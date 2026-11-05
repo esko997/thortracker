@@ -1,0 +1,94 @@
+package org.thortracker.model
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SongsTest {
+    @Test
+    fun gbChannelsAndBanks() {
+        val song = Songs.blank()
+        assertEquals(listOf("Pulse 1", "Pulse 2", "Wave", "Noise"), Songs.channelNames(song))
+        assertEquals(
+            listOf(InstrumentKind.PULSE, InstrumentKind.PULSE, InstrumentKind.WAVE, InstrumentKind.NOISE),
+            (0 until 4).map { Songs.channelKind(song, it) },
+        )
+        assertTrue(Songs.instruments(song, 1) === song.pulseInstruments)
+        assertTrue(Songs.instruments(song, 3) === song.noiseInstruments)
+        assertThrows(IllegalArgumentException::class.java) { Songs.channelNames(song.copy(backend = "other")) }
+    }
+
+    @Test
+    fun blankSongShape() {
+        val song = Songs.blank()
+        assertEquals(1, song.patterns.size)
+        assertEquals(listOf(0), song.orders)
+        assertTrue(song.patterns[0].tracks.all { track -> track.size == Songs.ROWS && track.all { it.isBlank } })
+        for (bank in listOf(song.pulseInstruments, song.waveInstruments, song.noiseInstruments)) {
+            assertEquals(Songs.INSTRUMENT_SLOTS, bank.size)
+        }
+        assertEquals((0 until 15).toList(), song.waveInstruments.map { it.wave })
+        assertEquals(16, song.waves.size)
+        assertTrue(song.waves.all { w -> w.size == 32 && w.all { it in 0..15 } })
+        // hUGETracker 1.0.11 DefaultWaves[6] (sine) is preserved exactly.
+        assertEquals(listOf(7, 10, 12, 13, 13, 11, 7, 5, 2, 1, 1, 3, 6, 8, 11, 13, 13, 12, 9, 7, 4, 1, 0, 1, 4, 7, 9, 12, 13, 13, 11, 8), song.waves[6])
+        assertEquals(Songs.ROWS, Songs.blankPattern(song).tracks[3].size)
+        assertEquals(4, Songs.blankPattern(song, "X").tracks.size)
+    }
+
+    @Test
+    fun demoIsACompleteArrangement() {
+        val demo = Songs.demo()
+        assertEquals(listOf(0, 1, 2, 1, 2), demo.orders)
+        assertEquals(1, demo.loopOrder)
+        for (ch in 0 until 4) {
+            assertTrue("channel $ch has notes", demo.patterns.any { p -> p.tracks[ch].any { it.note >= 0 } })
+        }
+        val cells = demo.patterns.flatMap { it.tracks.flatten() }
+        assertTrue(cells.any { it.note == Cell.CUT })
+        for (effect in listOf(0x0, 0x3, 0x4, 0x9, 0xC, 0xE)) {
+            assertTrue("demo uses effect %X".format(effect), cells.any { it.effect == effect && it.hasEffect })
+        }
+    }
+
+    @Test
+    fun noteNames() {
+        assertEquals("C-3", Songs.noteName(0))
+        assertEquals("A#7", Songs.noteName(58))
+        assertEquals("B-8", Songs.noteName(Songs.NOTE_MAX))
+        assertEquals("---", Songs.noteName(Cell.EMPTY))
+        assertEquals("CUT", Songs.noteName(Cell.CUT))
+    }
+
+    @Test
+    fun effectCatalogue() {
+        val effects = Songs.effects(Songs.blank())
+        assertEquals((0..15).toList(), effects.map { it.code })
+        assertEquals(listOf(6), effects.filter { !it.supported }.map { it.code })
+        val codes = { ch: Int -> Songs.effectsFor(Songs.blank(), ch).map { it.code } }
+        assertEquals((0..15).filter { it != 6 }, codes(0))
+        assertEquals((0..15).filter { it != 6 && it != 0xA }, codes(2))
+        assertEquals(listOf(0, 5, 7, 8, 9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF), codes(3))
+        val song = Songs.blank()
+        assertEquals("Arpeggio: note, +3, +7 semitones", Songs.describeEffect(song, 0, 0x0, 0x37))
+        assertEquals("No effect", Songs.describeEffect(song, 0, 0x0, 0x00))
+        assertEquals("Duty 75%", Songs.describeEffect(song, 1, 0x9, 0xC0))
+        assertEquals("Load wave 03 and retrigger", Songs.describeEffect(song, 2, 0x9, 0x03))
+        assertEquals("Noise width 7-bit", Songs.describeEffect(song, 3, 0x9, 0x08))
+        assertEquals("Wave volume 50%", Songs.describeEffect(song, 2, 0xC, 0x07))
+        assertEquals("Vibrato +3 units on 1 of every 4 ticks", Songs.describeEffect(song, 0, 0x4, 0x33))
+        assertEquals("Vibrato +2 units on every tick (constant detune)", Songs.describeEffect(song, 0, 0x4, 0x02))
+        assertEquals("Arpeggio: not supported on Noise", Songs.describeEffect(song, 3, 0x0, 0x37))
+        assertEquals("Pan Pulse 1 L+R, Pulse 2 L, Wave R, Noise off", Songs.describeEffect(song, 0, 0x8, 0x34 or 0x01 or 0x10))
+    }
+
+    @Test
+    fun cellProblemReportsRangesAndContext() {
+        val song = Songs.blank()
+        assertTrue(Songs.cellProblem(song, 0, Cell(note = 80))!!.contains("outside"))
+        assertTrue(Songs.cellProblem(song, 0, Cell(24, 16))!!.contains("instrument 16"))
+        assertFalse(Songs.cellProblem(song, 0, Cell(24, 1, 0x0, 0x37)) != null)
+    }
+}

@@ -1,0 +1,581 @@
+package org.thortracker.editor
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.thortracker.model.Cell
+import org.thortracker.model.InstrumentKind
+import org.thortracker.model.SongValidator
+import org.thortracker.model.Songs
+
+/** Drives views only through semantic controller actions, as a gamepad would. */
+class ViewControllerTest {
+    private val session = EditorSession(Songs.blank())
+    private val auditions = ArrayList<Triple<Int, Int, Int>>()
+    private var releases = 0
+    private var transports = 0
+
+    init {
+        session.onAudition = { ch, note, ins -> auditions += Triple(ch, note, ins) }
+        session.onReleaseAudition = { releases++ }
+        session.onTransport = { transports++ }
+    }
+
+    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) =
+        ViewController(session, ViewState(kind = kind).apply(setup))
+
+    private fun ViewController.tap(a: Action) { press(a); release(a) }
+
+    private fun ViewController.hold(a: Action, vararg moves: Action) {
+        press(a)
+        for (m in moves) { press(m); release(m) }
+        release(a)
+    }
+
+    private fun cell(order: Int, channel: Int, row: Int): Cell {
+        val s = session.song
+        return s.patterns[s.orders[order]].tracks[channel][row]
+    }
+
+    @Test
+    fun tapEditWritesLastNoteAdvancesAndIsOneUndo() {
+        val v = view(ViewKind.PATTERN)
+        v.tap(Action.EDIT)
+        assertEquals(Cell(note = 12, instrument = 1), cell(0, 0, 0))
+        assertEquals(1, v.state.row)
+        assertEquals(Triple(0, 12, 1), auditions.single())
+        assertEquals(1, releases)
+        assertEquals(1, session.selection.row)
+
+        session.undo()
+        assertEquals(Cell(), cell(0, 0, 0))
+        assertFalse(session.canUndo)
+    }
+
+    @Test
+    fun holdEditAdjustsNoteFineAndCoarseAsOneStep() {
+        val v = view(ViewKind.PATTERN)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT, Action.UP)
+        assertEquals(12 + 3 + 12, cell(0, 0, 0).note)
+        assertEquals(0, v.state.row) // adjusting does not advance
+        session.undo()
+        assertEquals(Cell(), cell(0, 0, 0))
+        assertFalse(session.canUndo)
+    }
+
+    @Test
+    fun clearCyclesNoteEmptyCutEmpty() {
+        val v = view(ViewKind.PATTERN)
+        session.setCell(0, 0, 0, Cell(note = 20, instrument = 2, effect = 0xC, param = 0x08))
+        v.tap(Action.CLEAR)
+        assertEquals(Cell(Cell.EMPTY, 0, 0xC, 0x08), cell(0, 0, 0))
+        v.tap(Action.CLEAR) // effect present: a cut would need the effect slot
+        assertEquals(Cell.EMPTY, cell(0, 0, 0).note)
+        assertNotNull(session.message)
+        v.state.field = 2
+        v.tap(Action.CLEAR)
+        v.state.field = 0
+        v.tap(Action.CLEAR)
+        assertEquals(Cell(note = Cell.CUT), cell(0, 0, 0))
+        assertEquals(null, Songs.cellProblem(session.song, 0, cell(0, 0, 0)))
+        v.tap(Action.CLEAR)
+        assertEquals(Cell(), cell(0, 0, 0))
+    }
+
+    @Test
+    fun soundNumberNeedsANote() {
+        val v = view(ViewKind.PATTERN) { field = 1 }
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(Cell(), cell(0, 0, 0))
+        assertNotNull(session.message)
+        assertFalse(session.canUndo)
+    }
+
+    @Test
+    fun effectTypeSkipsUnsupportedCallRoutine() {
+        val v = view(ViewKind.PATTERN) { field = 2 }
+        v.hold(Action.EDIT, *Array(6) { Action.RIGHT })
+        assertEquals(0x7, cell(0, 0, 0).effect)
+        v.state.field = 3
+        v.hold(Action.EDIT, Action.UP, Action.RIGHT)
+        assertEquals(0x11, cell(0, 0, 0).param)
+    }
+
+    @Test
+    fun effectTypeOffersOnlyEffectsTheChannelSupports() {
+        val v = view(ViewKind.PATTERN) { channel = 3; field = 2 }
+        v.hold(Action.EDIT, Action.RIGHT)
+        val first = cell(0, 3, 0).effect
+        assertEquals(Songs.effectsFor(session.song, 3).map { it.code }.first { it != 0 }, first)
+        repeat(16) { v.hold(Action.EDIT, Action.RIGHT) }
+        assertTrue(Songs.effectsFor(session.song, 3).any { it.code == cell(0, 3, 0).effect })
+    }
+
+    @Test
+    fun markCopyPasteAndDuplicateBlocks() {
+        for (r in 0..3) {
+            session.setCell(0, 0, r, Cell(note = r, instrument = 1))
+            session.setCell(0, 1, r, Cell(note = 24 + r, instrument = 2))
+        }
+        val v = view(ViewKind.PATTERN)
+        v.hold(Action.MARK, Action.DOWN, Action.DOWN, Action.DOWN, Action.RIGHT)
+        assertTrue(v.state.mark)
+        assertEquals(Block(0, 1, 0, 3), v.block())
+        v.tap(Action.COPY)
+
+        v.tap(Action.MARK) // tap drops the mark
+        assertFalse(v.state.mark)
+        v.state.row = 8
+        v.state.channel = 0
+        v.tap(Action.PASTE)
+        for (r in 0..3) {
+            assertEquals(cell(0, 0, r), cell(0, 0, 8 + r))
+            assertEquals(cell(0, 1, r), cell(0, 1, 8 + r))
+        }
+        assertEquals(Block(0, 1, 8, 11), v.block())
+
+        v.tap(Action.DUPLICATE)
+        assertEquals(cell(0, 1, 9), cell(0, 1, 13))
+        assertEquals(Block(0, 1, 12, 15), v.block())
+    }
+
+    @Test
+    fun auditionListensWithoutWriting() {
+        val v = view(ViewKind.PATTERN)
+        val before = session.song
+        v.press(Action.AUDITION)
+        assertEquals(Triple(0, 12, 1), auditions.single())
+        v.release(Action.AUDITION)
+        assertEquals(1, releases)
+        assertSame(before, session.song)
+    }
+
+    @Test
+    fun keyboardWriteModeWritesAtSharedCursorAndListenModeDoesNot() {
+        val kb = view(ViewKind.KEYBOARD) { entryMode = true; kbRow = 1; kbKey = 4 }
+        kb.tap(Action.EDIT)
+        assertEquals(Cell(note = 16, instrument = 1), cell(0, 0, 0))
+        assertEquals(1, session.selection.row)
+
+        kb.tap(Action.CLEAR) // write mode: cut and advance
+        assertEquals(Cell.CUT, cell(0, 0, 1).note)
+        assertEquals(2, session.selection.row)
+
+        kb.tap(Action.MARK) // switch to listen
+        assertFalse(kb.state.entryMode)
+        val before = session.song
+        kb.tap(Action.EDIT)
+        assertSame(before, session.song)
+        assertEquals(16, auditions.last().second)
+    }
+
+    @Test
+    fun keyboardFollowsPatternCursorChannel() {
+        val pattern = view(ViewKind.PATTERN)
+        val kb = view(ViewKind.KEYBOARD) { entryMode = true; kbRow = 1 }
+        pattern.tap(Action.NEXT_CHANNEL)
+        pattern.tap(Action.NEXT_CHANNEL)
+        kb.follow()
+        assertEquals(2, kb.state.channel)
+        kb.tap(Action.EDIT)
+        assertEquals(12, cell(0, 2, 0).note)
+    }
+
+    @Test
+    fun instrumentParameterHoldIsOneUndo() {
+        val v = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 3 }
+        assertEquals("Volume", v.soundParams[1].label)
+        v.hold(Action.EDIT, Action.LEFT, Action.LEFT)
+        assertEquals(13, session.song.pulseInstruments[0].volume)
+        session.undo()
+        assertEquals(15, session.song.pulseInstruments[0].volume)
+
+        v.state.instField = 2 + 4 // length cut on/off
+        v.tap(Action.EDIT)
+        assertTrue(session.song.pulseInstruments[0].lengthEnabled)
+    }
+
+    @Test
+    fun everyInstrumentParameterStaysInRange() {
+        for (kind in InstrumentKind.entries) {
+            val v = view(ViewKind.INSTRUMENT) { bank = kind.ordinal; instrument = 2 }
+            for ((i, p) in v.soundParams.withIndex()) {
+                v.state.instField = i + 2
+                v.hold(Action.EDIT, *Array(40) { Action.UP })
+                assertEquals(p.max, p.get(session.song.bank(kind)[1]))
+                v.hold(Action.EDIT, *Array(40) { Action.DOWN })
+                assertEquals(p.min, p.get(session.song.bank(kind)[1]))
+            }
+        }
+        assertTrue(SongValidator.structuralErrors(session.song).isEmpty())
+    }
+
+    @Test
+    fun soundNameEditsWithTheController() {
+        val v = view(ViewKind.INSTRUMENT) { instField = 1 }
+        session.setInstrument(InstrumentKind.PULSE, 1, session.song.pulseInstruments[0].copy(name = "Lead"))
+        v.tap(Action.RIGHT)
+        v.tap(Action.RIGHT)
+        v.tap(Action.RIGHT)
+        v.tap(Action.RIGHT) // past the end: appends
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals("LeadB", session.song.pulseInstruments[0].name)
+        v.tap(Action.CLEAR)
+        assertEquals("Lead", session.song.pulseInstruments[0].name)
+    }
+
+    @Test
+    fun waveDrawingAndToolsAreUndoable() {
+        val original = session.song.waves[0]
+        val v = view(ViewKind.WAVE) { wave = 0; waveRow = 1; waveCol = 0; waveLevel = 8 }
+        v.hold(Action.EDIT, Action.RIGHT, Action.UP)
+        assertEquals(8, session.song.waves[0][0])
+        assertEquals(9, session.song.waves[0][1])
+        session.undo()
+        assertEquals(original, session.song.waves[0])
+
+        v.tap(Action.LEFT) // back to sample 0, pen still at level 9
+        repeat(6) { v.tap(Action.UP) } // level 9 -> 15
+        assertEquals(1, v.state.waveRow)
+        v.tap(Action.UP) // past the top: into the tool row
+        assertEquals(0, v.state.waveRow)
+        v.tap(Action.EDIT) // Sine
+        assertEquals(WaveShapes.sine(), session.song.waves[0])
+    }
+
+    @Test
+    fun useInSoundAssignsTheWaveAndAuditionFindsIt() {
+        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 3))
+        val v = view(ViewKind.WAVE) { wave = 12; waveRow = 0; waveCol = 8 }
+        v.tap(Action.EDIT)
+        assertEquals(12, session.song.waveInstruments[2].wave)
+        v.state.waveRow = 1
+        v.press(Action.AUDITION)
+        assertEquals(Triple(2, 12, 3), auditions.last())
+        v.release(Action.AUDITION)
+    }
+
+    @Test
+    fun songViewArrangesOrders() {
+        val v = view(ViewKind.SONG) { songItem = ViewState.SONG_HEADER_ITEMS; songField = 1 }
+        v.tap(Action.EDIT) // repeat
+        assertEquals(listOf(0, 0), session.song.orders)
+        assertEquals(1, v.songOrder)
+        v.state.songField = 2
+        v.tap(Action.EDIT) // new pattern
+        assertEquals(listOf(0, 0, 1), session.song.orders)
+        v.state.songField = 3
+        v.tap(Action.EDIT) // clone
+        assertEquals(listOf(0, 0, 1, 2), session.song.orders)
+        assertEquals(3, session.song.patterns.size)
+        v.state.songField = 7
+        v.tap(Action.EDIT) // loop here
+        assertEquals(3, session.song.loopOrder)
+        v.state.songField = 5
+        v.tap(Action.EDIT) // earlier
+        assertEquals(listOf(0, 0, 2, 1), session.song.orders)
+        v.state.songField = 0
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(listOf(0, 0, 1, 1), session.song.orders)
+        v.tap(Action.CLEAR) // delete order
+        assertEquals(3, session.song.orders.size)
+
+        v.state.songItem = 2
+        v.hold(Action.EDIT, Action.RIGHT, Action.UP)
+        assertEquals(6 + 1 + 4, session.song.ticksPerRow)
+    }
+
+    @Test
+    fun songViewXPlaysFromTheOrder() {
+        session.newPatternAt(1)
+        val v = view(ViewKind.SONG) { songItem = ViewState.SONG_HEADER_ITEMS + 1 }
+        v.tap(Action.AUDITION)
+        assertEquals(1, transports)
+        assertEquals(1, session.selection.order)
+        assertEquals(0, session.selection.row)
+    }
+
+    @Test
+    fun followingViewsTrackSubjectsUnlessLocked() {
+        val pattern = view(ViewKind.PATTERN)
+        repeat(3) { pattern.tap(Action.NEXT_CHANNEL) }
+        pattern.state.field = 1
+        pattern.publishPattern()
+        assertEquals(InstrumentKind.NOISE, session.selection.bank)
+        assertEquals(ViewKind.INSTRUMENT, session.selection.context)
+
+        val follower = view(ViewKind.INSTRUMENT)
+        assertTrue(follower.follow())
+        assertEquals(InstrumentKind.NOISE.ordinal, follower.state.bank)
+
+        val locked = view(ViewKind.INSTRUMENT) { lockedSubject = 0 * 16 + 5 }
+        locked.follow()
+        assertEquals(0, locked.state.bank)
+        assertEquals(5, locked.state.instrument)
+
+        val independent = view(ViewKind.PATTERN) { followSelection = false; row = 30 }
+        assertFalse(independent.follow())
+        assertEquals(30, independent.state.row)
+    }
+
+    @Test
+    fun changingEditorDoesNotInterpretANoiseInstrumentLockAsAWaveIndex() {
+        val v = view(ViewKind.INSTRUMENT) { bank = 2; instrument = 1; lockedSubject = 33 }
+        v.state.switchKind(ViewKind.WAVE)
+        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 1, wave = 3, context = ViewKind.WAVE))
+        v.follow()
+        assertEquals(3, v.state.wave)
+
+        v.state.lockedSubject = 3
+        v.state.switchKind(ViewKind.WAVE)
+        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 1, wave = 4, context = ViewKind.WAVE))
+        v.follow()
+        assertEquals("Reselecting the same editor retains its subject lock", 3, v.state.wave)
+    }
+
+    @Test
+    fun explicitNavigationMovesTheLock() {
+        val v = view(ViewKind.INSTRUMENT) { lockedSubject = 16 + 2; bank = 1; instrument = 2 }
+        v.tap(Action.RIGHT)
+        assertEquals(16 + 3, v.state.lockedSubject)
+    }
+
+    @Test
+    fun undoWhileHoldingEditKeepsHistoryCoherent() {
+        val v = view(ViewKind.PATTERN)
+        v.press(Action.EDIT)
+        v.press(Action.RIGHT)
+        v.press(Action.UNDO)
+        assertEquals(Cell(), cell(0, 0, 0))
+        v.release(Action.EDIT)
+        assertFalse(session.canUndo)
+        assertTrue(session.canRedo)
+        session.redo()
+        assertEquals(13, cell(0, 0, 0).note)
+    }
+
+    @Test
+    fun cancelHoldsEndsTheGestureAndAudition() {
+        val v = view(ViewKind.PATTERN)
+        v.press(Action.EDIT)
+        v.press(Action.RIGHT)
+        v.cancelHolds()
+        assertFalse(v.editHeld)
+        assertFalse(session.inGesture)
+        assertEquals(1, releases)
+        v.press(Action.RIGHT) // a stray direction after a lost key-up only moves the cursor
+        assertEquals(13, cell(0, 0, 0).note)
+        assertEquals(1, v.state.field)
+    }
+
+    @Test
+    fun hintsDescribeTheCurrentAction() {
+        val v = view(ViewKind.PATTERN)
+        assertTrue(v.hints().any { it.keys == "A" && it.text.startsWith("Write note C-4") })
+        v.press(Action.EDIT)
+        assertTrue(v.hints().any { it.text == "Semitone" })
+        v.release(Action.EDIT)
+        for (kind in ViewKind.entries) assertTrue(view(kind).hints().isNotEmpty())
+    }
+
+    // ---- regressions found in editor review (each failed before its fix) ----
+
+    @Test
+    fun holdingClearWhileMovingNeverClears() {
+        val before = session.song
+        view(ViewKind.INSTRUMENT) { instField = 0; instrument = 1 }.hold(Action.CLEAR, Action.RIGHT)
+        view(ViewKind.INSTRUMENT) { instField = 2; instrument = 1 }.hold(Action.CLEAR, Action.DOWN)
+        view(ViewKind.WAVE) { wave = 0; waveRow = 0; waveCol = 5 }.hold(Action.CLEAR, Action.DOWN)
+        view(ViewKind.KEYBOARD) { entryMode = true; kbRow = 0; kbField = 1 }.hold(Action.CLEAR, Action.RIGHT)
+        assertSame(before, session.song)
+        assertEquals(0, session.selection.row)
+    }
+
+    @Test
+    fun keyboardKeysAboveTheTopNoteDoNothing() {
+        val kb = view(ViewKind.KEYBOARD) { entryMode = true; kbRow = 1; octave = 7; kbKey = 24 }
+        val before = session.song
+        kb.tap(Action.EDIT)
+        kb.tap(Action.AUDITION)
+        assertSame(before, session.song)
+        assertTrue(auditions.isEmpty())
+        kb.tap(Action.OCTAVE_UP)
+        assertEquals(7, kb.state.octave)
+        kb.state.kbKey = 23
+        kb.tap(Action.EDIT)
+        assertEquals(Songs.NOTE_MAX, cell(0, 0, 0).note)
+    }
+
+    @Test
+    fun heldControlsDeferFollowingAnotherDisplay() {
+        session.setCell(0, 0, 5, Cell(note = 30, instrument = 1))
+        val v = view(ViewKind.PATTERN) { row = 5 }
+        v.press(Action.EDIT) // picks up the note, no insertion
+        session.select(Selection(row = 20))
+        assertFalse(v.follow())
+        assertEquals(5, v.state.row)
+        v.release(Action.EDIT)
+        assertTrue(v.follow())
+        assertEquals(20, v.state.row)
+    }
+
+    @Test
+    fun contextSuggestsAComplementaryView() {
+        view(ViewKind.KEYBOARD) { entryMode = true; kbRow = 1 }.tap(Action.EDIT)
+        assertEquals(ViewKind.PATTERN, session.selection.context)
+        view(ViewKind.KEYBOARD) { kbRow = 0; kbField = 1 }.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(ViewKind.PATTERN, session.selection.context)
+        view(ViewKind.INSTRUMENT) { bank = InstrumentKind.PULSE.ordinal }.tap(Action.RIGHT)
+        assertEquals(ViewKind.KEYBOARD, session.selection.context)
+        view(ViewKind.INSTRUMENT) { bank = InstrumentKind.WAVE.ordinal }.tap(Action.RIGHT)
+        assertEquals(ViewKind.WAVE, session.selection.context)
+        view(ViewKind.WAVE).tap(Action.NEXT_CHANNEL)
+        assertEquals(ViewKind.INSTRUMENT, session.selection.context)
+    }
+
+    @Test
+    fun entryMemoryTravelsWithTheViewStateOnSwap() {
+        val top = view(ViewKind.PATTERN)
+        top.hold(Action.EDIT, Action.RIGHT, Action.RIGHT) // C-4 -> D-4
+        top.tap(Action.DOWN)
+        val bottom = view(ViewKind.KEYBOARD)
+        val moved = top.state
+        top.state = bottom.state
+        bottom.state = moved // the host swaps whole states between displays
+        bottom.tap(Action.EDIT)
+        assertEquals(14, cell(0, 0, 1).note)
+    }
+
+    @Test
+    fun playbackFollowWaitsForHeldControlsAndThenLetsTheUserNavigate() {
+        session.newPatternAt(1)
+        session.setCell(0, 0, 0, Cell(note = 30, instrument = 1))
+        val v = view(ViewKind.PATTERN)
+        v.press(Action.EDIT)
+        assertFalse(v.followPlayback(order = 1, playing = true))
+        assertEquals(0, v.state.order)
+        v.release(Action.EDIT)
+        assertTrue(v.followPlayback(order = 1, playing = true))
+        assertEquals(1, v.state.order)
+        v.state.order = 0 // the user navigates away while order 1 keeps playing
+        assertFalse(v.followPlayback(order = 1, playing = true))
+        assertEquals(0, v.state.order)
+
+        val still = view(ViewKind.PATTERN) { followPlayback = false }
+        assertFalse(still.followPlayback(order = 1, playing = true))
+        assertEquals(0, still.state.order)
+    }
+
+    @Test
+    fun anotherDisplayCannotEndAHeldAdjustment() {
+        val pattern = view(ViewKind.PATTERN)
+        val keyboard = view(ViewKind.KEYBOARD) { kbRow = 1 }
+        pattern.press(Action.EDIT)
+        pattern.tap(Action.RIGHT)
+        keyboard.tap(Action.EDIT) // Listen-mode key on the other display
+        keyboard.state.entryMode = true
+        keyboard.tap(Action.EDIT) // and a written note: both join the held group
+        assertTrue(session.inGesture)
+        pattern.tap(Action.RIGHT)
+        pattern.release(Action.EDIT)
+        assertFalse(session.inGesture)
+        session.undo()
+        assertEquals(Songs.blank(), session.song)
+        assertFalse(session.canUndo)
+    }
+
+    @Test
+    fun snapshotCopiesEntryMemoryIndependently() {
+        val v = view(ViewKind.PATTERN)
+        v.hold(Action.EDIT, Action.RIGHT)
+        val copy = v.state.snapshot()
+        v.state.entry.notes[0] = 40
+        assertEquals(13, copy.entry.notes[0])
+    }
+
+    /** A complete short song composed with controller actions only, across every view. */
+    @Test
+    fun physicalControlsComposeACompleteExportableSong() {
+        session.step = 4
+        val pattern = view(ViewKind.PATTERN)
+
+        // Melody on Pulse 1: a note every 4 rows, each held-A adjustment starting from the previous note.
+        pattern.tap(Action.EDIT)
+        for (semitones in listOf(4, 7, 12)) {
+            pattern.hold(Action.EDIT, *Array(semitones) { Action.RIGHT })
+            pattern.tap(Action.DOWN); pattern.tap(Action.DOWN); pattern.tap(Action.DOWN); pattern.tap(Action.DOWN)
+        }
+        // Set volume effect C0F on row 0 (effect type C is the 12th supported code).
+        pattern.state.row = 0
+        pattern.state.field = 2
+        pattern.hold(Action.EDIT, *Array(11) { Action.RIGHT })
+        pattern.state.field = 3
+        pattern.hold(Action.EDIT, *Array(15) { Action.RIGHT })
+        assertEquals(0xC, cell(0, 0, 0).effect)
+        assertEquals(0x0F, cell(0, 0, 0).param)
+
+        // Bass on Pulse 2 an octave lower with sound 03.
+        pattern.state.field = 0
+        pattern.tap(Action.NEXT_CHANNEL)
+        pattern.tap(Action.OCTAVE_DOWN)
+        pattern.tap(Action.EDIT)
+        pattern.state.row = 0
+        pattern.state.field = 1
+        pattern.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(Cell(note = 0, instrument = 3), cell(0, 1, 0))
+
+        // Wave and noise: a note each, and a cut on the noise channel.
+        pattern.state.field = 0
+        pattern.tap(Action.NEXT_CHANNEL)
+        pattern.tap(Action.EDIT)
+        pattern.tap(Action.NEXT_CHANNEL)
+        pattern.state.row = 0
+        pattern.tap(Action.EDIT)
+        pattern.tap(Action.CLEAR)
+        assertEquals(Cell.CUT, cell(0, 3, 4).note)
+
+        // Copy the melody bar down with the block selection.
+        pattern.state.channel = 0
+        pattern.state.row = 0
+        pattern.hold(Action.MARK, *Array(15) { Action.DOWN })
+        pattern.tap(Action.COPY)
+        pattern.tap(Action.MARK)
+        pattern.state.row = 16
+        pattern.tap(Action.PASTE)
+        assertEquals(cell(0, 0, 4), cell(0, 0, 20))
+
+        // Shape the lead sound and draw a wave the wave sound uses.
+        val sounds = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 2 }
+        sounds.hold(Action.EDIT, Action.RIGHT) // duty 25%
+        assertEquals(1, session.song.pulseInstruments[0].duty)
+        val waves = view(ViewKind.WAVE) { wave = 0; waveRow = 0; waveCol = 1 }
+        waves.tap(Action.EDIT) // triangle
+        assertEquals(WaveShapes.triangle(), session.song.waves[0])
+
+        // Arrange: repeat the pattern, add a clone, speed up, loop to order 1.
+        val song = view(ViewKind.SONG) { songItem = ViewState.SONG_HEADER_ITEMS; songField = 1 }
+        song.tap(Action.EDIT)
+        song.state.songField = 3
+        song.tap(Action.EDIT)
+        song.state.songField = 7
+        song.state.songItem = ViewState.SONG_HEADER_ITEMS + 1
+        song.tap(Action.EDIT)
+        song.state.songItem = 2
+        song.hold(Action.EDIT, Action.LEFT, Action.LEFT)
+        song.state.songItem = 0
+        song.hold(Action.EDIT, Action.RIGHT) // "Untitled" -> "Vntitled"
+
+        val s = session.song
+        assertEquals(listOf(0, 0, 1), s.orders)
+        assertEquals(1, s.loopOrder)
+        assertEquals(4, s.ticksPerRow)
+        assertEquals("Vntitled", s.title)
+        for (ch in 0 until 4) assertTrue(s.patterns[0].tracks[ch].any { it.note >= 0 })
+        assertEquals(listOf<String>(), SongValidator.errors(s))
+        assertNotEquals(Songs.blank(), s)
+    }
+}

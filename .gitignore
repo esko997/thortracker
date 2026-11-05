@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+.idea/
+local.properties
+**/build/
+.cxx/
+**/.cxx/
+.tools/
+research/
+evidence/
+dist/
+*.iml
