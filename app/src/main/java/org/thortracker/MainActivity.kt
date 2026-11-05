@@ -30,6 +30,10 @@ import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
+import org.thortracker.input.Binding
+import org.thortracker.input.Control
+import org.thortracker.input.ControlGroup
+import org.thortracker.input.Keymap
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.SongValidator
@@ -60,6 +64,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private val input = HostInput()
     private var secondary: Presentation? = null
     private var audio: TrackerAudio? = null
+    private var auditionSequence: Runnable? = null
     private var hasAudioFocus = false
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val audioFocusRequest by lazy {
@@ -72,7 +77,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                     hasAudioFocus = false
                     audio?.stop()
                     requestedPlaying = false
-                    audio?.releaseAudition()
+                    hosts.values.forEach { it.tracker.cancelInteraction() }
+                    releaseAudition()
                     statusMessage = "Playback paused: another app requested audio"
                     refresh()
                 }
@@ -90,7 +96,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private var pickerGeneration: Long? = null
     private var statusMessage = "Loading project…"
     private var flashedStatus: String? = null
-    private var remappings = mutableMapOf<Int, Int>()
+    private var keymap = Keymap.DEFAULT
     private var pickerSong: Song? = null
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
@@ -118,7 +124,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         workspace = WorkspaceStore(this)
         states = workspace.load()
         focus = workspace.focused()
-        remappings = workspace.bindings()
+        keymap = workspace.keymap()
+        input.keymap = keymap
+        popups.keys = keymap
         currentUri = savedInstanceState?.getString("documentUri")?.let(Uri::parse)
         savedInstanceState?.getString("pendingPickerUri")?.let { uri ->
             pendingPickerResult = savedInstanceState.getInt("pendingPickerRequest") to Uri.parse(uri)
@@ -137,10 +145,28 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         session.onStateChanged = { refresh() }
         session.onAudition = { channel, note, instrument ->
+            cancelAuditionSequence()
             if (requestAudioFocus()) audio?.audition(channel, note, instrument)
             scheduleAudioFeedback()
         }
-        session.onReleaseAudition = { audio?.releaseAudition() }
+        session.onAuditionSequence = { channel, notes, instrument ->
+            cancelAuditionSequence()
+            if (requestAudioFocus()) {
+                val sequence = object : Runnable {
+                    private var index = 0
+                    override fun run() {
+                        if (!active || auditionSequence !== this) return
+                        audio?.audition(channel, notes[index], instrument)
+                        index = (index + 1) % notes.size
+                        main.postDelayed(this, 180)
+                    }
+                }
+                auditionSequence = sequence
+                sequence.run()
+                scheduleAudioFeedback()
+            }
+        }
+        session.onReleaseAudition = ::releaseAudition
         // The Song view's "play this order" publishes the order it means; play exactly that selection.
         session.onTransport = { start ->
             if (start) session.selection.let { startPlayback(it.order, it.row) } else stopPlayback()
@@ -215,13 +241,14 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         active = false
         // Key-ups for anything held now may never arrive.
         input.reset()
-        if (popups.dropCaptures()) statusMessage = "Remapping cancelled"
+        hosts.values.forEach { it.tracker.heldModifiers = emptySet() }
+        if (popups.dropCaptures()) statusMessage = "Binding unchanged"
         hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
         audio?.stop()
         requestedPlaying = false
-        audio?.releaseAudition()
+        releaseAudition()
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest)
         hasAudioFocus = false
         if (documentReady) projectStore.autosave(session.song, immediate = true)
@@ -319,7 +346,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean = routeKey(event) || super.dispatchKeyEvent(event)
 
     /**
-     * Every key from either window. Layers in order: remap capture, open popup, host chords and global
+     * Every key from either window. Layers in order: binding capture, open popup, host chords and global
      * keys, the controller-focused toolbar, then the controller-focused editor. Returns false only for
      * keys the window itself should handle (system keys, typing into a popup's text field).
      */
@@ -329,41 +356,37 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return !popups.typing
         val down = action == KeyEvent.ACTION_DOWN
         val repeat = original.repeatCount
-        val code = remappings[original.keyCode] ?: original.keyCode
+        val code = original.keyCode
         popups.top?.capture?.let { capture ->
-            if (down && repeat == 0) capture(original.keyCode)
-            else if (!down) input.route(code, false, 0, true, false)
+            if (repeat == 0) capture(code, down)
             return true
         }
         if (!documentReady && !popups.isOpen) return true
-        return when (val route = input.route(code, down, repeat, popups.isOpen, toolbarFocused())) {
-            is HostInput.Route.Run -> { run(route.command); true }
+        val route = input.route(code, down, repeat, popups.isOpen, toolbarFocused())
+        hosts.forEach { (index, host) -> host.tracker.heldModifiers = if (index == focus) input.heldModifiers else emptySet() }
+        return when (route) {
+            is HostInput.Route.Run -> { run(route.control); true }
+            HostInput.Route.Menu -> { if (documentReady) { modalDisplay = focus; appMenu() }; true }
+            HostInput.Route.Pass -> false
+            is HostInput.Route.Editor ->
+                if (!documentReady) true else hosts[focus]?.tracker?.controllerAction(route.action, down, repeat) ?: true
             is HostInput.Route.Deliver -> when (route.target) {
                 HostInput.Target.NONE -> true
-                HostInput.Target.POPUP -> popups.handleKey(code, down, repeat)
-                HostInput.Target.TOOLBAR -> hosts[focus]?.toolbar?.handleKey(code, down, repeat) ?: true
-                HostInput.Target.EDITOR -> {
-                    if (!documentReady) return true
-                    val event = if (code == original.keyCode) original else KeyEvent(original.downTime, original.eventTime,
-                        action, code, repeat, original.metaState, original.deviceId,
-                        original.scanCode, original.flags, original.source)
-                    hosts[focus]?.tracker?.handleController(event) ?: false
-                }
+                HostInput.Target.POPUP -> popups.handleKey(route.code, down, repeat)
+                HostInput.Target.TOOLBAR -> hosts[focus]?.toolbar?.handleKey(route.code, down, repeat) ?: true
             }
         }
     }
 
-    private fun run(command: HostInput.Command) {
+    private fun run(control: Control) {
         if (!documentReady) return
-        when (command) {
-            HostInput.Command.UNDO -> editAction(Action.UNDO)
-            HostInput.Command.REDO -> editAction(Action.REDO)
-            HostInput.Command.SWAP -> swap()
-            HostInput.Command.TOOLBAR -> toggleToolbar()
-            HostInput.Command.PLAY_PATTERN -> toggleTransport(fromCursor = false)
-            HostInput.Command.PLAY_CURSOR -> toggleTransport(fromCursor = true)
-            HostInput.Command.FOCUS -> switchFocus()
-            HostInput.Command.MENU -> { modalDisplay = focus; appMenu() }
+        when (control) {
+            Control.SWAP -> swap()
+            Control.TOOLBAR -> toggleToolbar()
+            Control.PLAY_PATTERN -> toggleTransport(fromCursor = false)
+            Control.PLAY_CURSOR -> toggleTransport(fromCursor = true)
+            Control.FOCUS -> switchFocus()
+            else -> control.action?.let(::editAction)
         }
     }
 
@@ -436,6 +459,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             if (!state.pinned && index != focus && !host.tracker.ownsSelection) state.switchKind(selected.context)
             host.tracker.state = state
             host.tracker.controllerFocused = index == focus
+            host.tracker.heldModifiers = if (index == focus) input.heldModifiers else emptySet()
             host.tracker.visibility = if (documentReady) View.VISIBLE else View.INVISIBLE
             host.tracker.refresh()
             host.toolbar.heading.text = if (index == focus) "● ${session.song.title}" else session.song.title
@@ -462,6 +486,16 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         if (message == flashedStatus) return
         flashedStatus = message
         hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = false) else it.flash(null, false) }
+    }
+
+    private fun cancelAuditionSequence() {
+        auditionSequence?.let { main.removeCallbacks(it) }
+        auditionSequence = null
+    }
+
+    private fun releaseAudition() {
+        cancelAuditionSequence()
+        audio?.releaseAudition()
     }
 
     private fun scheduleAudioFeedback() {
@@ -576,41 +610,147 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                     session.step = intArrayOf(0, 1, 2, 4, 8, 16)[it]; refresh()
                 }
             })
-            add("Controller mappings" to ::mappingsMenu)
+            add("Controls" to ::showControls)
             add("Help" to { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; refresh() })
         })
     }
 
-    private fun mappingsMenu() {
-        val codes = intArrayOf(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT,
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B,
-            KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_BUTTON_L1,
-            KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2,
-            KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_THUMBL,
-            KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_MENU)
-        val labels = listOf("Up", "Down", "Left", "Right", "Edit / A", "Clear / B", "Audition / X", "Mark / Y",
-            "Previous channel / L1", "Next channel / R1", "Undo and swap trigger / L2", "Redo trigger / R2",
-            "Modifier / Select", "Play / Start", "Play from cursor trigger / L3", "Display focus / R3", "Menu")
-        menu("Remap action", labels.mapIndexed { index, label -> label to { capture(codes[index], label) } } +
-            ("Reset mappings" to {
-                remappings.clear(); workspace.saveBindings(remappings); statusMessage = "Default controls restored"; refresh()
-            }))
+    // ---- controls -------------------------------------------------------------------------------
+
+    private fun applyKeymap(next: Keymap, message: String?) {
+        keymap = next
+        input.keymap = next
+        input.reset()
+        popups.keys = next
+        hosts.values.forEach { it.tracker.keymap = next; it.toolbar.setKeys(next) }
+        workspace.saveKeymap(next)
+        message?.let { statusMessage = it }
+        refresh()
     }
 
-    /** Waits for one physical button for [label]; Back or Escape (or Cancel by touch) leaves unchanged. */
-    private fun capture(code: Int, label: String) {
-        popups.show(PopupSpec("Remap $label", message = "Press the button to use for $label. Back cancels.",
-            items = listOf(PopupItem.dismiss()), capture = { key ->
-                if (key != KeyEvent.KEYCODE_BACK && key != KeyEvent.KEYCODE_ESCAPE) {
-                    remappings.entries.removeAll { it.value == code }
-                    remappings[key] = code
-                    workspace.saveBindings(remappings)
-                    input.reset()
-                    statusMessage = "${KeyEvent.keyCodeToString(key)} → $label"
-                } else statusMessage = "Remapping cancelled"
-                popups.back()
-                refresh()
+    /** One row per control, grouped by area: its job, then its current binding; choosing a row rebinds it. */
+    private fun controlsSpec(): PopupSpec {
+        val items = ArrayList<PopupItem>()
+        var group: ControlGroup? = null
+        for (c in Control.entries) {
+            if (c.group != group) { group = c.group; items += PopupItem.heading(c.group.label) }
+            val bound = keymap.binding(c) != null
+            items += PopupItem(c.label, if (bound) PopupItem.Tone.PLAIN else PopupItem.Tone.DANGER, value = keymap.label(c)) { captureBinding(c) }
+        }
+        items += PopupItem.heading("Keymap file")
+        items += PopupItem("Export keymap…") { launchKeymapPicker(KEYMAP_EXPORT) }
+        items += PopupItem("Import keymap…") { launchKeymapPicker(KEYMAP_IMPORT) }
+        items += PopupItem("Reset all to defaults", PopupItem.Tone.DANGER) {
+            popups.show(PopupSpec("Reset all controls?", message = "Every binding returns to its default.",
+                items = listOf(PopupItem("Reset", PopupItem.Tone.DANGER) {
+                    popups.back()
+                    applyKeymap(Keymap.DEFAULT, "Default controls restored")
+                    popups.replaceTop(controlsSpec())
+                }, PopupItem.dismiss()), selected = 1), modalDisplay)
+        }
+        items += PopupItem.dismiss()
+        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3 " +
+            "and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
+            items = items, selected = 1)
+    }
+
+    private fun showControls() = popups.show(controlsSpec(), modalDisplay)
+
+    /** Waits for one button or one modifier+button chord for [control]; Back or Escape leaves it unchanged. */
+    private fun captureBinding(control: Control) {
+        val held = LinkedHashSet<Int>()
+        var finished = false
+        val default = Keymap.DEFAULT.binding(control)
+        fun finish(binding: Binding?) {
+            finished = true
+            popups.back()
+            input.reset()
+            if (binding == null) { statusMessage = "Binding unchanged"; refresh() } else finishCapture(control, binding)
+        }
+        popups.show(PopupSpec(control.label,
+            message = "Press the new button now. Current: ${keymap.label(control)}." +
+                (if (control.hold) " It is held with the D-pad, so it takes a single button."
+                else " For a chord, hold Select, L2, R2 or L3, then press the button.") + " Back cancels.",
+            items = listOfNotNull(
+                default?.let { PopupItem("Use default (${Keymap.label(it)})") { finish(it) } },
+                PopupItem.dismiss(),
+            ),
+            capture = { code, down ->
+                when {
+                    finished -> Unit
+                    code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE -> if (down) finish(null)
+                    code in Keymap.MODIFIERS -> if (down) held += code else held -= code
+                    !down -> Unit
+                    held.size > 1 -> { finish(null); showError("Hold one of Select, L2, R2 or L3 for a chord, not several") }
+                    else -> finish(Binding(code, held.firstOrNull()))
+                }
             }), modalDisplay)
+    }
+
+    /** Applies a captured [binding], asking before taking it from another control. */
+    private fun finishCapture(control: Control, binding: Binding) {
+        keymap.problem(control, binding)?.let { return showError(it) }
+        if (keymap.binding(control) == binding) { statusMessage = "${control.short}: unchanged"; refresh(); return }
+        val owner = keymap.control(binding)
+        if (owner == null) return assign(control, binding, null)
+        val chord = Keymap.label(binding)
+        if (owner.essential) {
+            return showError("$chord is ${owner.label}, which always needs a button. Rebind ${owner.short} first, or choose another button.")
+        }
+        popups.show(PopupSpec("$chord is ${owner.short}", message = "Use $chord for ${control.label}? ${owner.label} will have no binding until you set one.",
+            items = listOf(PopupItem("Replace", PopupItem.Tone.PRIMARY) { popups.back(); assign(control, binding, owner) }, PopupItem.dismiss()),
+            selected = 1), modalDisplay)
+    }
+
+    private fun assign(control: Control, binding: Binding, displaced: Control?) {
+        var next = keymap.with(control, binding)
+        if (displaced != null) next = next.with(displaced, null)
+        applyKeymap(next, "${control.short}: ${Keymap.label(binding)}" + (displaced?.let { " (${it.short} now unbound)" } ?: ""))
+        if (popups.top?.title == "Controls") popups.replaceTop(controlsSpec())
+    }
+
+    private fun launchKeymapPicker(request: Int) {
+        val intent = Intent(if (request == KEYMAP_IMPORT) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (request == KEYMAP_IMPORT) "*/*" else "application/json"
+            if (request == KEYMAP_EXPORT) putExtra(Intent.EXTRA_TITLE, "thor-tracker-keymap.json")
+        }
+        try { startActivityForResult(intent, request) }
+        catch (e: Exception) { showError("No document provider could open: ${e.message}") }
+    }
+
+    /** Writes or reads a keymap file off the UI thread; a provider that stalls cannot freeze input. */
+    private fun keymapFile(request: Int, uri: Uri) {
+        val snapshot = keymap
+        Thread({
+            val result = runCatching {
+                if (request == KEYMAP_EXPORT) {
+                    checkNotNull(contentResolver.openOutputStream(uri, "wt")) { "the destination could not be opened" }
+                        .use { it.write(snapshot.toJson().toByteArray()) }
+                    null
+                } else {
+                    val bytes = checkNotNull(contentResolver.openInputStream(uri)) { "the file could not be opened" }.use { stream ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val n = stream.read(buffer)
+                            if (n < 0) break
+                            out.write(buffer, 0, n)
+                            check(out.size() <= MAX_KEYMAP_BYTES) { "the file is too large to be a keymap" }
+                        }
+                        out.toByteArray()
+                    }
+                    Keymap.fromJson(bytes.toString(Charsets.UTF_8))
+                }
+            }
+            main.post {
+                if (isDestroyed) return@post
+                result.fold(
+                    { imported -> if (imported == null) { statusMessage = "Keymap exported"; refresh() } else applyKeymap(imported, "Keymap imported") },
+                    { e -> showError("Keymap ${if (request == KEYMAP_EXPORT) "export" else "import"} failed: ${e.message}") },
+                )
+            }
+        }, "keymap-file").start()
     }
 
     private fun fileMenu() {
@@ -637,7 +777,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private fun confirmReplace(action: () -> Unit) {
         popups.show(PopupSpec("Replace working song?",
             message = "The current song will replace the single previous-project recovery backup. Save it to a project file if you want to keep it permanently.",
-            items = listOf(PopupItem("Continue", PopupItem.Tone.DANGER, action), PopupItem.dismiss()),
+            items = listOf(PopupItem("Continue", PopupItem.Tone.DANGER, action = action), PopupItem.dismiss()),
             selected = 1), modalDisplay)
     }
 
@@ -682,6 +822,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     @Deprecated("Android Activity result API used to keep a small native host")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == KEYMAP_EXPORT || requestCode == KEYMAP_IMPORT) {
+            if (resultCode == RESULT_OK) data?.data?.let { keymapFile(requestCode, it) }
+            return
+        }
         if (resultCode != RESULT_OK) { pickerSong = null; pickerGeneration = null; return }
         val uri = data?.data ?: return
         try {
@@ -782,6 +926,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             toolbar.add("File", wideOnly = true, action = act { fileMenu() })
             toolbar.add("Menu", action = act { appMenu() })
             transport = toolbar.add("Play", action = act { toggleTransport(fromCursor = false) })
+            tracker.keymap = keymap
+            toolbar.setKeys(keymap)
             root.addView(tracker, FrameLayout.LayoutParams(-1, -1))
             root.addView(handle, FrameLayout.LayoutParams(dp(72), dp(18), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
             root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
@@ -818,6 +964,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         private const val OPEN = 10
         private const val SAVE = 11
         private const val EXPORT = 12
+        private const val KEYMAP_EXPORT = 13
+        private const val KEYMAP_IMPORT = 14
+        private const val MAX_KEYMAP_BYTES = 64 * 1024
         private const val WORKING = "Working copy"
         /** Song view header rows: 0 title, 1 artist, 2 ticks per row (tempo), 3 loop order. */
         private const val SONG_TEMPO_ITEM = 2

@@ -36,11 +36,18 @@ data class Cell(val note: Int = EMPTY, val instrument: Int = 0, val effect: Int 
 }
 
 /**
- * Channel-major tracks (`tracks[channel][row]`); a pattern's index is its position in [Song.patterns].
+ * Channel-major tracks (`tracks[channel][row]`, always [Songs.ROWS] rows); a pattern's index is its position in
+ * [Song.patterns]. [length] (1..[Songs.ROWS]) is how many rows play; rows past it are kept but hidden, not
+ * heard and exported blank, so shortening then lengthening loses nothing.
  * [scale] is editor-only note-entry guidance: it never alters [tracks] and is not exported or heard.
  */
 @Serializable
-data class Pattern(val name: String = "Pattern", val tracks: List<List<Cell>>, val scale: Scale = Scale.CHROMATIC) {
+data class Pattern(
+    val name: String = "Pattern",
+    val tracks: List<List<Cell>>,
+    val scale: Scale = Scale.CHROMATIC,
+    val length: Int = Songs.ROWS,
+) {
     companion object {
         fun blank(channels: Int, rows: Int = Songs.ROWS, name: String = "Pattern"): Pattern =
             Pattern(name, List(channels) { List(rows) { Cell.BLANK } })

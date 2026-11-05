@@ -7,6 +7,8 @@ import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Scale
 import org.thortracker.model.ScaleKind
 import org.thortracker.model.Songs
+import org.thortracker.model.TonalGuide
+import org.thortracker.input.Keymap
 
 /**
  * Semantic controller actions. Physical bindings live in the UI layer; views only see these.
@@ -52,14 +54,18 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private var editGesture: GestureToken? = null
     /** Playback order this view last reacted to; -1 when stopped. */
     private var playOrderSeen = -1
+    private var cachedSketchGuide: TonalGuide? = null
+    /** Current controller bindings, so hints name the buttons the user actually pressed. */
+    var keys: Keymap = Keymap.DEFAULT
 
     /** Last note/effect per channel and entry sound per bank; part of [state] so it swaps with it. */
     private val lastNote get() = state.entry.notes
     private val lastEffect get() = state.entry.effects
     private val penSound get() = state.entry.pens
 
-    /** True while A, B or Y is held: navigation must not be moved under the user's hands. */
-    val holding: Boolean get() = editHeld || clearHeld || markHeld
+    /** Held editing or Sketch listening keeps following from moving the subject under the user's hands. */
+    val holding: Boolean get() = editHeld || clearHeld || markHeld ||
+        (state.kind == ViewKind.SKETCH && (auditionHeld || auditioning))
 
     private val song get() = session.song
 
@@ -74,6 +80,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             Action.REDO -> { historyStep(false); true }
             Action.OCTAVE_DOWN, Action.OCTAVE_UP -> {
                 state.octave = (state.octave + if (a == Action.OCTAVE_UP) 1 else -1).coerceIn(ViewState.MIN_OCTAVE, maxOctave())
+                if (state.kind == ViewKind.SKETCH && auditioning) sketchListen(state.sketchRow == 1)
                 session.note("Octave ${state.octave}")
                 true
             }
@@ -129,6 +136,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         markHeld = false
         if (auditionHeld) release(Action.AUDITION)
         if (keyHeld) touchKeyUp()
+        if (state.kind == ViewKind.SKETCH) sketchRelease()
     }
 
     private fun historyStep(undo: Boolean) {
@@ -174,8 +182,15 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.scroll = state.scroll.coerceAtLeast(0)
         state.markRow = state.markRow.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
         state.markChannel = state.markChannel.coerceIn(0, s.channelCount() - 1)
-        state.scaleField = state.scaleField.coerceIn(0, 1)
+        state.scaleField = state.scaleField.coerceIn(0, 2)
         if (state.kind != ViewKind.PATTERN) state.scalePanel = false
+        if (state.kind == ViewKind.SKETCH) {
+            if (kindOf(state.channel) == InstrumentKind.NOISE) state.channel = song.firstChannelOf(InstrumentKind.PULSE).coerceAtLeast(0)
+            state.sketchRow = state.sketchRow.coerceIn(0, 2)
+            state.sketchField = state.sketchField.coerceIn(0, SKETCH_FIELDS.lastIndex)
+            state.sketchChord = state.sketchChord.coerceIn(0, (sketchGuide.chords.size - 1).coerceAtLeast(0))
+            state.sketchTone = state.sketchTone.coerceIn(0, sketchGuide.tones.lastIndex)
+        }
     }
 
     /** After explicit navigation in a locked view, the lock moves to the subject the user chose. */
@@ -184,7 +199,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.lockedSubject = when (state.kind) {
             ViewKind.INSTRUMENT -> state.bank * 16 + state.instrument
             ViewKind.WAVE -> state.wave
-            ViewKind.PATTERN, ViewKind.KEYBOARD -> state.channel
+            ViewKind.PATTERN, ViewKind.KEYBOARD, ViewKind.SKETCH -> state.channel
             else -> state.lockedSubject
         }
     }
@@ -195,6 +210,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         ViewKind.INSTRUMENT -> "Edit sound"
         ViewKind.WAVE -> "Draw wave"
         ViewKind.KEYBOARD -> "Keyboard"
+        ViewKind.SKETCH -> "Sketch"
         ViewKind.HELP -> "Help"
     }
 
@@ -219,7 +235,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     /** The keyboard's two-octave span is capped so only its top key can exceed the note range. */
-    private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD) ViewState.KEYBOARD_MAX_OCTAVE else ViewState.MAX_OCTAVE
+    private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD || state.kind == ViewKind.SKETCH) ViewState.KEYBOARD_MAX_OCTAVE else ViewState.MAX_OCTAVE
 
     private fun direction(dx: Int, dy: Int): Boolean {
         // A direction while B is held is always a jump/move, never followed by B's clear.
@@ -230,12 +246,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.INSTRUMENT -> soundDirection(dx, dy)
             ViewKind.WAVE -> waveDirection(dx, dy)
             ViewKind.KEYBOARD -> keyboardDirection(dx, dy)
+            ViewKind.SKETCH -> sketchDirection(dx, dy)
             ViewKind.HELP -> helpDirection(dx, dy)
         }
         return true
     }
 
     private fun editPress() {
+        if (state.kind == ViewKind.SKETCH) {
+            if (state.sketchRow != 0) sketchListen(state.sketchRow == 1)
+            return
+        }
         editGesture = session.beginGesture(gestureLabel())
         when (state.kind) {
             ViewKind.PATTERN -> patternEditPress()
@@ -253,6 +274,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.WAVE -> if (tap && state.waveRow == 0) applyTool(state.waveCol)
             ViewKind.KEYBOARD -> if (state.kbRow == 1) keyHeld = false else if (tap) stripActivate()
             ViewKind.HELP -> Unit
+            ViewKind.SKETCH -> Unit
         }
     }
 
@@ -264,6 +286,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.WAVE -> if (state.waveRow == 1) session.setWaveSample(state.wave, state.waveCol, 0)
             ViewKind.KEYBOARD -> if (state.entryMode) writeFromKeyboard(Cell.CUT)
             ViewKind.HELP -> Unit
+            ViewKind.SKETCH -> sketchRelease()
         }
     }
 
@@ -279,8 +302,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.KEYBOARD -> {
                 state.entryMode = !state.entryMode
                 markWasActive = false
-                session.note(if (state.entryMode) "Write mode: A writes notes at the pattern cursor" else "Listen mode: A only plays")
+                session.note(entryModeNote())
             }
+            ViewKind.SKETCH -> sketchUsePatternKey()
             else -> Unit
         }
     }
@@ -310,6 +334,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             }
             ViewKind.KEYBOARD -> if (keyPlayable(state.kbKey)) startAudition(state.channel, keyNote(state.kbKey), keyboardSound())
             ViewKind.HELP -> Unit
+            ViewKind.SKETCH -> sketchListen(state.sketchRow != 2)
         }
     }
 
@@ -320,6 +345,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         ViewKind.WAVE -> waveCommand(a)
         ViewKind.KEYBOARD -> keyboardCommand(a)
         ViewKind.HELP -> helpCommand(a)
+        ViewKind.SKETCH -> sketchCommand(a)
     }
 
     // ---- pattern ---------------------------------------------------------------------------------
@@ -606,11 +632,34 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             else s.copy(kind = ScaleKind.entries[Math.floorMod(s.kind.ordinal + delta, ScaleKind.entries.size)]))
     }
 
-    /** Resets the root ([field] 0) to C or the scale ([field] 1) to chromatic. */
+    /** Resets the root ([field] 0) to C, the scale ([field] 1) to chromatic, or the length ([field] 2) to 64 rows. */
     fun resetScaleField(field: Int) {
         val s = patternScale
         state.scaleField = field
-        setScale(if (field == 0) s.copy(root = 0) else s.copy(kind = ScaleKind.CHROMATIC))
+        when (field) {
+            0 -> setScale(s.copy(root = 0))
+            1 -> setScale(s.copy(kind = ScaleKind.CHROMATIC))
+            else -> setLength(Songs.ROWS)
+        }
+    }
+
+    /** Played rows of the pattern at the cursor's order. */
+    val patternLength: Int get() = song.patterns[pattern].length
+
+    /** Changes the pattern length by [delta] rows, within 1..64. */
+    fun stepLength(delta: Int) {
+        state.scaleField = 2
+        setLength(patternLength + delta)
+    }
+
+    private fun setLength(length: Int) {
+        if (!session.setPatternLength(pattern, length)) return
+        val n = patternLength
+        val uses = song.orders.count { it == pattern }
+        session.note("Pattern ${EditorSession.hex2(pattern)}: $n rows" +
+            (if (n < Songs.ROWS) " (rows ${EditorSession.hex2(n)}-3F hidden, kept)" else "") +
+            (if (uses > 1) ", in all $uses orders that use it" else ""))
+        normalise()
     }
 
     private fun setScale(s: Scale) {
@@ -625,9 +674,16 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Controller input while the scale panel is open; null lets the action through (closing the panel unless harmless). */
     private fun scalePanelPress(a: Action): Boolean? {
         when (a) {
-            Action.UP -> state.scaleField = 0
-            Action.DOWN -> state.scaleField = 1
-            Action.LEFT, Action.RIGHT -> stepScale(state.scaleField, if (a == Action.RIGHT) 1 else -1)
+            Action.UP -> state.scaleField = (state.scaleField - 1).coerceAtLeast(0)
+            Action.DOWN -> state.scaleField = (state.scaleField + 1).coerceAtMost(2)
+            Action.LEFT, Action.RIGHT -> {
+                val d = if (a == Action.RIGHT) 1 else -1
+                if (state.scaleField == 2) stepLength(d) else stepScale(state.scaleField, d)
+            }
+            Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
+                if (state.scaleField != 2) { closeScalePanel(); return null }
+                stepLength(if (a == Action.NEXT_CHANNEL) 8 else -8)
+            }
             Action.CLEAR -> resetScaleField(state.scaleField)
             Action.EDIT, Action.SCALE -> closeScalePanel()
             Action.UNDO, Action.REDO, Action.AUDITION -> return null
@@ -968,7 +1024,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun stripActivate() {
         if (state.kbField == 0) {
             state.entryMode = !state.entryMode
-            session.note(if (state.entryMode) "Write mode: A writes notes at the pattern cursor" else "Listen mode: A only plays")
+            session.note(entryModeNote())
         }
     }
 
@@ -1074,6 +1130,119 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return true
     }
 
+    // ---- tonal playground -------------------------------------------------------------------------
+
+    val sketchGuide: TonalGuide
+        get() {
+            val scale = state.sketchScale ?: patternScale
+            val cached = cachedSketchGuide
+            if (cached != null && cached.scale == scale) return cached
+            if (state.kind == ViewKind.SKETCH) stopAudition()
+            return TonalGuide(scale).also { cachedSketchGuide = it }
+        }
+
+    val sketchAuditioning: Boolean get() = state.kind == ViewKind.SKETCH && auditioning
+
+    fun sketchNote(index: Int): Int =
+        (state.octave - ViewState.MIN_OCTAVE) * 12 + sketchGuide.scale.root + sketchGuide.tones[index].interval
+
+    /** Keep the entire ascending voicing in the hardware range, rather than clipping individual notes. */
+    fun sketchChordNotes(): List<Int> {
+        val guide = sketchGuide
+        val chord = guide.chords.getOrNull(state.sketchChord) ?: return emptyList()
+        val base = (state.octave - ViewState.MIN_OCTAVE) * 12 + guide.scale.root
+        val shift = if (base + chord.intervals.last() > Songs.NOTE_MAX) 12 else 0
+        return chord.intervals.map { base + it - shift }
+    }
+
+    fun sketchSetField(index: Int) {
+        sketchRelease()
+        state.sketchRow = 0
+        state.sketchField = index.coerceIn(0, SKETCH_FIELDS.lastIndex)
+    }
+
+    fun sketchAdjustField(delta: Int) {
+        if (delta == 0) return
+        sketchRelease()
+        val scale = sketchGuide.scale
+        when (state.sketchField) {
+            0 -> state.sketchScale = scale.copy(root = Math.floorMod(scale.root + delta, 12))
+            1 -> state.sketchScale = scale.copy(kind = ScaleKind.entries[Math.floorMod(scale.kind.ordinal + delta, ScaleKind.entries.size)])
+            2 -> sketchChannel(delta)
+            3 -> state.instrument = (state.instrument + delta).coerceIn(1, EditorSession.BANK_SIZE)
+            4 -> state.octave = (state.octave + delta).coerceIn(ViewState.MIN_OCTAVE, ViewState.KEYBOARD_MAX_OCTAVE)
+        }
+        normalise()
+    }
+
+    fun sketchUsePatternKey() {
+        sketchRelease()
+        state.sketchScale = null
+        normalise()
+        session.note("Sketch follows the pattern key; no notes changed")
+    }
+
+    fun sketchSelectChord(index: Int) {
+        state.sketchRow = 1
+        state.sketchChord = index.coerceIn(0, (sketchGuide.chords.size - 1).coerceAtLeast(0))
+    }
+
+    fun sketchSelectTone(index: Int) {
+        state.sketchRow = 2
+        state.sketchTone = index.coerceIn(0, sketchGuide.tones.lastIndex)
+    }
+
+    fun sketchListen(chord: Boolean) {
+        normalise()
+        if (chord) {
+            val notes = sketchChordNotes()
+            if (notes.isEmpty()) {
+                stopAudition()
+                session.note("Choose a scale in Sketch to explore its chords")
+                return
+            }
+            auditioning = true
+            session.auditionSequence(state.channel, notes, state.instrument)
+        } else startAudition(state.channel, sketchNote(state.sketchTone), state.instrument)
+    }
+
+    fun sketchRelease() = stopAudition()
+
+    private fun sketchDirection(dx: Int, dy: Int) {
+        if (editHeld) editUsed = true
+        if (state.sketchRow == 0 && editHeld) {
+            sketchAdjustField(dx + dy)
+            return
+        }
+        if (dy != 0) {
+            state.sketchRow = (state.sketchRow - dy).coerceIn(0, 2)
+            if (state.sketchRow == 0) sketchRelease()
+        } else when (state.sketchRow) {
+            0 -> state.sketchField = (state.sketchField + dx).coerceIn(0, SKETCH_FIELDS.lastIndex)
+            1 -> sketchSelectChord(state.sketchChord + dx)
+            2 -> sketchSelectTone(state.sketchTone + dx)
+        }
+        if (state.sketchRow != 0 && (editHeld || auditionHeld)) sketchListen(state.sketchRow == 1)
+    }
+
+    private fun sketchChannel(delta: Int) {
+        val channels = (0 until song.channelCount()).filter { kindOf(it) != InstrumentKind.NOISE }
+        if (channels.isEmpty()) return
+        val index = channels.indexOf(state.channel).coerceAtLeast(0)
+        state.channel = channels[(index + delta).coerceIn(0, channels.lastIndex)]
+        state.instrument = pen(kindOf(state.channel))
+        syncLock()
+    }
+
+    private fun sketchCommand(a: Action): Boolean = when (a) {
+        Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
+            sketchRelease()
+            sketchChannel(if (a == Action.NEXT_CHANNEL) 1 else -1)
+            true
+        }
+        else -> false
+    }
+
     // ---- help --------------------------------------------------------------------------------------
 
     private fun helpDirection(dx: Int, dy: Int) {
@@ -1094,7 +1263,20 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     // ---- hints -------------------------------------------------------------------------------------
 
-    /** Contextual hints for the current view, field and held buttons. Key names follow default bindings. */
+    private fun entryModeNote(): String {
+        val edit = keys.label(Action.EDIT)
+        return if (state.entryMode) "Write mode: $edit writes notes at the pattern cursor" else "Listen mode: $edit only plays"
+    }
+
+    private fun k(a: Action): String = keys.label(a)
+    private fun lr(): String = keys.pair(Action.LEFT, Action.RIGHT)
+    private fun ud(): String = keys.pair(Action.UP, Action.DOWN)
+    private fun channels(): String = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
+    private fun copyPaste(): String = keys.pair(Action.COPY, Action.PASTE)
+    private fun editLr(): String = keys.held(Action.EDIT, lr())
+    private fun editUd(): String = keys.held(Action.EDIT, ud())
+
+    /** Contextual hints for the current view, field and held buttons. Key names follow the current [keys]. */
     fun hints(): List<Hint> {
         normalise()
         val h = ArrayList<Hint>()
@@ -1104,9 +1286,21 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.INSTRUMENT -> soundHints(h)
             ViewKind.WAVE -> waveHints(h)
             ViewKind.KEYBOARD -> keyboardHints(h)
+            ViewKind.SKETCH -> {
+                if (state.sketchRow == 0) {
+                    h += Hint(lr(), "Setting")
+                    h += Hint(keys.held(Action.EDIT, keys.dpad()), "Change ${SKETCH_FIELDS[state.sketchField].lowercase()}")
+                } else {
+                    h += Hint(lr(), if (state.sketchRow == 1) "Chord" else "Note")
+                    h += Hint("${k(Action.EDIT)} / ${k(Action.AUDITION)}", if (state.sketchRow == 1) "Hold: arpeggio" else "Hold: listen")
+                }
+                h += Hint(ud(), "Settings / chords / notes")
+                h += Hint(k(Action.MARK), "Use pattern key")
+                h += Hint(channels(), "Tonal channel")
+            }
             ViewKind.HELP -> {
-                h += Hint("↑↓", "Scroll")
-                h += Hint("←→", "Page: ${HELP_PAGES[state.helpPage]}")
+                h += Hint(ud(), "Scroll")
+                h += Hint(lr(), "Page: ${HELP_PAGES[state.helpPage]}")
             }
         }
         return h
@@ -1116,30 +1310,33 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val c = cell
         val ch = state.channel
         if (state.scalePanel) {
-            h += Hint("↑↓", "Root / scale")
-            h += Hint("←→", if (state.scaleField == 0) "Root note" else "Scale")
-            h += Hint("B", if (state.scaleField == 0) "Root C" else "Chromatic")
-            h += Hint("A", "Done")
-            h += Hint("X", "Listen")
+            h += Hint(ud(), "Root / scale / length")
+            when (state.scaleField) {
+                0 -> { h += Hint(lr(), "Root note"); h += Hint(k(Action.CLEAR), "Root C") }
+                1 -> { h += Hint(lr(), "Scale"); h += Hint(k(Action.CLEAR), "Chromatic") }
+                else -> { h += Hint(lr(), "Length ±1"); h += Hint(channels(), "Length ±8"); h += Hint(k(Action.CLEAR), "64 rows") }
+            }
+            h += Hint(k(Action.EDIT), "Done")
+            h += Hint(k(Action.AUDITION), "Listen")
             return
         }
         when {
             editHeld -> when (state.field) {
                 0 -> {
                     val scale = noteScale(ch)
-                    h += Hint("A+←→", when {
+                    h += Hint(editLr(), when {
                         kindOf(ch) == InstrumentKind.NOISE -> "Noise pitch (no scale)"
                         scale.isChromatic -> "Semitone"
                         else -> "${scale.label} note"
                     })
-                    h += Hint("A+↑↓", "Octave")
+                    h += Hint(editUd(), "Octave")
                 }
-                1 -> { h += Hint("A+←→", "Sound ±1"); h += Hint("A+↑↓", "Sound ±4") }
-                2 -> { h += Hint("A+←→", "Effect type: · none, then 0-F") }
-                else -> { h += Hint("A+←→", "Value ±1"); h += Hint("A+↑↓", "Value ±10h") }
+                1 -> { h += Hint(editLr(), "Sound ±1"); h += Hint(editUd(), "Sound ±4") }
+                2 -> { h += Hint(editLr(), "Effect type: · none, then 0-F") }
+                else -> { h += Hint(editLr(), "Value ±1"); h += Hint(editUd(), "Value ±10h") }
             }
-            clearHeld -> { h += Hint("B+↑↓", "Jump 16 rows"); h += Hint("B+←→", "Previous/next order") }
-            markHeld -> { h += Hint("Y+✛", "Extend selection"); h += Hint("Release", "Keep selection") }
+            clearHeld -> { h += Hint(keys.held(Action.CLEAR, ud()), "Jump 16 rows"); h += Hint(keys.held(Action.CLEAR, lr()), "Previous/next order") }
+            markHeld -> { h += Hint(keys.held(Action.MARK, keys.dpad()), "Extend selection"); h += Hint("Release", "Keep selection") }
             else -> {
                 val tap = when (state.field) {
                     0 -> if (c.note < 0) "Write note ${Songs.noteName(entryNote(ch))}" else "Hold to change note"
@@ -1153,13 +1350,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                         } ?: "Hold to pick effect"
                     }
                 }
-                h += Hint("A", tap)
-                h += Hint("B", if (state.mark) "Clear selection" else if (state.field == 0 && c.note == Cell.EMPTY) "Place OFF" else "Clear")
-                h += Hint("X", "Listen")
-                h += Hint("Y", if (state.mark) "Hold: extend, tap: unmark" else "Hold: select block")
-                h += Hint("L1 R1", "Channel")
-                h += Hint("Sel+X/A", "Copy/paste")
-                h += Hint("Sel+→", "Scale: ${patternScale.label}")
+                h += Hint(k(Action.EDIT), tap)
+                h += Hint(k(Action.CLEAR), if (state.mark) "Clear selection" else if (state.field == 0 && c.note == Cell.EMPTY) "Place OFF" else "Clear")
+                h += Hint(k(Action.AUDITION), "Listen")
+                h += Hint(k(Action.MARK), if (state.mark) "Hold: extend, tap: unmark" else "Hold: select block")
+                h += Hint(channels(), "Channel")
+                h += Hint(copyPaste(), "Copy/paste")
+                h += Hint(k(Action.SCALE), "Pattern: ${patternScale.label}, $patternLength rows")
             }
         }
     }
@@ -1167,62 +1364,62 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun songHints(h: MutableList<Hint>) {
         val item = state.songItem
         when {
-            item <= 1 -> { h += Hint("←→", "Letter position"); h += Hint("A+←→", "Change letter"); h += Hint("A+↑↓", "Case/digits"); h += Hint("B", "Delete letter") }
-            item == 2 -> { h += Hint("A+←→", "Ticks per row ±1 (lower is faster)"); h += Hint("B", "Reset to 6") }
-            item == 3 -> { h += Hint("A+←→", "Loop target order"); h += Hint("B", "Loop to start") }
+            item <= 1 -> { h += Hint(lr(), "Letter position"); h += Hint(editLr(), "Change letter"); h += Hint(editUd(), "Case/digits"); h += Hint(k(Action.CLEAR), "Delete letter") }
+            item == 2 -> { h += Hint(editLr(), "Ticks per row ±1 (lower is faster)"); h += Hint(k(Action.CLEAR), "Reset to 6") }
+            item == 3 -> { h += Hint(editLr(), "Loop target order"); h += Hint(k(Action.CLEAR), "Loop to start") }
             else -> {
-                h += Hint("A", ORDER_FIELD_HINTS[state.songField])
-                if (state.songField == 0) h += Hint("A+←→", "Pattern ±1")
-                h += Hint("B", "Delete order")
-                h += Hint("X", "Play from this order or stop")
-                h += Hint("Sel+Y", "Clone pattern")
-                h += Hint("Sel+X/A", "Copy/paste pattern")
+                h += Hint(k(Action.EDIT), ORDER_FIELD_HINTS[state.songField])
+                if (state.songField == 0) h += Hint(editLr(), "Pattern ±1")
+                h += Hint(k(Action.CLEAR), "Delete order")
+                h += Hint(k(Action.AUDITION), "Play from this order or stop")
+                h += Hint(k(Action.DUPLICATE), "Clone pattern")
+                h += Hint(copyPaste(), "Copy/paste pattern")
             }
         }
     }
 
     private fun soundHints(h: MutableList<Hint>) {
         when (state.instField) {
-            0 -> { h += Hint("←→", "Sound slot"); h += Hint("A+↑↓", "Bank"); h += Hint("L1 R1", "Bank"); h += Hint("B", "Reset sound") }
-            1 -> { h += Hint("←→", "Letter position"); h += Hint("A+←→", "Change letter"); h += Hint("B", "Delete letter") }
+            0 -> { h += Hint(lr(), "Sound slot"); h += Hint(editUd(), "Bank"); h += Hint(channels(), "Bank"); h += Hint(k(Action.CLEAR), "Reset sound") }
+            1 -> { h += Hint(lr(), "Letter position"); h += Hint(editLr(), "Change letter"); h += Hint(k(Action.CLEAR), "Delete letter") }
             else -> {
                 val p = soundParams.getOrNull(state.instField - 2)
-                if (p != null) h += Hint("A+←→", p.help)
-                h += Hint("←→", "Sound slot")
-                h += Hint("B", "Default value")
+                if (p != null) h += Hint(editLr(), p.help)
+                h += Hint(lr(), "Sound slot")
+                h += Hint(k(Action.CLEAR), "Default value")
             }
         }
-        h += Hint("X", "Listen")
-        h += Hint("Sel+X/A", "Copy/paste sound")
+        h += Hint(k(Action.AUDITION), "Listen")
+        h += Hint(copyPaste(), "Copy/paste sound")
     }
 
     private fun waveHints(h: MutableList<Hint>) {
         if (state.waveRow == 0) {
-            h += Hint("←→", "Tool")
-            h += Hint("A", if (state.waveCol == 8) "Wave sound ${EditorSession.hex2(waveTargetSound())} plays this wave" else WAVE_TOOLS[state.waveCol])
-            h += Hint("↓", "Back to drawing")
+            h += Hint(lr(), "Tool")
+            h += Hint(k(Action.EDIT), if (state.waveCol == 8) "Wave sound ${EditorSession.hex2(waveTargetSound())} plays this wave" else WAVE_TOOLS[state.waveCol])
+            h += Hint(k(Action.DOWN), "Back to drawing")
         } else {
-            h += Hint("✛", "Move pen")
-            h += Hint("A", "Hold: draw at pen height")
-            h += Hint("B", "Sample to 0")
-            h += Hint("↑ at top", "Tools")
+            h += Hint(keys.dpad(), "Move pen")
+            h += Hint(k(Action.EDIT), "Hold: draw at pen height")
+            h += Hint(k(Action.CLEAR), "Sample to 0")
+            h += Hint("${k(Action.UP)} at top", "Tools")
         }
-        h += Hint("L1 R1", "Wave")
-        h += Hint("X", "Listen")
+        h += Hint(channels(), "Wave")
+        h += Hint(k(Action.AUDITION), "Listen")
     }
 
     private fun keyboardHints(h: MutableList<Hint>) {
         if (state.kbRow == 0) {
-            h += Hint("←→", "Setting")
-            h += Hint("A+←→", "Change ${STRIP_FIELDS[state.kbField].lowercase()}")
-            h += Hint("↓", "Keys")
+            h += Hint(lr(), "Setting")
+            h += Hint(editLr(), "Change ${STRIP_FIELDS[state.kbField].lowercase()}")
+            h += Hint(k(Action.DOWN), "Keys")
         } else {
-            h += Hint("A", if (state.entryMode) "Write note and advance" else "Play note")
-            h += Hint("X", "Listen only")
-            h += Hint("Y", if (state.entryMode) "Switch to listen" else "Switch to write")
-            if (state.entryMode) { h += Hint("B", "Write OFF"); h += Hint("↓", "Skip step") }
-            h += Hint("↑", "Settings")
-            h += Hint("L1 R1", "Channel")
+            h += Hint(k(Action.EDIT), if (state.entryMode) "Write note and advance" else "Play note")
+            h += Hint(k(Action.AUDITION), "Listen only")
+            h += Hint(k(Action.MARK), if (state.entryMode) "Switch to listen" else "Switch to write")
+            if (state.entryMode) { h += Hint(k(Action.CLEAR), "Write OFF"); h += Hint(k(Action.DOWN), "Skip step") }
+            h += Hint(k(Action.UP), "Settings")
+            h += Hint(channels(), "Channel")
         }
     }
 
@@ -1250,6 +1447,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         )
         val WAVE_TOOLS = listOf("Sine", "Triangle", "Saw", "Square", "Invert", "Shift left", "Shift right", "Smooth", "Use in sound")
         val STRIP_FIELDS = listOf("Mode", "Channel", "Sound", "Octave", "Step")
+        val SKETCH_FIELDS = listOf("Root", "Scale", "Channel", "Sound", "Octave")
         val HELP_PAGES = listOf("Controls", "Effects", "Song check")
     }
 }

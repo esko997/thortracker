@@ -111,4 +111,36 @@ class ProjectCodecTest {
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(badRoot) }
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"root\":9", "\"root\":12")) }
     }
+
+    @Test
+    fun patternLengthsRoundTripAndNeedTheirFormatVersion() {
+        val blank = Songs.blank()
+        val song = blank.copy(patterns = listOf(blank.patterns[0].copy(length = 20)))
+        val text = ProjectCodec.encode(song)
+        assertEquals(song, ProjectCodec.decode(text))
+        val root = Json.parseToJsonElement(text).jsonObject
+        val claimingVersionTwo = JsonObject(root.toMutableMap().also { it["version"] = JsonPrimitive(2) }).toString()
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(claimingVersionTwo) }
+        for (bad in listOf(0, 65)) {
+            assertThrows(ProjectFormatException::class.java) {
+                ProjectCodec.encode(blank.copy(patterns = listOf(blank.patterns[0].copy(length = bad))))
+            }
+        }
+    }
+
+    @Test
+    fun newerScalesRoundTripAndNeedFormatFour() {
+        val blank = Songs.blank()
+        val song = blank.copy(patterns = listOf(blank.patterns[0].copy(scale = Scale(4, ScaleKind.PHRYGIAN_DOMINANT))))
+        val text = ProjectCodec.encode(song)
+        assertTrue(text.contains("\"kind\":\"phrygian-dominant\""))
+        assertEquals(song, ProjectCodec.decode(text))
+        val root = Json.parseToJsonElement(text).jsonObject
+        val claimingThree = JsonObject(root.toMutableMap().also { it["version"] = JsonPrimitive(3) }).toString()
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(claimingThree) }
+        // A version 3 file with an original scale still opens.
+        val major = ProjectCodec.encode(blank.copy(patterns = listOf(blank.patterns[0].copy(scale = Scale(0, ScaleKind.MAJOR)))))
+        val majorV3 = JsonObject(Json.parseToJsonElement(major).jsonObject.toMutableMap().also { it["version"] = JsonPrimitive(3) }).toString()
+        assertEquals(ScaleKind.MAJOR, ProjectCodec.decode(majorV3).patterns[0].scale.kind)
+    }
 }

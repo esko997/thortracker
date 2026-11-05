@@ -27,6 +27,46 @@ class HugeLoweringTest {
         return blank.copy(patterns = List(count) { Songs.blankPattern(blank) }, orders = List(count) { it })
     }
 
+    private fun withLength(song: Song, pattern: Int, length: Int): Song =
+        song.copy(patterns = song.patterns.toMutableList().also { it[pattern] = it[pattern].copy(length = length) })
+
+    private val emptyRow = bytes(90, 0x00, 0x00)
+
+    @Test
+    fun shortPatternEndsWithABreakAndExportsHiddenRowsBlank() {
+        var song = withLength(patterns(2), 0, 20)
+        song = withCell(song, 0, 0, 19, Cell(30, 1, 0xC, 0x08)) // Pulse 1's slot is taken
+        song = withCell(song, 0, 2, 40, Cell(12, 1)) // hidden, kept in the project
+        val data = HugeLowering.lower(song)
+        assertArrayEquals(bytes(30, 0x1C, 0x08), row(data.tracks[0], 19))
+        assertArrayEquals(bytes(90, 0x0D, 0x01), row(data.tracks[1], 19)) // first free slot: Pulse 2
+        for (ch in 0 until 4) for (r in 20 until 64) assertArrayEquals(emptyRow, row(data.tracks[ch], r))
+        assertTrue(data.tracks.subList(4, 8).all { t -> (0 until 64).all { r -> t[r * 3 + 1].toInt() == 0 } })
+        assertEquals(12, song.patterns[0].tracks[2][40].note)
+    }
+
+    @Test
+    fun existingBreakOnTheLastPlayedRowIsNotDoubled() {
+        var song = withLength(patterns(2), 0, 12)
+        song = withCell(song, 0, 3, 11, Cell(Cell.EMPTY, 0, 0xD, 0x05))
+        val data = HugeLowering.lower(song)
+        for (ch in 0 until 3) assertArrayEquals(emptyRow, row(data.tracks[ch], 11))
+        assertArrayEquals(bytes(90, 0x0D, 0x05), row(data.tracks[3], 11))
+    }
+
+    /** The loop jump ends a short final order by itself, so it needs only one free slot. */
+    @Test
+    fun shortFinalOrderLoopsWithAJumpInsteadOfABreak() {
+        val song = withLength(patterns(2), 1, 7).copy(loopOrder = 1)
+        val data = HugeLowering.lower(song)
+        assertEquals(9, data.tracks.size)
+        assertArrayEquals(bytes(90, 0x0D, 0x01), row(data.tracks[4], 6))
+        val final = data.tracks[data.orders[0][1]]
+        assertArrayEquals(bytes(90, 0x0B, 0x02), row(final, 6))
+        for (r in 7 until 64) assertArrayEquals(emptyRow, row(final, r))
+        for (ch in 1 until 4) assertArrayEquals(emptyRow, row(data.tracks[data.orders[ch][1]], 6))
+    }
+
     @Test
     fun cellsUseTheDnMacroLayout() {
         val cells = List(Songs.ROWS) { Cell.BLANK }.toMutableList().apply {

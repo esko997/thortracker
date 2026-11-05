@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.RectF
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import org.thortracker.audio.PlaybackPosition
@@ -16,6 +15,7 @@ import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.channelCount
+import org.thortracker.input.Keymap
 
 /**
  * One full-size tracker view. Renders the view kind in [state] from the shared [session] and turns
@@ -44,8 +44,25 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
         set(value) {
             if (field == value) return
             field = value
-            if (!value) { controller.cancelHolds(); shiftDown = false; downKeys.clear() }
+            if (!value) { controller.cancelHolds(); heldModifiers = emptySet() }
             focusStart = if (value) motion.start() else Motion.OFF
+            invalidate()
+        }
+
+    /** Chord modifiers held on the controller; set by the host only for the controller-focused view. */
+    var heldModifiers: Set<Int> = emptySet()
+        set(value) {
+            if (field == value) return
+            field = value.toSet()
+            invalidate()
+        }
+
+    /** The user's controller bindings: hints, help and chord hints name these buttons. */
+    var keymap: Keymap = Keymap.DEFAULT
+        set(value) {
+            if (field == value) return
+            field = value
+            controller.keys = value
             invalidate()
         }
 
@@ -61,8 +78,6 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
             invalidate()
         }
 
-    var bindings: ControllerBindings = ControllerBindings.default()
-
     internal val ink = Ink(resources.displayMetrics.density)
     internal val strip = DensityStrip(ink)
     internal val motion = Motion(this)
@@ -73,8 +88,6 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
     private val scratch = RectF()
     private val painters = HashMap<ViewKind, Painter>()
     private var activePainter: Painter? = null
-    private var shiftDown = false
-    private val downKeys = HashMap<Int, Action>()
     private var handling = 0
     private var seenSelection = session.selectionVersion
     private var seenKind = state.kind
@@ -121,13 +134,16 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
         controller.normalise()
     }
 
-    /** Current controller hints (key label, meaning), including shifted actions while the shift key is held. */
+    /** Current controller hints (key label, meaning); while one chord modifier is held, its chords. */
     val hints: List<Pair<String, String>> get() = currentHints().map { it.keys to it.text }
 
-    internal fun currentHints(): List<Hint> = when {
-        !shiftDown -> controller.hints()
-        state.kind == ViewKind.PATTERN -> PATTERN_SHIFT_HINTS
-        else -> SHIFT_HINTS
+    internal fun currentHints(): List<Hint> {
+        val mods = heldModifiers
+        if (mods.isEmpty()) return controller.hints()
+        if (mods.size > 1) return listOf(Hint(mods.joinToString("+") { Keymap.buttonName(it) }, "No chord: release one"))
+        return keymap.chords(mods.first())
+            .sortedBy { (c, _) -> if (c.host) 0 else 1 }
+            .map { (c, b) -> Hint(Keymap.label(b), c.short) }
     }
 
     /** Re-reads the session: applies selection following and repaints. Call from the session callbacks. */
@@ -161,36 +177,15 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
     fun cancelInteraction() {
         endTouch(notify = false) { it.cancel() }
         controller.cancelHolds()
-        shiftDown = false
-        downKeys.clear()
         invalidate()
     }
 
-    fun handleController(event: KeyEvent): Boolean {
-        val code = event.keyCode
-        if (code == bindings.shiftKey) {
-            when (event.action) {
-                KeyEvent.ACTION_DOWN -> if (!shiftDown) { shiftDown = true; invalidate() }
-                KeyEvent.ACTION_UP -> { shiftDown = false; invalidate() }
-            }
-            return true
-        }
-        return when (event.action) {
-            KeyEvent.ACTION_DOWN -> {
-                if (event.repeatCount > 0) {
-                    val held = downKeys[code] ?: return false
-                    return if (held.isDirection) press(held) else true
-                }
-                val action = (if (shiftDown) bindings.shifted[code] else null) ?: bindings.base[code] ?: return false
-                downKeys[code] = action
-                press(action)
-            }
-            KeyEvent.ACTION_UP -> {
-                val action = downKeys.remove(code) ?: return bindings.base.containsKey(code) || bindings.shifted.containsKey(code)
-                release(action)
-            }
-            else -> false
-        }
+    /** A controller [action] press ([down], [repeat] > 0 for key repeats) or release, routed by the host. */
+    fun controllerAction(action: Action, down: Boolean, repeat: Int): Boolean = when {
+        !down -> release(action)
+        repeat == 0 -> press(action)
+        action.isDirection -> press(action)
+        else -> true
     }
 
     fun press(action: Action): Boolean = input {
@@ -258,6 +253,7 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
             ViewKind.INSTRUMENT -> SoundPainter(this)
             ViewKind.WAVE -> WavePainter(this)
             ViewKind.KEYBOARD -> KeyboardPainter(this)
+            ViewKind.SKETCH -> SketchPainter(this)
             ViewKind.HELP -> HelpPainter(this)
         }
     }
@@ -361,19 +357,6 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
             MotionEvent.ACTION_CANCEL -> endTouch(notify = true) { it.cancel() }
         }
         return activePainter != null || event.actionMasked == MotionEvent.ACTION_UP
-    }
-
-    companion object {
-        private val SHIFT_HINTS = listOf(
-            Hint("Sel+Start", "Toolbar"),
-            Hint("Sel+A", "Paste"),
-            Hint("Sel+X", "Copy"),
-            Hint("Sel+B", "Cut"),
-            Hint("Sel+Y", "Duplicate"),
-            Hint("Sel+L1 R1", "Octave"),
-            Hint("Sel+↑↓", "Insert/delete row"),
-        )
-        private val PATTERN_SHIFT_HINTS = listOf(SHIFT_HINTS[0], Hint("Sel+→", "Pattern scale")) + SHIFT_HINTS.drop(1)
     }
 }
 

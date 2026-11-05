@@ -26,6 +26,7 @@ object SongValidator {
         song.patterns.forEachIndexed { p, pattern ->
             val label = Songs.patternLabel(song, p)
             if (pattern.scale.root !in 0..11) out += "${label.cap()} has scale root ${pattern.scale.root}; roots are 0-11 (C-B)"
+            if (pattern.length !in 1..Songs.ROWS) out += "${label.cap()} is ${pattern.length} rows long; lengths are 1-${Songs.ROWS}"
             if (pattern.tracks.size != channels) {
                 out += "${label.cap()} has ${pattern.tracks.size} channels; GB/hUGE patterns have $channels"
                 return@forEachIndexed
@@ -74,14 +75,20 @@ object SongValidator {
             }
         }
         song.patterns.forEachIndexed { p, pattern ->
+            val label = Songs.patternLabel(song, p).cap()
+            // Hidden rows past the length are exported blank, so only played rows can block export.
             pattern.tracks.forEachIndexed { ch, track ->
-                track.forEachIndexed { row, cell ->
-                    HugeRules.cellProblem(song, ch, cell)?.let {
-                        out += "${Songs.patternLabel(song, p).cap()}, ${HugeRules.CHANNEL_NAMES[ch]} row $row: $it"
-                    }
+                for (row in 0 until pattern.length) {
+                    HugeRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${HugeRules.CHANNEL_NAMES[ch]} row $row: $it" }
                 }
             }
+            if (HugeRules.lengthBreakConflict(pattern)) {
+                val last = pattern.length - 1
+                out += "$label is ${pattern.length} rows long, so row $last ends it with D01, but every channel uses its " +
+                    "effect slot there; clear one effect on row $last or enter D01 yourself"
+            }
         }
+        breaksIntoHiddenRows(song).forEach { out += it }
         val plan = HugeRules.loopPlan(song)
         plan.errors.forEach { out += it }
         val tracks = HugeRules.distinctReferencedTracks(song, plan)
@@ -98,7 +105,8 @@ object SongValidator {
         val speed = song.ticksPerRow
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
-                track.forEachIndexed { row, cell ->
+                for (row in 0 until pattern.length) {
+                    val cell = track[row]
                     val where = "${Songs.patternLabel(song, p).cap()}, ${HugeRules.CHANNEL_NAMES[ch]} row $row"
                     val fx = HugeRules.effectText(cell.effect, cell.param)
                     if (cell.effect == HugeRules.FX_NOTE_DELAY && cell.param >= speed) {
@@ -145,6 +153,37 @@ object SongValidator {
     }
 
     /**
+     * A Dxx (or a Bxx+Dxx pair) breaks to row xx-1 of the order it leads to; that row must exist in that order's
+     * pattern. The next order of the last one is the loop target. One message per cell.
+     */
+    private fun breaksIntoHiddenRows(song: Song): List<String> {
+        val out = LinkedHashMap<String, String>()
+        song.orders.forEachIndexed { order, p ->
+            val pattern = song.patterns[p]
+            for (row in 0 until pattern.length) {
+                val cells = pattern.tracks.map { it[row] }.filter { it.note != Cell.CUT }
+                val target = cells.firstOrNull { it.effect == HugeRules.FX_PATTERN_BREAK && it.param in 1..Songs.ROWS }?.param ?: continue
+                val jump = cells.firstOrNull { it.effect == HugeRules.FX_POSITION_JUMP && it.param != 0 }?.param
+                val next = when {
+                    jump != null -> jump - 1
+                    order == song.orders.size - 1 -> song.loopOrder
+                    else -> order + 1
+                }
+                val nextPattern = song.patterns.getOrNull(song.orders.getOrNull(next) ?: continue) ?: continue
+                if (target - 1 >= nextPattern.length) {
+                    val where = "${Songs.patternLabel(song, p).cap()} row $row (order $order)"
+                    out.getOrPut(where) {
+                        "$where: D${HugeRules.hex2(target)} breaks to row ${target - 1} of order $next, but its " +
+                            "${Songs.patternLabel(song, song.orders[next])} is ${nextPattern.length} rows long; " +
+                            "use D01-D${HugeRules.hex2(nextPattern.length)}"
+                    }
+                }
+            }
+        }
+        return out.values.toList()
+    }
+
+    /**
      * Notes without an instrument are legato in hUGEDriver 6.1.3: `res 7` clears the trigger bit and the
      * instrument's NRx2/NR32 is not reloaded. After an OFF (note_cut zeroes NRx2/NR32) or before any instrument
      * has played, such a note is silent. Follows the order list in sequence (jumps are not simulated); patterns
@@ -167,7 +206,8 @@ object SongValidator {
 
     private fun scanLegato(song: Song, p: Int, ch: Int, state: LegatoState, found: MutableMap<String, String>) {
         val kind = HugeRules.channelKind(ch)
-        song.patterns[p].tracks[ch].forEachIndexed { row, cell ->
+        val pattern = song.patterns[p]
+        pattern.tracks[ch].subList(0, pattern.length).forEachIndexed { row, cell ->
             val where = "${Songs.patternLabel(song, p).cap()}, ${HugeRules.CHANNEL_NAMES[ch]} row $row"
             if (cell.note >= 0) {
                 if (cell.instrument != 0) {

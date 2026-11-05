@@ -95,6 +95,35 @@ class AudioDeviceTest {
         }
     }
 
+    /** The real driver must leave a short pattern after its last played row, never reaching hidden rows. */
+    @Test
+    fun shortPatternsMoveOnAfterTheirLastRow() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        HugeAudio(context).use { audio ->
+            val blank = Songs.blank()
+            val pattern = blank.patterns[0]
+            val song = blank.copy(
+                patterns = listOf(pattern.copy(length = 5), pattern.copy(name = "B", length = 3)),
+                orders = listOf(0, 1),
+                ticksPerRow = 2,
+            )
+            audio.update(song)
+            audio.play(0, 0)
+            await("output transport starts", audio) { audio.position().playing }
+            val seen = HashSet<Pair<Int, Int>>()
+            val until = SystemClock.elapsedRealtime() + 1500
+            while (SystemClock.elapsedRealtime() < until) {
+                val p = audio.position()
+                if (p.playing) seen += p.order to p.row
+                SystemClock.sleep(3)
+            }
+            audio.stop()
+            assertNull(audio.error())
+            assertTrue("rows past a pattern's length were played: $seen", seen.all { (o, r) -> r < if (o == 0) 5 else 3 })
+            assertTrue("both short patterns played to their last row: $seen", (0 to 4) in seen && (1 to 2) in seen)
+            assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+        }
+    }
 
     private fun await(message: String, audio: HugeAudio, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 5000

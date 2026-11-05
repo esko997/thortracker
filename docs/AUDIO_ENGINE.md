@@ -2,7 +2,7 @@
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio. There is no
-second sequencer: notes, instruments, effects, timing and channel behaviour are whatever the
+second song sequencer: notes, instruments, effects, timing and channel behaviour are whatever the
 driver code does on the emulated CPU and APU.
 
 ## Sources, pins and licences
@@ -109,6 +109,12 @@ transport runs, the song's same channel is muted with `hUGE_mute_channel` at the
 driver cuts it and leaves it alone) and unmuted on release (it resumes at that channel's next
 note or effect). Release stops the audition machine immediately. Instrument 0 is rejected with
 an error (hUGE has no "no instrument" sound).
+
+Sketch's held chord preview uses `EditorSession.auditionSequence` and a host-owned 180 ms timer to send
+successive notes through that same `TrackerAudio.audition` path. It is an audition-only reference, not
+a tempo-synchronised song sequencer or an exported arpeggio effect. A new note/phrase cancels the old
+timer; release, menus, swaps, focus loss and activity pause cancel the held preview. The editor stores
+only local key/navigation settings; neither this preview nor its scheduling touches project data.
 
 ## Position, errors, lifecycle
 

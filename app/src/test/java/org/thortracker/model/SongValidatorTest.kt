@@ -235,4 +235,19 @@ class SongValidatorTest {
         assertEquals(SongValidator.MAX_REPORTED + 1, errors.size)
         assertTrue(errors.last().startsWith("...and "))
     }
+
+    @Test
+    fun shortPatternsNeedAnEndingSlotAndBreaksIntoPlayedRows() {
+        var song = TestSongs.patterns(2).let { s -> s.copy(patterns = s.patterns.mapIndexed { i, p -> if (i == 1) p.copy(length = 16) else p }) }
+        assertEquals(emptyList<String>(), SongValidator.errors(song))
+        // A problem on a hidden row is exported blank, so it does not block export.
+        song = TestSongs.withCell(song, 1, 0, 40, Cell(Cell.EMPTY, 0, 0xD, 0x00))
+        assertEquals(emptyList<String>(), SongValidator.errors(song))
+        song = TestSongs.withCell(song, 0, 0, 10, Cell(Cell.EMPTY, 0, 0xD, 0x15)) // row 20 of a 16-row pattern
+        assertTrue(SongValidator.errors(song).single().contains("D15 breaks to row 20 of order 1"))
+        song = TestSongs.withCell(song, 0, 0, 10, Cell(Cell.EMPTY, 0, 0xD, 0x10)) // row 15: its last row
+        assertEquals(emptyList<String>(), SongValidator.errors(song))
+        for (ch in 0 until 4) song = TestSongs.withCell(song, 1, ch, 15, Cell(Cell.EMPTY, 0, 0xC, 0x05))
+        assertTrue(SongValidator.errors(song).single().contains("row 15 ends it with D01"))
+    }
 }

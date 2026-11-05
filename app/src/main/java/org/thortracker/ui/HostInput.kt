@@ -1,115 +1,127 @@
 package org.thortracker.ui
 
 import android.view.KeyEvent
+import org.thortracker.editor.Action
+import org.thortracker.input.Binding
+import org.thortracker.input.Control
+import org.thortracker.input.Keymap
 
 /**
- * Host-level controller routing over logical (already remapped) key codes. Decides, per press, which
- * layer owns it: an open in-app popup, the revealed shell toolbar, a host chord/global command, or the
- * focused editor. A press keeps the owner of its first DOWN for its repeats and its UP, so a key whose
- * DOWN was consumed (chord constituent, popup choice, toolbar press) never leaks a repeat or release
- * into the editor, and an editor key held while a modal opens cannot keep editing underneath it.
+ * Host-level controller routing over physical key codes and the user's [keymap]. Decides, per press, which
+ * layer owns it: an open in-app popup, the revealed shell toolbar, a host control (history, transport,
+ * displays), or the focused editor. A press keeps the owner and meaning of its first DOWN for its repeats and
+ * its UP, so a key whose DOWN was consumed (chord, popup choice, toolbar press) never leaks a repeat or
+ * release into the editor, and an editor key held while a modal opens cannot keep editing underneath it.
  *
- * Chords: L2, R2 and L3 are pure triggers and do nothing alone. L2+A undo, R2+A redo (both triggers
- * held: nothing), L2+X swap complete views, R2+X nothing. Start toggles playback from the current
- * order's first row, L3+Start from the cursor, Select+Start reveals/focuses or returns from the
- * toolbar. Select still reaches the editor, where it is the copy/paste modifier.
+ * Modifiers ([Keymap.MODIFIERS]: Select, L2, R2, L3) do nothing alone. With one held, a press uses its chord
+ * if one is bound, otherwise the key's own binding. With several held, a key bound in any of their chords is
+ * ambiguous and does nothing. Menu and Back are fixed: they open the menu (Back leaves a focused toolbar or
+ * popup first). Popups and the toolbar receive the canonical key a press stands for ([Keymap.canonical]), so
+ * their navigation follows rebinding; [Control.overPopups] chords still run over popups.
  */
-class HostInput {
-    enum class Command { UNDO, REDO, SWAP, TOOLBAR, PLAY_PATTERN, PLAY_CURSOR, FOCUS, MENU }
-
-    enum class Target { NONE, POPUP, TOOLBAR, EDITOR }
+class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
+    enum class Target { NONE, POPUP, TOOLBAR }
 
     sealed interface Route {
-        data class Deliver(val target: Target) : Route
-        data class Run(val command: Command) : Route
+        /** Consumed; [code] is the canonical key for a POPUP/TOOLBAR target. */
+        data class Deliver(val target: Target, val code: Int = KeyEvent.KEYCODE_UNKNOWN) : Route
+        /** A host control's press. */
+        data class Run(val control: Control) : Route
+        /** Fixed menu key. */
+        data object Menu : Route
+        /** An editor action press, repeat or release for the focused view. */
+        data class Editor(val action: Action) : Route
+        /** Not a controller key: let the system handle it (volume and similar). */
+        data object Pass : Route
     }
 
-    private enum class Owner { GLOBAL, POPUP, TOOLBAR, EDITOR }
+    private sealed interface Owner {
+        data object Global : Owner
+        data class Popup(val code: Int) : Owner
+        data class Toolbar(val code: Int) : Owner
+        data class Editor(val action: Action) : Owner
+    }
 
     private val owners = HashMap<Int, Owner>()
-    private var l2 = false
-    private var r2 = false
-    private var l3 = false
-    private var select = false
+    private val held = LinkedHashSet<Int>()
 
     /** Forgets every held key, e.g. on pause, when matching key-ups may never arrive. */
     fun reset() {
         owners.clear()
-        l2 = false; r2 = false; l3 = false; select = false
+        held.clear()
     }
+
+    /** Modifiers currently held, in press order; the focused view shows their chords. */
+    val heldModifiers: Set<Int> get() = held
 
     fun route(code: Int, down: Boolean, repeat: Int, popupOpen: Boolean, toolbarFocused: Boolean): Route {
-        if (!down) when (code) {
-            KeyEvent.KEYCODE_BUTTON_L2 -> l2 = false
-            KeyEvent.KEYCODE_BUTTON_R2 -> r2 = false
-            KeyEvent.KEYCODE_BUTTON_THUMBL -> l3 = false
-            KeyEvent.KEYCODE_BUTTON_SELECT -> select = false
-        }
-        if (!down || repeat > 0) {
-            val owner = if (down) owners[code] else owners.remove(code)
-            return Route.Deliver(when (owner) {
-                Owner.GLOBAL -> Target.NONE
-                Owner.POPUP -> if (popupOpen) Target.POPUP else Target.NONE
-                Owner.TOOLBAR -> if (toolbarFocused && !popupOpen) Target.TOOLBAR else Target.NONE
-                // A release always reaches the editor so it can drop its hold; repeats stop under a modal.
-                Owner.EDITOR -> if (!down || (!popupOpen && !toolbarFocused)) Target.EDITOR else Target.NONE
-                null -> when {
-                    down || isTrigger(code) -> Target.NONE
-                    popupOpen -> Target.POPUP
-                    else -> Target.EDITOR
-                }
-            })
-        }
-        if (isTrigger(code)) {
-            when (code) {
-                KeyEvent.KEYCODE_BUTTON_L2 -> l2 = true
-                KeyEvent.KEYCODE_BUTTON_R2 -> r2 = true
-                else -> l3 = true
-            }
-            owners[code] = Owner.GLOBAL
+        if (code in Keymap.MODIFIERS) {
+            if (down) held += code else held -= code
             return Route.Deliver(Target.NONE)
         }
-        if (code == KeyEvent.KEYCODE_BUTTON_SELECT) select = true
-        val triggerChord = (l2 || r2) &&
-            (code == KeyEvent.KEYCODE_BUTTON_A || code == KeyEvent.KEYCODE_BUTTON_X)
-        if (popupOpen && !triggerChord) return deliver(code, Owner.POPUP, Target.POPUP)
-        var suppressed = false
-        val command = when (code) {
-            KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_SPACE -> when {
-                select -> Command.TOOLBAR
-                l3 -> Command.PLAY_CURSOR
-                else -> Command.PLAY_PATTERN
+        if (!down || repeat > 0) return continued(code, down, popupOpen, toolbarFocused)
+        when (code) {
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BUTTON_MODE ->
+                return if (popupOpen) deliver(code, Owner.Popup(code)) else { owners[code] = Owner.Global; Route.Menu }
+            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> return when {
+                popupOpen -> deliver(code, Owner.Popup(code))
+                toolbarFocused -> deliver(code, Owner.Toolbar(code))
+                else -> { owners[code] = Owner.Global; Route.Menu }
             }
-            KeyEvent.KEYCODE_BUTTON_A -> when {
-                l2 && r2 -> { suppressed = true; null }
-                l2 -> Command.UNDO
-                r2 -> Command.REDO
-                else -> null
-            }
-            KeyEvent.KEYCODE_BUTTON_X -> when {
-                l2 && !r2 -> Command.SWAP
-                r2 -> { suppressed = true; null }
-                else -> null
-            }
-            KeyEvent.KEYCODE_BUTTON_THUMBR -> Command.FOCUS
-            KeyEvent.KEYCODE_BUTTON_MODE, KeyEvent.KEYCODE_MENU -> Command.MENU
-            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> if (toolbarFocused) null else Command.MENU
-            else -> null
         }
-        if (command != null) {
-            owners[code] = Owner.GLOBAL
-            return Route.Run(command)
+        val chords = held.mapNotNull { keymap.control(Binding(code, it)) }
+        if (chords.isNotEmpty() && held.size > 1) return deliver(code, Owner.Global)
+        val control = chords.firstOrNull() ?: keymap.control(Binding(code))
+            ?: if (code == KeyEvent.KEYCODE_SPACE) Control.PLAY_PATTERN else null
+        if (popupOpen) {
+            if (control != null && control.overPopups && chords.isNotEmpty()) return run(code, control)
+            return deliver(code, Owner.Popup(keymap.canonical(code)))
         }
-        if (suppressed) return deliver(code, Owner.GLOBAL, Target.NONE)
-        if (toolbarFocused) return deliver(code, Owner.TOOLBAR, Target.TOOLBAR)
-        return deliver(code, Owner.EDITOR, Target.EDITOR)
+        if (control == null) return if (isController(code)) deliver(code, Owner.Global) else Route.Pass
+        if (control.host) return run(code, control)
+        if (toolbarFocused) return deliver(code, Owner.Toolbar(if (chords.isEmpty()) keymap.canonical(code) else KeyEvent.KEYCODE_UNKNOWN))
+        val action = control.action ?: return deliver(code, Owner.Global)
+        owners[code] = Owner.Editor(action)
+        return Route.Editor(action)
     }
 
-    private fun deliver(code: Int, owner: Owner, target: Target): Route {
+    /** Repeats and releases follow the owner of the press. */
+    private fun continued(code: Int, down: Boolean, popupOpen: Boolean, toolbarFocused: Boolean): Route {
+        val owner = if (down) owners[code] else owners.remove(code)
+        return when (owner) {
+            Owner.Global -> Route.Deliver(Target.NONE)
+            is Owner.Popup -> if (popupOpen) Route.Deliver(Target.POPUP, owner.code) else Route.Deliver(Target.NONE)
+            is Owner.Toolbar -> if (toolbarFocused && !popupOpen) Route.Deliver(Target.TOOLBAR, owner.code) else Route.Deliver(Target.NONE)
+            // A release always reaches the editor so it can drop its hold; repeats stop under a modal.
+            is Owner.Editor -> if (!down || (!popupOpen && !toolbarFocused)) Route.Editor(owner.action) else Route.Deliver(Target.NONE)
+            null -> when {
+                down -> Route.Deliver(Target.NONE)
+                popupOpen -> Route.Deliver(Target.POPUP, keymap.canonical(code))
+                else -> keymap.control(Binding(code))?.action?.let { Route.Editor(it) }
+                    ?: if (isController(code)) Route.Deliver(Target.NONE) else Route.Pass
+            }
+        }
+    }
+
+    private fun run(code: Int, control: Control): Route {
+        owners[code] = Owner.Global
+        return Route.Run(control)
+    }
+
+    private fun deliver(code: Int, owner: Owner): Route {
         owners[code] = owner
-        return Route.Deliver(target)
+        return when (owner) {
+            Owner.Global, is Owner.Editor -> Route.Deliver(Target.NONE)
+            is Owner.Popup -> Route.Deliver(Target.POPUP, owner.code)
+            is Owner.Toolbar -> Route.Deliver(Target.TOOLBAR, owner.code)
+        }
     }
 
-    private fun isTrigger(code: Int) = code == KeyEvent.KEYCODE_BUTTON_L2 ||
-        code == KeyEvent.KEYCODE_BUTTON_R2 || code == KeyEvent.KEYCODE_BUTTON_THUMBL
+    companion object {
+        /** Gamepad buttons and the D-pad: consumed even when unbound, so they never trigger system fallbacks. */
+        fun isController(code: Int): Boolean =
+            code in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_CENTER ||
+                code in KeyEvent.KEYCODE_BUTTON_A..KeyEvent.KEYCODE_BUTTON_MODE ||
+                code in KeyEvent.KEYCODE_BUTTON_1..KeyEvent.KEYCODE_BUTTON_16
+    }
 }

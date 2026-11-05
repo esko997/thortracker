@@ -6,6 +6,7 @@ import android.graphics.RectF
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewState
+import org.thortracker.model.Songs
 
 /**
  * Song sheet: title, artist, tempo and loop settings above the order list. Each order row carries a
@@ -98,7 +99,9 @@ internal class SongPainter(v: TrackerView) : Painter(v) {
                 ink.outline(c, RectF(px - cw * 0.3f, ry + 2, px + cw * 2.3f, ry + rowH - 2), cursorColor(), ink.dp(2f), ink.dp(3f))
             }
             val loopMark = if (o == s.loopOrder) "↻ " else ""
-            ink.label(c, ink.fit(loopMark + s.patterns[pat].name, ink.unit * 9.5f), px + cw * 3f, ry, rowH, if (o == s.loopOrder) Palette.PLAYHEAD else Palette.DIM)
+            val rows = s.patterns[pat].length
+            val name = s.patterns[pat].name + if (rows < Songs.ROWS) " · $rows" else ""
+            ink.label(c, ink.fit(loopMark + name, ink.unit * 9.5f), px + cw * 3f, ry, rowH, if (o == s.loopOrder) Palette.PLAYHEAD else Palette.DIM)
             if (stripRight - stripLeft > ink.unit * 4) {
                 v.strip.draw(c, stripLeft, ry + ink.dp(3f), stripRight, ry + rowH - ink.dp(3f), s.patterns[pat], if (o == playOrder) v.playback.row else -1)
             }

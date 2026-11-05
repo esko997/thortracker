@@ -5,6 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
+import org.thortracker.input.Keymap
+import org.thortracker.model.Scale
+import org.thortracker.model.ScaleKind
 
 /** Device-local navigation/layout settings, deliberately outside musical project files. */
 class WorkspaceStore(context: Context) {
@@ -43,6 +46,12 @@ class WorkspaceStore(context: Context) {
                     kbKey = item.optInt("kbKey", 0).coerceAtLeast(0),
                     helpPage = item.optInt("helpPage", 0).coerceAtLeast(0),
                     textPos = item.optInt("textPos", 0).coerceAtLeast(0),
+                    sketchScale = ScaleKind.entries.firstOrNull { it.name == item.optString("sketchScale") }
+                        ?.let { Scale(item.optInt("sketchRoot", 0).coerceIn(0, 11), it) },
+                    sketchRow = item.optInt("sketchRow", 1).coerceIn(0, 2),
+                    sketchField = item.optInt("sketchField", 0).coerceIn(0, 4),
+                    sketchChord = item.optInt("sketchChord", 0).coerceAtLeast(0),
+                    sketchTone = item.optInt("sketchTone", 0).coerceAtLeast(0),
                 )
             }
             defaults
@@ -61,25 +70,35 @@ class WorkspaceStore(context: Context) {
             put("waveRow", s.waveRow); put("waveCol", s.waveCol); put("waveLevel", s.waveLevel)
             put("kbRow", s.kbRow); put("kbField", s.kbField); put("kbKey", s.kbKey)
             put("helpPage", s.helpPage); put("textPos", s.textPos)
+            s.sketchScale?.let { put("sketchRoot", it.root); put("sketchScale", it.kind.name) }
+            put("sketchRow", s.sketchRow); put("sketchField", s.sketchField)
+            put("sketchChord", s.sketchChord); put("sketchTone", s.sketchTone)
         })
         prefs.edit().putString("views", array.toString()).putInt("focus", focused).apply()
     }
 
     fun focused(): Int = prefs.getInt("focus", 0).coerceIn(0, 1)
 
-    /** Physical Android keycode -> semantic default keycode consumed by the editor. */
-    fun bindings(): MutableMap<Int, Int> {
-        val result = mutableMapOf<Int, Int>()
+    /**
+     * The controller keymap (versioned JSON, the same format as exported keymap files). Upgrading the app keeps
+     * it; uninstalling or clearing data removes it, so users export a copy. Remaps saved by 0.1-0.4 are
+     * converted once. An unreadable stored keymap falls back to the defaults.
+     */
+    fun keymap(): Keymap {
+        prefs.getString("keymap", null)?.let { text ->
+            return try { Keymap.fromJson(text) } catch (_: IllegalArgumentException) { Keymap.DEFAULT }
+        }
+        val legacy = HashMap<Int, Int>()
         try {
             val objectValue = JSONObject(prefs.getString("bindings", "{}") ?: "{}")
-            objectValue.keys().forEach { key -> key.toIntOrNull()?.let { result[it] = objectValue.getInt(key) } }
+            objectValue.keys().forEach { key -> key.toIntOrNull()?.let { legacy[it] = objectValue.getInt(key) } }
         } catch (_: Exception) { }
-        return result
+        val migrated = Keymap.fromLegacyRemap(legacy)
+        saveKeymap(migrated)
+        return migrated
     }
 
-    fun saveBindings(bindings: Map<Int, Int>) {
-        val obj = JSONObject()
-        bindings.forEach { (physical, action) -> obj.put(physical.toString(), action) }
-        prefs.edit().putString("bindings", obj.toString()).apply()
+    fun saveKeymap(keymap: Keymap) {
+        prefs.edit().putString("keymap", keymap.toJson()).remove("bindings").apply()
     }
 }

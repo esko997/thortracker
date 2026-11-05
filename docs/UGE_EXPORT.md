@@ -29,7 +29,8 @@ Evidence gathered while writing the exporter:
 
 ## Document model (GB/hUGE)
 
-- Four channels: Pulse 1, Pulse 2, Wave, Noise. Patterns are 64 rows, one note/instrument/effect per channel-row.
+- Four channels: Pulse 1, Pulse 2, Wave, Noise. Patterns store 64 rows, one note/instrument/effect per channel-row;
+  `Pattern.length` (1..64, all channels) is how many of them play. Rows past it are kept but hidden.
 - `Cell.note`: `-1` empty, `-2` explicit cut (displayed as **OFF**), `0..71` = C-3..B-8 (hUGE numbering, `C_3 = 0`). Noise uses the same
   numbers; the driver maps them to NR43 (`get_note_poly`).
 - `Cell.instrument`: 1..15 selects a slot of the channel's typed bank. 0 is legato: hUGEDriver clears the trigger
@@ -59,6 +60,18 @@ messages, newline-separated) for any error. Otherwise it returns `HugeData`:
   - noise: `NR42, 0, 0, length & 63 | lengthEnabled << 6 | noiseWidth << 7, 0, 0`.
 - Waves: 16 bytes each, earlier sample in the high nibble.
 - Direction fields: 0 = decrease, 1 = increase (hUGE `stDown`/`stUp`; for the sweep, `stDown` sets NR10 bit 3).
+
+### Pattern length
+
+hUGE patterns are always 64 rows. `HugeRules.playedTracks` lowers a pattern with `length < 64` by blanking rows
+`length..63` and, unless row `length - 1` already has `Dxx` (xx >= 1) or any `Bxx`, injecting `D01` (break to row 0
+of the next order) into the first channel whose effect slot is empty and which is not a cut. No free slot is a
+validation error; nothing is overwritten. Per-cell validation covers only played rows. A `Dxx` whose target row is
+past the length of the order it leads to (next order, explicit `Bxx` target, or the loop target after the last order)
+is an error.
+
+The final order's loop plan (below) treats row `length - 1` as its last row. Its injected `B(L+1)` ends the pattern
+by itself, so the loop variant carries `B` instead of `D01` and needs only one free slot.
 
 ### Looping
 
@@ -126,15 +139,19 @@ Editor-only data (pattern names, root/scale guides, layout, view state) is not e
 
 ## Project file (`ProjectCodec`)
 
-UTF-8 JSON `{"format":"thor-tracker-project","version":2,"backend":"gb-huge","backendVersion":1,"song":{...}}`
+UTF-8 JSON `{"format":"thor-tracker-project","version":4,"backend":"gb-huge","backendVersion":1,"song":{...}}`
 with cells as `[note, instrument, effect, param]`. Version 2 adds each pattern's
 `scale: {"root":0..11,"kind":"chromatic"|"major"|"natural-minor"|"major-pentatonic"|"minor-pentatonic"}`.
-Version 1 files remain readable and default to Chromatic; they cannot claim to contain version-2 scale data.
-The backend data version remains 1 because scale guides are editor metadata.
+Version 3 adds each pattern's `length` (1..64). Version 4 adds the scale kinds `harmonic-minor`, `melodic-minor`,
+`dorian`, `phrygian`, `lydian`, `mixolydian`, `locrian`, `blues`, `whole-tone`, `phrygian-dominant`,
+`double-harmonic`, `hungarian-minor`, `hirajoshi` and `miyako-bushi`. Older files remain readable: version 1
+defaults to Chromatic and versions 1-2 to 64 rows; a file cannot claim a version older than the fields and scale
+kinds it contains. The backend data version remains 1: tracks keep
+their 64-row shape and lengths are lowered to standard driver breaks.
 
 Decoding rejects malformed JSON, unknown keys, other formats, newer versions, other backends and structurally
 invalid songs with `ProjectFormatException`. Songs with export errors still save and load, so work in progress
-survives autosave. New saves always use version 2; the earlier app does not read that newer format.
+survives autosave. New saves always use version 4; earlier apps do not read that newer format.
 
 ## Reproducing the sample and conversion
 

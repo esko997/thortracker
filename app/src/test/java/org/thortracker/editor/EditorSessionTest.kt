@@ -270,4 +270,39 @@ class EditorSessionTest {
         s.setTitle("A".repeat(400))
         assertEquals(EditorSession.MAX_TEXT, s.song.title.length)
     }
+
+    @Test
+    fun shorteningHidesRowsAndRowEditsStayInsideTheLength() {
+        val s = session()
+        s.setCell(0, 0, 3, Cell(note = 3, instrument = 1))
+        s.setCell(0, 0, 40, Cell(note = 40, instrument = 1))
+        assertTrue(s.setPatternLength(0, 8))
+        assertEquals(8, s.song.rowCount(0))
+        s.insertRow(0, 0..0, 0)
+        assertEquals(3, s.song.patterns[0].tracks[0][4].note)
+        assertEquals(40, s.song.patterns[0].tracks[0][40].note)
+        s.deleteRow(0, 0..0, 0)
+        s.deleteRow(0, 0..0, 0)
+        assertEquals(3, s.song.patterns[0].tracks[0][2].note)
+        assertEquals(Cell(), s.song.patterns[0].tracks[0][7])
+        assertEquals(40, s.song.patterns[0].tracks[0][40].note)
+        assertTrue(s.setPatternLength(0, 64))
+        assertEquals(40, s.song.patterns[0].tracks[0][40].note)
+        assertFalse(s.setPatternLength(0, 65)) // clamped to 64: unchanged
+    }
+
+    @Test
+    fun wholePatternCopyPasteCarriesItsLengthInOneUndoStep() {
+        val s = session()
+        val p1 = s.newPatternAt(1)
+        s.setCell(0, 1, 2, Cell(note = 5, instrument = 1))
+        s.setPatternLength(0, 12)
+        s.copyPattern(0)
+        s.pastePattern(p1)
+        assertEquals(12, s.song.patterns[p1].length)
+        assertEquals(5, s.song.patterns[p1].tracks[1][2].note)
+        s.undo()
+        assertEquals(64, s.song.patterns[p1].length)
+        assertEquals(Cell(), s.song.patterns[p1].tracks[1][2])
+    }
 }

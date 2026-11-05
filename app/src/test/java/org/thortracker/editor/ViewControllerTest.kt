@@ -44,6 +44,20 @@ class ViewControllerTest {
     }
 
     @Test
+    fun patternPanelSetsLengthAndKeepsTheCursorOnPlayedRows() {
+        val v = view(ViewKind.PATTERN) { row = 40 }
+        v.tap(Action.SCALE)
+        v.tap(Action.DOWN)
+        v.tap(Action.DOWN)
+        repeat(4) { v.tap(Action.PREV_CHANNEL) }
+        v.tap(Action.LEFT)
+        assertEquals(31, session.song.patterns[0].length)
+        assertEquals(30, v.state.row)
+        v.tap(Action.CLEAR)
+        assertEquals(64, session.song.patterns[0].length)
+    }
+
+    @Test
     fun tapEditWritesLastNoteAdvancesAndIsOneUndo() {
         val v = view(ViewKind.PATTERN)
         v.tap(Action.EDIT)

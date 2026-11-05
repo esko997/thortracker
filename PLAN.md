@@ -45,6 +45,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 - Controller-first: ordinary composition operations must not require a touchscreen keyboard. Touch is an additional useful input path.
 - Separate semantic actions from physical button bindings so controls can be remapped without rewriting views.
+- 0.5.0: one keymap (control → button or Select/L2/R2/L3 chord) drives routing, hints and Help; Menu → Controls rebinds with real presses, asks before takeovers, never strands navigation/confirm, and exports/imports versioned JSON. Menu and Back are fixed.
+- 0.6.0: 19 scale guides (modes, minors, blues, whole tone, exotic and Japanese scales), project format 4.
+- Microtuning (not implemented): stock hUGEDriver can only detune with `40y` (+0..15 period units upward, from tick 1 of each note, using the row's effect slot). That reaches quarter tones within ~10 cents from octave 5 up but only ~22-44 cents of bend in octaves 3-4. Exact per-song tunings would need a retuned driver note table shipped with the game.
 - Initial mapping proposal: D-pad navigates; hold A plus D-pad adjusts the current field; horizontal adjustments are fine and vertical adjustments coarse where appropriate (semitone/octave for notes); tapping A can insert the previous value; L/R changes channel; Start toggles playback.
 - The mapping is provisional and must be exercised on hardware. Choose nonconflicting bindings for focus, selection, copy/paste, clear, undo and redo.
 - Show contextual control hints on both displays.
@@ -123,6 +126,23 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - Non-destructive per-pattern root/scale guides for D-pad tonal note entry, persisted in project format 2. Existing format 1 songs remain readable.
 - Supported stutter construction is repeated note/instrument rows, not an invented unsupported hUGE effect.
 
+## Tonal playground — 0.3.0
+
+- Sketch is a full-size, freely placeable view with independent per-display exploration state, pinning and complete-state swapping.
+- Starts from the pattern's root/scale; local root/scale experiments never change the song. An explicit Pattern key reset resumes following.
+- Scale notes with interval degrees, diatonic triads with roman numerals, and highlighted chord-tone roles.
+- Hold-to-audition notes or repeating arpeggios through the existing actual-driver engine. Tonal channels only; no note insertion, history entry or export change.
+- Controller and touch navigation; preview release/cancellation on menus, focus changes, swaps and lifecycle interruption.
+- **L2+Start replaces the 0.2 L3+Start cursor-play binding.** Bare Start retains pattern-row-00 playback. Bare L2/R2/L3 remain inactive.
+- Phrase generation, variations, insertion and the circle-of-fifths reference are not part of this initial playground.
+
+## Pattern length — 0.4.0
+
+- One played length per pattern (1–64, all channels), set from the pattern panel; undoable, saved in project format 3.
+- Hidden rows are preserved; insert/delete row shift only played rows; whole-pattern copy/paste and clone carry the length.
+- Preview and `.uge` share one lowering: hidden rows blank, `D01` on the last played row (or the loop `B` on a short final order).
+- Per-channel lengths are intentionally out of scope (no hUGE per-channel position; too complex for this interface).
+
 
 ## Proposed MVP exclusions
 
@@ -136,7 +156,7 @@ These are implementation scope defaults, not claims that the features are imposs
 - Full Furnace feature parity, unrestricted automation lanes, custom executable driver routines and advanced macro/subpattern authoring.
 - Analog/revision-perfect emulation and hardware quirks not exercised by the supported feature set.
 - Configurable colour themes (requested after playtesting; deferred).
-- Scale-root-relative interval labels in place of note names (requested after playtesting; deferred).
+- Scale-root-relative interval labels in place of Pattern note names remain deferred; Sketch displays degrees alongside pitches.
 
 Standard instrument settings, row effects and full-song composition are not optional scaffolding. A runnable empty UI or audio demo is not the MVP.
 

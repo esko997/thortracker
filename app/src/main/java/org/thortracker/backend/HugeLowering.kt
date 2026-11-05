@@ -54,12 +54,16 @@ object HugeLowering {
         require(errors.isEmpty()) { errors.joinToString("\n") }
         val channels = song.patterns[0].tracks.size
         val tracks = ArrayList<ByteArray>(song.patterns.size * channels + channels)
-        for (pattern in song.patterns) for (track in pattern.tracks) tracks += encodeTrack(track)
+        val played = song.patterns.map { HugeRules.playedTracks(it) }
+        for (pattern in played) for (track in pattern) tracks += encodeTrack(track)
         val orders = List(channels) { ch -> IntArray(song.orders.size) { pos -> song.orders[pos] * channels + ch } }
+        // The final order gets its own copy of any channel the loop jump changes; the length ending applies to it too.
         val last = song.orders.size - 1
-        for ((ch, cells) in HugeRules.loopPlan(song).tracks.toSortedMap()) {
+        val finalTracks = HugeRules.finalOrderTracks(song, HugeRules.loopPlan(song))
+        for (ch in 0 until channels) {
+            if (finalTracks[ch] == played[song.orders[last]][ch]) continue
             orders[ch][last] = tracks.size
-            tracks += encodeTrack(cells)
+            tracks += encodeTrack(finalTracks[ch])
         }
         return HugeData(
             ticksPerRow = song.ticksPerRow,

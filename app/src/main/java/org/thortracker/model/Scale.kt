@@ -3,18 +3,40 @@ package org.thortracker.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Conventional scale shapes offered as a pattern's pitch guide, as semitone intervals above the root. */
+/**
+ * Conventional scale shapes offered as a pattern's pitch guide, as semitone intervals above the root. Serial
+ * names are stable; [V2] lists the kinds project format 2-3 can contain (the rest need format 4).
+ */
 @Serializable
 enum class ScaleKind(val label: String, intervals: IntArray) {
     @SerialName("chromatic") CHROMATIC("Chromatic", IntArray(12) { it }),
     @SerialName("major") MAJOR("Major", intArrayOf(0, 2, 4, 5, 7, 9, 11)),
     @SerialName("natural-minor") NATURAL_MINOR("Natural minor", intArrayOf(0, 2, 3, 5, 7, 8, 10)),
+    @SerialName("harmonic-minor") HARMONIC_MINOR("Harmonic minor", intArrayOf(0, 2, 3, 5, 7, 8, 11)),
+    @SerialName("melodic-minor") MELODIC_MINOR("Melodic minor", intArrayOf(0, 2, 3, 5, 7, 9, 11)),
+    @SerialName("dorian") DORIAN("Dorian", intArrayOf(0, 2, 3, 5, 7, 9, 10)),
+    @SerialName("phrygian") PHRYGIAN("Phrygian", intArrayOf(0, 1, 3, 5, 7, 8, 10)),
+    @SerialName("lydian") LYDIAN("Lydian", intArrayOf(0, 2, 4, 6, 7, 9, 11)),
+    @SerialName("mixolydian") MIXOLYDIAN("Mixolydian", intArrayOf(0, 2, 4, 5, 7, 9, 10)),
+    @SerialName("locrian") LOCRIAN("Locrian", intArrayOf(0, 1, 3, 5, 6, 8, 10)),
     @SerialName("major-pentatonic") MAJOR_PENTATONIC("Major pentatonic", intArrayOf(0, 2, 4, 7, 9)),
-    @SerialName("minor-pentatonic") MINOR_PENTATONIC("Minor pentatonic", intArrayOf(0, 3, 5, 7, 10));
+    @SerialName("minor-pentatonic") MINOR_PENTATONIC("Minor pentatonic", intArrayOf(0, 3, 5, 7, 10)),
+    @SerialName("blues") BLUES("Blues", intArrayOf(0, 3, 5, 6, 7, 10)),
+    @SerialName("whole-tone") WHOLE_TONE("Whole tone", intArrayOf(0, 2, 4, 6, 8, 10)),
+    @SerialName("phrygian-dominant") PHRYGIAN_DOMINANT("Phrygian dominant", intArrayOf(0, 1, 4, 5, 7, 8, 10)),
+    @SerialName("double-harmonic") DOUBLE_HARMONIC("Double harmonic", intArrayOf(0, 1, 4, 5, 7, 8, 11)),
+    @SerialName("hungarian-minor") HUNGARIAN_MINOR("Hungarian minor", intArrayOf(0, 2, 3, 6, 7, 8, 11)),
+    @SerialName("hirajoshi") HIRAJOSHI("Hirajoshi", intArrayOf(0, 2, 3, 7, 8)),
+    @SerialName("miyako-bushi") MIYAKO_BUSHI("Miyako-bushi (In)", intArrayOf(0, 1, 5, 7, 8));
 
     private val mask: Int = intervals.fold(0) { m, i -> m or (1 shl i) }
 
     fun hasInterval(semitones: Int): Boolean = mask and (1 shl Math.floorMod(semitones, 12)) != 0
+
+    companion object {
+        /** Kinds that existed in project formats 2 and 3. */
+        val V2 = setOf(CHROMATIC, MAJOR, NATURAL_MINOR, MAJOR_PENTATONIC, MINOR_PENTATONIC)
+    }
 }
 
 /**

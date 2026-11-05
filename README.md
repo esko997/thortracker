@@ -30,7 +30,7 @@ The verified delivery is `dist/thor-tracker-debug.apk`. `examples/` contains **T
 
 ## Views and displays
 
-Each display has one full-size view: **Pattern**, **Song**, **Instrument**, **Wave**, **Keyboard**, or **Help**. There is no designated “top-screen view” or “bottom-screen view.” Both displays can show the same kind of view and edit the same document. On a single-screen device, switch between views with the view button.
+Each display has one full-size view: **Pattern**, **Song**, **Instrument**, **Wave**, **Keyboard**, **Sketch**, or **Help**. There is no designated “top-screen view” or “bottom-screen view.” Both displays can show the same kind of view and edit the same document. On a single-screen device, switch between views with the view button.
 
 - **View button:** choose a view on that display. Choosing one pins it.
 - **Pinned / Context button:** open behavior and layout options.
@@ -41,7 +41,7 @@ Each display has one full-size view: **Pattern**, **Song**, **Instrument**, **Wa
 - **Focus / R3:** choose which display receives controller input. Touch does not silently move controller focus. The focused view has an amber border and title marker.
 - **Follow playhead:** optional in the pattern view; editing can stay at its cursor while playback continues elsewhere.
 
-Preset layouts are Pattern + Keyboard and Pattern + Instrument. View layout, behavior and controller mappings persist between launches. Undo/redo belongs to the document, not the display.
+Preset layouts are Pattern + Keyboard and Pattern + Instrument. View layout, behavior and controller bindings persist between launches. Undo/redo belongs to the document, not the display.
 
 The toolbar is hidden over the full-height editor rather than reserving a row. **Select+Start** reveals it and gives it controller focus: Left/Right choose, A activates, and B/Back returns to the editor. It stays visible while controller-focused. Tap or pull the small top-centre handle for touch use; that reveal hides after six idle seconds. Neither transition moves the grid. On the narrower display, **Swap**, **Undo/redo** and **File** remain available through **Menu**.
 
@@ -51,7 +51,9 @@ Short cell and key afterglows, channel activity lamps, and focus/view transition
 
 ## Controller reference
 
-Physical bindings are configurable through **Menu → Controller mappings**. On-screen hints and the Help view describe contextual controls.
+Every control is rebindable in **Menu → Controls**: one row per control, grouped by area, with its current binding on the right. Choose a row, then press the new button, or hold **Select, L2, R2 or L3** and press a button for a chord. Held controls (D-pad, Edit, Clear, Listen, Select block) take a single button. Assigning a binding another control uses asks first and leaves that control unbound; the D-pad, Edit and Clear can never be left without a button. Menu and Back are fixed, so the screen is always reachable. The hint bar, held-modifier chord hints, popups and Help show your bindings.
+
+Bindings survive app updates. Uninstalling or clearing app data removes them, so use **Export keymap…** to save a `thor-tracker-keymap.json` anywhere (e.g. Download) and **Import keymap…** to restore it, or to copy it to another handheld. The file is readable JSON (`"UNDO": "L2+A"`). Remaps from earlier versions are converted automatically. The table below lists the defaults.
 
 | Input | Action |
 | --- | --- |
@@ -70,16 +72,16 @@ Physical bindings are configurable through **Menu → Controller mappings**. On-
 | Select + Y | Duplicate |
 | Select + L1 / R1 | Lower / raise entry octave |
 | Select + Up / Down | Insert / delete a row in the channel or selection |
-| Select + Right | Open the current pattern's root/scale panel |
+| L2 + Right | Open/close the current pattern's root/scale/length panel |
 | Start | Play from row 00 of the current pattern's order, or stop |
-| L3 + Start | Play from the current cursor, or stop |
+| L2 + Start | Play from the current cursor, or stop |
 | Select + Start | Reveal/focus the toolbar, or return to the editor |
 | R3 | Switch controller focus between displays |
 | Menu / Back | Application menu; Back closes a popup or focused toolbar first |
 
 A held adjustment or wave-drawing gesture is one undo step. Overlapping gestures on the two displays share a step that commits after both end. Undo during a held controller adjustment ends that step; further changes start a new step. Undo during a touch drag ends its edits until the finger lifts. Touch drags keep their original instrument or wave, and selection/playhead following waits until the gesture ends. Opening a menu or leaving the app ends active gestures and releases audition notes. **Menu → Play from song start** explicitly starts at order 0, row 0; it is not a toggle.
 
-Hold the modifier **before** pressing its chord button. An A press that precedes L2/R2 remains an ordinary edit; note entry is not delayed waiting for a possible chord. Consumed chords suppress repeats and releases, even if the trigger is released first. Undo/redo and screen swap also work over app popups without choosing their highlighted item. Bare L3 is also unbound.
+Hold the modifier **before** pressing its chord button. While Select, L2, R2 or L3 is held, the focused display's hint bar shows only that modifier's chords; holding two shows that no chord applies. With a modifier held, a button without a chord does its ordinary job. An A press that precedes L2/R2 remains an ordinary edit; note entry is not delayed waiting for a possible chord. Consumed chords suppress repeats and releases, even if the trigger is released first. Undo/redo and screen swap also work over app popups without choosing their highlighted item. Bare L3 is also unbound.
 
 ### Enter a phrase
 
@@ -95,11 +97,35 @@ The keyboard's base octave is limited to 7. Keys above B-8 are dark and unavaila
 
 ### Pattern scales
 
-Tap **Scale** in the Pattern header or press **Select+Right**. Up/Down chooses Root or Scale; Left/Right changes it; B resets that field and A/Done closes. The root strip and scale arrows are also touchable.
+Tap **Scale** in the Pattern header or press **L2+Right**. Up/Down chooses Root, Scale or Length; Left/Right changes it; B resets that field and A/Done (or L2+Right again) closes. The root strip and arrows are also touchable.
 
-Chromatic is the default. Major, Natural minor, Major pentatonic and Minor pentatonic constrain Pulse/Wave D-pad note entry to the chosen root's scale. Horizontal edits visit successive scale notes; vertical edits move an octave, snapping an existing out-of-scale pitch in the edit direction. Changing the guide never transposes written notes. Noise and the piano keyboard remain chromatic; effect parameters remain raw hUGE values.
+Chromatic is the default. Every other scale constrains Pulse/Wave D-pad note entry to the chosen root's scale: Major, Natural/Harmonic/Melodic minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Major/Minor pentatonic, Blues, Whole tone, Phrygian dominant, Double harmonic, Hungarian minor, Hirajoshi and Miyako-bushi (In). Horizontal edits visit successive scale notes; vertical edits move an octave, snapping an existing out-of-scale pitch in the edit direction. Changing the guide never transposes written notes. Noise and the piano keyboard remain chromatic; effect parameters remain raw hUGE values.
 
 The guide belongs to the pattern, so repeated orders share it. It is undoable, saved in the project and preserved by pattern cloning/whole-pattern paste. Block paste still copies cells only. Scale metadata itself changes neither preview bytes nor `.uge` output.
+
+### Pattern length and polyrhythms
+
+The same panel's **Length** row sets how many rows the pattern plays, 1–64. Press Down to reach it; Left/Right changes it by 1, L1/R1 by 8, B returns to 64, and the ◀ ▶ arrows are touchable. Every order that uses the pattern plays that many rows and then moves to the next order. Rows past the length are hidden, not deleted: lengthening the pattern brings them back, and insert/delete row only shifts the played rows.
+
+Lengths apply to all four channels together; the GB driver has no per-channel position. For polyrhythms, combine pattern lengths in the arrangement (for example 48 then 20), or write different phrase lengths in one pattern whose length is their common multiple. The Song view's order list labels short patterns with their length and draws their density strips proportionally shorter.
+
+For preview and export, hidden rows are blank and the last played row receives `D01` in the first free effect slot (unless it already has `Dxx` or `Bxx`). A song check error asks you to free one effect slot if that row uses all four. Whole-pattern copy/paste and pattern cloning keep the length. `Dxx` breaks that would land on a hidden row of the next pattern are reported.
+
+### Sketch: explore a key without writing
+
+Reveal the toolbar, choose the current **View** button, then **Sketch**. If you opened the toolbar with Select+Start, press B/Back after choosing the view to return controller focus to the editor. Sketch can be pinned on either display, swapped with L2+X, or opened independently on both.
+
+- **Up/Down** chooses settings, chords or notes; **Left/Right** chooses within that row.
+- On settings, **hold A + D-pad** to change root, scale, tonal channel, sound or octave. Touch the left/right half of a setting to decrease/increase it.
+- **Hold A or X** on a chord to hear a repeating root-position arpeggio; on a note to sustain it. Release to stop. Touch and hold a pad, or slide between pads, for the same preview.
+- **L1/R1** chooses Pulse 1, Pulse 2 or Wave. Noise is intentionally excluded from this tonal reference.
+- **Y** or **Pattern key** returns to the pattern's root/scale. Until you change it, Sketch follows that guide; after a local change, the pattern's guide and all written notes remain untouched.
+
+Seven-note scales show their stacked-third triads; stacks that are not major, minor, diminished or augmented (e.g. double harmonic's V) are left out. Other scales (pentatonics, blues, whole tone, Japanese scales) show only standard triads made entirely of their notes. Chromatic offers twelve note pads and asks you to choose a scale for a chord shortlist. Notes show pitch and interval degree; the selected chord marks its root, third and fifth. Degrees and roman numerals use major-scale-relative intervals (`b3`, `#4`, `bIII`, etc.); pitch names use the tracker's sharp spelling.
+
+Sketch is **listen-only**: it never inserts notes, consumes undo history or changes project/export bytes. Local key/cursor settings belong to the device workspace and survive reopening. The preview uses the selected song instrument through hUGEDriver and temporarily borrows that channel while the other channels continue. Chord notes repeat every 180 ms as a listening reference, not a tempo-synchronised authored sequence; voicings near the top of the GB range shift down together rather than clipping notes. Menus, view swaps, focus/lifecycle changes and release cancel held previews.
+
+Phrase generation/variations, insertion and a circle-of-fifths reference remain future work.
 
 ### Arpeggio and OFF
 
@@ -109,7 +135,7 @@ The effect-type picker distinguishes **no effect** from selecting **0 (arpeggio)
 
 ## Sound and export rules
 
-The first backend is explicitly **GB/hUGE**: two pulse channels, one wave channel and one noise channel; 64 rows per pattern; one effect per channel per row. There are 15 instrument slots in each pulse/wave/noise bank and 16 wave tables. Instrument 0 means **legato**: it does not retrigger or reload an instrument. A legato note after a cut can therefore remain silent.
+The first backend is explicitly **GB/hUGE**: two pulse channels, one wave channel and one noise channel; up to 64 rows per pattern; one effect per channel per row. There are 15 instrument slots in each pulse/wave/noise bank and 16 wave tables. Instrument 0 means **legato**: it does not retrigger or reload an instrument. A legato note after a cut can therefore remain silent.
 
 - Pattern edits are heard from the next row; updates do not restart transport.
 - Instrument changes apply on the next note that loads that instrument. A sustained note keeps its existing envelope/settings.
@@ -134,7 +160,7 @@ Export is `.uge` only. GB-specific editing semantics live in the backend; future
 - Replacing a document retains one previous-project recovery backup. A later replacement overwrites that single slot: use named project files for permanent versions.
 - Unreadable recovery files are quarantined intact rather than replaced in place. The app reports the failure and retained location.
 - Opening a project validates its version and structure before replacing the working document.
-- New saves use project format 2 for per-pattern scale metadata. Format 1 projects still open with Chromatic guides; the older 0.1 app cannot read new format 2 saves.
+- 0.6 saves project format 4 (per-pattern scale and length, extended scale list), which 0.5 and earlier cannot open. Format 1-3 projects still open, as Chromatic and 64-row patterns where those fields are absent.
 - Recovery writes use a separate queue from document-provider I/O, so a stalled external save cannot block recovery of newer edits. Both run off the UI thread.
 - Saving captures the version selected for that operation. If editing continues, the app reports that newer edits remain unsaved. Completing an older save cannot attach its destination to a different document.
 - Android document providers control the durability and atomicity of writes to their own destinations; the app-private recovery copy remains separate.

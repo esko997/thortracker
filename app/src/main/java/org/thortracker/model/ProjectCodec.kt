@@ -20,11 +20,13 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * export-level problems ([SongValidator.errors]) are allowed so work in progress round-trips.
  *
  * Versions: 1 = initial format. 2 adds each pattern's editor-only `scale` (`{"root":0..11,"kind":"major"}`);
- * version 1 files have no scales and read as chromatic. Backend data is unchanged, so `backendVersion` stays 1.
+ * version 1 files have no scales and read as chromatic. 3 adds each pattern's played `length` (1-64);
+ * older files read as 64 rows. 4 adds scale kinds beyond the original five (modes, harmonic/melodic minor,
+ * blues, whole tone and others). Backend data is unchanged, so `backendVersion` stays 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 2
+    const val VERSION = 4
     const val BACKEND_VERSION = 1
 
     private val json = Json {
@@ -73,8 +75,14 @@ object ProjectCodec {
         if (backendVersion !in 1..BACKEND_VERSION) {
             throw ProjectFormatException("GB/hUGE data version $backendVersion is not supported; this version reads 1-$BACKEND_VERSION")
         }
-        if (version < SCALE_VERSION && hasPatternScale(root)) {
+        if (version < SCALE_VERSION && hasPatternKey(root, "scale")) {
             throw ProjectFormatException("Project version $version cannot contain pattern scales (added in version $SCALE_VERSION)")
+        }
+        if (version < LENGTH_VERSION && hasPatternKey(root, "length")) {
+            throw ProjectFormatException("Project version $version cannot contain pattern lengths (added in version $LENGTH_VERSION)")
+        }
+        if (version < EXTENDED_SCALES_VERSION && usesExtendedScale(root)) {
+            throw ProjectFormatException("Project version $version cannot contain the newer scales (added in version $EXTENDED_SCALES_VERSION)")
         }
         val envelope = try {
             json.decodeFromJsonElement(Envelope.serializer(), root)
@@ -93,6 +101,20 @@ object ProjectCodec {
     /** First format version with per-pattern scales. */
     private const val SCALE_VERSION = 2
 
-    private fun hasPatternScale(root: JsonObject): Boolean =
-        ((root["song"] as? JsonObject)?.get("patterns") as? JsonArray)?.any { (it as? JsonObject)?.containsKey("scale") == true } == true
+    /** First format version with per-pattern lengths. */
+    private const val LENGTH_VERSION = 3
+
+    /** First format version with scale kinds outside [ScaleKind.V2]. */
+    private const val EXTENDED_SCALES_VERSION = 4
+
+    private val V2_SCALE_NAMES = ScaleKind.V2.map { ScaleKind.serializer().descriptor.getElementName(it.ordinal) }.toSet()
+
+    private fun usesExtendedScale(root: JsonObject): Boolean =
+        ((root["song"] as? JsonObject)?.get("patterns") as? JsonArray)?.any { p ->
+            val kind = (((p as? JsonObject)?.get("scale") as? JsonObject)?.get("kind") as? JsonPrimitive)?.content
+            kind != null && kind !in V2_SCALE_NAMES
+        } == true
+
+    private fun hasPatternKey(root: JsonObject, key: String): Boolean =
+        ((root["song"] as? JsonObject)?.get("patterns") as? JsonArray)?.any { (it as? JsonObject)?.containsKey(key) == true } == true
 }

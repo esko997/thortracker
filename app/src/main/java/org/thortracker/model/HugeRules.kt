@@ -123,12 +123,54 @@ internal object HugeRules {
     /** The cell as hUGEDriver receives it: OFF ([Cell.CUT]) is no note + E00. Equal results mean identical driver bytes. */
     fun lowered(cell: Cell): Cell = if (cell.note == Cell.CUT) Cell(Cell.EMPTY, 0, FX_NOTE_CUT, 0) else cell
 
-    /** Distinct lowered tracks referenced by the order list, including the loop-variant tracks of [plan]. */
+    /**
+     * [pattern]'s tracks as hUGEDriver plays them. hUGE patterns are always 64 rows, so a shorter [Pattern.length]
+     * blanks the hidden rows and ends on its last row with D01 (break to row 0 of the next order) in the first free
+     * effect slot, unless that row already ends the pattern with a pattern break or position jump. [tracks] lets the
+     * loop plan supply its edited final-order copy. Returns [tracks] itself for a full-length pattern.
+     */
+    fun playedTracks(pattern: Pattern, tracks: List<List<Cell>> = pattern.tracks): List<List<Cell>> {
+        val last = pattern.length - 1
+        if (last >= Songs.ROWS - 1) return tracks
+        val breakChannel = if (endsPattern(tracks, last)) -1 else freeEffectChannel(tracks, last) ?: -1
+        return tracks.mapIndexed { ch, track ->
+            List(track.size) { row ->
+                when {
+                    row > last -> Cell.BLANK
+                    row == last && ch == breakChannel -> track[row].copy(effect = FX_PATTERN_BREAK, param = 1)
+                    else -> track[row]
+                }
+            }
+        }
+    }
+
+    /** True when [pattern] is shorter than 64 rows but its last row has no free effect slot for the ending D01. */
+    fun lengthBreakConflict(pattern: Pattern): Boolean {
+        val last = pattern.length - 1
+        return last < Songs.ROWS - 1 && !endsPattern(pattern.tracks, last) && freeEffectChannel(pattern.tracks, last) == null
+    }
+
+    /** A row already leaves the pattern: Dxx (xx > 0) or any Bxx; OFF cells use their slot for E00. */
+    private fun endsPattern(tracks: List<List<Cell>>, row: Int): Boolean = tracks.any { track ->
+        val c = track[row]
+        c.note != Cell.CUT && ((c.effect == FX_PATTERN_BREAK && c.param != 0) || c.effect == FX_POSITION_JUMP)
+    }
+
+    private fun freeEffectChannel(tracks: List<List<Cell>>, row: Int): Int? =
+        tracks.indices.firstOrNull { ch -> tracks[ch][row].let { it.note != Cell.CUT && !it.hasEffect } }
+
+    /** The final order's tracks as played: its pattern with the loop plan's edits, then its length ending. */
+    fun finalOrderTracks(song: Song, plan: LoopPlan): List<List<Cell>> {
+        val pattern = song.patterns[song.orders.last()]
+        return playedTracks(pattern, pattern.tracks.mapIndexed { ch, track -> plan.tracks[ch] ?: track })
+    }
+
+    /** Distinct lowered tracks referenced by the order list, including the final order's loop/length variants. */
     fun distinctReferencedTracks(song: Song, plan: LoopPlan): Int {
         val referenced = HashSet<List<Cell>>()
         val last = song.orders.size - 1
-        for (p in song.orders.subList(0, last).toSet()) referenced += song.patterns[p].tracks
-        song.patterns[song.orders[last]].tracks.forEachIndexed { ch, track -> referenced += plan.tracks[ch] ?: track }
+        for (p in song.orders.subList(0, last).toSet()) referenced += playedTracks(song.patterns[p])
+        referenced += finalOrderTracks(song, plan)
         val distinct = HashSet<List<Cell>>(referenced.size * 2)
         for (track in referenced) distinct += if (track.any { it.note == Cell.CUT }) track.map(::lowered) else track
         return distinct.size
@@ -266,7 +308,7 @@ internal object HugeRules {
         val patternIndex = song.orders.last()
         val pattern = song.patterns[patternIndex]
         val channels = pattern.tracks.size
-        val rows = pattern.tracks[0].size
+        val rows = pattern.length
         val edited = HashMap<Int, MutableList<Cell>>()
         val errors = ArrayList<String>()
         fun cell(ch: Int, row: Int) = edited[ch]?.get(row) ?: pattern.tracks[ch][row]

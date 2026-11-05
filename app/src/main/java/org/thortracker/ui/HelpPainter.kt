@@ -3,11 +3,14 @@ package org.thortracker.ui
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.bank
 import org.thortracker.editor.channelCount
+import org.thortracker.input.Control
+import org.thortracker.input.Keymap
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Songs
 
@@ -72,20 +75,23 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
     }
 
     private var cachedSong: org.thortracker.model.Song? = null
+    private var cachedKeymap: Keymap? = null
     private var cachedPage = -1
     private var cachedWidth = -1f
     private var cachedLines: List<Line> = emptyList()
 
-    /** Wrapped lines for the current page; rebuilt only when the song, page or width changes. */
+    /** Wrapped lines for the current page; rebuilt only when the song, keymap, page or width changes. */
     private fun pageLines(width: Float, keyW: Float): List<Line> {
-        if (song !== cachedSong || st.helpPage != cachedPage || width != cachedWidth) {
+        val keymap = v.keymap
+        if (song !== cachedSong || keymap !== cachedKeymap || st.helpPage != cachedPage || width != cachedWidth) {
             val raw = when (st.helpPage) {
-                0 -> controls()
+                0 -> controls(keymap)
                 1 -> effects()
                 else -> check()
             }
             cachedLines = raw.flatMap { wrapLine(it, width, keyW) }
             cachedSong = song
+            cachedKeymap = keymap
             cachedPage = st.helpPage
             cachedWidth = width
         }
@@ -110,56 +116,88 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
         return out
     }
 
-    private fun controls(): List<Line> = listOf(
-        Line.Heading("Everywhere"),
-        Line.Row("✛", "Move the cursor"),
-        Line.Row("A hold+✛", "Change the value under the cursor (←→ fine, ↑↓ coarse); one undo step"),
-        Line.Row("A tap", "Write the last value / press the button under the cursor"),
-        Line.Row("B tap", "Clear the value under the cursor"),
-        Line.Row("B hold+✛", "Jump in larger steps"),
-        Line.Row("X hold", "Listen without writing anything"),
-        Line.Row("L1 R1", "Previous/next channel, bank, wave or page"),
-        Line.Row("L2+A R2+A", "Undo / redo (whole document, both displays)"),
-        Line.Row("L2 R2 alone", "Do nothing, so a brushed trigger never edits"),
-        Line.Row("L2+X", "Swap the complete views of the two displays"),
-        Line.Row("Sel+X A B", "Copy / paste / cut"),
-        Line.Row("Sel+Y", "Duplicate"),
-        Line.Row("Sel+L1 R1", "Octave down / up"),
-        Line.Row("Start", "Play from the start of the current pattern, or stop"),
-        Line.Row("L3+Start", "Play from the cursor row, or stop"),
-        Line.Row("Sel+Start", "Show the toolbar and move the controller to it"),
-        Line.Row("R3", "Move controller focus to the other display"),
-        Line.Heading("Pattern"),
-        Line.Row("Columns", "Note, sound number, effect type and effect value per channel"),
-        Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
-        Line.Row("A on note", "Empty row: write the last note and advance by the step"),
-        Line.Row("B on note", "Clears a note; on an empty row places OFF"),
-        Line.Row("OFF", "Silences the channel at once (exported as E00). GB sounds have no release phase: for a tail, " +
-            "give the sound a falling volume envelope, or end it later in the row with Exx"),
-        Line.Row("A+←→ effect", "· is no effect, then 0 arpeggio, 1 slide up and on. 0 waits as 000 until you set its value"),
-        Line.Row("Y hold+✛", "Select a block for copy, cut, clear or duplicate"),
-        Line.Row("Sel+↑↓", "Insert / delete a row in the channel or selection"),
-        Line.Row("Sel+→", "Pattern scale: root and scale (Major, Natural minor, pentatonics or Chromatic). " +
-            "A+✛ on Pulse and Wave notes then lands only on its notes (A+↑↓ an octave, or the next scale note past it). " +
-            "Noise keeps every pitch. Setting a scale never changes written notes; it is not exported or heard"),
-        Line.Text("Rails beside a channel show how long each note keeps sounding."),
-        Line.Heading("Song"),
-        Line.Row("A+←→", "Change the pattern an order plays, tempo, loop or a letter"),
-        Line.Row("←→", "Order commands: repeat, new, clone, delete, move, loop here"),
-        Line.Row("X", "Play from this order, or stop if playing"),
-        Line.Heading("Sounds"),
-        Line.Row("←→", "Choose the sound slot; L1 R1 change bank"),
-        Line.Row("A+←→", "Adjust the setting; A tap toggles on/off settings"),
-        Line.Heading("Waves"),
-        Line.Row("✛", "Move the pen across samples and levels; ↑ at the top reaches the tools"),
-        Line.Row("A hold", "Draw at the pen height while moving"),
-        Line.Heading("Keyboard"),
-        Line.Row("Y", "Switch between Listen and Write"),
-        Line.Row("A", "Listen: play.  Write: write at the pattern cursor and advance"),
-        Line.Row("B", "Write mode: place OFF and advance"),
-        Line.Row("↓", "Write mode: skip a step"),
-        Line.Row("Dark keys", "Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note: they neither play nor write"),
-    )
+    /** Several actions in one key column: "Sel+X A B" when they share a modifier, else their labels. */
+    private fun Keymap.group(vararg actions: Action): String {
+        val bindings = actions.map { a -> control(a)?.let { binding(it) } }
+        val modifier = bindings.firstOrNull()?.modifier
+        if (modifier == null || bindings.any { it == null || it.modifier != modifier }) return actions.joinToString(" ") { label(it) }
+        return Keymap.buttonName(modifier) + "+" + bindings.joinToString(" ") { Keymap.buttonName(it!!.button) }
+    }
+
+    private fun controls(k: Keymap): List<Line> {
+        val edit = k.label(Action.EDIT)
+        val clear = k.label(Action.CLEAR)
+        val listen = k.label(Action.AUDITION)
+        val mark = k.label(Action.MARK)
+        val dpad = k.dpad()
+        val lr = k.pair(Action.LEFT, Action.RIGHT)
+        val ud = k.pair(Action.UP, Action.DOWN)
+        val channels = k.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
+        val editLr = k.held(Action.EDIT, lr)
+        return listOf(
+            Line.Heading("Everywhere"),
+            Line.Row(dpad, "Move the cursor"),
+            Line.Row("$edit hold+$dpad", "Change the value under the cursor ($lr fine, $ud coarse); one undo step"),
+            Line.Row("$edit tap", "Write the last value / press the button under the cursor"),
+            Line.Row("$clear tap", "Clear the value under the cursor"),
+            Line.Row("$clear hold+$dpad", "Jump in larger steps"),
+            Line.Row("$listen hold", "Listen without writing anything"),
+            Line.Row(channels, "Previous/next channel, bank, wave or page"),
+            Line.Row(k.pair(Action.UNDO, Action.REDO), "Undo / redo (whole document, both displays)"),
+            Line.Row(Keymap.MODIFIERS.joinToString(" ") { Keymap.buttonName(it) }, "Alone: only start chords, so a brushed trigger never edits"),
+            Line.Row(k.label(Control.SWAP), "Swap the complete views of the two displays"),
+            Line.Row(k.group(Action.COPY, Action.PASTE, Action.CUT), "Copy / paste / cut"),
+            Line.Row(k.label(Action.DUPLICATE), "Duplicate"),
+            Line.Row(k.group(Action.OCTAVE_DOWN, Action.OCTAVE_UP), "Octave down / up"),
+            Line.Row(k.label(Control.PLAY_PATTERN), "Play from the start of the current pattern, or stop"),
+            Line.Row(k.label(Control.PLAY_CURSOR), "Play from the cursor row, or stop"),
+            Line.Row(k.label(Control.TOOLBAR), "Show the toolbar and move the controller to it"),
+            Line.Row(k.label(Control.FOCUS), "Move controller focus to the other display"),
+            Line.Row("Menu", "Controls: rebind any button or chord; hints and this page follow"),
+            Line.Heading("Pattern"),
+            Line.Row("Columns", "Note, sound number, effect type and effect value per channel"),
+            Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
+            Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
+            Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
+            Line.Row("OFF", "Silences the channel at once (exported as E00). GB sounds have no release phase: for a tail, " +
+                "give the sound a falling volume envelope, or end it later in the row with Exx"),
+            Line.Row("$editLr effect", "· is no effect, then 0 arpeggio, 1 slide up and on. 0 waits as 000 until you set its value"),
+            Line.Row("$mark hold+$dpad", "Select a block for copy, cut, clear or duplicate"),
+            Line.Row(k.pair(Action.INSERT_ROW, Action.DELETE_ROW), "Insert / delete a row in the channel or selection"),
+            Line.Row(k.label(Action.SCALE), "Pattern panel: root, scale and length. A scale (major/minor and modes, pentatonics, blues, whole tone, exotic scales; Chromatic is all notes) makes " +
+                "${k.held(Action.EDIT, dpad)} on Pulse and Wave notes land only on its notes (${k.held(Action.EDIT, ud)} an octave, " +
+                "or the next scale note past it). Noise keeps every pitch. Setting a scale never changes written notes; it is not exported or heard"),
+            Line.Row("Length", "1 to 64 rows, $lr ±1, $channels ±8. Every order using the pattern plays that many rows, then moves on. " +
+                "Later rows are hidden, not deleted. Combine lengths (e.g. 48, then 20) for odd phrase lengths and polyrhythms"),
+            Line.Text("Rails beside a channel show how long each note keeps sounding."),
+            Line.Heading("Song"),
+            Line.Row(editLr, "Change the pattern an order plays, tempo, loop or a letter"),
+            Line.Row(lr, "Order commands: repeat, new, clone, delete, move, loop here"),
+            Line.Row(listen, "Play from this order, or stop if playing"),
+            Line.Heading("Sounds"),
+            Line.Row(lr, "Choose the sound slot; $channels change bank"),
+            Line.Row(editLr, "Adjust the setting; $edit tap toggles on/off settings"),
+            Line.Heading("Waves"),
+            Line.Row(dpad, "Move the pen across samples and levels; ${k.label(Action.UP)} at the top reaches the tools"),
+            Line.Row("$edit hold", "Draw at the pen height while moving"),
+            Line.Heading("Keyboard"),
+            Line.Row(mark, "Switch between Listen and Write"),
+            Line.Row(edit, "Listen: play.  Write: write at the pattern cursor and advance"),
+            Line.Row(clear, "Write mode: place OFF and advance"),
+            Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
+            Line.Row("Dark keys", "Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note: they neither play nor write"),
+            Line.Heading("Sketch"),
+            Line.Text("Listen-only tonal playground. Root/scale experiments stay local to this display; nothing writes notes or uses undo."),
+            Line.Row("$ud / $lr", "Settings, chords or notes / choose within the row"),
+            Line.Row("$edit or $listen hold", "Listen to a note or a repeating chord arpeggio; release to stop"),
+            Line.Row(k.held(Action.EDIT, dpad), "On settings: change root, scale, tonal channel, sound or octave"),
+            Line.Row(mark, "Use the pattern key again; local key settings never alter the pattern"),
+            Line.Row(channels, "Pulse 1, Pulse 2 or Wave; Noise has no tonal chord reference"),
+            Line.Text("Seven-note scales show their stacked-third triads (irregular stacks such as double harmonic's V are left out). Other scales show only triads made entirely of their notes. " +
+                "Chromatic offers all twelve notes; select a scale for chords. Degree labels use major-scale intervals (b3, #4, b6, b7)."),
+            Line.Text("Preview borrows the chosen channel while the other song channels continue. Arpeggios are a listening reference, not tempo-synced pattern data."),
+        )
+    }
 
     private fun effects(): List<Line> {
         val out = ArrayList<Line>()
@@ -205,7 +243,7 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
         val usedWaves = s.waveInstruments.map { it.wave }.toSet()
         out += Line.Row("Waves", "${s.waves.size} tables, ${usedWaves.size} assigned to sounds")
         out += Line.Row("Notes", "${Songs.noteName(0)} to ${Songs.noteName(Songs.NOTE_MAX)}")
-        out += Line.Row("Rows", "${Songs.ROWS} per pattern, ticks per row 1 to ${EditorSession.MAX_TICKS}")
+        out += Line.Row("Rows", "1 to ${Songs.ROWS} per pattern (L2+→ Length), ticks per row 1 to ${EditorSession.MAX_TICKS}")
         return out
     }
 

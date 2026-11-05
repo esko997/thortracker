@@ -37,6 +37,7 @@ class EditorSession(initial: Song) {
     var onSongChanged: ((Song) -> Unit)? = null
     var onStateChanged: (() -> Unit)? = null
     var onAudition: ((Int, Int, Int) -> Unit)? = null
+    var onAuditionSequence: ((Int, List<Int>, Int) -> Unit)? = null
     var onReleaseAudition: (() -> Unit)? = null
     var onTransport: ((Boolean) -> Unit)? = null
 
@@ -217,6 +218,12 @@ class EditorSession(initial: Song) {
         onAudition?.invoke(channel, note, instrument)
     }
 
+    /** A held, audition-only phrase; its host owns scheduling and cancels it on release. */
+    fun auditionSequence(channel: Int, notes: List<Int>, instrument: Int) {
+        if (notes.isEmpty() || notes.any { it !in 0..Songs.NOTE_MAX }) return
+        onAuditionSequence?.invoke(channel, notes, instrument)
+    }
+
     fun releaseAudition() { onReleaseAudition?.invoke() }
 
     fun transport(play: Boolean) { onTransport?.invoke(play) }
@@ -267,13 +274,16 @@ class EditorSession(initial: Song) {
 
     /**
      * Pastes the clipboard over the top of [pattern]. A whole copied pattern ([copyPattern]) also brings its
-     * editor-only scale, in the same undo step; other cell clips paste like [pasteCells] at row 0, channel 0.
+     * editor-only scale and its length, in the same undo step; rows past the pasted length stay hidden and
+     * untouched. Other cell clips paste like [pasteCells] at row 0, channel 0.
      */
     fun pastePattern(pattern: Int): Block? {
         val clip = clipboard as? Clip.Cells ?: run { note("Clipboard holds no pattern cells"); return null }
         val scale = clip.scale ?: return pasteCells(pattern, 0, 0)
-        val b = pasteBlock(pattern, clip, 0, 0) ?: return null
-        apply("Paste pattern") { s -> s.withPattern(pattern, pasted(s.patterns[pattern], clip, b).copy(scale = scale)) }
+        val b = Block(0, minOf(song.channelCount(), clip.width) - 1, 0, clip.height - 1)
+        apply("Paste pattern") { s ->
+            s.withPattern(pattern, pasted(s.patterns[pattern], clip, b).copy(scale = scale, length = clip.height))
+        }
         note("Pasted pattern into ${hex2(pattern)}")
         return b
     }
@@ -311,19 +321,19 @@ class EditorSession(initial: Song) {
         return Block(b.firstChannel, b.lastChannel, start, last)
     }
 
-    /** Inserts a blank row at [row] in the given channels; the last row falls off. */
+    /** Inserts a blank row at [row] in the given channels; the last played row falls off, hidden rows are untouched. */
     fun insertRow(pattern: Int, channels: IntRange, row: Int): Boolean = apply("Insert row") { s ->
         val p = s.patterns[pattern]
         s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t ->
-            if (c !in channels) t else (t.subList(0, row) + Cell() + t.subList(row, t.size - 1))
+            if (c !in channels) t else (t.subList(0, row) + Cell() + t.subList(row, p.length - 1) + t.subList(p.length, t.size))
         }))
     }
 
-    /** Deletes [row] in the given channels; a blank row enters at the bottom. */
+    /** Deletes [row] in the given channels; a blank row enters at the last played row, hidden rows are untouched. */
     fun deleteRow(pattern: Int, channels: IntRange, row: Int): Boolean = apply("Delete row") { s ->
         val p = s.patterns[pattern]
         s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t ->
-            if (c !in channels) t else (t.subList(0, row) + t.subList(row + 1, t.size) + Cell())
+            if (c !in channels) t else (t.subList(0, row) + t.subList(row + 1, p.length) + Cell() + t.subList(p.length, t.size))
         }))
     }
 
@@ -410,10 +420,10 @@ class EditorSession(initial: Song) {
         return index
     }
 
-    /** Copies a whole pattern, with its editor-only scale, to the cell clipboard. */
+    /** Copies a whole pattern's played rows, with its editor-only scale, to the cell clipboard. */
     fun copyPattern(pattern: Int) {
         val p = song.patterns[pattern]
-        clipboard = Clip.Cells(p.tracks, p.scale)
+        clipboard = Clip.Cells(p.tracks.map { it.subList(0, p.length) }, p.scale)
         note("Copied pattern ${hex2(pattern)}")
     }
 
@@ -422,6 +432,13 @@ class EditorSession(initial: Song) {
         if (scale.root !in 0..11) return false
         return apply("Set scale") { s -> s.withPattern(pattern, s.patterns[pattern].copy(scale = scale)) }
     }
+
+    /**
+     * Sets how many rows [pattern] plays (1..[Songs.ROWS]). Shortening hides later rows without clearing them;
+     * every order using the pattern changes with it.
+     */
+    fun setPatternLength(pattern: Int, length: Int): Boolean =
+        apply("Set pattern length") { s -> s.withPattern(pattern, s.patterns[pattern].copy(length = length.coerceIn(1, Songs.ROWS))) }
 
     /** The loop target follows its order when an order is inserted at or before it. */
     private fun shiftLoopForInsert(loop: Int, at: Int) = if (loop >= at) loop + 1 else loop
@@ -546,6 +563,15 @@ object Follow {
                     state.instrument = sel.instrument
                 }
             }
+            ViewKind.SKETCH -> {
+                state.order = sel.order
+                if (state.lockedSubject < 0 && Songs.channelKind(song, sel.channel) != InstrumentKind.NOISE) {
+                    state.channel = sel.channel
+                }
+                if (Songs.channelKind(song, state.channel.coerceIn(0, song.channelCount() - 1)) == sel.bank) {
+                    state.instrument = sel.instrument
+                }
+            }
             ViewKind.HELP -> Unit
         }
         if (state.lockedSubject >= 0) applyLock(state, song.channelCount())
@@ -553,7 +579,7 @@ object Follow {
         return state != before
     }
 
-    /** Holds a view on its locked subject: INSTRUMENT bank*16+slot, WAVE wave, PATTERN/KEYBOARD channel. */
+    /** Holds a view on its locked subject: INSTRUMENT bank*16+slot, WAVE wave, PATTERN/KEYBOARD/SKETCH channel. */
     fun applyLock(state: ViewState, channels: Int = Int.MAX_VALUE) {
         val s = state.lockedSubject
         if (s < 0) return
@@ -563,7 +589,7 @@ object Follow {
                 state.instrument = (s % 16).coerceIn(1, EditorSession.BANK_SIZE)
             }
             ViewKind.WAVE -> state.wave = s.coerceIn(0, 15)
-            ViewKind.PATTERN, ViewKind.KEYBOARD -> state.channel = s.coerceIn(0, channels - 1)
+            ViewKind.PATTERN, ViewKind.KEYBOARD, ViewKind.SKETCH -> state.channel = s.coerceIn(0, channels - 1)
             else -> Unit
         }
     }

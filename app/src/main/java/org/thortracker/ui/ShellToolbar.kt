@@ -15,12 +15,15 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import org.thortracker.editor.Action
+import org.thortracker.input.Control
+import org.thortracker.input.Keymap
 
 /**
  * The host's auto-hiding shell toolbar, laid over the top of the tracker so revealing it never moves
  * the grid. Hidden by default. A touch reveal (edge handle) hides itself after [TOUCH_TIMEOUT_MS] of
  * no touch on it; a controller reveal ([focusByController]) takes the logical controller cursor and
- * never times out, leaving only on B/Back, Select+Start or [hide]. Buttons stay ordinary,
+ * never times out, leaving only on Clear/Back, the toolbar control or [hide]. Buttons stay ordinary,
  * non-focusable [Button]s so Android focus remains on the tracker and they remain accessible by text.
  */
 @SuppressLint("ViewConstructor")
@@ -73,12 +76,22 @@ class ShellToolbar(context: Context, private val holdOpen: () -> Boolean) : Line
         addView(bar, LayoutParams(-1, dp(48)))
         addView(View(context).apply { setBackgroundColor(Palette.RULE) }, LayoutParams(-1, dp(1)))
         addView(hints, LayoutParams(-1, dp(26)))
-        hints.set(listOf("←→" to "Choose", "A" to "Press", "B" to "Back to editor", "Sel+Start" to "Hide"))
+        setKeys(Keymap.DEFAULT)
         addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
             val visibility = if (right - left >= dp(720)) VISIBLE else GONE
             wide.forEach { if (it.visibility != visibility) it.visibility = visibility }
             if (controllerFocused) post { moveCursor(0) }
         }
+    }
+
+    /** Names the current [keymap]'s buttons in the controller hint strip. */
+    fun setKeys(keymap: Keymap) {
+        hints.set(listOf(
+            keymap.pair(Action.LEFT, Action.RIGHT) to "Choose",
+            keymap.label(Action.EDIT) to "Press",
+            keymap.label(Action.CLEAR) to "Back to editor",
+            keymap.label(Control.TOOLBAR) to "Hide",
+        ))
     }
 
     /** Adds a button; [wideOnly] buttons hide on narrow displays (their actions remain in Menu). */

@@ -18,7 +18,8 @@ internal fun <T> List<T>.removed(index: Int): List<T> = toMutableList().also { i
 
 fun Song.channelCount(): Int = Songs.channelNames(this).size
 
-fun Song.rowCount(pattern: Int): Int = patterns[pattern].tracks.firstOrNull()?.size ?: Songs.ROWS
+/** Rows that play and are shown: the pattern's length; rows past it are hidden. */
+fun Song.rowCount(pattern: Int): Int = patterns[pattern].length
 
 fun Song.patternAt(order: Int): Int = orders[order.coerceIn(0, orders.size - 1)]
 
@@ -82,7 +83,8 @@ data class Block(val firstChannel: Int, val lastChannel: Int, val firstRow: Int,
 
 /**
  * Shared clipboard contents. Cell clips are channel-major, like [Pattern.tracks]; a whole copied pattern
- * also carries its editor-only [scale], which only a whole-pattern paste ([EditorSession.pastePattern]) applies.
+ * (its played rows) also carries its editor-only [scale], which only a whole-pattern paste
+ * ([EditorSession.pastePattern]) applies along with the clip's height as the pattern length.
  */
 sealed interface Clip {
     data class Cells(val tracks: List<List<Cell>>, val scale: Scale? = null) : Clip {

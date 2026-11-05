@@ -25,13 +25,24 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** One choice in an in-app popup. A null [action] dismisses the popup (back one level). */
-class PopupItem(val label: String?, val tone: Tone = Tone.PLAIN, val action: (() -> Unit)? = null) {
+/**
+ * One row of an in-app popup. A null [action] dismisses the popup (back one level). [value] is shown as a
+ * right-hand column (e.g. a key binding). A [heading] row only labels the rows below it and is never selected.
+ */
+class PopupItem(
+    val label: String?,
+    val tone: Tone = Tone.PLAIN,
+    val value: String? = null,
+    val heading: Boolean = false,
+    val action: (() -> Unit)? = null,
+) {
     enum class Tone { PLAIN, PRIMARY, DANGER }
 
     companion object {
         /** The leaving row: "Back" when a parent popup is underneath, otherwise "Cancel". */
         fun dismiss() = PopupItem(null)
+
+        fun heading(text: String) = PopupItem(text, heading = true)
     }
 }
 
@@ -41,20 +52,21 @@ class PopupText(initial: String, val maxLength: Int) {
 }
 
 /**
- * Content of one modal popup. [capture], when set, receives the next physical key press instead of
- * popup navigation (controller remapping). [selected] counts the text field (when present) as entry 0.
+ * Content of one modal popup. [capture], when set, receives every physical key press and release instead of
+ * popup navigation (controller rebinding). [selected] counts the text field (when present) as entry 0.
  */
 class PopupSpec(
     val title: String,
     val message: String? = null,
     val items: List<PopupItem>,
     val text: PopupText? = null,
-    val capture: ((Int) -> Unit)? = null,
+    val capture: ((code: Int, down: Boolean) -> Unit)? = null,
     selected: Int = 0,
 ) {
     internal var selected = selected
     internal val entries: Int get() = items.size + if (text != null) 1 else 0
     internal fun itemIndex(entry: Int) = entry - if (text != null) 1 else 0
+    internal fun selectable(entry: Int) = items.getOrNull(itemIndex(entry))?.heading != true
 }
 
 /**
@@ -77,11 +89,22 @@ class Popups(private val layers: (Int) -> PopupLayer?, private val displays: () 
     val isOpen: Boolean get() = stack.isNotEmpty()
     val top: PopupSpec? get() = stack.lastOrNull()
 
+    /** Controller bindings named in the popup's key hints. */
+    var keys: org.thortracker.input.Keymap = org.thortracker.input.Keymap.DEFAULT
+
     /** True while the top popup's text field holds Android focus, so typing keys must reach it. */
     val typing: Boolean get() = isOpen && layers(display)?.fieldFocused == true
 
     fun show(spec: PopupSpec, display: Int) {
         if (stack.isEmpty()) this.display = display
+        stack += spec
+        render()
+    }
+
+    /** Replaces the top popup in place (refreshed content), keeping its cursor where it was. */
+    fun replaceTop(spec: PopupSpec) {
+        val old = stack.removeLastOrNull() ?: return show(spec, display)
+        spec.selected = old.selected.coerceIn(0, spec.entries - 1)
         stack += spec
         render()
     }
@@ -114,7 +137,9 @@ class Popups(private val layers: (Int) -> PopupLayer?, private val displays: () 
     /** Runs entry [entry] of the top popup, as tapped or pressed with A. */
     fun choose(entry: Int) {
         val spec = top ?: return
-        spec.selected = entry.coerceIn(0, spec.entries - 1)
+        val target = entry.coerceIn(0, spec.entries - 1)
+        if (!spec.selectable(target)) return
+        spec.selected = target
         val index = spec.itemIndex(spec.selected)
         if (index < 0) { layers(display)?.focusField(); render(); return }
         val action = spec.items[index].action ?: return back()
@@ -151,9 +176,10 @@ class Popups(private val layers: (Int) -> PopupLayer?, private val displays: () 
     }
 
     private fun move(spec: PopupSpec, delta: Int) {
-        val next = (spec.selected + delta).coerceIn(0, spec.entries - 1)
+        var next = (spec.selected + delta).coerceIn(0, spec.entries - 1)
+        while (!spec.selectable(next) && next + delta in 0 until spec.entries) next += delta
         val layer = layers(display)
-        if (next == spec.selected) { layer?.page(delta); return }
+        if (next == spec.selected || !spec.selectable(next)) { layer?.page(delta); return }
         spec.selected = next
         layer?.select(next)
     }
@@ -305,19 +331,44 @@ class PopupLayer(context: Context) : FrameLayout(context) {
         }
         spec.items.forEachIndexed { index, item ->
             val entry = index + if (spec.text != null) 1 else 0
-            val row = Button(context).apply {
-                text = item.label ?: if (hasParent) "Back" else "Cancel"
-                isAllCaps = false; isFocusable = false; stateListAnimator = null
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                typeface = if (item.tone == PopupItem.Tone.PLAIN) REGULAR else BOLD
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                minHeight = dp(46); minimumHeight = dp(46)
-                setPadding(dp(20), 0, dp(18), 0)
-                background = RowBackground(density)
-                setOnClickListener { owner?.choose(entry) }
+            val row: View = when {
+                item.heading -> TextView(context).apply {
+                    text = item.label; typeface = BOLD; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(Palette.PLAYHEAD); setPadding(dp(20), dp(12), dp(18), dp(4))
+                }
+                item.value != null -> LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(46)
+                    setPadding(dp(20), 0, dp(18), 0)
+                    background = RowBackground(density)
+                    isClickable = true
+                    contentDescription = "${item.label}, ${item.value}"
+                    setOnClickListener { owner?.choose(entry) }
+                    addView(TextView(context).apply {
+                        text = item.label; typeface = REGULAR; setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); maxLines = 2
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(TextView(context).apply {
+                        text = item.value; typeface = BOLD; setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                        gravity = Gravity.CENTER; minWidth = dp(92)
+                        setPadding(dp(10), dp(4), dp(10), dp(4))
+                        background = GradientDrawable().apply { setColor(Palette.LANE); cornerRadius = dp(4).toFloat(); setStroke(dp(1), Palette.RULE) }
+                    }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
+                }
+                else -> Button(context).apply {
+                    text = item.label ?: if (hasParent) "Back" else "Cancel"
+                    isAllCaps = false; isFocusable = false; stateListAnimator = null
+                    gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                    typeface = if (item.tone == PopupItem.Tone.PLAIN) REGULAR else BOLD
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    minHeight = dp(46); minimumHeight = dp(46)
+                    setPadding(dp(20), 0, dp(18), 0)
+                    background = RowBackground(density)
+                    setOnClickListener { owner?.choose(entry) }
+                }
             }
             rows += row
-            body.addView(row, LinearLayout.LayoutParams(-1, dp(46)))
+            body.addView(row, LinearLayout.LayoutParams(-1, if (row is Button) dp(46) else -2))
         }
         body.addView(View(context), LinearLayout.LayoutParams(-1, dp(6)))
         scroll.scrollTo(0, 0)
@@ -334,22 +385,32 @@ class PopupLayer(context: Context) : FrameLayout(context) {
                     setStroke(dp(if (on || view.isFocused) 2 else 1), if (on) Palette.PLAYHEAD else Palette.RULE)
                 }
             } else {
-                val tone = spec.items[spec.itemIndex(index)].tone
+                val item = spec.items[spec.itemIndex(index)]
+                if (item.heading) return@forEachIndexed
                 (view.background as? RowBackground)?.let { it.selected = on; it.invalidateSelf() }
-                (view as TextView).setTextColor(when {
-                    tone == PopupItem.Tone.DANGER -> Palette.WRITE
+                val color = when {
+                    item.tone == PopupItem.Tone.DANGER -> Palette.WRITE
                     on -> Palette.TEXT
                     else -> Palette.mix(Palette.TEXT, Palette.DIM, 0.35f)
-                })
+                }
+                if (view is LinearLayout) {
+                    (view.getChildAt(0) as TextView).setTextColor(color)
+                    (view.getChildAt(1) as TextView).setTextColor(if (on) Palette.PLAYHEAD else Palette.TEXT)
+                } else (view as TextView).setTextColor(color)
             }
         }
+        val keys = owner?.keys ?: org.thortracker.input.Keymap.DEFAULT
         val onField = spec.text != null && entry == 0
         val leave = if (spec.items.any { it.action == null }) "Back" else "Close"
-        hints.set(buildList {
-            add("↑↓" to "Move")
-            add("A" to if (onField) (if (fieldFocused) "Keyboard" else "Type") else "Choose")
-            if (onField && fieldFocused) add("←→" to "Cursor")
-            add("B" to leave)
+        hints.set(if (spec.capture != null) listOf(
+            "Button" to "Bind it",
+            "Sel L2 R2 L3 +" to "Chord",
+            "Back" to "Cancel",
+        ) else buildList {
+            add(keys.pair(org.thortracker.editor.Action.UP, org.thortracker.editor.Action.DOWN) to "Move")
+            add(keys.label(org.thortracker.editor.Action.EDIT) to if (onField) (if (fieldFocused) "Keyboard" else "Type") else "Choose")
+            if (onField && fieldFocused) add(keys.pair(org.thortracker.editor.Action.LEFT, org.thortracker.editor.Action.RIGHT) to "Cursor")
+            add(keys.label(org.thortracker.editor.Action.CLEAR) to leave)
         })
         reveal(entry)
     }

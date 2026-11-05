@@ -16,6 +16,9 @@ import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
 import org.thortracker.model.Songs
 import org.thortracker.ui.TrackerView
+import org.thortracker.input.Binding
+import org.thortracker.input.Control
+import org.thortracker.input.Keymap
 import android.app.Activity
 import android.app.Instrumentation
 import android.content.IntentFilter
@@ -52,6 +55,8 @@ class ControllerWorkflowTest {
             SystemClock.sleep(40)
         }
         assertTrue("Actual audio initialization must complete", ready)
+        // Bindings persist in the app's prefs; every test starts from the documented defaults.
+        resetControls()
         instrumentation.runOnMainSync {
             tracker.session.replaceSong(Songs.demo())
             tracker.state.kind = ViewKind.PATTERN
@@ -69,8 +74,16 @@ class ControllerWorkflowTest {
     }
 
     @After fun tearDown() {
+        resetControls()
         instrumentation.runOnMainSync { activity.finish() }
         instrumentation.waitForIdleSync()
+    }
+
+    /** Restores default bindings through the app's own apply path (router, views and saved prefs together). */
+    private fun resetControls() {
+        val apply = MainActivity::class.java.getDeclaredMethod("applyKeymap", Keymap::class.java, String::class.java)
+            .apply { isAccessible = true }
+        instrumentation.runOnMainSync { apply.invoke(activity, Keymap.DEFAULT, null) }
     }
 
     @Test fun heldNoteAdjustmentIsOneUndoStep() {
@@ -126,7 +139,7 @@ class ControllerWorkflowTest {
         assertEquals(0, fromTop.row)
         tap(KeyEvent.KEYCODE_BUTTON_START)
         awaitPlayback(false)
-        chord(KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_START)
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_START)
         val fromCursor = awaitPlayback(true)
         assertEquals(1, fromCursor.order)
         assertEquals(40, fromCursor.row)
@@ -144,6 +157,22 @@ class ControllerWorkflowTest {
         }
         fail("Transport did not reach playing=$playing; last position=$position")
         return position
+    }
+
+    @Test fun l2RightTogglesThePatternPanelWithoutMovingTheCursor() {
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_DPAD_RIGHT)
+        instrumentation.runOnMainSync {
+            assertTrue(tracker.state.scalePanel)
+            assertEquals(0, tracker.state.field)
+            assertEquals(0, tracker.state.channel)
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_DPAD_RIGHT)
+        instrumentation.runOnMainSync { assertFalse(tracker.state.scalePanel) }
+        chord(KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_DPAD_RIGHT)
+        instrumentation.runOnMainSync {
+            assertFalse("Select+Right is no longer the panel shortcut", tracker.state.scalePanel)
+            assertEquals(1, tracker.state.field)
+        }
     }
 
     @Test fun openingMenuCancelsHeldEditModifier() {
@@ -176,14 +205,14 @@ class ControllerWorkflowTest {
             }), true)
         try {
             instrumentation.addMonitor(picker)
-            clickHostButton("File")
-            clickDialogItem("Save as…")
+            openFiles()
+            clickRow("Save as…")
             instrumentation.waitForIdleSync()
             assertEquals("Save as did not launch the document picker", 1, picker.hits)
             instrumentation.removeMonitor(picker)
-            clickHostButton("File")
-            clickDialogItem("New blank song")
-            clickDialogItem("Continue")
+            openFiles()
+            clickRow("New blank song")
+            clickRow("Continue")
             assertNotEquals(original.title, tracker.session.song.title)
             reader = thread(isDaemon = true) { bytes.set(destination.inputStream().use { it.readBytes() }) }
             reader.join(5000)
@@ -198,8 +227,8 @@ class ControllerWorkflowTest {
             probe.open(Uri.fromFile(destination)) { barrier.countDown() }
             assertTrue(barrier.await(5, TimeUnit.SECONDS))
             probe.close()
-            clickHostButton("File")
-            clickDialogItem("Save")
+            openFiles()
+            clickRow("Save")
             val deadline = SystemClock.elapsedRealtime() + 3000
             while (SystemClock.elapsedRealtime() < deadline &&
                 instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "org.thortracker" &&
@@ -214,6 +243,197 @@ class ControllerWorkflowTest {
                 tap(KeyEvent.KEYCODE_BACK)
             destination.delete()
         }
+    }
+
+    /** Rebinds through the real Controls screen with real key events, then exports, resets and imports the keymap. */
+    @Test fun controlsScreenRebindsChordsAndRoundTripsAKeymapFile() {
+        val apply = MainActivity::class.java.getDeclaredMethod("applyKeymap", Keymap::class.java, String::class.java)
+            .apply { isAccessible = true }
+        fun keymap(): Keymap { var k = Keymap.DEFAULT; instrumentation.runOnMainSync { k = tracker.keymap }; return k }
+        val l3b = Binding(KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_THUMBL)
+        val file = File(activity.cacheDir, "keymap-${System.nanoTime()}.json")
+        val exportMonitor = Instrumentation.ActivityMonitor(IntentFilter(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*")
+        }, Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { data = Uri.fromFile(file) }), true)
+        val importMonitor = Instrumentation.ActivityMonitor(IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*")
+        }, Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { data = Uri.fromFile(file) }), true)
+        instrumentation.runOnMainSync { apply.invoke(activity, Keymap.DEFAULT, null) }
+        try {
+            // Undo moves to the L3+B chord.
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Undo")
+            down(KeyEvent.KEYCODE_BUTTON_THUMBL); tap(KeyEvent.KEYCODE_BUTTON_B); up(KeyEvent.KEYCODE_BUTTON_THUMBL)
+            assertEquals(l3b, keymap().binding(Control.UNDO))
+            tap(KeyEvent.KEYCODE_MENU) // closes every popup
+            val before = tracker.session.song
+            down(KeyEvent.KEYCODE_BUTTON_A); tap(KeyEvent.KEYCODE_DPAD_RIGHT); up(KeyEvent.KEYCODE_BUTTON_A)
+            assertNotEquals(before, tracker.session.song)
+            down(KeyEvent.KEYCODE_BUTTON_THUMBL)
+            instrumentation.runOnMainSync { assertTrue(tracker.hints.contains("L3+B" to "Undo")) }
+            tap(KeyEvent.KEYCODE_BUTTON_B)
+            up(KeyEvent.KEYCODE_BUTTON_THUMBL)
+            assertEquals("L3+B must undo", before, tracker.session.song)
+
+            // Taking a chord from another control asks first and leaves that control unbound.
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Redo")
+            down(KeyEvent.KEYCODE_BUTTON_THUMBL); tap(KeyEvent.KEYCODE_BUTTON_B); up(KeyEvent.KEYCODE_BUTTON_THUMBL)
+            clickRow("Replace")
+            assertEquals(l3b, keymap().binding(Control.REDO))
+            assertEquals(null, keymap().binding(Control.UNDO))
+            // Edit can never be left without a button.
+            clickRow("Listen (hold)")
+            tap(KeyEvent.KEYCODE_BUTTON_A)
+            clickRow("OK")
+            assertEquals(Keymap.DEFAULT.binding(Control.AUDITION), keymap().binding(Control.AUDITION))
+            assertEquals(Keymap.DEFAULT.binding(Control.EDIT), keymap().binding(Control.EDIT))
+
+            instrumentation.addMonitor(exportMonitor)
+            clickRow("Export keymap…")
+            awaitTrue("keymap export") { file.exists() && file.readText().contains("\"REDO\": \"L3+B\"") }
+            instrumentation.removeMonitor(exportMonitor)
+
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Reset all to defaults")
+            clickRow("Reset")
+            assertEquals(Keymap.DEFAULT, keymap())
+            tap(KeyEvent.KEYCODE_MENU)
+
+            instrumentation.addMonitor(importMonitor)
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Import keymap…")
+            awaitTrue("keymap import") { keymap().binding(Control.REDO) == l3b }
+            assertEquals(null, keymap().binding(Control.UNDO))
+        } finally {
+            instrumentation.removeMonitor(exportMonitor)
+            instrumentation.removeMonitor(importMonitor)
+            instrumentation.runOnMainSync { apply.invoke(activity, Keymap.DEFAULT, null) }
+            file.delete()
+        }
+    }
+
+    /** Files through the app menu: the toolbar's File button is hidden on narrow single displays. */
+    private fun openFiles() {
+        tap(KeyEvent.KEYCODE_MENU)
+        clickRow("Files")
+    }
+    /** Polls [condition] from the test thread; conditions touching app state use runOnMainSync themselves. */
+    private fun awaitTrue(what: String, condition: () -> Boolean) {
+        val deadline = SystemClock.elapsedRealtime() + 5000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (condition()) return
+            SystemClock.sleep(20)
+        }
+        fail("$what did not complete")
+    }
+
+    /**
+     * Clicks a row of the visible in-app popup by its exact text, like a tap. Searches only the popup layer, so
+     * toolbar buttons with the same label are never hit, and rows scrolled out of view still work. Uses the
+     * view hierarchy rather than accessibility, which some vendor builds (Retroid) report unreliably.
+     */
+    private fun clickRow(text: String) {
+        instrumentation.waitForIdleSync()
+        fun popups(v: View): List<View> = when {
+            v is org.thortracker.ui.PopupLayer -> if (v.visibility == View.VISIBLE) listOf(v) else emptyList()
+            v is ViewGroup -> (0 until v.childCount).flatMap { popups(v.getChildAt(it)) }
+            else -> emptyList()
+        }
+        fun row(v: View): View? {
+            if (v is android.widget.TextView && v.text?.toString() == text) {
+                return if (v.isClickable) v else (v.parent as? android.widget.LinearLayout)?.takeIf { it.isClickable }
+            }
+            if (v is ViewGroup) for (i in 0 until v.childCount) row(v.getChildAt(i))?.let { return it }
+            return null
+        }
+        val deadline = SystemClock.elapsedRealtime() + 3000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            var clicked = false
+            instrumentation.runOnMainSync {
+                popups(activity.window.decorView).firstNotNullOfOrNull { row(it) }?.let { it.performClick(); clicked = true }
+            }
+            if (clicked) { instrumentation.waitForIdleSync(); return }
+            SystemClock.sleep(20)
+        }
+        fail("Row not found: $text")
+    }
+
+    @Test fun sketchArpeggioRepeatsWithoutWritingAndCancelsAtReleaseOrMenu() {
+        val original = tracker.session.song
+        val audioField = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
+        val engine = audioField.get(activity) as org.thortracker.audio.HugeAudio
+        val sounded = mutableListOf<Int>()
+        instrumentation.runOnMainSync {
+            audioField.set(activity, object : org.thortracker.audio.TrackerAudio by engine {
+                override fun audition(channel: Int, note: Int, instrument: Int) {
+                    sounded += note
+                    engine.audition(channel, note, instrument)
+                }
+            })
+            tracker.state.sketchScale = null
+            tracker.state.sketchField = 0
+            tracker.state.sketchRow = 1
+            tracker.state.sketchChord = 0
+            tracker.state.octave = 4
+        }
+        clickHostButton("Pattern")
+        clickRow("Sketch")
+        // View selection leaves the controller in the revealed toolbar until Back returns it to the editor.
+        tap(KeyEvent.KEYCODE_BACK)
+        assertEquals(ViewKind.SKETCH, tracker.state.kind)
+        // Start from the demo's chromatic guide and choose C major with the actual field controls.
+        tap(KeyEvent.KEYCODE_DPAD_UP)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_DPAD_DOWN)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        val before = awaitPlayback(true)
+        down(KeyEvent.KEYCODE_BUTTON_X)
+        val deadline = SystemClock.uptimeMillis() + 4000
+        var count = 0
+        while (count < 6 && SystemClock.uptimeMillis() < deadline) {
+            instrumentation.runOnMainSync { count = sounded.size }
+            SystemClock.sleep(20)
+        }
+        var phrase = emptyList<Int>()
+        instrumentation.runOnMainSync { phrase = sounded.toList() }
+        assertTrue("Held chord must repeat", phrase.size >= 6)
+        assertEquals(listOf(12, 16, 19, 12, 16, 19), phrase.take(6))
+        up(KeyEvent.KEYCODE_BUTTON_X)
+        instrumentation.runOnMainSync { count = sounded.size }
+        SystemClock.sleep(450)
+        instrumentation.runOnMainSync {
+            assertEquals("Released arpeggio must not retrigger", count, sounded.size)
+            assertFalse(tracker.controller.sketchAuditioning)
+            assertEquals(original, tracker.session.song)
+            assertFalse(tracker.session.canUndo)
+        }
+        val after = awaitPlayback(true)
+        assertEquals(before.order, after.order)
+        assertTrue("Preview must not restart song playback", after.row > before.row)
+        assertTrue(engine.diagnostics().getValue("lastAuditionPrepNs") > 0)
+        assertEquals(0L, engine.diagnostics().getValue("driverFaults"))
+        assertNull(engine.error())
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_MENU)
+        instrumentation.runOnMainSync { count = sounded.size }
+        SystemClock.sleep(450)
+        instrumentation.runOnMainSync {
+            assertEquals("Menu must cancel the held arpeggio even without key-up", count, sounded.size)
+            assertFalse(tracker.controller.sketchAuditioning)
+        }
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_BACK)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(false)
+        instrumentation.runOnMainSync { audioField.set(activity, engine) }
     }
 
     private fun clickHostButton(text: String) {
@@ -231,29 +451,6 @@ class ControllerWorkflowTest {
             button.performClick()
         }
         instrumentation.waitForIdleSync()
-    }
-
-    private fun clickDialogItem(text: String) {
-        instrumentation.uiAutomation.waitForIdle(250, 3000)
-        val deadline = SystemClock.elapsedRealtime() + 3000
-        while (SystemClock.elapsedRealtime() < deadline) {
-            val node = instrumentation.uiAutomation.rootInActiveWindow
-                ?.findAccessibilityNodeInfosByText(text)
-                ?.firstOrNull { it.text?.toString()?.equals(text, ignoreCase = true) == true }
-            if (node != null) {
-                val bounds = Rect().also(node::getBoundsInScreen)
-                val now = SystemClock.uptimeMillis()
-                for (action in intArrayOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
-                    val event = MotionEvent.obtain(now, now, action, bounds.exactCenterX(), bounds.exactCenterY(), 0)
-                    try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
-                }
-                instrumentation.waitForIdleSync()
-                instrumentation.uiAutomation.waitForIdle(250, 3000)
-                return
-            }
-            SystemClock.sleep(20)
-        }
-        fail("Dialog item not found: $text")
     }
 
     private fun down(code: Int) {

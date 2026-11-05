@@ -1,14 +1,15 @@
 package org.thortracker.editor
 
 import org.thortracker.model.InstrumentKind
+import org.thortracker.model.Scale
 
-enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, HELP }
+enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
 
 /**
  * Navigation state of one display. Each view kind keeps its own cursor fields so switching a display
  * between kinds (or swapping displays) preserves where the user was.
  *
- * lockedSubject: INSTRUMENT = bank * 16 + slot, WAVE = wave index, PATTERN/KEYBOARD = channel, -1 = none.
+ * lockedSubject: INSTRUMENT = bank * 16 + slot, WAVE = wave index, PATTERN/KEYBOARD/SKETCH = channel, -1 = none.
  */
 data class ViewState(
     var kind: ViewKind = ViewKind.PATTERN,
@@ -45,6 +46,12 @@ data class ViewState(
     /** Pattern view: the root/scale panel is open; [scaleField] 0 = root, 1 = scale. Not persisted. */
     var scalePanel: Boolean = false,
     var scaleField: Int = 0,
+    /** Null follows the pattern key; a local exploration never changes the musical document. */
+    var sketchScale: Scale? = null,
+    var sketchRow: Int = 1,
+    var sketchField: Int = 0,
+    var sketchChord: Int = 0,
+    var sketchTone: Int = 0,
     /**
      * Pattern view: the cell (see [ViewController.cellKey]) whose stored 000 the user explicitly picked as
      * effect 0 (arpeggio) and is still on; -1 = none. Display only: 000 stays "no effect" in the song. Not persisted.

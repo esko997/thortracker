@@ -3,6 +3,7 @@ package org.thortracker.ui
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.cellAt
@@ -328,7 +329,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
 
     /** Rightmost first: the pattern scale, then follow playback, entry step, octave. */
     private fun chips(): List<Pair<String, Int>> = listOf(
-        "Scale ${ctl.patternScale.label}" to 3,
+        "Scale ${ctl.patternScale.label}" + (if (ctl.patternLength < Songs.ROWS) " · ${ctl.patternLength} rows" else "") to 3,
         (if (st.followPlayback) "Follows playback" else "Stays put during playback") to 0,
         "Step ${session.step}" to 1,
         "Octave ${st.octave}" to 2,
@@ -429,7 +430,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             }
         } else if (st.field >= 2) {
             val info = Songs.effectsFor(s, ch)
-            ink.label(c, "Effects (hold A to pick)", x, y, line, Palette.DIM)
+            ink.label(c, "Effects (hold ${v.keymap.label(Action.EDIT)} to pick)", x, y, line, Palette.DIM)
             y += line
             ink.label(c, "· No effect", x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
             y += line * 0.8f
@@ -499,6 +500,9 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     private val rootKeys = Array(12) { RectF() }
     private val rootRow = RectF()
     private val scaleRow = RectF()
+    private val lengthRow = RectF()
+    private val lengthPrev = RectF()
+    private val lengthNext = RectF()
     private val scalePrev = RectF()
     private val scaleNext = RectF()
     private val scaleDone = RectF()
@@ -521,13 +525,14 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         if (textW != panelNoteWidth) {
             panelNoteWidth = textW
             panelNote = wrap("Pulse and Wave note edits land only on scale notes; Noise keeps every pitch. " +
-                "Written notes stay until you edit them, and nothing here is exported or heard.", textW, small)
+                "Written notes stay until you edit them; the scale is not exported or heard. Length sets how many rows " +
+                "every order using this pattern plays; later rows are hidden, not deleted.", textW, small)
         }
         val titleH = u * 1.9f
         val keyH = u * 2.6f
         val lineH = u * 2.1f
         val noteH = u * 1.1f
-        val h = pad + titleH + keyH + u * 0.4f + lineH + u * 0.5f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
+        val h = pad + titleH + keyH + u * 0.4f + (lineH + u * 0.3f) * 2 + u * 0.2f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
         val left = area.right - w - u * 0.5f
         val top = (headerBottom + u * 0.3f).coerceAtMost(maxOf(area.top, area.bottom - h))
         val panel = RectF(left, top, left + w, top + h)
@@ -537,7 +542,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
 
         val x = left + pad
         var y = top + pad * 0.6f
-        ink.label(c, "Pattern ${hex2(song.patternAt(st.order))} scale", x, y, titleH, Palette.TEXT, true)
+        ink.label(c, "Pattern ${hex2(song.patternAt(st.order))}", x, y, titleH, Palette.TEXT, true)
         ink.label(c, ink.fit(scale.label, textW * 0.5f, bold = true), panel.right - pad, y, titleH, Palette.PLAYHEAD, true, align = Paint.Align.RIGHT)
         y += titleH
 
@@ -577,6 +582,21 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         ink.label(c, "▶", scaleNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
         ink.label(c, ink.fit(scale.kind.label, scaleNext.left - scalePrev.right - u * 0.6f), (scalePrev.right + scaleNext.left) / 2f, y, lineH,
             Palette.TEXT, true, align = Paint.Align.CENTER)
+        y += lineH + u * 0.3f
+
+        // Length: previous / rows / next.
+        lengthRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
+        focusRow(c, lengthRow, 2)
+        ink.label(c, "Length", x, y, lineH, Palette.DIM)
+        lengthPrev.set(stripL, y + lineH * 0.12f, stripL + bw, y + lineH * 0.88f)
+        lengthNext.set(panel.right - pad - bw, lengthPrev.top, panel.right - pad, lengthPrev.bottom)
+        ink.round(c, lengthPrev, ink.dp(4f), Palette.RULE)
+        ink.round(c, lengthNext, ink.dp(4f), Palette.RULE)
+        ink.label(c, "◀", lengthPrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
+        ink.label(c, "▶", lengthNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
+        val len = ctl.patternLength
+        ink.label(c, if (len < Songs.ROWS) "$len rows" else "$len rows (full)", (lengthPrev.right + lengthNext.left) / 2f, y, lineH,
+            if (len < Songs.ROWS) Palette.PLAYHEAD else Palette.TEXT, true, align = Paint.Align.CENTER)
         y += lineH + u * 0.5f
 
         for (part in panelNote) {
@@ -588,7 +608,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         scaleDone.set(panel.right - pad - doneW, y + lineH * 0.1f, panel.right - pad, y + lineH * 0.9f)
         ink.round(c, scaleDone, ink.dp(4f), Palette.alpha(Palette.PLAYHEAD, 60))
         ink.label(c, "Done", scaleDone.centerX(), y, lineH, Palette.PLAYHEAD, true, small, Paint.Align.CENTER)
-        ink.label(c, "A done  B reset", x, y, lineH, Palette.FAINT, size = small)
+        ink.label(c, "${v.keymap.label(Action.EDIT)} done  ${v.keymap.label(Action.CLEAR)} reset", x, y, lineH, Palette.FAINT, size = small)
         return panel
     }
 
@@ -667,9 +687,12 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                     key >= 0 -> ctl.stepScale(0, key - ctl.patternScale.root)
                     scalePrev.contains(x, y) -> ctl.stepScale(1, -1)
                     scaleNext.contains(x, y) -> ctl.stepScale(1, 1)
+                    lengthPrev.contains(x, y) -> ctl.stepLength(-1)
+                    lengthNext.contains(x, y) -> ctl.stepLength(1)
                     scaleDone.contains(x, y) -> ctl.closeScalePanel()
                     rootRow.contains(x, y) -> st.scaleField = 0
                     scaleRow.contains(x, y) -> st.scaleField = 1
+                    lengthRow.contains(x, y) -> st.scaleField = 2
                 }
             }
         }
