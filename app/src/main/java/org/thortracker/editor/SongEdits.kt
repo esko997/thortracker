@@ -4,6 +4,7 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Pattern
+import org.thortracker.model.Scale
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 
@@ -79,9 +80,12 @@ data class Block(val firstChannel: Int, val lastChannel: Int, val firstRow: Int,
     }
 }
 
-/** Shared clipboard contents. Cell clips are channel-major, like [Pattern.tracks]. */
+/**
+ * Shared clipboard contents. Cell clips are channel-major, like [Pattern.tracks]; a whole copied pattern
+ * also carries its editor-only [scale], which only a whole-pattern paste ([EditorSession.pastePattern]) applies.
+ */
 sealed interface Clip {
-    data class Cells(val tracks: List<List<Cell>>) : Clip {
+    data class Cells(val tracks: List<List<Cell>>, val scale: Scale? = null) : Clip {
         val width: Int get() = tracks.size
         val height: Int get() = tracks.firstOrNull()?.size ?: 0
     }

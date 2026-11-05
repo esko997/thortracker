@@ -25,6 +25,7 @@ object SongValidator {
         if (song.patterns.isEmpty()) out += "The song has no patterns; add one"
         song.patterns.forEachIndexed { p, pattern ->
             val label = Songs.patternLabel(song, p)
+            if (pattern.scale.root !in 0..11) out += "${label.cap()} has scale root ${pattern.scale.root}; roots are 0-11 (C-B)"
             if (pattern.tracks.size != channels) {
                 out += "${label.cap()} has ${pattern.tracks.size} channels; GB/hUGE patterns have $channels"
                 return@forEachIndexed
@@ -145,7 +146,7 @@ object SongValidator {
 
     /**
      * Notes without an instrument are legato in hUGEDriver 6.1.3: `res 7` clears the trigger bit and the
-     * instrument's NRx2/NR32 is not reloaded. After a cut (note_cut zeroes NRx2/NR32) or before any instrument
+     * instrument's NRx2/NR32 is not reloaded. After an OFF (note_cut zeroes NRx2/NR32) or before any instrument
      * has played, such a note is silent. Follows the order list in sequence (jumps are not simulated); patterns
      * outside the order list start from an unknown state. One message per cell.
      */
@@ -184,7 +185,7 @@ object SongValidator {
             }
             val y = cell.param and 0xF
             when {
-                cell.note == Cell.CUT -> state.silencedBy = "the cut on $where"
+                cell.note == Cell.CUT -> state.silencedBy = "the OFF on $where"
                 cell.effect == HugeRules.FX_NOTE_CUT && cell.param < song.ticksPerRow ->
                     state.silencedBy = "the ${HugeRules.effectText(cell.effect, cell.param)} cut on $where"
                 // Wave Cxy rewrites NR32; Pulse/Noise Cxy restarts only if the last note carried the trigger bit.

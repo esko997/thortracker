@@ -1,12 +1,11 @@
 package org.thortracker
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Presentation
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -15,15 +14,15 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Display
+import android.text.TextUtils
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
+import android.widget.FrameLayout
 import android.widget.TextView
 import org.thortracker.audio.HugeAudio
 import org.thortracker.audio.TrackerAudio
@@ -36,7 +35,17 @@ import org.thortracker.model.Songs
 import org.thortracker.model.SongValidator
 import org.thortracker.storage.ProjectStore
 import org.thortracker.storage.WorkspaceStore
+import org.thortracker.ui.HostInput
+import org.thortracker.ui.Palette
+import org.thortracker.ui.PopupItem
+import org.thortracker.ui.PopupLayer
+import org.thortracker.ui.PopupSpec
+import org.thortracker.ui.PopupText
+import org.thortracker.ui.Popups
+import org.thortracker.ui.ShellToolbar
+import org.thortracker.ui.ToolbarHandle
 import org.thortracker.ui.TrackerView
+import org.thortracker.ui.hideFromAccessibility
 
 /** Two display hosts, one document. Musical edits and driver state never live here. */
 class MainActivity : Activity(), DisplayManager.DisplayListener {
@@ -47,6 +56,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private lateinit var displays: DisplayManager
     private val main = Handler(Looper.getMainLooper())
     private val hosts = mutableMapOf<Int, Host>()
+    private val popups = Popups({ hosts[it]?.popup }, { hosts.keys })
+    private val input = HostInput()
     private var secondary: Presentation? = null
     private var audio: TrackerAudio? = null
     private var hasAudioFocus = false
@@ -78,10 +89,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private var documentGeneration = 0L
     private var pickerGeneration: Long? = null
     private var statusMessage = "Loading project…"
+    private var flashedStatus: String? = null
     private var remappings = mutableMapOf<Int, Int>()
-    private var captureKey: ((Int) -> Unit)? = null
     private var pickerSong: Song? = null
-    private var dialog: AlertDialog? = null
+    /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
     private var awaitingTransportUntil = 0L
     private var requestedPlaying = false
@@ -96,7 +107,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 hosts.values.forEach { it.transport.text = if (requestedPlaying) "Stop" else "Play" }
                 main.postDelayed(this, 32)
             } else hosts.values.forEach { it.transport.text = "Play" }
-            audio?.error()?.let { error -> hosts.values.forEach { it.status.text = error } }
+            if (audio?.error() != null) updateStatus()
         }
     }
 
@@ -119,7 +130,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             audio?.update(song)
             if (documentReady) {
                 projectStore.autosave(song)
-                statusMessage = "Working copy"
+                statusMessage = WORKING
             }
             refresh()
             scheduleAudioFeedback()
@@ -130,7 +141,19 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             scheduleAudioFeedback()
         }
         session.onReleaseAudition = { audio?.releaseAudition() }
-        session.onTransport = { start -> if (start) startPlayback(true) else stopPlayback() }
+        // The Song view's "play this order" publishes the order it means; play exactly that selection.
+        session.onTransport = { start ->
+            if (start) session.selection.let { startPlayback(it.order, it.row) } else stopPlayback()
+        }
+        popups.onOpenChanged = { open ->
+            if (open) {
+                hosts.values.forEach { it.tracker.cancelInteraction() }
+            } else {
+                hosts.values.forEach { it.tracker.requestFocus() }
+                hideSystemBars()
+            }
+            refresh()
+        }
         displays = getSystemService(DisplayManager::class.java)
         displays.registerDisplayListener(this, main)
         buildPrimary()
@@ -144,7 +167,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             try {
                 audio = HugeAudio(applicationContext).also { it.update(session.song) }
                 initialized = true
-                statusMessage = if (recovered != null) "Recovered working project" else "Demo loaded · File → New for a blank song"
+                statusMessage = if (recovered != null) "Recovered working project"
+                else "Demo loaded. For a blank song choose Menu, Files, New blank song"
             } catch (e: Exception) {
                 statusMessage = "Audio unavailable"
                 showError("Audio initialization failed: ${e.message}")
@@ -159,7 +183,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 else rejectUnrecoveredWrite()
             }
             refresh()
-            hosts.values.forEach { it.tracker.requestFocus() }
+            if (!popups.isOpen) hosts.values.forEach { it.tracker.requestFocus() }
         }
     }
 
@@ -189,7 +213,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     override fun onPause() {
         active = false
-        hosts.values.forEach { it.tracker.cancelInteraction() }
+        // Key-ups for anything held now may never arrive.
+        input.reset()
+        if (popups.dropCaptures()) statusMessage = "Remapping cancelled"
+        hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
         audio?.stop()
@@ -213,7 +240,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         detachSecondary()
         audio?.close()
         projectStore.close()
-        dialog?.dismiss()
+        popups.onOpenChanged = null
+        popups.closeAll()
         super.onDestroy()
     }
 
@@ -250,10 +278,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                     hosts[1] = host
                     setContentView(host.root)
                 }
-                override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-                    if (dialog?.isShowing == true) return super.dispatchKeyEvent(event)
-                    return routeKey(event, 1) || super.dispatchKeyEvent(event)
-                }
+                override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+                    routeKey(event) || super.dispatchKeyEvent(event)
             }
             presentation.setOnDismissListener {
                 if (secondary === presentation) {
@@ -264,7 +290,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             }
             secondary = presentation
             presentation.show()
-            hosts[1]?.tracker?.requestFocus()
+            if (!popups.isOpen) hosts[1]?.tracker?.requestFocus()
             refresh()
         } catch (e: WindowManager.InvalidDisplayException) {
             detachSecondary()
@@ -275,8 +301,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     }
 
     private fun detachSecondary() {
-        if (modalDisplay == 1) dialog?.dismiss()
-        hosts.remove(1)?.tracker?.cancelInteraction()
+        hosts.remove(1)?.let { it.tracker.cancelInteraction(); it.toolbar.hide() }
+        // Popups shown there continue on the primary display with their callbacks intact, except a
+        // pending button capture: the user can no longer see that prompt, so it must not take a key.
+        if (popups.isOpen && popups.display == 1 && popups.dropCaptures()) statusMessage = "Remapping cancelled"
+        popups.rehome()
+        if (modalDisplay == 1) modalDisplay = 0
         val old = secondary
         secondary = null
         old?.dismiss()
@@ -286,55 +316,93 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     override fun onDisplayRemoved(displayId: Int) = updateSecondary()
     override fun onDisplayChanged(displayId: Int) = updateSecondary()
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (dialog?.isShowing == true) return super.dispatchKeyEvent(event)
-        return routeKey(event, 0) || super.dispatchKeyEvent(event)
-    }
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = routeKey(event) || super.dispatchKeyEvent(event)
 
-    private fun routeKey(original: KeyEvent, inputHost: Int): Boolean {
-        if (!documentReady || !active) return true
-        modalDisplay = inputHost
-        captureKey?.let { callback ->
-            if (original.action == KeyEvent.ACTION_DOWN && original.repeatCount == 0) {
-                captureKey = null
-                callback(original.keyCode)
-            }
+    /**
+     * Every key from either window. Layers in order: remap capture, open popup, host chords and global
+     * keys, the controller-focused toolbar, then the controller-focused editor. Returns false only for
+     * keys the window itself should handle (system keys, typing into a popup's text field).
+     */
+    private fun routeKey(original: KeyEvent): Boolean {
+        if (!active) return true
+        val action = original.action
+        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return !popups.typing
+        val down = action == KeyEvent.ACTION_DOWN
+        val repeat = original.repeatCount
+        val code = remappings[original.keyCode] ?: original.keyCode
+        popups.top?.capture?.let { capture ->
+            if (down && repeat == 0) capture(original.keyCode)
+            else if (!down) input.route(code, false, 0, true, false)
             return true
         }
-        val code = remappings[original.keyCode] ?: original.keyCode
-        val event = if (code == original.keyCode) original else KeyEvent(original.downTime, original.eventTime,
-            original.action, code, original.repeatCount, original.metaState, original.deviceId,
-            original.scanCode, original.flags, original.source)
-        when (code) {
-            KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_SPACE -> {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) toggleTransport()
-                return true
-            }
-            KeyEvent.KEYCODE_BUTTON_THUMBR -> {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) switchFocus()
-                return true
-            }
-            KeyEvent.KEYCODE_BUTTON_MODE, KeyEvent.KEYCODE_MENU,
-            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    appMenu()
+        if (!documentReady && !popups.isOpen) return true
+        return when (val route = input.route(code, down, repeat, popups.isOpen, toolbarFocused())) {
+            is HostInput.Route.Run -> { run(route.command); true }
+            is HostInput.Route.Deliver -> when (route.target) {
+                HostInput.Target.NONE -> true
+                HostInput.Target.POPUP -> popups.handleKey(code, down, repeat)
+                HostInput.Target.TOOLBAR -> hosts[focus]?.toolbar?.handleKey(code, down, repeat) ?: true
+                HostInput.Target.EDITOR -> {
+                    if (!documentReady) return true
+                    val event = if (code == original.keyCode) original else KeyEvent(original.downTime, original.eventTime,
+                        action, code, repeat, original.metaState, original.deviceId,
+                        original.scanCode, original.flags, original.source)
+                    hosts[focus]?.tracker?.handleController(event) ?: false
                 }
-                return true
             }
         }
-        return hosts[focus]?.tracker?.handleController(event) ?: false
     }
 
-    private fun toggleTransport() {
-        if (requestedPlaying) stopPlayback() else startPlayback(true)
+    private fun run(command: HostInput.Command) {
+        if (!documentReady) return
+        when (command) {
+            HostInput.Command.UNDO -> editAction(Action.UNDO)
+            HostInput.Command.REDO -> editAction(Action.REDO)
+            HostInput.Command.SWAP -> swap()
+            HostInput.Command.TOOLBAR -> toggleToolbar()
+            HostInput.Command.PLAY_PATTERN -> toggleTransport(fromCursor = false)
+            HostInput.Command.PLAY_CURSOR -> toggleTransport(fromCursor = true)
+            HostInput.Command.FOCUS -> switchFocus()
+            HostInput.Command.MENU -> { modalDisplay = focus; appMenu() }
+        }
     }
 
-    private fun startPlayback(fromSelection: Boolean) {
+    private fun toolbarFocused(): Boolean = hosts[focus]?.toolbar?.controllerFocused == true
+
+    /** Select+Start: the focused display's toolbar takes the controller cursor, or hands it back. */
+    private fun toggleToolbar() {
+        val toolbar = hosts[focus]?.toolbar ?: return
+        if (toolbar.controllerFocused) toolbar.hide()
+        else {
+            hosts.values.forEach { it.tracker.cancelInteraction() }
+            toolbar.focusByController()
+        }
+        refresh()
+    }
+
+    private fun setFocus(index: Int) {
+        val next = if (hosts.containsKey(index)) index else 0
+        if (next != focus) hosts[focus]?.toolbar?.takeIf { it.controllerFocused }?.hide()
+        focus = next
+        workspace.save(states, focus)
+        refresh()
+    }
+
+    /** Stopping is unconditional; starting plays the focused editor's order from row 0 or its cursor. */
+    private fun toggleTransport(fromCursor: Boolean) {
+        if (requestedPlaying) return stopPlayback()
+        // Two pattern views may sit at different places; the focused one is where the user is working.
+        val state = states[focus]
+        val selection = session.selection
+        val (order, row) = if (state.kind == ViewKind.PATTERN) state.order to state.row else selection.order to selection.row
+        startPlayback(order, if (fromCursor) row else 0)
+    }
+
+    private fun startPlayback(order: Int, row: Int) {
         val engine = audio ?: return showError("Audio is not ready yet")
         if (!requestAudioFocus()) return
-        val selected = session.selection
         requestedPlaying = true
-        engine.play(if (fromSelection) selected.order else 0, if (fromSelection) selected.row else 0)
+        engine.play(order.coerceIn(0, session.song.orders.size - 1), maxOf(0, row))
         awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + 1500
         main.removeCallbacks(tick)
         main.post(tick)
@@ -370,14 +438,30 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             host.tracker.controllerFocused = index == focus
             host.tracker.visibility = if (documentReady) View.VISIBLE else View.INVISIBLE
             host.tracker.refresh()
-            host.heading.text = if (index == focus) "● ${session.song.title}" else session.song.title
-            host.heading.setTextColor(if (index == focus) ACCENT else MUTED)
+            host.toolbar.heading.text = if (index == focus) "● ${session.song.title}" else session.song.title
+            host.toolbar.heading.setTextColor(if (index == focus) Palette.PLAYHEAD else Palette.DIM)
             host.viewButton.text = state.kind.name.lowercase().replaceFirstChar { it.uppercase() }
             host.pin.text = if (state.pinned) "Pinned" else "Context"
+            host.focusButton.visibility = if (hosts.size > 1) View.VISIBLE else View.GONE
             host.transport.isEnabled = initialized
             host.transport.text = if (requestedPlaying) "Stop" else "Play"
-            host.status.text = audio?.error() ?: statusMessage
+            host.toolbar.repaint()
+            val popupHere = popups.isOpen && popups.display == index
+            host.handle.visibility = if (documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
+            host.setModal(popupHere)
         }
+        updateStatus()
+    }
+
+    /** Status lives in the (usually hidden) toolbar; a new message also flashes a chip on each display. */
+    private fun updateStatus() {
+        val message = audio?.error() ?: statusMessage
+        hosts.values.forEach { if (it.toolbar.status.text.toString() != message) it.toolbar.status.text = message }
+        if (!documentReady) { hosts.values.forEach { it.flash(message, sticky = true) }; return }
+        if (message == WORKING) { flashedStatus = null; return }
+        if (message == flashedStatus) return
+        flashedStatus = message
+        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = false) else it.flash(null, false) }
     }
 
     private fun scheduleAudioFeedback() {
@@ -385,20 +469,47 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         main.postDelayed(audioFeedback, 100)
     }
 
-    private fun switchFocus() {
-        focus = if (hosts.containsKey(1)) 1 - focus else 0
-        workspace.save(states, focus)
-        refresh()
-    }
+    private fun switchFocus() = setFocus(if (hosts.containsKey(1)) 1 - focus else 0)
 
     private fun swap() {
         hosts.values.forEach { it.tracker.cancelInteraction() }
         val first = states[0]
         states[0] = states[1]
         states[1] = first
+        statusMessage = if (hosts.containsKey(1)) "Displays swapped" else "Showing the other saved view"
         workspace.save(states, focus)
         refresh()
     }
+
+    /** Menu route: the originating display shows the Song view with its tempo row under the cursor. */
+    private fun showSongDetails() {
+        val index = if (hosts.containsKey(modalDisplay)) modalDisplay else focus
+        val host = hosts[index] ?: return
+        hosts.values.forEach { it.toolbar.takeIf { t -> t.controllerFocused }?.hide() }
+        host.tracker.cancelInteraction()
+        focus = index
+        val state = states[index]
+        state.switchKind(ViewKind.SONG)
+        state.pinned = true
+        // Let the view apply its kind change (and any selection following) before choosing the row.
+        host.tracker.state = state
+        host.tracker.refresh()
+        state.songItem = SONG_TEMPO_ITEM
+        state.textPos = 0
+        statusMessage = "Song details: tempo (ticks per row) selected"
+        workspace.save(states, focus)
+        refresh()
+    }
+
+    // ---- menus ----------------------------------------------------------------------------------
+
+    private fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int = 0) {
+        popups.show(PopupSpec(title, items = entries.map { (label, action) -> PopupItem(label, action = action) } +
+            PopupItem.dismiss(), selected = selected), modalDisplay)
+    }
+
+    private fun choose(title: String, labels: List<String>, selected: (Int) -> Unit) =
+        menu(title, labels.mapIndexed { index, label -> label to { selected(index) } })
 
     private fun chooseView(index: Int) {
         choose("View on display ${index + 1}", ViewKind.entries.map { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { selected ->
@@ -448,26 +559,26 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     }
 
     private fun appMenu() {
-        choose("Thor Tracker", listOf("Files", "Views / layout", "Switch controller focus", "Play from song start",
-            "Copy selection", "Cut selection", "Paste", "Duplicate", "Undo", "Redo", "Entry step", "Controller mappings", "Help")) { option ->
-            when (option) {
-                0 -> fileMenu()
-                1 -> viewOptions(focus)
-                2 -> switchFocus()
-                3 -> startPlayback(false)
-                4 -> editAction(Action.COPY)
-                5 -> editAction(Action.CUT)
-                6 -> editAction(Action.PASTE)
-                7 -> editAction(Action.DUPLICATE)
-                8 -> session.undo()
-                9 -> session.redo()
-                10 -> choose("Advance after note entry", listOf("Stay", "1 row", "2 rows", "4 rows", "8 rows", "16 rows")) {
+        menu("Thor Tracker", buildList<Pair<String, () -> Unit>> {
+            add("Files" to ::fileMenu)
+            add("Song details / tempo" to ::showSongDetails)
+            add("Views / layout" to { viewOptions(focus) })
+            if (hosts.containsKey(1)) add("Switch controller focus" to ::switchFocus)
+            add("Play from song start" to { startPlayback(0, 0) })
+            add("Copy selection" to { editAction(Action.COPY) })
+            add("Cut selection" to { editAction(Action.CUT) })
+            add("Paste" to { editAction(Action.PASTE) })
+            add("Duplicate" to { editAction(Action.DUPLICATE) })
+            add("Undo" to { editAction(Action.UNDO) })
+            add("Redo" to { editAction(Action.REDO) })
+            add("Entry step" to {
+                choose("Advance after note entry", listOf("Stay", "1 row", "2 rows", "4 rows", "8 rows", "16 rows")) {
                     session.step = intArrayOf(0, 1, 2, 4, 8, 16)[it]; refresh()
                 }
-                11 -> mappingsMenu()
-                12 -> { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; refresh() }
-            }
-        }
+            })
+            add("Controller mappings" to ::mappingsMenu)
+            add("Help" to { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; refresh() })
+        })
     }
 
     private fun mappingsMenu() {
@@ -475,55 +586,59 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B,
             KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_BUTTON_L1,
             KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2,
-            KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_MENU)
+            KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_THUMBL,
+            KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_MENU)
         val labels = listOf("Up", "Down", "Left", "Right", "Edit / A", "Clear / B", "Audition / X", "Mark / Y",
-            "Previous channel / L1", "Next channel / R1", "Undo / L2", "Redo / R2", "Modifier / Select",
-            "Transport / Start", "Display focus / R3", "Menu")
-        choose("Remap action", labels + "Reset mappings") { index ->
-            if (index == codes.size) {
+            "Previous channel / L1", "Next channel / R1", "Undo and swap trigger / L2", "Redo trigger / R2",
+            "Modifier / Select", "Play / Start", "Play from cursor trigger / L3", "Display focus / R3", "Menu")
+        menu("Remap action", labels.mapIndexed { index, label -> label to { capture(codes[index], label) } } +
+            ("Reset mappings" to {
                 remappings.clear(); workspace.saveBindings(remappings); statusMessage = "Default controls restored"; refresh()
-            } else {
-                statusMessage = "Press a button for ${labels[index]} (Back cancels)"
+            }))
+    }
+
+    /** Waits for one physical button for [label]; Back or Escape (or Cancel by touch) leaves unchanged. */
+    private fun capture(code: Int, label: String) {
+        popups.show(PopupSpec("Remap $label", message = "Press the button to use for $label. Back cancels.",
+            items = listOf(PopupItem.dismiss()), capture = { key ->
+                if (key != KeyEvent.KEYCODE_BACK && key != KeyEvent.KEYCODE_ESCAPE) {
+                    remappings.entries.removeAll { it.value == code }
+                    remappings[key] = code
+                    workspace.saveBindings(remappings)
+                    input.reset()
+                    statusMessage = "${KeyEvent.keyCodeToString(key)} → $label"
+                } else statusMessage = "Remapping cancelled"
+                popups.back()
                 refresh()
-                captureKey = { key ->
-                    if (key != KeyEvent.KEYCODE_BACK && key != KeyEvent.KEYCODE_ESCAPE) {
-                        remappings.entries.removeAll { it.value == codes[index] }
-                        remappings[key] = codes[index]
-                        workspace.saveBindings(remappings)
-                        statusMessage = "${KeyEvent.keyCodeToString(key)} → ${labels[index]}"
-                    } else statusMessage = "Remapping cancelled"
-                    refresh()
-                }
-            }
-        }
+            }), modalDisplay)
     }
 
     private fun fileMenu() {
-        choose("Project", listOf("New blank song", "Open project", "Save", "Save as…", "Export .uge", "Rename song", "Load demo", "Recover previous project")) {
-            when (it) {
-                0 -> confirmReplace { replace(Songs.blank()) }
-                1 -> launchPicker(OPEN)
-                2 -> currentUri?.let { saveProject(it) } ?: launchPicker(SAVE)
-                3 -> launchPicker(SAVE)
-                4 -> launchPicker(EXPORT)
-                5 -> rename()
-                6 -> confirmReplace { replace(Songs.demo()) }
-                7 -> confirmReplace { projectStore.previous { song -> replace(song) } }
-            }
-        }
+        menu("Project", listOf<Pair<String, () -> Unit>>(
+            "New blank song" to { confirmReplace { replace(Songs.blank()) } },
+            "Open project" to { launchPicker(OPEN) },
+            "Save" to { currentUri?.let { saveProject(it) } ?: launchPicker(SAVE) },
+            "Save as…" to { launchPicker(SAVE) },
+            "Export .uge" to { launchPicker(EXPORT) },
+            "Rename song" to ::rename,
+            "Load demo" to { confirmReplace { replace(Songs.demo()) } },
+            "Recover previous project" to { confirmReplace { projectStore.previous { song -> replace(song) } } },
+        ))
     }
 
     private fun rename() {
-        val field = EditText(dialogHost().root.context).apply { setSingleLine(); setText(session.song.title); selectAll() }
-        showDialog(AlertDialog.Builder(dialogHost().root.context).setTitle("Song title").setView(field)
-            .setPositiveButton("Rename") { _, _ -> session.setTitle(field.text.toString().take(255)); refresh() }
-            .setNegativeButton("Cancel", null))
+        val title = PopupText(session.song.title, 255)
+        popups.show(PopupSpec("Song title", text = title, items = listOf(
+            PopupItem("Rename", PopupItem.Tone.PRIMARY) { session.setTitle(title.value.take(255)); refresh() },
+            PopupItem.dismiss(),
+        )), modalDisplay)
     }
 
     private fun confirmReplace(action: () -> Unit) {
-        showDialog(AlertDialog.Builder(dialogHost().root.context).setTitle("Replace working song?")
-            .setMessage("The current song will replace the single previous-project recovery backup. Save it to a project file if you want to keep it permanently.")
-            .setPositiveButton("Continue") { _, _ -> action() }.setNegativeButton("Cancel", null))
+        popups.show(PopupSpec("Replace working song?",
+            message = "The current song will replace the single previous-project recovery backup. Save it to a project file if you want to keep it permanently.",
+            items = listOf(PopupItem("Continue", PopupItem.Tone.DANGER, action), PopupItem.dismiss()),
+            selected = 1), modalDisplay)
     }
 
     private fun replace(song: Song, uri: Uri? = null) {
@@ -604,114 +719,107 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
     }
 
-    private fun dialogHost(): Host = hosts[modalDisplay]?.takeIf {
-        it.index == 0 || it.root.isAttachedToWindow
-    } ?: hosts.getValue(0)
-
-    private fun showDialog(builder: AlertDialog.Builder) {
-        val host = dialogHost()
-        modalDisplay = host.index
-        hosts.values.forEach { it.tracker.cancelInteraction() }
-        dialog?.dismiss()
-        dialog = builder.create().also {
-            // Secondary dialogs use the presentation's context and window type.
-            if (host.index != 0) it.window?.setType(checkNotNull(secondary?.window).attributes.type)
-            it.show()
-        }
-    }
-
-    private fun choose(title: String, labels: List<String>, selected: (Int) -> Unit) {
-        showDialog(AlertDialog.Builder(dialogHost().root.context).setTitle(title)
-            .setItems(labels.toTypedArray()) { _, which -> selected(which) }
-            .setNegativeButton("Cancel", null))
-    }
-
     private fun showError(message: String) {
         if (isDestroyed) return
         statusMessage = message
         android.util.Log.e("ThorTracker", message)
-        showDialog(AlertDialog.Builder(dialogHost().root.context).setTitle("Thor Tracker")
-            .setMessage(message).setPositiveButton("OK", null))
+        popups.show(PopupSpec("Thor Tracker", message = message,
+            items = listOf(PopupItem("OK", PopupItem.Tone.PRIMARY))), modalDisplay)
         refresh()
     }
 
+    /** One display's UI: the tracker with overlays for the pull tab, status chip, toolbar and popups. */
     private inner class Host(context: Context, val index: Int) {
-        val root = object : LinearLayout(context) {
-            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                    if (modalDisplay != index) dialog?.dismiss()
-                    modalDisplay = index
-                    tracker.requestFocus()
-                }
-                return super.dispatchTouchEvent(event)
-            }
-        }.apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(BASE) }
-        val heading = TextView(context).apply {
-            textSize = 14f; setTextColor(ACCENT); maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
+        private val density = context.resources.displayMetrics.density
+        private var modal = false
         val tracker = TrackerView(context, session, states[index]).apply {
             onTouchEnded = { this@MainActivity.refresh() }
         }
-        val viewButton = button(context, "View", index) { chooseView(index) }
-        val pin = button(context, "Pinned", index) { viewOptions(index) }
-        val transport = button(context, "Play", index) { toggleTransport() }
-        val status = TextView(context).apply {
-            textSize = 11f; setTextColor(MUTED); maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+        val popup = PopupLayer(context)
+        val toolbar = ShellToolbar(context) { popups.isOpen }.apply { onLeave = { this@MainActivity.refresh() } }
+        val handle = ToolbarHandle(context) {
+            if (documentReady && !popups.isOpen) { modalDisplay = index; toolbar.revealByTouch(); refresh() }
         }
+        private val chip = TextView(context).apply {
+            typeface = PopupLayer.REGULAR; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setTextColor(Palette.TEXT)
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END; maxWidth = dp(560)
+            background = GradientDrawable().apply {
+                setColor(Palette.BAR); cornerRadius = dp(14).toFloat(); setStroke(dp(1), Palette.RULE)
+            }
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            visibility = View.GONE
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        private val chipHide = Runnable {
+            chip.animate().alpha(0f).setDuration(220).withEndAction { chip.visibility = View.GONE }.start()
+        }
+        val root = object : FrameLayout(context) {
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    // Popups belong to their display; touching the other display leaves them.
+                    if (popups.isOpen && popups.display != index) popups.closeAll()
+                    if (!popups.isOpen) {
+                        modalDisplay = index
+                        if (toolbar.revealed && event.y > toolbar.bottom) toolbar.hide()
+                        tracker.requestFocus()
+                    }
+                }
+                return super.dispatchTouchEvent(event)
+            }
+        }.apply { setBackgroundColor(Palette.BG) }
+
+        private fun act(action: () -> Unit) = { if (documentReady) { modalDisplay = index; action() } }
+
+        val viewButton: Button = toolbar.add("View", action = act { chooseView(index) })
+        val pin: Button = toolbar.add("Pinned", action = act { viewOptions(index) })
+        val focusButton: Button = toolbar.add("Focus", action = act { setFocus(index) })
+        val transport: Button
+
         init {
-            val top = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-            }
-            val title = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(dp(context, 8), 0, dp(context, 8), 0)
-                addView(heading, LinearLayout.LayoutParams(-1, -2))
-                addView(status, LinearLayout.LayoutParams(-1, -2))
-            }
-            top.addView(title, LinearLayout.LayoutParams(0, -1, 1f))
-            top.addView(viewButton)
-            top.addView(pin)
-            top.addView(button(context, "Focus", index) { focus = index; refresh() })
-            val wideActions = listOf(
-                button(context, "Swap", index) { swap() },
-                button(context, "Undo", index) { session.undo() },
-                button(context, "Redo", index) { session.redo() },
-                button(context, "File", index) { fileMenu() },
-            )
-            wideActions.forEach(top::addView)
-            top.addView(button(context, "Menu", index) { appMenu() })
-            top.addView(transport)
-            root.addView(top, LinearLayout.LayoutParams(-1, dp(context, 48)))
-            root.addView(tracker, LinearLayout.LayoutParams(-1, 0, 1f))
-            root.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
-                val visibility = if (right - left >= dp(context, 720)) View.VISIBLE else View.GONE
-                wideActions.forEach { if (it.visibility != visibility) it.visibility = visibility }
-            }
+            toolbar.add("Swap", wideOnly = true, action = act { swap() })
+            toolbar.add("Undo", wideOnly = true, action = act { editAction(Action.UNDO) })
+            toolbar.add("Redo", wideOnly = true, action = act { editAction(Action.REDO) })
+            toolbar.add("File", wideOnly = true, action = act { fileMenu() })
+            toolbar.add("Menu", action = act { appMenu() })
+            transport = toolbar.add("Play", action = act { toggleTransport(fromCursor = false) })
+            root.addView(tracker, FrameLayout.LayoutParams(-1, -1))
+            root.addView(handle, FrameLayout.LayoutParams(dp(72), dp(18), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+            root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = dp(34)
+            })
+            root.addView(toolbar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+            root.addView(popup, FrameLayout.LayoutParams(-1, -1))
         }
+
+        /** Shows [message] on the status chip ([sticky] while loading); null clears it. */
+        fun flash(message: String?, sticky: Boolean) {
+            chip.removeCallbacks(chipHide)
+            chip.animate().cancel()
+            if (message == null) { chip.visibility = View.GONE; return }
+            chip.text = message
+            chip.alpha = 1f
+            chip.visibility = View.VISIBLE
+            if (!sticky) chip.postDelayed(chipHide, 2800)
+        }
+
+        /** While this display shows a popup, everything under it is hidden from accessibility. */
+        fun setModal(value: Boolean) {
+            if (value == modal) return
+            modal = value
+            root.hideFromAccessibility(value, popup)
+        }
+
+        private fun dp(value: Int) = (value * density).toInt()
     }
 
-    private fun button(context: Context, label: String, host: Int, action: () -> Unit): Button = Button(context).apply {
-        text = label; textSize = 13f; isAllCaps = false; minWidth = 0; minimumWidth = 0
-        setPadding(dp(context, 8), 0, dp(context, 8), 0)
-        setTextColor(TEXT); setBackgroundColor(PANEL)
-        layoutParams = LinearLayout.LayoutParams(-2, dp(context, 40)).apply { setMargins(2, 2, 2, 2) }
-        setOnClickListener { if (documentReady) { modalDisplay = host; action() } }
-    }
-
-    private fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
     private fun safeName(value: String): String = value.replace(Regex("[^A-Za-z0-9 _-]"), "_").take(80).ifBlank { "song" }
+
     companion object {
         private const val OPEN = 10
         private const val SAVE = 11
         private const val EXPORT = 12
-        private val BASE = Color.rgb(24, 28, 34)
-        private val PANEL = Color.rgb(40, 47, 56)
-        private val TEXT = Color.rgb(231, 233, 235)
-        private val MUTED = Color.rgb(158, 170, 184)
-        private val ACCENT = Color.rgb(234, 169, 89)
+        private const val WORKING = "Working copy"
+        /** Song view header rows: 0 title, 1 artist, 2 ticks per row (tempo), 3 loop order. */
+        private const val SONG_TEMPO_ITEM = 2
     }
 }

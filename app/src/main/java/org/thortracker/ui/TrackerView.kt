@@ -124,7 +124,11 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
     /** Current controller hints (key label, meaning), including shifted actions while the shift key is held. */
     val hints: List<Pair<String, String>> get() = currentHints().map { it.keys to it.text }
 
-    internal fun currentHints(): List<Hint> = if (shiftDown) SHIFT_HINTS else controller.hints()
+    internal fun currentHints(): List<Hint> = when {
+        !shiftDown -> controller.hints()
+        state.kind == ViewKind.PATTERN -> PATTERN_SHIFT_HINTS
+        else -> SHIFT_HINTS
+    }
 
     /** Re-reads the session: applies selection following and repaints. Call from the session callbacks. */
     fun refresh() {
@@ -361,6 +365,7 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
 
     companion object {
         private val SHIFT_HINTS = listOf(
+            Hint("Sel+Start", "Toolbar"),
             Hint("Sel+A", "Paste"),
             Hint("Sel+X", "Copy"),
             Hint("Sel+B", "Cut"),
@@ -368,6 +373,7 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
             Hint("Sel+L1 R1", "Octave"),
             Hint("Sel+↑↓", "Insert/delete row"),
         )
+        private val PATTERN_SHIFT_HINTS = listOf(SHIFT_HINTS[0], Hint("Sel+→", "Pattern scale")) + SHIFT_HINTS.drop(1)
     }
 }
 

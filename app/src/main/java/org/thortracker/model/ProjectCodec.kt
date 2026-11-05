@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
@@ -13,14 +14,17 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
 
 /**
  * Thor Tracker's own project format: UTF-8 JSON
- * `{"format":"thor-tracker-project","version":1,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
+ * `{"format":"thor-tracker-project","version":2,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
  * export-level problems ([SongValidator.errors]) are allowed so work in progress round-trips.
+ *
+ * Versions: 1 = initial format. 2 adds each pattern's editor-only `scale` (`{"root":0..11,"kind":"major"}`);
+ * version 1 files have no scales and read as chromatic. Backend data is unchanged, so `backendVersion` stays 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 1
+    const val VERSION = 2
     const val BACKEND_VERSION = 1
 
     private val json = Json {
@@ -69,6 +73,9 @@ object ProjectCodec {
         if (backendVersion !in 1..BACKEND_VERSION) {
             throw ProjectFormatException("GB/hUGE data version $backendVersion is not supported; this version reads 1-$BACKEND_VERSION")
         }
+        if (version < SCALE_VERSION && hasPatternScale(root)) {
+            throw ProjectFormatException("Project version $version cannot contain pattern scales (added in version $SCALE_VERSION)")
+        }
         val envelope = try {
             json.decodeFromJsonElement(Envelope.serializer(), root)
         } catch (e: SerializationException) {
@@ -82,4 +89,10 @@ object ProjectCodec {
         if (problems.isNotEmpty()) throw ProjectFormatException("Project data is invalid: ${problems.joinToString("; ")}")
         return song
     }
+
+    /** First format version with per-pattern scales. */
+    private const val SCALE_VERSION = 2
+
+    private fun hasPatternScale(root: JsonObject): Boolean =
+        ((root["song"] as? JsonObject)?.get("patterns") as? JsonArray)?.any { (it as? JsonObject)?.containsKey("scale") == true } == true
 }

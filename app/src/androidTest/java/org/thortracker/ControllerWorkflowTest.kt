@@ -84,9 +84,66 @@ class ControllerWorkflowTest {
         val pattern = before.orders[0]
         assertEquals(before.patterns[pattern].tracks[0][0].note + 3, changed.patterns[pattern].tracks[0][0].note)
         tap(KeyEvent.KEYCODE_BUTTON_L2)
-        assertEquals("Whole held adjustment must undo together", before, tracker.session.song)
         tap(KeyEvent.KEYCODE_BUTTON_R2)
+        assertEquals("Bare triggers must not consume undo history", changed, tracker.session.song)
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals("Whole held adjustment must undo together", before, tracker.session.song)
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
         assertEquals(changed, tracker.session.song)
+    }
+
+    @Test fun releasingTheTriggerBeforeAStillConsumesTheChord() {
+        val before = tracker.session.song
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        val changed = tracker.session.song
+        down(KeyEvent.KEYCODE_BUTTON_L2)
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        up(KeyEvent.KEYCODE_BUTTON_L2)
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals("Undo's A release must not re-enter the edited note", before, tracker.session.song)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        assertEquals("Chord release must not leave the edit modifier held", before, tracker.session.song)
+        down(KeyEvent.KEYCODE_BUTTON_R2)
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        up(KeyEvent.KEYCODE_BUTTON_R2)
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(changed, tracker.session.song)
+    }
+
+    @Test fun transportUsesTheFocusedPatternAndSupportsCursorStart() {
+        instrumentation.runOnMainSync {
+            tracker.session.replaceSong(Songs.blank().copy(orders = listOf(0, 0), ticksPerRow = 255))
+            tracker.state.order = 1
+            tracker.state.row = 40
+            tracker.state.followSelection = false
+            tracker.session.select(Selection(order = 0, row = 12))
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        val fromTop = awaitPlayback(true)
+        assertEquals(1, fromTop.order)
+        assertEquals(0, fromTop.row)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(false)
+        chord(KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_START)
+        val fromCursor = awaitPlayback(true)
+        assertEquals(1, fromCursor.order)
+        assertEquals(40, fromCursor.row)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(false)
+    }
+
+    private fun awaitPlayback(playing: Boolean): org.thortracker.audio.PlaybackPosition {
+        val deadline = SystemClock.uptimeMillis() + 5000
+        var position = org.thortracker.audio.PlaybackPosition()
+        while (SystemClock.uptimeMillis() < deadline) {
+            instrumentation.runOnMainSync { position = tracker.playback }
+            if (position.playing == playing) return position
+            SystemClock.sleep(10)
+        }
+        fail("Transport did not reach playing=$playing; last position=$position")
+        return position
     }
 
     @Test fun openingMenuCancelsHeldEditModifier() {
@@ -100,7 +157,7 @@ class ControllerWorkflowTest {
         tap(KeyEvent.KEYCODE_DPAD_RIGHT)
         assertEquals(afterAdjustment, tracker.session.song)
         assertFalse(before == afterAdjustment)
-        tap(KeyEvent.KEYCODE_BUTTON_L2)
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
         assertEquals(before, tracker.session.song)
         up(KeyEvent.KEYCODE_BUTTON_A)
     }
@@ -166,7 +223,14 @@ class ControllerWorkflowTest {
             if (view is ViewGroup) for (index in 0 until view.childCount) find(view.getChildAt(index))?.let { return it }
             return null
         }
-        instrumentation.runOnMainSync { checkNotNull(find(activity.window.decorView)).performClick() }
+        var shown = false
+        instrumentation.runOnMainSync { shown = find(activity.window.decorView)?.isShown == true }
+        if (!shown) chord(KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START)
+        instrumentation.runOnMainSync {
+            val button = checkNotNull(find(activity.window.decorView))
+            check(button.isShown) { "Toolbar button is hidden: $text" }
+            button.performClick()
+        }
         instrumentation.waitForIdleSync()
     }
 
@@ -202,6 +266,7 @@ class ControllerWorkflowTest {
         instrumentation.waitForIdleSync()
     }
     private fun tap(code: Int) { down(code); up(code) }
+    private fun chord(modifier: Int, code: Int) { down(modifier); tap(code); up(modifier) }
 
     private fun findTracker(view: View): TrackerView? {
         if (view is TrackerView) return view

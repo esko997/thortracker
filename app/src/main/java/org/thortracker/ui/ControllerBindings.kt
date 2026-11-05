@@ -5,7 +5,9 @@ import org.thortracker.editor.Action
 
 /**
  * Physical key → semantic [Action] map. [shiftKey] is a modifier: while it is held, [shifted] is
- * consulted before [base]. Keys absent from both maps are left to the host (START, R3, MENU, ...).
+ * consulted before [base]. Keys absent from both maps are left to the host: Start, L3, R3, Menu and the
+ * L2/R2 triggers, which do nothing alone and only act in the host's chords (L2+A undo, R2+A redo,
+ * L2+X swap displays, Select+Start toolbar, L3+Start play from the cursor).
  */
 class ControllerBindings(
     val base: Map<Int, Action>,
@@ -25,8 +27,6 @@ class ControllerBindings(
                 KeyEvent.KEYCODE_BUTTON_Y to Action.MARK,
                 KeyEvent.KEYCODE_BUTTON_L1 to Action.PREV_CHANNEL,
                 KeyEvent.KEYCODE_BUTTON_R1 to Action.NEXT_CHANNEL,
-                KeyEvent.KEYCODE_BUTTON_L2 to Action.UNDO,
-                KeyEvent.KEYCODE_BUTTON_R2 to Action.REDO,
             ),
             shifted = mapOf(
                 KeyEvent.KEYCODE_BUTTON_A to Action.PASTE,
@@ -37,6 +37,7 @@ class ControllerBindings(
                 KeyEvent.KEYCODE_BUTTON_R1 to Action.OCTAVE_UP,
                 KeyEvent.KEYCODE_DPAD_UP to Action.INSERT_ROW,
                 KeyEvent.KEYCODE_DPAD_DOWN to Action.DELETE_ROW,
+                KeyEvent.KEYCODE_DPAD_RIGHT to Action.SCALE,
             ),
         )
     }

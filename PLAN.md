@@ -112,6 +112,18 @@ The user explicitly accepts a working synthesizer/simulation if actual-driver pr
 
 Do not abandon the responsive composition loop to preserve emulator purity. Conversely, do not introduce a simulator merely on the assumption that in-memory driver preparation will be slow.
 
+## Playtest workflow pass — 0.2.0
+
+- Auto-hidden, overlay toolbar; Select+Start reveals it with explicit controller focus. Touch reveal times out; focused controller use does not.
+- L2/R2 are chord-only: L2+A undo, R2+A redo, L2+X complete-view swap. No bare-trigger action or constituent-button edit/audition leak.
+- Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
+- App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
+- Visible arpeggio-0 selection without inventing a parameter; OFF label retains immediate-cut semantics.
+- Discoverable Song details/tempo shortcut.
+- Non-destructive per-pattern root/scale guides for D-pad tonal note entry, persisted in project format 2. Existing format 1 songs remain readable.
+- Supported stutter construction is repeated note/instrument rows, not an invented unsupported hUGE effect.
+
+
 ## Proposed MVP exclusions
 
 These are implementation scope defaults, not claims that the features are impossible:
@@ -123,6 +135,8 @@ These are implementation scope defaults, not claims that the features are imposs
 - Window management, split panes and arbitrary docking.
 - Full Furnace feature parity, unrestricted automation lanes, custom executable driver routines and advanced macro/subpattern authoring.
 - Analog/revision-perfect emulation and hardware quirks not exercised by the supported feature set.
+- Configurable colour themes (requested after playtesting; deferred).
+- Scale-root-relative interval labels in place of note names (requested after playtesting; deferred).
 
 Standard instrument settings, row effects and full-song composition are not optional scaffolding. A runnable empty UI or audio demo is not the MVP.
 

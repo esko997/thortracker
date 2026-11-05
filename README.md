@@ -43,9 +43,9 @@ Each display has one full-size view: **Pattern**, **Song**, **Instrument**, **Wa
 
 Preset layouts are Pattern + Keyboard and Pattern + Instrument. View layout, behavior and controller mappings persist between launches. Undo/redo belongs to the document, not the display.
 
-The toolbar stays on one row. On the narrower display, **Swap**, **Undo/redo** and **File** remain available through **Menu** instead of taking space from the editor.
+The toolbar is hidden over the full-height editor rather than reserving a row. **Select+Start** reveals it and gives it controller focus: Left/Right choose, A activates, and B/Back returns to the editor. It stays visible while controller-focused. Tap or pull the small top-centre handle for touch use; that reveal hides after six idle seconds. Neither transition moves the grid. On the narrower display, **Swap**, **Undo/redo** and **File** remain available through **Menu**.
 
-Native menus open on the display where the input was received, keeping their controller navigation local without changing the editor's logical controller focus.
+App menus, confirmations, rename fields and errors are in-app overlays on their originating display. Up/Down choose, A activates, B/Back returns one level, and L1/R1 page long menus. Android's document picker and keyboard remain system-owned.
 
 Short cell and key afterglows, channel activity lamps, and focus/view transitions provide feedback without moving the grid or obscuring text. Animations settle completely when idle and honor Android's animator-duration setting, including disabled animations.
 
@@ -58,33 +58,54 @@ Physical bindings are configurable through **Menu → Controller mappings**. On-
 | D-pad | Move through fields, rows or tools |
 | Hold A + D-pad | Change the selected value; horizontal fine, vertical coarse |
 | Tap A | Enter the last note/value, or activate a command |
-| Tap B | Clear the selected field; on an empty pattern note, place a cut |
+| Tap B | Clear the selected field; on an empty pattern note, place OFF |
 | Hold B + D-pad | Move or jump without clearing on release |
 | Hold X | Audition without writing |
 | Hold Y + D-pad | Mark a pattern block |
 | L1 / R1 | Change channel, instrument bank, wave or help page |
-| L2 / R2 | Undo / redo |
+| L2 / R2 alone | No action; chord modifiers only |
+| L2 + A / R2 + A | Undo / redo |
+| L2 + X | Swap complete views, including their cursors and scrolling |
 | Select + X / A / B | Copy / paste / cut |
 | Select + Y | Duplicate |
 | Select + L1 / R1 | Lower / raise entry octave |
 | Select + Up / Down | Insert / delete a row in the channel or selection |
-| Start | Play / stop from the selected position |
+| Select + Right | Open the current pattern's root/scale panel |
+| Start | Play from row 00 of the current pattern's order, or stop |
+| L3 + Start | Play from the current cursor, or stop |
+| Select + Start | Reveal/focus the toolbar, or return to the editor |
 | R3 | Switch controller focus between displays |
-| Menu / Back | Application menu |
+| Menu / Back | Application menu; Back closes a popup or focused toolbar first |
 
 A held adjustment or wave-drawing gesture is one undo step. Overlapping gestures on the two displays share a step that commits after both end. Undo during a held controller adjustment ends that step; further changes start a new step. Undo during a touch drag ends its edits until the finger lifts. Touch drags keep their original instrument or wave, and selection/playhead following waits until the gesture ends. Opening a menu or leaving the app ends active gestures and releases audition notes. **Menu → Play from song start** explicitly starts at order 0, row 0; it is not a toggle.
+
+Hold the modifier **before** pressing its chord button. An A press that precedes L2/R2 remains an ordinary edit; note entry is not delayed waiting for a possible chord. Consumed chords suppress repeats and releases, even if the trigger is released first. Undo/redo and screen swap also work over app popups without choosing their highlighted item. Bare L3 is also unbound.
 
 ### Enter a phrase
 
 1. Choose Pattern. Navigate to a note field, hold A and use the D-pad to select a pitch. The adjacent sound field selects an instrument.
 2. Tap A on subsequent empty rows to repeat the last note. **Menu → Entry step** sets the row advance.
 3. Alternatively, put Keyboard on the other display, select **Write** with Y, and enter notes there. **Listen** mode auditions without changing the pattern.
-4. Hold Y and move to mark a phrase; Select+X copies it, Select+A pastes it. L2 undoes a mistake.
+4. Hold Y and move to mark a phrase; Select+X copies it, Select+A pastes it. L2+A undoes a mistake.
 5. Press Start to hear the phrase, edit while it plays, and stop/start or seek without saving or exporting.
 
-The Song view edits arrangement, tempo, loop point and text, with repeat/new/clone/delete/move commands. Instrument edits affect later note triggers. The Wave view edits the 32 four-bit samples directly; held drawing and touch drags are grouped for undo.
+**Menu → Song details / tempo** opens the Song view with **Ticks per row** selected. Hold A+Left/Right to change it; a lower value is faster. The view also edits title, artist, arrangement and loop point, with repeat/new/clone/delete/move commands. Instrument edits affect later note triggers. The Wave view edits the 32 four-bit samples directly; held drawing and touch drags are grouped for undo.
 
 The keyboard's base octave is limited to 7. Keys above B-8 are dark and unavailable rather than silently clamped to another pitch.
+
+### Pattern scales
+
+Tap **Scale** in the Pattern header or press **Select+Right**. Up/Down chooses Root or Scale; Left/Right changes it; B resets that field and A/Done closes. The root strip and scale arrows are also touchable.
+
+Chromatic is the default. Major, Natural minor, Major pentatonic and Minor pentatonic constrain Pulse/Wave D-pad note entry to the chosen root's scale. Horizontal edits visit successive scale notes; vertical edits move an octave, snapping an existing out-of-scale pitch in the edit direction. Changing the guide never transposes written notes. Noise and the piano keyboard remain chromatic; effect parameters remain raw hUGE values.
+
+The guide belongs to the pattern, so repeated orders share it. It is undoable, saved in the project and preserved by pattern cloning/whole-pattern paste. Block paste still copies cells only. Scale metadata itself changes neither preview bytes nor `.uge` output.
+
+### Arpeggio and OFF
+
+The effect-type picker distinguishes **no effect** from selecting **0 (arpeggio)**. Choosing 0 displays `000` and its explanation without changing the sound. Move to the value field and set `xy` to produce `0xy`; for example `047` alternates the note, +4 and +7 semitones. `000` itself remains no effect.
+
+**OFF** immediately silences the channel, with no release tail; it uses that row's effect slot as `E00`. For stutter/retrigger, repeat a note with a nonzero instrument on successive rows, adjusting ticks per row if finer spacing is needed. The supported hUGE effect set has no dedicated retrigger command; that is a driver/editor limitation, not a prohibition in the GBC sound hardware.
 
 ## Sound and export rules
 
@@ -113,6 +134,7 @@ Export is `.uge` only. GB-specific editing semantics live in the backend; future
 - Replacing a document retains one previous-project recovery backup. A later replacement overwrites that single slot: use named project files for permanent versions.
 - Unreadable recovery files are quarantined intact rather than replaced in place. The app reports the failure and retained location.
 - Opening a project validates its version and structure before replacing the working document.
+- New saves use project format 2 for per-pattern scale metadata. Format 1 projects still open with Chromatic guides; the older 0.1 app cannot read new format 2 saves.
 - Recovery writes use a separate queue from document-provider I/O, so a stalled external save cannot block recovery of newer edits. Both run off the UI thread.
 - Saving captures the version selected for that operation. If editing continues, the app reports that newer edits remain unsaved. Completing an older save cannot attach its destination to a different document.
 - Android document providers control the durability and atomicity of writes to their own destinations; the app-private recovery copy remains separate.

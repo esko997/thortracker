@@ -88,4 +88,27 @@ class ProjectCodecTest {
         val text = ProjectCodec.encode(blank).replaceFirst("[-1,0,0,0]", "[72,1,0,0]")
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text) }
     }
+
+    @Test
+    fun versionOneProjectsLoadWithChromaticPatterns() {
+        val old = javaClass.getResource("/uge2source/thor-groove.thor")!!.readText()
+        assertTrue(old.contains("\"version\":1,"))
+        val song = ProjectCodec.decode(old)
+        assertTrue(song.patterns.isNotEmpty() && song.patterns.all { it.scale == Scale.CHROMATIC })
+        assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+    }
+
+    @Test
+    fun patternScalesRoundTripAndNeedTheirFormatVersion() {
+        val blank = Songs.blank()
+        val song = blank.copy(patterns = listOf(blank.patterns[0].copy(scale = Scale(9, ScaleKind.NATURAL_MINOR))))
+        val text = ProjectCodec.encode(song)
+        assertEquals(song, ProjectCodec.decode(text))
+        val root = Json.parseToJsonElement(text).jsonObject
+        val claimingVersionOne = JsonObject(root.toMutableMap().also { it["version"] = JsonPrimitive(1) }).toString()
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(claimingVersionOne) }
+        val badRoot = blank.copy(patterns = listOf(blank.patterns[0].copy(scale = Scale(12, ScaleKind.MAJOR))))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(badRoot) }
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"root\":9", "\"root\":12")) }
+    }
 }

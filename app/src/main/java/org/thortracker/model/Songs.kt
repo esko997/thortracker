@@ -70,10 +70,10 @@ object Songs {
 
     fun blankPattern(song: Song, name: String = "Pattern"): Pattern = Pattern.blank(channelNames(song).size, ROWS, name)
 
-    /** "C-3".."B-8", "---" for no note, "CUT" for an explicit cut. */
+    /** "C-3".."B-8", "---" for no note, "OFF" for an explicit note cut ([Cell.CUT], exported as E00). */
     fun noteName(note: Int): String = when {
         note == Cell.EMPTY -> "---"
-        note == Cell.CUT -> "CUT"
+        note == Cell.CUT -> "OFF"
         note in 0..NOTE_MAX -> NOTE_NAMES[note % 12] + (3 + note / 12)
         else -> "???"
     }
@@ -86,14 +86,14 @@ object Songs {
 
     /**
      * Effect codes usable on [channel]: supported effects minus those the channel can never take
-     * (pitch effects 1-4 on Noise, Axy on Wave). Code 0 stays listed because 000 means no effect; a non-zero
-     * arpeggio on Noise is still rejected by [cellProblem], which also performs the parameter checks.
+     * (pitch effects 0-4, including arpeggio, on Noise; Axy on Wave). 000 ("no effect") is not an entry: the
+     * editor offers it separately. [cellProblem] performs the parameter checks.
      */
     fun effectsFor(song: Song, channel: Int): List<EffectInfo> {
         val kind = channelKind(song, channel)
         return HugeRules.EFFECTS.filter { info ->
             info.supported && when (kind) {
-                InstrumentKind.NOISE -> info.code == HugeRules.FX_ARPEGGIO || info.code !in HugeRules.NOISE_UNSAFE_PITCH_EFFECTS
+                InstrumentKind.NOISE -> info.code !in HugeRules.NOISE_UNSAFE_PITCH_EFFECTS
                 InstrumentKind.WAVE -> info.code != HugeRules.FX_VOLUME_SLIDE
                 InstrumentKind.PULSE -> true
             }

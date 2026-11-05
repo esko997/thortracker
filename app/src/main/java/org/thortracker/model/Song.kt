@@ -16,9 +16,10 @@ enum class InstrumentKind { PULSE, WAVE, NOISE }
 /**
  * One channel-row of a pattern.
  *
- * [note]: [EMPTY] (-1) = no note, [CUT] (-2) = explicit note cut, 0..71 = C-3..B-8 in hUGE numbering.
+ * [note]: [EMPTY] (-1) = no note, [CUT] (-2) = explicit note cut, shown as "OFF" (exported as E00: immediate
+ * silence, no envelope release), 0..71 = C-3..B-8 in hUGE numbering.
  * [instrument]: 0 = legato (hUGEDriver changes the pitch without restarting the note or reloading the instrument,
- * so it is silent after a cut or before any instrument has played), 1..15 = slot in the channel's typed bank.
+ * so it is silent after an OFF or before any instrument has played), 1..15 = slot in the channel's typed bank.
  * [effect]/[param]: raw hUGEDriver effect nibble and parameter byte; 0/0 ("000") is no effect.
  * Serialized compactly as `[note, instrument, effect, param]`.
  */
@@ -34,9 +35,12 @@ data class Cell(val note: Int = EMPTY, val instrument: Int = 0, val effect: Int 
     }
 }
 
-/** Channel-major tracks (`tracks[channel][row]`); a pattern's index is its position in [Song.patterns]. */
+/**
+ * Channel-major tracks (`tracks[channel][row]`); a pattern's index is its position in [Song.patterns].
+ * [scale] is editor-only note-entry guidance: it never alters [tracks] and is not exported or heard.
+ */
 @Serializable
-data class Pattern(val name: String = "Pattern", val tracks: List<List<Cell>>) {
+data class Pattern(val name: String = "Pattern", val tracks: List<List<Cell>>, val scale: Scale = Scale.CHROMATIC) {
     companion object {
         fun blank(channels: Int, rows: Int = Songs.ROWS, name: String = "Pattern"): Pattern =
             Pattern(name, List(channels) { List(rows) { Cell.BLANK } })

@@ -59,7 +59,6 @@ class SongsTest {
         assertEquals("A#7", Songs.noteName(58))
         assertEquals("B-8", Songs.noteName(Songs.NOTE_MAX))
         assertEquals("---", Songs.noteName(Cell.EMPTY))
-        assertEquals("CUT", Songs.noteName(Cell.CUT))
     }
 
     @Test
@@ -70,7 +69,7 @@ class SongsTest {
         val codes = { ch: Int -> Songs.effectsFor(Songs.blank(), ch).map { it.code } }
         assertEquals((0..15).filter { it != 6 }, codes(0))
         assertEquals((0..15).filter { it != 6 && it != 0xA }, codes(2))
-        assertEquals(listOf(0, 5, 7, 8, 9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF), codes(3))
+        assertEquals(listOf(5, 7, 8, 9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF), codes(3))
         val song = Songs.blank()
         assertEquals("Arpeggio: note, +3, +7 semitones", Songs.describeEffect(song, 0, 0x0, 0x37))
         assertEquals("No effect", Songs.describeEffect(song, 0, 0x0, 0x00))

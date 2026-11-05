@@ -30,12 +30,13 @@ Evidence gathered while writing the exporter:
 ## Document model (GB/hUGE)
 
 - Four channels: Pulse 1, Pulse 2, Wave, Noise. Patterns are 64 rows, one note/instrument/effect per channel-row.
-- `Cell.note`: `-1` empty, `-2` explicit cut, `0..71` = C-3..B-8 (hUGE numbering, `C_3 = 0`). Noise uses the same
+- `Cell.note`: `-1` empty, `-2` explicit cut (displayed as **OFF**), `0..71` = C-3..B-8 (hUGE numbering, `C_3 = 0`). Noise uses the same
   numbers; the driver maps them to NR43 (`get_note_poly`).
 - `Cell.instrument`: 1..15 selects a slot of the channel's typed bank. 0 is legato: hUGEDriver clears the trigger
   bit and does not reload the instrument, so the pitch changes without restarting. After a cut (`note_cut` zeroes
   NRx2/NR32) or before any instrument has played on the channel, such a note is silent.
 - `Cell.effect`/`param`: raw hUGE effect nibble and byte. `000` is no effect.
+- Selecting effect type 0 before entering a parameter is a view-local editor choice, not new song data: `000` still lowers as no effect. OFF remains an immediate `E00` cut, not a release envelope.
 - Typed banks of exactly 15 instruments; 16 waves x 32 samples of 0..15.
 - `Song.orders`: one pattern index per order position shared by all channels. `Song.loopOrder`: where playback
   continues after the last order.
@@ -87,6 +88,7 @@ Parameters are raw. Facts from `hUGEDriver.asm` 6.1.3 that the editor shows via 
 - Vibrato `4xy`: the pitch is raised by y on ticks where (running tick counter AND x) = 0, so x = 0 is a constant
   detune and 1/3/7/F raise it 1 of every 2/4/8/16 ticks. `Cxy` restarts Pulse/Noise only if the channel's last
   note loaded an instrument; on Wave it only rewrites NR32 (no restart).
+- There is no dedicated retrigger/stutter effect in the supported set. Repeating note rows with nonzero instruments retriggers their sound; instrument 0 is legato and is not an equivalent substitute.
 - Warnings (legal, probably unintended):
   - `7xx`/`Exx` not shorter than the song's ticks per row;
   - Noise notes C-3..D#3 and E-8..G-8 (0-3, 64-67): `get_note_poly` gives clock shift 14, which never clocks the
@@ -120,14 +122,19 @@ is a length byte plus 255 zero-padded UTF-8 bytes.
    filler (hUGETracker's documented off-by-one entry, ignored by the tracker and uge2source).
 7. 16 empty routines (`int32` 0 each).
 
-Editor-only data (pattern names, layout, view state) is not exported; the project file keeps it.
+Editor-only data (pattern names, root/scale guides, layout, view state) is not exported; the project file keeps it. Pattern scales constrain note entry, not existing notes or raw effect parameters.
 
 ## Project file (`ProjectCodec`)
 
-UTF-8 JSON `{"format":"thor-tracker-project","version":1,"backend":"gb-huge","backendVersion":1,"song":{...}}`
-with cells as `[note, instrument, effect, param]`. Decoding rejects malformed JSON, unknown keys, other formats,
-newer versions, other backends and structurally invalid songs with `ProjectFormatException`. Songs with export
-errors still save and load, so work in progress survives autosave.
+UTF-8 JSON `{"format":"thor-tracker-project","version":2,"backend":"gb-huge","backendVersion":1,"song":{...}}`
+with cells as `[note, instrument, effect, param]`. Version 2 adds each pattern's
+`scale: {"root":0..11,"kind":"chromatic"|"major"|"natural-minor"|"major-pentatonic"|"minor-pentatonic"}`.
+Version 1 files remain readable and default to Chromatic; they cannot claim to contain version-2 scale data.
+The backend data version remains 1 because scale guides are editor metadata.
+
+Decoding rejects malformed JSON, unknown keys, other formats, newer versions, other backends and structurally
+invalid songs with `ProjectFormatException`. Songs with export errors still save and load, so work in progress
+survives autosave. New saves always use version 2; the earlier app does not read that newer format.
 
 ## Reproducing the sample and conversion
 

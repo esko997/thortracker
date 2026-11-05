@@ -11,6 +11,8 @@ import org.thortracker.model.Cell
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.SongValidator
 import org.thortracker.model.Songs
+import org.thortracker.model.Scale
+import org.thortracker.model.ScaleKind
 
 /** Drives views only through semantic controller actions, as a gamepad would. */
 class ViewControllerTest {
@@ -98,7 +100,7 @@ class ViewControllerTest {
     @Test
     fun effectTypeSkipsUnsupportedCallRoutine() {
         val v = view(ViewKind.PATTERN) { field = 2 }
-        v.hold(Action.EDIT, *Array(6) { Action.RIGHT })
+        v.hold(Action.EDIT, *Array(7) { Action.RIGHT }) // no effect, 0, 1, 2, 3, 4, 5, then 7
         assertEquals(0x7, cell(0, 0, 0).effect)
         v.state.field = 3
         v.hold(Action.EDIT, Action.UP, Action.RIGHT)
@@ -509,10 +511,10 @@ class ViewControllerTest {
             pattern.hold(Action.EDIT, *Array(semitones) { Action.RIGHT })
             pattern.tap(Action.DOWN); pattern.tap(Action.DOWN); pattern.tap(Action.DOWN); pattern.tap(Action.DOWN)
         }
-        // Set volume effect C0F on row 0 (effect type C is the 12th supported code).
+        // Set volume effect C0F on row 0 (after "no effect", effect type C is the 12th supported code).
         pattern.state.row = 0
         pattern.state.field = 2
-        pattern.hold(Action.EDIT, *Array(11) { Action.RIGHT })
+        pattern.hold(Action.EDIT, *Array(12) { Action.RIGHT })
         pattern.state.field = 3
         pattern.hold(Action.EDIT, *Array(15) { Action.RIGHT })
         assertEquals(0xC, cell(0, 0, 0).effect)
@@ -577,5 +579,126 @@ class ViewControllerTest {
         for (ch in 0 until 4) assertTrue(s.patterns[0].tracks[ch].any { it.note >= 0 })
         assertEquals(listOf<String>(), SongValidator.errors(s))
         assertNotEquals(Songs.blank(), s)
+    }
+
+    @Test
+    fun effectZeroIsTheFirstPickAndTakesAValue() {
+        val v = view(ViewKind.PATTERN) { field = 2 }
+        v.hold(Action.EDIT, Action.RIGHT)
+        // Effect 0 comes right after "no effect": shown as chosen, but nothing audible is written yet.
+        assertTrue(v.chosenArpeggio())
+        assertEquals(Cell(), cell(0, 0, 0))
+        assertFalse(session.canUndo)
+        v.tap(Action.RIGHT) // value column of the same cell
+        assertEquals(3, v.state.field)
+        assertTrue(v.chosenArpeggio())
+        v.hold(Action.EDIT, Action.UP, Action.RIGHT, Action.RIGHT)
+        assertEquals(Cell(effect = 0, param = 0x12), cell(0, 0, 0))
+        v.tap(Action.DOWN)
+        assertFalse(v.chosenArpeggio())
+    }
+
+    @Test
+    fun effectOneWithValueZeroStepsBackToEffectZeroNotToNothing() {
+        session.setCell(0, 0, 0, Cell(note = 24, instrument = 1, effect = 1, param = 0))
+        val v = view(ViewKind.PATTERN) { field = 2 }
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(Cell(note = 24, instrument = 1), cell(0, 0, 0)) // 000: the same bytes as no effect
+        assertTrue(v.chosenArpeggio())
+        v.hold(Action.EDIT, Action.LEFT) // one further: no effect
+        assertFalse(v.chosenArpeggio())
+        assertEquals(Cell(note = 24, instrument = 1), cell(0, 0, 0))
+        v.hold(Action.EDIT, Action.RIGHT) // forward again lands on 0, not 1
+        assertTrue(v.chosenArpeggio())
+        v.state.field = 3
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(Cell(note = 24, instrument = 1, effect = 0, param = 0x01), cell(0, 0, 0))
+    }
+
+    @Test
+    fun patternScaleGuidesNoteSteppingWithoutChangingWrittenNotes() {
+        session.setCell(0, 0, 0, Cell(note = 13, instrument = 1)) // C#4, outside C major
+        session.setCell(0, 0, 1, Cell(note = 16, instrument = 1)) // E-4
+        session.setCell(0, 3, 0, Cell(note = 16, instrument = 1)) // a noise pitch
+        val tracks = session.song.patterns[0].tracks
+        assertTrue(session.setPatternScale(0, Scale(0, ScaleKind.MAJOR)))
+        assertSame(tracks, session.song.patterns[0].tracks)
+
+        val v = view(ViewKind.PATTERN)
+        v.hold(Action.EDIT, Action.UP) // C#5 is outside the scale: the next scale note above it, D-5
+        assertEquals(26, cell(0, 0, 0).note)
+        v.hold(Action.EDIT, Action.RIGHT) // D-5 to E-5
+        assertEquals(28, cell(0, 0, 0).note)
+        v.state.row = 1
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT) // E, F, G
+        assertEquals(19, cell(0, 0, 1).note)
+        v.hold(Action.EDIT, Action.LEFT, Action.LEFT, Action.LEFT) // F, E, D
+        assertEquals(14, cell(0, 0, 1).note)
+        v.hold(Action.EDIT, Action.DOWN) // from a scale note the octave is exact
+        assertEquals(2, cell(0, 0, 1).note)
+        v.state.channel = 3
+        v.state.row = 0
+        v.hold(Action.EDIT, Action.RIGHT) // Noise note numbers stay chromatic
+        assertEquals(17, cell(0, 3, 0).note)
+    }
+
+    @Test
+    fun scaleEditsStayInsideTheNoteRange() {
+        session.setPatternScale(0, Scale(9, ScaleKind.MINOR_PENTATONIC)) // A C D E G
+        val v = view(ViewKind.PATTERN)
+        fun edit(note: Int, vararg moves: Action): Int {
+            session.setCell(0, 0, 0, Cell(note = note, instrument = 1))
+            v.hold(Action.EDIT, *moves)
+            return cell(0, 0, 0).note
+        }
+        assertEquals(69, edit(67, Action.RIGHT, Action.RIGHT, Action.UP)) // G-8 to A-8, the top scale note; no octave above
+        assertEquals(0, edit(0, Action.LEFT, Action.DOWN)) // C-3: nothing lower
+        assertEquals(58, edit(58, Action.UP)) // A#7 (off scale): A#8 and B-8 are not scale notes, so no edit
+        assertEquals(0, edit(13, Action.DOWN)) // C#4 (off scale): C#3, then down to C-3
+        session.setPatternScale(0, Scale(2, ScaleKind.MAJOR)) // C is not in D major
+        assertEquals(12, edit(12, Action.DOWN)) // C-4 (off scale): no D major note at or below C-3, so no edit
+    }
+
+    @Test
+    fun chromaticEditsStillClampToTheNoteRange() {
+        val v = view(ViewKind.PATTERN)
+        fun edit(note: Int, vararg moves: Action): Int {
+            session.setCell(0, 0, 0, Cell(note = note, instrument = 1))
+            v.hold(Action.EDIT, *moves)
+            return cell(0, 0, 0).note
+        }
+        assertEquals(Songs.NOTE_MAX, edit(65, Action.UP))
+        assertEquals(0, edit(5, Action.DOWN))
+        assertEquals(Songs.NOTE_MAX, edit(Songs.NOTE_MAX, Action.RIGHT))
+        assertEquals(0, edit(0, Action.LEFT))
+    }
+
+    @Test
+    fun scalePanelEditsUndoableMetadataThatCloneAndPatternCopyCarry() {
+        session.setCell(0, 0, 0, Cell(note = 13, instrument = 1))
+        val tracks = session.song.patterns[0].tracks
+        val v = view(ViewKind.PATTERN)
+        v.tap(Action.SCALE)
+        assertTrue(v.state.scalePanel)
+        v.tap(Action.RIGHT); v.tap(Action.RIGHT) // root D
+        v.tap(Action.DOWN)
+        v.tap(Action.RIGHT) // Major
+        v.tap(Action.EDIT) // Done
+        assertFalse(v.state.scalePanel)
+        assertEquals(Scale(2, ScaleKind.MAJOR), session.song.patterns[0].scale)
+        assertSame(tracks, session.song.patterns[0].tracks)
+        session.undo()
+        assertEquals(Scale(2, ScaleKind.CHROMATIC), session.song.patterns[0].scale)
+        session.redo()
+
+        assertEquals(1, session.clonePatternAt(0))
+        assertEquals(Scale(2, ScaleKind.MAJOR), session.song.patterns[1].scale)
+        val song = view(ViewKind.SONG) { songItem = ViewState.SONG_HEADER_ITEMS }
+        song.tap(Action.COPY)
+        assertEquals(2, session.newPatternAt(2))
+        song.state.songItem = ViewState.SONG_HEADER_ITEMS + 2
+        song.tap(Action.PASTE)
+        assertEquals(Scale(2, ScaleKind.MAJOR), session.song.patterns[2].scale)
+        assertEquals(tracks, session.song.patterns[2].tracks)
     }
 }

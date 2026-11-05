@@ -16,6 +16,7 @@ import org.thortracker.model.Pattern
 import org.thortracker.editor.SoundParams
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Songs
+import org.thortracker.model.Scale
 
 /**
  * Pattern grid: hex row ruler, one lane per channel with note / sound / effect columns, sustain rails
@@ -181,7 +182,8 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             }
         }
 
-        // cells + sustain rails
+        // cells + sustain rails; the cursor cell may show an explicitly chosen arpeggio 000
+        val zeroHere = ctl.chosenArpeggio()
         for (ch in 0 until channels) {
             val x = gridLeft + ch * laneW + cw * 0.7f
             val col = Palette.channel(ch)
@@ -200,7 +202,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                     else -> 0f to 0f
                 }
                 if (bottom > top) ink.rect(c, x - cw * 0.45f, top, x - cw * 0.45f + ink.dp(2f), bottom, Palette.alpha(col, 120))
-                drawCell(c, cell, x, y, col, ch)
+                drawCell(c, cell, x, y, col, ch, zeroHere && ch == st.channel && r == st.row)
             }
         }
 
@@ -216,11 +218,14 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             ink.round(c, fr, ink.dp(3f), Palette.alpha(outline, 46))
             ink.outline(c, fr, outline, if (v.controllerFocused) ink.dp(2f) else ink.dp(1f), ink.dp(3f))
             val cell = p.tracks[st.channel][st.row]
-            drawCell(c, cell, gridLeft + st.channel * laneW + cw * 0.7f, gridTop + (st.row - first) * rowH, Palette.channel(st.channel), st.channel)
+            drawCell(c, cell, gridLeft + st.channel * laneW + cw * 0.7f, gridTop + (st.row - first) * rowH, Palette.channel(st.channel), st.channel, zeroHere)
         }
 
         // inspector
         inspector = if (wantInspector) RectF(area.right - inspectorW, laneTop, area.right, area.bottom).also { drawInspector(c, it) } else null
+
+        // root/scale panel over the grid
+        scalePanel = if (st.scalePanel) drawScalePanel(c, area) else null
     }
 
     private fun nextSounding(sounding: Boolean, cell: Cell): Boolean = when {
@@ -285,10 +290,11 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         return RectF(x + start * cw - cw * 0.2f, y + 1, x + (start + len) * cw + cw * 0.2f, y + rowH - 1)
     }
 
-    private fun drawCell(c: Canvas, cell: Cell, x: Float, y: Float, col: Int, ch: Int) {
+    /** [zero]: show this 000 as the explicitly chosen effect 0 (arpeggio) rather than as no effect. */
+    private fun drawCell(c: Canvas, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
         val noteText = when {
             cell.note >= 0 -> Songs.noteName(cell.note)
-            cell.note == Cell.CUT -> "CUT"
+            cell.note == Cell.CUT -> "OFF"
             else -> "···"
         }
         val noteColor = when {
@@ -298,9 +304,10 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         }
         ink.mono(c, noteText, x, y, rowH, noteColor, cell.note >= 0)
         ink.mono(c, if (cell.instrument > 0) hex2(cell.instrument) else "··", x + cw * 4, y, rowH, if (cell.instrument > 0) Palette.TEXT else Palette.FAINT)
-        val hasFx = cell.effect != 0 || cell.param != 0
-        ink.mono(c, if (hasFx) hex1(cell.effect) else "·", x + cw * 7, y, rowH, if (hasFx) Palette.PLAYHEAD else Palette.FAINT, hasFx)
-        ink.mono(c, if (hasFx) hex2(cell.param) else "··", x + cw * 8, y, rowH, if (hasFx) Palette.DIM else Palette.FAINT)
+        val hasFx = cell.hasEffect
+        val shown = hasFx || zero
+        ink.mono(c, if (shown) hex1(cell.effect) else "·", x + cw * 7, y, rowH, if (shown) Palette.PLAYHEAD else Palette.FAINT, hasFx)
+        ink.mono(c, if (shown) hex2(cell.param) else "··", x + cw * 8, y, rowH, if (shown) Palette.DIM else Palette.FAINT)
         if ((cell.note != Cell.EMPTY || cell.instrument != 0 || hasFx) && hasProblem(ch, cell)) {
             ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * 10.2f, y + rowH - ink.dp(1f), Palette.ERROR)
         }
@@ -319,7 +326,9 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         return problemCache[ch].getOrPut(cell) { Songs.cellProblem(s, ch, cell) != null }
     }
 
+    /** Rightmost first: the pattern scale, then follow playback, entry step, octave. */
     private fun chips(): List<Pair<String, Int>> = listOf(
+        "Scale ${ctl.patternScale.label}" to 3,
         (if (st.followPlayback) "Follows playback" else "Stays put during playback") to 0,
         "Step ${session.step}" to 1,
         "Octave ${st.octave}" to 2,
@@ -328,7 +337,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     private fun chipsWidth(): Float =
         chips().sumOf { (ink.labelWidth(it.first, ink.unit * 0.8f) + ink.unit * 1.4f).toDouble() }.toFloat()
 
-    /** Touchable header toggles: follow playback, entry step, octave. */
+    /** Touchable header toggles: scale panel, follow playback, entry step, octave. */
     private fun drawHeaderChips(c: Canvas, area: RectF) {
         headerChips.clear()
         val h = ink.unit * 2f
@@ -337,7 +346,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         for ((text, id) in chips()) {
             val w = ink.labelWidth(text, size) + ink.unit
             val r = RectF(x - w, area.top + h * 0.18f, x, area.top + h * 0.82f)
-            val on = id == 0 && st.followPlayback
+            val on = (id == 0 && st.followPlayback) || (id == 3 && st.scalePanel)
             ink.round(c, r, ink.dp(4f), if (on) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.RULE)
             ink.label(c, text, r.centerX(), area.top, h, if (on) Palette.PLAYHEAD else Palette.DIM, size = size, align = Paint.Align.CENTER)
             headerChips += r to id
@@ -367,7 +376,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         y += line
         val noteLine = when {
             cell.note >= 0 -> "Note ${Songs.noteName(cell.note)}"
-            cell.note == Cell.CUT -> "Cut: silences this channel"
+            cell.note == Cell.CUT -> "OFF: silent at once (E00), no release tail"
             else -> "No note: the previous note keeps sounding"
         }
         ink.label(c, ink.fit(noteLine, w), x, y, line, Palette.TEXT)
@@ -401,7 +410,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             }
             y += line
         }
-        if (cell.effect != 0 || cell.param != 0) {
+        if (cell.hasEffect) {
             val info = Songs.effects(s).firstOrNull { it.code == cell.effect }
             ink.label(c, ink.fit("${hex1(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, Palette.PLAYHEAD, true)
             y += line
@@ -409,10 +418,21 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                 ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
+        } else if (ctl.chosenArpeggio()) {
+            ink.label(c, ink.fit("000 Arpeggio, no value yet", w), x, y, line, Palette.PLAYHEAD, true)
+            y += line
+            val text = "Set the value xy: the note alternates with note+x and note+y semitones (047 = major chord). " +
+                "000 itself plays no effect."
+            for (part in wrap(text, w, ink.unit * 0.85f)) {
+                ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
+                y += line * 0.85f
+            }
         } else if (st.field >= 2) {
             val info = Songs.effectsFor(s, ch)
             ink.label(c, "Effects (hold A to pick)", x, y, line, Palette.DIM)
             y += line
+            ink.label(c, "· No effect", x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
+            y += line * 0.8f
             for (e in info) {
                 if (y > r.top + r.height() * 0.6f) break
                 ink.label(c, ink.fit("${hex1(e.code)} ${e.name}  ${e.param}", w), x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
@@ -473,6 +493,112 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         return out.take(4)
     }
 
+    // ---- root / scale panel ------------------------------------------------------------------------
+
+    private var scalePanel: RectF? = null
+    private val rootKeys = Array(12) { RectF() }
+    private val rootRow = RectF()
+    private val scaleRow = RectF()
+    private val scalePrev = RectF()
+    private val scaleNext = RectF()
+    private val scaleDone = RectF()
+    private var panelNote: List<String> = emptyList()
+    private var panelNoteWidth = -1f
+
+    /**
+     * The pattern's editor-only root and scale, drawn over the top right of the grid: a one-octave key strip
+     * lights the scale's pitch classes (tap a key for the root), arrows step the scale, Done closes. The
+     * focused row follows [org.thortracker.editor.ViewState.scaleField] for the controller.
+     */
+    private fun drawScalePanel(c: Canvas, area: RectF): RectF {
+        val u = ink.unit
+        val scale = ctl.patternScale
+        val small = u * 0.8f
+        val pad = u * 0.7f
+        val w = minOf(u * 24f, area.width() - u)
+        val labelW = u * 3.6f
+        val textW = w - pad * 2
+        if (textW != panelNoteWidth) {
+            panelNoteWidth = textW
+            panelNote = wrap("Pulse and Wave note edits land only on scale notes; Noise keeps every pitch. " +
+                "Written notes stay until you edit them, and nothing here is exported or heard.", textW, small)
+        }
+        val titleH = u * 1.9f
+        val keyH = u * 2.6f
+        val lineH = u * 2.1f
+        val noteH = u * 1.1f
+        val h = pad + titleH + keyH + u * 0.4f + lineH + u * 0.5f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
+        val left = area.right - w - u * 0.5f
+        val top = (headerBottom + u * 0.3f).coerceAtMost(maxOf(area.top, area.bottom - h))
+        val panel = RectF(left, top, left + w, top + h)
+        ink.round(c, panel, ink.dp(6f), Palette.LANE)
+        ink.outline(c, panel, Palette.RULE, ink.dp(1f), ink.dp(6f))
+        ink.rect(c, panel.left + ink.dp(6f), panel.top, panel.right - ink.dp(6f), panel.top + ink.dp(2f), Palette.PLAYHEAD)
+
+        val x = left + pad
+        var y = top + pad * 0.6f
+        ink.label(c, "Pattern ${hex2(song.patternAt(st.order))} scale", x, y, titleH, Palette.TEXT, true)
+        ink.label(c, ink.fit(scale.label, textW * 0.5f, bold = true), panel.right - pad, y, titleH, Palette.PLAYHEAD, true, align = Paint.Align.RIGHT)
+        y += titleH
+
+        // Root: a one-octave strip lighting the scale's pitch classes, the root outlined.
+        rootRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + keyH)
+        focusRow(c, rootRow, 0)
+        ink.label(c, "Root", x, y, keyH, Palette.DIM)
+        val stripL = x + labelW
+        val kw = (panel.right - pad - stripL) / 12f
+        for (k in 0 until 12) {
+            val r = rootKeys[k]
+            r.set(stripL + k * kw + ink.dp(1f), y + keyH * 0.14f, stripL + (k + 1) * kw - ink.dp(1f), y + keyH * 0.86f)
+            val inScale = scale.kind.hasInterval(k - scale.root)
+            val base = if (BLACK_KEYS[k]) Palette.BG else Palette.BAR
+            ink.round(c, r, ink.dp(3f), if (inScale && !scale.isChromatic) Palette.mix(base, Palette.PLAYHEAD, 0.38f) else base)
+            val isRoot = k == scale.root
+            if (isRoot) ink.outline(c, r, if (scale.isChromatic) Palette.DIM else Palette.PLAYHEAD, ink.dp(2f), ink.dp(3f))
+            val name = Scale.ROOT_NAMES[k]
+            ink.label(c, name, r.centerX(), r.top, r.height(), when {
+                isRoot && !scale.isChromatic -> Palette.TEXT
+                inScale && !scale.isChromatic -> Palette.TEXT
+                else -> Palette.FAINT
+            }, isRoot, if (name.length > 1) u * 0.62f else u * 0.75f, Paint.Align.CENTER)
+        }
+        y += keyH + u * 0.4f
+
+        // Scale: previous / name / next.
+        scaleRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
+        focusRow(c, scaleRow, 1)
+        ink.label(c, "Scale", x, y, lineH, Palette.DIM)
+        val bw = u * 2.2f
+        scalePrev.set(stripL, y + lineH * 0.12f, stripL + bw, y + lineH * 0.88f)
+        scaleNext.set(panel.right - pad - bw, scalePrev.top, panel.right - pad, scalePrev.bottom)
+        ink.round(c, scalePrev, ink.dp(4f), Palette.RULE)
+        ink.round(c, scaleNext, ink.dp(4f), Palette.RULE)
+        ink.label(c, "◀", scalePrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
+        ink.label(c, "▶", scaleNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
+        ink.label(c, ink.fit(scale.kind.label, scaleNext.left - scalePrev.right - u * 0.6f), (scalePrev.right + scaleNext.left) / 2f, y, lineH,
+            Palette.TEXT, true, align = Paint.Align.CENTER)
+        y += lineH + u * 0.5f
+
+        for (part in panelNote) {
+            ink.label(c, part, x, y, noteH, Palette.DIM, size = small)
+            y += noteH
+        }
+        y += u * 0.4f
+        val doneW = ink.labelWidth("Done", small, true) + u * 1.6f
+        scaleDone.set(panel.right - pad - doneW, y + lineH * 0.1f, panel.right - pad, y + lineH * 0.9f)
+        ink.round(c, scaleDone, ink.dp(4f), Palette.alpha(Palette.PLAYHEAD, 60))
+        ink.label(c, "Done", scaleDone.centerX(), y, lineH, Palette.PLAYHEAD, true, small, Paint.Align.CENTER)
+        ink.label(c, "A done  B reset", x, y, lineH, Palette.FAINT, size = small)
+        return panel
+    }
+
+    /** Marks the panel row the controller is on. */
+    private fun focusRow(c: Canvas, r: RectF, field: Int) {
+        if (st.scaleField != field) return
+        ink.round(c, r, ink.dp(4f), Palette.CURSOR_FILL)
+        ink.outline(c, r, if (v.controllerFocused) Palette.TEXT else Palette.DIM, if (v.controllerFocused) ink.dp(1.5f) else ink.dp(1f), ink.dp(4f))
+    }
+
     // ---- touch -------------------------------------------------------------------------------------
 
     override fun down(x: Float, y: Float): Boolean {
@@ -480,6 +606,11 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         touchStartScroll = st.scroll
         dragging = false
         for ((r, id) in headerChips) if (r.contains(x, y)) { touchTarget = 10 + id; return true }
+        val panel = scalePanel
+        if (panel != null) {
+            if (panel.contains(x, y)) { touchTarget = 20; return true }
+            ctl.closeScalePanel() // a touch elsewhere puts the panel away and acts as usual
+        }
         val insp = inspector
         touchTarget = when {
             insp != null && insp.contains(x, y) -> if (y >= orderListTop) 3 else 0
@@ -529,6 +660,18 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             10 -> st.followPlayback = !st.followPlayback
             11 -> session.step = if (session.step >= 4) 0 else session.step + 1
             12 -> st.octave = if (st.octave >= 7) 3 else st.octave + 1
+            13 -> if (st.scalePanel) ctl.closeScalePanel() else ctl.openScalePanel()
+            20 -> {
+                val key = rootKeys.indexOfFirst { it.contains(x, y) }
+                when {
+                    key >= 0 -> ctl.stepScale(0, key - ctl.patternScale.root)
+                    scalePrev.contains(x, y) -> ctl.stepScale(1, -1)
+                    scaleNext.contains(x, y) -> ctl.stepScale(1, 1)
+                    scaleDone.contains(x, y) -> ctl.closeScalePanel()
+                    rootRow.contains(x, y) -> st.scaleField = 0
+                    scaleRow.contains(x, y) -> st.scaleField = 1
+                }
+            }
         }
         dragging = false
     }
@@ -537,5 +680,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
 
     private companion object {
         const val LAMP_ROWS = 4
+        /** Pitch classes on black piano keys, C = 0. */
+        val BLACK_KEYS = booleanArrayOf(false, true, false, true, false, false, true, false, true, false, true, false)
     }
 }

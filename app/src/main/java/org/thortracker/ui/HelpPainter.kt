@@ -119,19 +119,29 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
         Line.Row("B hold+✛", "Jump in larger steps"),
         Line.Row("X hold", "Listen without writing anything"),
         Line.Row("L1 R1", "Previous/next channel, bank, wave or page"),
-        Line.Row("L2 R2", "Undo / redo (whole document, both displays)"),
+        Line.Row("L2+A R2+A", "Undo / redo (whole document, both displays)"),
+        Line.Row("L2 R2 alone", "Do nothing, so a brushed trigger never edits"),
+        Line.Row("L2+X", "Swap the complete views of the two displays"),
         Line.Row("Sel+X A B", "Copy / paste / cut"),
         Line.Row("Sel+Y", "Duplicate"),
         Line.Row("Sel+L1 R1", "Octave down / up"),
-        Line.Row("Start", "Play / stop"),
+        Line.Row("Start", "Play from the start of the current pattern, or stop"),
+        Line.Row("L3+Start", "Play from the cursor row, or stop"),
+        Line.Row("Sel+Start", "Show the toolbar and move the controller to it"),
         Line.Row("R3", "Move controller focus to the other display"),
         Line.Heading("Pattern"),
         Line.Row("Columns", "Note, sound number, effect type and effect value per channel"),
         Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
         Line.Row("A on note", "Empty row: write the last note and advance by the step"),
-        Line.Row("B on note", "Clears a note; on an empty row places a cut"),
+        Line.Row("B on note", "Clears a note; on an empty row places OFF"),
+        Line.Row("OFF", "Silences the channel at once (exported as E00). GB sounds have no release phase: for a tail, " +
+            "give the sound a falling volume envelope, or end it later in the row with Exx"),
+        Line.Row("A+←→ effect", "· is no effect, then 0 arpeggio, 1 slide up and on. 0 waits as 000 until you set its value"),
         Line.Row("Y hold+✛", "Select a block for copy, cut, clear or duplicate"),
         Line.Row("Sel+↑↓", "Insert / delete a row in the channel or selection"),
+        Line.Row("Sel+→", "Pattern scale: root and scale (Major, Natural minor, pentatonics or Chromatic). " +
+            "A+✛ on Pulse and Wave notes then lands only on its notes (A+↑↓ an octave, or the next scale note past it). " +
+            "Noise keeps every pitch. Setting a scale never changes written notes; it is not exported or heard"),
         Line.Text("Rails beside a channel show how long each note keeps sounding."),
         Line.Heading("Song"),
         Line.Row("A+←→", "Change the pattern an order plays, tempo, loop or a letter"),
@@ -146,15 +156,17 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
         Line.Heading("Keyboard"),
         Line.Row("Y", "Switch between Listen and Write"),
         Line.Row("A", "Listen: play.  Write: write at the pattern cursor and advance"),
-        Line.Row("B", "Write mode: place a cut and advance"),
+        Line.Row("B", "Write mode: place OFF and advance"),
         Line.Row("↓", "Write mode: skip a step"),
         Line.Row("Dark keys", "Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note: they neither play nor write"),
     )
 
     private fun effects(): List<Line> {
         val out = ArrayList<Line>()
-        out += Line.Text("One effect per channel per row. Values are hexadecimal.")
+        out += Line.Text("One effect per channel per row. Values are hexadecimal. 000 is no effect.")
         out += Line.Text("Effects marked unavailable cannot be exported or previewed and are refused.")
+        out += Line.Text("There is no stutter or retrigger effect in the supported hUGE set. For a stutter, repeat the note " +
+            "on consecutive rows with its sound number (each restarts the sound); Exx shortens each hit and 7xx delays one.")
         val names = Songs.channelNames(song)
         val usable = names.indices.map { ch -> Songs.effectsFor(song, ch).map { it.code }.toSet() }
         for (e in Songs.effects(song)) {

@@ -5,6 +5,7 @@ import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
+import org.thortracker.model.Scale
 import org.thortracker.model.Songs
 
 /**
@@ -258,25 +259,37 @@ class EditorSession(initial: Song) {
     /** Pastes the cell clipboard with its top-left at (channel,row); clipped at pattern bounds. Returns the pasted block. */
     fun pasteCells(pattern: Int, channel: Int, row: Int): Block? {
         val clip = clipboard as? Clip.Cells ?: run { note("Clipboard holds no pattern cells"); return null }
-        val channels = song.channelCount()
-        val rows = song.rowCount(pattern)
-        val lastC = minOf(channels - 1, channel + clip.width - 1)
-        val lastR = minOf(rows - 1, row + clip.height - 1)
-        if (lastC < channel || lastR < row) return null
-        apply("Paste cells") { s ->
-            val p = s.patterns[pattern]
-            val tracks = p.tracks.mapIndexed { c, track ->
-                if (c !in channel..lastC) track
-                else track.mapIndexed { r, cell ->
-                    if (r in row..lastR) normaliseCell(clip.tracks[c - channel][r - row]) else cell
-                }
-            }
-            s.withPattern(pattern, p.copy(tracks = tracks))
-        }
-        val b = Block(channel, lastC, row, lastR)
+        val b = pasteBlock(pattern, clip, channel, row) ?: return null
+        apply("Paste cells") { s -> s.withPattern(pattern, pasted(s.patterns[pattern], clip, b)) }
         note("Pasted ${b.width}×${b.height} cells")
         return b
     }
+
+    /**
+     * Pastes the clipboard over the top of [pattern]. A whole copied pattern ([copyPattern]) also brings its
+     * editor-only scale, in the same undo step; other cell clips paste like [pasteCells] at row 0, channel 0.
+     */
+    fun pastePattern(pattern: Int): Block? {
+        val clip = clipboard as? Clip.Cells ?: run { note("Clipboard holds no pattern cells"); return null }
+        val scale = clip.scale ?: return pasteCells(pattern, 0, 0)
+        val b = pasteBlock(pattern, clip, 0, 0) ?: return null
+        apply("Paste pattern") { s -> s.withPattern(pattern, pasted(s.patterns[pattern], clip, b).copy(scale = scale)) }
+        note("Pasted pattern into ${hex2(pattern)}")
+        return b
+    }
+
+    private fun pasteBlock(pattern: Int, clip: Clip.Cells, channel: Int, row: Int): Block? {
+        val lastC = minOf(song.channelCount() - 1, channel + clip.width - 1)
+        val lastR = minOf(song.rowCount(pattern) - 1, row + clip.height - 1)
+        return if (lastC < channel || lastR < row) null else Block(channel, lastC, row, lastR)
+    }
+
+    private fun pasted(p: Pattern, clip: Clip.Cells, b: Block): Pattern = p.copy(tracks = p.tracks.mapIndexed { c, track ->
+        if (c !in b.firstChannel..b.lastChannel) track
+        else track.mapIndexed { r, cell ->
+            if (r in b.firstRow..b.lastRow) normaliseCell(clip.tracks[c - b.firstChannel][r - b.firstRow]) else cell
+        }
+    })
 
     /**
      * Repeats [block] directly below itself (clipped at the pattern end) without touching the
@@ -397,11 +410,17 @@ class EditorSession(initial: Song) {
         return index
     }
 
-    /** Copies a whole pattern to the cell clipboard. */
+    /** Copies a whole pattern, with its editor-only scale, to the cell clipboard. */
     fun copyPattern(pattern: Int) {
         val p = song.patterns[pattern]
-        clipboard = Clip.Cells(p.tracks)
+        clipboard = Clip.Cells(p.tracks, p.scale)
         note("Copied pattern ${hex2(pattern)}")
+    }
+
+    /** Sets [pattern]'s editor-only note-entry scale. Stored notes, export and playback are unaffected. */
+    fun setPatternScale(pattern: Int, scale: Scale): Boolean {
+        if (scale.root !in 0..11) return false
+        return apply("Set scale") { s -> s.withPattern(pattern, s.patterns[pattern].copy(scale = scale)) }
     }
 
     /** The loop target follows its order when an order is inserted at or before it. */

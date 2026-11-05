@@ -80,7 +80,7 @@ internal object HugeRules {
         EffectInfo(0xD, "Pattern break", "xx: row+1 (01-40)",
             "After this row, continue with the next order at row xx-1 (D01 = row 0).", true),
         EffectInfo(0xE, "Note cut", "xx: ticks",
-            "Silence the channel after xx ticks (E00 = immediately). Must be less than the row length.", true),
+            "Silence the channel after xx ticks (E00 = immediately, the same as OFF). Must be less than the row length.", true),
         EffectInfo(0xF, "Set speed", "xx: ticks per row (01-FF)",
             "Change the number of ticks per row from this row on. Global.", true),
     )
@@ -120,7 +120,7 @@ internal object HugeRules {
         }
     }
 
-    /** The cell as hUGEDriver receives it: a cut is no note + E00. Equal results mean identical driver bytes. */
+    /** The cell as hUGEDriver receives it: OFF ([Cell.CUT]) is no note + E00. Equal results mean identical driver bytes. */
     fun lowered(cell: Cell): Cell = if (cell.note == Cell.CUT) Cell(Cell.EMPTY, 0, FX_NOTE_CUT, 0) else cell
 
     /** Distinct lowered tracks referenced by the order list, including the loop-variant tracks of [plan]. */
@@ -150,9 +150,9 @@ internal object HugeRules {
     fun cellProblem(song: Song, channel: Int, cell: Cell): String? {
         val kind = channelKind(channel)
         if (cell.note == Cell.CUT) {
-            if (cell.instrument != 0) return "a cut cannot load instrument ${hex2(cell.instrument)}; clear the instrument"
-            if (cell.hasEffect) return "a cut is exported as effect E00 and needs this row's effect slot, " +
-                "but the row has ${effectText(cell.effect, cell.param)}; move the effect or use Exx instead of the cut"
+            if (cell.instrument != 0) return "OFF cannot load instrument ${hex2(cell.instrument)}; clear the instrument"
+            if (cell.hasEffect) return "OFF is exported as effect E00 and needs this row's effect slot, " +
+                "but the row has ${effectText(cell.effect, cell.param)}; move the effect or use Exx instead of OFF"
         } else if (cell.note == Cell.EMPTY && cell.instrument != 0) {
             return "instrument ${hex2(cell.instrument)} without a note is ignored by hUGEDriver; add a note or clear the instrument"
         }

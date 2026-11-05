@@ -1,8 +1,11 @@
 package org.thortracker.editor
 
 import org.thortracker.model.Cell
+import org.thortracker.model.HugeRules
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
+import org.thortracker.model.Scale
+import org.thortracker.model.ScaleKind
 import org.thortracker.model.Songs
 
 /**
@@ -11,12 +14,14 @@ import org.thortracker.model.Songs
  * Press/release semantics: EDIT held + direction adjusts the field (one undo step per hold), a tap
  * inserts the previous value or activates. CLEAR tap clears, CLEAR held + direction jumps. AUDITION
  * held listens and never writes. MARK held + direction selects a block, a tap drops the selection.
+ * UNDO/REDO have no bare button: the host dispatches its trigger+A chords to them. SCALE opens or closes
+ * the Pattern view's root/scale panel.
  */
 enum class Action {
     UP, DOWN, LEFT, RIGHT,
     EDIT, CLEAR, AUDITION, MARK,
     PREV_CHANNEL, NEXT_CHANNEL, OCTAVE_DOWN, OCTAVE_UP,
-    COPY, CUT, PASTE, DUPLICATE, UNDO, REDO, INSERT_ROW, DELETE_ROW;
+    COPY, CUT, PASTE, DUPLICATE, UNDO, REDO, INSERT_ROW, DELETE_ROW, SCALE;
 
     val isDirection: Boolean get() = this == UP || this == DOWN || this == LEFT || this == RIGHT
 }
@@ -62,7 +67,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     fun press(a: Action): Boolean {
         normalise()
+        if (state.scalePanel) scalePanelPress(a)?.let { return it }
         return when (a) {
+            Action.SCALE -> { if (state.kind == ViewKind.PATTERN && !holding) openScalePanel(); state.kind == ViewKind.PATTERN }
             Action.UNDO -> { historyStep(true); true }
             Action.REDO -> { historyStep(false); true }
             Action.OCTAVE_DOWN, Action.OCTAVE_UP -> {
@@ -167,6 +174,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.scroll = state.scroll.coerceAtLeast(0)
         state.markRow = state.markRow.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
         state.markChannel = state.markChannel.coerceIn(0, s.channelCount() - 1)
+        state.scaleField = state.scaleField.coerceIn(0, 1)
+        if (state.kind != ViewKind.PATTERN) state.scalePanel = false
     }
 
     /** After explicit navigation in a locked view, the lock moves to the subject the user chose. */
@@ -280,7 +289,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         when (state.kind) {
             ViewKind.PATTERN -> {
                 val cell = song.cellAt(song.patternAt(state.order), state.channel, state.row)
-                val note = if (cell.note >= 0) cell.note else lastNote[state.channel] ?: defaultNote()
+                val note = if (cell.note >= 0) cell.note else entryNote(state.channel)
                 val ins = if (cell.note >= 0 && cell.instrument > 0) cell.instrument else pen(kindOf(state.channel))
                 startAudition(state.channel, note, ins)
             }
@@ -325,11 +334,39 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Publishes the pattern cursor as the shared selection. */
     fun publishPattern() {
         syncLock()
+        if (state.chosenArpeggio != cursorKey()) state.chosenArpeggio = -1
         val kind = kindOf(state.channel)
         val c = cell
         val ins = if (c.instrument > 0) c.instrument else pen(kind)
         val wave = if (kind == InstrumentKind.WAVE) song.instrument(kind, ins)?.wave ?: session.selection.wave else session.selection.wave
         session.select(Selection(state.order, state.row, state.channel, kind, ins, wave, PATTERN_CONTEXT[state.field]))
+    }
+
+    private fun cursorKey() = cellKey(pattern, state.channel, state.row)
+
+    /**
+     * True when the cursor cell's stored 000 is shown as an explicitly chosen effect 0 (arpeggio) waiting for
+     * its value, rather than as "no effect". Both are the same bytes; only the display and picker position differ.
+     */
+    fun chosenArpeggio(): Boolean {
+        if (state.chosenArpeggio != cursorKey()) return false
+        val c = cell
+        return c.note != Cell.CUT && !c.hasEffect
+    }
+
+    /** The pattern scale note stepping follows on [channel]; Noise note numbers select noise pitches, so stay chromatic. */
+    fun noteScale(channel: Int): Scale =
+        if (kindOf(channel) == InstrumentKind.NOISE) Scale.CHROMATIC else song.patterns[pattern].scale
+
+    /**
+     * Note written into an empty row: the channel's last note, else the scale root (C when chromatic) at the octave.
+     * With a scale, a remembered note outside it moves to the nearest scale note.
+     */
+    private fun entryNote(channel: Int): Int {
+        val scale = noteScale(channel)
+        if (scale.isChromatic) return lastNote[channel] ?: defaultNote()
+        val note = lastNote[channel] ?: (defaultNote() + scale.root).coerceIn(0, Songs.NOTE_MAX)
+        return scale.snap(note) ?: note
     }
 
     /** Moves the cursor by rows, crossing into neighbouring orders. */
@@ -388,7 +425,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val kind = kindOf(ch)
         when (state.field) {
             0 -> if (c.note < 0) {
-                val note = lastNote[ch] ?: defaultNote()
+                val note = entryNote(ch)
                 write(c.copy(note = note, instrument = pen(kind)))
                 editInserted = true
                 startAudition(ch, note, pen(kind))
@@ -403,10 +440,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 else -> { setPen(kind, c.instrument); state.instrument = c.instrument }
             }
             else -> when {
-                c.note == Cell.CUT -> session.note("A cut row cannot also carry an effect")
-                c.effect == 0 && c.param == 0 -> {
+                c.note == Cell.CUT -> session.note(OFF_TAKES_EFFECT_SLOT)
+                !c.hasEffect && !chosenArpeggio() -> {
                     val (e, p) = lastEffect[ch] ?: return
-                    write(c.copy(effect = e, param = p)); editInserted = true
+                    if (e == HugeRules.FX_ARPEGGIO && p == 0) state.chosenArpeggio = cursorKey() // 000: show the chosen arpeggio, nothing to write
+                    else { write(c.copy(effect = e, param = p)); editInserted = true }
                 }
                 else -> lastEffect[ch] = c.effect to c.param
             }
@@ -430,7 +468,23 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val kind = kindOf(ch)
         when (state.field) {
             0 -> {
-                val note = if (c.note < 0) lastNote[ch] ?: defaultNote() else (c.note + dx + 12 * dy).coerceIn(0, Songs.NOTE_MAX)
+                // Chromatic: semitones and octaves, clamped to C-3..B-8. With a pattern scale (Pulse/Wave), every
+                // edit lands on a scale note: steps go to the next one, octaves are exact from a scale note and
+                // otherwise take the first scale note past the octave target; no edit when none is in range.
+                // Setting a scale never touches notes; only edited notes move onto it.
+                val scale = noteScale(ch)
+                val note = when {
+                    c.note < 0 -> entryNote(ch)
+                    scale.isChromatic -> (c.note + dx + 12 * dy).coerceIn(0, Songs.NOTE_MAX)
+                    dy != 0 -> scale.octave(c.note, dy) ?: run {
+                        session.note("No ${scale.label} note an octave ${if (dy > 0) "above" else "below"} ${Songs.noteName(c.note)} within C-3..B-8")
+                        return
+                    }
+                    else -> scale.step(c.note, dx) ?: run {
+                        session.note("No ${if (dx > 0) "higher" else "lower"} ${scale.label} note than ${Songs.noteName(c.note)} within C-3..B-8")
+                        return
+                    }
+                }
                 val ins = if (c.note < 0 || c.instrument == 0) pen(kind) else c.instrument
                 write(c.copy(note = note, instrument = ins))
                 lastNote[ch] = note
@@ -445,20 +499,30 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 startAudition(ch, c.note, ins)
             }
             2 -> {
-                if (c.note == Cell.CUT) { session.note("A cut row cannot also carry an effect"); return }
-                val codes = Songs.effectsFor(song, ch).map { it.code }
-                if (codes.isEmpty()) return
-                val step = if (dx != 0) dx else dy
-                val idx = codes.indexOf(c.effect).let { if (it < 0) 0 else it }
-                val next = codes[Math.floorMod(idx + step, codes.size)]
-                write(c.copy(effect = next))
-                lastEffect[ch] = next to c.param
+                if (c.note == Cell.CUT) { session.note(OFF_TAKES_EFFECT_SLOT); return }
+                // Picker positions: no effect, then the channel's usable codes. A stored 000 counts as "no effect"
+                // unless effect 0 was picked here; picking 0 with value 00 writes nothing until a value is set.
+                val positions = listOf(NO_EFFECT) + Songs.effectsFor(song, ch).map { it.code }
+                val current = if (!c.hasEffect && !chosenArpeggio()) NO_EFFECT else c.effect
+                val idx = positions.indexOf(current).coerceAtLeast(0)
+                val next = positions[Math.floorMod(idx + (if (dx != 0) dx else dy), positions.size)]
+                if (next == NO_EFFECT) {
+                    write(c.copy(effect = 0, param = 0))
+                    state.chosenArpeggio = -1
+                    lastEffect.remove(ch)
+                } else {
+                    write(c.copy(effect = next))
+                    lastEffect[ch] = next to c.param
+                    state.chosenArpeggio = if (next == HugeRules.FX_ARPEGGIO && c.param == 0) cursorKey() else -1
+                }
             }
             else -> {
-                if (c.note == Cell.CUT) { session.note("A cut row cannot also carry an effect"); return }
+                if (c.note == Cell.CUT) { session.note(OFF_TAKES_EFFECT_SLOT); return }
                 val p = (c.param + dx + 16 * dy).coerceIn(0, 255)
                 write(c.copy(param = p))
                 lastEffect[ch] = c.effect to p
+                // Back to 00 on effect 0: keep showing the arpeggio being edited instead of a blank cell.
+                if (c.effect == HugeRules.FX_ARPEGGIO && p == 0) state.chosenArpeggio = cursorKey()
             }
         }
         publishPattern()
@@ -475,11 +539,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             0 -> when {
                 c.note >= 0 -> write(c.copy(note = Cell.EMPTY, instrument = 0))
                 c.note == Cell.CUT -> write(c.copy(note = Cell.EMPTY))
-                c.effect != 0 || c.param != 0 -> session.note("Clear this row's effect before placing a cut")
-                else -> { write(Cell(note = Cell.CUT)); session.note("Cut: silences the channel on this row") }
+                c.hasEffect -> session.note("Clear this row's effect first: OFF uses the effect slot (as E00)")
+                else -> { write(Cell(note = Cell.CUT)); session.note(OFF_EXPLAINED) }
             }
             1 -> write(c.copy(instrument = 0))
-            else -> write(c.copy(effect = 0, param = 0))
+            else -> { write(c.copy(effect = 0, param = 0)); state.chosenArpeggio = -1 }
         }
     }
 
@@ -518,6 +582,58 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.channel = b.firstChannel
         state.row = b.firstRow
         publishPattern()
+    }
+
+    // ---- pattern scale panel -------------------------------------------------------------------------
+
+    /** Editor-only scale of the pattern at the cursor's order. */
+    val patternScale: Scale get() = song.patterns[pattern].scale
+
+    fun openScalePanel() {
+        state.scalePanel = true
+        session.note(null)
+    }
+
+    fun closeScalePanel() {
+        state.scalePanel = false
+    }
+
+    /** Steps the root ([field] 0, by semitones, wrapping) or the scale ([field] 1, through [ScaleKind]) by [delta]. */
+    fun stepScale(field: Int, delta: Int) {
+        val s = patternScale
+        state.scaleField = field
+        setScale(if (field == 0) s.copy(root = Math.floorMod(s.root + delta, 12))
+            else s.copy(kind = ScaleKind.entries[Math.floorMod(s.kind.ordinal + delta, ScaleKind.entries.size)]))
+    }
+
+    /** Resets the root ([field] 0) to C or the scale ([field] 1) to chromatic. */
+    fun resetScaleField(field: Int) {
+        val s = patternScale
+        state.scaleField = field
+        setScale(if (field == 0) s.copy(root = 0) else s.copy(kind = ScaleKind.CHROMATIC))
+    }
+
+    private fun setScale(s: Scale) {
+        if (!session.setPatternScale(pattern, s)) return
+        val root = Scale.ROOT_NAMES[s.root]
+        session.note(
+            if (s.isChromatic) "Pattern ${EditorSession.hex2(pattern)}: chromatic, every semitone (root $root waits for a scale)"
+            else "Pattern ${EditorSession.hex2(pattern)}: ${s.label}. Note edits land on its notes; written notes stay until edited",
+        )
+    }
+
+    /** Controller input while the scale panel is open; null lets the action through (closing the panel unless harmless). */
+    private fun scalePanelPress(a: Action): Boolean? {
+        when (a) {
+            Action.UP -> state.scaleField = 0
+            Action.DOWN -> state.scaleField = 1
+            Action.LEFT, Action.RIGHT -> stepScale(state.scaleField, if (a == Action.RIGHT) 1 else -1)
+            Action.CLEAR -> resetScaleField(state.scaleField)
+            Action.EDIT, Action.SCALE -> closeScalePanel()
+            Action.UNDO, Action.REDO, Action.AUDITION -> return null
+            else -> { closeScalePanel(); return null }
+        }
+        return true
     }
 
     // ---- song / orders -----------------------------------------------------------------------------
@@ -602,7 +718,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 publishOrder()
             }
             Action.COPY -> if (o >= 0) session.copyPattern(song.orders[o]) else return false
-            Action.PASTE -> if (o >= 0) session.pasteCells(song.orders[o], 0, 0) else return false
+            Action.PASTE -> if (o >= 0) session.pastePattern(song.orders[o]) else return false
             Action.DUPLICATE -> if (o >= 0 && session.clonePatternAt(o) >= 0) { state.songItem++; publishOrder() }
             Action.INSERT_ROW -> if (o >= 0 && session.insertOrder(o + 1, song.orders[o])) { state.songItem++; publishOrder() }
             Action.DELETE_ROW -> if (o >= 0) { session.deleteOrder(o); normalise(); publishOrder() }
@@ -942,7 +1058,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val row = sel.row.coerceIn(0, song.rowCount(p) - 1)
         val old = song.cellAt(p, state.channel, row)
         val cell = if (note == Cell.CUT) {
-            if (old.effect != 0 || old.param != 0) { session.note("That row has an effect; clear it before placing a cut"); return }
+            if (old.hasEffect) { session.note("That row has an effect; clear it first: OFF uses the effect slot (as E00)"); return }
             Cell(note = Cell.CUT)
         } else old.copy(note = note, instrument = keyboardSound())
         session.setCell(p, state.channel, row, cell)
@@ -998,27 +1114,52 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun patternHints(h: MutableList<Hint>) {
         val c = cell
+        val ch = state.channel
+        if (state.scalePanel) {
+            h += Hint("↑↓", "Root / scale")
+            h += Hint("←→", if (state.scaleField == 0) "Root note" else "Scale")
+            h += Hint("B", if (state.scaleField == 0) "Root C" else "Chromatic")
+            h += Hint("A", "Done")
+            h += Hint("X", "Listen")
+            return
+        }
         when {
             editHeld -> when (state.field) {
-                0 -> { h += Hint("A+←→", "Semitone"); h += Hint("A+↑↓", "Octave") }
+                0 -> {
+                    val scale = noteScale(ch)
+                    h += Hint("A+←→", when {
+                        kindOf(ch) == InstrumentKind.NOISE -> "Noise pitch (no scale)"
+                        scale.isChromatic -> "Semitone"
+                        else -> "${scale.label} note"
+                    })
+                    h += Hint("A+↑↓", "Octave")
+                }
                 1 -> { h += Hint("A+←→", "Sound ±1"); h += Hint("A+↑↓", "Sound ±4") }
-                2 -> { h += Hint("A+←→", "Effect type") }
+                2 -> { h += Hint("A+←→", "Effect type: · none, then 0-F") }
                 else -> { h += Hint("A+←→", "Value ±1"); h += Hint("A+↑↓", "Value ±10h") }
             }
             clearHeld -> { h += Hint("B+↑↓", "Jump 16 rows"); h += Hint("B+←→", "Previous/next order") }
             markHeld -> { h += Hint("Y+✛", "Extend selection"); h += Hint("Release", "Keep selection") }
             else -> {
                 val tap = when (state.field) {
-                    0 -> if (c.note < 0) "Write note ${Songs.noteName(lastNote[state.channel] ?: defaultNote())}" else "Hold to change note"
-                    1 -> if (c.note < 0) "Needs a note" else if (c.instrument == 0) "Write sound ${EditorSession.hex2(pen(kindOf(state.channel)))}" else "Hold to change sound"
-                    else -> if (c.effect == 0 && c.param == 0) (lastEffect[state.channel]?.let { "Write effect ${EditorSession.hex1(it.first)}${EditorSession.hex2(it.second)}" } ?: "Hold to pick effect") else "Hold to change effect"
+                    0 -> if (c.note < 0) "Write note ${Songs.noteName(entryNote(ch))}" else "Hold to change note"
+                    1 -> if (c.note < 0) "Needs a note" else if (c.instrument == 0) "Write sound ${EditorSession.hex2(pen(kindOf(ch)))}" else "Hold to change sound"
+                    else -> when {
+                        c.hasEffect -> "Hold to change effect"
+                        chosenArpeggio() -> if (state.field == 2) "Hold to change effect" else "Hold to set arpeggio +x +y"
+                        else -> lastEffect[ch]?.let { (e, p) ->
+                            if (e == HugeRules.FX_ARPEGGIO && p == 0) "Pick arpeggio 0"
+                            else "Write effect ${EditorSession.hex1(e)}${EditorSession.hex2(p)}"
+                        } ?: "Hold to pick effect"
+                    }
                 }
                 h += Hint("A", tap)
-                h += Hint("B", if (state.mark) "Clear selection" else if (state.field == 0 && c.note == Cell.EMPTY) "Place cut" else "Clear")
+                h += Hint("B", if (state.mark) "Clear selection" else if (state.field == 0 && c.note == Cell.EMPTY) "Place OFF" else "Clear")
                 h += Hint("X", "Listen")
                 h += Hint("Y", if (state.mark) "Hold: extend, tap: unmark" else "Hold: select block")
                 h += Hint("L1 R1", "Channel")
                 h += Hint("Sel+X/A", "Copy/paste")
+                h += Hint("Sel+→", "Scale: ${patternScale.label}")
             }
         }
     }
@@ -1079,7 +1220,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             h += Hint("A", if (state.entryMode) "Write note and advance" else "Play note")
             h += Hint("X", "Listen only")
             h += Hint("Y", if (state.entryMode) "Switch to listen" else "Switch to write")
-            if (state.entryMode) { h += Hint("B", "Write cut"); h += Hint("↓", "Skip step") }
+            if (state.entryMode) { h += Hint("B", "Write OFF"); h += Hint("↓", "Skip step") }
             h += Hint("↑", "Settings")
             h += Hint("L1 R1", "Channel")
         }
@@ -1088,6 +1229,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     companion object {
         const val FIELDS = 4
         const val KEYS = 25
+        /** Effect picker position before effect 0: the row has no effect (000). */
+        private const val NO_EFFECT = -1
+        private const val OFF_TAKES_EFFECT_SLOT = "An OFF row has no effect slot left: OFF is exported as E00"
+        const val OFF_EXPLAINED = "OFF: instant silence (E00), no release tail; for a fade use a sound's falling envelope"
+
+        /** Identifies one pattern cell for view-local markers: pattern < 256, channel < 4, row < 64. */
+        fun cellKey(pattern: Int, channel: Int, row: Int): Int = (pattern shl 8) or (channel shl 6) or row
         val PATTERN_CONTEXT = arrayOf(ViewKind.KEYBOARD, ViewKind.INSTRUMENT, ViewKind.HELP, ViewKind.HELP)
         val ORDER_FIELDS = listOf("Pattern", "Repeat", "New", "Clone", "Delete", "Earlier", "Later", "Loop here")
         val ORDER_FIELD_HINTS = listOf(

@@ -42,6 +42,14 @@ data class ViewState(
     var helpPage: Int = 0,
     /** Character position while editing a name (song title/artist, sound name). */
     var textPos: Int = 0,
+    /** Pattern view: the root/scale panel is open; [scaleField] 0 = root, 1 = scale. Not persisted. */
+    var scalePanel: Boolean = false,
+    var scaleField: Int = 0,
+    /**
+     * Pattern view: the cell (see [ViewController.cellKey]) whose stored 000 the user explicitly picked as
+     * effect 0 (arpeggio) and is still on; -1 = none. Display only: 000 stays "no effect" in the song. Not persisted.
+     */
+    var chosenArpeggio: Int = -1,
     /** What "tap A" re-enters on this display; travels with the state when displays swap. Not persisted. */
     val entry: EntryMemory = EntryMemory(),
 ) {
@@ -49,6 +57,7 @@ data class ViewState(
     fun switchKind(next: ViewKind) {
         if (kind == next) return
         lockedSubject = -1
+        scalePanel = false
         kind = next
     }
 

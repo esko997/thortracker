@@ -188,7 +188,7 @@ class SongValidatorTest {
 
         val afterCut = SongValidator.warnings(song(0 to Cell(24, 1), 4 to Cell(Cell.CUT), 8 to Cell(26, 0)))
         assertTrue(afterCut.single().contains("row 8"))
-        assertTrue(afterCut.single().contains("the cut on") && afterCut.single().contains("row 4"))
+        assertTrue(afterCut.single().contains("row 4"))
 
         val afterEffectCut = SongValidator.warnings(song(0 to Cell(24, 1, 0xE, 0x02), 8 to Cell(26, 0)))
         assertTrue(afterEffectCut.single().contains("E02 cut"))

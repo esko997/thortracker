@@ -1,13 +1,18 @@
 package org.thortracker.backend
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.thortracker.audio.HugeImageLayout
 import org.thortracker.model.Cell
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
+import org.thortracker.model.Scale
+import org.thortracker.model.ScaleKind
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import java.nio.ByteBuffer
@@ -168,5 +173,17 @@ class UgeExporterTest {
         assertThrows(IllegalArgumentException::class.java) { UgeExporter.export(routine) }
         val longName = Songs.blank().copy(comment = "x".repeat(256))
         assertThrows(IllegalArgumentException::class.java) { UgeExporter.export(longName) }
+    }
+
+    @Test
+    fun patternScalesChangeNeitherExportNorPreviewBytes() {
+        val demo = Songs.demo()
+        val scaled = demo.copy(patterns = demo.patterns.mapIndexed { i, p ->
+            p.copy(scale = Scale((i * 5) % 12, ScaleKind.entries[1 + i % (ScaleKind.entries.size - 1)]))
+        })
+        assertNotEquals(demo, scaled)
+        assertArrayEquals(UgeExporter.export(demo), UgeExporter.export(scaled))
+        fun image(song: Song) = ByteArray(HugeImageLayout.SIZE).also { HugeImageLayout.build(HugeLowering.lower(song), it) }
+        assertArrayEquals(image(demo), image(scaled))
     }
 }
