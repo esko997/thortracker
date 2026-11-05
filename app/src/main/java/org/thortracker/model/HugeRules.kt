@@ -87,6 +87,36 @@ internal object HugeRules {
 
     fun channelKind(channel: Int): InstrumentKind = CHANNEL_KINDS[channel]
 
+    /** hUGEDriver 6.1.3 `include/hUGE_note_table.inc`: the 11-bit period of each note 0..71 (C-3..B-8). */
+    val NOTE_PERIODS = intArrayOf(
+        44, 156, 262, 363, 457, 547, 631, 710, 786, 854, 923, 986,
+        1046, 1102, 1155, 1205, 1253, 1297, 1339, 1379, 1417, 1452, 1486, 1517,
+        1546, 1575, 1602, 1627, 1650, 1673, 1694, 1714, 1732, 1750, 1767, 1783,
+        1798, 1812, 1825, 1837, 1849, 1860, 1871, 1881, 1890, 1899, 1907, 1915,
+        1923, 1930, 1936, 1943, 1949, 1954, 1959, 1964, 1969, 1974, 1978, 1982,
+        1985, 1988, 1992, 1995, 1998, 2001, 2004, 2006, 2009, 2011, 2013, 2015,
+    )
+
+    /**
+     * Pulse frequency in Hz of [note] raised by [detune] period units: 131072 / (2048 - period). The wave channel
+     * sounds an octave lower for the same period, so intervals are identical.
+     */
+    fun pitchHz(note: Int, detune: Int): Double {
+        val period = NOTE_PERIODS[note] + detune
+        require(detune >= 0 && period <= 2047) { "detune $detune on note $note is outside the 11-bit period" }
+        return 131072.0 / (2048 - period)
+    }
+
+    /**
+     * The constant 40y detune [cell] applies to its note: 0 without an effect, y for vibrato with tick mask 0 (4 0y),
+     * null for any other effect (the row's only effect slot is taken, so it cannot carry a tuning detune).
+     */
+    fun detuneOf(cell: Cell): Int? = when {
+        !cell.hasEffect -> 0
+        cell.effect == FX_VIBRATO && cell.param shr 4 == 0 -> cell.param and 0xF
+        else -> null
+    }
+
     /**
      * Pitch effects whose CH4 path is broken in hUGEDriver 6.1.3: `update_channel_freq.update_channel4` expects
      * a note ID in E, but arpeggio/vibrato pass a computed period, slides add to the stored poly byte, and tone

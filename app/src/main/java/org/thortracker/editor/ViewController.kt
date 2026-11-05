@@ -4,10 +4,15 @@ import org.thortracker.model.Cell
 import org.thortracker.model.HugeRules
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
+import org.thortracker.model.Phrase
+import org.thortracker.model.PhraseMotion
+import org.thortracker.model.PhraseRhythm
+import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
 import org.thortracker.model.ScaleKind
 import org.thortracker.model.Songs
 import org.thortracker.model.TonalGuide
+import kotlin.random.Random
 import org.thortracker.input.Keymap
 
 /**
@@ -80,8 +85,14 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             Action.REDO -> { historyStep(false); true }
             Action.OCTAVE_DOWN, Action.OCTAVE_UP -> {
                 state.octave = (state.octave + if (a == Action.OCTAVE_UP) 1 else -1).coerceIn(ViewState.MIN_OCTAVE, maxOctave())
-                if (state.kind == ViewKind.SKETCH && auditioning) sketchListen(state.sketchRow == 1)
-                session.note("Octave ${state.octave}")
+                when (state.kind) {
+                    ViewKind.SKETCH -> if (auditioning && state.sketchRow != SKETCH_PHRASE) sketchListen()
+                    ViewKind.INSTRUMENT, ViewKind.WAVE -> if (auditioning) auditionPress()
+                    ViewKind.KEYBOARD -> if (auditioning && keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey))
+                    else -> Unit
+                }
+                session.note(if (state.kind == ViewKind.INSTRUMENT || state.kind == ViewKind.WAVE)
+                    "Listening at ${Songs.noteName(defaultNote())}" else "Octave ${state.octave}")
                 true
             }
             Action.EDIT -> { if (!editHeld) { editHeld = true; editUsed = false; editInserted = false; editPress() }; true }
@@ -131,6 +142,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Drops any held state, e.g. when the display loses controller focus. */
     fun cancelHolds() {
+        // In Sketch a tap A can write (Insert) or change the key; a cancelled hold is never such a tap.
+        if (editHeld && state.kind == ViewKind.SKETCH) editUsed = true
         if (editHeld) release(Action.EDIT)
         clearHeld = false; clearUsed = true
         markHeld = false
@@ -182,14 +195,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.scroll = state.scroll.coerceAtLeast(0)
         state.markRow = state.markRow.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
         state.markChannel = state.markChannel.coerceIn(0, s.channelCount() - 1)
-        state.scaleField = state.scaleField.coerceIn(0, 2)
+        state.scaleField = state.scaleField.coerceIn(0, SCALE_FIT_FIELD)
         if (state.kind != ViewKind.PATTERN) state.scalePanel = false
         if (state.kind == ViewKind.SKETCH) {
             if (kindOf(state.channel) == InstrumentKind.NOISE) state.channel = song.firstChannelOf(InstrumentKind.PULSE).coerceAtLeast(0)
-            state.sketchRow = state.sketchRow.coerceIn(0, 2)
+            state.sketchRow = state.sketchRow.coerceIn(0, SKETCH_ROWS - 1)
             state.sketchField = state.sketchField.coerceIn(0, SKETCH_FIELDS.lastIndex)
             state.sketchChord = state.sketchChord.coerceIn(0, (sketchGuide.chords.size - 1).coerceAtLeast(0))
             state.sketchTone = state.sketchTone.coerceIn(0, sketchGuide.tones.lastIndex)
+            state.sketchCircleKey = Math.floorMod(state.sketchCircleKey, 12)
+            state.sketchPhraseField = state.sketchPhraseField.coerceIn(0, PHRASE_FIELDS.lastIndex)
+            if (state.sketchKeepRhythm) state.sketchKeepPitches = false
         }
     }
 
@@ -224,9 +240,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun defaultNote(): Int = ((state.octave - ViewState.MIN_OCTAVE) * 12).coerceIn(0, Songs.NOTE_MAX)
 
-    private fun startAudition(channel: Int, note: Int, instrument: Int) {
+    private fun startAudition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         if (note !in 0..Songs.NOTE_MAX) return
-        session.audition(channel, note, instrument)
+        session.audition(channel, note, instrument, detune)
         auditioning = true
     }
 
@@ -254,7 +270,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun editPress() {
         if (state.kind == ViewKind.SKETCH) {
-            if (state.sketchRow != 0) sketchListen(state.sketchRow == 1)
+            sketchEditPress()
             return
         }
         editGesture = session.beginGesture(gestureLabel())
@@ -274,7 +290,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.WAVE -> if (tap && state.waveRow == 0) applyTool(state.waveCol)
             ViewKind.KEYBOARD -> if (state.kbRow == 1) keyHeld = false else if (tap) stripActivate()
             ViewKind.HELP -> Unit
-            ViewKind.SKETCH -> Unit
+            ViewKind.SKETCH -> if (tap) sketchTap()
         }
     }
 
@@ -286,7 +302,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.WAVE -> if (state.waveRow == 1) session.setWaveSample(state.wave, state.waveCol, 0)
             ViewKind.KEYBOARD -> if (state.entryMode) writeFromKeyboard(Cell.CUT)
             ViewKind.HELP -> Unit
-            ViewKind.SKETCH -> sketchRelease()
+            ViewKind.SKETCH -> sketchClear()
         }
     }
 
@@ -332,9 +348,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 if (slot > 0 && ch >= 0) startAudition(ch, defaultNote(), slot)
                 else session.note("No wave sound plays wave ${EditorSession.hex1(state.wave)}: choose Use in sound first")
             }
-            ViewKind.KEYBOARD -> if (keyPlayable(state.kbKey)) startAudition(state.channel, keyNote(state.kbKey), keyboardSound())
+            ViewKind.KEYBOARD -> if (keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey))
             ViewKind.HELP -> Unit
-            ViewKind.SKETCH -> sketchListen(state.sketchRow != 2)
+            ViewKind.SKETCH -> sketchListen()
         }
     }
 
@@ -395,6 +411,58 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return scale.snap(note) ?: note
     }
 
+    /** The song tuning when [channel] is tonal (Pulse/Wave); Noise and 12-note songs return null. */
+    fun tuningFor(channel: Int): org.thortracker.model.TuningMap? =
+        if (kindOf(channel) == InstrumentKind.NOISE) null else session.tuningMap
+
+    /** Tuned pitch written into an empty row: the channel's last tuned pitch if still reachable, else 1/1 nearest the octave. */
+    private fun entryPitch(channel: Int, map: org.thortracker.model.TuningMap): org.thortracker.model.TunedPitch? {
+        state.entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
+        val root = map.tuning.root
+        val near = ((state.octave - ViewState.MIN_OCTAVE) * 12 + Math.floorMod(root, 12)).coerceIn(0, Songs.NOTE_MAX)
+        return map.nearest(near, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
+    }
+
+    /**
+     * Writes tuned [pitch] into the cursor cell (with sound [ins]) and auditions it. Refuses, with a message, when
+     * the pitch needs a bend and the row's effect slot holds another effect.
+     */
+    private fun writeTuned(c: Cell, pitch: org.thortracker.model.TunedPitch, ins: Int, map: org.thortracker.model.TuningMap): Boolean {
+        val next = EditorSession.tuned(c.copy(instrument = ins), pitch) ?: run {
+            session.note("This row's effect ${EditorSession.hex1(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for 40y; clear it first")
+            return false
+        }
+        write(next)
+        state.entry.tuned[state.channel] = pitch.note to pitch.detune
+        lastNote[state.channel] = pitch.note
+        startAudition(state.channel, pitch.note, ins, pitch.detune)
+        session.note("${map.tuning.name}: ${map.label(pitch)}  ${Songs.noteName(pitch.note)}${if (pitch.detune > 0) " +${pitch.detune}" else ""}  " +
+            "${"%+.1f".format(pitch.error)}¢")
+        return true
+    }
+
+    /** Hold-Edit stepping in a tuned song: ←→ next/previous reachable degree, ↑↓ the same degree a period away. */
+    private fun adjustTuned(c: Cell, dx: Int, dy: Int, map: org.thortracker.model.TuningMap) {
+        val ch = state.channel
+        val ins = if (c.note < 0 || c.instrument == 0) pen(kindOf(ch)) else c.instrument
+        if (map.pitches.isEmpty()) { session.note("No degree of ${map.tuning.name} is reachable within ${map.tuning.tolerance}¢"); return }
+        val target = if (c.note < 0) entryPitch(ch, map) else {
+            val detune = HugeRules.detuneOf(c) ?: 0
+            val here = map.index(c.note, detune).takeIf { it >= 0 } ?: map.nearest(c.note, detune)
+            val cur = map.pitches[here]
+            if (dy != 0) {
+                val goal = cur.degree + dy * map.steps
+                (if (dy > 0) map.pitches.firstOrNull { it.degree >= goal } else map.pitches.lastOrNull { it.degree <= goal })
+                    ?.takeIf { if (dy > 0) it.degree > cur.degree else it.degree < cur.degree }
+            } else if (map.index(c.note, detune) < 0) cur // first edit of an out-of-tuning note lands on the tuning
+            else map.pitches.getOrNull(here + dx)
+        } ?: run {
+            session.note("No ${if (dx > 0 || dy > 0) "higher" else "lower"} reachable degree of ${map.tuning.name} within C-3..B-8")
+            return
+        }
+        writeTuned(c, target, ins, map)
+    }
+
     /** Moves the cursor by rows, crossing into neighbouring orders. */
     private fun moveRows(delta: Int) {
         var order = state.order
@@ -451,14 +519,21 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val kind = kindOf(ch)
         when (state.field) {
             0 -> if (c.note < 0) {
-                val note = entryNote(ch)
-                write(c.copy(note = note, instrument = pen(kind)))
-                editInserted = true
-                startAudition(ch, note, pen(kind))
+                val map = tuningFor(ch)
+                if (map != null) {
+                    val pitch = entryPitch(ch, map) ?: run { session.note("No degree of ${map.tuning.name} is reachable"); return }
+                    if (writeTuned(c, pitch, pen(kind), map)) editInserted = true
+                } else {
+                    val note = entryNote(ch)
+                    write(c.copy(note = note, instrument = pen(kind)))
+                    editInserted = true
+                    startAudition(ch, note, pen(kind))
+                }
             } else {
                 lastNote[ch] = c.note
                 if (c.instrument > 0) { setPen(kind, c.instrument); state.instrument = c.instrument }
-                startAudition(ch, c.note, if (c.instrument > 0) c.instrument else pen(kind))
+                val detune = if (tuningFor(ch) != null) HugeRules.detuneOf(c) ?: 0 else 0
+                startAudition(ch, c.note, if (c.instrument > 0) c.instrument else pen(kind), detune)
             }
             1 -> when {
                 c.note < 0 -> session.note("Sounds start with a note: enter a note on this row first")
@@ -494,6 +569,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val kind = kindOf(ch)
         when (state.field) {
             0 -> {
+                tuningFor(ch)?.let { adjustTuned(c, dx, dy, it); publishPattern(); return }
                 // Chromatic: semitones and octaves, clamped to C-3..B-8. With a pattern scale (Pulse/Wave), every
                 // edit lands on a scale note: steps go to the next one, octaves are exact from a scale note and
                 // otherwise take the first scale note past the octave target; no edit when none is in range.
@@ -671,21 +747,42 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         )
     }
 
+    /** Nudges the pattern's played Pulse/Wave notes onto the nearest scale notes, as one undo step. */
+    fun fitPatternToScale() {
+        state.scaleField = SCALE_FIT_FIELD
+        val s = patternScale
+        val label = "Pattern ${EditorSession.hex2(pattern)}"
+        when {
+            song.tuning != null -> session.note("The song tuning replaces the scale: use Menu → Tuning → Fit notes")
+            s.isChromatic -> session.note("$label is chromatic: every note already fits. Choose a scale first")
+            else -> {
+                val moved = session.fitToScale(pattern)
+                session.note(if (moved == 0) "$label: every note is already in ${s.label}"
+                    else "$label: moved $moved note${if (moved == 1) "" else "s"} to the nearest ${s.label} note, marked ▴▾ until edited (${keys.label(Action.UNDO, state.kind)} undoes)")
+            }
+        }
+    }
+
     /** Controller input while the scale panel is open; null lets the action through (closing the panel unless harmless). */
     private fun scalePanelPress(a: Action): Boolean? {
         when (a) {
             Action.UP -> state.scaleField = (state.scaleField - 1).coerceAtLeast(0)
-            Action.DOWN -> state.scaleField = (state.scaleField + 1).coerceAtMost(2)
+            Action.DOWN -> state.scaleField = (state.scaleField + 1).coerceAtMost(SCALE_FIT_FIELD)
             Action.LEFT, Action.RIGHT -> {
                 val d = if (a == Action.RIGHT) 1 else -1
-                if (state.scaleField == 2) stepLength(d) else stepScale(state.scaleField, d)
+                when (state.scaleField) {
+                    2 -> stepLength(d)
+                    SCALE_FIT_FIELD -> Unit
+                    else -> stepScale(state.scaleField, d)
+                }
             }
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 if (state.scaleField != 2) { closeScalePanel(); return null }
                 stepLength(if (a == Action.NEXT_CHANNEL) 8 else -8)
             }
-            Action.CLEAR -> resetScaleField(state.scaleField)
-            Action.EDIT, Action.SCALE -> closeScalePanel()
+            Action.CLEAR -> if (state.scaleField != SCALE_FIT_FIELD) resetScaleField(state.scaleField)
+            Action.EDIT -> if (state.scaleField == SCALE_FIT_FIELD) fitPatternToScale() else closeScalePanel()
+            Action.SCALE -> closeScalePanel()
             Action.UNDO, Action.REDO, Action.AUDITION -> return null
             else -> { closeScalePanel(); return null }
         }
@@ -1006,7 +1103,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 if (key < 0 && state.octave > ViewState.MIN_OCTAVE) { state.octave--; key += 12 }
                 if (key > KEYS - 1 && state.octave < ViewState.KEYBOARD_MAX_OCTAVE) { state.octave++; key -= 12 }
                 state.kbKey = key.coerceIn(0, KEYS - 1)
-                if (editHeld) { editUsed = true; if (keyPlayable(state.kbKey)) startAudition(state.channel, keyNote(state.kbKey), keyboardSound()) }
+                if (editHeld) { editUsed = true; if (keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey)) }
             }
         }
     }
@@ -1091,14 +1188,25 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (!keyPlayable(state.kbKey)) { session.note("Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note"); return }
         val note = keyNote(state.kbKey)
         keyHeld = true
-        startAudition(state.channel, note, keyboardSound())
+        playKey(note)
         if (state.entryMode) writeFromKeyboard(note)
     }
 
     /** Touch glide while a key is held: plays the new key (if in range) without writing it. */
     fun glideTo(key: Int) {
         state.kbKey = key.coerceIn(0, KEYS - 1)
-        if (keyPlayable(state.kbKey)) startAudition(state.channel, keyNote(state.kbKey), keyboardSound())
+        if (keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey))
+    }
+
+    /** A key's pitch on the keyboard channel: in a tuned song, the nearest reachable degree (note, bend). */
+    private fun keyPitch(note: Int): org.thortracker.model.TunedPitch? {
+        val map = tuningFor(state.channel) ?: return null
+        return map.nearest(note, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
+    }
+
+    private fun playKey(note: Int) {
+        val p = keyPitch(note)
+        if (p != null) startAudition(state.channel, p.note, keyboardSound(), p.detune) else startAudition(state.channel, note, keyboardSound())
     }
 
     /** Touch key release. */
@@ -1116,7 +1224,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val cell = if (note == Cell.CUT) {
             if (old.hasEffect) { session.note("That row has an effect; clear it first: OFF uses the effect slot (as E00)"); return }
             Cell(note = Cell.CUT)
-        } else old.copy(note = note, instrument = keyboardSound())
+        } else {
+            val pitch = keyPitch(note)
+            if (pitch == null) old.copy(note = note, instrument = keyboardSound())
+            else EditorSession.tuned(old.copy(instrument = keyboardSound()), pitch)?.also {
+                state.entry.tuned[state.channel] = pitch.note to pitch.detune
+                session.note("${session.tuningMap?.tuning?.name}: wrote ${session.tuningMap?.label(pitch)} (${"%+.1f".format(pitch.error)}¢)")
+            } ?: run {
+                session.note("That row's effect uses the slot tuned notes need for 40y; clear it first")
+                return
+            }
+        }
         session.setCell(p, state.channel, row, cell)
         if (note >= 0) lastNote[state.channel] = note
         moveWritePosition(session.step)
@@ -1157,7 +1275,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     fun sketchSetField(index: Int) {
         sketchRelease()
-        state.sketchRow = 0
+        state.sketchRow = SKETCH_SETTINGS
         state.sketchField = index.coerceIn(0, SKETCH_FIELDS.lastIndex)
     }
 
@@ -1171,6 +1289,10 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             2 -> sketchChannel(delta)
             3 -> state.instrument = (state.instrument + delta).coerceIn(1, EditorSession.BANK_SIZE)
             4 -> state.octave = (state.octave + delta).coerceIn(ViewState.MIN_OCTAVE, ViewState.KEYBOARD_MAX_OCTAVE)
+            SKETCH_CHORDS_FIELD -> {
+                state.sketchCircle = !state.sketchCircle
+                if (state.sketchCircle) sketchCircleSync()
+            }
         }
         normalise()
     }
@@ -1179,50 +1301,97 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         sketchRelease()
         state.sketchScale = null
         normalise()
+        sketchCircleSync()
         session.note("Sketch follows the pattern key; no notes changed")
     }
 
     fun sketchSelectChord(index: Int) {
-        state.sketchRow = 1
+        state.sketchRow = SKETCH_CHORDS
         state.sketchChord = index.coerceIn(0, (sketchGuide.chords.size - 1).coerceAtLeast(0))
     }
 
     fun sketchSelectTone(index: Int) {
-        state.sketchRow = 2
+        state.sketchRow = SKETCH_NOTES
         state.sketchTone = index.coerceIn(0, sketchGuide.tones.lastIndex)
     }
 
-    fun sketchListen(chord: Boolean) {
+    /**
+     * Sounds the current Sketch item while held: the selected chord's arpeggio (or, in circle mode, the circle
+     * key's tonic triad) on the settings and chords rows, the selected note, or the phrase looping at song tempo.
+     */
+    fun sketchListen() {
         normalise()
-        if (chord) {
-            val notes = sketchChordNotes()
-            if (notes.isEmpty()) {
-                stopAudition()
-                session.note("Choose a scale in Sketch to explore its chords")
-                return
+        when (state.sketchRow) {
+            SKETCH_NOTES -> startAudition(state.channel, sketchNote(state.sketchTone), state.instrument)
+            SKETCH_PHRASE -> {
+                auditioning = true
+                session.auditionSequence(state.channel, sketchPhrase.steps, state.instrument, sketchStepMillis())
             }
-            auditioning = true
-            session.auditionSequence(state.channel, notes, state.instrument)
-        } else startAudition(state.channel, sketchNote(state.sketchTone), state.instrument)
+            else -> {
+                val notes = if (state.sketchCircle) sketchCircleTriad() else sketchChordNotes()
+                if (notes.isEmpty()) {
+                    stopAudition()
+                    session.note("Choose a scale in Sketch to explore its chords")
+                    return
+                }
+                auditioning = true
+                session.auditionSequence(state.channel, notes, state.instrument)
+            }
+        }
     }
 
     fun sketchRelease() = stopAudition()
 
+    /** A held A listens, except on the settings row and on phrase controls other than the strip. */
+    private fun sketchEditPress() {
+        when (state.sketchRow) {
+            SKETCH_SETTINGS -> Unit
+            SKETCH_PHRASE -> if (state.sketchPhraseField == PHRASE_STRIP) sketchListen()
+            else -> sketchListen()
+        }
+    }
+
+    /** Tap A: use the circle key, or activate the phrase control under the cursor. */
+    private fun sketchTap() {
+        when (state.sketchRow) {
+            SKETCH_CHORDS -> if (state.sketchCircle) sketchCircleSetKey()
+            SKETCH_PHRASE -> sketchPhraseActivate()
+        }
+    }
+
+    /** B: on the circle, switch between a major key and its relative minor; elsewhere it only stops a preview. */
+    private fun sketchClear() {
+        if (state.sketchRow == SKETCH_CHORDS && state.sketchCircle) {
+            state.sketchCircleMinor = !state.sketchCircleMinor
+            if (auditionHeld) sketchListen() else sketchRelease()
+        } else sketchRelease()
+    }
+
     private fun sketchDirection(dx: Int, dy: Int) {
         if (editHeld) editUsed = true
-        if (state.sketchRow == 0 && editHeld) {
+        val row = state.sketchRow
+        if (row == SKETCH_SETTINGS && editHeld) {
             sketchAdjustField(dx + dy)
             return
         }
-        if (dy != 0) {
-            state.sketchRow = (state.sketchRow - dy).coerceIn(0, 2)
-            if (state.sketchRow == 0) sketchRelease()
-        } else when (state.sketchRow) {
-            0 -> state.sketchField = (state.sketchField + dx).coerceIn(0, SKETCH_FIELDS.lastIndex)
-            1 -> sketchSelectChord(state.sketchChord + dx)
-            2 -> sketchSelectTone(state.sketchTone + dx)
+        if (row == SKETCH_PHRASE && editHeld && dy == 0 && state.sketchPhraseField in PHRASE_LENGTH..PHRASE_CHORD_TONES) {
+            sketchAdjustPhrase(dx)
+            return
         }
-        if (state.sketchRow != 0 && (editHeld || auditionHeld)) sketchListen(state.sketchRow == 1)
+        if (dy != 0) {
+            state.sketchRow = (row - dy).coerceIn(0, SKETCH_ROWS - 1)
+            if (state.sketchRow == SKETCH_SETTINGS) sketchRelease()
+        } else when (row) {
+            SKETCH_SETTINGS -> state.sketchField = (state.sketchField + dx).coerceIn(0, SKETCH_FIELDS.lastIndex)
+            SKETCH_CHORDS -> if (state.sketchCircle) sketchCircleSelect(state.sketchCircleKey + dx, state.sketchCircleMinor)
+                else sketchSelectChord(state.sketchChord + dx)
+            SKETCH_NOTES -> sketchSelectTone(state.sketchTone + dx)
+            // Moving between phrase controls never restarts or stops a phrase that is already looping.
+            else -> { state.sketchPhraseField = (state.sketchPhraseField + dx).coerceIn(0, PHRASE_FIELDS.lastIndex); return }
+        }
+        if (state.sketchRow == SKETCH_SETTINGS || (row == SKETCH_PHRASE && state.sketchRow == SKETCH_PHRASE)) return
+        val listen = auditionHeld || (editHeld && (state.sketchRow != SKETCH_PHRASE || state.sketchPhraseField == PHRASE_STRIP))
+        if (listen) sketchListen() else if (editHeld) sketchRelease()
     }
 
     private fun sketchChannel(delta: Int) {
@@ -1241,6 +1410,225 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             true
         }
         else -> false
+    }
+
+    // circle of fifths
+
+    /** The key under the circle cursor: its major key, or the relative natural minor on the inner ring. */
+    fun sketchCircleScale(position: Int = state.sketchCircleKey, minor: Boolean = state.sketchCircleMinor): Scale {
+        val major = circleRoot(position)
+        return if (minor) Scale((major + 9) % 12, ScaleKind.NATURAL_MINOR) else Scale(major, ScaleKind.MAJOR)
+    }
+
+    /**
+     * Where [scale]'s tonic sits on the circle: (position, on the minor ring), from the quality of its third, so
+     * D Dorian sits with D minor. Null for Chromatic and scales with neither a minor nor a major third.
+     */
+    fun sketchCirclePlace(scale: Scale = sketchGuide.scale): Pair<Int, Boolean>? {
+        if (scale.isChromatic) return null
+        val minor = scale.kind.hasInterval(3) && !scale.kind.hasInterval(4)
+        if (!minor && !scale.kind.hasInterval(4)) return null
+        return circlePosition(scale.root + if (minor) 3 else 0) to minor
+    }
+
+    /** Root-position tonic triad of the circle cursor's key at the Sketch octave, shifted down together to fit. */
+    fun sketchCircleTriad(): List<Int> {
+        val scale = sketchCircleScale()
+        val base = (state.octave - ViewState.MIN_OCTAVE) * 12 + scale.root
+        val shift = if (base + 7 > Songs.NOTE_MAX) 12 else 0
+        return listOf(0, if (state.sketchCircleMinor) 3 else 4, 7).map { base + it - shift }
+    }
+
+    fun sketchCircleSelect(position: Int, minor: Boolean) {
+        state.sketchRow = SKETCH_CHORDS
+        state.sketchCircleKey = Math.floorMod(position, 12)
+        state.sketchCircleMinor = minor
+    }
+
+    /** Makes the circle cursor's key (Major or Natural minor) Sketch's local key. The song is untouched. */
+    fun sketchCircleSetKey() {
+        val scale = sketchCircleScale()
+        sketchRelease()
+        state.sketchScale = scale
+        normalise()
+        session.note("Sketch key ${scale.label}; the pattern and its notes are unchanged")
+    }
+
+    /** Puts the circle cursor on the current key, when it has a place on the circle. */
+    private fun sketchCircleSync() {
+        val (position, minor) = sketchCirclePlace() ?: return
+        state.sketchCircleKey = position
+        state.sketchCircleMinor = minor
+    }
+
+    // phrases
+
+    /** The current phrase, generated from the seed on first use. */
+    val sketchPhrase: Phrase get() = state.sketchPhrase ?: sketchGenerate().also { state.sketchPhrase = it }
+
+    /** One pattern row at the song tempo: ticks per row at the GB vblank rate. */
+    fun sketchStepMillis(): Long = Math.round(song.ticksPerRow * 1000.0 / TICK_HZ)
+
+    /** The chord whose tones generated phrases land on at strong rows: the selected triad while Chord tones is on. */
+    fun sketchPhraseChord(): TonalGuide.Chord? =
+        if (state.sketchPhraseSettings.chordTones) sketchGuide.chords.getOrNull(state.sketchChord) else null
+
+    private fun sketchGenerate(): Phrase = Phrase.generate(
+        sketchGuide, (state.octave - ViewState.MIN_OCTAVE) * 12 + sketchGuide.scale.root, sketchPhraseChord(),
+        state.sketchPhraseSettings, Random(state.sketchPhraseSeed),
+    )
+
+    fun sketchSetPhraseField(index: Int) {
+        if (state.sketchRow != SKETCH_PHRASE) sketchRelease()
+        state.sketchRow = SKETCH_PHRASE
+        state.sketchPhraseField = index.coerceIn(0, PHRASE_FIELDS.lastIndex)
+    }
+
+    /** Steps the phrase setting under the cursor by [delta] and regenerates the phrase from the current seed. */
+    fun sketchAdjustPhrase(delta: Int) {
+        if (delta == 0) return
+        val s = state.sketchPhraseSettings
+        state.sketchPhraseSettings = when (state.sketchPhraseField) {
+            PHRASE_LENGTH -> s.copy(length = (s.length + delta).coerceIn(PhraseSettings.MIN_LENGTH, PhraseSettings.MAX_LENGTH))
+            PHRASE_RHYTHM -> s.copy(rhythm = PhraseRhythm.entries[Math.floorMod(s.rhythm.ordinal + delta, PhraseRhythm.entries.size)])
+            PHRASE_MOTION -> s.copy(motion = PhraseMotion.entries[Math.floorMod(s.motion.ordinal + delta, PhraseMotion.entries.size)])
+            PHRASE_CHORD_TONES -> s.copy(chordTones = !s.chordTones)
+            else -> return
+        }
+        if (state.sketchPhraseSettings == s) return
+        sketchNewPhrase(sketchGenerate())
+    }
+
+    /** Activates the phrase control under the cursor (tap A or a touch). */
+    fun sketchPhraseActivate() {
+        when (state.sketchPhraseField) {
+            PHRASE_RHYTHM, PHRASE_MOTION, PHRASE_CHORD_TONES -> sketchAdjustPhrase(1)
+            PHRASE_ANOTHER -> {
+                state.sketchPhraseSeed = nextSeed(state.sketchPhraseSeed)
+                sketchNewPhrase(sketchGenerate())
+            }
+            PHRASE_VARY -> {
+                state.sketchPhraseSeed = nextSeed(state.sketchPhraseSeed)
+                val keepRhythm = state.sketchKeepRhythm
+                val keepPitches = state.sketchKeepPitches && !keepRhythm
+                sketchNewPhrase(Phrase.vary(sketchPhrase, sketchGuide, sketchPhraseChord(), state.sketchPhraseSettings,
+                    Random(state.sketchPhraseSeed), keepRhythm, keepPitches))
+                session.note(when {
+                    keepRhythm -> "Variation: new pitches on the same rhythm"
+                    keepPitches -> "Variation: the same notes on a new rhythm"
+                    else -> "Variation: a few notes moved"
+                })
+            }
+            PHRASE_KEEP_RHYTHM -> {
+                state.sketchKeepRhythm = !state.sketchKeepRhythm
+                if (state.sketchKeepRhythm) state.sketchKeepPitches = false
+            }
+            PHRASE_KEEP_PITCHES -> {
+                state.sketchKeepPitches = !state.sketchKeepPitches
+                if (state.sketchKeepPitches) state.sketchKeepRhythm = false
+            }
+            PHRASE_FROM_COPIED -> sketchPhraseFromCopied()
+            PHRASE_INSERT -> sketchInsertPhrase()
+        }
+    }
+
+    /** Replaces the phrase; a phrase that is looping restarts with the new one. */
+    private fun sketchNewPhrase(phrase: Phrase) {
+        state.sketchPhrase = phrase
+        if (auditioning && state.sketchRow == SKETCH_PHRASE) sketchListen()
+    }
+
+    private fun sketchPhraseFromCopied() {
+        val cells = (session.clipboard as? Clip.Cells)?.tracks?.firstOrNull()
+        if (cells.isNullOrEmpty()) {
+            session.note("Copy pattern cells first (${k(Action.COPY)}); their first channel becomes the phrase")
+            return
+        }
+        val length = cells.size.coerceIn(PhraseSettings.MIN_LENGTH, PhraseSettings.MAX_LENGTH)
+        val phrase = Phrase.fromCells(cells, length)
+        if (phrase.onsets.isEmpty()) {
+            session.note("The first copied channel has no notes in its first $length rows")
+            return
+        }
+        state.sketchPhraseSettings = state.sketchPhraseSettings.copy(length = length)
+        sketchNewPhrase(phrase)
+        session.note("Phrase from copied cells: $length rows, ${phrase.onsets.size} notes" +
+            if (cells.size > length) " (the first $length of ${cells.size} rows)" else "")
+    }
+
+    /**
+     * Writes the phrase at the shared selection (its order's pattern and row) on Sketch's channel with Sketch's
+     * sound as one undo step, then moves the selection to the row after it.
+     */
+    private fun sketchInsertPhrase() {
+        sketchRelease()
+        normalise()
+        val sel = session.selection
+        val pattern = song.patternAt(sel.order)
+        val phrase = sketchPhrase
+        val span = minOf(phrase.length, song.rowCount(pattern) - sel.row)
+        val ch = state.channel
+        val written = session.insertPhrase(pattern, ch, sel.row, phrase.steps, state.instrument)
+        val skipped = span - written
+        session.select(sel.copy(row = sel.row + span, channel = ch, context = ViewKind.PATTERN))
+        session.note(buildString {
+            append("Inserted phrase: ${Songs.channelNames(song)[ch]}, pattern ${EditorSession.hex2(pattern)} rows ")
+            append("${EditorSession.hex2(sel.row)}-${EditorSession.hex2(sel.row + span - 1)}")
+            if (span < phrase.length) append(", cut at the pattern end")
+            if (skipped > 0) append("; $skipped note${if (skipped == 1) "" else "s"} skipped: the row's effect slot is needed for the tuning bend")
+        })
+    }
+
+    private fun sketchHints(h: MutableList<Hint>) {
+        val listen = "${k(Action.EDIT)} / ${k(Action.AUDITION)}"
+        when (state.sketchRow) {
+            SKETCH_SETTINGS -> {
+                h += Hint(lr(), "Setting")
+                h += Hint(keys.held(Action.EDIT, keys.dpad()),
+                    if (state.sketchField == SKETCH_CHORDS_FIELD) "Triads / circle of fifths" else "Change ${SKETCH_FIELDS[state.sketchField].lowercase()}")
+            }
+            SKETCH_CHORDS -> if (state.sketchCircle) {
+                h += Hint(lr(), "Move by fifths")
+                h += Hint(k(Action.CLEAR), if (state.sketchCircleMinor) "Major key" else "Relative minor")
+                h += Hint(listen, "Hold: tonic triad")
+                h += Hint(k(Action.EDIT), "Tap: use this key in Sketch")
+            } else {
+                h += Hint(lr(), "Chord")
+                h += Hint(listen, "Hold: arpeggio")
+            }
+            SKETCH_NOTES -> {
+                h += Hint(lr(), "Note")
+                h += Hint(listen, "Hold: listen")
+            }
+            else -> {
+                h += Hint(lr(), "Phrase control")
+                when (val f = state.sketchPhraseField) {
+                    PHRASE_STRIP -> h += Hint(listen, "Hold: loop the phrase")
+                    in PHRASE_LENGTH..PHRASE_CHORD_TONES -> {
+                        h += Hint(editLr(), "Change ${PHRASE_FIELDS[f].lowercase()}")
+                        h += Hint(k(Action.AUDITION), "Hold: loop the phrase")
+                    }
+                    else -> {
+                        h += Hint(k(Action.EDIT), when (f) {
+                            PHRASE_ANOTHER -> "New phrase with these settings"
+                            PHRASE_VARY -> when {
+                                state.sketchKeepRhythm -> "Vary: new pitches, same rhythm"
+                                state.sketchKeepPitches -> "Vary: same notes, new rhythm"
+                                else -> "Vary: move a few notes"
+                            }
+                            PHRASE_KEEP_RHYTHM -> if (state.sketchKeepRhythm) "Vary changes anything" else "Vary keeps the rhythm"
+                            PHRASE_KEEP_PITCHES -> if (state.sketchKeepPitches) "Vary changes anything" else "Vary keeps the notes"
+                            PHRASE_FROM_COPIED -> "Phrase from copied cells"
+                            else -> "Write at the pattern cursor (one undo step)"
+                        })
+                        h += Hint(k(Action.AUDITION), "Hold: loop the phrase")
+                    }
+                }
+            }
+        }
+        h += Hint(ud(), "Settings / chords / notes / phrase")
+        h += Hint(k(Action.MARK), "Use pattern key")
+        h += Hint(channels(), "Tonal channel")
     }
 
     // ---- help --------------------------------------------------------------------------------------
@@ -1268,11 +1656,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return if (state.entryMode) "Write mode: $edit writes notes at the pattern cursor" else "Listen mode: $edit only plays"
     }
 
-    private fun k(a: Action): String = keys.label(a)
-    private fun lr(): String = keys.pair(Action.LEFT, Action.RIGHT)
-    private fun ud(): String = keys.pair(Action.UP, Action.DOWN)
-    private fun channels(): String = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
-    private fun copyPaste(): String = keys.pair(Action.COPY, Action.PASTE)
+    private fun k(a: Action): String = keys.label(a, state.kind)
+    private fun lr(): String = keys.pair(Action.LEFT, Action.RIGHT, state.kind)
+    private fun ud(): String = keys.pair(Action.UP, Action.DOWN, state.kind)
+    private fun channels(): String = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL, state.kind)
+    private fun copyPaste(): String = keys.pair(Action.COPY, Action.PASTE, state.kind)
+    private fun octaves(): String = keys.pair(Action.OCTAVE_DOWN, Action.OCTAVE_UP, state.kind)
     private fun editLr(): String = keys.held(Action.EDIT, lr())
     private fun editUd(): String = keys.held(Action.EDIT, ud())
 
@@ -1286,18 +1675,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.INSTRUMENT -> soundHints(h)
             ViewKind.WAVE -> waveHints(h)
             ViewKind.KEYBOARD -> keyboardHints(h)
-            ViewKind.SKETCH -> {
-                if (state.sketchRow == 0) {
-                    h += Hint(lr(), "Setting")
-                    h += Hint(keys.held(Action.EDIT, keys.dpad()), "Change ${SKETCH_FIELDS[state.sketchField].lowercase()}")
-                } else {
-                    h += Hint(lr(), if (state.sketchRow == 1) "Chord" else "Note")
-                    h += Hint("${k(Action.EDIT)} / ${k(Action.AUDITION)}", if (state.sketchRow == 1) "Hold: arpeggio" else "Hold: listen")
-                }
-                h += Hint(ud(), "Settings / chords / notes")
-                h += Hint(k(Action.MARK), "Use pattern key")
-                h += Hint(channels(), "Tonal channel")
-            }
+            ViewKind.SKETCH -> sketchHints(h)
             ViewKind.HELP -> {
                 h += Hint(ud(), "Scroll")
                 h += Hint(lr(), "Page: ${HELP_PAGES[state.helpPage]}")
@@ -1310,13 +1688,15 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val c = cell
         val ch = state.channel
         if (state.scalePanel) {
-            h += Hint(ud(), "Root / scale / length")
+            h += Hint(ud(), "Root / scale / length / fit")
             when (state.scaleField) {
                 0 -> { h += Hint(lr(), "Root note"); h += Hint(k(Action.CLEAR), "Root C") }
                 1 -> { h += Hint(lr(), "Scale"); h += Hint(k(Action.CLEAR), "Chromatic") }
-                else -> { h += Hint(lr(), "Length ±1"); h += Hint(channels(), "Length ±8"); h += Hint(k(Action.CLEAR), "64 rows") }
+                2 -> { h += Hint(lr(), "Length ±1"); h += Hint(channels(), "Length ±8"); h += Hint(k(Action.CLEAR), "64 rows") }
+                else -> h += Hint(k(Action.EDIT), "Fit notes to ${patternScale.label}")
             }
-            h += Hint(k(Action.EDIT), "Done")
+            if (state.scaleField != SCALE_FIT_FIELD) h += Hint(k(Action.EDIT), "Done")
+            h += Hint(k(Action.SCALE), "Close")
             h += Hint(k(Action.AUDITION), "Listen")
             return
         }
@@ -1326,10 +1706,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     val scale = noteScale(ch)
                     h += Hint(editLr(), when {
                         kindOf(ch) == InstrumentKind.NOISE -> "Noise pitch (no scale)"
+                        tuningFor(ch) != null -> "${tuningFor(ch)!!.tuning.name} degree"
                         scale.isChromatic -> "Semitone"
                         else -> "${scale.label} note"
                     })
-                    h += Hint(editUd(), "Octave")
+                    h += Hint(editUd(), if (tuningFor(ch) != null) "Period" else "Octave")
                 }
                 1 -> { h += Hint(editLr(), "Sound ±1"); h += Hint(editUd(), "Sound ±4") }
                 2 -> { h += Hint(editLr(), "Effect type: · none, then 0-F") }
@@ -1390,6 +1771,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             }
         }
         h += Hint(k(Action.AUDITION), "Listen")
+        h += Hint(octaves(), "Listen at ${Songs.noteName(defaultNote())}")
         h += Hint(copyPaste(), "Copy/paste sound")
     }
 
@@ -1406,6 +1788,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         }
         h += Hint(channels(), "Wave")
         h += Hint(k(Action.AUDITION), "Listen")
+        h += Hint(octaves(), "Listen at ${Songs.noteName(defaultNote())}")
     }
 
     private fun keyboardHints(h: MutableList<Hint>) {
@@ -1420,11 +1803,14 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             if (state.entryMode) { h += Hint(k(Action.CLEAR), "Write OFF"); h += Hint(k(Action.DOWN), "Skip step") }
             h += Hint(k(Action.UP), "Settings")
             h += Hint(channels(), "Channel")
+            h += Hint(octaves(), "Octave ${state.octave}")
         }
     }
 
     companion object {
         const val FIELDS = 4
+        /** Scale panel rows: 0 root, 1 scale, 2 length, 3 fit notes to the scale. */
+        const val SCALE_FIT_FIELD = 3
         const val KEYS = 25
         /** Effect picker position before effect 0: the row has no effect (000). */
         private const val NO_EFFECT = -1
@@ -1447,7 +1833,37 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         )
         val WAVE_TOOLS = listOf("Sine", "Triangle", "Saw", "Square", "Invert", "Shift left", "Shift right", "Smooth", "Use in sound")
         val STRIP_FIELDS = listOf("Mode", "Channel", "Sound", "Octave", "Step")
-        val SKETCH_FIELDS = listOf("Root", "Scale", "Channel", "Sound", "Octave")
+        const val SKETCH_ROWS = 4
+        private const val SKETCH_SETTINGS = 0
+        private const val SKETCH_CHORDS = 1
+        private const val SKETCH_NOTES = 2
+        private const val SKETCH_PHRASE = 3
+        val SKETCH_FIELDS = listOf("Root", "Scale", "Channel", "Sound", "Octave", "Chords")
+        /** The settings-strip field switching the chords row between triads and the circle of fifths. */
+        const val SKETCH_CHORDS_FIELD = 5
+        val PHRASE_FIELDS = listOf("Phrase", "Length", "Rhythm", "Motion", "Chord tones", "Another", "Vary",
+            "Keep rhythm", "Keep pitches", "From copied", "Insert")
+        const val PHRASE_STRIP = 0
+        const val PHRASE_LENGTH = 1
+        const val PHRASE_RHYTHM = 2
+        const val PHRASE_MOTION = 3
+        const val PHRASE_CHORD_TONES = 4
+        const val PHRASE_ANOTHER = 5
+        const val PHRASE_VARY = 6
+        const val PHRASE_KEEP_RHYTHM = 7
+        const val PHRASE_KEEP_PITCHES = 8
+        const val PHRASE_FROM_COPIED = 9
+        const val PHRASE_INSERT = 10
+        /** hUGEDriver ticks once per GB vblank. */
+        const val TICK_HZ = 59.73
+
+        /** Major-key root (pitch class) at circle-of-fifths [position] (0 = C, 1 = G, ... 11 = F). */
+        fun circleRoot(position: Int): Int = Math.floorMod(position * 7, 12)
+
+        /** Circle-of-fifths position of major-key root [root]; 7 is its own inverse modulo 12. */
+        fun circlePosition(root: Int): Int = Math.floorMod(root * 7, 12)
+
+        private fun nextSeed(seed: Long): Long = seed * 6364136223846793005L + 1442695040888963407L
         val HELP_PAGES = listOf("Controls", "Effects", "Song check")
     }
 }

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,6 +12,7 @@ import org.thortracker.model.Cell
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.SongValidator
 import org.thortracker.model.Songs
+import org.thortracker.model.Scl
 import org.thortracker.model.Scale
 import org.thortracker.model.ScaleKind
 
@@ -20,9 +22,10 @@ class ViewControllerTest {
     private val auditions = ArrayList<Triple<Int, Int, Int>>()
     private var releases = 0
     private var transports = 0
+    private val bends = ArrayList<Int>()
 
     init {
-        session.onAudition = { ch, note, ins -> auditions += Triple(ch, note, ins) }
+        session.onAudition = { ch, note, ins, detune -> auditions += Triple(ch, note, ins); bends += detune }
         session.onReleaseAudition = { releases++ }
         session.onTransport = { transports++ }
     }
@@ -55,6 +58,133 @@ class ViewControllerTest {
         assertEquals(30, v.state.row)
         v.tap(Action.CLEAR)
         assertEquals(64, session.song.patterns[0].length)
+    }
+
+    @Test
+    fun patternPanelFitsPlayedTonalNotesToTheNearestScaleNoteAsOneUndo() {
+        session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC)) // C Eb F G Bb
+        session.setPatternLength(0, 16)
+        session.setCell(0, 0, 0, Cell(note = 25, instrument = 1))                 // C#: C is 1 away, Eb 2
+        session.setCell(0, 1, 1, Cell(note = 26, instrument = 2, effect = 0xC, param = 0x08)) // D: Eb is closer
+        session.setCell(0, 2, 2, Cell(note = 32, instrument = 0))                 // G#: G and Bb, G closer
+        session.setCell(0, 3, 3, Cell(note = 25, instrument = 1))                 // Noise keeps its pitch
+        session.setCell(0, 0, 20, Cell(note = 25, instrument = 1))                // hidden row is left alone
+        session.setCell(0, 0, 4, Cell(note = 24, instrument = 1))                 // already in the scale
+        val before = session.song
+        val v = view(ViewKind.PATTERN)
+        v.tap(Action.SCALE)
+        repeat(3) { v.tap(Action.DOWN) }
+        assertEquals(ViewController.SCALE_FIT_FIELD, v.state.scaleField)
+        v.tap(Action.EDIT)
+        assertTrue("Fit keeps the panel open", v.state.scalePanel)
+        assertEquals(Cell(note = 24, instrument = 1), cell(0, 0, 0))
+        assertEquals(Cell(note = 27, instrument = 2, effect = 0xC, param = 0x08), cell(0, 1, 1))
+        assertEquals(31, cell(0, 2, 2).note)
+        assertEquals(25, cell(0, 3, 3).note)
+        assertEquals(25, cell(0, 0, 20).note)
+        assertEquals(24, cell(0, 0, 4).note)
+        session.undo()
+        assertSame(before, session.song)
+    }
+
+    @Test
+    fun fitDoesNothingForChromaticOrTunedPatterns() {
+        session.setCell(0, 0, 0, Cell(note = 25, instrument = 1))
+        assertEquals(0, session.fitToScale(0))
+        session.setPatternScale(0, Scale(0, ScaleKind.MAJOR))
+        session.setTuning(Scl.parse("19-TET\n19\n" + (1..19).joinToString("\n") { "%.4f".format(it * 1200.0 / 19) }, "19-TET"))
+        assertEquals(0, session.fitToScale(0))
+        assertEquals(25, cell(0, 0, 0).note)
+    }
+
+    @Test
+    fun octaveChangeWhileListeningToASoundReSoundsItAnOctaveAway() {
+        val v = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1 }
+        v.press(Action.AUDITION)
+        val first = auditions.last().second
+        v.tap(Action.OCTAVE_UP)
+        assertEquals(first + 12, auditions.last().second)
+        v.tap(Action.OCTAVE_DOWN)
+        v.tap(Action.OCTAVE_DOWN)
+        assertEquals(first - 12, auditions.last().second)
+        v.release(Action.AUDITION)
+        val count = auditions.size
+        v.tap(Action.OCTAVE_UP) // not listening: only the octave changes
+        assertEquals(count, auditions.size)
+    }
+
+    @Test
+    fun fitMarksShowTheOriginalNoteAcrossChainedFitsAndClearOnEdit() {
+        session.setCell(0, 0, 0, Cell(note = 25, instrument = 1))   // C#
+        session.setCell(0, 1, 2, Cell(note = 26, instrument = 1))   // D
+        session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC)) // C Eb F G Bb
+        assertEquals(2, session.fitToScale(0))                       // C# -> C, D -> Eb
+        assertEquals(Cell(note = 25, instrument = 1), session.fittedFrom(0, 0, 0))
+        assertEquals(26, session.fittedFrom(0, 1, 2)?.note)
+        assertNull(session.fittedFrom(0, 2, 0))
+        // Changing the scale keeps the marks; a second Fit chains from the original notes (the drift is visible).
+        session.setPatternScale(0, Scale(1, ScaleKind.MAJOR))        // C# major: C# D# F F# G# A# C
+        session.fitToScale(0)                                        // Eb stays; C (24) is in C# major
+        assertEquals(25, session.fittedFrom(0, 0, 0)?.note)
+        assertEquals(26, session.fittedFrom(0, 1, 2)?.note)
+        // Editing another cell keeps the marks; editing a marked note unmarks only that note.
+        session.setCell(0, 3, 10, Cell(note = 30, instrument = 1))
+        assertEquals(25, session.fittedFrom(0, 0, 0)?.note)
+        session.setCell(0, 0, 0, Cell(note = 28, instrument = 1))
+        assertNull(session.fittedFrom(0, 0, 0))
+        assertEquals(26, session.fittedFrom(0, 1, 2)?.note)
+        // Undoing that edit shows its mark again; undoing the first Fit (original notes) shows none.
+        session.undo()
+        assertEquals(25, session.fittedFrom(0, 0, 0)?.note)
+        session.undo() // the cell on channel 3
+        session.undo() // the scale change (the second Fit changed nothing)
+        session.undo() // the first Fit
+        assertEquals(25, cell(0, 0, 0).note)
+        assertNull(session.fittedFrom(0, 0, 0))
+        assertNull(session.fittedFrom(0, 1, 2))
+    }
+
+    @Test
+    fun aNoteFittedBackToItsOriginalIsNoLongerMarked() {
+        session.setCell(0, 0, 0, Cell(note = 26, instrument = 1))   // D
+        session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC))
+        session.fitToScale(0)                                        // D -> Eb (27)
+        assertEquals(26, session.fittedFrom(0, 0, 0)?.note)
+        session.setPatternScale(0, Scale(2, ScaleKind.MINOR_PENTATONIC)) // D F G A C: Eb is nearest to D
+        session.fitToScale(0)
+        assertEquals(26, cell(0, 0, 0).note)
+        assertNull(session.fittedFrom(0, 0, 0))
+    }
+
+    @Test
+    fun chainedFitsMoveAFittedNoteAgainButRememberItsOriginal() {
+        session.setCell(0, 0, 0, Cell(note = 26, instrument = 1))   // D
+        session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC))
+        session.fitToScale(0)                                        // D -> Eb (27)
+        session.setPatternScale(0, Scale(4, ScaleKind.MAJOR_PENTATONIC)) // E F# G# B C#: Eb is nearest to E
+        assertEquals(1, session.fitToScale(0))
+        assertEquals(28, cell(0, 0, 0).note)
+        assertEquals(26, session.fittedFrom(0, 0, 0)?.note)          // the original, not the intermediate Eb
+    }
+
+    @Test
+    fun insertingOrDeletingRowsClearsThePatternsFitMarks() {
+        for (r in 4..7) session.setCell(0, 0, r, Cell(note = 25, instrument = 1))
+        session.setPatternScale(0, Scale(0, ScaleKind.MAJOR))
+        session.fitToScale(0)
+        assertEquals(25, session.fittedFrom(0, 0, 4)?.note)
+        session.insertRow(0, 0..0, 2)
+        for (r in 0..63) assertNull("row $r", session.fittedFrom(0, 0, r))
+    }
+
+    @Test
+    fun octaveChangeWhileListeningOnTheKeyboardReSoundsTheSameKey() {
+        val v = view(ViewKind.KEYBOARD) { kbRow = 1; kbKey = 4; octave = 4 }
+        v.press(Action.AUDITION)
+        val first = auditions.last().second
+        v.tap(Action.OCTAVE_UP)
+        assertEquals(first + 12, auditions.last().second)
+        v.release(Action.AUDITION)
     }
 
     @Test

@@ -75,9 +75,11 @@ int hm_start_song(HugeMachine* m, const HugeImage* image, int order, int row, in
                   int* seek_mode);
 
 /* Power-on reset, load the image's instruments/waves, and start a one-row audition song
- * playing `note` (0..71) with `instrument` (1..15) on `channel` (0..3). */
+ * playing `note` (0..71) with `instrument` (1..15) on `channel` (0..3). `detune` (0..15) > 0
+ * writes effect 40y on the note, raising its period by `detune` units from tick 1 (microtuning);
+ * it is ignored on the noise channel (3). */
 int hm_start_audition(HugeMachine* m, const HugeImage* image, int channel, int note,
-                      int instrument);
+                      int instrument, int detune);
 
 /* Live edit at a tick boundary: copy changed song bytes into the running machine and
  * re-resolve the driver's cached pointers (order table, current patterns, order count,

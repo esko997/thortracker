@@ -110,11 +110,15 @@ driver cuts it and leaves it alone) and unmuted on release (it resumes at that c
 note or effect). Release stops the audition machine immediately. Instrument 0 is rejected with
 an error (hUGE has no "no instrument" sound).
 
-Sketch's held chord preview uses `EditorSession.auditionSequence` and a host-owned 180 ms timer to send
-successive notes through that same `TrackerAudio.audition` path. It is an audition-only reference, not
-a tempo-synchronised song sequencer or an exported arpeggio effect. A new note/phrase cancels the old
-timer; release, menus, swaps, focus loss and activity pause cancel the held preview. The editor stores
-only local key/navigation settings; neither this preview nor its scheduling touches project data.
+Sketch's held previews use `EditorSession.auditionSequence(channel, steps, instrument, stepMillis)` and a
+host-owned timer that sends each step through that same `TrackerAudio.audition` path: chord arpeggios
+step every 180 ms; the phrase loop steps once per pattern row at the song tempo
+(`ticksPerRow * 1000 / 59.73` ms). A null step starts nothing, so the previous note keeps sounding
+(it is not retriggered). Steps are scheduled against the loop's start time rather than by chained
+delays, so handler latency does not accumulate. These are audition-only references, not a song
+sequencer or an exported effect. A new note/phrase cancels the old timer; release, menus, swaps, focus
+loss and activity pause cancel the held preview. Only the phrase's explicit Insert command writes
+notes (one undo step); neither these previews nor their scheduling touch project data.
 
 ## Position, errors, lifecycle
 

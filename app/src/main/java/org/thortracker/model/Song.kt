@@ -89,6 +89,8 @@ data class Instrument(
  * The whole GB/hUGE song document. [orders] holds one pattern index per order position, shared by all
  * channels; [loopOrder] is where playback continues after the last order. Typed banks hold exactly 15
  * instruments (slot n = index n-1); [waves] holds exactly 16 waveforms of 32 samples 0..15.
+ * [tuning] is the optional song-wide microtuning: Pulse/Wave notes entered in it carry their detune as `40y` in the
+ * cell itself, so the tuning only guides entry and validation and is not exported; null = plain 12-note table.
  */
 @Serializable
 data class Song(
@@ -104,6 +106,7 @@ data class Song(
     val waveInstruments: List<Instrument>,
     val noiseInstruments: List<Instrument>,
     val waves: List<List<Int>>,
+    val tuning: Tuning? = null,
 )
 
 /** Strict compact cell encoding: exactly four integers. Range checks belong to [SongValidator]. */

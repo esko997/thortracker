@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import org.thortracker.editor.Action
+import org.thortracker.editor.ViewKind
 
 /** A physical binding: [button] alone, or [button] pressed while [modifier] is held. Android key codes. */
 data class Binding(val button: Int, val modifier: Int? = null)
@@ -27,16 +28,21 @@ enum class ControlGroup(val label: String) {
  * Every rebindable control. [action] is the editor action it sends; host controls ([host]) are run by the
  * activity instead. [hold] controls are held together with the D-pad, so they bind to single buttons only.
  * [overPopups] controls also work while an in-app popup is open. [essential] controls may never be left
- * without a binding (they navigate and confirm). Menu and Back are fixed system keys and not listed.
+ * without a binding (they navigate and confirm). [views] limits a control to those views (null = every view):
+ * two controls may share a binding when their views do not overlap, so one chord can mean different things
+ * in different views. Menu and Back are fixed system keys and not listed.
  */
 enum class Control(
     val group: ControlGroup,
-    val label: String,
+    private val job: String,
     val short: String,
     val action: Action?,
     val hold: Boolean = false,
     val overPopups: Boolean = false,
     val essential: Boolean = false,
+    val views: Set<ViewKind>? = null,
+    /** Keymap file version that introduced the control; older files may already use its default. */
+    val since: Int = 1,
 ) {
     UP(ControlGroup.MOVE, "Up", "Up", Action.UP, hold = true, essential = true),
     DOWN(ControlGroup.MOVE, "Down", "Down", Action.DOWN, hold = true, essential = true),
@@ -48,15 +54,17 @@ enum class Control(
     MARK(ControlGroup.MOVE, "Select block (hold + D-pad)", "Select", Action.MARK, hold = true),
     PREV_CHANNEL(ControlGroup.CHANNEL, "Previous channel / bank / page", "Previous", Action.PREV_CHANNEL),
     NEXT_CHANNEL(ControlGroup.CHANNEL, "Next channel / bank / page", "Next", Action.NEXT_CHANNEL),
-    OCTAVE_DOWN(ControlGroup.CHANNEL, "Entry octave down", "Octave down", Action.OCTAVE_DOWN),
-    OCTAVE_UP(ControlGroup.CHANNEL, "Entry octave up", "Octave up", Action.OCTAVE_UP),
-    COPY(ControlGroup.CLIPBOARD, "Copy", "Copy", Action.COPY),
-    PASTE(ControlGroup.CLIPBOARD, "Paste", "Paste", Action.PASTE),
-    CUT(ControlGroup.CLIPBOARD, "Cut", "Cut", Action.CUT),
-    DUPLICATE(ControlGroup.CLIPBOARD, "Duplicate", "Duplicate", Action.DUPLICATE),
-    INSERT_ROW(ControlGroup.CLIPBOARD, "Insert row", "Insert row", Action.INSERT_ROW),
-    DELETE_ROW(ControlGroup.CLIPBOARD, "Delete row", "Delete row", Action.DELETE_ROW),
-    PATTERN_PANEL(ControlGroup.PATTERN, "Pattern panel: root, scale, length", "Pattern panel", Action.SCALE),
+    OCTAVE_DOWN(ControlGroup.CHANNEL, "Octave down", "Octave down", Action.OCTAVE_DOWN, views = OCTAVE_VIEWS),
+    OCTAVE_UP(ControlGroup.CHANNEL, "Octave up", "Octave up", Action.OCTAVE_UP, views = OCTAVE_VIEWS),
+    LISTEN_OCTAVE_DOWN(ControlGroup.CHANNEL, "Listening octave down", "Octave down", Action.OCTAVE_DOWN, views = SOUND_VIEWS, since = 2),
+    LISTEN_OCTAVE_UP(ControlGroup.CHANNEL, "Listening octave up", "Octave up", Action.OCTAVE_UP, views = SOUND_VIEWS, since = 2),
+    COPY(ControlGroup.CLIPBOARD, "Copy", "Copy", Action.COPY, views = CLIP_VIEWS),
+    PASTE(ControlGroup.CLIPBOARD, "Paste", "Paste", Action.PASTE, views = CLIP_VIEWS),
+    CUT(ControlGroup.CLIPBOARD, "Cut", "Cut", Action.CUT, views = CUT_VIEWS),
+    DUPLICATE(ControlGroup.CLIPBOARD, "Duplicate", "Duplicate", Action.DUPLICATE, views = CLIP_VIEWS),
+    INSERT_ROW(ControlGroup.CLIPBOARD, "Insert row / order", "Insert", Action.INSERT_ROW, views = ROW_VIEWS),
+    DELETE_ROW(ControlGroup.CLIPBOARD, "Delete row / order", "Delete", Action.DELETE_ROW, views = ROW_VIEWS),
+    PATTERN_PANEL(ControlGroup.PATTERN, "Pattern panel: root, scale, length", "Pattern panel", Action.SCALE, views = PATTERN_ONLY),
     UNDO(ControlGroup.HISTORY, "Undo", "Undo", Action.UNDO, overPopups = true),
     REDO(ControlGroup.HISTORY, "Redo", "Redo", Action.REDO, overPopups = true),
     PLAY_PATTERN(ControlGroup.TRANSPORT, "Play pattern from row 00 / stop", "Play", null),
@@ -67,21 +75,57 @@ enum class Control(
 
     /** Run by the activity (history, transport, displays) rather than delivered to the focused view. */
     val host: Boolean get() = action == null || this == UNDO || this == REDO
+
+    /** What the control does, with the views it is limited to: "Paste (Pattern, Song, Instrument, Wave)". */
+    val label: String get() = if (views == null) job else "$job (${ViewKind.entries.filter { it in views }.joinToString { it.title }})"
+
+    fun appliesIn(view: ViewKind): Boolean = views == null || view in views
+
+    /** Two controls can both be active in some view. */
+    fun overlaps(other: Control): Boolean =
+        views == null || other.views == null || views.any { it in other.views }
 }
+
+private val ViewKind.title: String get() = name.lowercase().replaceFirstChar { it.uppercase() }
+
+// Top-level (not the enum's companion) so they exist when the entries are constructed.
+private val PATTERN_ONLY = setOf(ViewKind.PATTERN)
+private val ROW_VIEWS = setOf(ViewKind.PATTERN, ViewKind.SONG)
+private val CLIP_VIEWS = setOf(ViewKind.PATTERN, ViewKind.SONG, ViewKind.INSTRUMENT, ViewKind.WAVE)
+private val CUT_VIEWS = setOf(ViewKind.PATTERN, ViewKind.INSTRUMENT, ViewKind.WAVE)
+private val SOUND_VIEWS = setOf(ViewKind.INSTRUMENT, ViewKind.WAVE, ViewKind.KEYBOARD, ViewKind.SKETCH)
+private val OCTAVE_VIEWS = SOUND_VIEWS + ViewKind.PATTERN
 
 /** The complete control → binding table. Immutable; [with] returns a changed copy. */
 class Keymap private constructor(private val table: Map<Control, Binding?>) {
-    private val byBinding: Map<Binding, Control> = table.entries.mapNotNull { (c, b) -> b?.let { it to c } }.toMap()
+    private val byBinding: Map<Binding, List<Control>> =
+        table.entries.mapNotNull { (c, b) -> b?.let { it to c } }.groupBy({ it.first }, { it.second })
 
     fun binding(control: Control): Binding? = table[control]
 
-    fun control(binding: Binding): Control? = byBinding[binding]
+    /** The control [binding] triggers in [view], or null. */
+    fun control(binding: Binding, view: ViewKind): Control? = byBinding[binding]?.firstOrNull { it.appliesIn(view) }
 
-    fun control(action: Action): Control? = Control.entries.firstOrNull { it.action == action }
+    /** Controls that would conflict with [control] using [binding] (they share a view with it). */
+    fun conflicts(control: Control, binding: Binding): List<Control> =
+        byBinding[binding].orEmpty().filter { it != control && it.overlaps(control) }
 
-    /** Bound chords using [modifier], in control order. */
-    fun chords(modifier: Int): List<Pair<Control, Binding>> =
-        Control.entries.mapNotNull { c -> table[c]?.takeIf { it.modifier == modifier }?.let { c to it } }
+    /**
+     * The control sending [action] in [view]: a bound control limited to that view first, then a bound
+     * control for every view. Without a view (or when none is bound) the first control with the action.
+     */
+    fun control(action: Action, view: ViewKind? = null): Control? {
+        if (view != null) {
+            val active = Control.entries.filter { it.action == action && it.appliesIn(view) && table[it] != null }
+            // The most view-specific binding is the one the view advertises.
+            active.minByOrNull { it.views?.size ?: Int.MAX_VALUE }?.let { return it }
+        }
+        return Control.entries.firstOrNull { it.action == action }
+    }
+
+    /** Bound chords using [modifier] that act in [view], in control order. */
+    fun chords(modifier: Int, view: ViewKind): List<Pair<Control, Binding>> =
+        Control.entries.mapNotNull { c -> table[c]?.takeIf { it.modifier == modifier && c.appliesIn(view) }?.let { c to it } }
 
     fun with(control: Control, binding: Binding?): Keymap = Keymap(table + (control to binding))
 
@@ -90,13 +134,15 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
     /** Display text: "A", "L2+A", "—" when unbound. */
     fun label(control: Control): String = table[control]?.let(::label) ?: UNBOUND
 
-    fun label(action: Action): String = control(action)?.let(::label) ?: UNBOUND
+    fun label(action: Action, view: ViewKind? = null): String = control(action, view)?.let(::label) ?: UNBOUND
 
     /** Two related actions in one hint: "←→", "L1 R1", "Sel+X/A" when they share a modifier. */
-    fun pair(a: Action, b: Action): String {
-        val ba = control(a)?.let { table[it] }
-        val bb = control(b)?.let { table[it] }
-        if (ba == null || bb == null) return listOf(label(a), label(b)).joinToString(" ")
+    fun pair(a: Action, b: Action, view: ViewKind? = null): String = pair(control(a, view), control(b, view))
+
+    private fun pair(a: Control?, b: Control?): String {
+        val ba = a?.let { table[it] }
+        val bb = b?.let { table[it] }
+        if (ba == null || bb == null) return listOf(a?.let(::label) ?: UNBOUND, b?.let(::label) ?: UNBOUND).joinToString(" ")
         if (ba.modifier != bb.modifier) return "${label(ba)} ${label(bb)}"
         val prefix = ba.modifier?.let { buttonName(it) + "+" } ?: ""
         val na = buttonName(ba.button)
@@ -113,7 +159,7 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
 
     /** The canonical popup/toolbar key a bare press of [code] stands for, so menus follow rebinding. */
     fun canonical(code: Int): Int {
-        val c = control(Binding(code)) ?: return code
+        val c = byBinding[Binding(code)]?.firstOrNull() ?: return code
         return CANONICAL[c] ?: KeyEvent.KEYCODE_UNKNOWN
     }
 
@@ -128,7 +174,7 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
 
     /** Essential controls the takeover of [binding] by [control] would leave with no binding. */
     fun stranded(control: Control, binding: Binding): Control? =
-        control(binding)?.takeIf { it != control && it.essential }
+        conflicts(control, binding).firstOrNull { it.essential }
 
     fun toJson(): String = JSON.encodeToString(JsonObject.serializer(), buildJsonObject {
         put("format", JsonPrimitive(FORMAT))
@@ -143,7 +189,7 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
 
     companion object {
         const val FORMAT = "thor-tracker-keymap"
-        const val VERSION = 1
+        const val VERSION = 2
         const val UNBOUND = "—"
 
         /** Buttons that do nothing alone and start chords. */
@@ -181,6 +227,8 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
             Control.NEXT_CHANNEL to Binding(KeyEvent.KEYCODE_BUTTON_R1),
             Control.OCTAVE_DOWN to Binding(KeyEvent.KEYCODE_BUTTON_L1, SEL),
             Control.OCTAVE_UP to Binding(KeyEvent.KEYCODE_BUTTON_R1, SEL),
+            Control.LISTEN_OCTAVE_DOWN to Binding(KeyEvent.KEYCODE_DPAD_LEFT, L2),
+            Control.LISTEN_OCTAVE_UP to Binding(KeyEvent.KEYCODE_DPAD_RIGHT, L2),
             Control.COPY to Binding(KeyEvent.KEYCODE_BUTTON_X, SEL),
             Control.PASTE to Binding(KeyEvent.KEYCODE_BUTTON_A, SEL),
             Control.CUT to Binding(KeyEvent.KEYCODE_BUTTON_B, SEL),
@@ -240,8 +288,10 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
         private val JSON = Json { prettyPrint = true }
 
         /**
-         * Reads a keymap file. Controls it does not mention keep their defaults (files from older versions);
-         * unknown controls are ignored (files from newer versions). Invalid or duplicate bindings are rejected.
+         * Reads a keymap file. Controls it does not mention keep their defaults (files from older versions)
+         * unless the file already uses that default for something in the same view, in which case they start
+         * unbound; unknown controls are ignored (files from newer versions). Invalid or duplicate bindings
+         * among the file's own entries are rejected.
          */
         fun fromJson(text: String): Keymap {
             val root = try { JSON.parseToJsonElement(text) as? JsonObject } catch (e: Exception) { null }
@@ -260,6 +310,12 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
                 }
                 if (binding != null) map.problem(control, binding)?.let { throw IllegalArgumentException("$name: $it") }
                 map = map.with(control, binding)
+            }
+            val named = entries.keys
+            for (c in Control.entries) {
+                if (c.since <= version || c.name in named) continue
+                val b = map.binding(c) ?: continue
+                if (map.conflicts(c, b).any { it.name in named }) map = map.with(c, null)
             }
             map.validationError()?.let { throw IllegalArgumentException(it) }
             return map
@@ -285,12 +341,15 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
             return if (map.validationError() == null) map else DEFAULT
         }
 
+        /** Essential controls need a binding; two controls may share one only if no view has both. */
         private fun Keymap.validationError(): String? {
-            val seen = HashMap<Binding, Control>()
+            val seen = HashMap<Binding, MutableList<Control>>()
             for (c in Control.entries) {
                 val b = binding(c)
                 if (b == null) { if (c.essential) return "${c.label} needs a binding"; continue }
-                seen.put(b, c)?.let { return "${label(b)} is bound to both ${it.label} and ${c.label}" }
+                val others = seen.getOrPut(b) { ArrayList() }
+                others.firstOrNull { it.overlaps(c) }?.let { return "${label(b)} is bound to both ${it.label} and ${c.label}" }
+                others += c
             }
             return null
         }

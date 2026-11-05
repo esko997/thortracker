@@ -143,4 +143,27 @@ class ProjectCodecTest {
         val majorV3 = JsonObject(Json.parseToJsonElement(major).jsonObject.toMutableMap().also { it["version"] = JsonPrimitive(3) }).toString()
         assertEquals(ScaleKind.MAJOR, ProjectCodec.decode(majorV3).patterns[0].scale.kind)
     }
+
+    @Test
+    fun songTuningRoundTripsAndNeedsFormatFive() {
+        val blank = Songs.blank()
+        val just = Scl.parse("Just\n3\n5/4\n3/2\n2/1\n", "f")
+        val song = blank.copy(tuning = just.copy(root = 36, tolerance = 10))
+        val text = ProjectCodec.encode(song)
+        assertTrue(text.contains("\"tuning\":{\"name\":\"Just\""))
+        assertEquals(song, ProjectCodec.decode(text))
+        val root = Json.parseToJsonElement(text).jsonObject
+        val claimingFour = JsonObject(root.toMutableMap().also { it["version"] = JsonPrimitive(4) }).toString()
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(claimingFour) }
+        // An untuned song written as version 4 (no tuning key) still opens.
+        val plain = Json.parseToJsonElement(ProjectCodec.encode(blank)).jsonObject
+        val plainSong = (plain["song"] as JsonObject).toMutableMap().also { it.remove("tuning") }
+        val v4 = JsonObject(plain.toMutableMap().also { it["version"] = JsonPrimitive(4); it["song"] = JsonObject(plainSong) }).toString()
+        assertEquals(blank, ProjectCodec.decode(v4))
+        // Structurally invalid tunings are neither saved nor loaded.
+        for (bad in listOf(just.copy(root = 72), just.copy(tolerance = 15), just.copy(cents = listOf(700.0, 500.0)))) {
+            assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(blank.copy(tuning = bad)) }
+        }
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"tolerance\":10", "\"tolerance\":7")) }
+    }
 }

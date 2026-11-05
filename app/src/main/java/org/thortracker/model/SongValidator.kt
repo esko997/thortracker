@@ -56,6 +56,7 @@ object SongValidator {
             if (samples.size != Songs.WAVE_SAMPLES) out += "Wave ${HugeRules.hex2(w)} has ${samples.size} samples; waves have ${Songs.WAVE_SAMPLES}"
             else if (samples.any { it !in 0..Songs.WAVE_MAX }) out += "Wave ${HugeRules.hex2(w)} has samples outside 0-15"
         }
+        song.tuning?.problems()?.forEach { out += it }
         return out.list()
     }
 
@@ -122,6 +123,7 @@ object SongValidator {
             }
         }
         silentLegatoNotes(song).forEach { out += it }
+        song.tuning?.let { tunedNoteWarnings(song, TuningMap(it)).forEach { message -> out += message } }
         if (song.orders.size <= HugeRules.MAX_ORDERS) {
             val tracks = HugeRules.distinctReferencedTracks(song, HugeRules.loopPlan(song))
             val bytes = estimatedDriverBytes(song, tracks)
@@ -141,6 +143,38 @@ object SongValidator {
         cell.effect !in 0..15 -> "effect ${cell.effect} is outside 0-F"
         cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
         else -> null
+    }
+
+    /**
+     * Played Pulse/Wave notes of a tuned song that do not sound a tuned pitch: either the row's effect slot holds
+     * something other than 40y (so the plain table note plays) and that plain note is not itself in the tuning, or
+     * the note + detune is not a reachable tuned pitch. Noise is never tuned. One message per cell.
+     */
+    private fun tunedNoteWarnings(song: Song, map: TuningMap): List<String> {
+        val out = ArrayList<String>()
+        val name = map.tuning.name
+        song.patterns.forEachIndexed { p, pattern ->
+            pattern.tracks.forEachIndexed { ch, track ->
+                if (HugeRules.channelKind(ch) == InstrumentKind.NOISE) return@forEachIndexed
+                for (row in 0 until pattern.length) {
+                    val cell = track[row]
+                    if (cell.note < 0) continue
+                    val where = "${Songs.patternLabel(song, p).cap()}, ${HugeRules.CHANNEL_NAMES[ch]} row $row"
+                    val detune = HugeRules.detuneOf(cell)
+                    when {
+                        detune == null -> if (map.index(cell.note, 0) < 0) {
+                            out += "$where: tuned note needs this row's effect slot for 40y but it holds " +
+                                "${HugeRules.effectText(cell.effect, cell.param)}; it plays at the plain 12-note pitch"
+                        }
+                        map.index(cell.note, detune) < 0 -> {
+                            val pitch = Songs.noteName(cell.note) + if (detune > 0) " +$detune" else ""
+                            out += "$where: $pitch is outside the song tuning \"$name\"; use Fit notes to tuning or re-enter it"
+                        }
+                    }
+                }
+            }
+        }
+        return out
     }
 
     /** uge2source's GBDK output size (it de-duplicates identical tracks): descriptor, order_cnt, tracks, orders, instruments, waves. */

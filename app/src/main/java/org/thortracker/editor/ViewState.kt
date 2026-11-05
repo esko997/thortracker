@@ -1,6 +1,8 @@
 package org.thortracker.editor
 
 import org.thortracker.model.InstrumentKind
+import org.thortracker.model.Phrase
+import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
 
 enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
@@ -48,10 +50,25 @@ data class ViewState(
     var scaleField: Int = 0,
     /** Null follows the pattern key; a local exploration never changes the musical document. */
     var sketchScale: Scale? = null,
+    /** 0 settings, 1 chords (or circle of fifths), 2 notes, 3 phrase. */
     var sketchRow: Int = 1,
     var sketchField: Int = 0,
     var sketchChord: Int = 0,
     var sketchTone: Int = 0,
+    /** The chords row shows the circle of fifths instead of the key's triads. */
+    var sketchCircle: Boolean = false,
+    /** Circle cursor: position by fifths from C (major root = 7 * position mod 12), on the outer or the relative-minor ring. */
+    var sketchCircleKey: Int = 0,
+    var sketchCircleMinor: Boolean = false,
+    /** Phrase row control, see [ViewController.PHRASE_FIELDS]. */
+    var sketchPhraseField: Int = 0,
+    var sketchPhraseSettings: PhraseSettings = PhraseSettings(),
+    /** The current phrase; null until first generated from [sketchPhraseSeed]. */
+    var sketchPhrase: Phrase? = null,
+    var sketchPhraseSeed: Long = 1L,
+    /** Vary keeps the onsets ([sketchKeepRhythm]) or the pitch sequence ([sketchKeepPitches]); at most one is on. */
+    var sketchKeepRhythm: Boolean = false,
+    var sketchKeepPitches: Boolean = false,
     /**
      * Pattern view: the cell (see [ViewController.cellKey]) whose stored 000 the user explicitly picked as
      * effect 0 (arpeggio) and is still on; -1 = none. Display only: 000 stays "no effect" in the song. Not persisted.
@@ -83,11 +100,12 @@ data class ViewState(
     }
 }
 
-/** Last note and effect entered per channel, and the entry sound per bank. */
+/** Last note and effect entered per channel, last tuned pitch (note, bend) per channel, and the entry sound per bank. */
 data class EntryMemory(
     val notes: HashMap<Int, Int> = HashMap(),
     val effects: HashMap<Int, Pair<Int, Int>> = HashMap(),
     val pens: HashMap<InstrumentKind, Int> = HashMap(),
+    val tuned: HashMap<Int, Pair<Int, Int>> = HashMap(),
 ) {
-    fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens))
+    fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens), HashMap(tuned))
 }

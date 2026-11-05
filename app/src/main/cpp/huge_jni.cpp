@@ -44,8 +44,8 @@ JNIEXPORT void JNICALL Java_org_thortracker_audio_HugeAudio_nativeStop(JNIEnv*, 
 }
 
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_HugeAudio_nativeAudition(JNIEnv*, jclass, jlong h, jint channel,
-                                                                          jint note, jint instrument) {
-    return engine(h)->audition(channel, note, instrument);
+                                                                          jint note, jint instrument, jint detune) {
+    return engine(h)->audition(channel, note, instrument, detune);
 }
 
 JNIEXPORT void JNICALL Java_org_thortracker_audio_HugeAudio_nativeReleaseAudition(JNIEnv*, jclass, jlong h) {

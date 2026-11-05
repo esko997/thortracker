@@ -148,7 +148,10 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
             Line.Row(k.label(Control.SWAP), "Swap the complete views of the two displays"),
             Line.Row(k.group(Action.COPY, Action.PASTE, Action.CUT), "Copy / paste / cut"),
             Line.Row(k.label(Action.DUPLICATE), "Duplicate"),
-            Line.Row(k.group(Action.OCTAVE_DOWN, Action.OCTAVE_UP), "Octave down / up"),
+            Line.Row(k.group(Action.OCTAVE_DOWN, Action.OCTAVE_UP), "Octave down / up (Pattern entry, or the listening note)"),
+            Line.Row("${k.label(Control.LISTEN_OCTAVE_DOWN)} ${k.label(Control.LISTEN_OCTAVE_UP)}",
+                "Instrument, Wave, Keyboard, Sketch: listening octave down / up; a held $listen restarts at the new octave"),
+            Line.Text("Chords can mean different things per view; holding a modifier shows only what it does here."),
             Line.Row(k.label(Control.PLAY_PATTERN), "Play from the start of the current pattern, or stop"),
             Line.Row(k.label(Control.PLAY_CURSOR), "Play from the cursor row, or stop"),
             Line.Row(k.label(Control.TOOLBAR), "Show the toolbar and move the controller to it"),
@@ -166,7 +169,8 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
             Line.Row(k.pair(Action.INSERT_ROW, Action.DELETE_ROW), "Insert / delete a row in the channel or selection"),
             Line.Row(k.label(Action.SCALE), "Pattern panel: root, scale and length. A scale (major/minor and modes, pentatonics, blues, whole tone, exotic scales; Chromatic is all notes) makes " +
                 "${k.held(Action.EDIT, dpad)} on Pulse and Wave notes land only on its notes (${k.held(Action.EDIT, ud)} an octave, " +
-                "or the next scale note past it). Noise keeps every pitch. Setting a scale never changes written notes; it is not exported or heard"),
+                "or the next scale note past it). Noise keeps every pitch. Setting a scale never changes written notes; it is not exported or heard. " +
+                "Its Notes row fits the played Pulse/Wave notes to the nearest scale note (ties go down), as one undo step"),
             Line.Row("Length", "1 to 64 rows, $lr ±1, $channels ±8. Every order using the pattern plays that many rows, then moves on. " +
                 "Later rows are hidden, not deleted. Combine lengths (e.g. 48, then 20) for odd phrase lengths and polyrhythms"),
             Line.Text("Rails beside a channel show how long each note keeps sounding."),
@@ -187,15 +191,20 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
             Line.Row("Dark keys", "Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note: they neither play nor write"),
             Line.Heading("Sketch"),
-            Line.Text("Listen-only tonal playground. Root/scale experiments stay local to this display; nothing writes notes or uses undo."),
-            Line.Row("$ud / $lr", "Settings, chords or notes / choose within the row"),
-            Line.Row("$edit or $listen hold", "Listen to a note or a repeating chord arpeggio; release to stop"),
-            Line.Row(k.held(Action.EDIT, dpad), "On settings: change root, scale, tonal channel, sound or octave"),
+            Line.Text("Tonal playground. Root/scale experiments stay local to this display; chords, notes and the circle only sound. Only the phrase's Insert writes notes (one undo step)."),
+            Line.Row("$ud / $lr", "Settings, chords, notes or phrase / choose within the row"),
+            Line.Row("$edit or $listen hold", "Listen to a note, a repeating chord arpeggio or the looping phrase; release to stop"),
+            Line.Row(k.held(Action.EDIT, dpad), "On settings: change root, scale, tonal channel, sound, octave or Chords (triads / circle of fifths)"),
             Line.Row(mark, "Use the pattern key again; local key settings never alter the pattern"),
             Line.Row(channels, "Pulse 1, Pulse 2 or Wave; Noise has no tonal chord reference"),
+            Line.Row("Circle", "$lr moves by fifths; $clear switches major / relative minor; hold $edit or $listen for the tonic triad; tap $edit makes it Sketch's key"),
+            Line.Row("Phrase", "$lr chooses a control; $editLr changes length, rhythm, motion or chord tones (a new phrase from the same seed); tap $edit for Another, Vary, the Keep toggles, From copied or Insert"),
+            Line.Row("Vary", "Keep rhythm: new pitches on the same rows. Keep pitches: the same notes on new rows. Neither: one to three notes move a scale step, maybe one shifts a row"),
+            Line.Row("Insert", "Writes the phrase at the pattern cursor on Sketch's channel with Sketch's sound, then moves the cursor past it. Rows without a new note are cleared but keep their effects"),
             Line.Text("Seven-note scales show their stacked-third triads (irregular stacks such as double harmonic's V are left out). Other scales show only triads made entirely of their notes. " +
                 "Chromatic offers all twelve notes; select a scale for chords. Degree labels use major-scale intervals (b3, #4, b6, b7)."),
-            Line.Text("Preview borrows the chosen channel while the other song channels continue. Arpeggios are a listening reference, not tempo-synced pattern data."),
+            Line.Text("Preview borrows the chosen channel while the other song channels continue. Arpeggios repeat every 180 ms; the phrase loops one row per step at the song's ticks per row."),
+            Line.Text("Sketch stays a 12-note reference in tuned songs; Insert moves each note to the nearest tuned pitch and skips notes whose bend needs an occupied effect slot."),
         )
     }
 

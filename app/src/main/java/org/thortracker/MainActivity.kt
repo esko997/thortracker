@@ -37,6 +37,9 @@ import org.thortracker.input.Keymap
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.SongValidator
+import org.thortracker.model.Scl
+import org.thortracker.model.Tuning
+import org.thortracker.model.TuningMap
 import org.thortracker.storage.ProjectStore
 import org.thortracker.storage.WorkspaceStore
 import org.thortracker.ui.HostInput
@@ -144,21 +147,27 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             scheduleAudioFeedback()
         }
         session.onStateChanged = { refresh() }
-        session.onAudition = { channel, note, instrument ->
+        session.onAudition = { channel, note, instrument, detune ->
             cancelAuditionSequence()
-            if (requestAudioFocus()) audio?.audition(channel, note, instrument)
+            if (requestAudioFocus()) audio?.audition(channel, note, instrument, detune)
             scheduleAudioFeedback()
         }
-        session.onAuditionSequence = { channel, notes, instrument ->
+        session.onAuditionSequence = { channel, steps, instrument, stepMillis ->
             cancelAuditionSequence()
             if (requestAudioFocus()) {
                 val sequence = object : Runnable {
                     private var index = 0
+                    private var due = android.os.SystemClock.uptimeMillis()
                     override fun run() {
                         if (!active || auditionSequence !== this) return
-                        audio?.audition(channel, notes[index], instrument)
-                        index = (index + 1) % notes.size
-                        main.postDelayed(this, 180)
+                        // A null step starts nothing: the previous note keeps sounding.
+                        steps[index]?.let { audio?.audition(channel, it, instrument) }
+                        index = (index + 1) % steps.size
+                        // Steps keep their spacing from the start time instead of accumulating handler delays;
+                        // after a stall the loop resumes from now rather than catching up in a burst.
+                        val now = android.os.SystemClock.uptimeMillis()
+                        due = if (due + stepMillis < now) now + stepMillis else due + stepMillis
+                        main.postAtTime(this, due)
                     }
                 }
                 auditionSequence = sequence
@@ -362,7 +371,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             return true
         }
         if (!documentReady && !popups.isOpen) return true
-        val route = input.route(code, down, repeat, popups.isOpen, toolbarFocused())
+        val route = input.route(code, down, repeat, popups.isOpen, toolbarFocused(), states[focus].kind)
         hosts.forEach { (index, host) -> host.tracker.heldModifiers = if (index == focus) input.heldModifiers else emptySet() }
         return when (route) {
             is HostInput.Route.Run -> { run(route.control); true }
@@ -610,6 +619,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                     session.step = intArrayOf(0, 1, 2, 4, 8, 16)[it]; refresh()
                 }
             })
+            add("Tuning" to ::tuningMenu)
             add("Controls" to ::showControls)
             add("Help" to { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; refresh() })
         })
@@ -691,21 +701,23 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private fun finishCapture(control: Control, binding: Binding) {
         keymap.problem(control, binding)?.let { return showError(it) }
         if (keymap.binding(control) == binding) { statusMessage = "${control.short}: unchanged"; refresh(); return }
-        val owner = keymap.control(binding)
-        if (owner == null) return assign(control, binding, null)
+        val owners = keymap.conflicts(control, binding)
+        if (owners.isEmpty()) return assign(control, binding, emptyList())
         val chord = Keymap.label(binding)
-        if (owner.essential) {
+        owners.firstOrNull { it.essential }?.let { owner ->
             return showError("$chord is ${owner.label}, which always needs a button. Rebind ${owner.short} first, or choose another button.")
         }
-        popups.show(PopupSpec("$chord is ${owner.short}", message = "Use $chord for ${control.label}? ${owner.label} will have no binding until you set one.",
-            items = listOf(PopupItem("Replace", PopupItem.Tone.PRIMARY) { popups.back(); assign(control, binding, owner) }, PopupItem.dismiss()),
+        val names = owners.joinToString(" and ") { it.short }
+        popups.show(PopupSpec("$chord is $names", message = "Use $chord for ${control.label}? ${owners.joinToString(" and ") { it.label }} will have no binding until you set one.",
+            items = listOf(PopupItem("Replace", PopupItem.Tone.PRIMARY) { popups.back(); assign(control, binding, owners) }, PopupItem.dismiss()),
             selected = 1), modalDisplay)
     }
 
-    private fun assign(control: Control, binding: Binding, displaced: Control?) {
+    private fun assign(control: Control, binding: Binding, displaced: List<Control>) {
         var next = keymap.with(control, binding)
-        if (displaced != null) next = next.with(displaced, null)
-        applyKeymap(next, "${control.short}: ${Keymap.label(binding)}" + (displaced?.let { " (${it.short} now unbound)" } ?: ""))
+        for (d in displaced) next = next.with(d, null)
+        applyKeymap(next, "${control.short}: ${Keymap.label(binding)}" +
+            (if (displaced.isEmpty()) "" else " (${displaced.joinToString(" and ") { it.short }} now unbound)"))
         if (popups.top?.title == "Controls") popups.replaceTop(controlsSpec())
     }
 
@@ -717,6 +729,94 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         try { startActivityForResult(intent, request) }
         catch (e: Exception) { showError("No document provider could open: ${e.message}") }
+    }
+
+    // ---- tuning ---------------------------------------------------------------------------------
+
+    /** Song tuning: load a Scala file, choose where 1/1 sounds and the accuracy limit, fit notes, or remove it. */
+    private fun tuningMenu() {
+        val t = session.song.tuning
+        val map = session.tuningMap
+        menu(if (t == null) "Tuning: 12-note (none)" else "Tuning: ${t.name}", buildList<Pair<String, () -> Unit>> {
+            add("Built-in tunings…" to ::builtInTunings)
+            add("Load .scl file…" to { launchTuningPicker() })
+            if (t != null && map != null) {
+                add("1/1 sounds on ${Songs.noteName(t.root)}…" to {
+                    menu("1/1 sounds on", (0..Songs.NOTE_MAX).map { n -> Songs.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root)
+                })
+                add("Accuracy limit: ${t.tolerance}¢…" to {
+                    choose("Accuracy limit", TOLERANCES.map { "$it cents" + if (it == 5) " (default)" else "" }) { applyTuning(t.copy(tolerance = TOLERANCES[it])) }
+                })
+                add("Fit notes in this pattern" to { fitTuning(listOf(states[focus].let { session.song.orders[it.order.coerceIn(0, session.song.orders.size - 1)] })) })
+                add("Fit notes in whole song" to { fitTuning(session.song.patterns.indices.toList()) })
+                add("Remove tuning (back to 12-note)" to { session.setTuning(null); statusMessage = "Tuning removed; written notes unchanged"; refresh() })
+            }
+        })
+    }
+
+    /** Scala files bundled in assets/tunings, listed by their own descriptions; keeps the current 1/1 and accuracy limit. */
+    private fun builtInTunings() {
+        val previous = session.song.tuning
+        val tunings = (assets.list(TUNING_ASSETS) ?: emptyArray()).filter { it.endsWith(".scl") }.sorted().mapNotNull { file ->
+            runCatching {
+                Scl.parse(assets.open("$TUNING_ASSETS/$file").use { it.readBytes() }.toString(Charsets.UTF_8), file.removeSuffix(".scl"))
+            }.getOrNull()
+        }
+        menu("Built-in tunings", tunings.map { t ->
+            t.name to { applyTuning(if (previous == null) t else t.copy(root = previous.root, tolerance = previous.tolerance)) }
+        })
+    }
+
+    private fun applyTuning(tuning: Tuning) {
+        session.setTuning(tuning)
+        statusMessage = tuningSummary(TuningMap(tuning))
+        refresh()
+    }
+
+    /** "24-TET: 118 of 144 degrees reachable within 5¢ (C-3..B-8)". */
+    private fun tuningSummary(map: TuningMap) =
+        "${map.tuning.name}: ${map.pitches.size} of ${map.all.size} degrees reachable within ${map.tuning.tolerance}¢"
+
+    private fun fitTuning(patterns: List<Int>) {
+        val r = session.fitToTuning(patterns)
+        statusMessage = "Fitted ${r.moved} note${if (r.moved == 1) "" else "s"}" +
+            (if (r.blocked > 0) "; ${r.blocked} left: their row's effect slot is needed for 40y" else "")
+        refresh()
+    }
+
+    private fun launchTuningPicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }
+        try { startActivityForResult(intent, TUNING_IMPORT) }
+        catch (e: Exception) { showError("No document provider could open: ${e.message}") }
+    }
+
+    /** Reads and parses a Scala file off the UI thread; keeps the current 1/1 note and accuracy limit. */
+    private fun importTuning(uri: Uri) {
+        val previous = session.song.tuning
+        Thread({
+            val result = runCatching {
+                val name = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }?.substringBeforeLast('.') ?: "Tuning"
+                val bytes = checkNotNull(contentResolver.openInputStream(uri)) { "the file could not be opened" }.use { stream ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val n = stream.read(buffer)
+                        if (n < 0) break
+                        out.write(buffer, 0, n)
+                        check(out.size() <= MAX_KEYMAP_BYTES) { "the file is too large to be a Scala scale" }
+                    }
+                    out.toByteArray()
+                }
+                Scl.parse(bytes.toString(Charsets.UTF_8), name).let { parsed ->
+                    if (previous == null) parsed else parsed.copy(root = previous.root, tolerance = previous.tolerance)
+                }
+            }
+            main.post {
+                if (isDestroyed) return@post
+                result.fold({ applyTuning(it) }, { e -> showError("Tuning not loaded: ${e.message}") })
+            }
+        }, "tuning-file").start()
     }
 
     /** Writes or reads a keymap file off the UI thread; a provider that stalls cannot freeze input. */
@@ -824,6 +924,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == KEYMAP_EXPORT || requestCode == KEYMAP_IMPORT) {
             if (resultCode == RESULT_OK) data?.data?.let { keymapFile(requestCode, it) }
+            return
+        }
+        if (requestCode == TUNING_IMPORT) {
+            if (resultCode == RESULT_OK) data?.data?.let(::importTuning)
             return
         }
         if (resultCode != RESULT_OK) { pickerSong = null; pickerGeneration = null; return }
@@ -966,6 +1070,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         private const val EXPORT = 12
         private const val KEYMAP_EXPORT = 13
         private const val KEYMAP_IMPORT = 14
+        private const val TUNING_IMPORT = 15
+        private const val TUNING_ASSETS = "tunings"
+        private val TOLERANCES = intArrayOf(5, 10, 20)
         private const val MAX_KEYMAP_BYTES = 64 * 1024
         private const val WORKING = "Working copy"
         /** Song view header rows: 0 title, 1 artist, 2 ticks per row (tempo), 3 loop order. */

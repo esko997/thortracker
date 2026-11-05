@@ -80,6 +80,22 @@ data class Scale(val root: Int = 0, val kind: ScaleKind = ScaleKind.CHROMATIC) {
     /** [note] itself if it is in the scale, else the nearest scale note above it, else below it (null if none in range). */
     fun snap(note: Int): Int? = if (contains(note)) note else step(note, 1) ?: step(note, -1)
 
+    /**
+     * [note] itself if it is in the scale, else the closer of the scale notes below and above it; an exact
+     * tie goes down. Null if no scale note is in C-3..B-8.
+     */
+    fun nearest(note: Int): Int? {
+        if (contains(note)) return note
+        val down = step(note, -1)
+        val up = step(note, 1)
+        return when {
+            down == null -> up
+            up == null -> down
+            up - note < note - down -> up
+            else -> down
+        }
+    }
+
     /** "Chromatic", or root and scale, e.g. "D Natural minor". */
     val label: String get() = if (isChromatic) kind.label else "${ROOT_NAMES[Math.floorMod(root, 12)]} ${kind.label}"
 

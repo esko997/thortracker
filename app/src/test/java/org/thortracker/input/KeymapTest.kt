@@ -8,6 +8,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.editor.Action
+import org.thortracker.editor.ViewKind
 
 class KeymapTest {
     private val sel = KeyEvent.KEYCODE_BUTTON_SELECT
@@ -24,11 +25,42 @@ class KeymapTest {
         assertEquals("Sel+Start", k.label(Control.TOOLBAR))
     }
 
-    @Test fun everyControlHasADistinctValidDefault() {
+    @Test fun everyControlHasAValidDefaultThatNoOtherControlInTheSameViewShares() {
         val k = Keymap.DEFAULT
-        val bindings = Control.entries.map { c -> assertNotNull(c.name, k.binding(c)); k.binding(c)!! }
-        assertEquals(bindings.size, bindings.toSet().size)
-        for (c in Control.entries) assertNull(c.name, k.problem(c, k.binding(c)!!))
+        for (c in Control.entries) {
+            val b = assertNotNull(c.name, k.binding(c)).let { k.binding(c)!! }
+            assertNull(c.name, k.problem(c, b))
+            assertEquals(c.name, emptyList<Control>(), k.conflicts(c, b))
+        }
+    }
+
+    @Test fun oneChordMeansDifferentThingsInDifferentViews() {
+        val k = Keymap.DEFAULT
+        val l2Right = Binding(KeyEvent.KEYCODE_DPAD_RIGHT, l2)
+        assertEquals(Control.PATTERN_PANEL, k.control(l2Right, ViewKind.PATTERN))
+        assertEquals(Control.LISTEN_OCTAVE_UP, k.control(l2Right, ViewKind.INSTRUMENT))
+        assertNull(k.control(l2Right, ViewKind.SONG))
+        // Hints name the binding that acts in the view.
+        assertEquals("L2+←→", k.pair(Action.OCTAVE_DOWN, Action.OCTAVE_UP, ViewKind.WAVE))
+        assertEquals("Sel+L1/R1", k.pair(Action.OCTAVE_DOWN, Action.OCTAVE_UP, ViewKind.PATTERN))
+        // Chord hints list only what the chord does in the view.
+        val patternChords = k.chords(l2, ViewKind.PATTERN).map { it.first }
+        val soundChords = k.chords(l2, ViewKind.INSTRUMENT).map { it.first }
+        assertTrue(Control.PATTERN_PANEL in patternChords && Control.LISTEN_OCTAVE_UP !in patternChords)
+        assertTrue(Control.LISTEN_OCTAVE_UP in soundChords && Control.PATTERN_PANEL !in soundChords)
+        assertTrue(Control.UNDO in patternChords && Control.UNDO in soundChords)
+        // A global control taking a scoped binding displaces every control it would collide with.
+        assertEquals(setOf(Control.PATTERN_PANEL, Control.LISTEN_OCTAVE_UP), k.conflicts(Control.SWAP, l2Right).toSet())
+        assertEquals(listOf(Control.PATTERN_PANEL), k.conflicts(Control.INSERT_ROW, l2Right))
+    }
+
+    @Test fun olderFilesDoNotGainADefaultTheyAlreadyUseElsewhere() {
+        // A 0.5 file that put Swap on L2+←: the new listening-octave default must not collide with it.
+        val old = """{"format":"thor-tracker-keymap","version":1,"bindings":{"SWAP":"L2+LEFT","UNDO":"L2+A"}}"""
+        val read = Keymap.fromJson(old)
+        assertEquals(Binding(KeyEvent.KEYCODE_DPAD_LEFT, l2), read.binding(Control.SWAP))
+        assertNull(read.binding(Control.LISTEN_OCTAVE_DOWN))
+        assertEquals(Keymap.DEFAULT.binding(Control.LISTEN_OCTAVE_UP), read.binding(Control.LISTEN_OCTAVE_UP))
     }
 
     @Test fun keymapFileRoundTripsAndToleratesOtherVersionsControls() {

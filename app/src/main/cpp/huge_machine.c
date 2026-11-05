@@ -312,10 +312,14 @@ int hm_start_song(HugeMachine* m, const HugeImage* image, int order, int row, in
 }
 
 int hm_start_audition(HugeMachine* m, const HugeImage* image, int channel, int note,
-                      int instrument) {
-    if (channel < 0 || channel > 3 || note < 0 || note > 71 || instrument < 1 || instrument > 15) {
+                      int instrument, int detune) {
+    if (channel < 0 || channel > 3 || note < 0 || note > 71 || instrument < 1 || instrument > 15 ||
+        detune < 0 || detune > 15) {
         return HM_ERR_IMAGE;
     }
+    /* 40y (vibrato speed 0) holds the period y units up from tick 1; noise is never tuned. */
+    const u8 fx = detune > 0 && channel != 3 ? 0x4 : 0x0;
+    const u8 param = fx ? (u8)detune : 0;
     if (hm_validate(image) != HM_OK) return HM_ERR_IMAGE;
     reset(m);
     copy_song(m, image);
@@ -338,10 +342,10 @@ int hm_start_audition(HugeMachine* m, const HugeImage* image, int channel, int n
         poke(m, (u16)(empty_track + at), 90);
         poke(m, (u16)(empty_track + at + 1), 0);
         poke(m, (u16)(empty_track + at + 2), 0);
-        /* dn(note, instr, 000) on row 0; rows 1..63 empty. */
+        /* dn(note, instr, 40y or 000) on row 0; rows 1..63 empty. */
         poke(m, (u16)(note_track + at), r == 0 ? (u8)(note | ((instrument & 0x10) << 3)) : 90);
-        poke(m, (u16)(note_track + at + 1), r == 0 ? (u8)((instrument << 4) & 0xF0) : 0);
-        poke(m, (u16)(note_track + at + 2), 0);
+        poke(m, (u16)(note_track + at + 1), r == 0 ? (u8)(((instrument << 4) & 0xF0) | fx) : 0);
+        poke(m, (u16)(note_track + at + 2), r == 0 ? param : 0);
     }
     m->base_tempo = 0;
     int r = call(m, HUGE_INIT, 0, 0, 0, desc);

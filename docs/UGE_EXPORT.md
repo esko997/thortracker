@@ -139,7 +139,7 @@ Editor-only data (pattern names, root/scale guides, layout, view state) is not e
 
 ## Project file (`ProjectCodec`)
 
-UTF-8 JSON `{"format":"thor-tracker-project","version":4,"backend":"gb-huge","backendVersion":1,"song":{...}}`
+UTF-8 JSON `{"format":"thor-tracker-project","version":5,"backend":"gb-huge","backendVersion":1,"song":{...}}`
 with cells as `[note, instrument, effect, param]`. Version 2 adds each pattern's
 `scale: {"root":0..11,"kind":"chromatic"|"major"|"natural-minor"|"major-pentatonic"|"minor-pentatonic"}`.
 Version 3 adds each pattern's `length` (1..64). Version 4 adds the scale kinds `harmonic-minor`, `melodic-minor`,
@@ -151,7 +151,7 @@ their 64-row shape and lengths are lowered to standard driver breaks.
 
 Decoding rejects malformed JSON, unknown keys, other formats, newer versions, other backends and structurally
 invalid songs with `ProjectFormatException`. Songs with export errors still save and load, so work in progress
-survives autosave. New saves always use version 4; earlier apps do not read that newer format.
+survives autosave. Version 5 adds `song.tuning` (`{"name", "cents": [degree cents ascending, last = period], "root": note 0..71 sounding 1/1, "tolerance": 5|10|20}` or null); tuned notes are ordinary cells with `40y`, so lowering and export are unchanged. New saves always use version 5; earlier apps do not read that newer format.
 
 ## Reproducing the sample and conversion
 

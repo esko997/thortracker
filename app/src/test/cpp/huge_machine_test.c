@@ -511,14 +511,43 @@ static void test_effects(HugeMachine* m) {
     EXPECT(last_write(&t[0], NR44) == 0xC0, "NR44 %02X", last_write(&t[0], NR44));
 }
 
+/* Microtuning relies on 40y: a fixed +y period detune from tick 1, held on later rows without the effect. */
+static void test_fixed_detune(HugeMachine* m) {
+    printf("40y fixed detune: tick 0 untuned, held across effect-less rows, re-applied after a legato note\n");
+    TSong s;
+    Tick t;
+    const int base = kPeriod[36];
+    song_init(&s, 4, 1);
+    cell(&s, 0, 0, 0, 36, 1, 0x4, 0x03); /* C-6 +3 units */
+    cell(&s, 0, 0, 3, 38, 0, 0x4, 0x05); /* legato D-6 +5 units */
+    start(m, &s, 1, 0, 0, NULL);
+    run_tick(m, &t);
+    EXPECT(ch1_period(&t) == base, "tick 0 plays the table period %d", ch1_period(&t));
+    int detuned = 1, rewrites = 0;
+    for (int i = 1; i < 12; ++i) { /* rest of row 0, then rows 1-2 without effects */
+        run_tick(m, &t);
+        int p = ch1_period(&t);
+        if (p >= 0) { ++rewrites; detuned &= p == base + 3; }
+        if (i == 1) EXPECT(p == base + 3, "tick 1 applies +3: %d", p);
+    }
+    EXPECT(detuned, "only the detuned period is written while held (%d writes)", rewrites);
+    EXPECT(count_writes(&t, NR12) == 0, "no retrigger while held");
+    run_tick(m, &t); /* row 3 tick 0: legato note at its table period */
+    EXPECT(ch1_period(&t) == kPeriod[38] && (last_write(&t, NR14) & 0x80) == 0, "legato note %d", ch1_period(&t));
+    run_tick(m, &t);
+    EXPECT(ch1_period(&t) == kPeriod[38] + 5, "legato note +5 from tick 1: %d", ch1_period(&t));
+}
+
 static void test_audition_and_mute(HugeMachine* m, HugeMachine* aud) {
     printf("audition machine and channel borrowing\n");
     TSong s;
     song_init(&s, 4, 1);
     for (int r = 0; r < 64; r += 4) cell(&s, 0, 0, r, 24, 1, 0, 0);
     build(&s, &g_img, 1);
-    EXPECT(hm_start_audition(aud, &g_img, 0, 0, 0) != HM_OK, "instrument 0 must be rejected");
-    EXPECT(hm_start_audition(aud, &g_img, 3, 30, 1) == HM_OK, "audition start");
+    EXPECT(hm_start_audition(aud, &g_img, 0, 0, 0, 0) != HM_OK, "instrument 0 must be rejected");
+    EXPECT(hm_start_audition(aud, &g_img, 0, 36, 1, 16) != HM_OK, "detune 16 must be rejected");
+    EXPECT(hm_start_audition(aud, &g_img, 0, 36, 1, -1) != HM_OK, "negative detune must be rejected");
+    EXPECT(hm_start_audition(aud, &g_img, 3, 30, 1, 0) == HM_OK, "audition start");
     hm_set_apu_logging(aud, 1);
     Tick t;
     run_tick(aud, &t);
@@ -529,10 +558,34 @@ static void test_audition_and_mute(HugeMachine* m, HugeMachine* aud) {
         rms += t.rms;
     }
     EXPECT(rms / 10 > 0.01, "audition audible %.4f", rms / 10);
-    EXPECT(hm_start_audition(aud, &g_img, 2, 24, 1) == HM_OK, "wave audition");
+    EXPECT(hm_start_audition(aud, &g_img, 2, 24, 1, 0) == HM_OK, "wave audition");
     hm_set_apu_logging(aud, 1);
     run_tick(aud, &t);
     EXPECT(last_write(&t, NR32) == 0x20 && (last_write(&t, NR34) & 0x80), "wave audition trigger");
+
+    printf("detuned audition: 40y from tick 1, plain without detune\n");
+    const int base = kPeriod[36];
+    for (int detune = 0; detune <= 5; detune += 5) {
+        EXPECT(hm_start_audition(aud, &g_img, 0, 36, 1, detune) == HM_OK, "CH1 audition detune %d", detune);
+        hm_set_apu_logging(aud, 1);
+        run_tick(aud, &t);
+        EXPECT(ch1_period(&t) == base && (last_write(&t, NR14) & 0x80), "detune %d: tick 0 triggers the table period %d",
+               detune, ch1_period(&t));
+        int held = 1, later = -1;
+        for (int i = 1; i < 12; ++i) {
+            run_tick(aud, &t);
+            int p = ch1_period(&t);
+            if (p >= 0) { later = p; held &= p == base + detune; }
+            if (count_writes(&t, NR12) != 0) held = 0; /* no retrigger */
+        }
+        if (detune) EXPECT(later == base + detune, "detune %d: later tick writes %d", detune, later);
+        else EXPECT(later < 0 || later == base, "no detune: period stays %d", later);
+        EXPECT(held, "detune %d: only period %d while held", detune, base + detune);
+    }
+    EXPECT(hm_start_audition(aud, &g_img, 3, 30, 1, 5) == HM_OK, "noise audition ignores detune");
+    hm_set_apu_logging(aud, 1);
+    run_tick(aud, &t);
+    EXPECT(last_write(&t, NR42) == 0xF1 && last_write(&t, NR44) == 0x80, "detuned noise trigger unchanged");
 
     start(m, &s, 1, 0, 0, NULL);
     run_tick(m, &t);
@@ -640,6 +693,7 @@ int main(int argc, char** argv) {
     test_live_tempo_to_one_midrow(m);
     test_seek(m);
     test_effects(m);
+    test_fixed_detune(m);
     test_audition_and_mute(m, aud);
     test_invalid_images(m);
     render_demo_and_measure(m, dir);

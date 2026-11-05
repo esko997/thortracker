@@ -4,6 +4,7 @@ import android.view.KeyEvent
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.thortracker.editor.Action
+import org.thortracker.editor.ViewKind
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
@@ -11,8 +12,23 @@ import org.thortracker.input.Keymap
 class HostInputTest {
     private val none = HostInput.Route.Deliver(HostInput.Target.NONE)
 
-    private fun HostInput.down(key: Int, popup: Boolean = false, toolbar: Boolean = false) = route(key, true, 0, popup, toolbar)
-    private fun HostInput.up(key: Int, popup: Boolean = false, toolbar: Boolean = false) = route(key, false, 0, popup, toolbar)
+    private fun HostInput.down(key: Int, popup: Boolean = false, toolbar: Boolean = false, view: ViewKind = ViewKind.PATTERN) =
+        route(key, true, 0, popup, toolbar, view)
+    private fun HostInput.up(key: Int, popup: Boolean = false, toolbar: Boolean = false, view: ViewKind = ViewKind.PATTERN) =
+        route(key, false, 0, popup, toolbar, view)
+
+    @Test fun l2RightOpensThePatternPanelInPatternButRaisesTheListeningOctaveInSoundViews() {
+        val input = HostInput()
+        input.down(KeyEvent.KEYCODE_BUTTON_L2)
+        assertEquals(HostInput.Route.Editor(Action.SCALE), input.down(KeyEvent.KEYCODE_DPAD_RIGHT))
+        input.up(KeyEvent.KEYCODE_DPAD_RIGHT)
+        assertEquals(HostInput.Route.Editor(Action.OCTAVE_UP), input.down(KeyEvent.KEYCODE_DPAD_RIGHT, view = ViewKind.INSTRUMENT))
+        input.up(KeyEvent.KEYCODE_DPAD_RIGHT, view = ViewKind.INSTRUMENT)
+        assertEquals(HostInput.Route.Editor(Action.OCTAVE_DOWN), input.down(KeyEvent.KEYCODE_DPAD_LEFT, view = ViewKind.WAVE))
+        input.up(KeyEvent.KEYCODE_DPAD_LEFT, view = ViewKind.WAVE)
+        // Where the chord means nothing, the key keeps its own binding, as for any unbound chord.
+        assertEquals(HostInput.Route.Editor(Action.RIGHT), input.down(KeyEvent.KEYCODE_DPAD_RIGHT, view = ViewKind.SONG))
+    }
 
     @Test fun undoAndRedoChordsCannotActivateAnOpenPopup() {
         for ((trigger, control) in listOf(KeyEvent.KEYCODE_BUTTON_L2 to Control.UNDO, KeyEvent.KEYCODE_BUTTON_R2 to Control.REDO)) {
@@ -20,7 +36,7 @@ class HostInputTest {
             input.down(trigger, popup = true)
             assertEquals(HostInput.Route.Run(control), input.down(KeyEvent.KEYCODE_BUTTON_A, popup = true))
             input.up(trigger, popup = true)
-            assertEquals(none, input.route(KeyEvent.KEYCODE_BUTTON_A, true, 1, true, false))
+            assertEquals(none, input.route(KeyEvent.KEYCODE_BUTTON_A, true, 1, true, false, ViewKind.PATTERN))
             assertEquals(none, input.up(KeyEvent.KEYCODE_BUTTON_A, popup = true))
         }
     }
@@ -40,7 +56,7 @@ class HostInputTest {
         input.down(KeyEvent.KEYCODE_BUTTON_L2)
         assertEquals(HostInput.Route.Run(Control.PLAY_CURSOR), input.down(KeyEvent.KEYCODE_BUTTON_START))
         input.up(KeyEvent.KEYCODE_BUTTON_L2)
-        assertEquals(none, input.route(KeyEvent.KEYCODE_BUTTON_START, true, 1, false, false))
+        assertEquals(none, input.route(KeyEvent.KEYCODE_BUTTON_START, true, 1, false, false, ViewKind.PATTERN))
         assertEquals(none, input.up(KeyEvent.KEYCODE_BUTTON_START))
         // A modifier without a chord for the key falls back to the key's own binding.
         input.down(KeyEvent.KEYCODE_BUTTON_THUMBL)
@@ -48,7 +64,7 @@ class HostInputTest {
         input.up(KeyEvent.KEYCODE_BUTTON_START)
         input.up(KeyEvent.KEYCODE_BUTTON_THUMBL)
         input.down(KeyEvent.KEYCODE_DPAD_LEFT)
-        assertEquals(HostInput.Route.Editor(Action.LEFT), input.route(KeyEvent.KEYCODE_DPAD_LEFT, true, 1, false, false))
+        assertEquals(HostInput.Route.Editor(Action.LEFT), input.route(KeyEvent.KEYCODE_DPAD_LEFT, true, 1, false, false, ViewKind.PATTERN))
     }
 
     @Test fun editorChordHoldsItsActionThroughRepeatAndRelease() {

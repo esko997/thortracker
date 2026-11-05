@@ -58,7 +58,7 @@ public:
     int set_image(const uint8_t* mem, uint32_t version);  // HM_OK / HM_ERR_IMAGE
     int play(int order, int row, int max_ticks);          // >= 0 seek mode, < 0 error
     void stop();
-    int audition(int channel, int note, int instrument);
+    int audition(int channel, int note, int instrument, int detune);
     void release_audition();
     int ensure_stream();  // AAUDIO_OK or an AAudio error code
     bool suspend_if_idle();

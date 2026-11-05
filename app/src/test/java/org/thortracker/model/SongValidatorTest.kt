@@ -250,4 +250,61 @@ class SongValidatorTest {
         for (ch in 0 until 4) song = TestSongs.withCell(song, 1, ch, 15, Cell(Cell.EMPTY, 0, 0xC, 0x05))
         assertTrue(SongValidator.errors(song).single().contains("row 15 ends it with D01"))
     }
+
+    @Test
+    fun tuningMustBeStructurallyValid() {
+        val ok = Tuning("24", List(24) { 50.0 * (it + 1) })
+        assertEquals(emptyList<String>(), SongValidator.structuralErrors(blank.copy(tuning = ok)))
+        val cases = listOf(
+            ok.copy(root = 72) to "root 72",
+            ok.copy(root = -1) to "root -1",
+            ok.copy(tolerance = 0) to "tolerance 0",
+            ok.copy(cents = emptyList()) to "no degrees",
+            ok.copy(cents = listOf(100.0, 100.0)) to "must ascend",
+            ok.copy(cents = listOf(0.0, 1200.0)) to "not above 1/1",
+            ok.copy(cents = listOf(Double.POSITIVE_INFINITY)) to "not a number",
+            ok.copy(cents = List(257) { it + 1.0 }) to "at most 256",
+            ok.copy(name = "n".repeat(256)) to "name",
+        )
+        for ((tuning, fragment) in cases) {
+            val errors = SongValidator.structuralErrors(blank.copy(tuning = tuning))
+            assertEquals("$tuning: $errors", 1, errors.size)
+            assertTrue("\"${errors[0]}\" should mention \"$fragment\"", errors[0].contains(fragment))
+        }
+    }
+
+    @Test
+    fun tunedSongsWarnAboutNotesOutsideTheTuning() {
+        val just = Scl.parse("Just\n12\n16/15\n9/8\n6/5\n5/4\n4/3\n45/32\n3/2\n8/5\n5/3\n9/5\n15/8\n2/1\n", "f")
+        val map = TuningMap(just)
+        // 5/4 is 13.7 cents below the table's E-5 and too far above D#-5 for 40y, so E-5 is not in the tuning at 5 cents.
+        assertEquals(-1, map.index(28, 0))
+        val tuned = map.pitches.first { it.detune > 0 }
+        val song = blank.copy(tuning = just)
+        fun warningsFor(channel: Int, cell: Cell, s: Song = song) = SongValidator.warnings(TestSongs.withCell(s, 0, channel, 10, cell))
+
+        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(tuned.note, 1, 0x4, tuned.detune)))
+        assertEquals(emptyList<String>(), warningsFor(wave, Cell(24, 1)))
+        // A plain note that is itself a tuned pitch keeps its effect slot free for other effects.
+        assertEquals(emptyList<String>(), warningsFor(pulse2, Cell(24, 1, 0x0, 0x47)))
+
+        val outside = warningsFor(pulse1, Cell(28, 1)).single()
+        assertTrue(outside, outside.contains("row 10") && outside.contains("E-5 is outside the song tuning \"Just\""))
+        val bent = if (tuned.detune < 15) tuned.detune + 1 else tuned.detune - 1
+        assertEquals(-1, map.index(tuned.note, bent))
+        val wrongBend = warningsFor(wave, Cell(tuned.note, 1, 0x4, bent)).single()
+        assertTrue(wrongBend, wrongBend.contains("Wave row 10") && wrongBend.contains("+$bent is outside"))
+        val occupied = warningsFor(pulse2, Cell(28, 1, 0xC, 0x08)).single()
+        assertTrue(occupied, occupied.contains("Pulse 2 row 10") && occupied.contains("holds C08"))
+        val vibrato = warningsFor(pulse1, Cell(28, 1, 0x4, 0x13)).single()
+        assertTrue(vibrato, vibrato.contains("holds 413"))
+
+        // Noise is never tuned, hidden rows are not played and untuned songs never warn.
+        assertEquals(emptyList<String>(), warningsFor(noise, Cell(28, 1)))
+        val short = song.copy(patterns = listOf(song.patterns[0].copy(length = 8)))
+        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(28, 1), short))
+        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(28, 1, 0x4, 0x03), blank))
+        // Every note of a 12-equal tuning is plain, so the demo song needs no changes.
+        assertEquals(emptyList<String>(), SongValidator.warnings(Songs.demo().copy(tuning = Tuning("12", List(12) { 100.0 * (it + 1) }))))
+    }
 }

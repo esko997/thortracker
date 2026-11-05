@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import org.thortracker.editor.Action
+import org.thortracker.editor.ViewController
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.cellAt
@@ -203,6 +204,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                     else -> 0f to 0f
                 }
                 if (bottom > top) ink.rect(c, x - cw * 0.45f, top, x - cw * 0.45f + ink.dp(2f), bottom, Palette.alpha(col, 120))
+                if (cell.note >= 0) session.fittedFrom(pattern, ch, r)?.let { from -> drawFitMark(c, ch, r - first, pitchOrder(cell) > pitchOrder(from)) }
                 drawCell(c, cell, x, y, col, ch, zeroHere && ch == st.channel && r == st.row)
             }
         }
@@ -291,6 +293,24 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         return RectF(x + start * cw - cw * 0.2f, y + 1, x + (start + len) * cw + cw * 0.2f, y + rowH - 1)
     }
 
+    /** A note a Fit moved: an amber field and an up/down tick at its right edge, until the cells are edited. */
+    private fun drawFitMark(c: Canvas, ch: Int, visRow: Int, up: Boolean) {
+        val f = fieldRect(ch, 0, visRow)
+        ink.round(c, f, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 64))
+        val size = rowH * 0.62f
+        ink.label(c, if (up) "▴" else "▾", f.right + cw * 0.05f, f.top, f.height(), Palette.PLAYHEAD, true, size)
+    }
+
+    /** Orders cells by sounding pitch: note, then its `40y` bend (another effect plays the plain note). */
+    private fun pitchOrder(cell: Cell): Int = cell.note * 16 + (org.thortracker.model.HugeRules.detuneOf(cell) ?: 0)
+
+    /** " · fitted from A-5" (with "+3" for a bent original), or "" when the cell carries no Fit mark. */
+    private fun fittedFromText(pattern: Int, ch: Int, row: Int): String {
+        val from = session.fittedFrom(pattern, ch, row)?.takeIf { it.note >= 0 } ?: return ""
+        val bend = org.thortracker.model.HugeRules.detuneOf(from)?.takeIf { it > 0 }?.let { "+$it" } ?: ""
+        return " · fitted from ${Songs.noteName(from.note)}$bend"
+    }
+
     /** [zero]: show this 000 as the explicitly chosen effect 0 (arpeggio) rather than as no effect. */
     private fun drawCell(c: Canvas, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
         val noteText = when {
@@ -329,7 +349,8 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
 
     /** Rightmost first: the pattern scale, then follow playback, entry step, octave. */
     private fun chips(): List<Pair<String, Int>> = listOf(
-        "Scale ${ctl.patternScale.label}" + (if (ctl.patternLength < Songs.ROWS) " · ${ctl.patternLength} rows" else "") to 3,
+        (song.tuning?.let { "Tuning ${if (it.name.length > 18) it.name.take(17) + "…" else it.name}" } ?: "Scale ${ctl.patternScale.label}") +
+            (if (ctl.patternLength < Songs.ROWS) " · ${ctl.patternLength} rows" else "") to 3,
         (if (st.followPlayback) "Follows playback" else "Stays put during playback") to 0,
         "Step ${session.step}" to 1,
         "Octave ${st.octave}" to 2,
@@ -375,8 +396,20 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
 
         ink.label(c, "${Songs.channelNames(s)[ch]}  row ${hex2(st.row)}", x, y, line, col, true)
         y += line
+        val tuning = ctl.tuningFor(ch)
         val noteLine = when {
-            cell.note >= 0 -> "Note ${Songs.noteName(cell.note)}"
+            cell.note >= 0 && tuning != null -> {
+                // A row holding another effect plays the plain note (bend 0): in tune when that is a degree.
+                val detune = org.thortracker.model.HugeRules.detuneOf(cell)
+                val i = tuning.index(cell.note, detune ?: 0)
+                when {
+                    i < 0 && detune == null -> "Note ${Songs.noteName(cell.note)}: untuned, effect slot taken"
+                    i < 0 -> "Note ${Songs.noteName(cell.note)}: outside ${tuning.tuning.name}"
+                    else -> tuning.pitches[i].let { p -> "Note ${Songs.noteName(cell.note)} · ${tuning.label(p)} ${"%+.1f".format(p.error)}¢" } +
+                        fittedFromText(s.patternAt(st.order), ch, st.row)
+                }
+            }
+            cell.note >= 0 -> "Note ${Songs.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
             cell.note == Cell.CUT -> "OFF: silent at once (E00), no release tail"
             else -> "No note: the previous note keeps sounding"
         }
@@ -503,11 +536,14 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     private val lengthRow = RectF()
     private val lengthPrev = RectF()
     private val lengthNext = RectF()
+    private val fitRow = RectF()
+    private val fitButton = RectF()
     private val scalePrev = RectF()
     private val scaleNext = RectF()
     private val scaleDone = RectF()
     private var panelNote: List<String> = emptyList()
     private var panelNoteWidth = -1f
+    private var panelNoteTuned = false
 
     /**
      * The pattern's editor-only root and scale, drawn over the top right of the grid: a one-octave key strip
@@ -522,9 +558,12 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val w = minOf(u * 24f, area.width() - u)
         val labelW = u * 3.6f
         val textW = w - pad * 2
-        if (textW != panelNoteWidth) {
+        val tuned = song.tuning != null
+        if (textW != panelNoteWidth || tuned != panelNoteTuned) {
             panelNoteWidth = textW
-            panelNote = wrap("Pulse and Wave note edits land only on scale notes; Noise keeps every pitch. " +
+            panelNoteTuned = tuned
+            panelNote = wrap((if (tuned) "The song tuning replaces this scale for Pulse and Wave note edits (Menu → Tuning). "
+                else "Pulse and Wave note edits land only on scale notes; Noise keeps every pitch. ") +
                 "Written notes stay until you edit them; the scale is not exported or heard. Length sets how many rows " +
                 "every order using this pattern plays; later rows are hidden, not deleted.", textW, small)
         }
@@ -532,7 +571,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val keyH = u * 2.6f
         val lineH = u * 2.1f
         val noteH = u * 1.1f
-        val h = pad + titleH + keyH + u * 0.4f + (lineH + u * 0.3f) * 2 + u * 0.2f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
+        val h = pad + titleH + keyH + u * 0.4f + (lineH + u * 0.3f) * 3 + u * 0.2f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
         val left = area.right - w - u * 0.5f
         val top = (headerBottom + u * 0.3f).coerceAtMost(maxOf(area.top, area.bottom - h))
         val panel = RectF(left, top, left + w, top + h)
@@ -597,6 +636,17 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val len = ctl.patternLength
         ink.label(c, if (len < Songs.ROWS) "$len rows" else "$len rows (full)", (lengthPrev.right + lengthNext.left) / 2f, y, lineH,
             if (len < Songs.ROWS) Palette.PLAYHEAD else Palette.TEXT, true, align = Paint.Align.CENTER)
+        y += lineH + u * 0.3f
+
+        // Fit: nudge the played Pulse/Wave notes onto the scale (one undo step).
+        fitRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
+        focusRow(c, fitRow, ViewController.SCALE_FIT_FIELD)
+        ink.label(c, "Notes", x, y, lineH, Palette.DIM)
+        val canFit = !scale.isChromatic && !tuned
+        fitButton.set(stripL, y + lineH * 0.12f, panel.right - pad, y + lineH * 0.88f)
+        ink.round(c, fitButton, ink.dp(4f), if (canFit) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.RULE)
+        ink.label(c, ink.fit(if (canFit) "Fit notes to ${scale.label}" else if (tuned) "Fit via Menu → Tuning" else "Fit notes: choose a scale",
+            fitButton.width() - u, small), fitButton.centerX(), y, lineH, if (canFit) Palette.PLAYHEAD else Palette.DIM, canFit, small, Paint.Align.CENTER)
         y += lineH + u * 0.5f
 
         for (part in panelNote) {
@@ -608,7 +658,10 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         scaleDone.set(panel.right - pad - doneW, y + lineH * 0.1f, panel.right - pad, y + lineH * 0.9f)
         ink.round(c, scaleDone, ink.dp(4f), Palette.alpha(Palette.PLAYHEAD, 60))
         ink.label(c, "Done", scaleDone.centerX(), y, lineH, Palette.PLAYHEAD, true, small, Paint.Align.CENTER)
-        ink.label(c, "${v.keymap.label(Action.EDIT)} done  ${v.keymap.label(Action.CLEAR)} reset", x, y, lineH, Palette.FAINT, size = small)
+        val footer = if (st.scaleField == ViewController.SCALE_FIT_FIELD)
+            "${v.keymap.label(Action.EDIT)} fit  ${v.keymap.label(Action.SCALE, st.kind)} close"
+            else "${v.keymap.label(Action.EDIT)} done  ${v.keymap.label(Action.CLEAR)} reset"
+        ink.label(c, footer, x, y, lineH, Palette.FAINT, size = small)
         return panel
     }
 
@@ -690,9 +743,11 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                     lengthPrev.contains(x, y) -> ctl.stepLength(-1)
                     lengthNext.contains(x, y) -> ctl.stepLength(1)
                     scaleDone.contains(x, y) -> ctl.closeScalePanel()
+                    fitButton.contains(x, y) -> ctl.fitPatternToScale()
                     rootRow.contains(x, y) -> st.scaleField = 0
                     scaleRow.contains(x, y) -> st.scaleField = 1
                     lengthRow.contains(x, y) -> st.scaleField = 2
+                    fitRow.contains(x, y) -> st.scaleField = ViewController.SCALE_FIT_FIELD
                 }
             }
         }

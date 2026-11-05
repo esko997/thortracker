@@ -55,8 +55,11 @@ class ControllerWorkflowTest {
             SystemClock.sleep(40)
         }
         assertTrue("Actual audio initialization must complete", ready)
-        // Bindings persist in the app's prefs; every test starts from the documented defaults.
+        // Bindings and controller focus persist in the app's prefs; every test starts from the documented
+        // defaults with the controller on the primary display's tracker.
         resetControls()
+        val setFocus = MainActivity::class.java.getDeclaredMethod("setFocus", Int::class.javaPrimitiveType).apply { isAccessible = true }
+        instrumentation.runOnMainSync { setFocus.invoke(activity, 0) }
         instrumentation.runOnMainSync {
             tracker.session.replaceSong(Songs.demo())
             tracker.state.kind = ViewKind.PATTERN
@@ -370,15 +373,16 @@ class ControllerWorkflowTest {
         val sounded = mutableListOf<Int>()
         instrumentation.runOnMainSync {
             audioField.set(activity, object : org.thortracker.audio.TrackerAudio by engine {
-                override fun audition(channel: Int, note: Int, instrument: Int) {
+                override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
                     sounded += note
-                    engine.audition(channel, note, instrument)
+                    engine.audition(channel, note, instrument, detune)
                 }
             })
             tracker.state.sketchScale = null
             tracker.state.sketchField = 0
             tracker.state.sketchRow = 1
             tracker.state.sketchChord = 0
+            tracker.state.sketchCircle = false
             tracker.state.octave = 4
         }
         clickHostButton("Pattern")

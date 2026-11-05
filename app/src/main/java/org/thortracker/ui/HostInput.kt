@@ -2,6 +2,7 @@ package org.thortracker.ui
 
 import android.view.KeyEvent
 import org.thortracker.editor.Action
+import org.thortracker.editor.ViewKind
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
@@ -17,7 +18,8 @@ import org.thortracker.input.Keymap
  * if one is bound, otherwise the key's own binding. With several held, a key bound in any of their chords is
  * ambiguous and does nothing. Menu and Back are fixed: they open the menu (Back leaves a focused toolbar or
  * popup first). Popups and the toolbar receive the canonical key a press stands for ([Keymap.canonical]), so
- * their navigation follows rebinding; [Control.overPopups] chords still run over popups.
+ * their navigation follows rebinding; [Control.overPopups] chords still run over popups. Bindings resolve in
+ * the focused [ViewKind], so a chord can act differently per view ([Control.views]).
  */
 class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     enum class Target { NONE, POPUP, TOOLBAR }
@@ -54,12 +56,12 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     /** Modifiers currently held, in press order; the focused view shows their chords. */
     val heldModifiers: Set<Int> get() = held
 
-    fun route(code: Int, down: Boolean, repeat: Int, popupOpen: Boolean, toolbarFocused: Boolean): Route {
+    fun route(code: Int, down: Boolean, repeat: Int, popupOpen: Boolean, toolbarFocused: Boolean, view: ViewKind): Route {
         if (code in Keymap.MODIFIERS) {
             if (down) held += code else held -= code
             return Route.Deliver(Target.NONE)
         }
-        if (!down || repeat > 0) return continued(code, down, popupOpen, toolbarFocused)
+        if (!down || repeat > 0) return continued(code, down, popupOpen, toolbarFocused, view)
         when (code) {
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BUTTON_MODE ->
                 return if (popupOpen) deliver(code, Owner.Popup(code)) else { owners[code] = Owner.Global; Route.Menu }
@@ -69,9 +71,9 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
                 else -> { owners[code] = Owner.Global; Route.Menu }
             }
         }
-        val chords = held.mapNotNull { keymap.control(Binding(code, it)) }
+        val chords = held.mapNotNull { keymap.control(Binding(code, it), view) }
         if (chords.isNotEmpty() && held.size > 1) return deliver(code, Owner.Global)
-        val control = chords.firstOrNull() ?: keymap.control(Binding(code))
+        val control = chords.firstOrNull() ?: keymap.control(Binding(code), view)
             ?: if (code == KeyEvent.KEYCODE_SPACE) Control.PLAY_PATTERN else null
         if (popupOpen) {
             if (control != null && control.overPopups && chords.isNotEmpty()) return run(code, control)
@@ -86,7 +88,7 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     }
 
     /** Repeats and releases follow the owner of the press. */
-    private fun continued(code: Int, down: Boolean, popupOpen: Boolean, toolbarFocused: Boolean): Route {
+    private fun continued(code: Int, down: Boolean, popupOpen: Boolean, toolbarFocused: Boolean, view: ViewKind): Route {
         val owner = if (down) owners[code] else owners.remove(code)
         return when (owner) {
             Owner.Global -> Route.Deliver(Target.NONE)
@@ -97,7 +99,7 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
             null -> when {
                 down -> Route.Deliver(Target.NONE)
                 popupOpen -> Route.Deliver(Target.POPUP, keymap.canonical(code))
-                else -> keymap.control(Binding(code))?.action?.let { Route.Editor(it) }
+                else -> keymap.control(Binding(code), view)?.action?.let { Route.Editor(it) }
                     ?: if (isController(code)) Route.Deliver(Target.NONE) else Route.Pass
             }
         }

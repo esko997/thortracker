@@ -19,8 +19,12 @@ interface TrackerAudio : java.io.Closeable {
 
     fun stop()
 
-    /** Sounds [note] (0..71) with typed [instrument] (1..15) on [channel] until [releaseAudition]. */
-    fun audition(channel: Int, note: Int, instrument: Int)
+    /**
+     * Sounds [note] (0..71) with typed [instrument] (1..15) on [channel] until [releaseAudition].
+     * [detune] (0..15) > 0 plays the note with effect 40y: the table period for the first driver
+     * tick, then raised by [detune] period units (microtuning). The noise channel ignores it.
+     */
+    fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0)
 
     fun releaseAudition()
 

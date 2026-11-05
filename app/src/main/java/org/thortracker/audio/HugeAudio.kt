@@ -81,7 +81,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         scheduleIdleCheck()
     }
 
-    override fun audition(channel: Int, note: Int, instrument: Int) = post {
+    override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) = post {
         if (instrument !in 1..15) {
             commandError = "Choose an instrument (01-0F) to audition"
             return@post
@@ -90,9 +90,13 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             commandError = "Cannot audition note $note on channel $channel"
             return@post
         }
+        if (detune !in 0..15) {
+            commandError = "Cannot audition detune $detune (00-0F)"
+            return@post
+        }
         applyPendingSong()
         val h = readyHandle() ?: return@post
-        val result = nativeAudition(h, channel, note, instrument)
+        val result = nativeAudition(h, channel, note, instrument, detune)
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
             // A held note keeps the stream: a pending idle check must not stop it before the
@@ -258,7 +262,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeEnsureStream(handle: Long): Int
         @JvmStatic private external fun nativePlay(handle: Long, order: Int, row: Int, maxTicks: Int): Int
         @JvmStatic private external fun nativeStop(handle: Long)
-        @JvmStatic private external fun nativeAudition(handle: Long, channel: Int, note: Int, instrument: Int): Int
+        @JvmStatic private external fun nativeAudition(handle: Long, channel: Int, note: Int, instrument: Int, detune: Int): Int
         @JvmStatic private external fun nativeReleaseAudition(handle: Long)
         @JvmStatic private external fun nativeSuspendIfIdle(handle: Long): Boolean
         @JvmStatic private external fun nativePosition(handle: Long): Long

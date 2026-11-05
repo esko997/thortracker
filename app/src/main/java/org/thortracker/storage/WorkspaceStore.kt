@@ -3,11 +3,17 @@ package org.thortracker.storage
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.input.Keymap
+import org.thortracker.model.Phrase
+import org.thortracker.model.PhraseMotion
+import org.thortracker.model.PhraseRhythm
+import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
 import org.thortracker.model.ScaleKind
+import org.thortracker.model.Songs
 
 /** Device-local navigation/layout settings, deliberately outside musical project files. */
 class WorkspaceStore(context: Context) {
@@ -48,10 +54,24 @@ class WorkspaceStore(context: Context) {
                     textPos = item.optInt("textPos", 0).coerceAtLeast(0),
                     sketchScale = ScaleKind.entries.firstOrNull { it.name == item.optString("sketchScale") }
                         ?.let { Scale(item.optInt("sketchRoot", 0).coerceIn(0, 11), it) },
-                    sketchRow = item.optInt("sketchRow", 1).coerceIn(0, 2),
-                    sketchField = item.optInt("sketchField", 0).coerceIn(0, 4),
+                    sketchRow = item.optInt("sketchRow", 1).coerceIn(0, ViewController.SKETCH_ROWS - 1),
+                    sketchField = item.optInt("sketchField", 0).coerceIn(0, ViewController.SKETCH_FIELDS.lastIndex),
                     sketchChord = item.optInt("sketchChord", 0).coerceAtLeast(0),
                     sketchTone = item.optInt("sketchTone", 0).coerceAtLeast(0),
+                    sketchCircle = item.optBoolean("sketchCircle", false),
+                    sketchCircleKey = Math.floorMod(item.optInt("sketchCircleKey", 0), 12),
+                    sketchCircleMinor = item.optBoolean("sketchCircleMinor", false),
+                    sketchPhraseField = item.optInt("phraseField", 0).coerceIn(0, ViewController.PHRASE_FIELDS.lastIndex),
+                    sketchPhraseSettings = PhraseSettings(
+                        length = item.optInt("phraseLength", 8).coerceIn(PhraseSettings.MIN_LENGTH, PhraseSettings.MAX_LENGTH),
+                        rhythm = PhraseRhythm.entries.firstOrNull { it.name == item.optString("phraseRhythm") } ?: PhraseRhythm.EVEN,
+                        motion = PhraseMotion.entries.firstOrNull { it.name == item.optString("phraseMotion") } ?: PhraseMotion.STEPS,
+                        chordTones = item.optBoolean("phraseChordTones", true),
+                    ),
+                    sketchPhrase = phrase(item.optJSONArray("phrase")),
+                    sketchPhraseSeed = item.optLong("phraseSeed", 1L),
+                    sketchKeepRhythm = item.optBoolean("keepRhythm", false),
+                    sketchKeepPitches = item.optBoolean("keepPitches", false) && !item.optBoolean("keepRhythm", false),
                 )
             }
             defaults
@@ -73,8 +93,22 @@ class WorkspaceStore(context: Context) {
             s.sketchScale?.let { put("sketchRoot", it.root); put("sketchScale", it.kind.name) }
             put("sketchRow", s.sketchRow); put("sketchField", s.sketchField)
             put("sketchChord", s.sketchChord); put("sketchTone", s.sketchTone)
+            put("sketchCircle", s.sketchCircle); put("sketchCircleKey", s.sketchCircleKey); put("sketchCircleMinor", s.sketchCircleMinor)
+            put("phraseField", s.sketchPhraseField); put("phraseLength", s.sketchPhraseSettings.length)
+            put("phraseRhythm", s.sketchPhraseSettings.rhythm.name); put("phraseMotion", s.sketchPhraseSettings.motion.name)
+            put("phraseChordTones", s.sketchPhraseSettings.chordTones); put("phraseSeed", s.sketchPhraseSeed)
+            put("keepRhythm", s.sketchKeepRhythm); put("keepPitches", s.sketchKeepPitches)
+            s.sketchPhrase?.let { p -> put("phrase", JSONArray().apply { p.steps.forEach { put(it ?: -1) } }) }
         })
         prefs.edit().putString("views", array.toString()).putInt("focus", focused).apply()
+    }
+
+    /** A stored phrase (-1 = no onset), or null to regenerate when it is missing or not a usable phrase. */
+    private fun phrase(array: JSONArray?): Phrase? {
+        if (array == null || array.length() !in 1..PhraseSettings.MAX_LENGTH) return null
+        val steps = List(array.length()) { array.optInt(it, -1) }
+        if (steps.any { it !in -1..Songs.NOTE_MAX } || steps.all { it < 0 }) return null
+        return Phrase(steps.map { it.takeIf { n -> n >= 0 } })
     }
 
     fun focused(): Int = prefs.getInt("focus", 0).coerceIn(0, 1)

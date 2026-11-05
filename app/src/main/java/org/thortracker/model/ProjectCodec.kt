@@ -6,6 +6,7 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 
@@ -14,7 +15,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
 
 /**
  * Thor Tracker's own project format: UTF-8 JSON
- * `{"format":"thor-tracker-project","version":2,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
+ * `{"format":"thor-tracker-project","version":5,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
  * export-level problems ([SongValidator.errors]) are allowed so work in progress round-trips.
@@ -22,11 +23,13 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * Versions: 1 = initial format. 2 adds each pattern's editor-only `scale` (`{"root":0..11,"kind":"major"}`);
  * version 1 files have no scales and read as chromatic. 3 adds each pattern's played `length` (1-64);
  * older files read as 64 rows. 4 adds scale kinds beyond the original five (modes, harmonic/melodic minor,
- * blues, whole tone and others). Backend data is unchanged, so `backendVersion` stays 1.
+ * blues, whole tone and others). 5 adds the song's optional microtuning `tuning`
+ * (`{"name":...,"cents":[...],"root":0..71,"tolerance":5|10|20}` or null); older files have none. Every save
+ * writes the current version. Backend data is unchanged, so `backendVersion` stays 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 4
+    const val VERSION = 5
     const val BACKEND_VERSION = 1
 
     private val json = Json {
@@ -84,6 +87,9 @@ object ProjectCodec {
         if (version < EXTENDED_SCALES_VERSION && usesExtendedScale(root)) {
             throw ProjectFormatException("Project version $version cannot contain the newer scales (added in version $EXTENDED_SCALES_VERSION)")
         }
+        if (version < TUNING_VERSION && hasTuning(root)) {
+            throw ProjectFormatException("Project version $version cannot contain a song tuning (added in version $TUNING_VERSION)")
+        }
         val envelope = try {
             json.decodeFromJsonElement(Envelope.serializer(), root)
         } catch (e: SerializationException) {
@@ -107,6 +113,9 @@ object ProjectCodec {
     /** First format version with scale kinds outside [ScaleKind.V2]. */
     private const val EXTENDED_SCALES_VERSION = 4
 
+    /** First format version with a song tuning. */
+    private const val TUNING_VERSION = 5
+
     private val V2_SCALE_NAMES = ScaleKind.V2.map { ScaleKind.serializer().descriptor.getElementName(it.ordinal) }.toSet()
 
     private fun usesExtendedScale(root: JsonObject): Boolean =
@@ -117,4 +126,7 @@ object ProjectCodec {
 
     private fun hasPatternKey(root: JsonObject, key: String): Boolean =
         ((root["song"] as? JsonObject)?.get("patterns") as? JsonArray)?.any { (it as? JsonObject)?.containsKey(key) == true } == true
+
+    private fun hasTuning(root: JsonObject): Boolean =
+        (root["song"] as? JsonObject)?.get("tuning").let { it != null && it !is JsonNull }
 }

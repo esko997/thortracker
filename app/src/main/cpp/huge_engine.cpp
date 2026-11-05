@@ -124,11 +124,11 @@ int Engine::play(int order, int row, int max_ticks) {
 
 void Engine::stop() { stop_seq_.store(++seq_, std::memory_order_release); }
 
-int Engine::audition(int channel, int note, int instrument) {
+int Engine::audition(int channel, int note, int instrument, int detune) {
     if (!has_image_) return HM_ERR_IMAGE;
     const int64_t t0 = now_ns();
     MachineSlot* slot = audition_slots_.back();
-    int r = hm_start_audition(slot->machine, control_image_, channel, note, instrument);
+    int r = hm_start_audition(slot->machine, control_image_, channel, note, instrument, detune);
     if (r != HM_OK) return r;
     slot->seq = ++seq_;
     slot->channel = channel;

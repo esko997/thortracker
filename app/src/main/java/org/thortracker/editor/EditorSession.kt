@@ -7,6 +7,10 @@ import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Scale
 import org.thortracker.model.Songs
+import org.thortracker.model.HugeRules
+import org.thortracker.model.TunedPitch
+import org.thortracker.model.Tuning
+import org.thortracker.model.TuningMap
 
 /**
  * Selection shared by every display. Views publish their cursor here; sibling views that follow the
@@ -36,8 +40,9 @@ class EditorSession(initial: Song) {
 
     var onSongChanged: ((Song) -> Unit)? = null
     var onStateChanged: (() -> Unit)? = null
-    var onAudition: ((Int, Int, Int) -> Unit)? = null
-    var onAuditionSequence: ((Int, List<Int>, Int) -> Unit)? = null
+    var onAudition: ((Int, Int, Int, Int) -> Unit)? = null
+    /** A looping audition: channel, steps (null = no retrigger, the previous note keeps sounding), instrument, ms per step. */
+    var onAuditionSequence: ((Int, List<Int?>, Int, Long) -> Unit)? = null
     var onReleaseAudition: (() -> Unit)? = null
     var onTransport: ((Boolean) -> Unit)? = null
 
@@ -84,6 +89,7 @@ class EditorSession(initial: Song) {
 
     fun replaceSong(song: Song) {
         openGestures.clear()
+        fitMarks.clear()
         gestureStart = null
         undoStack.clear()
         redoStack.clear()
@@ -213,15 +219,153 @@ class EditorSession(initial: Song) {
 
     // ---- transport / audition --------------------------------------------------------------------
 
-    fun audition(channel: Int, note: Int, instrument: Int) {
-        if (note !in 0..Songs.NOTE_MAX) return
-        onAudition?.invoke(channel, note, instrument)
+    /** Sounds [note] with [instrument] on [channel]; [detune] 0..15 adds the tuning bend (40y) the cell would carry. */
+    fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
+        if (note !in 0..Songs.NOTE_MAX || detune !in 0..15) return
+        onAudition?.invoke(channel, note, instrument, detune)
     }
 
-    /** A held, audition-only phrase; its host owns scheduling and cancels it on release. */
-    fun auditionSequence(channel: Int, notes: List<Int>, instrument: Int) {
-        if (notes.isEmpty() || notes.any { it !in 0..Songs.NOTE_MAX }) return
-        onAuditionSequence?.invoke(channel, notes, instrument)
+    // ---- tuning ----------------------------------------------------------------------------------
+
+    private var cachedTuning: Tuning? = null
+    private var cachedTuningMap: TuningMap? = null
+
+    /** Reachable pitches of the song's tuning, or null for ordinary 12-note songs. Cached per tuning. */
+    val tuningMap: TuningMap?
+        get() {
+            val t = song.tuning ?: return null
+            if (t != cachedTuning) { cachedTuning = t; cachedTuningMap = TuningMap(t) }
+            return cachedTuningMap
+        }
+
+    /** Sets or removes ([tuning] null) the song tuning. Written notes are unchanged; see [fitToTuning]. */
+    fun setTuning(tuning: Tuning?): Boolean =
+        apply(if (tuning == null) "Remove tuning" else "Set tuning") { it.copy(tuning = tuning) }
+
+    /** Result of [fitToTuning]: notes moved onto the tuning, and notes left because their effect slot is taken. */
+    data class FitResult(val moved: Int, val blocked: Int)
+
+    /**
+     * Moves every played Pulse/Wave note of [patterns] to the nearest reachable pitch of the song tuning, as
+     * one undo step. A note whose row holds another effect plays at its plain pitch; it moves only when the
+     * nearest pitch needs no bend, otherwise it is counted as blocked and left unchanged.
+     */
+    fun fitToTuning(patterns: Collection<Int>): FitResult {
+        val map = tuningMap ?: return FitResult(0, 0)
+        var moved = 0
+        var blocked = 0
+        val from = HashMap<Int, Map<Int, Cell>>()
+        val earlier = patterns.associateWith { liveMarks(it) }
+        val changed = apply("Fit notes to tuning") { s ->
+            var out = s
+            for (p in patterns.distinct()) {
+                val pattern = out.patterns[p]
+                val moves = HashMap<Int, Cell>()
+                val tracks = pattern.tracks.mapIndexed { ch, track ->
+                    if (Songs.channelKind(s, ch) == InstrumentKind.NOISE) track
+                    else track.mapIndexed { row, cell ->
+                        val detune = HugeRules.detuneOf(cell)
+                        // A note with another effect plays its plain pitch (bend 0).
+                        if (row >= pattern.length || cell.note < 0 || map.index(cell.note, detune ?: 0) >= 0) cell
+                        else {
+                            val target = map.nearest(cell.note, detune ?: 0).takeIf { it >= 0 }?.let { map.pitches[it] }
+                            val fitted = target?.let { tuned(cell, it) }
+                            when {
+                                target == null -> cell
+                                fitted == null -> { blocked++; cell }
+                                fitted == cell -> cell
+                                else -> { moved++; moves[fitKey(ch, row)] = cell; fitted }
+                            }
+                        }
+                    }
+                }
+                out = out.withPattern(p, pattern.copy(tracks = tracks))
+                from[p] = moves
+            }
+            out
+        }
+        if (changed) remember(earlier, from)
+        return FitResult(moved, blocked)
+    }
+
+    /**
+     * Moves every played Pulse/Wave note of [pattern] to the nearest note of its scale guide ([Scale.nearest]),
+     * as one undo step, and returns how many moved. Instruments and effects stay; Noise, hidden rows and cuts
+     * are untouched. Does nothing for a chromatic guide or in a tuned song, whose tuning replaces the guide.
+     */
+    fun fitToScale(pattern: Int): Int {
+        val scale = song.patterns.getOrNull(pattern)?.scale ?: return 0
+        if (scale.isChromatic || song.tuning != null) return 0
+        var moved = 0
+        val moves = HashMap<Int, Cell>()
+        val earlier = mapOf(pattern to liveMarks(pattern))
+        val changed = apply("Fit notes to scale") { s ->
+            val p = s.patterns[pattern]
+            val tracks = p.tracks.mapIndexed { ch, track ->
+                if (Songs.channelKind(s, ch) == InstrumentKind.NOISE) track
+                else track.mapIndexed { row, cell ->
+                    val target = if (row < p.length && cell.note >= 0) scale.nearest(cell.note) else null
+                    if (target == null || target == cell.note) cell
+                    else { moved++; moves[fitKey(ch, row)] = cell; cell.copy(note = target) }
+                }
+            }
+            s.withPattern(pattern, p.copy(tracks = tracks))
+        }
+        if (changed) remember(earlier, mapOf(pattern to moves))
+        return moved
+    }
+
+    /** A cell a Fit moved: what it held before ([from]) and what the Fit wrote ([to]), effect included. */
+    private data class FitMark(val from: Cell, val to: Cell)
+
+    /** Per pattern: cell key → mark. A mark shows while its cell still equals [FitMark.to]. */
+    private val fitMarks = HashMap<Int, Map<Int, FitMark>>()
+
+    private fun fitKey(channel: Int, row: Int) = (channel shl 6) or row
+
+    private fun liveMark(pattern: Int, key: Int): FitMark? {
+        val mark = fitMarks[pattern]?.get(key) ?: return null
+        val cell = song.patterns.getOrNull(pattern)?.tracks?.getOrNull(key shr 6)?.getOrNull(key and 63)
+        return mark.takeIf { cell == it.to }
+    }
+
+    private fun liveMarks(pattern: Int): Map<Int, Cell> =
+        fitMarks[pattern].orEmpty().keys.mapNotNull { k -> liveMark(pattern, k)?.let { k to it.from } }.toMap()
+
+    /**
+     * Records [moves] (key → cell before this Fit) per pattern, now that the song holds the fitted cells.
+     * [earlier] are the marks showing before this Fit, so chained Fits keep each cell's original and the total
+     * drift stays visible; a cell that came back to its original is unmarked.
+     */
+    private fun remember(earlier: Map<Int, Map<Int, Cell>>, moves: Map<Int, Map<Int, Cell>>) {
+        for ((p, m) in moves) {
+            val tracks = song.patterns[p].tracks
+            val marks = HashMap<Int, FitMark>()
+            for ((key, from) in earlier[p].orEmpty() + m.mapValues { (k, cell) -> earlier[p]?.get(k) ?: cell }) {
+                val now = tracks[key shr 6][key and 63]
+                if (now != from) marks[key] = FitMark(from, now)
+            }
+            if (marks.isEmpty()) fitMarks.remove(p) else fitMarks[p] = marks
+        }
+    }
+
+    /**
+     * The cell [channel]/[row] of [pattern] held before the latest Fit(s) moved it, or null. Each mark shows
+     * while that cell still holds exactly what the Fit wrote: editing it (or undoing the Fit) unmarks it, and
+     * other cells keep their marks. Inserting or deleting rows in the pattern clears its marks, since the
+     * moved notes no longer sit on the rows they were fitted on.
+     */
+    fun fittedFrom(pattern: Int, channel: Int, row: Int): Cell? = liveMark(pattern, fitKey(channel, row))?.from
+
+
+    /**
+     * A held, audition-only loop of [steps], one every [stepMillis]: a note retriggers [instrument] on [channel],
+     * null keeps the previous note sounding. Its host owns scheduling and cancels it on release. Ignored when
+     * no step has a note, a note is outside C-3..B-8, or [stepMillis] is not positive.
+     */
+    fun auditionSequence(channel: Int, steps: List<Int?>, instrument: Int, stepMillis: Long = 180) {
+        if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in 0..Songs.NOTE_MAX }) return
+        onAuditionSequence?.invoke(channel, steps, instrument, stepMillis)
     }
 
     fun releaseAudition() { onReleaseAudition?.invoke() }
@@ -238,6 +382,39 @@ class EditorSession(initial: Song) {
             val old = s.cellAt(pattern, channel, row)
             s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(f(old))))
         }
+
+    /**
+     * Writes a monophonic phrase into [channel] of [pattern] from [row] as one undo step "Insert phrase", clipped
+     * to the pattern length. A step with a note writes that note with [instrument], keeping the row's effect; in
+     * a tuned song the note becomes the nearest tuned pitch via [tuned], and a note whose bend would need the
+     * row's occupied effect slot (or that no tuned pitch reaches) is skipped, leaving its row unchanged. A null
+     * step clears the row's note and instrument (so the previous note sounds on) but keeps its effect.
+     * Returns the rows written: the clipped span minus skipped notes.
+     */
+    fun insertPhrase(pattern: Int, channel: Int, row: Int, steps: List<Int?>, instrument: Int): Int {
+        if (pattern !in song.patterns.indices || channel !in 0 until song.channelCount()) return 0
+        if (row !in 0 until song.patterns[pattern].length) return 0
+        require(steps.all { it == null || it in 0..Songs.NOTE_MAX }) { "Phrase notes must be within 0..${Songs.NOTE_MAX}" }
+        val map = tuningMap
+        var written = 0
+        apply("Insert phrase") { s ->
+            val p = s.patterns[pattern]
+            val track = p.tracks[channel].toMutableList()
+            for (r in row until minOf(p.length, row + steps.size)) {
+                val old = track[r]
+                val note = steps[r - row]
+                val cell = when {
+                    note == null -> old.copy(note = Cell.EMPTY, instrument = 0)
+                    map == null -> old.copy(note = note, instrument = instrument)
+                    else -> map.nearest(note, 0).takeIf { it >= 0 }?.let { tuned(old.copy(instrument = instrument), map.pitches[it]) }
+                } ?: continue
+                track[r] = normaliseCell(cell)
+                written++
+            }
+            s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t -> if (c == channel) track else t }))
+        }
+        return written
+    }
 
     fun copyBlock(pattern: Int, block: Block) {
         val p = song.patterns[pattern]
@@ -323,6 +500,7 @@ class EditorSession(initial: Song) {
 
     /** Inserts a blank row at [row] in the given channels; the last played row falls off, hidden rows are untouched. */
     fun insertRow(pattern: Int, channels: IntRange, row: Int): Boolean = apply("Insert row") { s ->
+        fitMarks.remove(pattern)
         val p = s.patterns[pattern]
         s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t ->
             if (c !in channels) t else (t.subList(0, row) + Cell() + t.subList(row, p.length - 1) + t.subList(p.length, t.size))
@@ -331,6 +509,7 @@ class EditorSession(initial: Song) {
 
     /** Deletes [row] in the given channels; a blank row enters at the last played row, hidden rows are untouched. */
     fun deleteRow(pattern: Int, channels: IntRange, row: Int): Boolean = apply("Delete row") { s ->
+        fitMarks.remove(pattern)
         val p = s.patterns[pattern]
         s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t ->
             if (c !in channels) t else (t.subList(0, row) + t.subList(row + 1, p.length) + Cell() + t.subList(p.length, t.size))
@@ -515,6 +694,19 @@ class EditorSession(initial: Song) {
         /** Pattern indices are kept below 256; the backend's distinct-track limit is reported by validation. */
         const val MAX_PATTERNS = 256
         const val MAX_TICKS = 255
+
+        /**
+         * [cell] playing tuned [pitch]: the note plus 40y for a bend, removing a previous tuning bend when none is
+         * needed. Null when a bend is needed but the row's effect slot holds another effect.
+         */
+        fun tuned(cell: Cell, pitch: TunedPitch): Cell? {
+            val current = HugeRules.detuneOf(cell)
+            return when {
+                pitch.detune > 0 -> if (current == null) null else cell.copy(note = pitch.note, effect = HugeRules.FX_VIBRATO, param = pitch.detune)
+                current != null && current > 0 -> cell.copy(note = pitch.note, effect = 0, param = 0)
+                else -> cell.copy(note = pitch.note)
+            }
+        }
         const val MAX_NAME = 24
         const val MAX_TEXT = 255
 
