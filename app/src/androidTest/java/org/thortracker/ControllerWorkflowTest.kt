@@ -159,7 +159,6 @@ class ControllerWorkflowTest {
         assertFalse(before == afterAdjustment)
         chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
         assertEquals(before, tracker.session.song)
-        up(KeyEvent.KEYCODE_BUTTON_A)
     }
 
     @Test fun finishingAnOlderSaveDoesNotAttachItsDestinationToANewSong() {
