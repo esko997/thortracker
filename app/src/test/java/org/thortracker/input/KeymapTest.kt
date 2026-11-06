@@ -23,13 +23,20 @@ class KeymapTest {
         assertEquals("A+←→", k.held(Action.EDIT, k.pair(Action.LEFT, Action.RIGHT)))
         assertEquals("✛", k.dpad())
         assertEquals("Sel+Start", k.label(Control.TOOLBAR))
+        assertEquals("L2+A/B", k.pair(Action.UNDO, Action.REDO))
+        assertEquals(listOf("R2+A", "R2+B", "R2+X", "R2+Y"),
+            listOf(Control.SHOW_SONG, Control.SHOW_INSTRUMENT, Control.SHOW_SKETCH, Control.SHOW_KEYBOARD).map(k::label))
+        assertEquals(null, k.binding(Control.SHOW_PATTERN))
     }
 
     @Test fun everyControlHasAValidDefaultThatNoOtherControlInTheSameViewShares() {
         val k = Keymap.DEFAULT
+        val unboundByDefault = setOf(Control.SHOW_PATTERN, Control.SHOW_WAVE, Control.SHOW_HELP)
         for (c in Control.entries) {
-            val b = assertNotNull(c.name, k.binding(c)).let { k.binding(c)!! }
-            assertNull(c.name, k.problem(c, b))
+            val b = k.binding(c)
+            if (c in unboundByDefault) { assertNull(c.name, b); continue }
+            assertNotNull(c.name, b)
+            assertNull(c.name, k.problem(c, b!!))
             assertEquals(c.name, emptyList<Control>(), k.conflicts(c, b))
         }
     }
@@ -73,6 +80,31 @@ class KeymapTest {
         val read = Keymap.fromJson(partial)
         assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_THUMBL), read.binding(Control.REDO))
         assertEquals(Keymap.DEFAULT.binding(Control.UNDO), read.binding(Control.UNDO))
+    }
+
+    /** A 0.7.x (version 2) keymap: today's defaults with Redo on R2+A and no view controls. */
+    private fun versionTwo(change: (MutableMap<String, kotlinx.serialization.json.JsonElement>) -> Unit = {}): String {
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(Keymap.DEFAULT.toJson()) as kotlinx.serialization.json.JsonObject
+        val bindings = (root["bindings"] as kotlinx.serialization.json.JsonObject).toMutableMap()
+        Control.entries.filter { it.since > 2 }.forEach { bindings.remove(it.name) }
+        bindings["REDO"] = kotlinx.serialization.json.JsonPrimitive("R2+A")
+        change(bindings)
+        return kotlinx.serialization.json.JsonObject(root.toMutableMap().also {
+            it["version"] = kotlinx.serialization.json.JsonPrimitive(2)
+            it["bindings"] = kotlinx.serialization.json.JsonObject(bindings)
+        }).toString()
+    }
+
+    @Test fun anUntouchedOlderKeymapTakesTodaysDefaultsIncludingMovedRedo() {
+        assertEquals(Keymap.DEFAULT, Keymap.fromJson(versionTwo()))
+    }
+
+    @Test fun aCustomisedOlderKeymapKeepsRedoOnR2AndLeavesThatViewChordUnbound() {
+        val read = Keymap.fromJson(versionTwo { it["SWAP"] = kotlinx.serialization.json.JsonPrimitive("L3+X") })
+        assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_R2), read.binding(Control.REDO))
+        assertNull(read.binding(Control.SHOW_SONG))
+        assertEquals(Keymap.DEFAULT.binding(Control.SHOW_INSTRUMENT), read.binding(Control.SHOW_INSTRUMENT))
+        assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_THUMBL), read.binding(Control.SWAP))
     }
 
     @Test fun invalidKeymapFilesAreRejectedWithTheReason() {

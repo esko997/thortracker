@@ -418,8 +418,32 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             Control.PLAY_PATTERN -> toggleTransport(fromCursor = false)
             Control.PLAY_CURSOR -> toggleTransport(fromCursor = true)
             Control.FOCUS -> switchFocus()
-            else -> control.action?.let(::editAction)
+            else -> control.shows?.let(::showView) ?: control.action?.let(::editAction)
         }
+    }
+
+    /** What each display showed before a view chord replaced it (view and whether it was pinned), for the second press. */
+    private val viewBeforeChord = HashMap<Int, Pair<ViewKind, Boolean>>()
+
+    /**
+     * A view chord: shows [kind] on the controller-focused display and pins it there, like choosing it from the
+     * View menu. Pressed again while that view is showing, it returns to the view it replaced, pinned or
+     * following the selection as it was.
+     */
+    private fun showView(kind: ViewKind) {
+        val index = focus
+        val state = states.getOrNull(index) ?: return
+        hosts.values.forEach { it.tracker.cancelInteraction() }
+        if (state.kind == kind) {
+            val (previous, pinned) = viewBeforeChord.remove(index) ?: return
+            state.switchKind(previous)
+            state.pinned = pinned
+        } else {
+            viewBeforeChord[index] = state.kind to state.pinned
+            state.switchKind(kind)
+            state.pinned = true
+        }
+        refresh(); workspace.save(states, focus)
     }
 
     private fun toolbarFocused(): Boolean = hosts[focus]?.toolbar?.controllerFocused == true
@@ -546,6 +570,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     private fun swap() {
         hosts.values.forEach { it.tracker.cancelInteraction() }
+        // The "previous view" of a chord travels with the view it belongs to.
+        val before0 = viewBeforeChord.remove(0)
+        viewBeforeChord.remove(1)?.let { viewBeforeChord[0] = it }
+        before0?.let { viewBeforeChord[1] = it }
         val first = states[0]
         states[0] = states[1]
         states[1] = first

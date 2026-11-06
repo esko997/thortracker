@@ -104,8 +104,27 @@ class ControllerWorkflowTest {
         assertEquals("Bare triggers must not consume undo history", changed, tracker.session.song)
         chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
         assertEquals("Whole held adjustment must undo together", before, tracker.session.song)
-        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_B)
         assertEquals(changed, tracker.session.song)
+    }
+
+    /**
+     * R2+B shows Instrument pinned on the focused display; R2+B again restores Pattern and its unpinned state.
+     * R2+B, R2+A, R2+A ends on Instrument. Nothing is edited.
+     */
+    @Test fun viewChordShowsTheViewAndTogglesBack() {
+        val before = tracker.session.song
+        instrumentation.runOnMainSync { tracker.state.pinned = false }
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_B)
+        instrumentation.runOnMainSync { assertEquals(ViewKind.INSTRUMENT, tracker.state.kind); assertTrue(tracker.state.pinned) }
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_B)
+        instrumentation.runOnMainSync { assertEquals(ViewKind.PATTERN, tracker.state.kind); assertFalse(tracker.state.pinned) }
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_B)
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync { assertEquals(ViewKind.SONG, tracker.state.kind) }
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync { assertEquals(ViewKind.INSTRUMENT, tracker.state.kind) }
+        assertEquals("View chords must not edit or release a held B/A", before, tracker.session.song)
     }
 
     @Test fun releasingTheTriggerBeforeAStillConsumesTheChord() {
@@ -121,10 +140,10 @@ class ControllerWorkflowTest {
         assertEquals("Undo's A release must not re-enter the edited note", before, tracker.session.song)
         tap(KeyEvent.KEYCODE_DPAD_RIGHT)
         assertEquals("Chord release must not leave the edit modifier held", before, tracker.session.song)
-        down(KeyEvent.KEYCODE_BUTTON_R2)
-        down(KeyEvent.KEYCODE_BUTTON_A)
-        up(KeyEvent.KEYCODE_BUTTON_R2)
-        up(KeyEvent.KEYCODE_BUTTON_A)
+        down(KeyEvent.KEYCODE_BUTTON_L2)
+        down(KeyEvent.KEYCODE_BUTTON_B)
+        up(KeyEvent.KEYCODE_BUTTON_L2)
+        up(KeyEvent.KEYCODE_BUTTON_B)
         assertEquals(changed, tracker.session.song)
     }
 

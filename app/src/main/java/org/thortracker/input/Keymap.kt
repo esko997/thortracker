@@ -43,6 +43,8 @@ enum class Control(
     val views: Set<ViewKind>? = null,
     /** Keymap file version that introduced the control; older files may already use its default. */
     val since: Int = 1,
+    /** For view controls: the view this control shows on the controller-focused display. */
+    val shows: ViewKind? = null,
 ) {
     UP(ControlGroup.MOVE, "Up", "Up", Action.UP, hold = true, essential = true),
     DOWN(ControlGroup.MOVE, "Down", "Down", Action.DOWN, hold = true, essential = true),
@@ -71,7 +73,14 @@ enum class Control(
     PLAY_CURSOR(ControlGroup.TRANSPORT, "Play from cursor / stop", "Play from cursor", null),
     SWAP(ControlGroup.VIEWS, "Swap the two displays' views", "Swap views", null, overPopups = true),
     FOCUS(ControlGroup.VIEWS, "Control the other display", "Other display", null),
-    TOOLBAR(ControlGroup.VIEWS, "Show / leave the toolbar", "Toolbar", null);
+    TOOLBAR(ControlGroup.VIEWS, "Show / leave the toolbar", "Toolbar", null),
+    SHOW_PATTERN(ControlGroup.VIEWS, "Show Pattern here (again: previous view)", "Pattern", null, since = 3, shows = ViewKind.PATTERN),
+    SHOW_SONG(ControlGroup.VIEWS, "Show Song here (again: previous view)", "Song", null, since = 3, shows = ViewKind.SONG),
+    SHOW_INSTRUMENT(ControlGroup.VIEWS, "Show Instrument here (again: previous view)", "Instrument", null, since = 3, shows = ViewKind.INSTRUMENT),
+    SHOW_SKETCH(ControlGroup.VIEWS, "Show Sketch here (again: previous view)", "Sketch", null, since = 3, shows = ViewKind.SKETCH),
+    SHOW_KEYBOARD(ControlGroup.VIEWS, "Show Keyboard here (again: previous view)", "Keyboard", null, since = 3, shows = ViewKind.KEYBOARD),
+    SHOW_WAVE(ControlGroup.VIEWS, "Show Wave here (again: previous view)", "Wave", null, since = 3, shows = ViewKind.WAVE),
+    SHOW_HELP(ControlGroup.VIEWS, "Show Help here (again: previous view)", "Help", null, since = 3, shows = ViewKind.HELP);
 
     /** Run by the activity (history, transport, displays) rather than delivered to the focused view. */
     val host: Boolean get() = action == null || this == UNDO || this == REDO
@@ -96,8 +105,9 @@ private val CUT_VIEWS = setOf(ViewKind.PATTERN, ViewKind.INSTRUMENT, ViewKind.WA
 private val SOUND_VIEWS = setOf(ViewKind.INSTRUMENT, ViewKind.WAVE, ViewKind.KEYBOARD, ViewKind.SKETCH)
 private val OCTAVE_VIEWS = SOUND_VIEWS + ViewKind.PATTERN
 
-/** The complete control → binding table. Immutable; [with] returns a changed copy. */
-class Keymap private constructor(private val table: Map<Control, Binding?>) {
+/** The complete control → binding table (every control present, null = unbound). Immutable; [with] returns a changed copy. */
+class Keymap private constructor(bindings: Map<Control, Binding?>) {
+    private val table: Map<Control, Binding?> = Control.entries.associateWith { bindings[it] }
     private val byBinding: Map<Binding, List<Control>> =
         table.entries.mapNotNull { (c, b) -> b?.let { it to c } }.groupBy({ it.first }, { it.second })
 
@@ -189,7 +199,7 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
 
     companion object {
         const val FORMAT = "thor-tracker-keymap"
-        const val VERSION = 2
+        const val VERSION = 3
         const val UNBOUND = "—"
 
         /** Buttons that do nothing alone and start chords. */
@@ -237,12 +247,16 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
             Control.DELETE_ROW to Binding(KeyEvent.KEYCODE_DPAD_DOWN, SEL),
             Control.PATTERN_PANEL to Binding(KeyEvent.KEYCODE_DPAD_RIGHT, L2),
             Control.UNDO to Binding(KeyEvent.KEYCODE_BUTTON_A, L2),
-            Control.REDO to Binding(KeyEvent.KEYCODE_BUTTON_A, R2),
+            Control.REDO to Binding(KeyEvent.KEYCODE_BUTTON_B, L2),
             Control.PLAY_PATTERN to Binding(KeyEvent.KEYCODE_BUTTON_START),
             Control.PLAY_CURSOR to Binding(KeyEvent.KEYCODE_BUTTON_START, L2),
             Control.SWAP to Binding(KeyEvent.KEYCODE_BUTTON_X, L2),
             Control.FOCUS to Binding(KeyEvent.KEYCODE_BUTTON_THUMBR),
             Control.TOOLBAR to Binding(KeyEvent.KEYCODE_BUTTON_START, SEL),
+            Control.SHOW_SONG to Binding(KeyEvent.KEYCODE_BUTTON_A, R2),
+            Control.SHOW_INSTRUMENT to Binding(KeyEvent.KEYCODE_BUTTON_B, R2),
+            Control.SHOW_SKETCH to Binding(KeyEvent.KEYCODE_BUTTON_X, R2),
+            Control.SHOW_KEYBOARD to Binding(KeyEvent.KEYCODE_BUTTON_Y, R2),
         ))
 
         private val NAMES = linkedMapOf(
@@ -291,7 +305,9 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
          * Reads a keymap file. Controls it does not mention keep their defaults (files from older versions)
          * unless the file already uses that default for something in the same view, in which case they start
          * unbound; unknown controls are ignored (files from newer versions). Invalid or duplicate bindings
-         * among the file's own entries are rejected.
+         * among the file's own entries are rejected. A file that never changed a binding from the defaults of
+         * its own version reads as today's defaults, so moved defaults (Redo to L2+B in version 3) reach users
+         * who never rebound anything.
          */
         fun fromJson(text: String): Keymap {
             val root = try { JSON.parseToJsonElement(text) as? JsonObject } catch (e: Exception) { null }
@@ -311,6 +327,11 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
                 if (binding != null) map.problem(control, binding)?.let { throw IllegalArgumentException("$name: $it") }
                 map = map.with(control, binding)
             }
+            if (entries.all { (name, value) ->
+                    val c = Control.entries.firstOrNull { it.name == name } ?: return@all true
+                    val b = if (value is JsonNull) null else (value as? JsonPrimitive)?.content?.let(::parse)
+                    b == defaultIn(c, version)
+                }) return DEFAULT
             val named = entries.keys
             for (c in Control.entries) {
                 if (c.since <= version || c.name in named) continue
@@ -320,6 +341,10 @@ class Keymap private constructor(private val table: Map<Control, Binding?>) {
             map.validationError()?.let { throw IllegalArgumentException(it) }
             return map
         }
+
+        /** A control's default binding in keymap file [version]. Only Redo has moved (R2+A before version 3). */
+        private fun defaultIn(control: Control, version: Int): Binding? =
+            if (control == Control.REDO && version < 3) Binding(KeyEvent.KEYCODE_BUTTON_A, R2) else DEFAULT.binding(control)
 
         /**
          * Converts 0.1-0.4 physical → logical key remaps (each logical key is the default button it acts as)

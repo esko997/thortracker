@@ -146,6 +146,8 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
             Line.Row(k.pair(Action.UNDO, Action.REDO), "Undo / redo (whole document, both displays)"),
             Line.Row(Keymap.MODIFIERS.joinToString(" ") { Keymap.buttonName(it) }, "Alone: only start chords, so a brushed trigger never edits"),
             Line.Row(k.label(Control.SWAP), "Swap the complete views of the two displays"),
+            Line.Row(Control.entries.filter { it.shows != null && k.binding(it) != null }.joinToString("  ") { "${k.label(it)} ${it.short}" }
+                .ifEmpty { "Menu → Controls" }, "Show that view on this display; the same chord again returns to the previous view"),
             Line.Row(k.group(Action.COPY, Action.PASTE, Action.CUT), "Copy / paste / cut"),
             Line.Row(k.label(Action.DUPLICATE), "Duplicate"),
             Line.Row(k.group(Action.OCTAVE_DOWN, Action.OCTAVE_UP), "Octave down / up (Pattern entry, or the listening note)"),

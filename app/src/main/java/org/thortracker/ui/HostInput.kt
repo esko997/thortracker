@@ -77,6 +77,8 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
             ?: if (code == KeyEvent.KEYCODE_SPACE) Control.PLAY_PATTERN else null
         if (popupOpen) {
             if (control != null && control.overPopups && chords.isNotEmpty()) return run(code, control)
+            // Any other chord (e.g. R2+A for a view) must not press the popup's highlighted item.
+            if (chords.isNotEmpty()) return deliver(code, Owner.Global)
             return deliver(code, Owner.Popup(keymap.canonical(code)))
         }
         if (control == null) return if (isController(code)) deliver(code, Owner.Global) else Route.Pass

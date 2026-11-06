@@ -31,14 +31,29 @@ class HostInputTest {
     }
 
     @Test fun undoAndRedoChordsCannotActivateAnOpenPopup() {
-        for ((trigger, control) in listOf(KeyEvent.KEYCODE_BUTTON_L2 to Control.UNDO, KeyEvent.KEYCODE_BUTTON_R2 to Control.REDO)) {
+        for ((button, control) in listOf(KeyEvent.KEYCODE_BUTTON_A to Control.UNDO, KeyEvent.KEYCODE_BUTTON_B to Control.REDO)) {
             val input = HostInput()
-            input.down(trigger, popup = true)
-            assertEquals(HostInput.Route.Run(control), input.down(KeyEvent.KEYCODE_BUTTON_A, popup = true))
-            input.up(trigger, popup = true)
-            assertEquals(none, input.route(KeyEvent.KEYCODE_BUTTON_A, true, 1, true, false, ViewKind.PATTERN))
-            assertEquals(none, input.up(KeyEvent.KEYCODE_BUTTON_A, popup = true))
+            input.down(KeyEvent.KEYCODE_BUTTON_L2, popup = true)
+            assertEquals(HostInput.Route.Run(control), input.down(button, popup = true))
+            input.up(KeyEvent.KEYCODE_BUTTON_L2, popup = true)
+            assertEquals(none, input.route(button, true, 1, true, false, ViewKind.PATTERN))
+            assertEquals(none, input.up(button, popup = true))
         }
+    }
+
+    @Test fun r2ChordsShowViewsAndNeverPressAPopupItem() {
+        val input = HostInput()
+        input.down(KeyEvent.KEYCODE_BUTTON_R2)
+        for ((button, control) in listOf(
+            KeyEvent.KEYCODE_BUTTON_A to Control.SHOW_SONG, KeyEvent.KEYCODE_BUTTON_B to Control.SHOW_INSTRUMENT,
+            KeyEvent.KEYCODE_BUTTON_X to Control.SHOW_SKETCH, KeyEvent.KEYCODE_BUTTON_Y to Control.SHOW_KEYBOARD,
+        )) {
+            assertEquals(HostInput.Route.Run(control), input.down(button, view = ViewKind.WAVE))
+            assertEquals(none, input.up(button, view = ViewKind.WAVE))
+        }
+        // Over an open popup a view chord does nothing: R2+A must not choose the highlighted item.
+        assertEquals(none, input.down(KeyEvent.KEYCODE_BUTTON_A, popup = true))
+        assertEquals(none, input.up(KeyEvent.KEYCODE_BUTTON_A, popup = true))
     }
 
     @Test fun ambiguousChordDoesNothingEvenOverAPopup() {

@@ -119,7 +119,8 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 ## Playtest workflow pass — 0.2.0
 
 - Auto-hidden, overlay toolbar; Select+Start reveals it with explicit controller focus. Touch reveal times out; focused controller use does not.
-- L2/R2 are chord-only: L2+A undo, R2+A redo, L2+X complete-view swap. No bare-trigger action or constituent-button edit/audition leak.
+- L2/R2 are chord-only: L2+A undo, L2+B redo (R2+A until 0.8), L2+X complete-view swap. No bare-trigger action or constituent-button edit/audition leak.
+- 0.8: R2 chords show views on the focused display (R2+A Song, R2+B Instrument, R2+X Sketch, R2+Y Keyboard; Pattern, Wave and Help bindable); a second press returns to the previous view.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
 - Visible arpeggio-0 selection without inventing a parameter; OFF label retains immediate-cut semantics.
