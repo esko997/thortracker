@@ -14,8 +14,8 @@ android {
         applicationId = "org.thortracker"
         minSdk = 26
         targetSdk = 32
-        versionCode = 15
-        versionName = "0.8.2"
+        versionCode = 16
+        versionName = "0.8.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {

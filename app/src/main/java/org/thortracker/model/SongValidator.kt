@@ -84,16 +84,19 @@ object SongValidator {
                 text(out, "${kind.label()} instrument ${HugeRules.hex2(i + 1)} name", instrument.name)
             }
         }
+        // Played-order position → the document order number the user sees (they differ once anything is parked).
+        val docOrder = HugeRules.playedOrders(document)
         val played = song.orders.toSet()
-        song.patterns.forEachIndexed { p, pattern ->
+        // Cell checks read the document's own cells, so a jump is reported as written and counted against every order.
+        document.patterns.forEachIndexed { p, pattern ->
             val label = Songs.patternLabel(song, p).cap()
             // Hidden rows past the length are exported blank, so only played rows can block export.
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     // A pattern no order plays never runs its jumps; see [warnings].
-                    if (p !in played && staleJump(song, cell)) continue
-                    HugeRules.cellProblem(song, ch, cell)?.let { out += "$label, ${HugeRules.CHANNEL_NAMES[ch]} row $row: $it" }
+                    if (p !in played && staleJump(document, cell)) continue
+                    HugeRules.cellProblem(document, ch, cell)?.let { out += "$label, ${HugeRules.CHANNEL_NAMES[ch]} row $row: $it" }
                 }
             }
             if (HugeRules.lengthBreakConflict(pattern)) {
@@ -102,8 +105,8 @@ object SongValidator {
                     "effect slot there; clear one effect on row $last or enter D01 yourself"
             }
         }
-        breaksIntoHiddenRows(song).forEach { out += it }
-        val plan = HugeRules.loopPlan(song)
+        breaksIntoHiddenRows(song, docOrder::get).forEach { out += it }
+        val plan = HugeRules.loopPlan(song, docOrder::get)
         plan.errors.forEach { out += it }
         val tracks = HugeRules.distinctReferencedTracks(song, plan)
         if (tracks > HugeLimits.PREVIEW_TRACK_SLOTS) {
@@ -119,13 +122,13 @@ object SongValidator {
         val out = Report()
         val speed = song.ticksPerRow
         val played = song.orders.toSet()
-        song.patterns.forEachIndexed { p, pattern ->
+        document.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     val where = "${Songs.patternLabel(song, p).cap()}, ${HugeRules.CHANNEL_NAMES[ch]} row $row"
                     val fx = HugeRules.effectText(cell.effect, cell.param)
-                    if (p !in played && staleJump(song, cell)) {
+                    if (p !in played && staleJump(document, cell)) {
                         out += "$where: $fx jumps to order ${cell.param - 1}, which the song no longer has; harmless while no " +
                             "order plays this pattern, but it must be fixed before the pattern is used again"
                     }
@@ -211,9 +214,10 @@ object SongValidator {
 
     /**
      * A Dxx (or a Bxx+Dxx pair) breaks to row xx-1 of the order it leads to; that row must exist in that order's
-     * pattern. The next order of the last one is the loop target. One message per cell.
+     * pattern. The next order of the last one is the loop target. One message per cell; [orderLabel] turns a
+     * played-order position into the order number shown to the user.
      */
-    private fun breaksIntoHiddenRows(song: Song): List<String> {
+    private fun breaksIntoHiddenRows(song: Song, orderLabel: (Int) -> Int): List<String> {
         val out = LinkedHashMap<String, String>()
         song.orders.forEachIndexed { order, p ->
             val pattern = song.patterns[p]
@@ -228,9 +232,9 @@ object SongValidator {
                 }
                 val nextPattern = song.patterns.getOrNull(song.orders.getOrNull(next) ?: continue) ?: continue
                 if (target - 1 >= nextPattern.length) {
-                    val where = "${Songs.patternLabel(song, p).cap()} row $row (order $order)"
+                    val where = "${Songs.patternLabel(song, p).cap()} row $row (order ${orderLabel(order)})"
                     out.getOrPut(where) {
-                        "$where: D${HugeRules.hex2(target)} breaks to row ${target - 1} of order $next, but its " +
+                        "$where: D${HugeRules.hex2(target)} breaks to row ${target - 1} of order ${orderLabel(next)}, but its " +
                             "${Songs.patternLabel(song, song.orders[next])} is ${nextPattern.length} rows long; " +
                             "use D01-D${HugeRules.hex2(nextPattern.length)}"
                     }

@@ -330,9 +330,10 @@ internal object HugeRules {
      * order can fall through to "the next order" must carry B(L+1): B00 is rewritten, and the last row and
      * every row with a pattern break (Dxx) without an explicit Bxx get an injected B(L+1) in the first free
      * effect slot. Bxx and Dxx compose in the driver (B sets the order, D the row), so a D row keeps its
-     * row target. A row without a free slot is a reported conflict; nothing is overwritten.
+     * row target. A row without a free slot is a reported conflict; nothing is overwritten. [orderLabel] maps an
+     * order position in [song] to the number its messages show (the document order when [song] is [arranged]).
      */
-    fun loopPlan(song: Song): LoopPlan {
+    fun loopPlan(song: Song, orderLabel: (Int) -> Int = { it }): LoopPlan {
         if (song.loopOrder == 0) return LoopPlan(emptyMap(), emptyList())
         val jump = song.loopOrder + 1
         val patternIndex = song.orders.last()
@@ -360,9 +361,11 @@ internal object HugeRules {
             if (!breaks || explicitJump) continue
             val free = (0 until channels).firstOrNull { ch -> cell(ch, row).let { it.note != Cell.CUT && !it.hasEffect } }
             if (free == null) {
-                errors += "Looping to order ${song.loopOrder} needs a free effect slot on row $row of the last order " +
-                    "(order ${song.orders.size - 1}, ${Songs.patternLabel(song, patternIndex)}) for B${hex2(jump)}, " +
-                    "but every channel uses its effect there; clear one effect on that row or enter B${hex2(jump)} yourself"
+                // Messages name orders as the user numbers them, so the suggested Bxx is the one to type.
+                val typed = orderLabel(song.loopOrder) + 1
+                errors += "Looping to order ${orderLabel(song.loopOrder)} needs a free effect slot on row $row of the last order " +
+                    "(order ${orderLabel(song.orders.size - 1)}, ${Songs.patternLabel(song, patternIndex)}) for B${hex2(typed)}, " +
+                    "but every channel uses its effect there; clear one effect on that row or enter B${hex2(typed)} yourself"
             } else {
                 set(free, row, cell(free, row).copy(effect = FX_POSITION_JUMP, param = jump))
             }

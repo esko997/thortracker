@@ -71,6 +71,21 @@ class ParkedOrdersTest {
         assertThrows(IllegalArgumentException::class.java) { HugeLowering.lower(song) }
     }
 
+    @Test fun songCheckNamesOrdersAsTheUserNumbersThemWhenAnEarlierOneIsParked() {
+        // Orders 0-4 play patterns 0-4; order 1 is parked, so played positions 1, 2, 3 are document orders 2, 3, 4.
+        var song = TestSongs.patterns(5).copy(loopOrder = 2, parkedOrders = listOf(1))
+        song = song.copy(patterns = song.patterns.mapIndexed { i, p -> if (i == 2) p.copy(length = 8) else p })
+        song = TestSongs.withCell(song, 0, 0, 5, Cell(Cell.EMPTY, 0, HugeRules.FX_PATTERN_BREAK, 0x10)) // D10 into order 2's 8 rows
+        song = TestSongs.withCell(song, 3, 0, 5, jump(31))                                             // B20: past the end
+        for (ch in 0..3) song = TestSongs.withCell(song, 4, ch, 63, Cell(Cell.EMPTY, 0, HugeRules.FX_SET_VOLUME, 0x0F))
+        val errors = SongValidator.errors(song)
+        assertTrue(errors.toString(), errors.any { it.contains("(order 0): D10 breaks to row 15 of order 2,") })
+        assertTrue(errors.toString(), errors.any { it.contains("would jump to order 31, but the song has 5 orders") })
+        assertTrue(errors.toString(), errors.any {
+            it.contains("Looping to order 2 ") && it.contains("(order 4, pattern 4") && it.contains("enter B03 yourself")
+        })
+    }
+
     @Test fun parkedOrdersMustNameAscendingExistingOrders() {
         val song = TestSongs.patterns(3)
         for (bad in listOf(listOf(3), listOf(2, 1), listOf(1, 1), listOf(-1))) {
