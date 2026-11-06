@@ -482,7 +482,8 @@ class PopupLayer(context: Context) : FrameLayout(context) {
 
 /** A strip of controller key badges, drawn like the tracker's own hint bar. */
 class KeyHints(context: Context) : View(context) {
-    private val ink = Ink(resources.displayMetrics.density)
+    private val surface = CanvasSurface()
+    private val ink = Ink(resources.displayMetrics.density, surface)
     private var hints: List<Pair<String, String>> = emptyList()
 
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
@@ -495,12 +496,14 @@ class KeyHints(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Palette.LANE)
+        surface.canvas = canvas
         val size = ink.dp(12f) * 0.82f
         var x = ink.dp(14f)
         for ((keys, meaning) in hints) {
             if (x + ink.hintWidth(keys, meaning, size) > width) break
-            x = ink.hint(canvas, keys, meaning, x, 0f, height.toFloat(), size)
+            x = ink.hint(surface, keys, meaning, x, 0f, height.toFloat(), size)
         }
+        surface.canvas = null
     }
 }
 

@@ -1,8 +1,5 @@
 package org.thortracker.ui
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
 import org.thortracker.editor.ViewController
@@ -19,18 +16,18 @@ import org.thortracker.model.Songs
  * mode keys only play; in Write mode a key writes the note at the shared pattern cursor and advances
  * by the step. The whole keyboard is tinted with the mode colour so the two cannot be confused.
  */
-internal class KeyboardPainter(v: TrackerView) : Painter(v) {
-    private val stripCells = Array(ViewController.STRIP_FIELDS.size) { RectF() to it }
-    private val keyRects = Array(ViewController.KEYS) { RectF() }
+internal class KeyboardPainter(v: PaneView) : Painter(v) {
+    private val stripCells = Array(ViewController.STRIP_FIELDS.size) { Rect() to it }
+    private val keyRects = Array(ViewController.KEYS) { Rect() }
     private val whiteKeys = keyRects.indices.filter { !isBlack(it) }.map { keyRects[it] to it }.toTypedArray()
     private val blackKeys = keyRects.indices.filter { isBlack(it) }.map { keyRects[it] to it }.toTypedArray()
-    private val keys = RectF()
-    private val cursor = RectF()
+    private val keys = Rect()
+    private val cursor = Rect()
     private val weights = floatArrayOf(1.3f, 1.2f, 1.9f, 0.7f, 0.7f)
     private val totalWeight = weights.sum()
     private var touchKey = -1
     private var touchStrip = -1
-    private var touchStripRect = RectF()
+    private var touchStripRect = Rect()
     private var keyGesture: GestureToken? = null
 
     // feedback: a struck key flashes, a released key keeps a short afterglow, a written note lights the header
@@ -40,7 +37,7 @@ internal class KeyboardPainter(v: TrackerView) : Painter(v) {
     private var releaseStart = Motion.OFF
     private var writeStart = Motion.OFF
 
-    override fun draw(c: Canvas, area: RectF) {
+    override fun draw(c: Surface, area: Rect) {
         val s = song
         val ch = st.channel.coerceIn(0, s.channelCount() - 1)
         val kind = Songs.channelKind(s, ch)
@@ -113,7 +110,7 @@ internal class KeyboardPainter(v: TrackerView) : Painter(v) {
                 ink.round(c, r, ink.dp(4f), fill)
                 val labelColor = if (!playable) Palette.FAINT else if (k == sounding) Palette.BG else 0xFF3A4450.toInt()
                 val label = if (playable) Songs.noteName(ctl.keyNote(k)) else "—"
-                ink.label(c, label, r.centerX(), r.bottom - ink.unit * 1.8f, ink.unit * 1.4f, labelColor, k % 12 == 0, ink.unit * 0.8f, Paint.Align.CENTER)
+                ink.label(c, label, r.centerX(), r.bottom - ink.unit * 1.8f, ink.unit * 1.4f, labelColor, k % 12 == 0, ink.unit * 0.8f, Align.CENTER)
                 wi++
             }
         }

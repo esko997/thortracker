@@ -1,35 +1,26 @@
 package org.thortracker.ui
 
-import android.provider.Settings
-import android.view.View
-import android.view.animation.AnimationUtils
-
 /**
  * Short, event-driven transitions for one view. A transition is only a start stamp: painters ask for its
  * progress while drawing, and only an unfinished one schedules the next frame, so a settled view never
- * redraws by itself. Durations follow the system animator duration scale; scale 0 (Remove animations)
- * shows every end state at once.
+ * redraws by itself. [scale] is the platform's animation duration scale; 0 (animations off) shows every end
+ * state at once. [clock] reads milliseconds; [requestFrame] asks the platform to draw again soon.
  */
-internal class Motion(private val view: View) {
-    private var scale = 1f
+class Motion(private val clock: () -> Long, private val requestFrame: () -> Unit) {
+    var scale = 1f
     private var now = 0L
     private var frameRequested = false
-
-    /** Re-reads the system animator duration scale; call when the view attaches or regains the window. */
-    fun refreshScale() {
-        scale = Settings.Global.getFloat(view.context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-    }
 
     /** Starts a transition now and returns its stamp, or [OFF] when animations are disabled. */
     fun start(): Long {
         if (scale <= 0f) return OFF
-        view.postInvalidateOnAnimation()
-        return AnimationUtils.currentAnimationTimeMillis()
+        requestFrame()
+        return clock()
     }
 
     /** Call at the top of every draw so all transitions in a frame share one clock reading. */
     fun beginFrame() {
-        now = AnimationUtils.currentAnimationTimeMillis()
+        now = clock()
         frameRequested = false
     }
 
@@ -40,7 +31,7 @@ internal class Motion(private val view: View) {
         if (t >= 1f) return 1f
         if (!frameRequested) {
             frameRequested = true
-            view.postInvalidateOnAnimation()
+            requestFrame()
         }
         return maxOf(0f, t)
     }

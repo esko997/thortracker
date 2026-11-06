@@ -1,8 +1,6 @@
 package org.thortracker.ui
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
+import org.thortracker.model.NumberText
 import org.thortracker.editor.Action
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.EditorSession.Companion.hex1
@@ -25,7 +23,7 @@ import org.thortracker.model.Scale
  * showing how long each note keeps sounding, the cursor, block mark and amber playhead. When wide
  * enough an inspector explains the cell under the cursor and lists the orders.
  */
-internal class PatternPainter(v: TrackerView) : Painter(v) {
+internal class PatternPainter(v: PaneView) : Painter(v) {
     private var gridTop = 0f
     private var gridLeft = 0f
     private var rowH = 0f
@@ -34,11 +32,11 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     private var visibleRows = 0
     private var headerBottom = 0f
     private var laneTop = 0f
-    private var inspector: RectF? = null
+    private var inspector: Rect? = null
     private var orderListTop = 0f
     private var orderRowH = 0f
     private var orderScroll = 0
-    private val headerChips = ArrayList<Pair<RectF, Int>>()
+    private val headerChips = ArrayList<Pair<Rect, Int>>()
 
     // feedback: the cells the last edit changed, and the auditioned lane's lamp
     private var seenPattern: Pattern? = null
@@ -58,7 +56,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     private var dragging = false
     private var touchTarget = 0
 
-    override fun draw(c: Canvas, area: RectF) {
+    override fun draw(c: Surface, area: Rect) {
         val s = song
         val pattern = s.patternAt(st.order)
         val rows = s.rowCount(pattern)
@@ -81,7 +79,6 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         headerBottom = header(c, area, "Order ${hex2(st.order)} of ${hex2(s.orders.size - 1)}", detail, chipsWidth())
         drawHeaderChips(c, area)
 
-        ink.text.textSize = ink.unit
         cw = ink.monoWidth("0")
         rowH = ink.unit * 1.2f // with the 12dp unit: about 24 rows on the Thor's top screen after the 1-row shell
         val rulerW = cw * 3.4f
@@ -154,7 +151,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             ink.rect(c, area.left, y, area.left + ink.dp(4f), y + rowH, Palette.PLAYHEAD)
         } else if (samePatternPlaying && v.playback.row in first..last) {
             val y = gridTop + (v.playback.row - first) * rowH
-            ink.outline(c, RectF(area.left + 1, y + 1, gridLeft + laneW * channels - 1, y + rowH - 1), Palette.alpha(Palette.PLAYHEAD, 120), ink.dp(1f))
+            ink.outline(c, Rect(area.left + 1, y + 1, gridLeft + laneW * channels - 1, y + rowH - 1), Palette.alpha(Palette.PLAYHEAD, 120), ink.dp(1f))
         }
 
         // mark
@@ -163,7 +160,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             val r0 = maxOf(b.firstRow, first)
             val r1 = minOf(b.lastRow, last)
             if (r0 <= r1) {
-                val rect = RectF(gridLeft + b.firstChannel * laneW, gridTop + (r0 - first) * rowH, gridLeft + (b.lastChannel + 1) * laneW, gridTop + (r1 - first + 1) * rowH)
+                val rect = Rect(gridLeft + b.firstChannel * laneW, gridTop + (r0 - first) * rowH, gridLeft + (b.lastChannel + 1) * laneW, gridTop + (r1 - first + 1) * rowH)
                 ink.rect(c, rect, Palette.alpha(Palette.LISTEN, 34))
                 ink.outline(c, rect, Palette.alpha(Palette.LISTEN, 160), ink.dp(1.5f))
             }
@@ -227,7 +224,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         }
 
         // inspector
-        inspector = if (wantInspector) RectF(area.right - inspectorW, laneTop, area.right, area.bottom).also { drawInspector(c, it) } else null
+        inspector = if (wantInspector) Rect(area.right - inspectorW, laneTop, area.right, area.bottom).also { drawInspector(c, it) } else null
 
         // root/scale panel over the grid
         scalePanel = if (st.scalePanel) drawScalePanel(c, area) else null
@@ -288,15 +285,15 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         return 0f
     }
 
-    private fun fieldRect(ch: Int, field: Int, visRow: Int): RectF {
+    private fun fieldRect(ch: Int, field: Int, visRow: Int): Rect {
         val x = gridLeft + ch * laneW + cw * 0.7f
         val y = gridTop + visRow * rowH
         val (start, len) = when (field) { 0 -> 0f to 3f; 1 -> 4f to 2f; 2 -> 7f to 1f; else -> 8f to 2f }
-        return RectF(x + start * cw - cw * 0.2f, y + 1, x + (start + len) * cw + cw * 0.2f, y + rowH - 1)
+        return Rect(x + start * cw - cw * 0.2f, y + 1, x + (start + len) * cw + cw * 0.2f, y + rowH - 1)
     }
 
     /** A note a Fit moved: an amber field and an up/down tick at its right edge, until the cells are edited. */
-    private fun drawFitMark(c: Canvas, ch: Int, visRow: Int, up: Boolean) {
+    private fun drawFitMark(c: Surface, ch: Int, visRow: Int, up: Boolean) {
         val f = fieldRect(ch, 0, visRow)
         ink.round(c, f, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 64))
         val size = rowH * 0.62f
@@ -314,7 +311,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     }
 
     /** [zero]: show this 000 as the explicitly chosen effect 0 (arpeggio) rather than as no effect. */
-    private fun drawCell(c: Canvas, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
+    private fun drawCell(c: Surface, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
         val noteText = when {
             cell.note >= 0 -> Songs.noteName(cell.note)
             cell.note == Cell.CUT -> "OFF"
@@ -362,27 +359,26 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         chips().sumOf { (ink.labelWidth(it.first, ink.unit * 0.8f) + ink.unit * 1.4f).toDouble() }.toFloat()
 
     /** Touchable header toggles: scale panel, follow playback, entry step, octave. */
-    private fun drawHeaderChips(c: Canvas, area: RectF) {
+    private fun drawHeaderChips(c: Surface, area: Rect) {
         headerChips.clear()
         val h = ink.unit * 2f
         val size = ink.unit * 0.8f
         var x = area.right - ink.unit * 0.6f
         for ((text, id) in chips()) {
             val w = ink.labelWidth(text, size) + ink.unit
-            val r = RectF(x - w, area.top + h * 0.18f, x, area.top + h * 0.82f)
+            val r = Rect(x - w, area.top + h * 0.18f, x, area.top + h * 0.82f)
             val on = (id == 0 && st.followPlayback) || (id == 3 && st.scalePanel)
             ink.round(c, r, ink.dp(4f), if (on) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.RULE)
-            ink.label(c, text, r.centerX(), area.top, h, if (on) Palette.PLAYHEAD else Palette.DIM, size = size, align = Paint.Align.CENTER)
+            ink.label(c, text, r.centerX(), area.top, h, if (on) Palette.PLAYHEAD else Palette.DIM, size = size, align = Align.CENTER)
             headerChips += r to id
             x -= w + ink.unit * 0.4f
         }
     }
 
     /** Settings summaries by instrument; instruments are immutable, so identity keys never go stale. */
-    private val summaries = java.util.IdentityHashMap<org.thortracker.model.Instrument, String>()
+    private val summaries = IdentityCache<org.thortracker.model.Instrument, String>(256)
 
-    private fun drawInspector(c: Canvas, r: RectF) {
-        if (summaries.size > 256) summaries.clear()
+    private fun drawInspector(c: Surface, r: Rect) {
         val s = song
         ink.rect(c, r, Palette.LANE)
         ink.line(c, r.left, r.top, r.left, r.bottom, Palette.RULE, ink.dp(1f))
@@ -407,7 +403,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                 when {
                     i < 0 && detune == null -> "Note ${Songs.noteName(cell.note)}: untuned, effect slot taken"
                     i < 0 -> "Note ${Songs.noteName(cell.note)}: outside ${tuning.tuning.name}"
-                    else -> tuning.pitches[i].let { p -> "Note ${Songs.noteName(cell.note)} · ${tuning.label(p)} ${"%+.1f".format(p.error)}¢" } +
+                    else -> tuning.pitches[i].let { p -> "Note ${Songs.noteName(cell.note)} · ${tuning.label(p)} ${NumberText.fixed(p.error, 1, plus = true)}¢" } +
                         fittedFromText(s.patternAt(st.order), ch, st.row)
                 }
             }
@@ -533,18 +529,18 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
 
     // ---- root / scale panel ------------------------------------------------------------------------
 
-    private var scalePanel: RectF? = null
-    private val rootKeys = Array(12) { RectF() }
-    private val rootRow = RectF()
-    private val scaleRow = RectF()
-    private val lengthRow = RectF()
-    private val lengthPrev = RectF()
-    private val lengthNext = RectF()
-    private val fitRow = RectF()
-    private val fitButton = RectF()
-    private val scalePrev = RectF()
-    private val scaleNext = RectF()
-    private val scaleDone = RectF()
+    private var scalePanel: Rect? = null
+    private val rootKeys = Array(12) { Rect() }
+    private val rootRow = Rect()
+    private val scaleRow = Rect()
+    private val lengthRow = Rect()
+    private val lengthPrev = Rect()
+    private val lengthNext = Rect()
+    private val fitRow = Rect()
+    private val fitButton = Rect()
+    private val scalePrev = Rect()
+    private val scaleNext = Rect()
+    private val scaleDone = Rect()
     private var panelNote: List<String> = emptyList()
     private var panelNoteWidth = -1f
     private var panelNoteTuned = false
@@ -554,7 +550,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
      * lights the scale's pitch classes (tap a key for the root), arrows step the scale, Done closes. The
      * focused row follows [org.thortracker.editor.ViewState.scaleField] for the controller.
      */
-    private fun drawScalePanel(c: Canvas, area: RectF): RectF {
+    private fun drawScalePanel(c: Surface, area: Rect): Rect {
         val u = ink.unit
         val scale = ctl.patternScale
         val small = u * 0.8f
@@ -578,7 +574,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val h = pad + titleH + keyH + u * 0.4f + (lineH + u * 0.3f) * 3 + u * 0.2f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
         val left = area.right - w - u * 0.5f
         val top = (headerBottom + u * 0.3f).coerceAtMost(maxOf(area.top, area.bottom - h))
-        val panel = RectF(left, top, left + w, top + h)
+        val panel = Rect(left, top, left + w, top + h)
         ink.round(c, panel, ink.dp(6f), Palette.LANE)
         ink.outline(c, panel, Palette.RULE, ink.dp(1f), ink.dp(6f))
         ink.rect(c, panel.left + ink.dp(6f), panel.top, panel.right - ink.dp(6f), panel.top + ink.dp(2f), Palette.PLAYHEAD)
@@ -586,7 +582,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val x = left + pad
         var y = top + pad * 0.6f
         ink.label(c, "Pattern ${hex2(song.patternAt(st.order))}", x, y, titleH, Palette.TEXT, true)
-        ink.label(c, ink.fit(scale.label, textW * 0.5f, bold = true), panel.right - pad, y, titleH, Palette.PLAYHEAD, true, align = Paint.Align.RIGHT)
+        ink.label(c, ink.fit(scale.label, textW * 0.5f, bold = true), panel.right - pad, y, titleH, Palette.PLAYHEAD, true, align = Align.RIGHT)
         y += titleH
 
         // Root: a one-octave strip lighting the scale's pitch classes, the root outlined.
@@ -608,7 +604,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
                 isRoot && !scale.isChromatic -> Palette.TEXT
                 inScale && !scale.isChromatic -> Palette.TEXT
                 else -> Palette.FAINT
-            }, isRoot, if (name.length > 1) u * 0.62f else u * 0.75f, Paint.Align.CENTER)
+            }, isRoot, if (name.length > 1) u * 0.62f else u * 0.75f, Align.CENTER)
         }
         y += keyH + u * 0.4f
 
@@ -621,10 +617,10 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         scaleNext.set(panel.right - pad - bw, scalePrev.top, panel.right - pad, scalePrev.bottom)
         ink.round(c, scalePrev, ink.dp(4f), Palette.RULE)
         ink.round(c, scaleNext, ink.dp(4f), Palette.RULE)
-        ink.label(c, "◀", scalePrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
-        ink.label(c, "▶", scaleNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
+        ink.label(c, "◀", scalePrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+        ink.label(c, "▶", scaleNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
         ink.label(c, ink.fit(scale.kind.label, scaleNext.left - scalePrev.right - u * 0.6f), (scalePrev.right + scaleNext.left) / 2f, y, lineH,
-            Palette.TEXT, true, align = Paint.Align.CENTER)
+            Palette.TEXT, true, align = Align.CENTER)
         y += lineH + u * 0.3f
 
         // Length: previous / rows / next.
@@ -635,11 +631,11 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         lengthNext.set(panel.right - pad - bw, lengthPrev.top, panel.right - pad, lengthPrev.bottom)
         ink.round(c, lengthPrev, ink.dp(4f), Palette.RULE)
         ink.round(c, lengthNext, ink.dp(4f), Palette.RULE)
-        ink.label(c, "◀", lengthPrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
-        ink.label(c, "▶", lengthNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Paint.Align.CENTER)
+        ink.label(c, "◀", lengthPrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+        ink.label(c, "▶", lengthNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
         val len = ctl.patternLength
         ink.label(c, if (len < Songs.ROWS) "$len rows" else "$len rows (full)", (lengthPrev.right + lengthNext.left) / 2f, y, lineH,
-            if (len < Songs.ROWS) Palette.PLAYHEAD else Palette.TEXT, true, align = Paint.Align.CENTER)
+            if (len < Songs.ROWS) Palette.PLAYHEAD else Palette.TEXT, true, align = Align.CENTER)
         y += lineH + u * 0.3f
 
         // Fit: nudge the played Pulse/Wave notes onto the scale (one undo step).
@@ -650,7 +646,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         fitButton.set(stripL, y + lineH * 0.12f, panel.right - pad, y + lineH * 0.88f)
         ink.round(c, fitButton, ink.dp(4f), if (canFit) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.RULE)
         ink.label(c, ink.fit(if (canFit) "Fit notes to ${scale.label}" else if (tuned) "Fit via Menu → Tuning" else "Fit notes: choose a scale",
-            fitButton.width() - u, small), fitButton.centerX(), y, lineH, if (canFit) Palette.PLAYHEAD else Palette.DIM, canFit, small, Paint.Align.CENTER)
+            fitButton.width() - u, small), fitButton.centerX(), y, lineH, if (canFit) Palette.PLAYHEAD else Palette.DIM, canFit, small, Align.CENTER)
         y += lineH + u * 0.5f
 
         for (part in panelNote) {
@@ -661,7 +657,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val doneW = ink.labelWidth("Done", small, true) + u * 1.6f
         scaleDone.set(panel.right - pad - doneW, y + lineH * 0.1f, panel.right - pad, y + lineH * 0.9f)
         ink.round(c, scaleDone, ink.dp(4f), Palette.alpha(Palette.PLAYHEAD, 60))
-        ink.label(c, "Done", scaleDone.centerX(), y, lineH, Palette.PLAYHEAD, true, small, Paint.Align.CENTER)
+        ink.label(c, "Done", scaleDone.centerX(), y, lineH, Palette.PLAYHEAD, true, small, Align.CENTER)
         val footer = if (st.scaleField == ViewController.SCALE_FIT_FIELD)
             "${v.keymap.label(Action.EDIT)} fit  ${v.keymap.label(Action.SCALE, st.kind)} close"
             else "${v.keymap.label(Action.EDIT)} done  ${v.keymap.label(Action.CLEAR)} reset"
@@ -670,7 +666,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     }
 
     /** Marks the panel row the controller is on. */
-    private fun focusRow(c: Canvas, r: RectF, field: Int) {
+    private fun focusRow(c: Surface, r: Rect, field: Int) {
         if (st.scaleField != field) return
         ink.round(c, r, ink.dp(4f), Palette.CURSOR_FILL)
         ink.outline(c, r, if (v.controllerFocused) Palette.TEXT else Palette.DIM, if (v.controllerFocused) ink.dp(1.5f) else ink.dp(1f), ink.dp(4f))
@@ -703,7 +699,7 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
     override fun move(x: Float, y: Float) {
         if (touchTarget != 1) return
         val dy = y - touchStartY
-        if (!dragging && Math.abs(dy) > rowH * 0.6f) dragging = true
+        if (!dragging && kotlin.math.abs(dy) > rowH * 0.6f) dragging = true
         if (dragging) {
             v.touchScrolled = true
             st.scroll = touchStartScroll - (dy / rowH).toInt()

@@ -1,8 +1,5 @@
 package org.thortracker.ui
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
@@ -27,16 +24,16 @@ import kotlin.math.sin
  * chord repeats it as an arpeggio, holding a note sustains it, holding the phrase loops it at song tempo; the
  * selected chord's tones are marked on the note pads with their role, so the rows read as one picture.
  */
-internal class SketchPainter(v: TrackerView) : Painter(v) {
-    private val stripCells = Array(ViewController.SKETCH_FIELDS.size) { RectF() }
-    private val keyButton = RectF()
-    private val chordRects = Array(MAX_PADS) { RectF() }
-    private val toneRects = Array(MAX_PADS) { RectF() }
-    private val chooseScale = RectF()
-    private val inset = RectF()
-    private val phraseStrip = RectF()
+internal class SketchPainter(v: PaneView) : Painter(v) {
+    private val stripCells = Array(ViewController.SKETCH_FIELDS.size) { Rect() }
+    private val keyButton = Rect()
+    private val chordRects = Array(MAX_PADS) { Rect() }
+    private val toneRects = Array(MAX_PADS) { Rect() }
+    private val chooseScale = Rect()
+    private val inset = Rect()
+    private val phraseStrip = Rect()
     /** Phrase controls by [ViewController.PHRASE_FIELDS] index; index 0 (the strip) uses [phraseStrip]. */
-    private val phraseCells = Array(ViewController.PHRASE_FIELDS.size) { RectF() }
+    private val phraseCells = Array(ViewController.PHRASE_FIELDS.size) { Rect() }
     private val weights = floatArrayOf(0.9f, 1.9f, 1.2f, 1.9f, 0.9f, 1.2f)
     private val buttonWeight = 1.5f
     private val phraseWeights = floatArrayOf(0f, 0.85f, 1.15f, 1f, 1.05f, 1f, 0.85f, 1f, 1f, 1f, 1f)
@@ -76,7 +73,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
     private var seenLocal: Boolean? = null
     private var keyChangeStart = Motion.OFF
 
-    override fun draw(c: Canvas, area: RectF) {
+    override fun draw(c: Surface, area: Rect) {
         val s = song
         val u = ink.unit
         val pad = u * 0.6f
@@ -133,7 +130,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             val r = stripCells[i]
             r.set(x + 2, stripTop, x + w - 2, stripTop + stripH)
             val value = when (i) {
-                F_ROOT -> Scale.ROOT_NAMES[Math.floorMod(scale.root, 12)]
+                F_ROOT -> Scale.ROOT_NAMES[scale.root.mod(12)]
                 F_SCALE -> scale.kind.label
                 F_CHANNEL -> channelName
                 F_SOUND -> "${hex2(st.instrument)} $soundName"
@@ -177,20 +174,20 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         drawPhrase(c, area.left + pad, y, area.right - pad, y + phraseH, guide, col, sounding, strike)
     }
 
-    private fun drawStripCell(c: Canvas, r: RectF, i: Int, value: String, valueColor: Int) {
+    private fun drawStripCell(c: Surface, r: Rect, i: Int, value: String, valueColor: Int) {
         val u = ink.unit
         val h = r.height()
         val focused = st.sketchRow == ROW_SETTINGS && st.sketchField == i
         ink.round(c, r, ink.dp(4f), if (focused) Palette.CURSOR_FILL else Palette.LANE)
         // The halves step down / up; the arrows sit on the edges to say so.
         ink.label(c, "‹", r.left + u * 0.45f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.2f)
-        ink.label(c, "›", r.right - u * 0.45f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.2f, Paint.Align.RIGHT)
-        ink.label(c, ViewController.SKETCH_FIELDS[i], r.centerX(), r.top + h * 0.04f, h * 0.42f, Palette.DIM, size = u * 0.8f, align = Paint.Align.CENTER)
-        ink.label(c, ink.fit(value, r.width() - u * 2.6f, bold = true), r.centerX(), r.top + h * 0.36f, h * 0.64f, valueColor, true, align = Paint.Align.CENTER)
+        ink.label(c, "›", r.right - u * 0.45f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.2f, Align.RIGHT)
+        ink.label(c, ViewController.SKETCH_FIELDS[i], r.centerX(), r.top + h * 0.04f, h * 0.42f, Palette.DIM, size = u * 0.8f, align = Align.CENTER)
+        ink.label(c, ink.fit(value, r.width() - u * 2.6f, bold = true), r.centerX(), r.top + h * 0.36f, h * 0.64f, valueColor, true, align = Align.CENTER)
         if (focused) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
     }
 
-    private fun drawKeyButton(c: Canvas, l: Float, t: Float, r: Float, b: Float, local: Boolean) {
+    private fun drawKeyButton(c: Surface, l: Float, t: Float, r: Float, b: Float, local: Boolean) {
         val u = ink.unit
         keyButton.set(l, t, r, b)
         val pulse = motion.fade(keyChangeStart, 380)
@@ -201,13 +198,13 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         val h = keyButton.height()
         val w = keyButton.width() - u
         ink.label(c, ink.fit(if (local) "Local key · tap to reset" else "Key follows pattern", w, u * 0.8f), keyButton.centerX(), t + h * 0.04f, h * 0.42f,
-            Palette.DIM, size = u * 0.8f, align = Paint.Align.CENTER)
+            Palette.DIM, size = u * 0.8f, align = Align.CENTER)
         ink.label(c, ink.fit(if (local) "↺ Pattern key" else "✓ Pattern key", w, bold = true), keyButton.centerX(), t + h * 0.36f, h * 0.64f,
-            if (local) Palette.PLAYHEAD else Palette.DIM, true, align = Paint.Align.CENTER)
+            if (local) Palette.PLAYHEAD else Palette.DIM, true, align = Align.CENTER)
     }
 
     /** A section title; the row the controller is on gets a cursor-coloured bar and bright text. */
-    private fun heading(c: Canvas, area: RectF, top: Float, h: Float, row: Int, title: String, detail: String) {
+    private fun heading(c: Surface, area: Rect, top: Float, h: Float, row: Int, title: String, detail: String) {
         val u = ink.unit
         val active = st.sketchRow == row
         val x = area.left + u * 0.6f
@@ -216,10 +213,10 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         ink.label(c, title, tx, top, h, if (active) Palette.TEXT else Palette.DIM, true, u * 0.95f)
         if (detail.isEmpty()) return
         val room = area.right - u * 0.6f - (tx + ink.labelWidth(title, u * 0.95f, true) + u * 1.5f)
-        if (room > u * 4f) ink.label(c, ink.fit(detail, room, u * 0.8f), area.right - u * 0.6f, top, h, Palette.FAINT, size = u * 0.8f, align = Paint.Align.RIGHT)
+        if (room > u * 4f) ink.label(c, ink.fit(detail, room, u * 0.8f), area.right - u * 0.6f, top, h, Palette.FAINT, size = u * 0.8f, align = Align.RIGHT)
     }
 
-    private fun drawChords(c: Canvas, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, sounding: Int, strike: Float, after: Float) {
+    private fun drawChords(c: Surface, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, sounding: Int, strike: Float, after: Float) {
         val u = ink.unit
         val chords = guide.chords
         circleShown = false
@@ -233,9 +230,9 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             val h = chooseScale.height()
             val w = chooseScale.width() - u * 2
             ink.label(c, ink.fit("Choose a scale to explore chords", w, u * 1.1f, true), chooseScale.centerX(), t + h * 0.18f, h * 0.34f,
-                Palette.TEXT, true, u * 1.1f, Paint.Align.CENTER)
+                Palette.TEXT, true, u * 1.1f, Align.CENTER)
             ink.label(c, ink.fit("Chromatic keeps all 12 notes available. Tap here to choose a key.", w), chooseScale.centerX(), t + h * 0.52f, h * 0.3f,
-                Palette.PLAYHEAD, align = Paint.Align.CENTER)
+                Palette.PLAYHEAD, align = Align.CENTER)
             return
         }
         val cw = (r - l) / maxOf(chordCount, 7)
@@ -257,9 +254,9 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             val w = rect.width() - u * 0.6f
             val strong = if (isOn) Palette.BG else Palette.TEXT
             val soft = if (isOn) Palette.BG else Palette.DIM
-            ink.label(c, ink.fit(chord.degree, w, u * 1.5f, true), rect.centerX(), rect.top + h * 0.06f, h * 0.38f, strong, true, u * 1.5f, Paint.Align.CENTER)
-            ink.label(c, ink.fit(chord.name, w, u * 1.05f, true), rect.centerX(), rect.top + h * 0.42f, h * 0.26f, if (isOn) Palette.BG else Palette.TEXT, true, u * 1.05f, Paint.Align.CENTER)
-            ink.mono(c, chordTones[i], rect.centerX(), rect.top + h * 0.68f, h * 0.24f, soft, size = u * 0.8f, align = Paint.Align.CENTER)
+            ink.label(c, ink.fit(chord.degree, w, u * 1.5f, true), rect.centerX(), rect.top + h * 0.06f, h * 0.38f, strong, true, u * 1.5f, Align.CENTER)
+            ink.label(c, ink.fit(chord.name, w, u * 1.05f, true), rect.centerX(), rect.top + h * 0.42f, h * 0.26f, if (isOn) Palette.BG else Palette.TEXT, true, u * 1.05f, Align.CENTER)
+            ink.mono(c, chordTones[i], rect.centerX(), rect.top + h * 0.68f, h * 0.24f, soft, size = u * 0.8f, align = Align.CENTER)
             focus(c, rect, ROW_CHORDS, selected)
         }
         // Pentatonic keys hold only a few chords; explain the gap instead of leaving it blank.
@@ -276,7 +273,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
      * Sketch key is filled amber, its IV and V neighbours (on the same ring) are tinted and labelled, and the
      * controller's circle cursor is outlined. A side panel describes the key under the cursor.
      */
-    private fun drawCircle(c: Canvas, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, sounding: Int, strike: Float, after: Float) {
+    private fun drawCircle(c: Surface, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, sounding: Int, strike: Float, after: Float) {
         val u = ink.unit
         circleShown = true
         chordCount = 0
@@ -287,14 +284,9 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         val cy = t + h / 2f
         circleX = cx; circleY = cy; circleR = radius
         val focusedRow = st.sketchRow == ROW_CHORDS
-        ink.fill.color = Palette.LANE
-        c.drawCircle(cx, cy, radius, ink.fill)
-        ink.stroke.color = if (focusedRow) Palette.alpha(cursorColor(), 140) else Palette.RULE
-        ink.stroke.strokeWidth = ink.dp(if (focusedRow) 2f else 1f)
-        c.drawCircle(cx, cy, radius, ink.stroke)
-        ink.stroke.color = Palette.RULE
-        ink.stroke.strokeWidth = ink.dp(1f)
-        c.drawCircle(cx, cy, radius * RING_SPLIT, ink.stroke)
+        c.fillCircle(cx, cy, radius, Palette.LANE)
+        c.strokeCircle(cx, cy, radius, if (focusedRow) Palette.alpha(cursorColor(), 140) else Palette.RULE, ink.dp(if (focusedRow) 2f else 1f))
+        c.strokeCircle(cx, cy, radius * RING_SPLIT, Palette.RULE, ink.dp(1f))
 
         val place = ctl.sketchCirclePlace(guide.scale)
         for (ring in 0..1) {
@@ -302,11 +294,11 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             val ringR = radius * if (minor) 0.43f else 0.81f
             val dot = if (minor) minOf(radius * 0.13f, u * 1.1f) else minOf(radius * 0.17f, u * 1.4f)
             for (pos in 0 until 12) {
-                val angle = Math.toRadians(-90.0 + 30.0 * pos)
+                val angle = (-90.0 + 30.0 * pos) * (kotlin.math.PI / 180.0)
                 val x = cx + ringR * cos(angle).toFloat()
                 val y = cy + ringR * sin(angle).toFloat()
                 val current = place != null && place.first == pos && place.second == minor
-                val step = if (place != null && place.second == minor) Math.floorMod(pos - place.first, 12) else -1
+                val step = if (place != null && place.second == minor) (pos - place.first).mod(12) else -1
                 val mark = when (step) { 1 -> if (minor) "v" else "V"; 11 -> if (minor) "iv" else "IV"; else -> "" }
                 val id = padId(ROW_CHORDS, circleIndex(pos, minor))
                 val isOn = id == sounding
@@ -315,26 +307,23 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
                     mark.isNotEmpty() -> Palette.mix(Palette.BAR, Palette.PLAYHEAD, 0.22f)
                     else -> Palette.BAR
                 }
-                ink.fill.color = when {
+                c.fillCircle(x, y, dot, when {
                     isOn -> if (strike > 0f) Palette.mix(Palette.LISTEN, Palette.TEXT, 0.55f * strike) else Palette.LISTEN
                     id == released && after > 0f -> Palette.mix(base, Palette.LISTEN, 0.7f * after)
                     else -> base
-                }
-                c.drawCircle(x, y, dot, ink.fill)
+                })
                 val root = ViewController.circleRoot(pos)
                 val name = if (minor) MINOR_NAMES[(root + 9) % 12] else Scale.ROOT_NAMES[root]
                 val textColor = if (isOn) Palette.BG else if (current) Palette.TEXT else Palette.DIM
                 val nameSize = if (minor) u * 0.85f else u * 1.05f
                 if (mark.isEmpty()) {
-                    ink.label(c, name, x, y - dot, dot * 2f, textColor, current, nameSize, Paint.Align.CENTER)
+                    ink.label(c, name, x, y - dot, dot * 2f, textColor, current, nameSize, Align.CENTER)
                 } else {
-                    ink.label(c, name, x, y - dot * 0.95f, dot * 1.15f, textColor, true, nameSize, Paint.Align.CENTER)
-                    ink.label(c, mark, x, y + dot * 0.1f, dot * 0.8f, if (isOn) Palette.BG else Palette.PLAYHEAD, size = minOf(nameSize * 0.75f, dot * 0.75f), align = Paint.Align.CENTER)
+                    ink.label(c, name, x, y - dot * 0.95f, dot * 1.15f, textColor, true, nameSize, Align.CENTER)
+                    ink.label(c, mark, x, y + dot * 0.1f, dot * 0.8f, if (isOn) Palette.BG else Palette.PLAYHEAD, size = minOf(nameSize * 0.75f, dot * 0.75f), align = Align.CENTER)
                 }
                 if (pos == st.sketchCircleKey && minor == st.sketchCircleMinor) {
-                    ink.stroke.color = if (focusedRow) cursorColor() else Palette.FAINT
-                    ink.stroke.strokeWidth = ink.dp(if (focusedRow) 3f else 1.5f)
-                    c.drawCircle(x, y, dot + ink.dp(3f), ink.stroke)
+                    c.strokeCircle(x, y, dot + ink.dp(3f), if (focusedRow) cursorColor() else Palette.FAINT, ink.dp(if (focusedRow) 3f else 1.5f))
                 }
             }
         }
@@ -348,8 +337,8 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         val title = keyName(cursor.root, minor)
         val relative = if (minor) "Relative major: ${keyName(ViewController.circleRoot(st.sketchCircleKey), false)}"
         else "Relative minor: ${keyName((cursor.root + 9) % 12, true)}"
-        val subdominant = keyName(Math.floorMod(cursor.root + 5, 12), minor)
-        val dominant = keyName(Math.floorMod(cursor.root + 7, 12), minor)
+        val subdominant = keyName((cursor.root + 5).mod(12), minor)
+        val dominant = keyName((cursor.root + 7).mod(12), minor)
         val triad = ctl.sketchCircleTriad().joinToString(" ") { Scale.ROOT_NAMES[it % 12] }
         val current = if (place == null) "Sketch key ${guide.scale.label}: no place on the circle"
         else "Sketch key: ${keyName(if (place.second) (ViewController.circleRoot(place.first) + 9) % 12 else ViewController.circleRoot(place.first), place.second)}"
@@ -373,7 +362,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         }
     }
 
-    private fun drawTones(c: Canvas, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, col: Int, sounding: Int, strike: Float, after: Float) {
+    private fun drawTones(c: Surface, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, col: Int, sounding: Int, strike: Float, after: Float) {
         val u = ink.unit
         val tones = guide.tones
         toneCount = minOf(tones.size, MAX_PADS)
@@ -409,12 +398,12 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             val playable = toneNotes[i] in 0..Songs.NOTE_MAX
             val strong = when { isOn -> Palette.BG; !playable -> Palette.FAINT; else -> Palette.TEXT }
             val nameTop = rect.top + minOf(h * 0.12f, u * 2f)
-            ink.mono(c, toneNames[i], rect.centerX(), nameTop, u * 2f, strong, true, nameSize, Paint.Align.CENTER)
+            ink.mono(c, toneNames[i], rect.centerX(), nameTop, u * 2f, strong, true, nameSize, Align.CENTER)
             val degreeColor = when { isOn -> Palette.BG; tone.interval == 0 -> Palette.TEXT; else -> Palette.DIM }
-            ink.label(c, tone.degree, rect.centerX(), nameTop + u * 2f, u * 1.6f, degreeColor, tone.interval == 0, u * 1.05f, Paint.Align.CENTER)
+            ink.label(c, tone.degree, rect.centerX(), nameTop + u * 2f, u * 1.6f, degreeColor, tone.interval == 0, u * 1.05f, Align.CENTER)
             if (role != 0 && h > u * 6f) {
                 ink.label(c, ROLES[role], rect.centerX(), rect.bottom - u * 2f, u * 1.6f, if (isOn) Palette.BG else if (chordAudition) Palette.LISTEN else col,
-                    role == 1, u * 0.9f, Paint.Align.CENTER)
+                    role == 1, u * 0.9f, Align.CENTER)
             }
             focus(c, rect, ROW_NOTES, selected)
         }
@@ -424,7 +413,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
      * The phrase as one column per row (note name at an onset, a held line while the previous note sounds on, a
      * dot before the first note; row numbers below, a rule every four rows), then its settings and actions.
      */
-    private fun drawPhrase(c: Canvas, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, col: Int, sounding: Int, strike: Float) {
+    private fun drawPhrase(c: Surface, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, col: Int, sounding: Int, strike: Float) {
         val u = ink.unit
         val phrase = ctl.sketchPhrase
         val focusedRow = st.sketchRow == ROW_PHRASE
@@ -448,16 +437,15 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             if (note != null) {
                 noteOn = true
                 val inKey = guide.scale.contains(note)
-                ink.mono(c, Songs.noteName(note), mid, t, noteH, if (inKey) Palette.TEXT else Palette.DIM, i % 4 == 0, noteSize, Paint.Align.CENTER)
-                ink.fill.color = held
-                c.drawCircle(mid, lineY, ink.dp(3f), ink.fill)
+                ink.mono(c, Songs.noteName(note), mid, t, noteH, if (inKey) Palette.TEXT else Palette.DIM, i % 4 == 0, noteSize, Align.CENTER)
+                c.fillCircle(mid, lineY, ink.dp(3f), held)
                 if (i + 1 < n && phrase.steps[i + 1] == null) ink.rect(c, mid, lineY - ink.dp(1.5f), x0 + cw, lineY + ink.dp(1.5f), held)
             } else if (noteOn) {
                 ink.rect(c, x0, lineY - ink.dp(1.5f), x0 + cw, lineY + ink.dp(1.5f), held)
             } else {
-                ink.label(c, "·", mid, t, noteH, Palette.FAINT, true, u, Paint.Align.CENTER)
+                ink.label(c, "·", mid, t, noteH, Palette.FAINT, true, u, Align.CENTER)
             }
-            ink.mono(c, hex1(i), mid, lineY + ink.dp(2f), t + stripH - lineY - ink.dp(2f), Palette.FAINT, size = u * 0.6f, align = Paint.Align.CENTER)
+            ink.mono(c, hex1(i), mid, lineY + ink.dp(2f), t + stripH - lineY - ink.dp(2f), Palette.FAINT, size = u * 0.6f, align = Align.CENTER)
         }
         if (st.sketchPhraseField == ViewController.PHRASE_STRIP) {
             ink.outline(c, phraseStrip, if (focusedRow) cursorColor() else Palette.FAINT, ink.dp(if (focusedRow) 2f else 1f), ink.dp(4f))
@@ -492,7 +480,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         }
     }
 
-    private fun drawPhraseCell(c: Canvas, r: RectF, i: Int, caption: String, value: String, on: Boolean, focusedRow: Boolean) {
+    private fun drawPhraseCell(c: Surface, r: Rect, i: Int, caption: String, value: String, on: Boolean, focusedRow: Boolean) {
         val u = ink.unit
         val h = r.height()
         val focused = focusedRow && st.sketchPhraseField == i
@@ -507,7 +495,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         if (on) ink.outline(c, r, Palette.PLAYHEAD, ink.dp(1.5f), ink.dp(4f))
         if (setting) {
             ink.label(c, "‹", r.left + u * 0.4f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.1f)
-            ink.label(c, "›", r.right - u * 0.4f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.1f, Paint.Align.RIGHT)
+            ink.label(c, "›", r.right - u * 0.4f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.1f, Align.RIGHT)
         }
         val w = r.width() - if (setting) u * 2.2f else u * 0.6f
         val valueColor = when {
@@ -515,13 +503,13 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
             on -> Palette.PLAYHEAD
             else -> Palette.TEXT
         }
-        ink.label(c, ink.fit(caption, w, u * 0.8f), r.centerX(), r.top + h * 0.04f, h * 0.42f, Palette.DIM, size = u * 0.8f, align = Paint.Align.CENTER)
-        ink.label(c, ink.fit(value, w, bold = true), r.centerX(), r.top + h * 0.36f, h * 0.64f, valueColor, true, align = Paint.Align.CENTER)
+        ink.label(c, ink.fit(caption, w, u * 0.8f), r.centerX(), r.top + h * 0.04f, h * 0.42f, Palette.DIM, size = u * 0.8f, align = Align.CENTER)
+        ink.label(c, ink.fit(value, w, bold = true), r.centerX(), r.top + h * 0.36f, h * 0.64f, valueColor, true, align = Align.CENTER)
         if (focused) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
     }
 
     /** The selected pad of a row: a strong cursor when the controller is on that row, a quiet mark otherwise. */
-    private fun focus(c: Canvas, rect: RectF, row: Int, selected: Boolean) {
+    private fun focus(c: Surface, rect: Rect, row: Int, selected: Boolean) {
         if (!selected) return
         inset.set(rect.left + ink.dp(2f), rect.top + ink.dp(2f), rect.right - ink.dp(2f), rect.bottom - ink.dp(2f))
         if (st.sketchRow == row) ink.outline(c, inset, cursorColor(), ink.dp(3f), ink.dp(4f))
@@ -538,7 +526,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
     private fun rebuild(guide: TonalGuide) {
         if (guide !== cachedGuide) {
             cachedGuide = guide
-            val root = Math.floorMod(guide.scale.root, 12)
+            val root = guide.scale.root.mod(12)
             chordTones = Array(guide.chords.size) { i -> guide.chords[i].intervals.joinToString(" ") { Scale.ROOT_NAMES[(root + it) % 12] } }
             chordsTitle = if (guide.chords.isEmpty()) "Chords" else "Chords in ${guide.scale.label}"
         }
@@ -555,12 +543,12 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         for (i in 0 until n) {
             val pc = guide.tones[i].interval
             var role = 0
-            if (chord != null) for (k in chord.intervals.indices) if (Math.floorMod(chord.intervals[k], 12) == pc) { role = k + 1; break }
+            if (chord != null) for (k in chord.intervals.indices) if (chord.intervals[k].mod(12) == pc) { role = k + 1; break }
             toneRole[i] = role
         }
     }
 
-    private fun keyName(root: Int, minor: Boolean) = "${Scale.ROOT_NAMES[Math.floorMod(root, 12)]} ${if (minor) "minor" else "major"}"
+    private fun keyName(root: Int, minor: Boolean) = "${Scale.ROOT_NAMES[root.mod(12)]} ${if (minor) "minor" else "major"}"
 
     // ---- touch ---------------------------------------------------------------------------------------
 
@@ -671,7 +659,7 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         }
     }
 
-    private fun hit(rects: Array<RectF>, count: Int, x: Float, y: Float): Int {
+    private fun hit(rects: Array<Rect>, count: Int, x: Float, y: Float): Int {
         for (i in 0 until count) if (rects[i].contains(x, y)) return i
         return -1
     }
@@ -682,8 +670,8 @@ internal class SketchPainter(v: TrackerView) : Painter(v) {
         val dy = y - circleY
         val d = hypot(dx, dy)
         if (circleR <= 0f || d > circleR || d < circleR * 0.2f) return -1
-        val degrees = Math.toDegrees(atan2(dy, dx).toDouble()) + 90.0
-        val pos = Math.floorMod((degrees / 30.0).roundToInt(), 12)
+        val degrees = atan2(dy, dx).toDouble() * (180.0 / kotlin.math.PI) + 90.0
+        val pos = (degrees / 30.0).roundToInt().mod(12)
         return pos + if (d < circleR * RING_SPLIT) 12 else 0
     }
 

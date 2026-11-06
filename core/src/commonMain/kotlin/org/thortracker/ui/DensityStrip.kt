@@ -1,26 +1,24 @@
 package org.thortracker.ui
 
-import android.graphics.Canvas
 import org.thortracker.model.Pattern
 import org.thortracker.model.Songs
 
 /**
  * A pattern drawn as one thin band per channel, lit where notes start: the arrangement overview used
  * by the Song view's order list and the Pattern view's order column. Every row has the same width, so a
- * shorter pattern draws a proportionally shorter strip. Shared per TrackerView.
+ * shorter pattern draws a proportionally shorter strip. Shared per pane.
  */
 internal class DensityStrip(private val ink: Ink) {
     /** Patterns are immutable, so identity is a safe and cheap cache key. */
-    private val cache = java.util.IdentityHashMap<Pattern, BooleanArray>()
+    private val cache = IdentityCache<Pattern, BooleanArray>(512)
 
     private fun density(p: Pattern): BooleanArray = cache.getOrPut(p) {
-        if (cache.size > 512) cache.clear()
         val rows = p.length
         BooleanArray(p.tracks.size * rows) { i -> p.tracks[i / rows][i % rows].note >= 0 }
     }
 
     /** Draws [p] into the box; [playRow] >= 0 adds the amber playhead tick. */
-    fun draw(c: Canvas, left: Float, top: Float, right: Float, bottom: Float, p: Pattern, playRow: Int = -1) {
+    fun draw(c: Surface, left: Float, top: Float, right: Float, bottom: Float, p: Pattern, playRow: Int = -1) {
         val channels = p.tracks.size
         val rows = p.length
         if (channels == 0 || rows == 0 || right - left < 4f) return

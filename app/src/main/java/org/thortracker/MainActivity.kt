@@ -56,6 +56,7 @@ import org.thortracker.ui.PopupText
 import org.thortracker.ui.Popups
 import org.thortracker.ui.ShellToolbar
 import org.thortracker.ui.ToolbarHandle
+import org.thortracker.ui.PaneView
 import org.thortracker.ui.TrackerView
 import org.thortracker.ui.hideFromAccessibility
 
@@ -74,7 +75,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private val popups = Popups({ hosts[it]?.popup }, { hosts.keys })
     private val input = HostInput()
     private var secondary: Presentation? = null
-    private var battery: TrackerView.Battery? = null
+    private var battery: PaneView.Battery? = null
     /**
      * Sticky ACTION_BATTERY_CHANGED: delivered at once on registration, then on level, plug, voltage and
      * temperature changes. Only the readout is touched (no view refresh), so frequent broadcasts never disturb
@@ -88,7 +89,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             // Some devices report NOT_CHARGING while plugged in at full; plugged in counts as charging.
             val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
             battery = if (!intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true) || level < 0 || scale <= 0) null
-                else TrackerView.Battery(level * 100 / scale, plugged || status == BatteryManager.BATTERY_STATUS_CHARGING)
+                else PaneView.Battery(level * 100 / scale, plugged || status == BatteryManager.BATTERY_STATUS_CHARGING)
             hosts.values.forEach { it.tracker.battery = battery }
         }
     }
