@@ -41,7 +41,7 @@ tools/build.sh :deck:linkDebugExecutableLinuxX64
 # fonts/ and tunings/ are copied beside the executable; deploy them together
 ```
 
-On the Deck, `~/thortracker-deck/spike/run.sh` starts it with the demo song. Add it in Desktop Mode via Steam → Add a Non-Steam Game to launch it from Gaming Mode. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y switch views); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
+On the Deck, `~/thortracker-deck/spike/run.sh` starts it with the demo song. Add it in Desktop Mode via Steam → Add a Non-Steam Game to launch it from Gaming Mode. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
 
 ## Open questions for the real port
 

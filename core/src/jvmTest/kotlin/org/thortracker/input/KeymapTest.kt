@@ -23,17 +23,15 @@ class KeymapTest {
         assertEquals("✛", k.dpad())
         assertEquals("Sel+Start", k.label(Control.TOOLBAR))
         assertEquals("L2+A/B", k.pair(Action.UNDO, Action.REDO))
-        assertEquals(listOf("R2+A", "R2+B", "R2+X", "R2+Y"),
-            listOf(Control.SHOW_SONG, Control.SHOW_INSTRUMENT, Control.SHOW_SKETCH, Control.SHOW_KEYBOARD).map(k::label))
-        assertEquals(null, k.binding(Control.SHOW_PATTERN))
+        assertEquals(listOf("R2+A", "R2+B", "R2+X", "R2+Y", "R2+↑", "R2+→", "R2+↓"),
+            listOf(Control.SHOW_SONG, Control.SHOW_INSTRUMENT, Control.SHOW_SKETCH, Control.SHOW_KEYBOARD,
+                Control.SHOW_PATTERN, Control.SHOW_WAVE, Control.SHOW_HELP).map(k::label))
     }
 
     @Test fun everyControlHasAValidDefaultThatNoOtherControlInTheSameViewShares() {
         val k = Keymap.DEFAULT
-        val unboundByDefault = setOf(Control.SHOW_PATTERN, Control.SHOW_WAVE, Control.SHOW_HELP)
         for (c in Control.entries) {
             val b = k.binding(c)
-            if (c in unboundByDefault) { assertNull(c.name, b); continue }
             assertNotNull(c.name, b)
             assertNull(c.name, k.problem(c, b!!))
             assertEquals(c.name, emptyList<Control>(), k.conflicts(c, b))
@@ -123,6 +121,29 @@ class KeymapTest {
         val takesL2Y = Keymap.fromJson(versionThree(mapOf("SWAP" to "L2+Y")))
         assertEquals(Binding(Keys.BUTTON_Y, Keys.BUTTON_L2), takesL2Y.binding(Control.SWAP))
         assertNull(takesL2Y.binding(Control.LOOP_PATTERN))
+    }
+
+    @Test fun anOlderKeymapGainsThePatternWaveAndHelpChordsUnlessItGaveThemAway() {
+        /** A version 4 file: today's defaults with the three view controls unbound, as 0.8.1-0.8.6 wrote them. */
+        fun versionFour(bindings: Map<String, String>): String {
+            val root = kotlinx.serialization.json.Json.parseToJsonElement(Keymap.DEFAULT.toJson()) as kotlinx.serialization.json.JsonObject
+            val all = (root["bindings"] as kotlinx.serialization.json.JsonObject).toMutableMap()
+            for (c in listOf(Control.SHOW_PATTERN, Control.SHOW_WAVE, Control.SHOW_HELP)) all[c.name] = kotlinx.serialization.json.JsonNull
+            bindings.forEach { (k, v) -> all[k] = kotlinx.serialization.json.JsonPrimitive(v) }
+            return kotlinx.serialization.json.JsonObject(root.toMutableMap().also {
+                it["version"] = kotlinx.serialization.json.JsonPrimitive(4)
+                it["bindings"] = kotlinx.serialization.json.JsonObject(all)
+            }).toString()
+        }
+        assertEquals(Keymap.DEFAULT, Keymap.fromJson(versionFour(emptyMap())))
+        val customised = Keymap.fromJson(versionFour(mapOf("SWAP" to "L3+X")))
+        assertEquals(Binding(Keys.DPAD_UP, Keys.BUTTON_R2), customised.binding(Control.SHOW_PATTERN))
+        assertEquals(Binding(Keys.BUTTON_X, Keys.BUTTON_THUMBL), customised.binding(Control.SWAP))
+        // A file that put Swap on R2+↑ keeps it there; Pattern then has no chord.
+        val takesR2Up = Keymap.fromJson(versionFour(mapOf("SWAP" to "R2+UP")))
+        assertEquals(Binding(Keys.DPAD_UP, Keys.BUTTON_R2), takesR2Up.binding(Control.SWAP))
+        assertNull(takesR2Up.binding(Control.SHOW_PATTERN))
+        assertEquals(Binding(Keys.DPAD_DOWN, Keys.BUTTON_R2), takesR2Up.binding(Control.SHOW_HELP))
     }
 
     @Test fun invalidKeymapFilesAreRejectedWithTheReason() {

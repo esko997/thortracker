@@ -6,6 +6,7 @@ import cnames.structs.SDL_Renderer
 import cnames.structs.SDL_Window
 import decknative.*
 import kotlinx.cinterop.*
+import org.thortracker.audio.AuditionLoop
 import org.thortracker.audio.PlaybackPosition
 import org.thortracker.audio.Transport
 import org.thortracker.editor.EditorSession
@@ -35,7 +36,8 @@ import sdl3.*
 fun main(args: Array<String>) {
     val songPath = args.firstOrNull { it.endsWith(".thor") }
     val quitAfterMs = args.firstOrNull { it.startsWith("seconds=") }?.substringAfter('=')?.toULong()?.times(1000uL)
-    // Test hook: script=96+22,20,108 taps buttons (Android key codes; "a+b" holds a while tapping b), one step per 150 ms,
+    // Test hook: script=96+22,20,99~1500 taps buttons (Android key codes; "a+b" holds a while tapping b, "b~ms" holds b
+    // for ms), one step per 150 ms,
     // through the same routing as the gamepad. With seconds=N the last frame is saved as deck-screenshot.bmp.
     val script = args.firstOrNull { it.startsWith("script=") }?.substringAfter('=')?.split(',')?.filter { it.isNotBlank() }.orEmpty()
 
@@ -77,8 +79,10 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
     private var repeats = 0
     var script = ArrayDeque<String>()
     private var scriptAt = 1000uL
+    private var heldScript: Pair<List<Int>, ULong>? = null
     private var lastAudioError: String? = null
     private var textInput = false
+    private val auditionLoop = AuditionLoop()
 
     init {
         pane.keymap = shell.keymap
@@ -87,7 +91,9 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         pane.controllerFocused = true
         session.onSongChanged = { transport.songChanged(it); pane.refresh() }
         session.onStateChanged = { pane.refresh() }
-        session.onAudition = { channel, note, instrument, detune -> audio.audition(channel, note, instrument, detune) }
+        session.onAudition = { channel, note, instrument, detune -> auditionLoop.stop(); audio.audition(channel, note, instrument, detune) }
+        session.onAuditionSequence = { channel, steps, instrument, stepMillis -> auditionLoop.start(channel, steps, instrument, stepMillis, SDL_GetTicks().toLong()) }
+        session.onReleaseAudition = { auditionLoop.stop(); audio.releaseAudition() }
         session.onTransport = { start -> if (start) transport.start(session.selection.order, session.selection.row) else transport.stop() }
         val start = opened ?: shell.recovered()
         if (start != null) { session.replaceSong(start); session.note(if (opened != null) "${start.title} opened" else "Recovered working project") }
@@ -104,14 +110,20 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             if (repeatCode != 0 && now >= repeatAt) { route(repeatCode, true, ++repeats); repeatAt = now + 60u }
             if (script.isNotEmpty() && now - start >= scriptAt) {
                 val step = script.removeFirst()
-                val codes = step.split('+').map { it.trim().toInt() }
+                // "a+b" holds a while tapping b; "b~ms" holds b for ms (the next step waits until it is released).
+                val held = step.substringAfter('~', "").toULongOrNull()
+                val codes = step.substringBefore('~').split('+').map { it.trim().toInt() }
                 codes.forEach { button(it, true) }
-                codes.reversed().forEach { button(it, false) }
+                if (held != null) { heldScript = codes to now + held } else codes.reversed().forEach { button(it, false) }
                 val st = pane.state
                 println("script $step -> view=${st.kind} popup=${popups.top?.title} order=${st.order} row=${st.row} " +
                     "cell=${session.song.patterns[session.song.patternAt(st.order)].tracks[st.channel][st.row]} msg=${session.message}")
-                scriptAt = now - start + 150u
+                scriptAt = now - start + 150u + (held ?: 0u)
             }
+            heldScript?.let { (codes, until) ->
+                if (now >= until) { codes.reversed().forEach { button(it, false) }; heldScript = null; println("released ${codes.joinToString("+")}: auditions=${audio.auditions} peak=${da_peak()}") }
+            }
+            auditionLoop.advance(now.toLong()) { ch, note, ins -> audio.audition(ch, note, ins) }
             audio.error().let { if (it != lastAudioError) { lastAudioError = it; if (it != null) session.note(it) } }
             shell.autosave(now)
             val typing = popup.fieldFocused
@@ -122,6 +134,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             popup.draw(pane.surface, output.width.toFloat(), output.height.toFloat())
             if (quitAfterMs != null && now - start > quitAfterMs) {
                 running = false
+                println("audio: auditions=${audio.auditions} peak=${da_peak()}")
                 println("frames=$frames fps=${frames * 1000 / maxOf(1uL, now - start).toLong()} position=${transport.position()} popup=${popups.top?.title}")
                 SDL_RenderReadPixels(renderer, null)?.let { println("screenshot: ${SDL_SaveBMP(it, "deck-screenshot.bmp")}") }
             }

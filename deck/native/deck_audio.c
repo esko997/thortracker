@@ -20,6 +20,7 @@ static int audition_ticks_left;
 static float song_buf[HM_MAX_TICK_FRAMES * 2];
 static float audition_buf[HM_MAX_TICK_FRAMES * 2];
 static volatile int pos_order, pos_row;
+static volatile float peak;   /* loudest rendered sample since the last da_peak (diagnostics) */
 
 static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int total) {
     (void)user; (void)total;
@@ -50,6 +51,7 @@ static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int tot
             }
         }
         if (frames == 0) continue;
+        for (int i = 0; i < frames * 2; i++) { float a = song_buf[i] < 0 ? -song_buf[i] : song_buf[i]; if (a > peak) peak = a; }
         int bytes = frames * 2 * (int)sizeof(float);
         SDL_PutAudioStreamData(s, song_buf, bytes);
         additional -= bytes;
@@ -108,7 +110,14 @@ int da_audition(int channel, int note, int instrument, int detune, int ticks) {
     return r;
 }
 
+void da_release_audition(void) {
+    SDL_LockAudioStream(stream);
+    auditioning = 0;
+    SDL_UnlockAudioStream(stream);
+}
+
 int da_playing(void) { return playing; }
+float da_peak(void) { float p = peak; peak = 0; return p; }
 int da_order(void) { return pos_order; }
 int da_row(void) { return pos_row; }
 

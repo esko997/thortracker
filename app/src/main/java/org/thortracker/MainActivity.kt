@@ -27,6 +27,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
+import org.thortracker.audio.AuditionLoop
 import org.thortracker.audio.HugeAudio
 import org.thortracker.audio.TrackerAudio
 import org.thortracker.audio.Transport
@@ -125,7 +126,15 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
     }
     private var audio: TrackerAudio? = null
-    private var auditionSequence: Runnable? = null
+    /** Sketch's held phrase or arpeggio: shared step timing, run on the main looper. */
+    private val auditionLoop = AuditionLoop()
+    private val auditionStep = object : Runnable {
+        override fun run() {
+            if (!active) return
+            val next = auditionLoop.advance(android.os.SystemClock.uptimeMillis()) { ch, note, ins -> audio?.audition(ch, note, ins) }
+            if (next != null) main.postAtTime(this, next)
+        }
+    }
     private var hasAudioFocus = false
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val audioFocusRequest by lazy {
@@ -221,23 +230,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         session.onAuditionSequence = { channel, steps, instrument, stepMillis ->
             cancelAuditionSequence()
             if (requestAudioFocus()) {
-                val sequence = object : Runnable {
-                    private var index = 0
-                    private var due = android.os.SystemClock.uptimeMillis()
-                    override fun run() {
-                        if (!active || auditionSequence !== this) return
-                        // A null step starts nothing: the previous note keeps sounding.
-                        steps[index]?.let { audio?.audition(channel, it, instrument) }
-                        index = (index + 1) % steps.size
-                        // Steps keep their spacing from the start time instead of accumulating handler delays;
-                        // after a stall the loop resumes from now rather than catching up in a burst.
-                        val now = android.os.SystemClock.uptimeMillis()
-                        due = if (due + stepMillis < now) now + stepMillis else due + stepMillis
-                        main.postAtTime(this, due)
-                    }
-                }
-                auditionSequence = sequence
-                sequence.run()
+                auditionLoop.start(channel, steps, instrument, stepMillis, android.os.SystemClock.uptimeMillis())
+                auditionStep.run()
                 scheduleAudioFeedback()
             }
         }
@@ -562,8 +556,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     }
 
     private fun cancelAuditionSequence() {
-        auditionSequence?.let { main.removeCallbacks(it) }
-        auditionSequence = null
+        auditionLoop.stop()
+        main.removeCallbacks(auditionStep)
     }
 
     private fun releaseAudition() {

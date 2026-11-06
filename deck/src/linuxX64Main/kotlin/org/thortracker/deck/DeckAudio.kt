@@ -17,6 +17,10 @@ import org.thortracker.model.Song
 class DeckAudio : TrackerAudio {
     private var error: String? = null
 
+    /** Auditions started since launch (test diagnostics). */
+    var auditions = 0
+        private set
+
     init { check(da_open() == 0) { "SDL audio could not open" } }
 
     /** Lowers the song and hands its image to the engine (applied live while playing); a bad song keeps the last one. */
@@ -33,14 +37,14 @@ class DeckAudio : TrackerAudio {
 
     override fun play(order: Int, row: Int) { da_play(order, row) }
     override fun stop() = da_stop()
-    override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) { da_audition(channel, note, instrument, detune, AUDITION_TICKS) }
-    override fun releaseAudition() {}
+    override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) { auditions++; da_audition(channel, note, instrument, detune, AUDITION_TICKS) }
+    override fun releaseAudition() = da_release_audition()
     override fun position() = PlaybackPosition(da_playing() != 0, da_order(), da_row())
     override fun error(): String? = error
     override fun close() = da_close()
 
     private companion object {
-        /** About 0.4 s at the driver's 59.7 Hz tick: the Deck has no held-note release yet. */
-        const val AUDITION_TICKS = 24
+        /** A held note sounds until released (as on Android); this caps it at about a minute should a release be lost. */
+        const val AUDITION_TICKS = 60 * 60
     }
 }

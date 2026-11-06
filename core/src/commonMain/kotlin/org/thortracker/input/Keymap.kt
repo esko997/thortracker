@@ -199,7 +199,7 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
 
     companion object {
         const val FORMAT = "thor-tracker-keymap"
-        const val VERSION = 4
+        const val VERSION = 5
         const val UNBOUND = "—"
 
         /** Buttons that do nothing alone and start chords. */
@@ -258,6 +258,9 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             Control.SHOW_INSTRUMENT to Binding(Keys.BUTTON_B, R2),
             Control.SHOW_SKETCH to Binding(Keys.BUTTON_X, R2),
             Control.SHOW_KEYBOARD to Binding(Keys.BUTTON_Y, R2),
+            Control.SHOW_PATTERN to Binding(Keys.DPAD_UP, R2),
+            Control.SHOW_WAVE to Binding(Keys.DPAD_RIGHT, R2),
+            Control.SHOW_HELP to Binding(Keys.DPAD_DOWN, R2),
         ))
 
         private val NAMES = linkedMapOf(
@@ -339,13 +342,28 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
                 val b = map.binding(c) ?: continue
                 if (map.conflicts(c, b).any { it.name in named }) map = map.with(c, null)
             }
+            // Version 5 gave the Pattern, Wave and Help view controls chords. An earlier file's null for them is the
+            // old default, not a choice: take the new chord unless the file gave that chord to something else.
+            if (version < 5) for (c in LATE_VIEW_CHORDS) {
+                val value = entries[c.name]
+                if (value != null && value !is JsonNull) continue
+                val b = DEFAULT.binding(c) ?: continue
+                map = map.with(c, null)
+                if (map.conflicts(c, b).isEmpty()) map = map.with(c, b)
+            }
             map.validationError()?.let { throw IllegalArgumentException(it) }
             return map
         }
 
-        /** A control's default binding in keymap file [version]. Only Redo has moved (R2+A before version 3). */
-        private fun defaultIn(control: Control, version: Int): Binding? =
-            if (control == Control.REDO && version < 3) Binding(Keys.BUTTON_A, R2) else DEFAULT.binding(control)
+        /** View controls that were unbound before keymap version 5. */
+        private val LATE_VIEW_CHORDS = listOf(Control.SHOW_PATTERN, Control.SHOW_WAVE, Control.SHOW_HELP)
+
+        /** A control's default binding in keymap file [version]: Redo was R2+A before version 3; [LATE_VIEW_CHORDS] were unbound before 5. */
+        private fun defaultIn(control: Control, version: Int): Binding? = when {
+            control == Control.REDO && version < 3 -> Binding(Keys.BUTTON_A, R2)
+            control in LATE_VIEW_CHORDS && version < 5 -> null
+            else -> DEFAULT.binding(control)
+        }
 
         /**
          * Converts 0.1-0.4 physical → logical key remaps (each logical key is the default button it acts as)
