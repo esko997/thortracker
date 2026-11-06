@@ -10,3 +10,4 @@ research/
 evidence/
 dist/
 *.iml
+/deck/deps/
