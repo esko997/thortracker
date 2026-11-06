@@ -75,6 +75,8 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
         val detail = buildString {
             append("Pattern ${hex2(pattern)}  ${p.name}")
             if (uses > 1) append("  (plays in $uses orders)")
+            if (v.playback.looping && v.playback.order == st.order) append("  · Looping")
+            if (st.order in s.parkedOrders) append("  · Parked (skipped by the song)")
         }
         headerBottom = header(c, area, "Order ${hex2(st.order)} of ${hex2(s.orders.size - 1)}", detail, chipsWidth())
         drawHeaderChips(c, area)
@@ -508,8 +510,10 @@ internal class PatternPainter(v: TrackerView) : Painter(v) {
             if (playingHere) ink.rect(c, r.left, oy, r.left + ink.dp(4f), oy + orderRowH, Palette.PLAYHEAD)
             val pat = s.orders[o]
             val loop = if (o == s.loopOrder) " ↻" else ""
+            val parked = o in s.parkedOrders
             ink.mono(c, hex2(o), x, oy, orderRowH, if (current) Palette.TEXT else Palette.FAINT, size = small)
-            ink.label(c, ink.fit("${hex2(pat)} ${s.patterns[pat].name}$loop", nameW, small), x + cw * 2.8f, oy, orderRowH, if (current) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, ink.fit("${if (parked) "‖ " else ""}${hex2(pat)} ${s.patterns[pat].name}$loop", nameW, small), x + cw * 2.8f, oy, orderRowH,
+                if (current) Palette.TEXT else if (parked) Palette.FAINT else Palette.DIM, size = small)
             if (stripRight - stripLeft > ink.unit * 4) {
                 v.strip.draw(c, stripLeft, oy + ink.dp(3f), stripRight, oy + orderRowH - ink.dp(3f), s.patterns[pat], if (playingHere) v.playback.row else -1)
             }

@@ -228,6 +228,51 @@ class EditorSessionTest {
     }
 
     @Test
+    fun parkingFollowsItsOrderThroughInsertDeleteMoveAndUndo() {
+        val s = session()
+        repeat(4) { s.newPatternAt(s.song.orders.size) }          // orders 0..4 play patterns 0..4
+        assertTrue(s.toggleParked(3))
+        fun parkedPatterns() = s.song.parkedOrders.map { s.song.orders[it] }
+        assertEquals(listOf(3), parkedPatterns())
+        s.insertOrder(0, 0)                                        // before it: the parking moves with its order
+        assertEquals(listOf(4), s.song.parkedOrders); assertEquals(listOf(3), parkedPatterns())
+        s.moveOrder(4, 1)                                          // the parked order itself moves
+        assertEquals(listOf(1), s.song.parkedOrders); assertEquals(listOf(3), parkedPatterns())
+        s.insertOrder(2, 1, parked = true)                         // a Repeat next to a parked order parks
+        assertEquals(listOf(3, 1), parkedPatterns())
+        s.deleteOrder(1)                                           // deleting a parked order drops its parking
+        assertEquals(listOf(1), parkedPatterns())
+        s.undo()
+        assertEquals(listOf(3, 1), parkedPatterns())
+        assertTrue(s.toggleParked(1))                              // unpark
+        assertEquals(listOf(1), parkedPatterns())
+        assertTrue(SongValidator.errors(s.song).isEmpty())
+    }
+
+    @Test
+    fun theLastPlayingOrderCanBeNeitherParkedNorDeleted() {
+        val s = session()
+        s.newPatternAt(1)                                          // orders 0, 1
+        assertTrue(s.toggleParked(0))
+        val before = s.song
+        assertFalse(s.toggleParked(1))
+        assertFalse(s.deleteOrder(1))
+        assertEquals(before, s.song)
+        assertTrue(s.deleteOrder(0))                               // the parked one can go
+        assertEquals(emptyList<Int>(), s.song.parkedOrders)
+    }
+
+    @Test
+    fun aCloneOfAParkedOrderIsParked() {
+        val s = session()
+        s.newPatternAt(1)
+        s.toggleParked(1)
+        val clone = s.clonePatternAt(1)
+        assertEquals(listOf(1, 2), s.song.parkedOrders)
+        assertEquals(clone, s.song.orders[2])
+    }
+
+    @Test
     fun cloneCopiesCellsIntoAnIndependentPattern() {
         val s = session()
         s.setCell(0, 0, 0, Cell(note = 12, instrument = 1))

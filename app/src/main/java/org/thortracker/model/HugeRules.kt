@@ -369,4 +369,58 @@ internal object HugeRules {
         }
         return LoopPlan(edited, errors)
     }
+
+    /**
+     * The song as heard while looping the pattern at [order]: that order alone (hUGEDriver wraps back to order 0
+     * after it), and every stored jump in it (Bxx, xx >= 01) aimed at that same single order, so a jump replays the
+     * pattern instead of leaving it. B00 and Dxx already land on "the next order", which is the loop. Patterns not
+     * in the loop are untouched. Editor playback only; never saved or exported.
+     */
+    fun patternLoop(song: Song, order: Int): Song {
+        val index = song.orders[order.coerceIn(0, song.orders.size - 1)]
+        val pattern = song.patterns[index]
+        val tracks = pattern.tracks.map { track ->
+            track.map { if (it.effect == FX_POSITION_JUMP && it.param > 1) it.copy(param = 1) else it }
+        }
+        val patterns = if (tracks == pattern.tracks) song.patterns
+        else song.patterns.toMutableList().also { it[index] = pattern.copy(tracks = tracks) }
+        return song.copy(orders = listOf(index), loopOrder = 0, patterns = patterns, parkedOrders = emptyList())
+    }
+
+    /** The document order indices song playback and export use, in order: every order that is not parked. */
+    fun playedOrders(song: Song): List<Int> {
+        if (song.parkedOrders.isEmpty()) return song.orders.indices.toList()
+        val parked = song.parkedOrders.toHashSet()
+        return song.orders.indices.filter { it !in parked }
+    }
+
+    /**
+     * The song as played and exported: its parked orders removed. Everything that names an order is renumbered to
+     * the shorter list: the loop target and every stored `Bxx` (B01 = order 0; B00 is relative). A loop or jump
+     * aimed at a parked order lands on the next played order after it (the loop target when none follows, and
+     * the first played order for a parked loop target at the end). Returns [song] itself when nothing is parked or
+     * everything is (which [SongValidator.errors] reports).
+     */
+    fun arranged(song: Song): Song {
+        if (song.parkedOrders.isEmpty()) return song
+        val played = playedOrders(song)
+        if (played.isEmpty()) return song
+        // Document order index → arranged index of the first played order at or after it (-1 past the last).
+        val next = IntArray(song.orders.size + 1) { -1 }
+        var k = played.size
+        for (o in song.orders.indices.reversed()) {
+            if (k > 0 && played[k - 1] == o) k--
+            next[o] = if (k < played.size) k else -1
+        }
+        val loop = next[song.loopOrder].let { if (it >= 0) it else 0 }
+        fun target(order: Int) = next[order].let { if (it >= 0) it else loop }
+        val old = song.orders.size
+        val patterns = song.patterns.map { p ->
+            val tracks = p.tracks.map { track ->
+                track.map { c -> if (c.effect == FX_POSITION_JUMP && c.param in 1..old) c.copy(param = target(c.param - 1) + 1) else c }
+            }
+            if (tracks == p.tracks) p else p.copy(tracks = tracks)
+        }
+        return song.copy(orders = played.map { song.orders[it] }, loopOrder = loop, patterns = patterns, parkedOrders = emptyList())
+    }
 }

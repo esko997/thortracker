@@ -91,6 +91,10 @@ data class Instrument(
  * instruments (slot n = index n-1); [waves] holds exactly 16 waveforms of 32 samples 0..15.
  * [tuning] is the optional song-wide microtuning: Pulse/Wave notes entered in it carry their detune as `40y` in the
  * cell itself, so the tuning only guides entry and validation and is not exported; null = plain 12-note table.
+ * [newPatternScale] is the editor-only scale guide a newly created (blank) pattern starts with; like pattern
+ * scales it is never exported or heard.
+ * [parkedOrders] (ascending order indices) stay in the arrangement for editing but are skipped by song playback
+ * and export ([HugeRules.arranged]).
  */
 @Serializable
 data class Song(
@@ -107,6 +111,8 @@ data class Song(
     val noiseInstruments: List<Instrument>,
     val waves: List<List<Int>>,
     val tuning: Tuning? = null,
+    val newPatternScale: Scale = Scale.CHROMATIC,
+    val parkedOrders: List<Int> = emptyList(),
 )
 
 /** Strict compact cell encoding: exactly four integers. Range checks belong to [SongValidator]. */

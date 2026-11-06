@@ -406,6 +406,23 @@ class ViewControllerTest {
     }
 
     @Test
+    fun songNewPatternScaleGuidesNewPatternsOnly() {
+        val v = view(ViewKind.SONG) { songItem = ViewState.SONG_NEW_SCALE_ITEM }
+        v.hold(Action.EDIT, Action.RIGHT, Action.UP, Action.UP)          // Chromatic → Major, root C → D
+        assertEquals(Scale(2, ScaleKind.MAJOR), session.song.newPatternScale)
+        val fresh = session.newPatternAt(1)
+        assertEquals(Scale(2, ScaleKind.MAJOR), session.song.patterns[fresh].scale)
+        // Existing patterns and clones keep their own guide.
+        assertEquals(Scale.CHROMATIC, session.song.patterns[0].scale)
+        val clone = session.clonePatternAt(0)
+        assertEquals(Scale.CHROMATIC, session.song.patterns[clone].scale)
+        v.tap(Action.CLEAR)
+        assertEquals(Scale.CHROMATIC, session.song.newPatternScale)
+        session.undo()
+        assertEquals(Scale(2, ScaleKind.MAJOR), session.song.newPatternScale)
+    }
+
+    @Test
     fun songViewArrangesOrders() {
         val v = view(ViewKind.SONG) { songItem = ViewState.SONG_HEADER_ITEMS; songField = 1 }
         v.tap(Action.EDIT) // repeat

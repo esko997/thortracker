@@ -57,12 +57,21 @@ object SongValidator {
             else if (samples.any { it !in 0..Songs.WAVE_MAX }) out += "Wave ${HugeRules.hex2(w)} has samples outside 0-15"
         }
         song.tuning?.problems()?.forEach { out += it }
+        if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
+        if (song.parkedOrders.any { it !in song.orders.indices } || song.parkedOrders.zipWithNext().any { (a, b) -> a >= b }) {
+            out += "Parked orders ${song.parkedOrders} must be ascending, distinct orders 0-${song.orders.size - 1}"
+        }
         return out.list()
     }
 
-    fun errors(song: Song): List<String> {
-        val structural = structuralErrors(song)
+    /** Problems that block playing or exporting [document]'s arrangement (its unparked orders, [HugeRules.arranged]). */
+    fun errors(document: Song): List<String> {
+        val structural = structuralErrors(document)
         if (structural.isNotEmpty()) return structural
+        if (document.parkedOrders.size == document.orders.size) {
+            return listOf("Every order is parked; unpark at least one to play the song or export it")
+        }
+        val song = HugeRules.arranged(document)
         val out = Report()
         if (song.orders.size > HugeRules.MAX_ORDERS) {
             out += "The song has ${song.orders.size} orders; hUGEDriver supports at most ${HugeRules.MAX_ORDERS}"
@@ -104,8 +113,9 @@ object SongValidator {
         return out.list()
     }
 
-    fun warnings(song: Song): List<String> {
-        if (structuralErrors(song).isNotEmpty()) return emptyList()
+    fun warnings(document: Song): List<String> {
+        if (structuralErrors(document).isNotEmpty()) return emptyList()
+        val song = HugeRules.arranged(document)
         val out = Report()
         val speed = song.ticksPerRow
         val played = song.orders.toSet()

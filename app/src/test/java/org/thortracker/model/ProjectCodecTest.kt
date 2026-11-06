@@ -166,4 +166,21 @@ class ProjectCodecTest {
         }
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"tolerance\":10", "\"tolerance\":7")) }
     }
+
+    @Test
+    fun newPatternScaleRoundTripsAndNeedsFormatSix() {
+        val blank = Songs.blank()
+        val song = blank.copy(newPatternScale = Scale(9, ScaleKind.DORIAN))
+        val text = ProjectCodec.encode(song)
+        assertEquals(song, ProjectCodec.decode(text))
+        val root = Json.parseToJsonElement(text).jsonObject
+        val claimingFive = JsonObject(root.toMutableMap().also { it["version"] = JsonPrimitive(5) }).toString()
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(claimingFive) }
+        // A version 5 file has no key and reads as chromatic.
+        val plain = Json.parseToJsonElement(ProjectCodec.encode(blank)).jsonObject
+        val plainSong = (plain["song"] as JsonObject).toMutableMap().also { it.remove("newPatternScale") }
+        val v5 = JsonObject(plain.toMutableMap().also { it["version"] = JsonPrimitive(5); it["song"] = JsonObject(plainSong) }).toString()
+        assertEquals(Scale.CHROMATIC, ProjectCodec.decode(v5).newPatternScale)
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(blank.copy(newPatternScale = Scale(12, ScaleKind.MAJOR))) }
+    }
 }

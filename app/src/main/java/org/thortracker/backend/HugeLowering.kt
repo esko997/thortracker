@@ -48,10 +48,15 @@ object HugeLowering {
     const val INSTRUMENT_BYTES = 6
     const val WAVE_BYTES = 16
 
-    /** @throws IllegalArgumentException with every [SongValidator.errors] message when [song] is not exportable. */
-    fun lower(song: Song): HugeData {
-        val errors = SongValidator.errors(song)
+    /**
+     * Lowers [document]'s arrangement ([HugeRules.arranged]: parked orders left out), so order positions in the
+     * result count played orders only.
+     * @throws IllegalArgumentException with every [SongValidator.errors] message when it is not exportable.
+     */
+    fun lower(document: Song): HugeData {
+        val errors = SongValidator.errors(document)
         require(errors.isEmpty()) { errors.joinToString("\n") }
+        val song = HugeRules.arranged(document)
         val channels = song.patterns[0].tracks.size
         val tracks = ArrayList<ByteArray>(song.patterns.size * channels + channels)
         val played = song.patterns.map { HugeRules.playedTracks(it) }

@@ -55,6 +55,10 @@ object Songs {
     /** A complete looping four-channel arrangement exercising instruments, waves, cuts and effects. */
     fun demo(): Song = DemoSong.build()
 
+    /** The order closest to [near] that plays [pattern] (earlier wins a tie), or -1 when no order plays it. */
+    fun nearestOrderPlaying(orders: List<Int>, pattern: Int, near: Int): Int =
+        orders.indices.filter { orders[it] == pattern }.minWithOrNull(compareBy({ Math.abs(it - near) }, { it })) ?: -1
+
     fun channelNames(song: Song): List<String> = when (song.backend) {
         BACKEND -> HugeRules.CHANNEL_NAMES
         else -> throw IllegalArgumentException("Unsupported backend \"${song.backend}\"")

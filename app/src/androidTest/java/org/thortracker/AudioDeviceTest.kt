@@ -125,6 +125,74 @@ class AudioDeviceTest {
         }
     }
 
+    /** A looped pattern replays itself in the real driver, including when its own Bxx would leave it. */
+    @Test
+    fun aPatternLoopReplaysOnlyThatPattern() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        HugeAudio(context).use { audio ->
+            val blank = Songs.blank()
+            val pattern = blank.patterns[0]
+            val jumpToOrder2 = pattern.copy(name = "B", length = 6).let { p ->
+                p.copy(tracks = p.tracks.mapIndexed { ch, t -> if (ch == 0) t.toMutableList().also {
+                    it[3] = org.thortracker.model.Cell(org.thortracker.model.Cell.EMPTY, 0, org.thortracker.model.HugeRules.FX_POSITION_JUMP, 0x03)
+                } else t })
+            }
+            val song = blank.copy(
+                patterns = listOf(pattern.copy(length = 5), jumpToOrder2, pattern.copy(name = "C", length = 4)),
+                orders = listOf(0, 1, 2),
+                ticksPerRow = 2,
+            )
+            audio.update(org.thortracker.model.HugeRules.patternLoop(song, 1))
+            audio.play(0, 0)
+            await("output transport starts", audio) { audio.position().playing }
+            val seen = ArrayList<Pair<Int, Int>>()
+            val until = SystemClock.elapsedRealtime() + 1500
+            while (SystemClock.elapsedRealtime() < until) {
+                val p = audio.position()
+                if (p.playing && seen.lastOrNull() != (p.order to p.row)) seen += p.order to p.row
+                SystemClock.sleep(3)
+            }
+            audio.stop()
+            assertNull(audio.error())
+            assertTrue("only the looped order played, up to its B row: $seen", seen.all { (o, r) -> o == 0 && r <= 3 })
+            val wraps = seen.zipWithNext().count { (a, b) -> a.second == 3 && b.second == 0 }
+            assertTrue("the pattern replayed at least twice: $seen", wraps >= 2)
+            assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+        }
+    }
+
+    /** The real driver plays the arrangement without the parked order: order 1 of what it hears is pattern C. */
+    @Test
+    fun aParkedOrderIsSkipped() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        HugeAudio(context).use { audio ->
+            val blank = Songs.blank()
+            val pattern = blank.patterns[0]
+            val song = blank.copy(
+                patterns = listOf(pattern.copy(length = 5), pattern.copy(name = "B", length = 3), pattern.copy(name = "C", length = 7)),
+                orders = listOf(0, 1, 2),
+                parkedOrders = listOf(1),
+                ticksPerRow = 2,
+            )
+            audio.update(song)
+            audio.play(0, 0)
+            await("output transport starts", audio) { audio.position().playing }
+            val seen = HashSet<Pair<Int, Int>>()
+            val until = SystemClock.elapsedRealtime() + 1500
+            while (SystemClock.elapsedRealtime() < until) {
+                val p = audio.position()
+                if (p.playing) seen += p.order to p.row
+                SystemClock.sleep(3)
+            }
+            audio.stop()
+            assertNull(audio.error())
+            assertTrue("only two orders are heard: $seen", seen.all { (o, _) -> o in 0..1 })
+            // Pattern B is 3 rows long; reaching row 6 of the second order proves it is pattern C.
+            assertTrue("the second heard order is pattern C: $seen", (1 to 6) in seen && (0 to 4) in seen)
+            assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+        }
+    }
+
     private fun await(message: String, audio: HugeAudio, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 5000
         while (!condition() && SystemClock.elapsedRealtime() < deadline) {

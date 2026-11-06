@@ -28,6 +28,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import org.thortracker.audio.HugeAudio
+import org.thortracker.audio.PlaybackPosition
 import org.thortracker.audio.TrackerAudio
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
@@ -37,6 +38,7 @@ import org.thortracker.input.Binding
 import org.thortracker.input.Control
 import org.thortracker.input.ControlGroup
 import org.thortracker.input.Keymap
+import org.thortracker.model.HugeRules
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.SongValidator
@@ -126,11 +128,45 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private var modalDisplay = 0
     private var awaitingTransportUntil = 0L
     private var requestedPlaying = false
+
+    /** Order whose pattern playback loops (L2+Y), or -1. Editor-only; Play/Start moves it to the order played. */
+    private var loopOrder = -1
+
+    /** The pattern [loopOrder] played when the loop was set, so order inserts/deletes/moves can follow it. */
+    private var loopPattern = -1
+
+    private fun loopAt(order: Int) {
+        loopOrder = order.coerceIn(0, session.song.orders.size - 1)
+        loopPattern = session.song.orders[loopOrder]
+    }
+
+    /** After an edit: keep looping the same pattern, at the nearest order that still plays it. */
+    private fun followLoop(song: Song) {
+        if (loopOrder < 0 || song.orders.getOrNull(loopOrder) == loopPattern) return
+        val moved = Songs.nearestOrderPlaying(song.orders, loopPattern, loopOrder)
+        loopOrder = if (moved >= 0) moved else loopOrder.coerceIn(0, song.orders.size - 1)
+        loopPattern = song.orders[loopOrder]
+    }
+
+    /** What the audio engine plays: the song, or only the looped order ([HugeRules.patternLoop]). */
+    private fun heard(song: Song): Song = if (loopOrder >= 0) HugeRules.patternLoop(song, loopOrder) else song
+
+    /** The loop was started only to hear a parked order (not by L2+Y), so stopping playback ends it. */
+    private var loopForParked = false
+
+    /**
+     * The engine's position in document terms: while looping, its single order is [loopOrder]; otherwise it counts
+     * played orders only, so parked ones are skipped when mapping back ([HugeRules.playedOrders]).
+     */
+    private fun heardPosition(): PlaybackPosition? = audio?.position()?.let {
+        if (loopOrder >= 0) it.copy(order = loopOrder, looping = true)
+        else it.copy(order = HugeRules.playedOrders(session.song).getOrElse(it.order) { _ -> it.order })
+    }
     private val audioFeedback = Runnable { refresh() }
     private val tick = object : Runnable {
         override fun run() {
             if (!active) return
-            val position = audio?.position()
+            val position = heardPosition()
             if (position != null) hosts.values.forEach { it.tracker.playback = position }
             if (android.os.SystemClock.uptimeMillis() >= awaitingTransportUntil && position?.playing != true) requestedPlaying = false
             if (position?.playing == true || android.os.SystemClock.uptimeMillis() < awaitingTransportUntil) {
@@ -159,7 +195,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         projectStore.onError = { showError(it) }
         session = EditorSession(Songs.demo())
         session.onSongChanged = { song ->
-            audio?.update(song)
+            followLoop(song)
+            audio?.update(heard(song))
             if (documentReady) {
                 projectStore.autosave(song)
                 statusMessage = WORKING
@@ -221,7 +258,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             recoveryWarning = warning
             documentReady = true
             try {
-                audio = HugeAudio(applicationContext).also { it.update(session.song) }
+                audio = HugeAudio(applicationContext).also { it.update(heard(session.song)) }
                 initialized = true
                 statusMessage = if (recovered != null) "Recovered working project"
                 else "Demo loaded. For a blank song choose Menu, Files, New blank song"
@@ -417,6 +454,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             Control.TOOLBAR -> toggleToolbar()
             Control.PLAY_PATTERN -> toggleTransport(fromCursor = false)
             Control.PLAY_CURSOR -> toggleTransport(fromCursor = true)
+            Control.LOOP_PATTERN -> toggleLoop()
             Control.FOCUS -> switchFocus()
             else -> control.shows?.let(::showView) ?: control.action?.let(::editAction)
         }
@@ -470,18 +508,68 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     /** Stopping is unconditional; starting plays the focused editor's order from row 0 or its cursor. */
     private fun toggleTransport(fromCursor: Boolean) {
         if (requestedPlaying) return stopPlayback()
-        // Two pattern views may sit at different places; the focused one is where the user is working.
+        val (order, row) = activePlace()
+        startPlayback(order, if (fromCursor) row else 0)
+    }
+
+    /** Two pattern views may sit at different places; the focused one is where the user is working. */
+    private fun activePlace(): Pair<Int, Int> {
         val state = states[focus]
         val selection = session.selection
-        val (order, row) = if (state.kind == ViewKind.PATTERN) state.order to state.row else selection.order to selection.row
-        startPlayback(order, if (fromCursor) row else 0)
+        return if (state.kind == ViewKind.PATTERN) state.order to state.row else selection.order to selection.row
+    }
+
+    /**
+     * Pattern loop on/off for the active order. Turning it on while that order plays keeps the current row; while
+     * another order plays, the loop starts at row 00. Turning it off keeps playing on through the song from the
+     * same row. Stopped, it only arms the loop for the next Play.
+     */
+    private fun toggleLoop() {
+        val engine = audio ?: return showError("Audio is not ready yet")
+        val playing = requestedPlaying
+        val heardNow = heardPosition()
+        loopForParked = false
+        if (loopOrder >= 0) {
+            val was = loopOrder
+            loopOrder = -1
+            engine.update(session.song)
+            when {
+                // A parked order is not part of the song, so there is nowhere to play on to.
+                playing && was in session.song.parkedOrders -> { stopPlayback(); session.note("Pattern loop off; order ${EditorSession.hex2(was)} is parked, so playback stopped") }
+                playing -> { session.note("Pattern loop off"); startPlayback(was, heardNow?.row ?: 0) }
+                else -> session.note("Pattern loop off")
+            }
+        } else {
+            val (order, _) = activePlace()
+            loopAt(order)
+            engine.update(heard(session.song))
+            session.note("Looping pattern ${EditorSession.hex2(session.song.orders[loopOrder])} (order ${EditorSession.hex2(loopOrder)})")
+            if (playing) startPlayback(loopOrder, if (heardNow?.order == loopOrder) heardNow.row else 0)
+        }
+        heardPosition()?.let { p -> hosts.values.forEach { it.tracker.playback = p } }
+        refresh()
     }
 
     private fun startPlayback(order: Int, row: Int) {
         val engine = audio ?: return showError("Audio is not ready yet")
         if (!requestAudioFocus()) return
         requestedPlaying = true
-        engine.play(order.coerceIn(0, session.song.orders.size - 1), maxOf(0, row))
+        val target = order.coerceIn(0, session.song.orders.size - 1)
+        if (loopForParked && target !in session.song.parkedOrders) {
+            loopForParked = false
+            loopOrder = -1
+            engine.update(session.song)
+        }
+        if (loopOrder < 0 && target in session.song.parkedOrders) {
+            // The song skips a parked order; playing it on its own means looping it until playback stops.
+            loopAt(target)
+            loopForParked = true
+            engine.update(heard(session.song))
+            session.note("Order ${EditorSession.hex2(target)} is parked: looping it on its own until you stop")
+        }
+        // While looping, Play loops whichever order it starts: the engine's song is that order alone.
+        if (loopOrder >= 0 && loopOrder != target) { loopAt(target); engine.update(heard(session.song)) }
+        engine.play(if (loopOrder >= 0) 0 else HugeRules.playedOrders(session.song).indexOf(target), maxOf(0, row))
         awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + 1500
         main.removeCallbacks(tick)
         main.post(tick)
@@ -491,6 +579,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private fun stopPlayback() {
         requestedPlaying = false
         audio?.stop()
+        if (loopForParked) {
+            loopForParked = false
+            loopOrder = -1
+            audio?.update(session.song)
+        }
         awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + 100
         main.removeCallbacks(tick)
         main.post(tick)

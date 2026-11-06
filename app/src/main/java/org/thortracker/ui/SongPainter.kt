@@ -36,7 +36,11 @@ internal class SongPainter(v: TrackerView) : Painter(v) {
             "Title" to s.title,
             "Artist" to s.artist,
             "Ticks per row" to "${s.ticksPerRow}   about ${bpm(s.ticksPerRow)} BPM at 4 rows per beat",
-            "Loop to" to "Order ${hex2(s.loopOrder)}",
+            "Loop to" to "Order ${hex2(s.loopOrder)}" + if (s.loopOrder in s.parkedOrders) {
+                val played = org.thortracker.model.HugeRules.playedOrders(s)
+                "   parked, so the song loops to order ${hex2(played.firstOrNull { it > s.loopOrder } ?: played.firstOrNull() ?: 0)}"
+            } else "",
+            "New patterns" to "${s.newPatternScale.label}   scale guide for New (Clone and Repeat keep their own)",
         )
         var y = top + ink.unit * 0.3f
         settingsTop = y
@@ -91,19 +95,23 @@ internal class SongPainter(v: TrackerView) : Painter(v) {
                 ink.rect(c, area.left, ry, area.right, ry + rowH, Palette.alpha(Palette.PLAYHEAD, 46))
                 ink.rect(c, area.left, ry, area.left + ink.dp(4f), ry + rowH, Palette.PLAYHEAD)
             }
+            val parked = o in s.parkedOrders
             ink.mono(c, hex2(o), area.left + pad, ry, rowH, if (selected) Palette.TEXT else Palette.FAINT)
             val px = area.left + pad + cw * 3.5f
             val patText = hex2(pat)
-            ink.mono(c, patText, px, ry, rowH, Palette.TEXT, true)
+            ink.mono(c, patText, px, ry, rowH, if (parked) Palette.FAINT else Palette.TEXT, true)
             if (selected && st.songField == 0) {
                 ink.outline(c, RectF(px - cw * 0.3f, ry + 2, px + cw * 2.3f, ry + rowH - 2), cursorColor(), ink.dp(2f), ink.dp(3f))
             }
             val loopMark = if (o == s.loopOrder) "↻ " else ""
             val rows = s.patterns[pat].length
-            val name = s.patterns[pat].name + if (rows < Songs.ROWS) " · $rows" else ""
-            ink.label(c, ink.fit(loopMark + name, ink.unit * 9.5f), px + cw * 3f, ry, rowH, if (o == s.loopOrder) Palette.PLAYHEAD else Palette.DIM)
+            val name = (if (parked) "Parked · " else "") + s.patterns[pat].name + if (rows < Songs.ROWS) " · $rows" else ""
+            ink.label(c, ink.fit(loopMark + name, ink.unit * 9.5f), px + cw * 3f, ry, rowH,
+                when { parked -> Palette.FAINT; o == s.loopOrder -> Palette.PLAYHEAD; else -> Palette.DIM })
             if (stripRight - stripLeft > ink.unit * 4) {
                 v.strip.draw(c, stripLeft, ry + ink.dp(3f), stripRight, ry + rowH - ink.dp(3f), s.patterns[pat], if (o == playOrder) v.playback.row else -1)
+                // Parked orders keep their preview, veiled so the played arrangement reads at a glance.
+                if (parked) ink.rect(c, stripLeft, ry + ink.dp(2f), stripRight, ry + rowH - ink.dp(2f), Palette.alpha(Palette.LANE, 170))
             }
         }
         if (s.orders.size > visible) {
@@ -134,7 +142,7 @@ internal class SongPainter(v: TrackerView) : Painter(v) {
         ink.label(c, "Order ${hex2(cur)}", x, r.top, r.height(), Palette.DIM, true, size)
         x += ink.labelWidth("Order 00", size, true) + ink.unit * 0.8f
         for (f in 1 until ViewController.ORDER_FIELDS.size) {
-            val text = ViewController.ORDER_FIELDS[f]
+            val text = if (f == ViewController.PARK_FIELD && cur in song.parkedOrders) "Unpark" else ViewController.ORDER_FIELDS[f]
             val w = ink.labelWidth(text, size) + ink.unit * 1.1f
             if (x + w > r.right) break
             val chip = RectF(x, r.top + r.height() * 0.17f, x + w, r.bottom - r.height() * 0.17f)

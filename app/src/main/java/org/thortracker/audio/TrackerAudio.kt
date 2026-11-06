@@ -2,8 +2,11 @@ package org.thortracker.audio
 
 import org.thortracker.model.Song
 
-/** Row the listener hears now (output latency compensated while playing). */
-data class PlaybackPosition(val playing: Boolean = false, val order: Int = 0, val row: Int = 0)
+/**
+ * Row the listener hears now (output latency compensated while playing). [looping] marks the editor's pattern loop:
+ * [order] is then the looped order, which is the only one heard.
+ */
+data class PlaybackPosition(val playing: Boolean = false, val order: Int = 0, val row: Int = 0, val looping: Boolean = false)
 
 /**
  * Backend playback boundary. Every method returns immediately and never throws for song or

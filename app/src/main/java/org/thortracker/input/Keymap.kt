@@ -71,6 +71,7 @@ enum class Control(
     REDO(ControlGroup.HISTORY, "Redo", "Redo", Action.REDO, overPopups = true),
     PLAY_PATTERN(ControlGroup.TRANSPORT, "Play pattern from row 00 / stop", "Play", null),
     PLAY_CURSOR(ControlGroup.TRANSPORT, "Play from cursor / stop", "Play from cursor", null),
+    LOOP_PATTERN(ControlGroup.TRANSPORT, "Loop the current pattern on / off", "Loop pattern", null, since = 4),
     SWAP(ControlGroup.VIEWS, "Swap the two displays' views", "Swap views", null, overPopups = true),
     FOCUS(ControlGroup.VIEWS, "Control the other display", "Other display", null),
     TOOLBAR(ControlGroup.VIEWS, "Show / leave the toolbar", "Toolbar", null),
@@ -199,7 +200,7 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
 
     companion object {
         const val FORMAT = "thor-tracker-keymap"
-        const val VERSION = 3
+        const val VERSION = 4
         const val UNBOUND = "—"
 
         /** Buttons that do nothing alone and start chords. */
@@ -250,6 +251,7 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             Control.REDO to Binding(KeyEvent.KEYCODE_BUTTON_B, L2),
             Control.PLAY_PATTERN to Binding(KeyEvent.KEYCODE_BUTTON_START),
             Control.PLAY_CURSOR to Binding(KeyEvent.KEYCODE_BUTTON_START, L2),
+            Control.LOOP_PATTERN to Binding(KeyEvent.KEYCODE_BUTTON_Y, L2),
             Control.SWAP to Binding(KeyEvent.KEYCODE_BUTTON_X, L2),
             Control.FOCUS to Binding(KeyEvent.KEYCODE_BUTTON_THUMBR),
             Control.TOOLBAR to Binding(KeyEvent.KEYCODE_BUTTON_START, SEL),

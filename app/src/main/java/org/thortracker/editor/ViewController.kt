@@ -828,6 +828,15 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             1 -> session.setArtist(SoundParams.editName(s.artist, state.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
             2 -> session.setTicksPerRow(s.ticksPerRow + dx + 4 * dy)
             3 -> session.setLoopOrder(s.loopOrder + dx + 8 * dy)
+            ViewState.SONG_NEW_SCALE_ITEM -> {
+                // A+←→ steps the scale kind, A+↑↓ the root, like the pattern panel.
+                val ns = s.newPatternScale
+                val next = ns.copy(
+                    root = Math.floorMod(ns.root + dy, 12),
+                    kind = ScaleKind.entries[Math.floorMod(ns.kind.ordinal + dx, ScaleKind.entries.size)],
+                )
+                if (session.setNewPatternScale(next)) session.note("New patterns start in ${next.label}")
+            }
             else -> if (state.songField == 0) {
                 session.setOrderPattern(songOrder, s.orders[songOrder] + dx + 8 * dy)
                 publishOrder()
@@ -840,13 +849,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (o < 0) return
         when (state.songField) {
             0 -> { publishOrder(); session.note("Order ${EditorSession.hex2(o)} selected") }
-            1 -> if (session.insertOrder(o + 1, song.orders[o])) { state.songItem++; publishOrder() }
-            2 -> if (session.newPatternAt(o + 1) >= 0) { state.songItem++; publishOrder() }
+            1 -> if (session.insertOrder(o + 1, song.orders[o], parked = o in song.parkedOrders)) { state.songItem++; publishOrder() }
+            2 -> if (session.newPatternAt(o + 1, parked = o in song.parkedOrders) >= 0) { state.songItem++; publishOrder() }
             3 -> if (session.clonePatternAt(o) >= 0) { state.songItem++; publishOrder() }
             4 -> { session.deleteOrder(o); normalise(); publishOrder() }
             5 -> if (session.moveOrder(o, o - 1)) { state.songItem--; publishOrder() }
             6 -> if (session.moveOrder(o, o + 1)) { state.songItem++; publishOrder() }
             7 -> session.setLoopOrder(o)
+            8 -> if (session.toggleParked(o)) {
+                session.note(if (o in song.parkedOrders) "Order ${EditorSession.hex2(o)} parked: kept here, skipped by song playback and export"
+                else "Order ${EditorSession.hex2(o)} plays again")
+            }
         }
     }
 
@@ -857,6 +870,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             1 -> session.setArtist(deleteChar(s.artist, state.textPos))
             2 -> session.setTicksPerRow(6)
             3 -> session.setLoopOrder(0)
+            ViewState.SONG_NEW_SCALE_ITEM -> if (session.setNewPatternScale(Scale.CHROMATIC)) session.note("New patterns start chromatic")
             else -> { session.deleteOrder(songOrder); normalise(); publishOrder() }
         }
     }
@@ -873,7 +887,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             Action.COPY -> if (o >= 0) session.copyPattern(song.orders[o]) else return false
             Action.PASTE -> if (o >= 0) session.pastePattern(song.orders[o]) else return false
             Action.DUPLICATE -> if (o >= 0 && session.clonePatternAt(o) >= 0) { state.songItem++; publishOrder() }
-            Action.INSERT_ROW -> if (o >= 0 && session.insertOrder(o + 1, song.orders[o])) { state.songItem++; publishOrder() }
+            Action.INSERT_ROW -> if (o >= 0 && session.insertOrder(o + 1, song.orders[o], parked = o in song.parkedOrders)) { state.songItem++; publishOrder() }
             Action.DELETE_ROW -> if (o >= 0) { session.deleteOrder(o); normalise(); publishOrder() }
             else -> return false
         }
@@ -1748,6 +1762,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             item <= 1 -> { h += Hint(lr(), "Letter position"); h += Hint(editLr(), "Change letter"); h += Hint(editUd(), "Case/digits"); h += Hint(k(Action.CLEAR), "Delete letter") }
             item == 2 -> { h += Hint(editLr(), "Ticks per row ±1 (lower is faster)"); h += Hint(k(Action.CLEAR), "Reset to 6") }
             item == 3 -> { h += Hint(editLr(), "Loop target order"); h += Hint(k(Action.CLEAR), "Loop to start") }
+            item == ViewState.SONG_NEW_SCALE_ITEM -> {
+                h += Hint(editLr(), "Scale"); h += Hint(editUd(), "Root"); h += Hint(k(Action.CLEAR), "Chromatic")
+            }
             else -> {
                 h += Hint(k(Action.EDIT), ORDER_FIELD_HINTS[state.songField])
                 if (state.songField == 0) h += Hint(editLr(), "Pattern ±1")
@@ -1820,7 +1837,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         /** Identifies one pattern cell for view-local markers: pattern < 256, channel < 4, row < 64. */
         fun cellKey(pattern: Int, channel: Int, row: Int): Int = (pattern shl 8) or (channel shl 6) or row
         val PATTERN_CONTEXT = arrayOf(ViewKind.KEYBOARD, ViewKind.INSTRUMENT, ViewKind.HELP, ViewKind.HELP)
-        val ORDER_FIELDS = listOf("Pattern", "Repeat", "New", "Clone", "Delete", "Earlier", "Later", "Loop here")
+        val ORDER_FIELDS = listOf("Pattern", "Repeat", "New", "Clone", "Delete", "Earlier", "Later", "Loop here", "Park")
+        /** Song view order command that parks/unparks the order. */
+        const val PARK_FIELD = 8
         val ORDER_FIELD_HINTS = listOf(
             "Select this order for editing",
             "Repeat this pattern in a new order below",
@@ -1830,6 +1849,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             "Move this order earlier",
             "Move this order later",
             "Loop the song back to this order",
+            "Park / unpark: keep this order here but skip it in song playback and export",
         )
         val WAVE_TOOLS = listOf("Sine", "Triangle", "Saw", "Square", "Invert", "Shift left", "Shift right", "Smooth", "Use in sound")
         val STRIP_FIELDS = listOf("Mode", "Channel", "Sound", "Octave", "Step")

@@ -91,8 +91,10 @@ data class ViewState(
     val bankKind: InstrumentKind get() = InstrumentKind.entries[bank.coerceIn(0, InstrumentKind.entries.size - 1)]
 
     companion object {
-        /** Song view rows before the order list: title, artist, ticks per row, loop order. */
-        const val SONG_HEADER_ITEMS = 4
+        /** Song view rows before the order list: title, artist, ticks per row, loop order, scale for new patterns. */
+        const val SONG_HEADER_ITEMS = 5
+        /** Song view row of the scale new patterns start with. */
+        const val SONG_NEW_SCALE_ITEM = 4
         const val MIN_OCTAVE = 3
         const val MAX_OCTAVE = 8
         /** The 25-key keyboard starts at most at C-7, so only its top key (C-9) is beyond the note range. */

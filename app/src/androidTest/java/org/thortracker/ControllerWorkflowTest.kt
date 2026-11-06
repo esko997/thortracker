@@ -127,6 +127,117 @@ class ControllerWorkflowTest {
         assertEquals("View chords must not edit or release a held B/A", before, tracker.session.song)
     }
 
+    /** L2+Y loops the focused pattern view's order: playback stays on it past its end, and L2+Y again releases it. */
+    @Test fun loopPatternChordKeepsPlaybackOnThatOrder() {
+        instrumentation.runOnMainSync {
+            assertTrue("demo needs two orders", tracker.session.song.orders.size >= 2)
+            tracker.session.select(Selection(order = 1, row = 0, channel = 0))
+            tracker.state.order = 1
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_Y)
+        instrumentation.runOnMainSync { assertTrue(tracker.playback.looping); assertEquals(1, tracker.playback.order) }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        val song = tracker.session.song
+        val p = song.patterns[song.orders[1]]
+        // Long enough to pass the pattern's end at least once.
+        val loopMs = p.length * song.ticksPerRow * 1000L / 60 + 1500
+        val until = SystemClock.uptimeMillis() + loopMs
+        var played = false
+        var wrapped = false
+        var last = -1
+        while (SystemClock.uptimeMillis() < until) {
+            instrumentation.runOnMainSync {
+                val pos = tracker.playback
+                if (pos.playing) {
+                    played = true
+                    assertEquals("loop left its order at row ${pos.row}", 1, pos.order)
+                    if (pos.row < last) wrapped = true
+                    last = pos.row
+                }
+            }
+            SystemClock.sleep(20)
+        }
+        assertTrue("playback started", played)
+        assertTrue("the pattern replayed", wrapped)
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_Y)
+        instrumentation.runOnMainSync { assertFalse(tracker.playback.looping) }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+    }
+
+    /** Inserting an order before the looped one (and undoing it) keeps looping the same pattern. */
+    @Test fun loopFollowsItsPatternWhenOrdersShift() {
+        var pattern = -1
+        instrumentation.runOnMainSync {
+            assertTrue("demo needs three orders", tracker.session.song.orders.size >= 3)
+            tracker.session.select(Selection(order = 2, row = 0, channel = 0))
+            tracker.state.order = 2
+            pattern = tracker.session.song.orders[2]
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_Y)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        SystemClock.sleep(600)
+        instrumentation.runOnMainSync {
+            assertTrue(tracker.playback.playing && tracker.playback.looping)
+            assertEquals(2, tracker.playback.order)
+            assertTrue(tracker.session.insertOrder(0, tracker.session.song.orders[0]))
+            assertNotEquals("the insert must change what order 02 plays", pattern, tracker.session.song.orders[2])
+        }
+        SystemClock.sleep(300)
+        instrumentation.runOnMainSync {
+            assertEquals("loop stayed on pattern $pattern", 3, tracker.playback.order)
+            assertEquals(pattern, tracker.session.song.orders[3])
+            tracker.session.undo()
+        }
+        SystemClock.sleep(300)
+        instrumentation.runOnMainSync { assertTrue(tracker.playback.looping); assertEquals(2, tracker.playback.order) }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+    }
+
+    /** Song playback never lands on a parked order; Start on the parked order loops it alone until stopped. */
+    @Test fun parkedOrdersAreSkippedAndPlayAloneOnRequest() {
+        instrumentation.runOnMainSync {
+            val s = tracker.session
+            assertTrue("demo needs three orders", s.song.orders.size >= 3)
+            s.setTicksPerRow(1)                                    // about a second per 64-row pattern
+            assertTrue(s.toggleParked(1))
+            s.select(Selection(order = 0, row = 0, channel = 0))
+            tracker.state.order = 0
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        val seen = HashSet<Int>()
+        val until = SystemClock.uptimeMillis() + 3500
+        while (SystemClock.uptimeMillis() < until) {
+            instrumentation.runOnMainSync { tracker.playback.let { if (it.playing) seen += it.order } }
+            SystemClock.sleep(20)
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        assertTrue("played past the parked order: $seen", 2 in seen)
+        assertFalse("the parked order was played: $seen", 1 in seen)
+        // Start on the parked order: it loops on its own, and stopping ends that loop.
+        instrumentation.runOnMainSync { tracker.session.select(Selection(order = 1, row = 0, channel = 0)); tracker.state.order = 1 }
+        SystemClock.sleep(300)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        var wrapped = false
+        var last = -1
+        val loopUntil = SystemClock.uptimeMillis() + 2500
+        while (SystemClock.uptimeMillis() < loopUntil) {
+            instrumentation.runOnMainSync {
+                val pos = tracker.playback
+                if (pos.playing) {
+                    assertTrue(pos.looping)
+                    assertEquals("left the parked order at row ${pos.row}", 1, pos.order)
+                    if (pos.row < last) wrapped = true
+                    last = pos.row
+                }
+            }
+            SystemClock.sleep(20)
+        }
+        assertTrue("the parked pattern replayed", wrapped)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        SystemClock.sleep(300)
+        instrumentation.runOnMainSync { assertFalse("stopping ended the parked preview loop", tracker.playback.looping) }
+    }
+
     @Test fun releasingTheTriggerBeforeAStillConsumesTheChord() {
         val before = tracker.session.song
         down(KeyEvent.KEYCODE_BUTTON_A)

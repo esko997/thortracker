@@ -15,7 +15,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
 
 /**
  * Thor Tracker's own project format: UTF-8 JSON
- * `{"format":"thor-tracker-project","version":5,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
+ * `{"format":"thor-tracker-project","version":7,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
  * export-level problems ([SongValidator.errors]) are allowed so work in progress round-trips.
@@ -24,12 +24,14 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * version 1 files have no scales and read as chromatic. 3 adds each pattern's played `length` (1-64);
  * older files read as 64 rows. 4 adds scale kinds beyond the original five (modes, harmonic/melodic minor,
  * blues, whole tone and others). 5 adds the song's optional microtuning `tuning`
- * (`{"name":...,"cents":[...],"root":0..71,"tolerance":5|10|20}` or null); older files have none. Every save
- * writes the current version. Backend data is unchanged, so `backendVersion` stays 1.
+ * (`{"name":...,"cents":[...],"root":0..71,"tolerance":5|10|20}` or null); older files have none. 6 adds the
+ * song's editor-only `newPatternScale` (the scale new patterns start with); older files read as chromatic.
+ * 7 adds `parkedOrders` (ascending order indices skipped by playback and export); older files park none.
+ * Every save writes the current version. Backend data is unchanged, so `backendVersion` stays 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 5
+    const val VERSION = 7
     const val BACKEND_VERSION = 1
 
     private val json = Json {
@@ -90,6 +92,13 @@ object ProjectCodec {
         if (version < TUNING_VERSION && hasTuning(root)) {
             throw ProjectFormatException("Project version $version cannot contain a song tuning (added in version $TUNING_VERSION)")
         }
+        if (version < NEW_PATTERN_SCALE_VERSION && hasNewPatternScale(root)) {
+            throw ProjectFormatException("Project version $version cannot contain a new-pattern scale (added in version $NEW_PATTERN_SCALE_VERSION)")
+        }
+        val parked = (root["song"] as? JsonObject)?.get("parkedOrders")
+        if (version < PARKED_VERSION && parked is JsonArray && parked.isNotEmpty()) {
+            throw ProjectFormatException("Project version $version cannot contain parked orders (added in version $PARKED_VERSION)")
+        }
         val envelope = try {
             json.decodeFromJsonElement(Envelope.serializer(), root)
         } catch (e: SerializationException) {
@@ -116,6 +125,12 @@ object ProjectCodec {
     /** First format version with a song tuning. */
     private const val TUNING_VERSION = 5
 
+    /** First format version with the song's scale for new patterns. */
+    private const val NEW_PATTERN_SCALE_VERSION = 6
+
+    /** First format version with parked orders. */
+    private const val PARKED_VERSION = 7
+
     private val V2_SCALE_NAMES = ScaleKind.V2.map { ScaleKind.serializer().descriptor.getElementName(it.ordinal) }.toSet()
 
     private fun usesExtendedScale(root: JsonObject): Boolean =
@@ -129,4 +144,10 @@ object ProjectCodec {
 
     private fun hasTuning(root: JsonObject): Boolean =
         (root["song"] as? JsonObject)?.get("tuning").let { it != null && it !is JsonNull }
+
+    /** True for a guiding (non-chromatic) new-pattern scale; a chromatic one is what older versions mean anyway. */
+    private fun hasNewPatternScale(root: JsonObject): Boolean {
+        val kind = ((root["song"] as? JsonObject)?.get("newPatternScale") as? JsonObject)?.get("kind") as? JsonPrimitive
+        return kind != null && kind.content != "chromatic"
+    }
 }

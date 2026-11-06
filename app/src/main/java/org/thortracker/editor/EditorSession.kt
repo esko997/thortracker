@@ -531,19 +531,41 @@ class EditorSession(initial: Song) {
         s.copy(orders = s.orders.replaced(order, pattern.coerceIn(0, s.patterns.size - 1)))
     }
 
-    /** Inserts an order referencing [pattern] at [at]. Returns false if the order list is full. */
-    fun insertOrder(at: Int, pattern: Int): Boolean {
+    /** Inserts an order referencing [pattern] at [at], [parked] or playing. Returns false if the order list is full. */
+    fun insertOrder(at: Int, pattern: Int, parked: Boolean = false): Boolean {
         if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return false }
         return apply("Insert order") { s ->
             val idx = at.coerceIn(0, s.orders.size)
             s.withOrders(s.orders.inserted(idx, pattern.coerceIn(0, s.patterns.size - 1))) { if (it >= idx) it + 1 else it }
+                .parking(idx, parked)
         }
     }
 
+    private fun Song.parking(order: Int, parked: Boolean): Song =
+        if (parked) copy(parkedOrders = (parkedOrders + order).distinct().sorted()) else this
+
     fun deleteOrder(at: Int): Boolean {
         if (song.orders.size <= 1) { note("A song needs at least one order"); return false }
+        if (song.parkedOrders.isNotEmpty() && song.parkedOrders.size == song.orders.size - 1 && at !in song.parkedOrders) {
+            note("This is the only order that plays; unpark another before deleting it"); return false
+        }
         // A loop or jump aimed at the deleted order lands on the order that takes its place.
-        return apply("Delete order") { s -> s.withOrders(s.orders.removed(at)) { if (it > at) it - 1 else it } }
+        return apply("Delete order") { s -> s.withOrders(s.orders.removed(at), dropped = at) { if (it > at) it - 1 else it } }
+    }
+
+    /**
+     * Parks or unparks [order]: a parked order keeps its place, pattern and everything in it, but song playback
+     * and export skip it. The last playing order cannot be parked.
+     */
+    fun toggleParked(order: Int): Boolean {
+        if (order !in song.orders.indices) return false
+        val parked = order in song.parkedOrders
+        if (!parked && song.parkedOrders.size == song.orders.size - 1) {
+            note("At least one order must play; unpark another first"); return false
+        }
+        return apply(if (parked) "Unpark order" else "Park order") { s ->
+            s.copy(parkedOrders = if (parked) s.parkedOrders - order else (s.parkedOrders + order).sorted())
+        }
     }
 
     /** Moves an order; the loop target and stored jumps stay on the same order entry wherever it ends up. */
@@ -563,20 +585,24 @@ class EditorSession(initial: Song) {
         }
     }
 
-    /** Appends a blank pattern and inserts an order for it at [at]. Returns the new pattern index or -1. */
-    fun newPatternAt(at: Int): Int {
+    /**
+     * Appends a blank pattern, guided by the song's [org.thortracker.model.Song.newPatternScale], and inserts
+     * an order for it at [at], [parked] or playing. Returns the new pattern index or -1.
+     */
+    fun newPatternAt(at: Int, parked: Boolean = false): Int {
         if (song.patterns.size >= MAX_PATTERNS) { note("The song already has $MAX_PATTERNS patterns"); return -1 }
         if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return -1 }
         val index = song.patterns.size
         apply("New pattern") { s ->
-            val p = Songs.blankPattern(s, "Pattern ${index.toString(16).uppercase().padStart(2, '0')}")
+            val p = Songs.blankPattern(s, "Pattern ${index.toString(16).uppercase().padStart(2, '0')}").copy(scale = s.newPatternScale)
             val idx = at.coerceIn(0, s.orders.size)
             s.withOrders(s.orders.inserted(idx, index)) { if (it >= idx) it + 1 else it }.let { it.copy(patterns = it.patterns + p) }
+                .parking(idx, parked)
         }
         return index
     }
 
-    /** Duplicates the pattern used by [order] into a new pattern placed in a new order right after it. */
+    /** Duplicates the pattern used by [order] into a new pattern in a new order right after it, parked if [order] is. */
     fun clonePatternAt(order: Int): Int {
         if (song.patterns.size >= MAX_PATTERNS) { note("The song already has $MAX_PATTERNS patterns"); return -1 }
         if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return -1 }
@@ -587,6 +613,7 @@ class EditorSession(initial: Song) {
             // Copy after the jumps moved, so the clone's own Bxx point at the same orders as the original's.
             s.withOrders(s.orders.inserted(idx, index)) { if (it >= idx) it + 1 else it }
                 .let { it.copy(patterns = it.patterns + it.patterns[source].let { p -> p.copy(name = (p.name + " copy").take(MAX_NAME)) }) }
+                .parking(idx, order in s.parkedOrders)
         }
         return index
     }
@@ -612,12 +639,12 @@ class EditorSession(initial: Song) {
         apply("Set pattern length") { s -> s.withPattern(pattern, s.patterns[pattern].copy(length = length.coerceIn(1, Songs.ROWS))) }
 
     /**
-     * Replaces the order list with [orders], moving everything that names an order with it: the loop target and
-     * every stored `Bxx` jump (B01 = order 0; B00, "next order", is relative and stays). [newIndex] maps an old
-     * order index to its new one; results are clamped to the new list. Patterns without such jumps keep their
-     * identity.
+     * Replaces the order list with [orders], moving everything that names an order with it: the loop target, the
+     * parked orders and every stored `Bxx` jump (B01 = order 0; B00, "next order", is relative and stays).
+     * [newIndex] maps an old order index to its new one; results are clamped to the new list. A [dropped] (deleted)
+     * order's parking goes with it. Patterns without such jumps keep their identity.
      */
-    private fun Song.withOrders(orders: List<Int>, newIndex: (Int) -> Int): Song {
+    private fun Song.withOrders(orders: List<Int>, dropped: Int = -1, newIndex: (Int) -> Int): Song {
         val last = orders.size - 1
         val old = this.orders.size
         fun target(order: Int) = newIndex(order).coerceIn(0, last)
@@ -635,12 +662,19 @@ class EditorSession(initial: Song) {
             }
             if (changed) p.copy(tracks = tracks) else p
         }
-        return copy(orders = orders, loopOrder = target(loopOrder), patterns = patterns)
+        val parked = parkedOrders.filter { it != dropped }.map(::target).distinct().sorted()
+        return copy(orders = orders, loopOrder = target(loopOrder), patterns = patterns, parkedOrders = parked)
     }
 
     fun setLoopOrder(order: Int) = apply("Set loop") { s -> s.copy(loopOrder = order.coerceIn(0, s.orders.size - 1)) }
 
     fun setTicksPerRow(ticks: Int) = apply("Set tempo") { s -> s.copy(ticksPerRow = ticks.coerceIn(1, MAX_TICKS)) }
+
+    /** Sets the editor-only scale guide new blank patterns start with. Existing patterns are unchanged. */
+    fun setNewPatternScale(scale: Scale): Boolean {
+        if (scale.root !in 0..11) return false
+        return apply("Set new-pattern scale") { s -> s.copy(newPatternScale = scale) }
+    }
 
     // ---- instruments ------------------------------------------------------------------------------
 

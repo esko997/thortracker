@@ -156,6 +156,7 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
             Line.Text("Chords can mean different things per view; holding a modifier shows only what it does here."),
             Line.Row(k.label(Control.PLAY_PATTERN), "Play from the start of the current pattern, or stop"),
             Line.Row(k.label(Control.PLAY_CURSOR), "Play from the cursor row, or stop"),
+            Line.Row(k.label(Control.LOOP_PATTERN), "Loop the current pattern on / off; while on, Play loops whichever pattern it starts"),
             Line.Row(k.label(Control.TOOLBAR), "Show the toolbar and move the controller to it"),
             Line.Row(k.label(Control.FOCUS), "Move controller focus to the other display"),
             Line.Row("Menu", "Controls: rebind any button or chord; hints and this page follow"),
@@ -178,7 +179,9 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
             Line.Text("Rails beside a channel show how long each note keeps sounding."),
             Line.Heading("Song"),
             Line.Row(editLr, "Change the pattern an order plays, tempo, loop or a letter"),
-            Line.Row(lr, "Order commands: repeat, new, clone, delete, move, loop here"),
+            Line.Row(lr, "Order commands: repeat, new, clone, delete, move, loop here, park"),
+            Line.Text("A parked order keeps its place and pattern but the song skips it when playing and exporting; " +
+                "playing a parked order loops it on its own. Repeat, New and Clone next to a parked order are parked too."),
             Line.Row(listen, "Play from this order, or stop if playing"),
             Line.Heading("Sounds"),
             Line.Row(lr, "Choose the sound slot; $channels change bank"),

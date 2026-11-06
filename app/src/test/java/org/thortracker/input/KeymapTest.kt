@@ -107,6 +107,25 @@ class KeymapTest {
         assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_THUMBL), read.binding(Control.SWAP))
     }
 
+    @Test fun loopPatternArrivesOnL2YUnlessAnOlderKeymapAlreadyUsesIt() {
+        assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_BUTTON_L2), Keymap.DEFAULT.binding(Control.LOOP_PATTERN))
+        fun versionThree(bindings: Map<String, String>): String {
+            val root = kotlinx.serialization.json.Json.parseToJsonElement(Keymap.DEFAULT.toJson()) as kotlinx.serialization.json.JsonObject
+            val all = (root["bindings"] as kotlinx.serialization.json.JsonObject).toMutableMap()
+            all.remove(Control.LOOP_PATTERN.name)
+            bindings.forEach { (k, v) -> all[k] = kotlinx.serialization.json.JsonPrimitive(v) }
+            return kotlinx.serialization.json.JsonObject(root.toMutableMap().also {
+                it["version"] = kotlinx.serialization.json.JsonPrimitive(3)
+                it["bindings"] = kotlinx.serialization.json.JsonObject(all)
+            }).toString()
+        }
+        val customised = Keymap.fromJson(versionThree(mapOf("SWAP" to "L3+X")))
+        assertEquals(Keymap.DEFAULT.binding(Control.LOOP_PATTERN), customised.binding(Control.LOOP_PATTERN))
+        val takesL2Y = Keymap.fromJson(versionThree(mapOf("SWAP" to "L2+Y")))
+        assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_BUTTON_L2), takesL2Y.binding(Control.SWAP))
+        assertNull(takesL2Y.binding(Control.LOOP_PATTERN))
+    }
+
     @Test fun invalidKeymapFilesAreRejectedWithTheReason() {
         fun file(bindings: String) = """{"format":"thor-tracker-keymap","version":1,"bindings":{$bindings}}"""
         val cases = mapOf(

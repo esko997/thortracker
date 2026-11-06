@@ -49,6 +49,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 - 0.6.0: 19 scale guides (modes, minors, blues, whole tone, exotic and Japanese scales), project format 4.
 - 0.7.0 microtuning: one Scala tuning per song, realised with stock hUGEDriver as nearest note + `40y` (+0..15 period units from tick 1, held across effect-less rows — verified natively). Entry restricted to degrees within a per-song accuracy limit (5¢ default, measured on the driver's 12-note grid); explicit Fit command; project format 5. Exact per-song tunings would need a retuned driver note table shipped with the game (not done).
   - Decision (user, 2026-11-05): the `40y` bends stay written in the pattern cells, so the pattern shows exactly what will be rendered. Applying the tuning only at playback/export was considered and rejected; retuning a finished song is not a use case.
+- 0.8.1: Song view **New patterns** scale (editor-only guide that New starts patterns in; Clone/Repeat keep their source scale), project format 6.
+- 0.8.1: L2+Y pattern loop (keymap version 4): the engine plays that order alone, with its stored Bxx jumps aimed back at it; editor playback only.
+- 0.8.2: parked orders (Song view Park): kept in place, skipped by playback and export via one arrangement step (`HugeRules.arranged`) that renumbers loop/`Bxx`; playing a parked order loops it alone; project format 7.
 - Initial mapping proposal: D-pad navigates; hold A plus D-pad adjusts the current field; horizontal adjustments are fine and vertical adjustments coarse where appropriate (semitone/octave for notes); tapping A can insert the previous value; L/R changes channel; Start toggles playback.
 - The mapping is provisional and must be exercised on hardware. Choose nonconflicting bindings for focus, selection, copy/paste, clear, undo and redo.
 - Show contextual control hints on both displays.

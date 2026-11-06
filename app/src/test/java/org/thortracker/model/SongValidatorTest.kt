@@ -247,6 +247,30 @@ class SongValidatorTest {
         assertTrue(SongValidator.errors(played).single().contains("B0B would jump to order 10"))
     }
 
+    @Test fun aPatternLoopPlaysOnlyThatOrderAndKeepsItsJumpsInside() {
+        // Orders 0,1,2 play patterns 0,1,2; pattern 1 jumps to order 2 and the song loops to order 1.
+        var song = TestSongs.patterns(3).copy(orders = listOf(0, 1, 2), loopOrder = 1)
+        song = TestSongs.withCell(song, 1, 1, 15, Cell(Cell.EMPTY, 0, HugeRules.FX_POSITION_JUMP, 0x03))
+        song = TestSongs.withCell(song, 1, 2, 20, Cell(Cell.EMPTY, 0, HugeRules.FX_POSITION_JUMP, 0x00))
+        val loop = HugeRules.patternLoop(song, 1)
+        assertEquals(listOf(1), loop.orders)
+        assertEquals(0, loop.loopOrder)
+        assertEquals(0x01, loop.patterns[1].tracks[1][15].param)   // B03 now replays the loop
+        assertEquals(0x00, loop.patterns[1].tracks[2][20].param)   // B00 already means "next order" = the loop
+        assertEquals(song.patterns[0], loop.patterns[0])
+        assertEquals(emptyList<String>(), SongValidator.errors(loop))
+        org.thortracker.backend.HugeLowering.lower(loop)              // playable by the driver
+        assertEquals(song.patterns[1].tracks[1][15].param, 0x03)    // the document is untouched
+    }
+
+    @Test fun theNearestOrderPlayingAPatternPrefersTheCloserThenEarlierOne() {
+        val orders = listOf(0, 1, 2, 1, 2)
+        assertEquals(2, Songs.nearestOrderPlaying(orders, 2, 2))       // still where it was
+        assertEquals(3, Songs.nearestOrderPlaying(listOf(9) + orders, 2, 2)) // shifted by an insert before it
+        assertEquals(1, Songs.nearestOrderPlaying(orders, 1, 2))       // tie between 1 and 3: earlier wins
+        assertEquals(-1, Songs.nearestOrderPlaying(orders, 7, 2))      // no order plays it
+    }
+
     @Test
     fun shortPatternsNeedAnEndingSlotAndBreaksIntoPlayedRows() {
         var song = TestSongs.patterns(2).let { s -> s.copy(patterns = s.patterns.mapIndexed { i, p -> if (i == 1) p.copy(length = 16) else p }) }
