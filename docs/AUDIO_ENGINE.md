@@ -161,7 +161,7 @@ notes (one undo step); neither these previews nor their scheduling touch project
   invalid image rejection. It prints seek and per-tick costs and writes `host_demo.wav` and
   `host_trace.txt` (per-tick APU register writes) for comparison with a reference player
   (PyBoy/mGBA running the same driver).
-- `app/src/test/java/org/thortracker/audio/HugeImageLayoutTest.kt`: layout equals the lowered
+- `core/src/jvmTest/kotlin/org/thortracker/audio/HugeImageLayoutTest.kt`: layout equals the lowered
   bytes, sharing, capacity, minimal byte diffs.
 - Exercised (2026-11-05): host test **107 checks, 0 failures**, including lowering the
   tempo to one tick per row during an existing row without replaying that row. Host timings:

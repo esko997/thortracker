@@ -1,7 +1,7 @@
 # GB/hUGE backend: `.uge` export and preview data contract
 
-Code: `app/src/main/java/org/thortracker/model/` (document, rules, validation, project format) and
-`app/src/main/java/org/thortracker/backend/` (`HugeLowering`, `UgeExporter`, `HugeLimits`).
+Code: `core/src/commonMain/kotlin/org/thortracker/model/` (document, rules, validation, project format) and
+`core/src/commonMain/kotlin/org/thortracker/backend/` (`HugeLowering`, `UgeExporter`, `HugeLimits`).
 
 ## Targets and sources
 
@@ -22,7 +22,7 @@ Evidence gathered while writing the exporter:
   lists, `order_cnt`, `DN(...)` rows (including a cut as `DN(___,0,0xE00)`), and instrument bytes such as duty
   `{8,10,241,0,128}`, wave `{200,64,0,0,128}` and noise `{210,0,197,0,0}` came out as specified below. Those byte
   values are asserted in `HugeLoweringTest.instrumentBytesMatchUge2source`.
-- `src/test/resources/uge2source/song_thor_groove.c` is the pinned `uge2source` output for the demo `.uge`
+- `core/src/jvmTest/resources/uge2source/song_thor_groove.c` is the pinned `uge2source` output for the demo `.uge`
   written by `UgeExporter`. `Uge2sourceFixtureTest` requires the preview lowering to equal it (rows, order lists,
   `order_cnt`, tempo, instrument structs, waves). Regenerate it when the demo changes (command in the test).
 - hUGETracker's sample songs are not checked in: their authors' licences are not stated in the repository.
