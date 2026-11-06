@@ -180,7 +180,7 @@ class AppMenus(
 
     fun showControls() = popups.show(controlsSpec(), host.modalDisplay)
 
-    /** Waits for one button or one modifier+button chord for [control]; Back or Escape leaves it unchanged. */
+    /** Waits for one button or one modifier+button chord for [control]; Back, Escape or Menu leaves it unchanged. */
     fun captureBinding(control: Control) {
         val held = LinkedHashSet<Int>()
         var finished = false
@@ -194,7 +194,7 @@ class AppMenus(
         popups.show(PopupSpec(control.label,
             message = "Press the new button now. Current: ${keymap.label(control)}." +
                 (if (control.hold) " It is held with the D-pad, so it takes a single button."
-                else " For a chord, hold Select, L2, R2 or L3, then press the button.") + " Back cancels.",
+                else " For a chord, hold Select, L2, R2 or L3, then press the button.") + " Back or Menu cancels.",
             items = listOfNotNull(
                 default?.let { PopupItem("Use default (${Keymap.label(it)})") { finish(it) } },
                 PopupItem.dismiss(),
@@ -202,7 +202,8 @@ class AppMenus(
             capture = { code, down ->
                 when {
                     finished -> Unit
-                    code == Keys.BACK || code == Keys.ESCAPE -> if (down) finish(null)
+                    // Back and Menu can never be bound, so either cancels (the Deck has no Back button).
+                    code == Keys.BACK || code == Keys.ESCAPE || code == Keys.MENU || code == Keys.BUTTON_MODE -> if (down) finish(null)
                     code in Keymap.MODIFIERS -> if (down) held += code else held -= code
                     !down -> Unit
                     held.size > 1 -> { finish(null); host.error("Hold one of Select, L2, R2 or L3 for a chord, not several") }

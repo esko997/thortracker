@@ -73,10 +73,11 @@ kotlin {
 
 tasks.matching { it.name == "cinteropDecknativeLinuxX64" }.configureEach { dependsOn(buildEngine) }
 
-// The fonts ship beside the executable (the program loads them from its own directory).
+// The fonts and built-in tunings ship beside the executable (the program loads them from its own directory).
 tasks.matching { it.name.startsWith("link") && it.name.endsWith("ExecutableLinuxX64") }.configureEach {
     doLast {
         val bin = outputs.files.files.first { it.isDirectory }
         copy { from(layout.projectDirectory.dir("fonts")); into(bin.resolve("fonts")) }
+        copy { from(rootProject.layout.projectDirectory.dir("app/src/main/assets/tunings")); into(bin.resolve("tunings")) }
     }
 }
