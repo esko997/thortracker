@@ -14,6 +14,24 @@ Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it w
 
 The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** starts a new composition.
 
+## Steam Deck
+
+Thor Tracker also runs on the Steam Deck (and other x86_64 Linux) as a native program built from the same core: the same views, controls, menus and sound engine, one view at a time on the Deck's screen. It is newer than the Thor app; see `deck/README.md` for what it does and does not do yet.
+
+1. In **Desktop Mode**, download `thor-tracker-<version>-x86_64.AppImage` from the [Releases page](https://github.com/esko997/thortracker/releases) (for example into `~/Applications`).
+2. In a terminal (Konsole), make it executable and give it a stable name, so Steam's shortcut never has to change:
+   ```sh
+   cd ~/Applications
+   chmod +x thor-tracker-*-x86_64.AppImage
+   ln -sfn thor-tracker-<version>-x86_64.AppImage thor-tracker
+   ```
+3. In Steam, choose **Games → Add a Non-Steam Game to My Library…**, **Browse…**, set the file type to *All Files*, pick `thor-tracker` and **Add Selected Programs**.
+4. Back in **Gaming Mode**, start it from your library (Non-Steam).
+
+To upgrade, download the new AppImage, `chmod +x` it and run the `ln -sfn` line again with the new file name. The Steam shortcut keeps working. Your projects, settings and working song are kept outside the AppImage.
+
+Controls are the Thor's: the D-pad moves, hold A + D-pad edits, Start plays, R2 + A/B/X/Y and R2 + ↑/→/↓ switch views, L2 + A/B undo/redo. **Select + Start** opens the menu (it also opens from a back grip if your Steam Input layout passes them to the game), and the menu has **Quit**. To type a song title, select the title field with A, then press **Steam + X** for the on-screen keyboard. Projects and exports are kept in `~/ThorTracker`; the song you are working on is saved automatically and reopens next time.
+
 ## A quick tour
 
 ### Pattern editing on both screens
@@ -113,7 +131,7 @@ Every control is rebindable in **Menu → Controls**: one row per control, group
 
 ![Menu → Controls: rows grouped by area such as Clipboard and rows, each naming the views it acts in, e.g. "Listening octave up (Instrument, Wave, Keyboard, Sketch)" bound to L2+→ and "Copy (Pattern, Song, Instrument, Wave)" bound to Sel+X](docs/media/controls-remap-menu.png)
 
-Bindings survive app updates. Uninstalling or clearing app data removes them, so use **Export keymap…** to save a `thor-tracker-keymap.json` anywhere (e.g. Download) and **Import keymap…** to restore it, or to copy it to another handheld. The file is readable JSON (`"UNDO": "L2+A"`). Remaps from earlier versions are converted automatically. A keymap from an earlier version gains each newer control's default, unless that file already uses the same button for something in the same view; then the new control starts unbound. A keymap you never changed takes the current defaults, including moved ones (0.8 moved Redo from R2+A to L2+B for the R2 view chords); a changed one keeps its Redo on R2+A and leaves Show Song unbound. 0.8.1 writes keymap version 4 (adds Loop pattern on L2+Y), which earlier versions do not import. The table below lists the defaults.
+Bindings survive app updates. Uninstalling or clearing app data removes them, so use **Export keymap…** to save a `thor-tracker-keymap.json` anywhere (e.g. Download) and **Import keymap…** to restore it, or to copy it to another handheld. The file is readable JSON (`"UNDO": "L2+A"`). Remaps from earlier versions are converted automatically. A keymap from an earlier version gains each newer control's default, unless that file already uses the same button for something in the same view; then the new control starts unbound. A keymap you never changed takes the current defaults, including moved ones (0.8 moved Redo from R2+A to L2+B for the R2 view chords); a changed one keeps its Redo on R2+A and leaves Show Song unbound. 0.8.1 writes keymap version 4 (adds Loop pattern on L2+Y); 0.8.6 writes version 5, giving Pattern, Wave and Help their R2 + ↑ / → / ↓ chords (an older keymap gains them unless it already uses those chords). Earlier versions do not import newer keymap files. The table below lists the defaults.
 
 | Input | Action |
 | --- | --- |
@@ -128,6 +146,7 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | L2 / R2 alone | No action; chord modifiers only |
 | L2 + A / L2 + B | Undo / redo |
 | R2 + A / B / X / Y | Show Song / Instrument / Sketch / Keyboard on the focused display; the same chord again returns to the previous view |
+| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise |
 | L2 + X | Swap complete views, including their cursors and scrolling |
 | Select + X / A / B | Copy / paste / cut |
 | Select + Y | Duplicate |

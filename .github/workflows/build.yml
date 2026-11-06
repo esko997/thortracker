@@ -71,6 +71,54 @@ jobs:
             app/build/reports/tests
           if-no-files-found: ignore
 
+  # The Steam Deck / desktop Linux frontend: SDL3 built from source, the Kotlin/Native release executable, an AppImage.
+  deck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: Read the app version
+        id: version
+        shell: bash
+        run: echo "version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+      - name: SDL3 build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libgles2-mesa-dev libdrm-dev libgbm-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev
+      - name: Build SDL3 from source
+        run: deck/tools/build-sdl3.sh
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-35'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Release executable
+        run: ./gradlew --no-daemon --console=plain :deck:linkReleaseExecutableLinuxX64
+      - name: AppImage
+        run: deck/tools/package-appimage.sh "${{ steps.version.outputs.version }}"
+      - name: The AppImage starts, draws and opens the menu (offscreen video, no audio device)
+        shell: bash
+        run: |
+          set -euo pipefail
+          home=$(mktemp -d)
+          out=$(HOME="$home" APPIMAGE_EXTRACT_AND_RUN=1 SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy \
+            timeout 60 "dist/thor-tracker-${{ steps.version.outputs.version }}-x86_64.AppImage" seconds=3 script=110 2>&1)
+          echo "$out" | grep -E '^(SDL|script|frames|screenshot)'
+          grep -q 'popup=Thor Tracker' <<< "$out"
+          grep -q 'screenshot: true' <<< "$out"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-appimage
+          path: |
+            dist/thor-tracker-*-x86_64.AppImage
+            dist/thor-tracker-*-x86_64.AppImage.sha256
+          if-no-files-found: error
+
   # A version bump on main publishes it: when no release v<versionName> exists yet, sign and publish that commit.
   release:
     needs: build
@@ -82,6 +130,8 @@ jobs:
     concurrency:
       group: signed-release
       cancel-in-progress: false
+    outputs:
+      published: ${{ steps.publish.outputs.publish }}
     env:
       VERSION: ${{ needs.build.outputs.version }}
       TAG: v${{ needs.build.outputs.version }}
@@ -148,3 +198,32 @@ jobs:
           set -euo pipefail
           gh release create "$TAG" --target "$GITHUB_SHA" --title "Thor Tracker $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
             "dist/thor-tracker-$VERSION.apk" "dist/thor-tracker-$VERSION.apk.sha256"
+
+  # The Deck AppImage joins a release the signed APK already published. It never holds up the APK: if the deck job
+  # failed, this is skipped and the release stays APK-only.
+  release-appimage:
+    needs: [build, release, deck]
+    if: needs.release.outputs.published == 'true' && needs.deck.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: v${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: thor-tracker-appimage
+          path: dist
+      - name: Attach the AppImage to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "dist/thor-tracker-$VERSION-x86_64.AppImage" "dist/thor-tracker-$VERSION-x86_64.AppImage.sha256"
+          notes=$(gh release view "$TAG" --json body --jq .body)
+          printf '%s\n\nSteam Deck / Linux: `thor-tracker-%s-x86_64.AppImage` (see the README, "Steam Deck").\n' "$notes" "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"

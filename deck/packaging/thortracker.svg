@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Thor Tracker icon: the Android launcher icon (app/src/main/res/drawable/ic_launcher.xml) as SVG. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 108 108">
+  <rect width="108" height="108" rx="18" fill="#181D25"/>
+  <g transform="translate(54 54) scale(0.84) translate(-54 -54)">
+    <path fill="#232C37" stroke="#7DD4C5" stroke-width="2.5" d="M32,24H76Q80,24 80,28V45Q80,49 76,49H32Q28,49 28,45V28Q28,24 32,24Z"/>
+    <path fill="none" stroke="#7DD4C5" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" d="M35,39H44V31H53V42H62V35H73"/>
+    <path fill="#232C37" stroke="#E4AF66" stroke-width="2.5" d="M32,57H76Q80,57 80,61V80Q80,84 76,84H32Q28,84 28,80V61Q28,57 32,57Z"/>
+    <path fill="#778593" d="M46,52H62V54H46Z"/>
+    <path fill="#7DD4C5" d="M35,64H41V69H35ZM35,73H41V78H35Z"/>
+    <path fill="#A8C5EF" d="M46,69H52V74H46Z"/>
+    <path fill="#C9A4E8" d="M57,64H63V69H57ZM57,73H63V78H57Z"/>
+    <path fill="#E79A91" d="M68,69H74V74H68Z"/>
+  </g>
+</svg>

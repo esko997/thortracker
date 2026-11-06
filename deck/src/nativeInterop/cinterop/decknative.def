@@ -1,0 +1,3 @@
+headers = deck_audio.h deck_draw.h
+package = decknative
+staticLibraries = libdeck_native.a
