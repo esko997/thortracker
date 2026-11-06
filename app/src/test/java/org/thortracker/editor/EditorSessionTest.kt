@@ -12,6 +12,8 @@ import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.model.HugeRules
+import org.thortracker.model.SongValidator
 
 class EditorSessionTest {
     private fun session(song: Song = Songs.blank()) = EditorSession(song)
@@ -188,6 +190,41 @@ class EditorSessionTest {
         s.moveOrder(0, 2) // and back past it the other way
         assertEquals(listOf(1, 0, 2), s.song.orders)
         assertEquals(0, s.song.orders[s.song.loopOrder])
+    }
+
+    @Test
+    fun storedJumpsFollowTheirOrderThroughInsertDeleteMoveAndClone() {
+        val s = session()
+        repeat(4) { s.newPatternAt(s.song.orders.size) }          // orders 0..4 play patterns 0..4
+        val jump = HugeRules.FX_POSITION_JUMP
+        s.setCell(4, 1, 15, Cell(Cell.EMPTY, 0, jump, 0x05))       // B05: jump to order 4 (pattern 4)
+        s.setCell(4, 2, 15, Cell(Cell.EMPTY, 0, jump, 0x00))       // B00: next order, relative
+        fun b() = s.song.patterns[4].tracks[1][15].param
+        fun target() = s.song.orders[b() - 1]
+        s.insertOrder(1, 0)                                        // shifts order 4 to 5
+        assertEquals(6, b()); assertEquals(4, target())
+        s.deleteOrder(2)                                           // an order before it goes
+        assertEquals(5, b()); assertEquals(4, target())
+        s.moveOrder(4, 0)                                          // its own order moves to the front
+        assertEquals(1, b()); assertEquals(4, target())
+        assertEquals(0x00, s.song.patterns[4].tracks[2][15].param) // B00 is relative and untouched
+        val clone = s.clonePatternAt(0)                            // the clone jumps to the same order
+        assertEquals(s.song.patterns[4].tracks[1][15], s.song.patterns[clone].tracks[1][15])
+        // Deleting the jump's own target lands it on the order that takes its place.
+        s.deleteOrder(0)
+        assertEquals(1, b())
+        assertTrue(SongValidator.errors(s.song).isEmpty())
+    }
+
+    @Test
+    fun deletingOrdersNeverLeavesAPlayedJumpPastTheEnd() {
+        val s = session()
+        repeat(10) { s.newPatternAt(s.song.orders.size) }         // 11 orders
+        s.setCell(10, 1, 15, Cell(Cell.EMPTY, 0, HugeRules.FX_POSITION_JUMP, 0x0B)) // B0B: the last order
+        repeat(5) { s.deleteOrder(1) }
+        assertEquals(6, s.song.orders.size)
+        assertTrue(SongValidator.errors(s.song).isEmpty())
+        assertEquals(10, s.song.orders[s.song.patterns[10].tracks[1][15].param - 1])
     }
 
     @Test

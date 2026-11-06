@@ -199,7 +199,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         try {
             HugeImageLayout.build(HugeLowering.lower(song), image)
         } catch (e: IllegalArgumentException) {
-            songError = "Preview not updated: ${e.message ?: "invalid song"}"
+            songError = "Playing the last playable version, not your latest edits: ${e.message ?: "invalid song"}"
             return
         }
         imageVersion++
@@ -208,7 +208,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             hasImage = true
             songError = null
         } else {
-            songError = "Preview not updated: song data rejected by the player (layout error $result)"
+            songError = "Playing the last playable version, not your latest edits: the player rejected the song data (layout error $result)"
         }
     }
 

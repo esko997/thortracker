@@ -3,7 +3,10 @@ package org.thortracker
 import android.app.Activity
 import android.app.Presentation
 import android.content.Context
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
@@ -66,6 +69,24 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private val popups = Popups({ hosts[it]?.popup }, { hosts.keys })
     private val input = HostInput()
     private var secondary: Presentation? = null
+    private var battery: TrackerView.Battery? = null
+    /**
+     * Sticky ACTION_BATTERY_CHANGED: delivered at once on registration, then on level, plug, voltage and
+     * temperature changes. Only the readout is touched (no view refresh), so frequent broadcasts never disturb
+     * selection following or a gesture; [refresh] copies it to a display attached later.
+     */
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            // Some devices report NOT_CHARGING while plugged in at full; plugged in counts as charging.
+            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+            battery = if (!intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true) || level < 0 || scale <= 0) null
+                else TrackerView.Battery(level * 100 / scale, plugged || status == BatteryManager.BATTERY_STATUS_CHARGING)
+            hosts.values.forEach { it.tracker.battery = battery }
+        }
+    }
     private var audio: TrackerAudio? = null
     private var auditionSequence: Runnable? = null
     private var hasAudioFocus = false
@@ -242,6 +263,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         super.onResume()
         active = true
         hideSystemBars()
+        registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         updateSecondary()
         refresh()
     }
@@ -250,6 +272,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         active = false
         // Key-ups for anything held now may never arrive.
         input.reset()
+        unregisterReceiver(batteryReceiver)
         hosts.values.forEach { it.tracker.heldModifiers = emptySet() }
         if (popups.dropCaptures()) statusMessage = "Binding unchanged"
         hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
@@ -469,6 +492,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             host.tracker.state = state
             host.tracker.controllerFocused = index == focus
             host.tracker.heldModifiers = if (index == focus) input.heldModifiers else emptySet()
+            host.tracker.battery = battery
             host.tracker.visibility = if (documentReady) View.VISIBLE else View.INVISIBLE
             host.tracker.refresh()
             host.toolbar.heading.text = if (index == focus) "● ${session.song.title}" else session.song.title
@@ -486,15 +510,21 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         updateStatus()
     }
 
-    /** Status lives in the (usually hidden) toolbar; a new message also flashes a chip on each display. */
+    /**
+     * Status lives in the (usually hidden) toolbar; a new message also flashes a chip on each display. An audio
+     * error (e.g. the preview could not take the latest edits) stays on screen until it clears, because what you
+     * hear no longer matches the song.
+     */
     private fun updateStatus() {
-        val message = audio?.error() ?: statusMessage
+        val audioError = audio?.error()
+        val message = audioError ?: statusMessage
         hosts.values.forEach { if (it.toolbar.status.text.toString() != message) it.toolbar.status.text = message }
         if (!documentReady) { hosts.values.forEach { it.flash(message, sticky = true) }; return }
         if (message == WORKING) { flashedStatus = null; return }
         if (message == flashedStatus) return
         flashedStatus = message
-        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = false) else it.flash(null, false) }
+        val sticky = audioError != null
+        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = sticky) else it.flash(null, false) }
     }
 
     private fun cancelAuditionSequence() {

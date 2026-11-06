@@ -536,36 +536,30 @@ class EditorSession(initial: Song) {
         if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return false }
         return apply("Insert order") { s ->
             val idx = at.coerceIn(0, s.orders.size)
-            s.copy(orders = s.orders.inserted(idx, pattern.coerceIn(0, s.patterns.size - 1)), loopOrder = shiftLoopForInsert(s.loopOrder, idx))
+            s.withOrders(s.orders.inserted(idx, pattern.coerceIn(0, s.patterns.size - 1))) { if (it >= idx) it + 1 else it }
         }
     }
 
     fun deleteOrder(at: Int): Boolean {
         if (song.orders.size <= 1) { note("A song needs at least one order"); return false }
-        return apply("Delete order") { s ->
-            val loop = when {
-                s.loopOrder > at -> s.loopOrder - 1
-                else -> s.loopOrder
-            }.coerceIn(0, s.orders.size - 2)
-            s.copy(orders = s.orders.removed(at), loopOrder = loop)
-        }
+        // A loop or jump aimed at the deleted order lands on the order that takes its place.
+        return apply("Delete order") { s -> s.withOrders(s.orders.removed(at)) { if (it > at) it - 1 else it } }
     }
 
-    /** Moves an order; the loop target stays on the same order entry wherever it ends up. */
+    /** Moves an order; the loop target and stored jumps stay on the same order entry wherever it ends up. */
     fun moveOrder(from: Int, to: Int): Boolean {
         if (to !in song.orders.indices || from !in song.orders.indices || from == to) return false
         return apply("Move order") { s ->
             val list = s.orders.toMutableList()
-            val v = list.removeAt(from)
-            list.add(to, v)
-            val loop = s.loopOrder
-            val newLoop = when {
-                loop == from -> to
-                loop in (from + 1)..to -> loop - 1
-                loop in to until from -> loop + 1
-                else -> loop
+            list.add(to, list.removeAt(from))
+            s.withOrders(list) { o ->
+                when {
+                    o == from -> to
+                    o in (from + 1)..to -> o - 1
+                    o in to until from -> o + 1
+                    else -> o
+                }
             }
-            s.copy(orders = list, loopOrder = newLoop)
         }
     }
 
@@ -577,7 +571,7 @@ class EditorSession(initial: Song) {
         apply("New pattern") { s ->
             val p = Songs.blankPattern(s, "Pattern ${index.toString(16).uppercase().padStart(2, '0')}")
             val idx = at.coerceIn(0, s.orders.size)
-            s.copy(patterns = s.patterns + p, orders = s.orders.inserted(idx, index), loopOrder = shiftLoopForInsert(s.loopOrder, idx))
+            s.withOrders(s.orders.inserted(idx, index)) { if (it >= idx) it + 1 else it }.let { it.copy(patterns = it.patterns + p) }
         }
         return index
     }
@@ -588,13 +582,11 @@ class EditorSession(initial: Song) {
         if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return -1 }
         val index = song.patterns.size
         apply("Clone pattern") { s ->
-            val src = s.patterns[s.patternAt(order)]
+            val source = s.patternAt(order)
             val idx = order + 1
-            s.copy(
-                patterns = s.patterns + src.copy(name = (src.name + " copy").take(MAX_NAME)),
-                orders = s.orders.inserted(idx, index),
-                loopOrder = shiftLoopForInsert(s.loopOrder, idx),
-            )
+            // Copy after the jumps moved, so the clone's own Bxx point at the same orders as the original's.
+            s.withOrders(s.orders.inserted(idx, index)) { if (it >= idx) it + 1 else it }
+                .let { it.copy(patterns = it.patterns + it.patterns[source].let { p -> p.copy(name = (p.name + " copy").take(MAX_NAME)) }) }
         }
         return index
     }
@@ -619,8 +611,32 @@ class EditorSession(initial: Song) {
     fun setPatternLength(pattern: Int, length: Int): Boolean =
         apply("Set pattern length") { s -> s.withPattern(pattern, s.patterns[pattern].copy(length = length.coerceIn(1, Songs.ROWS))) }
 
-    /** The loop target follows its order when an order is inserted at or before it. */
-    private fun shiftLoopForInsert(loop: Int, at: Int) = if (loop >= at) loop + 1 else loop
+    /**
+     * Replaces the order list with [orders], moving everything that names an order with it: the loop target and
+     * every stored `Bxx` jump (B01 = order 0; B00, "next order", is relative and stays). [newIndex] maps an old
+     * order index to its new one; results are clamped to the new list. Patterns without such jumps keep their
+     * identity.
+     */
+    private fun Song.withOrders(orders: List<Int>, newIndex: (Int) -> Int): Song {
+        val last = orders.size - 1
+        val old = this.orders.size
+        fun target(order: Int) = newIndex(order).coerceIn(0, last)
+        val patterns = patterns.map { p ->
+            var changed = false
+            val tracks = p.tracks.map { track ->
+                var t: MutableList<Cell>? = null
+                track.forEachIndexed { row, cell ->
+                    if (cell.effect == HugeRules.FX_POSITION_JUMP && cell.param in 1..old) {
+                        val param = target(cell.param - 1) + 1
+                        if (param != cell.param) (t ?: track.toMutableList().also { t = it })[row] = cell.copy(param = param)
+                    }
+                }
+                t?.also { changed = true } ?: track
+            }
+            if (changed) p.copy(tracks = tracks) else p
+        }
+        return copy(orders = orders, loopOrder = target(loopOrder), patterns = patterns)
+    }
 
     fun setLoopOrder(order: Int) = apply("Set loop") { s -> s.copy(loopOrder = order.coerceIn(0, s.orders.size - 1)) }
 

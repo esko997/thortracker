@@ -75,12 +75,16 @@ object SongValidator {
                 text(out, "${kind.label()} instrument ${HugeRules.hex2(i + 1)} name", instrument.name)
             }
         }
+        val played = song.orders.toSet()
         song.patterns.forEachIndexed { p, pattern ->
             val label = Songs.patternLabel(song, p).cap()
             // Hidden rows past the length are exported blank, so only played rows can block export.
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
-                    HugeRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${HugeRules.CHANNEL_NAMES[ch]} row $row: $it" }
+                    val cell = track[row]
+                    // A pattern no order plays never runs its jumps; see [warnings].
+                    if (p !in played && staleJump(song, cell)) continue
+                    HugeRules.cellProblem(song, ch, cell)?.let { out += "$label, ${HugeRules.CHANNEL_NAMES[ch]} row $row: $it" }
                 }
             }
             if (HugeRules.lengthBreakConflict(pattern)) {
@@ -104,12 +108,17 @@ object SongValidator {
         if (structuralErrors(song).isNotEmpty()) return emptyList()
         val out = Report()
         val speed = song.ticksPerRow
+        val played = song.orders.toSet()
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     val where = "${Songs.patternLabel(song, p).cap()}, ${HugeRules.CHANNEL_NAMES[ch]} row $row"
                     val fx = HugeRules.effectText(cell.effect, cell.param)
+                    if (p !in played && staleJump(song, cell)) {
+                        out += "$where: $fx jumps to order ${cell.param - 1}, which the song no longer has; harmless while no " +
+                            "order plays this pattern, but it must be fixed before the pattern is used again"
+                    }
                     if (cell.effect == HugeRules.FX_NOTE_DELAY && cell.param >= speed) {
                         out += "$where: $fx delays by ${cell.param} ticks, but rows last $speed ticks at the song speed, so the note is skipped"
                     }
@@ -134,6 +143,10 @@ object SongValidator {
         }
         return out.list()
     }
+
+    /** A `Bxx` naming an order past the end of the order list. */
+    private fun staleJump(song: Song, cell: Cell): Boolean =
+        cell.effect == HugeRules.FX_POSITION_JUMP && cell.param > song.orders.size
 
     /** Range problem of a single cell independent of context, or null. */
     fun cellRangeProblem(cell: Cell): String? = when {

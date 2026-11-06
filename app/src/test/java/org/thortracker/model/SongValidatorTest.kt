@@ -236,6 +236,17 @@ class SongValidatorTest {
         assertTrue(errors.last().startsWith("...and "))
     }
 
+    @Test fun aStaleJumpOnlyBlocksPlaybackWhenAnOrderPlaysItsPattern() {
+        // Pattern 1 is not in the order list and jumps to an order that no longer exists.
+        var song = TestSongs.patterns(2).copy(orders = listOf(0))
+        song = TestSongs.withCell(song, 1, 1, 15, Cell(Cell.EMPTY, 0, HugeRules.FX_POSITION_JUMP, 0x0B))
+        assertEquals(emptyList<String>(), SongValidator.errors(song))
+        assertTrue(SongValidator.warnings(song).any { it.contains("B0B") && it.contains("no longer has") })
+        // Once an order plays it, it blocks playback and export.
+        val played = song.copy(orders = listOf(0, 1))
+        assertTrue(SongValidator.errors(played).single().contains("B0B would jump to order 10"))
+    }
+
     @Test
     fun shortPatternsNeedAnEndingSlotAndBreaksIntoPlayedRows() {
         var song = TestSongs.patterns(2).let { s -> s.copy(patterns = s.patterns.mapIndexed { i, p -> if (i == 1) p.copy(length = 16) else p }) }

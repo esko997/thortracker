@@ -66,6 +66,14 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
             invalidate()
         }
 
+    /** Battery level 0..100 and whether it is charging; null hides the readout (no battery reported). */
+    var battery: Battery? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+
     var playback: PlaybackPosition = PlaybackPosition()
         set(value) {
             if (field == value) return
@@ -314,7 +322,7 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
         val size = ink.unit * 0.82f
         var x = r.left + ink.unit * 0.6f
         val msg = session.message
-        val right = r.right - ink.unit * 0.6f
+        val right = drawBattery(c, r, r.right - ink.unit * 0.6f, size) - ink.unit * 0.6f
         if (!controllerFocused) x = ink.hint(c, "R3", "Control this display", x, r.top, r.height(), size)
         for (h in currentHints()) {
             if (x + ink.hintWidth(h.keys, h.text, size) > right - (if (msg != null) ink.unit * 10 else 0f)) break
@@ -339,6 +347,36 @@ class TrackerView(context: Context, val session: EditorSession, state: ViewState
             }
         }
     }
+
+    /**
+     * A small battery at the bar's right end: outline, fill to the level, and the percentage. Cyan while
+     * charging, red at 15% or below otherwise. Returns where the rest of the bar must end.
+     */
+    private fun drawBattery(c: Canvas, r: RectF, right: Float, size: Float): Float {
+        val b = battery ?: return right
+        val color = when {
+            b.charging -> Palette.LISTEN
+            b.level <= 15 -> Palette.ERROR
+            else -> Palette.DIM
+        }
+        val text = "${b.level}%"
+        val textW = ink.labelWidth(text, size, false)
+        ink.label(c, text, right, r.top, r.height(), color, false, size, android.graphics.Paint.Align.RIGHT)
+        val h = r.height() * 0.36f
+        val w = h * 1.9f
+        val nub = ink.dp(2f)
+        val bodyRight = right - textW - ink.unit * 0.3f - nub
+        val top = r.centerY() - h / 2f
+        scratch.set(bodyRight - w, top, bodyRight, top + h)
+        ink.outline(c, scratch, color, ink.dp(1.2f), ink.dp(2f))
+        ink.rect(c, bodyRight, top + h * 0.3f, bodyRight + nub, top + h * 0.7f, color)
+        val inset = ink.dp(2.2f)
+        val fill = (w - inset * 2) * b.level.coerceIn(0, 100) / 100f
+        if (fill > 0f) ink.rect(c, bodyRight - w + inset, top + inset, bodyRight - w + inset + fill, top + h - inset, color)
+        return bodyRight - w
+    }
+
+    data class Battery(val level: Int, val charging: Boolean)
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
