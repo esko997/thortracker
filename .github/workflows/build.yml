@@ -1,0 +1,125 @@
+name: build
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: Read the app version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "versionName \"$version\" is not x.y.z" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Unit tests, debug and (unsigned) release builds, sample export
+        run: ./gradlew --no-daemon --console=plain testDebugUnitTest assembleDebug assembleRelease exportSamples
+      - name: The factory song still exports byte-identically
+        run: cmp app/build/samples/thor-groove.uge examples/thor-groove.uge
+      - name: Native hUGEDriver preview-machine test (host gcc)
+        run: tools/audio/run_native_host_test.sh "$RUNNER_TEMP/audio-evidence"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Keep test reports of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports
+          path: app/build/reports/tests
+          if-no-files-found: ignore
+
+  # A version bump on main publishes it: when no release v<versionName> exists yet, sign and publish that commit.
+  release:
+    needs: build
+    if: github.repository == 'esko997/thortracker' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: signed-release
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: v${{ needs.build.outputs.version }}
+    steps:
+      - name: Publish only a version that has no release yet
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+            echo "$TAG is already released; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.publish.outputs.publish == 'true'
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        if: steps.publish.outputs.publish == 'true'
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        if: steps.publish.outputs.publish == 'true'
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 cmake;3.22.1'
+      # No Gradle cache action in the signing job: no signing-run state is saved or restored.
+      - name: Build and verify with the release key
+        if: steps.publish.outputs.publish == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.THORTRACKER_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.THORTRACKER_RELEASE_KEYSTORE_PASSWORD }}
+          THORTRACKER_SIGNING_DIR: ${{ runner.temp }}/thortracker-signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -rf -- "$THORTRACKER_SIGNING_DIR"' EXIT
+          [[ -n $KEYSTORE_BASE64 && -n $KEYSTORE_PASSWORD ]] || { echo 'Release signing secrets are missing' >&2; exit 1; }
+          mkdir -m 700 "$THORTRACKER_SIGNING_DIR"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$THORTRACKER_SIGNING_DIR/thortracker-release.p12"
+          printf '%s\n' "$KEYSTORE_PASSWORD" > "$THORTRACKER_SIGNING_DIR/store-password"
+          unset KEYSTORE_BASE64 KEYSTORE_PASSWORD
+          tools/release.sh
+      - name: Release notes from docs/VERIFICATION.md
+        if: steps.publish.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The section whose heading starts with "## <version> ", up to the next "## " heading.
+          awk -v v="$VERSION" 'index($0, "## " v " ") == 1 { on = 1 } on && /^## / && index($0, "## " v " ") != 1 { exit } on' \
+            docs/VERIFICATION.md > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || { echo "docs/VERIFICATION.md has no \"## $VERSION ...\" section" >&2; exit 1; }
+          printf '\n---\nVerify the download: `sha256sum -c thor-tracker-%s.apk.sha256`. Signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`).\n' "$VERSION" >> "$RUNNER_TEMP/notes.md"
+      - name: Publish the release
+        if: steps.publish.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Thor Tracker $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+            "dist/thor-tracker-$VERSION.apk" "dist/thor-tracker-$VERSION.apk.sha256"

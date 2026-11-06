@@ -1,10 +1,62 @@
 # Thor Tracker
 
-A controller-first Android tracker for Game Boy / Game Boy Color music, designed around the AYN Thor's two displays. Projects use a versioned `.thor` document; export produces hUGETracker `.uge` v6 files.
+Thor Tracker is a controller-first music tracker for Game Boy / Game Boy Color sound, built for the AYN Thor's two screens: write patterns on one display while the other shows the arrangement, an instrument, a piano keyboard or a phrase sketchpad, then swap them with a chord. What you hear is the real hUGEDriver 6.1.3 running inside an embedded binjgb Game Boy emulator, and songs export as hUGETracker `.uge` v6 files ready for GB homebrew. It also runs on single-screen Android handhelds.
 
-Playback runs the actual pinned hUGEDriver 6.1.3 inside binjgb, through Android AAudio. There is no runtime compiler or separate approximate sequencer. The editor keeps the song in memory; new snapshots are prepared away from the audio callback and applied between driver ticks without restarting the song.
+![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
-## Build and install
+*Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. All screenshots and clips come from the app running in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom). The emulator has no audio.*
+
+## Install
+
+Download the latest APK from the [GitHub Releases page](https://github.com/esko997/thortracker/releases) and sideload it: open it on the device and allow installs from that source, or run `adb install -r path/to/downloaded.apk`. Android 8 or later is required; arm64-v8a and x86_64 are supported.
+
+Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
+
+The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** starts a new composition.
+
+## A quick tour
+
+### Pattern editing on both screens
+
+![The Keyboard view on the bottom screen writing notes C-4, E-4, G-4, C-5, G-4, E-4, C-4 down the Pulse 2 column of the top screen's pattern, one row per press](docs/media/pattern-keyboard-write.gif)
+
+The Pattern view is a four-channel hUGE grid (Pulse 1, Pulse 2, Wave, Noise) with an inspector that explains the selected note, sound or effect. Hold A and use the D-pad to change a value, or put the Keyboard on the other screen in **Write** mode. Each press writes a note at the pattern cursor and moves down a row. Both screens edit the same song, and the order list beside the grid shows where you are.
+
+### Song view: arrangement, loop point and parked orders
+
+<img src="docs/media/song-view-parked-order.png" width="620" alt="Song view showing title, artist, ticks per row (about 149 BPM), loop point at order 01 marked with a loop arrow, and order 03 dimmed and labelled Parked, with the order command row Repeat, New, Clone, Delete, Earlier, Later, Loop here, Unpark">
+
+Title, tempo, loop point and the order list with a density strip for each pattern. Order commands repeat, add, clone, delete, move, set the loop point and **park** an order: a parked order keeps its place but playback and export skip it.
+
+### Instrument and Wave: sound design
+
+![Top screen: the Wave view editing wave 5, a 32-step V shape, with Sine, Triangle, Saw, Square, Invert, Shift and Smooth tools. Bottom screen: the Instrument view's Wave bank, with sound 01 Triangle bass using wave 5 at 100% output](docs/media/sound-design-wave-instrument.png)
+
+Fifteen instruments in each of the pulse, wave and noise banks, each with live sliders and a preview of its envelope or waveform, plus sixteen 32-sample wave tables you draw directly or start from a preset shape.
+
+### Sketch: chords and generated phrases
+
+<img src="docs/media/sketch-phrase-generator.gif" width="620" alt="Sketch view in A natural minor: chord pads i to bVII, scale-note pads with the chord's root, third and fifth marked, and a 16-row phrase strip that changes each time Another or Vary is pressed">
+
+A tonal sketchpad for the current key. Hear chords and scale notes, generate short phrases from rhythm, motion and chord-tone settings (**Another**, **Vary**), then **Insert** one into the pattern as a single undo step.
+
+### Keyboard view
+
+![Top screen: the pattern with the new Pulse 2 notes. Bottom screen: the Keyboard view in Write notes mode on Pulse 2, octave 4, step 1, with keys C-4 to C-6](docs/media/pattern-and-keyboard-dual-screen.png)
+
+Two octaves of keys. **Listen** mode plays the selected instrument without writing anything. **Write** mode enters notes at the pattern cursor with the chosen step.
+
+### View chords: R2 + A / B / X / Y
+
+<img src="docs/media/view-chords-r2.gif" width="620" alt="One display switching through views with controller chords: Song, then Instrument (R2+B), Sketch (R2+X), Keyboard (R2+Y) and back to Song (R2+A)">
+
+Hold R2 and press A, B, X or Y to show Song, Instrument, Sketch or Keyboard on the focused display. Press the same chord again to go back. R3 moves controller focus between the screens, and the focused screen has an amber border.
+
+## How playback works
+
+Projects use a versioned `.thor` document; export produces hUGETracker `.uge` v6 files. Playback runs the actual pinned hUGEDriver 6.1.3 inside binjgb, through Android AAudio. There is no runtime compiler or separate approximate sequencer. The editor keeps the song in memory; new snapshots are prepared away from the audio callback and applied between driver ticks without restarting the song.
+
+## Build from source
 
 Requires JDK 17, Android SDK platform 35, build tools, NDK `27.0.12077973`, and CMake `3.22.1`. The Gradle wrapper uses Gradle 8.9.
 
@@ -16,6 +68,10 @@ adb -s YOUR_DEVICE install -r app/build/outputs/apk/debug/app-debug.apk
 
 `tools/build.sh` uses the host JDK when available, otherwise the workstation's `ubuntu` Distrobox. It serializes Gradle with the shared workstation build lock. A conventional environment can instead run `./gradlew testDebugUnitTest assembleDebug` with `ANDROID_HOME` set. Both arm64-v8a and x86_64 are included; Android 8 or later is required.
 
+Every push and pull request runs the GitHub Actions `build` workflow (`.github/workflows/build.yml`): unit tests, debug and release builds, the sample export compared byte-for-byte with `examples/thor-groove.uge`, and the native hUGEDriver host test. Each run attaches its debug APK. A push to `main` whose `versionName` (in `app/build.gradle.kts`) has no release yet publishes one: the workflow signs the APK with the release key held in repository secrets and publishes `v<versionName>`, with notes taken from that version's section of `docs/VERIFICATION.md`. To release, bump `versionCode`/`versionName` and add that section.
+
+`tools/release.sh` builds the same signed APK locally into `dist/thor-tracker-<version>.apk` with its `.sha256`. It reads the key from `~/.local/share/thortracker/signing/` (or `$THORTRACKER_SIGNING_DIR`) and refuses any other signer or a debuggable build.
+
 Generate a sample project and export:
 
 ```sh
@@ -23,8 +79,6 @@ Generate a sample project and export:
 # app/build/samples/thor-groove.thor
 # app/build/samples/thor-groove.uge
 ```
-
-The installed app opens **Thor Groove** on a first launch. Subsequent launches recover the working document. **File → New blank song** starts a new composition.
 
 The verified delivery is `dist/thor-tracker-debug.apk`. `examples/` contains **Thor Groove** and **Controller Study**, each as `.thor` and `.uge`; the latter was entered through the running Thor UI and controller event path. See [verification results and remaining physical checks](docs/VERIFICATION.md) before treating measured engine latency as acoustic latency.
 
@@ -54,6 +108,8 @@ Short cell and key afterglows, channel activity lamps, and focus/view transition
 ## Controller reference
 
 Every control is rebindable in **Menu → Controls**: one row per control, grouped by area, with its current binding on the right. Choose a row, then press the new button, or hold **Select, L2, R2 or L3** and press a button for a chord. Held controls (D-pad, Edit, Clear, Listen, Select block) take a single button. Some controls only act in certain views; their rows name those views, e.g. "Delete row / order (Pattern, Song)". Two controls can share a binding when no view has both, so one chord can mean different things per view (by default **L2+→** opens the pattern panel in Pattern and raises the listening octave in Instrument, Wave, Keyboard and Sketch). Assigning a binding another control in an overlapping view uses asks first and leaves that control unbound; the D-pad, Edit and Clear can never be left without a button. Menu and Back are fixed, so the screen is always reachable. The hint bar, held-modifier chord hints, popups and Help show your bindings for the focused view.
+
+![Menu → Controls: rows grouped by area such as Clipboard and rows, each naming the views it acts in, e.g. "Listening octave up (Instrument, Wave, Keyboard, Sketch)" bound to L2+→ and "Copy (Pattern, Song, Instrument, Wave)" bound to Sel+X](docs/media/controls-remap-menu.png)
 
 Bindings survive app updates. Uninstalling or clearing app data removes them, so use **Export keymap…** to save a `thor-tracker-keymap.json` anywhere (e.g. Download) and **Import keymap…** to restore it, or to copy it to another handheld. The file is readable JSON (`"UNDO": "L2+A"`). Remaps from earlier versions are converted automatically. A keymap from an earlier version gains each newer control's default, unless that file already uses the same button for something in the same view; then the new control starts unbound. A keymap you never changed takes the current defaults, including moved ones (0.8 moved Redo from R2+A to L2+B for the R2 view chords); a changed one keeps its Redo on R2+A and leaves Show Song unbound. 0.8.1 writes keymap version 4 (adds Loop pattern on L2+Y), which earlier versions do not import. The table below lists the defaults.
 
@@ -88,6 +144,8 @@ A held adjustment or wave-drawing gesture is one undo step. Overlapping gestures
 
 Hold the modifier **before** pressing its chord button. While Select, L2, R2 or L3 is held, the focused display's hint bar shows only that modifier's chords that act in the focused view; holding two shows that no chord applies. With a modifier held, a button without a chord in that view does its ordinary job. An A press that precedes L2/R2 remains an ordinary edit; note entry is not delayed waiting for a possible chord. Consumed chords suppress repeats and releases, even if the trigger is released first. Undo/redo and screen swap also work over app popups without choosing their highlighted item. Bare L3 is also unbound.
 
+![Pattern view playing with L2+Y on: the header reads "Pattern 00 Intro · Looping", the playhead row is highlighted, and the status line says "Looping pattern 00 (order 00)"](docs/media/pattern-loop-playback.png)
+
 ### Enter a phrase
 
 1. Choose Pattern. Navigate to a note field, hold A and use the D-pad to select a pitch. The adjacent sound field selects an instrument.
@@ -105,6 +163,8 @@ The keyboard's base octave is limited to 7. Keys above B-8 are dark and unavaila
 ### Pattern scales
 
 Tap **Scale** in the Pattern header or press **L2+Right**. Up/Down chooses Root, Scale, Length or Notes; Left/Right changes it; B resets that field and A/Done (or L2+Right again) closes. On **Notes**, A (or a tap on the button) runs **Fit notes to scale**: every played Pulse/Wave note outside the scale moves to the nearest scale note, an exact tie going down, as one undo step. Instruments and effects stay; Noise, hidden rows past the pattern length and OFF are untouched. It does nothing for Chromatic, and in a tuned song it points to **Menu → Tuning → Fit notes** instead. The root strip and arrows are also touchable.
+
+![The pattern panel opened with L2+Right: Pattern 00 set to root A, scale Natural minor, length 64 rows (full), with the Fit notes to A Natural minor button; the header's Scale button reads "Scale A Natural minor"](docs/media/pattern-scale-panel.png)
 
 Moved notes are rewritten, and each one is marked in the grid with an amber field and a ▴/▾ tick showing which way it went; the inspector reads e.g. "Note G#5 · fitted from A-5". Fitting again after choosing another scale keeps the marks relative to the notes before the first Fit, so chained Fits show their total drift; a note that lands back on its original pitch loses its mark. A mark stays while its cell holds exactly what the Fit wrote: editing that cell (note, sound or effect) removes just its mark, other marks stay, and undoing the Fit removes them all. Inserting or deleting rows clears the pattern's marks, since the notes no longer sit where they were fitted. Marks are not saved with the project. **Menu → Tuning → Fit notes** marks its moves the same way, including a note whose `40y` bend alone changed (the inspector shows e.g. "fitted from E-5+7").
 
@@ -135,7 +195,7 @@ For preview and export, hidden rows are blank and the last played row receives `
 
 ### Sketch: explore a key, try phrases
 
-Reveal the toolbar, choose the current **View** button, then **Sketch**. If you opened the toolbar with Select+Start, press B/Back after choosing the view to return controller focus to the editor. Sketch can be pinned on either display, swapped with L2+X, or opened independently on both.
+Press **R2+X**, or reveal the toolbar, choose the current **View** button, then **Sketch**. If you opened the toolbar with Select+Start, press B/Back after choosing the view to return controller focus to the editor. Sketch can be pinned on either display, swapped with L2+X, or opened independently on both.
 
 - **Up/Down** chooses settings, chords, notes or phrase; **Left/Right** chooses within that row.
 - On settings, **hold A + D-pad** to change root, scale, tonal channel, sound, octave or **Chords** (Triads or Circle). Touch the left/right half of a setting to decrease/increase it.
@@ -145,7 +205,11 @@ Reveal the toolbar, choose the current **View** button, then **Sketch**. If you 
 
 Seven-note scales show their stacked-third triads; stacks that are not major, minor, diminished or augmented (e.g. double harmonic's V) are left out. Other scales (pentatonics, blues, whole tone, Japanese scales) show only standard triads made entirely of their notes. Chromatic offers twelve note pads and asks you to choose a scale for a chord shortlist. Notes show pitch and interval degree; the selected chord marks its root, third and fifth. Degrees and roman numerals use major-scale-relative intervals (`b3`, `#4`, `bIII`, etc.); pitch names use the tracker's sharp spelling.
 
+<img src="docs/media/sketch-chords-phrase.png" width="620" alt="Sketch in local key A Natural minor: chord pads i Am, ii° Bdim, bIII C, iv Dm, v Em, bVI F, bVII G; note pads A-4 to G-5 with the root, 3rd and 5th of Am marked; a 16-row syncopated phrase below with Another, Vary, Keep rhythm, Keep pitches, From copied and Insert">
+
 **Circle of fifths.** Set **Chords** to *Circle* and the chords row shows the twelve major keys clockwise by fifths (C at the top), their relative minors on the inner ring. Sketch's current key is filled; its IV and V neighbours on the same ring are marked. **Left/Right** moves the cursor by fifths, **B** switches between the major key and its relative minor, **hold A or X** hears that key's tonic triad, and **tap A** makes it Sketch's local key (Major or Natural minor). Touch works the same: hold a key to hear it, lift without sliding to choose it. A scale sits where its tonic's third puts it (D Dorian with D minor); Chromatic and scales without a major or minor third have no place. Y still returns to the pattern key.
+
+<img src="docs/media/sketch-circle-of-fifths.png" width="620" alt="Sketch with Chords set to Circle: twelve major keys around the outer ring and relative minors inside, the current key A minor filled, its iv and v neighbours marked, and the cursor on E minor showing its relative major, tonic triad and A/B/X hints">
 
 **Phrase.** The bottom row shows a short phrase, one column per row: a note name where a note starts, a held line while it sounds on, row numbers below. Left/Right walks the controls:
 
