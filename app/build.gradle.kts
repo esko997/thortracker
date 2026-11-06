@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+// Release signing is opt-in: tools/release.sh passes -PthortrackerSigningDir=<dir holding thortracker-release.p12 and
+// store-password>. Without it, assembleRelease builds an unsigned APK (as the CI build job does).
+val signingDir = providers.gradleProperty("thortrackerSigningDir").orNull?.let(::file)
 android {
     namespace = "org.thortracker"
     compileSdk = 35
@@ -14,8 +17,8 @@ android {
         applicationId = "org.thortracker"
         minSdk = 26
         targetSdk = 32
-        versionCode = 16
-        versionName = "0.8.3"
+        versionCode = 17
+        versionName = "0.8.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
@@ -27,7 +30,25 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
-    buildTypes { release { isMinifyEnabled = false } }
+    signingConfigs {
+        if (signingDir != null) create("release") {
+            val password = signingDir.resolve("store-password").readText().trim()
+            storeFile = signingDir.resolve("thortracker-release.p12")
+            storePassword = password
+            keyAlias = "thortracker-release"
+            keyPassword = password
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+        }
+    }
+    lint {
+        // Sideloaded on handhelds, not published on Google Play; targetSdk 32 is the tested runtime behaviour.
+        disable += "ExpiredTargetSdkVersion"
+    }
 }
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
