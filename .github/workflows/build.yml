@@ -121,7 +121,7 @@ jobs:
 
   # A version bump on main publishes it: when no release v<versionName> exists yet, sign and publish that commit.
   release:
-    needs: [build, deck]
+    needs: build
     if: github.repository == 'esko997/thortracker' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -130,6 +130,8 @@ jobs:
     concurrency:
       group: signed-release
       cancel-in-progress: false
+    outputs:
+      published: ${{ steps.publish.outputs.publish }}
     env:
       VERSION: ${{ needs.build.outputs.version }}
       TAG: v${{ needs.build.outputs.version }}
@@ -176,12 +178,6 @@ jobs:
           printf '%s\n' "$KEYSTORE_PASSWORD" > "$THORTRACKER_SIGNING_DIR/store-password"
           unset KEYSTORE_BASE64 KEYSTORE_PASSWORD
           tools/release.sh
-      - name: The Steam Deck / Linux AppImage from this run
-        if: steps.publish.outputs.publish == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: thor-tracker-appimage
-          path: dist
       - name: Release notes from docs/VERIFICATION.md
         if: steps.publish.outputs.publish == 'true'
         shell: bash
@@ -192,7 +188,6 @@ jobs:
             docs/VERIFICATION.md > "$RUNNER_TEMP/notes.md"
           [ -s "$RUNNER_TEMP/notes.md" ] || { echo "docs/VERIFICATION.md has no \"## $VERSION ...\" section" >&2; exit 1; }
           printf '\n---\nVerify the download: `sha256sum -c thor-tracker-%s.apk.sha256`. Signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`).\n' "$VERSION" >> "$RUNNER_TEMP/notes.md"
-          printf '\nSteam Deck / Linux: `thor-tracker-%s-x86_64.AppImage` (see the README, "Steam Deck").\n' "$VERSION" >> "$RUNNER_TEMP/notes.md"
       - name: Publish the release
         if: steps.publish.outputs.publish == 'true'
         env:
@@ -202,5 +197,33 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$TAG" --target "$GITHUB_SHA" --title "Thor Tracker $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
-            "dist/thor-tracker-$VERSION.apk" "dist/thor-tracker-$VERSION.apk.sha256" \
-            "dist/thor-tracker-$VERSION-x86_64.AppImage" "dist/thor-tracker-$VERSION-x86_64.AppImage.sha256"
+            "dist/thor-tracker-$VERSION.apk" "dist/thor-tracker-$VERSION.apk.sha256"
+
+  # The Deck AppImage joins a release the signed APK already published. It never holds up the APK: if the deck job
+  # failed, this is skipped and the release stays APK-only.
+  release-appimage:
+    needs: [build, release, deck]
+    if: needs.release.outputs.published == 'true' && needs.deck.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: v${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: thor-tracker-appimage
+          path: dist
+      - name: Attach the AppImage to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "dist/thor-tracker-$VERSION-x86_64.AppImage" "dist/thor-tracker-$VERSION-x86_64.AppImage.sha256"
+          notes=$(gh release view "$TAG" --json body --jq .body)
+          printf '%s\n\nSteam Deck / Linux: `thor-tracker-%s-x86_64.AppImage` (see the README, "Steam Deck").\n' "$notes" "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
