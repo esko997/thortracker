@@ -1,8 +1,6 @@
 package org.thortracker.ui
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
+import kotlin.math.roundToInt
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
@@ -16,15 +14,15 @@ import org.thortracker.model.InstrumentKind
  * pen is a crosshair (sample, level); holding A draws at the pen height. Touch draws by dragging, with
  * interpolation so fast strokes leave no gaps. Each stroke or hold is one undo step.
  */
-internal class WavePainter(v: TrackerView) : Painter(v) {
-    private val thumbs = ArrayList<Pair<RectF, Int>>()
-    private val tools = ArrayList<Pair<RectF, Int>>()
-    private var grid = RectF()
+internal class WavePainter(v: PaneView) : Painter(v) {
+    private val thumbs = ArrayList<Pair<Rect, Int>>()
+    private val tools = ArrayList<Pair<Rect, Int>>()
+    private var grid = Rect()
     private var lastSample = -1
     private var lastLevel = -1
     private var drawing = false
 
-    override fun draw(c: Canvas, area: RectF) {
+    override fun draw(c: Surface, area: Rect) {
         val s = song
         val wave = s.waves[st.wave]
         val users = s.waveInstruments.withIndex().filter { it.value.wave == st.wave }.map { hex2(it.index + 1) }
@@ -38,7 +36,7 @@ internal class WavePainter(v: TrackerView) : Painter(v) {
         val thumbH = ink.unit * 2.6f
         val tw = (area.width() - pad * 2) / s.waves.size
         for ((i, w) in s.waves.withIndex()) {
-            val r = RectF(area.left + pad + i * tw + 2, top + ink.unit * 0.4f, area.left + pad + (i + 1) * tw - 2, top + ink.unit * 0.4f + thumbH)
+            val r = Rect(area.left + pad + i * tw + 2, top + ink.unit * 0.4f, area.left + pad + (i + 1) * tw - 2, top + ink.unit * 0.4f + thumbH)
             val sel = i == st.wave
             ink.round(c, r, ink.dp(3f), if (sel) Palette.CURSOR_FILL else Palette.LANE)
             val bw = r.width() / w.size
@@ -61,11 +59,11 @@ internal class WavePainter(v: TrackerView) : Painter(v) {
             val text = if (i == 8) "Use in sound ${hex2(ctl.waveTargetSound())}" else name
             val w = ink.labelWidth(text, size) + ink.unit
             if (x + w > area.right - pad) break
-            val r = RectF(x, toolTop, x + w, toolTop + toolH)
+            val r = Rect(x, toolTop, x + w, toolTop + toolH)
             val sel = st.waveRow == 0 && st.waveCol == i
             ink.round(c, r, ink.dp(4f), if (sel) Palette.CURSOR_FILL else Palette.RULE)
             if (sel) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
-            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) Palette.TEXT else Palette.DIM, sel, size, Paint.Align.CENTER)
+            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) Palette.TEXT else Palette.DIM, sel, size, Align.CENTER)
             tools += r to i
             x += w + ink.unit * 0.4f
         }
@@ -75,7 +73,7 @@ internal class WavePainter(v: TrackerView) : Painter(v) {
         val gTop = toolTop + toolH + ink.unit * 0.8f
         val gBottom = area.bottom - hexH - ink.unit * 0.4f
         val labelW = ink.unit * 1.6f
-        grid = RectF(area.left + pad + labelW, gTop, area.right - pad, gBottom)
+        grid = Rect(area.left + pad + labelW, gTop, area.right - pad, gBottom)
         if (grid.height() < ink.unit * 3) return
         val cw = grid.width() / WaveShapes.SAMPLES
         val ch = grid.height() / (WaveShapes.MAX + 1)
@@ -96,7 +94,7 @@ internal class WavePainter(v: TrackerView) : Painter(v) {
             val topY = grid.bottom - (sample + 1) * ch
             ink.rect(c, bx + 1, topY + ch, bx + cw - 1, grid.bottom, Palette.alpha(col, 70))
             ink.rect(c, bx + 1, topY, bx + cw - 1, topY + ch, col)
-            ink.mono(c, hex1(sample), bx + cw / 2, grid.bottom + ink.unit * 0.2f, hexH, if (st.waveRow == 1 && i == st.waveCol) Palette.TEXT else Palette.FAINT, size = minOf(ink.unit * 0.8f, cw * 1.1f), align = Paint.Align.CENTER)
+            ink.mono(c, hex1(sample), bx + cw / 2, grid.bottom + ink.unit * 0.2f, hexH, if (st.waveRow == 1 && i == st.waveCol) Palette.TEXT else Palette.FAINT, size = minOf(ink.unit * 0.8f, cw * 1.1f), align = Align.CENTER)
         }
         // pen crosshair
         if (st.waveRow == 1) {
@@ -105,7 +103,7 @@ internal class WavePainter(v: TrackerView) : Painter(v) {
             val pc = cursorColor()
             ink.line(c, grid.left, py + ch / 2, grid.right, py + ch / 2, Palette.alpha(pc, 70), ink.dp(1f))
             ink.line(c, px + cw / 2, grid.top, px + cw / 2, grid.bottom, Palette.alpha(pc, 70), ink.dp(1f))
-            ink.outline(c, RectF(px, py, px + cw, py + ch), pc, ink.dp(2f))
+            ink.outline(c, Rect(px, py, px + cw, py + ch), pc, ink.dp(2f))
         }
     }
 
@@ -177,7 +175,7 @@ internal class WavePainter(v: TrackerView) : Painter(v) {
             var i = lastSample
             while (true) {
                 val t = (i - lastSample).toFloat() / (sample - lastSample)
-                w[i] = Math.round(lastLevel + (level - lastLevel) * t)
+                w[i] = (lastLevel + (level - lastLevel) * t).roundToInt()
                 if (i == sample) break
                 i += step
             }

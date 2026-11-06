@@ -1,8 +1,5 @@
 package org.thortracker.ui
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.EditorSession.Companion.hex1
@@ -15,8 +12,8 @@ import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Songs
 
 /** Reference pages: controls, the backend's effect list, and the live export check of the song. */
-internal class HelpPainter(v: TrackerView) : Painter(v) {
-    private val tabs = ArrayList<Pair<RectF, Int>>()
+internal class HelpPainter(v: PaneView) : Painter(v) {
+    private val tabs = ArrayList<Pair<Rect, Int>>()
     private var bodyTop = 0f
     private var lineH = 0f
     private var touchY = 0f
@@ -30,7 +27,7 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
         data class Text(val text: String, val color: Int = Palette.DIM) : Line
     }
 
-    override fun draw(c: Canvas, area: RectF) {
+    override fun draw(c: Surface, area: Rect) {
         val top = header(c, area, "Help", ViewController.HELP_PAGES[st.helpPage])
         tabs.clear()
         val tabH = ink.unit * 1.9f
@@ -38,10 +35,10 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
         for ((i, name) in ViewController.HELP_PAGES.withIndex()) {
             val text = if (i == 2) "$name (${v.problems().size})" else name
             val w = ink.labelWidth(text) + ink.unit * 1.4f
-            val r = RectF(x, top, x + w, top + tabH)
+            val r = Rect(x, top, x + w, top + tabH)
             val on = i == st.helpPage
             if (on) ink.rect(c, r.left, r.bottom - ink.dp(3f), r.right, r.bottom, Palette.PLAYHEAD)
-            ink.label(c, text, r.centerX(), r.top, r.height(), if (on) Palette.TEXT else Palette.DIM, on, align = Paint.Align.CENTER)
+            ink.label(c, text, r.centerX(), r.top, r.height(), if (on) Palette.TEXT else Palette.DIM, on, align = Align.CENTER)
             tabs += r to i
             x += w
         }
@@ -282,7 +279,7 @@ internal class HelpPainter(v: TrackerView) : Painter(v) {
     override fun move(x: Float, y: Float) {
         if (tabHit >= 0) return
         val dy = y - touchY
-        if (!dragging && Math.abs(dy) > lineH * 0.5f) dragging = true
+        if (!dragging && kotlin.math.abs(dy) > lineH * 0.5f) dragging = true
         if (dragging) st.scroll = maxOf(0, touchScroll - (dy / lineH).toInt())
     }
 
