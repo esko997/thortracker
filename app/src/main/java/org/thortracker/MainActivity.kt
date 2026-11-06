@@ -28,17 +28,17 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import org.thortracker.audio.HugeAudio
-import org.thortracker.audio.PlaybackPosition
 import org.thortracker.audio.TrackerAudio
+import org.thortracker.audio.Transport
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
+import org.thortracker.editor.Workspace
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
 import org.thortracker.input.ControlGroup
 import org.thortracker.input.Keymap
-import org.thortracker.model.HugeRules
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.SongValidator
@@ -64,7 +64,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private lateinit var session: EditorSession
     private lateinit var projectStore: ProjectStore
     private lateinit var workspace: WorkspaceStore
-    private lateinit var states: MutableList<ViewState>
+    /** Panes (one per display here) and the controller's focus; [states] and [focus] are its views. */
+    private lateinit var panes: Workspace
+    private val states: MutableList<ViewState> get() = panes.panes
+    private val focus: Int get() = panes.focus
     private lateinit var displays: DisplayManager
     private val main = Handler(Looper.getMainLooper())
     private val hosts = mutableMapOf<Int, Host>()
@@ -101,8 +104,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             .setOnAudioFocusChangeListener({ change ->
                 if (change < 0) {
                     hasAudioFocus = false
-                    audio?.stop()
-                    requestedPlaying = false
+                    transport.halt()
                     hosts.values.forEach { it.tracker.cancelInteraction() }
                     releaseAudition()
                     statusMessage = "Playback paused: another app requested audio"
@@ -110,7 +112,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 }
             }, main).build()
     }
-    private var focus = 0
     private var active = false
     private var initialized = false
     private var documentReady = false
@@ -127,50 +128,16 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
     private var awaitingTransportUntil = 0L
-    private var requestedPlaying = false
-
-    /** Order whose pattern playback loops (L2+Y), or -1. Editor-only; Play/Start moves it to the order played. */
-    private var loopOrder = -1
-
-    /** The pattern [loopOrder] played when the loop was set, so order inserts/deletes/moves can follow it. */
-    private var loopPattern = -1
-
-    private fun loopAt(order: Int) {
-        loopOrder = order.coerceIn(0, session.song.orders.size - 1)
-        loopPattern = session.song.orders[loopOrder]
-    }
-
-    /** After an edit: keep looping the same pattern, at the nearest order that still plays it. */
-    private fun followLoop(song: Song) {
-        if (loopOrder < 0 || song.orders.getOrNull(loopOrder) == loopPattern) return
-        val moved = Songs.nearestOrderPlaying(song.orders, loopPattern, loopOrder)
-        loopOrder = if (moved >= 0) moved else loopOrder.coerceIn(0, song.orders.size - 1)
-        loopPattern = song.orders[loopOrder]
-    }
-
-    /** What the audio engine plays: the song, or only the looped order ([HugeRules.patternLoop]). */
-    private fun heard(song: Song): Song = if (loopOrder >= 0) HugeRules.patternLoop(song, loopOrder) else song
-
-    /** The loop was started only to hear a parked order (not by L2+Y), so stopping playback ends it. */
-    private var loopForParked = false
-
-    /**
-     * The engine's position in document terms: while looping, its single order is [loopOrder]; otherwise it counts
-     * played orders only, so parked ones are skipped when mapping back ([HugeRules.playedOrders]).
-     */
-    private fun heardPosition(): PlaybackPosition? = audio?.position()?.let {
-        if (loopOrder >= 0) it.copy(order = loopOrder, looping = true)
-        else it.copy(order = HugeRules.playedOrders(session.song).getOrElse(it.order) { _ -> it.order })
-    }
+    private lateinit var transport: Transport
     private val audioFeedback = Runnable { refresh() }
     private val tick = object : Runnable {
         override fun run() {
             if (!active) return
-            val position = heardPosition()
+            val position = transport.position()
             if (position != null) hosts.values.forEach { it.tracker.playback = position }
-            if (android.os.SystemClock.uptimeMillis() >= awaitingTransportUntil && position?.playing != true) requestedPlaying = false
+            if (android.os.SystemClock.uptimeMillis() >= awaitingTransportUntil && position?.playing != true) transport.requested = false
             if (position?.playing == true || android.os.SystemClock.uptimeMillis() < awaitingTransportUntil) {
-                hosts.values.forEach { it.transport.text = if (requestedPlaying) "Stop" else "Play" }
+                hosts.values.forEach { it.transport.text = if (transport.requested) "Stop" else "Play" }
                 main.postDelayed(this, 32)
             } else hosts.values.forEach { it.transport.text = "Play" }
             if (audio?.error() != null) updateStatus()
@@ -182,8 +149,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
         workspace = WorkspaceStore(this)
-        states = workspace.load()
-        focus = workspace.focused()
+        panes = Workspace(workspace.load(), workspace.focused())
         keymap = workspace.keymap()
         input.keymap = keymap
         popups.keys = keymap
@@ -194,9 +160,18 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         projectStore = ProjectStore(this)
         projectStore.onError = { showError(it) }
         session = EditorSession(Songs.demo())
+        transport = Transport(session, object : Transport.Host {
+            override fun mayPlay() = requestAudioFocus()
+            override fun audioMissing() = showError("Audio is not ready yet")
+            override fun transportChanged(starting: Boolean) {
+                awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + if (starting) 1500 else 100
+                main.removeCallbacks(tick)
+                main.post(tick)
+                refresh()
+            }
+        })
         session.onSongChanged = { song ->
-            followLoop(song)
-            audio?.update(heard(song))
+            transport.songChanged(song)
             if (documentReady) {
                 projectStore.autosave(song)
                 statusMessage = WORKING
@@ -236,7 +211,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         session.onReleaseAudition = ::releaseAudition
         // The Song view's "play this order" publishes the order it means; play exactly that selection.
         session.onTransport = { start ->
-            if (start) session.selection.let { startPlayback(it.order, it.row) } else stopPlayback()
+            if (start) session.selection.let { transport.start(it.order, it.row) } else transport.stop()
         }
         popups.onOpenChanged = { open ->
             if (open) {
@@ -258,7 +233,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             recoveryWarning = warning
             documentReady = true
             try {
-                audio = HugeAudio(applicationContext).also { it.update(heard(session.song)) }
+                audio = HugeAudio(applicationContext).also { transport.audio = it }
                 initialized = true
                 statusMessage = if (recovered != null) "Recovered working project"
                 else "Demo loaded. For a blank song choose Menu, Files, New blank song"
@@ -315,8 +290,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
-        audio?.stop()
-        requestedPlaying = false
+        transport.halt()
         releaseAudition()
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest)
         hasAudioFocus = false
@@ -359,7 +333,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             .firstOrNull { it.displayId != display?.displayId }
         if (candidate == null) {
             detachSecondary()
-            if (focus == 1) focus = 0
+            if (focus == 1) panes.focus = 0
             refresh()
             return
         }
@@ -380,7 +354,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             presentation.setOnDismissListener {
                 if (secondary === presentation) {
                     detachSecondary()
-                    if (focus == 1) focus = 0
+                    if (focus == 1) panes.focus = 0
                     refresh()
                 }
             }
@@ -390,7 +364,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             refresh()
         } catch (e: WindowManager.InvalidDisplayException) {
             detachSecondary()
-            if (focus == 1) focus = 0
+            if (focus == 1) panes.focus = 0
             statusMessage = "Second display disconnected; working on one screen"
             refresh()
         }
@@ -460,27 +434,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
     }
 
-    /** What each display showed before a view chord replaced it (view and whether it was pinned), for the second press. */
-    private val viewBeforeChord = HashMap<Int, Pair<ViewKind, Boolean>>()
-
-    /**
-     * A view chord: shows [kind] on the controller-focused display and pins it there, like choosing it from the
-     * View menu. Pressed again while that view is showing, it returns to the view it replaced, pinned or
-     * following the selection as it was.
-     */
+    /** A view chord on the controller-focused display ([Workspace.showView]). */
     private fun showView(kind: ViewKind) {
-        val index = focus
-        val state = states.getOrNull(index) ?: return
         hosts.values.forEach { it.tracker.cancelInteraction() }
-        if (state.kind == kind) {
-            val (previous, pinned) = viewBeforeChord.remove(index) ?: return
-            state.switchKind(previous)
-            state.pinned = pinned
-        } else {
-            viewBeforeChord[index] = state.kind to state.pinned
-            state.switchKind(kind)
-            state.pinned = true
-        }
+        if (!panes.showView(kind)) return
         refresh(); workspace.save(states, focus)
     }
 
@@ -500,93 +457,20 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private fun setFocus(index: Int) {
         val next = if (hosts.containsKey(index)) index else 0
         if (next != focus) hosts[focus]?.toolbar?.takeIf { it.controllerFocused }?.hide()
-        focus = next
+        panes.focus = next
         workspace.save(states, focus)
         refresh()
     }
 
     /** Stopping is unconditional; starting plays the focused editor's order from row 0 or its cursor. */
     private fun toggleTransport(fromCursor: Boolean) {
-        if (requestedPlaying) return stopPlayback()
-        val (order, row) = activePlace()
-        startPlayback(order, if (fromCursor) row else 0)
+        val (order, row) = panes.activePlace(session.selection)
+        transport.toggle(order, if (fromCursor) row else 0)
     }
 
-    /** Two pattern views may sit at different places; the focused one is where the user is working. */
-    private fun activePlace(): Pair<Int, Int> {
-        val state = states[focus]
-        val selection = session.selection
-        return if (state.kind == ViewKind.PATTERN) state.order to state.row else selection.order to selection.row
-    }
-
-    /**
-     * Pattern loop on/off for the active order. Turning it on while that order plays keeps the current row; while
-     * another order plays, the loop starts at row 00. Turning it off keeps playing on through the song from the
-     * same row. Stopped, it only arms the loop for the next Play.
-     */
     private fun toggleLoop() {
-        val engine = audio ?: return showError("Audio is not ready yet")
-        val playing = requestedPlaying
-        val heardNow = heardPosition()
-        loopForParked = false
-        if (loopOrder >= 0) {
-            val was = loopOrder
-            loopOrder = -1
-            engine.update(session.song)
-            when {
-                // A parked order is not part of the song, so there is nowhere to play on to.
-                playing && was in session.song.parkedOrders -> { stopPlayback(); session.note("Pattern loop off; order ${EditorSession.hex2(was)} is parked, so playback stopped") }
-                playing -> { session.note("Pattern loop off"); startPlayback(was, heardNow?.row ?: 0) }
-                else -> session.note("Pattern loop off")
-            }
-        } else {
-            val (order, _) = activePlace()
-            loopAt(order)
-            engine.update(heard(session.song))
-            session.note("Looping pattern ${EditorSession.hex2(session.song.orders[loopOrder])} (order ${EditorSession.hex2(loopOrder)})")
-            if (playing) startPlayback(loopOrder, if (heardNow?.order == loopOrder) heardNow.row else 0)
-        }
-        heardPosition()?.let { p -> hosts.values.forEach { it.tracker.playback = p } }
-        refresh()
-    }
-
-    private fun startPlayback(order: Int, row: Int) {
-        val engine = audio ?: return showError("Audio is not ready yet")
-        if (!requestAudioFocus()) return
-        requestedPlaying = true
-        val target = order.coerceIn(0, session.song.orders.size - 1)
-        if (loopForParked && target !in session.song.parkedOrders) {
-            loopForParked = false
-            loopOrder = -1
-            engine.update(session.song)
-        }
-        if (loopOrder < 0 && target in session.song.parkedOrders) {
-            // The song skips a parked order; playing it on its own means looping it until playback stops.
-            loopAt(target)
-            loopForParked = true
-            engine.update(heard(session.song))
-            session.note("Order ${EditorSession.hex2(target)} is parked: looping it on its own until you stop")
-        }
-        // While looping, Play loops whichever order it starts: the engine's song is that order alone.
-        if (loopOrder >= 0 && loopOrder != target) { loopAt(target); engine.update(heard(session.song)) }
-        engine.play(if (loopOrder >= 0) 0 else HugeRules.playedOrders(session.song).indexOf(target), maxOf(0, row))
-        awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + 1500
-        main.removeCallbacks(tick)
-        main.post(tick)
-        refresh()
-    }
-
-    private fun stopPlayback() {
-        requestedPlaying = false
-        audio?.stop()
-        if (loopForParked) {
-            loopForParked = false
-            loopOrder = -1
-            audio?.update(session.song)
-        }
-        awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + 100
-        main.removeCallbacks(tick)
-        main.post(tick)
+        transport.toggleLoop(panes.activePlace(session.selection).first)
+        transport.position()?.let { p -> hosts.values.forEach { it.tracker.playback = p } }
         refresh()
     }
 
@@ -601,7 +485,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     }
 
     private fun refresh() {
-        if (!::states.isInitialized || !::session.isInitialized) return
+        if (!::panes.isInitialized || !::session.isInitialized) return
         val selected = session.selection
         hosts.forEach { (index, host) ->
             val state = states[index]
@@ -618,7 +502,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             host.pin.text = if (state.pinned) "Pinned" else "Context"
             host.focusButton.visibility = if (hosts.size > 1) View.VISIBLE else View.GONE
             host.transport.isEnabled = initialized
-            host.transport.text = if (requestedPlaying) "Stop" else "Play"
+            host.transport.text = if (transport.requested) "Stop" else "Play"
             host.toolbar.repaint()
             val popupHere = popups.isOpen && popups.display == index
             host.handle.visibility = if (documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
@@ -663,13 +547,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     private fun swap() {
         hosts.values.forEach { it.tracker.cancelInteraction() }
-        // The "previous view" of a chord travels with the view it belongs to.
-        val before0 = viewBeforeChord.remove(0)
-        viewBeforeChord.remove(1)?.let { viewBeforeChord[0] = it }
-        before0?.let { viewBeforeChord[1] = it }
-        val first = states[0]
-        states[0] = states[1]
-        states[1] = first
+        panes.swap(0, 1)
         statusMessage = if (hosts.containsKey(1)) "Displays swapped" else "Showing the other saved view"
         workspace.save(states, focus)
         refresh()
@@ -681,7 +559,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         val host = hosts[index] ?: return
         hosts.values.forEach { it.toolbar.takeIf { t -> t.controllerFocused }?.hide() }
         host.tracker.cancelInteraction()
-        focus = index
+        panes.focus = index
         val state = states[index]
         state.switchKind(ViewKind.SONG)
         state.pinned = true
@@ -758,7 +636,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             add("Song details / tempo" to ::showSongDetails)
             add("Views / layout" to { viewOptions(focus) })
             if (hosts.containsKey(1)) add("Switch controller focus" to ::switchFocus)
-            add("Play from song start" to { startPlayback(0, 0) })
+            add("Play from song start" to { transport.start(0, 0) })
             add("Copy selection" to { editAction(Action.COPY) })
             add("Cut selection" to { editAction(Action.CUT) })
             add("Paste" to { editAction(Action.PASTE) })
@@ -1034,7 +912,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     private fun replace(song: Song, uri: Uri? = null) {
         documentGeneration++
-        stopPlayback()
+        transport.stop()
         projectStore.archive(session.song)
         session.replaceSong(song)
         currentUri = uri
