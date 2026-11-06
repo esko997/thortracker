@@ -20,8 +20,9 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("huge_machine.c").asFile,
         engineSrc.file("third_party/binjgb/src/common.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
+        layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
-    inputs.files(sources, engineSrc.file("huge_machine.h"), layout.projectDirectory.file("native/deck_audio.h"))
+    inputs.files(sources, engineSrc.file("huge_machine.h"), layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
     val out = nativeOut.get().asFile
@@ -34,7 +35,7 @@ val buildEngine by tasks.registering(Exec::class) {
         append("[ -x \"\$CC\" ] && [ -d \"\$SR\" ] || { echo 'Kotlin/Native toolchain not downloaded yet; build :core:compileKotlinLinuxX64 once' >&2; exit 1; }\n")
         for (src in sources) {
             append("\"\$CC\" --target=x86_64-unknown-linux-gnu --sysroot=\"\$SR\" -std=gnu11 -O2 -fPIC -DNDEBUG=1 -w ")
-            append("-I'${engineSrc.asFile}' -I'${engineSrc.dir("third_party/binjgb/src").asFile}' -I'${sdlInclude.asFile}' ")
+            append("-I'${engineSrc.asFile}' -I'${engineSrc.dir("third_party/binjgb/src").asFile}' -I'${sdlInclude.asFile}' -I'${layout.projectDirectory.dir("native").asFile}' ")
             append("-c '${src}' -o '${out}/${src.nameWithoutExtension}.o'\n")
         }
         append("rm -f '${out}/libdeck_native.a'\n")
@@ -71,3 +72,11 @@ kotlin {
 }
 
 tasks.matching { it.name == "cinteropDecknativeLinuxX64" }.configureEach { dependsOn(buildEngine) }
+
+// The fonts ship beside the executable (the program loads them from its own directory).
+tasks.matching { it.name.startsWith("link") && it.name.endsWith("ExecutableLinuxX64") }.configureEach {
+    doLast {
+        val bin = outputs.files.files.first { it.isDirectory }
+        copy { from(layout.projectDirectory.dir("fonts")); into(bin.resolve("fonts")) }
+    }
+}
