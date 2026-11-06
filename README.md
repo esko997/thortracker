@@ -14,6 +14,17 @@ Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it w
 
 The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** starts a new composition.
 
+## Steam Deck
+
+Thor Tracker also runs on the Steam Deck (and other x86_64 Linux) as a native program built from the same core: the same views, controls, menus and sound engine, one view at a time on the Deck's screen. It is newer than the Thor app; see `deck/README.md` for what it does and does not do yet.
+
+1. In **Desktop Mode**, download `thor-tracker-<version>-x86_64.AppImage` from the [Releases page](https://github.com/esko997/thortracker/releases) (for example into `~/Applications`).
+2. Make it executable: right-click it, **Properties → Permissions → Is executable**, or run `chmod +x thor-tracker-*-x86_64.AppImage`.
+3. In Steam, choose **Games → Add a Non-Steam Game to My Library…**, **Browse…**, set the file type to *All Files*, pick the AppImage and **Add Selected Programs**.
+4. Back in **Gaming Mode**, start it from your library (Non-Steam).
+
+Controls are the Thor's: the D-pad moves, hold A + D-pad edits, Start plays, R2 + A/B/X/Y switch views, L2 + A/B undo/redo. **Select + Start** opens the menu (it also opens from a back grip if your Steam Input layout passes them to the game), and the menu has **Quit**. To type a song title, select the title field with A, then press **Steam + X** for the on-screen keyboard. Projects and exports are kept in `~/ThorTracker`; the song you are working on is saved automatically and reopens next time.
+
 ## A quick tour
 
 ### Pattern editing on both screens

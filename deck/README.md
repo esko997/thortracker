@@ -28,6 +28,10 @@ The Deck uses the shared button routing (`HostInput`), popups and menus (`AppMen
 
 Not yet checked: physical button presses (no one pressed them), Gaming Mode as a non-Steam game, suspend/resume, back paddles and trackpads under Steam Input.
 
+## Packaging
+
+`tools/build-sdl3.sh` builds SDL3 3.2.18 from its release tarball into `deps/` (CI does this); `tools/package-appimage.sh <version>` puts the release executable, `fonts/`, `tunings/` and that `libSDL3.so.0` (in `lib/`, found through the executable's `$ORIGIN/lib` rpath) into `dist/thor-tracker-<version>-x86_64.AppImage`. CI's `deck` job builds it on every push, starts the AppImage offscreen and opens the menu, and uploads it; releases attach it. The executable needs only glibc 2.19 or later; the bundled SDL3 is built on Ubuntu 24.04 (glibc 2.39; SteamOS has 2.41).
+
 ## Build and run
 
 ```sh
@@ -45,4 +49,3 @@ On the Deck, `~/thortracker-deck/spike/run.sh` starts it with the demo song. Add
 - Touchscreen input.
 - Shapes are not anti-aliased on the Deck yet (SDL geometry); circles and rounded corners look slightly stepped.
 - Files: Open/Save/Export through SDL3 file dialogs (desktop portal) or a built-in browser in Gaming Mode.
-- Packaging: link against the Steam Linux Runtime (sniper) SDK or bundle SDL3. Build in CI. Ship a Flatpak/AppImage or a Steam shortcut.
