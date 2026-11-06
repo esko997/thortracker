@@ -1,11 +1,11 @@
 package org.thortracker.ui
 
-import android.view.KeyEvent
 import org.thortracker.editor.Action
 import org.thortracker.editor.ViewKind
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
+import org.thortracker.input.Keys
 
 /**
  * Host-level controller routing over physical key codes and the user's [keymap]. Decides, per press, which
@@ -26,7 +26,7 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
 
     sealed interface Route {
         /** Consumed; [code] is the canonical key for a POPUP/TOOLBAR target. */
-        data class Deliver(val target: Target, val code: Int = KeyEvent.KEYCODE_UNKNOWN) : Route
+        data class Deliver(val target: Target, val code: Int = Keys.UNKNOWN) : Route
         /** A host control's press. */
         data class Run(val control: Control) : Route
         /** Fixed menu key. */
@@ -63,9 +63,9 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
         }
         if (!down || repeat > 0) return continued(code, down, popupOpen, toolbarFocused, view)
         when (code) {
-            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BUTTON_MODE ->
+            Keys.MENU, Keys.BUTTON_MODE ->
                 return if (popupOpen) deliver(code, Owner.Popup(code)) else { owners[code] = Owner.Global; Route.Menu }
-            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> return when {
+            Keys.BACK, Keys.ESCAPE -> return when {
                 popupOpen -> deliver(code, Owner.Popup(code))
                 toolbarFocused -> deliver(code, Owner.Toolbar(code))
                 else -> { owners[code] = Owner.Global; Route.Menu }
@@ -74,7 +74,7 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
         val chords = held.mapNotNull { keymap.control(Binding(code, it), view) }
         if (chords.isNotEmpty() && held.size > 1) return deliver(code, Owner.Global)
         val control = chords.firstOrNull() ?: keymap.control(Binding(code), view)
-            ?: if (code == KeyEvent.KEYCODE_SPACE) Control.PLAY_PATTERN else null
+            ?: if (code == Keys.SPACE) Control.PLAY_PATTERN else null
         if (popupOpen) {
             if (control != null && control.overPopups && chords.isNotEmpty()) return run(code, control)
             // Any other chord (e.g. R2+A for a view) must not press the popup's highlighted item.
@@ -83,7 +83,7 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
         }
         if (control == null) return if (isController(code)) deliver(code, Owner.Global) else Route.Pass
         if (control.host) return run(code, control)
-        if (toolbarFocused) return deliver(code, Owner.Toolbar(if (chords.isEmpty()) keymap.canonical(code) else KeyEvent.KEYCODE_UNKNOWN))
+        if (toolbarFocused) return deliver(code, Owner.Toolbar(if (chords.isEmpty()) keymap.canonical(code) else Keys.UNKNOWN))
         val action = control.action ?: return deliver(code, Owner.Global)
         owners[code] = Owner.Editor(action)
         return Route.Editor(action)
@@ -124,8 +124,8 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     companion object {
         /** Gamepad buttons and the D-pad: consumed even when unbound, so they never trigger system fallbacks. */
         fun isController(code: Int): Boolean =
-            code in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_CENTER ||
-                code in KeyEvent.KEYCODE_BUTTON_A..KeyEvent.KEYCODE_BUTTON_MODE ||
-                code in KeyEvent.KEYCODE_BUTTON_1..KeyEvent.KEYCODE_BUTTON_16
+            code in Keys.DPAD_UP..Keys.DPAD_CENTER ||
+                code in Keys.BUTTON_A..Keys.BUTTON_MODE ||
+                code in Keys.BUTTON_1..Keys.BUTTON_16
     }
 }
