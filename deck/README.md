@@ -1,6 +1,6 @@
-# Thor Tracker on Steam Deck — spike
+# Thor Tracker on Steam Deck
 
-![The Deck build's Pattern view on a Steam Deck, drawn by the same shared code as the Thor app: the demo song's Intro pattern with an edited C#4 under the cursor, the inspector and order list on the right, and the controller hints at the bottom](spike-deck-screenshot.png)
+![The Deck build's Pattern view on a Steam Deck, drawn by the same shared code as the Thor app: the demo song's Intro pattern with an edited C#4 under the cursor, the inspector and order list on the right, and the controller hints at the bottom](deck-pattern.png)
 
 A Kotlin/Native + SDL3 frontend for Steam Deck / desktop Linux. It shares the Android app's core and audio engine:
 
@@ -18,7 +18,7 @@ The Deck uses the shared button routing (`HostInput`), popups and menus (`AppMen
 - **Recovery:** the working song is written to `~/.local/share/thortracker/working.thor` a second after each change and on Quit, and reopens on the next start. "Load demo", "New blank song" and Open keep the replaced song as `previous.thor` for "Recover previous project". The keymap is saved beside it.
 - Built-in tunings ship in `tunings/` beside the executable.
 
-## What the spike showed (SteamOS 3.8.28, Desktop Mode)
+## What has been verified (SteamOS 3.8.28)
 
 - One native 12 MB binary with no Java runtime. It uses the Deck's system SDL3 3.2.18 (Wayland, PipeWire). The engine is compiled with Kotlin/Native's own clang and glibc 2.19 sysroot, so the build needs no system compiler.
 - The Steam Deck Controller is detected. Scripted input through the same routing as the gamepad moved the cursor, edited a note (A+Right), undid it (L2+A) and started playback (Start). Playback ran at the right tempo while edits reached the engine live, at a steady 89-90 fps (90 Hz panel, vsync) with no slow frames.
@@ -41,7 +41,7 @@ tools/build.sh :deck:linkDebugExecutableLinuxX64
 # fonts/ and tunings/ are copied beside the executable; deploy them together
 ```
 
-On the Deck, `~/thortracker-deck/spike/run.sh` starts it with the demo song. Add it in Desktop Mode via Steam → Add a Non-Steam Game to launch it from Gaming Mode. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
+To install a release on the Deck, see the main README's "Steam Deck" section. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
 
 ## Open questions for the real port
 
