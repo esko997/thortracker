@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Thor Tracker
+Comment=Controller-first Game Boy / Game Boy Color music tracker
+Exec=thortracker %f
+Icon=thortracker
+Categories=AudioVideo;Audio;Music;
+Terminal=false

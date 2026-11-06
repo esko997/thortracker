@@ -60,8 +60,9 @@ kotlin {
         binaries.executable {
             baseName = "thortracker"
             entryPoint = "org.thortracker.deck.main"
-            // libSDL3 is the system's at run time (SteamOS ships it); deps/lib only provides symbols to link against.
-            linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lm", "--allow-shlib-undefined")
+            // Links against deps/lib/libSDL3.so. The AppImage bundles that library in lib/ beside the executable, found
+            // through the rpath; without it the system's SDL3 is used (SteamOS ships one).
+            linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
         }
     }
     sourceSets {

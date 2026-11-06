@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fetches what the deck module builds against into deck/deps (gitignored):
+# Fetches what the deck module builds against into deck/deps (gitignored), for quick local builds
+# (CI and releases build SDL3 from source instead: tools/build-sdl3.sh):
 #  - SDL3 headers from the official release tarball (zlib license),
 #  - a libSDL3.so to link against: copied from the Steam Deck (SteamOS ships SDL3 system-wide; the binary uses the
 #    Deck's own copy at run time). Usage: deck/tools/fetch-deps.sh [user@deck-host]

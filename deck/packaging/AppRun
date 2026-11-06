@@ -1,0 +1,4 @@
+#!/bin/sh
+# Thor Tracker AppImage entry point. The program finds fonts/, tunings/ and lib/ beside its own executable.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/thortracker" "$@"
