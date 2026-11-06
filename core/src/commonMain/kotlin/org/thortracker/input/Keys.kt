@@ -17,6 +17,8 @@ object Keys {
     const val SPACE = 62
     const val ENTER = 66
     const val MENU = 82
+    const val PAGE_UP = 92
+    const val PAGE_DOWN = 93
     const val BUTTON_A = 96
     const val BUTTON_B = 97
     const val BUTTON_C = 98
@@ -33,6 +35,10 @@ object Keys {
     const val BUTTON_SELECT = 109
     const val BUTTON_MODE = 110
     const val ESCAPE = 111
+    const val NUMPAD_ENTER = 160
     const val BUTTON_1 = 188
     const val BUTTON_16 = 203
+
+    /** Android's KeyEvent.isGamepadButton: A..Mode and the generic buttons 1..16. */
+    fun isGamepadButton(code: Int): Boolean = code in BUTTON_A..BUTTON_MODE || code in BUTTON_1..BUTTON_16
 }
