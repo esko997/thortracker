@@ -1,9 +1,13 @@
-# Audio engine: hUGEDriver preview
+# Audio engine: hUGEDriver preview (and the NES spike)
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
 (Steam Deck). There is no second song sequencer: notes, instruments, effects, timing and channel
 behaviour are whatever the driver code does on the emulated CPU and APU.
+
+The NES system (`"nes-famistudio"`, design step 4) follows the same principle: the FamiStudio
+sound engine 4.5.3 runs on an emulated 6502 + 2A03. It is compiled into both hosts and proven in
+the host test, but nothing in Kotlin uses it yet; see [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -41,6 +45,10 @@ Game Boy through the ops table as well as through `hm_*` directly.
 | hUGEDriver 6.1.3 | `third_party/hUGEDriver-6.1.3/` (README, `gbdk/hUGEDriver.lib`, `include/`, `rgbds/hUGEDriver.asm`) | byte-identical to gbc-puzzler's vendored copy of the [v6.1.3 release](https://github.com/SuperDisk/hUGEDriver/releases/tag/v6.1.3); `hUGEDriver.lib` sha256 `6c0a2664…5cac89`, `hUGEDriver.asm` sha256 `16870fd8…01d56` | public domain ("dedicated to the public domain" in its README); no obligation |
 | binjgb | `app/src/main/cpp/third_party/binjgb/` (`src/emulator.c/.h`, `common.c/.h`, `memory.c/.h`, `builtin-palettes.def`, `LICENSE`) | github.com/binji/binjgb commit `16621111ed0ee73bcc45c912a823bcebedcffc0f` | MIT — **ship the copyright and permission notice** (`LICENSE`) with the app (credits/about screen or bundled notices) |
 | GBDK-2020 4.5.0 `sdar`/`sdldgb` | offline only (`tools/audio/prepare_huge_player.py`) | gbdk-linux64.tar.gz sha256 `d7857a5f…605c` (gbc-puzzler `tools/fetch-gbdk`) | tools are not shipped; output is the PD driver |
+| FamiStudio sound engine 4.5.3 | `third_party/famistudio-4.5.3/` (`famistudio_ca65.s`, `NoteTables/famistudio_note_table_{lsb,msb}.bin`, `readme.txt`, `LICENSE`, and the test-only `DemoSource/song_shatterhand_ca65.s`); assembled into `app/src/main/cpp/generated/nes_player_image.h` | github.com/BleuBleu/FamiStudio tag `4.5.3`, commit `c09dca64788606c09fcb5e70db28b9dd1f34be78` (the engine file is unchanged since tag 4.5.0 and still says 4.5.0 in its banner); `famistudio_ca65.s` sha256 `e126a8f3…71fe`, note tables `b917b0eb…ee41` / `b52e4924…69fb`, demo song `59c73131…8c60` | engine: all-permissive ("copyright notice and this notice are preserved"); note tables and demo data: FamiStudio's MIT licence. Both notices are in `NOTICE.txt` |
+| m6502.h (floooh/chips) | `app/src/main/cpp/third_party/chips/` (`m6502.h`, `LICENSE`) | github.com/floooh/chips commit `9e88298ce56319953ac7a43213a1120359f7a3a6`, `m6502.h` sha256 `b3fc32a0…868d46e` | zlib — keep the notice; it is in `NOTICE.txt` |
+| blip_buf 1.1.0 | `app/src/main/cpp/third_party/blip_buf/` (`blip_buf.c/.h`, `license.txt`, `readme.txt`, `changes.txt`) | Shay Green's release archive `blip_buf-1.1.0.zip` (code.google.com archive of blip-buf, sha256 `37a9b4f0…2b398e4c`); `blip_buf.c` sha256 `66c4a3f3…0c7573`, unmodified | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
+| cc65 `ca65`/`ld65` | offline only (`tools/audio/prepare_nes_player.py`) | Ubuntu 24.04 package `cc65 2.19-1` ("ca65 V2.18 - Ubuntu 2.19-1"), checked by the script | tools are not shipped |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -71,10 +79,11 @@ assembled at app runtime or per Play.
 `ndkVersion = "27.0.12077973"`, CMake `3.22.1`, `externalNativeBuild.cmake.path =
 src/main/cpp/CMakeLists.txt`, ABIs `arm64-v8a`, `x86_64`. The CMake project builds a static C11
 library `chip_engines` (`chip_engine.c`, `huge_chip.c`, `huge_machine.c`, which `#include`s
-binjgb's `emulator.c`, plus `common.c`, always with `NDEBUG`) and the shared `thortracker_audio`
-(`audio_engine.cpp`, `audio_jni.cpp`) linked with NDK `aaudio`, `log`, `m`, `dl`. No third-party
-Java/Gradle dependency. The Deck compiles the same C files with Kotlin/Native's clang
-(`deck/build.gradle.kts`, `buildEngine`).
+binjgb's `emulator.c`, plus `common.c`; and the NES files `nes/nes_chip.c`, `nes/nes_machine.c`,
+which `#include`s the header-only `m6502.h`, `nes/nes_apu.c` and `blip_buf.c`; always with
+`NDEBUG`) and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with NDK
+`aaudio`, `log`, `m`, `dl`. No third-party Java/Gradle dependency. Everything is C, so the Deck
+compiles the same files with Kotlin/Native's clang (`deck/build.gradle.kts`, `buildEngine`).
 
 ## Memory map of the preview cartridge
 
@@ -218,3 +227,191 @@ notes (one undo step); neither these previews nor their scheduling touch project
 - Acoustic listening, physical button-to-speaker latency, and an independent trace-by-trace
   reference-player comparison have not been performed. Digital capture is signal-path evidence,
   not a substitute for the user's listening and playability assessment.
+
+## NES: FamiStudio sound engine on a 6502 + 2A03 (`"nes-famistudio"`)
+
+Design step 4 (spike): a native machine proven in the host test, registered in `chip_engine_ops`
+and compiled into the Android library and the Deck binary. No Kotlin lowering, UI or host
+integration yet (step 5).
+
+### What runs
+
+- **Player image** (`generated/nes_player_image.h`, 2791 bytes at `$8000`): the unmodified
+  FamiStudio 4.5.3 engine plus a fixed NSF-style entry table (`tools/audio/nes/nes_player.s`):
+  `$8000 nes_player_init` (A = song index → `famistudio_init(NTSC, NES_SONG_BASE)` +
+  `famistudio_music_play`), `$8003 nes_player_play` (`famistudio_update`), `$8006
+  nes_player_idle` (return address of host calls), `$8009 nes_player_trap` (interrupt/BRK vector
+  target = fault). Configuration: NTSC, smooth vibrato, DPCM support compiled in at
+  `FAMISTUDIO_DPCM_OFF = $C000`, every 2A03 feature FamiStudio's own NSF kernel enables (volume
+  track and slides, pitch track, slide notes incl. noise, vibrato, arpeggio, duty-cycle effect, DMC
+  delta counter, release notes, phase reset, extended instrument range) except the DPCM
+  bank-switching/extended-range encodings, **FamiStudio tempo mode**, no SFX. Extra features only
+  add opcodes, so any 2A03-only FamiStudio-tempo export without DPCM bank switching plays.
+- **CPU**: `m6502.h` (floooh/chips; cycle-stepped, tested in `floooh/chips-test` with nestest, the
+  Wolfgang Lorenz suite and a cycle comparison against perfect6502; here additionally against py65,
+  below), BCD disabled as on the 2A03. The machine calls the player exactly like an NSF
+  player: init once, then play at the start of every frame, each call returning to
+  `nes_player_idle` where the machine stops. Frames alternate 29780 and 29781 CPU cycles
+  (29780.5 = 341 × 262 − 0.5 PPU dots / 3: 60.0988 Hz, the real NTSC rate rather than 60 Hz).
+- **Faults** (`CHIP_ERR_FAULT`, then silent until the next start): fetching an undocumented, JAM
+  or BRK opcode (FamiStudio executes `brk` on stream opcodes its build does not support), fetching
+  the trap address, or a call longer than one frame (init: 200000 cycles).
+- **APU**: `nes/nes_apu.c`, written here from the NESdev wiki, because no permissively licensed,
+  accurate 2A03 APU in plain C was available (blargg's Nes_Snd_Emu/game-music-emu and MAME are
+  C++; puNES and FCEUmm are woven into their emulators' globals) and the Deck builds C only.
+  Emulated: pulse duty sequencers, envelopes, sweeps (pulse 1 ones' complement, target-period
+  muting even with sweep off), length counters with halt and the `$4015` enables/status, the
+  triangle linear counter, the noise LFSR in both modes, the frame counter (4/5-step, `$4017`
+  3-4 cycle delay, immediate 5-step clock, IRQ flag), the DMC output level (`$4011`), and the
+  nonlinear mixer (exact NESdev formulas, so the idle triangle's held step and the DMC level
+  change the other channels' loudness as on hardware). Not emulated: DPCM sample playback and DMC
+  IRQ (samples are silent), IRQs to the CPU, same-cycle length/halt quirks, the APU-cycle phase
+  of pulse/noise timers (counted in CPU cycles), triangle periods below 2 (frozen, avoiding
+  ultrasonic pops). Silent channels' timers are not stepped (their phase is reset by the write that
+  makes them audible); timers run event to event, not cycle by cycle.
+- **Output**: the mixed level as band-limited steps into blip_buf (blargg's band-limited synthesis,
+  the technique of game-music-emu and FamiStudio's own NesSndEmu), then a first-order 37 Hz
+  high-pass and 14 kHz low-pass (Famicom-style output stage), × 2.0, L = R. The demo song peaks at
+  0.56 (rms 0.13).
+
+### CPU memory map
+
+| Range | Use |
+|---|---|
+| `$0000-$0007` | engine zero page |
+| `$0100-$01FF` | stack (host calls start at S = `$FB` with the idle return address pushed) |
+| `$0200-$02A2` | engine RAM; `$02A3-$07FF` free (candidate audition scratch, below) |
+| `$4000-$4017` | APU, writes timestamped to their CPU cycle; `$4015` reads status |
+| `$8000-$8AE6` | player image |
+| `$A000-$FFF9` | song region (`NES_SONG_BASE`..`NES_SONG_END`, 24570 bytes): the image's FamiStudio data |
+| `$FFFA-$FFFF` | vectors → `nes_player_trap`, written by the machine |
+
+Everything else reads 0 and ignores writes.
+
+### Image layout (what step 5's lowering produces)
+
+`image_size` = 32-byte header + 24570-byte song region, little-endian:
+
+| Offset | Field |
+|---|---|
+| 0 | `"TTNS"` |
+| 4 | player id = first 4 bytes of the player image sha256 (`NES_PLAYER_ID`): an image only plays on the engine build it was lowered for |
+| 8 | song base (`$A000`) |
+| 10 | data size (bytes of FamiStudio data; the rest of the region must be zero) |
+| 12 | song index |
+| 13 / 14 / 16 / 17 | timing: frames per row (u8), rows per order (u16), order count (u8), loop order (u8); all zero = unknown |
+| 18-31 | zero |
+| 32 | song region, placed at `$A000` |
+
+`load_image` validates the header, the FamiStudio song list (count 1-17, song index, instrument
+pointer, five channel stream pointers and the tempo-envelope pointer of every song inside the data)
+and the zero padding. The streams themselves are not parsed; bad stream data ends in a fault.
+
+**FamiStudio data format** (authority: the engine source and FamiStudio's exporter,
+`FamiStudio/Source/IO/FamitoneMusicFile.cs`; FamiStudio's own `famistudio-asm-export` is the
+golden reference, and the 4.5.3 Linux release runs headless with `dotnet FamiStudio.dll <song>
+famistudio-asm-export out.s -famistudio-asm-format:ca65`, checked here): byte song count; word
+instrument list; word DPCM list − 4; per song 5 stream pointers (pulse 1, pulse 2, triangle, noise,
+DPCM) + 4 tempo bytes (FamiStudio tempo: tempo-envelope pointer, frame-lookup index, 0). An
+instrument is 4 envelope pointers: volume (byte 0 = release index), arpeggio, duty, pitch (byte
+0 = relative/absolute flag). Envelope bytes ≥ `$80` are values (byte − 192), `$00` loops to the
+index in the next byte, `$01-$7F` hold the value that many frames. Channel streams are the
+engine's opcode language (notes, empty-row runs, `$41` reference = call a block, `$42` loop,
+`$44` end, `$45` release, effect opcodes `$4x/$5x`; see `famistudio_advance_channel`). All
+pointers are absolute, so data is lowered for `$A000`.
+
+**Notes**: stream note `n` (1-96) indexes the NTSC note table; `n = 46` is period `$0FD`
+(440.4 Hz on a pulse), so Thor Tracker's absolute note (C-0 = 0) is `n + 11`. Pulses can play
+`n ≥ 10` (A-1, the longest 11-bit period); the triangle uses the same table and sounds an octave
+lower (FamiTracker convention); 0 stops the note. The host test checks the whole table against
+12-TET A440 (within one period unit).
+
+### Ops behaviour (spike)
+
+| Op | Behaviour |
+|---|---|
+| `start(order, row)` | power-on reset, init + play, then a silent fast-forward of the real engine for `(order × rows per order + row) × frames per row` frames (always `CHIP_SEEK_FROM_START`). Fails with `CHIP_ERR_IMAGE` past the song, past `max_ticks`, or for (order, row) ≠ (0, 0) without timing. Cost ≈ 11.4 µs per frame on the dev PC (3591 frames: 41 ms) |
+| `apply_image` | copies the song region and timing of a valid image at the tick boundary; the engine keeps its stream and envelope pointers, so this is only correct for edits that keep every data offset |
+| `audition` | `CHIP_ERR_IMAGE` (not supported yet) |
+| `release` | 0 |
+| `mute(channel 0-4)` | forces the channel's level to 0 in the APU mixer while the engine keeps running, so unmuting resumes mid-note (hUGE resumes at the next note) |
+| `position` | from the frame counter and the image timing, wrapped at the loop order; without timing `(0, 0, frames)` |
+| `tick` | one frame: play routine + APU, 798-800 frames at 48 kHz |
+
+### What step 5 needs
+
+1. **Tempo mode.** In FamiStudio tempo the streams advance every frame (row lengths are baked
+   into the data as frame counts; the tempo envelope only adds/skips frames for NTSC/PAL), so the
+   engine has no rows: position and seek need the lowering's frame timing. The header's single
+   frames-per-row value covers constant grooves only; grooves or per-pattern lengths need a
+   per-order start-frame table. In **FamiTracker tempo** (`FAMISTUDIO_USE_FAMITRACKER_TEMPO` +
+   `..._DELAYED_NOTES_OR_CUTS`) the engine advances rows itself with speed (= ticks per row, `Fxx`)
+   and tempo, supports note delay/cut, and exposes the row in RAM (`famistudio_tempo_advance_row`
+   after an update; before it, a row starts iff `famistudio_tempo_acc_hi >= famistudio_song_speed`).
+   That matches the tracker model (and the Game Boy's ticks per row) and makes row-exact seek and
+   position possible from engine state; recommended. Switching means: set the flags in
+   `nes_player.s`, re-run the prepare script (new player id), make `nm_validate` treat the 4
+   tempo bytes as NTSC/PAL step words instead of an envelope pointer, and count rows instead of
+   frames. The test song then has to come from a FamiTracker-tempo export (FamiStudio's CLI can
+   export one from a FamiStudio text file).
+2. **Live edits.** Stream pointers are cached by the engine, so a relayout under a playing song
+   is unsafe. Either lay data out with stable slots (as `HugeImageLayout` does: each
+   pattern/channel stream in a fixed slot, order lists as streams of `$41` references), or re-seek a
+   spare machine to the current position off the audio thread and swap it in.
+3. **Audition.** Needs a one-note song using the image's instrument list: e.g. a second song in
+   the data (song index 1) whose stream for the channel plays note `n` with instrument `i` and
+   holds, or a stream the C side writes into free RAM (`$02A3-$07FF`) pointing at the image's
+   instruments. Release = the engine's release opcode (`$45`), so `release()` should return 1 and
+   tick until the volume envelope reaches 0. Channel borrowing can use `mute` (mixer level) or
+   the engine's channel state.
+4. **Export.** The host test writes `nes_demo.nsf`: a 128-byte NSF header (load `$8000`, init
+   `$8000`, play `$8003`, NTSC speed 16639 µs) + the player + the song region. The same bytes are
+   the `.nsf` export.
+5. **Measure on the Thor**: realtime cost per tick and seek cost per frame (dev PC: 104 µs per
+   tick, 159× realtime; the engine's worst frame is 4267 CPU cycles), and output level against
+   the Game Boy.
+
+### Preparing the player (once, when the pin or configuration changes)
+
+```
+python3 tools/audio/prepare_nes_player.py   # ca65/ld65 on PATH or in the `ubuntu` distrobox
+```
+
+It checks the vendored sources' sha256 and the assembler version, assembles
+`tools/audio/nes/nes_player.s` with `ca65 -g` and links it alone (`nes_player.cfg`: code at
+`$8000`, zero page at `$00`, RAM at `$0200`), checks the entry table, that the player ends below
+`NES_SONG_BASE` and the RAM layout, links the demo song export at `$A000` (`nes_song.cfg`), checks
+its song list, and writes `app/src/main/cpp/generated/nes_player_image.h` (bytes, addresses,
+player id) and the test fixture `app/src/test/cpp/nes_demo_song.h`. Two runs produce identical
+files.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` also builds and runs `app/src/test/cpp/nes_machine_test.c`
+  (2026-11-07: **183 checks, 0 failures**; Game Boy unchanged at 145). APU: pulse/triangle pitch
+  from timer periods by zero crossings (440.40 / 220.20 Hz exact), length counter clocked at cycle
+  149149 for index 0, `$4015` status and enable, frame IRQ flag, envelope, linear counter, sweep
+  in both negate modes and target muting, 5-step immediate clock after the `$4017` delay, LFSR
+  periods 32767 / 93, mixer formulas. Player: entry table, note table vs 12-TET, FamiStudio's
+  own export of Shatterhand "Final Area" played for 4200 frames (one pass + loop + 10 s) with no
+  fault, non-silent and unclipped, register writes repeating with the 3600-frame song period (the
+  timing metadata matches the engine), pulse periods on the note table, the longest held pulse 1
+  and triangle notes rendered alone measuring 220.30 Hz (timer 220.20) and 130.68 Hz (timer
+  130.68), identical render hashes twice, seek to order 3 row 5 writing the same registers as
+  straight play, seek limits, apply, mute, invalid opcode/BRK/runaway faults, an unknown stream
+  opcode reaching the engine's BRK as `CHIP_ERR_FAULT`, and the ops table (registry, image checks,
+  start/position/tick/apply/mute/audition/release).
+- Evidence written to the directory: `nes_demo.wav` (30 s, 48 kHz stereo), `nes_demo_tonal.wav`
+  (pulses + triangle only), `nes_trace.txt` (per-frame APU writes), `nes_demo.nsf`.
+- `tools/audio/nes_reference_check.py <dir> [--famistudio <FamiStudio 4.5.3 Linux release>]`
+  (developer evidence: numpy, py65, libgme; FamiStudio needs .NET 8) — 2026-11-07, all PASS:
+  - py65 (an independent 6502) running the NSF: all 4200 frames, 37075 APU writes identical in
+    order and value.
+  - Audio vs libgme rendering the same NSF, FamiStudio's own `wav-export` and libgme rendering
+    FamiStudio's own `nsf-export` of `Shatterhand.fms`: loudness-envelope correlation 0.90 / 0.93 /
+    0.89 (full mix) and 0.94 / 0.96 (pulses + triangle), log-spectrum correlation 0.91 / 0.93
+    (pulses + triangle). The two references agree with each other less (0.875 full mix; 0.906 and
+    0.911 pulses + triangle): the differences are within the spread between players (output
+    filters, random noise, mixer approximations), not an outlier.
+- Not done: listening on hardware, blargg's APU test ROMs (they need a PPU and IRQs), a comparison
+  with a real NES capture.

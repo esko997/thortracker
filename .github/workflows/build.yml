@@ -54,7 +54,7 @@ jobs:
           code=$(sed -n 's/^ *versionCode = \([0-9]*\)$/\1/p' app/build.gradle.kts)
           echo "versionCode $code (latest release $latest: $previous)"
           (( code > previous )) || { echo "Bump versionCode above $previous for v$VERSION" >&2; exit 1; }
-      - name: Native hUGEDriver preview-machine test (host gcc)
+      - name: Native chip-engine tests, Game Boy and NES (host gcc)
         run: tools/audio/run_native_host_test.sh "$RUNNER_TEMP/audio-evidence"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

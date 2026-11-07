@@ -307,3 +307,5 @@ The bundled third-party components keep their own licenses, all compatible with 
 ## Dependencies
 
 binjgb is MIT licensed; its full notice is in `app/src/main/cpp/third_party/binjgb/LICENSE` and bundled in the APK's `assets/NOTICE.txt`. hUGEDriver 6.1.3 is public domain and pinned under `third_party/`. The Steam Deck build adds SDL3 (zlib license), stb_truetype (public domain / MIT) and the Noto fonts (SIL Open Font License, `deck/fonts/OFL.txt`); its AppImage carries the same `NOTICE.txt`. See the audio document for exact source revisions and the one-time player-image regeneration procedure.
+
+The NES engine (in development; not yet reachable from the app) adds the FamiStudio sound engine 4.5.3 (its own all-permissive notice; its note tables and the test song are MIT), pinned under `third_party/famistudio-4.5.3/` and pre-assembled into `app/src/main/cpp/generated/nes_player_image.h`; the `m6502.h` 6502 emulator from floooh/chips (zlib license); and blip_buf 1.1.0 (LGPL-2.1-or-later), both under `app/src/main/cpp/third_party/`. The 2A03 APU emulation is Thor Tracker's own code. All notices are in `NOTICE.txt`.
