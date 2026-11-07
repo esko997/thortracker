@@ -7,6 +7,7 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.nes.NesSystem
 
 /** What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. */
 enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE }
@@ -264,7 +265,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem
