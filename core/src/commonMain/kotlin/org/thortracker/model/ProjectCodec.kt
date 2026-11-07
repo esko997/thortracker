@@ -1,39 +1,46 @@
 package org.thortracker.model
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 import org.thortracker.system.SoundSystems
-import org.thortracker.system.system
+import org.thortracker.system.SystemSound
 
 /** A project file that is malformed, from a newer/unknown format, or structurally invalid. */
 class ProjectFormatException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
 
 /**
  * Thor Tracker's own project format: UTF-8 JSON
- * `{"format":"thor-tracker-project","version":7,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
+ * `{"format":"thor-tracker-project","version":8,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
  * export-level problems ([org.thortracker.system.SoundSystem.errors]) are allowed so work in progress round-trips.
+ * `backend` names the song's sound system ([SoundSystems]); the song repeats it, and its chip data is the song's
+ * `sound` object, in that system's own shape ([org.thortracker.system.SoundSystem.soundSerializer]).
  *
  * Versions: 1 = initial format. 2 adds each pattern's editor-only `scale` (`{"root":0..11,"kind":"major"}`);
  * version 1 files have no scales and read as chromatic. 3 adds each pattern's played `length` (1-64);
  * older files read as 64 rows. 4 adds scale kinds beyond the original five (modes, harmonic/melodic minor,
  * blues, whole tone and others). 5 adds the song's optional microtuning `tuning`
- * (`{"name":...,"cents":[...],"root":0..71,"tolerance":5|10|20}` or null); older files have none. 6 adds the
+ * (`{"name":...,"cents":[...],"root":note,"tolerance":5|10|20}` or null); older files have none. 6 adds the
  * song's editor-only `newPatternScale` (the scale new patterns start with); older files read as chromatic.
  * 7 adds `parkedOrders` (ascending order indices skipped by playback and export); older files park none.
- * Every save writes the current version. Backend data is unchanged, so `backendVersion` stays 1.
+ * 8 nests the chip data in `sound` and makes notes absolute (semitones from C-0, so C-3 = 36), the tuning root
+ * too; versions 1-7 are Game Boy songs and are upgraded by their system
+ * ([org.thortracker.system.SoundSystem.upgradeProject]). Every save writes the current version. `backendVersion`
+ * stays 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 7
+    const val VERSION = 8
     const val BACKEND_VERSION = 1
 
     private val json = Json {
@@ -51,14 +58,37 @@ object ProjectCodec {
         @SerialName("version") val version: Int,
         @SerialName("backend") val backend: String,
         @SerialName("backendVersion") val backendVersion: Int,
-        @SerialName("song") val song: Song,
+        @SerialName("song") val song: SongFile,
+    )
+
+    /** A [Song] as stored: shared fields, the system id and the system's own `sound` object. */
+    @Serializable
+    private data class SongFile(
+        @SerialName("title") val title: String = "Untitled",
+        @SerialName("artist") val artist: String = "",
+        @SerialName("comment") val comment: String = "",
+        /** Absent in hand-written files: the project's backend. */
+        @SerialName("backend") val backend: String? = null,
+        @SerialName("ticksPerRow") val ticksPerRow: Int = 6,
+        @SerialName("loopOrder") val loopOrder: Int = 0,
+        @SerialName("patterns") val patterns: List<Pattern>,
+        @SerialName("orders") val orders: List<Int>,
+        @SerialName("sound") val sound: JsonElement,
+        @SerialName("tuning") val tuning: Tuning? = null,
+        @SerialName("newPatternScale") val newPatternScale: Scale = Scale.CHROMATIC,
+        @SerialName("parkedOrders") val parkedOrders: List<Int> = emptyList(),
     )
 
     /** @throws ProjectFormatException if [song] is structurally invalid (it could not be read back). */
     fun encode(song: Song): String {
-        val problems = song.system.structuralErrors(song)
+        val system = song.system
+        val problems = system.structuralErrors(song)
         if (problems.isNotEmpty()) throw ProjectFormatException("Song cannot be saved: ${problems.joinToString("; ")}")
-        return json.encodeToString(Envelope.serializer(), Envelope(FORMAT, VERSION, song.backend, BACKEND_VERSION, song))
+        @Suppress("UNCHECKED_CAST") // a song's sound is always its system's
+        val sound = json.encodeToJsonElement(system.soundSerializer as KSerializer<SystemSound>, song.sound)
+        val file = SongFile(song.title, song.artist, song.comment, system.id, song.ticksPerRow, song.loopOrder, song.patterns,
+            song.orders, sound, song.tuning, song.newPatternScale, song.parkedOrders)
+        return json.encodeToString(Envelope.serializer(), Envelope(FORMAT, VERSION, system.id, BACKEND_VERSION, file))
     }
 
     /** @throws ProjectFormatException for anything that is not a readable, structurally valid project. */
@@ -103,19 +133,34 @@ object ProjectCodec {
         if (version < PARKED_VERSION && parked is JsonArray && parked.isNotEmpty()) {
             throw ProjectFormatException("Project version $version cannot contain parked orders (added in version $PARKED_VERSION)")
         }
-        val envelope = try {
-            json.decodeFromJsonElement(Envelope.serializer(), root)
+        val upgraded = (root["song"] as? JsonObject)?.takeIf { version < SOUND_VERSION }?.let { song ->
+            try {
+                JsonObject(root + ("song" to system.upgradeProject(song, version)))
+            } catch (e: IllegalArgumentException) {
+                throw ProjectFormatException("Project data is invalid: ${e.message}", e)
+            }
+        } ?: root
+        val song = try {
+            val file = json.decodeFromJsonElement(Envelope.serializer(), upgraded).song
+            if (file.backend != null && file.backend != backend) {
+                throw ProjectFormatException("Song backend \"${file.backend}\" does not match the project backend \"$backend\"")
+            }
+            Song(file.title, file.artist, file.comment, file.ticksPerRow, file.loopOrder, file.patterns, file.orders,
+                json.decodeFromJsonElement(system.soundSerializer, file.sound), file.tuning, file.newPatternScale, file.parkedOrders)
         } catch (e: SerializationException) {
             throw ProjectFormatException("Project data is invalid: ${e.message}", e)
+        } catch (e: ProjectFormatException) {
+            throw e
         } catch (e: IllegalArgumentException) {
             throw ProjectFormatException("Project data is invalid: ${e.message}", e)
         }
-        val song = envelope.song
-        if (song.backend != backend) throw ProjectFormatException("Song backend \"${song.backend}\" does not match the project backend \"$backend\"")
         val problems = system.structuralErrors(song)
         if (problems.isNotEmpty()) throw ProjectFormatException("Project data is invalid: ${problems.joinToString("; ")}")
         return song
     }
+
+    /** First format version with the chip data in `sound` and absolute notes. */
+    private const val SOUND_VERSION = 8
 
     /** First format version with per-pattern scales. */
     private const val SCALE_VERSION = 2

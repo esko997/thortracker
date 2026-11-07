@@ -1,8 +1,9 @@
 package org.thortracker.backend
 
+import org.thortracker.system.gb.gb
 import org.thortracker.model.Cell
 import org.thortracker.system.gb.HugeRules
-import org.thortracker.model.Instrument
+import org.thortracker.system.gb.GbInstrument
 import org.thortracker.model.Song
 import org.thortracker.system.gb.GbValidator
 
@@ -14,7 +15,7 @@ import org.thortracker.system.gb.GbValidator
  * Byte layouts match hUGETracker 1.0.11 codegen (InstrumentToBytes / RenderGBDKInstrument) and the GBDK
  * structs in `hUGEDriver.h`:
  * - [tracks]: 64 rows x 3 bytes, the `dn` macro: `note | (instr & 0x10) << 3`, `(instr << 4) | effect`, `param`;
- *   note 90 = no note.
+ *   note = driver note (cell note - [HugeRules.NOTE_OFFSET], 0 = C-3), 90 = no note.
  * - [duty]: `hUGEDutyInstr_t` = NR10, NR11, NR12, subpattern lo, hi (0), highmask (0x80 | lengthEnabled << 6).
  * - [wave]: `hUGEWaveInstr_t` = NR31, NR32, wave index, subpattern lo, hi (0), highmask (0x80 | lengthEnabled << 6).
  * - [noise]: `hUGENoiseInstr_t` = NR42, subpattern lo, hi (0), highmask (length & 63 | lengthEnabled << 6 |
@@ -76,17 +77,17 @@ object HugeLowering {
             orderPatterns = song.orders.toIntArray(),
             orders = orders,
             tracks = tracks,
-            duty = song.pulseInstruments.map(::dutyBytes),
-            wave = song.waveInstruments.map(::waveBytes),
-            noise = song.noiseInstruments.map(::noiseBytes),
-            waves = song.waves.map(::packWave),
+            duty = song.gb.pulse.map(::dutyBytes),
+            wave = song.gb.wave.map(::waveBytes),
+            noise = song.gb.noise.map(::noiseBytes),
+            waves = song.gb.waves.map(::packWave),
         )
     }
 
     fun encodeTrack(cells: List<Cell>): ByteArray {
         val out = ByteArray(cells.size * ROW_BYTES)
         cells.forEachIndexed { row, cell ->
-            val note = if (cell.note >= 0) cell.note else HugeRules.NO_NOTE
+            val note = if (cell.note >= 0) cell.note - HugeRules.NOTE_OFFSET else HugeRules.NO_NOTE
             val effect = if (cell.note == Cell.CUT) HugeRules.FX_NOTE_CUT else cell.effect
             val param = if (cell.note == Cell.CUT) 0 else cell.param
             val i = row * ROW_BYTES
@@ -98,14 +99,14 @@ object HugeLowering {
     }
 
     /** NR10: sweep time << 4 | subtract (bit 3, hUGE "Down") | shift. */
-    fun nr10(instrument: Instrument): Int =
+    fun nr10(instrument: GbInstrument): Int =
         (instrument.sweepTime shl 4) or (if (instrument.sweepDirection == 0) 0x08 else 0) or instrument.sweepShift
 
     /** NRx2: initial volume << 4 | increase (bit 3) | pace. */
-    fun envelope(instrument: Instrument): Int =
+    fun envelope(instrument: GbInstrument): Int =
         (instrument.volume shl 4) or (instrument.envelopeDirection shl 3) or instrument.envelopePace
 
-    fun dutyBytes(instrument: Instrument) = byteArrayOf(
+    fun dutyBytes(instrument: GbInstrument) = byteArrayOf(
         nr10(instrument).toByte(),
         ((instrument.duty shl 6) or (instrument.length and 0x3F)).toByte(),
         envelope(instrument).toByte(),
@@ -113,7 +114,7 @@ object HugeLowering {
         (0x80 or lengthBit(instrument)).toByte(),
     )
 
-    fun waveBytes(instrument: Instrument) = byteArrayOf(
+    fun waveBytes(instrument: GbInstrument) = byteArrayOf(
         instrument.length.toByte(),
         (instrument.waveVolume shl 5).toByte(),
         instrument.wave.toByte(),
@@ -121,7 +122,7 @@ object HugeLowering {
         (0x80 or lengthBit(instrument)).toByte(),
     )
 
-    fun noiseBytes(instrument: Instrument) = byteArrayOf(
+    fun noiseBytes(instrument: GbInstrument) = byteArrayOf(
         envelope(instrument).toByte(),
         0, 0,
         ((instrument.length and 0x3F) or lengthBit(instrument) or (instrument.noiseWidth shl 7)).toByte(),
@@ -130,5 +131,5 @@ object HugeLowering {
 
     fun packWave(samples: List<Int>) = ByteArray(WAVE_BYTES) { i -> ((samples[2 * i] shl 4) or samples[2 * i + 1]).toByte() }
 
-    private fun lengthBit(instrument: Instrument) = if (instrument.lengthEnabled) 0x40 else 0
+    private fun lengthBit(instrument: GbInstrument) = if (instrument.lengthEnabled) 0x40 else 0
 }

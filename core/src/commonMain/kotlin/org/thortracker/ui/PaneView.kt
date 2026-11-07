@@ -12,7 +12,6 @@ import org.thortracker.editor.channelCount
 import org.thortracker.input.Keymap
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
-import org.thortracker.system.system
 
 /**
  * One pane: renders the view kind in [state] from the shared [session] into whatever rectangle the frontend gives

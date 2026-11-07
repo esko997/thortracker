@@ -1,8 +1,6 @@
 package org.thortracker.system.gb
 
 import org.thortracker.model.Cell
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
@@ -46,23 +44,25 @@ internal object DemoSong {
             loopOrder = 1,
             patterns = listOf(intro(), themeA(), themeB()),
             orders = listOf(0, 1, 2, 1, 2),
-            pulseInstruments = base.pulseInstruments.toMutableList().apply {
-                this[CHORD - 1] = Instrument(name = "Chord 25%", duty = 1, volume = 8)
-                this[LEAD - 1] = Instrument(name = "Lead 50%", duty = 2, volume = 13, envelopePace = 7)
-                this[PLUCK - 1] = Instrument(name = "Pluck 12.5%", duty = 0, volume = 14, envelopePace = 1)
-                this[ZAP - 1] = Instrument(name = "Sweep zap", duty = 2, volume = 15, envelopePace = 2,
+            sound = base.gb.copy(
+            pulse = base.gb.pulse.toMutableList().apply {
+                this[CHORD - 1] = GbInstrument(name = "Chord 25%", duty = 1, volume = 8)
+                this[LEAD - 1] = GbInstrument(name = "Lead 50%", duty = 2, volume = 13, envelopePace = 7)
+                this[PLUCK - 1] = GbInstrument(name = "Pluck 12.5%", duty = 0, volume = 14, envelopePace = 1)
+                this[ZAP - 1] = GbInstrument(name = "Sweep zap", duty = 2, volume = 15, envelopePace = 2,
                     sweepTime = 2, sweepDirection = 0, sweepShift = 2)
             },
-            waveInstruments = base.waveInstruments.toMutableList().apply {
-                this[TRI_BASS - 1] = Instrument(name = "Triangle bass", kind = InstrumentKind.WAVE, wave = 5, waveVolume = 1)
-                this[SAW_BASS - 1] = Instrument(name = "Saw bass", kind = InstrumentKind.WAVE, wave = 4, waveVolume = 2)
+            wave = base.gb.wave.toMutableList().apply {
+                this[TRI_BASS - 1] = GbInstrument(name = "Triangle bass", kind = GbBank.WAVE, wave = 5, waveVolume = 1)
+                this[SAW_BASS - 1] = GbInstrument(name = "Saw bass", kind = GbBank.WAVE, wave = 4, waveVolume = 2)
             },
-            noiseInstruments = base.noiseInstruments.toMutableList().apply {
-                this[KICK - 1] = Instrument(name = "Kick", kind = InstrumentKind.NOISE, volume = 15, envelopePace = 1)
-                this[SNARE - 1] = Instrument(name = "Snare", kind = InstrumentKind.NOISE, volume = 13, envelopePace = 2)
-                this[HAT - 1] = Instrument(name = "Closed hat", kind = InstrumentKind.NOISE, volume = 7, envelopePace = 1)
-                this[OPEN_HAT - 1] = Instrument(name = "Open hat", kind = InstrumentKind.NOISE, volume = 7, envelopePace = 3)
+            noise = base.gb.noise.toMutableList().apply {
+                this[KICK - 1] = GbInstrument(name = "Kick", kind = GbBank.NOISE, volume = 15, envelopePace = 1)
+                this[SNARE - 1] = GbInstrument(name = "Snare", kind = GbBank.NOISE, volume = 13, envelopePace = 2)
+                this[HAT - 1] = GbInstrument(name = "Closed hat", kind = GbBank.NOISE, volume = 7, envelopePace = 1)
+                this[OPEN_HAT - 1] = GbInstrument(name = "Open hat", kind = GbBank.NOISE, volume = 7, envelopePace = 3)
             },
+            ),
         )
     }
 
@@ -172,7 +172,7 @@ internal object DemoSong {
     private fun n(name: String): Int {
         val index = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-").indexOf(name.substring(0, 2))
         require(index >= 0) { "bad note $name" }
-        return (name.substring(2).toInt() - 3) * 12 + index
+        return name.substring(2).toInt() * 12 + index
     }
 
     private class PatternBuilder(private val title: String) {

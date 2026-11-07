@@ -12,7 +12,6 @@ import org.thortracker.editor.patternUses
 import org.thortracker.editor.rowCount
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
-import org.thortracker.system.system
 import org.thortracker.model.Songs
 import org.thortracker.model.Scale
 

@@ -5,7 +5,6 @@ import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewState
 import org.thortracker.model.Songs
-import org.thortracker.system.system
 
 /**
  * Song sheet: title, artist, tempo and loop settings above the order list. Each order row carries a

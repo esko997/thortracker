@@ -1,5 +1,7 @@
 package org.thortracker.system
 
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonObject
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
@@ -94,6 +96,14 @@ interface SystemHelp {
 }
 
 /**
+ * Everything about a song that belongs to its chip (instruments, wave tables). Each system has its own; shared code
+ * never looks inside, it asks [system].
+ */
+interface SystemSound {
+    val system: SoundSystem
+}
+
+/**
  * A sound chip with the driver that plays it: everything about a song that is not shared. Shared code (editor, views,
  * menus, validation entry points, tuning) asks the song's system instead of naming a chip. See docs/BACKENDS.md.
  */
@@ -130,6 +140,16 @@ interface SoundSystem {
     val maxOrders: Int
 
     fun blank(): Song
+
+    /** How this system's [SystemSound] is stored: the song's `sound` object in project files. */
+    val soundSerializer: KSerializer<out SystemSound>
+
+    /**
+     * Rewrites a song object written by project format [version] (before 8, when chip data was not yet in `sound` and
+     * notes were not absolute) into the current shape. Only the Game Boy existed then.
+     * @throws IllegalArgumentException when this system has no such files.
+     */
+    fun upgradeProject(song: JsonObject, version: Int): JsonObject
     fun demo(): Song
 
     /** Effects usable on [channel]; "no effect" is not an entry (the editor offers it separately). */
@@ -197,6 +217,3 @@ object SoundSystems {
     fun of(id: String): SoundSystem = find(id)
         ?: throw IllegalArgumentException("Sound system \"$id\" is not supported; this version knows ${ALL.joinToString { "\"${it.id}\"" }}")
 }
-
-/** The system this song is written for. */
-val Song.system: SoundSystem get() = SoundSystems.of(backend)

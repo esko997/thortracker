@@ -9,7 +9,6 @@ import org.thortracker.editor.patternAt
 import org.thortracker.editor.Selection
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.system.system
 
 /**
  * Note entry keyboard. Two octaves plus the top C. The mode switch is the dominant element: in Listen
@@ -194,7 +193,7 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
                 0 -> st.entryMode = !st.entryMode
                 1 -> ctl.setKeyboardChannel(st.channel + d)
                 2 -> ctl.setKeyboardSound(st.instrument + d)
-                3 -> st.octave = (st.octave + d).coerceIn(ViewState.MIN_OCTAVE, ViewState.KEYBOARD_MAX_OCTAVE)
+                3 -> st.octave = (st.octave + d).coerceIn(ctl.keyboardOctaves())
                 4 -> session.step += d
             }
             return

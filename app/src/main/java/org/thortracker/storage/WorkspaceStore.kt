@@ -37,7 +37,7 @@ class WorkspaceStore(context: Context) {
                     instrument = item.optInt("instrument", 1).coerceAtLeast(1),
                     wave = item.optInt("wave", 0).coerceAtLeast(0),
                     scroll = item.optInt("scroll", 0).coerceAtLeast(0),
-                    octave = item.optInt("octave", 4).coerceIn(3, 8),
+                    octave = item.optInt("octave", 4).coerceIn(0, Songs.NOTE_LIMIT / 12),
                     bank = item.optInt("bank", 0).coerceAtLeast(0),
                     followPlayback = item.optBoolean("followPlayback", true),
                     entryMode = item.optBoolean("entryMode", false),
@@ -68,7 +68,7 @@ class WorkspaceStore(context: Context) {
                         motion = PhraseMotion.entries.firstOrNull { it.name == item.optString("phraseMotion") } ?: PhraseMotion.STEPS,
                         chordTones = item.optBoolean("phraseChordTones", true),
                     ),
-                    sketchPhrase = phrase(item.optJSONArray("phrase")),
+                    sketchPhrase = phrase(item.optJSONArray("phraseNotes")),
                     sketchPhraseSeed = item.optLong("phraseSeed", 1L),
                     sketchKeepRhythm = item.optBoolean("keepRhythm", false),
                     sketchKeepPitches = item.optBoolean("keepPitches", false) && !item.optBoolean("keepRhythm", false),
@@ -98,7 +98,8 @@ class WorkspaceStore(context: Context) {
             put("phraseRhythm", s.sketchPhraseSettings.rhythm.name); put("phraseMotion", s.sketchPhraseSettings.motion.name)
             put("phraseChordTones", s.sketchPhraseSettings.chordTones); put("phraseSeed", s.sketchPhraseSeed)
             put("keepRhythm", s.sketchKeepRhythm); put("keepPitches", s.sketchKeepPitches)
-            s.sketchPhrase?.let { p -> put("phrase", JSONArray().apply { p.steps.forEach { put(it ?: -1) } }) }
+            // "phraseNotes" holds absolute notes (from C-0); the older "phrase" key held Game Boy notes and is left to regenerate.
+            s.sketchPhrase?.let { p -> put("phraseNotes", JSONArray().apply { p.steps.forEach { put(it ?: -1) } }) }
         })
         prefs.edit().putString("views", array.toString()).putInt("focus", focused).apply()
     }

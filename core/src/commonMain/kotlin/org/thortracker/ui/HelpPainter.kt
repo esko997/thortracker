@@ -8,7 +8,6 @@ import org.thortracker.input.Control
 import org.thortracker.input.Keymap
 import org.thortracker.editor.ViewKind
 import org.thortracker.model.Songs
-import org.thortracker.system.system
 
 /** Reference pages: controls, the backend's effect list, and the live export check of the song. */
 internal class HelpPainter(v: PaneView) : Painter(v) {

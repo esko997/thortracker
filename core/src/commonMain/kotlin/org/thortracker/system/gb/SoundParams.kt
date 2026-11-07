@@ -1,7 +1,5 @@
 package org.thortracker.system.gb
 
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.editor.EditorSession
 import org.thortracker.model.NumberText
 
@@ -12,11 +10,11 @@ class SoundParam(
     val max: Int,
     val coarse: Int,
     val help: String,
-    val get: (Instrument) -> Int,
-    val set: (Instrument, Int) -> Instrument,
-    val format: (Instrument, Int) -> String = { _, v -> v.toString() },
+    val get: (GbInstrument) -> Int,
+    val set: (GbInstrument, Int) -> GbInstrument,
+    val format: (GbInstrument, Int) -> String = { _, v -> v.toString() },
 ) {
-    fun adjust(i: Instrument, delta: Int): Instrument = set(i, (get(i) + delta).coerceIn(min, max))
+    fun adjust(i: GbInstrument, delta: Int): GbInstrument = set(i, (get(i) + delta).coerceIn(min, max))
 }
 
 object SoundParams {
@@ -71,14 +69,14 @@ object SoundParams {
     private val waveParams = listOf(wave, waveVolume, lengthOn, length256)
     private val noiseParams = listOf(noiseWidth, volume, envDir, envPace, lengthOn, length64)
 
-    fun forKind(kind: InstrumentKind): List<SoundParam> = when (kind) {
-        InstrumentKind.PULSE -> pulseParams
-        InstrumentKind.WAVE -> waveParams
-        InstrumentKind.NOISE -> noiseParams
+    fun forKind(kind: GbBank): List<SoundParam> = when (kind) {
+        GbBank.PULSE -> pulseParams
+        GbBank.WAVE -> waveParams
+        GbBank.NOISE -> noiseParams
     }
 
     /** One-line reading of a sound's settings, e.g. "Duty 25% · Vol 15 fade 1 · Length off". */
-    fun summary(i: Instrument): String {
+    fun summary(i: GbInstrument): String {
         val env = when {
             i.envelopePace == 0 -> "Vol ${i.volume} hold"
             i.envelopeDirection == 0 -> "Vol ${i.volume} fade ${i.envelopePace}"
@@ -86,14 +84,14 @@ object SoundParams {
         }
         val length = if (i.lengthEnabled) "Length ${i.length}" else "Length off"
         return when (i.kind) {
-            InstrumentKind.PULSE -> buildString {
+            GbBank.PULSE -> buildString {
                 append("Duty ").append(duty.format(i, i.duty)).append(" · ").append(env).append(" · ").append(length)
                 if (i.sweepTime != 0 && i.sweepShift != 0) {
                     append(" · Sweep ").append(if (i.sweepDirection == 0) "down " else "up ").append(i.sweepTime).append('/').append(i.sweepShift)
                 }
             }
-            InstrumentKind.WAVE -> "Wave ${EditorSession.hex1(i.wave)} · ${waveVolume.format(i, waveVolume.get(i))} · $length"
-            InstrumentKind.NOISE -> "${if (i.noiseWidth == 0) "Long noise" else "Short noise"} · $env · $length"
+            GbBank.WAVE -> "Wave ${EditorSession.hex1(i.wave)} · ${waveVolume.format(i, waveVolume.get(i))} · $length"
+            GbBank.NOISE -> "${if (i.noiseWidth == 0) "Long noise" else "Short noise"} · $env · $length"
         }
     }
 }

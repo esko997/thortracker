@@ -3,7 +3,6 @@ package org.thortracker.audio
 import org.thortracker.editor.EditorSession
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.system.system
 
 /**
  * Song playback in document terms, over any [TrackerAudio]: Play/Stop, the editor's pattern loop (L2+Y) and parked

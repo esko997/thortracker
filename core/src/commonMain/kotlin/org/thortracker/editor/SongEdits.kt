@@ -5,7 +5,6 @@ import org.thortracker.model.Pattern
 import org.thortracker.model.Scale
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
-import org.thortracker.system.system
 
 /** Pure, immutable song transformations used by [EditorSession] commands. */
 internal fun <T> List<T>.replaced(index: Int, value: T): List<T> =

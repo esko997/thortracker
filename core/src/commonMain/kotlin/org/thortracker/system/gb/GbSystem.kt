@@ -1,13 +1,17 @@
 package org.thortracker.system.gb
 
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import org.thortracker.backend.HugeLimits
 import org.thortracker.backend.UgeExporter
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
 import org.thortracker.input.Keymap
 import org.thortracker.model.Cell
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Song
 import org.thortracker.system.BankSpec
 import org.thortracker.system.ChannelKind
@@ -29,23 +33,23 @@ object GbSystem : SoundSystem {
     override val id = "gb-huge"
     override val name = "Game Boy (hUGEDriver)"
 
-    /** Bank index of each [InstrumentKind]: its ordinal. */
-    fun bankOf(kind: InstrumentKind): Int = kind.ordinal
+    /** Bank index of each [GbBank]: its ordinal. */
+    fun bankOf(kind: GbBank): Int = kind.ordinal
 
-    fun kindOf(bank: Int): InstrumentKind = InstrumentKind.entries[bank.coerceIn(0, InstrumentKind.entries.size - 1)]
+    fun kindOf(bank: Int): GbBank = GbBank.entries[bank.coerceIn(0, GbBank.entries.size - 1)]
 
     override val channels = HugeRules.CHANNEL_NAMES.indices.map { ch ->
         val kind = HugeRules.CHANNEL_KINDS[ch]
         ChannelSpec(
             HugeRules.CHANNEL_NAMES[ch],
-            when (kind) { InstrumentKind.PULSE -> ChannelKind.PULSE; InstrumentKind.WAVE -> ChannelKind.WAVE; InstrumentKind.NOISE -> ChannelKind.NOISE },
+            when (kind) { GbBank.PULSE -> ChannelKind.PULSE; GbBank.WAVE -> ChannelKind.WAVE; GbBank.NOISE -> ChannelKind.NOISE },
             bankOf(kind),
-            tonal = kind != InstrumentKind.NOISE,
+            tonal = kind != GbBank.NOISE,
         )
     }
 
-    override val banks = InstrumentKind.entries.map { BankSpec(it.name.lowercase().replaceFirstChar(Char::uppercase), HugeRules.INSTRUMENT_SLOTS) }
-    override val noteRange = 0..HugeRules.NOTE_MAX
+    override val banks = GbBank.entries.map { BankSpec(it.name.lowercase().replaceFirstChar(Char::uppercase), HugeRules.INSTRUMENT_SLOTS) }
+    override val noteRange = HugeRules.NOTE_OFFSET until HugeRules.NOTE_OFFSET + HugeRules.NOTE_COUNT
     override val effects: List<EffectSpec> get() = HugeRules.EFFECTS
     override val views = ViewKind.entries.toSet()
     override val exports = listOf(ExportFormat("uge") { UgeExporter.export(it) })
@@ -60,6 +64,45 @@ object GbSystem : SoundSystem {
     override val maxOrders = HugeLimits.MAX_ORDERS
 
     override fun blank(): Song = HugeRules.blankSong()
+
+    override val soundSerializer: KSerializer<GbSound> = GbSound.serializer()
+
+    /**
+     * Versions 1-7 kept the banks and waves at the top of the song (`pulseInstruments`, `waveInstruments`,
+     * `noiseInstruments`, `waves`) and numbered notes (and the tuning root) from C-3; version 8 nests them in `sound`
+     * and counts from C-0. Sentinels (no note, OFF) and anything malformed are left for strict decoding to report.
+     */
+    override fun upgradeProject(song: JsonObject, version: Int): JsonObject {
+        val moved = mapOf("pulseInstruments" to "pulse", "waveInstruments" to "wave", "noiseInstruments" to "noise", "waves" to "waves")
+        val out = LinkedHashMap<String, JsonElement>()
+        for ((key, value) in song) {
+            when (key) {
+                in moved -> Unit
+                "patterns" -> out[key] = (value as? JsonArray)?.let { JsonArray(it.map(::upgradePattern)) } ?: value
+                "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject(t.mapValues { (k, v) -> if (k == "root") shifted(v) else v }) } ?: value
+                else -> out[key] = value
+            }
+            if (key == "orders") out["sound"] = JsonObject(moved.entries.mapNotNull { (old, new) -> song[old]?.let { new to it } }.toMap())
+        }
+        if ("sound" !in out) out["sound"] = JsonObject(moved.entries.mapNotNull { (old, new) -> song[old]?.let { new to it } }.toMap())
+        return JsonObject(out)
+    }
+
+    private fun upgradePattern(pattern: JsonElement): JsonElement {
+        if (pattern !is JsonObject) return pattern
+        val tracks = pattern["tracks"] as? JsonArray ?: return pattern
+        val upgraded = JsonArray(tracks.map { track ->
+            if (track !is JsonArray) track
+            else JsonArray(track.map { cell -> if (cell is JsonArray && cell.isNotEmpty()) JsonArray(listOf(shifted(cell[0])) + cell.drop(1)) else cell })
+        })
+        return JsonObject(pattern + ("tracks" to upgraded))
+    }
+
+    /** A note number counted from C-3 as one counted from C-0; sentinels and non-numbers unchanged. */
+    private fun shifted(note: JsonElement): JsonElement {
+        val n = (note as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull ?: return note
+        return if (n >= 0) JsonPrimitive(n + HugeRules.NOTE_OFFSET) else note
+    }
     override fun demo(): Song = DemoSong.build()
 
     override fun effectsFor(channel: Int): List<EffectSpec> = HugeRules.effectsFor(channel)
@@ -80,23 +123,24 @@ object GbSystem : SoundSystem {
 
     override fun withJumpTarget(cell: Cell, order: Int): Cell = cell.copy(param = order + 1)
 
-    override fun engineNote(note: Int): Int = note
+    /** hUGEDriver numbers notes from C-3. */
+    override fun engineNote(note: Int): Int = note - HugeRules.NOTE_OFFSET
 
     override fun instrumentName(song: Song, bank: Int, slot: Int): String? = instrument(song, bank, slot)?.name
 
     override fun instrumentSummary(song: Song, bank: Int, slot: Int): String? = instrument(song, bank, slot)?.let(SoundParams::summary)
 
     override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? {
-        val ins = instrument(song, bank, slot)?.takeIf { it.kind == InstrumentKind.WAVE } ?: return null
-        return song.waves.getOrNull(ins.wave)?.map { it / 15f }
+        val ins = instrument(song, bank, slot)?.takeIf { it.kind == GbBank.WAVE } ?: return null
+        return song.gb.waves.getOrNull(ins.wave)?.map { it / 15f }
     }
 
     /** Instrument [slot] (1..15) of [bank], or null. */
-    fun instrument(song: Song, bank: Int, slot: Int): Instrument? =
+    fun instrument(song: Song, bank: Int, slot: Int): GbInstrument? =
         if (bank !in banks.indices) null else HugeRules.bank(song, kindOf(bank)).getOrNull(slot - 1)
 
     override fun selectSound(selection: Selection, song: Song): Selection =
-        if (selection.bank != bankOf(InstrumentKind.WAVE)) selection
+        if (selection.bank != bankOf(GbBank.WAVE)) selection
         else selection.copy(wave = instrument(song, selection.bank, selection.instrument)?.wave ?: selection.wave)
 
     override fun view(kind: ViewKind): SystemView? = when (kind) {
@@ -114,10 +158,10 @@ object GbSystem : SoundSystem {
         override val name = "40y"
         override val max = 15
 
-        override fun range(note: Int): IntRange = 0..minOf(max, 2047 - HugeRules.NOTE_PERIODS[note])
+        override fun range(note: Int): IntRange = 0..minOf(max, 2047 - HugeRules.NOTE_PERIODS[note - HugeRules.NOTE_OFFSET])
 
         override fun cents(note: Int, fine: Int): Double {
-            val gap = 2048 - HugeRules.NOTE_PERIODS[note]
+            val gap = 2048 - HugeRules.NOTE_PERIODS[note - HugeRules.NOTE_OFFSET]
             return 1200.0 * log2(gap.toDouble() / (gap - fine))
         }
 
@@ -164,7 +208,7 @@ object GbSystem : SoundSystem {
         }
 
         override fun limits(song: Song): List<Pair<String, String>> = buildList {
-            for (kind in InstrumentKind.entries) {
+            for (kind in GbBank.entries) {
                 val used = HashSet<Int>()
                 for (ch in channels.indices) {
                     if (HugeRules.channelKind(ch) != kind) continue
@@ -172,8 +216,8 @@ object GbSystem : SoundSystem {
                 }
                 add(kind.name.lowercase().replaceFirstChar { it.uppercase() } to "${used.size} of ${HugeRules.bank(song, kind).size} sounds used")
             }
-            val usedWaves = song.waveInstruments.map { it.wave }.toSet()
-            add("Waves" to "${song.waves.size} tables, ${usedWaves.size} assigned to sounds")
+            val usedWaves = song.gb.wave.map { it.wave }.toSet()
+            add("Waves" to "${song.gb.waves.size} tables, ${usedWaves.size} assigned to sounds")
         }
     }
 }

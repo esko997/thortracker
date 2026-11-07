@@ -42,7 +42,6 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.SoundSystems
-import org.thortracker.system.system
 import org.thortracker.model.Scl
 import org.thortracker.model.Tuning
 import org.thortracker.storage.ProjectStore

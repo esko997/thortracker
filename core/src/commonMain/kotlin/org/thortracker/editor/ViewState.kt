@@ -92,10 +92,6 @@ data class ViewState(
         const val SONG_HEADER_ITEMS = 5
         /** Song view row of the scale new patterns start with. */
         const val SONG_NEW_SCALE_ITEM = 4
-        const val MIN_OCTAVE = 3
-        const val MAX_OCTAVE = 8
-        /** The 25-key keyboard starts at most at C-7, so only its top key (C-9) is beyond the note range. */
-        const val KEYBOARD_MAX_OCTAVE = 7
     }
 }
 

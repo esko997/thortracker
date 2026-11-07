@@ -4,7 +4,6 @@ import kotlin.math.roundToInt
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
-import org.thortracker.model.InstrumentKind
 import org.thortracker.ui.Align
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
@@ -27,18 +26,18 @@ internal class WavePainter(v: PaneView) : Painter(v) {
 
     override fun draw(c: Surface, area: Rect) {
         val s = song
-        val wave = s.waves[st.wave]
-        val users = s.waveInstruments.withIndex().filter { it.value.wave == st.wave }.map { hex2(it.index + 1) }
+        val wave = s.gb.waves[st.wave]
+        val users = s.gb.wave.withIndex().filter { it.value.wave == st.wave }.map { hex2(it.index + 1) }
         val locked = if (st.lockedSubject >= 0) "locked  " else ""
         val top = header(c, area, "Wave ${hex1(st.wave)}", locked + if (users.isEmpty()) "No wave sound plays this wave" else "Played by sound ${users.joinToString(", ")}")
-        val col = Palette.channel(maxOf(0, s.firstChannelOf(InstrumentKind.WAVE)))
+        val col = Palette.channel(maxOf(0, s.firstChannelOf(GbBank.WAVE)))
         val pad = ink.unit * 0.7f
 
         // thumbnails
         thumbs.clear()
         val thumbH = ink.unit * 2.6f
-        val tw = (area.width() - pad * 2) / s.waves.size
-        for ((i, w) in s.waves.withIndex()) {
+        val tw = (area.width() - pad * 2) / s.gb.waves.size
+        for ((i, w) in s.gb.waves.withIndex()) {
             val r = Rect(area.left + pad + i * tw + 2, top + ink.unit * 0.4f, area.left + pad + (i + 1) * tw - 2, top + ink.unit * 0.4f + thumbH)
             val sel = i == st.wave
             ink.round(c, r, ink.dp(3f), if (sel) Palette.CURSOR_FILL else Palette.LANE)
@@ -170,7 +169,7 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         val ch = grid.height() / (WaveShapes.MAX + 1)
         val sample = ((x - grid.left) / cw).toInt().coerceIn(0, WaveShapes.SAMPLES - 1)
         val level = ((grid.bottom - y) / ch).toInt().coerceIn(0, WaveShapes.MAX)
-        val w = song.waves[strokeWave].toMutableList()
+        val w = song.gb.waves[strokeWave].toMutableList()
         if (lastSample < 0 || lastSample == sample) {
             w[sample] = level
         } else {

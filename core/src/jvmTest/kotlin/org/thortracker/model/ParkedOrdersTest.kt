@@ -103,7 +103,7 @@ class ParkedOrdersTest {
         val six = kotlinx.serialization.json.JsonObject(root.toMutableMap().also { it["version"] = kotlinx.serialization.json.JsonPrimitive(6) })
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(six.toString()) }
         val plain = ProjectCodec.encode(TestSongs.patterns(3))
-        val plainSix = plain.replaceFirst("\"version\":7", "\"version\":6")
+        val plainSix = TestSongs.legacy(plain, 6)
         assertEquals(emptyList<Int>(), ProjectCodec.decode(plainSix).parkedOrders)
     }
 }

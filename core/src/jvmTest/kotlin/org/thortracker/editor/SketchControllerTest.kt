@@ -1,5 +1,8 @@
 package org.thortracker.editor
 
+import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gb.GbBank
+import org.thortracker.system.gb.gb
 import org.thortracker.system.gb.HugeRules
 import org.junit.Assert.*
 import org.junit.Test
@@ -30,7 +33,7 @@ class SketchControllerTest {
     @Test fun exploringAndListeningPreserveTheDocumentAndExistingRedo() {
         val ctl = controller()
         val session = ctl.session
-        session.setCell(0, 0, 0, Cell(note = 12, instrument = 1))
+        session.setCell(0, 0, 0, Cell(note = 48, instrument = 1))
         val edited = session.song
         session.undo()
         val before = session.song
@@ -86,13 +89,13 @@ class SketchControllerTest {
             ctl.state.octave = octave
             ctl.normalise()
             ctl.sketchGuide.tones.indices.forEach { index ->
-                assertTrue(ctl.sketchNote(index) in 0..HugeRules.NOTE_MAX)
+                assertTrue(ctl.sketchNote(index) in GbSystem.noteRange)
                 assertTrue(scale.contains(ctl.sketchNote(index)))
             }
             ctl.sketchGuide.chords.forEachIndexed { index, chord ->
                 ctl.sketchSelectChord(index)
                 val voiced = ctl.sketchChordNotes()
-                assertTrue(voiced.all { it in 0..HugeRules.NOTE_MAX && scale.contains(it) })
+                assertTrue(voiced.all { it in GbSystem.noteRange && scale.contains(it) })
                 assertEquals(chord.intervals.map { it - chord.intervals[0] }, voiced.map { it - voiced[0] })
                 assertEquals((root + chord.intervals[0]) % 12, voiced[0] % 12)
             }
@@ -118,7 +121,7 @@ class SketchControllerTest {
 
     @Test fun followingAndChannelControlsNeverRouteTonalPreviewsToNoise() {
         val ctl = controller()
-        ctl.session.select(Selection(channel = 3, bank = org.thortracker.model.InstrumentKind.NOISE.ordinal, instrument = 4))
+        ctl.session.select(Selection(channel = 3, bank = GbBank.NOISE.ordinal, instrument = 4))
         ctl.follow(); ctl.normalise()
         assertEquals(0, ctl.state.channel)
         assertEquals(1, ctl.state.instrument)
@@ -195,7 +198,7 @@ class SketchControllerTest {
         val ctl = controller(ticksPerRow = 12)
         val session = ctl.session
         val before = session.song
-        val phrase = Phrase(listOf(24, null, 28, null, 31, null, null, 36))
+        val phrase = Phrase(listOf(60, null, 64, null, 67, null, null, 72))
         ctl.state.sketchPhrase = phrase
         ctl.state.channel = 1
         ctl.state.instrument = 3
@@ -205,7 +208,8 @@ class SketchControllerTest {
         ctl.sketchSetPhraseField(ViewController.PHRASE_RHYTHM)
         ctl.press(Action.AUDITION)
         // One pattern row per step: 12 ticks at 59.73 Hz.
-        assertEquals(listOf(Sequence(1, phrase.steps, 3, Math.round(12 * 1000.0 / 59.73))), sequences)
+        // The engine hears hUGEDriver notes (from C-3).
+        assertEquals(listOf(Sequence(1, phrase.steps.map { it?.minus(36) }, 3, Math.round(12 * 1000.0 / 59.73))), sequences)
         assertEquals(201L, sequences[0].stepMillis)
         assertTrue(ctl.sketchAuditioning)
         // Moving between controls keeps the loop running without restarting it.
@@ -232,13 +236,13 @@ class SketchControllerTest {
     @Test fun insertWritesAtTheSelectionAsOneUndoStepAndAdvancesIt() {
         val ctl = controller()
         val session = ctl.session
-        session.setCell(0, 0, 5, Cell(note = 40, instrument = 2, effect = HugeRules.FX_SET_VOLUME, param = 0x08))
-        session.setCell(0, 0, 6, Cell(note = 41, instrument = 2, effect = HugeRules.FX_PAN, param = 0x11))
+        session.setCell(0, 0, 5, Cell(note = 76, instrument = 2, effect = HugeRules.FX_SET_VOLUME, param = 0x08))
+        session.setCell(0, 0, 6, Cell(note = 77, instrument = 2, effect = HugeRules.FX_PAN, param = 0x11))
         val before = session.song
         session.select(Selection(order = 0, row = 4, channel = 0))
         ctl.state.channel = 0
         ctl.state.instrument = 3
-        ctl.state.sketchPhrase = Phrase(listOf(24, null, 26, null))
+        ctl.state.sketchPhrase = Phrase(listOf(60, null, 62, null))
         ctl.sketchSetPhraseField(ViewController.PHRASE_INSERT)
         // A hold cancelled by a menu or focus change is not a tap: nothing is written.
         ctl.press(Action.EDIT)
@@ -246,9 +250,9 @@ class SketchControllerTest {
         assertSame(before, session.song)
         ctl.tap(Action.EDIT)
         val track = session.song.patterns[0].tracks[0]
-        assertEquals(Cell(24, 3), track[4])
+        assertEquals(Cell(60, 3), track[4])
         assertEquals(Cell(effect = HugeRules.FX_SET_VOLUME, param = 0x08), track[5])
-        assertEquals(Cell(26, 3, HugeRules.FX_PAN, 0x11), track[6])
+        assertEquals(Cell(62, 3, HugeRules.FX_PAN, 0x11), track[6])
         assertEquals(Cell(), track[7])
         assertEquals(8, session.selection.row)
         assertEquals(0, session.selection.channel)
@@ -261,14 +265,14 @@ class SketchControllerTest {
     @Test fun insertPhraseClipsToThePatternLengthAndKeepsOtherChannels() {
         val session = EditorSession(Songs.blank())
         session.setPatternLength(0, 10)
-        session.setCell(0, 1, 9, Cell(50, 1))
-        val steps = listOf(30, null, 32, 33)
+        session.setCell(0, 1, 9, Cell(86, 1))
+        val steps = listOf(66, null, 68, 69)
         assertEquals(2, session.insertPhrase(0, 0, 8, steps, 1))
         val p = session.song.patterns[0]
-        assertEquals(Cell(30, 1), p.tracks[0][8])
+        assertEquals(Cell(66, 1), p.tracks[0][8])
         assertEquals(Cell(), p.tracks[0][9])
         assertEquals(Cell(), p.tracks[0][10]) // hidden rows untouched
-        assertEquals(Cell(50, 1), p.tracks[1][9])
+        assertEquals(Cell(86, 1), p.tracks[1][9])
         assertEquals("Insert phrase", session.undoLabel)
         // Through Sketch, the clipped insert leaves the selection on the last played row.
         val ctl = ViewController(session, ViewState(kind = ViewKind.SKETCH))
@@ -283,16 +287,16 @@ class SketchControllerTest {
     @Test fun insertInATunedSongSnapsNotesAndSkipsThoseWhoseBendHasNoSlot() {
         val nineteen = Scl.parse("19-TET\n19\n" + (1..19).joinToString("\n") { "%.4f".format(it * 1200.0 / 19) }, "19-TET")
         val session = EditorSession(Songs.blank())
-        session.setTuning(nineteen.copy(root = 24))
+        session.setTuning(nineteen.copy(root = 60))
         val map = session.tuningMap!!
-        val bent = (24..59).first { map.pitches[map.nearest(it, 0)].detune > 0 }
+        val bent = (60..95).first { map.pitches[map.nearest(it, 0)].detune > 0 }
         val bentPitch = map.pitches[map.nearest(bent, 0)]
-        val plainPitch = map.pitches[map.nearest(24, 0)]
+        val plainPitch = map.pitches[map.nearest(60, 0)]
         assertEquals(0, plainPitch.detune)
         session.setCell(0, 0, 1, Cell(effect = HugeRules.FX_PAN, param = 0x11))
-        session.setCell(0, 0, 3, Cell(note = 10, instrument = 2, effect = HugeRules.FX_SET_VOLUME, param = 0x0F))
+        session.setCell(0, 0, 3, Cell(note = 46, instrument = 2, effect = HugeRules.FX_SET_VOLUME, param = 0x0F))
         val blocked = session.song.patterns[0].tracks[0][3]
-        val written = session.insertPhrase(0, 0, 0, listOf(bent, null, 24, bent), 1)
+        val written = session.insertPhrase(0, 0, 0, listOf(bent, null, 60, bent), 1)
         assertEquals(3, written) // four rows, one note skipped
         val track = session.song.patterns[0].tracks[0]
         assertEquals(Cell(bentPitch.note, 1, HugeRules.FX_VIBRATO, bentPitch.detune), track[0])
@@ -305,14 +309,14 @@ class SketchControllerTest {
     @Test fun fromCopiedTakesTheFirstCopiedChannel() {
         val ctl = controller()
         val session = ctl.session
-        session.setCell(0, 1, 0, Cell(30, 1))
-        session.setCell(0, 1, 3, Cell(33, 1))
-        session.setCell(0, 2, 1, Cell(40, 1))
+        session.setCell(0, 1, 0, Cell(66, 1))
+        session.setCell(0, 1, 3, Cell(69, 1))
+        session.setCell(0, 2, 1, Cell(76, 1))
         session.copyBlock(0, Block(1, 2, 0, 5))
         val before = session.song
         ctl.sketchSetPhraseField(ViewController.PHRASE_FROM_COPIED)
         ctl.tap(Action.EDIT)
-        assertEquals(listOf(30, null, null, 33, null, null), ctl.sketchPhrase.steps)
+        assertEquals(listOf(66, null, null, 69, null, null), ctl.sketchPhrase.steps)
         assertEquals(6, ctl.state.sketchPhraseSettings.length)
         assertSame(before, session.song)
     }

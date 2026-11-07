@@ -2,8 +2,6 @@ package org.thortracker.system.gb
 
 import org.thortracker.backend.HugeLimits
 import org.thortracker.model.Cell
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.NumberText
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
@@ -18,8 +16,11 @@ import org.thortracker.system.EffectSpec
  * The validator, editor hints, lowering and `.uge` export all use these rules.
  */
 object HugeRules {
-    /** Highest note: B-8. */
-    const val NOTE_MAX = 71
+    /** hUGEDriver note 0 (C-3) in semitones from C-0: cells hold absolute notes, the driver this minus 36. */
+    const val NOTE_OFFSET = 36
+
+    /** Notes in hUGEDriver's table: C-3..B-8. */
+    const val NOTE_COUNT = 72
     const val INSTRUMENT_SLOTS = 15
     const val WAVE_COUNT = 16
     const val WAVE_SAMPLES = 32
@@ -48,7 +49,7 @@ object HugeRules {
     /** hUGETracker stores names/title/artist/comment as Pascal ShortString (length byte + 255 bytes). */
     const val MAX_TEXT_BYTES = 255
 
-    val CHANNEL_KINDS = listOf(InstrumentKind.PULSE, InstrumentKind.PULSE, InstrumentKind.WAVE, InstrumentKind.NOISE)
+    val CHANNEL_KINDS = listOf(GbBank.PULSE, GbBank.PULSE, GbBank.WAVE, GbBank.NOISE)
     val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Wave", "Noise")
     /** Only CH1 has the NR10 frequency-sweep unit; the driver writes NR10 for channel 0 only. */
     const val SWEEP_CHANNEL = 0
@@ -90,7 +91,7 @@ object HugeRules {
             "Change the number of ticks per row from this row on. Global.", true),
     )
 
-    fun channelKind(channel: Int): InstrumentKind = CHANNEL_KINDS[channel]
+    fun channelKind(channel: Int): GbBank = CHANNEL_KINDS[channel]
 
     /**
      * Effect codes usable on [channel]: supported effects minus those the channel can never take
@@ -101,9 +102,9 @@ object HugeRules {
         val kind = channelKind(channel)
         return EFFECTS.filter { info ->
             info.supported && when (kind) {
-                InstrumentKind.NOISE -> info.code !in NOISE_UNSAFE_PITCH_EFFECTS
-                InstrumentKind.WAVE -> info.code != FX_VOLUME_SLIDE
-                InstrumentKind.PULSE -> true
+                GbBank.NOISE -> info.code !in NOISE_UNSAFE_PITCH_EFFECTS
+                GbBank.WAVE -> info.code != FX_VOLUME_SLIDE
+                GbBank.PULSE -> true
             }
         }
     }
@@ -139,28 +140,30 @@ object HugeRules {
         title = "Untitled",
         patterns = listOf(Pattern.blank(CHANNEL_KINDS.size, Songs.ROWS, "Pattern 00")),
         orders = listOf(0),
-        pulseInstruments = defaultPulseBank(),
-        waveInstruments = List(INSTRUMENT_SLOTS) { i ->
-            Instrument(name = DEFAULT_WAVE_NAMES[i], kind = InstrumentKind.WAVE, wave = i)
-        },
-        noiseInstruments = List(INSTRUMENT_SLOTS) { i ->
-            Instrument(name = "Noise ${i + 1}", kind = InstrumentKind.NOISE, volume = 15, envelopePace = if (i == 0) 0 else 1)
-        },
-        waves = DEFAULT_WAVES,
+        sound = GbSound(
+            pulse = defaultPulseBank(),
+            wave = List(INSTRUMENT_SLOTS) { i ->
+                GbInstrument(name = DEFAULT_WAVE_NAMES[i], kind = GbBank.WAVE, wave = i)
+            },
+            noise = List(INSTRUMENT_SLOTS) { i ->
+                GbInstrument(name = "Noise ${i + 1}", kind = GbBank.NOISE, volume = 15, envelopePace = if (i == 0) 0 else 1)
+            },
+            waves = DEFAULT_WAVES,
+        ),
     )
 
-    private fun defaultPulseBank(): List<Instrument> {
+    private fun defaultPulseBank(): List<GbInstrument> {
         val duties = listOf("12.5%", "25%", "50%", "75%")
         return List(INSTRUMENT_SLOTS) { i ->
             when {
-                i < 4 -> Instrument(name = "Duty ${duties[i]}", duty = i, volume = 15)
-                i < 8 -> Instrument(name = "Duty ${duties[i - 4]} plink", duty = i - 4, volume = 15, envelopePace = 1)
-                else -> Instrument(name = "Pulse ${i + 1}", duty = 2, volume = 12)
+                i < 4 -> GbInstrument(name = "Duty ${duties[i]}", duty = i, volume = 15)
+                i < 8 -> GbInstrument(name = "Duty ${duties[i - 4]} plink", duty = i - 4, volume = 15, envelopePace = 1)
+                else -> GbInstrument(name = "Pulse ${i + 1}", duty = 2, volume = 12)
             }
         }
     }
 
-    /** hUGEDriver 6.1.3 `include/hUGE_note_table.inc`: the 11-bit period of each note 0..71 (C-3..B-8). */
+    /** hUGEDriver 6.1.3 `include/hUGE_note_table.inc`: the 11-bit period of each driver note 0..71 (C-3..B-8). */
     val NOTE_PERIODS = intArrayOf(
         44, 156, 262, 363, 457, 547, 631, 710, 786, 854, 923, 986,
         1046, 1102, 1155, 1205, 1253, 1297, 1339, 1379, 1417, 1452, 1486, 1517,
@@ -171,11 +174,11 @@ object HugeRules {
     )
 
     /**
-     * Pulse frequency in Hz of [note] raised by [detune] period units: 131072 / (2048 - period). The wave channel
-     * sounds an octave lower for the same period, so intervals are identical.
+     * Pulse frequency in Hz of (absolute) [note] raised by [detune] period units: 131072 / (2048 - period). The wave
+     * channel sounds an octave lower for the same period, so intervals are identical.
      */
     fun pitchHz(note: Int, detune: Int): Double {
-        val period = NOTE_PERIODS[note] + detune
+        val period = NOTE_PERIODS[note - NOTE_OFFSET] + detune
         require(detune >= 0 && period <= 2047) { "detune $detune on note $note is outside the 11-bit period" }
         return 131072.0 / (2048 - period)
     }
@@ -197,7 +200,7 @@ object HugeRules {
      */
     val NOISE_UNSAFE_PITCH_EFFECTS = setOf(FX_ARPEGGIO, FX_PORTA_UP, FX_PORTA_DOWN, FX_TONE_PORTA, FX_VIBRATO)
 
-    /** NR43 value hUGEDriver 6.1.3 `get_note_poly` computes for a noise note (before the 7-bit width bit). */
+    /** NR43 value hUGEDriver 6.1.3 `get_note_poly` computes for driver noise note [note] (0..71, before the 7-bit width bit). */
     fun noisePoly(note: Int): Int {
         val a = (note + 192).inv() and 0xFF
         if (a < 7) return a
@@ -211,14 +214,14 @@ object HugeRules {
      * 14 or 15 stops the LFSR, so those notes produce no noise; notes 64+ wrap inside `get_note_poly`.
      */
     fun noiseNoteProblem(note: Int): String? {
-        if (note !in 0..NOTE_MAX) return null
-        val poly = noisePoly(note)
+        if (note !in GbSystem.noteRange) return null
+        val poly = noisePoly(note - NOTE_OFFSET)
         val name = Songs.noteName(note)
         return when {
             poly shr 4 >= 14 -> "noise note $name gives NR43 ${hex2(poly)} (clock shift ${poly shr 4}), which never " +
                 "clocks the LFSR, so it plays no noise; use E-3..D#8"
-            note >= 64 -> "noise note $name wraps around in hUGEDriver to NR43 ${hex2(poly)}, the same low rumble as " +
-                "${Songs.noteName((4..63).first { noisePoly(it) == poly })}; use E-3..D#8"
+            note - NOTE_OFFSET >= 64 -> "noise note $name wraps around in hUGEDriver to NR43 ${hex2(poly)}, the same low rumble as " +
+                "${Songs.noteName(NOTE_OFFSET + (4..63).first { noisePoly(it) == poly })}; use E-3..D#8"
             else -> null
         }
     }
@@ -279,10 +282,10 @@ object HugeRules {
         return distinct.size
     }
 
-    fun bank(song: Song, kind: InstrumentKind): List<Instrument> = when (kind) {
-        InstrumentKind.PULSE -> song.pulseInstruments
-        InstrumentKind.WAVE -> song.waveInstruments
-        InstrumentKind.NOISE -> song.noiseInstruments
+    fun bank(song: Song, kind: GbBank): List<GbInstrument> = when (kind) {
+        GbBank.PULSE -> song.gb.pulse
+        GbBank.WAVE -> song.gb.wave
+        GbBank.NOISE -> song.gb.noise
     }
 
     fun hex2(value: Int) = NumberText.hex(value, 2)
@@ -311,7 +314,7 @@ object HugeRules {
         val x = p shr 4
         val y = p and 0xF
         val fx = effectText(cell.effect, p)
-        if (kind == InstrumentKind.NOISE && cell.effect in NOISE_UNSAFE_PITCH_EFFECTS) {
+        if (kind == GbBank.NOISE && cell.effect in NOISE_UNSAFE_PITCH_EFFECTS) {
             return "${EFFECTS[cell.effect].name.lowercase()} ($fx) is not supported on Noise: hUGEDriver 6.1.3 reads a " +
                 "pitch period or offset NR43 value as a noise note, giving an unrelated noise pitch; enter separate noise notes instead"
         }
@@ -322,19 +325,19 @@ object HugeRules {
             FX_CALL_ROUTINE -> "6xx calls user routines, which this project cannot provide (uge2source exports them as NULL)"
             FX_NOTE_DELAY -> if (p == 0) "700 never plays the note; use 701 or more, or remove the note" else null
             FX_TIMBRE -> when (kind) {
-                InstrumentKind.WAVE -> if (p > 0x0F) "$fx loads wave ${hex2(p)}, but only waves 00-0F exist" else null
-                InstrumentKind.NOISE -> if (p != 0x00 && p != 0x08) "on Noise, 9xx only selects the LFSR width: 900 = 15-bit, 908 = 7-bit" else null
-                InstrumentKind.PULSE -> null
+                GbBank.WAVE -> if (p > 0x0F) "$fx loads wave ${hex2(p)}, but only waves 00-0F exist" else null
+                GbBank.NOISE -> if (p != 0x00 && p != 0x08) "on Noise, 9xx only selects the LFSR width: 900 = 15-bit, 908 = 7-bit" else null
+                GbBank.PULSE -> null
             }
             FX_VOLUME_SLIDE -> when {
-                kind == InstrumentKind.WAVE -> "volume slide (Axy) is not supported on the Wave channel; use Cxy"
+                kind == GbBank.WAVE -> "volume slide (Axy) is not supported on the Wave channel; use Cxy"
                 x != 0 && y != 0 -> "$fx slides up and down at once; one digit must be 0"
                 else -> null
             }
             FX_POSITION_JUMP -> if (p > song.orders.size) {
                 "$fx would jump to order ${p - 1}, but the song has ${song.orders.size} orders (B01-${hex2(song.orders.size)}; B00 = next order)"
             } else null
-            FX_SET_VOLUME -> if (kind == InstrumentKind.WAVE && x != 0) {
+            FX_SET_VOLUME -> if (kind == GbBank.WAVE && x != 0) {
                 "the Wave channel has no envelope; use C0${NumberText.hex(y)} (x must be 0)"
             } else null
             FX_PATTERN_BREAK -> when {
@@ -351,7 +354,7 @@ object HugeRules {
         val kind = channelKind(channel)
         val x = param shr 4
         val y = param and 0xF
-        if (kind == InstrumentKind.NOISE && effect in NOISE_UNSAFE_PITCH_EFFECTS && (effect != FX_ARPEGGIO || param != 0)) {
+        if (kind == GbBank.NOISE && effect in NOISE_UNSAFE_PITCH_EFFECTS && (effect != FX_ARPEGGIO || param != 0)) {
             return "${EFFECTS[effect].name}: not supported on Noise"
         }
         return when (effect) {
@@ -374,14 +377,14 @@ object HugeRules {
                 CHANNEL_NAMES[ch] + " " + when { left && right -> "L+R"; left -> "L"; right -> "R"; else -> "off" }
             }
             FX_TIMBRE -> when (kind) {
-                InstrumentKind.PULSE -> "Duty ${listOf("12.5%", "25%", "50%", "75%")[param shr 6]}" +
+                GbBank.PULSE -> "Duty ${listOf("12.5%", "25%", "50%", "75%")[param shr 6]}" +
                     (if (param and 0x3F != 0) ", length bits ${hex2(param and 0x3F)}" else "")
-                InstrumentKind.WAVE -> "Load wave ${hex2(param)} and retrigger"
-                InstrumentKind.NOISE -> if (param == 0x08) "Noise width 7-bit" else "Noise width 15-bit"
+                GbBank.WAVE -> "Load wave ${hex2(param)} and retrigger"
+                GbBank.NOISE -> if (param == 0x08) "Noise width 7-bit" else "Noise width 15-bit"
             }
             FX_VOLUME_SLIDE -> if (x != 0) "Volume slide up $x" else "Volume slide down $y"
             FX_POSITION_JUMP -> if (param == 0) "Jump to the next order" else "Jump to order ${param - 1}"
-            FX_SET_VOLUME -> if (kind == InstrumentKind.WAVE) {
+            FX_SET_VOLUME -> if (kind == GbBank.WAVE) {
                 "Wave volume " + when { y >= 10 -> "100%"; y >= 5 -> "50%"; y >= 1 -> "25%"; else -> "mute" }
             } else "Set volume $y/15" + (if (x != 0) ", envelope bits ${NumberText.hex(x)}" else "")
             FX_PATTERN_BREAK -> if (param == 0) "D00 (no effect)" else "Break to row ${param - 1} of the next order"

@@ -7,7 +7,6 @@ import org.thortracker.model.Scale
 import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
-import org.thortracker.system.system
 
 /**
  * Selection shared by every display. Views publish their cursor here; sibling views that follow the

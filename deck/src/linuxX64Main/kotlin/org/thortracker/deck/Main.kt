@@ -20,7 +20,6 @@ import org.thortracker.input.Keys
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.system.system
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
 import org.thortracker.ui.HostInput

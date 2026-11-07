@@ -1,7 +1,6 @@
 package org.thortracker.model
 
 import org.thortracker.system.SoundSystems
-import org.thortracker.system.system
 import kotlin.math.abs
 
 /** Factories and chip-neutral queries for [Song]; everything about the chip comes from the song's system. */
@@ -25,11 +24,11 @@ object Songs {
 
     fun blankPattern(song: Song, name: String = "Pattern"): Pattern = Pattern.blank(song.system.channels.size, ROWS, name)
 
-    /** "C-3".."B-8", "---" for no note, "OFF" for an explicit note cut ([Cell.CUT]). */
+    /** "C-0".."B-9" (semitones from C-0), "---" for no note, "OFF" for an explicit note cut ([Cell.CUT]). */
     fun noteName(note: Int): String = when {
         note == Cell.EMPTY -> "---"
         note == Cell.CUT -> "OFF"
-        note >= 0 -> NOTE_NAMES[note % 12] + (3 + note / 12)
+        note in 0..NOTE_LIMIT -> NOTE_NAMES[note % 12] + (note / 12)
         else -> "???"
     }
 

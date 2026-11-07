@@ -1,5 +1,7 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.GbInstrument
+import org.thortracker.system.gb.gb
 import org.thortracker.system.gb.GbValidator
 import org.thortracker.system.gb.GbSystem
 import kotlinx.serialization.json.Json
@@ -31,8 +33,8 @@ class ProjectCodecTest {
 
     @Test
     fun cellsAreCompactArrays() {
-        val text = ProjectCodec.encode(TestSongs.withCell(Songs.blank(), 0, 1, 0, Cell(24, 3, 0xC, 0x08)))
-        assertTrue(text.contains("[24,3,12,8]"))
+        val text = ProjectCodec.encode(TestSongs.withCell(Songs.blank(), 0, 1, 0, Cell(60, 3, 0xC, 0x08)))
+        assertTrue(text.contains("[60,3,12,8]"))
         assertTrue(text.contains("[-1,0,0,0]"))
     }
 
@@ -78,17 +80,32 @@ class ProjectCodecTest {
         val blank = Songs.blank()
         val threeChannels = blank.copy(patterns = listOf(Pattern.blank(3)))
         val shortTrack = blank.copy(patterns = listOf(Pattern("x", List(4) { List(32) { Cell.BLANK } })))
-        val badNote = TestSongs.withCell(blank, 0, 0, 0, Cell(72, 1))
-        val badSample = blank.copy(waves = blank.waves.toMutableList().also { it[0] = List(32) { 16 } })
-        val wrongKind = blank.copy(noiseInstruments = blank.noiseInstruments.toMutableList().also { it[0] = Instrument() })
+        val badNote = TestSongs.withCell(blank, 0, 0, 0, Cell(108, 1))
+        val badSample = blank.copy(sound = blank.gb.copy(waves = blank.gb.waves.toMutableList().also { it[0] = List(32) { 16 } }))
+        val wrongKind = blank.copy(sound = blank.gb.copy(noise = blank.gb.noise.toMutableList().also { it[0] = GbInstrument() }))
         val badLoop = blank.copy(loopOrder = 1)
         for (song in listOf(threeChannels, shortTrack, badNote, badSample, wrongKind, badLoop)) {
             assertTrue(GbValidator.structuralErrors(song).isNotEmpty())
             assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(song) }
         }
         // The same data arriving from a file is rejected on decode.
-        val text = ProjectCodec.encode(blank).replaceFirst("[-1,0,0,0]", "[72,1,0,0]")
+        val text = ProjectCodec.encode(blank).replaceFirst("[-1,0,0,0]", "[108,1,0,0]")
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text) }
+    }
+
+    @Test
+    fun versionSevenProjectsUpgradeToTheSameSongAndExportIdenticalUge() {
+        val v7 = TestSongs.legacy(ProjectCodec.encode(Songs.demo()), 7)
+        assertTrue(v7.contains("\"version\":7,") && v7.contains("\"pulseInstruments\"") && !v7.contains("\"sound\""))
+        assertTrue(v7.contains("[33,1,0,55]")) // the intro's first chord, A-5, in hUGE numbering
+        val song = ProjectCodec.decode(v7)
+        assertEquals(Songs.demo(), song)
+        assertEquals(69, song.patterns[0].tracks[0][0].note) // A-5 counted from C-0
+        val examples = listOf(java.io.File("../examples/thor-groove.uge"), java.io.File("examples/thor-groove.uge")).first { it.isFile }
+        assertTrue(examples.readBytes().contentEquals(org.thortracker.backend.UgeExporter.export(song)))
+        // Saving writes version 8: the chip data nested in "sound", notes absolute.
+        val saved = ProjectCodec.encode(song)
+        assertTrue(saved.contains("\"version\":8,") && saved.contains("\"sound\":{\"pulse\":") && saved.contains("[69,1,0,55]"))
     }
 
     @Test
@@ -142,7 +159,7 @@ class ProjectCodecTest {
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(claimingThree) }
         // A version 3 file with an original scale still opens.
         val major = ProjectCodec.encode(blank.copy(patterns = listOf(blank.patterns[0].copy(scale = Scale(0, ScaleKind.MAJOR)))))
-        val majorV3 = JsonObject(Json.parseToJsonElement(major).jsonObject.toMutableMap().also { it["version"] = JsonPrimitive(3) }).toString()
+        val majorV3 = TestSongs.legacy(major, 3)
         assertEquals(ScaleKind.MAJOR, ProjectCodec.decode(majorV3).patterns[0].scale.kind)
     }
 
@@ -160,10 +177,10 @@ class ProjectCodecTest {
         // An untuned song written as version 4 (no tuning key) still opens.
         val plain = Json.parseToJsonElement(ProjectCodec.encode(blank)).jsonObject
         val plainSong = (plain["song"] as JsonObject).toMutableMap().also { it.remove("tuning") }
-        val v4 = JsonObject(plain.toMutableMap().also { it["version"] = JsonPrimitive(4); it["song"] = JsonObject(plainSong) }).toString()
+        val v4 = TestSongs.legacy(JsonObject(plain.toMutableMap().also { it["song"] = JsonObject(plainSong) }).toString(), 4)
         assertEquals(blank, ProjectCodec.decode(v4))
         // Structurally invalid tunings are neither saved nor loaded.
-        for (bad in listOf(just.copy(root = 72), just.copy(tolerance = 15), just.copy(cents = listOf(700.0, 500.0)))) {
+        for (bad in listOf(just.copy(root = 108), just.copy(root = 35), just.copy(tolerance = 15), just.copy(cents = listOf(700.0, 500.0)))) {
             assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(blank.copy(tuning = bad)) }
         }
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"tolerance\":10", "\"tolerance\":7")) }
@@ -181,7 +198,7 @@ class ProjectCodecTest {
         // A version 5 file has no key and reads as chromatic.
         val plain = Json.parseToJsonElement(ProjectCodec.encode(blank)).jsonObject
         val plainSong = (plain["song"] as JsonObject).toMutableMap().also { it.remove("newPatternScale") }
-        val v5 = JsonObject(plain.toMutableMap().also { it["version"] = JsonPrimitive(5); it["song"] = JsonObject(plainSong) }).toString()
+        val v5 = TestSongs.legacy(JsonObject(plain.toMutableMap().also { it["song"] = JsonObject(plainSong) }).toString(), 5)
         assertEquals(Scale.CHROMATIC, ProjectCodec.decode(v5).newPatternScale)
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(blank.copy(newPatternScale = Scale(12, ScaleKind.MAJOR))) }
     }

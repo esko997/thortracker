@@ -12,11 +12,12 @@ import kotlin.math.abs
 import kotlin.math.log2
 
 class TuningTest {
-    private val c5 = 24
+    private val c3 = 36
+    private val c5 = 60
 
     /** Bend of [y] period units on [note] in cents, straight from the GB pitch formula and the driver table. */
     private fun bend(note: Int, y: Int): Double {
-        val gap = 2048 - HugeRules.NOTE_PERIODS[note]
+        val gap = 2048 - HugeRules.NOTE_PERIODS[note - HugeRules.NOTE_OFFSET]
         return 1200.0 * log2(gap.toDouble() / (gap - y))
     }
 
@@ -38,14 +39,14 @@ class TuningTest {
 
     @Test
     fun pitchHzAndDetuneOfFollowTheDriver() {
-        assertEquals(131072.0 / (2048 - 1546), HugeRules.pitchHz(24, 0), 1e-9)
-        assertEquals(131072.0 / (2048 - 1546 - 15), HugeRules.pitchHz(24, 15), 1e-9)
-        assertEquals(0, HugeRules.detuneOf(Cell(24, 1)))
-        assertEquals(9, HugeRules.detuneOf(Cell(24, 1, 0x4, 0x09)))
-        assertEquals(0, HugeRules.detuneOf(Cell(24, 1, 0x4, 0x00)))
-        assertEquals(null, HugeRules.detuneOf(Cell(24, 1, 0x4, 0x19))) // real vibrato
-        assertEquals(null, HugeRules.detuneOf(Cell(24, 1, 0x0, 0x47)))
-        assertEquals(null, HugeRules.detuneOf(Cell(24, 1, 0xC, 0x08)))
+        assertEquals(131072.0 / (2048 - 1546), HugeRules.pitchHz(60, 0), 1e-9)
+        assertEquals(131072.0 / (2048 - 1546 - 15), HugeRules.pitchHz(60, 15), 1e-9)
+        assertEquals(0, HugeRules.detuneOf(Cell(60, 1)))
+        assertEquals(9, HugeRules.detuneOf(Cell(60, 1, 0x4, 0x09)))
+        assertEquals(0, HugeRules.detuneOf(Cell(60, 1, 0x4, 0x00)))
+        assertEquals(null, HugeRules.detuneOf(Cell(60, 1, 0x4, 0x19))) // real vibrato
+        assertEquals(null, HugeRules.detuneOf(Cell(60, 1, 0x0, 0x47)))
+        assertEquals(null, HugeRules.detuneOf(Cell(60, 1, 0xC, 0x08)))
     }
 
     @Test
@@ -62,7 +63,7 @@ class TuningTest {
         val t = Scl.parse(text, "file")
         assertEquals("12 tone equal temperament", t.name)
         assertEquals(equal(12), t.cents)
-        assertEquals(24, t.root)
+        assertEquals(c5, t.root)
         assertEquals(5, t.tolerance)
     }
 
@@ -114,18 +115,18 @@ class TuningTest {
         assertEquals(72, map.all.size)
         assertEquals(72, map.pitches.size)
         map.pitches.forEachIndexed { i, p ->
-            assertEquals(i, p.note)
-            assertEquals(i - c5, p.degree)
+            assertEquals(c3 + i, p.note)
+            assertEquals(c3 + i - c5, p.degree)
             assertEquals(0, p.detune)
             assertEquals(0.0, p.error, 1e-9)
-            assertEquals(i, map.index(i, 0))
+            assertEquals(i, map.index(c3 + i, 0))
         }
-        assertEquals("0/12", map.label(map.pitches[c5]))
-        assertEquals("0/12 ·1", map.label(map.pitches[c5 + 12])) // C-6 stays C-6
-        assertEquals("11/12 ·-1", map.label(map.pitches[c5 - 1]))
+        assertEquals("0/12", map.label(map.pitches[c5 - c3]))
+        assertEquals("0/12 ·1", map.label(map.pitches[c5 - c3 + 12])) // C-6 stays C-6
+        assertEquals("11/12 ·-1", map.label(map.pitches[c5 - c3 - 1]))
         // Rooted elsewhere, the same scale still covers every note.
-        val onA = TuningMap(Tuning("12", equal(12), root = 9), GbSystem)
-        assertEquals((0..71).toList(), onA.pitches.map { it.note })
+        val onA = TuningMap(Tuning("12", equal(12), root = c3 + 9), GbSystem)
+        assertEquals(GbSystem.noteRange.toList(), onA.pitches.map { it.note })
     }
 
     @Test
@@ -149,28 +150,28 @@ class TuningTest {
         }
         fun reachableIn(notes: IntRange) = map.pitches.count { it.note in notes }
         // Octave 5 (C-5..B-5): a full bend is over 52 cents, so all 24 quarter-tone degrees play.
-        assertTrue((24..35).all { bend(it, 15) > 52.0 })
-        assertEquals(24, reachableIn(24..35))
+        assertTrue((60..71).all { bend(it, 15) > 52.0 })
+        assertEquals(24, reachableIn(60..71))
         // Octave 3: at most ~26 cents of bend, so only the 12 plain notes.
-        assertTrue((0..11).all { bend(it, 15) < 45.0 })
-        assertEquals(12, reachableIn(0..11))
-        assertTrue(map.pitches.filter { it.note in 0..11 }.all { it.detune == 0 })
+        assertTrue((36..47).all { bend(it, 15) < 45.0 })
+        assertEquals(12, reachableIn(36..47))
+        assertTrue(map.pitches.filter { it.note in 36..47 }.all { it.detune == 0 })
     }
 
     @Test
     fun reachablePitchesAreAccurateUniqueAndIndexed() {
         val just = Scl.parse("just\n12\n16/15\n9/8\n6/5\n5/4\n4/3\n45/32\n3/2\n8/5\n5/3\n9/5\n15/8\n2/1\n", "f")
-        for (tol in Tuning.TOLERANCES) for (tuning in listOf(just, Tuning("24", equal(24)), Tuning("31", equal(31), root = 30))) {
+        for (tol in Tuning.TOLERANCES) for (tuning in listOf(just, Tuning("24", equal(24)), Tuning("31", equal(31), root = c3 + 30))) {
             val map = TuningMap(tuning.copy(tolerance = tol), GbSystem)
             assertTrue(map.pitches.isNotEmpty())
             assertEquals(map.pitches.size, map.pitches.map { it.note to it.detune }.toSet().size)
             for (p in map.all) {
-                assertTrue(p.note in 0..71 && p.detune in 0..15)
+                assertTrue(p.note in GbSystem.noteRange && p.detune in 0..15)
                 // Error is the nominal grid pitch minus the target.
                 assertEquals(100.0 * (p.note - tuning.root) + bend(p.note, p.detune) - p.cents, p.error, 1e-9)
                 // Only the note below the target or the next one up is used.
                 val below = tuning.root + Math.floor(p.cents / 100.0).toInt()
-                assertTrue(p.note == below.coerceIn(0, 71) || p.note == (below + 1).coerceIn(0, 71))
+                assertTrue(p.note == below.coerceIn(GbSystem.noteRange) || p.note == (below + 1).coerceIn(GbSystem.noteRange))
             }
             map.pitches.forEachIndexed { i, p ->
                 assertTrue(abs(p.error) <= tol + 1e-9)
@@ -183,15 +184,15 @@ class TuningTest {
                 if (map.pitches.none { it.note == p.note && it.detune == p.detune }) assertEquals(-1, map.index(p.note, p.detune))
             }
             // Every driver pitch snaps to the closest tuned pitch.
-            for (note in 0..71) for (y in 0..15) {
+            for (note in GbSystem.noteRange) for (y in 0..15) {
                 val n = map.nearest(note, y)
                 val c = map.cents(note, y)
                 val d = abs(map.cents(map.pitches[n].note, map.pitches[n].detune) - c)
                 assertTrue(map.pitches.all { abs(map.cents(it.note, it.detune) - c) >= d - 1e-12 })
             }
         }
-        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(24, 3))
-        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(72, 0))
+        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(c5, 3))
+        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(108, 0))
     }
 
     @Test
@@ -215,7 +216,7 @@ class TuningTest {
             val q = Math.floorDiv(p.degree, 13)
             val r = Math.floorMod(p.degree, 13)
             assertEquals(q * tritave + (if (r == 0) 0.0 else bp.cents[r - 1]), p.cents, 1e-9)
-            assertTrue(p.cents >= 100.0 * (0 - c5) - 10.0 && p.cents < 100.0 * (71 - c5) + 100.0)
+            assertTrue(p.cents >= 100.0 * (c3 - c5) - 10.0 && p.cents < 100.0 * (107 - c5) + 100.0)
         }
         assertEquals(0, map.all.first { it.degree == 0 }.detune)
         assertEquals(c5, map.all.first { it.degree == 0 }.note)
@@ -233,7 +234,7 @@ class TuningTest {
         val ok = Tuning("ok", equal(12))
         assertEquals(emptyList<String>(), ok.problems(GbSystem.noteRange))
         for (bad in listOf(
-            ok.copy(root = -1), ok.copy(root = 72), ok.copy(tolerance = 7), ok.copy(cents = emptyList()),
+            ok.copy(root = c3 - 1), ok.copy(root = 108), ok.copy(tolerance = 7), ok.copy(cents = emptyList()),
             ok.copy(cents = listOf(200.0, 100.0)), ok.copy(cents = listOf(-1.0, 1200.0)), ok.copy(cents = listOf(Double.NaN)),
             ok.copy(cents = equal(257)), ok.copy(name = "n".repeat(256)),
         )) {

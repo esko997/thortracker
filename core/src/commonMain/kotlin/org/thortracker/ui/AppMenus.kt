@@ -17,7 +17,6 @@ import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
 import org.thortracker.system.ExportFormat
-import org.thortracker.system.system
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared

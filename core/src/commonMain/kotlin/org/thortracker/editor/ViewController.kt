@@ -14,7 +14,6 @@ import org.thortracker.model.TunedPitch
 import org.thortracker.model.TuningMap
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemView
-import org.thortracker.system.system
 import kotlin.random.Random
 import kotlin.math.roundToLong
 import org.thortracker.input.Keymap
@@ -92,7 +91,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             Action.UNDO -> { historyStep(true); true }
             Action.REDO -> { historyStep(false); true }
             Action.OCTAVE_DOWN, Action.OCTAVE_UP -> {
-                state.octave = (state.octave + if (a == Action.OCTAVE_UP) 1 else -1).coerceIn(ViewState.MIN_OCTAVE, maxOctave())
+                state.octave = (state.octave + if (a == Action.OCTAVE_UP) 1 else -1).coerceIn(minOctave(), maxOctave())
                 val own = systemView()
                 when (state.kind) {
                     ViewKind.SKETCH -> if (auditioning && state.sketchRow != SKETCH_PHRASE) sketchListen()
@@ -185,7 +184,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.row = state.row.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
         state.field = state.field.coerceIn(0, FIELDS - 1)
         state.instrument = state.instrument.coerceIn(1, maxSlots())
-        state.octave = state.octave.coerceIn(ViewState.MIN_OCTAVE, maxOctave())
+        state.octave = state.octave.coerceIn(minOctave(), maxOctave())
         state.songItem = state.songItem.coerceIn(0, ViewState.SONG_HEADER_ITEMS + s.orders.size - 1)
         state.markOrder = state.markOrder.coerceIn(0, s.orders.size - 1)
         if (state.mark && state.markOrder != state.order) state.mark = false
@@ -253,7 +252,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun rangeText(): String = "${Songs.noteName(system.noteRange.first)}..${Songs.noteName(system.noteRange.last)}"
 
     /** The listening note of the sound views: C at the current octave. */
-    internal fun defaultNote(): Int = ((state.octave - ViewState.MIN_OCTAVE) * 12).coerceIn(system.noteRange)
+    internal fun defaultNote(): Int = (state.octave * 12).coerceIn(system.noteRange)
 
     internal fun startAudition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         if (note !in system.noteRange) return
@@ -271,8 +270,14 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** A held Clear moved something: its release clears nothing. For system views. */
     internal fun useClear() { clearUsed = true }
 
+    /** Octave of the lowest note (octaves count from C-0, like notes). */
+    private fun minOctave() = system.noteRange.first / 12
+
     /** The keyboard's two-octave span is capped so only its top key can exceed the note range. */
-    private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD || state.kind == ViewKind.SKETCH) ViewState.KEYBOARD_MAX_OCTAVE else ViewState.MAX_OCTAVE
+    private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD || state.kind == ViewKind.SKETCH) keyboardOctaves().last else system.noteRange.last / 12
+
+    /** Octaves the 25-key keyboard (and Sketch) can start at: its top key is the only one past the highest note. */
+    fun keyboardOctaves(): IntRange = minOctave()..(system.noteRange.last + 1) / 12 - 2
 
     private fun direction(dx: Int, dy: Int): Boolean {
         // A direction while B is held is always a jump/move, never followed by B's clear.
@@ -428,7 +433,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun entryPitch(channel: Int, map: TuningMap): TunedPitch? {
         state.entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
         val root = map.tuning.root
-        val near = ((state.octave - ViewState.MIN_OCTAVE) * 12 + root.mod(12)).coerceIn(system.noteRange)
+        val near = (state.octave * 12 + root.mod(12)).coerceIn(system.noteRange)
         return map.nearest(near, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
     }
 
@@ -909,7 +914,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     // ---- keyboard ----------------------------------------------------------------------------------
 
     /** Note of keyboard [key] at the current octave; may exceed the range, see [keyPlayable]. */
-    fun keyNote(key: Int): Int = (state.octave - ViewState.MIN_OCTAVE) * 12 + key
+    fun keyNote(key: Int): Int = state.octave * 12 + key
 
     fun keyPlayable(key: Int): Boolean = keyNote(key) in system.noteRange
 
@@ -930,8 +935,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             dy < 0 && !editHeld -> if (state.entryMode) moveWritePosition(maxOf(1, session.step)) else Unit
             dx != 0 -> {
                 var key = state.kbKey + dx
-                if (key < 0 && state.octave > ViewState.MIN_OCTAVE) { state.octave--; key += 12 }
-                if (key > KEYS - 1 && state.octave < ViewState.KEYBOARD_MAX_OCTAVE) { state.octave++; key -= 12 }
+                if (key < 0 && state.octave > minOctave()) { state.octave--; key += 12 }
+                if (key > KEYS - 1 && state.octave < keyboardOctaves().last) { state.octave++; key -= 12 }
                 state.kbKey = key.coerceIn(0, KEYS - 1)
                 if (editHeld) { editUsed = true; if (keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey)) }
             }
@@ -943,7 +948,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             0 -> state.entryMode = !state.entryMode
             1 -> setKeyboardChannel(state.channel + d)
             2 -> setKeyboardSound(state.instrument + d)
-            3 -> state.octave = (state.octave + d).coerceIn(ViewState.MIN_OCTAVE, ViewState.KEYBOARD_MAX_OCTAVE)
+            3 -> state.octave = (state.octave + d).coerceIn(keyboardOctaves())
             4 -> session.step += d
         }
     }
@@ -1092,13 +1097,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     val sketchAuditioning: Boolean get() = state.kind == ViewKind.SKETCH && auditioning
 
     fun sketchNote(index: Int): Int =
-        (state.octave - ViewState.MIN_OCTAVE) * 12 + sketchGuide.scale.root + sketchGuide.tones[index].interval
+        state.octave * 12 + sketchGuide.scale.root + sketchGuide.tones[index].interval
 
     /** Keep the entire ascending voicing in the hardware range, rather than clipping individual notes. */
     fun sketchChordNotes(): List<Int> {
         val guide = sketchGuide
         val chord = guide.chords.getOrNull(state.sketchChord) ?: return emptyList()
-        val base = (state.octave - ViewState.MIN_OCTAVE) * 12 + guide.scale.root
+        val base = state.octave * 12 + guide.scale.root
         val shift = if (base + chord.intervals.last() > system.noteRange.last) 12 else 0
         return chord.intervals.map { base + it - shift }
     }
@@ -1118,7 +1123,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             1 -> state.sketchScale = scale.copy(kind = ScaleKind.entries[(scale.kind.ordinal + delta).mod(ScaleKind.entries.size)])
             2 -> sketchChannel(delta)
             3 -> state.instrument = (state.instrument + delta).coerceIn(1, slots(bankOf(state.channel)))
-            4 -> state.octave = (state.octave + delta).coerceIn(ViewState.MIN_OCTAVE, ViewState.KEYBOARD_MAX_OCTAVE)
+            4 -> state.octave = (state.octave + delta).coerceIn(keyboardOctaves())
             SKETCH_CHORDS_FIELD -> {
                 state.sketchCircle = !state.sketchCircle
                 if (state.sketchCircle) sketchCircleSync()
@@ -1264,7 +1269,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Root-position tonic triad of the circle cursor's key at the Sketch octave, shifted down together to fit. */
     fun sketchCircleTriad(): List<Int> {
         val scale = sketchCircleScale()
-        val base = (state.octave - ViewState.MIN_OCTAVE) * 12 + scale.root
+        val base = state.octave * 12 + scale.root
         val shift = if (base + 7 > system.noteRange.last) 12 else 0
         return listOf(0, if (state.sketchCircleMinor) 3 else 4, 7).map { base + it - shift }
     }
@@ -1304,7 +1309,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (state.sketchPhraseSettings.chordTones) sketchGuide.chords.getOrNull(state.sketchChord) else null
 
     private fun sketchGenerate(): Phrase = Phrase.generate(
-        sketchGuide, (state.octave - ViewState.MIN_OCTAVE) * 12 + sketchGuide.scale.root, sketchPhraseChord(),
+        sketchGuide, state.octave * 12 + sketchGuide.scale.root, sketchPhraseChord(),
         state.sketchPhraseSettings, Random(state.sketchPhraseSeed), system.noteRange,
     )
 

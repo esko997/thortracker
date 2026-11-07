@@ -8,8 +8,6 @@ import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.SystemView
@@ -18,28 +16,28 @@ import org.thortracker.ui.Painter
 
 /**
  * The Game Boy's sound editor: the three typed banks, the selected sound's name and one row per register setting
- * ([SoundParams]). State: [ViewState.bank] (bank index = [InstrumentKind] ordinal), [ViewState.instrument] and
+ * ([SoundParams]). State: [ViewState.bank] (bank index = [GbBank] ordinal), [ViewState.instrument] and
  * [ViewState.instField] (0 slot/bank, 1 name, 2+ parameters).
  */
 object GbSoundView : SystemView() {
-    fun kind(state: ViewState): InstrumentKind = GbSystem.kindOf(state.bank)
+    fun kind(state: ViewState): GbBank = GbSystem.kindOf(state.bank)
 
     fun params(state: ViewState): List<SoundParam> = SoundParams.forKind(kind(state))
 
-    fun sound(song: Song, state: ViewState): Instrument? = song.instrument(kind(state), state.instrument)
+    fun sound(song: Song, state: ViewState): GbInstrument? = song.instrument(kind(state), state.instrument)
 
     override val gestureLabel = "Edit sound"
 
     override fun normalise(v: ViewController) {
         val st = v.state
-        st.bank = st.bank.coerceIn(0, InstrumentKind.entries.size - 1)
+        st.bank = st.bank.coerceIn(0, GbBank.entries.size - 1)
         st.instField = st.instField.coerceIn(0, 1 + params(st).size)
     }
 
     override fun subject(state: ViewState): Int = state.bank * 16 + state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
-        state.bank = (subject / 16).coerceIn(0, InstrumentKind.entries.size - 1)
+        state.bank = (subject / 16).coerceIn(0, GbBank.entries.size - 1)
         state.instrument = (subject % 16).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
     }
 
@@ -53,9 +51,9 @@ object GbSoundView : SystemView() {
         val kind = kind(st)
         v.syncLock()
         val session = v.session
-        val wave = if (kind == InstrumentKind.WAVE) sound(v.session.song, st)?.wave ?: session.selection.wave else session.selection.wave
+        val wave = if (kind == GbBank.WAVE) sound(v.session.song, st)?.wave ?: session.selection.wave else session.selection.wave
         // Sound view suggests where the sound is heard: its waveform for wave sounds, else the keyboard.
-        val context = if (kind == InstrumentKind.WAVE) ViewKind.WAVE else ViewKind.KEYBOARD
+        val context = if (kind == GbBank.WAVE) ViewKind.WAVE else ViewKind.KEYBOARD
         session.select(session.selection.copy(bank = GbSystem.bankOf(kind), instrument = st.instrument, wave = wave, context = context))
     }
 
@@ -78,7 +76,7 @@ object GbSoundView : SystemView() {
             0 -> {
                 st.instrument = (st.instrument + dx).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
                 if (dy != 0) {
-                    st.bank = (st.bank - dy).mod(InstrumentKind.entries.size)
+                    st.bank = (st.bank - dy).mod(GbBank.entries.size)
                     st.instField = 0
                 }
                 publish(v)
@@ -137,7 +135,7 @@ object GbSoundView : SystemView() {
         val kind = kind(st)
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                st.bank = (st.bank + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(InstrumentKind.entries.size)
+                st.bank = (st.bank + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(GbBank.entries.size)
                 st.instField = st.instField.coerceAtMost(1 + params(st).size)
                 publish(v)
             }
@@ -178,7 +176,7 @@ object GbSoundView : SystemView() {
 
     override fun painter(pane: PaneView): Painter = SoundPainter(pane)
 
-    private fun defaultSound(kind: InstrumentKind, slot: Int) = Instrument(name = "Sound ${EditorSession.hex2(slot)}", kind = kind)
+    private fun defaultSound(kind: GbBank, slot: Int) = GbInstrument(name = "Sound ${EditorSession.hex2(slot)}", kind = kind)
 }
 
 /**
@@ -193,7 +191,7 @@ object GbWaveView : SystemView() {
 
     override fun normalise(v: ViewController) {
         val st = v.state
-        st.wave = st.wave.coerceIn(0, v.session.song.waves.size - 1)
+        st.wave = st.wave.coerceIn(0, v.session.song.gb.waves.size - 1)
         st.waveRow = st.waveRow.coerceIn(0, 1)
         st.waveCol = st.waveCol.coerceIn(0, if (st.waveRow == 0) TOOLS.size - 1 else WaveShapes.SAMPLES - 1)
         st.waveLevel = st.waveLevel.coerceIn(0, WaveShapes.MAX)
@@ -216,7 +214,7 @@ object GbWaveView : SystemView() {
         val slot = soundUsingWave(v, st.wave)
         val sel = v.session.selection
         v.session.select(
-            if (slot > 0) sel.copy(wave = st.wave, bank = GbSystem.bankOf(InstrumentKind.WAVE), instrument = slot, context = ViewKind.INSTRUMENT)
+            if (slot > 0) sel.copy(wave = st.wave, bank = GbSystem.bankOf(GbBank.WAVE), instrument = slot, context = ViewKind.INSTRUMENT)
             else sel.copy(wave = st.wave, context = ViewKind.INSTRUMENT),
         )
     }
@@ -225,16 +223,16 @@ object GbWaveView : SystemView() {
     fun soundUsingWave(v: ViewController, wave: Int): Int {
         val sel = v.session.selection
         val song = v.session.song
-        val waveBank = GbSystem.bankOf(InstrumentKind.WAVE)
-        if (sel.bank == waveBank && song.instrument(InstrumentKind.WAVE, sel.instrument)?.wave == wave) return sel.instrument
-        val idx = song.waveInstruments.indexOfFirst { it.wave == wave }
+        val waveBank = GbSystem.bankOf(GbBank.WAVE)
+        if (sel.bank == waveBank && song.instrument(GbBank.WAVE, sel.instrument)?.wave == wave) return sel.instrument
+        val idx = song.gb.wave.indexOfFirst { it.wave == wave }
         return if (idx < 0) 0 else idx + 1
     }
 
     /** Wave sound the "Use in sound" tool assigns to. */
     fun targetSound(v: ViewController): Int {
         val sel = v.session.selection
-        val waveBank = GbSystem.bankOf(InstrumentKind.WAVE)
+        val waveBank = GbSystem.bankOf(GbBank.WAVE)
         return if (sel.bank == waveBank) sel.instrument else v.pen(waveBank)
     }
 
@@ -282,7 +280,7 @@ object GbWaveView : SystemView() {
     fun applyTool(v: ViewController, tool: Int) {
         val st = v.state
         val session = v.session
-        val w = session.song.waves[st.wave]
+        val w = session.song.gb.waves[st.wave]
         when (tool) {
             0 -> session.setWave(st.wave, WaveShapes.sine(), "Sine wave")
             1 -> session.setWave(st.wave, WaveShapes.triangle(), "Triangle wave")
@@ -294,7 +292,7 @@ object GbWaveView : SystemView() {
             7 -> session.setWave(st.wave, WaveShapes.smooth(w), "Smooth wave")
             8 -> {
                 val slot = targetSound(v)
-                session.editInstrument(InstrumentKind.WAVE, slot, "Assign wave") { it.copy(wave = st.wave) }
+                session.editInstrument(GbBank.WAVE, slot, "Assign wave") { it.copy(wave = st.wave) }
                 session.note("Sound ${EditorSession.hex2(slot)} now plays wave ${EditorSession.hex1(st.wave)}")
             }
         }
@@ -303,7 +301,7 @@ object GbWaveView : SystemView() {
     override fun audition(v: ViewController) {
         val st = v.state
         val slot = soundUsingWave(v, st.wave)
-        val ch = v.session.song.firstChannelOf(InstrumentKind.WAVE)
+        val ch = v.session.song.firstChannelOf(GbBank.WAVE)
         if (slot > 0 && ch >= 0) v.startAudition(ch, v.defaultNote(), slot)
         else v.session.note("No wave sound plays wave ${EditorSession.hex1(st.wave)}: choose Use in sound first")
     }
@@ -314,15 +312,15 @@ object GbWaveView : SystemView() {
         val song = session.song
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                st.wave = (st.wave + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(song.waves.size)
+                st.wave = (st.wave + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(song.gb.waves.size)
                 publish(v)
             }
             Action.COPY -> session.copyWave(st.wave)
             Action.PASTE -> session.pasteWave(st.wave)
             Action.CUT -> { session.copyWave(st.wave); session.setWave(st.wave, List(WaveShapes.SAMPLES) { 0 }, "Cut wave") }
             Action.DUPLICATE -> {
-                if (st.wave >= song.waves.size - 1) { session.note("Wave ${EditorSession.hex1(st.wave)} is the last wave"); return true }
-                session.setWave(st.wave + 1, song.waves[st.wave], "Duplicate wave")
+                if (st.wave >= song.gb.waves.size - 1) { session.note("Wave ${EditorSession.hex1(st.wave)} is the last wave"); return true }
+                session.setWave(st.wave + 1, song.gb.waves[st.wave], "Duplicate wave")
                 st.wave++
                 publish(v)
             }

@@ -1,8 +1,9 @@
 package org.thortracker.backend
 
+import org.thortracker.system.gb.gb
 import org.thortracker.system.gb.HugeRules
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
+import org.thortracker.system.gb.GbInstrument
+import org.thortracker.system.gb.GbBank
 import org.thortracker.model.Song
 
 /**
@@ -26,10 +27,10 @@ object UgeExporter {
         out.shortString(song.title)
         out.shortString(song.artist)
         out.shortString(song.comment)
-        for (kind in listOf(InstrumentKind.PULSE, InstrumentKind.WAVE, InstrumentKind.NOISE)) {
+        for (kind in listOf(GbBank.PULSE, GbBank.WAVE, GbBank.NOISE)) {
             for (instrument in HugeRules.bank(song, kind)) writeInstrument(out, kind, instrument)
         }
-        for (wave in song.waves) for (sample in wave) out.u8(sample)
+        for (wave in song.gb.waves) for (sample in wave) out.u8(sample)
         out.i32(song.ticksPerRow)
         out.bool(false) // TimerEnabled: tempo comes from the vblank tick, as in gbc-puzzler.
         out.i32(0) // TimerDivider
@@ -58,7 +59,7 @@ object UgeExporter {
     }
 
     /** One `TInstrumentV3` (1385 bytes); enums are 4 bytes, subranges/booleans 1 byte. */
-    private fun writeInstrument(out: LittleEndian, kind: InstrumentKind, it: Instrument) {
+    private fun writeInstrument(out: LittleEndian, kind: GbBank, it: GbInstrument) {
         out.i32(kind.ordinal) // itSquare = 0, itWave = 1, itNoise = 2
         out.shortString(it.name)
         out.i32(it.length)

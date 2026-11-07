@@ -14,7 +14,6 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import org.thortracker.system.system
 
 /**
  * Tonal playground: the current key's chords (or the circle of fifths), its scale tones, and a generated

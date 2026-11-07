@@ -21,7 +21,7 @@ import kotlin.math.log2
 data class Tuning(
     val name: String,
     val cents: List<Double>,
-    val root: Int = 24,
+    val root: Int = 60,
     val tolerance: Int = 5,
 ) {
     /** Number of degrees per period. */
