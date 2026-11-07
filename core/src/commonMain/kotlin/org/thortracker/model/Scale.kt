@@ -43,7 +43,8 @@ enum class ScaleKind(val label: String, intervals: IntArray) {
 /**
  * Editor-only pitch guide of a pattern: which notes the Pattern view's note stepping visits on tonal
  * channels. It never changes stored notes, and lowering, preview audio and `.uge` export ignore it.
- * [root] is a pitch class, 0 = C .. 11 = B (hUGE note 0 is C-3, so a note's pitch class is note % 12).
+ * [root] is a pitch class, 0 = C .. 11 = B (a note's pitch class is note % 12). Stepping stays within the song
+ * system's note range ([range] parameters).
  */
 @Serializable
 data class Scale(val root: Int = 0, val kind: ScaleKind = ScaleKind.CHROMATIC) {
@@ -51,12 +52,12 @@ data class Scale(val root: Int = 0, val kind: ScaleKind = ScaleKind.CHROMATIC) {
 
     fun contains(note: Int): Boolean = kind.hasInterval(note - root)
 
-    /** The nearest scale note strictly above ([direction] > 0) or below [note] within C-3..B-8, or null at the edge. */
-    fun step(note: Int, direction: Int): Int? {
+    /** The nearest scale note strictly above ([direction] > 0) or below [note] within [range], or null at the edge. */
+    fun step(note: Int, direction: Int, range: IntRange): Int? {
         val d = direction.sign
         if (d == 0) return note
         var n = note + d
-        while (n in 0..Songs.NOTE_MAX) {
+        while (n in range) {
             if (contains(n)) return n
             n += d
         }
@@ -65,13 +66,13 @@ data class Scale(val root: Int = 0, val kind: ScaleKind = ScaleKind.CHROMATIC) {
 
     /**
      * [note] moved by whole [octaves]: exact for a scale note; for a note outside the scale, the first scale note
-     * at or beyond that octave target in the same direction. Null when nothing fits within C-3..B-8.
+     * at or beyond that octave target in the same direction. Null when nothing fits within [range].
      */
-    fun octave(note: Int, octaves: Int): Int? {
+    fun octave(note: Int, octaves: Int, range: IntRange): Int? {
         val d = octaves.sign
         var n = note + 12 * octaves
-        if (d == 0 || contains(note)) return n.takeIf { it in 0..Songs.NOTE_MAX }
-        while (n in 0..Songs.NOTE_MAX) {
+        if (d == 0 || contains(note)) return n.takeIf { it in range }
+        while (n in range) {
             if (contains(n)) return n
             n += d
         }
@@ -79,16 +80,16 @@ data class Scale(val root: Int = 0, val kind: ScaleKind = ScaleKind.CHROMATIC) {
     }
 
     /** [note] itself if it is in the scale, else the nearest scale note above it, else below it (null if none in range). */
-    fun snap(note: Int): Int? = if (contains(note)) note else step(note, 1) ?: step(note, -1)
+    fun snap(note: Int, range: IntRange): Int? = if (contains(note)) note else step(note, 1, range) ?: step(note, -1, range)
 
     /**
      * [note] itself if it is in the scale, else the closer of the scale notes below and above it; an exact
-     * tie goes down. Null if no scale note is in C-3..B-8.
+     * tie goes down. Null if no scale note is in [range].
      */
-    fun nearest(note: Int): Int? {
+    fun nearest(note: Int, range: IntRange): Int? {
         if (contains(note)) return note
-        val down = step(note, -1)
-        val up = step(note, 1)
+        val down = step(note, -1, range)
+        val up = step(note, 1, range)
         return when {
             down == null -> up
             up == null -> down

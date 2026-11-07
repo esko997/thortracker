@@ -1,5 +1,6 @@
 package org.thortracker
 
+import org.thortracker.system.gb.HugeRules
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -134,7 +135,7 @@ class AudioDeviceTest {
             val pattern = blank.patterns[0]
             val jumpToOrder2 = pattern.copy(name = "B", length = 6).let { p ->
                 p.copy(tracks = p.tracks.mapIndexed { ch, t -> if (ch == 0) t.toMutableList().also {
-                    it[3] = org.thortracker.model.Cell(org.thortracker.model.Cell.EMPTY, 0, org.thortracker.model.HugeRules.FX_POSITION_JUMP, 0x03)
+                    it[3] = org.thortracker.model.Cell(org.thortracker.model.Cell.EMPTY, 0, HugeRules.FX_POSITION_JUMP, 0x03)
                 } else t })
             }
             val song = blank.copy(
@@ -142,7 +143,7 @@ class AudioDeviceTest {
                 orders = listOf(0, 1, 2),
                 ticksPerRow = 2,
             )
-            audio.update(org.thortracker.model.HugeRules.patternLoop(song, 1))
+            audio.update(HugeRules.patternLoop(song, 1))
             audio.play(0, 0)
             await("output transport starts", audio) { audio.position().playing }
             val seen = ArrayList<Pair<Int, Int>>()

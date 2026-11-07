@@ -1,4 +1,5 @@
-// Realtime playback engine: AAudio output + hUGEDriver machines (huge_machine.h).
+// Realtime playback engine: AAudio output + two chip machines (chip_engine.h) of one sound
+// system: the song machine and the audition machine.
 //
 // Threads:
 //  - control thread (HugeAudio's single executor): set_image, play, stop, audition,
@@ -16,7 +17,7 @@
 #include <cstdint>
 #include <mutex>
 
-#include "huge_machine.h"
+#include "chip_engine.h"
 
 namespace thortracker {
 
@@ -40,10 +41,17 @@ private:
     std::atomic<uint8_t> middle_{1};
 };
 
+// A loaded image (ops->image_storage bytes) and the song version it came from.
+struct ImageSlot {
+    ChipImage* data = nullptr;
+    uint32_t version = 0;
+};
+
 struct MachineSlot {
-    HugeMachine* machine = nullptr;
+    ChipMachine* machine = nullptr;
     uint32_t seq = 0;
-    int channel = -1;  // audition channel
+    int channel = -1;            // audition channel
+    uint32_t image_version = 0;  // version of the image the machine plays (song machines)
 };
 
 class Engine {
@@ -51,14 +59,15 @@ public:
     static constexpr int32_t kSampleRate = 48000;
     static constexpr int kStatCount = 14;
 
-    static Engine* create();
+    // nullptr if ops is null or allocation fails.
+    static Engine* create(const ChipEngineOps* ops);
     ~Engine();
 
     // Control thread.
-    int set_image(const uint8_t* mem, uint32_t version);  // HM_OK / HM_ERR_IMAGE
-    int play(int order, int row, int max_ticks);          // >= 0 seek mode, < 0 error
+    int set_image(const uint8_t* bytes, size_t size, uint32_t version);  // CHIP_OK / CHIP_ERR_IMAGE
+    int play(int order, int row, int max_ticks);  // >= 0 seek mode, < 0 error
     void stop();
-    int audition(int channel, int note, int instrument, int detune);
+    int audition(int channel, int note, int instrument, int fine);
     void release_audition();
     int ensure_stream();  // AAUDIO_OK or an AAudio error code
     bool suspend_if_idle();
@@ -66,20 +75,23 @@ public:
 
     // Any thread. Packed: bit 40 = playing, bits 16..23 order, bits 0..7 row; -1 = never played.
     int64_t position();
-    void stats(int64_t* out, int count);  // see huge_jni.cpp for the field order
+    void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
 
     // AAudio callbacks.
     aaudio_data_callback_result_t render(float* out, int32_t frames);
     void on_error(aaudio_result_t error);
 
 private:
-    Engine() = default;
+    explicit Engine(const ChipEngineOps* ops) : ops_(ops) {}
+    ChipImage* new_image();
     void close_stream_locked();
     void record_row(uint64_t frame, int order, int row);
     int64_t presented_frame_locked();
 
+    const ChipEngineOps* const ops_;
+
     // Control-thread state.
-    HugeImage* control_image_ = nullptr;
+    ImageSlot control_image_;
     bool has_image_ = false;
     uint32_t seq_ = 0;
     std::mutex stream_mutex_;  // guards stream_ for control/UI threads (never the callback)
@@ -87,7 +99,8 @@ private:
     bool stream_started_ = false;
 
     // Hand-over to the audio thread.
-    TripleBuffer<HugeImage> images_;
+    TripleBuffer<ImageSlot> images_;
+    ImageSlot image_storage_[3];
     TripleBuffer<MachineSlot> play_slots_;
     TripleBuffer<MachineSlot> audition_slots_;
     MachineSlot slot_storage_[6];
@@ -96,12 +109,13 @@ private:
     std::atomic<bool> stream_dead_{false};
 
     // Audio-thread state.
-    HugeImage* front_image_ = nullptr;  // newest image the audio thread holds
+    ImageSlot* front_image_ = nullptr;  // newest image the audio thread holds
     MachineSlot* play_ = nullptr;
     MachineSlot* aud_ = nullptr;
+    bool aud_releasing_ = false;  // key-off sent; ticking until the machine reports the end
     int borrowed_channel_ = -1;
-    float play_buf_[HM_MAX_TICK_FRAMES * 2];
-    float aud_buf_[HM_MAX_TICK_FRAMES * 2];
+    float play_buf_[CHIP_MAX_TICK_FRAMES * 2];
+    float aud_buf_[CHIP_MAX_TICK_FRAMES * 2];
     int play_len_ = 0, play_pos_ = 0, aud_len_ = 0, aud_pos_ = 0;
     uint64_t frames_rendered_ = 0;
 

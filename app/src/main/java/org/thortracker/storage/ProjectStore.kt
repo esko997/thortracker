@@ -5,7 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.AtomicFile
-import org.thortracker.backend.UgeExporter
+import org.thortracker.system.ExportFormat
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import java.io.File
@@ -97,16 +97,16 @@ class ProjectStore(context: Context) : AutoCloseable {
         }
     }
 
-    fun export(uri: Uri, song: Song, callback: () -> Unit) {
+    fun export(uri: Uri, song: Song, format: ExportFormat, callback: () -> Unit) {
         providerExecutor.execute {
             try {
-                val bytes = UgeExporter.export(song)
+                val bytes = format.export(song)
                 context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
                     stream.write(bytes)
                     stream.flush()
                 } ?: error("The selected provider did not open the export destination")
                 deliver(callback)
-            } catch (e: Exception) { fail("UGE export failed", e) }
+            } catch (e: Exception) { fail("${format.extension.uppercase()} export failed", e) }
         }
     }
 

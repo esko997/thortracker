@@ -7,14 +7,11 @@ import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.cellAt
 import org.thortracker.editor.channelCount
-import org.thortracker.editor.instrument
 import org.thortracker.editor.patternAt
 import org.thortracker.editor.patternUses
 import org.thortracker.editor.rowCount
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
-import org.thortracker.editor.SoundParams
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Songs
 import org.thortracker.model.Scale
 
@@ -61,7 +58,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val pattern = s.patternAt(st.order)
         val rows = s.rowCount(pattern)
         val channels = s.channelCount()
-        val names = Songs.channelNames(s)
+        val names = s.system.channels.map { it.name }
         val playing = v.playback.playing
         val playHere = playing && v.playback.order == st.order
         val samePatternPlaying = playing && !playHere && v.playback.order in s.orders.indices && s.orders[v.playback.order] == pattern
@@ -119,9 +116,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val lamp = maxOf(playLamp(ch), heard)
             ink.rect(c, x, laneTop, x + laneW, gridTop, Palette.mix(Palette.BG, col, 0.10f + 0.12f * lamp))
             ink.rect(c, x, laneTop, x + laneW, laneTop + ink.dp(3f), if (lamp > 0f) Palette.mix(col, Palette.TEXT, 0.6f * lamp) else col)
-            val kind = Songs.channelKind(s, ch)
-            val pen = ctl.pen(kind)
-            val penName = s.instrument(kind, pen)?.name ?: ""
+            val pen = ctl.pen(s.system.channels[ch].bank)
+            val penName = s.system.instrumentName(s, s.system.channels[ch].bank, pen) ?: ""
             ink.label(c, names[ch], x + cw * 0.6f, laneTop, laneHeaderH, col, true)
             val nw = ink.labelWidth(names[ch], ink.unit, true)
             ink.label(c, ink.fit("${hex2(pen)} $penName", laneW - nw - cw * 2f, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
@@ -300,13 +296,16 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         ink.label(c, if (up) "▴" else "▾", f.right + cw * 0.05f, f.top, f.height(), Palette.PLAYHEAD, true, size)
     }
 
-    /** Orders cells by sounding pitch: note, then its `40y` bend (another effect plays the plain note). */
-    private fun pitchOrder(cell: Cell): Int = cell.note * 16 + (org.thortracker.model.HugeRules.detuneOf(cell) ?: 0)
+    /** Orders cells by sounding pitch: note, then its fine pitch (another effect plays the plain note). */
+    private fun pitchOrder(cell: Cell): Int {
+        val fine = song.system.fine
+        return cell.note * (fine.max + 1) + (fine.of(cell) ?: 0)
+    }
 
     /** " · fitted from A-5" (with "+3" for a bent original), or "" when the cell carries no Fit mark. */
     private fun fittedFromText(pattern: Int, ch: Int, row: Int): String {
         val from = session.fittedFrom(pattern, ch, row)?.takeIf { it.note >= 0 } ?: return ""
-        val bend = org.thortracker.model.HugeRules.detuneOf(from)?.takeIf { it > 0 }?.let { "+$it" } ?: ""
+        val bend = song.system.fine.of(from)?.takeIf { it > 0 }?.let { "+$it" } ?: ""
         return " · fitted from ${Songs.noteName(from.note)}$bend"
     }
 
@@ -343,7 +342,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             problemSong = s
             problemCache = Array(s.channelCount()) { HashMap() }
         }
-        return problemCache[ch].getOrPut(cell) { Songs.cellProblem(s, ch, cell) != null }
+        return problemCache[ch].getOrPut(cell) { s.system.cellProblem(s, ch, cell) != null }
     }
 
     /** Rightmost first: the pattern scale, then follow playback, entry step, octave. */
@@ -375,8 +374,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
     }
 
-    /** Settings summaries by instrument; instruments are immutable, so identity keys never go stale. */
-    private val summaries = IdentityCache<org.thortracker.model.Instrument, String>(256)
+    /** The inspector's sound summary and waveform, kept until the song or the shown sound changes. */
+    private var summarySong: org.thortracker.model.Song? = null
+    private var summaryKey = -1
+    private var summaryText: String? = null
+    private var summaryShape: List<Float>? = null
 
     private fun drawInspector(c: Surface, r: Rect) {
         val s = song
@@ -390,15 +392,16 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val ch = st.channel
         val col = Palette.channel(ch)
         val cell = s.cellAt(s.patternAt(st.order), ch, st.row)
-        val kind = Songs.channelKind(s, ch)
+        val system = s.system
+        val bank = system.channels[ch].bank
 
-        ink.label(c, "${Songs.channelNames(s)[ch]}  row ${hex2(st.row)}", x, y, line, col, true)
+        ink.label(c, "${system.channels[ch].name}  row ${hex2(st.row)}", x, y, line, col, true)
         y += line
         val tuning = ctl.tuningFor(ch)
         val noteLine = when {
             cell.note >= 0 && tuning != null -> {
                 // A row holding another effect plays the plain note (bend 0): in tune when that is a degree.
-                val detune = org.thortracker.model.HugeRules.detuneOf(cell)
+                val detune = system.fine.of(cell)
                 val i = tuning.index(cell.note, detune ?: 0)
                 when {
                     i < 0 && detune == null -> "Note ${Songs.noteName(cell.note)}: untuned, effect slot taken"
@@ -408,33 +411,37 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 }
             }
             cell.note >= 0 -> "Note ${Songs.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
-            cell.note == Cell.CUT -> "OFF: silent at once (E00), no release tail"
+            cell.note == Cell.CUT -> system.help.offInspector
             else -> "No note: the previous note keeps sounding"
         }
         ink.label(c, ink.fit(noteLine, w), x, y, line, Palette.TEXT)
         y += line
-        val shownSlot = if (cell.instrument > 0) cell.instrument else if (cell.note >= 0) 0 else ctl.pen(kind)
+        val shownSlot = if (cell.instrument > 0) cell.instrument else if (cell.note >= 0) 0 else ctl.pen(bank)
         val soundLine = when {
-            cell.instrument > 0 -> "Sound ${hex2(cell.instrument)} ${s.instrument(kind, cell.instrument)?.name ?: ""}"
+            cell.instrument > 0 -> "Sound ${hex2(cell.instrument)} ${system.instrumentName(s, bank, cell.instrument) ?: ""}"
             cell.note >= 0 -> "No sound number: legato, changes pitch without restarting the sound"
-            else -> "Pen sound ${hex2(ctl.pen(kind))} ${s.instrument(kind, ctl.pen(kind))?.name ?: ""}"
+            else -> "Pen sound ${hex2(ctl.pen(bank))} ${system.instrumentName(s, bank, ctl.pen(bank)) ?: ""}"
         }
         ink.label(c, ink.fit(soundLine, w), x, y, line, Palette.DIM)
         y += line
-        s.instrument(kind, shownSlot)?.let { ins ->
+        val key = bank * 256 + shownSlot
+        if (s !== summarySong || key != summaryKey) {
+            summarySong = s
+            summaryKey = key
+            summaryText = system.instrumentSummary(s, bank, shownSlot)
+            summaryShape = system.instrumentShape(s, bank, shownSlot)
+        }
+        summaryText?.let { summary ->
             // What the sound number means, so its settings are visible without switching view.
-            val summary = summaries.getOrPut(ins) { SoundParams.summary(ins) }
             val small = ink.unit * 0.85f
-            if (kind == InstrumentKind.WAVE) {
-                val wave = s.waves.getOrNull(ins.wave)
+            val shape = summaryShape
+            if (shape != null) {
                 val pw = ink.unit * 4.5f
-                if (wave != null) {
-                    val bw = pw / wave.size
-                    val top = y + line * 0.2f
-                    val h = line * 0.6f
-                    for ((i, sample) in wave.withIndex()) {
-                        ink.rect(c, x + i * bw, top + h * (1 - sample / 15f), x + (i + 1) * bw, top + h, col)
-                    }
+                val bw = pw / shape.size
+                val top = y + line * 0.2f
+                val h = line * 0.6f
+                for ((i, level) in shape.withIndex()) {
+                    ink.rect(c, x + i * bw, top + h * (1 - level), x + (i + 1) * bw, top + h, col)
                 }
                 ink.label(c, ink.fit(summary, w - pw - ink.unit * 0.5f, small), x + pw + ink.unit * 0.5f, y, line, Palette.DIM, size = small)
             } else {
@@ -443,10 +450,10 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             y += line
         }
         if (cell.hasEffect) {
-            val info = Songs.effects(s).firstOrNull { it.code == cell.effect }
+            val info = system.effects.firstOrNull { it.code == cell.effect }
             ink.label(c, ink.fit("${hex1(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, Palette.PLAYHEAD, true)
             y += line
-            for (part in wrap(Songs.describeEffect(s, ch, cell.effect, cell.param), w, ink.unit * 0.85f)) {
+            for (part in wrap(system.describeEffect(s, ch, cell.effect, cell.param), w, ink.unit * 0.85f)) {
                 ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
@@ -460,7 +467,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 y += line * 0.85f
             }
         } else if (st.field >= 2) {
-            val info = Songs.effectsFor(s, ch)
+            val info = system.effectsFor(ch)
             ink.label(c, "Effects (hold ${v.keymap.label(Action.EDIT)} to pick)", x, y, line, Palette.DIM)
             y += line
             ink.label(c, "· No effect", x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
@@ -471,7 +478,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 y += line * 0.8f
             }
         }
-        Songs.cellProblem(s, ch, cell)?.let { problem ->
+        s.system.cellProblem(s, ch, cell)?.let { problem ->
             for (part in wrap(problem, w, ink.unit * 0.85f)) {
                 ink.label(c, part, x, y, line * 0.85f, Palette.ERROR, size = ink.unit * 0.85f)
                 y += line * 0.85f
@@ -562,8 +569,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         if (textW != panelNoteWidth || tuned != panelNoteTuned) {
             panelNoteWidth = textW
             panelNoteTuned = tuned
-            panelNote = wrap((if (tuned) "The song tuning replaces this scale for Pulse and Wave note edits (Menu → Tuning). "
-                else "Pulse and Wave note edits land only on scale notes; Noise keeps every pitch. ") +
+            val help = song.system.help
+            panelNote = wrap((if (tuned) "The song tuning replaces this scale for ${help.tonalChannels} note edits (Menu → Tuning). "
+                else "${help.tonalChannels} note edits land only on scale notes; ${help.untonalNote} ") +
                 "Written notes stay until you edit them; the scale is not exported or heard. Length sets how many rows " +
                 "every order using this pattern plays; later rows are hidden, not deleted.", textW, small)
         }
@@ -638,7 +646,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             if (len < Songs.ROWS) Palette.PLAYHEAD else Palette.TEXT, true, align = Align.CENTER)
         y += lineH + u * 0.3f
 
-        // Fit: nudge the played Pulse/Wave notes onto the scale (one undo step).
+        // Fit: nudge the played notes of tonal channels onto the scale (one undo step).
         fitRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
         focusRow(c, fitRow, ViewController.SCALE_FIT_FIELD)
         ink.label(c, "Notes", x, y, lineH, Palette.DIM)

@@ -9,10 +9,12 @@ import org.thortracker.audio.PlaybackPosition
 import org.thortracker.audio.TrackerAudio
 import org.thortracker.backend.HugeLowering
 import org.thortracker.model.Song
+import org.thortracker.system.gb.GbSystem
 
 /**
  * [TrackerAudio] over the SDL3 engine glue (native/deck_audio.c), so the shared [org.thortracker.audio.Transport]
- * drives the Deck exactly as it drives Android's HugeAudio. Main thread only.
+ * drives the Deck exactly as it drives Android's HugeAudio: during playback an audition mutes its channel in the
+ * song until it is released. Main thread only.
  */
 class DeckAudio : TrackerAudio {
     private var error: String? = null
@@ -21,7 +23,7 @@ class DeckAudio : TrackerAudio {
     var auditions = 0
         private set
 
-    init { check(da_open() == 0) { "SDL audio could not open" } }
+    init { check(da_open(GbSystem.id) == 0) { "SDL audio could not open" } }
 
     /** Lowers the song and hands its image to the engine (applied live while playing); a bad song keeps the last one. */
     override fun update(song: Song) {

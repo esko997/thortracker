@@ -8,20 +8,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(BINJGB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/binjgb/src)
 
-# The hUGEDriver machine: one C translation unit that includes binjgb's emulator.c.
-add_library(huge_machine STATIC
+# The chip machines behind chip_engine.h. huge_machine.c includes binjgb's emulator.c.
+add_library(chip_engines STATIC
+    chip_engine.c
+    huge_chip.c
     huge_machine.c
     ${BINJGB_DIR}/common.c
 )
-target_include_directories(huge_machine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${BINJGB_DIR})
-target_compile_definitions(huge_machine PRIVATE NDEBUG=1)
-target_compile_options(huge_machine PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
+target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${BINJGB_DIR})
+target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
+target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers)
-set_target_properties(huge_machine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(chip_engines PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(thortracker_audio SHARED
-    huge_engine.cpp
-    huge_jni.cpp
+    audio_engine.cpp
+    audio_jni.cpp
 )
 target_compile_options(thortracker_audio PRIVATE -O2 -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(thortracker_audio PRIVATE huge_machine aaudio log m dl)
+target_link_libraries(thortracker_audio PRIVATE chip_engines aaudio log m dl)

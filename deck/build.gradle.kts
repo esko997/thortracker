@@ -1,4 +1,4 @@
-// Steam Deck / desktop Linux frontend (spike): Kotlin/Native + SDL3 over the shared :core and the C hUGEDriver engine.
+// Steam Deck / desktop Linux frontend (spike): Kotlin/Native + SDL3 over the shared :core and the C chip engines.
 // Needs deck/deps (SDL3 headers + a libSDL3.so to link against); see deck/tools/fetch-deps.sh.
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
@@ -17,12 +17,14 @@ val nativeOut = layout.buildDirectory.dir("native")
 val konanDeps = File(System.getProperty("user.home"), ".konan/dependencies")
 val buildEngine by tasks.registering(Exec::class) {
     val sources = listOf(
+        engineSrc.file("chip_engine.c").asFile,
+        engineSrc.file("huge_chip.c").asFile,
         engineSrc.file("huge_machine.c").asFile,
         engineSrc.file("third_party/binjgb/src/common.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
-    inputs.files(sources, engineSrc.file("huge_machine.h"), layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
+    inputs.files(sources, engineSrc.files("chip_engine.h", "huge_machine.h"), layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
     val out = nativeOut.get().asFile

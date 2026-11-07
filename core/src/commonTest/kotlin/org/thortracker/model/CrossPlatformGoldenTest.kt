@@ -1,5 +1,6 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.GbSystem
 import kotlin.test.Test
 import kotlin.math.abs
 import kotlin.test.assertEquals
@@ -23,7 +24,7 @@ class CrossPlatformGoldenTest {
     /**
      * Cents from ratios go through log2, whose last bit differs between the JVM and native libm (seen: up to ~1e-13
      * cents on just-5-limit), so cents compare within 1e-9. What users get, the note and 40y bend each degree lands
-     * on, must be identical.
+     * on, must be identical. [THOR_GROOVE] is a version 7 project: it pins the upgrade to version 8 too.
      */
     @Test fun builtInScalaTuningsLandOnTheSameNotesAndBends() {
         for (case in SCL) {
@@ -34,7 +35,9 @@ class CrossPlatformGoldenTest {
                 val expected = Double.fromBits(bits)
                 assertTrue(abs(tuning.cents[i] - expected) < 1e-9, "${case.file} degree $i: ${tuning.cents[i]} vs $expected")
             }
-            val landed = TuningMap(tuning).pitches.map { it.degree * 1000000 + it.note * 100 + it.detune }
+            // Pinned as hUGEDriver notes (from C-3), as when notes were stored that way: the realisation is unchanged.
+            val c3 = GbSystem.noteRange.first
+            val landed = TuningMap(tuning, GbSystem).pitches.map { it.degree * 1000000 + (it.note - c3) * 100 + it.detune }
             assertEquals(case.pitches.toList(), landed, case.file)
         }
     }

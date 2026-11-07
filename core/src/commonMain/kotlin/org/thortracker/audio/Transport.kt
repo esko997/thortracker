@@ -1,7 +1,6 @@
 package org.thortracker.audio
 
 import org.thortracker.editor.EditorSession
-import org.thortracker.model.HugeRules
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 
@@ -43,16 +42,16 @@ class Transport(private val session: EditorSession, private val host: Host = obj
     /** The loop was started only to hear a parked order (not by the loop control), so stopping playback ends it. */
     private var loopForParked = false
 
-    /** What the engine plays: the song, or only the looped order ([HugeRules.patternLoop]). */
-    fun heard(song: Song): Song = if (loopOrder >= 0) HugeRules.patternLoop(song, loopOrder) else song
+    /** What the engine plays: the song, or only the looped order ([org.thortracker.system.SoundSystem.patternLoop]). */
+    fun heard(song: Song): Song = if (loopOrder >= 0) song.system.patternLoop(song, loopOrder) else song
 
     /**
      * The engine's position in document terms: while looping, its single order is [loopOrder]; otherwise it counts
-     * played orders only, so parked ones are skipped when mapping back ([HugeRules.playedOrders]).
+     * played orders only, so parked ones are skipped when mapping back ([Songs.playedOrders]).
      */
     fun position(): PlaybackPosition? = audio?.position()?.let {
         if (loopOrder >= 0) it.copy(order = loopOrder, looping = true)
-        else it.copy(order = HugeRules.playedOrders(session.song).getOrElse(it.order) { _ -> it.order })
+        else it.copy(order = Songs.playedOrders(session.song).getOrElse(it.order) { _ -> it.order })
     }
 
     /** Call for every document change: the loop follows its pattern, and the engine gets the new song. */
@@ -87,7 +86,7 @@ class Transport(private val session: EditorSession, private val host: Host = obj
         }
         // While looping, Play loops whichever order it starts: the engine's song is that order alone.
         if (loopOrder >= 0 && loopOrder != target) { loopAt(target); engine.update(heard(session.song)) }
-        engine.play(if (loopOrder >= 0) 0 else HugeRules.playedOrders(session.song).indexOf(target), maxOf(0, row))
+        engine.play(if (loopOrder >= 0) 0 else Songs.playedOrders(session.song).indexOf(target), maxOf(0, row))
         host.transportChanged(true)
     }
 

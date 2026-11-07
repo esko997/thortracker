@@ -1,7 +1,9 @@
 # GB/hUGE backend: `.uge` export and preview data contract
 
-Code: `core/src/commonMain/kotlin/org/thortracker/model/` (document, rules, validation, project format) and
-`core/src/commonMain/kotlin/org/thortracker/backend/` (`HugeLowering`, `UgeExporter`, `HugeLimits`).
+Code: `core/src/commonMain/kotlin/org/thortracker/system/gb/` (`GbSystem`, `GbSound`, `HugeRules`, `GbValidator`),
+`core/src/commonMain/kotlin/org/thortracker/model/` (shared document, project format) and
+`core/src/commonMain/kotlin/org/thortracker/backend/` (`HugeLowering`, `UgeExporter`, `HugeLimits`). Cells hold notes
+counted from C-0; lowering subtracts 36 (`HugeRules.NOTE_OFFSET`) for hUGEDriver's C-3-based note numbers.
 
 ## Targets and sources
 

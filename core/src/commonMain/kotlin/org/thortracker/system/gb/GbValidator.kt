@@ -1,6 +1,10 @@
-package org.thortracker.model
+package org.thortracker.system.gb
 
 import org.thortracker.backend.HugeLimits
+import org.thortracker.model.Cell
+import org.thortracker.model.Song
+import org.thortracker.model.Songs
+import org.thortracker.model.TuningMap
 
 /**
  * GB/hUGE checks, in two layers:
@@ -10,14 +14,14 @@ import org.thortracker.backend.HugeLimits
  *   hUGETracker 1.0.11 / uge2source. A work-in-progress song may have these and still be saved.
  * [warnings] are legal but probably unintended. Messages name the location and the fix.
  */
-object SongValidator {
+object GbValidator {
     /** Lists are capped so a pathological song cannot flood the UI; the last entry states the remainder. */
     const val MAX_REPORTED = 100
 
     fun structuralErrors(song: Song): List<String> {
         val out = Report()
-        if (song.backend != Songs.BACKEND) {
-            out += "Backend \"${song.backend}\" is not supported; this version only edits \"${Songs.BACKEND}\" songs"
+        if (song.sound !is GbSound) {
+            out += "The song is for ${song.system.name}, not the Game Boy"
             return out.list()
         }
         val channels = HugeRules.CHANNEL_KINDS.size
@@ -48,15 +52,15 @@ object SongValidator {
         if (song.orders.isNotEmpty() && song.loopOrder !in song.orders.indices) {
             out += "Loop order ${song.loopOrder} is outside the order list (0-${song.orders.size - 1})"
         }
-        checkBank(out, "Pulse", song.pulseInstruments, InstrumentKind.PULSE)
-        checkBank(out, "Wave", song.waveInstruments, InstrumentKind.WAVE)
-        checkBank(out, "Noise", song.noiseInstruments, InstrumentKind.NOISE)
-        if (song.waves.size != Songs.WAVE_COUNT) out += "The song has ${song.waves.size} waves; GB/hUGE songs have exactly ${Songs.WAVE_COUNT}"
-        song.waves.forEachIndexed { w, samples ->
-            if (samples.size != Songs.WAVE_SAMPLES) out += "Wave ${HugeRules.hex2(w)} has ${samples.size} samples; waves have ${Songs.WAVE_SAMPLES}"
-            else if (samples.any { it !in 0..Songs.WAVE_MAX }) out += "Wave ${HugeRules.hex2(w)} has samples outside 0-15"
+        checkBank(out, "Pulse", song.gb.pulse, GbBank.PULSE)
+        checkBank(out, "Wave", song.gb.wave, GbBank.WAVE)
+        checkBank(out, "Noise", song.gb.noise, GbBank.NOISE)
+        if (song.gb.waves.size != HugeRules.WAVE_COUNT) out += "The song has ${song.gb.waves.size} waves; GB/hUGE songs have exactly ${HugeRules.WAVE_COUNT}"
+        song.gb.waves.forEachIndexed { w, samples ->
+            if (samples.size != HugeRules.WAVE_SAMPLES) out += "Wave ${HugeRules.hex2(w)} has ${samples.size} samples; waves have ${HugeRules.WAVE_SAMPLES}"
+            else if (samples.any { it !in 0..HugeRules.WAVE_MAX }) out += "Wave ${HugeRules.hex2(w)} has samples outside 0-15"
         }
-        song.tuning?.problems()?.forEach { out += it }
+        song.tuning?.problems(GbSystem.noteRange)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
         if (song.parkedOrders.any { it !in song.orders.indices } || song.parkedOrders.zipWithNext().any { (a, b) -> a >= b }) {
             out += "Parked orders ${song.parkedOrders} must be ascending, distinct orders 0-${song.orders.size - 1}"
@@ -79,13 +83,13 @@ object SongValidator {
         text(out, "Title", song.title)
         text(out, "Artist", song.artist)
         text(out, "Comment", song.comment)
-        for (kind in InstrumentKind.entries) {
+        for (kind in GbBank.entries) {
             HugeRules.bank(song, kind).forEachIndexed { i, instrument ->
                 text(out, "${kind.label()} instrument ${HugeRules.hex2(i + 1)} name", instrument.name)
             }
         }
         // Played-order position → the document order number the user sees (they differ once anything is parked).
-        val docOrder = HugeRules.playedOrders(document)
+        val docOrder = Songs.playedOrders(document)
         val played = song.orders.toSet()
         // Cell checks read the document's own cells, so a jump is reported as written and counted against every order.
         document.patterns.forEachIndexed { p, pattern ->
@@ -138,14 +142,14 @@ object SongValidator {
                     if (cell.effect == HugeRules.FX_NOTE_CUT && cell.param >= speed) {
                         out += "$where: $fx cuts after ${cell.param} ticks, but rows last $speed ticks at the song speed, so nothing is cut"
                     }
-                    if (cell.note >= 0 && HugeRules.channelKind(ch) == InstrumentKind.NOISE) {
+                    if (cell.note >= 0 && HugeRules.channelKind(ch) == GbBank.NOISE) {
                         HugeRules.noiseNoteProblem(cell.note)?.let { out += "$where: $it" }
                     }
                 }
             }
         }
         silentLegatoNotes(song).forEach { out += it }
-        song.tuning?.let { tunedNoteWarnings(song, TuningMap(it)).forEach { message -> out += message } }
+        song.tuning?.let { tunedNoteWarnings(song, TuningMap(it, GbSystem)).forEach { message -> out += message } }
         if (song.orders.size <= HugeRules.MAX_ORDERS) {
             val tracks = HugeRules.distinctReferencedTracks(song, HugeRules.loopPlan(song))
             val bytes = estimatedDriverBytes(song, tracks)
@@ -163,9 +167,9 @@ object SongValidator {
 
     /** Range problem of a single cell independent of context, or null. */
     fun cellRangeProblem(cell: Cell): String? = when {
-        cell.note != Cell.EMPTY && cell.note != Cell.CUT && cell.note !in 0..Songs.NOTE_MAX ->
-            "note ${cell.note} is outside C-3..B-8 (0-${Songs.NOTE_MAX})"
-        cell.instrument !in 0..Songs.INSTRUMENT_SLOTS -> "instrument ${cell.instrument} is outside 0-${Songs.INSTRUMENT_SLOTS}"
+        cell.note != Cell.EMPTY && cell.note != Cell.CUT && cell.note !in GbSystem.noteRange ->
+            "note ${cell.note} is outside C-3..B-8 (${GbSystem.noteRange.first}-${GbSystem.noteRange.last})"
+        cell.instrument !in 0..HugeRules.INSTRUMENT_SLOTS -> "instrument ${cell.instrument} is outside 0-${HugeRules.INSTRUMENT_SLOTS}"
         cell.effect !in 0..15 -> "effect ${cell.effect} is outside 0-F"
         cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
         else -> null
@@ -181,7 +185,7 @@ object SongValidator {
         val name = map.tuning.name
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
-                if (HugeRules.channelKind(ch) == InstrumentKind.NOISE) return@forEachIndexed
+                if (HugeRules.channelKind(ch) == GbBank.NOISE) return@forEachIndexed
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     if (cell.note < 0) continue
@@ -209,7 +213,7 @@ object SongValidator {
         val descriptor = 1 + 2 * 10 // hUGESong_t: tempo byte + 10 pointers
         val orderCount = 1
         return descriptor + orderCount + distinctTracks * Songs.ROWS * 3 + channels * song.orders.size * 2 +
-            3 * Songs.INSTRUMENT_SLOTS * 6 + Songs.WAVE_COUNT * 16
+            3 * HugeRules.INSTRUMENT_SLOTS * 6 + HugeRules.WAVE_COUNT * 16
     }
 
     /**
@@ -290,23 +294,23 @@ object SongValidator {
                 cell.effect == HugeRules.FX_NOTE_CUT && cell.param < song.ticksPerRow ->
                     state.silencedBy = "the ${HugeRules.effectText(cell.effect, cell.param)} cut on $where"
                 // Wave Cxy rewrites NR32; Pulse/Noise Cxy restarts only if the last note carried the trigger bit.
-                cell.effect == HugeRules.FX_SET_VOLUME && y != 0 && (kind == InstrumentKind.WAVE || !state.lastNoteLegato) ->
+                cell.effect == HugeRules.FX_SET_VOLUME && y != 0 && (kind == GbBank.WAVE || !state.lastNoteLegato) ->
                     state.silencedBy = null
                 // Axy always retriggers, from the zeroed volume plus x.
-                cell.effect == HugeRules.FX_VOLUME_SLIDE && cell.param shr 4 != 0 && kind != InstrumentKind.WAVE ->
+                cell.effect == HugeRules.FX_VOLUME_SLIDE && cell.param shr 4 != 0 && kind != GbBank.WAVE ->
                     state.silencedBy = null
             }
         }
     }
 
-    private fun checkBank(out: Report, label: String, bank: List<Instrument>, kind: InstrumentKind) {
-        if (bank.size != Songs.INSTRUMENT_SLOTS) {
-            out += "The $label bank has ${bank.size} instruments; GB/hUGE banks have exactly ${Songs.INSTRUMENT_SLOTS}"
+    private fun checkBank(out: Report, label: String, bank: List<GbInstrument>, kind: GbBank) {
+        if (bank.size != HugeRules.INSTRUMENT_SLOTS) {
+            out += "The $label bank has ${bank.size} instruments; GB/hUGE banks have exactly ${HugeRules.INSTRUMENT_SLOTS}"
         }
         bank.forEachIndexed { i, it ->
             val where = "$label instrument ${HugeRules.hex2(i + 1)}"
             if (it.kind != kind) out += "$where is a ${it.kind.label()} instrument in the $label bank"
-            val maxLength = if (kind == InstrumentKind.WAVE) 255 else 63
+            val maxLength = if (kind == GbBank.WAVE) 255 else 63
             range(out, where, "duty", it.duty, 0..3)
             range(out, where, "volume", it.volume, 0..15)
             range(out, where, "envelope direction", it.envelopeDirection, 0..1)
@@ -315,7 +319,7 @@ object SongValidator {
             range(out, where, "sweep time", it.sweepTime, 0..7)
             range(out, where, "sweep direction", it.sweepDirection, 0..1)
             range(out, where, "sweep shift", it.sweepShift, 0..7)
-            range(out, where, "wave", it.wave, 0 until Songs.WAVE_COUNT)
+            range(out, where, "wave", it.wave, 0 until HugeRules.WAVE_COUNT)
             range(out, where, "wave volume", it.waveVolume, 0..3)
             range(out, where, "noise width", it.noiseWidth, 0..1)
         }
@@ -330,7 +334,7 @@ object SongValidator {
         if (bytes > HugeRules.MAX_TEXT_BYTES) out += "$field is $bytes bytes long; hUGETracker stores at most ${HugeRules.MAX_TEXT_BYTES} (UTF-8)"
     }
 
-    private fun InstrumentKind.label() = name.lowercase().replaceFirstChar { it.uppercase() }
+    private fun GbBank.label() = name.lowercase().replaceFirstChar { it.uppercase() }
 
     private fun String.cap() = replaceFirstChar { it.uppercase() }
 

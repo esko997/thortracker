@@ -8,19 +8,17 @@ import kotlinx.serialization.builtins.IntArraySerializer
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
-
-/** Instrument bank / channel hardware type of the GB/hUGE backend. */
-@Serializable
-enum class InstrumentKind { PULSE, WAVE, NOISE }
+import org.thortracker.system.SoundSystem
+import org.thortracker.system.SystemSound
 
 /**
  * One channel-row of a pattern.
  *
- * [note]: [EMPTY] (-1) = no note, [CUT] (-2) = explicit note cut, shown as "OFF" (exported as E00: immediate
- * silence, no envelope release), 0..71 = C-3..B-8 in hUGE numbering.
- * [instrument]: 0 = legato (hUGEDriver changes the pitch without restarting the note or reloading the instrument,
- * so it is silent after an OFF or before any instrument has played), 1..15 = slot in the channel's typed bank.
- * [effect]/[param]: raw hUGEDriver effect nibble and parameter byte; 0/0 ("000") is no effect.
+ * [note]: [EMPTY] (-1) = no note, [CUT] (-2) = explicit note cut, shown as "OFF", 0 and up = semitones from C-0
+ * (C-3 = 36), within the song system's [org.thortracker.system.SoundSystem.noteRange].
+ * [instrument]: 0 = no sound number (legato), 1.. = slot in the bank of the channel
+ * ([org.thortracker.system.ChannelSpec.bank]).
+ * [effect]/[param]: the system's raw effect number (nibble) and parameter byte; 0/0 ("000") is no effect.
  * Serialized compactly as `[note, instrument, effect, param]`.
  */
 @Serializable(with = CellSerializer::class)
@@ -55,67 +53,35 @@ data class Pattern(
 }
 
 /**
- * A GB/hUGE instrument. Only the fields relevant to [kind] are audible; the rest are preserved.
- *
- * - envelopeDirection / sweepDirection: 0 = decrease, 1 = increase.
- * - length: raw length-timer register value (pulse/noise 0..63, wave 0..255); sound lasts (64 - length)/256 s
- *   (wave: (256 - length)/256 s) when [lengthEnabled].
- * - sweepTime 0..7 (0 = off), sweepShift 0..7: pulse frequency sweep, hardware exists on Pulse 1 only.
- * - wave 0..15: waveform index; waveVolume: 1 = 100%, 2 = 50%, 3 = 25%, 0 = mute.
- * - noiseWidth: 0 = 15-bit (long) LFSR, 1 = 7-bit (short, metallic) LFSR.
- */
-@Serializable
-data class Instrument(
-    val name: String = "Sound",
-    val kind: InstrumentKind = InstrumentKind.PULSE,
-    val duty: Int = 2,
-    val volume: Int = 12,
-    val envelopeDirection: Int = 0,
-    val envelopePace: Int = 0,
-    val length: Int = 0,
-    val lengthEnabled: Boolean = false,
-    val sweepTime: Int = 0,
-    val sweepDirection: Int = 0,
-    val sweepShift: Int = 0,
-    val wave: Int = 0,
-    val waveVolume: Int = 1,
-    val noiseWidth: Int = 0,
-) {
-    /** True when the pulse frequency sweep actually changes pitch (needs Pulse 1 hardware). */
-    val usesSweep: Boolean get() = kind == InstrumentKind.PULSE && sweepTime != 0 && sweepShift != 0
-}
-
-/**
- * The whole GB/hUGE song document. [orders] holds one pattern index per order position, shared by all
- * channels; [loopOrder] is where playback continues after the last order. Typed banks hold exactly 15
- * instruments (slot n = index n-1); [waves] holds exactly 16 waveforms of 32 samples 0..15.
- * [tuning] is the optional song-wide microtuning: Pulse/Wave notes entered in it carry their detune as `40y` in the
- * cell itself, so the tuning only guides entry and validation and is not exported; null = plain 12-note table.
+ * The whole song document. [orders] holds one pattern index per order position, shared by all channels;
+ * [loopOrder] is where playback continues after the last order. [sound] is everything about the chip (instruments,
+ * wave tables); [system] is the chip it is written for.
+ * [tuning] is the optional song-wide microtuning: notes entered in it carry their fine pitch in the cell itself
+ * ([org.thortracker.system.SoundSystem.fine]), so the tuning only guides entry and validation and is not exported;
+ * null = plain 12-note table.
  * [newPatternScale] is the editor-only scale guide a newly created (blank) pattern starts with; like pattern
  * scales it is never exported or heard.
  * [parkedOrders] (ascending order indices) stay in the arrangement for editing but are skipped by song playback
- * and export ([HugeRules.arranged]).
+ * and export ([org.thortracker.system.SoundSystem.arranged]).
  */
-@Serializable
 data class Song(
     val title: String = "Untitled",
     val artist: String = "",
     val comment: String = "",
-    val backend: String = Songs.BACKEND,
     val ticksPerRow: Int = 6,
     val loopOrder: Int = 0,
     val patterns: List<Pattern>,
     val orders: List<Int>,
-    val pulseInstruments: List<Instrument>,
-    val waveInstruments: List<Instrument>,
-    val noiseInstruments: List<Instrument>,
-    val waves: List<List<Int>>,
+    val sound: SystemSound,
     val tuning: Tuning? = null,
     val newPatternScale: Scale = Scale.CHROMATIC,
     val parkedOrders: List<Int> = emptyList(),
-)
+) {
+    /** The chip the song is written for. */
+    val system: SoundSystem get() = sound.system
+}
 
-/** Strict compact cell encoding: exactly four integers. Range checks belong to [SongValidator]. */
+/** Strict compact cell encoding: exactly four integers. Range checks belong to the song's system ([org.thortracker.system.SoundSystem.structuralErrors]). */
 object CellSerializer : KSerializer<Cell> {
     private val delegate = IntArraySerializer()
 

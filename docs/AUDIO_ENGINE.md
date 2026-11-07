@@ -1,9 +1,38 @@
 # Audio engine: hUGEDriver preview
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
-Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio. There is no
-second song sequencer: notes, instruments, effects, timing and channel behaviour are whatever the
-driver code does on the emulated CPU and APU.
+Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
+(Steam Deck). There is no second song sequencer: notes, instruments, effects, timing and channel
+behaviour are whatever the driver code does on the emulated CPU and APU.
+
+## Chip engine interface (what a new sound system implements)
+
+Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are
+chip-neutral: they call one `ChipEngineOps` table (`app/src/main/cpp/chip_engine.h`), looked up
+by system id with `chip_engine_ops(id)` (`chip_engine.c`). `HugeAudio` and `DeckAudio` create
+their host for `"gb-huge"`, whose ops (`huge_chip.c`) map one-to-one onto `huge_machine.h`, so the
+Game Boy plays exactly as before.
+
+A new chip adds one ops table to the registry in `chip_engine.c` (and its sources to `CMakeLists.txt`,
+`deck/build.gradle.kts` and the host test script) and implements:
+
+| Op / field | Contract |
+|---|---|
+| `system_id`, `image_size`, `image_storage` | id the Kotlin side passes; bytes of a lowered image; bytes of a loaded image (host-allocated, plain data moved with `memcpy`, never referenced by a machine after a call returns) |
+| `create(rate)` / `destroy` | the only allocation; rates up to `CHIP_MAX_SAMPLE_RATE` |
+| `load_image(storage, bytes, size)` | copy + validate (`CHIP_OK` / `CHIP_ERR_IMAGE`); hosts load off the audio thread |
+| `start(image, order, row, max_ticks, &seek_mode)` | reset and position the real driver so the next tick plays (order, row); off the audio thread on a spare machine |
+| `apply_image(image)` | live edit at a tick boundary, transport preserved; realtime-safe |
+| `audition(image, channel, note, instrument, fine)` | reset and sound one held note through the driver; `fine` is the chip's fine pitch (Game Boy: `40y` detune) |
+| `release()` | key-off: 0 = silent now (host drops the machine; Game Boy), 1 = release phase, host keeps ticking until `tick` returns 0 |
+| `mute(channel, muted)` | the song machine's side of audition channel borrowing |
+| `position(&order, &row, &tick)` | row the next tick processes |
+| `tick(out)` | one driver tick: ≤ `CHIP_MAX_TICK_FRAMES` float stereo frames, 0 = released note ended, `CHIP_ERR_FAULT` |
+
+The hosts keep everything that is not about the chip: triple-buffered image and machine hand-over
+at tick boundaries (Android), image versions, latency-compensated position, audition mixing and
+channel borrowing, the Deck's held-note cap and `da_peak` diagnostics. The host test drives the
+Game Boy through the ops table as well as through `hm_*` directly.
 
 ## Sources, pins and licences
 
@@ -41,9 +70,11 @@ assembled at app runtime or per Play.
 
 `ndkVersion = "27.0.12077973"`, CMake `3.22.1`, `externalNativeBuild.cmake.path =
 src/main/cpp/CMakeLists.txt`, ABIs `arm64-v8a`, `x86_64`. The CMake project builds a static C11
-library (`huge_machine.c`, which `#include`s binjgb's `emulator.c`, plus `common.c`, always with
-`NDEBUG`) and the shared `thortracker_audio` (`huge_engine.cpp`, `huge_jni.cpp`) linked with NDK
-`aaudio`, `log`, `m`, `dl`. No third-party Java/Gradle dependency.
+library `chip_engines` (`chip_engine.c`, `huge_chip.c`, `huge_machine.c`, which `#include`s
+binjgb's `emulator.c`, plus `common.c`, always with `NDEBUG`) and the shared `thortracker_audio`
+(`audio_engine.cpp`, `audio_jni.cpp`) linked with NDK `aaudio`, `log`, `m`, `dl`. No third-party
+Java/Gradle dependency. The Deck compiles the same C files with Kotlin/Native's clang
+(`deck/build.gradle.kts`, `buildEngine`).
 
 ## Memory map of the preview cartridge
 
@@ -68,8 +99,9 @@ For comparison a GBDK game bank holds ~80 tracks (export warning, not a preview 
 
 `HugeAudio.update(song)` (UI thread, non-blocking) → control thread: `HugeLowering.lower`
 (the same lowering `.uge` export uses) → `HugeImageLayout.build` (fixed header, deduplicated
-tracks) → JNI copies the 64 KiB image into a preallocated triple buffer. The AAudio callback
-takes the newest image **at a driver-tick boundary** and `hm_apply_image` copies changed bytes
+tracks) → JNI loads the 64 KiB image (`load_image`) and copies it into a preallocated triple
+buffer. The AAudio callback takes the newest image **at a driver-tick boundary** and
+`apply_image` (`hm_apply_image`) copies changed bytes
 into the running machine, then refreshes the driver's cached copies (descriptor pointers,
 order_cnt, current pattern pointers, base tempo if edited, wave-reload flag). The callback never
 allocates, locks, encodes or compiles; images are produced off the realtime thread.
@@ -158,7 +190,9 @@ notes (one undo step); neither these previews nor their scheduling touch project
   timing and wrap; live cell/order/instrument/tempo/wave edits without transport movement;
   seek reconstruction (speed and NR50 from earlier orders) and the unreachable-row fallback;
   effects 0,1,2,3,4,5,7,8,9,A,B,C,D,E,F; wave/noise registers; audition; channel mute borrow;
-  invalid image rejection. It prints seek and per-tick costs and writes `host_demo.wav` and
+  invalid image rejection; and the `"gb-huge"` ops table as the hosts use it (registry lookup,
+  image size checks, start, non-silent render of the demo song, position advance, live apply,
+  seek, mute, audition and release). It prints seek and per-tick costs and writes `host_demo.wav` and
   `host_trace.txt` (per-tick APU register writes) for comparison with a reference player
   (PyBoy/mGBA running the same driver).
 - `core/src/jvmTest/kotlin/org/thortracker/audio/HugeImageLayoutTest.kt`: layout equals the lowered
@@ -167,6 +201,8 @@ notes (one undo step); neither these previews nor their scheduling touch project
   tempo to one tick per row during an existing row without replaying that row. Host timings:
   seek to order 1 row 8 0.63 ms; order 15 row 60 (~6100 driver ticks) 16.81 ms;
   realtime render 32.9 µs per tick (≈510× realtime).
+- 2026-11-07 (chip engine interface): host test **145 checks, 0 failures** (126 machine checks
+  plus 19 through `ChipEngineOps`).
 - On the physical Thor, all six Android instrumentation tests passed, including live editing,
   auditioning and 50 consecutive open/play/close cycles. A separate 30-second float-stream soak
   reported zero underruns and driver faults, worst callback 2.79 ms (20 ms burst), and output

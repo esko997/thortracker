@@ -15,25 +15,25 @@ class WorkspaceTransportTest {
 
     @Test fun aViewChordShowsTheViewAndTheSecondPressRestoresViewAndPinning() {
         val w = workspace()
-        assertTrue(w.showView(ViewKind.SONG))
+        assertTrue(w.showView(ViewKind.SONG, ViewKind.entries.toSet()))
         assertEquals(ViewKind.SONG, w.focused.kind)
         assertTrue(w.focused.pinned)
-        assertTrue(w.showView(ViewKind.SONG))
+        assertTrue(w.showView(ViewKind.SONG, ViewKind.entries.toSet()))
         assertEquals(ViewKind.PATTERN, w.focused.kind)
         assertFalse(w.focused.pinned, "the pane followed the selection before the chord")
-        assertFalse(w.showView(ViewKind.PATTERN), "nothing remembered: the chord does nothing")
+        assertFalse(w.showView(ViewKind.PATTERN, ViewKind.entries.toSet()), "nothing remembered: the chord does nothing")
     }
 
     @Test fun swapCarriesEachPanesChordMemory() {
         val w = workspace()
-        w.showView(ViewKind.INSTRUMENT)                 // pane 0: Pattern → Instrument
+        w.showView(ViewKind.INSTRUMENT, ViewKind.entries.toSet())                 // pane 0: Pattern → Instrument
         w.swap(0, 1)
         assertEquals(ViewKind.KEYBOARD, w.panes[0].kind)
         w.focus = 1
-        assertTrue(w.showView(ViewKind.INSTRUMENT))      // pane 1 is the swapped Instrument: back to Pattern
+        assertTrue(w.showView(ViewKind.INSTRUMENT, ViewKind.entries.toSet()))      // pane 1 is the swapped Instrument: back to Pattern
         assertEquals(ViewKind.PATTERN, w.panes[1].kind)
         w.focus = 0
-        assertFalse(w.showView(ViewKind.KEYBOARD))
+        assertFalse(w.showView(ViewKind.KEYBOARD, ViewKind.entries.toSet()))
     }
 
     @Test fun focusStaysInsideThePanes() {

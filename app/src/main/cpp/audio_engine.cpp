@@ -1,4 +1,4 @@
-#include "huge_engine.h"
+#include "audio_engine.h"
 
 #include <android/log.h>
 
@@ -41,11 +41,6 @@ void request_game_usage(AAudioStreamBuilder* builder) {
     if (set_usage) set_usage(builder, AAUDIO_USAGE_GAME);
 }
 
-HugeImage* new_image() {
-    auto* image = static_cast<HugeImage*>(calloc(1, sizeof(HugeImage)));
-    return image;
-}
-
 bool after(uint32_t a, uint32_t b) { return static_cast<int32_t>(a - b) > 0; }
 
 constexpr int64_t kPlayingBit = int64_t{1} << 40;
@@ -56,13 +51,19 @@ int64_t pack_position(bool playing, int order, int row) {
 
 }  // namespace
 
-Engine* Engine::create() {
-    Engine* e = new (std::nothrow) Engine();
+ChipImage* Engine::new_image() { return static_cast<ChipImage*>(calloc(1, ops_->image_storage)); }
+
+Engine* Engine::create(const ChipEngineOps* ops) {
+    if (!ops) return nullptr;
+    Engine* e = new (std::nothrow) Engine(ops);
     if (!e) return nullptr;
-    bool ok = (e->control_image_ = new_image()) != nullptr;
-    for (int i = 0; i < 3 && ok; ++i) ok = (e->images_.slots[i] = new_image()) != nullptr;
+    bool ok = (e->control_image_.data = e->new_image()) != nullptr;
+    for (int i = 0; i < 3 && ok; ++i) {
+        ok = (e->image_storage_[i].data = e->new_image()) != nullptr;
+        e->images_.slots[i] = &e->image_storage_[i];
+    }
     for (int i = 0; i < 6 && ok; ++i) {
-        e->slot_storage_[i].machine = hm_create(kSampleRate);
+        e->slot_storage_[i].machine = ops->create(kSampleRate);
         ok = e->slot_storage_[i].machine != nullptr;
     }
     if (!ok) {
@@ -85,36 +86,39 @@ Engine::~Engine() {
         std::lock_guard<std::mutex> lock(stream_mutex_);
         close_stream_locked();
     }
-    for (auto& slot : slot_storage_) hm_destroy(slot.machine);
-    for (auto* image : images_.slots) free(image);
-    free(control_image_);
+    for (auto& slot : slot_storage_) {
+        if (slot.machine) ops_->destroy(slot.machine);
+    }
+    for (auto& image : image_storage_) free(image.data);
+    free(control_image_.data);
 }
 
-int Engine::set_image(const uint8_t* mem, uint32_t version) {
-    std::memcpy(control_image_->mem, mem, sizeof(control_image_->mem));
-    control_image_->version = version;
-    if (hm_validate(control_image_) != HM_OK) {
+int Engine::set_image(const uint8_t* bytes, size_t size, uint32_t version) {
+    if (ops_->load_image(control_image_.data, bytes, size) != CHIP_OK) {
         has_image_ = false;
-        return HM_ERR_IMAGE;
+        return CHIP_ERR_IMAGE;
     }
-    HugeImage* back = images_.back();
-    std::memcpy(back, control_image_, sizeof(HugeImage));
+    control_image_.version = version;
+    ImageSlot* back = images_.back();
+    std::memcpy(back->data, control_image_.data, ops_->image_storage);
+    back->version = version;
     images_.publish();
     has_image_ = true;
-    return HM_OK;
+    return CHIP_OK;
 }
 
 int Engine::play(int order, int row, int max_ticks) {
-    if (!has_image_) return HM_ERR_IMAGE;
+    if (!has_image_) return CHIP_ERR_IMAGE;
     const int64_t t0 = now_ns();
     MachineSlot* slot = play_slots_.back();
-    int mode = HM_SEEK_FROM_START;
-    int r = hm_start_song(slot->machine, control_image_, order, row, max_ticks, &mode);
-    if (r != HM_OK) return r;
+    int mode = CHIP_SEEK_FROM_START;
+    int r = ops_->start(slot->machine, control_image_.data, order, row, max_ticks, &mode);
+    if (r != CHIP_OK) return r;
     slot->seq = ++seq_;
     slot->channel = -1;
+    slot->image_version = control_image_.version;
     int o = 0, rw = 0, t = 0;
-    hm_position(slot->machine, &o, &rw, &t);
+    ops_->position(slot->machine, &o, &rw, &t);
     last_position_.store(pack_position(false, o, rw));
     play_slots_.publish();
     last_seek_ns_.store(now_ns() - t0);
@@ -124,17 +128,17 @@ int Engine::play(int order, int row, int max_ticks) {
 
 void Engine::stop() { stop_seq_.store(++seq_, std::memory_order_release); }
 
-int Engine::audition(int channel, int note, int instrument, int detune) {
-    if (!has_image_) return HM_ERR_IMAGE;
+int Engine::audition(int channel, int note, int instrument, int fine) {
+    if (!has_image_) return CHIP_ERR_IMAGE;
     const int64_t t0 = now_ns();
     MachineSlot* slot = audition_slots_.back();
-    int r = hm_start_audition(slot->machine, control_image_, channel, note, instrument, detune);
-    if (r != HM_OK) return r;
+    int r = ops_->audition(slot->machine, control_image_.data, channel, note, instrument, fine);
+    if (r != CHIP_OK) return r;
     slot->seq = ++seq_;
     slot->channel = channel;
     audition_slots_.publish();
     last_audition_ns_.store(now_ns() - t0);
-    return HM_OK;
+    return CHIP_OK;
 }
 
 void Engine::release_audition() { release_seq_.store(++seq_, std::memory_order_release); }
@@ -245,29 +249,38 @@ aaudio_data_callback_result_t Engine::render(float* out, int32_t frames) {
     if (audition_slots_.consume()) {
         aud_ = audition_slots_.front();
         aud_len_ = aud_pos_ = 0;
+        aud_releasing_ = false;
     }
-    if (aud_ && !after(aud_->seq, release_seq_.load(std::memory_order_acquire))) aud_ = nullptr;
+    if (aud_ && !aud_releasing_ && !after(aud_->seq, release_seq_.load(std::memory_order_acquire))) {
+        // Key-off: chips without a release phase stop at once; others play it out.
+        if (ops_->release(aud_->machine)) {
+            aud_releasing_ = true;
+        } else {
+            aud_ = nullptr;
+        }
+    }
     if (images_.consume()) front_image_ = images_.front();
     const int desired_borrow = aud_ ? aud_->channel : -1;
 
     int i = 0;
     while (play_ && i < frames) {
         if (play_pos_ >= play_len_) {
-            HugeMachine* m = play_->machine;
-            if (front_image_ && after(front_image_->version, hm_image_version(m))) {
+            ChipMachine* m = play_->machine;
+            if (front_image_ && after(front_image_->version, play_->image_version)) {
                 const int64_t a0 = now_ns();
-                hm_apply_image(m, front_image_);
+                ops_->apply_image(m, front_image_->data);
+                play_->image_version = front_image_->version;
                 last_apply_ns_.store(now_ns() - a0, std::memory_order_relaxed);
             }
             if (desired_borrow != borrowed_channel_) {
-                if (borrowed_channel_ >= 0) hm_mute_channel(m, borrowed_channel_, 0);
-                if (desired_borrow >= 0) hm_mute_channel(m, desired_borrow, 1);
+                if (borrowed_channel_ >= 0) ops_->mute(m, borrowed_channel_, 0);
+                if (desired_borrow >= 0) ops_->mute(m, desired_borrow, 1);
                 borrowed_channel_ = desired_borrow;
             }
             int order = 0, row = 0, tick = 0;
-            hm_position(m, &order, &row, &tick);
+            ops_->position(m, &order, &row, &tick);
             if (tick == 0) record_row(frames_rendered_ + static_cast<uint64_t>(i), order, row);
-            const int k = hm_tick(m, play_buf_);
+            const int k = ops_->tick(m, play_buf_);
             if (k <= 0) {
                 faults_.fetch_add(1, std::memory_order_relaxed);
                 play_ = nullptr;
@@ -288,10 +301,10 @@ aaudio_data_callback_result_t Engine::render(float* out, int32_t frames) {
     i = 0;
     while (aud_ && i < frames) {
         if (aud_pos_ >= aud_len_) {
-            const int k = hm_tick(aud_->machine, aud_buf_);
+            const int k = ops_->tick(aud_->machine, aud_buf_);
             if (k <= 0) {
-                faults_.fetch_add(1, std::memory_order_relaxed);
-                aud_ = nullptr;
+                if (k < 0) faults_.fetch_add(1, std::memory_order_relaxed);
+                aud_ = nullptr;  // fault, or a released note has ended
                 break;
             }
             aud_len_ = k;
