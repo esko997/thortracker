@@ -4,8 +4,9 @@
 #include "chip_engine.h"
 
 extern const ChipEngineOps huge_chip_ops;
+extern const ChipEngineOps nes_chip_ops;
 
-static const ChipEngineOps* const systems[] = {&huge_chip_ops};
+static const ChipEngineOps* const systems[] = {&huge_chip_ops, &nes_chip_ops};
 
 const ChipEngineOps* chip_engine_ops(const char* system_id) {
     if (!system_id) return NULL;

@@ -73,7 +73,8 @@ data class NesSound(val instruments: List<NesInstrument>) : SystemSound
 ```
 
 - **Notes become absolute.** `Cell.note` counts semitones from C-0 (so today's C-3 = 36). Each backend declares its
-  range (Game Boy C-3..B-8; NES the FamiStudio engine's note table, confirmed in step 4) and lowering subtracts its
+  range (Game Boy C-3..B-8; NES: FamiStudio note byte `n` = absolute `n + 11`, table C-1..B-8 with A-4 = 440 Hz on the
+  pulses, pulses reach down to A-1 and the triangle sounds an octave below — confirmed in step 4) and lowering subtracts its
   own offset, so `.uge` bytes do not change. Sketch, the Keyboard view, scales and tunings then work in one pitch
   space for every chip.
 - **Cells keep note / instrument / effect / param.** The effect numbers are the backend's. Each backend maps a
@@ -117,13 +118,14 @@ muted in the song) stay in the hosts and work for every chip.
 
 ## NES backend
 
-- **Driver:** FamiStudio sound engine 4.5 (all-permissive licence, notice kept). Used in NES homebrew; supports
+- **Driver:** FamiStudio sound engine 4.5.3 (all-permissive licence, notice kept). Used in NES homebrew; supports
   volume and fine-pitch tracks, slides, vibrato, arpeggios, release notes, duty changes and note delays. It also
   drives the VRC6, VRC7 (2-operator FM), N163, S5B, FDS, MMC5 and EPSM (YM2608) expansion chips, which can become
   later systems on the same driver.
-- **Engine:** a 6502 core and a 2A03 APU (pulse ×2, triangle, noise; no DPCM samples), both under permissive licences
-  or written here. The engine binary is assembled once at build time (like hUGEDriver) and the song data is placed
-  at a fixed address, as `HugeImageLayout` does today.
+- **Engine:** `m6502.h` (floooh/chips, zlib) and a 2A03 APU written here (`nes/nes_apu.c`: pulse ×2, triangle,
+  noise, DMC output level; no DPCM samples), band-limited through blip_buf (LGPL-2.1+). The player image is assembled
+  once (`tools/audio/prepare_nes_player.py`, committed like hUGEDriver's) and the song data is placed at the fixed
+  song region `$A000-$FFF9`. Details in `docs/AUDIO_ENGINE.md` (NES section).
 - **Lowering:** Kotlin encodes songs into the FamiStudio engine's data format. A golden test compares it with
   FamiStudio's own export of the same song.
 - **Instruments:** duty, volume, arpeggio and pitch envelopes, each with loop and release points. A new instrument
@@ -140,8 +142,12 @@ muted in the song) stay in the hosts and work for every chip.
 3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck. `TrackerAudio` takes
    absolute notes; the song's system lowers, names its engine and converts audition notes (`SoundSystem.engine`), and
    `ChipAudio` (Android, was `HugeAudio`) and `DeckAudio` switch engines with the song's system.
-4. **NES spike.** 6502 + 2A03 playing the FamiStudio engine with a song exported from FamiStudio, in the native host
-   test; compare audio with an NSF render.
+4. **NES spike** — done. `chip_engine_ops("nes-famistudio")` plays FamiStudio's own export of a
+   demo song in the native host test (183 checks): exact pitches, deterministic render, no CPU faults, seek, mute,
+   loop period; register writes identical to py65 running the same NSF; audio within the spread of libgme and
+   FamiStudio's own WAV/NSF exports. No audition yet; position/seek by frame count. Decisions for step 5 (tempo mode:
+   FamiTracker tempo recommended so the engine owns rows and `Fxx`; stable data slots for live edits; audition song;
+   note mapping `n + 11`) are listed in `docs/AUDIO_ENGINE.md` → "What step 5 needs".
 5. **NES backend.** Lowering, instruments and their editor, New → system, Help, validation, `.nsf` and FamiStudio
    text export. Release.
 6. **SID**, then **FM**: OPL3 first, YM2612 second (see below).
