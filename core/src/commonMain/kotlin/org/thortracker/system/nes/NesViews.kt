@@ -112,9 +112,25 @@ object NesInstrumentView : SystemView() {
         envelope(v.session.song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
     }
 
+    /** Moves to another slot; Listen moves to the channel that slot plays on most, so a bass sounds on Triangle. */
     private fun moveSlot(v: ViewController, delta: Int) {
-        v.state.instrument = (v.state.instrument + delta).coerceIn(1, NesSystem.SLOTS)
+        val st = v.state
+        val slot = (st.instrument + delta).coerceIn(1, NesSystem.SLOTS)
+        if (slot == st.instrument) return
+        st.instrument = slot
+        mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         publish(v)
+    }
+
+    /** The channel whose arranged rows use sound [slot] most, or null when none does. */
+    fun mostUsedChannel(song: Song, slot: Int): Int? {
+        val counts = IntArray(song.system.channels.size)
+        for (pat in song.orders.toSet()) {
+            val tracks = song.patterns[pat].tracks
+            for (ch in counts.indices) for (cell in tracks[ch]) if (cell.instrument == slot) counts[ch]++
+        }
+        val best = counts.indices.maxBy { counts[it] }
+        return if (counts[best] > 0) best else null
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
@@ -297,6 +313,8 @@ object NesInstrumentView : SystemView() {
                 ud to "Sound slot, name, Listen channel, envelope, length, loop, release (volume), mode (pitch), then the steps",
                 lr to "On settings: the sound slot; on the steps: move along them",
                 channels to "Volume, arpeggio, pitch or duty envelope",
+                "Listen on" to "The channel ${keys.label(Action.AUDITION)} plays the sound on ($lr there). Choosing a slot moves it to the channel that sound plays on most; " +
+                    "envelope tabs that channel ignores are greyed",
                 keys.held(Action.EDIT, ud) to "On a step: raise / lower its value; past the last step it adds one",
                 keys.held(Action.EDIT, lr) to "On a step: carry its value to the next step (draws flat runs, adds steps at the end); on settings: change them",
                 "$edit tap" to "Past the last step: add a step; on Mode: relative / absolute pitch",
