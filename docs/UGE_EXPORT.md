@@ -3,7 +3,8 @@
 Code: `core/src/commonMain/kotlin/org/thortracker/system/gb/` (`GbSystem`, `GbSound`, `HugeRules`, `GbValidator`),
 `core/src/commonMain/kotlin/org/thortracker/model/` (shared document, project format) and
 `core/src/commonMain/kotlin/org/thortracker/backend/` (`HugeLowering`, `UgeExporter`, `HugeLimits`). Cells hold notes
-counted from C-0; lowering subtracts 36 (`HugeRules.NOTE_OFFSET`) for hUGEDriver's C-3-based note numbers.
+in scientific pitch; lowering subtracts 24 (`HugeRules.NOTE_OFFSET`) for hUGEDriver's note numbers (0 = hUGETracker's
+C-3, which sounds C2 = 65.4 Hz).
 
 ## Targets and sources
 

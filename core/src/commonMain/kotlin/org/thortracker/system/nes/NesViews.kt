@@ -297,7 +297,7 @@ object NesInstrumentView : SystemView() {
         if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE) h += Hint(v.lr(), "Sound slot")
         h += Hint(v.channels(), "Envelope")
         h += Hint(v.k(Action.AUDITION), "Listen on ${v.session.song.system.channels.getOrNull(st.listenChannel)?.name ?: ""}")
-        h += Hint(v.octaves(), "Listen at ${Songs.noteName(v.defaultNote())}")
+        h += Hint(v.octaves(), "Listen at ${NesSystem.noteName(v.defaultNote())}")
         h += Hint(v.copyPaste(), if (envelopeRow(row)) "Copy/paste envelope" else "Copy/paste sound")
     }
 

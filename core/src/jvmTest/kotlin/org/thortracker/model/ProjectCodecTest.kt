@@ -100,12 +100,31 @@ class ProjectCodecTest {
         assertTrue(v7.contains("[33,1,0,55]")) // the intro's first chord, A-5, in hUGE numbering
         val song = ProjectCodec.decode(v7)
         assertEquals(Songs.demo(), song)
-        assertEquals(69, song.patterns[0].tracks[0][0].note) // A-5 counted from C-0
+        assertEquals(57, song.patterns[0].tracks[0][0].note) // hUGETracker's A-5 is A4 = 440 Hz
         val examples = listOf(java.io.File("../examples/thor-groove.uge"), java.io.File("examples/thor-groove.uge")).first { it.isFile }
         assertTrue(examples.readBytes().contentEquals(org.thortracker.backend.UgeExporter.export(song)))
-        // Saving writes version 8: the chip data nested in "sound", notes absolute.
+        // Saving writes version 9: the chip data nested in "sound", notes in scientific pitch.
         val saved = ProjectCodec.encode(song)
-        assertTrue(saved.contains("\"version\":8,") && saved.contains("\"sound\":{\"pulse\":") && saved.contains("[69,1,0,55]"))
+        assertTrue(saved.contains("\"version\":9,") && saved.contains("\"sound\":{\"pulse\":") && saved.contains("[57,1,0,55]"))
+    }
+
+    @Test
+    fun versionEightGameBoyProjectsMoveDownAnOctaveAndExportIdenticalUge() {
+        val tuned = Songs.demo().copy(tuning = Tuning("12", List(12) { 100.0 * (it + 1) }, root = 48))
+        val v8 = TestSongs.devVersion8(ProjectCodec.encode(tuned))
+        assertTrue(v8.contains("\"version\":8,") && v8.contains("[69,1,0,55]") && v8.contains("\"root\":60"))
+        val song = ProjectCodec.decode(v8)
+        assertEquals(tuned, song)
+        val examples = listOf(java.io.File("../examples/thor-groove.uge"), java.io.File("examples/thor-groove.uge")).first { it.isFile }
+        assertTrue(examples.readBytes().contentEquals(org.thortracker.backend.UgeExporter.export(song)))
+    }
+
+    @Test
+    fun versionEightNesProjectsAreUnchanged() {
+        val demo = org.thortracker.system.nes.NesSystem.demo()
+        val text = ProjectCodec.encode(demo)
+        val v8 = Json.parseToJsonElement(text).jsonObject.let { JsonObject(it + ("version" to JsonPrimitive(8))) }.toString()
+        assertEquals(demo, ProjectCodec.decode(v8))
     }
 
     @Test
@@ -180,7 +199,7 @@ class ProjectCodecTest {
         val v4 = TestSongs.legacy(JsonObject(plain.toMutableMap().also { it["song"] = JsonObject(plainSong) }).toString(), 4)
         assertEquals(blank, ProjectCodec.decode(v4))
         // Structurally invalid tunings are neither saved nor loaded.
-        for (bad in listOf(just.copy(root = 108), just.copy(root = 35), just.copy(tolerance = 15), just.copy(cents = listOf(700.0, 500.0)))) {
+        for (bad in listOf(just.copy(root = 96), just.copy(root = 23), just.copy(tolerance = 15), just.copy(cents = listOf(700.0, 500.0)))) {
             assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(blank.copy(tuning = bad)) }
         }
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"tolerance\":10", "\"tolerance\":7")) }

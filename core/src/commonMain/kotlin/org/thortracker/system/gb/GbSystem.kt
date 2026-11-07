@@ -53,6 +53,9 @@ object GbSystem : SoundSystem {
 
     override val banks = GbBank.entries.map { BankSpec(it.name.lowercase().replaceFirstChar(Char::uppercase), HugeRules.INSTRUMENT_SLOTS) }
     override val noteRange = HugeRules.NOTE_OFFSET until HugeRules.NOTE_OFFSET + HugeRules.NOTE_COUNT
+
+    /** hUGETracker names notes an octave above scientific pitch: its C-3 is C2 (65.4 Hz). */
+    override val nameOctaveOffset = 1
     override val effects: List<EffectSpec> get() = HugeRules.EFFECTS
     override val views = ViewKind.entries.toSet()
     override val exports = listOf(ExportFormat("uge") { UgeExporter.export(it) })
@@ -72,39 +75,42 @@ object GbSystem : SoundSystem {
 
     /**
      * Versions 1-7 kept the banks and waves at the top of the song (`pulseInstruments`, `waveInstruments`,
-     * `noiseInstruments`, `waves`) and numbered notes (and the tuning root) from C-3; version 8 nests them in `sound`
-     * and counts from C-0. Sentinels (no note, OFF) and anything malformed are left for strict decoding to report.
+     * `noiseInstruments`, `waves`) and used hUGE note numbers (0 = C-3, also for the tuning root); version 8 (development
+     * builds only) nested them in `sound` and counted from hUGETracker's C-0, an octave above scientific pitch; version
+     * 9 counts in scientific pitch. Notes move up 24 from 1-7 and down 12 from 8. Sentinels (no note, OFF) and anything
+     * malformed are left for strict decoding to report.
      */
     override fun upgradeProject(song: JsonObject, version: Int): JsonObject {
-        val moved = mapOf("pulseInstruments" to "pulse", "waveInstruments" to "wave", "noiseInstruments" to "noise", "waves" to "waves")
+        val delta = if (version < 8) HugeRules.NOTE_OFFSET else -12
+        val moved = if (version < 8) mapOf("pulseInstruments" to "pulse", "waveInstruments" to "wave", "noiseInstruments" to "noise", "waves" to "waves") else emptyMap()
         val out = LinkedHashMap<String, JsonElement>()
         for ((key, value) in song) {
             when (key) {
                 in moved -> Unit
-                "patterns" -> out[key] = (value as? JsonArray)?.let { JsonArray(it.map(::upgradePattern)) } ?: value
-                "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject(t.mapValues { (k, v) -> if (k == "root") shifted(v) else v }) } ?: value
+                "patterns" -> out[key] = (value as? JsonArray)?.let { JsonArray(it.map { p -> upgradePattern(p, delta) }) } ?: value
+                "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject(t.mapValues { (k, v) -> if (k == "root") shifted(v, delta) else v }) } ?: value
                 else -> out[key] = value
             }
-            if (key == "orders") out["sound"] = JsonObject(moved.entries.mapNotNull { (old, new) -> song[old]?.let { new to it } }.toMap())
+            if (moved.isNotEmpty() && key == "orders") out["sound"] = JsonObject(moved.entries.mapNotNull { (old, new) -> song[old]?.let { new to it } }.toMap())
         }
-        if ("sound" !in out) out["sound"] = JsonObject(moved.entries.mapNotNull { (old, new) -> song[old]?.let { new to it } }.toMap())
+        if (moved.isNotEmpty() && "sound" !in out) out["sound"] = JsonObject(moved.entries.mapNotNull { (old, new) -> song[old]?.let { new to it } }.toMap())
         return JsonObject(out)
     }
 
-    private fun upgradePattern(pattern: JsonElement): JsonElement {
+    private fun upgradePattern(pattern: JsonElement, delta: Int): JsonElement {
         if (pattern !is JsonObject) return pattern
         val tracks = pattern["tracks"] as? JsonArray ?: return pattern
         val upgraded = JsonArray(tracks.map { track ->
             if (track !is JsonArray) track
-            else JsonArray(track.map { cell -> if (cell is JsonArray && cell.isNotEmpty()) JsonArray(listOf(shifted(cell[0])) + cell.drop(1)) else cell })
+            else JsonArray(track.map { cell -> if (cell is JsonArray && cell.isNotEmpty()) JsonArray(listOf(shifted(cell[0], delta)) + cell.drop(1)) else cell })
         })
         return JsonObject(pattern + ("tracks" to upgraded))
     }
 
-    /** A note number counted from C-3 as one counted from C-0; sentinels and non-numbers unchanged. */
-    private fun shifted(note: JsonElement): JsonElement {
+    /** A stored note moved by [delta] semitones; sentinels and non-numbers unchanged. */
+    private fun shifted(note: JsonElement, delta: Int): JsonElement {
         val n = (note as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull ?: return note
-        return if (n >= 0) JsonPrimitive(n + HugeRules.NOTE_OFFSET) else note
+        return if (n >= 0) JsonPrimitive(n + delta) else note
     }
     override fun demo(): Song = DemoSong.build()
 
@@ -166,7 +172,7 @@ object GbSystem : SoundSystem {
 
         override fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..HugeRules.INSTRUMENT_SLOTS -> "Choose an instrument (01-0F) to audition"
-            note !in noteRange || channel !in channels.indices -> "Cannot audition note $note on channel $channel"
+            note !in noteRange || channel !in channels.indices -> "Cannot audition note ${noteName(note)} on channel $channel"
             fine !in 0..Detune.max -> "Cannot audition detune $fine (00-0F)"
             else -> null
         }

@@ -36,13 +36,13 @@ internal object TestSongs {
 
     /**
      * A current project file ([ProjectCodec.encode] output) as Game Boy project format [version] (1-7) wrote it: the
-     * banks and waves at the top of the song instead of in `sound`, notes and the tuning root counted from C-3.
+     * banks and waves at the top of the song instead of in `sound`, notes and the tuning root as hUGE note numbers (0 = C-3).
      */
     fun legacy(text: String, version: Int): String {
         val root = Json.parseToJsonElement(text).jsonObject
         val song = root.getValue("song").jsonObject
         val sound = song.getValue("sound").jsonObject
-        fun older(note: JsonElement): JsonElement = note.jsonPrimitive.int.let { if (it >= 0) JsonPrimitive(it - 36) else note }
+        fun older(note: JsonElement): JsonElement = note.jsonPrimitive.int.let { if (it >= 0) JsonPrimitive(it - 24) else note }
         val out = LinkedHashMap<String, JsonElement>()
         for ((key, value) in song) when (key) {
             "sound" -> {
@@ -57,5 +57,25 @@ internal object TestSongs {
             else -> out[key] = value
         }
         return JsonObject(root + ("version" to JsonPrimitive(version)) + ("song" to JsonObject(out))).toString()
+    }
+
+    /**
+     * A current project file as development builds wrote project format 8: notes and the tuning root counted from
+     * the system's C-0 in its own naming, which for the Game Boy (hUGETracker names) is 12 above scientific pitch.
+     */
+    fun devVersion8(text: String): String {
+        val root = Json.parseToJsonElement(text).jsonObject
+        val song = root.getValue("song").jsonObject
+        fun older(note: JsonElement): JsonElement = note.jsonPrimitive.int.let { if (it >= 0) JsonPrimitive(it + 12) else note }
+        val out = LinkedHashMap<String, JsonElement>()
+        for ((key, value) in song) when (key) {
+            "patterns" -> out[key] = JsonArray(value.jsonArray.map { p ->
+                val tracks = p.jsonObject.getValue("tracks").jsonArray.map { t -> JsonArray(t.jsonArray.map { c -> JsonArray(listOf(older(c.jsonArray[0])) + c.jsonArray.drop(1)) }) }
+                JsonObject(p.jsonObject + ("tracks" to JsonArray(tracks)))
+            })
+            "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject(t + ("root" to older(t.getValue("root")))) } ?: value
+            else -> out[key] = value
+        }
+        return JsonObject(root + ("version" to JsonPrimitive(8)) + ("song" to JsonObject(out))).toString()
     }
 }

@@ -21,7 +21,7 @@ import kotlin.math.log2
 data class Tuning(
     val name: String,
     val cents: List<Double>,
-    val root: Int = 60,
+    val root: Int = 48,
     val tolerance: Int = 5,
 ) {
     /** Number of degrees per period. */
@@ -30,12 +30,13 @@ data class Tuning(
     /** The interval after which the scale repeats, in cents. */
     val period: Double get() = cents.last()
 
-    /** Structural problems, one message each, with 1/1 on a note of [range]; empty when the tuning is usable. */
-    fun problems(range: IntRange): List<String> {
+    /** Structural problems, one message each, with 1/1 on a note of [system]; empty when the tuning is usable. */
+    fun problems(system: SoundSystem): List<String> {
+        val range = system.noteRange
         val out = ArrayList<String>()
         if (name.length > MAX_NAME) out += "Tuning name is ${name.length} characters long; at most $MAX_NAME are allowed"
         if (root !in range) {
-            out += "Tuning root $root is outside ${Songs.noteName(range.first)}..${Songs.noteName(range.last)} (${range.first}-${range.last})"
+            out += "Tuning root $root is outside ${system.noteName(range.first)}..${system.noteName(range.last)} (${range.first}-${range.last})"
         }
         if (tolerance !in TOLERANCES) out += "Tuning tolerance $tolerance is not one of ${TOLERANCES.joinToString("/")} cents"
         degreeProblem(cents)?.let { out += "Tuning \"$name\": $it" }
@@ -179,7 +180,7 @@ class TuningMap(val tuning: Tuning, val system: SoundSystem) {
     private val fine = system.fine
 
     init {
-        require(tuning.problems(range).isEmpty()) { tuning.problems(range).joinToString("; ") }
+        require(tuning.problems(system).isEmpty()) { tuning.problems(system).joinToString("; ") }
     }
 
     val steps: Int = tuning.steps

@@ -12,8 +12,8 @@ import kotlin.math.abs
 import kotlin.math.log2
 
 class TuningTest {
-    private val c3 = 36
-    private val c5 = 60
+    private val c3 = 24
+    private val c5 = 48
 
     /** Bend of [y] period units on [note] in cents, straight from the GB pitch formula and the driver table. */
     private fun bend(note: Int, y: Int): Double {
@@ -39,14 +39,14 @@ class TuningTest {
 
     @Test
     fun pitchHzAndDetuneOfFollowTheDriver() {
-        assertEquals(131072.0 / (2048 - 1546), HugeRules.pitchHz(60, 0), 1e-9)
-        assertEquals(131072.0 / (2048 - 1546 - 15), HugeRules.pitchHz(60, 15), 1e-9)
-        assertEquals(0, HugeRules.detuneOf(Cell(60, 1)))
-        assertEquals(9, HugeRules.detuneOf(Cell(60, 1, 0x4, 0x09)))
-        assertEquals(0, HugeRules.detuneOf(Cell(60, 1, 0x4, 0x00)))
-        assertEquals(null, HugeRules.detuneOf(Cell(60, 1, 0x4, 0x19))) // real vibrato
-        assertEquals(null, HugeRules.detuneOf(Cell(60, 1, 0x0, 0x47)))
-        assertEquals(null, HugeRules.detuneOf(Cell(60, 1, 0xC, 0x08)))
+        assertEquals(131072.0 / (2048 - 1546), HugeRules.pitchHz(48, 0), 1e-9)
+        assertEquals(131072.0 / (2048 - 1546 - 15), HugeRules.pitchHz(48, 15), 1e-9)
+        assertEquals(0, HugeRules.detuneOf(Cell(48, 1)))
+        assertEquals(9, HugeRules.detuneOf(Cell(48, 1, 0x4, 0x09)))
+        assertEquals(0, HugeRules.detuneOf(Cell(48, 1, 0x4, 0x00)))
+        assertEquals(null, HugeRules.detuneOf(Cell(48, 1, 0x4, 0x19))) // real vibrato
+        assertEquals(null, HugeRules.detuneOf(Cell(48, 1, 0x0, 0x47)))
+        assertEquals(null, HugeRules.detuneOf(Cell(48, 1, 0xC, 0x08)))
     }
 
     @Test
@@ -150,12 +150,12 @@ class TuningTest {
         }
         fun reachableIn(notes: IntRange) = map.pitches.count { it.note in notes }
         // Octave 5 (C-5..B-5): a full bend is over 52 cents, so all 24 quarter-tone degrees play.
-        assertTrue((60..71).all { bend(it, 15) > 52.0 })
-        assertEquals(24, reachableIn(60..71))
+        assertTrue((48..59).all { bend(it, 15) > 52.0 })
+        assertEquals(24, reachableIn(48..59))
         // Octave 3: at most ~26 cents of bend, so only the 12 plain notes.
-        assertTrue((36..47).all { bend(it, 15) < 45.0 })
-        assertEquals(12, reachableIn(36..47))
-        assertTrue(map.pitches.filter { it.note in 36..47 }.all { it.detune == 0 })
+        assertTrue((24..35).all { bend(it, 15) < 45.0 })
+        assertEquals(12, reachableIn(24..35))
+        assertTrue(map.pitches.filter { it.note in 24..35 }.all { it.detune == 0 })
     }
 
     @Test
@@ -192,7 +192,7 @@ class TuningTest {
             }
         }
         assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(c5, 3))
-        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(108, 0))
+        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(96, 0))
     }
 
     @Test
@@ -216,7 +216,7 @@ class TuningTest {
             val q = Math.floorDiv(p.degree, 13)
             val r = Math.floorMod(p.degree, 13)
             assertEquals(q * tritave + (if (r == 0) 0.0 else bp.cents[r - 1]), p.cents, 1e-9)
-            assertTrue(p.cents >= 100.0 * (c3 - c5) - 10.0 && p.cents < 100.0 * (107 - c5) + 100.0)
+            assertTrue(p.cents >= 100.0 * (c3 - c5) - 10.0 && p.cents < 100.0 * (95 - c5) + 100.0)
         }
         assertEquals(0, map.all.first { it.degree == 0 }.detune)
         assertEquals(c5, map.all.first { it.degree == 0 }.note)
@@ -232,13 +232,13 @@ class TuningTest {
     @Test
     fun invalidTuningsAreReported() {
         val ok = Tuning("ok", equal(12))
-        assertEquals(emptyList<String>(), ok.problems(GbSystem.noteRange))
+        assertEquals(emptyList<String>(), ok.problems(GbSystem))
         for (bad in listOf(
-            ok.copy(root = c3 - 1), ok.copy(root = 108), ok.copy(tolerance = 7), ok.copy(cents = emptyList()),
+            ok.copy(root = c3 - 1), ok.copy(root = 96), ok.copy(tolerance = 7), ok.copy(cents = emptyList()),
             ok.copy(cents = listOf(200.0, 100.0)), ok.copy(cents = listOf(-1.0, 1200.0)), ok.copy(cents = listOf(Double.NaN)),
             ok.copy(cents = equal(257)), ok.copy(name = "n".repeat(256)),
         )) {
-            assertEquals("$bad", 1, bad.problems(GbSystem.noteRange).size)
+            assertEquals("$bad", 1, bad.problems(GbSystem).size)
             assertThrows(IllegalArgumentException::class.java) { TuningMap(bad, GbSystem) }
         }
     }

@@ -14,8 +14,9 @@ import org.thortracker.system.SystemSound
 /**
  * One channel-row of a pattern.
  *
- * [note]: [EMPTY] (-1) = no note, [CUT] (-2) = explicit note cut, shown as "OFF", 0 and up = semitones from C-0
- * (C-3 = 36), within the song system's [org.thortracker.system.SoundSystem.noteRange].
+ * [note]: [EMPTY] (-1) = no note, [CUT] (-2) = explicit note cut, shown as "OFF", 0 and up = scientific pitch
+ * (0 = C0, 57 = A4 = 440 Hz), within the song system's [org.thortracker.system.SoundSystem.noteRange]; names are the
+ * system's ([org.thortracker.system.SoundSystem.noteName]).
  * [instrument]: 0 = no sound number (legato), 1.. = slot in the bank of the channel
  * ([org.thortracker.system.ChannelSpec.bank]).
  * [effect]/[param]: the system's raw effect number (0-35, written 0-9 then A-Z) and parameter byte; 0/0 ("000") is no effect.

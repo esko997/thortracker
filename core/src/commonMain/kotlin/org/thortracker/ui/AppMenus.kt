@@ -249,9 +249,9 @@ class AppMenus(
                 host.loadTuningFile { parsed -> applyTuning(if (previous == null) parsed else parsed.copy(root = previous.root, tolerance = previous.tolerance)) }
             })
             if (t != null && map != null) {
-                add("1/1 sounds on ${Songs.noteName(t.root)}…" to {
+                add("1/1 sounds on ${session.song.system.noteName(t.root)}…" to {
                     val range = session.song.system.noteRange
-                    menu("1/1 sounds on", range.map { n -> Songs.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root - range.first)
+                    menu("1/1 sounds on", range.map { n -> session.song.system.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root - range.first)
                 })
                 add("Accuracy limit: ${t.tolerance}¢…" to {
                     choose("Accuracy limit", TOLERANCES.map { "$it cents" + if (it == 5) " (default)" else "" }) { applyTuning(t.copy(tolerance = TOLERANCES[it])) }

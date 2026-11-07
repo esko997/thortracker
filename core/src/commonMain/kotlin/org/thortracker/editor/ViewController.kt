@@ -99,7 +99,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     ViewKind.KEYBOARD -> if (auditioning && keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey))
                     else -> if (own != null && auditioning) own.audition(this)
                 }
-                session.note(if (own != null) "Listening at ${Songs.noteName(defaultNote())}" else "Octave ${state.octave}")
+                session.note(if (own != null) "Listening at ${system.noteName(defaultNote())}" else "Octave ${state.octave}")
                 true
             }
             Action.EDIT -> { if (!editHeld) { editHeld = true; editUsed = false; editInserted = false; editPress() }; true }
@@ -250,10 +250,10 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     /** Lowest and highest note of the song's system, for messages ("C-3..B-8"). */
-    private fun rangeText(): String = "${Songs.noteName(system.noteRange.first)}..${Songs.noteName(system.noteRange.last)}"
+    private fun rangeText(): String = "${system.noteName(system.noteRange.first)}..${system.noteName(system.noteRange.last)}"
 
     /** The listening note of the sound views: C at the current octave. */
-    internal fun defaultNote(): Int = (state.octave * 12).coerceIn(system.noteRange)
+    internal fun defaultNote(): Int = (octaveNote(state.octave)).coerceIn(system.noteRange)
 
     internal fun startAudition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         if (note !in system.noteRange) return
@@ -271,14 +271,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** A held Clear moved something: its release clears nothing. For system views. */
     internal fun useClear() { clearUsed = true }
 
-    /** Octave of the lowest note (octaves count from C-0, like notes). */
-    private fun minOctave() = system.noteRange.first / 12
+    /** Octave of the lowest note, in the system's note names. */
+    private fun minOctave() = system.noteRange.first / 12 + system.nameOctaveOffset
+
+    /** The C of octave [octave], counted in the system's note names (Game Boy "Octave 4" starts at its C-4). */
+    private fun octaveNote(octave: Int): Int = (octave - system.nameOctaveOffset) * 12
 
     /** The keyboard's two-octave span is capped so only its top key can exceed the note range. */
-    private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD || state.kind == ViewKind.SKETCH) keyboardOctaves().last else system.noteRange.last / 12
+    private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD || state.kind == ViewKind.SKETCH) keyboardOctaves().last else system.noteRange.last / 12 + system.nameOctaveOffset
 
     /** Octaves the 25-key keyboard (and Sketch) can start at: its top key is the only one past the highest note. */
-    fun keyboardOctaves(): IntRange = minOctave()..(system.noteRange.last + 1) / 12 - 2
+    fun keyboardOctaves(): IntRange = minOctave()..(system.noteRange.last + 1) / 12 - 2 + system.nameOctaveOffset
 
     private fun direction(dx: Int, dy: Int): Boolean {
         // A direction while B is held is always a jump/move, never followed by B's clear.
@@ -434,7 +437,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun entryPitch(channel: Int, map: TuningMap): TunedPitch? {
         state.entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
         val root = map.tuning.root
-        val near = (state.octave * 12 + root.mod(12)).coerceIn(system.noteRange)
+        val near = (octaveNote(state.octave) + root.mod(12)).coerceIn(system.noteRange)
         return map.nearest(near, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
     }
 
@@ -451,7 +454,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.entry.tuned[state.channel] = pitch.note to pitch.detune
         lastNote[state.channel] = pitch.note
         startAudition(state.channel, pitch.note, ins, pitch.detune)
-        session.note("${map.tuning.name}: ${map.label(pitch)}  ${Songs.noteName(pitch.note)}${if (pitch.detune > 0) " +${pitch.detune}" else ""}  " +
+        session.note("${map.tuning.name}: ${map.label(pitch)}  ${system.noteName(pitch.note)}${if (pitch.detune > 0) " +${pitch.detune}" else ""}  " +
             "${NumberText.fixed(pitch.error, 1, plus = true)}¢")
         return true
     }
@@ -602,11 +605,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     c.note < 0 -> entryNote(ch)
                     scale.isChromatic -> (c.note + dx + 12 * dy).coerceIn(system.noteRange)
                     dy != 0 -> scale.octave(c.note, dy, system.noteRange) ?: run {
-                        session.note("No ${scale.label} note an octave ${if (dy > 0) "above" else "below"} ${Songs.noteName(c.note)} within ${rangeText()}")
+                        session.note("No ${scale.label} note an octave ${if (dy > 0) "above" else "below"} ${system.noteName(c.note)} within ${rangeText()}")
                         return
                     }
                     else -> scale.step(c.note, dx, system.noteRange) ?: run {
-                        session.note("No ${if (dx > 0) "higher" else "lower"} ${scale.label} note than ${Songs.noteName(c.note)} within ${rangeText()}")
+                        session.note("No ${if (dx > 0) "higher" else "lower"} ${scale.label} note than ${system.noteName(c.note)} within ${rangeText()}")
                         return
                     }
                 }
@@ -918,7 +921,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     // ---- keyboard ----------------------------------------------------------------------------------
 
     /** Note of keyboard [key] at the current octave; may exceed the range, see [keyPlayable]. */
-    fun keyNote(key: Int): Int = state.octave * 12 + key
+    fun keyNote(key: Int): Int = octaveNote(state.octave) + key
 
     fun keyPlayable(key: Int): Boolean = keyNote(key) in system.noteRange
 
@@ -1023,7 +1026,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Plays [key]; in write mode also writes it at the shared pattern cursor and advances by the step. */
     fun keyDown(key: Int) {
         state.kbKey = key.coerceIn(0, KEYS - 1)
-        if (!keyPlayable(state.kbKey)) { session.note("Above ${Songs.noteName(system.noteRange.last)}, the highest note"); return }
+        if (!keyPlayable(state.kbKey)) { session.note("Above ${system.noteName(system.noteRange.last)}, the highest note"); return }
         val note = keyNote(state.kbKey)
         keyHeld = true
         playKey(note)
@@ -1101,13 +1104,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     val sketchAuditioning: Boolean get() = state.kind == ViewKind.SKETCH && auditioning
 
     fun sketchNote(index: Int): Int =
-        state.octave * 12 + sketchGuide.scale.root + sketchGuide.tones[index].interval
+        octaveNote(state.octave) + sketchGuide.scale.root + sketchGuide.tones[index].interval
 
     /** Keep the entire ascending voicing in the hardware range, rather than clipping individual notes. */
     fun sketchChordNotes(): List<Int> {
         val guide = sketchGuide
         val chord = guide.chords.getOrNull(state.sketchChord) ?: return emptyList()
-        val base = state.octave * 12 + guide.scale.root
+        val base = octaveNote(state.octave) + guide.scale.root
         val shift = if (base + chord.intervals.last() > system.noteRange.last) 12 else 0
         return chord.intervals.map { base + it - shift }
     }
@@ -1273,7 +1276,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Root-position tonic triad of the circle cursor's key at the Sketch octave, shifted down together to fit. */
     fun sketchCircleTriad(): List<Int> {
         val scale = sketchCircleScale()
-        val base = state.octave * 12 + scale.root
+        val base = octaveNote(state.octave) + scale.root
         val shift = if (base + 7 > system.noteRange.last) 12 else 0
         return listOf(0, if (state.sketchCircleMinor) 3 else 4, 7).map { base + it - shift }
     }
@@ -1313,7 +1316,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (state.sketchPhraseSettings.chordTones) sketchGuide.chords.getOrNull(state.sketchChord) else null
 
     private fun sketchGenerate(): Phrase = Phrase.generate(
-        sketchGuide, state.octave * 12 + sketchGuide.scale.root, sketchPhraseChord(),
+        sketchGuide, octaveNote(state.octave) + sketchGuide.scale.root, sketchPhraseChord(),
         state.sketchPhraseSettings, Random(state.sketchPhraseSeed), system.noteRange,
     )
 
@@ -1559,7 +1562,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             markHeld -> { h += Hint(keys.held(Action.MARK, keys.dpad()), "Extend selection"); h += Hint("Release", "Keep selection") }
             else -> {
                 val tap = when (state.field) {
-                    0 -> if (c.note < 0) "Write note ${Songs.noteName(entryNote(ch))}" else "Hold to change note"
+                    0 -> if (c.note < 0) "Write note ${system.noteName(entryNote(ch))}" else "Hold to change note"
                     1 -> if (c.note < 0) "Needs a note" else if (c.instrument == 0) "Write sound ${EditorSession.hex2(pen(bankOf(ch)))}" else "Hold to change sound"
                     else -> when {
                         c.hasEffect -> "Hold to change effect"

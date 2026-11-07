@@ -142,7 +142,7 @@ interface PlaybackEngine {
     fun lower(song: Song, out: ByteArray)
 
     /**
-     * Why the engine cannot sound absolute [note] (semitones from C-0) with sound [instrument] on [channel] at the
+     * Why the engine cannot sound absolute [note] (scientific pitch, 0 = C0) with sound [instrument] on [channel] at the
      * system's fine pitch [fine] ([FinePitch]), or null when it can.
      */
     fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String?
@@ -176,8 +176,17 @@ interface SoundSystem {
     val channels: List<ChannelSpec>
     val banks: List<BankSpec>
 
-    /** Playable notes, in semitones from C-0. */
+    /** Playable notes, in scientific pitch: semitones from C0 (16.35 Hz), so A4 = 57 = 440 Hz in 12-TET. */
     val noteRange: IntRange
+
+    /**
+     * How much higher this system's note names number octaves than scientific pitch: 0 for FamiTracker/FamiStudio
+     * (A-4 = 440 Hz), 1 for hUGETracker (its C-3 sounds C2, 65.4 Hz). The editor's octave fields count in these names.
+     */
+    val nameOctaveOffset: Int
+
+    /** [note]'s name in this system's convention ("A-4"), "---" for no note, "OFF" for a note cut. */
+    fun noteName(note: Int): String = org.thortracker.model.Songs.noteName(note, nameOctaveOffset)
 
     /** Every effect number the system names (Game Boy: 0-F), including unsupported ones. */
     val effects: List<EffectSpec>

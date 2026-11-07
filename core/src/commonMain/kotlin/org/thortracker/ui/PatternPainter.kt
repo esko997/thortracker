@@ -306,13 +306,13 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     private fun fittedFromText(pattern: Int, ch: Int, row: Int): String {
         val from = session.fittedFrom(pattern, ch, row)?.takeIf { it.note >= 0 } ?: return ""
         val bend = song.system.fine.of(from)?.takeIf { it > 0 }?.let { "+$it" } ?: ""
-        return " · fitted from ${Songs.noteName(from.note)}$bend"
+        return " · fitted from ${song.system.noteName(from.note)}$bend"
     }
 
     /** [zero]: show this 000 as the explicitly chosen effect 0 (arpeggio) rather than as no effect. */
     private fun drawCell(c: Surface, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
         val noteText = when {
-            cell.note >= 0 -> Songs.noteName(cell.note)
+            cell.note >= 0 -> song.system.noteName(cell.note)
             cell.note == Cell.CUT -> "OFF"
             else -> "···"
         }
@@ -404,13 +404,13 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 val detune = system.fine.of(cell)
                 val i = tuning.index(cell.note, detune ?: 0)
                 when {
-                    i < 0 && detune == null -> "Note ${Songs.noteName(cell.note)}: untuned, effect slot taken"
-                    i < 0 -> "Note ${Songs.noteName(cell.note)}: outside ${tuning.tuning.name}"
-                    else -> tuning.pitches[i].let { p -> "Note ${Songs.noteName(cell.note)} · ${tuning.label(p)} ${NumberText.fixed(p.error, 1, plus = true)}¢" } +
+                    i < 0 && detune == null -> "Note ${song.system.noteName(cell.note)}: untuned, effect slot taken"
+                    i < 0 -> "Note ${song.system.noteName(cell.note)}: outside ${tuning.tuning.name}"
+                    else -> tuning.pitches[i].let { p -> "Note ${song.system.noteName(cell.note)} · ${tuning.label(p)} ${NumberText.fixed(p.error, 1, plus = true)}¢" } +
                         fittedFromText(s.patternAt(st.order), ch, st.row)
                 }
             }
-            cell.note >= 0 -> "Note ${Songs.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
+            cell.note >= 0 -> "Note ${song.system.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
             cell.note == Cell.CUT -> system.help.offInspector
             else -> "No note: the previous note keeps sounding"
         }

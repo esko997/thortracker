@@ -187,7 +187,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(edit, "Listen: play.  Write: write at the pattern cursor and advance"),
             Line.Row(clear, "Write mode: place OFF and advance"),
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
-            Line.Row("Dark keys", "Above ${Songs.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
+            Line.Row("Dark keys", "Above ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
             Line.Heading("Sketch"),
             Line.Text("Tonal playground. Root/scale experiments stay local to this display; chords, notes and the circle only sound. Only the phrase's Insert writes notes (one undo step)."),
             Line.Row("$ud / $lr", "Settings, chords, notes or phrase / choose within the row"),
@@ -247,7 +247,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         out += Line.Row("Orders", "${s.orders.size} of ${s.system.maxOrders}")
         out += Line.Row("Patterns", "${s.patterns.size} of ${EditorSession.MAX_PATTERNS} (${s.orders.toSet().size} in the arrangement)")
         for ((key, text) in s.system.help.limits(s)) out += Line.Row(key, text)
-        out += Line.Row("Notes", "${Songs.noteName(s.system.noteRange.first)} to ${Songs.noteName(s.system.noteRange.last)}")
+        out += Line.Row("Notes", "${s.system.noteName(s.system.noteRange.first)} to ${s.system.noteName(s.system.noteRange.last)}")
         out += Line.Row("Rows", "1 to ${Songs.ROWS} per pattern (L2+→ Length), ticks per row 1 to ${EditorSession.MAX_TICKS}")
         return out
     }

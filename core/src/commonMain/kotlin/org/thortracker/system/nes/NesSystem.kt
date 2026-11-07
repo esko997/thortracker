@@ -45,6 +45,9 @@ object NesSystem : SoundSystem {
     }
     override val banks = listOf(BankSpec("Instruments", SLOTS))
     override val noteRange = (1 + NesRules.NOTE_OFFSET)..(NesRules.NOTE_COUNT + NesRules.NOTE_OFFSET)
+
+    /** FamiTracker/FamiStudio names are scientific pitch: A-4 = 440 Hz. */
+    override val nameOctaveOffset = 0
     override val effects: List<EffectSpec> get() = NesRules.EFFECTS
     override val views = ViewKind.entries.toSet() - ViewKind.WAVE
     override val exports = listOf(
@@ -71,8 +74,10 @@ object NesSystem : SoundSystem {
     override val soundSerializer: KSerializer<NesSound> = NesSound.serializer()
 
     /** Project versions before 8 only held Game Boy songs. */
+    /** Version 8 NES songs already counted in scientific pitch (FamiTracker names: A-4 = 440 Hz). */
     override fun upgradeProject(song: JsonObject, version: Int): JsonObject =
-        throw IllegalArgumentException("$name songs need project version 8 or later; version $version files are Game Boy songs")
+        if (version >= 8) song
+        else throw IllegalArgumentException("$name songs need project version 8 or later; version $version files are Game Boy songs")
 
     override fun demo(): Song = NesDemoSong.build()
 
@@ -152,7 +157,7 @@ object NesSystem : SoundSystem {
 
         override fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..SLOTS -> "Choose an instrument (01-${NumberText.hex(SLOTS, 2)}) to audition"
-            channel !in channels.indices || note !in noteRange -> "Cannot audition note $note on channel $channel"
+            channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
             NesRules.kind(channel) != ChannelKind.NOISE && note < NesRules.LOWEST_TONAL ->
                 "${channels[channel].name} cannot play below A-1"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"

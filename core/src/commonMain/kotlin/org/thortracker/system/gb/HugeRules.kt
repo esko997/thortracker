@@ -16,8 +16,11 @@ import org.thortracker.system.EffectSpec
  * The validator, editor hints, lowering and `.uge` export all use these rules.
  */
 object HugeRules {
-    /** hUGEDriver note 0 (C-3) in semitones from C-0: cells hold absolute notes, the driver this minus 36. */
-    const val NOTE_OFFSET = 36
+    /**
+     * hUGEDriver note 0, which hUGETracker names C-3 and which sounds C2 (65.4 Hz), in scientific pitch: cells hold
+     * absolute notes, the driver this minus 24.
+     */
+    const val NOTE_OFFSET = 24
 
     /** Notes in hUGEDriver's table: C-3..B-8. */
     const val NOTE_COUNT = 72
@@ -216,12 +219,12 @@ object HugeRules {
     fun noiseNoteProblem(note: Int): String? {
         if (note !in GbSystem.noteRange) return null
         val poly = noisePoly(note - NOTE_OFFSET)
-        val name = Songs.noteName(note)
+        val name = GbSystem.noteName(note)
         return when {
             poly shr 4 >= 14 -> "noise note $name gives NR43 ${hex2(poly)} (clock shift ${poly shr 4}), which never " +
                 "clocks the LFSR, so it plays no noise; use E-3..D#8"
             note - NOTE_OFFSET >= 64 -> "noise note $name wraps around in hUGEDriver to NR43 ${hex2(poly)}, the same low rumble as " +
-                "${Songs.noteName(NOTE_OFFSET + (4..63).first { noisePoly(it) == poly })}; use E-3..D#8"
+                "${GbSystem.noteName(NOTE_OFFSET + (4..63).first { noisePoly(it) == poly })}; use E-3..D#8"
             else -> null
         }
     }

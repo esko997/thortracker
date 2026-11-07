@@ -19,7 +19,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
 
 /**
  * Thor Tracker's own project format: UTF-8 JSON
- * `{"format":"thor-tracker-project","version":8,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
+ * `{"format":"thor-tracker-project","version":9,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
  * export-level problems ([org.thortracker.system.SoundSystem.errors]) are allowed so work in progress round-trips.
@@ -33,14 +33,15 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * (`{"name":...,"cents":[...],"root":note,"tolerance":5|10|20}` or null); older files have none. 6 adds the
  * song's editor-only `newPatternScale` (the scale new patterns start with); older files read as chromatic.
  * 7 adds `parkedOrders` (ascending order indices skipped by playback and export); older files park none.
- * 8 nests the chip data in `sound` and makes notes absolute (semitones from C-0, so C-3 = 36), the tuning root
- * too; versions 1-7 are Game Boy songs and are upgraded by their system
- * ([org.thortracker.system.SoundSystem.upgradeProject]). Every save writes the current version. `backendVersion`
- * stays 1.
+ * 8 (development builds only) nested the chip data in `sound` and counted notes from C-0 in each system's own
+ * naming. 9 makes every note (and the tuning root) scientific pitch: 0 = C0 (16.35 Hz), 57 = A4 = 440 Hz, so the same
+ * number is the same pitch on every system. Older files are upgraded by their system
+ * ([org.thortracker.system.SoundSystem.upgradeProject]; versions 1-7 are Game Boy songs). Every save writes the
+ * current version. `backendVersion` stays 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 8
+    const val VERSION = 9
     const val BACKEND_VERSION = 1
 
     private val json = Json {
@@ -133,7 +134,7 @@ object ProjectCodec {
         if (version < PARKED_VERSION && parked is JsonArray && parked.isNotEmpty()) {
             throw ProjectFormatException("Project version $version cannot contain parked orders (added in version $PARKED_VERSION)")
         }
-        val upgraded = (root["song"] as? JsonObject)?.takeIf { version < SOUND_VERSION }?.let { song ->
+        val upgraded = (root["song"] as? JsonObject)?.takeIf { version < PITCH_VERSION }?.let { song ->
             try {
                 JsonObject(root + ("song" to system.upgradeProject(song, version)))
             } catch (e: IllegalArgumentException) {
@@ -159,8 +160,8 @@ object ProjectCodec {
         return song
     }
 
-    /** First format version with the chip data in `sound` and absolute notes. */
-    private const val SOUND_VERSION = 8
+    /** First format version whose notes are scientific pitch (0 = C0, A4 = 57 = 440 Hz) for every system. */
+    private const val PITCH_VERSION = 9
 
     /** First format version with per-pattern scales. */
     private const val SCALE_VERSION = 2

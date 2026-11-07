@@ -63,14 +63,14 @@ class SongsTest {
 
     @Test
     fun noteNames() {
-        assertEquals("C-0", Songs.noteName(0))
-        assertEquals("C-3", Songs.noteName(36))
-        assertEquals("C-3", Songs.noteName(GbSystem.noteRange.first))
-        assertEquals("A#7", Songs.noteName(94))
-        assertEquals("B-9", Songs.noteName(Songs.NOTE_LIMIT))
-        assertEquals("???", Songs.noteName(Songs.NOTE_LIMIT + 1))
-        assertEquals("B-8", Songs.noteName(GbSystem.noteRange.last))
-        assertEquals("---", Songs.noteName(Cell.EMPTY))
+        // hUGETracker names: an octave above scientific pitch (its C-3 is C2 = absolute 24).
+        assertEquals("C-1", GbSystem.noteName(0))
+        assertEquals("C-3", GbSystem.noteName(24))
+        assertEquals("C-3", GbSystem.noteName(GbSystem.noteRange.first))
+        assertEquals("A#7", GbSystem.noteName(82))
+        assertEquals("???", GbSystem.noteName(Songs.NOTE_LIMIT + 1))
+        assertEquals("B-8", GbSystem.noteName(GbSystem.noteRange.last))
+        assertEquals("---", GbSystem.noteName(Cell.EMPTY))
     }
 
     @Test

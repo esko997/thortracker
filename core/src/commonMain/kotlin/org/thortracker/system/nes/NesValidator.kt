@@ -63,7 +63,7 @@ object NesValidator {
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
             envelopeShape(out, where, "duty", ins.duty, NesEnvelope.DUTY)
         }
-        song.tuning?.problems(NesSystem.noteRange)?.forEach { out += it }
+        song.tuning?.problems(NesSystem)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
         if (song.parkedOrders.any { it !in song.orders.indices } || song.parkedOrders.zipWithNext().any { (a, b) -> a >= b }) {
             out += "Parked orders ${song.parkedOrders} must be ascending, distinct orders 0-${song.orders.size - 1}"
@@ -181,7 +181,7 @@ object NesValidator {
                     val cell = pattern.tracks[ch][row]
                     if (cell.note < 0) continue
                     if (cell.instrument == 0) {
-                        out += "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row: ${Songs.noteName(cell.note)} has no " +
+                        out += "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row: ${NesSystem.noteName(cell.note)} has no " +
                             "instrument and none has played on this channel yet; enter the instrument number"
                     }
                     break@loop
@@ -208,7 +208,7 @@ object NesValidator {
                                 "${NesRules.effectText(cell.effect, cell.param)}; it plays at the plain 12-note pitch"
                         }
                         map.index(cell.note, fine) < 0 -> {
-                            val pitch = Songs.noteName(cell.note) + if (fine > 0) " +$fine" else ""
+                            val pitch = NesSystem.noteName(cell.note) + if (fine > 0) " +$fine" else ""
                             out += "$where: $pitch is outside the song tuning \"${map.tuning.name}\"; use Fit notes to tuning or re-enter it"
                         }
                     }

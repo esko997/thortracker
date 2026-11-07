@@ -23,9 +23,12 @@ Steps 1 and 2 are done for the Game Boy (branch `systems`).
   `GbSoundView`/`GbWaveView` with `SoundPainter`, `WavePainter`, `SoundParams` and the bank/wave edits (`GbEdits`).
   Tuned notes are realised as `40y` (`GbSystem.fine`).
 - `Song` holds the shared fields plus `sound: SystemSound`; `Song.system` is the sound's system. `Cell.note` counts
-  semitones from C-0 (C-3 = 36); lowering subtracts 36, so `.uge` bytes are unchanged. Scales, Sketch, phrases, the
+  semitones in scientific pitch (0 = C0, A4 = 57 = 440 Hz), the same pitch on every system; Game Boy lowering subtracts
+  24 (hUGE note 0 = C2), so `.uge` bytes are unchanged. Note names are the system's (`SoundSystem.noteName`,
+  `nameOctaveOffset`): hUGETracker's (an octave above scientific: its C-3 is C2) and FamiTracker's (A-4 = 440 Hz); the
+  editor's octave fields count in those names. Scales, Sketch, phrases, the
   keyboard and tunings work in that absolute pitch; octave limits come from the note range.
-- `ProjectCodec` writes version 8 (`song.backend` + `song.sound`) and upgrades versions 1-7 through
+- `ProjectCodec` writes version 9 (`song.backend` + `song.sound`, scientific pitch) and upgrades versions 1-8 through
   `SoundSystem.upgradeProject`. `TrackerAudio` takes absolute notes; the song's system converts them.
 - Shared code and both audio hosts no longer name the Game Boy. `SoundSystem.engine` (`PlaybackEngine`) is what a
   host needs to play a system: the native engine id, the image size and `lower(song, out)`, the seek tick budget,
@@ -72,7 +75,7 @@ data class GbSound(val pulse: List<GbInstrument>, val wave: List<GbInstrument>, 
 data class NesSound(val instruments: List<NesInstrument>) : SystemSound
 ```
 
-- **Notes become absolute.** `Cell.note` counts semitones from C-0 (so today's C-3 = 36). Each backend declares its
+- **Notes become absolute.** `Cell.note` counts semitones in scientific pitch (0 = C0, A4 = 57 = 440 Hz; the Game Boy's C-3, which sounds C2, = 24). Each backend declares its
   range (Game Boy C-3..B-8; NES: FamiStudio note byte `n` = absolute `n + 11`, table C-1..B-8 with A-4 = 440 Hz on the
   pulses, pulses reach down to A-1 and the triangle sounds an octave below — confirmed in step 4) and lowering subtracts its
   own offset, so `.uge` bytes do not change. Sketch, the Keyboard view, scales and tunings then work in one pitch
@@ -83,7 +86,8 @@ data class NesSound(val instruments: List<NesInstrument>) : SystemSound
   keeps the hUGE numbers exactly.
 - **Tuning realisation moves to the backend:** `realise(cents) -> (note, fine)`. Game Boy keeps `40y`, NES uses the
   engine's fine-pitch track. Each chip reports its own "N of M degrees reachable within 5¢".
-- **Project files version 8** add `system` and nest the chip data; version 1-7 files open as Game Boy songs.
+- **Project files version 8** add `system` and nest the chip data; version 1-7 files open as Game Boy songs. Version 9
+  makes notes scientific pitch on every system (8 counted in each system's naming; Game Boy 8 files move down 12).
 
 ## Backend interface (core)
 
@@ -162,7 +166,7 @@ muted in the song) stay in the hosts and work for every chip.
 
 1. **Declare the Game Boy** — done. `SoundSystem` + `GbSystem` (`system/gb`); the editor, painters, Help and menus
    read channels, banks, effects, limits and views from the song's system. Screenshots identical.
-2. **Model** — done. `GbSound`, absolute notes (C-3 = 36), project version 8 with migration from 1-7, Sketch
+2. **Model** — done. `GbSound`, absolute notes, project version 8 with migration from 1-7 (since version 9: scientific pitch, Game Boy C-3 = 24), Sketch
    phrases in saved workspaces migrated, tuning realisation through the system.
 3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck. `TrackerAudio` takes
    absolute notes; the song's system lowers, names its engine and converts audition notes (`SoundSystem.engine`), and

@@ -139,7 +139,7 @@ object NesRules {
         val spec = effect(cell.effect) ?: return "effect ${effectChar(cell.effect)} does not exist on the NES"
         val fx = effectText(cell.effect, p)
         if (cell.effect in unusable(channel)) return "${spec.name.lowercase()} ($fx) has no effect on ${CHANNEL_NAMES[channel]}"
-        val noteName = if (cell.note >= 0) org.thortracker.model.Songs.noteName(cell.note) else null
+        val noteName = if (cell.note >= 0) NesSystem.noteName(cell.note) else null
         return when (cell.effect) {
             FX_ARPEGGIO -> if (cell.note < 0) "$fx needs a note on its row (FamiStudio arpeggios belong to a note)" else null
             FX_VIBRATO -> when {

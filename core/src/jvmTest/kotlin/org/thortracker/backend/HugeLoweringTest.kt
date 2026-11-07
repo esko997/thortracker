@@ -36,14 +36,14 @@ class HugeLoweringTest {
     @Test
     fun shortPatternEndsWithABreakAndExportsHiddenRowsBlank() {
         var song = withLength(patterns(2), 0, 20)
-        song = withCell(song, 0, 0, 19, Cell(66, 1, 0xC, 0x08)) // Pulse 1's slot is taken
-        song = withCell(song, 0, 2, 40, Cell(48, 1)) // hidden, kept in the project
+        song = withCell(song, 0, 0, 19, Cell(54, 1, 0xC, 0x08)) // Pulse 1's slot is taken
+        song = withCell(song, 0, 2, 40, Cell(36, 1)) // hidden, kept in the project
         val data = HugeLowering.lower(song)
         assertArrayEquals(bytes(30, 0x1C, 0x08), row(data.tracks[0], 19))
         assertArrayEquals(bytes(90, 0x0D, 0x01), row(data.tracks[1], 19)) // first free slot: Pulse 2
         for (ch in 0 until 4) for (r in 20 until 64) assertArrayEquals(emptyRow, row(data.tracks[ch], r))
         assertTrue(data.tracks.subList(4, 8).all { t -> (0 until 64).all { r -> t[r * 3 + 1].toInt() == 0 } })
-        assertEquals(48, song.patterns[0].tracks[2][40].note)
+        assertEquals(36, song.patterns[0].tracks[2][40].note)
     }
 
     @Test
@@ -71,9 +71,9 @@ class HugeLoweringTest {
     @Test
     fun cellsUseTheDnMacroLayout() {
         val cells = List(Songs.ROWS) { Cell.BLANK }.toMutableList().apply {
-            this[0] = Cell(60, 1, 0x0, 0x37) // C-5: DN(C_5,1,0x037)
+            this[0] = Cell(48, 1, 0x0, 0x37) // C-5: DN(C_5,1,0x037)
             this[1] = Cell(Cell.CUT) // DN(___,0,0xE00)
-            this[2] = Cell(107, 15, 0xF, 0xFF)
+            this[2] = Cell(95, 15, 0xF, 0xFF)
         }
         val track = HugeLowering.encodeTrack(cells)
         assertEquals(Songs.ROWS * 3, track.size)
@@ -145,7 +145,7 @@ class HugeLoweringTest {
     @Test
     fun loopUsesFirstFreeSlotAndRewritesNextOrderJumps() {
         var song = patterns(2).copy(loopOrder = 1)
-        song = withCell(song, 1, 0, 63, Cell(66, 1, 0xC, 0x08)) // occupied
+        song = withCell(song, 1, 0, 63, Cell(54, 1, 0xC, 0x08)) // occupied
         song = withCell(song, 1, 1, 63, Cell(Cell.CUT)) // cut needs E00
         song = withCell(song, 1, 3, 20, Cell(Cell.EMPTY, 0, 0xB, 0x00)) // B00 = "next order" = loop
         song = withCell(song, 1, 2, 40, Cell(Cell.EMPTY, 0, 0xD, 0x05)) // break: needs the loop target too
@@ -198,8 +198,8 @@ class HugeLoweringTest {
     @Test
     fun rejectsSongsWithErrorsListingAllOfThem() {
         var song = Songs.blank()
-        song = withCell(song, 0, 0, 1, Cell(60, 1, 0x6, 0x00))
-        song = withCell(song, 0, 2, 2, Cell(60, 1, 0xA, 0x01))
+        song = withCell(song, 0, 0, 1, Cell(48, 1, 0x6, 0x00))
+        song = withCell(song, 0, 2, 2, Cell(48, 1, 0xA, 0x01))
         val error = assertThrows(IllegalArgumentException::class.java) { HugeLowering.lower(song) }
         assertEquals(2, error.message!!.lines().size)
     }
