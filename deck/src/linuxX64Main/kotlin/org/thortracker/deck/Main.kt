@@ -208,7 +208,11 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             else -> {
                 val shows = control.shows
                 val action = control.action
-                if (shows != null) { pane.cancelInteraction(); if (panes.showView(shows, session.song.system.views)) pane.refresh() }
+                if (shows != null) {
+                    pane.cancelInteraction()
+                    if (panes.showView(shows, session.song.system.views)) pane.refresh()
+                    else Workspace.missingView(shows, session.song.system)?.let(session::note)
+                }
                 else if (action != null) shell.editAction(action)
             }
         }

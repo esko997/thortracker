@@ -12,6 +12,7 @@ import org.thortracker.model.TonalGuide
 import org.thortracker.model.NumberText
 import org.thortracker.model.TunedPitch
 import org.thortracker.model.TuningMap
+import org.thortracker.system.EffectSpec
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemView
 import kotlin.random.Random
@@ -443,7 +444,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
      */
     private fun writeTuned(c: Cell, pitch: TunedPitch, ins: Int, map: TuningMap): Boolean {
         val next = system.fine.write(c.copy(instrument = ins), pitch.note, pitch.detune) ?: run {
-            session.note("This row's effect ${EditorSession.hex1(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for ${system.fine.name}; clear it first")
+            session.note("This row's effect ${EffectSpec.charOf(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for ${system.fine.name}; clear it first")
             return false
         }
         write(next)
@@ -1562,7 +1563,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                         chosenArpeggio() -> if (state.field == 2) "Hold to change effect" else "Hold to set arpeggio +x +y"
                         else -> lastEffect[ch]?.let { (e, p) ->
                             if (e == ZERO_EFFECT && p == 0) "Pick ${system.effects.first { it.code == ZERO_EFFECT }.name.lowercase()} 0"
-                            else "Write effect ${EditorSession.hex1(e)}${EditorSession.hex2(p)}"
+                            else "Write effect ${EffectSpec.charOf(e)}${EditorSession.hex2(p)}"
                         } ?: "Hold to pick effect"
                     }
                 }

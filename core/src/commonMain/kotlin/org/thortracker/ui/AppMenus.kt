@@ -17,6 +17,8 @@ import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
 import org.thortracker.system.ExportFormat
+import org.thortracker.system.SoundSystem
+import org.thortracker.system.SoundSystems
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared
@@ -289,15 +291,23 @@ class AppMenus(
     fun fileMenu() {
         val system = session.song.system
         menu("Project", listOf(
-            "New blank song" to { confirmReplace { host.replace(system.blank()) } },
+            "New blank song" to { chooseSystem("New song for") { confirmReplace { host.replace(it.blank()) } } },
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
         ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
             "Rename song" to ::rename,
-            "Load demo" to { confirmReplace { host.replace(system.demo()) } },
+            "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
             "Recover previous project" to { confirmReplace { host.recoverPrevious() } },
         ))
+    }
+
+    /** Asks which sound chip a new song targets (the current song's first), skipped while the build knows one. */
+    private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
+        val current = session.song.system
+        val systems = listOf(current) + SoundSystems.ALL.filter { it != current }
+        if (systems.size == 1) return chosen(current)
+        choose(title, systems.map { it.name }) { chosen(systems[it]) }
     }
 
     private fun export(format: ExportFormat) {

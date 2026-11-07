@@ -468,7 +468,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     /** A view chord on the controller-focused display ([Workspace.showView]). */
     private fun showView(kind: ViewKind) {
         hosts.values.forEach { it.tracker.cancelInteraction() }
-        if (!panes.showView(kind, session.song.system.views)) return
+        if (!panes.showView(kind, session.song.system.views)) { Workspace.missingView(kind, session.song.system)?.let(session::note); return }
         refresh(); workspace.save(states, focus)
     }
 

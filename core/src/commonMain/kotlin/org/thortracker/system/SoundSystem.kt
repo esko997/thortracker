@@ -21,7 +21,10 @@ data class ChannelSpec(val name: String, val kind: ChannelKind, val bank: Int, v
 /** An instrument bank of a [SoundSystem]: [slots] sounds, numbered 1..[slots] in cells. */
 data class BankSpec(val name: String, val slots: Int)
 
-/** One effect number of a [SoundSystem]: what it means, its parameter layout and whether it can be played/exported. */
+/**
+ * One effect number of a [SoundSystem]: what it means, its parameter layout and whether it can be played/exported.
+ * [code] is also its name: one character, 0-9 then A-Z ([char]), so the Game Boy's hexadecimal 0-F stay as they are.
+ */
 data class EffectSpec(
     val code: Int,
     val name: String,
@@ -30,7 +33,24 @@ data class EffectSpec(
     val description: String,
     /** False when the effect can never be exported/previewed. */
     val supported: Boolean,
-)
+) {
+    /** The character the effect is written with. */
+    val char: Char get() = charOf(code)
+
+    companion object {
+        /** Most effect codes a cell can name: one character, 0-9 then A-Z. */
+        const val MAX_CODE = 35
+
+        private const val CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        private val TEXT = Array(CHARS.length) { CHARS[it].toString() }
+
+        /** The character effect [code] is written with: 0-9, then A-Z; '?' beyond. */
+        fun charOf(code: Int): Char = if (code in 0..MAX_CODE) CHARS[code] else '?'
+
+        /** [charOf] as text, without allocating (pattern grids draw it per cell). */
+        fun textOf(code: Int): String = if (code in 0..MAX_CODE) TEXT[code] else "?"
+    }
+}
 
 /** A file format a song exports to, e.g. hUGETracker's `.uge`. [export] receives a song with no [SoundSystem.errors]. */
 class ExportFormat(val extension: String, val export: (Song) -> ByteArray)
@@ -158,7 +178,7 @@ interface SoundSystem {
     /** Playable notes, in semitones from C-0. */
     val noteRange: IntRange
 
-    /** Every effect number (0..F), including unsupported ones. */
+    /** Every effect number the system names (Game Boy: 0-F), including unsupported ones. */
     val effects: List<EffectSpec>
 
     /** View kinds this system can show; the shared ones plus its own (e.g. the Game Boy's Wave view). */
