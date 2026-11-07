@@ -98,13 +98,14 @@ class NesInstrumentViewTest {
         v.hold(Action.EDIT, Action.UP) // +8
         assertEquals(9, sound.volume.values.size)
         v.goTo(Row.RELEASE)
-        v.hold(Action.EDIT, Action.RIGHT) // first legal release: step 0 (no loop yet)
-        assertEquals(0, sound.volume.release)
+        v.hold(Action.EDIT, Action.RIGHT) // a release needs a loop: it loops from step 0 and releases at step 1
+        assertEquals(0, sound.volume.loop)
+        assertEquals(1, sound.volume.release)
         v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT, Action.RIGHT)
-        assertEquals(4, sound.volume.release)
+        assertEquals(5, sound.volume.release)
         v.goTo(Row.LOOP)
         v.hold(Action.EDIT, *Array(9) { Action.RIGHT })
-        assertEquals("the loop stays before the release", 3, sound.volume.loop)
+        assertEquals("the loop stays before the release", 4, sound.volume.loop)
         v.goTo(Row.LENGTH)
         v.hold(Action.EDIT, *Array(6) { Action.LEFT })
         assertEquals(3, sound.volume.values.size)
@@ -120,6 +121,7 @@ class NesInstrumentViewTest {
         val e = NesEnvelope(listOf(1, 2, 3), loop = 0, release = 2)
         assertEquals(-1, NesEnvelopeKind.ARPEGGIO.fixed(e).release)
         assertEquals(e, NesEnvelopeKind.VOLUME.fixed(e))
+        assertEquals("no release without a loop", -1, NesEnvelopeKind.VOLUME.fixed(e.copy(loop = -1)).release)
         assertEquals(NesEnvelope(listOf(2, 3), 0, 1), NesEnvelopes.removed(NesEnvelopeKind.VOLUME, e, 0))
     }
 

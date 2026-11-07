@@ -117,7 +117,11 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     else -> "empty: not used"
                 }, rx, vx, y, h, sel, env.values.isEmpty())
                 Row.LOOP -> setting(c, "Loop", if (env.loop < 0) "off: the last value holds" else "from step ${env.loop}", rx, vx, y, h, sel, env.loop < 0)
-                Row.RELEASE -> setting(c, "Release", if (env.release < 0) "none: OFF cuts the note" else "at step ${env.release}: OFF plays on from here", rx, vx, y, h, sel, env.release < 0)
+                Row.RELEASE -> setting(c, "Release", when {
+                    env.release >= 0 -> "at step ${env.release}: after OFF the steps from here play out"
+                    env.loop < 0 -> "none: OFF stops the note (a release needs a loop)"
+                    else -> "none: OFF stops the note"
+                }, rx, vx, y, h, sel, env.release < 0)
                 Row.MODE -> setting(c, "Mode", if (ins.pitchRelative) "relative: offsets add up every frame" else "absolute: offset from the note", rx, vx, y, h, sel, false)
                 else -> Unit
             }
@@ -136,7 +140,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     private fun setting(c: Surface, label: String, value: String, x: Float, vx: Float, y: Float, h: Float, sel: Boolean, off: Boolean) {
         ink.label(c, label, x, y, h, if (sel) Palette.TEXT else Palette.DIM)
-        ink.label(c, value, vx, y, h, if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel)
+        ink.label(c, value, vx, y, h, if (sel) (if (off) Palette.DIM else Palette.TEXT) else (if (off) Palette.FAINT else Palette.DIM), sel)
     }
 
     /** Frames at the NES's 60 per second, as a duration. */
@@ -166,7 +170,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
             ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
             val size = k.of(ins).values.size
-            val label = if (size == 0) k.label else "${k.label} $size"
+            val label = if (size == 0) k.label else "${k.label} ($size)"
             ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
             tabs += t to k.ordinal
         }
@@ -198,9 +202,9 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         } else { lo = kind.range.first; hi = kind.range.last }
         fun yOf(value: Int) = inner.bottom - inner.height() * (value - lo).toFloat() / (hi - lo)
 
-        // columns: at least 16, wide enough to read; scroll to keep the cursor in view
+        // columns: at least 24, wide enough to read; scroll to keep the cursor in view
         val minCell = ink.unit * 1.15f
-        val columns = maxOf(16, values.size + 1)
+        val columns = maxOf(24, values.size + 1)
         cellW = maxOf(minCell, inner.width() / columns)
         val fit = maxOf(1, (inner.width() / cellW).toInt())
         stepScroll = stepScroll.coerceIn(maxOf(0, step - fit + 1), step)

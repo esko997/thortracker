@@ -302,12 +302,12 @@ class AppMenus(
         ))
     }
 
-    /** Asks which sound chip a new song targets (the current song's first), skipped while the build knows one. */
+    /** Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows one. */
     private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
+        val systems = SoundSystems.ALL
         val current = session.song.system
-        val systems = listOf(current) + SoundSystems.ALL.filter { it != current }
         if (systems.size == 1) return chosen(current)
-        choose(title, systems.map { it.name }) { chosen(systems[it]) }
+        menu(title, systems.map { it.name to { chosen(it) } }, selected = systems.indexOf(current).coerceAtLeast(0))
     }
 
     private fun export(format: ExportFormat) {

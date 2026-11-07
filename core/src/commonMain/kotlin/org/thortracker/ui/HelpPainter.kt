@@ -164,7 +164,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
             Line.Row("OFF", help.off),
-            Line.Row("$editLr effect", "· is no effect, then 0 arpeggio, 1 slide up and on. 0 waits as 000 until you set its value"),
+            Line.Row("$editLr effect", "· is no effect, then ${system.effects.filter { it.supported }.take(2).joinToString(", ") { "${it.char} ${it.name.lowercase()}" }} and on. " +
+                "0 waits as 000 until you set its value"),
             Line.Row("$mark hold+$dpad", "Select a block for copy, cut, clear or duplicate"),
             Line.Row(k.pair(Action.INSERT_ROW, Action.DELETE_ROW), "Insert / delete a row in the channel or selection"),
             Line.Row(k.label(Action.SCALE), "Pattern panel: root, scale and length. A scale (major/minor and modes, pentatonics, blues, whole tone, exotic scales; Chromatic is all notes) makes " +

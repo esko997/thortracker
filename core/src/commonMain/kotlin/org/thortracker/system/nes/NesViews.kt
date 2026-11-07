@@ -305,7 +305,8 @@ object NesInstrumentView : SystemView() {
             ),
             "Envelopes" to NesEnvelopeKind.entries.map { it.label to envelopeSummary(it) } + listOf(
                 "Loop" to "The steps from the loop point to the end repeat while the note holds; without one the last value holds",
-                "Release" to "Volume only: with a release point the loop runs before it until OFF, then the steps from it play out",
+                "Release" to "Volume only, and only with a loop: the loop runs before the release point until OFF, then the steps from it play out. " +
+                    "Without one, OFF stops the note. Setting a release on an envelope without a loop loops it from step 0",
             ),
         )
     }

@@ -34,13 +34,17 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
         DUTY -> i.copy(duty = e)
     }
 
-    /** [e] made legal for this envelope: values clamped, release only on volume, loop before release. */
+    /**
+     * [e] made legal for this envelope: values clamped, loop < length, and a release only on volume and only after a
+     * loop (loop < release < length; FamiStudio drops a release without a loop).
+     */
     fun fixed(e: NesEnvelope): NesEnvelope {
         val values = if (e.values.all { it in range }) e.values else e.values.map { it.coerceIn(range) }
         val last = values.size - 1
-        val release = if (canRelease && e.release in 0..last) e.release else -1
+        var release = if (canRelease && e.release in 1..last) e.release else -1
         var loop = if (e.loop in 0..last) e.loop else -1
         if (release >= 0 && loop >= release) loop = release - 1
+        if (loop < 0) release = -1
         val out = NesEnvelope(values, loop, release)
         return if (out == e) e else out
     }
@@ -85,15 +89,19 @@ object NesEnvelopes {
         return kind.fixed(e.copy(loop = loop.coerceIn(-1, top)))
     }
 
-    /** [e] releasing at [release] (-1: none); only after the loop point. Moving below the first legal step removes it. */
+    /**
+     * [e] releasing at [release] (-1: none), after the loop point. A release needs a loop: setting one on an envelope
+     * without a loop loops it from step 0. Moving below the first legal step removes the release.
+     */
     fun withRelease(kind: NesEnvelopeKind, e: NesEnvelope, release: Int): NesEnvelope {
-        if (!kind.canRelease) return e
-        val first = e.loop + 1
+        if (!kind.canRelease || e.values.size < 2) return kind.fixed(e.copy(release = -1))
+        val loop = maxOf(e.loop, 0)
+        val first = loop + 1
         val r = when {
             release < first -> if (e.release < 0 && release >= 0) first else -1
             else -> release.coerceAtMost(e.values.size - 1)
         }
-        return kind.fixed(e.copy(release = if (r in first until e.values.size) r else -1))
+        return kind.fixed(if (r < 0) e.copy(release = -1) else e.copy(loop = loop, release = r))
     }
 }
 
@@ -119,8 +127,9 @@ fun EditorSession.editNesInstrument(slot: Int, label: String, f: (NesInstrument)
     return setNesInstrument(slot, f(cur), label)
 }
 
+/** Edits envelope [kind] of sound [slot]; the result is made legal ([NesEnvelopeKind.fixed]). */
 fun EditorSession.editNesEnvelope(slot: Int, kind: NesEnvelopeKind, label: String, f: (NesEnvelope) -> NesEnvelope): Boolean =
-    editNesInstrument(slot, label) { kind.set(it, f(kind.of(it))) }
+    editNesInstrument(slot, label) { kind.set(it, kind.fixed(f(kind.of(it)))) }
 
 fun EditorSession.copyNesInstrument(slot: Int) {
     val i = song.nesInstrument(slot) ?: return
