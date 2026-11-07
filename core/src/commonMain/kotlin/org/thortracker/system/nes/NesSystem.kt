@@ -90,6 +90,5 @@ object NesSystem : SoundSystem {
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
 
-    /** NesEditor's instrument view plugs in here (ViewKind.INSTRUMENT). */
-    override fun view(kind: ViewKind): SystemView? = null
+    override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) NesInstrumentView else null
 }

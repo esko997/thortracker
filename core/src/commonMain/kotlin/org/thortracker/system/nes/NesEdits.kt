@@ -71,12 +71,12 @@ object NesEnvelopes {
         return kind.fixed(NesEnvelope(values, shift(e.loop).coerceAtMost(values.size - 1), shift(e.release).coerceAtMost(values.size - 1)))
     }
 
-    /** [e] cut or extended (repeating its last value) to [length] steps. */
+    /** [e] cut or extended (repeating its last value) to [length] steps; a loop past the end moves to the last step. */
     fun withLength(kind: NesEnvelopeKind, e: NesEnvelope, length: Int): NesEnvelope {
         val n = length.coerceIn(0, NesEnvelope.MAX_LENGTH)
         if (n == e.values.size) return e
         val values = if (n < e.values.size) e.values.take(n) else e.values + List(n - e.values.size) { valueAt(kind, e, e.values.size) }
-        return kind.fixed(e.copy(values = values))
+        return kind.fixed(NesEnvelope(values, e.loop.coerceAtMost(n - 1), e.release))
     }
 
     /** [e] looping from [loop] (-1: holds its last value); kept before the release point. */
