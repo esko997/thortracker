@@ -1,5 +1,6 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.GbSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,8 +16,8 @@ class BuiltInTuningsTest {
         assertEquals(listOf("19-tet.scl", "22-edo.scl", "24-tet.scl", "just-5-limit.scl"), files)
         for (f in files) {
             val t = load(f)
-            assertEquals(f, emptyList<String>(), t.problems())
-            assertTrue(f, TuningMap(t).pitches.isNotEmpty())
+            assertEquals(f, emptyList<String>(), t.problems(GbSystem.noteRange))
+            assertTrue(f, TuningMap(t, GbSystem).pitches.isNotEmpty())
         }
     }
 

@@ -1,5 +1,7 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.gb.GbSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -20,10 +22,10 @@ class PhraseTest {
             val guide = TonalGuide(Scale(root, kind))
             for (base in listOf(root, 24 + root, 48 + root)) for (motion in PhraseMotion.entries) for (rhythm in PhraseRhythm.entries) {
                 for (chord in listOf(null, guide.chords.firstOrNull())) for (seed in 0L until 4L) {
-                    val phrase = Phrase.generate(guide, base, chord, settings(16, rhythm, motion), Random(seed))
+                    val phrase = Phrase.generate(guide, base, chord, settings(16, rhythm, motion), Random(seed), GbSystem.noteRange)
                     for (note in phrase.pitches) {
                         val where = "$kind root $root base $base $motion $rhythm seed $seed: $note"
-                        assertTrue(where, note in 0..Songs.NOTE_MAX)
+                        assertTrue(where, note in 0..HugeRules.NOTE_MAX)
                         assertTrue(where, note in base..base + Phrase.REGISTER)
                         assertTrue(where, guide.scale.contains(note))
                     }
@@ -34,7 +36,7 @@ class PhraseTest {
 
     @Test fun lengthAndDownbeatAreAlwaysHonoured() {
         for (length in PhraseSettings.MIN_LENGTH..PhraseSettings.MAX_LENGTH) for (rhythm in PhraseRhythm.entries) for (seed in 0L until 10L) {
-            val phrase = Phrase.generate(cMajor, 24, null, settings(length, rhythm), Random(seed))
+            val phrase = Phrase.generate(cMajor, 24, null, settings(length, rhythm), Random(seed), GbSystem.noteRange)
             assertEquals(length, phrase.length)
             assertNotNull("$length $rhythm $seed", phrase.steps[0])
             assertEquals(0, phrase.onsets.first())
@@ -42,8 +44,8 @@ class PhraseTest {
     }
 
     @Test fun sameSeedSameSettingsSamePhrase() {
-        val a = Phrase.generate(cMajor, 24, cMajor.chords[0], settings(12, PhraseRhythm.SYNCOPATED, PhraseMotion.LEAPS), Random(42))
-        val b = Phrase.generate(cMajor, 24, cMajor.chords[0], settings(12, PhraseRhythm.SYNCOPATED, PhraseMotion.LEAPS), Random(42))
+        val a = Phrase.generate(cMajor, 24, cMajor.chords[0], settings(12, PhraseRhythm.SYNCOPATED, PhraseMotion.LEAPS), Random(42), GbSystem.noteRange)
+        val b = Phrase.generate(cMajor, 24, cMajor.chords[0], settings(12, PhraseRhythm.SYNCOPATED, PhraseMotion.LEAPS), Random(42), GbSystem.noteRange)
         assertEquals(a, b)
     }
 
@@ -52,15 +54,15 @@ class PhraseTest {
         var evenTotal = 0
         var syncopatedTotal = 0
         for (length in PhraseSettings.MIN_LENGTH..PhraseSettings.MAX_LENGTH) for (seed in 0L until 20L) {
-            val sparse = Phrase.generate(cMajor, 24, null, settings(length, PhraseRhythm.SPARSE), Random(seed)).onsets.size
-            val even = Phrase.generate(cMajor, 24, null, settings(length, PhraseRhythm.EVEN), Random(seed)).onsets.size
+            val sparse = Phrase.generate(cMajor, 24, null, settings(length, PhraseRhythm.SPARSE), Random(seed), GbSystem.noteRange).onsets.size
+            val even = Phrase.generate(cMajor, 24, null, settings(length, PhraseRhythm.EVEN), Random(seed), GbSystem.noteRange).onsets.size
             assertTrue("length $length seed $seed: sparse $sparse, even $even", sparse < even)
             // Sparse: row 0 plus at most one onset in each later four-row block; even: at least every other row.
             assertTrue(sparse <= (length + 3) / 4)
             assertTrue(even >= (length + 1) / 2)
             sparseTotal += sparse
             evenTotal += even
-            syncopatedTotal += Phrase.generate(cMajor, 24, null, settings(length, PhraseRhythm.SYNCOPATED), Random(seed)).onsets.size
+            syncopatedTotal += Phrase.generate(cMajor, 24, null, settings(length, PhraseRhythm.SYNCOPATED), Random(seed), GbSystem.noteRange).onsets.size
         }
         assertTrue(sparseTotal < syncopatedTotal)
         assertTrue(syncopatedTotal < evenTotal)
@@ -68,9 +70,9 @@ class PhraseTest {
 
     @Test fun risingPhrasesClimbAndFallingPhrasesDescend() {
         for (seed in 0L until 50L) for (chord in listOf(null, cMajor.chords[4])) {
-            val rising = Phrase.generate(cMajor, 24, chord, settings(16, PhraseRhythm.EVEN, PhraseMotion.RISING), Random(seed)).pitches
+            val rising = Phrase.generate(cMajor, 24, chord, settings(16, PhraseRhythm.EVEN, PhraseMotion.RISING), Random(seed), GbSystem.noteRange).pitches
             assertTrue("seed $seed: $rising", rising.last() > rising.first())
-            val falling = Phrase.generate(cMajor, 24, chord, settings(16, PhraseRhythm.EVEN, PhraseMotion.FALLING), Random(seed)).pitches
+            val falling = Phrase.generate(cMajor, 24, chord, settings(16, PhraseRhythm.EVEN, PhraseMotion.FALLING), Random(seed), GbSystem.noteRange).pitches
             assertTrue("seed $seed: $falling", falling.last() < falling.first())
         }
     }
@@ -83,8 +85,8 @@ class PhraseTest {
         val steps = ArrayList<Int>()
         val leaps = ArrayList<Int>()
         for (seed in 0L until 40L) {
-            steps += scaleDistances(Phrase.generate(cMajor, 24, null, settings(16, motion = PhraseMotion.STEPS), Random(seed)).pitches)
-            leaps += scaleDistances(Phrase.generate(cMajor, 24, null, settings(16, motion = PhraseMotion.LEAPS), Random(seed)).pitches)
+            steps += scaleDistances(Phrase.generate(cMajor, 24, null, settings(16, motion = PhraseMotion.STEPS), Random(seed), GbSystem.noteRange).pitches)
+            leaps += scaleDistances(Phrase.generate(cMajor, 24, null, settings(16, motion = PhraseMotion.LEAPS), Random(seed), GbSystem.noteRange).pitches)
         }
         assertTrue(steps.count { it <= 1 } > steps.size * 0.6)
         assertTrue(steps.all { it <= 2 })
@@ -94,7 +96,7 @@ class PhraseTest {
     @Test fun strongRowsLandOnChordTonesWhenAChordIsGiven() {
         for (chord in cMajor.chords.take(6)) for (motion in PhraseMotion.entries) for (seed in 0L until 10L) {
             val classes = chord.intervals.map { it % 12 }.toSet()
-            val phrase = Phrase.generate(cMajor, 24, chord, settings(16, PhraseRhythm.SYNCOPATED, motion), Random(seed))
+            val phrase = Phrase.generate(cMajor, 24, chord, settings(16, PhraseRhythm.SYNCOPATED, motion), Random(seed), GbSystem.noteRange)
             for (row in phrase.onsets.filter { it % 4 == 0 }) {
                 assertTrue("${chord.name} $motion $seed row $row", phrase.steps[row]!! % 12 in classes)
             }
@@ -103,8 +105,8 @@ class PhraseTest {
 
     @Test fun keepRhythmVariesPitchesOnTheSameOnsets() {
         for (seed in 0L until 20L) {
-            val phrase = Phrase.generate(cMajor, 24, null, settings(12), Random(seed))
-            val varied = Phrase.vary(phrase, cMajor, null, settings(12), Random(seed + 100), keepRhythm = true, keepPitches = false)
+            val phrase = Phrase.generate(cMajor, 24, null, settings(12), Random(seed), GbSystem.noteRange)
+            val varied = Phrase.vary(phrase, cMajor, null, settings(12), Random(seed + 100), keepRhythm = true, keepPitches = false, GbSystem.noteRange)
             assertEquals(phrase.onsets, varied.onsets)
             assertEquals(phrase.length, varied.length)
             assertTrue(varied.pitches.all { cMajor.scale.contains(it) })
@@ -114,8 +116,8 @@ class PhraseTest {
     @Test fun keepPitchesReplacesTheSameNotesOnNewOnsets() {
         var moved = 0
         for (seed in 0L until 20L) for (rhythm in PhraseRhythm.entries) {
-            val phrase = Phrase.generate(cMajor, 24, null, settings(16, PhraseRhythm.SPARSE), Random(seed))
-            val varied = Phrase.vary(phrase, cMajor, null, settings(16, rhythm), Random(seed + 100), keepRhythm = false, keepPitches = true)
+            val phrase = Phrase.generate(cMajor, 24, null, settings(16, PhraseRhythm.SPARSE), Random(seed), GbSystem.noteRange)
+            val varied = Phrase.vary(phrase, cMajor, null, settings(16, rhythm), Random(seed + 100), keepRhythm = false, keepPitches = true, GbSystem.noteRange)
             assertEquals(phrase.pitches, varied.pitches)
             assertEquals(phrase.length, varied.length)
             assertEquals(0, varied.onsets.first())
@@ -126,15 +128,15 @@ class PhraseTest {
 
     @Test fun plainVaryIsASmallMutation() {
         for (seed in 0L until 40L) {
-            val phrase = Phrase.generate(cMajor, 24, null, settings(16), Random(seed))
-            val varied = Phrase.vary(phrase, cMajor, null, settings(16), Random(seed + 7), keepRhythm = false, keepPitches = false)
+            val phrase = Phrase.generate(cMajor, 24, null, settings(16), Random(seed), GbSystem.noteRange)
+            val varied = Phrase.vary(phrase, cMajor, null, settings(16), Random(seed + 7), keepRhythm = false, keepPitches = false, GbSystem.noteRange)
             assertNotEquals(phrase, varied)
             assertEquals(phrase.length, varied.length)
             assertEquals(phrase.pitches.size, varied.pitches.size)
             // Every changed note moved exactly one scale step; one to three of them changed.
             val changed = phrase.pitches.zip(varied.pitches).filter { (a, b) -> a != b }
             assertTrue(changed.size <= 3)
-            for ((a, b) in changed) assertTrue("$a -> $b", b == cMajor.scale.step(a, 1) || b == cMajor.scale.step(a, -1))
+            for ((a, b) in changed) assertTrue("$a -> $b", b == cMajor.scale.step(a, 1, GbSystem.noteRange) || b == cMajor.scale.step(a, -1, GbSystem.noteRange))
             // At most one onset moved, by one row.
             val before = phrase.onsets.toSet()
             val after = varied.onsets.toSet()
@@ -147,16 +149,16 @@ class PhraseTest {
     }
 
     @Test fun varyCannotKeepBothRhythmAndPitches() {
-        val phrase = Phrase.generate(cMajor, 24, null, settings(), Random(1))
+        val phrase = Phrase.generate(cMajor, 24, null, settings(), Random(1), GbSystem.noteRange)
         assertThrows(IllegalArgumentException::class.java) {
-            Phrase.vary(phrase, cMajor, null, settings(), Random(2), keepRhythm = true, keepPitches = true)
+            Phrase.vary(phrase, cMajor, null, settings(), Random(2), keepRhythm = true, keepPitches = true, GbSystem.noteRange)
         }
     }
 
     @Test fun copiedCellsSeedAPhrase() {
         val cells = listOf(Cell(30, 1), Cell(), Cell(Cell.CUT), Cell(32, 2, 0xC, 0x0F), Cell(instrument = 3), Cell(35, 1))
-        assertEquals(listOf(30, null, null, 32, null, 35, null, null), Phrase.fromCells(cells, 8).steps)
-        assertEquals(listOf(30, null, null, 32), Phrase.fromCells(cells, 4).steps)
-        assertNull(Phrase.fromCells(listOf(Cell()), 4).steps.firstOrNull { it != null })
+        assertEquals(listOf(30, null, null, 32, null, 35, null, null), Phrase.fromCells(cells, 8, GbSystem.noteRange).steps)
+        assertEquals(listOf(30, null, null, 32), Phrase.fromCells(cells, 4, GbSystem.noteRange).steps)
+        assertNull(Phrase.fromCells(listOf(Cell()), 4, GbSystem.noteRange).steps.firstOrNull { it != null })
     }
 }

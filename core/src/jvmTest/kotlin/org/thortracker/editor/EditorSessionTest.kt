@@ -1,5 +1,14 @@
 package org.thortracker.editor
 
+import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.gb.GbValidator
+import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gb.WaveShapes
+import org.thortracker.system.gb.setInstrument
+import org.thortracker.system.gb.copyInstrument
+import org.thortracker.system.gb.pasteInstrument
+import org.thortracker.system.gb.setWave
+import org.thortracker.system.gb.setWaveSample
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -12,8 +21,6 @@ import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.model.HugeRules
-import org.thortracker.model.SongValidator
 
 class EditorSessionTest {
     private fun session(song: Song = Songs.blank()) = EditorSession(song)
@@ -106,7 +113,7 @@ class EditorSessionTest {
         s.setCell(0, 0, 0, Cell(note = Cell.EMPTY, instrument = 4, effect = 0xC, param = 0x0F))
         assertEquals(Cell(Cell.EMPTY, 0, 0xC, 0x0F), s.song.patterns[0].tracks[0][0])
         s.setCell(0, 0, 1, Cell(note = 500, instrument = 99, effect = 20, param = 999))
-        assertEquals(Cell(Songs.NOTE_MAX, 15, 15, 255), s.song.patterns[0].tracks[0][1])
+        assertEquals(Cell(HugeRules.NOTE_MAX, 15, 15, 255), s.song.patterns[0].tracks[0][1])
     }
 
     @Test
@@ -213,7 +220,7 @@ class EditorSessionTest {
         // Deleting the jump's own target lands it on the order that takes its place.
         s.deleteOrder(0)
         assertEquals(1, b())
-        assertTrue(SongValidator.errors(s.song).isEmpty())
+        assertTrue(GbValidator.errors(s.song).isEmpty())
     }
 
     @Test
@@ -223,7 +230,7 @@ class EditorSessionTest {
         s.setCell(10, 1, 15, Cell(Cell.EMPTY, 0, HugeRules.FX_POSITION_JUMP, 0x0B)) // B0B: the last order
         repeat(5) { s.deleteOrder(1) }
         assertEquals(6, s.song.orders.size)
-        assertTrue(SongValidator.errors(s.song).isEmpty())
+        assertTrue(GbValidator.errors(s.song).isEmpty())
         assertEquals(10, s.song.orders[s.song.patterns[10].tracks[1][15].param - 1])
     }
 
@@ -246,7 +253,7 @@ class EditorSessionTest {
         assertEquals(listOf(3, 1), parkedPatterns())
         assertTrue(s.toggleParked(1))                              // unpark
         assertEquals(listOf(1), parkedPatterns())
-        assertTrue(SongValidator.errors(s.song).isEmpty())
+        assertTrue(GbValidator.errors(s.song).isEmpty())
     }
 
     @Test
@@ -289,11 +296,11 @@ class EditorSessionTest {
         val s = session()
         assertFalse(s.deleteOrder(0))
         assertNotNull(s.message)
-        val full = s.song.copy(orders = List(EditorSession.MAX_ORDERS) { 0 })
+        val full = s.song.copy(orders = List(GbSystem.maxOrders) { 0 })
         s.replaceSong(full)
         assertFalse(s.insertOrder(0, 0))
         assertEquals(-1, s.newPatternAt(0))
-        assertEquals(EditorSession.MAX_ORDERS, s.song.orders.size)
+        assertEquals(GbSystem.maxOrders, s.song.orders.size)
     }
 
     @Test

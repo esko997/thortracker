@@ -1,5 +1,7 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.gb.GbSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -108,7 +110,7 @@ class TuningTest {
 
     @Test
     fun twelveEqualMapsToEveryPlainNote() {
-        val map = TuningMap(Tuning("12", equal(12), root = c5))
+        val map = TuningMap(Tuning("12", equal(12), root = c5), GbSystem)
         assertEquals(72, map.all.size)
         assertEquals(72, map.pitches.size)
         map.pitches.forEachIndexed { i, p ->
@@ -122,13 +124,13 @@ class TuningTest {
         assertEquals("0/12 ·1", map.label(map.pitches[c5 + 12])) // C-6 stays C-6
         assertEquals("11/12 ·-1", map.label(map.pitches[c5 - 1]))
         // Rooted elsewhere, the same scale still covers every note.
-        val onA = TuningMap(Tuning("12", equal(12), root = 9))
+        val onA = TuningMap(Tuning("12", equal(12), root = 9), GbSystem)
         assertEquals((0..71).toList(), onA.pitches.map { it.note })
     }
 
     @Test
     fun quarterTonesFollowTheAvailableBend() {
-        val map = TuningMap(Tuning("24", equal(24), root = c5, tolerance = 5))
+        val map = TuningMap(Tuning("24", equal(24), root = c5, tolerance = 5), GbSystem)
         assertEquals(-48, map.all.first().degree) // C-3
         assertEquals(95, map.all.last().degree) // B-8 + 50 cents
         // Independent expectation: plain degrees are exact; quarter tone 2k+1 can only be the note below bent ~50 cents.
@@ -159,7 +161,7 @@ class TuningTest {
     fun reachablePitchesAreAccurateUniqueAndIndexed() {
         val just = Scl.parse("just\n12\n16/15\n9/8\n6/5\n5/4\n4/3\n45/32\n3/2\n8/5\n5/3\n9/5\n15/8\n2/1\n", "f")
         for (tol in Tuning.TOLERANCES) for (tuning in listOf(just, Tuning("24", equal(24)), Tuning("31", equal(31), root = 30))) {
-            val map = TuningMap(tuning.copy(tolerance = tol))
+            val map = TuningMap(tuning.copy(tolerance = tol), GbSystem)
             assertTrue(map.pitches.isNotEmpty())
             assertEquals(map.pitches.size, map.pitches.map { it.note to it.detune }.toSet().size)
             for (p in map.all) {
@@ -188,13 +190,13 @@ class TuningTest {
                 assertTrue(map.pitches.all { abs(map.cents(it.note, it.detune) - c) >= d - 1e-12 })
             }
         }
-        assertEquals(-1, TuningMap(Tuning("12", equal(12))).index(24, 3))
-        assertEquals(-1, TuningMap(Tuning("12", equal(12))).index(72, 0))
+        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(24, 3))
+        assertEquals(-1, TuningMap(Tuning("12", equal(12)), GbSystem).index(72, 0))
     }
 
     @Test
     fun justIntervalsUseTheBendThatFitsBest() {
-        val map = TuningMap(Tuning("fifth", listOf(1200.0 * log2(1.5), 1200.0), root = c5, tolerance = 5))
+        val map = TuningMap(Tuning("fifth", listOf(1200.0 * log2(1.5), 1200.0), root = c5, tolerance = 5), GbSystem)
         val fifth = map.all.single { it.degree == 1 }
         // 3/2 = 701.955 cents: G-5 is the note below, bent by whichever y lands closest.
         assertEquals(c5 + 7, fifth.note)
@@ -207,7 +209,7 @@ class TuningTest {
     fun nonOctavePeriodsRepeatAtTheirPeriod() {
         val tritave = 1200.0 * log2(3.0)
         val bp = Tuning("Bohlen-Pierce", equal(13, tritave), root = c5, tolerance = 10)
-        val map = TuningMap(bp)
+        val map = TuningMap(bp, GbSystem)
         assertEquals(13, map.steps)
         for (p in map.all) {
             val q = Math.floorDiv(p.degree, 13)
@@ -229,14 +231,14 @@ class TuningTest {
     @Test
     fun invalidTuningsAreReported() {
         val ok = Tuning("ok", equal(12))
-        assertEquals(emptyList<String>(), ok.problems())
+        assertEquals(emptyList<String>(), ok.problems(GbSystem.noteRange))
         for (bad in listOf(
             ok.copy(root = -1), ok.copy(root = 72), ok.copy(tolerance = 7), ok.copy(cents = emptyList()),
             ok.copy(cents = listOf(200.0, 100.0)), ok.copy(cents = listOf(-1.0, 1200.0)), ok.copy(cents = listOf(Double.NaN)),
             ok.copy(cents = equal(257)), ok.copy(name = "n".repeat(256)),
         )) {
-            assertEquals("$bad", 1, bad.problems().size)
-            assertThrows(IllegalArgumentException::class.java) { TuningMap(bad) }
+            assertEquals("$bad", 1, bad.problems(GbSystem.noteRange).size)
+            assertThrows(IllegalArgumentException::class.java) { TuningMap(bad, GbSystem) }
         }
     }
 }

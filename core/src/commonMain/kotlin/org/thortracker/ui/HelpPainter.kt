@@ -4,12 +4,11 @@ import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.ViewController
-import org.thortracker.editor.bank
-import org.thortracker.editor.channelCount
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
-import org.thortracker.model.InstrumentKind
+import org.thortracker.editor.ViewKind
 import org.thortracker.model.Songs
+import org.thortracker.system.system
 
 /** Reference pages: controls, the backend's effect list, and the live export check of the song. */
 internal class HelpPainter(v: PaneView) : Painter(v) {
@@ -122,6 +121,10 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
     }
 
     private fun controls(k: Keymap): List<Line> {
+        val system = song.system
+        val help = system.help
+        val listening = listOf(ViewKind.INSTRUMENT, ViewKind.WAVE, ViewKind.KEYBOARD, ViewKind.SKETCH).filter { it in system.views }
+            .joinToString(", ") { it.name.lowercase().replaceFirstChar(Char::uppercase) }
         val edit = k.label(Action.EDIT)
         val clear = k.label(Action.CLEAR)
         val listen = k.label(Action.AUDITION)
@@ -149,7 +152,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(k.label(Action.DUPLICATE), "Duplicate"),
             Line.Row(k.group(Action.OCTAVE_DOWN, Action.OCTAVE_UP), "Octave down / up (Pattern entry, or the listening note)"),
             Line.Row("${k.label(Control.LISTEN_OCTAVE_DOWN)} ${k.label(Control.LISTEN_OCTAVE_UP)}",
-                "Instrument, Wave, Keyboard, Sketch: listening octave down / up; a held $listen restarts at the new octave"),
+                "$listening: listening octave down / up; a held $listen restarts at the new octave"),
             Line.Text("Chords can mean different things per view; holding a modifier shows only what it does here."),
             Line.Row(k.label(Control.PLAY_PATTERN), "Play from the start of the current pattern, or stop"),
             Line.Row(k.label(Control.PLAY_CURSOR), "Play from the cursor row, or stop"),
@@ -162,15 +165,14 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
-            Line.Row("OFF", "Silences the channel at once (exported as E00). GB sounds have no release phase: for a tail, " +
-                "give the sound a falling volume envelope, or end it later in the row with Exx"),
+            Line.Row("OFF", help.off),
             Line.Row("$editLr effect", "· is no effect, then 0 arpeggio, 1 slide up and on. 0 waits as 000 until you set its value"),
             Line.Row("$mark hold+$dpad", "Select a block for copy, cut, clear or duplicate"),
             Line.Row(k.pair(Action.INSERT_ROW, Action.DELETE_ROW), "Insert / delete a row in the channel or selection"),
             Line.Row(k.label(Action.SCALE), "Pattern panel: root, scale and length. A scale (major/minor and modes, pentatonics, blues, whole tone, exotic scales; Chromatic is all notes) makes " +
-                "${k.held(Action.EDIT, dpad)} on Pulse and Wave notes land only on its notes (${k.held(Action.EDIT, ud)} an octave, " +
-                "or the next scale note past it). Noise keeps every pitch. Setting a scale never changes written notes; it is not exported or heard. " +
-                "Its Notes row fits the played Pulse/Wave notes to the nearest scale note (ties go down), as one undo step"),
+                "${k.held(Action.EDIT, dpad)} on ${help.tonalChannels} notes land only on its notes (${k.held(Action.EDIT, ud)} an octave, " +
+                "or the next scale note past it). ${help.untonalNote} Setting a scale never changes written notes; it is not exported or heard. " +
+                "Its Notes row fits the played ${help.tonalChannelsShort} notes to the nearest scale note (ties go down), as one undo step"),
             Line.Row("Length", "1 to 64 rows, $lr ±1, $channels ±8. Every order using the pattern plays that many rows, then moves on. " +
                 "Later rows are hidden, not deleted. Combine lengths (e.g. 48, then 20) for odd phrase lengths and polyrhythms"),
             Line.Text("Rails beside a channel show how long each note keeps sounding."),
@@ -180,25 +182,20 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Text("A parked order keeps its place and pattern but the song skips it when playing and exporting; " +
                 "playing a parked order loops it on its own. Repeat, New and Clone next to a parked order are parked too."),
             Line.Row(listen, "Play from this order, or stop if playing"),
-            Line.Heading("Sounds"),
-            Line.Row(lr, "Choose the sound slot; $channels change bank"),
-            Line.Row(editLr, "Adjust the setting; $edit tap toggles on/off settings"),
-            Line.Heading("Waves"),
-            Line.Row(dpad, "Move the pen across samples and levels; ${k.label(Action.UP)} at the top reaches the tools"),
-            Line.Row("$edit hold", "Draw at the pen height while moving"),
+        ) + help.viewSections(k).flatMap { (heading, rows) -> listOf(Line.Heading(heading)) + rows.map { (key, text) -> Line.Row(key, text) } } + listOf(
             Line.Heading("Keyboard"),
             Line.Row(mark, "Switch between Listen and Write"),
             Line.Row(edit, "Listen: play.  Write: write at the pattern cursor and advance"),
             Line.Row(clear, "Write mode: place OFF and advance"),
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
-            Line.Row("Dark keys", "Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note: they neither play nor write"),
+            Line.Row("Dark keys", "Above ${Songs.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
             Line.Heading("Sketch"),
             Line.Text("Tonal playground. Root/scale experiments stay local to this display; chords, notes and the circle only sound. Only the phrase's Insert writes notes (one undo step)."),
             Line.Row("$ud / $lr", "Settings, chords, notes or phrase / choose within the row"),
             Line.Row("$edit or $listen hold", "Listen to a note, a repeating chord arpeggio or the looping phrase; release to stop"),
             Line.Row(k.held(Action.EDIT, dpad), "On settings: change root, scale, tonal channel, sound, octave or Chords (triads / circle of fifths)"),
             Line.Row(mark, "Use the pattern key again; local key settings never alter the pattern"),
-            Line.Row(channels, "Pulse 1, Pulse 2 or Wave; Noise has no tonal chord reference"),
+            Line.Row(channels, help.sketchChannels),
             Line.Row("Circle", "$lr moves by fifths; $clear switches major / relative minor; hold $edit or $listen for the tonic triad; tap $edit makes it Sketch's key"),
             Line.Row("Phrase", "$lr chooses a control; $editLr changes length, rhythm, motion or chord tones (a new phrase from the same seed); tap $edit for Another, Vary, the Keep toggles, From copied or Insert"),
             Line.Row("Vary", "Keep rhythm: new pitches on the same rows. Keep pitches: the same notes on new rows. Neither: one to three notes move a scale step, maybe one shifts a row"),
@@ -217,11 +214,11 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         val out = ArrayList<Line>()
         out += Line.Text("One effect per channel per row. Values are hexadecimal. 000 is no effect.")
         out += Line.Text("Effects marked unavailable cannot be exported or previewed and are refused.")
-        out += Line.Text("There is no stutter or retrigger effect in the supported hUGE set. For a stutter, repeat the note " +
-            "on consecutive rows with its sound number (each restarts the sound); Exx shortens each hit and 7xx delays one.")
-        val names = Songs.channelNames(song)
-        val usable = names.indices.map { ch -> Songs.effectsFor(song, ch).map { it.code }.toSet() }
-        for (e in Songs.effects(song)) {
+        val system = song.system
+        for (text in system.help.effectsIntro) out += Line.Text(text)
+        val names = system.channels.map { it.name }
+        val usable = names.indices.map { ch -> system.effectsFor(ch).map { it.code }.toSet() }
+        for (e in system.effects) {
             val layout = e.param.substringBefore(':').trim()
             val meaning = e.param.substringAfter(':', "").trim()
             val missing = names.indices.filter { e.code !in usable[it] }.map { names[it] }
@@ -248,27 +245,12 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             for (w in warnings) out += Line.Text(w, Palette.PLAYHEAD)
         }
         out += Line.Heading("Limits used")
-        out += Line.Row("Orders", "${s.orders.size} of ${EditorSession.MAX_ORDERS}")
+        out += Line.Row("Orders", "${s.orders.size} of ${s.system.maxOrders}")
         out += Line.Row("Patterns", "${s.patterns.size} of ${EditorSession.MAX_PATTERNS} (${s.orders.toSet().size} in the arrangement)")
-        for (k in InstrumentKind.entries) {
-            val used = usedSlots(k)
-            out += Line.Row(k.name.lowercase().replaceFirstChar { it.uppercase() }, "${used.size} of ${s.bank(k).size} sounds used")
-        }
-        val usedWaves = s.waveInstruments.map { it.wave }.toSet()
-        out += Line.Row("Waves", "${s.waves.size} tables, ${usedWaves.size} assigned to sounds")
-        out += Line.Row("Notes", "${Songs.noteName(0)} to ${Songs.noteName(Songs.NOTE_MAX)}")
+        for ((key, text) in s.system.help.limits(s)) out += Line.Row(key, text)
+        out += Line.Row("Notes", "${Songs.noteName(s.system.noteRange.first)} to ${Songs.noteName(s.system.noteRange.last)}")
         out += Line.Row("Rows", "1 to ${Songs.ROWS} per pattern (L2+→ Length), ticks per row 1 to ${EditorSession.MAX_TICKS}")
         return out
-    }
-
-    private fun usedSlots(kind: InstrumentKind): Set<Int> {
-        val s = song
-        val used = HashSet<Int>()
-        for (ch in 0 until s.channelCount()) {
-            if (Songs.channelKind(s, ch) != kind) continue
-            for (pat in s.orders.toSet()) for (cell in s.patterns[pat].tracks[ch]) if (cell.instrument > 0) used += cell.instrument
-        }
-        return used
     }
 
     override fun down(x: Float, y: Float): Boolean {

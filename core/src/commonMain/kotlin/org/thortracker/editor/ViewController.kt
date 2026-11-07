@@ -1,9 +1,6 @@
 package org.thortracker.editor
 
 import org.thortracker.model.Cell
-import org.thortracker.model.HugeRules
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Phrase
 import org.thortracker.model.PhraseMotion
 import org.thortracker.model.PhraseRhythm
@@ -13,6 +10,11 @@ import org.thortracker.model.ScaleKind
 import org.thortracker.model.Songs
 import org.thortracker.model.TonalGuide
 import org.thortracker.model.NumberText
+import org.thortracker.model.TunedPitch
+import org.thortracker.model.TuningMap
+import org.thortracker.system.SoundSystem
+import org.thortracker.system.SystemView
+import org.thortracker.system.system
 import kotlin.random.Random
 import kotlin.math.roundToLong
 import org.thortracker.input.Keymap
@@ -74,7 +76,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     val holding: Boolean get() = editHeld || clearHeld || markHeld ||
         (state.kind == ViewKind.SKETCH && (auditionHeld || auditioning))
 
-    private val song get() = session.song
+    internal val song get() = session.song
+    private val system: SoundSystem get() = song.system
+
+    /** The system's own editor for the showing view (Instrument, Wave), or null for a shared view. */
+    private fun systemView(): SystemView? = system.view(state.kind)
 
     // ---- entry points ----------------------------------------------------------------------------
 
@@ -87,14 +93,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             Action.REDO -> { historyStep(false); true }
             Action.OCTAVE_DOWN, Action.OCTAVE_UP -> {
                 state.octave = (state.octave + if (a == Action.OCTAVE_UP) 1 else -1).coerceIn(ViewState.MIN_OCTAVE, maxOctave())
+                val own = systemView()
                 when (state.kind) {
                     ViewKind.SKETCH -> if (auditioning && state.sketchRow != SKETCH_PHRASE) sketchListen()
-                    ViewKind.INSTRUMENT, ViewKind.WAVE -> if (auditioning) auditionPress()
                     ViewKind.KEYBOARD -> if (auditioning && keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey))
-                    else -> Unit
+                    else -> if (own != null && auditioning) own.audition(this)
                 }
-                session.note(if (state.kind == ViewKind.INSTRUMENT || state.kind == ViewKind.WAVE)
-                    "Listening at ${Songs.noteName(defaultNote())}" else "Octave ${state.octave}")
+                session.note(if (own != null) "Listening at ${Songs.noteName(defaultNote())}" else "Octave ${state.octave}")
                 true
             }
             Action.EDIT -> { if (!editHeld) { editHeld = true; editUsed = false; editInserted = false; editPress() }; true }
@@ -172,23 +177,21 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     fun normalise() {
         val s = song
+        val system = s.system
+        // A song of another system may lack the showing view (no Wave view without wave tables).
+        if (state.kind !in system.views) state.switchKind(ViewKind.PATTERN)
         state.order = state.order.coerceIn(0, s.orders.size - 1)
         state.channel = state.channel.coerceIn(0, s.channelCount() - 1)
         state.row = state.row.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
         state.field = state.field.coerceIn(0, FIELDS - 1)
-        state.instrument = state.instrument.coerceIn(1, EditorSession.BANK_SIZE)
-        state.wave = state.wave.coerceIn(0, s.waves.size - 1)
-        state.bank = state.bank.coerceIn(0, InstrumentKind.entries.size - 1)
+        state.instrument = state.instrument.coerceIn(1, maxSlots())
         state.octave = state.octave.coerceIn(ViewState.MIN_OCTAVE, maxOctave())
         state.songItem = state.songItem.coerceIn(0, ViewState.SONG_HEADER_ITEMS + s.orders.size - 1)
         state.markOrder = state.markOrder.coerceIn(0, s.orders.size - 1)
         if (state.mark && state.markOrder != state.order) state.mark = false
         // Restored workspaces may carry any values; keep every view-local cursor addressable.
         state.songField = state.songField.coerceIn(0, ORDER_FIELDS.size - 1)
-        state.instField = state.instField.coerceIn(0, 1 + SoundParams.forKind(state.bankKind).size)
-        state.waveRow = state.waveRow.coerceIn(0, 1)
-        state.waveCol = state.waveCol.coerceIn(0, if (state.waveRow == 0) WAVE_TOOLS.size - 1 else WaveShapes.SAMPLES - 1)
-        state.waveLevel = state.waveLevel.coerceIn(0, WaveShapes.MAX)
+        for (kind in system.views) system.view(kind)?.normalise(this)
         state.kbRow = state.kbRow.coerceIn(0, 1)
         state.kbField = state.kbField.coerceIn(0, STRIP_FIELDS.size - 1)
         state.kbKey = state.kbKey.coerceIn(0, KEYS - 1)
@@ -200,7 +203,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.scaleField = state.scaleField.coerceIn(0, SCALE_FIT_FIELD)
         if (state.kind != ViewKind.PATTERN) state.scalePanel = false
         if (state.kind == ViewKind.SKETCH) {
-            if (kindOf(state.channel) == InstrumentKind.NOISE) state.channel = song.firstChannelOf(InstrumentKind.PULSE).coerceAtLeast(0)
+            if (!tonal(state.channel)) state.channel = system.channels.indexOfFirst { it.tonal }.coerceAtLeast(0)
             state.sketchRow = state.sketchRow.coerceIn(0, SKETCH_ROWS - 1)
             state.sketchField = state.sketchField.coerceIn(0, SKETCH_FIELDS.lastIndex)
             state.sketchChord = state.sketchChord.coerceIn(0, (sketchGuide.chords.size - 1).coerceAtLeast(0))
@@ -214,36 +217,46 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** After explicit navigation in a locked view, the lock moves to the subject the user chose. */
     fun syncLock() {
         if (state.lockedSubject < 0) return
-        state.lockedSubject = when (state.kind) {
-            ViewKind.INSTRUMENT -> state.bank * 16 + state.instrument
-            ViewKind.WAVE -> state.wave
+        state.lockedSubject = systemView()?.subject(state) ?: when (state.kind) {
             ViewKind.PATTERN, ViewKind.KEYBOARD, ViewKind.SKETCH -> state.channel
             else -> state.lockedSubject
         }
     }
 
-    private fun gestureLabel(): String = when (state.kind) {
+    private fun gestureLabel(): String = systemView()?.gestureLabel ?: when (state.kind) {
         ViewKind.PATTERN -> arrayOf("Edit note", "Edit sound", "Edit effect", "Edit effect value")[state.field]
         ViewKind.SONG -> "Edit song"
-        ViewKind.INSTRUMENT -> "Edit sound"
-        ViewKind.WAVE -> "Draw wave"
         ViewKind.KEYBOARD -> "Keyboard"
         ViewKind.SKETCH -> "Sketch"
         ViewKind.HELP -> "Help"
+        else -> ""
     }
 
-    private fun kindOf(channel: Int): InstrumentKind = Songs.channelKind(song, channel)
+    /** The instrument bank [channel] plays from. */
+    private fun bankOf(channel: Int): Int = system.channels[channel].bank
 
-    fun pen(kind: InstrumentKind): Int = penSound[kind] ?: 1
+    /** True when [channel]'s notes are pitches (scales, tunings and Sketch apply); false for noise. */
+    private fun tonal(channel: Int): Boolean = system.channels[channel].tonal
 
-    private fun setPen(kind: InstrumentKind, slot: Int) {
-        penSound[kind] = slot.coerceIn(1, EditorSession.BANK_SIZE)
+    private fun slots(bank: Int): Int = system.banks[bank].slots
+
+    private fun maxSlots(): Int = system.banks.maxOf { it.slots }
+
+    /** The entry sound of [bank]: the slot new notes on its channels get. */
+    fun pen(bank: Int): Int = penSound[bank] ?: 1
+
+    internal fun setPen(bank: Int, slot: Int) {
+        penSound[bank] = slot.coerceIn(1, slots(bank))
     }
 
-    private fun defaultNote(): Int = ((state.octave - ViewState.MIN_OCTAVE) * 12).coerceIn(0, Songs.NOTE_MAX)
+    /** Lowest and highest note of the song's system, for messages ("C-3..B-8"). */
+    private fun rangeText(): String = "${Songs.noteName(system.noteRange.first)}..${Songs.noteName(system.noteRange.last)}"
 
-    private fun startAudition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
-        if (note !in 0..Songs.NOTE_MAX) return
+    /** The listening note of the sound views: C at the current octave. */
+    internal fun defaultNote(): Int = ((state.octave - ViewState.MIN_OCTAVE) * 12).coerceIn(system.noteRange)
+
+    internal fun startAudition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
+        if (note !in system.noteRange) return
         session.audition(channel, note, instrument, detune)
         auditioning = true
     }
@@ -252,20 +265,26 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (auditioning) { auditioning = false; session.releaseAudition() }
     }
 
+    /** A held Edit moved something: its release is no tap. For system views. */
+    internal fun useEdit() { editUsed = true }
+
+    /** A held Clear moved something: its release clears nothing. For system views. */
+    internal fun useClear() { clearUsed = true }
+
     /** The keyboard's two-octave span is capped so only its top key can exceed the note range. */
     private fun maxOctave() = if (state.kind == ViewKind.KEYBOARD || state.kind == ViewKind.SKETCH) ViewState.KEYBOARD_MAX_OCTAVE else ViewState.MAX_OCTAVE
 
     private fun direction(dx: Int, dy: Int): Boolean {
         // A direction while B is held is always a jump/move, never followed by B's clear.
         if (clearHeld) clearUsed = true
+        systemView()?.let { it.direction(this, dx, dy); return true }
         when (state.kind) {
             ViewKind.PATTERN -> patternDirection(dx, dy)
             ViewKind.SONG -> songDirection(dx, dy)
-            ViewKind.INSTRUMENT -> soundDirection(dx, dy)
-            ViewKind.WAVE -> waveDirection(dx, dy)
             ViewKind.KEYBOARD -> keyboardDirection(dx, dy)
             ViewKind.SKETCH -> sketchDirection(dx, dy)
             ViewKind.HELP -> helpDirection(dx, dy)
+            else -> Unit
         }
         return true
     }
@@ -276,35 +295,33 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             return
         }
         editGesture = session.beginGesture(gestureLabel())
-        when (state.kind) {
-            ViewKind.PATTERN -> patternEditPress()
-            ViewKind.WAVE -> if (state.waveRow == 1) paintSample()
-            ViewKind.KEYBOARD -> if (state.kbRow == 1) keyDown(state.kbKey)
-            else -> Unit
+        val own = systemView()
+        when {
+            own != null -> own.editPress(this)
+            state.kind == ViewKind.PATTERN -> patternEditPress()
+            state.kind == ViewKind.KEYBOARD -> if (state.kbRow == 1) keyDown(state.kbKey)
         }
     }
 
     private fun editRelease(tap: Boolean) {
+        systemView()?.let { it.editRelease(this, tap); return }
         when (state.kind) {
             ViewKind.PATTERN -> if (tap && editInserted) advance(session.step)
             ViewKind.SONG -> if (tap) songActivate()
-            ViewKind.INSTRUMENT -> if (tap) soundActivate()
-            ViewKind.WAVE -> if (tap && state.waveRow == 0) applyTool(state.waveCol)
             ViewKind.KEYBOARD -> if (state.kbRow == 1) keyHeld = false else if (tap) stripActivate()
-            ViewKind.HELP -> Unit
             ViewKind.SKETCH -> if (tap) sketchTap()
+            else -> Unit
         }
     }
 
     private fun clearTap() {
+        systemView()?.let { it.clear(this); return }
         when (state.kind) {
             ViewKind.PATTERN -> patternClear()
             ViewKind.SONG -> songClear()
-            ViewKind.INSTRUMENT -> soundClear()
-            ViewKind.WAVE -> if (state.waveRow == 1) session.setWaveSample(state.wave, state.waveCol, 0)
             ViewKind.KEYBOARD -> if (state.entryMode) writeFromKeyboard(Cell.CUT)
-            ViewKind.HELP -> Unit
             ViewKind.SKETCH -> sketchClear()
+            else -> Unit
         }
     }
 
@@ -328,11 +345,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     private fun auditionPress() {
+        systemView()?.let { it.audition(this); return }
         when (state.kind) {
             ViewKind.PATTERN -> {
                 val cell = song.cellAt(song.patternAt(state.order), state.channel, state.row)
                 val note = if (cell.note >= 0) cell.note else entryNote(state.channel)
-                val ins = if (cell.note >= 0 && cell.instrument > 0) cell.instrument else pen(kindOf(state.channel))
+                val ins = if (cell.note >= 0 && cell.instrument > 0) cell.instrument else pen(bankOf(state.channel))
                 startAudition(state.channel, note, ins)
             }
             ViewKind.SONG -> {
@@ -340,30 +358,19 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 session.select(session.selection.copy(order = order, row = 0, context = ViewKind.PATTERN))
                 session.transport(true)
             }
-            ViewKind.INSTRUMENT -> {
-                val ch = song.firstChannelOf(state.bankKind)
-                if (ch >= 0) startAudition(ch, defaultNote(), state.instrument)
-            }
-            ViewKind.WAVE -> {
-                val slot = soundUsingWave(state.wave)
-                val ch = song.firstChannelOf(InstrumentKind.WAVE)
-                if (slot > 0 && ch >= 0) startAudition(ch, defaultNote(), slot)
-                else session.note("No wave sound plays wave ${EditorSession.hex1(state.wave)}: choose Use in sound first")
-            }
             ViewKind.KEYBOARD -> if (keyPlayable(state.kbKey)) playKey(keyNote(state.kbKey))
-            ViewKind.HELP -> Unit
             ViewKind.SKETCH -> sketchListen()
+            else -> Unit
         }
     }
 
-    private fun command(a: Action): Boolean = when (state.kind) {
+    private fun command(a: Action): Boolean = systemView()?.command(this, a) ?: when (state.kind) {
         ViewKind.PATTERN -> patternCommand(a)
         ViewKind.SONG -> songCommand(a)
-        ViewKind.INSTRUMENT -> soundCommand(a)
-        ViewKind.WAVE -> waveCommand(a)
         ViewKind.KEYBOARD -> keyboardCommand(a)
         ViewKind.HELP -> helpCommand(a)
         ViewKind.SKETCH -> sketchCommand(a)
+        else -> false
     }
 
     // ---- pattern ---------------------------------------------------------------------------------
@@ -379,11 +386,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     fun publishPattern() {
         syncLock()
         if (state.chosenArpeggio != cursorKey()) state.chosenArpeggio = -1
-        val kind = kindOf(state.channel)
+        val bank = bankOf(state.channel)
         val c = cell
-        val ins = if (c.instrument > 0) c.instrument else pen(kind)
-        val wave = if (kind == InstrumentKind.WAVE) song.instrument(kind, ins)?.wave ?: session.selection.wave else session.selection.wave
-        session.select(Selection(state.order, state.row, state.channel, kind, ins, wave, PATTERN_CONTEXT[state.field]))
+        val ins = if (c.instrument > 0) c.instrument else pen(bank)
+        val sel = Selection(state.order, state.row, state.channel, bank, ins, session.selection.wave, PATTERN_CONTEXT[state.field])
+        session.select(system.selectSound(sel, song))
     }
 
     private fun cursorKey() = cellKey(pattern, state.channel, state.row)
@@ -398,9 +405,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return c.note != Cell.CUT && !c.hasEffect
     }
 
-    /** The pattern scale note stepping follows on [channel]; Noise note numbers select noise pitches, so stay chromatic. */
+    /** The pattern scale note stepping follows on [channel]; noise note numbers select noise rates, so stay chromatic. */
     fun noteScale(channel: Int): Scale =
-        if (kindOf(channel) == InstrumentKind.NOISE) Scale.CHROMATIC else song.patterns[pattern].scale
+        if (!tonal(channel)) Scale.CHROMATIC else song.patterns[pattern].scale
 
     /**
      * Note written into an empty row: the channel's last note, else the scale root (C when chromatic) at the octave.
@@ -409,19 +416,19 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun entryNote(channel: Int): Int {
         val scale = noteScale(channel)
         if (scale.isChromatic) return lastNote[channel] ?: defaultNote()
-        val note = lastNote[channel] ?: (defaultNote() + scale.root).coerceIn(0, Songs.NOTE_MAX)
-        return scale.snap(note) ?: note
+        val note = lastNote[channel] ?: (defaultNote() + scale.root).coerceIn(system.noteRange)
+        return scale.snap(note, system.noteRange) ?: note
     }
 
-    /** The song tuning when [channel] is tonal (Pulse/Wave); Noise and 12-note songs return null. */
-    fun tuningFor(channel: Int): org.thortracker.model.TuningMap? =
-        if (kindOf(channel) == InstrumentKind.NOISE) null else session.tuningMap
+    /** The song tuning when [channel] is tonal; noise channels and 12-note songs return null. */
+    fun tuningFor(channel: Int): TuningMap? =
+        if (!tonal(channel)) null else session.tuningMap
 
     /** Tuned pitch written into an empty row: the channel's last tuned pitch if still reachable, else 1/1 nearest the octave. */
-    private fun entryPitch(channel: Int, map: org.thortracker.model.TuningMap): org.thortracker.model.TunedPitch? {
+    private fun entryPitch(channel: Int, map: TuningMap): TunedPitch? {
         state.entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
         val root = map.tuning.root
-        val near = ((state.octave - ViewState.MIN_OCTAVE) * 12 + root.mod(12)).coerceIn(0, Songs.NOTE_MAX)
+        val near = ((state.octave - ViewState.MIN_OCTAVE) * 12 + root.mod(12)).coerceIn(system.noteRange)
         return map.nearest(near, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
     }
 
@@ -429,9 +436,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
      * Writes tuned [pitch] into the cursor cell (with sound [ins]) and auditions it. Refuses, with a message, when
      * the pitch needs a bend and the row's effect slot holds another effect.
      */
-    private fun writeTuned(c: Cell, pitch: org.thortracker.model.TunedPitch, ins: Int, map: org.thortracker.model.TuningMap): Boolean {
-        val next = EditorSession.tuned(c.copy(instrument = ins), pitch) ?: run {
-            session.note("This row's effect ${EditorSession.hex1(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for 40y; clear it first")
+    private fun writeTuned(c: Cell, pitch: TunedPitch, ins: Int, map: TuningMap): Boolean {
+        val next = system.fine.write(c.copy(instrument = ins), pitch.note, pitch.detune) ?: run {
+            session.note("This row's effect ${EditorSession.hex1(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for ${system.fine.name}; clear it first")
             return false
         }
         write(next)
@@ -444,12 +451,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     /** Hold-Edit stepping in a tuned song: ←→ next/previous reachable degree, ↑↓ the same degree a period away. */
-    private fun adjustTuned(c: Cell, dx: Int, dy: Int, map: org.thortracker.model.TuningMap) {
+    private fun adjustTuned(c: Cell, dx: Int, dy: Int, map: TuningMap) {
         val ch = state.channel
-        val ins = if (c.note < 0 || c.instrument == 0) pen(kindOf(ch)) else c.instrument
+        val ins = if (c.note < 0 || c.instrument == 0) pen(bankOf(ch)) else c.instrument
         if (map.pitches.isEmpty()) { session.note("No degree of ${map.tuning.name} is reachable within ${map.tuning.tolerance}¢"); return }
         val target = if (c.note < 0) entryPitch(ch, map) else {
-            val detune = HugeRules.detuneOf(c) ?: 0
+            val detune = system.fine.of(c) ?: 0
             val here = map.index(c.note, detune).takeIf { it >= 0 } ?: map.nearest(c.note, detune)
             val cur = map.pitches[here]
             if (dy != 0) {
@@ -459,7 +466,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             } else if (map.index(c.note, detune) < 0) cur // first edit of an out-of-tuning note lands on the tuning
             else map.pitches.getOrNull(here + dx)
         } ?: run {
-            session.note("No ${if (dx > 0 || dy > 0) "higher" else "lower"} reachable degree of ${map.tuning.name} within C-3..B-8")
+            session.note("No ${if (dx > 0 || dy > 0) "higher" else "lower"} reachable degree of ${map.tuning.name} within ${rangeText()}")
             return
         }
         writeTuned(c, target, ins, map)
@@ -518,35 +525,35 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun patternEditPress() {
         val c = cell
         val ch = state.channel
-        val kind = kindOf(ch)
+        val bank = bankOf(ch)
         when (state.field) {
             0 -> if (c.note < 0) {
                 val map = tuningFor(ch)
                 if (map != null) {
                     val pitch = entryPitch(ch, map) ?: run { session.note("No degree of ${map.tuning.name} is reachable"); return }
-                    if (writeTuned(c, pitch, pen(kind), map)) editInserted = true
+                    if (writeTuned(c, pitch, pen(bank), map)) editInserted = true
                 } else {
                     val note = entryNote(ch)
-                    write(c.copy(note = note, instrument = pen(kind)))
+                    write(c.copy(note = note, instrument = pen(bank)))
                     editInserted = true
-                    startAudition(ch, note, pen(kind))
+                    startAudition(ch, note, pen(bank))
                 }
             } else {
                 lastNote[ch] = c.note
-                if (c.instrument > 0) { setPen(kind, c.instrument); state.instrument = c.instrument }
-                val detune = if (tuningFor(ch) != null) HugeRules.detuneOf(c) ?: 0 else 0
-                startAudition(ch, c.note, if (c.instrument > 0) c.instrument else pen(kind), detune)
+                if (c.instrument > 0) { setPen(bank, c.instrument); state.instrument = c.instrument }
+                val detune = if (tuningFor(ch) != null) system.fine.of(c) ?: 0 else 0
+                startAudition(ch, c.note, if (c.instrument > 0) c.instrument else pen(bank), detune)
             }
             1 -> when {
                 c.note < 0 -> session.note("Sounds start with a note: enter a note on this row first")
-                c.instrument == 0 -> { write(c.copy(instrument = pen(kind))); editInserted = true }
-                else -> { setPen(kind, c.instrument); state.instrument = c.instrument }
+                c.instrument == 0 -> { write(c.copy(instrument = pen(bank))); editInserted = true }
+                else -> { setPen(bank, c.instrument); state.instrument = c.instrument }
             }
             else -> when {
-                c.note == Cell.CUT -> session.note(OFF_TAKES_EFFECT_SLOT)
+                offTakesSlot(c) -> session.note(offSlotTaken())
                 !c.hasEffect && !chosenArpeggio() -> {
                     val (e, p) = lastEffect[ch] ?: return
-                    if (e == HugeRules.FX_ARPEGGIO && p == 0) state.chosenArpeggio = cursorKey() // 000: show the chosen arpeggio, nothing to write
+                    if (e == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey() // 000: show the chosen arpeggio, nothing to write
                     else { write(c.copy(effect = e, param = p)); editInserted = true }
                 }
                 else -> lastEffect[ch] = c.effect to c.param
@@ -555,58 +562,63 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         publishPattern()
     }
 
+    /** [c] is an OFF that is written as an effect, so its row has no effect slot to edit. */
+    private fun offTakesSlot(c: Cell): Boolean = c.note == Cell.CUT && system.offEffect != null
+
+    private fun offSlotTaken() = "An OFF row has no effect slot left: OFF is exported as ${system.offEffect}"
+
     private fun write(c: Cell) {
         session.setCell(pattern, state.channel, state.row, c)
         problemNote()
     }
 
     private fun problemNote() {
-        val problem = Songs.cellProblem(song, state.channel, cell)
+        val problem = system.cellProblem(song, state.channel, cell)
         if (problem != null) session.note(problem)
     }
 
     private fun adjustCell(dx: Int, dy: Int) {
         val c = cell
         val ch = state.channel
-        val kind = kindOf(ch)
+        val bank = bankOf(ch)
         when (state.field) {
             0 -> {
                 tuningFor(ch)?.let { adjustTuned(c, dx, dy, it); publishPattern(); return }
-                // Chromatic: semitones and octaves, clamped to C-3..B-8. With a pattern scale (Pulse/Wave), every
+                // Chromatic: semitones and octaves, clamped to the note range. With a pattern scale (tonal channels), every
                 // edit lands on a scale note: steps go to the next one, octaves are exact from a scale note and
                 // otherwise take the first scale note past the octave target; no edit when none is in range.
                 // Setting a scale never touches notes; only edited notes move onto it.
                 val scale = noteScale(ch)
                 val note = when {
                     c.note < 0 -> entryNote(ch)
-                    scale.isChromatic -> (c.note + dx + 12 * dy).coerceIn(0, Songs.NOTE_MAX)
-                    dy != 0 -> scale.octave(c.note, dy) ?: run {
-                        session.note("No ${scale.label} note an octave ${if (dy > 0) "above" else "below"} ${Songs.noteName(c.note)} within C-3..B-8")
+                    scale.isChromatic -> (c.note + dx + 12 * dy).coerceIn(system.noteRange)
+                    dy != 0 -> scale.octave(c.note, dy, system.noteRange) ?: run {
+                        session.note("No ${scale.label} note an octave ${if (dy > 0) "above" else "below"} ${Songs.noteName(c.note)} within ${rangeText()}")
                         return
                     }
-                    else -> scale.step(c.note, dx) ?: run {
-                        session.note("No ${if (dx > 0) "higher" else "lower"} ${scale.label} note than ${Songs.noteName(c.note)} within C-3..B-8")
+                    else -> scale.step(c.note, dx, system.noteRange) ?: run {
+                        session.note("No ${if (dx > 0) "higher" else "lower"} ${scale.label} note than ${Songs.noteName(c.note)} within ${rangeText()}")
                         return
                     }
                 }
-                val ins = if (c.note < 0 || c.instrument == 0) pen(kind) else c.instrument
+                val ins = if (c.note < 0 || c.instrument == 0) pen(bank) else c.instrument
                 write(c.copy(note = note, instrument = ins))
                 lastNote[ch] = note
                 startAudition(ch, note, ins)
             }
             1 -> {
                 if (c.note < 0) { session.note("Sounds start with a note: enter a note on this row first"); return }
-                val ins = ((if (c.instrument == 0) pen(kind) else c.instrument) + dx + 4 * dy).coerceIn(1, EditorSession.BANK_SIZE)
+                val ins = ((if (c.instrument == 0) pen(bank) else c.instrument) + dx + 4 * dy).coerceIn(1, slots(bank))
                 write(c.copy(instrument = ins))
-                setPen(kind, ins)
+                setPen(bank, ins)
                 state.instrument = ins
                 startAudition(ch, c.note, ins)
             }
             2 -> {
-                if (c.note == Cell.CUT) { session.note(OFF_TAKES_EFFECT_SLOT); return }
+                if (offTakesSlot(c)) { session.note(offSlotTaken()); return }
                 // Picker positions: no effect, then the channel's usable codes. A stored 000 counts as "no effect"
                 // unless effect 0 was picked here; picking 0 with value 00 writes nothing until a value is set.
-                val positions = listOf(NO_EFFECT) + Songs.effectsFor(song, ch).map { it.code }
+                val positions = listOf(NO_EFFECT) + system.effectsFor(ch).map { it.code }
                 val current = if (!c.hasEffect && !chosenArpeggio()) NO_EFFECT else c.effect
                 val idx = positions.indexOf(current).coerceAtLeast(0)
                 val next = positions[(idx + (if (dx != 0) dx else dy)).mod(positions.size)]
@@ -617,16 +629,16 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 } else {
                     write(c.copy(effect = next))
                     lastEffect[ch] = next to c.param
-                    state.chosenArpeggio = if (next == HugeRules.FX_ARPEGGIO && c.param == 0) cursorKey() else -1
+                    state.chosenArpeggio = if (next == ZERO_EFFECT && c.param == 0) cursorKey() else -1
                 }
             }
             else -> {
-                if (c.note == Cell.CUT) { session.note(OFF_TAKES_EFFECT_SLOT); return }
+                if (offTakesSlot(c)) { session.note(offSlotTaken()); return }
                 val p = (c.param + dx + 16 * dy).coerceIn(0, 255)
                 write(c.copy(param = p))
                 lastEffect[ch] = c.effect to p
                 // Back to 00 on effect 0: keep showing the arpeggio being edited instead of a blank cell.
-                if (c.effect == HugeRules.FX_ARPEGGIO && p == 0) state.chosenArpeggio = cursorKey()
+                if (c.effect == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey()
             }
         }
         publishPattern()
@@ -643,8 +655,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             0 -> when {
                 c.note >= 0 -> write(c.copy(note = Cell.EMPTY, instrument = 0))
                 c.note == Cell.CUT -> write(c.copy(note = Cell.EMPTY))
-                c.hasEffect -> session.note("Clear this row's effect first: OFF uses the effect slot (as E00)")
-                else -> { write(Cell(note = Cell.CUT)); session.note(OFF_EXPLAINED) }
+                c.hasEffect && system.offEffect != null -> session.note("Clear this row's effect first: OFF uses the effect slot (as ${system.offEffect})")
+                else -> { write(Cell(note = Cell.CUT)); session.note(system.help.offEntered) }
             }
             1 -> write(c.copy(instrument = 0))
             else -> { write(c.copy(effect = 0, param = 0)); state.chosenArpeggio = -1 }
@@ -656,7 +668,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 state.channel = (state.channel + if (a == Action.NEXT_CHANNEL) 1 else -1).coerceIn(0, song.channelCount() - 1)
                 syncLock()
-                state.instrument = pen(kindOf(state.channel))
+                state.instrument = pen(bankOf(state.channel))
                 publishPattern()
             }
             Action.COPY -> session.copyBlock(pattern, block())
@@ -749,7 +761,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         )
     }
 
-    /** Nudges the pattern's played Pulse/Wave notes onto the nearest scale notes, as one undo step. */
+    /** Nudges the pattern's played notes on tonal channels onto the nearest scale notes, as one undo step. */
     fun fitPatternToScale() {
         state.scaleField = SCALE_FIT_FIELD
         val s = patternScale
@@ -826,8 +838,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun songAdjust(dx: Int, dy: Int) {
         val s = song
         when (state.songItem) {
-            0 -> session.setTitle(SoundParams.editName(s.title, state.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
-            1 -> session.setArtist(SoundParams.editName(s.artist, state.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
+            0 -> session.setTitle(NameEdit.edit(s.title, state.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
+            1 -> session.setArtist(NameEdit.edit(s.artist, state.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
             2 -> session.setTicksPerRow(s.ticksPerRow + dx + 4 * dy)
             3 -> session.setLoopOrder(s.loopOrder + dx + 8 * dy)
             ViewState.SONG_NEW_SCALE_ITEM -> {
@@ -877,8 +889,6 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         }
     }
 
-    private fun deleteChar(text: String, pos: Int) = if (pos < text.length) text.removeRange(pos, pos + 1) else text
-
     private fun songCommand(a: Action): Boolean {
         val o = songOrder
         when (a) {
@@ -896,208 +906,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return true
     }
 
-    // ---- instruments -------------------------------------------------------------------------------
-
-    val soundParams: List<SoundParam> get() = SoundParams.forKind(state.bankKind)
-    val sound: Instrument? get() = song.instrument(state.bankKind, state.instrument)
-
-    fun publishSound() {
-        val kind = state.bankKind
-        syncLock()
-        val wave = if (kind == InstrumentKind.WAVE) sound?.wave ?: session.selection.wave else session.selection.wave
-        // Sound view suggests where the sound is heard: its waveform for wave sounds, else the keyboard.
-        val context = if (kind == InstrumentKind.WAVE) ViewKind.WAVE else ViewKind.KEYBOARD
-        session.select(session.selection.copy(bank = kind, instrument = state.instrument, wave = wave, context = context))
-    }
-
-    private fun soundDirection(dx: Int, dy: Int) {
-        val fields = 2 + soundParams.size
-        when {
-            editHeld -> { editUsed = true; soundAdjust(dx, dy) }
-            dy != 0 -> { state.instField = (state.instField - dy).coerceIn(0, fields - 1); state.textPos = 0 }
-            state.instField == 1 -> state.textPos = (state.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
-            else -> { state.instrument = (state.instrument + dx).coerceIn(1, EditorSession.BANK_SIZE); publishSound() }
-        }
-    }
-
-    private fun soundAdjust(dx: Int, dy: Int) {
-        val kind = state.bankKind
-        when (state.instField) {
-            0 -> {
-                state.instrument = (state.instrument + dx).coerceIn(1, EditorSession.BANK_SIZE)
-                if (dy != 0) {
-                    state.bank = (state.bank - dy).mod(InstrumentKind.entries.size)
-                    state.instField = 0
-                }
-                publishSound()
-            }
-            1 -> session.editInstrument(kind, state.instrument, "Rename sound") {
-                it.copy(name = SoundParams.editName(it.name, state.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
-            }
-            else -> {
-                val p = soundParams.getOrNull(state.instField - 2) ?: return
-                session.editInstrument(kind, state.instrument, "Set ${p.label.lowercase()}") { p.adjust(it, dx + p.coarse * dy) }
-                if (p.label == "Wave") publishSound()
-            }
-        }
-    }
-
-    private fun soundActivate() {
-        when (state.instField) {
-            0 -> { publishSound(); session.note("Sound ${EditorSession.hex2(state.instrument)} selected for entry") }
-            1 -> Unit
-            else -> {
-                val p = soundParams.getOrNull(state.instField - 2) ?: return
-                if (p.max - p.min == 1) {
-                    session.editInstrument(state.bankKind, state.instrument, "Toggle ${p.label.lowercase()}") {
-                        p.set(it, if (p.get(it) == p.min) p.max else p.min)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun soundClear() {
-        val kind = state.bankKind
-        when (state.instField) {
-            0 -> session.setInstrument(kind, state.instrument, defaultSound(kind, state.instrument))
-            1 -> session.editInstrument(kind, state.instrument, "Rename sound") { it.copy(name = deleteChar(it.name, state.textPos)) }
-            else -> {
-                val p = soundParams.getOrNull(state.instField - 2) ?: return
-                val def = p.get(defaultSound(kind, state.instrument))
-                session.editInstrument(kind, state.instrument, "Reset ${p.label.lowercase()}") { p.set(it, def) }
-            }
-        }
-    }
-
-    private fun soundCommand(a: Action): Boolean {
-        val kind = state.bankKind
-        when (a) {
-            Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                state.bank = (state.bank + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(InstrumentKind.entries.size)
-                state.instField = state.instField.coerceAtMost(1 + soundParams.size)
-                publishSound()
-            }
-            Action.COPY -> session.copyInstrument(kind, state.instrument)
-            Action.PASTE -> session.pasteInstrument(kind, state.instrument)
-            Action.CUT -> {
-                session.copyInstrument(kind, state.instrument)
-                session.setInstrument(kind, state.instrument, defaultSound(kind, state.instrument))
-            }
-            Action.DUPLICATE -> {
-                if (state.instrument >= EditorSession.BANK_SIZE) { session.note("Sound ${EditorSession.hex2(state.instrument)} is the last slot"); return true }
-                val src = sound ?: return true
-                session.setInstrument(kind, state.instrument + 1, src.copy(name = (src.name + "+").take(EditorSession.MAX_NAME)))
-                state.instrument++
-                publishSound()
-            }
-            else -> return false
-        }
-        return true
-    }
-
-    private fun defaultSound(kind: InstrumentKind, slot: Int) = Instrument(name = "Sound ${EditorSession.hex2(slot)}", kind = kind)
-
-    // ---- waves -------------------------------------------------------------------------------------
-
-    /** Wave view suggests the sound view showing the wave sound that plays this wave. */
-    fun publishWave() {
-        syncLock()
-        val slot = soundUsingWave(state.wave)
-        val sel = session.selection
-        session.select(
-            if (slot > 0) sel.copy(wave = state.wave, bank = InstrumentKind.WAVE, instrument = slot, context = ViewKind.INSTRUMENT)
-            else sel.copy(wave = state.wave, context = ViewKind.INSTRUMENT),
-        )
-    }
-
-    /** Wave sound slot that plays [wave]: the selected wave sound if it does, else the first, else 0. */
-    fun soundUsingWave(wave: Int): Int {
-        val sel = session.selection
-        if (sel.bank == InstrumentKind.WAVE && song.instrument(InstrumentKind.WAVE, sel.instrument)?.wave == wave) return sel.instrument
-        val idx = song.waveInstruments.indexOfFirst { it.wave == wave }
-        return if (idx < 0) 0 else idx + 1
-    }
-
-    /** Wave sound the "Use in sound" tool assigns to. */
-    fun waveTargetSound(): Int {
-        val sel = session.selection
-        return if (sel.bank == InstrumentKind.WAVE) sel.instrument else pen(InstrumentKind.WAVE)
-    }
-
-    private fun paintSample() {
-        session.setWaveSample(state.wave, state.waveCol, state.waveLevel)
-    }
-
-    private fun waveDirection(dx: Int, dy: Int) {
-        if (state.waveRow == 0) {
-            when {
-                dy < 0 -> state.waveRow = 1
-                dx != 0 -> state.waveCol = (state.waveCol + dx).coerceIn(0, WAVE_TOOLS.size - 1)
-            }
-            return
-        }
-        when {
-            clearHeld -> { clearUsed = true; state.waveCol = (state.waveCol + 8 * dx).coerceIn(0, WaveShapes.SAMPLES - 1) }
-            editHeld -> {
-                editUsed = true
-                state.waveCol = (state.waveCol + dx).coerceIn(0, WaveShapes.SAMPLES - 1)
-                state.waveLevel = (state.waveLevel + dy).coerceIn(0, WaveShapes.MAX)
-                paintSample()
-            }
-            dy > 0 && state.waveLevel == WaveShapes.MAX -> { state.waveRow = 0; state.waveCol = state.waveCol.coerceIn(0, WAVE_TOOLS.size - 1) }
-            else -> {
-                state.waveCol = (state.waveCol + dx).coerceIn(0, WaveShapes.SAMPLES - 1)
-                state.waveLevel = (state.waveLevel + dy).coerceIn(0, WaveShapes.MAX)
-            }
-        }
-    }
-
-    fun applyTool(tool: Int) {
-        val w = song.waves[state.wave]
-        when (tool) {
-            0 -> session.setWave(state.wave, WaveShapes.sine(), "Sine wave")
-            1 -> session.setWave(state.wave, WaveShapes.triangle(), "Triangle wave")
-            2 -> session.setWave(state.wave, WaveShapes.saw(), "Saw wave")
-            3 -> session.setWave(state.wave, WaveShapes.square(), "Square wave")
-            4 -> session.setWave(state.wave, WaveShapes.invert(w), "Invert wave")
-            5 -> session.setWave(state.wave, WaveShapes.rotate(w, -1), "Shift wave")
-            6 -> session.setWave(state.wave, WaveShapes.rotate(w, 1), "Shift wave")
-            7 -> session.setWave(state.wave, WaveShapes.smooth(w), "Smooth wave")
-            8 -> {
-                val slot = waveTargetSound()
-                session.editInstrument(InstrumentKind.WAVE, slot, "Assign wave") { it.copy(wave = state.wave) }
-                session.note("Sound ${EditorSession.hex2(slot)} now plays wave ${EditorSession.hex1(state.wave)}")
-            }
-        }
-    }
-
-    private fun waveCommand(a: Action): Boolean {
-        when (a) {
-            Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                state.wave = (state.wave + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(song.waves.size)
-                publishWave()
-            }
-            Action.COPY -> session.copyWave(state.wave)
-            Action.PASTE -> session.pasteWave(state.wave)
-            Action.CUT -> { session.copyWave(state.wave); session.setWave(state.wave, List(WaveShapes.SAMPLES) { 0 }, "Cut wave") }
-            Action.DUPLICATE -> {
-                if (state.wave >= song.waves.size - 1) { session.note("Wave ${EditorSession.hex1(state.wave)} is the last wave"); return true }
-                session.setWave(state.wave + 1, song.waves[state.wave], "Duplicate wave")
-                state.wave++
-                publishWave()
-            }
-            else -> return false
-        }
-        return true
-    }
-
     // ---- keyboard ----------------------------------------------------------------------------------
 
     /** Note of keyboard [key] at the current octave; may exceed the range, see [keyPlayable]. */
     fun keyNote(key: Int): Int = (state.octave - ViewState.MIN_OCTAVE) * 12 + key
 
-    fun keyPlayable(key: Int): Boolean = keyNote(key) in 0..Songs.NOTE_MAX
+    fun keyPlayable(key: Int): Boolean = keyNote(key) in system.noteRange
 
     fun keyboardSound(): Int = state.instrument
 
@@ -1149,7 +963,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (holding) return false // applied by the host once the held control is released
         val sel = session.selection
         setPen(sel.bank, sel.instrument)
-        if (state.kind == ViewKind.PATTERN && kindOf(state.channel) == sel.bank) state.instrument = sel.instrument
+        if (state.kind == ViewKind.PATTERN && bankOf(state.channel) == sel.bank) state.instrument = sel.instrument
         return Follow.apply(state, session)
     }
 
@@ -1172,21 +986,20 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     fun setKeyboardSound(slot: Int) {
-        state.instrument = slot.coerceIn(1, EditorSession.BANK_SIZE)
-        setPen(kindOf(state.channel), state.instrument)
+        state.instrument = slot.coerceIn(1, slots(bankOf(state.channel)))
+        setPen(bankOf(state.channel), state.instrument)
         publishKeyboard()
     }
 
     fun setKeyboardChannel(channel: Int) {
         state.channel = channel.coerceIn(0, song.channelCount() - 1)
         syncLock()
-        state.instrument = pen(kindOf(state.channel))
+        state.instrument = pen(bankOf(state.channel))
         publishKeyboard()
     }
 
     private fun publishKeyboard() {
-        val kind = kindOf(state.channel)
-        session.select(session.selection.copy(channel = state.channel, bank = kind, instrument = state.instrument, context = ViewKind.PATTERN))
+        session.select(session.selection.copy(channel = state.channel, bank = bankOf(state.channel), instrument = state.instrument, context = ViewKind.PATTERN))
     }
 
     private fun moveWritePosition(rows: Int) {
@@ -1201,7 +1014,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Plays [key]; in write mode also writes it at the shared pattern cursor and advances by the step. */
     fun keyDown(key: Int) {
         state.kbKey = key.coerceIn(0, KEYS - 1)
-        if (!keyPlayable(state.kbKey)) { session.note("Above ${Songs.noteName(Songs.NOTE_MAX)}, the highest note"); return }
+        if (!keyPlayable(state.kbKey)) { session.note("Above ${Songs.noteName(system.noteRange.last)}, the highest note"); return }
         val note = keyNote(state.kbKey)
         keyHeld = true
         playKey(note)
@@ -1215,7 +1028,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     /** A key's pitch on the keyboard channel: in a tuned song, the nearest reachable degree (note, bend). */
-    private fun keyPitch(note: Int): org.thortracker.model.TunedPitch? {
+    private fun keyPitch(note: Int): TunedPitch? {
         val map = tuningFor(state.channel) ?: return null
         return map.nearest(note, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
     }
@@ -1238,16 +1051,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val row = sel.row.coerceIn(0, song.rowCount(p) - 1)
         val old = song.cellAt(p, state.channel, row)
         val cell = if (note == Cell.CUT) {
-            if (old.hasEffect) { session.note("That row has an effect; clear it first: OFF uses the effect slot (as E00)"); return }
+            val off = system.offEffect
+            if (off != null && old.hasEffect) { session.note("That row has an effect; clear it first: OFF uses the effect slot (as $off)"); return }
             Cell(note = Cell.CUT)
         } else {
             val pitch = keyPitch(note)
             if (pitch == null) old.copy(note = note, instrument = keyboardSound())
-            else EditorSession.tuned(old.copy(instrument = keyboardSound()), pitch)?.also {
+            else system.fine.write(old.copy(instrument = keyboardSound()), pitch.note, pitch.detune)?.also {
                 state.entry.tuned[state.channel] = pitch.note to pitch.detune
                 session.note("${session.tuningMap?.tuning?.name}: wrote ${session.tuningMap?.label(pitch)} (${NumberText.fixed(pitch.error, 1, plus = true)}¢)")
             } ?: run {
-                session.note("That row's effect uses the slot tuned notes need for 40y; clear it first")
+                session.note("That row's effect uses the slot tuned notes need for ${system.fine.name}; clear it first")
                 return
             }
         }
@@ -1285,7 +1099,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val guide = sketchGuide
         val chord = guide.chords.getOrNull(state.sketchChord) ?: return emptyList()
         val base = (state.octave - ViewState.MIN_OCTAVE) * 12 + guide.scale.root
-        val shift = if (base + chord.intervals.last() > Songs.NOTE_MAX) 12 else 0
+        val shift = if (base + chord.intervals.last() > system.noteRange.last) 12 else 0
         return chord.intervals.map { base + it - shift }
     }
 
@@ -1303,7 +1117,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             0 -> state.sketchScale = scale.copy(root = (scale.root + delta).mod(12))
             1 -> state.sketchScale = scale.copy(kind = ScaleKind.entries[(scale.kind.ordinal + delta).mod(ScaleKind.entries.size)])
             2 -> sketchChannel(delta)
-            3 -> state.instrument = (state.instrument + delta).coerceIn(1, EditorSession.BANK_SIZE)
+            3 -> state.instrument = (state.instrument + delta).coerceIn(1, slots(bankOf(state.channel)))
             4 -> state.octave = (state.octave + delta).coerceIn(ViewState.MIN_OCTAVE, ViewState.KEYBOARD_MAX_OCTAVE)
             SKETCH_CHORDS_FIELD -> {
                 state.sketchCircle = !state.sketchCircle
@@ -1411,11 +1225,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     private fun sketchChannel(delta: Int) {
-        val channels = (0 until song.channelCount()).filter { kindOf(it) != InstrumentKind.NOISE }
+        val channels = (0 until song.channelCount()).filter { tonal(it) }
         if (channels.isEmpty()) return
         val index = channels.indexOf(state.channel).coerceAtLeast(0)
         state.channel = channels[(index + delta).coerceIn(0, channels.lastIndex)]
-        state.instrument = pen(kindOf(state.channel))
+        state.instrument = pen(bankOf(state.channel))
         syncLock()
     }
 
@@ -1451,7 +1265,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     fun sketchCircleTriad(): List<Int> {
         val scale = sketchCircleScale()
         val base = (state.octave - ViewState.MIN_OCTAVE) * 12 + scale.root
-        val shift = if (base + 7 > Songs.NOTE_MAX) 12 else 0
+        val shift = if (base + 7 > system.noteRange.last) 12 else 0
         return listOf(0, if (state.sketchCircleMinor) 3 else 4, 7).map { base + it - shift }
     }
 
@@ -1482,8 +1296,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** The current phrase, generated from the seed on first use. */
     val sketchPhrase: Phrase get() = state.sketchPhrase ?: sketchGenerate().also { state.sketchPhrase = it }
 
-    /** One pattern row at the song tempo: ticks per row at the GB vblank rate. */
-    fun sketchStepMillis(): Long = (song.ticksPerRow * 1000.0 / TICK_HZ).roundToLong()
+    /** One pattern row at the song tempo: ticks per row at the system's tick rate. */
+    fun sketchStepMillis(): Long = (song.ticksPerRow * 1000.0 / system.tickHz).roundToLong()
 
     /** The chord whose tones generated phrases land on at strong rows: the selected triad while Chord tones is on. */
     fun sketchPhraseChord(): TonalGuide.Chord? =
@@ -1491,7 +1305,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun sketchGenerate(): Phrase = Phrase.generate(
         sketchGuide, (state.octave - ViewState.MIN_OCTAVE) * 12 + sketchGuide.scale.root, sketchPhraseChord(),
-        state.sketchPhraseSettings, Random(state.sketchPhraseSeed),
+        state.sketchPhraseSettings, Random(state.sketchPhraseSeed), system.noteRange,
     )
 
     fun sketchSetPhraseField(index: Int) {
@@ -1528,7 +1342,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 val keepRhythm = state.sketchKeepRhythm
                 val keepPitches = state.sketchKeepPitches && !keepRhythm
                 sketchNewPhrase(Phrase.vary(sketchPhrase, sketchGuide, sketchPhraseChord(), state.sketchPhraseSettings,
-                    Random(state.sketchPhraseSeed), keepRhythm, keepPitches))
+                    Random(state.sketchPhraseSeed), keepRhythm, keepPitches, system.noteRange))
                 session.note(when {
                     keepRhythm -> "Variation: new pitches on the same rhythm"
                     keepPitches -> "Variation: the same notes on a new rhythm"
@@ -1561,7 +1375,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             return
         }
         val length = cells.size.coerceIn(PhraseSettings.MIN_LENGTH, PhraseSettings.MAX_LENGTH)
-        val phrase = Phrase.fromCells(cells, length)
+        val phrase = Phrase.fromCells(cells, length, system.noteRange)
         if (phrase.onsets.isEmpty()) {
             session.note("The first copied channel has no notes in its first $length rows")
             return
@@ -1588,7 +1402,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val skipped = span - written
         session.select(sel.copy(row = sel.row + span, channel = ch, context = ViewKind.PATTERN))
         session.note(buildString {
-            append("Inserted phrase: ${Songs.channelNames(song)[ch]}, pattern ${EditorSession.hex2(pattern)} rows ")
+            append("Inserted phrase: ${system.channels[ch].name}, pattern ${EditorSession.hex2(pattern)} rows ")
             append("${EditorSession.hex2(sel.row)}-${EditorSession.hex2(sel.row + span - 1)}")
             if (span < phrase.length) append(", cut at the pattern end")
             if (skipped > 0) append("; $skipped note${if (skipped == 1) "" else "s"} skipped: the row's effect slot is needed for the tuning bend")
@@ -1672,30 +1486,30 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return if (state.entryMode) "Write mode: $edit writes notes at the pattern cursor" else "Listen mode: $edit only plays"
     }
 
-    private fun k(a: Action): String = keys.label(a, state.kind)
-    private fun lr(): String = keys.pair(Action.LEFT, Action.RIGHT, state.kind)
-    private fun ud(): String = keys.pair(Action.UP, Action.DOWN, state.kind)
-    private fun channels(): String = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL, state.kind)
-    private fun copyPaste(): String = keys.pair(Action.COPY, Action.PASTE, state.kind)
-    private fun octaves(): String = keys.pair(Action.OCTAVE_DOWN, Action.OCTAVE_UP, state.kind)
-    private fun editLr(): String = keys.held(Action.EDIT, lr())
-    private fun editUd(): String = keys.held(Action.EDIT, ud())
+    internal fun k(a: Action): String = keys.label(a, state.kind)
+    internal fun lr(): String = keys.pair(Action.LEFT, Action.RIGHT, state.kind)
+    internal fun ud(): String = keys.pair(Action.UP, Action.DOWN, state.kind)
+    internal fun channels(): String = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL, state.kind)
+    internal fun copyPaste(): String = keys.pair(Action.COPY, Action.PASTE, state.kind)
+    internal fun octaves(): String = keys.pair(Action.OCTAVE_DOWN, Action.OCTAVE_UP, state.kind)
+    internal fun editLr(): String = keys.held(Action.EDIT, lr())
+    internal fun editUd(): String = keys.held(Action.EDIT, ud())
 
     /** Contextual hints for the current view, field and held buttons. Key names follow the current [keys]. */
     fun hints(): List<Hint> {
         normalise()
         val h = ArrayList<Hint>()
+        systemView()?.let { it.hints(this, h); return h }
         when (state.kind) {
             ViewKind.PATTERN -> patternHints(h)
             ViewKind.SONG -> songHints(h)
-            ViewKind.INSTRUMENT -> soundHints(h)
-            ViewKind.WAVE -> waveHints(h)
             ViewKind.KEYBOARD -> keyboardHints(h)
             ViewKind.SKETCH -> sketchHints(h)
             ViewKind.HELP -> {
                 h += Hint(ud(), "Scroll")
                 h += Hint(lr(), "Page: ${HELP_PAGES[state.helpPage]}")
             }
+            else -> Unit
         }
         return h
     }
@@ -1721,7 +1535,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 0 -> {
                     val scale = noteScale(ch)
                     h += Hint(editLr(), when {
-                        kindOf(ch) == InstrumentKind.NOISE -> "Noise pitch (no scale)"
+                        !tonal(ch) -> "${system.channels[ch].name} pitch (no scale)"
                         tuningFor(ch) != null -> "${tuningFor(ch)!!.tuning.name} degree"
                         scale.isChromatic -> "Semitone"
                         else -> "${scale.label} note"
@@ -1737,12 +1551,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             else -> {
                 val tap = when (state.field) {
                     0 -> if (c.note < 0) "Write note ${Songs.noteName(entryNote(ch))}" else "Hold to change note"
-                    1 -> if (c.note < 0) "Needs a note" else if (c.instrument == 0) "Write sound ${EditorSession.hex2(pen(kindOf(ch)))}" else "Hold to change sound"
+                    1 -> if (c.note < 0) "Needs a note" else if (c.instrument == 0) "Write sound ${EditorSession.hex2(pen(bankOf(ch)))}" else "Hold to change sound"
                     else -> when {
                         c.hasEffect -> "Hold to change effect"
                         chosenArpeggio() -> if (state.field == 2) "Hold to change effect" else "Hold to set arpeggio +x +y"
                         else -> lastEffect[ch]?.let { (e, p) ->
-                            if (e == HugeRules.FX_ARPEGGIO && p == 0) "Pick arpeggio 0"
+                            if (e == ZERO_EFFECT && p == 0) "Pick ${system.effects.first { it.code == ZERO_EFFECT }.name.lowercase()} 0"
                             else "Write effect ${EditorSession.hex1(e)}${EditorSession.hex2(p)}"
                         } ?: "Hold to pick effect"
                     }
@@ -1778,38 +1592,6 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         }
     }
 
-    private fun soundHints(h: MutableList<Hint>) {
-        when (state.instField) {
-            0 -> { h += Hint(lr(), "Sound slot"); h += Hint(editUd(), "Bank"); h += Hint(channels(), "Bank"); h += Hint(k(Action.CLEAR), "Reset sound") }
-            1 -> { h += Hint(lr(), "Letter position"); h += Hint(editLr(), "Change letter"); h += Hint(k(Action.CLEAR), "Delete letter") }
-            else -> {
-                val p = soundParams.getOrNull(state.instField - 2)
-                if (p != null) h += Hint(editLr(), p.help)
-                h += Hint(lr(), "Sound slot")
-                h += Hint(k(Action.CLEAR), "Default value")
-            }
-        }
-        h += Hint(k(Action.AUDITION), "Listen")
-        h += Hint(octaves(), "Listen at ${Songs.noteName(defaultNote())}")
-        h += Hint(copyPaste(), "Copy/paste sound")
-    }
-
-    private fun waveHints(h: MutableList<Hint>) {
-        if (state.waveRow == 0) {
-            h += Hint(lr(), "Tool")
-            h += Hint(k(Action.EDIT), if (state.waveCol == 8) "Wave sound ${EditorSession.hex2(waveTargetSound())} plays this wave" else WAVE_TOOLS[state.waveCol])
-            h += Hint(k(Action.DOWN), "Back to drawing")
-        } else {
-            h += Hint(keys.dpad(), "Move pen")
-            h += Hint(k(Action.EDIT), "Hold: draw at pen height")
-            h += Hint(k(Action.CLEAR), "Sample to 0")
-            h += Hint("${k(Action.UP)} at top", "Tools")
-        }
-        h += Hint(channels(), "Wave")
-        h += Hint(k(Action.AUDITION), "Listen")
-        h += Hint(octaves(), "Listen at ${Songs.noteName(defaultNote())}")
-    }
-
     private fun keyboardHints(h: MutableList<Hint>) {
         if (state.kbRow == 0) {
             h += Hint(lr(), "Setting")
@@ -1833,8 +1615,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         const val KEYS = 25
         /** Effect picker position before effect 0: the row has no effect (000). */
         private const val NO_EFFECT = -1
-        private const val OFF_TAKES_EFFECT_SLOT = "An OFF row has no effect slot left: OFF is exported as E00"
-        const val OFF_EXPLAINED = "OFF: instant silence (E00), no release tail; for a fade use a sound's falling envelope"
+        /** Effect number 0: with value 00 it is stored exactly like "no effect" (000), so choosing it is shown, not written. */
+        private const val ZERO_EFFECT = 0
+
+        /** [text] without the character at [pos]. */
+        internal fun deleteChar(text: String, pos: Int) = if (pos < text.length) text.removeRange(pos, pos + 1) else text
 
         /** Identifies one pattern cell for view-local markers: pattern < 256, channel < 4, row < 64. */
         fun cellKey(pattern: Int, channel: Int, row: Int): Int = (pattern shl 8) or (channel shl 6) or row
@@ -1853,7 +1638,6 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             "Loop the song back to this order",
             "Park / unpark: keep this order here but skip it in song playback and export",
         )
-        val WAVE_TOOLS = listOf("Sine", "Triangle", "Saw", "Square", "Invert", "Shift left", "Shift right", "Smooth", "Use in sound")
         val STRIP_FIELDS = listOf("Mode", "Channel", "Sound", "Octave", "Step")
         const val SKETCH_ROWS = 4
         private const val SKETCH_SETTINGS = 0
@@ -1876,8 +1660,6 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         const val PHRASE_KEEP_PITCHES = 8
         const val PHRASE_FROM_COPIED = 9
         const val PHRASE_INSERT = 10
-        /** hUGEDriver ticks once per GB vblank. */
-        const val TICK_HZ = 59.73
 
         /** Major-key root (pitch class) at circle-of-fifths [position] (0 = C, 1 = G, ... 11 = F). */
         fun circleRoot(position: Int): Int = (position * 7).mod(12)

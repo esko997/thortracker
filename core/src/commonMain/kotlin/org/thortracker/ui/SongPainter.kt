@@ -5,6 +5,7 @@ import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewState
 import org.thortracker.model.Songs
+import org.thortracker.system.system
 
 /**
  * Song sheet: title, artist, tempo and loop settings above the order list. Each order row carries a
@@ -35,7 +36,7 @@ internal class SongPainter(v: PaneView) : Painter(v) {
             "Artist" to s.artist,
             "Ticks per row" to "${s.ticksPerRow}   about ${bpm(s.ticksPerRow)} BPM at 4 rows per beat",
             "Loop to" to "Order ${hex2(s.loopOrder)}" + if (s.loopOrder in s.parkedOrders) {
-                val played = org.thortracker.model.HugeRules.playedOrders(s)
+                val played = org.thortracker.model.Songs.playedOrders(s)
                 "   parked, so the song loops to order ${hex2(played.firstOrNull { it > s.loopOrder } ?: played.firstOrNull() ?: 0)}"
             } else "",
             "New patterns" to "${s.newPatternScale.label}   scale guide for New (Clone and Repeat keep their own)",
@@ -154,8 +155,8 @@ internal class SongPainter(v: PaneView) : Painter(v) {
         }
     }
 
-    /** GB vblank tick rate (59.73 Hz) with four rows per beat. */
-    private fun bpm(ticks: Int): Int = (59.73 * 60.0 / (ticks * 4)).roundToLong().toInt()
+    /** At the song system's tick rate, with four rows per beat. */
+    private fun bpm(ticks: Int): Int = (song.system.tickHz * 60.0 / (ticks * 4)).roundToLong().toInt()
 
     // ---- touch ---------------------------------------------------------------------------------------
 

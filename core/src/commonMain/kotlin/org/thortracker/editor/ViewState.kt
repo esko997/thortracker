@@ -1,6 +1,5 @@
 package org.thortracker.editor
 
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Phrase
 import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
@@ -11,7 +10,7 @@ enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
  * Navigation state of one display. Each view kind keeps its own cursor fields so switching a display
  * between kinds (or swapping displays) preserves where the user was.
  *
- * lockedSubject: INSTRUMENT = bank * 16 + slot, WAVE = wave index, PATTERN/KEYBOARD/SKETCH = channel, -1 = none.
+ * lockedSubject: PATTERN/KEYBOARD/SKETCH = channel, a system's own views their subject ([org.thortracker.system.SystemView.subject]), -1 = none.
  */
 data class ViewState(
     var kind: ViewKind = ViewKind.PATTERN,
@@ -88,8 +87,6 @@ data class ViewState(
     /** Independent copy, used when swapping or persisting display states. */
     fun snapshot(): ViewState = copy(entry = entry.deepCopy())
 
-    val bankKind: InstrumentKind get() = InstrumentKind.entries[bank.coerceIn(0, InstrumentKind.entries.size - 1)]
-
     companion object {
         /** Song view rows before the order list: title, artist, ticks per row, loop order, scale for new patterns. */
         const val SONG_HEADER_ITEMS = 5
@@ -102,11 +99,11 @@ data class ViewState(
     }
 }
 
-/** Last note and effect entered per channel, last tuned pitch (note, bend) per channel, and the entry sound per bank. */
+/** Last note and effect entered per channel, last tuned pitch (note, bend) per channel, and the entry sound per bank index. */
 data class EntryMemory(
     val notes: HashMap<Int, Int> = HashMap(),
     val effects: HashMap<Int, Pair<Int, Int>> = HashMap(),
-    val pens: HashMap<InstrumentKind, Int> = HashMap(),
+    val pens: HashMap<Int, Int> = HashMap(),
     val tuned: HashMap<Int, Pair<Int, Int>> = HashMap(),
 ) {
     fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens), HashMap(tuned))

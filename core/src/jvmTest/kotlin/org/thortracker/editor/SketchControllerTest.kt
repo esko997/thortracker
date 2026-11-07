@@ -1,9 +1,9 @@
 package org.thortracker.editor
 
+import org.thortracker.system.gb.HugeRules
 import org.junit.Assert.*
 import org.junit.Test
 import org.thortracker.model.Cell
-import org.thortracker.model.HugeRules
 import org.thortracker.model.Phrase
 import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
@@ -86,13 +86,13 @@ class SketchControllerTest {
             ctl.state.octave = octave
             ctl.normalise()
             ctl.sketchGuide.tones.indices.forEach { index ->
-                assertTrue(ctl.sketchNote(index) in 0..Songs.NOTE_MAX)
+                assertTrue(ctl.sketchNote(index) in 0..HugeRules.NOTE_MAX)
                 assertTrue(scale.contains(ctl.sketchNote(index)))
             }
             ctl.sketchGuide.chords.forEachIndexed { index, chord ->
                 ctl.sketchSelectChord(index)
                 val voiced = ctl.sketchChordNotes()
-                assertTrue(voiced.all { it in 0..Songs.NOTE_MAX && scale.contains(it) })
+                assertTrue(voiced.all { it in 0..HugeRules.NOTE_MAX && scale.contains(it) })
                 assertEquals(chord.intervals.map { it - chord.intervals[0] }, voiced.map { it - voiced[0] })
                 assertEquals((root + chord.intervals[0]) % 12, voiced[0] % 12)
             }
@@ -118,7 +118,7 @@ class SketchControllerTest {
 
     @Test fun followingAndChannelControlsNeverRouteTonalPreviewsToNoise() {
         val ctl = controller()
-        ctl.session.select(Selection(channel = 3, bank = org.thortracker.model.InstrumentKind.NOISE, instrument = 4))
+        ctl.session.select(Selection(channel = 3, bank = org.thortracker.model.InstrumentKind.NOISE.ordinal, instrument = 4))
         ctl.follow(); ctl.normalise()
         assertEquals(0, ctl.state.channel)
         assertEquals(1, ctl.state.instrument)

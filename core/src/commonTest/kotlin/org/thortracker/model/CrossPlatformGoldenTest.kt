@@ -1,5 +1,6 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.GbSystem
 import kotlin.test.Test
 import kotlin.math.abs
 import kotlin.test.assertEquals
@@ -34,7 +35,7 @@ class CrossPlatformGoldenTest {
                 val expected = Double.fromBits(bits)
                 assertTrue(abs(tuning.cents[i] - expected) < 1e-9, "${case.file} degree $i: ${tuning.cents[i]} vs $expected")
             }
-            val landed = TuningMap(tuning).pitches.map { it.degree * 1000000 + it.note * 100 + it.detune }
+            val landed = TuningMap(tuning, GbSystem).pitches.map { it.degree * 1000000 + it.note * 100 + it.detune }
             assertEquals(case.pitches.toList(), landed, case.file)
         }
     }

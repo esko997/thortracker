@@ -1,10 +1,10 @@
 package org.thortracker.backend
 
 import org.thortracker.model.Cell
-import org.thortracker.model.HugeRules
+import org.thortracker.system.gb.HugeRules
 import org.thortracker.model.Instrument
 import org.thortracker.model.Song
-import org.thortracker.model.SongValidator
+import org.thortracker.system.gb.GbValidator
 
 /**
  * A validated song in hUGEDriver 6.1.3 data layout — the single lowering shared by preview playback
@@ -51,10 +51,10 @@ object HugeLowering {
     /**
      * Lowers [document]'s arrangement ([HugeRules.arranged]: parked orders left out), so order positions in the
      * result count played orders only.
-     * @throws IllegalArgumentException with every [SongValidator.errors] message when it is not exportable.
+     * @throws IllegalArgumentException with every [GbValidator.errors] message when it is not exportable.
      */
     fun lower(document: Song): HugeData {
-        val errors = SongValidator.errors(document)
+        val errors = GbValidator.errors(document)
         require(errors.isEmpty()) { errors.joinToString("\n") }
         val song = HugeRules.arranged(document)
         val channels = song.patterns[0].tracks.size

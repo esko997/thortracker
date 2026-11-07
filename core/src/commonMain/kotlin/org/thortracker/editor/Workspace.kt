@@ -24,9 +24,11 @@ class Workspace(panes: List<ViewState>, focus: Int = 0) {
     /**
      * A view chord: shows [kind] in the focused pane and pins it there, like choosing it from a view menu. Pressed
      * again while that view is showing, it returns to the view it replaced, pinned or following the selection as it
-     * was. Returns false when nothing changed (the view is showing and no earlier view is remembered).
+     * was. Returns false when nothing changed (the view is showing and no earlier view is remembered) or the song's
+     * system has no such view ([available]).
      */
-    fun showView(kind: ViewKind): Boolean {
+    fun showView(kind: ViewKind, available: Set<ViewKind>): Boolean {
+        if (kind !in available) return false
         val state = focused
         if (state.kind == kind) {
             val (previous, pinned) = beforeChord.remove(focus) ?: return false

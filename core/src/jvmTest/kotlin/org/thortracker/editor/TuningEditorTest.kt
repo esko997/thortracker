@@ -1,12 +1,13 @@
 package org.thortracker.editor
 
+import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.gb.GbSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.model.Cell
-import org.thortracker.model.HugeRules
 import org.thortracker.model.Scl
 import org.thortracker.model.Songs
 import org.thortracker.model.TuningMap
@@ -26,7 +27,7 @@ class TuningEditorTest {
     private fun cell(row: Int = 0, ch: Int = 0) = session.song.patterns[0].tracks[ch][row]
 
     @Test fun stepsVisitQuarterTonesWhereReachableAndWriteTheirBend() {
-        val map = TuningMap(session.song.tuning!!)
+        val map = TuningMap(session.song.tuning!!, GbSystem)
         val v = view(5)
         v.press(Action.EDIT); v.release(Action.EDIT) // writes 1/1 = C-5, plain
         assertEquals(Cell(24, 1), cell())

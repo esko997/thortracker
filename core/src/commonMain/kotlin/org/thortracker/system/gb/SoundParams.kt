@@ -1,7 +1,8 @@
-package org.thortracker.editor
+package org.thortracker.system.gb
 
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
+import org.thortracker.editor.EditorSession
 import org.thortracker.model.NumberText
 
 /** One editable GB instrument parameter with its legal range and readable value text. */
@@ -94,22 +95,5 @@ object SoundParams {
             InstrumentKind.WAVE -> "Wave ${EditorSession.hex1(i.wave)} · ${waveVolume.format(i, waveVolume.get(i))} · $length"
             InstrumentKind.NOISE -> "${if (i.noiseWidth == 0) "Long noise" else "Short noise"} · $env · $length"
         }
-    }
-
-    /** Characters available when editing names with the controller. */
-    const val CHARSET = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.'!#&()+/:"
-
-    fun cycleChar(c: Char, delta: Int): Char {
-        val i = CHARSET.indexOf(c).coerceAtLeast(0)
-        return CHARSET[(i + delta).mod(CHARSET.length)]
-    }
-
-    /** Replaces (or appends) the character at [pos] by cycling it [delta] steps; trims trailing spaces. */
-    fun editName(name: String, pos: Int, delta: Int, maxLen: Int): String {
-        val padded = StringBuilder(name)
-        while (padded.length <= pos && padded.length < maxLen) padded.append(' ')
-        if (pos >= padded.length) return name
-        padded[pos] = cycleChar(padded[pos], delta)
-        return padded.toString().trimEnd()
     }
 }

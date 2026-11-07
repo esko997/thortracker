@@ -1,4 +1,11 @@
-package org.thortracker.model
+package org.thortracker.system.gb
+
+import org.thortracker.model.Cell
+import org.thortracker.model.Instrument
+import org.thortracker.model.InstrumentKind
+import org.thortracker.model.Pattern
+import org.thortracker.model.Song
+import org.thortracker.model.Songs
 
 /**
  * The bundled demo: "Thor Groove", A minor, Am-F-C-G, 6 ticks per row. Intro, theme A and theme B,
@@ -30,7 +37,7 @@ internal object DemoSong {
     private val BASS_ROOTS = intArrayOf(n("A-4"), n("F-4"), n("C-5"), n("G-4"))
 
     fun build(): Song {
-        val base = Songs.blank()
+        val base = HugeRules.blankSong()
         return base.copy(
             title = "Thor Groove",
             artist = "Thor Tracker",

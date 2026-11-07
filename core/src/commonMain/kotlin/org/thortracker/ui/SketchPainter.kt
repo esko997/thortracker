@@ -5,7 +5,6 @@ import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.channelCount
-import org.thortracker.editor.instrument
 import org.thortracker.editor.patternAt
 import org.thortracker.model.Scale
 import org.thortracker.model.Songs
@@ -15,6 +14,7 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import org.thortracker.system.system
 
 /**
  * Tonal playground: the current key's chords (or the circle of fifths), its scale tones, and a generated
@@ -85,10 +85,9 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         rebuild(guide)
 
         val ch = st.channel.coerceIn(0, s.channelCount() - 1)
-        val kind = Songs.channelKind(s, ch)
         val col = Palette.channel(ch)
-        val channelName = Songs.channelNames(s)[ch]
-        val soundName = s.instrument(kind, st.instrument)?.name ?: ""
+        val channelName = s.system.channels[ch].name
+        val soundName = s.system.instrumentName(s, s.system.channels[ch].bank, st.instrument) ?: ""
 
         // What sounds: the touched pad, else the controller's row while the controller audition is held.
         val auditioning = ctl.sketchAuditioning
@@ -395,7 +394,7 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
                 val band = if (chordAudition) Palette.LISTEN else col
                 ink.rect(c, rect.left + ink.dp(4f), rect.top + ink.dp(3f), rect.right - ink.dp(4f), rect.top + ink.dp(if (role == 1) 9f else 6f), band)
             }
-            val playable = toneNotes[i] in 0..Songs.NOTE_MAX
+            val playable = toneNotes[i] in song.system.noteRange
             val strong = when { isOn -> Palette.BG; !playable -> Palette.FAINT; else -> Palette.TEXT }
             val nameTop = rect.top + minOf(h * 0.12f, u * 2f)
             ink.mono(c, toneNames[i], rect.centerX(), nameTop, u * 2f, strong, true, nameSize, Align.CENTER)
@@ -535,7 +534,7 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
             val note = ctl.sketchNote(i)
             if (note != toneNotes[i]) {
                 toneNotes[i] = note
-                toneNames[i] = if (note in 0..Songs.NOTE_MAX) Songs.noteName(note) else "—"
+                toneNames[i] = if (note in song.system.noteRange) Songs.noteName(note) else "—"
             }
         }
         // The circle hides the triads, so it marks no chord on the note pads.

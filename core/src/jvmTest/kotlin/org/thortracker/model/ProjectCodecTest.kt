@@ -1,5 +1,7 @@
 package org.thortracker.model
 
+import org.thortracker.system.gb.GbValidator
+import org.thortracker.system.gb.GbSystem
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -23,7 +25,7 @@ class ProjectCodecTest {
         val root = Json.parseToJsonElement(ProjectCodec.encode(Songs.blank())).jsonObject
         assertEquals(ProjectCodec.FORMAT, root["format"]!!.jsonPrimitive.content)
         assertEquals(ProjectCodec.VERSION.toString(), root["version"]!!.jsonPrimitive.content)
-        assertEquals(Songs.BACKEND, root["backend"]!!.jsonPrimitive.content)
+        assertEquals(GbSystem.id, root["backend"]!!.jsonPrimitive.content)
         assertEquals(ProjectCodec.BACKEND_VERSION.toString(), root["backendVersion"]!!.jsonPrimitive.content)
     }
 
@@ -38,7 +40,7 @@ class ProjectCodecTest {
     fun workInProgressWithExportErrorsStillRoundTrips() {
         // A cut that also carries an effect cannot be exported, but must survive autosave.
         val song = TestSongs.withCell(Songs.blank(), 0, 0, 5, Cell(Cell.CUT, 0, 0xF, 3))
-        assertTrue(SongValidator.errors(song).isNotEmpty())
+        assertTrue(GbValidator.errors(song).isNotEmpty())
         assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
     }
 
@@ -81,7 +83,7 @@ class ProjectCodecTest {
         val wrongKind = blank.copy(noiseInstruments = blank.noiseInstruments.toMutableList().also { it[0] = Instrument() })
         val badLoop = blank.copy(loopOrder = 1)
         for (song in listOf(threeChannels, shortTrack, badNote, badSample, wrongKind, badLoop)) {
-            assertTrue(SongValidator.structuralErrors(song).isNotEmpty())
+            assertTrue(GbValidator.structuralErrors(song).isNotEmpty())
             assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(song) }
         }
         // The same data arriving from a file is rejected on decode.

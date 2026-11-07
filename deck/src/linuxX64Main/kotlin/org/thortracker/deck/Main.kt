@@ -20,6 +20,7 @@ import org.thortracker.input.Keys
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.system.system
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
 import org.thortracker.ui.HostInput
@@ -208,7 +209,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             else -> {
                 val shows = control.shows
                 val action = control.action
-                if (shows != null) { pane.cancelInteraction(); if (panes.showView(shows)) pane.refresh() }
+                if (shows != null) { pane.cancelInteraction(); if (panes.showView(shows, session.song.system.views)) pane.refresh() }
                 else if (action != null) shell.editAction(action)
             }
         }

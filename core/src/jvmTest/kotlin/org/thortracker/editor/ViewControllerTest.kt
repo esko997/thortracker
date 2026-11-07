@@ -1,5 +1,12 @@
 package org.thortracker.editor
 
+import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.gb.GbSoundView
+import org.thortracker.system.gb.bank
+import org.thortracker.system.gb.GbValidator
+import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gb.WaveShapes
+import org.thortracker.system.gb.setInstrument
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -10,7 +17,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.model.Cell
 import org.thortracker.model.InstrumentKind
-import org.thortracker.model.SongValidator
 import org.thortracker.model.Songs
 import org.thortracker.model.Scl
 import org.thortracker.model.Scale
@@ -227,7 +233,7 @@ class ViewControllerTest {
         v.state.field = 0
         v.tap(Action.CLEAR)
         assertEquals(Cell(note = Cell.CUT), cell(0, 0, 0))
-        assertEquals(null, Songs.cellProblem(session.song, 0, cell(0, 0, 0)))
+        assertEquals(null, GbSystem.cellProblem(session.song, 0, cell(0, 0, 0)))
         v.tap(Action.CLEAR)
         assertEquals(Cell(), cell(0, 0, 0))
     }
@@ -256,9 +262,9 @@ class ViewControllerTest {
         val v = view(ViewKind.PATTERN) { channel = 3; field = 2 }
         v.hold(Action.EDIT, Action.RIGHT)
         val first = cell(0, 3, 0).effect
-        assertEquals(Songs.effectsFor(session.song, 3).map { it.code }.first { it != 0 }, first)
+        assertEquals(GbSystem.effectsFor(3).map { it.code }.first { it != 0 }, first)
         repeat(16) { v.hold(Action.EDIT, Action.RIGHT) }
-        assertTrue(Songs.effectsFor(session.song, 3).any { it.code == cell(0, 3, 0).effect })
+        assertTrue(GbSystem.effectsFor(3).any { it.code == cell(0, 3, 0).effect })
     }
 
     @Test
@@ -334,7 +340,7 @@ class ViewControllerTest {
     @Test
     fun instrumentParameterHoldIsOneUndo() {
         val v = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 3 }
-        assertEquals("Volume", v.soundParams[1].label)
+        assertEquals("Volume", GbSoundView.params(v.state)[1].label)
         v.hold(Action.EDIT, Action.LEFT, Action.LEFT)
         assertEquals(13, session.song.pulseInstruments[0].volume)
         session.undo()
@@ -349,7 +355,7 @@ class ViewControllerTest {
     fun everyInstrumentParameterStaysInRange() {
         for (kind in InstrumentKind.entries) {
             val v = view(ViewKind.INSTRUMENT) { bank = kind.ordinal; instrument = 2 }
-            for ((i, p) in v.soundParams.withIndex()) {
+            for ((i, p) in GbSoundView.params(v.state).withIndex()) {
                 v.state.instField = i + 2
                 v.hold(Action.EDIT, *Array(40) { Action.UP })
                 assertEquals(p.max, p.get(session.song.bank(kind)[1]))
@@ -357,7 +363,7 @@ class ViewControllerTest {
                 assertEquals(p.min, p.get(session.song.bank(kind)[1]))
             }
         }
-        assertTrue(SongValidator.structuralErrors(session.song).isEmpty())
+        assertTrue(GbValidator.structuralErrors(session.song).isEmpty())
     }
 
     @Test
@@ -395,7 +401,7 @@ class ViewControllerTest {
 
     @Test
     fun useInSoundAssignsTheWaveAndAuditionFindsIt() {
-        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 3))
+        session.select(Selection(bank = InstrumentKind.WAVE.ordinal, instrument = 3))
         val v = view(ViewKind.WAVE) { wave = 12; waveRow = 0; waveCol = 8 }
         v.tap(Action.EDIT)
         assertEquals(12, session.song.waveInstruments[2].wave)
@@ -468,7 +474,7 @@ class ViewControllerTest {
         repeat(3) { pattern.tap(Action.NEXT_CHANNEL) }
         pattern.state.field = 1
         pattern.publishPattern()
-        assertEquals(InstrumentKind.NOISE, session.selection.bank)
+        assertEquals(InstrumentKind.NOISE.ordinal, session.selection.bank)
         assertEquals(ViewKind.INSTRUMENT, session.selection.context)
 
         val follower = view(ViewKind.INSTRUMENT)
@@ -489,13 +495,13 @@ class ViewControllerTest {
     fun changingEditorDoesNotInterpretANoiseInstrumentLockAsAWaveIndex() {
         val v = view(ViewKind.INSTRUMENT) { bank = 2; instrument = 1; lockedSubject = 33 }
         v.state.switchKind(ViewKind.WAVE)
-        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 1, wave = 3, context = ViewKind.WAVE))
+        session.select(Selection(bank = InstrumentKind.WAVE.ordinal, instrument = 1, wave = 3, context = ViewKind.WAVE))
         v.follow()
         assertEquals(3, v.state.wave)
 
         v.state.lockedSubject = 3
         v.state.switchKind(ViewKind.WAVE)
-        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 1, wave = 4, context = ViewKind.WAVE))
+        session.select(Selection(bank = InstrumentKind.WAVE.ordinal, instrument = 1, wave = 4, context = ViewKind.WAVE))
         v.follow()
         assertEquals("Reselecting the same editor retains its subject lock", 3, v.state.wave)
     }
@@ -570,7 +576,7 @@ class ViewControllerTest {
         assertEquals(7, kb.state.octave)
         kb.state.kbKey = 23
         kb.tap(Action.EDIT)
-        assertEquals(Songs.NOTE_MAX, cell(0, 0, 0).note)
+        assertEquals(HugeRules.NOTE_MAX, cell(0, 0, 0).note)
     }
 
     @Test
@@ -738,7 +744,7 @@ class ViewControllerTest {
         assertEquals(4, s.ticksPerRow)
         assertEquals("Vntitled", s.title)
         for (ch in 0 until 4) assertTrue(s.patterns[0].tracks[ch].any { it.note >= 0 })
-        assertEquals(listOf<String>(), SongValidator.errors(s))
+        assertEquals(listOf<String>(), GbValidator.errors(s))
         assertNotEquals(Songs.blank(), s)
     }
 
@@ -828,9 +834,9 @@ class ViewControllerTest {
             v.hold(Action.EDIT, *moves)
             return cell(0, 0, 0).note
         }
-        assertEquals(Songs.NOTE_MAX, edit(65, Action.UP))
+        assertEquals(HugeRules.NOTE_MAX, edit(65, Action.UP))
         assertEquals(0, edit(5, Action.DOWN))
-        assertEquals(Songs.NOTE_MAX, edit(Songs.NOTE_MAX, Action.RIGHT))
+        assertEquals(HugeRules.NOTE_MAX, edit(HugeRules.NOTE_MAX, Action.RIGHT))
         assertEquals(0, edit(0, Action.LEFT))
     }
 

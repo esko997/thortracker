@@ -5,11 +5,11 @@ import org.thortracker.editor.GestureToken
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.channelCount
-import org.thortracker.editor.instrument
 import org.thortracker.editor.patternAt
 import org.thortracker.editor.Selection
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.system.system
 
 /**
  * Note entry keyboard. Two octaves plus the top C. The mode switch is the dominant element: in Listen
@@ -40,7 +40,6 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
     override fun draw(c: Surface, area: Rect) {
         val s = song
         val ch = st.channel.coerceIn(0, s.channelCount() - 1)
-        val kind = Songs.channelKind(s, ch)
         val col = Palette.channel(ch)
         val mode = if (st.entryMode) Palette.WRITE else Palette.LISTEN
         val sel = session.selection
@@ -54,8 +53,8 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
         val pad = ink.unit * 0.6f
         val values = listOf(
             if (st.entryMode) "Write notes" else "Listen only",
-            Songs.channelNames(s)[ch],
-            "${hex2(st.instrument)} ${s.instrument(kind, st.instrument)?.name ?: ""}",
+            s.system.channels[ch].name,
+            "${hex2(st.instrument)} ${s.system.instrumentName(s, s.system.channels[ch].bank, st.instrument) ?: ""}",
             "${st.octave}",
             "${session.step}",
         )

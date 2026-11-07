@@ -11,7 +11,8 @@ import org.thortracker.editor.ViewState
 import org.thortracker.editor.channelCount
 import org.thortracker.input.Keymap
 import org.thortracker.model.Song
-import org.thortracker.model.SongValidator
+import org.thortracker.system.SoundSystem
+import org.thortracker.system.system
 
 /**
  * One pane: renders the view kind in [state] from the shared [session] into whatever rectangle the frontend gives
@@ -115,7 +116,7 @@ class PaneView(
     internal fun problems(): List<String> {
         val s = session.song
         if (s !== checkedSong) {
-            checkedProblems = SongValidator.errors(s)
+            checkedProblems = s.system.errors(s)
             checkedSong = s
         }
         return checkedProblems
@@ -125,7 +126,7 @@ class PaneView(
     internal fun warnings(): List<String> {
         val s = session.song
         if (s !== warnedSong) {
-            checkedWarnings = SongValidator.warnings(s)
+            checkedWarnings = s.system.warnings(s)
             warnedSong = s
         }
         return checkedWarnings
@@ -160,7 +161,7 @@ class PaneView(
                 }
             }
             // The host may have changed the lock; hold the view on it.
-            Follow.applyLock(state, session.song.channelCount())
+            Follow.applyLock(state, session.song)
         } else {
             controller.syncLock()
         }
@@ -245,15 +246,22 @@ class PaneView(
         if (notify) onTouchEnded?.invoke()
     }
 
-    private fun painter(): Painter = painters.getOrPut(state.kind) {
-        when (state.kind) {
-            ViewKind.PATTERN -> PatternPainter(this)
-            ViewKind.SONG -> SongPainter(this)
-            ViewKind.INSTRUMENT -> SoundPainter(this)
-            ViewKind.WAVE -> WavePainter(this)
-            ViewKind.KEYBOARD -> KeyboardPainter(this)
-            ViewKind.SKETCH -> SketchPainter(this)
-            ViewKind.HELP -> HelpPainter(this)
+    /** The system whose own views' painters [painters] holds; another song system starts them afresh. */
+    private var paintersSystem: SoundSystem? = null
+
+    private fun painter(): Painter {
+        val system = session.song.system
+        if (system !== paintersSystem) { painters.clear(); paintersSystem = system }
+        return painters.getOrPut(state.kind) {
+            system.view(state.kind)?.painter(this) ?: when (state.kind) {
+                ViewKind.PATTERN -> PatternPainter(this)
+                ViewKind.SONG -> SongPainter(this)
+                ViewKind.KEYBOARD -> KeyboardPainter(this)
+                ViewKind.SKETCH -> SketchPainter(this)
+                ViewKind.HELP -> HelpPainter(this)
+                // normalise() never leaves a pane on a view its song's system lacks.
+                else -> PatternPainter(this)
+            }
         }
     }
 

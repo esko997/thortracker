@@ -1,26 +1,25 @@
 package org.thortracker.editor
 
 import org.thortracker.model.Cell
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Scale
 import org.thortracker.model.Songs
-import org.thortracker.model.HugeRules
-import org.thortracker.model.TunedPitch
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
+import org.thortracker.system.system
 
 /**
  * Selection shared by every display. Views publish their cursor here; sibling views that follow the
  * selection read it in [Follow.apply]. [context] suggests the view kind an unpinned sibling could show.
+ * [bank] indexes the song system's banks; [wave] is the subject of a system's own view that is not a sound
+ * (the Game Boy's wave tables).
  */
 data class Selection(
     val order: Int = 0,
     val row: Int = 0,
     val channel: Int = 0,
-    val bank: InstrumentKind = InstrumentKind.PULSE,
+    val bank: Int = 0,
     val instrument: Int = 1,
     val wave: Int = 0,
     val context: ViewKind = ViewKind.PATTERN,
@@ -51,6 +50,9 @@ class EditorSession(initial: Song) {
 
     var clipboard: Clip? = null
         private set
+
+    /** Puts [clip] on the clipboard (a system's own clips: sounds, wave tables). */
+    fun hold(clip: Clip) { clipboard = clip }
 
     /** Rows the cursor advances after step entry (0 = stay). */
     var step: Int = 1
@@ -212,29 +214,34 @@ class EditorSession(initial: Song) {
             order = order,
             row = s.row.coerceIn(0, rows - 1),
             channel = s.channel.coerceIn(0, song.channelCount() - 1),
-            instrument = s.instrument.coerceIn(1, BANK_SIZE),
-            wave = s.wave.coerceIn(0, song.waves.size - 1),
+            instrument = s.instrument.coerceIn(1, song.system.banks.maxOf { it.slots }),
+            wave = s.wave.coerceAtLeast(0),
         )
     }
 
     // ---- transport / audition --------------------------------------------------------------------
 
-    /** Sounds [note] with [instrument] on [channel]; [detune] 0..15 adds the tuning bend (40y) the cell would carry. */
+    /**
+     * Sounds [note] with [instrument] on [channel]; [detune] adds the tuning bend (the system's fine pitch) the cell
+     * would carry. The callback receives the playback engine's note number ([org.thortracker.system.SoundSystem.engineNote]).
+     */
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
-        if (note !in 0..Songs.NOTE_MAX || detune !in 0..15) return
-        onAudition?.invoke(channel, note, instrument, detune)
+        val system = song.system
+        if (note !in system.noteRange || detune !in 0..system.fine.max) return
+        onAudition?.invoke(channel, system.engineNote(note), instrument, detune)
     }
 
     // ---- tuning ----------------------------------------------------------------------------------
 
     private var cachedTuning: Tuning? = null
     private var cachedTuningMap: TuningMap? = null
+    private var cachedSystem: org.thortracker.system.SoundSystem? = null
 
     /** Reachable pitches of the song's tuning, or null for ordinary 12-note songs. Cached per tuning. */
     val tuningMap: TuningMap?
         get() {
             val t = song.tuning ?: return null
-            if (t != cachedTuning) { cachedTuning = t; cachedTuningMap = TuningMap(t) }
+            if (t != cachedTuning || song.system !== cachedSystem) { cachedTuning = t; cachedSystem = song.system; cachedTuningMap = TuningMap(t, song.system) }
             return cachedTuningMap
         }
 
@@ -246,7 +253,7 @@ class EditorSession(initial: Song) {
     data class FitResult(val moved: Int, val blocked: Int)
 
     /**
-     * Moves every played Pulse/Wave note of [patterns] to the nearest reachable pitch of the song tuning, as
+     * Moves every played note on a tonal channel of [patterns] to the nearest reachable pitch of the song tuning, as
      * one undo step. A note whose row holds another effect plays at its plain pitch; it moves only when the
      * nearest pitch needs no bend, otherwise it is counted as blocked and left unchanged.
      */
@@ -262,14 +269,14 @@ class EditorSession(initial: Song) {
                 val pattern = out.patterns[p]
                 val moves = HashMap<Int, Cell>()
                 val tracks = pattern.tracks.mapIndexed { ch, track ->
-                    if (Songs.channelKind(s, ch) == InstrumentKind.NOISE) track
+                    if (!s.system.channels[ch].tonal) track
                     else track.mapIndexed { row, cell ->
-                        val detune = HugeRules.detuneOf(cell)
+                        val detune = s.system.fine.of(cell)
                         // A note with another effect plays its plain pitch (bend 0).
                         if (row >= pattern.length || cell.note < 0 || map.index(cell.note, detune ?: 0) >= 0) cell
                         else {
                             val target = map.nearest(cell.note, detune ?: 0).takeIf { it >= 0 }?.let { map.pitches[it] }
-                            val fitted = target?.let { tuned(cell, it) }
+                            val fitted = target?.let { s.system.fine.write(cell, it.note, it.detune) }
                             when {
                                 target == null -> cell
                                 fitted == null -> { blocked++; cell }
@@ -289,8 +296,8 @@ class EditorSession(initial: Song) {
     }
 
     /**
-     * Moves every played Pulse/Wave note of [pattern] to the nearest note of its scale guide ([Scale.nearest]),
-     * as one undo step, and returns how many moved. Instruments and effects stay; Noise, hidden rows and cuts
+     * Moves every played note on a tonal channel of [pattern] to the nearest note of its scale guide ([Scale.nearest]),
+     * as one undo step, and returns how many moved. Instruments and effects stay; noise, hidden rows and cuts
      * are untouched. Does nothing for a chromatic guide or in a tuned song, whose tuning replaces the guide.
      */
     fun fitToScale(pattern: Int): Int {
@@ -302,9 +309,9 @@ class EditorSession(initial: Song) {
         val changed = apply("Fit notes to scale") { s ->
             val p = s.patterns[pattern]
             val tracks = p.tracks.mapIndexed { ch, track ->
-                if (Songs.channelKind(s, ch) == InstrumentKind.NOISE) track
+                if (!s.system.channels[ch].tonal) track
                 else track.mapIndexed { row, cell ->
-                    val target = if (row < p.length && cell.note >= 0) scale.nearest(cell.note) else null
+                    val target = if (row < p.length && cell.note >= 0) scale.nearest(cell.note, s.system.noteRange) else null
                     if (target == null || target == cell.note) cell
                     else { moved++; moves[fitKey(ch, row)] = cell; cell.copy(note = target) }
                 }
@@ -361,11 +368,13 @@ class EditorSession(initial: Song) {
     /**
      * A held, audition-only loop of [steps], one every [stepMillis]: a note retriggers [instrument] on [channel],
      * null keeps the previous note sounding. Its host owns scheduling and cancels it on release. Ignored when
-     * no step has a note, a note is outside C-3..B-8, or [stepMillis] is not positive.
+     * no step has a note, a note is outside the system's range, or [stepMillis] is not positive. The callback
+     * receives engine note numbers, like [audition].
      */
     fun auditionSequence(channel: Int, steps: List<Int?>, instrument: Int, stepMillis: Long = 180) {
-        if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in 0..Songs.NOTE_MAX }) return
-        onAuditionSequence?.invoke(channel, steps, instrument, stepMillis)
+        val system = song.system
+        if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in system.noteRange }) return
+        onAuditionSequence?.invoke(channel, steps.map { it?.let(system::engineNote) }, instrument, stepMillis)
     }
 
     fun releaseAudition() { onReleaseAudition?.invoke() }
@@ -375,18 +384,18 @@ class EditorSession(initial: Song) {
     // ---- pattern cells ---------------------------------------------------------------------------
 
     fun setCell(pattern: Int, channel: Int, row: Int, cell: Cell): Boolean =
-        apply("Edit cell") { s -> s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(cell))) }
+        apply("Edit cell") { s -> s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(cell, song.system))) }
 
     fun editCell(pattern: Int, channel: Int, row: Int, label: String = "Edit cell", f: (Cell) -> Cell): Boolean =
         apply(label) { s ->
             val old = s.cellAt(pattern, channel, row)
-            s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(f(old))))
+            s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(f(old), song.system)))
         }
 
     /**
      * Writes a monophonic phrase into [channel] of [pattern] from [row] as one undo step "Insert phrase", clipped
      * to the pattern length. A step with a note writes that note with [instrument], keeping the row's effect; in
-     * a tuned song the note becomes the nearest tuned pitch via [tuned], and a note whose bend would need the
+     * a tuned song the note becomes the nearest tuned pitch (its fine pitch written by the system), and a note whose bend would need the
      * row's occupied effect slot (or that no tuned pitch reaches) is skipped, leaving its row unchanged. A null
      * step clears the row's note and instrument (so the previous note sounds on) but keeps its effect.
      * Returns the rows written: the clipped span minus skipped notes.
@@ -394,7 +403,8 @@ class EditorSession(initial: Song) {
     fun insertPhrase(pattern: Int, channel: Int, row: Int, steps: List<Int?>, instrument: Int): Int {
         if (pattern !in song.patterns.indices || channel !in 0 until song.channelCount()) return 0
         if (row !in 0 until song.patterns[pattern].length) return 0
-        require(steps.all { it == null || it in 0..Songs.NOTE_MAX }) { "Phrase notes must be within 0..${Songs.NOTE_MAX}" }
+        val range = song.system.noteRange
+        require(steps.all { it == null || it in range }) { "Phrase notes must be within ${range.first}..${range.last}" }
         val map = tuningMap
         var written = 0
         apply("Insert phrase") { s ->
@@ -406,9 +416,9 @@ class EditorSession(initial: Song) {
                 val cell = when {
                     note == null -> old.copy(note = Cell.EMPTY, instrument = 0)
                     map == null -> old.copy(note = note, instrument = instrument)
-                    else -> map.nearest(note, 0).takeIf { it >= 0 }?.let { tuned(old.copy(instrument = instrument), map.pitches[it]) }
+                    else -> map.nearest(note, 0).takeIf { it >= 0 }?.let { i -> map.pitches[i].let { t -> s.system.fine.write(old.copy(instrument = instrument), t.note, t.detune) } }
                 } ?: continue
-                track[r] = normaliseCell(cell)
+                track[r] = normaliseCell(cell, song.system)
                 written++
             }
             s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t -> if (c == channel) track else t }))
@@ -474,7 +484,7 @@ class EditorSession(initial: Song) {
     private fun pasted(p: Pattern, clip: Clip.Cells, b: Block): Pattern = p.copy(tracks = p.tracks.mapIndexed { c, track ->
         if (c !in b.firstChannel..b.lastChannel) track
         else track.mapIndexed { r, cell ->
-            if (r in b.firstRow..b.lastRow) normaliseCell(clip.tracks[c - b.firstChannel][r - b.firstRow]) else cell
+            if (r in b.firstRow..b.lastRow) normaliseCell(clip.tracks[c - b.firstChannel][r - b.firstRow], song.system) else cell
         }
     })
 
@@ -533,7 +543,8 @@ class EditorSession(initial: Song) {
 
     /** Inserts an order referencing [pattern] at [at], [parked] or playing. Returns false if the order list is full. */
     fun insertOrder(at: Int, pattern: Int, parked: Boolean = false): Boolean {
-        if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return false }
+        val maxOrders = song.system.maxOrders
+        if (song.orders.size >= maxOrders) { note("The song already has $maxOrders orders"); return false }
         return apply("Insert order") { s ->
             val idx = at.coerceIn(0, s.orders.size)
             s.withOrders(s.orders.inserted(idx, pattern.coerceIn(0, s.patterns.size - 1))) { if (it >= idx) it + 1 else it }
@@ -591,7 +602,7 @@ class EditorSession(initial: Song) {
      */
     fun newPatternAt(at: Int, parked: Boolean = false): Int {
         if (song.patterns.size >= MAX_PATTERNS) { note("The song already has $MAX_PATTERNS patterns"); return -1 }
-        if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return -1 }
+        if (song.orders.size >= song.system.maxOrders) { note("The song already has ${song.system.maxOrders} orders"); return -1 }
         val index = song.patterns.size
         apply("New pattern") { s ->
             val p = Songs.blankPattern(s, "Pattern ${index.toString(16).uppercase().padStart(2, '0')}").copy(scale = s.newPatternScale)
@@ -605,7 +616,7 @@ class EditorSession(initial: Song) {
     /** Duplicates the pattern used by [order] into a new pattern in a new order right after it, parked if [order] is. */
     fun clonePatternAt(order: Int): Int {
         if (song.patterns.size >= MAX_PATTERNS) { note("The song already has $MAX_PATTERNS patterns"); return -1 }
-        if (song.orders.size >= MAX_ORDERS) { note("The song already has $MAX_ORDERS orders"); return -1 }
+        if (song.orders.size >= song.system.maxOrders) { note("The song already has ${song.system.maxOrders} orders"); return -1 }
         val index = song.patterns.size
         apply("Clone pattern") { s ->
             val source = s.patternAt(order)
@@ -640,22 +651,24 @@ class EditorSession(initial: Song) {
 
     /**
      * Replaces the order list with [orders], moving everything that names an order with it: the loop target, the
-     * parked orders and every stored `Bxx` jump (B01 = order 0; B00, "next order", is relative and stays).
+     * parked orders and every stored jump to an order ([org.thortracker.system.SoundSystem.jumpTarget]; relative jumps stay).
      * [newIndex] maps an old order index to its new one; results are clamped to the new list. A [dropped] (deleted)
      * order's parking goes with it. Patterns without such jumps keep their identity.
      */
     private fun Song.withOrders(orders: List<Int>, dropped: Int = -1, newIndex: (Int) -> Int): Song {
         val last = orders.size - 1
         val old = this.orders.size
+        val sys = this.system
         fun target(order: Int) = newIndex(order).coerceIn(0, last)
         val patterns = patterns.map { p ->
             var changed = false
             val tracks = p.tracks.map { track ->
                 var t: MutableList<Cell>? = null
                 track.forEachIndexed { row, cell ->
-                    if (cell.effect == HugeRules.FX_POSITION_JUMP && cell.param in 1..old) {
-                        val param = target(cell.param - 1) + 1
-                        if (param != cell.param) (t ?: track.toMutableList().also { t = it })[row] = cell.copy(param = param)
+                    val jump = sys.jumpTarget(cell)
+                    if (jump != null && jump < old) {
+                        val moved = target(jump)
+                        if (moved != jump) (t ?: track.toMutableList().also { t = it })[row] = sys.withJumpTarget(cell, moved)
                     }
                 }
                 t?.also { changed = true } ?: track
@@ -676,87 +689,13 @@ class EditorSession(initial: Song) {
         return apply("Set new-pattern scale") { s -> s.copy(newPatternScale = scale) }
     }
 
-    // ---- instruments ------------------------------------------------------------------------------
-
-    fun setInstrument(kind: InstrumentKind, slot: Int, instrument: Instrument): Boolean {
-        if (slot !in 1..BANK_SIZE) return false
-        return apply("Edit ${instrument.name.ifBlank { "sound" }}") { s ->
-            val fixed = instrument.copy(kind = kind)
-            s.withBank(kind, s.bank(kind).replaced(slot - 1, fixed))
-        }
-    }
-
-    fun editInstrument(kind: InstrumentKind, slot: Int, label: String, f: (Instrument) -> Instrument): Boolean {
-        val cur = song.instrument(kind, slot) ?: return false
-        return apply(label) { s -> s.withBank(kind, s.bank(kind).replaced(slot - 1, f(cur).copy(kind = kind))) }
-    }
-
-    fun copyInstrument(kind: InstrumentKind, slot: Int) {
-        val i = song.instrument(kind, slot) ?: return
-        clipboard = Clip.Sound(i)
-        note("Copied sound ${hex2(slot)} ${i.name}")
-    }
-
-    /** Pastes a copied sound; only into the same kind of bank, because parameters differ per kind. */
-    fun pasteInstrument(kind: InstrumentKind, slot: Int): Boolean {
-        val clip = clipboard as? Clip.Sound ?: run { note("Clipboard holds no sound"); return false }
-        if (clip.instrument.kind != kind) {
-            note("Clipboard holds a ${kindName(clip.instrument.kind)} sound; pick a ${kindName(clip.instrument.kind)} slot")
-            return false
-        }
-        val ok = setInstrument(kind, slot, clip.instrument)
-        note("Pasted into sound ${hex2(slot)}")
-        return ok
-    }
-
-    // ---- waves -----------------------------------------------------------------------------------
-
-    fun setWave(index: Int, samples: List<Int>, label: String = "Edit wave"): Boolean {
-        if (samples.size != WaveShapes.SAMPLES) return false
-        val clamped = samples.map { it.coerceIn(0, WaveShapes.MAX) }
-        return apply(label) { s -> s.copy(waves = s.waves.replaced(index, clamped)) }
-    }
-
-    fun setWaveSample(index: Int, sample: Int, value: Int): Boolean {
-        val w = song.waves[index]
-        if (sample !in w.indices) return false
-        return setWave(index, w.replaced(sample, value.coerceIn(0, WaveShapes.MAX)), "Draw wave")
-    }
-
-    fun copyWave(index: Int) {
-        clipboard = Clip.Wave(song.waves[index])
-        note("Copied wave ${hex1(index)}")
-    }
-
-    fun pasteWave(index: Int): Boolean {
-        val clip = clipboard as? Clip.Wave ?: run { note("Clipboard holds no wave"); return false }
-        val ok = setWave(index, clip.samples, "Paste wave")
-        note("Pasted into wave ${hex1(index)}")
-        return ok
-    }
-
     companion object {
-        const val BANK_SIZE = 15
         const val HISTORY_LIMIT = 400
         const val MAX_STEP = 16
-        /** hUGEDriver order count limit; the editor refuses to grow the list past it. */
-        const val MAX_ORDERS = org.thortracker.backend.HugeLimits.MAX_ORDERS
-        /** Pattern indices are kept below 256; the backend's distinct-track limit is reported by validation. */
+        /** Pattern indices are kept below 256; the system's own data limits are reported by validation. */
         const val MAX_PATTERNS = 256
         const val MAX_TICKS = 255
 
-        /**
-         * [cell] playing tuned [pitch]: the note plus 40y for a bend, removing a previous tuning bend when none is
-         * needed. Null when a bend is needed but the row's effect slot holds another effect.
-         */
-        fun tuned(cell: Cell, pitch: TunedPitch): Cell? {
-            val current = HugeRules.detuneOf(cell)
-            return when {
-                pitch.detune > 0 -> if (current == null) null else cell.copy(note = pitch.note, effect = HugeRules.FX_VIBRATO, param = pitch.detune)
-                current != null && current > 0 -> cell.copy(note = pitch.note, effect = 0, param = 0)
-                else -> cell.copy(note = pitch.note)
-            }
-        }
         const val MAX_NAME = 24
         const val MAX_TEXT = 255
 
@@ -766,11 +705,6 @@ class EditorSession(initial: Song) {
 
         fun hex1(v: Int): String = if (v in 0..15) HEX1[v] else v.toString(16).uppercase()
         fun hex2(v: Int): String = if (v in 0..255) HEX2[v] else v.toString(16).uppercase().padStart(2, '0')
-        fun kindName(k: InstrumentKind) = when (k) {
-            InstrumentKind.PULSE -> "pulse"
-            InstrumentKind.WAVE -> "wave"
-            InstrumentKind.NOISE -> "noise"
-        }
     }
 }
 
@@ -783,6 +717,7 @@ object Follow {
         if (!state.followSelection) return false
         val sel = session.selection
         val song = session.song
+        val channels = song.system.channels
         val before = state.copy()
         when (state.kind) {
             ViewKind.PATTERN -> {
@@ -794,45 +729,39 @@ object Follow {
                 state.order = sel.order
                 state.songItem = ViewState.SONG_HEADER_ITEMS + sel.order
             }
-            ViewKind.INSTRUMENT -> if (state.lockedSubject < 0) {
-                state.bank = sel.bank.ordinal
-                state.instrument = sel.instrument
-            }
-            ViewKind.WAVE -> if (state.lockedSubject < 0) state.wave = sel.wave
             ViewKind.KEYBOARD -> {
                 if (state.lockedSubject < 0) state.channel = sel.channel
-                if (Songs.channelKind(song, state.channel.coerceIn(0, song.channelCount() - 1)) == sel.bank) {
+                if (channels[state.channel.coerceIn(0, song.channelCount() - 1)].bank == sel.bank) {
                     state.instrument = sel.instrument
                 }
             }
             ViewKind.SKETCH -> {
                 state.order = sel.order
-                if (state.lockedSubject < 0 && Songs.channelKind(song, sel.channel) != InstrumentKind.NOISE) {
+                if (state.lockedSubject < 0 && channels[sel.channel].tonal) {
                     state.channel = sel.channel
                 }
-                if (Songs.channelKind(song, state.channel.coerceIn(0, song.channelCount() - 1)) == sel.bank) {
+                if (channels[state.channel.coerceIn(0, song.channelCount() - 1)].bank == sel.bank) {
                     state.instrument = sel.instrument
                 }
             }
             ViewKind.HELP -> Unit
+            else -> if (state.lockedSubject < 0) song.system.view(state.kind)?.follow(state, sel, song)
         }
-        if (state.lockedSubject >= 0) applyLock(state, song.channelCount())
+        if (state.lockedSubject >= 0) applyLock(state, song)
         state.order = state.order.coerceIn(0, song.orders.size - 1)
         return state != before
     }
 
-    /** Holds a view on its locked subject: INSTRUMENT bank*16+slot, WAVE wave, PATTERN/KEYBOARD/SKETCH channel. */
-    fun applyLock(state: ViewState, channels: Int = Int.MAX_VALUE) {
+    /** Holds a view on its locked subject: PATTERN/KEYBOARD/SKETCH a channel; the system's own views their subject. */
+    fun applyLock(state: ViewState, song: Song) {
         val s = state.lockedSubject
         if (s < 0) return
         when (state.kind) {
-            ViewKind.INSTRUMENT -> {
-                state.bank = (s / 16).coerceIn(0, InstrumentKind.entries.size - 1)
-                state.instrument = (s % 16).coerceIn(1, EditorSession.BANK_SIZE)
-            }
-            ViewKind.WAVE -> state.wave = s.coerceIn(0, 15)
-            ViewKind.PATTERN, ViewKind.KEYBOARD, ViewKind.SKETCH -> state.channel = s.coerceIn(0, channels - 1)
-            else -> Unit
+            ViewKind.PATTERN, ViewKind.KEYBOARD, ViewKind.SKETCH -> state.channel = s.coerceIn(0, song.channelCount() - 1)
+            else -> song.system.view(state.kind)?.applyLock(state, s)
         }
     }
+
+    /** The subject a lock on [state]'s view holds: a channel, or the system view's own subject. */
+    fun subject(state: ViewState, song: Song): Int = song.system.view(state.kind)?.subject(state) ?: state.channel
 }

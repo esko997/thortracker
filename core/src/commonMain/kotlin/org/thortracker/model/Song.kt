@@ -8,6 +8,7 @@ import kotlinx.serialization.builtins.IntArraySerializer
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import org.thortracker.system.SoundSystems
 
 /** Instrument bank / channel hardware type of the GB/hUGE backend. */
 @Serializable
@@ -94,14 +95,14 @@ data class Instrument(
  * [newPatternScale] is the editor-only scale guide a newly created (blank) pattern starts with; like pattern
  * scales it is never exported or heard.
  * [parkedOrders] (ascending order indices) stay in the arrangement for editing but are skipped by song playback
- * and export ([HugeRules.arranged]).
+ * and export ([org.thortracker.system.SoundSystem.arranged]).
  */
 @Serializable
 data class Song(
     val title: String = "Untitled",
     val artist: String = "",
     val comment: String = "",
-    val backend: String = Songs.BACKEND,
+    val backend: String = SoundSystems.DEFAULT.id,
     val ticksPerRow: Int = 6,
     val loopOrder: Int = 0,
     val patterns: List<Pattern>,
@@ -115,7 +116,7 @@ data class Song(
     val parkedOrders: List<Int> = emptyList(),
 )
 
-/** Strict compact cell encoding: exactly four integers. Range checks belong to [SongValidator]. */
+/** Strict compact cell encoding: exactly four integers. Range checks belong to the song's system ([org.thortracker.system.SoundSystem.structuralErrors]). */
 object CellSerializer : KSerializer<Cell> {
     private val delegate = IntArraySerializer()
 

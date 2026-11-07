@@ -42,16 +42,16 @@ data class PhraseSettings(
 }
 
 /**
- * A short monophonic line, one entry per pattern row: a note 0..71 starts there (an onset); null means no new
+ * A short monophonic line, one entry per pattern row: a note starts there (an onset); null means no new
  * note, so the previous one keeps sounding. Listening-only data until Sketch inserts it into a pattern.
  *
  * Generation is deterministic for a given [Random] seed. Generated notes come only from the guide's scale
- * (any semitone for Chromatic), within the register [baseNote, baseNote + 19] limited to C-3..B-8; row 0 is
+ * (any semitone for Chromatic), within the register [baseNote, baseNote + 19] limited to the system's range; row 0 is
  * always an onset. With a chord, row 0 and every onset on a multiple of four rows is one of its tones.
  */
 data class Phrase(val steps: List<Int?>) {
     init {
-        require(steps.all { it == null || it in 0..Songs.NOTE_MAX }) { "Phrase notes must be within 0..${Songs.NOTE_MAX}" }
+        require(steps.all { it == null || it >= 0 }) { "Phrase notes must be pitches (0 or above)" }
     }
 
     val length: Int get() = steps.size
@@ -66,9 +66,9 @@ data class Phrase(val steps: List<Int?>) {
         /** Span of the generation register above its base note, in semitones. */
         const val REGISTER = 19
 
-        fun generate(guide: TonalGuide, baseNote: Int, chord: TonalGuide.Chord?, settings: PhraseSettings, random: Random): Phrase {
+        fun generate(guide: TonalGuide, baseNote: Int, chord: TonalGuide.Chord?, settings: PhraseSettings, random: Random, range: IntRange): Phrase {
             val rows = onsetRows(settings.length, settings.rhythm, random)
-            val pool = pool(guide.scale, register(baseNote))
+            val pool = pool(guide.scale, register(baseNote, range))
             return assemble(settings.length, rows, walk(rows, pool, chordClasses(guide, chord), settings.motion, random))
         }
 
@@ -87,6 +87,7 @@ data class Phrase(val steps: List<Int?>) {
             random: Random,
             keepRhythm: Boolean,
             keepPitches: Boolean,
+            range: IntRange,
         ): Phrase {
             require(!(keepRhythm && keepPitches)) { "Keeping both rhythm and pitches leaves nothing to vary" }
             val pitches = phrase.pitches
@@ -94,7 +95,7 @@ data class Phrase(val steps: List<Int?>) {
             return when {
                 keepRhythm -> {
                     val rows = phrase.onsets
-                    val pool = pool(guide.scale, around(pitches))
+                    val pool = pool(guide.scale, around(pitches, range))
                     val chordPcs = chordClasses(guide, chord)
                     var notes = walk(rows, pool, chordPcs, settings.motion, random)
                     repeat(ATTEMPTS) { if (notes == pitches) notes = walk(rows, pool, chordPcs, settings.motion, random) }
@@ -105,29 +106,29 @@ data class Phrase(val steps: List<Int?>) {
                     repeat(ATTEMPTS) { if (rows == phrase.onsets) rows = chooseOnsets(phrase.length, pitches.size, settings.rhythm, random) }
                     assemble(phrase.length, rows, pitches)
                 }
-                else -> mutate(phrase, guide.scale, random)
+                else -> mutate(phrase, guide.scale, random, range)
             }
         }
 
         /** A phrase from copied pattern cells of one channel: notes are onsets; empty rows, OFF and missing rows are null. */
-        fun fromCells(cells: List<Cell>, length: Int): Phrase =
-            Phrase(List(length) { row -> cells.getOrNull(row)?.note?.takeIf { it in 0..Songs.NOTE_MAX } })
+        fun fromCells(cells: List<Cell>, length: Int, range: IntRange): Phrase =
+            Phrase(List(length) { row -> cells.getOrNull(row)?.note?.takeIf { it in range } })
 
         private const val ATTEMPTS = 8
 
-        private fun register(baseNote: Int): IntRange {
-            val lo = baseNote.coerceIn(0, Songs.NOTE_MAX)
-            val hi = minOf(Songs.NOTE_MAX, lo + REGISTER)
+        private fun register(baseNote: Int, range: IntRange): IntRange {
+            val lo = baseNote.coerceIn(range)
+            val hi = minOf(range.last, lo + REGISTER)
             // Near the top of the range keep at least an octave to move in.
-            return if (hi - lo >= 12) lo..hi else maxOf(0, hi - 12)..hi
+            return if (hi - lo >= 12) lo..hi else maxOf(range.first, hi - 12)..hi
         }
 
         /** A register around existing notes: their own span, or [REGISTER] semitones centred on them. */
-        private fun around(pitches: List<Int>): IntRange {
+        private fun around(pitches: List<Int>, range: IntRange): IntRange {
             val lo = pitches.min()
             val hi = pitches.max()
             if (hi - lo >= REGISTER) return lo..hi
-            val start = ((lo + hi) / 2 - REGISTER / 2).coerceIn(0, Songs.NOTE_MAX - REGISTER)
+            val start = ((lo + hi) / 2 - REGISTER / 2).coerceIn(range.first, range.last - REGISTER)
             return start..start + REGISTER
         }
 
@@ -249,14 +250,14 @@ data class Phrase(val steps: List<Int?>) {
             return index
         }
 
-        private fun mutate(phrase: Phrase, scale: Scale, random: Random): Phrase {
+        private fun mutate(phrase: Phrase, scale: Scale, random: Random, range: IntRange): Phrase {
             val steps = phrase.steps.toMutableList()
             val onsets = phrase.onsets
             val moves = 1 + random.nextInt(minOf(3, onsets.size))
             for (row in onsets.shuffled(random).take(moves)) {
                 val note = steps[row] ?: continue
                 val d = if (random.nextBoolean()) 1 else -1
-                steps[row] = scale.step(note, d) ?: scale.step(note, -d) ?: note
+                steps[row] = scale.step(note, d, range) ?: scale.step(note, -d, range) ?: note
             }
             if (random.nextBoolean()) {
                 // Shift one later onset by a row into an empty neighbour; row 0 stays the downbeat.

@@ -9,6 +9,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
+import org.thortracker.system.SoundSystems
+import org.thortracker.system.system
 
 /** A project file that is malformed, from a newer/unknown format, or structurally invalid. */
 class ProjectFormatException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
@@ -18,7 +20,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * `{"format":"thor-tracker-project","version":7,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
- * export-level problems ([SongValidator.errors]) are allowed so work in progress round-trips.
+ * export-level problems ([org.thortracker.system.SoundSystem.errors]) are allowed so work in progress round-trips.
  *
  * Versions: 1 = initial format. 2 adds each pattern's editor-only `scale` (`{"root":0..11,"kind":"major"}`);
  * version 1 files have no scales and read as chromatic. 3 adds each pattern's played `length` (1-64);
@@ -54,7 +56,7 @@ object ProjectCodec {
 
     /** @throws ProjectFormatException if [song] is structurally invalid (it could not be read back). */
     fun encode(song: Song): String {
-        val problems = SongValidator.structuralErrors(song)
+        val problems = song.system.structuralErrors(song)
         if (problems.isNotEmpty()) throw ProjectFormatException("Song cannot be saved: ${problems.joinToString("; ")}")
         return json.encodeToString(Envelope.serializer(), Envelope(FORMAT, VERSION, song.backend, BACKEND_VERSION, song))
     }
@@ -74,11 +76,13 @@ object ProjectCodec {
         if (version > VERSION) throw ProjectFormatException("Project version $version was written by a newer Thor Tracker; this version reads up to $VERSION")
         if (version < 1) throw ProjectFormatException("Project version $version is invalid")
         val backend = (root["backend"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-        if (backend != Songs.BACKEND) throw ProjectFormatException("Project backend \"${backend ?: "missing"}\" is not supported; this version reads \"${Songs.BACKEND}\"")
+        val system = backend?.let(SoundSystems::find) ?: throw ProjectFormatException(
+            "Project backend \"${backend ?: "missing"}\" is not supported; this version reads ${SoundSystems.ALL.joinToString { "\"${it.id}\"" }}"
+        )
         val backendVersion = (root["backendVersion"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
             ?: throw ProjectFormatException("Backend data version is missing or not a number")
         if (backendVersion !in 1..BACKEND_VERSION) {
-            throw ProjectFormatException("GB/hUGE data version $backendVersion is not supported; this version reads 1-$BACKEND_VERSION")
+            throw ProjectFormatException("${system.name} data version $backendVersion is not supported; this version reads 1-$BACKEND_VERSION")
         }
         if (version < SCALE_VERSION && hasPatternKey(root, "scale")) {
             throw ProjectFormatException("Project version $version cannot contain pattern scales (added in version $SCALE_VERSION)")
@@ -108,7 +112,7 @@ object ProjectCodec {
         }
         val song = envelope.song
         if (song.backend != backend) throw ProjectFormatException("Song backend \"${song.backend}\" does not match the project backend \"$backend\"")
-        val problems = SongValidator.structuralErrors(song)
+        val problems = system.structuralErrors(song)
         if (problems.isNotEmpty()) throw ProjectFormatException("Project data is invalid: ${problems.joinToString("; ")}")
         return song
     }

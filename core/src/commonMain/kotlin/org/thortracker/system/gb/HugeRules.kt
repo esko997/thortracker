@@ -1,6 +1,14 @@
-package org.thortracker.model
+package org.thortracker.system.gb
 
 import org.thortracker.backend.HugeLimits
+import org.thortracker.model.Cell
+import org.thortracker.model.Instrument
+import org.thortracker.model.InstrumentKind
+import org.thortracker.model.NumberText
+import org.thortracker.model.Pattern
+import org.thortracker.model.Song
+import org.thortracker.model.Songs
+import org.thortracker.system.EffectSpec
 
 /**
  * GB/hUGE effect and cell semantics, verified against the pinned hUGEDriver 6.1.3 source
@@ -9,17 +17,14 @@ import org.thortracker.backend.HugeLimits
  * driver would ignore, misinterpret or that the export toolchain cannot represent.
  * The validator, editor hints, lowering and `.uge` export all use these rules.
  */
-data class EffectInfo(
-    val code: Int,
-    val name: String,
-    /** Parameter layout, e.g. "xy: x=up, y=down". */
-    val param: String,
-    val description: String,
-    /** False when the effect can never be exported/previewed (6xx). */
-    val supported: Boolean,
-)
-
 object HugeRules {
+    /** Highest note: B-8. */
+    const val NOTE_MAX = 71
+    const val INSTRUMENT_SLOTS = 15
+    const val WAVE_COUNT = 16
+    const val WAVE_SAMPLES = 32
+    const val WAVE_MAX = 15
+
     const val NO_NOTE = 90
     const val FX_ARPEGGIO = 0x0
     const val FX_PORTA_UP = 0x1
@@ -49,43 +54,111 @@ object HugeRules {
     const val SWEEP_CHANNEL = 0
 
     val EFFECTS = listOf(
-        EffectInfo(0x0, "Arpeggio", "xy: +x, +y semitones",
+        EffectSpec(0x0, "Arpeggio", "xy: +x, +y semitones",
             "Cycle each tick between the note, note+x and note+y semitones. 000 = no effect. Not on Noise.", true),
-        EffectInfo(0x1, "Slide up", "xx: units per tick",
+        EffectSpec(0x1, "Slide up", "xx: units per tick",
             "Raise the pitch by xx period units every tick after the first. Not on Noise.", true),
-        EffectInfo(0x2, "Slide down", "xx: units per tick",
+        EffectSpec(0x2, "Slide down", "xx: units per tick",
             "Lower the pitch by xx period units every tick after the first. Not on Noise.", true),
-        EffectInfo(0x3, "Tone portamento", "xx: units per tick",
+        EffectSpec(0x3, "Tone portamento", "xx: units per tick",
             "Slide toward this row's note instead of playing it, stopping exactly on it. Not on Noise.", true),
-        EffectInfo(0x4, "Vibrato", "xy: x=tick mask, y=depth",
+        EffectSpec(0x4, "Vibrato", "xy: x=tick mask, y=depth",
             "Raise the note by y units on ticks where (running tick counter AND x) = 0, else play it plain: " +
                 "x=0 constant detune, 1/3/7/F raised 1 of every 2/4/8/16 ticks. Not on Noise.", true),
-        EffectInfo(0x5, "Master volume", "xy: NR50 (x=left, y=right; 0-7 each)",
+        EffectSpec(0x5, "Master volume", "xy: NR50 (x=left, y=right; 0-7 each)",
             "Write NR50 for both speakers. Global. Volume 0 is quiet, not silent.", true),
-        EffectInfo(0x6, "Call routine", "xy: routine y",
+        EffectSpec(0x6, "Call routine", "xy: routine y",
             "User assembly routines are not part of Thor Tracker projects and are exported as NULL by uge2source.", false),
-        EffectInfo(0x7, "Note delay", "xx: ticks",
+        EffectSpec(0x7, "Note delay", "xx: ticks",
             "Start this row's note after xx ticks. A delay of the row length or more skips it.", true),
-        EffectInfo(0x8, "Panning", "xx: NR51 bits (hi nibble left, lo right; bit0=Pulse 1..bit3=Noise)",
+        EffectSpec(0x8, "Panning", "xx: NR51 bits (hi nibble left, lo right; bit0=Pulse 1..bit3=Noise)",
             "Route channels to the left/right speakers. Global.", true),
-        EffectInfo(0x9, "Timbre", "xx: duty/NRx1, wave index, or noise width",
+        EffectSpec(0x9, "Timbre", "xx: duty/NRx1, wave index, or noise width",
             "Pulse: write NRx1 (duty in bits 6-7). Wave: load wave xx (00-0F) and retrigger. Noise: 00 = 15-bit, 08 = 7-bit.", true),
-        EffectInfo(0xA, "Volume slide", "xy: x=up, y=down",
+        EffectSpec(0xA, "Volume slide", "xy: x=up, y=down",
             "Retrigger at the instrument's initial volume +x or -y. One nibble must be 0. Not on Wave.", true),
-        EffectInfo(0xB, "Position jump", "xx: order+1 (00 = next order)",
+        EffectSpec(0xB, "Position jump", "xx: order+1 (00 = next order)",
             "After this row, continue at order xx-1 (B01 = first order). B00 continues with the next order.", true),
-        EffectInfo(0xC, "Set volume", "xy: y=volume, x=envelope bits",
+        EffectSpec(0xC, "Set volume", "xy: y=volume, x=envelope bits",
             "Pulse/Noise: set volume y/15 and restart the note (a legato note without instrument is not retriggered). " +
                 "Wave: 0 mute, 1-4 25%, 5-9 50%, A-F 100%, no restart; x must be 0.", true),
-        EffectInfo(0xD, "Pattern break", "xx: row+1 (01-40)",
+        EffectSpec(0xD, "Pattern break", "xx: row+1 (01-40)",
             "After this row, continue with the next order at row xx-1 (D01 = row 0).", true),
-        EffectInfo(0xE, "Note cut", "xx: ticks",
+        EffectSpec(0xE, "Note cut", "xx: ticks",
             "Silence the channel after xx ticks (E00 = immediately, the same as OFF). Must be less than the row length.", true),
-        EffectInfo(0xF, "Set speed", "xx: ticks per row (01-FF)",
+        EffectSpec(0xF, "Set speed", "xx: ticks per row (01-FF)",
             "Change the number of ticks per row from this row on. Global.", true),
     )
 
     fun channelKind(channel: Int): InstrumentKind = CHANNEL_KINDS[channel]
+
+    /**
+     * Effect codes usable on [channel]: supported effects minus those the channel can never take
+     * (pitch effects 0-4, including arpeggio, on Noise; Axy on Wave). 000 ("no effect") is not an entry: the
+     * editor offers it separately. [cellProblem] performs the parameter checks.
+     */
+    fun effectsFor(channel: Int): List<EffectSpec> {
+        val kind = channelKind(channel)
+        return EFFECTS.filter { info ->
+            info.supported && when (kind) {
+                InstrumentKind.NOISE -> info.code !in NOISE_UNSAFE_PITCH_EFFECTS
+                InstrumentKind.WAVE -> info.code != FX_VOLUME_SLIDE
+                InstrumentKind.PULSE -> true
+            }
+        }
+    }
+
+    /** hUGETracker 1.0.11 `DefaultWaves` (hugedatatypes.pas), then five additional fixed tables. */
+    val DEFAULT_WAVES: List<List<Int>> = listOf(
+        "0000FFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+        "00000000FFFFFFFFFFFFFFFFFFFFFFFF",
+        "0000000000000000FFFFFFFFFFFFFFFF",
+        "000000000000000000000000FFFFFFFF",
+        "000112233445566778899AABBCCDDEEF",
+        "FEDCBA9876543210123456789ABCDEFF",
+        "7ACDDB75211368BDDC974101479CDDB8",
+        "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F",
+        "FEFCFAF8F6F4F2F0F2F4F6F8FAFCFEFF",
+        "FEDDCCBBAA9988778ABDF124578ABDEE",
+        "841161ED57475AADCEA31779DD200347",
+        // Extra tables (not hUGETracker defaults): soft square, 6.25% pulse, falling saw, organ, half sine.
+        "BBBBBBBBBBBBBBBB4444444444444444",
+        "FF000000000000000000000000000000",
+        "FFEEDDCCBBAA99887766554433221100",
+        "89BDEEEDCBA998888777665432111246",
+        "89BCDEEFFFEEDCB98888888888888888",
+    ).map { row -> row.map { it.digitToInt(16) } }
+
+    val DEFAULT_WAVE_NAMES = listOf(
+        "Square 12.5%", "Square 25%", "Square 50%", "Square 75%", "Sawtooth", "Triangle", "Sine", "Toothy",
+        "Triangle toothy", "Pointy", "Strange", "Soft square", "Pulse 6.25%", "Falling saw", "Organ", "Half sine",
+    )
+
+    /** A new song: one blank pattern, default banks and the default waves. */
+    fun blankSong(): Song = Song(
+        title = "Untitled",
+        patterns = listOf(Pattern.blank(CHANNEL_KINDS.size, Songs.ROWS, "Pattern 00")),
+        orders = listOf(0),
+        pulseInstruments = defaultPulseBank(),
+        waveInstruments = List(INSTRUMENT_SLOTS) { i ->
+            Instrument(name = DEFAULT_WAVE_NAMES[i], kind = InstrumentKind.WAVE, wave = i)
+        },
+        noiseInstruments = List(INSTRUMENT_SLOTS) { i ->
+            Instrument(name = "Noise ${i + 1}", kind = InstrumentKind.NOISE, volume = 15, envelopePace = if (i == 0) 0 else 1)
+        },
+        waves = DEFAULT_WAVES,
+    )
+
+    private fun defaultPulseBank(): List<Instrument> {
+        val duties = listOf("12.5%", "25%", "50%", "75%")
+        return List(INSTRUMENT_SLOTS) { i ->
+            when {
+                i < 4 -> Instrument(name = "Duty ${duties[i]}", duty = i, volume = 15)
+                i < 8 -> Instrument(name = "Duty ${duties[i - 4]} plink", duty = i - 4, volume = 15, envelopePace = 1)
+                else -> Instrument(name = "Pulse ${i + 1}", duty = 2, volume = 12)
+            }
+        }
+    }
 
     /** hUGEDriver 6.1.3 `include/hUGE_note_table.inc`: the 11-bit period of each note 0..71 (C-3..B-8). */
     val NOTE_PERIODS = intArrayOf(
@@ -138,7 +211,7 @@ object HugeRules {
      * 14 or 15 stops the LFSR, so those notes produce no noise; notes 64+ wrap inside `get_note_poly`.
      */
     fun noiseNoteProblem(note: Int): String? {
-        if (note !in 0..Songs.NOTE_MAX) return null
+        if (note !in 0..NOTE_MAX) return null
         val poly = noisePoly(note)
         val name = Songs.noteName(note)
         return when {
@@ -217,7 +290,7 @@ object HugeRules {
 
     /**
      * The first reason [cell] cannot be exported/previewed on [channel], or null.
-     * Assumes structurally valid ranges (see [SongValidator.structuralErrors]).
+     * Assumes structurally valid ranges (see [GbValidator.structuralErrors]).
      */
     fun cellProblem(song: Song, channel: Int, cell: Cell): String? {
         val kind = channelKind(channel)
@@ -390,23 +463,16 @@ object HugeRules {
         return song.copy(orders = listOf(index), loopOrder = 0, patterns = patterns, parkedOrders = emptyList())
     }
 
-    /** The document order indices song playback and export use, in order: every order that is not parked. */
-    fun playedOrders(song: Song): List<Int> {
-        if (song.parkedOrders.isEmpty()) return song.orders.indices.toList()
-        val parked = song.parkedOrders.toHashSet()
-        return song.orders.indices.filter { it !in parked }
-    }
-
     /**
      * The song as played and exported: its parked orders removed. Everything that names an order is renumbered to
      * the shorter list: the loop target and every stored `Bxx` (B01 = order 0; B00 is relative). A loop or jump
      * aimed at a parked order lands on the next played order after it (the loop target when none follows, and
      * the first played order for a parked loop target at the end). Returns [song] itself when nothing is parked or
-     * everything is (which [SongValidator.errors] reports).
+     * everything is (which [GbValidator.errors] reports).
      */
     fun arranged(song: Song): Song {
         if (song.parkedOrders.isEmpty()) return song
-        val played = playedOrders(song)
+        val played = Songs.playedOrders(song)
         if (played.isEmpty()) return song
         // Document order index → arranged index of the first played order at or after it (-1 past the last).
         val next = IntArray(song.orders.size + 1) { -1 }

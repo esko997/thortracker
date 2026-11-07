@@ -1,6 +1,6 @@
 package org.thortracker.backend
 
-import org.thortracker.model.HugeRules
+import org.thortracker.system.gb.HugeRules
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
 import org.thortracker.model.Song
@@ -11,7 +11,7 @@ import org.thortracker.model.Song
  * docs/UGE_EXPORT.md). Patterns come from [HugeLowering], so export and preview play the same data:
  * one hUGE pattern per (song pattern, channel) with key = [HugeData] track index, plus loop-variant tracks.
  *
- * @throws IllegalArgumentException when the song has [org.thortracker.model.SongValidator.errors].
+ * @throws IllegalArgumentException when the song has [org.thortracker.system.gb.GbValidator.errors].
  */
 object UgeExporter {
     const val UGE_VERSION = 6

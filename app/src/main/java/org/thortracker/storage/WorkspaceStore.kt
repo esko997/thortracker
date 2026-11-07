@@ -107,7 +107,7 @@ class WorkspaceStore(context: Context) {
     private fun phrase(array: JSONArray?): Phrase? {
         if (array == null || array.length() !in 1..PhraseSettings.MAX_LENGTH) return null
         val steps = List(array.length()) { array.optInt(it, -1) }
-        if (steps.any { it !in -1..Songs.NOTE_MAX } || steps.all { it < 0 }) return null
+        if (steps.any { it !in -1..Songs.NOTE_LIMIT } || steps.all { it < 0 }) return null
         return Phrase(steps.map { it.takeIf { n -> n >= 0 } })
     }
 

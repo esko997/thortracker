@@ -1,13 +1,16 @@
-package org.thortracker.ui
+package org.thortracker.system.gb
 
 import kotlin.math.roundToInt
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
-import org.thortracker.editor.ViewController
-import org.thortracker.editor.WaveShapes
-import org.thortracker.editor.firstChannelOf
 import org.thortracker.model.InstrumentKind
+import org.thortracker.ui.Align
+import org.thortracker.ui.PaneView
+import org.thortracker.ui.Painter
+import org.thortracker.ui.Palette
+import org.thortracker.ui.Rect
+import org.thortracker.ui.Surface
 
 /**
  * Wave editor: the 16 wave tables as thumbnails, a tool row, and a 32 x 16 drawing grid. The controller
@@ -55,8 +58,8 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         val toolH = ink.unit * 1.7f
         var x = area.left + pad
         val size = ink.unit * 0.85f
-        for ((i, name) in ViewController.WAVE_TOOLS.withIndex()) {
-            val text = if (i == 8) "Use in sound ${hex2(ctl.waveTargetSound())}" else name
+        for ((i, name) in GbWaveView.TOOLS.withIndex()) {
+            val text = if (i == 8) "Use in sound ${hex2(GbWaveView.targetSound(ctl))}" else name
             val w = ink.labelWidth(text, size) + ink.unit
             if (x + w > area.right - pad) break
             val r = Rect(x, toolTop, x + w, toolTop + toolH)
@@ -119,13 +122,13 @@ internal class WavePainter(v: PaneView) : Painter(v) {
     override fun down(x: Float, y: Float): Boolean {
         thumbs.firstOrNull { it.first.contains(x, y) }?.let { (_, i) ->
             st.wave = i
-            ctl.publishWave()
+            GbWaveView.publish(ctl)
             return true
         }
         tools.firstOrNull { it.first.contains(x, y) }?.let { (_, i) ->
             st.waveRow = 0
             st.waveCol = i
-            ctl.applyTool(i)
+            GbWaveView.applyTool(ctl, i)
             return true
         }
         if (grid.contains(x, y)) {

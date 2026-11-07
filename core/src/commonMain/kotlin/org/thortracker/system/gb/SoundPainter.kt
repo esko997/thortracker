@@ -1,19 +1,20 @@
-package org.thortracker.ui
+package org.thortracker.system.gb
 
-import org.thortracker.model.NumberText
 import kotlin.math.roundToInt
-import org.thortracker.editor.EditorSession
-import org.thortracker.editor.GestureToken
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
-import org.thortracker.editor.SoundParam
-import org.thortracker.editor.bank
+import org.thortracker.editor.GestureToken
 import org.thortracker.editor.channelCount
-import org.thortracker.editor.firstChannelOf
 import org.thortracker.model.Instrument
 import org.thortracker.model.InstrumentKind
+import org.thortracker.model.NumberText
 import org.thortracker.model.Song
-import org.thortracker.model.Songs
+import org.thortracker.ui.Align
+import org.thortracker.ui.PaneView
+import org.thortracker.ui.Painter
+import org.thortracker.ui.Palette
+import org.thortracker.ui.Rect
+import org.thortracker.ui.Surface
 
 /**
  * Sound (instrument) editor. Left: bank tabs and the 15 slots with how often each is used. Right: the
@@ -38,7 +39,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
 
     override fun draw(c: Surface, area: Rect) {
         val s = song
-        val kind = st.bankKind
+        val kind = GbSoundView.kind(st)
         val ins = s.bank(kind).getOrNull(st.instrument - 1) ?: return
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "${bankName(kind)} bank$locked  ${usageText(kind, st.instrument)}")
@@ -61,10 +62,10 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             tabs += r to k.ordinal
         }
         slotTop = top + tabH + ink.unit * 0.2f
-        slotH = minOf(ink.unit * 1.5f, (area.bottom - slotTop) / EditorSession.BANK_SIZE)
-        slotRect = Rect(left.left, slotTop, left.right, slotTop + slotH * EditorSession.BANK_SIZE)
+        slotH = minOf(ink.unit * 1.5f, (area.bottom - slotTop) / HugeRules.INSTRUMENT_SLOTS)
+        slotRect = Rect(left.left, slotTop, left.right, slotTop + slotH * HugeRules.INSTRUMENT_SLOTS)
         val bank = s.bank(kind)
-        for (i in 1..EditorSession.BANK_SIZE) {
+        for (i in 1..HugeRules.INSTRUMENT_SLOTS) {
             val y = slotTop + (i - 1) * slotH
             val sel = i == st.instrument
             if (sel) {
@@ -87,7 +88,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
         val rw = area.right - pad - rx
-        val params = ctl.soundParams
+        val params = GbSoundView.params(st)
         paramH = ink.unit * 1.55f
         var y = top + ink.unit * 0.4f
         // name
@@ -112,7 +113,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         }
         paramRect = Rect(rx, paramTop, rx + rw, y)
         if (kind == InstrumentKind.PULSE && s.firstChannelOf(kind) >= 0) {
-            ink.label(c, "Sweep plays only on ${Songs.channelNames(s)[s.firstChannelOf(kind)]}", rx, y, paramH * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
+            ink.label(c, "Sweep plays only on ${HugeRules.CHANNEL_NAMES[s.firstChannelOf(kind)]}", rx, y, paramH * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
             y += paramH * 0.8f
         }
 
@@ -265,7 +266,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         if (s !== usageSong) {
             usage.clear()
             for (ch in 0 until s.channelCount()) {
-                val k = Songs.channelKind(s, ch)
+                val k = HugeRules.channelKind(ch)
                 val counted = HashSet<Int>()
                 for (pat in s.orders) {
                     if (!counted.add(pat)) continue
@@ -294,28 +295,28 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
     override fun down(x: Float, y: Float): Boolean {
         tabs.firstOrNull { it.first.contains(x, y) }?.let { (_, k) ->
             st.bank = k
-            st.instField = st.instField.coerceAtMost(1 + ctl.soundParams.size)
-            ctl.publishSound()
+            st.instField = st.instField.coerceAtMost(1 + GbSoundView.params(st).size)
+            GbSoundView.publish(ctl)
             return true
         }
         if (slotRect.contains(x, y)) {
-            st.instrument = (((y - slotTop) / slotH).toInt() + 1).coerceIn(1, EditorSession.BANK_SIZE)
+            st.instrument = (((y - slotTop) / slotH).toInt() + 1).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
             st.instField = 0
-            ctl.publishSound()
+            GbSoundView.publish(ctl)
             return true
         }
         if (paramRect.contains(x, y)) {
             val i = ((y - paramTop) / paramH).toInt()
-            val p = ctl.soundParams.getOrNull(i) ?: return false
+            val p = GbSoundView.params(st).getOrNull(i) ?: return false
             st.instField = i + 2
             if (x >= barLeft - ink.unit) {
                 dragParam = p
-                dragKind = st.bankKind
+                dragKind = GbSoundView.kind(st)
                 dragSlot = st.instrument
                 dragGesture = session.beginGesture("Set ${p.label.lowercase()}")
                 setFromX(p, x)
             } else if (p.max - p.min == 1) {
-                session.editInstrument(st.bankKind, st.instrument, "Toggle ${p.label.lowercase()}") { p.set(it, if (p.get(it) == p.min) p.max else p.min) }
+                session.editInstrument(GbSoundView.kind(st), st.instrument, "Toggle ${p.label.lowercase()}") { p.set(it, if (p.get(it) == p.min) p.max else p.min) }
             }
             return true
         }
@@ -346,6 +347,6 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         dragParam = null
         dragGesture?.let { session.endGesture(it) }
         dragGesture = null
-        if (p.label == "Wave" && st.bankKind == dragKind && st.instrument == dragSlot) ctl.publishSound()
+        if (p.label == "Wave" && GbSoundView.kind(st) == dragKind && st.instrument == dragSlot) GbSoundView.publish(ctl)
     }
 }
