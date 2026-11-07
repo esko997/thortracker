@@ -1,5 +1,6 @@
 package org.thortracker.backend
 
+import org.thortracker.system.gb.gb
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNotEquals
@@ -9,8 +10,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.audio.HugeImageLayout
 import org.thortracker.model.Cell
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
+import org.thortracker.system.gb.GbInstrument
+import org.thortracker.system.gb.GbBank
 import org.thortracker.model.Scale
 import org.thortracker.model.ScaleKind
 import org.thortracker.model.Song
@@ -97,9 +98,9 @@ class UgeExporterTest {
         assertEquals("A", uge.artist)
         assertEquals("C", uge.comment)
         assertEquals(List(15) { 0 } + List(15) { 1 } + List(15) { 2 }, uge.instruments.map { it.type })
-        assertEquals(song.pulseInstruments.map { it.name }, uge.instruments.take(15).map { it.name })
+        assertEquals(song.gb.pulse.map { it.name }, uge.instruments.take(15).map { it.name })
         assertTrue(uge.instruments.all { !it.subpatternEnabled && it.subpattern.all { c -> c.note == 90 && c.effect == 0 } })
-        assertEquals(song.waves, uge.waves)
+        assertEquals(song.gb.waves, uge.waves)
         assertEquals(6, uge.ticksPerRow)
         assertFalse(uge.timerEnabled)
         assertEquals(0, uge.timerDivider)
@@ -122,15 +123,15 @@ class UgeExporterTest {
     @Test
     fun instrumentFieldEncodings() {
         val base = Songs.blank()
-        val song = base.copy(
-            pulseInstruments = base.pulseInstruments.toMutableList().also {
-                it[0] = Instrument(name = "Up", volume = 3, envelopeDirection = 1, envelopePace = 4, sweepDirection = 1,
+        val song = base.copy(sound = base.gb.copy(
+            pulse = base.gb.pulse.toMutableList().also {
+                it[0] = GbInstrument(name = "Up", volume = 3, envelopeDirection = 1, envelopePace = 4, sweepDirection = 1,
                     length = 33, lengthEnabled = true)
             },
-            noiseInstruments = base.noiseInstruments.toMutableList().also {
-                it[14] = Instrument(name = "Metal", kind = InstrumentKind.NOISE, noiseWidth = 1)
+            noise = base.gb.noise.toMutableList().also {
+                it[14] = GbInstrument(name = "Metal", kind = GbBank.NOISE, noiseWidth = 1)
             },
-        )
+        ))
         val uge = parse(UgeExporter.export(song))
         val up = uge.instruments[0]
         assertEquals(0, up.volSweepDirection) // stUp
@@ -149,7 +150,7 @@ class UgeExporterTest {
             loopOrder = 1,
         )
         song = withCell(song, 0, 1, 4, Cell(Cell.CUT))
-        song = withCell(song, 1, 2, 0, Cell(33, 2, 0x9, 0x03))
+        song = withCell(song, 1, 2, 0, Cell(69, 2, 0x9, 0x03))
         val uge = parse(UgeExporter.export(song))
         assertEquals((0..8).toList(), uge.patterns.keys.toList())
         // Each order column: entries, then hUGETracker's ignored trailing 0.
@@ -169,7 +170,7 @@ class UgeExporterTest {
 
     @Test
     fun refusesUnexportableSongs() {
-        val routine = withCell(Songs.blank(), 0, 0, 0, Cell(24, 1, 0x6, 0x01))
+        val routine = withCell(Songs.blank(), 0, 0, 0, Cell(60, 1, 0x6, 0x01))
         assertThrows(IllegalArgumentException::class.java) { UgeExporter.export(routine) }
         val longName = Songs.blank().copy(comment = "x".repeat(256))
         assertThrows(IllegalArgumentException::class.java) { UgeExporter.export(longName) }

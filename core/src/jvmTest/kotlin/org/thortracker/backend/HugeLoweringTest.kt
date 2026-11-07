@@ -1,13 +1,14 @@
 package org.thortracker.backend
 
+import org.thortracker.system.gb.gb
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.model.Cell
-import org.thortracker.model.Instrument
-import org.thortracker.model.InstrumentKind
+import org.thortracker.system.gb.GbInstrument
+import org.thortracker.system.gb.GbBank
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 
@@ -35,14 +36,14 @@ class HugeLoweringTest {
     @Test
     fun shortPatternEndsWithABreakAndExportsHiddenRowsBlank() {
         var song = withLength(patterns(2), 0, 20)
-        song = withCell(song, 0, 0, 19, Cell(30, 1, 0xC, 0x08)) // Pulse 1's slot is taken
-        song = withCell(song, 0, 2, 40, Cell(12, 1)) // hidden, kept in the project
+        song = withCell(song, 0, 0, 19, Cell(66, 1, 0xC, 0x08)) // Pulse 1's slot is taken
+        song = withCell(song, 0, 2, 40, Cell(48, 1)) // hidden, kept in the project
         val data = HugeLowering.lower(song)
         assertArrayEquals(bytes(30, 0x1C, 0x08), row(data.tracks[0], 19))
         assertArrayEquals(bytes(90, 0x0D, 0x01), row(data.tracks[1], 19)) // first free slot: Pulse 2
         for (ch in 0 until 4) for (r in 20 until 64) assertArrayEquals(emptyRow, row(data.tracks[ch], r))
         assertTrue(data.tracks.subList(4, 8).all { t -> (0 until 64).all { r -> t[r * 3 + 1].toInt() == 0 } })
-        assertEquals(12, song.patterns[0].tracks[2][40].note)
+        assertEquals(48, song.patterns[0].tracks[2][40].note)
     }
 
     @Test
@@ -70,9 +71,9 @@ class HugeLoweringTest {
     @Test
     fun cellsUseTheDnMacroLayout() {
         val cells = List(Songs.ROWS) { Cell.BLANK }.toMutableList().apply {
-            this[0] = Cell(24, 1, 0x0, 0x37) // DN(C_5,1,0x037)
+            this[0] = Cell(60, 1, 0x0, 0x37) // C-5: DN(C_5,1,0x037)
             this[1] = Cell(Cell.CUT) // DN(___,0,0xE00)
-            this[2] = Cell(71, 15, 0xF, 0xFF)
+            this[2] = Cell(107, 15, 0xF, 0xFF)
         }
         val track = HugeLowering.encodeTrack(cells)
         assertEquals(Songs.ROWS * 3, track.size)
@@ -85,11 +86,11 @@ class HugeLoweringTest {
     /** Expected bytes were produced by hUGETracker 1.0.11 uge2source from equivalent .uge instruments. */
     @Test
     fun instrumentBytesMatchUge2source() {
-        val duty = Instrument(duty = 0, volume = 15, envelopePace = 1, length = 10)
+        val duty = GbInstrument(duty = 0, volume = 15, envelopePace = 1, length = 10)
         assertArrayEquals(bytes(8, 10, 241, 0, 0, 128), HugeLowering.dutyBytes(duty))
-        val wave = Instrument(kind = InstrumentKind.WAVE, length = 200, waveVolume = 2, wave = 0)
+        val wave = GbInstrument(kind = GbBank.WAVE, length = 200, waveVolume = 2, wave = 0)
         assertArrayEquals(bytes(200, 64, 0, 0, 0, 128), HugeLowering.waveBytes(wave))
-        val noiseShort = Instrument(kind = InstrumentKind.NOISE, volume = 13, envelopePace = 2, length = 5, lengthEnabled = true, noiseWidth = 1)
+        val noiseShort = GbInstrument(kind = GbBank.NOISE, volume = 13, envelopePace = 2, length = 5, lengthEnabled = true, noiseWidth = 1)
         assertArrayEquals(bytes(210, 0, 0, 197, 0, 0), HugeLowering.noiseBytes(noiseShort))
         val noiseLong = noiseShort.copy(lengthEnabled = false, noiseWidth = 0)
         assertArrayEquals(bytes(210, 0, 0, 5, 0, 0), HugeLowering.noiseBytes(noiseLong))
@@ -97,11 +98,11 @@ class HugeLoweringTest {
 
     @Test
     fun registerFieldDirections() {
-        val upSweep = Instrument(sweepTime = 2, sweepDirection = 1, sweepShift = 3)
+        val upSweep = GbInstrument(sweepTime = 2, sweepDirection = 1, sweepShift = 3)
         assertEquals(0x23, HugeLowering.nr10(upSweep))
         assertEquals(0x2B, HugeLowering.nr10(upSweep.copy(sweepDirection = 0)))
-        assertEquals(0x9D, HugeLowering.envelope(Instrument(volume = 9, envelopeDirection = 1, envelopePace = 5)))
-        val lengthPulse = HugeLowering.dutyBytes(Instrument(duty = 3, length = 63, lengthEnabled = true))
+        assertEquals(0x9D, HugeLowering.envelope(GbInstrument(volume = 9, envelopeDirection = 1, envelopePace = 5)))
+        val lengthPulse = HugeLowering.dutyBytes(GbInstrument(duty = 3, length = 63, lengthEnabled = true))
         assertEquals(0xFF, lengthPulse[1].toInt() and 0xFF)
         assertEquals(0xC0, lengthPulse[5].toInt() and 0xFF)
     }
@@ -144,7 +145,7 @@ class HugeLoweringTest {
     @Test
     fun loopUsesFirstFreeSlotAndRewritesNextOrderJumps() {
         var song = patterns(2).copy(loopOrder = 1)
-        song = withCell(song, 1, 0, 63, Cell(30, 1, 0xC, 0x08)) // occupied
+        song = withCell(song, 1, 0, 63, Cell(66, 1, 0xC, 0x08)) // occupied
         song = withCell(song, 1, 1, 63, Cell(Cell.CUT)) // cut needs E00
         song = withCell(song, 1, 3, 20, Cell(Cell.EMPTY, 0, 0xB, 0x00)) // B00 = "next order" = loop
         song = withCell(song, 1, 2, 40, Cell(Cell.EMPTY, 0, 0xD, 0x05)) // break: needs the loop target too
@@ -197,8 +198,8 @@ class HugeLoweringTest {
     @Test
     fun rejectsSongsWithErrorsListingAllOfThem() {
         var song = Songs.blank()
-        song = withCell(song, 0, 0, 1, Cell(24, 1, 0x6, 0x00))
-        song = withCell(song, 0, 2, 2, Cell(24, 1, 0xA, 0x01))
+        song = withCell(song, 0, 0, 1, Cell(60, 1, 0x6, 0x00))
+        song = withCell(song, 0, 2, 2, Cell(60, 1, 0xA, 0x01))
         val error = assertThrows(IllegalArgumentException::class.java) { HugeLowering.lower(song) }
         assertEquals(2, error.message!!.lines().size)
     }

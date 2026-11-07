@@ -1,13 +1,15 @@
-package org.thortracker.ui
+package org.thortracker.system.gb
 
 import kotlin.math.roundToInt
 import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
-import org.thortracker.editor.ViewController
-import org.thortracker.editor.WaveShapes
-import org.thortracker.editor.firstChannelOf
-import org.thortracker.model.InstrumentKind
+import org.thortracker.ui.Align
+import org.thortracker.ui.PaneView
+import org.thortracker.ui.Painter
+import org.thortracker.ui.Palette
+import org.thortracker.ui.Rect
+import org.thortracker.ui.Surface
 
 /**
  * Wave editor: the 16 wave tables as thumbnails, a tool row, and a 32 x 16 drawing grid. The controller
@@ -24,18 +26,18 @@ internal class WavePainter(v: PaneView) : Painter(v) {
 
     override fun draw(c: Surface, area: Rect) {
         val s = song
-        val wave = s.waves[st.wave]
-        val users = s.waveInstruments.withIndex().filter { it.value.wave == st.wave }.map { hex2(it.index + 1) }
+        val wave = s.gb.waves[st.wave]
+        val users = s.gb.wave.withIndex().filter { it.value.wave == st.wave }.map { hex2(it.index + 1) }
         val locked = if (st.lockedSubject >= 0) "locked  " else ""
         val top = header(c, area, "Wave ${hex1(st.wave)}", locked + if (users.isEmpty()) "No wave sound plays this wave" else "Played by sound ${users.joinToString(", ")}")
-        val col = Palette.channel(maxOf(0, s.firstChannelOf(InstrumentKind.WAVE)))
+        val col = Palette.channel(maxOf(0, s.firstChannelOf(GbBank.WAVE)))
         val pad = ink.unit * 0.7f
 
         // thumbnails
         thumbs.clear()
         val thumbH = ink.unit * 2.6f
-        val tw = (area.width() - pad * 2) / s.waves.size
-        for ((i, w) in s.waves.withIndex()) {
+        val tw = (area.width() - pad * 2) / s.gb.waves.size
+        for ((i, w) in s.gb.waves.withIndex()) {
             val r = Rect(area.left + pad + i * tw + 2, top + ink.unit * 0.4f, area.left + pad + (i + 1) * tw - 2, top + ink.unit * 0.4f + thumbH)
             val sel = i == st.wave
             ink.round(c, r, ink.dp(3f), if (sel) Palette.CURSOR_FILL else Palette.LANE)
@@ -55,8 +57,8 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         val toolH = ink.unit * 1.7f
         var x = area.left + pad
         val size = ink.unit * 0.85f
-        for ((i, name) in ViewController.WAVE_TOOLS.withIndex()) {
-            val text = if (i == 8) "Use in sound ${hex2(ctl.waveTargetSound())}" else name
+        for ((i, name) in GbWaveView.TOOLS.withIndex()) {
+            val text = if (i == 8) "Use in sound ${hex2(GbWaveView.targetSound(ctl))}" else name
             val w = ink.labelWidth(text, size) + ink.unit
             if (x + w > area.right - pad) break
             val r = Rect(x, toolTop, x + w, toolTop + toolH)
@@ -119,13 +121,13 @@ internal class WavePainter(v: PaneView) : Painter(v) {
     override fun down(x: Float, y: Float): Boolean {
         thumbs.firstOrNull { it.first.contains(x, y) }?.let { (_, i) ->
             st.wave = i
-            ctl.publishWave()
+            GbWaveView.publish(ctl)
             return true
         }
         tools.firstOrNull { it.first.contains(x, y) }?.let { (_, i) ->
             st.waveRow = 0
             st.waveCol = i
-            ctl.applyTool(i)
+            GbWaveView.applyTool(ctl, i)
             return true
         }
         if (grid.contains(x, y)) {
@@ -167,7 +169,7 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         val ch = grid.height() / (WaveShapes.MAX + 1)
         val sample = ((x - grid.left) / cw).toInt().coerceIn(0, WaveShapes.SAMPLES - 1)
         val level = ((grid.bottom - y) / ch).toInt().coerceIn(0, WaveShapes.MAX)
-        val w = song.waves[strokeWave].toMutableList()
+        val w = song.gb.waves[strokeWave].toMutableList()
         if (lastSample < 0 || lastSample == sample) {
             w[sample] = level
         } else {

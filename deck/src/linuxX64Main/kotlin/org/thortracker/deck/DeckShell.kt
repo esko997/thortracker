@@ -1,6 +1,6 @@
 package org.thortracker.deck
 
-import org.thortracker.backend.UgeExporter
+import org.thortracker.system.ExportFormat
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewKind
@@ -121,9 +121,9 @@ class DeckShell(
         } else error("Could not write ${Files.pretty(path)}")
     }
 
-    override fun exportUge(song: Song) =
-        FileBrowser(popups, "Export .uge", listOf(".uge"), saveName = Files.safeName(song.title) + ".uge") { path ->
-            if (Files.write(path, UgeExporter.export(song))) status("UGE exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
+    override fun export(song: Song, format: ExportFormat) =
+        FileBrowser(popups, "Export .${format.extension}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
+            if (Files.write(path, format.export(song))) status("${format.extension.uppercase()} exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
         }.show(documents)
 
     override fun recoverPrevious() {

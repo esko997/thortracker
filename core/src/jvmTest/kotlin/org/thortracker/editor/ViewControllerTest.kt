@@ -1,5 +1,13 @@
 package org.thortracker.editor
 
+import org.thortracker.system.gb.gb
+import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.gb.GbSoundView
+import org.thortracker.system.gb.bank
+import org.thortracker.system.gb.GbValidator
+import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gb.WaveShapes
+import org.thortracker.system.gb.setInstrument
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -9,8 +17,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.model.Cell
-import org.thortracker.model.InstrumentKind
-import org.thortracker.model.SongValidator
+import org.thortracker.system.gb.GbBank
 import org.thortracker.model.Songs
 import org.thortracker.model.Scl
 import org.thortracker.model.Scale
@@ -64,12 +71,12 @@ class ViewControllerTest {
     fun patternPanelFitsPlayedTonalNotesToTheNearestScaleNoteAsOneUndo() {
         session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC)) // C Eb F G Bb
         session.setPatternLength(0, 16)
-        session.setCell(0, 0, 0, Cell(note = 25, instrument = 1))                 // C#: C is 1 away, Eb 2
-        session.setCell(0, 1, 1, Cell(note = 26, instrument = 2, effect = 0xC, param = 0x08)) // D: Eb is closer
-        session.setCell(0, 2, 2, Cell(note = 32, instrument = 0))                 // G#: G and Bb, G closer
-        session.setCell(0, 3, 3, Cell(note = 25, instrument = 1))                 // Noise keeps its pitch
-        session.setCell(0, 0, 20, Cell(note = 25, instrument = 1))                // hidden row is left alone
-        session.setCell(0, 0, 4, Cell(note = 24, instrument = 1))                 // already in the scale
+        session.setCell(0, 0, 0, Cell(note = 61, instrument = 1))                 // C#: C is 1 away, Eb 2
+        session.setCell(0, 1, 1, Cell(note = 62, instrument = 2, effect = 0xC, param = 0x08)) // D: Eb is closer
+        session.setCell(0, 2, 2, Cell(note = 68, instrument = 0))                 // G#: G and Bb, G closer
+        session.setCell(0, 3, 3, Cell(note = 61, instrument = 1))                 // Noise keeps its pitch
+        session.setCell(0, 0, 20, Cell(note = 61, instrument = 1))                // hidden row is left alone
+        session.setCell(0, 0, 4, Cell(note = 60, instrument = 1))                 // already in the scale
         val before = session.song
         val v = view(ViewKind.PATTERN)
         v.tap(Action.SCALE)
@@ -77,24 +84,24 @@ class ViewControllerTest {
         assertEquals(ViewController.SCALE_FIT_FIELD, v.state.scaleField)
         v.tap(Action.EDIT)
         assertTrue("Fit keeps the panel open", v.state.scalePanel)
-        assertEquals(Cell(note = 24, instrument = 1), cell(0, 0, 0))
-        assertEquals(Cell(note = 27, instrument = 2, effect = 0xC, param = 0x08), cell(0, 1, 1))
-        assertEquals(31, cell(0, 2, 2).note)
-        assertEquals(25, cell(0, 3, 3).note)
-        assertEquals(25, cell(0, 0, 20).note)
-        assertEquals(24, cell(0, 0, 4).note)
+        assertEquals(Cell(note = 60, instrument = 1), cell(0, 0, 0))
+        assertEquals(Cell(note = 63, instrument = 2, effect = 0xC, param = 0x08), cell(0, 1, 1))
+        assertEquals(67, cell(0, 2, 2).note)
+        assertEquals(61, cell(0, 3, 3).note)
+        assertEquals(61, cell(0, 0, 20).note)
+        assertEquals(60, cell(0, 0, 4).note)
         session.undo()
         assertSame(before, session.song)
     }
 
     @Test
     fun fitDoesNothingForChromaticOrTunedPatterns() {
-        session.setCell(0, 0, 0, Cell(note = 25, instrument = 1))
+        session.setCell(0, 0, 0, Cell(note = 61, instrument = 1))
         assertEquals(0, session.fitToScale(0))
         session.setPatternScale(0, Scale(0, ScaleKind.MAJOR))
         session.setTuning(Scl.parse("19-TET\n19\n" + (1..19).joinToString("\n") { "%.4f".format(it * 1200.0 / 19) }, "19-TET"))
         assertEquals(0, session.fitToScale(0))
-        assertEquals(25, cell(0, 0, 0).note)
+        assertEquals(61, cell(0, 0, 0).note)
     }
 
     @Test
@@ -115,64 +122,64 @@ class ViewControllerTest {
 
     @Test
     fun fitMarksShowTheOriginalNoteAcrossChainedFitsAndClearOnEdit() {
-        session.setCell(0, 0, 0, Cell(note = 25, instrument = 1))   // C#
-        session.setCell(0, 1, 2, Cell(note = 26, instrument = 1))   // D
+        session.setCell(0, 0, 0, Cell(note = 61, instrument = 1))   // C#
+        session.setCell(0, 1, 2, Cell(note = 62, instrument = 1))   // D
         session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC)) // C Eb F G Bb
         assertEquals(2, session.fitToScale(0))                       // C# -> C, D -> Eb
-        assertEquals(Cell(note = 25, instrument = 1), session.fittedFrom(0, 0, 0))
-        assertEquals(26, session.fittedFrom(0, 1, 2)?.note)
+        assertEquals(Cell(note = 61, instrument = 1), session.fittedFrom(0, 0, 0))
+        assertEquals(62, session.fittedFrom(0, 1, 2)?.note)
         assertNull(session.fittedFrom(0, 2, 0))
         // Changing the scale keeps the marks; a second Fit chains from the original notes (the drift is visible).
         session.setPatternScale(0, Scale(1, ScaleKind.MAJOR))        // C# major: C# D# F F# G# A# C
         session.fitToScale(0)                                        // Eb stays; C (24) is in C# major
-        assertEquals(25, session.fittedFrom(0, 0, 0)?.note)
-        assertEquals(26, session.fittedFrom(0, 1, 2)?.note)
+        assertEquals(61, session.fittedFrom(0, 0, 0)?.note)
+        assertEquals(62, session.fittedFrom(0, 1, 2)?.note)
         // Editing another cell keeps the marks; editing a marked note unmarks only that note.
-        session.setCell(0, 3, 10, Cell(note = 30, instrument = 1))
-        assertEquals(25, session.fittedFrom(0, 0, 0)?.note)
-        session.setCell(0, 0, 0, Cell(note = 28, instrument = 1))
+        session.setCell(0, 3, 10, Cell(note = 66, instrument = 1))
+        assertEquals(61, session.fittedFrom(0, 0, 0)?.note)
+        session.setCell(0, 0, 0, Cell(note = 64, instrument = 1))
         assertNull(session.fittedFrom(0, 0, 0))
-        assertEquals(26, session.fittedFrom(0, 1, 2)?.note)
+        assertEquals(62, session.fittedFrom(0, 1, 2)?.note)
         // Undoing that edit shows its mark again; undoing the first Fit (original notes) shows none.
         session.undo()
-        assertEquals(25, session.fittedFrom(0, 0, 0)?.note)
+        assertEquals(61, session.fittedFrom(0, 0, 0)?.note)
         session.undo() // the cell on channel 3
         session.undo() // the scale change (the second Fit changed nothing)
         session.undo() // the first Fit
-        assertEquals(25, cell(0, 0, 0).note)
+        assertEquals(61, cell(0, 0, 0).note)
         assertNull(session.fittedFrom(0, 0, 0))
         assertNull(session.fittedFrom(0, 1, 2))
     }
 
     @Test
     fun aNoteFittedBackToItsOriginalIsNoLongerMarked() {
-        session.setCell(0, 0, 0, Cell(note = 26, instrument = 1))   // D
+        session.setCell(0, 0, 0, Cell(note = 62, instrument = 1))   // D
         session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC))
         session.fitToScale(0)                                        // D -> Eb (27)
-        assertEquals(26, session.fittedFrom(0, 0, 0)?.note)
+        assertEquals(62, session.fittedFrom(0, 0, 0)?.note)
         session.setPatternScale(0, Scale(2, ScaleKind.MINOR_PENTATONIC)) // D F G A C: Eb is nearest to D
         session.fitToScale(0)
-        assertEquals(26, cell(0, 0, 0).note)
+        assertEquals(62, cell(0, 0, 0).note)
         assertNull(session.fittedFrom(0, 0, 0))
     }
 
     @Test
     fun chainedFitsMoveAFittedNoteAgainButRememberItsOriginal() {
-        session.setCell(0, 0, 0, Cell(note = 26, instrument = 1))   // D
+        session.setCell(0, 0, 0, Cell(note = 62, instrument = 1))   // D
         session.setPatternScale(0, Scale(0, ScaleKind.MINOR_PENTATONIC))
         session.fitToScale(0)                                        // D -> Eb (27)
         session.setPatternScale(0, Scale(4, ScaleKind.MAJOR_PENTATONIC)) // E F# G# B C#: Eb is nearest to E
         assertEquals(1, session.fitToScale(0))
-        assertEquals(28, cell(0, 0, 0).note)
-        assertEquals(26, session.fittedFrom(0, 0, 0)?.note)          // the original, not the intermediate Eb
+        assertEquals(64, cell(0, 0, 0).note)
+        assertEquals(62, session.fittedFrom(0, 0, 0)?.note)          // the original, not the intermediate Eb
     }
 
     @Test
     fun insertingOrDeletingRowsClearsThePatternsFitMarks() {
-        for (r in 4..7) session.setCell(0, 0, r, Cell(note = 25, instrument = 1))
+        for (r in 4..7) session.setCell(0, 0, r, Cell(note = 61, instrument = 1))
         session.setPatternScale(0, Scale(0, ScaleKind.MAJOR))
         session.fitToScale(0)
-        assertEquals(25, session.fittedFrom(0, 0, 4)?.note)
+        assertEquals(61, session.fittedFrom(0, 0, 4)?.note)
         session.insertRow(0, 0..0, 2)
         for (r in 0..63) assertNull("row $r", session.fittedFrom(0, 0, r))
     }
@@ -191,7 +198,7 @@ class ViewControllerTest {
     fun tapEditWritesLastNoteAdvancesAndIsOneUndo() {
         val v = view(ViewKind.PATTERN)
         v.tap(Action.EDIT)
-        assertEquals(Cell(note = 12, instrument = 1), cell(0, 0, 0))
+        assertEquals(Cell(note = 48, instrument = 1), cell(0, 0, 0))
         assertEquals(1, v.state.row)
         assertEquals(Triple(0, 12, 1), auditions.single())
         assertEquals(1, releases)
@@ -206,7 +213,7 @@ class ViewControllerTest {
     fun holdEditAdjustsNoteFineAndCoarseAsOneStep() {
         val v = view(ViewKind.PATTERN)
         v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT, Action.UP)
-        assertEquals(12 + 3 + 12, cell(0, 0, 0).note)
+        assertEquals(48 + 3 + 12, cell(0, 0, 0).note)
         assertEquals(0, v.state.row) // adjusting does not advance
         session.undo()
         assertEquals(Cell(), cell(0, 0, 0))
@@ -216,7 +223,7 @@ class ViewControllerTest {
     @Test
     fun clearCyclesNoteEmptyCutEmpty() {
         val v = view(ViewKind.PATTERN)
-        session.setCell(0, 0, 0, Cell(note = 20, instrument = 2, effect = 0xC, param = 0x08))
+        session.setCell(0, 0, 0, Cell(note = 56, instrument = 2, effect = 0xC, param = 0x08))
         v.tap(Action.CLEAR)
         assertEquals(Cell(Cell.EMPTY, 0, 0xC, 0x08), cell(0, 0, 0))
         v.tap(Action.CLEAR) // effect present: a cut would need the effect slot
@@ -227,7 +234,7 @@ class ViewControllerTest {
         v.state.field = 0
         v.tap(Action.CLEAR)
         assertEquals(Cell(note = Cell.CUT), cell(0, 0, 0))
-        assertEquals(null, Songs.cellProblem(session.song, 0, cell(0, 0, 0)))
+        assertEquals(null, GbSystem.cellProblem(session.song, 0, cell(0, 0, 0)))
         v.tap(Action.CLEAR)
         assertEquals(Cell(), cell(0, 0, 0))
     }
@@ -256,16 +263,16 @@ class ViewControllerTest {
         val v = view(ViewKind.PATTERN) { channel = 3; field = 2 }
         v.hold(Action.EDIT, Action.RIGHT)
         val first = cell(0, 3, 0).effect
-        assertEquals(Songs.effectsFor(session.song, 3).map { it.code }.first { it != 0 }, first)
+        assertEquals(GbSystem.effectsFor(3).map { it.code }.first { it != 0 }, first)
         repeat(16) { v.hold(Action.EDIT, Action.RIGHT) }
-        assertTrue(Songs.effectsFor(session.song, 3).any { it.code == cell(0, 3, 0).effect })
+        assertTrue(GbSystem.effectsFor(3).any { it.code == cell(0, 3, 0).effect })
     }
 
     @Test
     fun markCopyPasteAndDuplicateBlocks() {
         for (r in 0..3) {
             session.setCell(0, 0, r, Cell(note = r, instrument = 1))
-            session.setCell(0, 1, r, Cell(note = 24 + r, instrument = 2))
+            session.setCell(0, 1, r, Cell(note = 60 + r, instrument = 2))
         }
         val v = view(ViewKind.PATTERN)
         v.hold(Action.MARK, Action.DOWN, Action.DOWN, Action.DOWN, Action.RIGHT)
@@ -304,7 +311,7 @@ class ViewControllerTest {
     fun keyboardWriteModeWritesAtSharedCursorAndListenModeDoesNot() {
         val kb = view(ViewKind.KEYBOARD) { entryMode = true; kbRow = 1; kbKey = 4 }
         kb.tap(Action.EDIT)
-        assertEquals(Cell(note = 16, instrument = 1), cell(0, 0, 0))
+        assertEquals(Cell(note = 52, instrument = 1), cell(0, 0, 0))
         assertEquals(1, session.selection.row)
 
         kb.tap(Action.CLEAR) // write mode: cut and advance
@@ -328,28 +335,28 @@ class ViewControllerTest {
         kb.follow()
         assertEquals(2, kb.state.channel)
         kb.tap(Action.EDIT)
-        assertEquals(12, cell(0, 2, 0).note)
+        assertEquals(48, cell(0, 2, 0).note)
     }
 
     @Test
     fun instrumentParameterHoldIsOneUndo() {
         val v = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 3 }
-        assertEquals("Volume", v.soundParams[1].label)
+        assertEquals("Volume", GbSoundView.params(v.state)[1].label)
         v.hold(Action.EDIT, Action.LEFT, Action.LEFT)
-        assertEquals(13, session.song.pulseInstruments[0].volume)
+        assertEquals(13, session.song.gb.pulse[0].volume)
         session.undo()
-        assertEquals(15, session.song.pulseInstruments[0].volume)
+        assertEquals(15, session.song.gb.pulse[0].volume)
 
         v.state.instField = 2 + 4 // length cut on/off
         v.tap(Action.EDIT)
-        assertTrue(session.song.pulseInstruments[0].lengthEnabled)
+        assertTrue(session.song.gb.pulse[0].lengthEnabled)
     }
 
     @Test
     fun everyInstrumentParameterStaysInRange() {
-        for (kind in InstrumentKind.entries) {
+        for (kind in GbBank.entries) {
             val v = view(ViewKind.INSTRUMENT) { bank = kind.ordinal; instrument = 2 }
-            for ((i, p) in v.soundParams.withIndex()) {
+            for ((i, p) in GbSoundView.params(v.state).withIndex()) {
                 v.state.instField = i + 2
                 v.hold(Action.EDIT, *Array(40) { Action.UP })
                 assertEquals(p.max, p.get(session.song.bank(kind)[1]))
@@ -357,32 +364,32 @@ class ViewControllerTest {
                 assertEquals(p.min, p.get(session.song.bank(kind)[1]))
             }
         }
-        assertTrue(SongValidator.structuralErrors(session.song).isEmpty())
+        assertTrue(GbValidator.structuralErrors(session.song).isEmpty())
     }
 
     @Test
     fun soundNameEditsWithTheController() {
         val v = view(ViewKind.INSTRUMENT) { instField = 1 }
-        session.setInstrument(InstrumentKind.PULSE, 1, session.song.pulseInstruments[0].copy(name = "Lead"))
+        session.setInstrument(GbBank.PULSE, 1, session.song.gb.pulse[0].copy(name = "Lead"))
         v.tap(Action.RIGHT)
         v.tap(Action.RIGHT)
         v.tap(Action.RIGHT)
         v.tap(Action.RIGHT) // past the end: appends
         v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
-        assertEquals("LeadB", session.song.pulseInstruments[0].name)
+        assertEquals("LeadB", session.song.gb.pulse[0].name)
         v.tap(Action.CLEAR)
-        assertEquals("Lead", session.song.pulseInstruments[0].name)
+        assertEquals("Lead", session.song.gb.pulse[0].name)
     }
 
     @Test
     fun waveDrawingAndToolsAreUndoable() {
-        val original = session.song.waves[0]
+        val original = session.song.gb.waves[0]
         val v = view(ViewKind.WAVE) { wave = 0; waveRow = 1; waveCol = 0; waveLevel = 8 }
         v.hold(Action.EDIT, Action.RIGHT, Action.UP)
-        assertEquals(8, session.song.waves[0][0])
-        assertEquals(9, session.song.waves[0][1])
+        assertEquals(8, session.song.gb.waves[0][0])
+        assertEquals(9, session.song.gb.waves[0][1])
         session.undo()
-        assertEquals(original, session.song.waves[0])
+        assertEquals(original, session.song.gb.waves[0])
 
         v.tap(Action.LEFT) // back to sample 0, pen still at level 9
         repeat(6) { v.tap(Action.UP) } // level 9 -> 15
@@ -390,15 +397,15 @@ class ViewControllerTest {
         v.tap(Action.UP) // past the top: into the tool row
         assertEquals(0, v.state.waveRow)
         v.tap(Action.EDIT) // Sine
-        assertEquals(WaveShapes.sine(), session.song.waves[0])
+        assertEquals(WaveShapes.sine(), session.song.gb.waves[0])
     }
 
     @Test
     fun useInSoundAssignsTheWaveAndAuditionFindsIt() {
-        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 3))
+        session.select(Selection(bank = GbBank.WAVE.ordinal, instrument = 3))
         val v = view(ViewKind.WAVE) { wave = 12; waveRow = 0; waveCol = 8 }
         v.tap(Action.EDIT)
-        assertEquals(12, session.song.waveInstruments[2].wave)
+        assertEquals(12, session.song.gb.wave[2].wave)
         v.state.waveRow = 1
         v.press(Action.AUDITION)
         assertEquals(Triple(2, 12, 3), auditions.last())
@@ -468,12 +475,12 @@ class ViewControllerTest {
         repeat(3) { pattern.tap(Action.NEXT_CHANNEL) }
         pattern.state.field = 1
         pattern.publishPattern()
-        assertEquals(InstrumentKind.NOISE, session.selection.bank)
+        assertEquals(GbBank.NOISE.ordinal, session.selection.bank)
         assertEquals(ViewKind.INSTRUMENT, session.selection.context)
 
         val follower = view(ViewKind.INSTRUMENT)
         assertTrue(follower.follow())
-        assertEquals(InstrumentKind.NOISE.ordinal, follower.state.bank)
+        assertEquals(GbBank.NOISE.ordinal, follower.state.bank)
 
         val locked = view(ViewKind.INSTRUMENT) { lockedSubject = 0 * 16 + 5 }
         locked.follow()
@@ -489,13 +496,13 @@ class ViewControllerTest {
     fun changingEditorDoesNotInterpretANoiseInstrumentLockAsAWaveIndex() {
         val v = view(ViewKind.INSTRUMENT) { bank = 2; instrument = 1; lockedSubject = 33 }
         v.state.switchKind(ViewKind.WAVE)
-        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 1, wave = 3, context = ViewKind.WAVE))
+        session.select(Selection(bank = GbBank.WAVE.ordinal, instrument = 1, wave = 3, context = ViewKind.WAVE))
         v.follow()
         assertEquals(3, v.state.wave)
 
         v.state.lockedSubject = 3
         v.state.switchKind(ViewKind.WAVE)
-        session.select(Selection(bank = InstrumentKind.WAVE, instrument = 1, wave = 4, context = ViewKind.WAVE))
+        session.select(Selection(bank = GbBank.WAVE.ordinal, instrument = 1, wave = 4, context = ViewKind.WAVE))
         v.follow()
         assertEquals("Reselecting the same editor retains its subject lock", 3, v.state.wave)
     }
@@ -518,7 +525,7 @@ class ViewControllerTest {
         assertFalse(session.canUndo)
         assertTrue(session.canRedo)
         session.redo()
-        assertEquals(13, cell(0, 0, 0).note)
+        assertEquals(49, cell(0, 0, 0).note)
     }
 
     @Test
@@ -531,7 +538,7 @@ class ViewControllerTest {
         assertFalse(session.inGesture)
         assertEquals(1, releases)
         v.press(Action.RIGHT) // a stray direction after a lost key-up only moves the cursor
-        assertEquals(13, cell(0, 0, 0).note)
+        assertEquals(49, cell(0, 0, 0).note)
         assertEquals(1, v.state.field)
     }
 
@@ -570,12 +577,12 @@ class ViewControllerTest {
         assertEquals(7, kb.state.octave)
         kb.state.kbKey = 23
         kb.tap(Action.EDIT)
-        assertEquals(Songs.NOTE_MAX, cell(0, 0, 0).note)
+        assertEquals(GbSystem.noteRange.last, cell(0, 0, 0).note)
     }
 
     @Test
     fun heldControlsDeferFollowingAnotherDisplay() {
-        session.setCell(0, 0, 5, Cell(note = 30, instrument = 1))
+        session.setCell(0, 0, 5, Cell(note = 66, instrument = 1))
         val v = view(ViewKind.PATTERN) { row = 5 }
         v.press(Action.EDIT) // picks up the note, no insertion
         session.select(Selection(row = 20))
@@ -592,9 +599,9 @@ class ViewControllerTest {
         assertEquals(ViewKind.PATTERN, session.selection.context)
         view(ViewKind.KEYBOARD) { kbRow = 0; kbField = 1 }.hold(Action.EDIT, Action.RIGHT)
         assertEquals(ViewKind.PATTERN, session.selection.context)
-        view(ViewKind.INSTRUMENT) { bank = InstrumentKind.PULSE.ordinal }.tap(Action.RIGHT)
+        view(ViewKind.INSTRUMENT) { bank = GbBank.PULSE.ordinal }.tap(Action.RIGHT)
         assertEquals(ViewKind.KEYBOARD, session.selection.context)
-        view(ViewKind.INSTRUMENT) { bank = InstrumentKind.WAVE.ordinal }.tap(Action.RIGHT)
+        view(ViewKind.INSTRUMENT) { bank = GbBank.WAVE.ordinal }.tap(Action.RIGHT)
         assertEquals(ViewKind.WAVE, session.selection.context)
         view(ViewKind.WAVE).tap(Action.NEXT_CHANNEL)
         assertEquals(ViewKind.INSTRUMENT, session.selection.context)
@@ -610,13 +617,13 @@ class ViewControllerTest {
         top.state = bottom.state
         bottom.state = moved // the host swaps whole states between displays
         bottom.tap(Action.EDIT)
-        assertEquals(14, cell(0, 0, 1).note)
+        assertEquals(50, cell(0, 0, 1).note)
     }
 
     @Test
     fun playbackFollowWaitsForHeldControlsAndThenLetsTheUserNavigate() {
         session.newPatternAt(1)
-        session.setCell(0, 0, 0, Cell(note = 30, instrument = 1))
+        session.setCell(0, 0, 0, Cell(note = 66, instrument = 1))
         val v = view(ViewKind.PATTERN)
         v.press(Action.EDIT)
         assertFalse(v.followPlayback(order = 1, playing = true))
@@ -657,7 +664,7 @@ class ViewControllerTest {
         v.hold(Action.EDIT, Action.RIGHT)
         val copy = v.state.snapshot()
         v.state.entry.notes[0] = 40
-        assertEquals(13, copy.entry.notes[0])
+        assertEquals(49, copy.entry.notes[0])
     }
 
     /** A complete short song composed with controller actions only, across every view. */
@@ -689,7 +696,7 @@ class ViewControllerTest {
         pattern.state.row = 0
         pattern.state.field = 1
         pattern.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
-        assertEquals(Cell(note = 0, instrument = 3), cell(0, 1, 0))
+        assertEquals(Cell(note = 36, instrument = 3), cell(0, 1, 0))
 
         // Wave and noise: a note each, and a cut on the noise channel.
         pattern.state.field = 0
@@ -714,10 +721,10 @@ class ViewControllerTest {
         // Shape the lead sound and draw a wave the wave sound uses.
         val sounds = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 2 }
         sounds.hold(Action.EDIT, Action.RIGHT) // duty 25%
-        assertEquals(1, session.song.pulseInstruments[0].duty)
+        assertEquals(1, session.song.gb.pulse[0].duty)
         val waves = view(ViewKind.WAVE) { wave = 0; waveRow = 0; waveCol = 1 }
         waves.tap(Action.EDIT) // triangle
-        assertEquals(WaveShapes.triangle(), session.song.waves[0])
+        assertEquals(WaveShapes.triangle(), session.song.gb.waves[0])
 
         // Arrange: repeat the pattern, add a clone, speed up, loop to order 1.
         val song = view(ViewKind.SONG) { songItem = ViewState.SONG_HEADER_ITEMS; songField = 1 }
@@ -738,7 +745,7 @@ class ViewControllerTest {
         assertEquals(4, s.ticksPerRow)
         assertEquals("Vntitled", s.title)
         for (ch in 0 until 4) assertTrue(s.patterns[0].tracks[ch].any { it.note >= 0 })
-        assertEquals(listOf<String>(), SongValidator.errors(s))
+        assertEquals(listOf<String>(), GbValidator.errors(s))
         assertNotEquals(Songs.blank(), s)
     }
 
@@ -761,46 +768,46 @@ class ViewControllerTest {
 
     @Test
     fun effectOneWithValueZeroStepsBackToEffectZeroNotToNothing() {
-        session.setCell(0, 0, 0, Cell(note = 24, instrument = 1, effect = 1, param = 0))
+        session.setCell(0, 0, 0, Cell(note = 60, instrument = 1, effect = 1, param = 0))
         val v = view(ViewKind.PATTERN) { field = 2 }
         v.hold(Action.EDIT, Action.LEFT)
-        assertEquals(Cell(note = 24, instrument = 1), cell(0, 0, 0)) // 000: the same bytes as no effect
+        assertEquals(Cell(note = 60, instrument = 1), cell(0, 0, 0)) // 000: the same bytes as no effect
         assertTrue(v.chosenArpeggio())
         v.hold(Action.EDIT, Action.LEFT) // one further: no effect
         assertFalse(v.chosenArpeggio())
-        assertEquals(Cell(note = 24, instrument = 1), cell(0, 0, 0))
+        assertEquals(Cell(note = 60, instrument = 1), cell(0, 0, 0))
         v.hold(Action.EDIT, Action.RIGHT) // forward again lands on 0, not 1
         assertTrue(v.chosenArpeggio())
         v.state.field = 3
         v.hold(Action.EDIT, Action.RIGHT)
-        assertEquals(Cell(note = 24, instrument = 1, effect = 0, param = 0x01), cell(0, 0, 0))
+        assertEquals(Cell(note = 60, instrument = 1, effect = 0, param = 0x01), cell(0, 0, 0))
     }
 
     @Test
     fun patternScaleGuidesNoteSteppingWithoutChangingWrittenNotes() {
-        session.setCell(0, 0, 0, Cell(note = 13, instrument = 1)) // C#4, outside C major
-        session.setCell(0, 0, 1, Cell(note = 16, instrument = 1)) // E-4
-        session.setCell(0, 3, 0, Cell(note = 16, instrument = 1)) // a noise pitch
+        session.setCell(0, 0, 0, Cell(note = 49, instrument = 1)) // C#4, outside C major
+        session.setCell(0, 0, 1, Cell(note = 52, instrument = 1)) // E-4
+        session.setCell(0, 3, 0, Cell(note = 52, instrument = 1)) // a noise pitch
         val tracks = session.song.patterns[0].tracks
         assertTrue(session.setPatternScale(0, Scale(0, ScaleKind.MAJOR)))
         assertSame(tracks, session.song.patterns[0].tracks)
 
         val v = view(ViewKind.PATTERN)
         v.hold(Action.EDIT, Action.UP) // C#5 is outside the scale: the next scale note above it, D-5
-        assertEquals(26, cell(0, 0, 0).note)
+        assertEquals(62, cell(0, 0, 0).note)
         v.hold(Action.EDIT, Action.RIGHT) // D-5 to E-5
-        assertEquals(28, cell(0, 0, 0).note)
+        assertEquals(64, cell(0, 0, 0).note)
         v.state.row = 1
         v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT) // E, F, G
-        assertEquals(19, cell(0, 0, 1).note)
+        assertEquals(55, cell(0, 0, 1).note)
         v.hold(Action.EDIT, Action.LEFT, Action.LEFT, Action.LEFT) // F, E, D
-        assertEquals(14, cell(0, 0, 1).note)
+        assertEquals(50, cell(0, 0, 1).note)
         v.hold(Action.EDIT, Action.DOWN) // from a scale note the octave is exact
-        assertEquals(2, cell(0, 0, 1).note)
+        assertEquals(38, cell(0, 0, 1).note)
         v.state.channel = 3
         v.state.row = 0
         v.hold(Action.EDIT, Action.RIGHT) // Noise note numbers stay chromatic
-        assertEquals(17, cell(0, 3, 0).note)
+        assertEquals(53, cell(0, 3, 0).note)
     }
 
     @Test
@@ -812,12 +819,12 @@ class ViewControllerTest {
             v.hold(Action.EDIT, *moves)
             return cell(0, 0, 0).note
         }
-        assertEquals(69, edit(67, Action.RIGHT, Action.RIGHT, Action.UP)) // G-8 to A-8, the top scale note; no octave above
-        assertEquals(0, edit(0, Action.LEFT, Action.DOWN)) // C-3: nothing lower
-        assertEquals(58, edit(58, Action.UP)) // A#7 (off scale): A#8 and B-8 are not scale notes, so no edit
-        assertEquals(0, edit(13, Action.DOWN)) // C#4 (off scale): C#3, then down to C-3
+        assertEquals(105, edit(103, Action.RIGHT, Action.RIGHT, Action.UP)) // G-8 to A-8, the top scale note; no octave above
+        assertEquals(36, edit(36, Action.LEFT, Action.DOWN)) // C-3: nothing lower
+        assertEquals(94, edit(94, Action.UP)) // A#7 (off scale): A#8 and B-8 are not scale notes, so no edit
+        assertEquals(36, edit(49, Action.DOWN)) // C#4 (off scale): C#3, then down to C-3
         session.setPatternScale(0, Scale(2, ScaleKind.MAJOR)) // C is not in D major
-        assertEquals(12, edit(12, Action.DOWN)) // C-4 (off scale): no D major note at or below C-3, so no edit
+        assertEquals(48, edit(48, Action.DOWN)) // C-4 (off scale): no D major note at or below C-3, so no edit
     }
 
     @Test
@@ -828,15 +835,15 @@ class ViewControllerTest {
             v.hold(Action.EDIT, *moves)
             return cell(0, 0, 0).note
         }
-        assertEquals(Songs.NOTE_MAX, edit(65, Action.UP))
-        assertEquals(0, edit(5, Action.DOWN))
-        assertEquals(Songs.NOTE_MAX, edit(Songs.NOTE_MAX, Action.RIGHT))
-        assertEquals(0, edit(0, Action.LEFT))
+        assertEquals(GbSystem.noteRange.last, edit(101, Action.UP))
+        assertEquals(36, edit(41, Action.DOWN))
+        assertEquals(GbSystem.noteRange.last, edit(GbSystem.noteRange.last, Action.RIGHT))
+        assertEquals(36, edit(36, Action.LEFT))
     }
 
     @Test
     fun scalePanelEditsUndoableMetadataThatCloneAndPatternCopyCarry() {
-        session.setCell(0, 0, 0, Cell(note = 13, instrument = 1))
+        session.setCell(0, 0, 0, Cell(note = 49, instrument = 1))
         val tracks = session.song.patterns[0].tracks
         val v = view(ViewKind.PATTERN)
         v.tap(Action.SCALE)

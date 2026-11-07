@@ -23,9 +23,10 @@ interface TrackerAudio : AutoCloseable {
     fun stop()
 
     /**
-     * Sounds [note] (0..71) with typed [instrument] (1..15) on [channel] until [releaseAudition].
-     * [detune] (0..15) > 0 plays the note with effect 40y: the table period for the first driver
-     * tick, then raised by [detune] period units (microtuning). The noise channel ignores it.
+     * Sounds [note] with [instrument] (a slot of the channel's bank) on [channel] until [releaseAudition].
+     * [note] is the engine's own number ([org.thortracker.system.SoundSystem.engineNote]; Game Boy: hUGEDriver's
+     * 0..71 = C-3..B-8). [detune] > 0 plays the note with the system's fine pitch (Game Boy: effect 40y, the table
+     * period for the first driver tick, then raised by [detune] period units). Noise channels ignore it.
      */
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0)
 

@@ -3,6 +3,7 @@ package org.thortracker.ui
 import org.thortracker.audio.Transport
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
+import org.thortracker.editor.Follow
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
@@ -12,10 +13,10 @@ import org.thortracker.input.ControlGroup
 import org.thortracker.input.Keymap
 import org.thortracker.input.Keys
 import org.thortracker.model.Song
-import org.thortracker.model.SongValidator
 import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
+import org.thortracker.system.ExportFormat
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared
@@ -48,8 +49,8 @@ interface MenuHost {
     /** Saves to the current project file, or asks where when there is none. */
     fun saveProject()
     fun saveProjectAs()
-    /** Asks where and exports [song], which validated without errors. */
-    fun exportUge(song: Song)
+    /** Asks where and exports [song] as [format]; [song] validated without errors. */
+    fun export(song: Song, format: ExportFormat)
     fun recoverPrevious()
     fun exportKeymap()
     fun importKeymap()
@@ -82,8 +83,9 @@ class AppMenus(
         menu(title, labels.mapIndexed { index, label -> label to { selected(index) } })
 
     fun chooseView(index: Int) {
-        choose("View on display ${index + 1}", ViewKind.entries.map { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { selected ->
-            states[index].switchKind(ViewKind.entries[selected])
+        val kinds = ViewKind.entries.filter { it in session.song.system.views }
+        choose("View on display ${index + 1}", kinds.map { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { selected ->
+            states[index].switchKind(kinds[selected])
             states[index].pinned = true
             host.refresh()
         }
@@ -106,11 +108,7 @@ class AppMenus(
                 2 -> {
                     if (state.lockedSubject >= 0) state.lockedSubject = -1
                     else {
-                        state.lockedSubject = when (state.kind) {
-                            ViewKind.INSTRUMENT -> state.bank * 16 + state.instrument
-                            ViewKind.WAVE -> state.wave
-                            else -> state.channel
-                        }
+                        state.lockedSubject = Follow.subject(state, session.song)
                         state.followSelection = false
                     }
                 }
@@ -250,7 +248,8 @@ class AppMenus(
             })
             if (t != null && map != null) {
                 add("1/1 sounds on ${Songs.noteName(t.root)}…" to {
-                    menu("1/1 sounds on", (0..Songs.NOTE_MAX).map { n -> Songs.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root)
+                    val range = session.song.system.noteRange
+                    menu("1/1 sounds on", range.map { n -> Songs.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root - range.first)
                 })
                 add("Accuracy limit: ${t.tolerance}¢…" to {
                     choose("Accuracy limit", TOLERANCES.map { "$it cents" + if (it == 5) " (default)" else "" }) { applyTuning(t.copy(tolerance = TOLERANCES[it])) }
@@ -272,7 +271,7 @@ class AppMenus(
 
     fun applyTuning(tuning: Tuning) {
         session.setTuning(tuning)
-        host.status(tuningSummary(TuningMap(tuning)))
+        host.status(tuningSummary(TuningMap(tuning, session.song.system)))
     }
 
     /** "24-TET: 118 of 144 degrees reachable within 5¢ (C-3..B-8)". */
@@ -282,29 +281,30 @@ class AppMenus(
     private fun fitTuning(patterns: List<Int>) {
         val r = session.fitToTuning(patterns)
         host.status("Fitted ${r.moved} note${if (r.moved == 1) "" else "s"}" +
-            (if (r.blocked > 0) "; ${r.blocked} left: their row's effect slot is needed for 40y" else ""))
+            (if (r.blocked > 0) "; ${r.blocked} left: their row's effect slot is needed for ${session.song.system.fine.name}" else ""))
     }
 
     // ---- files ----------------------------------------------------------------------------------
 
     fun fileMenu() {
+        val system = session.song.system
         menu("Project", listOf(
-            "New blank song" to { confirmReplace { host.replace(Songs.blank()) } },
+            "New blank song" to { confirmReplace { host.replace(system.blank()) } },
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
-            "Export .uge" to ::exportUge,
+        ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
             "Rename song" to ::rename,
-            "Load demo" to { confirmReplace { host.replace(Songs.demo()) } },
+            "Load demo" to { confirmReplace { host.replace(system.demo()) } },
             "Recover previous project" to { confirmReplace { host.recoverPrevious() } },
         ))
     }
 
-    private fun exportUge() {
+    private fun export(format: ExportFormat) {
         val song = session.song
-        val errors = SongValidator.errors(song)
+        val errors = song.system.errors(song)
         if (errors.isNotEmpty()) return host.error(errors.joinToString("\n"))
-        host.exportUge(song)
+        host.export(song, format)
     }
 
     private fun rename() {

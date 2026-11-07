@@ -40,7 +40,8 @@ import org.thortracker.input.Control
 import org.thortracker.input.Keymap
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.model.SongValidator
+import org.thortracker.system.ExportFormat
+import org.thortracker.system.SoundSystems
 import org.thortracker.model.Scl
 import org.thortracker.model.Tuning
 import org.thortracker.storage.ProjectStore
@@ -94,7 +95,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         override fun openProject() = launchPicker(OPEN)
         override fun saveProject() { currentUri?.let { saveProject(it) } ?: launchPicker(SAVE) }
         override fun saveProjectAs() = launchPicker(SAVE)
-        override fun exportUge(song: Song) = launchPicker(EXPORT)
+        override fun export(song: Song, format: ExportFormat) { exportFormat = format; launchPicker(EXPORT) }
         override fun recoverPrevious() = projectStore.previous { song -> this@MainActivity.replace(song) }
         override fun exportKeymap() = launchKeymapPicker(KEYMAP_EXPORT)
         override fun importKeymap() = launchKeymapPicker(KEYMAP_IMPORT)
@@ -166,6 +167,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private var flashedStatus: String? = null
     private var keymap = Keymap.DEFAULT
     private var pickerSong: Song? = null
+
+    /** The format the export picker writes; the song system's first until the menu chooses one. */
+    private var exportFormat: ExportFormat = SoundSystems.DEFAULT.exports.first()
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
     private var awaitingTransportUntil = 0L
@@ -464,7 +468,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     /** A view chord on the controller-focused display ([Workspace.showView]). */
     private fun showView(kind: ViewKind) {
         hosts.values.forEach { it.tracker.cancelInteraction() }
-        if (!panes.showView(kind)) return
+        if (!panes.showView(kind, session.song.system.views)) return
         refresh(); workspace.save(states, focus)
     }
 
@@ -725,7 +729,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     private fun launchPicker(request: Int) {
         if (request == EXPORT) {
-            val errors = SongValidator.errors(session.song)
+            val errors = session.song.system.errors(session.song)
             if (errors.isNotEmpty()) return showError(errors.joinToString("\n"))
         }
         hosts.values.forEach { it.tracker.cancelInteraction() }
@@ -735,7 +739,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = if (request == OPEN) "*/*" else "application/octet-stream"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            if (request != OPEN) putExtra(Intent.EXTRA_TITLE, safeName(session.song.title) + if (request == EXPORT) ".uge" else ".thor")
+            if (request != OPEN) putExtra(Intent.EXTRA_TITLE, safeName(session.song.title) + if (request == EXPORT) ".${exportFormat.extension}" else ".thor")
         }
         try { startActivityForResult(intent, request) }
         catch (e: Exception) { showError("No document provider could open: ${e.message}") }
@@ -783,8 +787,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 if (generation == documentGeneration) replace(song, uri)
             }
             SAVE -> saveProject(uri, snapshot, generation)
-            EXPORT -> projectStore.export(uri, snapshot) {
-                if (generation == documentGeneration) { statusMessage = "UGE exported"; refresh() }
+            EXPORT -> exportFormat.let { format ->
+                projectStore.export(uri, snapshot, format) {
+                    if (generation == documentGeneration) { statusMessage = "${format.extension.uppercase()} exported"; refresh() }
+                }
             }
         }
     }
