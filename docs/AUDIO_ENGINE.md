@@ -482,11 +482,11 @@ clear all mutes (power-on).
 
 ### Remaining for step 5 (not native)
 
-`.nsf` export: a 128-byte NSF header (load `$8000`, init `$8000`, play `$8003`, NTSC speed 16639 µs,
-no bank switching) + `NesPlayerImage.BYTES` + zero fill to `$A000` + the song region's data bytes
-(the host test writes `nes_ft.nsf` this way). Measure on the Thor: realtime cost per tick and seek
-cost per frame (dev PC: 114 µs per tick, 147× realtime; the engine's worst frame 4828 CPU cycles),
-and output level against the Game Boy.
+`.nsf` export is done (`NsfExporter`, docs/BACKENDS.md: a 128-byte NSF header — load `$8000`, init
+`$8000`, play `$8003`, NTSC speed 16639 µs, no bank switching — + `NesPlayerImage.BYTES` + zero fill
+to `$A000` + the lowered data). Still to measure on the Thor: realtime cost per tick and seek cost
+per frame (dev PC: 114 µs per tick, 147× realtime; the engine's worst frame 4828 CPU cycles), and
+output level against the Game Boy.
 
 ### Preparing the player (once, when the pin, configuration or layout changes)
 
