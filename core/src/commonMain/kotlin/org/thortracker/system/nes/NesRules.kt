@@ -17,16 +17,19 @@ object NesRules {
     const val NOTE_OFFSET = 11
     const val NOTE_COUNT = 96
 
-    /** The lowest note the pulses can play: FamiStudio note 10 (A-1), the longest 11-bit period. */
-    const val PULSE_LOWEST = 10 + NOTE_OFFSET
+    /**
+     * The lowest note the pulses and the triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in its
+     * note table (the triangle sounds it an octave lower).
+     */
+    const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
     val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise")
     val CHANNEL_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE)
     const val TRIANGLE = 2
     const val NOISE = 3
 
-    /** FamiStudio's longest song (orders). */
-    const val MAX_ORDERS = 256
+    /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
+    const val MAX_ORDERS = 255
 
     /** FamiTracker-tempo speeds FamiStudio accepts (ticks per row). */
     val SPEEDS = 1..31
@@ -54,11 +57,11 @@ object NesRules {
 
     val EFFECTS = listOf(
         EffectSpec(FX_ARPEGGIO, "Arpeggio", "xy: +x, +y semitones",
-            "This row's note cycles every frame through the note, +x and +y semitones (y = 0: note and +x). The next " +
-                "note without 0xy plays plain. Needs a note on the row. Not on Noise.", true),
+            "This row's note cycles every frame through the note, +x and +y semitones. The next note without 0xy plays " +
+                "plain. Needs a note on the row. Not on Noise.", true),
         EffectSpec(FX_VIBRATO, "Vibrato", "xy: x=speed 1-C, y=depth 1-F",
-            "Wobble the pitch of the playing note from this row on (FamiStudio vibrato). 400 stops it; the next note " +
-                "starts without vibrato unless it has its own 4xy. Not on Noise.", true),
+            "Wobble the pitch from this row on, across later notes, until 400 (FamiStudio vibrato; it replaces the " +
+                "instrument's pitch envelope meanwhile). Not on Noise.", true),
         EffectSpec(FX_VOLUME_SLIDE, "Volume slide", "xy: from volume x to y",
             "Set volume x, then slide to volume y by the next note or effect row on this channel. Not on Triangle.", true),
         EffectSpec(FX_VOLUME, "Volume", "xx: 00-0F",
@@ -78,8 +81,8 @@ object NesRules {
         EffectSpec(FX_NOTE_CUT, "Note cut", "xx: frames 00-1F",
             "Silence the channel xx frames into this row (S00 = at once). Must be shorter than the row.", true),
         EffectSpec(FX_DUTY, "Duty", "xx: 00-03 (Noise 00-01)",
-            "Pulse duty 12.5/25/50/75% from this row on, overriding the instrument's duty envelope; on Noise 00 = hiss, " +
-                "01 = metallic. Not on Triangle.", true),
+            "Pulse duty 12.5/25/50/75% from this row on (an instrument duty envelope takes over at its next step); on " +
+                "Noise 00 = hiss, 01 = metallic. Not on Triangle.", true),
     )
 
     private val BY_CODE = EFFECTS.associateBy { it.code }
@@ -126,8 +129,8 @@ object NesRules {
         if (cell.note == Cell.EMPTY && cell.instrument != 0) {
             return "instrument ${hex2(cell.instrument)} without a note does nothing; add a note or clear the instrument"
         }
-        if (cell.note >= 0 && kind(channel) == ChannelKind.PULSE && cell.note < PULSE_LOWEST) {
-            return "the pulses cannot play below A-1; play it an octave higher or on the Triangle"
+        if (cell.note >= 0 && kind(channel) != ChannelKind.NOISE && cell.note < LOWEST_TONAL) {
+            return "${CHANNEL_NAMES[channel]} cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
         }
         if (!cell.hasEffect) return null
         val p = cell.param
@@ -161,7 +164,7 @@ object NesRules {
                     val target = cell.note + if (cell.effect == FX_SLIDE_UP) p else -p
                     when {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
-                        kind(channel) == ChannelKind.PULSE && target < PULSE_LOWEST -> "$fx from $noteName would end below A-1, which the pulses cannot play"
+                        kind(channel) != ChannelKind.NOISE && target < LOWEST_TONAL -> "$fx from $noteName would end below A-1, which ${CHANNEL_NAMES[channel]} cannot play"
                         else -> null
                     }
                 }
@@ -182,7 +185,7 @@ object NesRules {
         val spec = effect(effect) ?: return "Unknown effect"
         if (effect in unusable(channel) && (effect != FX_ARPEGGIO || param != 0)) return "${spec.name}: no effect on ${CHANNEL_NAMES[channel]}"
         return when (effect) {
-            FX_ARPEGGIO -> if (param == 0) "No effect" else if (y == 0) "Arpeggio: note, +$x semitones" else "Arpeggio: note, +$x, +$y semitones"
+            FX_ARPEGGIO -> if (param == 0) "No effect" else "Arpeggio: note, +$x, +$y semitones"
             FX_VIBRATO -> if (param == 0) "Vibrato off" else "Vibrato speed $x, depth $y"
             FX_VOLUME_SLIDE -> "Volume $x sliding to $y"
             FX_VOLUME -> "Volume $param/15"
