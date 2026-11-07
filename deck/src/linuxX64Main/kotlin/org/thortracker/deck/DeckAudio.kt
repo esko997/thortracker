@@ -9,6 +9,7 @@ import org.thortracker.audio.PlaybackPosition
 import org.thortracker.audio.TrackerAudio
 import org.thortracker.backend.HugeLowering
 import org.thortracker.model.Song
+import org.thortracker.system.gb.GbSystem
 
 /**
  * [TrackerAudio] over the SDL3 engine glue (native/deck_audio.c), so the shared [org.thortracker.audio.Transport]
@@ -22,7 +23,7 @@ class DeckAudio : TrackerAudio {
     var auditions = 0
         private set
 
-    init { check(da_open(SYSTEM_ID) == 0) { "SDL audio could not open" } }
+    init { check(da_open(GbSystem.id) == 0) { "SDL audio could not open" } }
 
     /** Lowers the song and hands its image to the engine (applied live while playing); a bad song keeps the last one. */
     override fun update(song: Song) {
@@ -45,8 +46,6 @@ class DeckAudio : TrackerAudio {
     override fun close() = da_close()
 
     private companion object {
-        /** Native engine (chip_engine.h) for the images this class lowers: hUGEDriver on binjgb. */
-        const val SYSTEM_ID = "gb-huge"
         /** A held note sounds until released (as on Android); this caps it at about a minute should a release be lost. */
         const val AUDITION_TICKS = 60 * 60
     }

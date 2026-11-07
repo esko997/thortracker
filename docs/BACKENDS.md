@@ -103,22 +103,14 @@ Game Boy's implementation wraps today's `HugeRules`, `HugeLimits`, `HugeLowering
 
 ## Native engine (C, both frontends)
 
-`huge_machine.h` becomes one implementation of a small engine interface the AAudio and SDL3 hosts call:
+Both hosts (AAudio on Android, SDL3 on the Deck) drive chips only through `ChipEngineOps` in
+`app/src/main/cpp/chip_engine.h`; `chip_engine_ops("gb-huge")` is hUGEDriver on binjgb (`huge_chip.c` over
+`huge_machine.c`). The ops are tick-based (`tick` renders one driver tick), images are copied into host-owned slots
+and applied at tick boundaries, and `release` reports whether the chip has a release phase the host must keep
+ticking. `docs/AUDIO_ENGINE.md` lists what a new chip implements.
 
-```c
-typedef struct ChipEngineOps {
-    int  (*set_image)(void *e, const uint8_t *image, size_t size);   // validated, applied at a tick boundary
-    void (*start)(void *e, int order, int row, int loop_order);
-    int  (*render)(void *e, float *stereo, int frames);
-    void (*position)(void *e, int *order, int *row, int *tick);
-    void (*audition)(void *e, int channel, int note, int instrument, int fine);
-    void (*release)(void *e);
-    void (*mute)(void *e, int channel, int muted);
-} ChipEngineOps;
-```
-
-The latency-compensated position reporting, live song updates and audition mixing stay in the hosts and work for
-every chip.
+The latency-compensated position reporting, live song updates and audition mixing (with the auditioned channel
+muted in the song) stay in the hosts and work for every chip.
 
 ## NES backend
 
@@ -138,11 +130,14 @@ every chip.
 
 ## Steps
 
-1. **Declare the Game Boy.** `SoundSystem` + `GbSystem`; validator, `ViewController`, `EditorSession`, painters, Help
-   and menus read channels, effects, limits and views from it. No behaviour change; screenshots identical.
-2. **Model.** `system` + `GbSound`, absolute notes, project version 8 with migration, backend registry in the codec,
-   tuning realisation through the system.
-3. **Native engine interface.** Game Boy behind `ChipEngineOps` on Android and Deck; host test unchanged.
+1. **Declare the Game Boy** — done. `SoundSystem` + `GbSystem` (`system/gb`); the editor, painters, Help and menus
+   read channels, banks, effects, limits and views from the song's system. Screenshots identical.
+2. **Model** — done. `GbSound`, absolute notes (C-3 = 36), project version 8 with migration from 1-7, Sketch
+   phrases in saved workspaces migrated, tuning realisation through the system.
+3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck.
+   Still Game Boy-shaped: `TrackerAudio` takes hUGEDriver note numbers (`EditorSession` converts) and the hosts lower
+   with `HugeLowering`/`HugeImageLayout`. Before the NES, `TrackerAudio` takes absolute notes and the song's system
+   lowers and names its engine.
 4. **NES spike.** 6502 + 2A03 playing the FamiStudio engine with a song exported from FamiStudio, in the native host
    test; compare audio with an NSF render.
 5. **NES backend.** Lowering, instruments and their editor, New → system, Help, validation, `.nsf` and FamiStudio

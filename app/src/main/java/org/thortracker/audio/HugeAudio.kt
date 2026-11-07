@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.thortracker.backend.HugeLowering
 import org.thortracker.model.Song
+import org.thortracker.system.gb.GbSystem
 
 /**
  * Game Boy preview: the pinned hUGEDriver 6.1.3 player running in an embedded binjgb Game Boy
@@ -54,7 +55,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
     init {
         post {
-            val created = nativeCreate(SYSTEM_ID)
+            val created = nativeCreate(GbSystem.id)
             if (created == 0L) {
                 deviceError = "Audio engine could not allocate the Game Boy player"
             } else {
@@ -245,8 +246,6 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         const val SEEK_TICK_BUDGET = 12000
         private const val IDLE_SUSPEND_SECONDS = 10L
         private const val CLOSE_TIMEOUT_SECONDS = 2L
-        /** Native engine (chip_engine.h) for the images this class lowers: hUGEDriver on binjgb. */
-        private const val SYSTEM_ID = "gb-huge"
         private const val CHIP_ERR_IMAGE = -1
         private const val CHIP_ERR_FAULT = -2
         private val DIAGNOSTIC_NAMES = listOf(
