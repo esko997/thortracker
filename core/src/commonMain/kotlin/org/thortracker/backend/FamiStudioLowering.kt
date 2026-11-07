@@ -35,6 +35,18 @@ internal object FamiStudioLowering {
         16, 15, 14, 13,
     )
 
+    /**
+     * FamiStudio's PAL note table (`NesApu.GetOrCreateNoteTableSet`: 1662607 / 16 / f − 0.5, truncated). Only slide
+     * steps use it: FamiStudio's music export targets NTSC and PAL at once and takes the larger of the two steps.
+     */
+    val NOTE_TABLE_PAL = intArrayOf(
+        0, 3176, 2998, 2830, 2671, 2521, 2379, 2246, 2120, 2001, 1888, 1782, 1682, 1588, 1499, 1414, 1335, 1260, 1189,
+        1122, 1059, 1000, 944, 891, 841, 793, 749, 707, 667, 629, 594, 561, 529, 499, 471, 445, 420, 396, 374, 353, 333,
+        314, 297, 280, 264, 249, 235, 222, 209, 198, 186, 176, 166, 157, 148, 139, 132, 124, 117, 110, 104, 98, 93, 87, 82,
+        78, 73, 69, 65, 62, 58, 55, 52, 49, 46, 43, 41, 38, 36, 34, 32, 30, 29, 27, 25, 24, 22, 21, 20, 19, 18, 17, 16, 15,
+        14, 13, 12,
+    )
+
     /** FamiTracker tempo 150: one row per `speed` frames (FamiStudio's integer formula for NTSC and PAL). */
     const val TEMPO = 150
     const val TEMPO_PAL = 256 * TEMPO / 125
@@ -371,15 +383,16 @@ internal object FamiStudioLowering {
             else -> FamiStudioEnvelopes.allIdentical(fs.instruments[i1 - 1], fs.instruments[i2 - 1])
         }
 
-        /** `Channel.CountFramesBetween` (FamiTracker tempo 150: one frame per tick). */
-        private fun framesBetween(from: Int, to: Int, speed: Int): Float {
+        /** `Song.CountFramesBetween` at FamiTracker tempo [TEMPO]: NTSC runs one frame per tick, PAL 125/150 of one. */
+        private fun framesBetween(from: Int, to: Int, speed: Int, pal: Boolean = false): Float {
+            val ratio = (if (pal) 125 else 150) / TEMPO.toFloat()
             var s = speed
             var frames = 0f
             var r = from
             while (r != to && r < fs.totalRows) {
                 val set = fs.speedAt(r)
                 if (set >= 0) s = set
-                frames += s.toFloat()
+                frames += s * ratio
                 r++
             }
             return frames
@@ -394,9 +407,19 @@ internal object FamiStudioLowering {
             return fs.totalRows - row
         }
 
-        /** `ComputeSlideNoteParams` (NTSC; the PAL step equals the NTSC one for an NTSC export), or null when the slide is flat. */
+        /**
+         * The slide opcode's step: `ComputeSlideNoteParams` for NTSC and for PAL, the larger magnitude with the NTSC sign
+         * (FamiStudio's music export is always for both machines), or null when the slide is flat.
+         */
         private fun slideStep(c: Int, row: Int, note: FsNote, speed: Int): Int? {
-            var delta = if (c == NesRules.NOISE) note.value - note.slideTarget else NOTE_TABLE[note.value] - NOTE_TABLE[note.slideTarget]
+            val ntsc = slideStep(c, row, note, speed, pal = false) ?: return null
+            val pal = slideStep(c, row, note, speed, pal = true) ?: return null
+            return (maxOf(abs(ntsc), abs(pal)) * ntsc.sign).coerceIn(-128, 127)
+        }
+
+        private fun slideStep(c: Int, row: Int, note: FsNote, speed: Int, pal: Boolean): Int? {
+            val table = if (pal) NOTE_TABLE_PAL else NOTE_TABLE
+            var delta = if (c == NesRules.NOISE) note.value - note.slideTarget else table[note.value] - table[note.slideTarget]
             if (delta == 0) return null
             delta = delta shl if (c == NesRules.NOISE) 4 else 1
             val next = if (note.cutDelay >= 0) row else minOf(row + minOf(distanceToNextNote(c, row), 256), fs.totalRows)
@@ -406,14 +429,14 @@ internal object FamiStudioLowering {
                     if (n.noteDelay >= 0) delay += if (n.cutDelay >= 0) minOf(n.noteDelay, n.cutDelay) else n.noteDelay
                     else if (n.cutDelay >= 0) delay += n.cutDelay
                 }
-                framesBetween(row, next, speed) + delay
+                framesBetween(row, next, speed, pal) + delay
             } else {
                 (if (note.cutDelay >= 0) note.cutDelay else 0).toFloat()
             }
             return stepSize(delta, frames)
         }
 
-        /** `ComputeVolumeSlideNoteParams` (volume has 4 fraction bits). */
+        /** `ComputeVolumeSlideNoteParams` (volume has 4 fraction bits; FamiStudio computes the PAL step as NTSC too). */
         private fun volumeSlideStep(c: Int, row: Int, note: FsNote, speed: Int): Int {
             val delta = note.volume - note.volumeSlideTarget
             if (delta == 0) return 0

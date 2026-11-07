@@ -2,7 +2,7 @@ package org.thortracker.backend
 
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
-import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesEnvelope
 
 /**
@@ -36,9 +36,11 @@ object FamiStudioText {
         val used = HashSet<Int>()
         for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.instrument != 0) used += n.instrument
         val names = HashMap<Int, String>()
+        val untouched = NesSound.blank().instruments
         for ((i, ins) in fs.instruments.withIndex()) {
             val slot = i + 1
-            if (slot !in used && ins.copy(name = NesInstrument.DEFAULT.name) == NesInstrument.DEFAULT) continue
+            // Untouched slots (NesSound.blank's) stay out of the FamiStudio project.
+            if (slot !in used && ins == untouched[i]) continue
             val name = "${NumberText.hex(slot, 2)} ${ins.name}".trimEnd()
             names[slot] = name
             line(1, "Instrument" + attr("Name", name))
