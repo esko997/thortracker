@@ -5,13 +5,15 @@
  *
  * Song images are built here with the same fixed layout as HugeImageLayout.kt (no track
  * sharing needed for these small songs). Expected register values come from the driver
- * source (third_party/hUGEDriver-6.1.3/rgbds/hUGEDriver.asm) and its note table. */
+ * source (third_party/hUGEDriver-6.1.3/rgbds/hUGEDriver.asm) and its note table. The last
+ * group drives the same machine through the chip engine interface the audio hosts use. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#include "chip_engine.h"
 #include "huge_machine.h"
 
 static int failures = 0;
@@ -615,6 +617,87 @@ static void test_invalid_images(HugeMachine* m) {
     EXPECT(hm_validate(&g_img) == HM_ERR_IMAGE, "track pointer outside song regions");
 }
 
+/* Two orders with all four channels busy; also rendered to host_demo.wav. */
+static void demo_song(TSong* s) {
+    song_init(s, 6, 2);
+    static const int melody[16] = {24, 28, 31, 36, 31, 28, 26, 29, 33, 38, 33, 29, 24, 31, 36, 40};
+    for (int r = 0; r < 64; r += 4) {
+        cell(s, 0, 0, r, melody[(r / 4) % 16], 1, r == 16 ? 0x4 : 0, r == 16 ? 0x13 : 0);
+        cell(s, 0, 1, r + 2, melody[(r / 4 + 3) % 16] - 12, 2, 0, 0);
+        cell(s, 0, 2, r, melody[(r / 8) % 16] - 12, 1, 0, 0);
+        cell(s, 0, 3, r, 40 + (r % 8), (r % 8) ? 2 : 1, 0, 0);
+        cell(s, 1, 0, r, melody[15 - (r / 4) % 16], 2, r == 32 ? 0x0 : 0, r == 32 ? 0x47 : 0);
+        cell(s, 1, 2, r, melody[(r / 8) % 16] - 12, 1, 0, 0);
+        cell(s, 1, 3, r + 2, 44, 1, 0, 0);
+    }
+    cell(s, 1, 1, 0, 36, 1, 0x1, 0x02);
+}
+
+/* Runs `ticks` ticks through the ops; returns the peak sample, -1 if a tick returned no frames. */
+static float ops_render(const ChipEngineOps* ops, ChipMachine* m, int ticks) {
+    static float buf[CHIP_MAX_TICK_FRAMES * 2];
+    float peak = 0;
+    for (int i = 0; i < ticks; ++i) {
+        const int k = ops->tick(m, buf);
+        if (k <= 0 || k > (int)CHIP_MAX_TICK_FRAMES) return -1;
+        for (int j = 0; j < 2 * k; ++j) peak = fabsf(buf[j]) > peak ? fabsf(buf[j]) : peak;
+    }
+    return peak;
+}
+
+static void test_chip_engine_ops(void) {
+    printf("chip engine ops: gb-huge as the audio hosts drive it\n");
+    const ChipEngineOps* ops = chip_engine_ops("gb-huge");
+    EXPECT(ops && strcmp(ops->system_id, "gb-huge") == 0, "gb-huge is registered");
+    EXPECT(chip_engine_ops("nes-famistudio") == NULL && chip_engine_ops(NULL) == NULL, "unknown systems have no engine");
+    if (!ops) return;
+    EXPECT(ops->image_size == 0x10000 && ops->image_storage >= ops->image_size, "image %zu bytes, storage %zu",
+           ops->image_size, ops->image_storage);
+    ChipImage* img = (ChipImage*)calloc(1, ops->image_storage);
+    ChipMachine* m = ops->create(48000);
+    ChipMachine* aud = ops->create(48000);
+    if (!img || !m || !aud) {
+        EXPECT(0, "ops create");
+        return;
+    }
+    TSong s;
+    demo_song(&s);
+    build(&s, &g_img, 1);
+    EXPECT(ops->load_image(img, g_img.mem, 0x100) == CHIP_ERR_IMAGE, "short image rejected");
+    EXPECT(ops->load_image(img, g_img.mem, sizeof g_img.mem) == CHIP_OK, "demo image loads");
+
+    int mode = -1, o = -1, r = -1, t = -1;
+    EXPECT(ops->start(m, img, 0, 0, 12000, &mode) == CHIP_OK && mode == CHIP_SEEK_FROM_START, "start at 0/0");
+    const float peak = ops_render(ops, m, 120);
+    EXPECT(peak > 0.05f, "two seconds of the demo are audible: peak %.3f", peak);
+    ops->position(m, &o, &r, &t);
+    EXPECT(o == 0 && r == 20 && t == 0, "position advanced to order 0 row 20 tick 0: %d/%d/%d", o, r, t);
+
+    cell(&s, 0, 0, 24, 30, 2, 0, 0);
+    build(&s, &g_img, 2);
+    EXPECT(ops->load_image(img, g_img.mem, sizeof g_img.mem) == CHIP_OK, "edited image loads");
+    ops->apply_image(m, img);
+    ops->position(m, &o, &r, &t);
+    EXPECT(o == 0 && r == 20 && t == 0, "live apply keeps the transport: %d/%d/%d", o, r, t);
+    EXPECT(ops_render(ops, m, 30) > 0, "renders after a live apply");
+
+    EXPECT(ops->start(m, img, 1, 8, 12000, &mode) == CHIP_OK, "seek to order 1 row 8");
+    ops->position(m, &o, &r, &t);
+    EXPECT(o == 1 && r == 8 && t == 0, "seek position %d/%d/%d", o, r, t);
+    EXPECT(ops->mute(m, 0, 1) == CHIP_OK && ops->mute(m, 0, 0) == CHIP_OK, "mute and unmute a channel");
+    EXPECT(ops->mute(m, 4, 1) != CHIP_OK, "no channel 4");
+
+    EXPECT(ops->audition(aud, img, 0, 36, 0, 0) == CHIP_ERR_IMAGE, "audition without an instrument rejected");
+    EXPECT(ops->audition(aud, img, 0, 36, 1, 3) == CHIP_OK, "audition C-6 detuned");
+    const float held = ops_render(ops, aud, 20);
+    EXPECT(held > 0.05f, "audition audible: peak %.3f", held);
+    EXPECT(ops->release(aud) == 0, "no release phase: the host drops the machine at once");
+
+    ops->destroy(m);
+    ops->destroy(aud);
+    free(img);
+}
+
 static void write_wav(const char* path, const float* data, int frames) {
     FILE* f = fopen(path, "wb");
     if (!f) return;
@@ -633,18 +716,7 @@ static void write_wav(const char* path, const float* data, int frames) {
 static void render_demo_and_measure(HugeMachine* m, const char* dir) {
     printf("demo render, trace and realtime cost\n");
     TSong s;
-    song_init(&s, 6, 2);
-    static const int melody[16] = {24, 28, 31, 36, 31, 28, 26, 29, 33, 38, 33, 29, 24, 31, 36, 40};
-    for (int r = 0; r < 64; r += 4) {
-        cell(&s, 0, 0, r, melody[(r / 4) % 16], 1, r == 16 ? 0x4 : 0, r == 16 ? 0x13 : 0);
-        cell(&s, 0, 1, r + 2, melody[(r / 4 + 3) % 16] - 12, 2, 0, 0);
-        cell(&s, 0, 2, r, melody[(r / 8) % 16] - 12, 1, 0, 0);
-        cell(&s, 0, 3, r, 40 + (r % 8), (r % 8) ? 2 : 1, 0, 0);
-        cell(&s, 1, 0, r, melody[15 - (r / 4) % 16], 2, r == 32 ? 0x0 : 0, r == 32 ? 0x47 : 0);
-        cell(&s, 1, 2, r, melody[(r / 8) % 16] - 12, 1, 0, 0);
-        cell(&s, 1, 3, r + 2, 44, 1, 0, 0);
-    }
-    cell(&s, 1, 1, 0, 36, 1, 0x1, 0x02);
+    demo_song(&s);
     start(m, &s, 1, 0, 0, NULL);
     const int ticks = 60 * 20;
     float* wav = (float*)malloc(sizeof(float) * 2 * HM_MAX_TICK_FRAMES * ticks);
@@ -696,6 +768,7 @@ int main(int argc, char** argv) {
     test_fixed_detune(m);
     test_audition_and_mute(m, aud);
     test_invalid_images(m);
+    test_chip_engine_ops();
     render_demo_and_measure(m, dir);
     hm_destroy(m);
     hm_destroy(aud);
