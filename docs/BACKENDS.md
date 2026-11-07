@@ -128,8 +128,11 @@ muted in the song) stay in the hosts and work for every chip.
   song region `$A000-$FFF9`. Details in `docs/AUDIO_ENGINE.md` (NES section).
 - **Lowering:** Kotlin encodes songs into the FamiStudio engine's data format. A golden test compares it with
   FamiStudio's own export of the same song.
-- **Instruments:** duty, volume, arpeggio and pitch envelopes, each with loop and release points. A new instrument
-  editor; Wave view hidden; triangle has no volume (the editor says so instead of offering it).
+- **Instruments:** duty, volume, arpeggio and pitch envelopes, each with loop and release points, in one bank shared
+  by all four channels; the editor greys out what a channel ignores. A new instrument editor; Wave view hidden;
+  triangle has no volume (the editor says so instead of offering it).
+- **Timing:** the player is built for FamiTracker tempo, so the engine owns rows, speed (`Fxx`), note delays and cuts,
+  and position and seek are exact rows, as on the Game Boy.
 - **Export:** `.nsf` (plays in any NSF player and on hardware via flash carts) and FamiStudio's text format (opens in
   FamiStudio, from which it exports to ca65/asm6/NESASM projects).
 
@@ -171,7 +174,8 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
 - **Parameter locks as effects**: brightness, ratio, waveform and similar effects on a row, applied at note start.
 - **Chord effect** written like the arpeggio (`xy` = +x and +y semitones) but sounding together on spare chip voices
   (OPL3 has 18 two-operator voices); larger chords through a second column or a numbered chord-shape table with
-  inversions.
+  inversions. Only systems with voices to spare declare it; on the others (Game Boy, NES, YM2612) chords stay notes
+  spread across channels.
 - **Drums are pitched instruments**: the note is the pitch, the instrument the drum sound, built from ordinary FM
   voices with a pitch sweep (start pitch, end pitch, speed) so every drum is independent. OPL3's rhythm mode may come
   later as an option; its snare/hi-hat and tom/cymbal pairs share a pitch.
