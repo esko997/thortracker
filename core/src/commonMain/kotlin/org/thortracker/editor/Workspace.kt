@@ -1,5 +1,7 @@
 package org.thortracker.editor
 
+import org.thortracker.system.SoundSystem
+
 /**
  * The views a frontend shows and which one the controller drives. Each pane is a [ViewState] (a view kind with its
  * own cursor and scroll). Where panes appear is the frontend's layout: on the Thor one pane per display, on a single
@@ -60,5 +62,11 @@ class Workspace(panes: List<ViewState>, focus: Int = 0) {
     fun activePlace(selection: Selection): Pair<Int, Int> {
         val state = focused
         return if (state.kind == ViewKind.PATTERN) state.order to state.row else selection.order to selection.row
+    }
+
+    companion object {
+        /** Status for a view chord naming a view [system] lacks (the NES has no Wave view), or null when it has it. */
+        fun missingView(kind: ViewKind, system: SoundSystem): String? =
+            if (kind in system.views) null else "${system.name} has no ${kind.name.lowercase().replaceFirstChar(Char::uppercase)} view"
     }
 }

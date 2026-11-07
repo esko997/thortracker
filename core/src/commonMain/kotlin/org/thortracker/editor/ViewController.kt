@@ -12,6 +12,7 @@ import org.thortracker.model.TonalGuide
 import org.thortracker.model.NumberText
 import org.thortracker.model.TunedPitch
 import org.thortracker.model.TuningMap
+import org.thortracker.system.EffectSpec
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemView
 import kotlin.random.Random
@@ -241,8 +242,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun maxSlots(): Int = system.banks.maxOf { it.slots }
 
-    /** The entry sound of [bank]: the slot new notes on its channels get. */
-    fun pen(bank: Int): Int = penSound[bank] ?: 1
+    /** The entry sound of [bank]: the slot new notes on its channels get (kept within the bank after a system change). */
+    fun pen(bank: Int): Int = (penSound[bank] ?: 1).coerceIn(1, slots(bank))
 
     internal fun setPen(bank: Int, slot: Int) {
         penSound[bank] = slot.coerceIn(1, slots(bank))
@@ -443,7 +444,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
      */
     private fun writeTuned(c: Cell, pitch: TunedPitch, ins: Int, map: TuningMap): Boolean {
         val next = system.fine.write(c.copy(instrument = ins), pitch.note, pitch.detune) ?: run {
-            session.note("This row's effect ${EditorSession.hex1(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for ${system.fine.name}; clear it first")
+            session.note("This row's effect ${EffectSpec.charOf(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for ${system.fine.name}; clear it first")
             return false
         }
         write(next)
@@ -557,7 +558,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             else -> when {
                 offTakesSlot(c) -> session.note(offSlotTaken())
                 !c.hasEffect && !chosenArpeggio() -> {
-                    val (e, p) = lastEffect[ch] ?: return
+                    val (e, p) = lastEffectOf(ch) ?: return
                     if (e == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey() // 000: show the chosen arpeggio, nothing to write
                     else { write(c.copy(effect = e, param = p)); editInserted = true }
                 }
@@ -571,6 +572,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun offTakesSlot(c: Cell): Boolean = c.note == Cell.CUT && system.offEffect != null
 
     private fun offSlotTaken() = "An OFF row has no effect slot left: OFF is exported as ${system.offEffect}"
+
+    /** The effect a tap re-enters on [ch], unless it was remembered from a song of another system that lacks it. */
+    private fun lastEffectOf(ch: Int): Pair<Int, Int>? = lastEffect[ch]?.takeIf { (e, _) -> system.effects.any { it.code == e } }
 
     private fun write(c: Cell) {
         session.setCell(pattern, state.channel, state.row, c)
@@ -1560,9 +1564,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     else -> when {
                         c.hasEffect -> "Hold to change effect"
                         chosenArpeggio() -> if (state.field == 2) "Hold to change effect" else "Hold to set arpeggio +x +y"
-                        else -> lastEffect[ch]?.let { (e, p) ->
+                        else -> lastEffectOf(ch)?.let { (e, p) ->
                             if (e == ZERO_EFFECT && p == 0) "Pick ${system.effects.first { it.code == ZERO_EFFECT }.name.lowercase()} 0"
-                            else "Write effect ${EditorSession.hex1(e)}${EditorSession.hex2(p)}"
+                            else "Write effect ${EffectSpec.charOf(e)}${EditorSession.hex2(p)}"
                         } ?: "Hold to pick effect"
                     }
                 }

@@ -35,6 +35,10 @@ data class ViewState(
     var songItem: Int = SONG_HEADER_ITEMS,
     var songField: Int = 0,
     var instField: Int = 0,
+    /** Envelope instrument editors (NES): the envelope shown, the step under the cursor and the channel Listen plays on. Not persisted. */
+    var envelope: Int = 0,
+    var envStep: Int = 0,
+    var listenChannel: Int = 0,
     var waveRow: Int = 1,
     var waveCol: Int = 0,
     var waveLevel: Int = 8,

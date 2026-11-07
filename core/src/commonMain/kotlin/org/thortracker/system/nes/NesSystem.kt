@@ -117,8 +117,7 @@ object NesSystem : SoundSystem {
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
 
-    /** NesEditor's instrument view plugs in here (ViewKind.INSTRUMENT). */
-    override fun view(kind: ViewKind): SystemView? = null
+    override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) NesInstrumentView else null
 
     /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use. */
     fun summary(ins: NesInstrument): String {
@@ -216,8 +215,7 @@ object NesSystem : SoundSystem {
         override val untonalNote = "Noise keeps every pitch (16 noise rates, repeating every 16 semitones)."
         override val sketchChannels = "Pulse 1, Pulse 2 or Triangle; Noise has no tonal chord reference"
 
-        /** The instrument view's own keys come from the editor's view (NesEditor replaces this). */
-        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = emptyList()
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = NesInstrumentView.helpSections(keys)
 
         override fun limits(song: Song): List<Pair<String, String>> = buildList {
             val used = HashSet<Int>()

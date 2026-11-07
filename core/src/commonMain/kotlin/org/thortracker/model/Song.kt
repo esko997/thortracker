@@ -18,7 +18,7 @@ import org.thortracker.system.SystemSound
  * (C-3 = 36), within the song system's [org.thortracker.system.SoundSystem.noteRange].
  * [instrument]: 0 = no sound number (legato), 1.. = slot in the bank of the channel
  * ([org.thortracker.system.ChannelSpec.bank]).
- * [effect]/[param]: the system's raw effect number (nibble) and parameter byte; 0/0 ("000") is no effect.
+ * [effect]/[param]: the system's raw effect number (0-35, written 0-9 then A-Z) and parameter byte; 0/0 ("000") is no effect.
  * Serialized compactly as `[note, instrument, effect, param]`.
  */
 @Serializable(with = CellSerializer::class)

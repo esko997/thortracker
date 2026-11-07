@@ -141,6 +141,7 @@ class PaneView(
         if (mods.isEmpty()) return controller.hints()
         if (mods.size > 1) return listOf(Hint(mods.joinToString("+") { Keymap.buttonName(it) }, "No chord: release one"))
         return keymap.chords(mods.first(), state.kind)
+            .filter { (c, _) -> c.shows == null || c.shows in session.song.system.views }
             .sortedBy { (c, _) -> if (c.host) 0 else 1 }
             .map { (c, b) -> Hint(Keymap.label(b), c.short) }
     }
