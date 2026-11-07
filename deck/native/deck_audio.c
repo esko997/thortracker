@@ -100,11 +100,11 @@ int da_set_image(const unsigned char* bytes, int size) {
     return 0;
 }
 
-int da_play(int order, int row) {
+int da_play(int order, int row, int max_ticks) {
     if (!has_image) return -1;
     int seek = 0;
     SDL_LockAudioStream(stream);
-    int r = ops->start(song_machine, image, order, row, 60 * 60 * 10, &seek);
+    int r = ops->start(song_machine, image, order, row, max_ticks, &seek);
     playing = r == CHIP_OK;
     borrowed_channel = -1;   /* start resets the machine: nothing is muted */
     if (playing) { pos_order = order; pos_row = row; }
@@ -150,4 +150,8 @@ void da_close(void) {
     free(image);
     free(spare);
     image = spare = NULL;
+    /* Closed state, so da_open can start another system's engine. */
+    ops = NULL;
+    has_image = playing = auditioning = 0;
+    borrowed_channel = -1;
 }

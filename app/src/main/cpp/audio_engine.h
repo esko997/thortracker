@@ -2,7 +2,7 @@
 // system: the song machine and the audition machine.
 //
 // Threads:
-//  - control thread (HugeAudio's single executor): set_image, play, stop, audition,
+//  - control thread (ChipAudio's single executor): set_image, play, stop, audition,
 //    release_audition, ensure_stream, suspend_if_idle, destroy. Heavy work (image copy,
 //    seek fast-forward, audition setup) happens here into spare machines.
 //  - AAudio callback thread: consumes published images/machines through lock-free triple

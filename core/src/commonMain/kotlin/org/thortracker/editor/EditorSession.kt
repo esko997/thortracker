@@ -222,12 +222,12 @@ class EditorSession(initial: Song) {
 
     /**
      * Sounds [note] with [instrument] on [channel]; [detune] adds the tuning bend (the system's fine pitch) the cell
-     * would carry. The callback receives the playback engine's note number ([org.thortracker.system.SoundSystem.engineNote]).
+     * would carry. The callback receives the absolute note; the audio host converts it for the song's engine.
      */
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         val system = song.system
         if (note !in system.noteRange || detune !in 0..system.fine.max) return
-        onAudition?.invoke(channel, system.engineNote(note), instrument, detune)
+        onAudition?.invoke(channel, note, instrument, detune)
     }
 
     // ---- tuning ----------------------------------------------------------------------------------
@@ -368,12 +368,12 @@ class EditorSession(initial: Song) {
      * A held, audition-only loop of [steps], one every [stepMillis]: a note retriggers [instrument] on [channel],
      * null keeps the previous note sounding. Its host owns scheduling and cancels it on release. Ignored when
      * no step has a note, a note is outside the system's range, or [stepMillis] is not positive. The callback
-     * receives engine note numbers, like [audition].
+     * receives absolute notes, like [audition].
      */
     fun auditionSequence(channel: Int, steps: List<Int?>, instrument: Int, stepMillis: Long = 180) {
         val system = song.system
         if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in system.noteRange }) return
-        onAuditionSequence?.invoke(channel, steps.map { it?.let(system::engineNote) }, instrument, stepMillis)
+        onAuditionSequence?.invoke(channel, steps, instrument, stepMillis)
     }
 
     fun releaseAudition() { onReleaseAudition?.invoke() }

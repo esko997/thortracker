@@ -15,7 +15,7 @@ Steps 1 and 2 are done for the Game Boy (branch `systems`).
 
 - `system/SoundSystem.kt`: `SoundSystem` (channels as `ChannelSpec` with a chip-neutral `ChannelKind`, bank index and
   `tonal`; `banks`; absolute `noteRange`; `effects`/`effectsFor`; `views`; `exports`; `fine` (tuning realisation);
-  validation; `arranged`/`patternLoop`; order-jump rewriting; `engineNote`; instrument names/summaries; Help prose),
+  validation; `arranged`/`patternLoop`; order-jump rewriting; `engine`; instrument names/summaries; Help prose),
   `SystemSound`, and the `SoundSystems` registry (unknown id: a clear error). `SystemView` is a system's own view:
   controller logic plus painter, which `ViewController` and `PaneView` delegate to.
 - `system/gb/`: `GbSystem` wraps `HugeRules`, `GbValidator` (was `SongValidator`), `HugeLimits`, `HugeLowering` and
@@ -26,17 +26,20 @@ Steps 1 and 2 are done for the Game Boy (branch `systems`).
   semitones from C-0 (C-3 = 36); lowering subtracts 36, so `.uge` bytes are unchanged. Scales, Sketch, phrases, the
   keyboard and tunings work in that absolute pitch; octave limits come from the note range.
 - `ProjectCodec` writes version 8 (`song.backend` + `song.sound`) and upgrades versions 1-7 through
-  `SoundSystem.upgradeProject`. `TrackerAudio.audition` takes the engine's note (`SoundSystem.engineNote`).
-- Shared code no longer names the Game Boy. `audio/HugeImageLayout.kt` (the hUGEDriver memory image) stays where the
-  native track imports it; step 3 moves it behind the engine interface.
+  `SoundSystem.upgradeProject`. `TrackerAudio` takes absolute notes; the song's system converts them.
+- Shared code and both audio hosts no longer name the Game Boy. `SoundSystem.engine` (`PlaybackEngine`) is what a
+  host needs to play a system: the native engine id, the image size and `lower(song, out)`, the seek tick budget,
+  and audition mapping (`auditionProblem`, `note`, `fine`). `GbSystem.engine` wraps `HugeLowering` and
+  `HugeImageLayout` (now in `backend/`).
 
-Playback on both frontends: Kotlin lowers the song (`HugeLowering` → `HugeImageLayout`, a 64 KiB Game Boy memory
-image), and C runs the real hUGEDriver on binjgb (`huge_machine.c`) inside the AAudio (Android) or SDL3 (Deck)
-callback. `TrackerAudio` is already a clean Kotlin seam; the native seam (`huge_machine.h`) is Game Boy-shaped.
+Playback on both frontends: the song's system lowers it (Game Boy: `HugeLowering` → `HugeImageLayout`, a 64 KiB Game
+Boy memory image), and C runs the real driver (Game Boy: hUGEDriver on binjgb, `huge_machine.c`) behind
+`ChipEngineOps` inside the AAudio (Android, `ChipAudio`) or SDL3 (Deck, `DeckAudio`) callback. Each host runs the
+engine of the song it is given and replaces it when a song of another system arrives.
 
 Pinned behaviour that must stay green throughout: `CrossPlatformGoldenTest` (factory `.uge` size and hash, tuning
 notes and bends), `Uge2sourceFixtureTest` (lowering byte-identical to real `uge2source`), `HugeLoweringTest`,
-`HugeImageLayoutTest`, `UgeExporterTest`, `ProjectCodecTest`, the native host test (126 checks), the 18 emulator
+`HugeImageLayoutTest`, `UgeExporterTest`, `ProjectCodecTest`, the native host test (145 checks), the 18 emulator
 tests, and screenshot parity of every view.
 
 ## Principles
@@ -94,7 +97,7 @@ interface SoundSystem {
     val exports: List<ExportFormat>          // .uge; .nsf, FamiStudio text
     fun validate(song: Song): List<Problem>
     fun realise(note: Int, cents: Double): Pitch
-    fun lower(song: Song): EngineImage       // what the native engine plays
+    val engine: PlaybackEngine               // native engine id, lower(song) → image, seek budget, audition mapping
     fun instrumentEditor(): InstrumentEditor // params, painter, hints
 }
 ```
@@ -134,10 +137,9 @@ muted in the song) stay in the hosts and work for every chip.
    read channels, banks, effects, limits and views from the song's system. Screenshots identical.
 2. **Model** — done. `GbSound`, absolute notes (C-3 = 36), project version 8 with migration from 1-7, Sketch
    phrases in saved workspaces migrated, tuning realisation through the system.
-3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck.
-   Still Game Boy-shaped: `TrackerAudio` takes hUGEDriver note numbers (`EditorSession` converts) and the hosts lower
-   with `HugeLowering`/`HugeImageLayout`. Before the NES, `TrackerAudio` takes absolute notes and the song's system
-   lowers and names its engine.
+3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck. `TrackerAudio` takes
+   absolute notes; the song's system lowers, names its engine and converts audition notes (`SoundSystem.engine`), and
+   `ChipAudio` (Android, was `HugeAudio`) and `DeckAudio` switch engines with the song's system.
 4. **NES spike.** 6502 + 2A03 playing the FamiStudio engine with a song exported from FamiStudio, in the native host
    test; compare audio with an NSF render.
 5. **NES backend.** Lowering, instruments and their editor, New → system, Help, validation, `.nsf` and FamiStudio

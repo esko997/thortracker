@@ -9,11 +9,27 @@ behaviour are whatever the driver code does on the emulated CPU and APU.
 
 Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are
 chip-neutral: they call one `ChipEngineOps` table (`app/src/main/cpp/chip_engine.h`), looked up
-by system id with `chip_engine_ops(id)` (`chip_engine.c`). `HugeAudio` and `DeckAudio` create
-their host for `"gb-huge"`, whose ops (`huge_chip.c`) map one-to-one onto `huge_machine.h`, so the
-Game Boy plays exactly as before.
+by system id with `chip_engine_ops(id)` (`chip_engine.c`). Their Kotlin sides, `ChipAudio`
+(Android) and `DeckAudio`, are chip-neutral too: they ask the song's system for its
+`PlaybackEngine` (`SoundSystem.engine`, core `system/SoundSystem.kt`) and create the native host
+for its `id`. When a song of another system arrives they destroy the running engine (playback
+ends) and create the new one. `"gb-huge"`'s ops (`huge_chip.c`) map one-to-one onto
+`huge_machine.h`, so the Game Boy plays exactly as before.
 
-A new chip adds one ops table to the registry in `chip_engine.c` (and its sources to `CMakeLists.txt`,
+A new chip implements both sides. In Kotlin, `PlaybackEngine`:
+
+| Member | Contract |
+|---|---|
+| `id` | the native ops' `system_id` |
+| `imageSize` | the native `image_size`; hosts allocate the image buffer with it |
+| `seekTicks` | `start`'s `max_ticks`: silent fast-forward budget for play-from-position (Game Boy: 12000, ~3.3 min) |
+| `lower(song, out)` | the image for the song as heard (the system's export lowering); `IllegalArgumentException` with an actionable message for an unplayable song (the host keeps the last image) |
+| `auditionProblem(channel, note, instrument, fine)` | why an audition cannot sound (absolute note, system fine pitch), or null; the host reports it as its error |
+| `note(note)`, `fine(note, fine)` | `audition`'s note and fine arguments for an absolute note and the system's fine value (Game Boy: note − 36, `40y` detune unchanged) |
+
+The host's held-audition cap on the Deck is about a minute of the system's `tickHz` ticks.
+
+Natively, it adds one ops table to the registry in `chip_engine.c` (and its sources to `CMakeLists.txt`,
 `deck/build.gradle.kts` and the host test script) and implements:
 
 | Op / field | Contract |
@@ -97,8 +113,9 @@ For comparison a GBDK game bank holds ~80 tracks (export warning, not a preview 
 
 ## Data path
 
-`HugeAudio.update(song)` (UI thread, non-blocking) → control thread: `HugeLowering.lower`
-(the same lowering `.uge` export uses) → `HugeImageLayout.build` (fixed header, deduplicated
+`ChipAudio.update(song)` (UI thread, non-blocking) → control thread: the song system's
+`PlaybackEngine.lower` — for the Game Boy `HugeLowering.lower` (the same lowering `.uge` export
+uses) → `HugeImageLayout.build` (fixed header, deduplicated
 tracks) → JNI loads the 64 KiB image (`load_image`) and copies it into a preallocated triple
 buffer. The AAudio callback takes the newest image **at a driver-tick boundary** and
 `apply_image` (`hm_apply_image`) copies changed bytes
@@ -127,7 +144,7 @@ allocates, locks, encodes or compiles; images are produced off the realtime thre
 `play(order, row)` prepares a spare machine on the control thread: power-on reset, `hUGE_init`,
 then **silent fast-forward of the real driver from order 0 row 0** (APU frame sequencer
 advanced through idle time; no sample synthesis) until the driver is at (order, row, tick 0),
-budget `HugeAudio.SEEK_TICK_BUDGET` = 12000 ticks (~3.3 min). If not reached (budget or the row
+budget `PlaybackEngine.seekTicks` (Game Boy: 12000 ticks, ~3.3 min; the Deck uses the same budget). If not reached (budget or the row
 is unreachable through jumps), it restarts from driver-init state, positions the driver at the
 order start and silently replays that order's earlier rows. The ready machine is swapped in
 by the callback; the result mode is reported in `diagnostics()["lastSeekMode"]` (0 = from song
@@ -175,7 +192,7 @@ notes (one undo step); neither these previews nor their scheduling touch project
   enabled or not, so FAST is dropped for every app's track on that output. App-side requests
   (usage GAME, PCM_I16, a session id to drop RAW) cannot change this and were tried or ruled
   out; the I16 trial was reverted. This is a device-configuration limit, not an engine defect.
-- `HugeAudio.diagnostics()` reports sample rate, burst, buffer size, xruns, worst callback time,
+- `ChipAudio.diagnostics()` reports sample rate, burst, buffer size, xruns, worst callback time,
   last seek / audition preparation time, faults, seek mode, exclusive/low-latency flags and the
   last live-apply time inside the callback, plus the output latency used for the playhead
   (`outputLatencyFrames`, the timestamp measurement, or the buffer size when no timestamp is
@@ -195,8 +212,9 @@ notes (one undo step); neither these previews nor their scheduling touch project
   seek, mute, audition and release). It prints seek and per-tick costs and writes `host_demo.wav` and
   `host_trace.txt` (per-tick APU register writes) for comparison with a reference player
   (PyBoy/mGBA running the same driver).
-- `core/src/jvmTest/kotlin/org/thortracker/audio/HugeImageLayoutTest.kt`: layout equals the lowered
-  bytes, sharing, capacity, minimal byte diffs.
+- `core/src/jvmTest/kotlin/org/thortracker/backend/HugeImageLayoutTest.kt`: layout equals the lowered
+  bytes, sharing, capacity, minimal byte diffs, and `GbSystem.engine` lowers exactly that image and
+  converts audition notes (absolute − 36).
 - Exercised (2026-11-05): host test **107 checks, 0 failures**, including lowering the
   tempo to one tick per row during an existing row without replaying that row. Host timings:
   seek to order 1 row 8 0.63 ms; order 15 row 60 (~6100 driver ticks) 16.81 ms;

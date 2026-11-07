@@ -1,8 +1,4 @@
-package org.thortracker.audio
-
-import org.thortracker.backend.HugeData
-import org.thortracker.backend.HugeLimits
-import org.thortracker.backend.HugeLowering
+package org.thortracker.backend
 
 /**
  * Places a lowered song ([HugeData], the same bytes `.uge` export is built from) into the

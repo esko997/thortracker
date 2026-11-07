@@ -1,15 +1,14 @@
-package org.thortracker.audio
+package org.thortracker.backend
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.thortracker.backend.HugeData
-import org.thortracker.backend.HugeLimits
-import org.thortracker.backend.HugeLowering
 import org.thortracker.model.Songs
+import org.thortracker.system.gb.GbSystem
 
 class HugeImageLayoutTest {
     private fun u8(image: ByteArray, at: Int) = image[at].toInt() and 0xFF
@@ -90,5 +89,26 @@ class HugeImageLayoutTest {
         val diff = a.indices.filter { a[it] != b[it] }
         assertEquals(listOf(HugeImageLayout.DESCRIPTOR), diff)
         assertNotEquals(a[HugeImageLayout.DESCRIPTOR], b[HugeImageLayout.DESCRIPTOR])
+    }
+
+    /** What the hosts play: the Game Boy engine lowers exactly this layout and takes hUGEDriver's note numbers. */
+    @Test
+    fun gameBoyEngineLowersThisLayoutAndConvertsAuditions() {
+        val song = Songs.demo()
+        val engine = GbSystem.engine
+        assertEquals("gb-huge", engine.id)
+        assertEquals(HugeImageLayout.SIZE, engine.imageSize)
+        val expected = ByteArray(HugeImageLayout.SIZE).also { HugeImageLayout.build(HugeLowering.lower(song), it) }
+        val image = ByteArray(engine.imageSize) { 0x55 }
+        engine.lower(song, image)
+        assertArrayEquals(expected, image)
+        assertEquals(0, engine.note(36))   // C-3
+        assertEquals(71, engine.note(107)) // B-8
+        assertEquals(7, engine.fine(60, 7))
+        assertNull(engine.auditionProblem(3, 36, 15, 15))
+        assertEquals("Choose an instrument (01-0F) to audition", engine.auditionProblem(0, 60, 0, 0))
+        assertEquals("Cannot audition note 35 on channel 0", engine.auditionProblem(0, 35, 1, 0))
+        assertEquals("Cannot audition note 60 on channel 4", engine.auditionProblem(4, 60, 1, 0))
+        assertEquals("Cannot audition detune 16 (00-0F)", engine.auditionProblem(0, 60, 1, 16))
     }
 }

@@ -499,7 +499,7 @@ class ControllerWorkflowTest {
     @Test fun sketchArpeggioRepeatsWithoutWritingAndCancelsAtReleaseOrMenu() {
         val original = tracker.session.song
         val audioField = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
-        val engine = audioField.get(activity) as org.thortracker.audio.HugeAudio
+        val engine = audioField.get(activity) as org.thortracker.audio.ChipAudio
         val sounded = mutableListOf<Int>()
         instrumentation.runOnMainSync {
             audioField.set(activity, object : org.thortracker.audio.TrackerAudio by engine {
@@ -539,7 +539,7 @@ class ControllerWorkflowTest {
         var phrase = emptyList<Int>()
         instrumentation.runOnMainSync { phrase = sounded.toList() }
         assertTrue("Held chord must repeat", phrase.size >= 6)
-        assertEquals(listOf(12, 16, 19, 12, 16, 19), phrase.take(6))
+        assertEquals(listOf(48, 52, 55, 48, 52, 55), phrase.take(6))
         up(KeyEvent.KEYCODE_BUTTON_X)
         instrumentation.runOnMainSync { count = sounded.size }
         SystemClock.sleep(450)
