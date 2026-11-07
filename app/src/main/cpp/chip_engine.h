@@ -3,8 +3,8 @@
  * per sound system, looked up by the system id the song was lowered for:
  *
  *   "gb-huge"         hUGEDriver 6.1.3 on binjgb (huge_chip.c over huge_machine.c)
- *   "nes-famistudio"  FamiStudio sound engine 4.5.3 on a 6502 + 2A03 (nes/nes_chip.c over
- *                     nes/nes_machine.c; spike: no audition yet)
+ *   "nes-famistudio"  FamiStudio sound engine 4.5.3 (FamiTracker tempo) on a 6502 + 2A03
+ *                     (nes/nes_chip.c over nes/nes_machine.c and nes/nes_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:
