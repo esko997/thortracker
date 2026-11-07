@@ -10,7 +10,8 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
 
 NesGoldenTest then compares the APU register traces of <name>.bin and our lowering through the embedded player.
 
-Usage: tools/audio/nes_golden.py [--famistudio DIR]   (DIR = FamiStudio 4.5.3 Linux release, default /tmp/famistudio-app)
+Usage: tools/audio/nes_golden.py [--famistudio DIR]   (DIR = FamiStudio 4.5.3 Linux release; default: the pinned
+release fetched and verified into the cache by tools/audio/fetch_famistudio.sh)
 dotnet (8) and ca65/ld65 are used from PATH, else through `distrobox enter ubuntu --` (as prepare_nes_player.py).
 """
 import argparse
@@ -23,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "core" / "src" / "jvmTest" / "resources" / "nes-golden"
 SONG_CFG = ROOT / "tools" / "audio" / "nes" / "nes_song.cfg"
+FETCH_FAMISTUDIO = ROOT / "tools" / "audio" / "fetch_famistudio.sh"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 
 
@@ -41,8 +43,12 @@ def run(cmd: list, cwd: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--famistudio", type=Path, default=Path("/tmp/famistudio-app"))
+    ap.add_argument("--famistudio", type=Path)
     args = ap.parse_args()
+    if args.famistudio is None:
+        # Progress goes to stderr (shown); the last stdout line is the release directory.
+        fetched = subprocess.run([str(FETCH_FAMISTUDIO)], stdout=subprocess.PIPE, text=True, check=True).stdout
+        args.famistudio = Path(fetched.splitlines()[-1])
     dll = args.famistudio / "FamiStudio.dll"
     if not dll.exists():
         sys.exit(f"{dll} not found (FamiStudio 4.5.3 Linux release)")

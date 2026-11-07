@@ -385,9 +385,9 @@ for user-facing messages. `image_size` = 26650 bytes, little-endian:
   The DPCM channel's rows are empty runs only. Anything else (`$52`, `$55`+, opcodes on a channel
   whose engine table has no entry, which would write out of bounds) is rejected.
 - **Notes**: engine note n (1-96) indexes the NTSC note table; n = 46 is period `$0FD` (440.4 Hz on a
-  pulse; FamiStudio calls it A3), so Thor Tracker's absolute note (semitones from C-0, A-4 = 440 Hz)
-  is **n + 11** (verified against 12-TET A440 in the host test; note the Game Boy's C-3 = 36 is 65.4 Hz,
-  hUGETracker's octave naming, so one absolute number is an octave apart between the two systems).
+  pulse; FamiStudio calls it A3), so Thor Tracker's absolute note (scientific pitch: 0 = C0, A4 = 57 = 440 Hz)
+  is **n + 11** (verified against 12-TET A440 in the host test). Absolute notes are the same pitch on every
+  system: the Game Boy's hUGE note 0 (named C-3 by hUGETracker) is C2 = 65.4 Hz = absolute 24.
   Pulses can play n ≥ 10 (A-1, the longest 11-bit period); the triangle uses the same table and
   sounds an octave lower (FamiTracker convention). Noise: the register's period index is
   `((n + arpeggio) & 15) ^ 15`, and duty bit 0 selects the short (93-step) mode.
@@ -489,10 +489,25 @@ to `$A000` + the lowered data). Still to measure on the Thor: realtime cost per 
 per frame (dev PC: 114 µs per tick, 147× realtime; the engine's worst frame 4828 CPU cycles), and
 output level against the Game Boy.
 
+### FamiStudio 4.5.3 application (offline reference, not shipped)
+
+The NES tools export with FamiStudio itself. `tools/audio/fetch_famistudio.sh` downloads the
+official Linux release `FamiStudio453-LinuxAMD64.zip`
+(`https://github.com/BleuBleu/FamiStudio/releases/download/4.5.3/FamiStudio453-LinuxAMD64.zip`,
+sha256 `9133afed2fb384663b0735d8e950cdc2714849f4fd476b16de8d56e5e81da0ad`, the digest GitHub lists
+for the asset; pinned in the script) into
+`${THOR_TRACKER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/thor-tracker}/famistudio-4.5.3/`, verifies it
+(a mismatching file is deleted and the script fails), extracts it to `app/` there and prints that
+directory (the one containing `FamiStudio.dll`) as its last stdout line; progress goes to stderr.
+It is idempotent: a verified archive is never downloaded again and a complete extraction is reused.
+`nes_golden.py` and `nes_reference_check.py` run it themselves; `--famistudio DIR` on either
+overrides it with another copy of the release. Running FamiStudio needs .NET 8 (`dotnet` on PATH,
+else the tools use the `ubuntu` distrobox, which shares `$HOME` and so the cache). Needs curl and unzip.
+
 ### Preparing the player (once, when the pin, configuration or layout changes)
 
 ```
-python3 tools/audio/prepare_nes_player.py [--famistudio <FamiStudio 4.5.3 Linux release dir>]
+python3 tools/audio/prepare_nes_player.py [--famistudio "$(tools/audio/fetch_famistudio.sh)"]
 ```
 
 It checks the vendored sources' sha256 and the assembler version (ca65/ld65 on PATH or in the
@@ -536,7 +551,8 @@ envelope edited; cut to two orders). Two runs produce identical files.
 - Evidence written to the directory: `nes_ft.wav` / `nes_ft_tonal.wav` (30 s, 48 kHz), `nes_trace.txt`
   (per-frame APU writes), `nes_ft.nsf` (player + FamiStudio's export).
 - `tools/audio/nes_reference_check.py <dir> [--famistudio <FamiStudio 4.5.3 Linux release>]`
-  (developer evidence: numpy, py65, libgme; FamiStudio needs .NET 8) — 2026-11-07, PASS:
+  (developer evidence: numpy, py65, libgme; FamiStudio, fetched by `fetch_famistudio.sh` unless
+  `--famistudio` is given, needs .NET 8) — 2026-11-07, PASS:
   - py65 running `nes_ft.nsf`: 1080 frames, 9309 APU writes identical in order and value.
   - **FamiStudio's own `nsf-export`** (its FamiTracker-tempo kernel and its NTSC data) in py65: identical
     APU writes in all 1080 frames except 95 frames of pulse/triangle period during the two slides
