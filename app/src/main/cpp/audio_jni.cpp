@@ -2,7 +2,7 @@
 // nativeStats must come from HugeAudio's single control thread.
 #include <jni.h>
 
-#include "huge_engine.h"
+#include "audio_engine.h"
 
 using thortracker::Engine;
 
@@ -12,8 +12,13 @@ Engine* engine(jlong handle) { return reinterpret_cast<Engine*>(handle); }
 
 extern "C" {
 
-JNIEXPORT jlong JNICALL Java_org_thortracker_audio_HugeAudio_nativeCreate(JNIEnv*, jclass) {
-    return reinterpret_cast<jlong>(Engine::create());
+// 0 if the system id has no engine in this build or allocation fails.
+JNIEXPORT jlong JNICALL Java_org_thortracker_audio_HugeAudio_nativeCreate(JNIEnv* env, jclass, jstring system) {
+    const char* id = env->GetStringUTFChars(system, nullptr);
+    if (!id) return 0;
+    Engine* e = Engine::create(chip_engine_ops(id));
+    env->ReleaseStringUTFChars(system, id);
+    return reinterpret_cast<jlong>(e);
 }
 
 JNIEXPORT void JNICALL Java_org_thortracker_audio_HugeAudio_nativeDestroy(JNIEnv*, jclass, jlong h) {
@@ -22,10 +27,11 @@ JNIEXPORT void JNICALL Java_org_thortracker_audio_HugeAudio_nativeDestroy(JNIEnv
 
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_HugeAudio_nativeSetImage(JNIEnv* env, jclass, jlong h,
                                                                           jbyteArray image, jint version) {
-    if (env->GetArrayLength(image) != 0x10000) return HM_ERR_IMAGE;
     jbyte* bytes = env->GetByteArrayElements(image, nullptr);
-    if (!bytes) return HM_ERR_IMAGE;
-    const int result = engine(h)->set_image(reinterpret_cast<const uint8_t*>(bytes), static_cast<uint32_t>(version));
+    if (!bytes) return CHIP_ERR_IMAGE;
+    const int result = engine(h)->set_image(reinterpret_cast<const uint8_t*>(bytes),
+                                            static_cast<size_t>(env->GetArrayLength(image)),
+                                            static_cast<uint32_t>(version));
     env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
     return result;
 }
@@ -44,8 +50,8 @@ JNIEXPORT void JNICALL Java_org_thortracker_audio_HugeAudio_nativeStop(JNIEnv*, 
 }
 
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_HugeAudio_nativeAudition(JNIEnv*, jclass, jlong h, jint channel,
-                                                                          jint note, jint instrument, jint detune) {
-    return engine(h)->audition(channel, note, instrument, detune);
+                                                                          jint note, jint instrument, jint fine) {
+    return engine(h)->audition(channel, note, instrument, fine);
 }
 
 JNIEXPORT void JNICALL Java_org_thortracker_audio_HugeAudio_nativeReleaseAudition(JNIEnv*, jclass, jlong h) {

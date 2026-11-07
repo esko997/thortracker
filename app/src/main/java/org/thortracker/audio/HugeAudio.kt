@@ -12,7 +12,8 @@ import org.thortracker.model.Song
 
 /**
  * Game Boy preview: the pinned hUGEDriver 6.1.3 player running in an embedded binjgb Game Boy
- * Color (native, `libthortracker_audio.so`), output through AAudio.
+ * Color (native, `libthortracker_audio.so`), output through AAudio. The native host is chip-neutral
+ * (`chip_engine.h`); this class creates it for the "gb-huge" system, whose images it lowers.
  *
  * - [update] lowers the song with [HugeLowering] (the same data `.uge` export uses), places it with
  *   [HugeImageLayout] and hands the 64 KiB image to the running machine, which applies it at the
@@ -53,7 +54,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
     init {
         post {
-            val created = nativeCreate()
+            val created = nativeCreate(SYSTEM_ID)
             if (created == 0L) {
                 deviceError = "Audio engine could not allocate the Game Boy player"
             } else {
@@ -233,8 +234,8 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     private fun engineFailure(code: Int, what: String) = when (code) {
-        HM_ERR_IMAGE -> "Cannot $what: no valid song data loaded"
-        HM_ERR_FAULT -> "Cannot $what: the driver faulted on this song data"
+        CHIP_ERR_IMAGE -> "Cannot $what: no valid song data loaded"
+        CHIP_ERR_FAULT -> "Cannot $what: the driver faulted on this song data"
         else -> "Cannot $what (error $code)"
     }
 
@@ -244,8 +245,10 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         const val SEEK_TICK_BUDGET = 12000
         private const val IDLE_SUSPEND_SECONDS = 10L
         private const val CLOSE_TIMEOUT_SECONDS = 2L
-        private const val HM_ERR_IMAGE = -1
-        private const val HM_ERR_FAULT = -2
+        /** Native engine (chip_engine.h) for the images this class lowers: hUGEDriver on binjgb. */
+        private const val SYSTEM_ID = "gb-huge"
+        private const val CHIP_ERR_IMAGE = -1
+        private const val CHIP_ERR_FAULT = -2
         private val DIAGNOSTIC_NAMES = listOf(
             "sampleRate", "framesPerBurst", "bufferFrames", "xruns", "maxCallbackNs", "lastSeekNs",
             "lastAuditionPrepNs", "driverFaults", "lastSeekMode", "exclusive", "lowLatency", "lastLiveApplyNs",
@@ -256,7 +259,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             System.loadLibrary("thortracker_audio")
         }
 
-        @JvmStatic private external fun nativeCreate(): Long
+        @JvmStatic private external fun nativeCreate(systemId: String): Long
         @JvmStatic private external fun nativeDestroy(handle: Long)
         @JvmStatic private external fun nativeSetImage(handle: Long, image: ByteArray, version: Int): Int
         @JvmStatic private external fun nativeEnsureStream(handle: Long): Int
