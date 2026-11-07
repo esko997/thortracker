@@ -47,9 +47,9 @@ object FamiStudioText {
             envelope(::line, "Pitch", ins.pitch, 0, ins.pitchRelative)
             envelope(::line, "DutyCycle", ins.duty, 0, false)
         }
-        val arpeggios = sortedSetOf<Int>()
+        val arpeggios = HashSet<Int>()
         for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.arpeggio >= 0) arpeggios += n.arpeggio
-        for (a in arpeggios) {
+        for (a in arpeggios.sorted()) {
             line(1, "Arpeggio" + attr("Name", arpName(a)) + attr("Length", 3) + attr("Loop", 0) +
                 attr("Values", "0,${a shr 4},${a and 0xF}"))
         }
@@ -70,7 +70,8 @@ object FamiStudioText {
                 if (notes.isEmpty()) continue
                 val name = patterns.getOrPut(notes) {
                     val p = fs.patternOfOrder[o]
-                    val n = variants.merge(p, 1, Int::plus)!!
+                    val n = (variants[p] ?: 0) + 1
+                    variants[p] = n
                     val base = "${NumberText.hex(p, 2)} ${fs.patternNames[p]}".trimEnd()
                     if (n == 1) base else "$base ($n)"
                 }
