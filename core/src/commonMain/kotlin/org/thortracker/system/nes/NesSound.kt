@@ -1,6 +1,7 @@
 package org.thortracker.system.nes
 
 import kotlinx.serialization.Serializable
+import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemSound
@@ -55,7 +56,7 @@ data class NesSound(val instruments: List<NesInstrument>) : SystemSound {
     override val system: SoundSystem get() = NesSystem
 
     companion object {
-        fun blank(): NesSound = NesSound(List(NesSystem.SLOTS) { i -> NesInstrument(name = "Sound ${i + 1}") })
+        fun blank(): NesSound = NesSound(List(NesSystem.SLOTS) { i -> NesInstrument(name = "Sound ${NumberText.hex(i + 1, 2)}") })
     }
 }
 
