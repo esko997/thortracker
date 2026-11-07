@@ -1,7 +1,8 @@
 // SDL3 audio output for one sound system's chip machines (chip_engine.h) on desktop Linux / Steam Deck.
 // One SDL audio stream pulls frames on SDL's audio thread; each request runs whole driver ticks.
 // Control calls (main thread) lock the stream, so the callback never sees a half-applied change.
-// One song machine plus one audition machine, mixed; no triple buffering as on Android.
+// One song machine plus one audition machine, mixed; no triple buffering as on Android. As on Android, an
+// audition borrows its channel: the song machine's channel is muted while the audition sounds.
 #include "deck_audio.h"
 #include <SDL3/SDL.h>
 #include <stdlib.h>
@@ -20,6 +21,8 @@ static int has_image;
 static int playing;
 static int auditioning;
 static int audition_ticks_left;
+static int audition_channel;
+static int borrowed_channel = -1;   /* channel muted on the song machine */
 static float song_buf[CHIP_MAX_TICK_FRAMES * 2];
 static float audition_buf[CHIP_MAX_TICK_FRAMES * 2];
 static volatile int pos_order, pos_row;
@@ -38,6 +41,13 @@ static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int tot
         int frames = 0;
         if (playing) {
             int order, row, tick;
+            /* Borrowing changes at a tick boundary, as audio_engine.cpp does. */
+            const int desired = auditioning ? audition_channel : -1;
+            if (desired != borrowed_channel) {
+                if (borrowed_channel >= 0) ops->mute(song_machine, borrowed_channel, 0);
+                if (desired >= 0) ops->mute(song_machine, desired, 1);
+                borrowed_channel = desired;
+            }
             ops->position(song_machine, &order, &row, &tick);
             pos_order = order;
             pos_row = row;
@@ -96,6 +106,7 @@ int da_play(int order, int row) {
     SDL_LockAudioStream(stream);
     int r = ops->start(song_machine, image, order, row, 60 * 60 * 10, &seek);
     playing = r == CHIP_OK;
+    borrowed_channel = -1;   /* start resets the machine: nothing is muted */
     if (playing) { pos_order = order; pos_row = row; }
     SDL_UnlockAudioStream(stream);
     return r;
@@ -113,6 +124,7 @@ int da_audition(int channel, int note, int instrument, int fine, int ticks) {
     int r = ops->audition(audition_machine, image, channel, note, instrument, fine);
     auditioning = r == CHIP_OK;
     audition_ticks_left = ticks;
+    audition_channel = channel;
     SDL_UnlockAudioStream(stream);
     return r;
 }

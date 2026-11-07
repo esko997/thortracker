@@ -12,7 +12,8 @@ import org.thortracker.model.Song
 
 /**
  * [TrackerAudio] over the SDL3 engine glue (native/deck_audio.c), so the shared [org.thortracker.audio.Transport]
- * drives the Deck exactly as it drives Android's HugeAudio. Main thread only.
+ * drives the Deck exactly as it drives Android's HugeAudio: during playback an audition mutes its channel in the
+ * song until it is released. Main thread only.
  */
 class DeckAudio : TrackerAudio {
     private var error: String? = null
