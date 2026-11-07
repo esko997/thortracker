@@ -213,6 +213,8 @@ class EditorSession(initial: Song) {
             order = order,
             row = s.row.coerceIn(0, rows - 1),
             channel = s.channel.coerceIn(0, song.channelCount() - 1),
+            // A song of another system may have fewer banks (the NES has one).
+            bank = s.bank.coerceIn(0, song.system.banks.size - 1),
             instrument = s.instrument.coerceIn(1, song.system.banks.maxOf { it.slots }),
             wave = s.wave.coerceAtLeast(0),
         )

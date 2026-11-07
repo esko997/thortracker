@@ -178,4 +178,20 @@ class NesInstrumentViewTest {
         v.press(Action.DOWN)
         assertEquals(ViewKind.PATTERN, v.state.kind)
     }
+
+    @Test
+    fun switchingSystemsKeepsSelectionAndEntrySoundsInRange() {
+        val gb = EditorSession(GbSystem.blank())
+        val sounds = ViewController(gb, ViewState(kind = ViewKind.INSTRUMENT))
+        sounds.tap(Action.NEXT_CHANNEL); sounds.tap(Action.NEXT_CHANNEL) // GB noise bank
+        assertEquals(2, gb.selection.bank)
+        gb.replaceSong(NesSystem.blank())
+        assertEquals("the NES has one bank", 0, gb.selection.bank)
+        val pattern = ViewController(gb, ViewState(kind = ViewKind.KEYBOARD))
+        pattern.follow()
+        pattern.setKeyboardSound(40)
+        assertEquals(40, pattern.pen(0))
+        gb.replaceSong(GbSystem.blank())
+        assertEquals("a GB bank has 15 slots", 15, pattern.pen(0))
+    }
 }
