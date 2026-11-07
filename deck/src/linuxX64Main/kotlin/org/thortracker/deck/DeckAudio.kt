@@ -4,49 +4,100 @@ package org.thortracker.deck
 
 import decknative.*
 import kotlinx.cinterop.*
-import org.thortracker.audio.HugeImageLayout
 import org.thortracker.audio.PlaybackPosition
 import org.thortracker.audio.TrackerAudio
-import org.thortracker.backend.HugeLowering
 import org.thortracker.model.Song
-import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.PlaybackEngine
+import org.thortracker.system.SoundSystem
+import kotlin.math.roundToInt
 
 /**
  * [TrackerAudio] over the SDL3 engine glue (native/deck_audio.c), so the shared [org.thortracker.audio.Transport]
- * drives the Deck exactly as it drives Android's HugeAudio: during playback an audition mutes its channel in the
- * song until it is released. Main thread only.
+ * drives the Deck exactly as it drives Android's ChipAudio: during playback an audition mutes its channel in the
+ * song until it is released. It runs the engine of the song's own system ([SoundSystem.engine]) and reopens the
+ * glue with another engine when a song of another system arrives. Main thread only.
  */
 class DeckAudio : TrackerAudio {
-    private var error: String? = null
+    private var system: SoundSystem? = null   // whose engine the glue has open
+    private var image = ByteArray(0)
+    private var hasImage = false
+    private var auditionTicks = 0
+    private var songError: String? = null
+    private var commandError: String? = null
+    private var deviceError: String? = null
 
     /** Auditions started since launch (test diagnostics). */
     var auditions = 0
         private set
 
-    init { check(da_open(GbSystem.id) == 0) { "SDL audio could not open" } }
-
     /** Lowers the song and hands its image to the engine (applied live while playing); a bad song keeps the last one. */
     override fun update(song: Song) {
-        error = try {
-            val image = ByteArray(HugeImageLayout.SIZE)
-            HugeImageLayout.build(HugeLowering.lower(song), image)
-            image.usePinned { da_set_image(it.addressOf(0).reinterpret(), image.size) }
-            null
+        val engine = open(song.system) ?: return
+        songError = try {
+            engine.lower(song, image)
+            val result = image.usePinned { da_set_image(it.addressOf(0).reinterpret(), image.size) }
+            if (result == 0) { hasImage = true; null }
+            else "Playing the last playable version, not your latest edits: the player rejected the song data (error $result)"
         } catch (e: IllegalArgumentException) {
             "Playing the last playable version, not your latest edits: ${e.message?.lineSequence()?.firstOrNull()}"
         }
     }
 
-    override fun play(order: Int, row: Int) { da_play(order, row) }
-    override fun stop() = da_stop()
-    override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) { auditions++; da_audition(channel, note, instrument, detune, AUDITION_TICKS) }
-    override fun releaseAudition() = da_release_audition()
+    override fun play(order: Int, row: Int) {
+        val engine = ready() ?: return
+        commandError = failure(da_play(order, row, engine.seekTicks), "play")
+    }
+
+    override fun stop() { if (system != null) da_stop() }
+
+    override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
+        auditions++
+        val engine = ready() ?: return
+        engine.auditionProblem(channel, note, instrument, detune)?.let { commandError = it; return }
+        commandError = failure(da_audition(channel, engine.note(note), instrument, engine.fine(note, detune), auditionTicks), "audition")
+    }
+
+    override fun releaseAudition() { if (system != null) da_release_audition() }
     override fun position() = PlaybackPosition(da_playing() != 0, da_order(), da_row())
-    override fun error(): String? = error
+    override fun error(): String? = deviceError ?: commandError ?: songError
     override fun close() = da_close()
+
+    /** [next]'s engine, opening it in place of another system's (whose playback ends); null if it cannot open. */
+    private fun open(next: SoundSystem): PlaybackEngine? {
+        if (next === system) return next.engine
+        da_close()
+        system = null
+        hasImage = false
+        val result = da_open(next.engine.id)
+        if (result != 0) {
+            da_close()
+            deviceError = if (result == NO_ENGINE) "This build has no player for ${next.name}" else "SDL audio could not open (error $result)"
+            return null
+        }
+        deviceError = null
+        system = next
+        if (image.size != next.engine.imageSize) image = ByteArray(next.engine.imageSize)
+        auditionTicks = (AUDITION_CAP_SECONDS * next.tickHz).roundToInt()
+        return next.engine
+    }
+
+    /** The open engine once it has a playable image, else null with the reason in [commandError]. */
+    private fun ready(): PlaybackEngine? {
+        val engine = system?.engine
+        if (engine == null || !hasImage) { commandError = songError ?: "No playable song loaded"; return null }
+        return engine
+    }
+
+    private fun failure(code: Int, what: String): String? = when {
+        code >= 0 -> null
+        code == CHIP_ERR_FAULT -> "Cannot $what: the driver faulted on this song data"
+        else -> "Cannot $what: no valid song data loaded"
+    }
 
     private companion object {
         /** A held note sounds until released (as on Android); this caps it at about a minute should a release be lost. */
-        const val AUDITION_TICKS = 60 * 60
+        const val AUDITION_CAP_SECONDS = 60
+        const val NO_ENGINE = -2   // da_open: this build has no engine for the system
+        const val CHIP_ERR_FAULT = -2
     }
 }

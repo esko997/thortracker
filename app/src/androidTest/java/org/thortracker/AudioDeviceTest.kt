@@ -10,7 +10,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.thortracker.audio.HugeAudio
+import org.thortracker.audio.ChipAudio
 import org.thortracker.model.Songs
 
 /** Uses the real JNI engine and Android audio device, not a fake callback or sequencer. */
@@ -19,7 +19,7 @@ class AudioDeviceTest {
     @Test
     fun liveEditsAndAuditionDoNotRestartTheSong() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        HugeAudio(instrumentation.targetContext).use { audio ->
+        ChipAudio(instrumentation.targetContext).use { audio ->
             val song = Songs.demo()
             audio.update(song)
             val playRequestedAt = SystemClock.elapsedRealtime()
@@ -44,7 +44,7 @@ class AudioDeviceTest {
             assertTrue("driver stopped progressing after edit", audio.position().row > before.row)
 
             val beforeAudition = audio.position()
-            audio.audition(1, 36, 1)
+            audio.audition(1, 72, 1) // C-6
             await("audition prepared", audio) { audio.diagnostics().getValue("lastAuditionPrepNs") > 0 }
             SystemClock.sleep(120)
             audio.releaseAudition()
@@ -82,7 +82,7 @@ class AudioDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val silentSong = Songs.blank()
         repeat(50) { iteration ->
-            val audio = HugeAudio(context)
+            val audio = ChipAudio(context)
             try {
                 audio.update(silentSong)
                 audio.play(0, 0)
@@ -100,7 +100,7 @@ class AudioDeviceTest {
     @Test
     fun shortPatternsMoveOnAfterTheirLastRow() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        HugeAudio(context).use { audio ->
+        ChipAudio(context).use { audio ->
             val blank = Songs.blank()
             val pattern = blank.patterns[0]
             val song = blank.copy(
@@ -130,7 +130,7 @@ class AudioDeviceTest {
     @Test
     fun aPatternLoopReplaysOnlyThatPattern() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        HugeAudio(context).use { audio ->
+        ChipAudio(context).use { audio ->
             val blank = Songs.blank()
             val pattern = blank.patterns[0]
             val jumpToOrder2 = pattern.copy(name = "B", length = 6).let { p ->
@@ -166,7 +166,7 @@ class AudioDeviceTest {
     @Test
     fun aParkedOrderIsSkipped() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        HugeAudio(context).use { audio ->
+        ChipAudio(context).use { audio ->
             val blank = Songs.blank()
             val pattern = blank.patterns[0]
             val song = blank.copy(
@@ -194,7 +194,7 @@ class AudioDeviceTest {
         }
     }
 
-    private fun await(message: String, audio: HugeAudio, condition: () -> Boolean) {
+    private fun await(message: String, audio: ChipAudio, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 5000
         while (!condition() && SystemClock.elapsedRealtime() < deadline) {
             assertNull("$message: ${audio.error()}", audio.error())

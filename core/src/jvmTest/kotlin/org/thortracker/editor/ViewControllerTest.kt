@@ -200,7 +200,7 @@ class ViewControllerTest {
         v.tap(Action.EDIT)
         assertEquals(Cell(note = 48, instrument = 1), cell(0, 0, 0))
         assertEquals(1, v.state.row)
-        assertEquals(Triple(0, 12, 1), auditions.single())
+        assertEquals(Triple(0, 48, 1), auditions.single())
         assertEquals(1, releases)
         assertEquals(1, session.selection.row)
 
@@ -301,7 +301,7 @@ class ViewControllerTest {
         val v = view(ViewKind.PATTERN)
         val before = session.song
         v.press(Action.AUDITION)
-        assertEquals(Triple(0, 12, 1), auditions.single())
+        assertEquals(Triple(0, 48, 1), auditions.single())
         v.release(Action.AUDITION)
         assertEquals(1, releases)
         assertSame(before, session.song)
@@ -323,7 +323,7 @@ class ViewControllerTest {
         val before = session.song
         kb.tap(Action.EDIT)
         assertSame(before, session.song)
-        assertEquals(16, auditions.last().second)
+        assertEquals(52, auditions.last().second)
     }
 
     @Test
@@ -408,7 +408,7 @@ class ViewControllerTest {
         assertEquals(12, session.song.gb.wave[2].wave)
         v.state.waveRow = 1
         v.press(Action.AUDITION)
-        assertEquals(Triple(2, 12, 3), auditions.last())
+        assertEquals(Triple(2, 48, 3), auditions.last())
         v.release(Action.AUDITION)
     }
 

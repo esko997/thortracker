@@ -6,7 +6,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
+import org.thortracker.backend.HugeImageLayout
 import org.thortracker.backend.HugeLimits
+import org.thortracker.backend.HugeLowering
 import org.thortracker.backend.UgeExporter
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
@@ -19,6 +21,7 @@ import org.thortracker.system.ChannelSpec
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.FinePitch
+import org.thortracker.system.PlaybackEngine
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemHelp
 import org.thortracker.system.SystemView
@@ -123,8 +126,7 @@ object GbSystem : SoundSystem {
 
     override fun withJumpTarget(cell: Cell, order: Int): Cell = cell.copy(param = order + 1)
 
-    /** hUGEDriver numbers notes from C-3. */
-    override fun engineNote(note: Int): Int = note - HugeRules.NOTE_OFFSET
+    override val engine: PlaybackEngine = Engine
 
     override fun instrumentName(song: Song, bank: Int, slot: Int): String? = instrument(song, bank, slot)?.name
 
@@ -147,6 +149,33 @@ object GbSystem : SoundSystem {
         ViewKind.INSTRUMENT -> GbSoundView
         ViewKind.WAVE -> GbWaveView
         else -> null
+    }
+
+    /**
+     * hUGEDriver 6.1.3 on binjgb (native `"gb-huge"`, huge_chip.c over huge_machine.c): the song lowered as for `.uge`
+     * export ([HugeLowering]) and placed in the 64 KiB Game Boy memory image ([HugeImageLayout]).
+     */
+    private object Engine : PlaybackEngine {
+        override val id = "gb-huge"
+        override val imageSize = HugeImageLayout.SIZE
+
+        /** At 59.73 ticks per second, ~3.3 minutes of song. */
+        override val seekTicks = 12000
+
+        override fun lower(song: Song, out: ByteArray) = HugeImageLayout.build(HugeLowering.lower(song), out)
+
+        override fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
+            instrument !in 1..HugeRules.INSTRUMENT_SLOTS -> "Choose an instrument (01-0F) to audition"
+            note !in noteRange || channel !in channels.indices -> "Cannot audition note $note on channel $channel"
+            fine !in 0..Detune.max -> "Cannot audition detune $fine (00-0F)"
+            else -> null
+        }
+
+        /** hUGEDriver numbers notes from C-3. */
+        override fun note(note: Int): Int = note - HugeRules.NOTE_OFFSET
+
+        /** The audition plays 40y itself: the detune passes unchanged. */
+        override fun fine(note: Int, fine: Int): Int = fine
     }
 
     /**

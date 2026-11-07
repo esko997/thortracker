@@ -7,31 +7,28 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-import org.thortracker.backend.HugeLowering
 import org.thortracker.model.Song
-import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.SoundSystem
 
 /**
- * Game Boy preview: the pinned hUGEDriver 6.1.3 player running in an embedded binjgb Game Boy
- * Color (native, `libthortracker_audio.so`), output through AAudio. The native host is chip-neutral
- * (`chip_engine.h`); this class creates it for the "gb-huge" system, whose images it lowers.
+ * Song preview through the native chip engine (`libthortracker_audio.so`, `chip_engine.h`), output
+ * through AAudio. It runs the engine of the song's own system ([SoundSystem.engine]) and replaces
+ * it when a song of another system arrives (that stops playback).
  *
- * - [update] lowers the song with [HugeLowering] (the same data `.uge` export uses), places it with
- *   [HugeImageLayout] and hands the 64 KiB image to the running machine, which applies it at the
- *   next driver tick: pattern cells take effect from the next row processed, order changes at the
- *   next order (the current order's patterns are re-resolved immediately), instrument edits at the
- *   next note that loads the instrument (a sustained note keeps the registers it was triggered
- *   with, as on hardware), wave edits at the next CH3 note with an instrument, base tempo edits
- *   immediately. The transport never restarts.
+ * - [update] lowers the song with the system's [org.thortracker.system.PlaybackEngine.lower] (the
+ *   same data its export uses) and hands the image to the running machine, which applies it at the
+ *   next driver tick; the transport never restarts. What an edit changes when is the driver's own
+ *   behaviour (docs/AUDIO_ENGINE.md, "Live-edit semantics").
  * - [play] reconstructs state by silently running the driver from the song start up to the target
- *   row ([SEEK_TICK_BUDGET] ticks max); beyond that, or if jumps make the row unreachable, it
- *   starts from driver-init state at the order start and silently replays that order's earlier rows.
+ *   row (the engine's [org.thortracker.system.PlaybackEngine.seekTicks] max); beyond that, or if
+ *   jumps make the row unreachable, it starts from driver-init state at the order start and
+ *   silently replays that order's earlier rows.
  * - [audition] plays the note through the driver on a second machine with the song's current
- *   instruments; during playback the song's channel is muted with hUGE_mute_channel (the driver
- *   cuts it) and unmuted on release, resuming at that channel's next note.
+ *   instruments; during playback the song's channel is muted by the driver and unmuted on
+ *   release, resuming at that channel's next note.
  * - Work runs on one control thread; the audio callback never allocates or waits.
  */
-class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
+class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     private val executor = ScheduledThreadPoolExecutor(1) { runnable ->
         Thread(runnable, "thor-audio-control").apply { isDaemon = true }
     }.apply {
@@ -48,21 +45,11 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     @Volatile private var deviceError: String? = null
 
     // Control-thread state.
-    private val image = ByteArray(HugeImageLayout.SIZE)
+    private var system: SoundSystem? = null   // whose engine `handle` runs
+    private var image = ByteArray(0)
     private var imageVersion = 0
     private var hasImage = false
     private var idleCheck: ScheduledFuture<*>? = null
-
-    init {
-        post {
-            val created = nativeCreate(GbSystem.id)
-            if (created == 0L) {
-                deviceError = "Audio engine could not allocate the Game Boy player"
-            } else {
-                synchronized(handleLock) { handle = created }
-            }
-        }
-    }
 
     override fun update(song: Song) {
         if (closed) return
@@ -72,7 +59,8 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     override fun play(order: Int, row: Int) = post {
         applyPendingSong()
         val h = readyHandle() ?: return@post
-        val result = nativePlay(h, order, row, SEEK_TICK_BUDGET)
+        val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
+        val result = nativePlay(h, order, row, engine.seekTicks)
         commandError = if (result < 0) engineFailure(result, "play") else null
         scheduleIdleCheck()
     }
@@ -84,21 +72,18 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) = post {
-        if (instrument !in 1..15) {
-            commandError = "Choose an instrument (01-0F) to audition"
-            return@post
-        }
-        if (note !in 0..71 || channel !in 0..3) {
-            commandError = "Cannot audition note $note on channel $channel"
-            return@post
-        }
-        if (detune !in 0..15) {
-            commandError = "Cannot audition detune $detune (00-0F)"
-            return@post
-        }
         applyPendingSong()
+        val engine = system?.engine
+        if (engine == null) {
+            commandError = songError ?: "No playable song loaded"
+            return@post
+        }
+        engine.auditionProblem(channel, note, instrument, detune)?.let {
+            commandError = it
+            return@post
+        }
         val h = readyHandle() ?: return@post
-        val result = nativeAudition(h, channel, note, instrument, detune)
+        val result = nativeAudition(h, channel, engine.note(note), instrument, engine.fine(note, detune))
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
             // A held note keeps the stream: a pending idle check must not stop it before the
@@ -193,13 +178,13 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
     private fun applyPendingSong() {
         val song = pendingSong.getAndSet(null) ?: return
-        val h = handle
+        val h = engineFor(song.system)
         if (h == 0L) {
             pendingSong.compareAndSet(null, song)
             return
         }
         try {
-            HugeImageLayout.build(HugeLowering.lower(song), image)
+            song.system.engine.lower(song, image)
         } catch (e: IllegalArgumentException) {
             songError = "Playing the last playable version, not your latest edits: ${e.message ?: "invalid song"}"
             return
@@ -212,6 +197,31 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         } else {
             songError = "Playing the last playable version, not your latest edits: the player rejected the song data (layout error $result)"
         }
+    }
+
+    /**
+     * The handle of [next]'s engine: the running one, or a new one replacing another system's (its
+     * transport, stream and image go with it). 0 when it cannot be created ([deviceError] says why).
+     */
+    private fun engineFor(next: SoundSystem): Long {
+        if (next === system) return handle
+        synchronized(handleLock) {
+            val old = handle
+            handle = 0L
+            if (old != 0L) nativeDestroy(old)
+        }
+        system = null
+        hasImage = false
+        val created = nativeCreate(next.engine.id)
+        if (created == 0L) {
+            deviceError = "Audio engine could not start the ${next.name} player"
+            return 0L
+        }
+        synchronized(handleLock) { handle = created }
+        system = next
+        if (image.size != next.engine.imageSize) image = ByteArray(next.engine.imageSize)
+        deviceError = null
+        return created
     }
 
     private fun readyHandle(): Long? {
@@ -241,9 +251,7 @@ class HugeAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     companion object {
-        private const val TAG = "HugeAudio"
-        /** Seek reconstruction budget in driver ticks (59.73 per second): ~3.3 minutes of song. */
-        const val SEEK_TICK_BUDGET = 12000
+        private const val TAG = "ChipAudio"
         private const val IDLE_SUSPEND_SECONDS = 10L
         private const val CLOSE_TIMEOUT_SECONDS = 2L
         private const val CHIP_ERR_IMAGE = -1

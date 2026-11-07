@@ -21,10 +21,19 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("huge_chip.c").asFile,
         engineSrc.file("huge_machine.c").asFile,
         engineSrc.file("third_party/binjgb/src/common.c").asFile,
+        engineSrc.file("nes/nes_chip.c").asFile,
+        engineSrc.file("nes/nes_machine.c").asFile,
+        engineSrc.file("nes/nes_apu.c").asFile,
+        engineSrc.file("third_party/blip_buf/blip_buf.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
-    inputs.files(sources, engineSrc.files("chip_engine.h", "huge_machine.h"), layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
+    val includeDirs = listOf(engineSrc.asFile) +
+        listOf("third_party/binjgb/src", "nes", "third_party/chips", "third_party/blip_buf").map { engineSrc.dir(it).asFile } +
+        listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
+    inputs.files(sources, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_apu.h",
+        "generated/nes_player_image.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
+        layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
     val out = nativeOut.get().asFile
@@ -37,7 +46,7 @@ val buildEngine by tasks.registering(Exec::class) {
         append("[ -x \"\$CC\" ] && [ -d \"\$SR\" ] || { echo 'Kotlin/Native toolchain not downloaded yet; build :core:compileKotlinLinuxX64 once' >&2; exit 1; }\n")
         for (src in sources) {
             append("\"\$CC\" --target=x86_64-unknown-linux-gnu --sysroot=\"\$SR\" -std=gnu11 -O2 -fPIC -DNDEBUG=1 -w ")
-            append("-I'${engineSrc.asFile}' -I'${engineSrc.dir("third_party/binjgb/src").asFile}' -I'${sdlInclude.asFile}' -I'${layout.projectDirectory.dir("native").asFile}' ")
+            append(includeDirs.joinToString(" ", postfix = " ") { "-I'$it'" })
             append("-c '${src}' -o '${out}/${src.nameWithoutExtension}.o'\n")
         }
         append("rm -f '${out}/libdeck_native.a'\n")

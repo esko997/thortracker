@@ -28,7 +28,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import org.thortracker.audio.AuditionLoop
-import org.thortracker.audio.HugeAudio
+import org.thortracker.audio.ChipAudio
 import org.thortracker.audio.TrackerAudio
 import org.thortracker.audio.Transport
 import org.thortracker.editor.Action
@@ -264,7 +264,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             recoveryWarning = warning
             documentReady = true
             try {
-                audio = HugeAudio(applicationContext).also { transport.audio = it }
+                audio = ChipAudio(applicationContext).also { transport.audio = it }
                 initialized = true
                 statusMessage = if (recovered != null) "Recovered working project"
                 else "Demo loaded. For a blank song choose Menu, Files, New blank song"

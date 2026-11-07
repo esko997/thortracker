@@ -8,7 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.thortracker.audio.HugeImageLayout
 import org.thortracker.model.Cell
 import org.thortracker.system.gb.GbInstrument
 import org.thortracker.system.gb.GbBank

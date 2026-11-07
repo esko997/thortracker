@@ -15,7 +15,7 @@ Steps 1 and 2 are done for the Game Boy (branch `systems`).
 
 - `system/SoundSystem.kt`: `SoundSystem` (channels as `ChannelSpec` with a chip-neutral `ChannelKind`, bank index and
   `tonal`; `banks`; absolute `noteRange`; `effects`/`effectsFor`; `views`; `exports`; `fine` (tuning realisation);
-  validation; `arranged`/`patternLoop`; order-jump rewriting; `engineNote`; instrument names/summaries; Help prose),
+  validation; `arranged`/`patternLoop`; order-jump rewriting; `engine`; instrument names/summaries; Help prose),
   `SystemSound`, and the `SoundSystems` registry (unknown id: a clear error). `SystemView` is a system's own view:
   controller logic plus painter, which `ViewController` and `PaneView` delegate to.
 - `system/gb/`: `GbSystem` wraps `HugeRules`, `GbValidator` (was `SongValidator`), `HugeLimits`, `HugeLowering` and
@@ -26,17 +26,20 @@ Steps 1 and 2 are done for the Game Boy (branch `systems`).
   semitones from C-0 (C-3 = 36); lowering subtracts 36, so `.uge` bytes are unchanged. Scales, Sketch, phrases, the
   keyboard and tunings work in that absolute pitch; octave limits come from the note range.
 - `ProjectCodec` writes version 8 (`song.backend` + `song.sound`) and upgrades versions 1-7 through
-  `SoundSystem.upgradeProject`. `TrackerAudio.audition` takes the engine's note (`SoundSystem.engineNote`).
-- Shared code no longer names the Game Boy. `audio/HugeImageLayout.kt` (the hUGEDriver memory image) stays where the
-  native track imports it; step 3 moves it behind the engine interface.
+  `SoundSystem.upgradeProject`. `TrackerAudio` takes absolute notes; the song's system converts them.
+- Shared code and both audio hosts no longer name the Game Boy. `SoundSystem.engine` (`PlaybackEngine`) is what a
+  host needs to play a system: the native engine id, the image size and `lower(song, out)`, the seek tick budget,
+  and audition mapping (`auditionProblem`, `note`, `fine`). `GbSystem.engine` wraps `HugeLowering` and
+  `HugeImageLayout` (now in `backend/`).
 
-Playback on both frontends: Kotlin lowers the song (`HugeLowering` → `HugeImageLayout`, a 64 KiB Game Boy memory
-image), and C runs the real hUGEDriver on binjgb (`huge_machine.c`) inside the AAudio (Android) or SDL3 (Deck)
-callback. `TrackerAudio` is already a clean Kotlin seam; the native seam (`huge_machine.h`) is Game Boy-shaped.
+Playback on both frontends: the song's system lowers it (Game Boy: `HugeLowering` → `HugeImageLayout`, a 64 KiB Game
+Boy memory image), and C runs the real driver (Game Boy: hUGEDriver on binjgb, `huge_machine.c`) behind
+`ChipEngineOps` inside the AAudio (Android, `ChipAudio`) or SDL3 (Deck, `DeckAudio`) callback. Each host runs the
+engine of the song it is given and replaces it when a song of another system arrives.
 
 Pinned behaviour that must stay green throughout: `CrossPlatformGoldenTest` (factory `.uge` size and hash, tuning
 notes and bends), `Uge2sourceFixtureTest` (lowering byte-identical to real `uge2source`), `HugeLoweringTest`,
-`HugeImageLayoutTest`, `UgeExporterTest`, `ProjectCodecTest`, the native host test (126 checks), the 18 emulator
+`HugeImageLayoutTest`, `UgeExporterTest`, `ProjectCodecTest`, the native host test (145 checks), the 18 emulator
 tests, and screenshot parity of every view.
 
 ## Principles
@@ -70,7 +73,8 @@ data class NesSound(val instruments: List<NesInstrument>) : SystemSound
 ```
 
 - **Notes become absolute.** `Cell.note` counts semitones from C-0 (so today's C-3 = 36). Each backend declares its
-  range (Game Boy C-3..B-8; NES the FamiStudio engine's note table, confirmed in step 4) and lowering subtracts its
+  range (Game Boy C-3..B-8; NES: FamiStudio note byte `n` = absolute `n + 11`, table C-1..B-8 with A-4 = 440 Hz on the
+  pulses, pulses reach down to A-1 and the triangle sounds an octave below — confirmed in step 4) and lowering subtracts its
   own offset, so `.uge` bytes do not change. Sketch, the Keyboard view, scales and tunings then work in one pitch
   space for every chip.
 - **Cells keep note / instrument / effect / param.** The effect numbers are the backend's. Each backend maps a
@@ -94,7 +98,7 @@ interface SoundSystem {
     val exports: List<ExportFormat>          // .uge; .nsf, FamiStudio text
     fun validate(song: Song): List<Problem>
     fun realise(note: Int, cents: Double): Pitch
-    fun lower(song: Song): EngineImage       // what the native engine plays
+    val engine: PlaybackEngine               // native engine id, lower(song) → image, seek budget, audition mapping
     fun instrumentEditor(): InstrumentEditor // params, painter, hints
 }
 ```
@@ -114,13 +118,14 @@ muted in the song) stay in the hosts and work for every chip.
 
 ## NES backend
 
-- **Driver:** FamiStudio sound engine 4.5 (all-permissive licence, notice kept). Used in NES homebrew; supports
+- **Driver:** FamiStudio sound engine 4.5.3 (all-permissive licence, notice kept). Used in NES homebrew; supports
   volume and fine-pitch tracks, slides, vibrato, arpeggios, release notes, duty changes and note delays. It also
   drives the VRC6, VRC7 (2-operator FM), N163, S5B, FDS, MMC5 and EPSM (YM2608) expansion chips, which can become
   later systems on the same driver.
-- **Engine:** a 6502 core and a 2A03 APU (pulse ×2, triangle, noise; no DPCM samples), both under permissive licences
-  or written here. The engine binary is assembled once at build time (like hUGEDriver) and the song data is placed
-  at a fixed address, as `HugeImageLayout` does today.
+- **Engine:** `m6502.h` (floooh/chips, zlib) and a 2A03 APU written here (`nes/nes_apu.c`: pulse ×2, triangle,
+  noise, DMC output level; no DPCM samples), band-limited through blip_buf (LGPL-2.1+). The player image is assembled
+  once (`tools/audio/prepare_nes_player.py`, committed like hUGEDriver's) and the song data is placed at the fixed
+  song region `$A000-$FFF9`. Details in `docs/AUDIO_ENGINE.md` (NES section).
 - **Lowering:** Kotlin encodes songs into the FamiStudio engine's data format. A golden test compares it with
   FamiStudio's own export of the same song.
 - **Instruments:** duty, volume, arpeggio and pitch envelopes, each with loop and release points. A new instrument
@@ -134,15 +139,45 @@ muted in the song) stay in the hosts and work for every chip.
    read channels, banks, effects, limits and views from the song's system. Screenshots identical.
 2. **Model** — done. `GbSound`, absolute notes (C-3 = 36), project version 8 with migration from 1-7, Sketch
    phrases in saved workspaces migrated, tuning realisation through the system.
-3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck.
-   Still Game Boy-shaped: `TrackerAudio` takes hUGEDriver note numbers (`EditorSession` converts) and the hosts lower
-   with `HugeLowering`/`HugeImageLayout`. Before the NES, `TrackerAudio` takes absolute notes and the song's system
-   lowers and names its engine.
-4. **NES spike.** 6502 + 2A03 playing the FamiStudio engine with a song exported from FamiStudio, in the native host
-   test; compare audio with an NSF render.
+3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck. `TrackerAudio` takes
+   absolute notes; the song's system lowers, names its engine and converts audition notes (`SoundSystem.engine`), and
+   `ChipAudio` (Android, was `HugeAudio`) and `DeckAudio` switch engines with the song's system.
+4. **NES spike** — done. `chip_engine_ops("nes-famistudio")` plays FamiStudio's own export of a
+   demo song in the native host test (183 checks): exact pitches, deterministic render, no CPU faults, seek, mute,
+   loop period; register writes identical to py65 running the same NSF; audio within the spread of libgme and
+   FamiStudio's own WAV/NSF exports. No audition yet; position/seek by frame count. Decisions for step 5 (tempo mode:
+   FamiTracker tempo recommended so the engine owns rows and `Fxx`; stable data slots for live edits; audition song;
+   note mapping `n + 11`) are listed in `docs/AUDIO_ENGINE.md` → "What step 5 needs".
 5. **NES backend.** Lowering, instruments and their editor, New → system, Help, validation, `.nsf` and FamiStudio
    text export. Release.
-6. **SID**, then **FM** (design to follow; FM has its own ideas pending).
+6. **SID**, then **FM**: OPL3 first, YM2612 second (see below).
+
+## Effect columns
+
+A system declares how many effect columns each channel may have; the Game Boy keeps one (hUGEDriver stores one
+effect per row) and its songs look exactly as today. Richer systems allow several (FamiTracker allows 4, Furnace 8),
+with the number shown adjustable per channel to save width on handheld screens. Effect names are one character from
+0-9 then A-Z, declared per system, so chips with more than 16 effects fit without changing Game Boy songs. Each effect
+declares whether it applies when a note starts (like a parameter lock: no mid-note register clicks) or at once.
+
+## FM (planned)
+
+Both OPL3 (YMF262) and YM2612 (OPN2), OPL3 first. Ideas from ALM Busy Circuits' Akemie's Castle / Akemie's Taiko and
+Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
+
+- **Instrument editor of curated choices**: an algorithm from a short curated list, a frequency-ratio set stepped
+  through whole-number pairs, a waveform combination, brightness (modulator level) and attack/decay, each one ←/→
+  value; the full per-operator grid stays available behind a toggle.
+- **Parameter locks as effects**: brightness, ratio, waveform and similar effects on a row, applied at note start.
+- **Chord effect** written like the arpeggio (`xy` = +x and +y semitones) but sounding together on spare chip voices
+  (OPL3 has 18 two-operator voices); larger chords through a second column or a numbered chord-shape table with
+  inversions.
+- **Drums are pitched instruments**: the note is the pitch, the instrument the drum sound, built from ordinary FM
+  voices with a pitch sweep (start pitch, end pitch, speed) so every drum is independent. OPL3's rhythm mode may come
+  later as an option; its snare/hi-hat and tom/cymbal pairs share a pitch.
+- **OPL3 is music-only**: no console plays it, so the system uses our own player and exports VGM. YM2612 then reuses
+  the FM editor and player, and adds export for a Mega Drive sound driver so songs can go into games.
+- Cores: ymfm (BSD-3-Clause) covers both chips; the Nuked cores (LGPL-2.1) are also GPL-compatible.
 
 ## Open questions
 

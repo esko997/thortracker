@@ -96,6 +96,44 @@ interface SystemHelp {
 }
 
 /**
+ * How the audio hosts play a [SoundSystem]: its native engine (`ChipEngineOps` in app/src/main/cpp/chip_engine.h, see
+ * docs/AUDIO_ENGINE.md), the image that engine plays and the numbers its calls take. Hosts (Android's `ChipAudio`, the
+ * Deck's `DeckAudio`) never name a chip: they run the engine of the song they are given.
+ */
+interface PlaybackEngine {
+    /** The native implementation's id, as `chip_engine_ops` looks it up ("gb-huge"). */
+    val id: String
+
+    /** Bytes of a lowered image (the engine's `image_size`); hosts allocate [lower]'s buffer with it. */
+    val imageSize: Int
+
+    /**
+     * Most driver ticks a play-from-position may spend silently replaying the song from its start before the engine
+     * falls back to the target order's start (`ChipEngineOps.start`'s `max_ticks`).
+     */
+    val seekTicks: Int
+
+    /**
+     * Writes the image the engine plays for [song] (as heard: the whole song or a pattern loop) into [out], which
+     * holds [imageSize] bytes. The same lowering the system's export uses.
+     * @throws IllegalArgumentException with an actionable message when the song cannot be played.
+     */
+    fun lower(song: Song, out: ByteArray)
+
+    /**
+     * Why the engine cannot sound absolute [note] (semitones from C-0) with sound [instrument] on [channel] at the
+     * system's fine pitch [fine] ([FinePitch]), or null when it can.
+     */
+    fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String?
+
+    /** The engine's note number for absolute [note] (Game Boy: hUGEDriver's 0..71 from C-3). */
+    fun note(note: Int): Int
+
+    /** The engine's fine-pitch argument for the system's fine value [fine] on [note] (Game Boy: the 40y detune). */
+    fun fine(note: Int, fine: Int): Int
+}
+
+/**
  * Everything about a song that belongs to its chip (instruments, wave tables). Each system has its own; shared code
  * never looks inside, it asks [system].
  */
@@ -182,8 +220,8 @@ interface SoundSystem {
     /** [cell] with its jump aimed at [order]; only called when [jumpTarget] is not null. */
     fun withJumpTarget(cell: Cell, order: Int): Cell
 
-    /** The note number the playback engine ([org.thortracker.audio.TrackerAudio.audition]) takes for [note]. */
-    fun engineNote(note: Int): Int
+    /** How the audio hosts play this system's songs. */
+    val engine: PlaybackEngine
 
     /** Name of instrument [slot] (1-based) of [bank], or null for no such slot. */
     fun instrumentName(song: Song, bank: Int, slot: Int): String?

@@ -30,7 +30,7 @@ import sdl3.*
 
 /**
  * Thor Tracker on the Steam Deck: the shared core (editing, panes, transport, views, button routing, menus) in one
- * full-screen pane on SDL3, driven by the gamepad and heard through the C hUGEDriver engine.
+ * full-screen pane on SDL3, driven by the gamepad and heard through the song's C chip engine ([DeckAudio]).
  * Usage: thortracker [song.thor] [seconds=N] [script=...]
  */
 fun main(args: Array<String>) {
