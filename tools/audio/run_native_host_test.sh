@@ -12,6 +12,7 @@ cpp="$root/app/src/main/cpp"
 ${CC:-gcc} -std=gnu11 -O2 -Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable \
   -Wno-sign-compare -Wno-missing-field-initializers \
   -I "$cpp" -I "$cpp/third_party/binjgb/src" \
-  "$cpp/huge_machine.c" "$cpp/third_party/binjgb/src/common.c" "$root/app/src/test/cpp/huge_machine_test.c" \
+  "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/chip_engine.c" "$cpp/third_party/binjgb/src/common.c" \
+  "$root/app/src/test/cpp/huge_machine_test.c" \
   -lm -o "$build/huge_machine_test"
 exec "$build/huge_machine_test" "$out"
