@@ -142,7 +142,34 @@ muted in the song) stay in the hosts and work for every chip.
    test; compare audio with an NSF render.
 5. **NES backend.** Lowering, instruments and their editor, New → system, Help, validation, `.nsf` and FamiStudio
    text export. Release.
-6. **SID**, then **FM** (design to follow; FM has its own ideas pending).
+6. **SID**, then **FM**: OPL3 first, YM2612 second (see below).
+
+## Effect columns
+
+A system declares how many effect columns each channel may have; the Game Boy keeps one (hUGEDriver stores one
+effect per row) and its songs look exactly as today. Richer systems allow several (FamiTracker allows 4, Furnace 8),
+with the number shown adjustable per channel to save width on handheld screens. Effect names are one character from
+0-9 then A-Z, declared per system, so chips with more than 16 effects fit without changing Game Boy songs. Each effect
+declares whether it applies when a note starts (like a parameter lock: no mid-note register clicks) or at once.
+
+## FM (planned)
+
+Both OPL3 (YMF262) and YM2612 (OPN2), OPL3 first. Ideas from ALM Busy Circuits' Akemie's Castle / Akemie's Taiko and
+Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
+
+- **Instrument editor of curated choices**: an algorithm from a short curated list, a frequency-ratio set stepped
+  through whole-number pairs, a waveform combination, brightness (modulator level) and attack/decay, each one ←/→
+  value; the full per-operator grid stays available behind a toggle.
+- **Parameter locks as effects**: brightness, ratio, waveform and similar effects on a row, applied at note start.
+- **Chord effect** written like the arpeggio (`xy` = +x and +y semitones) but sounding together on spare chip voices
+  (OPL3 has 18 two-operator voices); larger chords through a second column or a numbered chord-shape table with
+  inversions.
+- **Drums are pitched instruments**: the note is the pitch, the instrument the drum sound, built from ordinary FM
+  voices with a pitch sweep (start pitch, end pitch, speed) so every drum is independent. OPL3's rhythm mode may come
+  later as an option; its snare/hi-hat and tom/cymbal pairs share a pitch.
+- **OPL3 is music-only**: no console plays it, so the system uses our own player and exports VGM. YM2612 then reuses
+  the FM editor and player, and adds export for a Mega Drive sound driver so songs can go into games.
+- Cores: ymfm (BSD-3-Clause) covers both chips; the Nuked cores (LGPL-2.1) are also GPL-compatible.
 
 ## Open questions
 
