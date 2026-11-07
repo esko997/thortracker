@@ -198,12 +198,14 @@ internal object FamiStudioLowering {
         val vibratos: Map<Int, Envelope>,
         val instrumentArpeggios: IntArray,
     ) {
-        /** FamiStudio's speed channel: the one with the most speed effects (the first on a tie). */
+        /** FamiStudio's speed channel: the one whose patterns hold the most speed effects (the first on a tie). */
         val speedChannel: Int = run {
             var best = 0
             var bestCount = 0
             for (c in 0 until NesSystem.channels.size) {
-                val count = fs.notes[c].count { it != null && it.speed >= 0 }
+                val count = FamiStudioText.distinctPatternOrders(fs, c).sumOf { o ->
+                    (fs.orderStart[o] until fs.orderStart[o + 1]).count { (fs.notes[c][it]?.speed ?: -1) >= 0 }
+                }
                 if (count > bestCount) {
                     best = c
                     bestCount = count

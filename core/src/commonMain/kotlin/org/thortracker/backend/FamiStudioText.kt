@@ -33,16 +33,9 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else ""))
-        val used = HashSet<Int>()
-        for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.instrument != 0) used += n.instrument
-        val names = HashMap<Int, String>()
-        val untouched = NesSound.blank().instruments
-        for ((i, ins) in fs.instruments.withIndex()) {
-            val slot = i + 1
-            // Untouched slots (NesSound.blank's) stay out of the FamiStudio project.
-            if (slot !in used && ins == untouched[i]) continue
-            val name = "${NumberText.hex(slot, 2)} ${ins.name}".trimEnd()
-            names[slot] = name
+        val names = instrumentNames(fs)
+        for ((slot, name) in names) {
+            val ins = fs.instruments[slot - 1]
             line(1, "Instrument" + attr("Name", name))
             envelope(::line, "Volume", ins.volume, 15, false)
             envelope(::line, "Arpeggio", ins.arpeggio, 0, false)
@@ -86,6 +79,30 @@ object FamiStudioText {
             for ((o, name) in instances) line(3, "PatternInstance" + attr("Time", o) + attr("Pattern", name))
         }
         return out.toString()
+    }
+
+    /** FamiStudio instrument names by slot ("slot name"), for every slot the song uses or that was edited. */
+    private fun instrumentNames(fs: FsSong): Map<Int, String> {
+        val used = HashSet<Int>()
+        for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.instrument != 0) used += n.instrument
+        val untouched = NesSound.blank().instruments
+        val names = LinkedHashMap<Int, String>()
+        for ((i, ins) in fs.instruments.withIndex()) {
+            // Untouched slots (NesSound.blank's) stay out of the FamiStudio project.
+            if (i + 1 !in used && ins == untouched[i]) continue
+            names[i + 1] = "${NumberText.hex(i + 1, 2)} ${ins.name}".trimEnd()
+        }
+        return names
+    }
+
+    /**
+     * The first order of each distinct FamiStudio pattern the export gives channel [c] (FamiStudio's exporter counts
+     * effects per pattern, not per order, e.g. to pick its speed channel).
+     */
+    internal fun distinctPatternOrders(fs: FsSong, c: Int): List<Int> {
+        val names = instrumentNames(fs)
+        val seen = HashSet<List<String>>()
+        return (0 until fs.orders).filter { o -> orderNotes(fs, c, o, names).let { it.isNotEmpty() && seen.add(it) } }
     }
 
     /** The FamiStudio `Note` lines of channel [c] in order [o]. */
