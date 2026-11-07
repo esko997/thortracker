@@ -11,10 +11,12 @@ data class PlaybackPosition(val playing: Boolean = false, val order: Int = 0, va
 /**
  * Backend playback boundary. Every method returns immediately and never throws for song or
  * device problems; work runs on the implementation's own thread. Failures are reported by
- * [error] so the host can show them while editing continues.
+ * [error] so the host can show them while editing continues. Implementations play the song's own
+ * system ([org.thortracker.system.SoundSystem.engine]) and switch engines when a song of another
+ * system arrives.
  */
 interface TrackerAudio : AutoCloseable {
-    /** New document state; upcoming events use it without restarting the transport. */
+    /** New document state; upcoming events use it without restarting the transport (unless its system changed). */
     fun update(song: Song)
 
     /** Starts playback so the next row heard is ([order], [row]) with reconstructed state. */
@@ -23,10 +25,10 @@ interface TrackerAudio : AutoCloseable {
     fun stop()
 
     /**
-     * Sounds [note] with [instrument] (a slot of the channel's bank) on [channel] until [releaseAudition].
-     * [note] is the engine's own number ([org.thortracker.system.SoundSystem.engineNote]; Game Boy: hUGEDriver's
-     * 0..71 = C-3..B-8). [detune] > 0 plays the note with the system's fine pitch (Game Boy: effect 40y, the table
-     * period for the first driver tick, then raised by [detune] period units). Noise channels ignore it.
+     * Sounds absolute [note] (semitones from C-0) with [instrument] (a slot of the channel's bank) on [channel] until
+     * [releaseAudition], with the current song's sounds. [detune] > 0 plays the note with the system's fine pitch
+     * ([org.thortracker.system.FinePitch]; Game Boy: effect 40y). The implementation converts both for its engine
+     * ([org.thortracker.system.PlaybackEngine.note], [org.thortracker.system.PlaybackEngine.fine]).
      */
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0)
 

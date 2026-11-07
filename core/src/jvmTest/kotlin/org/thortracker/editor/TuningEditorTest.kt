@@ -19,7 +19,7 @@ class TuningEditorTest {
     private val bends = ArrayList<Pair<Int, Int>>()
 
     // Auditions reach the engine as hUGEDriver notes (from C-3); record them as cell notes.
-    init { session.onAudition = { _, note, _, detune -> bends += note + GbSystem.noteRange.first to detune } }
+    init { session.onAudition = { _, note, _, detune -> bends += note to detune } }
 
     private fun view(octave: Int) = ViewController(session, ViewState(kind = ViewKind.PATTERN, octave = octave))
     private fun ViewController.hold(vararg moves: Action) {

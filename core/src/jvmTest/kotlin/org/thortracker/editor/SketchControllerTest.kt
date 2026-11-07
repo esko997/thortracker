@@ -56,8 +56,8 @@ class SketchControllerTest {
         ctl.tap(Action.PASTE)
         ctl.tap(Action.CUT)
         ctl.tap(Action.INSERT_ROW)
-        assertEquals(listOf(Sequence(0, listOf(12, 16, 19), 1, 180)), chords)
-        assertEquals(listOf(12, 14), notes)
+        assertEquals(listOf(Sequence(0, listOf(48, 52, 55), 1, 180)), chords)
+        assertEquals(listOf(48, 50), notes)
         assertEquals(2, releases)
         assertSame(before, session.song)
         assertEquals(selection, session.selection)
@@ -111,7 +111,7 @@ class SketchControllerTest {
         assertFalse(ctl.sketchAuditioning)
         ctl.sketchSelectTone(11)
         ctl.press(Action.AUDITION)
-        assertEquals(listOf(23), notes)
+        assertEquals(listOf(59), notes)
         assertTrue(ctl.holding)
         ctl.cancelHolds()
         assertFalse(ctl.holding)
@@ -138,7 +138,7 @@ class SketchControllerTest {
         ctl.follow()
         assertEquals(1, ctl.state.channel)
         assertEquals(7, ctl.state.instrument)
-        assertEquals(listOf(Triple(2, 12, 1)), notes)
+        assertEquals(listOf(Triple(2, 48, 1)), notes)
     }
 
     // ---- phrases ---------------------------------------------------------------------------------
@@ -208,8 +208,7 @@ class SketchControllerTest {
         ctl.sketchSetPhraseField(ViewController.PHRASE_RHYTHM)
         ctl.press(Action.AUDITION)
         // One pattern row per step: 12 ticks at 59.73 Hz.
-        // The engine hears hUGEDriver notes (from C-3).
-        assertEquals(listOf(Sequence(1, phrase.steps.map { it?.minus(36) }, 3, Math.round(12 * 1000.0 / 59.73))), sequences)
+        assertEquals(listOf(Sequence(1, phrase.steps, 3, Math.round(12 * 1000.0 / 59.73))), sequences)
         assertEquals(201L, sequences[0].stepMillis)
         assertTrue(ctl.sketchAuditioning)
         // Moving between controls keeps the loop running without restarting it.
@@ -337,13 +336,13 @@ class SketchControllerTest {
         ctl.tap(Action.DOWN)
         ctl.tap(Action.RIGHT) // G major
         ctl.press(Action.AUDITION)
-        assertEquals(listOf(19, 23, 26), sequences.last().steps)
+        assertEquals(listOf(55, 59, 62), sequences.last().steps)
         assertEquals(180L, sequences.last().stepMillis)
         ctl.release(Action.AUDITION)
         ctl.tap(Action.CLEAR) // its relative minor
         assertEquals(Scale(4, ScaleKind.NATURAL_MINOR), ctl.sketchCircleScale())
         ctl.press(Action.AUDITION)
-        assertEquals(listOf(16, 19, 23), sequences.last().steps)
+        assertEquals(listOf(52, 55, 59), sequences.last().steps)
         ctl.release(Action.AUDITION)
         ctl.tap(Action.EDIT)
         assertEquals(Scale(4, ScaleKind.NATURAL_MINOR), ctl.state.sketchScale)
