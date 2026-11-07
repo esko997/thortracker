@@ -1063,7 +1063,11 @@ static void test_chip_engine_ops(void) {
     ops->position(cm, &order, &row, &tick);
     EXPECT(order == 2 && row == 10 && tick == 0, "apply keeps the position");
     /* Audition borrowing pulse 1, as the hosts do it. */
-    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENT_LEAD, 0) == CHIP_OK, "audition through the ops");
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, 0, 0) == CHIP_ERR_IMAGE, "ops audition: slot 0 (no instrument) rejected");
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENTS + 1, 0) == CHIP_ERR_IMAGE, "ops audition: slot past the table rejected");
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENTS, 0) == CHIP_OK, "ops audition: last slot = last table index");
+    /* The hosts pass the cell's 1-based slot: Lead is table index 2, slot 3. */
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENT_LEAD + 1, 0) == CHIP_OK, "audition through the ops");
     EXPECT(ops->mute(cm, 0, 1) == CHIP_OK, "song's pulse 1 muted while auditioning");
     int n1 = ops->tick(cm, g_out), n2 = ops->tick(au, g_out);
     EXPECT(n1 > 0 && n2 > 0, "both machines tick");

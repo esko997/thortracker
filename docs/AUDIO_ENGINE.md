@@ -451,12 +451,13 @@ every one of 1080 frames and gets register writes identical to straight play.
 
 ### Audition
 
-`audition(channel 0..3, note, instrument, fine)` resets the (spare) machine with the image, starts
+`audition(channel 0..3, note, slot, fine)` resets the (spare) machine with the image, starts
 its song, then points all five channel streams into RAM at `$07C0`: silent channels play `$FF $42`
 (64-row empty runs, looping); the auditioned channel plays `$54 instrument`, `$4E fine` (pulses and
 triangle only), `$40 note`, then the silent loop — so the note sustains through the real engine
 with the image's own instrument table and envelopes. Arguments: engine note 1..96 (absolute − 11),
-instrument = table index (0..count−1), fine = signed period offset −128..127 like `$4E` (ignored on
+instrument = the cell's 1-based slot as the hosts pass it (`nes_chip.c` plays table index slot − 1;
+slot 0 is rejected; `nm_audition` itself takes the table index), fine = signed period offset −128..127 like `$4E` (ignored on
 noise). DPCM (4), raw images and out-of-range arguments are `CHIP_ERR_IMAGE`.
 
 `release()`: if no tick has run, or the instrument's volume envelope has no release index, returns 0
