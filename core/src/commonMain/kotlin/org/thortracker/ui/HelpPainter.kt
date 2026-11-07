@@ -207,6 +207,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 "Chromatic offers all twelve notes; select a scale for chords. Degree labels use major-scale intervals (b3, #4, b6, b7)."),
             Line.Text("Preview borrows the chosen channel while the other song channels continue. Arpeggios repeat every 180 ms; the phrase loops one row per step at the song's ticks per row."),
             Line.Text("Sketch stays a 12-note reference in tuned songs; Insert moves each note to the nearest tuned pitch and skips notes whose bend needs an occupied effect slot."),
+            Line.Heading("About"),
+            Line.Text("Thor Tracker is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 or (at your option) any later version. " +
+                "It comes with ABSOLUTELY NO WARRANTY. Source code, the licence and third-party notices: github.com/esko997/thortracker"),
         )
     }
 

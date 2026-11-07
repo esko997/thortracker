@@ -14,6 +14,8 @@ cp "$bin/thortracker.kexe" "$app/usr/bin/thortracker"
 cp -r "$bin/fonts" "$bin/tunings" "$app/usr/bin/"
 cp -L deps/lib/libSDL3.so.0 "$app/usr/bin/lib/"
 for f in deps/SDL3-*/LICENSE.txt; do cp "$f" "$app/usr/bin/lib/SDL3-LICENSE.txt"; done
+# hUGEDriver, binjgb (MIT: its notice must ship) and Kotlin: the same notice the Android app carries.
+cp ../app/src/main/assets/NOTICE.txt "$app/usr/bin/NOTICE.txt"
 cp packaging/AppRun packaging/thortracker.desktop packaging/thortracker.svg "$app/"
 cp packaging/thortracker.svg "$app/.DirIcon"
 chmod -R u=rwX,go=rX "$app"

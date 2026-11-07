@@ -1,5 +1,8 @@
 Thor Tracker dependency notices
 
+Thor Tracker itself is licensed under the GNU General Public License, version 3 or
+(at your option) any later version: https://github.com/esko997/thortracker
+
 Playback uses hUGEDriver 6.1.3 (public domain) and binjgb at commit
 16621111ed0ee73bcc45c912a823bcebedcffc0f (MIT, notice below).
 The binjgb audio output buffer is locally adapted to floating-point samples.
