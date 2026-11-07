@@ -19,6 +19,7 @@ add_library(chip_engines STATIC
     ${BINJGB_DIR}/common.c
     ${NES_DIR}/nes_chip.c
     ${NES_DIR}/nes_machine.c
+    ${NES_DIR}/nes_image.c
     ${NES_DIR}/nes_apu.c
     ${BLIP_DIR}/blip_buf.c
 )
