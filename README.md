@@ -12,7 +12,7 @@ Download the latest APK from the [GitHub Releases page](https://github.com/esko9
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
-The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** starts a new composition.
+The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy or NES) and starts a new composition; **Load demo** asks the same.
 
 ## Steam Deck
 
@@ -51,6 +51,10 @@ Title, tempo, loop point and the order list with a density strip for each patter
 ![Top screen: the Wave view editing wave 5, a 32-step V shape, with Sine, Triangle, Saw, Square, Invert, Shift and Smooth tools. Bottom screen: the Instrument view's Wave bank, with sound 01 Triangle bass using wave 5 at 100% output](docs/media/sound-design-wave-instrument.png)
 
 Fifteen instruments in each of the pulse, wave and noise banks, each with live sliders and a preview of its envelope or waveform, plus sixteen 32-sample wave tables you draw directly or start from a preset shape.
+
+### NES instruments: envelopes
+
+An NES song has one bank of 64 instruments shared by Pulse 1, Pulse 2, Triangle and Noise. Each instrument is four FamiStudio envelopes (volume, arpeggio, pitch and duty), one value per frame, edited with the controller: ↑/↓ choose a row (slot, name, the channel **Listen** plays on, envelope, length, loop, release, pitch mode, then the steps), ←/→ move along the steps, **hold A + ↑/↓** changes a step's value and **hold A + ←/→** carries it to the next step (adding steps at the end). **B** deletes a step, **L1/R1** switch envelope. The loop region and release point are drawn on the steps; a release (volume only) needs a loop. Tabs a channel ignores are greyed for the Listen channel (Triangle has no volume or duty; on Noise, duty picks long or short noise). NES songs have no Wave view; **R2 + →** says so.
 
 ### Sketch: chords and generated phrases
 
@@ -142,11 +146,11 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | Hold B + D-pad | Move or jump without clearing on release |
 | Hold X | Audition without writing |
 | Hold Y + D-pad | Mark a pattern block |
-| L1 / R1 | Change channel, instrument bank, wave or help page |
+| L1 / R1 | Change channel, instrument bank, wave or help page; NES Instrument view: envelope |
 | L2 / R2 alone | No action; chord modifiers only |
 | L2 + A / L2 + B | Undo / redo |
 | R2 + A / B / X / Y | Show Song / Instrument / Sketch / Keyboard on the focused display; the same chord again returns to the previous view |
-| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise |
+| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise (Wave: Game Boy songs only) |
 | L2 + X | Swap complete views, including their cursors and scrolling |
 | Select + X / A / B | Copy / paste / cut |
 | Select + Y | Duplicate |
