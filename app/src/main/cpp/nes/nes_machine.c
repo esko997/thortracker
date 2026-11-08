@@ -427,10 +427,9 @@ static StreamState stream_state(const NmView* v, int c, int order, int consumed,
     return st;
 }
 
-/* New address for an engine envelope pointer (and its read position) when `image` replaces the
- * playing one: the same directory entry if unchanged; else an entry of the same kind with the
- * same bytes; else the same entry edited (position kept if still an instruction start, else the
- * envelope restarts); else the engine's silent dummy. Pointers outside the directory are kept. */
+/* Instrument envelopes retain their stable directory slot, including edits. Effect envelopes can be
+ * renumbered, so prefer matching bytes before an edited slot. Keep a valid read position, otherwise
+ * restart; a removed envelope falls back to the silent dummy. */
 static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int kind, uint16_t addr, uint8_t* ptr,
                                uint8_t* repeat) {
     const uint8_t* odir = m->meta + NES_IMAGE_HEADER_SIZE;
@@ -445,9 +444,7 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
 #define SAME(i) (ndir[4 * (i) + 3] == kind && ndir[4 * (i) + 2] == len && !memcmp(NEW_BYTES(i), old, (size_t)len))
     const int same_index = idx < ni->envelopes && nm_rd16(ndir + 4 * idx) && ndir[4 * idx + 3] == kind;
     if (same_index && SAME(idx)) return nm_rd16(ndir + 4 * idx);
-    /* Instrument envelopes keep their directory index (slot * 4 + kind, below 4 * NES_IMAGE_MAX_INSTRUMENTS): an
-     * edited one stays its own slot's even when another slot holds identical bytes. Only effect envelopes (from
-     * index 256, renumbered by the lowering) are followed by content. */
+
     if (!(same_index && idx < 4 * NES_IMAGE_MAX_INSTRUMENTS)) {
         for (int u = 0; u < ni->used_count; ++u) {
             if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);

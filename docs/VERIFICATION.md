@@ -1,5 +1,30 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.15.0 NES + Konami VRC6
+
+- **New blank song / Load demo → NES… → NES + VRC6** adds two eight-duty pulse channels and a sawtooth to the NES's five channels. The demo is **Saw Sunrise**.
+- The shared 64-slot bank distinguishes 2A03 and VRC6 sounds. VRC6 instruments expose their eight pulse duties and Full/Half/Quarter saw gain, with the chip's accumulator distortion at high Full-gain levels.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV export use the VRC6 build of the pinned FamiStudio 4.5.3 driver.
+- Fixed live envelope edits selecting an identical envelope from a different instrument instead of the edited slot.
+- Fixed single-effect Pattern lanes overflowing into their neighbours on narrow screens: readable minimum widths use the existing horizontal scrolling and touch hit testing. Four-channel Game Boy layouts remain unchanged.
+
+Verified: 410 JVM core tests, 13 Linux core tests and six Android-host unit tests; native checks passed (Game Boy 145, NES 336, VRC6 105, SID 151, OPL3 282, Mega Drive 500, WAV 249). Two VRC6 golden songs compare every frame's register writes against FamiStudio's independent export, including repeat passes; the 14 pre-existing NES golden files remain byte-identical. A generated VRC6 NSF also played through libgme as eight voices with non-silent PCM.
+
+The 18 existing Android instrumentation tests passed against the production-signed candidate on Nova. A temporary capture harness rendered 32 Game Boy views: all are pixel-identical to a 0.14.1 baseline captured on the same Nova, including after the narrow-lane fix. The Game Boy factory `.uge` remains byte-identical. One xrun, no driver faults and a 0.638 ms maximum callback were recorded during the final automated audio suite; sustained VRC6 playback smoke tracks reported zero underruns on Nova, DMG and Konkr.
+
+Reserved-handheld checks exercised family selection, eight-channel playback, saw/pulse editors and X audition. Nova's NSF and FamiStudio-text exports through Android's document picker are byte-identical to desktop sample exports; its WAV is non-silent 48 kHz, 16-bit stereo PCM (1,466,779 frames). On Konkr's 960×720 display, the reproduced lane overlap is gone, L1/R1 reaches the final saw channel by scrolling, and touching a scrolled effect parameter selects that field. Temporary test APKs/captures/exports were removed; `/ThorTunez` was untouched.
+
+The actual desktop frontend played the demo and exported the shortest valid one-row, one-tick VRC6 song without a fade: 798 non-silent frames, rather than running to the safety cap. These are automated signal and UI checks, not human listening or a test on a physical VRC6 cartridge.
+## 0.14.1 Right-stick Pattern shortcuts
+
+- With the Pattern grid focused, flick the **right stick Up twice** to reach the first row, or **Down twice** to reach the last row. Return to neutral between flicks; each flick and the gap can be up to 300 ms.
+- Single flicks and a held stick do not jump. Menus, the toolbar, the Pattern panel and other views block the gesture. Changing focus or controllers cancels a pending flick. Left-stick and D-pad navigation are unchanged.
+- Available on Android and Steam Deck; the L2/R2 bindings are unchanged.
+
+Verified: 404 JVM core tests, 13 Linux core tests and six Android-host unit tests passed; Android and Deck builds succeeded. Six actual Deck frontend scenarios covered both jumps, single/held input, modal exclusion and view-change cancellation. The packaged release AppImage also passed both jumps and modal exclusion.
+
+On Nova, a temporary Android `uinput` gamepad exercised EventHub/InputReader through the activity: Down jumped to row `3F`, Up to `00`; single/held input, menus, Song, toolbar and Pattern panel did not jump; left-stick and D-pad single-row movement remained intact. The same signed 0.14.1 candidate passed both jumps on DMG (Mega Drive) and Konkr (OPL3). Temporary virtual devices/helpers were removed and handhelds returned to Home/sleep; external songs were untouched. Physical-stick ergonomics and threshold tuning still need human playtesting.
+
 ## 0.14.0 WAV export and opt-in diagnostics
 
 - **Export .wav** renders Game Boy, NES, C64 SID, OPL3 and Mega Drive songs through the same native engines used for playback, as 48 kHz, 16-bit stereo PCM. Choose extra loop passes and either no fade or a five-second fade. Rendering stops at ten minutes if the requested loop point has not been reached and reports that cap.

@@ -535,13 +535,12 @@ At a tick boundary, Thor layout to Thor layout:
    pattern, empty-run remainder) is recomputed in the new data for "rows 0..row of this order
    consumed" — or "0..row−1, positioned after the row's `$47 d`" when the channel has a delayed note
    pending. Edited cells are heard from the next row processed.
-3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots) is found in the
-   old directory and moved to: the same index if its bytes are unchanged; else an entry of the same
-   kind with identical bytes (effect envelopes renumbered by the lowering); else the same index
-   edited — keeping the read position if it is still an instruction start, else restarting that
-   envelope; else the engine's silent dummy envelope. So a sustained note follows an edit of its
-   own instrument's envelope (GB: the next note does) unless an identical copy of the old envelope
-   remains elsewhere.
+3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots in the base NES build) is
+   found in the old directory. Instrument envelopes retain their stable slot even if an identical copy of the
+   old bytes remains elsewhere, so editing one instrument affects its sustained notes, not another instrument.
+   Effect envelopes can be renumbered: keep an unchanged slot, else find identical bytes of the same kind,
+   else follow the edited slot. An edited envelope keeps its read position if it is still an instruction
+   start, otherwise restarts; a removed envelope falls back to the engine's silent dummy.
 4. Instrument table pointer, DPCM list pointer and tempo step are re-read; the speed is set to
    straight play's speed at the playhead if the edit changed it (song speed, an earlier Fxx in this
    order) or the playhead was clamped; otherwise the engine keeps its speed (e.g. one inherited
@@ -557,9 +556,9 @@ At a tick boundary, Thor layout to Thor layout:
    until the engine starts the next sample, which plays the new list entry and bytes.
 
 **Contract for the builder**: any layout that passes `nm_load_image` relocates — data and samples may
-move freely between images. Keep directory indices stable for instrument envelopes (e.g. slot·4 +
-kind) so sustained notes follow envelope edits; effect envelopes and DPCM mappings may be renumbered
-(the streams carry the new numbers). Raw layouts: bytes are copied (correct only if nothing moved).
+move freely between images. Instrument envelope indices are `slot·4 + kind` (0..255); effect envelopes
+start at 256 and may be renumbered, as may DPCM mappings (the streams carry the new numbers). Raw
+layouts: bytes are copied (correct only if nothing moved).
 The host test applies a fully re-laid-out image before every one of 1080 frames and gets register
 writes identical to straight play; with the DPCM test song it moves every sample before every frame
 (298 playing samples relocated in 576 frames) and the DMC output stays sample-identical.

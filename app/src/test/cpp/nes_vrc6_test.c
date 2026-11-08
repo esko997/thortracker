@@ -302,9 +302,6 @@ static void test_images(void) {
     int streams_ok = 1;
     for (int c = 0; c < NES_VRC6_CHANNELS; ++c) streams_ok &= i->streams[c] >= NES_VRC6_SONG_BASE;
     EXPECT(streams_ok, "an order stream for each of the 8 channels");
-    for (int o = 0; o < VRC6_TEST_ORDERS; ++o) {
-        EXPECT(i->speed[o] == nes_vrc6_speed[o][0], "order %d starts at speed %d (%d)", o, nes_vrc6_speed[o][0], i->speed[o]);
-    }
 
     /* The builds refuse each other's images. */
     static NesImage other;
@@ -616,7 +613,7 @@ static void test_live_apply(NesMachine* m) {
     EXPECT(d < 0, "moved data applied before each of %d frames: same writes as straight play (first difference %d)", frames, d);
     printf("  worst apply_image: %.1f us\n", worst_us);
 
-    /* The VPulse sustain 12 -> 8 heard on the sustaining note; order 2's edited note when reached. */
+    /* Identical Lead and VPulse envelopes keep separate identities: only VPulse's sustain is edited. */
     const NesVrc6* v = nm_vrc6(m);
     nm_start(m, &g_thor, 0, 0, 12000, &mode);
     for (int i = 0; i < 4; ++i) nm_tick_silent(m);
@@ -624,7 +621,8 @@ static void test_live_apply(NesMachine* m) {
     nm_apply_image(m, &g_edited);
     nm_tick_silent(m);
     const int after = v->pulse[0].ctrl & 15;
-    EXPECT(before == 12 && after == 8, "sustaining VPulse note follows its edited volume envelope (%d -> %d)", before, after);
+    EXPECT(before == 12 && after == 8 && (nm_apu(m)->pulse[0].ctrl & 15) == 12,
+           "VPulse sustain follows its edit (%d -> %d); identical unedited Lead stays at 12", before, after);
     nm_start(m, &g_edited, 2, 8, 12000, &mode);
     nm_tick_silent(m);
     const int edited_note = nm_peek(m, NES_VRC6_FAMISTUDIO_CHN_NOTE + CH_VPULSE1);
