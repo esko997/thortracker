@@ -140,7 +140,7 @@ class GtSong(
          * jumps and program commands as table rows, speed effects as speedtable rows ([SidSpeeds]), one GoatTracker
          * pattern per distinct voice pattern of each order. A voice whose order starts with a note but no instrument gets
          * the instrument it plays in straight play written there, so the order sounds the same when entered by the
-         * loop, a seek or a pattern loop.
+         * loop, a seek or a pattern loop. The song has no "released" text, so GoatTracker's copyright field stays empty.
          */
         fun of(document: Song): GtSong {
             val song = SidSystem.arranged(document)
@@ -230,7 +230,7 @@ class GtSong(
             }
             val freq = SidTuning.frequencies(song)
             return GtSong(
-                song.title, song.artist, song.comment.lineSequence().firstOrNull().orEmpty(), orderlists, song.loopOrder, instruments,
+                song.title, song.artist, "", orderlists, song.loopOrder, instruments,
                 left, right, patterns, song.ticksPerRow - 1,
                 if (sid.chip == SidChip.MOS6581) MODEL_6581 else MODEL_8580, sid.multispeed,
                 sid.hardRestartAttackDecay, sid.hardRestartSustainRelease,

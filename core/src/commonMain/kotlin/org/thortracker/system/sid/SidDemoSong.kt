@@ -40,8 +40,8 @@ internal object SidDemoSong {
             name = "Bass sweep", attack = 0, decay = 9, sustain = 8, release = 6, wave = saw,
             filter = SidProgram(listOf(
                 SidRow.filter(SidTables.LOWPASS, 0xC, 0x1), // voice 1 through a resonant lowpass
-                SidRow.cutoff(0x10),
-                SidRow.modulate(0x60, 1), SidRow.modulate(0x60, -1), // 96 ticks up, 96 down: 32 rows a cycle
+                SidRow.cutoff(0x03),
+                SidRow.modulate(0x40, 1), SidRow.modulate(0x40, -1), // 64 ticks up, 64 down: a cycle every 21⅓ rows
                 SidRow.jump(3),
             )),
         )

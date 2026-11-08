@@ -2,7 +2,8 @@
  * through the native "c64-sid" engine exactly as the audio hosts run it: chip_engine_ops lookup, load_image
  * (the full image validation; its problem is printed when it fails), start at order 0 row 0, then one tick per
  * engine frame. Writes a 48 kHz stereo 16-bit WAV and prints peak/rms and any driver fault.
- * The image header chooses the chip model; `model=6581|8580` overrides it for comparisons.
+ * The image header chooses the chip model; `model=6581|8580` overrides it for comparisons, and `mute=23` (voice
+ * numbers 1-3) mutes voices, to hear one in isolation.
  * Built and run by tools/audio/render_sid_image.sh. */
 #include <math.h>
 #include <stdint.h>
@@ -18,7 +19,7 @@
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s image.sidimg out.wav [seconds] [model=6581|8580]\n", argv[0]);
+        fprintf(stderr, "usage: %s image.sidimg out.wav [seconds] [model=6581|8580] [mute=123]\n", argv[0]);
         return 2;
     }
     double seconds = argc > 3 ? atof(argv[3]) : 30.0;
@@ -27,7 +28,11 @@ int main(int argc, char** argv) {
     static uint8_t bytes[SID_IMAGE_SIZE + 1];
     size_t size = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
-    if (argc > 4 && !strncmp(argv[4], "model=", 6) && size > 13) bytes[13] = atoi(argv[4] + 6) == 6581 ? 0 : 1;
+    const char* mutes = "";
+    for (int a = 4; a < argc; ++a) {
+        if (!strncmp(argv[a], "model=", 6) && size > 13) bytes[13] = atoi(argv[a] + 6) == 6581 ? 0 : 1;
+        if (!strncmp(argv[a], "mute=", 5)) mutes = argv[a] + 5;
+    }
     const ChipEngineOps* ops = chip_engine_ops("c64-sid");
     if (!ops) { fprintf(stderr, "no c64-sid engine in this build\n"); return 1; }
     if (size != ops->image_size) {
@@ -43,6 +48,7 @@ int main(int argc, char** argv) {
     ChipMachine* m = ops->create(RATE);
     int mode = 0;
     if (ops->start(m, image, 0, 0, 12000, &mode) != CHIP_OK) { fprintf(stderr, "start failed\n"); return 1; }
+    for (const char* c = mutes; *c; ++c) if (*c >= '1' && *c <= '3') ops->mute(m, *c - '1', 1);
     long want = (long)(seconds * RATE);
     float* pcm = malloc(sizeof(float) * 2 * (want + CHIP_MAX_TICK_FRAMES));
     long frames = 0;

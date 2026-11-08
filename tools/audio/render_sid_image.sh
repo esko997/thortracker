@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders a lowered SID image through the native "c64-sid" engine (host gcc/g++, the same sources as the hosts).
-# Usage: tools/audio/render_sid_image.sh image.sidimg out.wav [seconds] [model=6581|8580]
+# Usage: tools/audio/render_sid_image.sh image.sidimg out.wav [seconds] [model=6581|8580] [mute=123]
 # Images: `tools/build.sh exportSamples` writes app/build/samples/raster-run.sidimg (the SID demo song).
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
