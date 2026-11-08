@@ -8,8 +8,9 @@ import org.thortracker.input.Keymap
 import org.thortracker.editor.ViewKind
 import org.thortracker.model.Songs
 import org.thortracker.system.ChannelKind
+import org.thortracker.system.SoundSystems
 
-/** Reference pages: controls, the backend's effect list, and the live export check of the song. */
+/** Reference pages: controls, the backend's effect list, the live export check of the song, and About. */
 internal class HelpPainter(v: PaneView) : Painter(v) {
     private val tabs = ArrayList<Pair<Rect, Int>>()
     private var bodyTop = 0f
@@ -82,7 +83,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             val raw = when (st.helpPage) {
                 0 -> controls(keymap)
                 1 -> effects()
-                else -> check()
+                2 -> check()
+                else -> about(keymap)
             }
             cachedLines = raw.flatMap { wrapLine(it, width, keyW) }
             cachedSong = song
@@ -218,11 +220,27 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 "Chromatic offers all twelve notes; select a scale for chords. Degree labels use major-scale intervals (b3, #4, b6, b7)."),
             Line.Text("Preview borrows the chosen channel while the other song channels continue. Arpeggios repeat every 180 ms; the phrase loops one row per step at the song's ticks per row."),
             Line.Text("Sketch stays a 12-note reference in tuned songs; Insert moves each note to the nearest tuned pitch and skips notes whose bend needs an occupied effect slot."),
-            Line.Heading("About"),
-            Line.Text("Thor Tracker is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 or (at your option) any later version. " +
-                "It comes with ABSOLUTELY NO WARRANTY. Source code, the licence and third-party notices: github.com/esko997/thortracker"),
         )
     }
+
+    /** Version, the sound systems' drivers, bug reports and diagnostics, licence. */
+    private fun about(k: Keymap): List<Line> = listOf(
+        Line.Heading("Thor Tracker ${About.version}"),
+        Line.Text("A controller-first chiptune tracker. Source code, releases and the issue tracker: github.com/esko997/thortracker"),
+        Line.Heading("Sound systems"),
+    ) + SoundSystems.ALL.map { Line.Text("${it.name}: ${it.engine.driver}", if (it === song.system) Palette.TEXT else Palette.DIM) } + listOf(
+        Line.Text("Files → Export .wav renders the song through the same player as playback (48 kHz 16-bit stereo): once through, " +
+            "optional loop passes, then a fade-out, or ending exactly at the loop point."),
+        Line.Heading("Report a bug"),
+        Line.Row(k.label(Action.EDIT), "Report a bug (opens the issue form where the system can; otherwise shows its address) or Copy diagnostics"),
+        Line.Row("Issues", About.ISSUES_URL),
+        Line.Row("Diagnostics", "A plain-text report of the version, device, displays, audio statistics, the song's system and recent messages: " +
+            "copied to the clipboard on Android, written to ~/ThorTracker/diagnostics.txt on the Steam Deck. Paste it into the issue. " +
+            "Thor Tracker never sends anything anywhere: no network, no telemetry."),
+        Line.Heading("Licence"),
+        Line.Text("Thor Tracker is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 or (at your option) any later version. " +
+            "It comes with ABSOLUTELY NO WARRANTY. Source code, the licence and third-party notices: github.com/esko997/thortracker"),
+    )
 
     /** Most effect columns a channel of the song's system has. */
     private fun maxColumns(): Int = song.system.channels.indices.maxOfOrNull { song.system.effectColumns(it) } ?: 1

@@ -67,6 +67,20 @@ class DeckAudio : TrackerAudio {
     override fun error(): String? = deviceError ?: commandError ?: songError
     override fun close() = da_close()
 
+    /**
+     * Diagnostics lines: SDL's audio driver, the output (rate, device buffer), callbacks, late callbacks while sounding
+     * (likely underruns), the slowest callback and driver faults since launch, and the system whose engine is open.
+     */
+    fun diagnostics(): List<Pair<String, String>> {
+        val v = LongArray(DA_STATS)
+        v.usePinned { da_stats(it.addressOf(0), v.size) }
+        val driver = sdl3.SDL_GetCurrentAudioDriver()?.toKString() ?: "none"
+        return listOf(
+            "Audio" to "SDL $driver, ${v[0]} Hz float stereo, device buffer ${v[1]} frames, engine ${system?.engine?.id ?: "not open"}",
+            "Audio stats" to "callbacks ${v[2]}, late callbacks ${v[3]}, worst callback ${v[4] / 1000} µs, driver faults ${v[5]}",
+        )
+    }
+
     /** [next]'s engine, opening it in place of another system's (whose playback ends); null if it cannot open. */
     private fun open(next: SoundSystem): PlaybackEngine? {
         if (next === system) return next.engine

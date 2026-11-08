@@ -167,6 +167,7 @@ object Opl3System : SoundSystem {
 
     private object Engine : PlaybackEngine {
         override val id = "opl3-fm"
+        override val driver = "Thor Tracker's OPL3 player on Nuked-OPL3 1.8 (commit 765ec96), blip_buf 1.1.0"
         override val imageSize = Opl3PlayerImage.IMAGE_SIZE
 
         /** At 60 ticks per second, ~3.3 minutes of song. */

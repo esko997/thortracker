@@ -201,6 +201,7 @@ object YmSystem : SoundSystem {
 
     private object Engine : PlaybackEngine {
         override val id = YmPlayerImage.ENGINE_ID
+        override val driver = "Thor Tracker's player through SGDK's XGM driver (commit 9a78a44) on z80.h (chips 9e88298), ymfm (commit 81aec25) and Thor Tracker's SN76489"
         override val imageSize = YmPlayerImage.IMAGE_SIZE
 
         /** At 60 ticks per second, ~3.3 minutes of song. */

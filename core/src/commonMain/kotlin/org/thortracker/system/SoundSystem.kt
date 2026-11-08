@@ -138,6 +138,12 @@ interface PlaybackEngine {
     /** The native implementation's id, as `chip_engine_ops` looks it up ("gb-huge"). */
     val id: String
 
+    /**
+     * What plays the songs, with versions and source pins, for Help → About and the diagnostics ("hUGEDriver 6.1.3 on
+     * binjgb 1662111").
+     */
+    val driver: String
+
     /** Bytes of a lowered image (the engine's `image_size`); hosts allocate [lower]'s buffer with it. */
     val imageSize: Int
 

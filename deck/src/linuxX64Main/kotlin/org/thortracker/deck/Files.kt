@@ -30,15 +30,47 @@ object Files {
     fun readText(path: String): String? = readBytes(path)?.decodeToString()
 
     /** Writes via a temporary file and rename, so a crash never leaves a half-written file at [path]. */
-    fun write(path: String, bytes: ByteArray): Boolean {
+    fun write(path: String, bytes: ByteArray): Boolean = write(path) { sink -> if (bytes.isNotEmpty()) sink(bytes, bytes.size) }
+
+    /** As [write], with the content streamed: [fill] passes (bytes, count) pieces to its sink. */
+    fun write(path: String, fill: ((ByteArray, Int) -> Unit) -> Unit): Boolean {
         val tmp = "$path.tmp"
         val f = fopen(tmp, "wb") ?: return false
-        val ok = try {
-            bytes.isEmpty() || bytes.usePinned { fwrite(it.addressOf(0), 1u, bytes.size.convert(), f).toInt() == bytes.size }
+        var ok = true
+        try {
+            fill { bytes, count ->
+                if (ok && count > 0) ok = bytes.usePinned { fwrite(it.addressOf(0), 1u, count.convert(), f).toInt() == count }
+            }
+        } finally {
+            if (fclose(f) != 0) ok = false
+        }
+        if (!ok) remove(tmp)
+        return ok && rename(tmp, path) == 0
+    }
+
+    /**
+     * Moves the file [from] to [to]: a rename, or (across file systems) a copy through [write] and removing [from].
+     * [from] is gone afterwards either way; false when [to] was not written.
+     */
+    fun move(from: String, to: String): Boolean {
+        if (rename(from, to) == 0) return true
+        val f = fopen(from, "rb")
+        var read = f != null
+        val written = f != null && try {
+            write(to) { sink ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = buffer.usePinned { fread(it.addressOf(0), 1u, buffer.size.convert(), f) }.toInt()
+                    if (n > 0) sink(buffer, n)
+                    if (n < buffer.size) { read = ferror(f) == 0; break }
+                }
+            }
         } finally {
             fclose(f)
         }
-        return ok && rename(tmp, path) == 0
+        remove(from)
+        if (written && !read) remove(to)   // a short copy: never leave it under the chosen name
+        return written && read
     }
 
     fun exists(path: String): Boolean = access(path, F_OK) == 0

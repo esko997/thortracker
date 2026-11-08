@@ -1,6 +1,7 @@
 package org.thortracker.ui
 
 import org.thortracker.audio.Transport
+import org.thortracker.audio.WavOptions
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Follow
@@ -54,6 +55,15 @@ interface MenuHost {
     fun saveProjectAs()
     /** Asks where and exports [song] as [format]; [song] validated without errors. */
     fun export(song: Song, format: ExportFormat)
+    /**
+     * Renders [song] as a WAV file with [options] through the native engine ([org.thortracker.audio.WavExport]: off the
+     * UI's work, spooled to a private file, with a progress popup that can cancel it) and saves it where the user
+     * chooses: Android renders first and then asks for the destination, the Deck asks first. [song] validated without
+     * errors; never called while [showWavExport] reports a running export.
+     */
+    fun exportWav(song: Song, options: WavOptions)
+    /** Shows the running WAV export's popup again (Hide closed it); false when no export runs. */
+    fun showWavExport(): Boolean
     fun recoverPrevious()
     fun exportKeymap()
     fun importKeymap()
@@ -69,6 +79,15 @@ interface MenuHost {
     fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (name: String, extension: String, bytes: ByteArray) -> Unit)
     /** Platform rows at the end of the main menu (e.g. Quit on the Deck). */
     fun extraMenuItems(): List<Pair<String, () -> Unit>> = emptyList()
+
+    /** Opens [url] in the platform's browser; false when it cannot (the menus then show the address instead). */
+    fun openUrl(url: String): Boolean = false
+
+    /** The platform's diagnostics lines ([About.diagnostics]): device, OS, displays, audio statistics. */
+    fun diagnostics(): List<Pair<String, String>>
+
+    /** Gives the diagnostics [text] to the user: Android copies it to the clipboard, the Deck writes a file. */
+    fun shareDiagnostics(text: String)
 }
 
 /** The app's menus: main menu, views, controls rebinding, tuning and files, over a platform [MenuHost]. */
@@ -98,6 +117,7 @@ class AppMenus(
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
+        override fun about() = this@AppMenus.about()
     }
 
     /** Runs a view's menu request ([EditorSession.onMenuRequest]). */
@@ -315,6 +335,7 @@ class AppMenus(
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
         ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
+            "Export .wav…" to ::exportWav,
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
             "Recover previous project" to { confirmReplace { host.recoverPrevious() } },
@@ -334,6 +355,34 @@ class AppMenus(
         val errors = song.system.errors(song)
         if (errors.isNotEmpty()) return host.error(errors.joinToString("\n"))
         host.export(song, format)
+    }
+
+    /** Files → Export .wav: the running export's popup, or how long, then the host renders and saves. */
+    private fun exportWav() {
+        if (host.showWavExport()) return
+        val song = session.song
+        val errors = song.system.errors(song)
+        if (errors.isNotEmpty()) return host.error(errors.joinToString("\n"))
+        choose("Export .wav: length", WavOptions.CHOICES.map { it.label }) { host.exportWav(song, WavOptions.CHOICES[it]) }
+    }
+
+    /** Help → About's actions: report a bug (the issue form) and the diagnostics text. */
+    fun about() {
+        popups.show(PopupSpec("Thor Tracker ${About.version}",
+            message = "Bug reports go to GitHub's issue form. Copy diagnostics makes a plain-text report (version, device, " +
+                "displays, audio statistics, recent messages) for you to paste into it; nothing is sent anywhere.",
+            items = listOf(
+                PopupItem("Report a bug…", PopupItem.Tone.PRIMARY) { reportBug() },
+                PopupItem("Copy diagnostics") { host.shareDiagnostics(About.diagnostics(host.diagnostics(), session.song, keymap)) },
+                PopupItem.dismiss(),
+            )), host.modalDisplay)
+    }
+
+    private fun reportBug() {
+        if (host.openUrl(About.ISSUES_URL)) return
+        popups.show(PopupSpec("Report a bug", message = "Open ${About.ISSUES_URL} in a browser and choose Bug report. " +
+            "Copy diagnostics first and paste the text into the form.",
+            items = listOf(PopupItem("OK", PopupItem.Tone.PRIMARY))), host.modalDisplay)
     }
 
     private fun rename() {

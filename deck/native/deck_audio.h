@@ -11,6 +11,10 @@ void da_release_audition(void);
 int da_playing(void);
 int da_order(void);                                        /* played-order position of the row heard */
 int da_row(void);
+#define DA_STATS 6
+/* Diagnostics since launch: sample rate, device buffer frames, callbacks, late callbacks while sounding (likely
+ * underruns), slowest callback (ns), driver faults; writes min(count, DA_STATS) values. Any thread. */
+void da_stats(long long* out, int count);
 float da_peak(void);                                       /* loudest sample since the last call (diagnostics) */
 void da_close(void);
 #endif
