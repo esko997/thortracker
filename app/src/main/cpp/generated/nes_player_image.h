@@ -4,20 +4,22 @@
 // and wrapped by tools/audio/nes/nes_player.s; assembled with ca65 V2.18 - Ubuntu 2.19-1.
 // Engine licence: "Copying and distribution of this file, with or without modification, are permitted in any
 // medium without royalty provided the copyright notice and this notice are preserved" (c) 2019-2026 Mathieu Gauthier.
-// image sha256 0eb6b54733b4175bf5be436dda1f55d512effa9a98470ec47a70434132f865d1
+// image sha256 e350a2a9a323119f5450da403744d461a0401e4867f898430ace87d96d2edfbe
 #ifndef NES_PLAYER_IMAGE_H_
 #define NES_PLAYER_IMAGE_H_
 #include <stdint.h>
 
 #define NES_PLAYER_BASE 0x8000
 #define NES_PLAYER_SIZE 0x0B12
-#define NES_PLAYER_ID 0x47B5B60Eu /* first 4 bytes of the image sha256, little-endian */
+#define NES_PLAYER_ID 0xA9A250E3u /* first 4 bytes of the image sha256, little-endian */
 #define NES_PLAYER_INIT 0x8000 /* A = song index */
 #define NES_PLAYER_PLAY 0x8003 /* one 60 Hz engine frame */
 #define NES_PLAYER_IDLE 0x8006 /* return address of host-called routines */
 #define NES_PLAYER_TRAP 0x8009 /* BRK/IRQ/NMI vector target: a fault */
-#define NES_SONG_BASE 0xA000
-#define NES_SONG_END 0xFFFA
+#define NES_SONG_BASE 0x8C00 /* song data (FamiStudio format) from here ... */
+#define NES_SONG_END 0xC000 /* ... up to here (exclusive) */
+#define NES_SAMPLE_BASE 0xC000 /* DPCM samples ($4012 = (address - $C000) / 64) from here ... */
+#define NES_SAMPLE_END 0xFFFA /* ... up to the vectors (exclusive) */
 #define NES_ZP_SIZE 0x0008
 #define NES_RAM_BASE 0x0200
 #define NES_RAM_SIZE 0x00AC
@@ -25,14 +27,21 @@
 #define NES_NUM_ENVELOPES 11
 #define NES_NUM_PITCH_ENVELOPES 3
 
-/* Image layout (docs/AUDIO_ENGINE.md, "Image layout"): header, envelope directory, song region. */
+/* Image layout (docs/AUDIO_ENGINE.md, "Image layout"): header, envelope directory, region = CPU memory
+ * NES_SONG_BASE..NES_SAMPLE_END (song data from NES_SONG_BASE, samples from NES_SAMPLE_BASE). */
 #define NES_IMAGE_HEADER_SIZE 32
+#define NES_IMAGE_HEADER_DPCM_COUNT 15 /* u8: DPCM list entries (Thor layout) */
+#define NES_IMAGE_HEADER_SAMPLE_SIZE 22 /* u16: sample bytes used from NES_SAMPLE_BASE */
 #define NES_IMAGE_MAX_ENVELOPES 512
 #define NES_IMAGE_DIRECTORY_SIZE 2048
 #define NES_IMAGE_MAX_INSTRUMENTS 64
 #define NES_IMAGE_MAX_ORDERS 255
 #define NES_IMAGE_MAX_ROWS 255
-#define NES_IMAGE_SIZE 26650
+#define NES_IMAGE_MAX_DPCM_MAPPINGS 63
+#define NES_IMAGE_SAMPLE_ALIGN 64
+#define NES_IMAGE_MAX_SAMPLE_BYTES 4081 /* $4013 = $FF: 16 * 255 + 1 */
+#define NES_IMAGE_REGION_SIZE 29690
+#define NES_IMAGE_SIZE 31770
 
 #define NES_FAMISTUDIO_INIT 0x801A
 #define NES_FAMISTUDIO_MUSIC_PLAY 0x80FE
@@ -78,7 +87,7 @@
 
 static const uint8_t nes_player_code[NES_PLAYER_SIZE] = {
     0x4C, 0x0C, 0x80, 0x4C, 0x3C, 0x82, 0x4C, 0x06, 0x80, 0x4C, 0x09, 0x80, 0x48, 0xA2, 0x00, 0xA0,
-    0xA0, 0xA9, 0x01, 0x20, 0x1A, 0x80, 0x68, 0x4C, 0xFE, 0x80, 0x8E, 0xA2, 0x02, 0x8C, 0xA3, 0x02,
+    0x8C, 0xA9, 0x01, 0x20, 0x1A, 0x80, 0x68, 0x4C, 0xFE, 0x80, 0x8E, 0xA2, 0x02, 0x8C, 0xA3, 0x02,
     0x86, 0x04, 0x84, 0x05, 0xA9, 0x61, 0x8D, 0xA1, 0x02, 0x20, 0x72, 0x80, 0xA0, 0x01, 0xB1, 0x04,
     0x8D, 0xA4, 0x02, 0xC8, 0xB1, 0x04, 0x8D, 0xA5, 0x02, 0xC8, 0xB1, 0x04, 0x8D, 0xA6, 0x02, 0xC8,
     0xB1, 0x04, 0x8D, 0xA7, 0x02, 0xA9, 0x80, 0x8D, 0xA9, 0x02, 0x8D, 0xAA, 0x02, 0xA9, 0x0F, 0x8D,

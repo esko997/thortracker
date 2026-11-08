@@ -1084,7 +1084,7 @@ static void test_chip_engine_ops(void) {
 
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
-    nm_build_raw_image(&g_raw, nes_ft_raw, NES_FT_RAW_SIZE, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
+    nm_build_raw_image(&g_raw, nes_ft_raw, NES_FT_RAW_SIZE, NULL, 0, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
     EXPECT(nm_load_image(&g_raw) == 0, "raw FamiStudio export loads (%s)", g_raw.info.problem ? g_raw.info.problem : "-");
     load_fixture(&g_thor, nes_ft_thor, NES_FT_THOR_SIZE, "Thor layout");
     load_fixture(&g_moved, nes_ft_moved, NES_FT_MOVED_SIZE, "moved");

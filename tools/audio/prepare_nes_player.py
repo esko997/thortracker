@@ -49,6 +49,7 @@ NES_DIR = ROOT / "tools" / "audio" / "nes"
 OUT_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_player_image.h"
 OUT_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesPlayerImage.kt"
 OUT_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_ft_song.h"
+OUT_DPCM = ROOT / "app" / "src" / "test" / "cpp" / "nes_dpcm_song.h"
 
 FAMISTUDIO_TAG = "4.5.3"
 FAMISTUDIO_COMMIT = "c09dca64788606c09fcb5e70db28b9dd1f34be78"
@@ -59,18 +60,32 @@ PINNED = {
 }
 TEST_SONG_TXT = NES_DIR / "ft_test.txt"
 TEST_SONG_CA65 = NES_DIR / "ft_test_ca65.s"
+DPCM_SONG_TXT = NES_DIR / "dpcm_test.txt"
+DPCM_SONG_CA65 = NES_DIR / "dpcm_test_ca65.s"
+DPCM_SONG_DMC = NES_DIR / "dpcm_test_ca65.dmc"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 
 PLAYER_BASE = 0x8000
-SONG_BASE = 0xA000
-SONG_END = 0xFFFA  # vectors follow
+SONG_BASE = 0x8C00  # the page after the player (checked): FamiStudio data, below the samples
+SONG_END = 0xC000
+SAMPLE_BASE = 0xC000  # DPCM samples ($4012 addresses $C000 + 64 n), up to the vectors
+SAMPLE_END = 0xFFFA
+SAMPLE_ALIGN = 64
+MAX_SAMPLE_BYTES = 16 * 255 + 1
+MAX_DPCM_MAPPINGS = 63  # FamiStudio without FAMISTUDIO_USE_DPCM_EXTENDED_RANGE
+DPCM_PTR = (SAMPLE_BASE & 0x3FFF) >> 6  # FamiStudio's FAMISTUDIO_DPCM_PTR for samples at $C000
 AUDITION_RAM = 0x07C0  # one-note audition streams written by the native machine; engine RAM must end below
 ENTRY = {"nes_player_init": 0x8000, "nes_player_play": 0x8003, "nes_player_idle": 0x8006, "nes_player_trap": 0x8009}
 
-# Image layout (docs/AUDIO_ENGINE.md): header, envelope directory, song region.
+# Image layout (docs/AUDIO_ENGINE.md): header, envelope directory, region = CPU memory SONG_BASE..SAMPLE_END
+# (song data from SONG_BASE, sample bytes from SAMPLE_BASE).
 HEADER_SIZE = 32
+HEADER_DPCM_COUNT = 15  # u8: entries in the FamiStudio DPCM list (Thor layout)
+HEADER_SAMPLE_SIZE = 22  # u16: sample bytes used from SAMPLE_BASE
 MAX_ENVELOPES = 512
 DIRECTORY_SIZE = 4 * MAX_ENVELOPES
+REGION_SIZE = SAMPLE_END - SONG_BASE
+IMAGE_SIZE = HEADER_SIZE + DIRECTORY_SIZE + REGION_SIZE
 MAX_INSTRUMENTS = 64
 MAX_ORDERS = 255
 MAX_ROWS = 255
@@ -174,8 +189,9 @@ def u16(data, at: int) -> int:
 
 # ---- FamiStudio ca65 export parser ---------------------------------------------------------------
 
-def parse_famistudio_ca65(text: str, base: int):
-    """Assembles FamiStudio's ca65 music export (labels, .byte, .word, .lobyte/.hibyte) at `base`.
+def parse_famistudio_ca65(text: str, base: int, name: str = "ft_test_ca65.s"):
+    """Assembles FamiStudio's ca65 music export (labels, .byte, .word, .lobyte/.hibyte, DPCM list entries
+    `$nn+.lobyte(FAMISTUDIO_DPCM_PTR)` for samples at SAMPLE_BASE) at `base`.
     Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03 songs."""
     items = []  # (label or None, directive, [operands])
     for raw in text.splitlines():
@@ -190,7 +206,7 @@ def parse_famistudio_ca65(text: str, base: int):
                 continue
         m = re.match(r"^\.(byte|word)\s+(.*)$", line)
         if not m:
-            sys.exit(f"ft_test_ca65.s: unsupported line {raw!r}")
+            sys.exit(f"{name}: unsupported line {raw!r}")
         items.append((None, m.group(1), [o.strip() for o in m.group(2).split(",")]))
     addrs, pc = {}, base
     for label, directive, ops in items:
@@ -200,6 +216,9 @@ def parse_famistudio_ca65(text: str, base: int):
             pc += len(ops) * (1 if directive == "byte" else 2)
 
     def value(op: str) -> int:
+        m = re.match(r"^\$([0-9a-fA-F]{2})\+\.lobyte\(FAMISTUDIO_DPCM_PTR\)$", op)
+        if m:
+            return int(m.group(1), 16) + (DPCM_PTR & 0xFF)
         m = re.match(r"^\.(lo|hi)byte\((@?\w+)\)$", op)
         if m:
             v = addrs[m.group(2)]
@@ -219,7 +238,7 @@ def parse_famistudio_ca65(text: str, base: int):
             v = value(op) & 0xFFFF
             if directive == "byte":
                 if v > 0xFF:
-                    sys.exit(f"ft_test_ca65.s: byte operand {op} = {v}")
+                    sys.exit(f"{name}: byte operand {op} = {v}")
                 out.append(v)
             else:
                 out += bytes((v & 0xFF, v >> 8))
@@ -302,13 +321,16 @@ def split_orders(entries, rows_per_order: int, orders: int, channel: int):
 
 # ---- Thor Tracker layout builder ------------------------------------------------------------------
 
-def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plain", edits=(), env_edits=None) -> bytes:
-    """Lays `song` (instruments, envelopes, per-order channel entries) out as a Thor Tracker image.
-    arrangement "plain": table, envelopes, order streams, patterns; "moved": patterns (reversed),
-    envelopes, order streams (shuffled), table, with gaps, so every address differs. Directory
-    indices are identical in both (envelopes stay ascending by index, as the layout requires).
-    edits: [(order, channel, entry index, old byte, new byte)] patched into that row's bytes;
-    env_edits: {directory index: (old bytes, new bytes)}."""
+def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plain", edits=(), env_edits=None,
+                     sample_edits=None) -> bytes:
+    """Lays `song` (instruments, envelopes, per-order channel entries, DPCM list and samples) out as a Thor
+    Tracker image. arrangement "plain": table, DPCM list, envelopes, order streams, patterns, samples exactly
+    where FamiStudio's .dmc has them; "moved": patterns (reversed), envelopes, order streams (shuffled), DPCM
+    list, table, with gaps, and the samples in reverse order 64 bytes apart, so every address differs.
+    Directory indices and mapping indices are identical in both (envelopes stay ascending by index, as the
+    layout requires). edits: [(order, channel, entry index, old byte, new byte)] patched into that row's
+    bytes; env_edits: {directory index: (old bytes, new bytes)}; sample_edits: {$4012 offset of a sample in
+    the .dmc: (byte index, new byte)}."""
     envs = song["envelopes"]  # directory index -> (kind, bytes)
     instruments = song["instruments"]  # [(vol, arp, duty, pitch) directory indices]
     orders = song["orders"][:order_count]
@@ -328,14 +350,15 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
             if key not in unique:
                 unique.append(key)
     sizes = {f"pat{i}": sum(len(b) for b, _ in key) for i, key in enumerate(unique)}
+    dpcm = song["dpcm"]  # FamiStudio list entries (4 bytes each, $4012 offsets as in song["dmc"])
     stream_size = 4 * len(orders) + 3
-    names = (["header", "table"] + [f"env{i}" for i in sorted(envs)] + [f"ch{c}" for c in range(5)]
+    names = (["header", "table", "dpcm"] + [f"env{i}" for i in sorted(envs)] + [f"ch{c}" for c in range(5)]
              + [f"pat{i}" for i in range(len(unique))])
-    size_of = {"header": 19, "table": 8 * len(instruments), **{f"env{i}": len(envs[i][1]) for i in envs},
+    size_of = {"header": 19, "table": 8 * len(instruments), "dpcm": len(dpcm), **{f"env{i}": len(envs[i][1]) for i in envs},
                **{f"ch{c}": stream_size for c in range(5)}, **sizes}
     if arrangement == "moved":
         names = (["header"] + [f"pat{i}" for i in reversed(range(len(unique)))]
-                 + [f"env{i}" for i in sorted(envs)] + [f"ch{c}" for c in (3, 1, 4, 0, 2)] + ["table"])
+                 + [f"env{i}" for i in sorted(envs)] + [f"ch{c}" for c in (3, 1, 4, 0, 2)] + ["dpcm", "table"])
     pc = SONG_BASE
     for i, name in enumerate(names):
         addr[name] = pc
@@ -348,7 +371,7 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
     def word(v):
         return bytes((v & 0xFF, v >> 8))
 
-    put(addr["header"], bytes([1]) + word(addr["table"]) + word(SONG_BASE)
+    put(addr["header"], bytes([1]) + word(addr["table"]) + word(addr["dpcm"] - 4 if dpcm else SONG_BASE)
         + b"".join(word(addr[f"ch{c}"]) for c in range(5)) + song["tempo_words"])
     put(addr["table"], b"".join(word(addr[f"env{i}"]) for ins in instruments for i in ins))
     for i in envs:
@@ -381,26 +404,48 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
         if bytes(region[at:at + len(old)]) != old or len(new) != len(old):
             sys.exit("envelope edit target mismatch")
         region[at:at + len(new)] = new
+    # Samples: each list entry's (offset, length) range of the .dmc; ranges of different mappings coincide.
+    dmc = bytearray(song["dmc"])
+    for off, (i, b) in (sample_edits or {}).items():
+        dmc[64 * off + i] = b
+    ranges = sorted({(dpcm[k], 16 * dpcm[k + 1] + 1) for k in range(0, len(dpcm), 4)})
+    if arrangement == "plain":
+        samples, where = dmc, {off: off for off, _ in ranges}
+    else:
+        samples, where, at = bytearray(), {}, 1
+        for off, length in reversed(ranges):
+            where[off] = at
+            samples[len(samples):] = bytes(64 * at - len(samples)) + dmc[64 * off:64 * off + length]
+            at = (len(samples) + 63) // 64 + 1
+    dpcm_moved = bytearray(dpcm)
+    for k in range(0, len(dpcm), 4):
+        dpcm_moved[k] = where[dpcm[k]]
+    put(addr["dpcm"], dpcm_moved)
+    if samples:
+        region[len(region):] = bytes(SAMPLE_BASE - SONG_BASE - len(region)) + samples
 
     header = bytearray(HEADER_SIZE)
     header[0:4] = b"TTNS"
     header[4:8] = song["player_id"].to_bytes(4, "little")
     header[8:10] = word(SONG_BASE)
-    header[10:12] = word(len(region))
+    header[10:12] = word(pc - SONG_BASE)
     header[12] = 0
     header[13] = LAYOUT_THOR
     header[14] = len(instruments)
     header[16:18] = word(max(envs) + 1)
+    header[HEADER_DPCM_COUNT] = len(dpcm) // 4
+    header[HEADER_SAMPLE_SIZE:HEADER_SAMPLE_SIZE + 2] = word(len(samples))
     directory = bytearray(DIRECTORY_SIZE)
     for i, (kind, data) in envs.items():
         directory[4 * i:4 * i + 4] = word(addr[f"env{i}"]) + bytes((len(data), kind))
-    if len(region) > SONG_END - SONG_BASE:
-        sys.exit("layout fixture does not fit the song region")
+    if pc > SONG_END or SAMPLE_BASE + len(samples) > SAMPLE_END:
+        sys.exit("layout fixture does not fit the song or sample region")
     return bytes(header + directory + region)
 
 
-def thor_song_from_export(region: bytes, labels_: dict, txt: str, player_id: int):
-    """FamiStudio's export of ft_test.txt re-expressed as the parts build_thor_image lays out."""
+def thor_song_from_export(region: bytes, labels_: dict, txt: str, player_id: int, dmc: bytes = b""):
+    """FamiStudio's export of a test song (its .dmc samples `dmc`) re-expressed as the parts build_thor_image
+    lays out."""
     song_attrs = re.search(r'^\tSong [^\n]*', txt, re.M).group(0)
     rows = int(re.search(r'PatternLength="(\d+)"', song_attrs).group(1))
     orders = int(re.search(r' Length="(\d+)"', song_attrs).group(1))
@@ -411,6 +456,17 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player_id: int
     env_labels = sorted((a - SONG_BASE, n) for n, a in labels_.items() if re.fullmatch(r"@env\d+", n))
     ends = [a for a, _ in env_labels[1:]] + [labels_["@samples"] - SONG_BASE]
     env_bytes = {SONG_BASE + a: region[a:e] for (a, _), e in zip(env_labels, ends)}
+    # DPCM list: from @samples (the header points 4 bytes before it) to the next label.
+    samples_at = labels_["@samples"]
+    if u16(region, 3) != samples_at - 4:
+        sys.exit("DPCM list pointer is not @samples-4")
+    list_end = min(a for n, a in labels_.items() if a >= samples_at and n != "@samples")
+    dpcm = bytes(region[samples_at - SONG_BASE:list_end - SONG_BASE])
+    if len(dpcm) % 4 or len(dpcm) > 4 * MAX_DPCM_MAPPINGS:
+        sys.exit("unexpected DPCM list")
+    for k in range(0, len(dpcm), 4):
+        if 64 * dpcm[k] + 16 * dpcm[k + 1] + 1 > len(dmc):
+            sys.exit("DPCM list entry outside the .dmc")
     count = (env_labels[0][0] - table) // 8
     envs, instruments = {}, []
     for i in range(count):
@@ -421,7 +477,11 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player_id: int
     per_channel, effect_index = [], {}
     for c in range(5):
         start = u16(region, 5 + 2 * c) - SONG_BASE
-        loop_at = labels_[f"@song0ch{c}loop"] - SONG_BASE
+        loop_name = f"@song0ch{c}loop"
+        if loop_name not in labels_:  # FamiStudio shares identical channel streams under one label
+            twin = next(k for k in range(5) if labels_.get(f"@song0ch{k}") == start + SONG_BASE and f"@song0ch{k}loop" in labels_)
+            loop_name = f"@song0ch{twin}loop"
+        loop_at = labels_[loop_name] - SONG_BASE
         entries, loop_index = flatten_channel(region, start, loop_at)
         groups = split_orders(entries, rows, orders, c)
         if sum(len(g) for g in groups[:loop]) != loop_index:
@@ -441,6 +501,8 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player_id: int
         "envelopes": envs,
         "effect_env_index": effect_index,
         "orders": [[per_channel[c][o] for c in range(5)] for o in range(orders)],
+        "dpcm": dpcm,
+        "dmc": bytes(dmc),
     }, rows, orders, loop
 
 
@@ -468,11 +530,61 @@ def row_speeds(txt: str, rows: int, orders: int):
     return table
 
 
-def famistudio_export(app: Path, out: Path) -> None:
+DPCM_PLAY, DPCM_STOP, DPCM_DELTA = 1, 2, 3
+
+
+def dpcm_events(txt: str):
+    """The DMC register writes the DPCM channel of the FamiStudio text asks for in the first pass, read from the
+    text alone (samples packed as FamiStudio's .dmc does: project order, each from a 64-byte boundary):
+    [(order, row, frame in row, kind, $4010, $4012, $4013, $4011 or -1)]."""
+    def attrs(line):
+        return dict(re.findall(r'(\w+)="([^"]*)"', line))
+    samples, at = {}, 0
+    for line in re.findall(r'^\tDPCMSample [^\n]*', txt, re.M):
+        a = attrs(line)
+        size = len(a["Data"]) // 2
+        samples[a["Name"]] = (at // 64, size >> 4, 2 * int(a.get("DmcInitialValue", "32")))
+        at += (size + 63) // 64 * 64
+    mappings, instrument = {}, None
+    for line in txt.splitlines():
+        if line.startswith("\tInstrument "):
+            instrument = attrs(line)["Name"]
+        elif line.startswith("\t\tDPCMMapping "):
+            a = attrs(line)
+            start, length, init = samples[a["Sample"]]
+            if "DmcInitialValue" in a:
+                init = 2 * int(a["DmcInitialValue"])
+            ctrl = int(a["Pitch"]) | (0x40 if a["Loop"] == "True" else 0)
+            mappings[(instrument, a["Note"])] = (ctrl, start, length, init)
+    chan = re.split(r'\n\t\tChannel ', txt)
+    dpcm = next(c for c in chan if c.startswith('Type="DPCM"'))
+    patterns = {}
+    for pat in re.split(r'\n\t\t\tPattern ', dpcm)[1:]:
+        lines = pat.split("\n")
+        patterns[attrs(lines[0])["Name"]] = [attrs(l) for l in lines[1:] if l.startswith("\t\t\t\tNote ")]
+    events = []
+    for order, name in re.findall(r'PatternInstance Time="(\d+)" Pattern="([^"]+)"', dpcm):
+        for n in patterns[name]:
+            o, r = int(order), int(n["Time"])
+            value = n.get("Value")
+            if value == "Stop":
+                events.append((o, r, int(n.get("NoteDelay", 0)), DPCM_STOP, 0, 0, 0, -1))
+            elif value:
+                ctrl, start, length, init = mappings[(n["Instrument"], value)]
+                level = int(n["DeltaCounter"]) if "DeltaCounter" in n else -1 if n.get("Attack") == "False" else init
+                events.append((o, r, int(n.get("NoteDelay", 0)), DPCM_PLAY, ctrl, start, length, level))
+            elif "DeltaCounter" in n:
+                events.append((o, r, 0, DPCM_DELTA, 0, 0, 0, int(n["DeltaCounter"])))
+            if "CutDelay" in n:
+                events.append((o, r, int(n["CutDelay"]), DPCM_STOP, 0, 0, 0, -1))
+    return sorted(events)
+
+
+def famistudio_export(app: Path, txt: Path, out: Path) -> None:
     dll = app / "FamiStudio.dll"
     if not dll.exists():
         sys.exit(f"{dll} not found")
-    cmd = ["dotnet", str(dll), str(TEST_SONG_TXT), "famistudio-asm-export", str(out), "-famistudio-asm-format:ca65"]
+    cmd = ["dotnet", str(dll), str(txt), "famistudio-asm-export", str(out), "-famistudio-asm-format:ca65"]
     if not shutil.which("dotnet"):
         cmd = ["distrobox", "enter", "ubuntu", "--"] + cmd
     res = subprocess.run(cmd, capture_output=True, text=True)
@@ -487,7 +599,8 @@ def kotlin_hex(data: bytes) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--famistudio", type=Path, help="FamiStudio 4.5.3 Linux release dir: re-export ft_test.txt and compare")
+    ap.add_argument("--famistudio", type=Path,
+                    help="FamiStudio 4.5.3 Linux release dir: re-export ft_test.txt and dpcm_test.txt and compare")
     args = ap.parse_args()
 
     for path, want in PINNED.items():
@@ -496,11 +609,14 @@ def main() -> None:
             sys.exit(f"{path.relative_to(ROOT)}: sha256 {got} != pinned {want}")
     if args.famistudio:
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
-            fresh = Path(tmp) / "ft_test_ca65.s"
-            famistudio_export(args.famistudio.resolve(), fresh)
-            if fresh.read_bytes() != TEST_SONG_CA65.read_bytes():
-                sys.exit("FamiStudio's export of ft_test.txt differs from tools/audio/nes/ft_test_ca65.s")
-            print("FamiStudio re-export of ft_test.txt: identical")
+            for txt, ca65, dmc in ((TEST_SONG_TXT, TEST_SONG_CA65, None), (DPCM_SONG_TXT, DPCM_SONG_CA65, DPCM_SONG_DMC)):
+                fresh = Path(tmp) / ca65.name
+                famistudio_export(args.famistudio.resolve(), txt, fresh)
+                if fresh.read_bytes() != ca65.read_bytes():
+                    sys.exit(f"FamiStudio's export of {txt.name} differs from {ca65.relative_to(ROOT)}")
+                if dmc and fresh.with_suffix(".dmc").read_bytes() != dmc.read_bytes():
+                    sys.exit(f"FamiStudio's samples of {txt.name} differ from {dmc.relative_to(ROOT)}")
+                print(f"FamiStudio re-export of {txt.name}: identical")
 
     prefix = tool_prefix()
     version = run(prefix, ["ca65", "--version"], ROOT).strip()
@@ -521,6 +637,10 @@ def main() -> None:
         run(prefix, ["ca65", "-I", str(NES_DIR), str(t / "song.s"), "-o", str(t / "song.o")], t)
         run(prefix, ["ld65", "-C", str(NES_DIR / "nes_song.cfg"), "-o", str(t / "song.bin"), str(t / "song.o")], t)
         song = (t / "song.bin").read_bytes()
+        (t / "dpcm.s").write_text(f'.segment "SONG"\nFAMISTUDIO_DPCM_PTR = ${DPCM_PTR:02X}\n.include "dpcm_test_ca65.s"\n')
+        run(prefix, ["ca65", "-I", str(NES_DIR), str(t / "dpcm.s"), "-o", str(t / "dpcm.o")], t)
+        run(prefix, ["ld65", "-C", str(NES_DIR / "nes_song.cfg"), "-o", str(t / "dpcm.bin"), str(t / "dpcm.o")], t)
+        dpcm_song = (t / "dpcm.bin").read_bytes()
 
     for name, addr in ENTRY.items():
         if syms.get(name) != addr:
@@ -574,6 +694,27 @@ def main() -> None:
     edited = build_thor_image(thor, orders, loop, edits=[(2, 0, entry[0], 0x30, 0x33)], env_edits=env_edit)
     short = build_thor_image(thor, 2, 1)
 
+    # DPCM test song: the same checks, plus its samples (.dmc at SAMPLE_BASE) and the DMC writes the text asks for.
+    dpcm_text = DPCM_SONG_CA65.read_text()
+    dpcm_txt = DPCM_SONG_TXT.read_text()
+    dmc = DPCM_SONG_DMC.read_bytes()
+    parsed, dpcm_labels = parse_famistudio_ca65(dpcm_text, SONG_BASE, DPCM_SONG_CA65.name)
+    if parsed != dpcm_song:
+        sys.exit("parser output differs from the ld65 link of dpcm_test_ca65.s")
+    if SAMPLE_BASE + len(dmc) > SAMPLE_END or "FAMISTUDIO_USE_DELTA_COUNTER" not in dpcm_text:
+        sys.exit("DPCM test song: samples that fit and the delta counter expected")
+    dthor, drows, dorders, dloop = thor_song_from_export(dpcm_song, dpcm_labels, dpcm_txt, player_id, dmc)
+    dspeeds = row_speeds(dpcm_txt, drows, dorders)
+    events = dpcm_events(dpcm_txt)
+    for o, r, f, kind, ctrl, start, length, level in events:
+        k = next((k for k in range(0, len(dthor["dpcm"]), 4) if dthor["dpcm"][k:k + 3] == bytes((start, length, ctrl))), None)
+        if kind == DPCM_PLAY and k is None:
+            sys.exit(f"DPCM event at {o}/{r} has no list entry in the export")
+    dbase = build_thor_image(dthor, dorders, dloop)
+    dmoved = build_thor_image(dthor, dorders, dloop, "moved")
+    # Edit: one byte in the middle of the Kick (the sample at .dmc offset 0).
+    dedited = build_thor_image(dthor, dorders, dloop, sample_edits={0: (100, dmc[100] ^ 0xFF)})
+
     sym_lines = "\n".join(f"#define NES_{s.upper()} 0x{syms[s]:04X}" for s in SYMBOLS)
     OUT_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
 // FamiStudio sound engine {FAMISTUDIO_TAG} (github.com/BleuBleu/FamiStudio commit {FAMISTUDIO_COMMIT}),
@@ -593,8 +734,10 @@ def main() -> None:
 #define NES_PLAYER_PLAY 0x{ENTRY['nes_player_play']:04X} /* one 60 Hz engine frame */
 #define NES_PLAYER_IDLE 0x{ENTRY['nes_player_idle']:04X} /* return address of host-called routines */
 #define NES_PLAYER_TRAP 0x{ENTRY['nes_player_trap']:04X} /* BRK/IRQ/NMI vector target: a fault */
-#define NES_SONG_BASE 0x{SONG_BASE:04X}
-#define NES_SONG_END 0x{SONG_END:04X}
+#define NES_SONG_BASE 0x{SONG_BASE:04X} /* song data (FamiStudio format) from here ... */
+#define NES_SONG_END 0x{SONG_END:04X} /* ... up to here (exclusive) */
+#define NES_SAMPLE_BASE 0x{SAMPLE_BASE:04X} /* DPCM samples ($4012 = (address - $C000) / 64) from here ... */
+#define NES_SAMPLE_END 0x{SAMPLE_END:04X} /* ... up to the vectors (exclusive) */
 #define NES_ZP_SIZE 0x{zp[1]:04X}
 #define NES_RAM_BASE 0x{bss[0]:04X}
 #define NES_RAM_SIZE 0x{bss[1]:04X}
@@ -602,14 +745,21 @@ def main() -> None:
 #define NES_NUM_ENVELOPES {num_envelopes}
 #define NES_NUM_PITCH_ENVELOPES {num_pitch}
 
-/* Image layout (docs/AUDIO_ENGINE.md, "Image layout"): header, envelope directory, song region. */
+/* Image layout (docs/AUDIO_ENGINE.md, "Image layout"): header, envelope directory, region = CPU memory
+ * NES_SONG_BASE..NES_SAMPLE_END (song data from NES_SONG_BASE, samples from NES_SAMPLE_BASE). */
 #define NES_IMAGE_HEADER_SIZE {HEADER_SIZE}
+#define NES_IMAGE_HEADER_DPCM_COUNT {HEADER_DPCM_COUNT} /* u8: DPCM list entries (Thor layout) */
+#define NES_IMAGE_HEADER_SAMPLE_SIZE {HEADER_SAMPLE_SIZE} /* u16: sample bytes used from NES_SAMPLE_BASE */
 #define NES_IMAGE_MAX_ENVELOPES {MAX_ENVELOPES}
 #define NES_IMAGE_DIRECTORY_SIZE {DIRECTORY_SIZE}
 #define NES_IMAGE_MAX_INSTRUMENTS {MAX_INSTRUMENTS}
 #define NES_IMAGE_MAX_ORDERS {MAX_ORDERS}
 #define NES_IMAGE_MAX_ROWS {MAX_ROWS}
-#define NES_IMAGE_SIZE {HEADER_SIZE + DIRECTORY_SIZE + SONG_END - SONG_BASE}
+#define NES_IMAGE_MAX_DPCM_MAPPINGS {MAX_DPCM_MAPPINGS}
+#define NES_IMAGE_SAMPLE_ALIGN {SAMPLE_ALIGN}
+#define NES_IMAGE_MAX_SAMPLE_BYTES {MAX_SAMPLE_BYTES} /* $4013 = $FF: 16 * 255 + 1 */
+#define NES_IMAGE_REGION_SIZE {REGION_SIZE}
+#define NES_IMAGE_SIZE {IMAGE_SIZE}
 
 {sym_lines}
 
@@ -637,22 +787,45 @@ object NesPlayerImage {{
     const val INIT = 0x{ENTRY['nes_player_init']:04X}
     const val PLAY = 0x{ENTRY['nes_player_play']:04X}
 
-    /** Song region: FamiStudio data placed at [SONG_BASE], at most up to [SONG_END] (exclusive; vectors follow). */
+    /** Song region: FamiStudio data placed at [SONG_BASE], at most up to [SONG_END] (exclusive; the samples follow). */
     const val SONG_BASE = 0x{SONG_BASE:04X}
     const val SONG_END = 0x{SONG_END:04X}
+
+    /**
+     * Sample region: DPCM samples from [SAMPLE_BASE] up to [SAMPLE_END] (exclusive; vectors follow), each starting on a
+     * [SAMPLE_ALIGN] boundary (`$4012` = (address − [SAMPLE_BASE]) / 64) and [MAX_SAMPLE_BYTES] long at most
+     * (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
+     */
+    const val SAMPLE_BASE = 0x{SAMPLE_BASE:04X}
+    const val SAMPLE_END = 0x{SAMPLE_END:04X}
+    const val SAMPLE_ALIGN = {SAMPLE_ALIGN}
+    const val MAX_SAMPLE_BYTES = {MAX_SAMPLE_BYTES}
+
+    /** Entries of the FamiStudio DPCM list (without FamiStudio's extended DPCM range): stream note bytes 1..63. */
+    const val MAX_DPCM_MAPPINGS = {MAX_DPCM_MAPPINGS}
 
     /** Header bytes 4..7 (little-endian): an image only plays on the player build it was lowered for. */
     const val PLAYER_ID = 0x{player_id:08X}.toInt()
 
     const val HEADER_SIZE = {HEADER_SIZE}
+
+    /** Header byte: entries in the DPCM list. */
+    const val HEADER_DPCM_COUNT = {HEADER_DPCM_COUNT}
+
+    /** Header u16 (little-endian): sample bytes used from [SAMPLE_BASE] (zero after). */
+    const val HEADER_SAMPLE_SIZE = {HEADER_SAMPLE_SIZE}
+
     const val MAX_ENVELOPES = {MAX_ENVELOPES}
     const val DIRECTORY_SIZE = {DIRECTORY_SIZE}
     const val MAX_INSTRUMENTS = {MAX_INSTRUMENTS}
     const val MAX_ORDERS = {MAX_ORDERS}
     const val MAX_ROWS = {MAX_ROWS}
 
-    /** Bytes of a lowered image: header + envelope directory + song region. */
-    const val IMAGE_SIZE = {HEADER_SIZE + DIRECTORY_SIZE + SONG_END - SONG_BASE}
+    /**
+     * Bytes of a lowered image: header + envelope directory + region, the CPU memory [SONG_BASE] until [SAMPLE_END]
+     * (song data at region offset 0, samples at [SAMPLE_BASE] − [SONG_BASE]).
+     */
+    const val IMAGE_SIZE = {IMAGE_SIZE}
 
     /** Header byte 13. */
     const val LAYOUT_THOR = {LAYOUT_THOR}
@@ -711,11 +884,70 @@ static const uint8_t nes_ft_speed[NES_FT_ORDERS][NES_FT_ROWS] = {{
 {c_array("nes_ft_short", short)}
 #endif /* NES_FT_SONG_H_ */
 """)
+
+    region_at = HEADER_SIZE + DIRECTORY_SIZE
+
+    def c_split(name, image):
+        """An image as two arrays: header + directory + song data, and the sample bytes (at NES_SAMPLE_BASE)."""
+        size = u16(image, 10)
+        return c_array(name, image[:region_at + size]) + c_array(f"{name}_samples", image[region_at + SAMPLE_BASE - SONG_BASE:])
+
+    dpcm_list = dthor["dpcm"]
+    sample_names = re.findall(r"^\t\.byte \$[0-9a-f]{2}\+\.lobyte\(FAMISTUDIO_DPCM_PTR\),[^;]*; ([0-9a-f]{2}) (\w+) \(Pitch:(\d+)\)$",
+                              dpcm_text, re.M)
+    if len(sample_names) != len(dpcm_list) // 4:
+        sys.exit("DPCM mapping names not found in the export")
+    mapping_defines = "\n".join(f"#define NES_DPCM_MAP_{n.upper()}_{p} {int(i, 16) + 1}" for i, n, p in sample_names)
+    dspeed_rows = ",\n".join("    {" + ", ".join(str(s) for s in line) + "}" for line in dspeeds)
+    event_rows = ",\n".join("    {" + ", ".join(str(v) for v in e) + "}" for e in events)
+    OUT_DPCM.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// DPCM test song tools/audio/nes/dpcm_test.txt (sha256 {sha256(DPCM_SONG_TXT.read_bytes())}, FamiTracker tempo),
+// as exported by FamiStudio {FAMISTUDIO_TAG} itself (tools/audio/nes/dpcm_test_ca65.s, sha256 {sha256(DPCM_SONG_CA65.read_bytes())};
+// samples dpcm_test_ca65.dmc, sha256 {sha256(dmc)}).
+//   nes_dpcm_raw / nes_dpcm_dmc: that export linked at NES_SONG_BASE and its samples for NES_SAMPLE_BASE (raw layout).
+//   nes_dpcm_thor:   the same rows, DPCM list and samples (where the .dmc has them) in the Thor Tracker layout;
+//                    every row's bytes are FamiStudio's. Arrays: header + directory + song data, then *_samples.
+//   nes_dpcm_moved:  every block and every sample at another address (same directory and mapping indices).
+//   nes_dpcm_edited: nes_dpcm_thor with byte 100 of the Kick sample inverted.
+#ifndef NES_DPCM_SONG_H_
+#define NES_DPCM_SONG_H_
+#include <stdint.h>
+
+#define NES_DPCM_ROWS {drows}
+#define NES_DPCM_ORDERS {dorders}
+#define NES_DPCM_LOOP {dloop}
+#define NES_DPCM_MAPPINGS {len(dpcm_list) // 4}
+/* Mapping (stream note byte, 1-based list index) of each sample/pitch in the export. */
+{mapping_defines}
+
+/* Speed in effect at each row of the first pass, read from dpcm_test.txt (not from the export). */
+static const uint8_t nes_dpcm_speed[NES_DPCM_ORDERS][NES_DPCM_ROWS] = {{
+{dspeed_rows}
+}};
+
+/* The DMC writes the DPCM channel of dpcm_test.txt asks for in the first pass, from the text alone (samples
+ * packed like FamiStudio's .dmc): order, row, frame in the row, kind (1 play: $4015=$0F, $4012, $4013,
+ * $4010, [$4011], $4015=$1F; 2 stop: $4015=$0F; 3 delta counter: $4011), $4010, $4012, $4013, $4011 or -1. */
+#define NES_DPCM_EVENTS {len(events)}
+static const int16_t nes_dpcm_events[NES_DPCM_EVENTS][8] = {{
+{event_rows}
+}};
+
+{c_array("nes_dpcm_raw", dpcm_song)}
+{c_array("nes_dpcm_dmc", dmc)}
+{c_split("nes_dpcm_thor", dbase)}
+{c_split("nes_dpcm_moved", dmoved)}
+{c_split("nes_dpcm_edited", dedited)}
+#endif /* NES_DPCM_SONG_H_ */
+""")
     print(f"player: {len(player)} bytes at ${PLAYER_BASE:04X}, sha256 {player_sha}, id 0x{player_id:08X}")
     print(f"engine RAM: zp ${zp[0]:02X}+{zp[1]}, bss ${bss[0]:04X}+{bss[1]} (ends ${bss[0] + bss[1]:04X})")
     print(f"test song: {len(song)} bytes raw; Thor layout region {len(base) - HEADER_SIZE - DIRECTORY_SIZE} bytes, "
           f"{len(thor['instruments'])} instruments, {len(thor['envelopes'])} envelopes")
-    print(f"wrote {OUT_PLAYER.relative_to(ROOT)}, {OUT_KOTLIN.relative_to(ROOT)} and {OUT_SONG.relative_to(ROOT)}")
+    print(f"DPCM test song: {len(dpcm_song)} bytes + {len(dmc)} sample bytes, {len(dpcm_list) // 4} mappings, "
+          f"{len(events)} DMC events in the first pass")
+    print(f"wrote {OUT_PLAYER.relative_to(ROOT)}, {OUT_KOTLIN.relative_to(ROOT)}, {OUT_SONG.relative_to(ROOT)} "
+          f"and {OUT_DPCM.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
