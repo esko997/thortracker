@@ -2,6 +2,9 @@ package org.thortracker
 
 import android.app.Activity
 import android.app.Presentation
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.BroadcastReceiver
 import android.content.Intent
@@ -10,16 +13,20 @@ import android.os.BatteryManager
 import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
+import android.hardware.input.InputManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -31,6 +38,8 @@ import org.thortracker.audio.AuditionLoop
 import org.thortracker.audio.ChipAudio
 import org.thortracker.audio.TrackerAudio
 import org.thortracker.audio.Transport
+import org.thortracker.audio.WavExport
+import org.thortracker.audio.WavOptions
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewKind
@@ -55,14 +64,16 @@ import org.thortracker.ui.PopupLayer
 import org.thortracker.ui.PopupSpec
 import org.thortracker.ui.PopupText
 import org.thortracker.ui.Popups
+import org.thortracker.ui.RecentMessages
 import org.thortracker.ui.ShellToolbar
 import org.thortracker.ui.ToolbarHandle
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.TrackerView
 import org.thortracker.ui.hideFromAccessibility
+import java.io.File
 
 /** Two display hosts, one document. Musical edits and driver state never live here. */
-class MainActivity : Activity(), DisplayManager.DisplayListener {
+class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.InputDeviceListener {
     private lateinit var session: EditorSession
     private lateinit var projectStore: ProjectStore
     private lateinit var workspace: WorkspaceStore
@@ -71,6 +82,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private val states: MutableList<ViewState> get() = panes.panes
     private val focus: Int get() = panes.focus
     private lateinit var displays: DisplayManager
+    private lateinit var inputDevices: InputManager
     private val main = Handler(Looper.getMainLooper())
     private val hosts = mutableMapOf<Int, Host>()
     private val popups = Popups({ hosts[it]?.popup }, { hosts.keys })
@@ -96,6 +108,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         override fun saveProject() { currentUri?.let { saveProject(it) } ?: launchPicker(SAVE) }
         override fun saveProjectAs() = launchPicker(SAVE)
         override fun export(song: Song, format: ExportFormat) { exportFormat = format; launchPicker(EXPORT) }
+        override fun exportWav(song: Song, options: WavOptions) = startWavExport(song, options)
+        override fun showWavExport(): Boolean = this@MainActivity.showWavExport()
         override fun recoverPrevious() = projectStore.previous { song -> this@MainActivity.replace(song) }
         override fun exportKeymap() = launchKeymapPicker(KEYMAP_EXPORT)
         override fun importKeymap() = launchKeymapPicker(KEYMAP_IMPORT)
@@ -109,6 +123,18 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) {
             fileLoad = FileLoad(extensions, maxBytes, loaded)
             launchFilePicker()
+        }
+        override fun openUrl(url: String): Boolean = try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        }
+        override fun diagnostics(): List<Pair<String, String>> = this@MainActivity.diagnostics()
+        override fun shareDiagnostics(text: String) {
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Thor Tracker diagnostics", text))
+            statusMessage = "Diagnostics copied to the clipboard: paste them into the bug report"
+            this@MainActivity.refresh()
         }
     }
     private var secondary: Presentation? = null
@@ -176,6 +202,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     /** The format the export picker writes; the song system's first until the menu chooses one. */
     private var exportFormat: ExportFormat = SoundSystems.DEFAULT.exports.first()
+    /** The WAV export (rendering, ready to save, or being saved); null when none runs. */
+    private var wavRun: WavRun? = null
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
     private var awaitingTransportUntil = 0L
@@ -254,6 +282,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             if (start) session.selection.let { transport.start(it.order, it.row) } else transport.stop()
         }
         popups.onOpenChanged = { open ->
+            input.resetStick()
             if (open) {
                 hosts.values.forEach { it.tracker.cancelInteraction() }
             } else {
@@ -264,6 +293,14 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         displays = getSystemService(DisplayManager::class.java)
         displays.registerDisplayListener(this, main)
+        inputDevices = getSystemService(InputManager::class.java)
+        inputDevices.registerInputDeviceListener(this, main)
+        // Once per process: a previous activity's cancelled worker may still own a spool while it exits.
+        if (!wavSpoolsCleaned) {
+            cacheDir.listFiles { _, name -> name.startsWith(WAV_SPOOL_PREFIX) && name.endsWith(".part") }
+                ?.forEach { it.delete() }
+            wavSpoolsCleaned = true
+        }
         buildPrimary()
         projectStore.restore { recovered, warning ->
             if (isDestroyed) return@restore
@@ -347,8 +384,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     override fun onDestroy() {
         displays.unregisterDisplayListener(this)
+        inputDevices.unregisterInputDeviceListener(this)
         main.removeCallbacksAndMessages(null)
         detachSecondary()
+        // Nothing can pick a destination for a render any more: free it (a file being written still completes).
+        wavRun?.cancel()
+        wavRun = null
         audio?.close()
         projectStore.close()
         popups.onOpenChanged = null
@@ -391,6 +432,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 }
                 override fun dispatchKeyEvent(event: KeyEvent): Boolean =
                     routeKey(event) || super.dispatchKeyEvent(event)
+                override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+                    rightStick(event)
+                    return super.dispatchGenericMotionEvent(event)
+                }
             }
             presentation.setOnDismissListener {
                 if (secondary === presentation) {
@@ -428,6 +473,59 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     override fun onDisplayChanged(displayId: Int) = updateSecondary()
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean = routeKey(event) || super.dispatchKeyEvent(event)
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        rightStick(event)
+        return super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // A shade, dialog or the other window took the input: a flick from before must not finish a jump.
+        input.resetStick()
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) = input.resetStick()
+    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
+    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
+
+    /**
+     * Feeds the right stick's vertical axis, including the samples batched into [event], to
+     * [HostInput.rightStick]; a quick double flick moves the focused Pattern view to its pattern's first or last
+     * row. Only observes: the event still goes to the window, so Android keeps turning the left stick and hat
+     * into D-pad keys.
+     */
+    private fun rightStick(event: MotionEvent) {
+        if (event.actionMasked != MotionEvent.ACTION_MOVE || !event.isFromSource(InputDevice.SOURCE_JOYSTICK)) return
+        val device = event.device ?: return
+        val range = rightStickY(device) ?: return
+        val host = hosts[focus]
+        val pattern = active && documentReady && host?.tracker?.patternFocused == true
+        fun sample(value: Float, millis: Long) {
+            val y = (value - range.min) / range.range * 2f - 1f
+            val jump = input.rightStick(device.id, y, millis, focus, states[focus].kind, pattern, popups.isOpen, toolbarFocused())
+            if (jump != 0) host?.tracker?.jumpPatternEdge(jump > 0)
+        }
+        for (i in 0 until event.historySize) sample(event.getHistoricalAxisValue(range.axis, i), event.getHistoricalEventTime(i))
+        sample(event.getAxisValue(range.axis), event.eventTime)
+    }
+
+    /**
+     * [device]'s right-stick vertical axis, or null. Android's standard gamepad layout puts the right stick on
+     * Z/RZ and the analog triggers on LTRIGGER/RTRIGGER (or BRAKE/GAS); controllers without a key layout file
+     * get Linux's raw axes, right stick on RX/RY and triggers on Z/RZ. So Z/RZ is the stick when RX/RY are absent
+     * or dedicated trigger axes exist, otherwise RX/RY. Both axes of a pair must exist and be centred, so a
+     * trigger or a lone axis is never paired with half of a stick.
+     */
+    private fun rightStickY(device: InputDevice): InputDevice.MotionRange? {
+        fun centred(axis: Int) = device.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK)?.takeIf { it.min < 0f && it.max > 0f }
+        fun present(axis: Int) = device.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK) != null
+        val zPair = centred(MotionEvent.AXIS_Z)?.let { centred(MotionEvent.AXIS_RZ) }
+        val rPair = centred(MotionEvent.AXIS_RX)?.let { centred(MotionEvent.AXIS_RY) }
+        val triggers = present(MotionEvent.AXIS_LTRIGGER) || present(MotionEvent.AXIS_RTRIGGER) ||
+            present(MotionEvent.AXIS_BRAKE) || present(MotionEvent.AXIS_GAS)
+        return if (zPair != null && (rPair == null || triggers)) zPair else rPair
+    }
 
     /**
      * Every key from either window. Layers in order: binding capture, open popup, host chords and global
@@ -561,6 +659,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         val audioError = audio?.error()
         val message = audioError ?: statusMessage
         hosts.values.forEach { if (it.toolbar.status.text.toString() != message) it.toolbar.status.text = message }
+        if (message != WORKING) RecentMessages.record(if (audioError != null) "audio" else "status", message)
         if (!documentReady) { hosts.values.forEach { it.flash(message, sticky = true) }; return }
         main.removeCallbacks(statusCheck)
         if (audioError != null) main.postDelayed(statusCheck, 500)
@@ -787,22 +886,31 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
     }
 
-    private fun launchPicker(request: Int) {
+    private fun launchPicker(request: Int, title: String = session.song.title) {
         if (request == EXPORT) {
             val errors = session.song.system.errors(session.song)
             if (errors.isNotEmpty()) return showError(errors.joinToString("\n"))
         }
         hosts.values.forEach { it.tracker.cancelInteraction() }
-        pickerSong = session.song
-        pickerGeneration = documentGeneration
+        if (request != EXPORT_WAV) {   // the WAV is rendered already: wavDestination writes it
+            pickerSong = session.song
+            pickerGeneration = documentGeneration
+        }
         val intent = Intent(if (request == OPEN) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (request == OPEN) "*/*" else "application/octet-stream"
+            type = when (request) { OPEN -> "*/*"; EXPORT_WAV -> "audio/x-wav"; else -> "application/octet-stream" }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            if (request != OPEN) putExtra(Intent.EXTRA_TITLE, safeName(session.song.title) + if (request == EXPORT) ".${exportFormat.extension}" else ".thor")
+            if (request != OPEN) putExtra(Intent.EXTRA_TITLE, safeName(title) + when (request) {
+                EXPORT -> ".${exportFormat.extension}"
+                EXPORT_WAV -> ".wav"
+                else -> ".thor"
+            })
         }
         try { startActivityForResult(intent, request) }
-        catch (e: Exception) { showError("No document provider could open: ${e.message}") }
+        catch (e: Exception) {
+            if (request == EXPORT_WAV) wavRun?.saving = false
+            showError("No document provider could open: ${e.message}")
+        }
     }
 
     @Deprecated("Android Activity result API used to keep a small native host")
@@ -818,6 +926,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         if (requestCode == FILE_IMPORT) {
             if (resultCode == RESULT_OK) data?.data?.let(::importFile) else fileLoad = null
+            return
+        }
+        if (requestCode == EXPORT_WAV) {
+            wavDestination(resultCode, data?.data)
             return
         }
         if (resultCode != RESULT_OK) { pickerSong = null; pickerGeneration = null; return }
@@ -859,9 +971,202 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
     }
 
+    /**
+     * One WAV export. A worker thread renders it into the [spool] file in the app's cache ([WavExport]); the finished
+     * render is handed over here and waits in a "WAV ready" popup until the user picks a destination; a second worker
+     * copies it there and deletes the spool. No document exists until the file is complete, so a cancelled, failed or
+     * interrupted render leaves nothing in the user's storage, and a failed copy removes its document. [cancel]
+     * (Cancel, Discard, or this activity going away) frees the render and its spool whoever holds it.
+     */
+    private class WavRun(val title: String, val spool: File) {
+        @Volatile var cancelled = false
+            private set
+        private var ready: WavExport? = null
+        /** The popup last shown for this export, and the one Files → Export .wav shows again (main thread). */
+        var popup: PopupSpec? = null
+        var latest: PopupSpec? = null
+        /** The destination picker is open, or the file is being copied (main thread). */
+        var saving = false
+
+        /** Keeps the worker's finished render; false when the export was cancelled meanwhile (the worker cleans up). */
+        fun complete(export: WavExport): Boolean = synchronized(this) {
+            if (cancelled) false else { ready = export; true }
+        }
+
+        /** The finished render, now owned by the caller (with the spool); null when cancelled. */
+        fun take(): WavExport? = synchronized(this) { ready.also { ready = null } }
+
+        fun cancel() = synchronized(this) {
+            cancelled = true
+            ready?.let { it.close(); spool.delete() }
+            ready = null
+        }
+    }
+
+    /** Renders [song] to WAV on a worker thread with a progress popup that can cancel; [wavRendered] takes over. */
+    private fun startWavExport(song: Song, options: WavOptions) {
+        if (showWavExport()) return
+        val spool = runCatching { File.createTempFile(WAV_SPOOL_PREFIX, ".part", cacheDir) }
+            .getOrElse { return showError("WAV export failed: ${it.message}") }
+        val run = WavRun(song.title, spool)
+        wavRun = run
+        Thread({
+            val result = runCatching {
+                val export = WavExport(song, options, run.spool.path)
+                var kept = false
+                try {
+                    var shown = 0L
+                    while (!run.cancelled && !export.step()) {
+                        val now = android.os.SystemClock.uptimeMillis()
+                        if (now - shown >= PROGRESS_MILLIS) {
+                            shown = now
+                            val spec = export.popup { endWav(run); statusMessage = "WAV export cancelled" }
+                            main.post { showWavProgress(run, spec) }
+                        }
+                    }
+                    kept = !run.cancelled && run.complete(export)
+                    if (kept) export.summary() to export.size else null
+                } finally {
+                    if (!kept) {
+                        export.close()   // removes an incomplete spool
+                        if (export.done) run.spool.delete()
+                    }
+                }
+            }
+            if (result.isFailure) run.spool.delete()
+            main.post { wavRendered(run, result) }
+        }, "wav-render").start()
+    }
+
+    /** Shows or refreshes the progress popup, unless Back hid it or another popup covers it. */
+    private fun showWavProgress(run: WavRun, spec: PopupSpec) {
+        if (isDestroyed || wavRun !== run || run.cancelled) return
+        run.latest = spec
+        when {
+            run.popup == null -> popups.show(spec, modalDisplay)
+            popups.top === run.popup -> popups.replaceTop(spec)
+            else -> return
+        }
+        run.popup = spec
+        refresh()
+    }
+
+    /** The render ended: report a failure, or offer the finished file for saving ([saveWav]) or discarding. */
+    private fun wavRendered(run: WavRun, result: Result<Pair<String, Long>?>) {
+        if (isDestroyed || wavRun !== run) return
+        val rendered = result.getOrElse { e ->
+            endWav(run)
+            return showError("WAV export failed: ${e.message}")
+        }
+        if (rendered == null) {   // cancelled; the Cancel action said so
+            endWav(run)
+            refresh()
+            return
+        }
+        val (summary, size) = rendered
+        val spec = PopupSpec("WAV ready", message = "${run.title}: $summary. ${(size + 500_000) / 1_000_000} MB. " +
+            "Choose where to save it.", items = listOf(
+            PopupItem("Save .wav…", PopupItem.Tone.PRIMARY) { saveWav(run) },
+            PopupItem("Discard", PopupItem.Tone.DANGER) { endWav(run); statusMessage = "WAV export discarded" },
+        ))
+        // Never in place of the progress popup: its cursor (on Hide) would land on Discard.
+        if (run.popup != null && popups.top === run.popup) popups.back()
+        run.latest = spec
+        run.popup = spec
+        popups.show(spec, modalDisplay)
+        refresh()
+    }
+
+    /** Files → Export .wav while an export runs: its progress or ready popup again. False when none runs. */
+    private fun showWavExport(): Boolean {
+        val run = wavRun ?: return false
+        val spec = run.latest
+        if (run.saving || spec == null) {
+            statusMessage = if (run.saving) "The WAV export is being saved" else "The WAV export is starting"
+            refresh()
+            return true
+        }
+        popups.closeAll()
+        popups.show(spec, modalDisplay)
+        run.popup = spec
+        refresh()
+        return true
+    }
+
+    private fun saveWav(run: WavRun) {
+        run.saving = true
+        launchPicker(EXPORT_WAV, run.title)
+    }
+
+    /** The destination picker answered: copy the render there, or offer it again when the picker was cancelled. */
+    private fun wavDestination(resultCode: Int, uri: Uri?) {
+        val run = wavRun?.takeIf { it.saving }
+        if (run == null) {
+            // The render did not survive (Android closed the app while the picker was open): remove the new, empty
+            // document again, where the provider allows it.
+            if (resultCode == RESULT_OK && uri != null) {
+                val resolver = applicationContext.contentResolver
+                Thread({ runCatching { DocumentsContract.deleteDocument(resolver, uri) } }, "wav-discard").start()
+                showError("The rendered WAV was lost when Android closed Thor Tracker; nothing was saved. Export it again.")
+            }
+            return
+        }
+        run.saving = false
+        if (resultCode != RESULT_OK || uri == null) { showWavExport(); return }
+        val export = run.take() ?: return endWav(run)
+        run.saving = true
+        val resolver = applicationContext.contentResolver
+        Thread({
+            val result = runCatching {
+                try {
+                    checkNotNull(resolver.openOutputStream(uri, "wt")) { "the destination could not be opened" }.use { out ->
+                        run.spool.inputStream().use { it.copyTo(out, COPY_BUFFER) }
+                    }
+                    export.summary()
+                } finally {
+                    export.close()
+                    run.spool.delete()
+                }
+            }
+            if (result.isFailure) runCatching { DocumentsContract.deleteDocument(resolver, uri) }
+            main.post {
+                if (wavRun === run) wavRun = null
+                if (isDestroyed) return@post
+                result.fold(
+                    { summary -> statusMessage = "WAV exported ($summary)"; refresh() },
+                    { e -> showError("WAV export failed: ${e.message}. Nothing was saved.") },
+                )
+            }
+        }, "wav-write").start()
+    }
+
+    /** Ends [run] (frees its render and spool) and closes its popup if it is on top. */
+    private fun endWav(run: WavRun) {
+        run.cancel()
+        if (wavRun === run) wavRun = null
+        if (run.popup != null && popups.top === run.popup) popups.back()
+        run.popup = null
+    }
+
+    /** Device, Android, displays and ChipAudio's measurements for the diagnostics ([org.thortracker.ui.About]). */
+    private fun diagnostics(): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        out += "Device" to "${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE})"
+        out += "Android" to "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}), ${Build.SUPPORTED_ABIS.firstOrNull() ?: "?"}"
+        for ((index, host) in hosts.toSortedMap()) {
+            val metrics = host.root.resources.displayMetrics
+            out += "Display ${index + 1}" to "${host.root.width}x${host.root.height} px, density ${metrics.density}, view ${states[index].kind.name.lowercase()}"
+        }
+        val stats = (audio as? ChipAudio)?.diagnostics().orEmpty()
+        out += "Audio" to if (stats.isEmpty()) "engine not started" else stats.entries.joinToString(", ") { (k, v) -> "$k=$v" }
+        audio?.error()?.let { out += "Audio error" to it }
+        return out
+    }
+
     private fun showError(message: String) {
         if (isDestroyed) return
         statusMessage = message
+        RecentMessages.record("error", message)
         android.util.Log.e("ThorTracker", message)
         popups.show(PopupSpec("Thor Tracker", message = message,
             items = listOf(PopupItem("OK", PopupItem.Tone.PRIMARY))), modalDisplay)
@@ -964,6 +1269,13 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         private const val KEYMAP_IMPORT = 14
         private const val TUNING_IMPORT = 15
         private const val FILE_IMPORT = 16
+        private const val EXPORT_WAV = 17
+        /** How often the WAV export's progress popup refreshes. */
+        private const val PROGRESS_MILLIS = 150L
+        /** Each worker owns a distinct file, including while cancellation is still winding down. */
+        private const val WAV_SPOOL_PREFIX = "wav-export-"
+        private var wavSpoolsCleaned = false // Activity lifecycle callbacks run on the main thread.
+        private const val COPY_BUFFER = 64 * 1024
         private const val TUNING_ASSETS = "tunings"
                 private const val MAX_KEYMAP_BYTES = 64 * 1024
         private const val WORKING = "Working copy"

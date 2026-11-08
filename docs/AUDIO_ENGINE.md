@@ -60,13 +60,45 @@ Natively, it adds one ops table to the registry in `chip_engine.c` (and its sour
 | `audition(image, channel, note, instrument, fine)` | reset and sound one held note through the driver; `fine` is the chip's fine pitch (Game Boy: `40y` detune) |
 | `release()` | key-off: 0 = silent now (host drops the machine; Game Boy), 1 = release phase, host keeps ticking until `tick` returns 0 |
 | `mute(channel, muted)` | the song machine's side of audition channel borrowing |
-| `position(&order, &row, &tick)` | row the next tick processes |
+| `position(&order, &row, &tick)` | row the next tick processes; tick 0 = the next tick starts that row (a one-row loop at speed 1 reports the same `(order, row, 0)` before every tick and enters the row every time) |
 | `tick(out)` | one driver tick: ≤ `CHIP_MAX_TICK_FRAMES` float stereo frames, 0 = released note ended, `CHIP_ERR_FAULT` |
+| `row_serial()` (optional) | for engines whose position follows a lagging driver (the Mega Drive: behind a heavy frame tick 0 repeats without a new row, then several rows pass in one tick): the row-start count belonging to the position's row instance; changes exactly when the position moves into a newly started row. NULL = tick 0 marks row starts |
 
 The hosts keep everything that is not about the chip: triple-buffered image and machine hand-over
 at tick boundaries (Android), image versions, latency-compensated position, audition mixing and
 channel borrowing, the Deck's held-note cap and `da_peak` diagnostics. The host test drives the
 Game Boy through the ops table as well as through `hm_*` directly.
+
+### WAV export (`chip_wav.c`)
+
+Every system renders `.wav` files through the same ops: `chip_wav_open(system_id, image, loops, fade_ms,
+max_seconds, spool_path)` creates a machine at 48 kHz, `start`s it at (0, 0) and spools 16-bit stereo PCM to the
+host's private file tick by tick (memory stays at one tick, whatever the length); `chip_wav_run(job, ticks)` steps
+it, `chip_wav_status` reports frames, the expected total, the order, loop known, size and `CHIP_WAV_CAPPED`;
+`chip_wav_close` removes the spool unless the file completed (the host then moves or copies it and deletes it).
+
+- **Row entries** follow the contract above: `row_serial` changing, or tick 0 before a tick. The loop point is the
+  first row instance entered a second time (`(order, row)`, whatever order list or jump leads back, a row jumping to
+  itself included). The song part ends at that second arrival, or `loops` arrivals later.
+- **Fade** (`fade_ms` > 0): the song keeps playing past the end of the song part (it loops on; nothing is keyed off)
+  while a linear gain falls to 0; trailing silence beyond one second after the last sample louder than 1 LSB is cut
+  (`ftruncate`). This is not a release tail: no driver has a "stop with release" operation, so none is rendered.
+  `fade_ms` = 0 ends exactly at the loop point, for files a player loops.
+- **Limit**: a song part reaching `max_seconds` (the hosts: 600) stops at that tick, fades as above and sets
+  `CHIP_WAV_CAPPED`; the hosts tell the user the file is not the whole song (or not all the passes). Files never
+  exceed `CHIP_WAV_MAX_FRAMES` (size < 2³¹ bytes: RIFF's 32-bit lengths and a 32-bit `off_t`, about 3 h 6 min);
+  `max_seconds` = 0 means that bound, and a fade that cannot fit is refused (`"arguments"`).
+- **Failures**: a driver fault (`CHIP_WAV_ERR_FAULT`) or a failed spool write (`CHIP_WAV_ERR_WRITE`, e.g. disk full)
+  end the job; closing it removes the spool.
+- **Hosts**: Android (`ChipAudio.nativeWav*`, `MainActivity`) renders on a worker thread into
+  `cacheDir/wav-export.wav.part`, then asks for the destination ("WAV ready": Save .wav… / Discard) and copies it
+  there; no document exists until the file is complete, a failed copy deletes its document, and the activity going
+  away frees the render. The Deck (`DeckWav`, `DeckShell.pumpExport`) asks first, renders in 8 ms slices of the frame
+  loop into `~/.local/share/thortracker/wav-export.wav.part` and moves it into place (rename, or copy across file
+  systems). Both remove a leftover spool at startup. `chip_render_wav` renders a whole file in one call (tests).
+- **Host test** (`app/src/test/cpp/wav_render_test.c`, in `tools/audio/run_native_host_test.sh`): every demo image;
+  header, samples identical to straight ticking up to the loop point, step-size independence, loop passes, fade
+  length and end, the limit with `CHIP_WAV_CAPPED`, spool removal on early close.
 
 ## Sources, pins and licences
 
@@ -2024,6 +2056,8 @@ SN76489; `tools/audio/ym/ym_ref.py IMAGE --vgm OUT` writes the same bytes from t
 ### Position, seek and live edits
 
 - `position()`: above (the player runs one tick ahead; the heard position lags behind heavy frames).
+- `row_serial()`: the player ticks encoded at tick 0 up to the heard position's tick (`ymm_row_serial`, stored beside
+  each FIFO position), so a lag that repeats `(order, row, 0)` is not a new row and a speed-1 row jumping to itself is.
 - `start(order, row, max_ticks)`: machine reset (chips reset, SGDK's reset writes, driver boot), then the **player and
   the encoder's state** run alone from the song start until the next tick starts (order, row) (`CHIP_SEEK_FROM_START`;
   0.18 µs per tick: `ymx_absorb` keeps the encoder state without encoding, exact because the clean and XGC states are

@@ -15,7 +15,8 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
-2. **WAV export** for every system (each engine already renders audio natively).
+2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
+   Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
 3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) first —
    implemented on branch `nes-exp` as the "NES + VRC6" variant (`docs/BACKENDS.md`, "NES expansion chips", which also
    lists the steps for each further chip) — then VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
@@ -43,6 +44,25 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 9. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
+
+### Testing feedback and QoL proposals (2026-11-08)
+
+- **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
+  hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
+  display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence
+  before implementation; retain a visible collapsed-state indicator.
+- **Mixer view:** proposed channel faders for fixed volume levels, separate from per-row volume effects.
+  Design remains open: distinguish chip-supported gain that survives native export from preview-only mixing.
+  Do not promise independent gain on chips whose voices share an analogue mix or silently change exported sound.
+- **Right-stick pattern jump** — implemented in 0.14.1, verified in the Deck frontend and Android input path: two
+  quick same-direction right-stick flicks, neutral between them, move the focused Pattern cursor to the pattern's
+  first/last row. Shared detector `input/StickFlicks` (engage 0.6, neutral 0.3, flick ≤ 300 ms, gap ≤ 300 ms)
+  behind `HostInput.rightStick`; Android reads Z/RZ or RX/RY per device, the Deck SDL's right Y. Fixed gesture, not
+  in the keymap; the L2+R2 layer is unaffected. Thresholds may need tuning on the Thor's sticks.
+- **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
+  compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
+  Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware
+  for UI smoke tests. The host reset alone does not establish the crash cause.
 
 ## Agreed MVP scope
 

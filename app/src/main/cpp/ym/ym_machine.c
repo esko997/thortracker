@@ -120,6 +120,8 @@ struct YmMachine {
     YmImage image;
     int loaded;
     int fifo[FIFO][3];   /* position of player tick i at fifo[i % FIFO] */
+    uint32_t fifo_rows[FIFO]; /* row_starts after player tick i was encoded: its row instance (ymm_row_serial) */
+    uint32_t row_starts;      /* player ticks encoded at tick 0 since begin_stream */
     uint32_t encoded;    /* player ticks encoded since the start (the last one is queued, not yet executed) */
     uint32_t ticks;
     int audition, audition_channel, released, release_ticks;
@@ -673,6 +675,8 @@ static int encode_tick(YmMachine* m) {
     pos[0] = p->order;
     pos[1] = p->row;
     pos[2] = p->tick;
+    if (p->tick == 0) ++m->row_starts;
+    m->fifo_rows[m->encoded % FIFO] = m->row_starts;
     int n = m->nprefix, loop_at = -1;
     memcpy(m->frame, m->prefix, sizeof m->prefix[0] * (size_t)n);
     m->nprefix = 0;
@@ -720,6 +724,7 @@ static void run_tick(YmMachine* m) {
  * in one tick (the caller discards its output). */
 static int begin_stream(YmMachine* m) {
     m->encoded = 0;
+    m->row_starts = 0;
     if (encode_tick(m)) return -1;
     run_tick(m);
     return 0;
@@ -912,14 +917,21 @@ int ymm_mute(YmMachine* m, int channel, int muted) {
     return YMM_OK;
 }
 
-void ymm_position(const YmMachine* m, int* order, int* row, int* tick) {
+/* The fifo slot of the player tick the driver executes next. */
+static uint32_t heard(const YmMachine* m) {
     uint32_t next = executed(m);
     if (m->encoded - next > FIFO) next = m->encoded - FIFO;
-    const int* pos = m->fifo[next % FIFO];
+    return next % FIFO;
+}
+
+void ymm_position(const YmMachine* m, int* order, int* row, int* tick) {
+    const int* pos = m->fifo[heard(m)];
     *order = pos[0];
     *row = pos[1];
     *tick = pos[2];
 }
+
+uint32_t ymm_row_serial(const YmMachine* m) { return m->fifo_rows[heard(m)]; }
 
 /* One engine tick: the player's next frame is encoded and streamed, then one vertical interrupt's worth of Z80 and
  * chips run (the driver executes the frame queued the tick before). Returns the frames now in the blip buffers. */
