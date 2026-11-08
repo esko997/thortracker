@@ -232,6 +232,32 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   cartridge with a VRC6). FamiStudio text with `Expansions="VRC6"`, `Expansion="VRC6"` and `Vrc6SawMasterVolume` on
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
+- **Sunsoft 5B** (`NesS5bSystem`, `"nes-famistudio-s5b"`, "NES + Sunsoft 5B (FamiStudio)"; a YM2149F): channels 5B Square
+  1-3 (5-7, `ChannelKind.PULSE`, no duty). FamiStudio plays the 5B from the pulses' note table + 1, and the 5B divides
+  by 32 where the pulses divide by 16, so a 5B note sounds an octave below a pulse on the same note (like the
+  triangle); 12-bit periods reach C-1..B-8. 5B sounds (`NesChip.S5B`) have volume, arpeggio and pitch envelopes, a
+  **mixer** envelope (`NesInstrument.mixer`: 0 tone+noise, 1 noise, 2 tone, 3 off; empty = tone, FamiStudio's
+  default), a **noise** envelope (0-31) and a hardware envelope (`S5bEnvelope`: shape off or `$08-$0F`, auto period
+  with octave -8..8 or a manual period 0-65535). Shared hardware, as FamiStudio's engine 4.5.3 drives it: the highest
+  square sounding an envelope sound sets the envelope's shape and period every frame, any attack restarts it, its
+  level replaces the volume envelope and `Cxx`; the highest sounding square sets the noise period (Square 1 only with
+  noise in its mixer, Squares 2-3 always: the engine's mask table is meant for shifted mixer values; FamiStudio's
+  editor preview differs, the exported engine and this app play this). `NesS5b` warns where squares fight over them and
+  feeds the Pattern view's shared state (lane tags ENV / NOISE, inspector lines). Effects: `Ixx` / `Jyy` = the
+  envelope period's high / low byte (FamiStudio `EnvelopePeriod`), combined when both are on one row (on any squares;
+  alone the other byte is 0; two different values of one byte in a row are an error), lowered as `$5E lo hi` on Square
+  1 as FamiStudio's exporter moves them; the next note with attack on a square that played since reloads its sound
+  (FamiStudio's override rule). Deliberate difference: each order's first note re-sends its sound, so a manual period
+  is reloaded there too; FamiStudio's own export differs only when another square loaded a different manual period or
+  an `Ixx`/`Jyy` preceded a legato first note (the check warns about overlapping envelope sounds). Lowering: the 16-byte
+  `instruments_exp` entries (vol, arp, pitch, mixer, noise words, shape, octave or `$80`, period, 0, 0) for every slot;
+  mixer/noise envelopes at directory `256 + 2 slot (+1)`, kinds 4/5, mixer values as FamiStudio's processed bits
+  (`ProcessMixerEnvelope`); effect envelopes from 384 (`NesPlayer.effectEnvelopes`). Editor: pages volume, arpeggio,
+  pitch, mixer, noise and **5B envelope** (shape drawing, auto/manual, octave in musical terms, period as rate/ramp time).
+  Exports: `.nsf` with `$7B` bit 5; FamiStudio text `Expansions="S5B"`, `S5BEnvelopeShape/AutoPitch/AutoPitchOctave/
+  Pitch`, `MixerSettings`/`NoiseFreq` envelopes, `S5BSquare1-3`, `EnvelopePeriod`. Demo "Copper Kite"
+  (`NesS5bDemoSong`); golden songs `s5b_demo`, `s5b_effects`. Native: `nes/nes_s5b.c` (NESdev + emu2149 behaviour;
+  mix level per FamiStudio's 5B/VRC6 ratio; the 5B amplifier's nonlinearity is not modelled), see AUDIO_ENGINE.md.
 
 **Adding the next expansion** (VRC7, N163, S5B, FDS, MMC5, EPSM) follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song

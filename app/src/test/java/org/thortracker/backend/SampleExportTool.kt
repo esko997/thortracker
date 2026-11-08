@@ -2,6 +2,7 @@ package org.thortracker.backend
 
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
@@ -39,6 +40,12 @@ object SampleExportTool {
         for (format in NesVrc7System.exports) File(directory, "lantern-point.${format.extension}").writeBytes(format.export(vrc7))
         File(directory, "lantern-point.nesimg").writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(vrc7, it) })
         println("Exported ${vrc7.title} to ${directory.absolutePath}")
+        // The NES + Sunsoft 5B demo (its image plays on "nes-famistudio-s5b"; render_nes_image.sh picks it).
+        val s5b = NesS5bSystem.demo()
+        File(directory, "copper-kite.thor").writeText(ProjectCodec.encode(s5b), Charsets.UTF_8)
+        for (format in NesS5bSystem.exports) File(directory, "copper-kite.${format.extension}").writeBytes(format.export(s5b))
+        File(directory, "copper-kite.nesimg").writeBytes(ByteArray(NesS5bSystem.engine.imageSize).also { NesS5bSystem.engine.lower(s5b, it) })
+        println("Exported ${s5b.title} to ${directory.absolutePath}")
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

@@ -9,25 +9,37 @@ import org.thortracker.model.Song
 /** NES document edits: the one instrument bank and its envelopes, as undoable [EditorSession] commands. */
 
 /**
- * The four envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges; duty depends on the
- * sound's [NesChip]) and the value a new step starts from. Only volume has a release point (FamiStudio's rule).
+ * The envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges; duty depends on the sound's
+ * [NesChip]) and the value a new step starts from: the four every sound has (volume, arpeggio, pitch, duty), then the
+ * 5B's [MIXER] and [NOISE], which only 5B sounds hold ([belongsTo]). Only volume has a release point (FamiStudio's rule).
  */
 enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback: Int) {
     VOLUME("Volume", NesEnvelope.VOLUME, 15),
     ARPEGGIO("Arpeggio", NesEnvelope.ARPEGGIO, 0),
     PITCH("Pitch", NesEnvelope.PITCH, 0),
-    DUTY("Duty", NesEnvelope.DUTY, 0);
+    DUTY("Duty", NesEnvelope.DUTY, 0),
+    MIXER("Mixer", NesEnvelope.MIXER, 2),
+    NOISE("Noise", NesEnvelope.NOISE, 0);
 
     val canRelease: Boolean get() = this == VOLUME
 
     /** The values this envelope holds on a [chip] sound: the VRC6 has eight duties. */
     fun range(chip: NesChip): IntRange = if (this == DUTY) chip.duty else range
 
+    /** Whether a [chip] sound has this envelope: duty only where the chip has duties, mixer and noise only on the 5B. */
+    fun belongsTo(chip: NesChip): Boolean = when (this) {
+        DUTY -> chip.hasDuty
+        MIXER, NOISE -> chip == NesChip.S5B
+        else -> true
+    }
+
     fun of(i: NesInstrument): NesEnvelope = when (this) {
         VOLUME -> i.volume
         ARPEGGIO -> i.arpeggio
         PITCH -> i.pitch
         DUTY -> i.duty
+        MIXER -> i.mixer
+        NOISE -> i.noise
     }
 
     fun set(i: NesInstrument, e: NesEnvelope): NesInstrument = when (this) {
@@ -35,15 +47,18 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
         ARPEGGIO -> i.copy(arpeggio = e)
         PITCH -> i.copy(pitch = e)
         DUTY -> i.copy(duty = e)
+        MIXER -> i.copy(mixer = e)
+        NOISE -> i.copy(noise = e)
     }
 
     /**
      * [e] made legal for this envelope of a [chip] sound: values clamped, loop < length, and a release only on volume
-     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop). A VRC7 sound's duty
-     * envelope is always empty (its FM channels have no duty).
+     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop). An envelope the
+     * chip's sounds do not have ([belongsTo]: a VRC7 or 5B sound's duty, a mixer or noise envelope off the 5B) is
+     * always empty.
      */
     fun fixed(e: NesEnvelope, chip: NesChip = NesChip.APU): NesEnvelope {
-        if (this == DUTY && chip == NesChip.VRC7) return if (e.values.isEmpty() && e.loop < 0 && e.release < 0) e else NesEnvelope()
+        if (!belongsTo(chip)) return if (e.values.isEmpty() && e.loop < 0 && e.release < 0) e else NesEnvelope()
         val range = range(chip)
         val values = if (e.values.all { it in range }) e.values else e.values.map { it.coerceIn(range) }
         val last = values.size - 1
@@ -118,9 +133,10 @@ fun Song.nesInstrument(slot: Int): NesInstrument? = nes.instruments.getOrNull(sl
 fun defaultNesInstrument(slot: Int) = NesInstrument(name = "Sound ${hex2(slot)}")
 
 /**
- * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7 sounds have none), the saw volume and the
- * FM patch back to their defaults when it leaves the VRC6 / VRC7. Refused (with a note) when the chip is not the song's
- * or the sound still maps DPCM samples, which only 2A03 sounds play.
+ * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7 and 5B sounds have none), the saw volume,
+ * the FM patch and the 5B's mixer, noise and hardware envelope back to their defaults when it leaves that chip.
+ * Refused (with a note) when the chip is not the song's or the sound still maps DPCM samples, which only 2A03 sounds
+ * play.
  */
 fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
     val ins = song.nesInstrument(slot) ?: return false
@@ -133,12 +149,15 @@ fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
     return setNesInstrument(slot, ins.forChip(chip), "Make sound ${chip.label}")
 }
 
-/** This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7), other chips' settings reset. */
+/** This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7 and 5B), other chips' settings reset. */
 fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
     chip = chip,
     duty = NesEnvelopeKind.DUTY.fixed(duty, chip),
     sawVolume = if (chip == NesChip.VRC6) sawVolume else Vrc6SawVolume.HALF,
     fm = if (chip == NesChip.VRC7) fm else Vrc7Patch.DEFAULT,
+    mixer = NesEnvelopeKind.MIXER.fixed(mixer, chip),
+    noise = NesEnvelopeKind.NOISE.fixed(noise, chip),
+    s5b = if (chip == NesChip.S5B) s5b else S5bEnvelope.DEFAULT,
 )
 
 /** [instrument] as [song] can hold it: a sound of a chip the song lacks becomes a 2A03 sound (pasted across songs). */
@@ -148,6 +167,13 @@ fun nesInstrumentFor(song: Song, instrument: NesInstrument): NesInstrument =
 /** Edits the FM patch of VRC7 sound [slot]. */
 fun EditorSession.editNesFm(slot: Int, label: String, f: (Vrc7Patch) -> Vrc7Patch): Boolean =
     editNesInstrument(slot, label) { if (it.chip == NesChip.VRC7) it.copy(fm = f(it.fm)) else it }
+
+/** Edits the hardware envelope settings of 5B sound [slot], kept in range (octave -8..8, period 0..65535). */
+fun EditorSession.editNesS5b(slot: Int, label: String, f: (S5bEnvelope) -> S5bEnvelope): Boolean =
+    editNesInstrument(slot, label) {
+        if (it.chip != NesChip.S5B) it
+        else f(it.s5b).let { e -> it.copy(s5b = e.copy(octave = e.octave.coerceIn(S5bEnvelope.OCTAVES), period = e.period.coerceIn(S5bEnvelope.PERIODS))) }
+    }
 
 /** A copied NES instrument, or one of its envelopes. */
 sealed interface NesClip : Clip {

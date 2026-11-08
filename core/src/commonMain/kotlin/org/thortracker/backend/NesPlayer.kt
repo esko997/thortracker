@@ -4,9 +4,10 @@ import org.thortracker.system.nes.NesExpansion
 
 /**
  * One build of the NES preview player (FamiStudio sound engine 4.5.3, FamiTracker tempo): the plain 2A03 build
- * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage]). Each has its
- * own native engine ([engineId]), player bytes and song region (the region starts on the page after the player, so a
- * larger player leaves less room); the image layout numbers all share stay in [NesPlayerImage].
+ * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage],
+ * [NesS5bPlayerImage]). Each has its own native engine ([engineId]), player bytes and song region (the region starts on
+ * the page after the player, so a larger player leaves less room); the image layout numbers all share stay in
+ * [NesPlayerImage].
  */
 class NesPlayer private constructor(
     /** The native `ChipEngineOps` id that plays this build's images. */
@@ -23,13 +24,20 @@ class NesPlayer private constructor(
     val imageSize: Int,
     /** Channel streams in the song header: the 2A03's five plus the expansion's. */
     val channels: Int,
-    /** NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7). */
+    /** NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 5 = Sunsoft 5B). */
     val nsfChips: Int,
     /**
      * The song header holds FamiStudio's expansion instrument pointer (`instruments_exp`, after `instruments`) and the
-     * expansion's channels load their instruments from that table (FDS, N163, VRC7, EPSM and S5B builds: the VRC7 here).
+     * expansion's channels load their instruments from that table (FDS, N163, VRC7, EPSM and S5B builds: the VRC7 and
+     * 5B here).
      */
     val expInstruments: Boolean,
+    /**
+     * The first envelope directory index of effect envelopes (`0xy` arpeggios, vibratos); the instruments' own envelopes
+     * sit below it, one stable index each (slot × 4 + kind; the 5B build adds its mixer and noise envelopes at
+     * 256 + slot × 2 + 0/1, so its effect envelopes start at 384).
+     */
+    val effectEnvelopes: Int,
     private val code: () -> ByteArray,
 ) {
     /** The player bytes at [load]; a fresh copy per call. */
@@ -39,22 +47,32 @@ class NesPlayer private constructor(
         val APU = NesPlayer(
             "nes-famistudio", NesPlayerImage.LOAD, NesPlayerImage.INIT, NesPlayerImage.PLAY, NesPlayerImage.SONG_BASE,
             NesPlayerImage.REGION_END, NesPlayerImage.REGION_SIZE, NesPlayerImage.PLAYER_ID, NesPlayerImage.IMAGE_SIZE,
-            channels = 5, nsfChips = 0, expInstruments = false,
+            channels = 5, nsfChips = 0, expInstruments = false, effectEnvelopes = EFFECT_ENVELOPES,
         ) { NesPlayerImage.BYTES }
 
         val VRC6 = NesPlayer(
             "nes-famistudio-vrc6", NesVrc6PlayerImage.LOAD, NesVrc6PlayerImage.INIT, NesVrc6PlayerImage.PLAY,
             NesVrc6PlayerImage.SONG_BASE, NesVrc6PlayerImage.REGION_END, NesVrc6PlayerImage.REGION_SIZE,
             NesVrc6PlayerImage.PLAYER_ID, NesVrc6PlayerImage.IMAGE_SIZE, NesVrc6PlayerImage.CHANNELS, nsfChips = 0x01,
-            expInstruments = false,
+            expInstruments = false, effectEnvelopes = EFFECT_ENVELOPES,
         ) { NesVrc6PlayerImage.BYTES }
 
         val VRC7 = NesPlayer(
             "nes-famistudio-vrc7", NesVrc7PlayerImage.LOAD, NesVrc7PlayerImage.INIT, NesVrc7PlayerImage.PLAY,
             NesVrc7PlayerImage.SONG_BASE, NesVrc7PlayerImage.REGION_END, NesVrc7PlayerImage.REGION_SIZE,
             NesVrc7PlayerImage.PLAYER_ID, NesVrc7PlayerImage.IMAGE_SIZE, NesVrc7PlayerImage.CHANNELS, nsfChips = 0x02,
-            expInstruments = true,
+            expInstruments = true, effectEnvelopes = EFFECT_ENVELOPES,
         ) { NesVrc7PlayerImage.BYTES }
+
+        val S5B = NesPlayer(
+            "nes-famistudio-s5b", NesS5bPlayerImage.LOAD, NesS5bPlayerImage.INIT, NesS5bPlayerImage.PLAY,
+            NesS5bPlayerImage.SONG_BASE, NesS5bPlayerImage.REGION_END, NesS5bPlayerImage.REGION_SIZE,
+            NesS5bPlayerImage.PLAYER_ID, NesS5bPlayerImage.IMAGE_SIZE, NesS5bPlayerImage.CHANNELS, nsfChips = 0x20,
+            expInstruments = true, effectEnvelopes = NesS5bPlayerImage.EFFECT_ENVELOPES,
+        ) { NesS5bPlayerImage.BYTES }
+
+        /** Effect envelopes of the builds without extra instrument envelopes: after the 64 slots × 4 kinds. */
+        private const val EFFECT_ENVELOPES = 256
     }
 }
 
@@ -64,4 +82,5 @@ val NesExpansion.player: NesPlayer
         NesExpansion.NONE -> NesPlayer.APU
         NesExpansion.VRC6 -> NesPlayer.VRC6
         NesExpansion.VRC7 -> NesPlayer.VRC7
+        NesExpansion.S5B -> NesPlayer.S5B
     }

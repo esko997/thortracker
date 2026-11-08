@@ -4,6 +4,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.thortracker.backend.FamiStudioEnvelopes
 import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.backend.FamiStudioText
 import org.thortracker.backend.FsSong
@@ -25,6 +26,7 @@ import org.thortracker.system.ExportFormat
 import org.thortracker.system.FinePitch
 import org.thortracker.system.NoteSample
 import org.thortracker.system.PlaybackEngine
+import org.thortracker.system.SharedState
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemHelp
 import org.thortracker.system.SystemView
@@ -36,7 +38,7 @@ import kotlin.math.log2
  * instrument is its note → sample mappings) and the song's DPCM samples.
  * Lowering ([FamiStudioLowering]) and both exports (`.nsf`, FamiStudio text) read the same [FsSong].
  * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels, [NesVrc7System]
- * the Konami VRC7's six FM channels.
+ * the Konami VRC7's six FM channels, [NesS5bSystem] the Sunsoft 5B's three squares.
  */
 object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
     override val id = "nes-famistudio"
@@ -75,6 +77,21 @@ object NesVrc7System : NesFamiStudioSystem(NesExpansion.VRC7) {
 }
 
 /**
+ * The NES with the Sunsoft 5B cartridge chip (FamiStudio's S5B expansion; a YM2149F): the 2A03's five channels, then
+ * 5B Square 1-3, three square tones with a 4-bit logarithmic volume (12-bit periods: every note), sharing one noise
+ * generator (a mixer envelope per sound picks tone, noise, both or neither) and one envelope generator (a sound's
+ * hardware envelope shape, its period following the note or manual, `Ixx`/`Jyy`). The FamiStudio engine assembled with
+ * `FAMISTUDIO_EXP_S5B` plays it (native `"nes-famistudio-s5b"`); the squares take 5B instruments ([NesChip.S5B]).
+ * Who owns the shared generators at a position is the Pattern view's shared state ([NesS5b.state]).
+ */
+object NesS5bSystem : NesFamiStudioSystem(NesExpansion.S5B) {
+    override val id = "nes-famistudio-s5b"
+    override val name = "NES + Sunsoft 5B (FamiStudio)"
+
+    override fun demo(): Song = NesS5bDemoSong.build()
+}
+
+/**
  * What every NES variant shares: the FamiStudio sound engine on the 2A03 plus at most one [expansion] chip (one
  * system per expansion: FamiStudio builds its engine for one, and a system's channels are fixed). Everything is
  * driven by the song's own [NesSound.expansion], so shared NES code may call [NesSystem] for any NES song.
@@ -101,6 +118,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         NesExpansion.NONE -> Help
         NesExpansion.VRC6 -> Vrc6Help
         NesExpansion.VRC7 -> Vrc7Help
+        NesExpansion.S5B -> S5bHelp
     }
 
     /** OFF is a note event of its own (release or stop); it needs no effect slot. */
@@ -212,7 +230,10 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         return NoteSample(sample.name, dpcmDetail(m))
     }
 
-    /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6/VRC7 sounds: "VRC6 · …", saw volume, patch). */
+    /** The 5B's shared envelope and noise generators: which square drives them (5B songs only). */
+    override fun sharedState(song: Song, order: Int, row: Int): SharedState? = NesS5b.state(song, order, row)
+
+    /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6/VRC7/5B sounds: "VRC6 · …", saw volume, patch, mixer). */
     fun summary(ins: NesInstrument): String {
         fun env(name: String, e: NesEnvelope, neutral: Int, text: (Int) -> String = Int::toString): String? {
             if (e.values.isEmpty() || e.values.all { it == neutral }) return null
@@ -222,13 +243,17 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         }
         val vrc6 = ins.chip == NesChip.VRC6
         val vrc7 = ins.chip == NesChip.VRC7
+        val s5b = ins.chip == NesChip.S5B
         val parts = listOfNotNull(
-            ins.chip.label.takeIf { vrc6 || vrc7 },
+            ins.chip.label.takeIf { vrc6 || vrc7 || s5b },
             Vrc7Presets.NAMES[ins.fm.preset.coerceIn(Vrc7Presets.NAMES.indices)].lowercase().takeIf { vrc7 },
             env("vol", ins.volume, 15),
             env("arp", ins.arpeggio, 0),
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
             env("duty", ins.duty, 0) { NesRules.dutyText(ins.chip, it) },
+            env("mixer", ins.mixer, FamiStudioEnvelopes.MIXER_TONE, NesS5b::mixerText).takeIf { s5b },
+            env("noise", ins.noise, 0).takeIf { s5b },
+            NesS5b.summary(ins.s5b).takeIf { s5b && ins.s5b.shape != S5bShape.OFF },
             "saw ${ins.sawVolume.label.lowercase()}".takeIf { vrc6 && ins.sawVolume != Vrc6SawVolume.HALF },
             "sustain on release".takeIf { vrc7 && ins.fm.sustainRelease },
             "sustain on stop".takeIf { vrc7 && ins.fm.sustainStop },
@@ -236,7 +261,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         )
         return when {
             parts.isEmpty() -> "Full volume, no envelopes"
-            parts.size == 1 && vrc6 -> "VRC6 · full volume, no envelopes"
+            parts.size == 1 && (vrc6 || s5b) -> "${ins.chip.label} · full volume, no envelopes"
             else -> parts.joinToString(" · ")
         }
     }
@@ -248,7 +273,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      */
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
-        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU, blip_buf 1.1.0"
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU" +
+            (if (expansion == NesExpansion.S5B) " and Sunsoft 5B (YM2149F, after NESdev and emu2149)" else "") + ", blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
@@ -292,7 +318,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
      * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic). The VRC7's
      * FM channels convert a Pxx to their nearest frequency step for the same pitch ([NesRules.vrc7FinePitch]): one step
-     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there.
+     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there. The 5B squares play the
+     * pulse table's period + 1 (an octave lower), so the pulse arithmetic holds for them unchanged.
      */
     private object Fine : FinePitch {
         override val name = "Pxx"
@@ -389,5 +416,24 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
         override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
             NesInstrumentView.helpSections(keys, NesExpansion.VRC7)
+    }
+
+    private object S5bHelp : NesHelp() {
+        override val effectsIntro = super.effectsIntro + listOf(
+            "5B Square 1-3 play 5B sounds (Chip: 5B on the Instrument view): square tones that sound an octave below a 2A03 " +
+                "pulse on the same note (as the triangle does: FamiStudio plays the 5B from the pulses' note table), with a mixer " +
+                "envelope (tone, noise, both, neither), a noise envelope and an optional hardware envelope. No Vxx (no duty).",
+            "The three squares share one noise generator and one envelope generator: the highest square sounding a noise or " +
+                "envelope sound sets them for all (the lane headers tag who does: ENV, NOISE; the check warns when two sounds fight).",
+            "Ixx / Jyy (5B squares): the shared envelope period's high / low byte, together on one row (on two squares) for xxyy, " +
+                "alone xx00 / 00yy. It drives sounds with a manual period until a note reloads its sound (a new sound, a note with " +
+                "attack after it, or an order's first note).",
+        )
+        override val tonalChannels = "Pulse, Triangle and 5B Square"
+        override val tonalChannelsShort = "Pulse/Tri/5B"
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle or 5B Square 1-3; Noise and DPCM have no tonal chord reference"
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, NesExpansion.S5B)
     }
 }

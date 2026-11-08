@@ -12,7 +12,7 @@ Download the latest APK from the [GitHub Releases page](https://github.com/esko9
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
-The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy, NES, C64 SID, OPL3 or Mega Drive; **NES…** then offers the plain NES or NES + VRC6) and starts a new composition; **Load demo** asks the same.
+The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy, NES, C64 SID, OPL3 or Mega Drive; **NES…** then offers the plain NES, NES + VRC6 or NES + Sunsoft 5B) and starts a new composition; **Load demo** asks the same.
 
 ## Steam Deck
 
@@ -59,6 +59,10 @@ An NES song has five channels (Pulse 1, Pulse 2, Triangle, Noise and DPCM) and o
 ### NES DPCM samples
 
 The fifth NES channel, **DPCM**, plays delta-modulation samples. A note on it plays the sample its instrument maps to that key, as in FamiStudio's DPCM instruments; envelopes do not apply there and only `Fxx`, `Gxx`, `Sxx` and `Zxx` (DMC output level) do. The instrument view's last page (**L1/R1** past Duty) edits the mappings with the controller: **Key** (←/→ a semitone, **hold A + ←/→** the next mapped key, **A + ↑/↓** an octave), **Sample**, **Pitch** (DMC rate 0-F, F = 33.1 kHz), **Loop** and **Level** (the initial `$4011` level, the sample's own unless set). Below, the sound's mapped keys sit beside the song's samples with their sizes, the shared 16 KB of sample memory, and the selected sample's waveform, name and initial level; **A** maps the selected sample to the key, **B** deletes it. **Add** offers the built-in starter kit (kick, snare, hat, two toms, bass; synthesized in code, so free to use) on General MIDI drum keys in the shown octave, or a `.wav` or `.dmc` file: the Android document picker, or the Deck's file browser in `~/ThorTracker`. A `.wav` is converted on the device at the rate you choose; each rate shows the resulting size against the free sample memory. X listens to the shown key. In the Pattern view, **hold A + ←/→** on a DPCM note steps through the mapped keys and the inspector (or the status line on narrow screens) names the sample; the Keyboard view labels mapped keys with their samples.
+
+### NES + Sunsoft 5B
+
+**New blank song → NES… → NES + Sunsoft 5B (FamiStudio)** (and **Load demo**, the demo *Copper Kite*) adds Sunsoft's 5B (a YM2149F) as FamiStudio does: **5B Square 1-3** after DPCM. 5B sounds (**Chip: 5B**) sound an octave below a 2A03 pulse on the same note and have volume, arpeggio, pitch, **Mixer** (tone+noise, noise, tone or off per frame) and **Noise** (period 0-31) envelopes, plus a **5B env** page: the chip's hardware envelope (saw, triangle or one-shot shapes; its period follows the note by an octave setting, or is manual). The three squares share one noise and one envelope generator: the highest square sounding such a sound drives them (the Pattern view tags it ENV / NOISE; the song check warns when sounds fight). **Ixx / Jyy** set the envelope period's high / low byte (together on one row for xxyy). Exports: `.nsf` (expansion byte bit 5) and FamiStudio text. Details: docs/BACKENDS.md.
 
 ### NES + VRC6
 

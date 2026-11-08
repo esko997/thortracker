@@ -8,13 +8,17 @@ import kotlin.math.sin
 
 /**
  * FamiStudio 4.5.3's envelope encoding, ported from its exporter (`FamitoneMusicFile.ProcessEnvelope`,
- * `CleanupEnvelopes`, `Envelope.Optimize`, `Envelope.CreateVibratoEnvelope`) so the bytes the engine reads are the
- * ones FamiStudio itself would export. Envelope bytes: a value is byte − 192 (`$80-$FF`), `$01-$7F` holds the
- * previous value that many frames, `$00 n` jumps to index n. Volume envelopes start with their release index,
- * pitch envelopes with the relative flag (`$80`).
+ * `ProcessMixerEnvelope`, `CleanupEnvelopes`, `Envelope.Optimize`, `Envelope.CreateVibratoEnvelope`) so the bytes the
+ * engine reads are the ones FamiStudio itself would export. Envelope bytes: a value is byte − 192 (`$80-$FF`),
+ * `$01-$7F` holds the previous value that many frames, `$00 n` jumps to index n. Volume envelopes start with their
+ * release index, pitch envelopes with the relative flag (`$80`).
  */
 internal object FamiStudioEnvelopes {
-    enum class Kind { VOLUME, ARPEGGIO, DUTY, PITCH }
+    /**
+     * Envelope kinds in the image's directory order (the ordinal is the directory's kind byte): the 2A03 four, then the
+     * 5B's mixer (FamiStudio `S5BMixer`) and noise period (`S5BNoiseFreq`) envelopes.
+     */
+    enum class Kind { VOLUME, ARPEGGIO, DUTY, PITCH, MIXER, NOISE }
 
     /** An envelope as FamiStudio holds it after import and the exporter's clean-up (see [effective]). */
     data class Env(val values: List<Int>, val loop: Int, val release: Int, val relative: Boolean)
@@ -32,14 +36,19 @@ internal object FamiStudioEnvelopes {
      * do: a release needs a loop, loop < release < length; only volume releases), an empty envelope (no values or
      * all at the type's neutral value) replaced by FamiStudio's default, and the exporter's clean-up (`CleanupEnvelopes`,
      * then `Optimize` for non-empty envelopes). Two instruments with equal effective envelopes are "identical" for
-     * FamiStudio's legato rule.
+     * FamiStudio's legato rule. A mixer envelope's neutral value is 2 (tone only: FamiStudio's default, one step).
      */
     fun effective(e: NesEnvelope, kind: Kind, relative: Boolean = false): Env {
-        val zero = if (kind == Kind.VOLUME) 15 else 0
+        val zero = when (kind) {
+            Kind.VOLUME -> 15
+            Kind.MIXER -> MIXER_TONE
+            else -> 0
+        }
         if (e.values.isEmpty() || e.values.all { it == zero }) {
             return when (kind) {
                 Kind.VOLUME -> Env(listOf(15), -1, -1, false)
                 Kind.DUTY -> Env(listOf(0), -1, -1, false)
+                Kind.MIXER -> Env(listOf(MIXER_TONE), -1, -1, false)
                 else -> Env(List(8) { 0 }, -1, -1, false)
             }
         }
@@ -66,13 +75,22 @@ internal object FamiStudioEnvelopes {
 
     /** The bytes FamiStudio exports for instrument envelope [e] of [kind]. */
     fun encode(e: NesEnvelope, kind: Kind, relative: Boolean = false): ByteArray {
-        val env = effective(e, kind, relative)
+        val env = effective(e, kind, relative).let { if (kind == Kind.MIXER) it.copy(values = it.values.map(::mixerBits)) else it }
         return process(env, kind == Kind.VOLUME, kind == Kind.PITCH) ?: when (kind) {
             Kind.VOLUME, Kind.PITCH -> DEFAULT_PITCH_OR_RELEASE_ENV
             Kind.DUTY -> DEFAULT_DUTY_ENV
-            Kind.ARPEGGIO -> DEFAULT_ENV
+            Kind.ARPEGGIO, Kind.MIXER, Kind.NOISE -> DEFAULT_ENV
         }
     }
+
+    /** The mixer value FamiStudio's default (and an empty envelope) plays: tone only. */
+    const val MIXER_TONE = 2
+
+    /**
+     * `ProcessMixerEnvelope`: a mixer value 0-3 (bit 0 tone off, bit 1 noise off) as the engine reads it, tone-off in
+     * bit 0 and noise-off in bit 3, so square n's value shifted left by n gives its bits of the 5B's `$07` register.
+     */
+    fun mixerBits(value: Int): Int = (value and 1) or ((value and 2) shl 2)
 
     /** The arpeggio FamiStudio plays for effect `0xy`: note, +x, +y, looping. */
     fun arpeggio(param: Int): ByteArray =
@@ -142,10 +160,12 @@ internal object FamiStudioEnvelopes {
         return ByteArray(ptr) { data[it].toByte() }
     }
 
-    /** FamiStudio's legato rule (`Channel.CanDisableAttack`, `Instrument.AllEnvelopesAreIdentical`). */
+    /** FamiStudio's legato rule (`Channel.CanDisableAttack`, `Instrument.AllEnvelopesAreIdentical`: every envelope type). */
     fun allIdentical(a: NesInstrument, b: NesInstrument): Boolean =
         effective(a.volume, Kind.VOLUME) == effective(b.volume, Kind.VOLUME) &&
             effective(a.arpeggio, Kind.ARPEGGIO) == effective(b.arpeggio, Kind.ARPEGGIO) &&
             effective(a.pitch, Kind.PITCH, a.pitchRelative) == effective(b.pitch, Kind.PITCH, b.pitchRelative) &&
-            effective(a.duty, Kind.DUTY) == effective(b.duty, Kind.DUTY)
+            effective(a.duty, Kind.DUTY) == effective(b.duty, Kind.DUTY) &&
+            effective(a.mixer, Kind.MIXER) == effective(b.mixer, Kind.MIXER) &&
+            effective(a.noise, Kind.NOISE) == effective(b.noise, Kind.NOISE)
 }

@@ -21,7 +21,8 @@ import org.thortracker.ui.Surface
  * and on an envelope page the shown envelope's length / loop / release / pitch mode, what each channel does with it,
  * and its steps as bars with the loop region and release point; on the DPCM page the shown key's mapping, the
  * sound's mapped keys and the song's samples with the selected one's waveform; on a VRC7 sound's FM page the patch,
- * the sustain overrides and the patch's fields for the modulator and the carrier.
+ * the sustain overrides and the patch's fields for the modulator and the carrier; on a 5B sound's envelope page the
+ * hardware envelope's shape, period mode, octave and period, a drawing of the shape and how the squares share it.
  */
 internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private companion object {
@@ -42,7 +43,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     override fun draw(c: Surface, area: Rect) {
         val s = song
         val ins = NesInstrumentView.sound(s, st) ?: return
-        val kind = NesInstrumentView.kind(st)
+        val kind = NesInstrumentView.kind(s, st)
         val env = kind.of(ins)
         val channels = s.system.channels
         val listen = channels.getOrNull(st.listenChannel)
@@ -88,8 +89,9 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val rowH = ink.unit * 1.5f
         val vx = rx + ink.unit * 6.5f
         var y = top + ink.unit * 0.3f
-        val dpcm = NesInstrumentView.dpcmPage(st)
+        val dpcm = NesInstrumentView.dpcmPage(s, st)
         val fm = NesInstrumentView.fmPage(s, st)
+        val hw = NesInstrumentView.s5bEnvPage(s, st)
         val mapping = if (dpcm) ins.dpcm[st.dpcmKey] else null
         for (r in NesInstrumentView.rows(st, s)) {
             if (r == Row.SLOT || r == Row.STEPS || r in BOX_ROWS || r in NesInstrumentView.FM_PARAMS) continue
@@ -112,7 +114,12 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     NesChip.APU -> "2A03: Pulse 1/2, Triangle, Noise, DPCM"
                     NesChip.VRC6 -> "VRC6: VRC6 Pulse 1/2 and Saw"
                     NesChip.VRC7 -> "VRC7: FM 1-6"
+                    NesChip.S5B -> "5B: 5B Square 1-3"
                 }, rx, vx, y, h, sel, false)
+                Row.ENV_SHAPE -> setting(c, "Shape", NesInstrumentView.s5bRowText(r, ins.s5b), rx, vx, y, h, sel, ins.s5b.shape == S5bShape.OFF)
+                Row.ENV_AUTO -> setting(c, "Period", NesInstrumentView.s5bRowText(r, ins.s5b), rx, vx, y, h, sel, false)
+                Row.ENV_OCTAVE -> setting(c, "Octave", NesInstrumentView.s5bRowText(r, ins.s5b), rx, vx, y, h, sel, !ins.s5b.autoPitch)
+                Row.ENV_PERIOD -> setting(c, "Manual", NesInstrumentView.s5bRowText(r, ins.s5b), rx, vx, y, h, sel, ins.s5b.autoPitch)
                 Row.PATCH -> setting(c, "Patch", when (ins.fm.preset) {
                     Vrc7Presets.CUSTOM -> "Custom: the chip's one programmable patch (shared by all FM channels)"
                     else -> "${Vrc7Presets.NAMES.getOrElse(ins.fm.preset) { "?" }}: built-in (${ins.fm.preset} of 15); edit a field to make it Custom"
@@ -127,8 +134,8 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
                     val name = listen?.name ?: ""
                     ink.label(c, name, vx, y, h, col, true)
-                    val note = if (fm) null else listen?.let {
-                        NesInstrumentView.channelNote(kind, it.kind, ins.chip, ins.sawVolume, NesRules.chip(s.nes.expansion, st.listenChannel))
+                    val note = if (fm || hw) null else listen?.let {
+                        NesInstrumentView.channelNote(kind, it.kind, ins.chip, ins.sawVolume, NesRules.chip(s.nes.expansion, st.listenChannel), ins.s5b.shape)
                     }
                     if (note != null) {
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
@@ -184,13 +191,18 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             drawFm(c, Rect(rx, y + ink.unit * 0.3f, rx + rw, area.bottom - ink.unit * 0.4f), ins.fm, row, col)
             return
         }
+        if (hw) {
+            plot.hide()
+            drawShape(c, Rect(rx, y + ink.unit * 0.3f, rx + rw, area.bottom - ink.unit * 0.4f), ins.s5b, col)
+            return
+        }
         val small = ink.unit * 0.8f
         ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind, ins.chip), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
         y += rowH * 0.85f
 
         // steps
         val plotTop = y + ink.unit * 0.3f
-        if (area.bottom - plotTop > ink.unit * 4f) drawSteps(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), kind, env, listen?.kind, col, row == Row.STEPS, ins.chip)
+        if (area.bottom - plotTop > ink.unit * 4f) drawSteps(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), kind, env, listen?.kind, col, row == Row.STEPS, ins)
         else plot.hide()
     }
 
@@ -209,16 +221,19 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         else -> Palette.DIM
     }
 
-    /** Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys on 2A03 sounds. */
+    /**
+     * Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys on
+     * 2A03 sounds, the FM patch on VRC7 sounds, the hardware envelope on 5B sounds.
+     */
     private fun drawTabs(c: Surface, ins: NesInstrument, r: Rect, listen: org.thortracker.system.ChannelKind?, col: Int) {
         tabs.clear()
         val n = NesInstrumentView.pages(song, st)
         val w = r.width() / n
         for (page in 0 until n) {
-            val k = NesEnvelopeKind.entries.getOrNull(page)
+            val k = NesInstrumentView.pageKind(ins.chip, page)
             val t = Rect(r.left + page * w, r.top, r.left + (page + 1) * w, r.bottom)
             val on = page == st.envelope
-            val ignored = listen != null && k != null && ignores(k, listen)
+            val ignored = listen != null && k != null && ignores(k, listen, ins)
             val color = when {
                 on -> col
                 ignored -> Palette.FAINT
@@ -226,15 +241,85 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             }
             if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
             ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
-            val fmTab = k == NesEnvelopeKind.DUTY && ins.chip == NesChip.VRC7
-            val size = if (fmTab) 0 else k?.of(ins)?.values?.size ?: ins.dpcm.size
-            val name = when {
-                fmTab -> "FM patch"
-                else -> k?.label ?: "DPCM"
+            val size = k?.of(ins)?.values?.size ?: if (ins.chip == NesChip.APU) ins.dpcm.size else 0
+            val name = k?.label ?: when (ins.chip) {
+                NesChip.VRC7 -> "FM patch"
+                NesChip.S5B -> if (ins.s5b.shape == S5bShape.OFF) "5B env" else "5B env ✓"
+                else -> "DPCM"
             }
             val label = if (size == 0) name else "$name ($size)"
             ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
             tabs += t to page
+        }
+    }
+
+    // ---- 5B envelope page: the shape drawn over five ramps, and how the squares share it -------------------------
+
+    /**
+     * The hardware envelope's level over five 32-step ramps from a restart (so repeats and holds both show), the timing
+     * of one ramp, and the sharing rules under it.
+     */
+    private fun drawShape(c: Surface, r: Rect, e: S5bEnvelope, col: Int) {
+        val small = ink.unit * 0.8f
+        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        val titleH = ink.unit * 1.3f
+        val title = when {
+            e.shape == S5bShape.OFF -> "No hardware envelope: the volume envelope sets the level"
+            e.autoPitch -> "${e.shape.label}: ${NesS5b.octaveText(e.shape, e.octave)}"
+            else -> "${e.shape.label}: ${NesS5b.periodText(e.shape, e.period)}"
+        }
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.DIM, size = small)
+        val notes = listOf(
+            "One generator for three squares: the highest square sounding an envelope sound sets shape and period.",
+            "Each note with attack restarts it; legato notes keep it running. Its level replaces the volume envelope and Cxx.",
+        )
+        val lineH = ink.unit * 1.1f
+        val plot = Rect(r.left + ink.unit * 0.5f, r.top + titleH, r.right - ink.unit * 0.5f, r.bottom - lineH * notes.size - ink.unit * 0.3f)
+        if (plot.height() > ink.unit * 1.5f && plot.width() > ink.unit * 4f) {
+            ink.rect(c, plot, Palette.BG)
+            val levels = shapeLevels(e.shape)
+            val dx = plot.width() / levels.size
+            var px = plot.left
+            var py = plot.bottom - plot.height() * levels[0] / 31f
+            for ((i, level) in levels.withIndex()) {
+                val x = plot.left + dx * (i + 1)
+                val y = plot.bottom - plot.height() * level / 31f
+                ink.line(c, px, py, px, y, if (e.shape == S5bShape.OFF) Palette.FAINT else col, ink.dp(2f))
+                ink.line(c, px, y, x, y, if (e.shape == S5bShape.OFF) Palette.FAINT else col, ink.dp(2f))
+                px = x
+                py = y
+            }
+        }
+        var y = r.bottom - lineH * notes.size - ink.unit * 0.2f
+        for (n in notes) {
+            ink.label(c, ink.fit(n, r.width() - ink.unit), r.left + ink.unit * 0.5f, y, lineH, Palette.FAINT, size = small * 0.95f)
+            y += lineH
+        }
+    }
+
+    /** The 5B envelope's levels (0..31) step by step from a restart: 160 steps (five ramps); off: full level. */
+    private fun shapeLevels(shape: S5bShape): IntArray {
+        if (shape == S5bShape.OFF) return IntArray(160) { 31 }
+        val r = shape.register
+        val cont = r and 8 != 0
+        val attack = r and 4 != 0
+        val alternate = r and 2 != 0
+        val hold = r and 1 != 0
+        var up = attack
+        var level = if (attack) 0 else 31
+        var held = false
+        return IntArray(160) { i ->
+            if (i > 0 && !held) {
+                val next = level + if (up) 1 else -1
+                if (next in 0..31) level = next
+                else when {
+                    !cont -> { level = 0; held = true }
+                    hold -> { level = if (attack != alternate) 31 else 0; held = true }
+                    alternate -> up = !up
+                    else -> level = if (up) 0 else 31
+                }
+            }
+            level
         }
     }
 
@@ -304,13 +389,14 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     /**
-     * True when [channel] plays nothing of envelope [kind]: the triangle's volume and duty, the VRC6 saw's duty, every
-     * envelope on DPCM.
+     * True when [channel] plays nothing of envelope [kind] of [ins]: the triangle's volume and duty, the VRC6 saw's duty,
+     * every envelope on DPCM, a 5B sound's volume while its hardware envelope sets the level.
      */
-    private fun ignores(kind: NesEnvelopeKind, channel: org.thortracker.system.ChannelKind) =
+    private fun ignores(kind: NesEnvelopeKind, channel: org.thortracker.system.ChannelKind, ins: NesInstrument) =
         channel == org.thortracker.system.ChannelKind.SAMPLE ||
             channel == org.thortracker.system.ChannelKind.TRIANGLE && (kind == NesEnvelopeKind.DUTY || kind == NesEnvelopeKind.VOLUME) ||
-            channel == org.thortracker.system.ChannelKind.SAW && kind == NesEnvelopeKind.DUTY
+            channel == org.thortracker.system.ChannelKind.SAW && kind == NesEnvelopeKind.DUTY ||
+            ins.chip == NesChip.S5B && kind == NesEnvelopeKind.VOLUME && ins.s5b.shape != S5bShape.OFF
 
     // ---- DPCM page: mapped keys and the song's samples ------------------------------------------------
 
@@ -455,11 +541,12 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     private fun drawSteps(c: Surface, r: Rect, kind: NesEnvelopeKind, env: NesEnvelope, listen: org.thortracker.system.ChannelKind?, col: Int, focused: Boolean,
-                          chip: NesChip) {
+                          ins: NesInstrument) {
+        val chip = ins.chip
         val text = { value: Int -> NesInstrumentView.valueText(kind, value, listen, chip) }
         val title = EnvelopePlot.title(kind.label, env.values, st.envStep, text,
             ctl.keys.label(org.thortracker.editor.Action.EDIT), ctl.keys.label(org.thortracker.editor.Action.UP))
-        plot.draw(c, r, title, kind, env, st.envStep, text, listen != null && ignores(kind, listen), col, focused, cursorColor(), ctl.editHeld,
+        plot.draw(c, r, title, kind, env, st.envStep, text, listen != null && ignores(kind, listen, ins), col, focused, cursorColor(), ctl.editHeld,
             kind.range(chip))
     }
 
@@ -491,7 +578,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private var drawKind = NesEnvelopeKind.VOLUME
 
     override fun down(x: Float, y: Float): Boolean {
-        if (NesInstrumentView.dpcmPage(st)) dpcmDown(x, y)?.let { return it }
+        if (NesInstrumentView.dpcmPage(song, st)) dpcmDown(x, y)?.let { return it }
         fmDown(x, y)?.let { return it }
         tabs.firstOrNull { it.first.contains(x, y) }?.let { (_, k) ->
             NesInstrumentView.showEnvelope(ctl, k)
@@ -506,7 +593,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         if (plot.contains(x, y)) {
             st.instField = NesInstrumentView.rows(st, song).indexOf(Row.STEPS)
             drawSlot = st.instrument
-            drawKind = NesInstrumentView.kind(st)
+            drawKind = NesInstrumentView.kind(song, st)
             drawing = session.beginGesture("Draw ${drawKind.label.lowercase()}")
             drawAt(x, y)
             return true

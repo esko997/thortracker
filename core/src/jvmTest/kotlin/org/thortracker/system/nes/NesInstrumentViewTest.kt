@@ -73,13 +73,13 @@ class NesInstrumentViewTest {
         val ins = { vrc6.song.nes.instruments[0] }
         assertTrue(Row.CHIP in NesInstrumentView.rows(v.state, vrc6.song))
         assertFalse(Row.SAW in NesInstrumentView.rows(v.state, vrc6.song))
-        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(vrc6.song, v.state))
+        assertEquals(NesInstrumentView.DPCM_PAGE + 1, NesInstrumentView.pages(vrc6.song, v.state))
         goTo(Row.CHIP)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(NesChip.VRC6, ins().chip)
         assertEquals(NesRules.VRC6_PULSE1, v.state.listenChannel) // Listen follows to a VRC6 channel
         assertTrue(Row.SAW in NesInstrumentView.rows(v.state, vrc6.song))
-        assertEquals(NesEnvelopeKind.entries.size, NesInstrumentView.pages(vrc6.song, v.state)) // no DPCM page
+        assertEquals(NesInstrumentView.DPCM_PAGE, NesInstrumentView.pages(vrc6.song, v.state)) // no DPCM page
         goTo(Row.SAW)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(Vrc6SawVolume.QUARTER, ins().sawVolume)
@@ -104,6 +104,63 @@ class NesInstrumentViewTest {
         assertEquals(Vrc6SawVolume.HALF, pasted.sawVolume)
         // 2A03 songs refuse the VRC6 chip.
         assertFalse(session.setNesChip(1, NesChip.VRC6))
+    }
+
+    /**
+     * A 5B sound: no duty and no DPCM page; its pages are volume, arpeggio, pitch, mixer, noise and the hardware envelope,
+     * whose rows set the shape, the period mode, the octave (clamped to -8..8) and the period (×2 per coarse step, at
+     * most 65535). Leaving the 5B drops its mixer, noise and envelope.
+     */
+    @Test
+    fun s5bSoundsEditMixerNoiseAndTheHardwareEnvelope() {
+        val s5b = EditorSession(NesS5bSystem.blank())
+        val v = ViewController(s5b, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, s5b.song).indexOf(row) }
+        val ins = { s5b.song.nes.instruments[0] }
+        goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.S5B, ins().chip)
+        assertEquals(NesRules.S5B_SQUARE1, v.state.listenChannel)
+        assertEquals(NesInstrumentView.S5B_ENV_PAGE + 1, NesInstrumentView.pages(s5b.song, v.state))
+        // Page 3 is the mixer: values 0-3, drawn up from the tone default.
+        v.state.envelope = 3
+        assertEquals(NesEnvelopeKind.MIXER, NesInstrumentView.kind(s5b.song, v.state))
+        assertFalse(NesInstrumentView.dpcmPage(s5b.song, v.state))
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(5) { Action.UP })
+        assertEquals(listOf(3), ins().mixer.values)
+        v.hold(Action.EDIT, *Array(5) { Action.DOWN })
+        assertEquals(listOf(0), ins().mixer.values)
+        // Page 4 is the noise period, 0-31 (not the DPCM page on a 5B sound).
+        v.state.envelope = 4
+        assertEquals(NesEnvelopeKind.NOISE, NesInstrumentView.kind(s5b.song, v.state))
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(40) { Action.UP })
+        assertEquals(listOf(31), ins().noise.values)
+        // Page 5: the hardware envelope.
+        v.state.envelope = NesInstrumentView.S5B_ENV_PAGE
+        assertTrue(NesInstrumentView.s5bEnvPage(s5b.song, v.state))
+        assertNull(NesInstrumentView.envelope(s5b.song, v.state))
+        goTo(Row.ENV_SHAPE)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(S5bShape.SAW_DOWN, ins().s5b.shape)
+        goTo(Row.ENV_OCTAVE)
+        v.hold(Action.EDIT, *Array(5) { Action.UP })
+        assertEquals(S5bEnvelope.OCTAVES.last, ins().s5b.octave)
+        goTo(Row.ENV_AUTO)
+        v.tap(Action.EDIT)
+        assertFalse(ins().s5b.autoPitch)
+        goTo(Row.ENV_PERIOD)
+        v.hold(Action.EDIT, *Array(8) { Action.UP })
+        assertEquals(S5bEnvelope.PERIODS.last, ins().s5b.period)
+        v.tap(Action.CLEAR)
+        assertEquals(S5bEnvelope.DEFAULT.period, ins().s5b.period)
+        // Back to 2A03: the 5B's envelopes and settings go.
+        goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertTrue(ins().mixer.values.isEmpty() && ins().noise.values.isEmpty())
+        assertEquals(S5bEnvelope.DEFAULT, ins().s5b)
     }
 
     @Test
@@ -139,11 +196,11 @@ class NesInstrumentViewTest {
         v.hold(Action.EDIT, *Array(10) { Action.UP })
         assertEquals(listOf(3), session.song.nes.instruments[1].duty.values)
         v.tap(Action.NEXT_CHANNEL) // the DPCM page
-        assertTrue(NesInstrumentView.dpcmPage(v.state))
+        assertTrue(NesInstrumentView.dpcmPage(session.song, v.state))
         v.tap(Action.NEXT_CHANNEL) // to volume (wraps)
-        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
+        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(session.song, v.state))
         v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL) // DPCM, duty, pitch
-        assertEquals(NesEnvelopeKind.PITCH, NesInstrumentView.kind(v.state))
+        assertEquals(NesEnvelopeKind.PITCH, NesInstrumentView.kind(session.song, v.state))
         v.goTo(Row.STEPS)
         v.hold(Action.EDIT, *Array(80) { Action.DOWN })
         assertEquals(listOf(-64), session.song.nes.instruments[1].pitch.values)

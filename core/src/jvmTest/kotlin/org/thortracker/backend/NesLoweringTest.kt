@@ -6,8 +6,12 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesExpansion
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.S5bEnvelope
+import org.thortracker.system.nes.S5bShape
 import org.thortracker.system.nes.Vrc6SawVolume
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
@@ -19,9 +23,9 @@ import kotlin.test.assertTrue
 
 /**
  * The image contract of the native `"nes-famistudio"` engines (docs/AUDIO_ENGINE.md, NES image layout), checked on
- * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`): header,
- * envelope directory, instrument table, channel streams of `$41` per order plus `$42`, flat pattern streams with one
- * terminator per row, and the engine-facing numbers of [NesSystem.engine] and [NesVrc6System.engine].
+ * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`, the 5B ones
+ * on `"nes-famistudio-s5b"`): header, envelope directory, instrument tables, channel streams of `$41` per order plus
+ * `$42`, flat pattern streams with one terminator per row, and the engine-facing numbers of each system's engine.
  */
 class NesLoweringTest {
     private fun u16(b: ByteArray, at: Int) = (b[at].toInt() and 0xff) or ((b[at + 1].toInt() and 0xff) shl 8)
@@ -60,7 +64,9 @@ class NesLoweringTest {
         assertTrue(image.copyOfRange(region + size, samplesAt).all { it == 0.toByte() }, "$name: region not zero after the data")
         assertTrue(image.copyOfRange(samplesAt + sampleSize, image.size).all { it == 0.toByte() }, "$name: region not zero after the samples")
         // Every sample list entry points at whole samples inside the sample block.
-        val listAt = u16(image, region + 3) + 4 - base
+        val expansion = song.nes.expansion
+        val head = if (player.expInstruments) 7 else 5
+        val listAt = u16(image, region + head - 2) + 4 - base
         for (k in 0 until u8(image, NesPlayerImage.HEADER_DPCM_COUNT)) {
             val e = region + listAt + 4 * k
             val from = NesPlayerImage.SAMPLE_BASE + 64 * u8(image, e)
@@ -72,7 +78,8 @@ class NesLoweringTest {
         val envCount = u16(image, 16)
         val data = image.copyOfRange(region, region + size)
         fun at(addr: Int) = addr - base
-        // Directory: ascending, non-overlapping, inside the data, lengths 2..255, kinds 0..3; instruments at slot*4+kind.
+        // Directory: ascending, non-overlapping, inside the data, lengths 2..255, kinds 0..3 (the 5B adds mixer 4 and
+        // noise 5); instruments at slot*4+kind, the 5B's mixer and noise at 256+slot*2+0/1.
         var last = 0
         val dir = HashMap<Int, Triple<Int, Int, Int>>()
         for (i in 0 until envCount) {
@@ -81,7 +88,8 @@ class NesLoweringTest {
             if (addr == 0) continue
             val len = u8(image, e + 2)
             val kind = u8(image, e + 3)
-            assertTrue(addr >= last && len in 2..255 && kind in 0..3 && at(addr) + len <= size, "$name: directory entry $i")
+            val kinds = if (expansion == NesExpansion.S5B) 0..5 else 0..3
+            assertTrue(addr >= last && len in 2..255 && kind in kinds && at(addr) + len <= size, "$name: directory entry $i")
             last = addr + len
             dir[addr] = Triple(i, len, kind)
         }
@@ -91,12 +99,32 @@ class NesLoweringTest {
         val instruments = at(u16(data, 1))
         val channels = player.channels
         assertEquals(song.nes.expansion.channels, channels, "$name: a stream per channel")
-        val streams = IntArray(channels) { at(u16(data, 5 + 2 * it)) }
-        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, 5 + 2 * channels))
-        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, 7 + 2 * channels))
+        val streams = IntArray(channels) { at(u16(data, head + 2 * it)) }
+        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, head + 2 * channels))
+        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, head + 2 + 2 * channels))
         for (slot in 0 until NesSystem.SLOTS) for (kind in 0 until 4) {
             val addr = u16(data, instruments + slot * 8 + kind * 2)
             assertEquals(slot * 4 + kind to kind, dir[addr]!!.let { it.first to it.third }, "$name: instrument $slot envelope $kind")
+        }
+        if (player.expInstruments) {
+            // FamiStudio's expansion instruments, one per slot: volume, arpeggio and pitch envelopes first.
+            val exp = at(u16(data, 3))
+            for (slot in 0 until NesSystem.SLOTS) {
+                val e = exp + slot * FamiStudioLowering.EXP_INSTRUMENT_SIZE
+                for ((k, kind) in listOf(0, 1, 3).withIndex()) {
+                    assertEquals(slot * 4 + kind to kind, dir[u16(data, e + 2 * k)]!!.let { it.first to it.third }, "$name: expansion instrument $slot")
+                }
+                if (expansion != NesExpansion.S5B) continue
+                // 5B: mixer and noise envelopes, the shape ($08-$0F or 0), the octave (-8..8, or $80 = manual), the
+                // manual period, two zero bytes; all from the sound.
+                val ins = song.nes.instruments[slot]
+                assertEquals(256 + slot * 2 to 4, dir[u16(data, e + 6)]!!.let { it.first to it.third }, "$name: 5B mixer of $slot")
+                assertEquals(257 + slot * 2 to 5, dir[u16(data, e + 8)]!!.let { it.first to it.third }, "$name: 5B noise of $slot")
+                assertEquals(ins.s5b.shape.register, u8(data, e + 10), "$name: 5B shape of $slot")
+                assertEquals(if (ins.s5b.autoPitch) ins.s5b.octave and 0xff else 0x80, u8(data, e + 11), "$name: 5B octave of $slot")
+                assertEquals(ins.s5b.period, u16(data, e + 12), "$name: 5B period of $slot")
+                assertEquals(0, u16(data, e + 14), "$name: 5B padding of $slot")
+            }
         }
         val arranged = NesSystem.arranged(song)
         val orders = arranged.orders.size
@@ -106,7 +134,7 @@ class NesLoweringTest {
                 assertEquals(0x41, u8(data, s + 4 * o), "$name: channel $c order $o")
                 val n = u8(data, s + 4 * o + 1)
                 val rows = arranged.patterns[arranged.orders[o]].length
-                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base), "$name: channel $c order $o rows")
+                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base, expansion), "$name: channel $c order $o rows")
             }
             assertEquals(0x42, u8(data, s + 4 * orders))
             assertEquals(base + s + 4 * arranged.loopOrder, u16(data, s + 4 * orders + 1))
@@ -114,7 +142,8 @@ class NesLoweringTest {
     }
 
     /** Walks [n] row terminators of a flat pattern stream; returns the rows they cover. Checks opcode limits. */
-    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int): Int {
+    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int, expansion: NesExpansion): Int {
+        val s5b = NesRules.isS5b(expansion, channel)
         var p = start
         var rows = 0
         var terms = 0
@@ -147,11 +176,11 @@ class NesLoweringTest {
                     0x48 -> p++
                     0x4e -> { assertTrue(channel != NesRules.NOISE); p++ }
                     0x4f -> {
-                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW)
-                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(
-                            if (channel >= NesRules.APU_CHANNELS) org.thortracker.system.nes.NesExpansion.VRC6 else org.thortracker.system.nes.NesExpansion.NONE, channel))
+                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW && !s5b)
+                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(expansion, channel))
                     }
                     0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
+                    0x5e -> { assertTrue(s5b && channel == NesRules.S5B_SQUARE1, "5B envelope period off 5B Square 1"); p += 2 }
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -245,6 +274,71 @@ class NesLoweringTest {
         val volumes = ArrayList<Int>()
         for (i in 0 until data.size - 2) if (u8(data, i) == 0x55 && u8(data, i + 2) >= 0x80 && u8(data, i + 2) and 1 == 0) volumes += u8(data, i + 1)
         assertTrue(volumes.containsAll(listOf(0x00, 0x01, 0xff)), volumes.toString())
+    }
+
+    /** The 5B variant: its own engine and image; 5B squares take 5B sounds and reach every note; a blank song's image. */
+    @Test
+    fun s5bEngineNumbers() {
+        val e = NesS5bSystem.engine
+        val base = NesS5bSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("Buzz", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.SAW_DOWN, octave = -2))
+        val song = base.copy(sound = base.nes.copy(instruments = bank))
+        assertEquals("nes-famistudio-s5b", e.id)
+        assertEquals(NesS5bPlayerImage.IMAGE_SIZE, e.imageSize)
+        assertEquals(NesS5bPlayerImage.SONG_BASE, NesPlayer.S5B.songBase)
+        assertEquals(0x20, NesPlayer.S5B.nsfChips)
+        assertEquals(8, NesS5bSystem.channels.size)
+        assertEquals(46, e.note(song, NesRules.S5B_SQUARE1, 57, 2))
+        assertEquals(-5, e.fine(NesRules.S5B_SQUARE1, 57, 5)) // periods, as on the pulses
+        assertEquals(null, e.auditionProblem(song, NesRules.S5B_SQUARE1, 12, 2, 0)) // C-1: 12-bit periods reach it
+        assertTrue(e.auditionProblem(song, NesRules.S5B_SQUARE1, 57, 1, 0)!!.contains("2A03 sound"))
+        assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("5B sound"))
+        val image = ByteArray(e.imageSize)
+        e.lower(song, image)
+        check("s5b blank", song, image)
+        // Effect envelopes start after the 64 slots' mixer and noise envelopes.
+        val lowered = FamiStudioLowering.lower(song)
+        assertEquals(NesS5bPlayerImage.EFFECT_ENVELOPES, lowered.envelopes.filter { it.kind == FamiStudioEnvelopes.Kind.ARPEGGIO }.maxOf { it.index })
+        assertTrue(lowered.envelopes.filter { it.index >= NesS5bPlayerImage.EFFECT_ENVELOPES }.none { it.kind == FamiStudioEnvelopes.Kind.MIXER })
+        // A 5B mixer is FamiStudio's processed bits: tone only (the default) is $08, held.
+        assertContentEquals(byteArrayOf(0xc8.toByte(), 0x7f, 0x00, 0x00), lowered.envelopes.first { it.index == FamiStudioLowering.S5B_ENVELOPES + 2 }.bytes)
+    }
+
+    /**
+     * FamiStudio's 5B envelope period: every `Ixx`/`Jyy` of a row (from any square) is one `$5E lo hi` on Square 1's
+     * stream; the next note with attack on a square that played since reloads its sound (restoring a manual period),
+     * a note on the effect's own row keeps the effect's period.
+     */
+    @Test
+    fun s5bEnvelopePeriodGoesToSquareOneAndReloadsTheSound() {
+        val base = NesS5bSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Tremolo", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
+        val sq1 = NesRules.S5B_SQUARE1
+        val tracks = base.patterns[0].tracks.map { it.toMutableList() }
+        tracks[sq1][0] = Cell(48, 1)
+        tracks[sq1 + 1][2] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_LO, 0x34)
+        tracks[sq1 + 2][2] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_HI, 0x12)
+        tracks[sq1][4] = Cell(52, 1)
+        tracks[sq1][6] = Cell(55, 1)
+        tracks[sq1 + 1][6] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_LO, 0x01)
+        val song = base.copy(patterns = listOf(base.patterns[0].copy(tracks = tracks)), sound = base.nes.copy(instruments = bank))
+        assertEquals(emptyList(), NesS5bSystem.errors(song))
+        val data = FamiStudioLowering.lower(song).data
+        val songBase = NesPlayer.S5B.songBase
+        val order0 = u16(data, u16(data, 7 + 2 * sq1) - songBase + 2) - songBase
+        // Row 0 instrument + C-4; row 1 empty; row 2 $5E $34 $12 (two rows); row 4 the sound again + E-4; row 5 empty;
+        // row 6 $5E $01 $00 and G-4 without the sound.
+        val expected = listOf(0x80, 37 - 12, 0x81, 0x5e, 0x34, 0x12, 0x83, 0x80, 41 - 12, 0x81, 0x5e, 0x01, 0x00, 44 - 12)
+        assertEquals(expected, (expected.indices).map { u8(data, order0 + it) })
+        // Squares 2 and 3 carry no period opcode; the text export puts the combined period on Square 1's notes.
+        val text = FamiStudioText.text(song)
+        assertTrue("EnvelopePeriod=\"4660\"" in text && "EnvelopePeriod=\"1\"" in text, text)
+        assertTrue("S5BEnvelopeShape=\"3\"" in text && "S5BEnvelopeAutoPitch=\"False\"" in text && "S5BEnvelopePitch=\"900\"" in text, text)
+        // Two different high bytes on one row are an error.
+        val clash = tracks.map { it.toMutableList() }.also { it[sq1][2] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_HI, 0x13) }
+        assertTrue(NesS5bSystem.errors(song.copy(patterns = listOf(base.patterns[0].copy(tracks = clash)))).any { "I12 and I13" in it || "I13 and I12" in it })
     }
 
     @Test

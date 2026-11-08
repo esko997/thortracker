@@ -10,7 +10,10 @@ import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.S5bEnvelope
+import org.thortracker.system.nes.S5bShape
 import org.thortracker.system.nes.Vrc6SawVolume
 import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.DpcmMapping
@@ -21,7 +24,8 @@ import org.thortracker.system.nes.DpcmStarterKit
  * Songs whose FamiStudio text export FamiStudio 4.5.3 itself turned into engine data (tools/audio/nes_golden.py):
  * the fixtures in src/jvmTest/resources/nes-golden. Between them they use every NES effect, OFF as release and stop,
  * legato, identical and differing instruments, custom pattern lengths, speed changes on several channels, parked
- * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides.
+ * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides; the 5B
+ * ones its mixer and noise envelopes, every hardware envelope mode and the envelope period effects.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -31,6 +35,8 @@ object NesGoldenSongs {
         "dpcm" to ::dpcm,
         "vrc6_demo" to NesVrc6System::demo,
         "vrc6_effects" to ::vrc6Effects,
+        "s5b_demo" to NesS5bSystem::demo,
+        "s5b_effects" to ::s5bEffects,
     )
 
     private fun n(name: String): Int {
@@ -291,6 +297,92 @@ object NesGoldenSongs {
         b.note(0, 0, "A-4", 7)
         return base.copy(
             title = "VRC6 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * 5B: mixer envelopes over all four settings with loops, noise envelopes, the hardware envelope with saw, triangle
+     * and one-shot shapes at positive, zero and negative auto octaves and a manual period, `Jyy` alone on Square 2 (moved to
+     * Square 1) and the reload of the manual period at Square 1's next note with attack, `Ixx` and `Jyy` combined from
+     * Squares 3 and 2 on a note row (the note keeps it), volume and volume slides, vibrato, slides, arpeggio, fine pitch,
+     * delays, cuts, OFF release and stop, legato between identical sounds, the 5B's lowest and highest notes, the speed
+     * set on a 5B square, and 2A03 channels alongside. One sound has a manual period and only Square 1 plays it.
+     */
+    fun s5bEffects(): Song {
+        val base = NesS5bSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val s5b = NesChip.S5B
+        bank[0] = NesInstrument("Tone lead", volume = NesEnvelope(listOf(13, 12, 11, 10), loop = 3), chip = s5b)
+        bank[1] = NesInstrument("Release tone", volume = NesEnvelope(listOf(15, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), chip = s5b)
+        bank[2] = NesInstrument("Noise snare", volume = NesEnvelope(listOf(14, 11, 9, 7, 5, 3, 1, 0)), chip = s5b,
+            mixer = NesEnvelope(listOf(1, 1, 0, 0, 2)), noise = NesEnvelope(listOf(6, 9, 12, 15, 18)))
+        bank[3] = NesInstrument("Mixer walk", volume = NesEnvelope(listOf(12)), chip = s5b,
+            mixer = NesEnvelope(listOf(0, 0, 1, 1, 2, 2, 3, 3), loop = 0), noise = NesEnvelope(listOf(3, 5, 7), loop = 1))
+        bank[4] = NesInstrument("Buzz saw", chip = s5b, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = true, octave = 4))
+        bank[5] = NesInstrument("Buzz tri neg", chip = s5b, s5b = S5bEnvelope(S5bShape.TRIANGLE_UP, autoPitch = true, octave = -1))
+        bank[6] = NesInstrument("Decay once", chip = s5b, s5b = S5bEnvelope(S5bShape.DECAY, autoPitch = true, octave = 0))
+        bank[7] = NesInstrument("Manual tremolo", chip = s5b, s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
+        bank[8] = NesInstrument("Attack hold", chip = s5b, mixer = NesEnvelope(listOf(2, 0), loop = 1), noise = NesEnvelope(listOf(20)),
+            s5b = S5bEnvelope(S5bShape.ATTACK, autoPitch = true, octave = 2))
+        bank[9] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[10] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        bank[11] = NesInstrument("Tone twin", volume = NesEnvelope(listOf(13, 12, 11, 10), loop = 3), chip = s5b)
+        val sq1 = NesRules.S5B_SQUARE1
+        val sq2 = sq1 + 1
+        val sq3 = sq1 + 2
+        val a = P("5B A", channels = 8)
+        // Square 1: the manual period sound alone in the envelope generator (Squares 2 and 3 play none until row 32).
+        a.note(sq1, 0, "C-4", 8)
+        a.fx(sq2, 8, NesRules.FX_ENV_PERIOD_LO, 0x40) // period $0040 from Square 2, moved to Square 1
+        a.note(sq1, 16, "E-4", 8) // attack after the effect: the sound's own 900 again
+        a.note(sq1, 24, "G-4", 8)
+        a.fx(sq3, 24, NesRules.FX_ENV_PERIOD_HI, 0x03) // with Square 2's J20 below: $0320, kept by this note
+        a.fx(sq2, 24, NesRules.FX_ENV_PERIOD_LO, 0x20)
+        a.note(sq1, 32, "C-5", 1, NesRules.FX_VIBRATO, 0x46)
+        a.note(sq1, 36, "D-5", 12) // identical sound: legato allowed by FamiStudio's rule, attack kept here
+        a.note(sq1, 38, "E-5", 0) // legato
+        a.fx(sq1, 40, NesRules.FX_VIBRATO, 0x00)
+        a.note(sq1, 42, "C-5", 1, NesRules.FX_SLIDE_UP, 0x07)
+        a.note(sq1, 46, "G-5", 1, NesRules.FX_FINE_PITCH, 0x8C)
+        a.note(sq1, 48, "A-4", 2, NesRules.FX_ARPEGGIO, 0x47)
+        a.off(sq1, 52) // release
+        a.off(sq1, 54) // already released: stop
+        a.note(sq1, 56, "C-1", 1) // the 5B's lowest note (12-bit period)
+        a.note(sq1, 60, "B-8", 1, NesRules.FX_NOTE_CUT, 0x03) // its highest
+        // Square 2: the mixer walk with volume and a volume slide, then auto-period envelopes.
+        a.note(sq2, 0, "G-3", 4, NesRules.FX_VOLUME, 0x09)
+        a.note(sq2, 12, "B-3", 4, NesRules.FX_VOLUME_SLIDE, 0xF3)
+        a.fx(sq2, 20, NesRules.FX_VOLUME, 0x0C)
+        a.note(sq2, 32, "E-2", 5) // saw buzz, octave 4
+        a.note(sq2, 40, "E-2", 5, NesRules.FX_SLIDE_DOWN, 0x05)
+        a.note(sq2, 48, "A-2", 6) // triangle up, octave -1
+        a.note(sq2, 56, "A-2", 6, NesRules.FX_NOTE_DELAY, 0x02)
+        // Square 3: noise snare, the speed, a one-shot envelope, the attack-and-hold sound with noise.
+        for (r in listOf(4, 12, 20, 28)) a.note(sq3, r, "D-5", 3)
+        a.fx(sq3, 16, NesRules.FX_SPEED, 0x05)
+        a.note(sq3, 36, "C-4", 7) // decay once, octave 0
+        a.note(sq3, 44, "F-4", 9) // attack, hold, octave 2, tone then tone+noise
+        a.fx(sq3, 50, NesRules.FX_SPEED, 0x04)
+        a.note(sq3, 52, "F-4", 9, NesRules.FX_NOTE_CUT, 0x02)
+        // 2A03 alongside.
+        a.note(0, 0, "E-4", 10)
+        a.note(0, 32, "G-4", 10, NesRules.FX_DUTY, 0x03)
+        a.note(2, 0, "C-3", 10)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 11)
+        val b = P("5B B", length = 32, channels = 8)
+        b.note(sq1, 0, "E-5", 1)
+        b.note(sq1, 16, "C-5", 1)
+        b.off(sq1, 24)
+        b.note(sq2, 0, "A-2", 5)
+        b.note(sq2, 16, "D-3", 4)
+        b.note(sq3, 0, "D-5", 3)
+        b.note(sq3, 8, "D-5", 3)
+        b.note(0, 0, "A-4", 10)
+        return base.copy(
+            title = "5B effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
             sound = base.nes.copy(instruments = bank),
         )

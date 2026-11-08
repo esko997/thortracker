@@ -18,7 +18,9 @@ import org.thortracker.system.nes.NesSound
  * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
  * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`), its instruments of
  * that chip carry `Expansion="VRC6"` and the saw master volume (`Expansion="VRC7"`: the patch, the custom patch's
- * registers and the release/stop overrides), and its channels follow the 2A03's.
+ * registers and the release/stop overrides; `Expansion="S5B"`: the envelope shape, auto-pitch, octave and period, and
+ * the `MixerSettings` and `NoiseFreq` envelopes), its channels follow the 2A03's, and a 5B envelope period is the
+ * `EnvelopePeriod` of 5B Square 1's note.
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -29,7 +31,16 @@ object FamiStudioText {
     private fun channelType(expansion: NesExpansion, c: Int): String = when {
         c < APU_TYPES.size -> APU_TYPES[c]
         expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
+        expansion == NesExpansion.S5B -> "S5BSquare${c - APU_TYPES.size + 1}"
         else -> "VRC7FM${c - APU_TYPES.size + 1}"
+    }
+
+    /** FamiStudio's expansion names (`ExpansionType.InternalNames`). */
+    private fun expansionName(chip: NesChip): String = when (chip) {
+        NesChip.APU -> ""
+        NesChip.VRC6 -> "VRC6"
+        NesChip.VRC7 -> "VRC7"
+        NesChip.S5B -> "S5B"
     }
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
@@ -49,7 +60,7 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else "") +
-            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.chip.label) else ""))
+            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", expansionName(fs.expansion.chip)) else ""))
         val names = instrumentNames(fs)
         val samples = sampleNames(fs, names.keys)
         for ((data, name) in samples) {
@@ -70,6 +81,10 @@ object FamiStudioText {
                     } else "") +
                     attr("Vrc7OverrideRelease", if (ins.fm.sustainRelease) "True" else "False") +
                     attr("Vrc7OverrideStop", if (ins.fm.sustainStop) "True" else "False")
+                // `FamistudioTextFile`: S5BEnvelopeShape 0 (off) or 1-8 = $08-$0F, then auto-pitch, its octave, the period.
+                NesChip.S5B -> attr("Expansion", "S5B") + attr("S5BEnvelopeShape", ins.s5b.shape.famiStudio) +
+                    attr("S5BEnvelopeAutoPitch", if (ins.s5b.autoPitch) "True" else "False") +
+                    attr("S5BEnvelopeAutoPitchOctave", ins.s5b.octave) + attr("S5BEnvelopePitch", ins.s5b.period)
             })
             for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
                 val sample = fs.samples.getOrNull(m.sample) ?: continue
@@ -84,6 +99,10 @@ object FamiStudioText {
             envelope(::line, "Arpeggio", ins.arpeggio, 0, false)
             envelope(::line, "Pitch", ins.pitch, 0, ins.pitchRelative)
             envelope(::line, "DutyCycle", ins.duty, 0, false)
+            if (ins.chip == NesChip.S5B) {
+                envelope(::line, "MixerSettings", ins.mixer, FamiStudioEnvelopes.MIXER_TONE, false)
+                envelope(::line, "NoiseFreq", ins.noise, 0, false)
+            }
         }
         val arpeggios = HashSet<Int>()
         for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.arpeggio >= 0) arpeggios += n.arpeggio
@@ -198,6 +217,7 @@ object FamiStudioText {
                 if (n.noteDelay >= 0) s.append(attr("NoteDelay", n.noteDelay))
                 if (n.cutDelay >= 0) s.append(attr("CutDelay", n.cutDelay))
                 if (n.deltaCounter >= 0) s.append(attr("DeltaCounter", n.deltaCounter))
+                if (n.envelopePeriod >= 0) s.append(attr("EnvelopePeriod", n.envelopePeriod))
             }
             lines += s.toString()
         }

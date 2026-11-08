@@ -19,8 +19,8 @@ object NesRules {
 
     /**
      * The lowest note the 2A03's pulses and triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in
-     * its note table (the triangle sounds it an octave lower). The VRC6's 12-bit periods and the VRC7's frequency
-     * numbers reach every note.
+     * its note table (the triangle sounds it an octave lower). The VRC6's and 5B's 12-bit periods and the VRC7's
+     * frequency numbers reach every note.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
@@ -42,6 +42,9 @@ object NesRules {
     /** The VRC7's first FM channel (FM 1..6 are channels 5..10). */
     const val VRC7_FM1 = 5
 
+    /** The 5B's squares (5B Square 1..3 are channels 5..7); FamiStudio's engine reads envelope periods on the first. */
+    const val S5B_SQUARE1 = 5
+
     /** Channel [ch]'s name in a song with [expansion]. */
     fun channelName(expansion: NesExpansion, ch: Int): String =
         if (ch < APU_CHANNELS) APU_NAMES[ch] else expansion.channelNames.getOrElse(ch - APU_CHANNELS) { "Channel $ch" }
@@ -55,6 +58,9 @@ object NesRules {
 
     /** True for the six FM channels of a VRC7 song. */
     fun isVrc7(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.VRC7 && ch >= VRC7_FM1
+
+    /** True for the three 5B squares of a 5B song. */
+    fun isS5b(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.S5B && ch >= S5B_SQUARE1
 
     /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
     const val MAX_ORDERS = 255
@@ -71,9 +77,12 @@ object NesRules {
     const val FX_FINE_PITCH = 25 // P
     const val FX_SLIDE_UP = 26 // Q
     const val FX_SLIDE_DOWN = 27 // R
-    const val FX_NOTE_CUT = 28 // S
     const val FX_DUTY = 31 // V
     const val FX_DELTA_COUNTER = 35 // Z
+
+    /** 5B: the shared envelope generator's period, high byte (`Ixx`) and low byte (`Jxx`), FamiTracker's letters. */
+    const val FX_ENV_PERIOD_HI = 18 // I
+    const val FX_ENV_PERIOD_LO = 19 // J
 
     /** Zxx: DMC output levels 00-7F. */
     const val DELTA_COUNTER_MAX = 0x7F
@@ -118,6 +127,13 @@ object NesRules {
         EffectSpec(FX_DELTA_COUNTER, "DMC level", "xx: output level 00-7F",
             "DPCM only. Set the DMC output level (FamiStudio's delta counter): with a note, its sample starts from xx " +
                 "instead of its initial value; without a note, at once. A high level makes Triangle and Noise quieter.", true),
+        EffectSpec(FX_ENV_PERIOD_HI, "5B env period high", "xx: period xx00 (with Jyy on the row: xxyy)",
+            "5B squares only. Sets the 5B's shared envelope period (FamiStudio's EnvelopePeriod) to xx × 256, or to xxyy " +
+                "with a Jyy on another 5B square in the same row; it drives sounds with a manual period until a note " +
+                "reloads its sound's own. One step lasts 16 CPU cycles × the period, a ramp 32 steps.", true),
+        EffectSpec(FX_ENV_PERIOD_LO, "5B env period low", "yy: period 00yy (with Ixx on the row: xxyy)",
+            "5B squares only. Sets the 5B's shared envelope period to yy (00-FF: fast envelopes, audible buzzes), or to " +
+                "xxyy with an Ixx on another 5B square in the same row.", true),
     )
 
     /** The duty effect on the VRC6 pulses: eight duties (FamiStudio's `Channel.SupportsEffect`; not on the saw). */
@@ -142,7 +158,7 @@ object NesRules {
     /** The chip whose instruments [channel] plays in a song with [expansion]. */
     fun chip(expansion: NesExpansion, channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else expansion.chip
 
-    /** True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw and the VRC7's FM channels). */
+    /** True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw, the VRC7's FM channels, the 5B squares). */
     fun pitched(expansion: NesExpansion, channel: Int): Boolean = kind(expansion, channel).let {
         it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW || it == ChannelKind.VOICE
     }
@@ -155,17 +171,23 @@ object NesRules {
     fun dutyMax(expansion: NesExpansion, channel: Int): Int =
         if (chip(expansion, channel) == NesChip.VRC6) NesChip.VRC6.duty.last else 3
 
+    /** The 5B's envelope period effects, which exist only on its squares. */
+    private val ENV_PERIOD = setOf(FX_ENV_PERIOD_HI, FX_ENV_PERIOD_LO)
+
     /**
      * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, duty on the VRC6
-     * saw and the VRC7's FM channels, everything but speed, delay, cut and the DMC level on DPCM (FamiStudio's
-     * `Channel.SupportsEffect`), and the DMC level elsewhere.
+     * saw, the VRC7's FM channels and the 5B squares, everything but speed, delay, cut and the DMC level on DPCM
+     * (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, and the 5B envelope period off its squares.
      */
-    private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when (kind(expansion, channel)) {
-        ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER)
-        ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER)
-        ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
-        ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
-        else -> setOf(FX_DELTA_COUNTER)
+    private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when {
+        isS5b(expansion, channel) -> setOf(FX_DUTY, FX_DELTA_COUNTER)
+        else -> ENV_PERIOD + when (kind(expansion, channel)) {
+            ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER)
+            ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER)
+            ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
+            ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
+            else -> setOf(FX_DELTA_COUNTER)
+        }
     }
 
     fun effectsFor(expansion: NesExpansion, channel: Int): List<EffectSpec> = unusable(expansion, channel).let { no ->
@@ -332,14 +354,43 @@ object NesRules {
                 else -> "Duty ${dutyText(NesChip.APU, param)}"
             }
             FX_DELTA_COUNTER -> "DMC level $param"
+            FX_ENV_PERIOD_HI -> "5B envelope period ${NumberText.hex(param, 2)}00 (${param shl 8}; a Jyy in the row sets the low byte)"
+            FX_ENV_PERIOD_LO -> "5B envelope period 00${NumberText.hex(param, 2)} ($param; an Ixx in the row sets the high byte)"
             else -> "Unknown effect"
         }
     }
 
-    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7 sounds have none. */
+    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7 and 5B sounds have none. */
     fun dutyText(chip: NesChip, value: Int): String = when (chip) {
         NesChip.APU -> listOf("12.5%", "25%", "50%", "75%").getOrElse(value) { "?" }
         NesChip.VRC6 -> if (value in NesChip.VRC6.duty) "${value + 1}/16" else "?"
-        NesChip.VRC7 -> "none"
+        NesChip.VRC7, NesChip.S5B -> "none"
+    }
+
+    /**
+     * The 5B envelope period each row of [cells] (one row of every 5B square, in channel order) sets, or -1: `Ixx` gives
+     * the high byte and `Jyy` the low byte, on any squares of the row; a byte without its effect is 0. Null when two
+     * squares give one byte different values (the row is ambiguous; [envPeriodConflict] says why).
+     */
+    fun envPeriod(cells: List<Cell>): Int? {
+        var hi = -1
+        var lo = -1
+        for (c in cells) {
+            if (!c.hasEffect) continue
+            when (c.effect) {
+                FX_ENV_PERIOD_HI -> if (hi >= 0 && hi != c.param) return null else hi = c.param
+                FX_ENV_PERIOD_LO -> if (lo >= 0 && lo != c.param) return null else lo = c.param
+            }
+        }
+        return if (hi < 0 && lo < 0) -1 else (maxOf(hi, 0) shl 8) or maxOf(lo, 0)
+    }
+
+    /** Why one row's 5B cells set the envelope period ambiguously, or null. */
+    fun envPeriodConflict(cells: List<Cell>): String? {
+        if (envPeriod(cells) != null) return null
+        val hi = cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_HI }.map { it.param }.distinct()
+        val which = if (hi.size > 1) hi.map { effectText(FX_ENV_PERIOD_HI, it) } else
+            cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_LO }.map { it.param }.distinct().map { effectText(FX_ENV_PERIOD_LO, it) }
+        return "${which.joinToString(" and ")} set the 5B's one envelope period twice in one row; keep one"
     }
 }
