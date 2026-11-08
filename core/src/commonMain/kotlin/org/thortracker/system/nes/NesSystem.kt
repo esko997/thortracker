@@ -195,7 +195,7 @@ object NesSystem : SoundSystem {
             if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
-            NesDpcm.layout(FsSong.of(song), withUnplayed = true).index[instrument to note]
+            FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
 
         /** The engine's fine pitch adds to the period, so raising the pitch is negative. */
         override fun fine(note: Int, fine: Int): Int = -fine
@@ -257,9 +257,9 @@ object NesSystem : SoundSystem {
             for (p in song.orders.toSet()) for (track in song.patterns[p].tracks) for (cell in track) if (cell.instrument > 0) used += cell.instrument
             add("Instruments" to "${used.size} of $SLOTS used")
             if (NesValidator.errors(song).isEmpty()) {
-                val bytes = FamiStudioLowering.lower(FsSong.of(song)).data.size
-                val room = org.thortracker.backend.NesPlayerImage.SONG_END - org.thortracker.backend.NesPlayerImage.SONG_BASE
-                add("Song data" to "$bytes of $room bytes")
+                val lowered = FamiStudioLowering.lower(FsSong.of(song))
+                // Song data and DPCM samples share $8C00-$FFF9.
+                add("Song data" to "${lowered.data.size} + samples ${lowered.samples.size} of ${Dpcm.REGION} bytes")
             }
         }
     }

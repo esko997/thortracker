@@ -120,7 +120,7 @@ object FamiStudioText {
      * data that [slots]' mappings reference, those the song plays first in [NesDpcm]'s placement order.
      */
     private fun sampleNames(fs: FsSong, slots: Set<Int>): Map<List<Int>, String> {
-        val layout = NesDpcm.layout(fs, withUnplayed = false)
+        val layout = NesDpcm.layout(fs)
         val referenced = slots.flatMap { fs.instruments[it - 1].dpcm.values.map { m -> m.sample } }.filter { it in fs.samples.indices }.sorted()
         val names = LinkedHashMap<List<Int>, String>()
         val taken = HashSet<String>()

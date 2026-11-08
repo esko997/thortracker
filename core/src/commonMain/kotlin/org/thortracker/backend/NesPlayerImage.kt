@@ -17,7 +17,9 @@ object NesPlayerImage {
 
     /** Song region: FamiStudio data placed at [SONG_BASE], at most up to [SONG_END] (exclusive; the samples follow). */
     const val SONG_BASE = 0x8C00
-    const val SONG_END = 0xC000
+    /** End (exclusive) of the region song data and samples share; the vectors follow. */
+    const val REGION_END = 0xFFFA
+    const val REGION_SIZE = 29690
 
     /**
      * Sample region: DPCM samples from [SAMPLE_BASE] up to [SAMPLE_END] (exclusive; vectors follow), each starting on a
@@ -25,7 +27,6 @@ object NesPlayerImage {
      * (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
      */
     const val SAMPLE_BASE = 0xC000
-    const val SAMPLE_END = 0xFFFA
     const val SAMPLE_ALIGN = 64
     const val MAX_SAMPLE_BYTES = 4081
 
@@ -42,6 +43,7 @@ object NesPlayerImage {
 
     /** Header u16 (little-endian): sample bytes used from [SAMPLE_BASE] (zero after). */
     const val HEADER_SAMPLE_SIZE = 22
+    const val HEADER_SAMPLE_START = 24
 
     const val MAX_ENVELOPES = 512
     const val DIRECTORY_SIZE = 2048

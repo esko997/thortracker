@@ -3,6 +3,7 @@ package org.thortracker.backend
 import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
+import org.thortracker.system.nes.Dpcm
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
 import kotlin.math.abs
@@ -86,18 +87,19 @@ internal object FamiStudioLowering {
     }
 
     /**
-     * The lowered song: FamiStudio data for [NesPlayerImage.SONG_BASE], its envelope directory, the sample memory for
-     * [NesPlayerImage.SAMPLE_BASE] and the DPCM sample list's [dpcm] layout ([NesDpcm]).
+     * The lowered song: FamiStudio data for [NesPlayerImage.SONG_BASE], its envelope directory, and the DPCM layout
+     * ([NesDpcm]): the sample block for [NesDpcm.Layout.start] and the sample list.
      */
     class Lowered(val data: ByteArray, val envelopes: List<Envelope>, val instrumentCount: Int, val dpcm: NesDpcm.Layout) {
         val samples: ByteArray get() = dpcm.bytes
+        val sampleStart: Int get() = dpcm.start
         val mappingCount: Int get() = dpcm.entries.size
     }
 
     /**
      * The song as exported: only the samples and mappings it plays. [withUnplayed] (the preview image) adds every other
-     * DPCM mapping that fits, for auditioning.
-     * @throws IllegalArgumentException when the song has errors or its data does not fit the song region.
+     * DPCM mapping that fits, for auditioning, without taking room the song needs.
+     * @throws IllegalArgumentException when the song has errors or its data and samples do not fit the NES memory.
      */
     fun lower(song: Song, withUnplayed: Boolean = false): Lowered {
         val errors = NesSystem.errors(song)
@@ -106,6 +108,14 @@ internal object FamiStudioLowering {
     }
 
     fun lower(fs: FsSong, withUnplayed: Boolean = false): Lowered {
+        val played = lower(fs, NesDpcm.layout(fs))
+        if (!withUnplayed) return played
+        // Unplayed mappings only append list entries and samples: the song's own bytes and entry numbers stay.
+        val preview = NesDpcm.layout(fs, songBytes = played.data.size)
+        return if (preview.entries.size == played.mappingCount && preview.bytes.size == played.samples.size) played else lower(fs, preview)
+    }
+
+    private fun lower(fs: FsSong, dpcm: NesDpcm.Layout): Lowered {
         val base = NesPlayerImage.SONG_BASE
         val out = Bytes()
         // Header: song count, instruments, samples - 4, five channel streams, tempo words.
@@ -141,7 +151,6 @@ internal object FamiStudioLowering {
             at += e.bytes.size
         }
         // FamiStudio's DPCM sample list (`samples:`); the header points 4 bytes before it (entries count from 1).
-        val dpcm = NesDpcm.layout(fs, withUnplayed)
         val samplesAt = at
         at += 4 * dpcm.entries.size
         val bySlot = envelopes.filter { it.index < EFFECT_ENVELOPES_START }.associateBy { it.index }
@@ -172,9 +181,21 @@ internal object FamiStudioLowering {
                 at += bytes.size
             }
         }
-        require(at <= NesPlayerImage.SONG_END - base) {
-            "The song needs $at bytes of NES song data; the player has room for ${NesPlayerImage.SONG_END - base} " +
-                "(\$${NumberText.hex(base, 4)}-\$${NumberText.hex(NesPlayerImage.SONG_END - 1, 4)}). Reuse patterns or shorten the song"
+        val sampleBytes = dpcm.bytes.size
+        require(sampleBytes <= Dpcm.MEMORY) {
+            "The DPCM samples the song plays need $sampleBytes bytes in 64-byte slots; at most ${Dpcm.MEMORY} fit " +
+                "(\$C000-\$FFF9). Use fewer or shorter samples"
+        }
+        val room = (if (sampleBytes == 0) NesPlayerImage.REGION_END else dpcm.start) - base
+        require(at <= room) {
+            if (sampleBytes == 0) {
+                "The song needs ${kb(at)} of NES song data; the player has room for ${kb(room)} " +
+                    "(\$${NumberText.hex(base, 4)}-\$FFF9). Reuse patterns or shorten the song"
+            } else {
+                "Song data ${kb(at)} + DPCM samples ${kb(sampleBytes)} exceed the NES's ${kb(NesPlayerImage.REGION_SIZE)} " +
+                    "(\$${NumberText.hex(base, 4)}-\$FFF9, samples from \$${NumberText.hex(dpcm.start, 4)}). " +
+                    "Reuse patterns, shorten the song or use fewer or shorter samples"
+            }
         }
         out.byte(1)
         out.word(base + instrumentsAt)
@@ -188,7 +209,7 @@ internal object FamiStudioLowering {
         }
         for (e in envelopes) out.bytes(e.bytes)
         check(out.size == samplesAt)
-        for (e in dpcm.entries) for (b in e.bytes()) out.byte(b)
+        for (e in dpcm.entries) for (b in dpcm.entryBytes(e)) out.byte(b)
         for (c in 0 until CHANNELS) {
             check(out.size == channelAt[c])
             for (o in 0 until fs.orders) {
@@ -203,6 +224,9 @@ internal object FamiStudioLowering {
         check(out.size == at)
         return Lowered(out.toByteArray(), envelopes.sortedBy { it.index }, instrumentCount, dpcm)
     }
+
+    /** "20.1 KB (20582 bytes)": sizes in budget messages. */
+    internal fun kb(bytes: Int): String = "${bytes / 1024}.${bytes % 1024 * 10 / 1024} KB ($bytes bytes)"
 
     /** One order's pattern stream of one channel: [bytes] and its number of row terminators. */
     class Chunk(val bytes: ByteArray, val notes: Int)

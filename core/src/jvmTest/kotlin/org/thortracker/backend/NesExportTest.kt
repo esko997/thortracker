@@ -39,10 +39,10 @@ class NesExportTest {
         val lowered = FamiStudioLowering.lower(song)
         val data = lowered.data
         val songAt = NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD
-        val samplesAt = NesPlayerImage.SAMPLE_BASE - NesPlayerImage.LOAD
+        val samplesAt = lowered.sampleStart - NesPlayerImage.LOAD
         assertContentEquals(data, body.copyOfRange(songAt, songAt + data.size))
         assertTrue(body.copyOfRange(songAt + data.size, samplesAt).all { it == 0.toByte() })
-        // The demo plays the starter kit: its samples end the file at $C000.
+        // The demo plays the starter kit: its samples end the file, at the top of \$C000-\$FFF9.
         assertTrue(lowered.samples.isNotEmpty())
         assertContentEquals(lowered.samples, body.copyOfRange(samplesAt, body.size))
         // The same bytes play: the NSF's song is what the tracer (and the preview engine) runs.

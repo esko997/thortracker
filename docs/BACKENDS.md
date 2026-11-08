@@ -129,8 +129,10 @@ muted in the song) stay in the hosts and work for every chip.
 - **Engine:** `m6502.h` (floooh/chips, zlib) and a 2A03 APU written here (`nes/nes_apu.c`: pulse ×2, triangle,
   noise and the DMC with sample playback), band-limited through blip_buf (LGPL-2.1+). The player image is assembled
   once (`tools/audio/prepare_nes_player.py`, committed like hUGEDriver's, with DPCM and the delta counter enabled);
-  the song data is placed at the song region `$8C00-$BFFF` and DPCM samples at `$C000-$FFF9` (no bank switching).
-  Details in `docs/AUDIO_ENGINE.md` (NES section).
+  song data and DPCM samples share `$8C00-$FFF9` (29690 bytes, no bank switching): the song grows up from `$8C00`, the
+  samples sit at the top (64-aligned, never below `$C000`, where the DMC starts reading), and the song must end below
+  them. A song without samples keeps all 29690 bytes (0.9.0 allowed 24570). Details in `docs/AUDIO_ENGINE.md` (NES
+  section).
 - **Model** (`system/nes`): `NesSound` = one bank of 64 `NesInstrument`s (slot n = index n − 1), each four
   `NesEnvelope`s (values, loop, release; FamiStudio ranges: volume 0-15, arpeggio and pitch −64..63, duty 0-3, at most
   256 steps; a release only on volume and only after a loop, as FamiStudio's import enforces) plus the pitch
@@ -147,8 +149,10 @@ muted in the song) stay in the hosts and work for every chip.
   FamiStudio's own import and encoder arithmetic (byte-identical, proven by `DpcmTest` against FamiStudio itself via
   `tools/audio/dpcm_reference.py`; padded to 16n + 1 rather than FamiStudio's default 16n), and `DpcmStarterKit`
   (kick, snare, hat, toms, bass; synthesized in integer arithmetic, so identical on every platform and free of
-  third-party audio). Budgets: the samples a song plays fit `$C000-$FFF9` (each 64-byte aligned) and at most 63
-  distinct mappings (FamiStudio's limit without its extended range); validation names the samples and notes.
+  third-party audio). Budgets: the samples a song plays fit `$C000-$FFF9` in 64-byte slots (at most 16320 bytes), song
+  data plus samples fit the shared 29690 bytes ("Song data 20.1 KB + DPCM samples 9.0 KB exceed the NES's 28.9 KB"),
+  and at most 63 distinct mappings (FamiStudio's limit without its extended range); validation names the samples and
+  notes.
 - **Effects** (one column; codes are the base-36 value of their character): `0xy` arpeggio (a FamiStudio arpeggio
   0, x, y on that note), `4xy` vibrato (speed 1-C, depth 1-F; persists across notes until `400`), `Axy` volume x
   sliding to y by the next volume effect, `Cxx` volume, `Fxx` speed 1-1F, `Gxx` note delay, `Pxx` fine pitch (80 =
@@ -166,9 +170,10 @@ muted in the song) stay in the hosts and work for every chip.
   NTSC/PAL step, as its music export always targets both) — and envelopes are its `ProcessEnvelope` bytes. Its layout
   is ours: instruments and their envelopes in stable slots, `$41` per order, identical order streams stored once;
   each order re-sends its first note's instrument and a held volume so it can be entered by seek, loop or live edit.
-  DPCM (`NesDpcm`) follows FamiStudio's packing: the samples the song plays in sample order from `$C000`, each padded
-  with `$55` to 64 bytes (identical data stored once), and a 4-byte sample list entry per distinct mapping; a DPCM
-  note is its entry number. The preview image also holds the mappings the song does not play, while they fit, so the
+  DPCM (`NesDpcm`) follows FamiStudio's packing: the samples the song plays in sample order, each padded with `$55` to
+  64 bytes (identical data stored once), as one block placed at the top of `$C000-$FFF9`, and a 4-byte sample list entry
+  per distinct mapping; a DPCM note is its entry number. The preview image also holds the mappings the song does not
+  play while the list, the sample memory and the shared budget have room (they never take room the song needs), so the
   editor can audition them (`PlaybackEngine.note(song, channel, note, instrument)` gives the entry).
 - **Golden test** (`NesGoldenTest`): FamiStudio 4.5.3 imports our text export of four songs (the demo, an effects
   song, an envelope song, a DPCM song) and exports its own data and sample bank (`tools/audio/nes_golden.py`). Our
@@ -177,7 +182,8 @@ muted in the song) stay in the hosts and work for every chip.
   frame through two passes and the loop. Whole-file bytes are not compared: FamiStudio sorts and merges instruments,
   orders envelopes by CRC and compresses streams by a size search, none of which affects what plays.
 - **Export:** `.nsf` (`NsfExporter`: NSF 1, NTSC, no bank switching: the player at `$8000`, the lowered data at
-  `$8C00` and the samples at `$C000`; plays in NSF players and on hardware via flash carts) and FamiStudio's text format
+  `$8C00` and the sample block where the image puts it; plays in NSF players and on hardware via flash carts) and
+  FamiStudio's text format
   (`FamiStudioText`; FamiStudio 4.5.3 opens it, the golden script proves it, and exports it to ca65/asm6/NESASM for
   games; instruments are named "slot name" and carry their DPCM mappings, one `DPCMSample` per distinct sample data,
   one pattern per distinct order content so note durations and releases stay exact).
