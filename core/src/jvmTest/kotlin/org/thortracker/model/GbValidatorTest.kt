@@ -52,29 +52,29 @@ class GbValidatorTest {
     @Test
     fun instrumentWithoutNoteIsNotSilentlyIgnored() {
         assertRejected(wave, Cell(Cell.EMPTY, 2), "without a note")
-        assertAccepted(wave, Cell(66, 0))
+        assertAccepted(wave, Cell(54, 0))
         assertAccepted(wave, Cell(Cell.EMPTY, 0, 0xC, 0x0A))
     }
 
     @Test
     fun effectRulesFollowHugeDriver() {
-        assertAccepted(pulse1, Cell(60, 1, 0x0, 0x47))
-        assertRejected(pulse1, Cell(60, 1, 0x6, 0x01), "6xx")
-        assertRejected(pulse2, Cell(60, 1, 0x1, 0x00), "does nothing")
-        assertRejected(noise, Cell(60, 1, 0x3, 0x10), "not supported on Noise")
-        assertRejected(pulse1, Cell(60, 1, 0x4, 0x30), "depth 0")
-        assertRejected(pulse1, Cell(60, 1, 0x7, 0x00), "never plays")
-        assertAccepted(pulse1, Cell(60, 1, 0x7, 0x02))
-        assertAccepted(pulse2, Cell(60, 1, 0x9, 0xC0))
-        assertAccepted(wave, Cell(60, 1, 0x9, 0x0F))
-        assertRejected(wave, Cell(60, 1, 0x9, 0x10), "only waves 00-0F")
-        assertAccepted(noise, Cell(60, 1, 0x9, 0x08))
-        assertRejected(noise, Cell(60, 1, 0x9, 0x04), "LFSR width")
-        assertRejected(wave, Cell(60, 1, 0xA, 0x01), "not supported on the Wave")
-        assertRejected(pulse1, Cell(60, 1, 0xA, 0x11), "one digit must be 0")
-        assertAccepted(pulse1, Cell(60, 1, 0xA, 0x02))
-        assertRejected(wave, Cell(60, 1, 0xC, 0x1A), "x must be 0")
-        assertAccepted(noise, Cell(60, 1, 0xC, 0x1A))
+        assertAccepted(pulse1, Cell(48, 1, 0x0, 0x47))
+        assertRejected(pulse1, Cell(48, 1, 0x6, 0x01), "6xx")
+        assertRejected(pulse2, Cell(48, 1, 0x1, 0x00), "does nothing")
+        assertRejected(noise, Cell(48, 1, 0x3, 0x10), "not supported on Noise")
+        assertRejected(pulse1, Cell(48, 1, 0x4, 0x30), "depth 0")
+        assertRejected(pulse1, Cell(48, 1, 0x7, 0x00), "never plays")
+        assertAccepted(pulse1, Cell(48, 1, 0x7, 0x02))
+        assertAccepted(pulse2, Cell(48, 1, 0x9, 0xC0))
+        assertAccepted(wave, Cell(48, 1, 0x9, 0x0F))
+        assertRejected(wave, Cell(48, 1, 0x9, 0x10), "only waves 00-0F")
+        assertAccepted(noise, Cell(48, 1, 0x9, 0x08))
+        assertRejected(noise, Cell(48, 1, 0x9, 0x04), "LFSR width")
+        assertRejected(wave, Cell(48, 1, 0xA, 0x01), "not supported on the Wave")
+        assertRejected(pulse1, Cell(48, 1, 0xA, 0x11), "one digit must be 0")
+        assertAccepted(pulse1, Cell(48, 1, 0xA, 0x02))
+        assertRejected(wave, Cell(48, 1, 0xC, 0x1A), "x must be 0")
+        assertAccepted(noise, Cell(48, 1, 0xC, 0x1A))
         assertRejected(pulse1, Cell(Cell.EMPTY, 0, 0xD, 0x00), "D00 does nothing")
         assertRejected(pulse1, Cell(Cell.EMPTY, 0, 0xD, 0x41), "D01-40")
         assertAccepted(pulse1, Cell(Cell.EMPTY, 0, 0xD, 0x40))
@@ -86,12 +86,12 @@ class GbValidatorTest {
     @Test
     fun pitchEffectsAreRejectedOnNoise() {
         for ((effect, param) in listOf(0x0 to 0x37, 0x1 to 0x04, 0x2 to 0x04, 0x3 to 0x10, 0x4 to 0x33)) {
-            assertRejected(noise, Cell(60, 1, effect, param), "not supported on Noise")
-            assertAccepted(pulse1, Cell(60, 1, effect, param))
+            assertRejected(noise, Cell(48, 1, effect, param), "not supported on Noise")
+            assertAccepted(pulse1, Cell(48, 1, effect, param))
             assertTrue(GbSystem.describeEffect(blank, noise, effect, param).endsWith("not supported on Noise"))
         }
-        assertAccepted(noise, Cell(60, 1, 0x0, 0x00))
-        assertAccepted(noise, Cell(60, 1, 0xE, 0x02))
+        assertAccepted(noise, Cell(48, 1, 0x0, 0x00))
+        assertAccepted(noise, Cell(48, 1, 0xE, 0x02))
     }
 
     @Test
@@ -108,11 +108,11 @@ class GbValidatorTest {
     @Test
     fun sweepOnlyOnPulseOne() {
         val song = TestSongs.withPulse(blank, 4, GbInstrument(name = "Zap", sweepTime = 3, sweepShift = 2))
-        assertAccepted(pulse1, Cell(66, 4), song)
-        assertRejected(pulse2, Cell(66, 4), "frequency sweep", song)
+        assertAccepted(pulse1, Cell(54, 4), song)
+        assertRejected(pulse2, Cell(54, 4), "frequency sweep", song)
         // Sweep time without a shift does not change pitch, so it is harmless on Pulse 2.
         val inert = TestSongs.withPulse(blank, 4, GbInstrument(name = "Inert", sweepTime = 3, sweepShift = 0))
-        assertAccepted(pulse2, Cell(66, 4), inert)
+        assertAccepted(pulse2, Cell(54, 4), inert)
     }
 
     @Test
@@ -161,29 +161,29 @@ class GbValidatorTest {
 
     @Test
     fun warningsForTimingThatNeverHappens() {
-        val delayed = TestSongs.withCell(blank, 0, 0, 3, Cell(60, 1, 0x7, 0x06))
+        val delayed = TestSongs.withCell(blank, 0, 0, 3, Cell(48, 1, 0x7, 0x06))
         assertTrue(GbValidator.warnings(delayed).single().contains("note is skipped"))
-        val cut = TestSongs.withCell(blank, 0, 1, 3, Cell(60, 1, 0xE, 0x09))
+        val cut = TestSongs.withCell(blank, 0, 1, 3, Cell(48, 1, 0xE, 0x09))
         assertTrue(GbValidator.warnings(cut).single().contains("nothing is cut"))
         assertEquals(emptyList<String>(), GbValidator.errors(cut))
     }
 
     @Test
     fun noiseNotesOutsideTheAudibleRangeWarn() {
-        // get_note_poly: driver notes 0-3 and 64-67 (cells hold them + 36) give clock shift 14 (LFSR never clocked, Pan Docs NR43);
+        // get_note_poly: driver notes 0-3 and 64-67 (cells hold them + 24) give clock shift 14 (LFSR never clocked, Pan Docs NR43);
         // 68-71 wrap to the same NR43 as E-3.
-        for (note in listOf(0, 3, 64, 67).map { it + 36 }) {
+        for (note in listOf(0, 3, 64, 67).map { it + 24 }) {
             val song = TestSongs.withCell(blank, 0, noise, 0, Cell(note, 1))
             assertTrue(GbValidator.warnings(song).single().contains("plays no noise"))
         }
-        val wrapped = TestSongs.withCell(blank, 0, noise, 0, Cell(106, 1))
+        val wrapped = TestSongs.withCell(blank, 0, noise, 0, Cell(94, 1))
         val warning = GbValidator.warnings(wrapped).single()
         assertTrue(warning.contains("wraps around") && warning.contains("E-3"))
-        for (note in listOf(4, 24, 63).map { it + 36 }) {
+        for (note in listOf(4, 12, 63).map { it + 24 }) {
             assertEquals(emptyList<String>(), GbValidator.warnings(TestSongs.withCell(blank, 0, noise, 0, Cell(note, 1))))
         }
         // The same note numbers are ordinary pitches on the tonal channels.
-        assertEquals(emptyList<String>(), GbValidator.warnings(TestSongs.withCell(blank, 0, pulse1, 0, Cell(106, 1))))
+        assertEquals(emptyList<String>(), GbValidator.warnings(TestSongs.withCell(blank, 0, pulse1, 0, Cell(94, 1))))
     }
 
     @Test
@@ -191,30 +191,30 @@ class GbValidatorTest {
         fun song(vararg cells: Pair<Int, Cell>, channel: Int = pulse1): Song =
             cells.fold(blank) { s, (row, cell) -> TestSongs.withCell(s, 0, channel, row, cell) }
 
-        val afterCut = GbValidator.warnings(song(0 to Cell(60, 1), 4 to Cell(Cell.CUT), 8 to Cell(62, 0)))
+        val afterCut = GbValidator.warnings(song(0 to Cell(48, 1), 4 to Cell(Cell.CUT), 8 to Cell(50, 0)))
         assertTrue(afterCut.single().contains("row 8"))
         assertTrue(afterCut.single().contains("row 4"))
 
-        val afterEffectCut = GbValidator.warnings(song(0 to Cell(60, 1, 0xE, 0x02), 8 to Cell(62, 0)))
+        val afterEffectCut = GbValidator.warnings(song(0 to Cell(48, 1, 0xE, 0x02), 8 to Cell(50, 0)))
         assertTrue(afterEffectCut.single().contains("E02 cut"))
 
-        val atStart = GbValidator.warnings(song(5 to Cell(60, 0), channel = pulse2))
+        val atStart = GbValidator.warnings(song(5 to Cell(48, 0), channel = pulse2))
         assertTrue(atStart.single().contains("start of the song"))
 
         // Legato after a sounding note, a new instrument, or a volume restart is fine.
-        assertEquals(emptyList<String>(), GbValidator.warnings(song(0 to Cell(60, 1), 8 to Cell(62, 0))))
-        assertEquals(emptyList<String>(), GbValidator.warnings(song(0 to Cell(60, 1), 4 to Cell(Cell.CUT), 8 to Cell(62, 2))))
+        assertEquals(emptyList<String>(), GbValidator.warnings(song(0 to Cell(48, 1), 8 to Cell(50, 0))))
+        assertEquals(emptyList<String>(), GbValidator.warnings(song(0 to Cell(48, 1), 4 to Cell(Cell.CUT), 8 to Cell(50, 2))))
         assertEquals(emptyList<String>(), GbValidator.warnings(
-            song(0 to Cell(60, 1), 4 to Cell(Cell.CUT), 6 to Cell(Cell.EMPTY, 0, 0xC, 0x0A), 8 to Cell(62, 0))))
+            song(0 to Cell(48, 1), 4 to Cell(Cell.CUT), 6 to Cell(Cell.EMPTY, 0, 0xC, 0x0A), 8 to Cell(50, 0))))
         // A Cxy after a legato note cannot restart (no trigger bit), so the next legato note is still silent.
-        val stillSilent = GbValidator.warnings(song(0 to Cell(60, 1), 2 to Cell(Cell.CUT), 4 to Cell(61, 0),
-            6 to Cell(Cell.EMPTY, 0, 0xC, 0x0A), 8 to Cell(62, 0)))
+        val stillSilent = GbValidator.warnings(song(0 to Cell(48, 1), 2 to Cell(Cell.CUT), 4 to Cell(49, 0),
+            6 to Cell(Cell.EMPTY, 0, 0xC, 0x0A), 8 to Cell(50, 0)))
         assertEquals(2, stillSilent.size)
         // The order list carries state across patterns: a cut at the end of one silences the next.
         var twoOrders = TestSongs.patterns(2)
-        twoOrders = TestSongs.withCell(twoOrders, 0, wave, 0, Cell(60, 1))
+        twoOrders = TestSongs.withCell(twoOrders, 0, wave, 0, Cell(48, 1))
         twoOrders = TestSongs.withCell(twoOrders, 0, wave, 63, Cell(Cell.CUT))
-        twoOrders = TestSongs.withCell(twoOrders, 1, wave, 0, Cell(60, 0))
+        twoOrders = TestSongs.withCell(twoOrders, 1, wave, 0, Cell(48, 0))
         assertTrue(GbValidator.warnings(twoOrders).single().contains("P1"))
     }
 
@@ -233,7 +233,7 @@ class GbValidatorTest {
     @Test
     fun structuralErrorsAreReportedFirstAndCapped() {
         var junk = blank
-        for (row in 0 until 64) for (ch in 0 until 4) junk = TestSongs.withCell(junk, 0, ch, row, Cell(135))
+        for (row in 0 until 64) for (ch in 0 until 4) junk = TestSongs.withCell(junk, 0, ch, row, Cell(123))
         val errors = GbValidator.structuralErrors(junk)
         assertEquals(GbValidator.MAX_REPORTED + 1, errors.size)
         assertTrue(errors.last().startsWith("...and "))
@@ -294,8 +294,8 @@ class GbValidatorTest {
         val ok = Tuning("24", List(24) { 50.0 * (it + 1) })
         assertEquals(emptyList<String>(), GbValidator.structuralErrors(blank.copy(tuning = ok)))
         val cases = listOf(
-            ok.copy(root = 108) to "root 108",
-            ok.copy(root = 35) to "root 35",
+            ok.copy(root = 96) to "root 96",
+            ok.copy(root = 23) to "root 23",
             ok.copy(root = -1) to "root -1",
             ok.copy(tolerance = 0) to "tolerance 0",
             ok.copy(cents = emptyList()) to "no degrees",
@@ -323,26 +323,26 @@ class GbValidatorTest {
         fun warningsFor(channel: Int, cell: Cell, s: Song = song) = GbValidator.warnings(TestSongs.withCell(s, 0, channel, 10, cell))
 
         assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(tuned.note, 1, 0x4, tuned.detune)))
-        assertEquals(emptyList<String>(), warningsFor(wave, Cell(60, 1)))
+        assertEquals(emptyList<String>(), warningsFor(wave, Cell(48, 1)))
         // A plain note that is itself a tuned pitch keeps its effect slot free for other effects.
-        assertEquals(emptyList<String>(), warningsFor(pulse2, Cell(60, 1, 0x0, 0x47)))
+        assertEquals(emptyList<String>(), warningsFor(pulse2, Cell(48, 1, 0x0, 0x47)))
 
-        val outside = warningsFor(pulse1, Cell(64, 1)).single()
+        val outside = warningsFor(pulse1, Cell(52, 1)).single()
         assertTrue(outside, outside.contains("row 10") && outside.contains("E-5 is outside the song tuning \"Just\""))
         val bent = if (tuned.detune < 15) tuned.detune + 1 else tuned.detune - 1
         assertEquals(-1, map.index(tuned.note, bent))
         val wrongBend = warningsFor(wave, Cell(tuned.note, 1, 0x4, bent)).single()
         assertTrue(wrongBend, wrongBend.contains("Wave row 10") && wrongBend.contains("+$bent is outside"))
-        val occupied = warningsFor(pulse2, Cell(64, 1, 0xC, 0x08)).single()
+        val occupied = warningsFor(pulse2, Cell(52, 1, 0xC, 0x08)).single()
         assertTrue(occupied, occupied.contains("Pulse 2 row 10") && occupied.contains("holds C08"))
-        val vibrato = warningsFor(pulse1, Cell(64, 1, 0x4, 0x13)).single()
+        val vibrato = warningsFor(pulse1, Cell(52, 1, 0x4, 0x13)).single()
         assertTrue(vibrato, vibrato.contains("holds 413"))
 
         // Noise is never tuned, hidden rows are not played and untuned songs never warn.
-        assertEquals(emptyList<String>(), warningsFor(noise, Cell(64, 1)))
+        assertEquals(emptyList<String>(), warningsFor(noise, Cell(52, 1)))
         val short = song.copy(patterns = listOf(song.patterns[0].copy(length = 8)))
-        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(64, 1), short))
-        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(64, 1, 0x4, 0x03), blank))
+        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(52, 1), short))
+        assertEquals(emptyList<String>(), warningsFor(pulse1, Cell(52, 1, 0x4, 0x03), blank))
         // Every note of a 12-equal tuning is plain, so the demo song needs no changes.
         assertEquals(emptyList<String>(), GbValidator.warnings(Songs.demo().copy(tuning = Tuning("12", List(12) { 100.0 * (it + 1) }))))
     }

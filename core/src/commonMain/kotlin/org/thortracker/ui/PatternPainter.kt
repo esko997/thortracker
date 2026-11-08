@@ -3,7 +3,6 @@ package org.thortracker.ui
 import org.thortracker.model.NumberText
 import org.thortracker.editor.Action
 import org.thortracker.editor.ViewController
-import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.cellAt
 import org.thortracker.editor.channelCount
@@ -14,6 +13,7 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Songs
 import org.thortracker.model.Scale
+import org.thortracker.system.EffectSpec
 
 /**
  * Pattern grid: hex row ruler, one lane per channel with note / sound / effect columns, sustain rails
@@ -306,13 +306,13 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     private fun fittedFromText(pattern: Int, ch: Int, row: Int): String {
         val from = session.fittedFrom(pattern, ch, row)?.takeIf { it.note >= 0 } ?: return ""
         val bend = song.system.fine.of(from)?.takeIf { it > 0 }?.let { "+$it" } ?: ""
-        return " · fitted from ${Songs.noteName(from.note)}$bend"
+        return " · fitted from ${song.system.noteName(from.note)}$bend"
     }
 
     /** [zero]: show this 000 as the explicitly chosen effect 0 (arpeggio) rather than as no effect. */
     private fun drawCell(c: Surface, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
         val noteText = when {
-            cell.note >= 0 -> Songs.noteName(cell.note)
+            cell.note >= 0 -> song.system.noteName(cell.note)
             cell.note == Cell.CUT -> "OFF"
             else -> "···"
         }
@@ -325,7 +325,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         ink.mono(c, if (cell.instrument > 0) hex2(cell.instrument) else "··", x + cw * 4, y, rowH, if (cell.instrument > 0) Palette.TEXT else Palette.FAINT)
         val hasFx = cell.hasEffect
         val shown = hasFx || zero
-        ink.mono(c, if (shown) hex1(cell.effect) else "·", x + cw * 7, y, rowH, if (shown) Palette.PLAYHEAD else Palette.FAINT, hasFx)
+        ink.mono(c, if (shown) EffectSpec.textOf(cell.effect) else "·", x + cw * 7, y, rowH, if (shown) Palette.PLAYHEAD else Palette.FAINT, hasFx)
         ink.mono(c, if (shown) hex2(cell.param) else "··", x + cw * 8, y, rowH, if (shown) Palette.DIM else Palette.FAINT)
         if ((cell.note != Cell.EMPTY || cell.instrument != 0 || hasFx) && hasProblem(ch, cell)) {
             ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * 10.2f, y + rowH - ink.dp(1f), Palette.ERROR)
@@ -404,13 +404,13 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 val detune = system.fine.of(cell)
                 val i = tuning.index(cell.note, detune ?: 0)
                 when {
-                    i < 0 && detune == null -> "Note ${Songs.noteName(cell.note)}: untuned, effect slot taken"
-                    i < 0 -> "Note ${Songs.noteName(cell.note)}: outside ${tuning.tuning.name}"
-                    else -> tuning.pitches[i].let { p -> "Note ${Songs.noteName(cell.note)} · ${tuning.label(p)} ${NumberText.fixed(p.error, 1, plus = true)}¢" } +
+                    i < 0 && detune == null -> "Note ${song.system.noteName(cell.note)}: untuned, effect slot taken"
+                    i < 0 -> "Note ${song.system.noteName(cell.note)}: outside ${tuning.tuning.name}"
+                    else -> tuning.pitches[i].let { p -> "Note ${song.system.noteName(cell.note)} · ${tuning.label(p)} ${NumberText.fixed(p.error, 1, plus = true)}¢" } +
                         fittedFromText(s.patternAt(st.order), ch, st.row)
                 }
             }
-            cell.note >= 0 -> "Note ${Songs.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
+            cell.note >= 0 -> "Note ${song.system.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
             cell.note == Cell.CUT -> system.help.offInspector
             else -> "No note: the previous note keeps sounding"
         }
@@ -451,7 +451,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
         if (cell.hasEffect) {
             val info = system.effects.firstOrNull { it.code == cell.effect }
-            ink.label(c, ink.fit("${hex1(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, Palette.PLAYHEAD, true)
+            ink.label(c, ink.fit("${EffectSpec.charOf(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, Palette.PLAYHEAD, true)
             y += line
             for (part in wrap(system.describeEffect(s, ch, cell.effect, cell.param), w, ink.unit * 0.85f)) {
                 ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
@@ -474,7 +474,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             y += line * 0.8f
             for (e in info) {
                 if (y > r.top + r.height() * 0.6f) break
-                ink.label(c, ink.fit("${hex1(e.code)} ${e.name}  ${e.param}", w), x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
+                ink.label(c, ink.fit("${e.char} ${e.name}  ${e.param}", w), x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
                 y += line * 0.8f
             }
         }

@@ -37,7 +37,7 @@ internal fun Song.withPattern(index: Int, pattern: Pattern): Song =
 
 /**
  * A cell normalised to what [system] can represent: notes within its range, sound numbers within its largest bank, a
- * cut or empty note carrying no instrument; effect and parameter within the cell's nibble and byte.
+ * cut or empty note carrying no instrument; effect within the system's codes and parameter within a byte.
  */
 fun normaliseCell(cell: Cell, system: SoundSystem): Cell {
     val note = when {
@@ -46,7 +46,7 @@ fun normaliseCell(cell: Cell, system: SoundSystem): Cell {
         else -> cell.note.coerceIn(system.noteRange)
     }
     val instrument = if (note < 0) 0 else cell.instrument.coerceIn(0, system.banks.maxOf { it.slots })
-    val effect = cell.effect.coerceIn(0, 15)
+    val effect = cell.effect.coerceIn(0, system.effects.maxOf { it.code })
     val param = cell.param.coerceIn(0, 255)
     val out = Cell(note, instrument, effect, param)
     return if (out == cell) cell else out

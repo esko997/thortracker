@@ -7,7 +7,7 @@ import kotlin.math.abs
 object Songs {
     const val ROWS = 64
 
-    /** Highest note any system may use: B-9 (notes count semitones from C-0). */
+    /** Highest note any system may use: B9 in scientific pitch (notes count semitones from C0 = 16.35 Hz; A4 = 57 = 440 Hz). */
     const val NOTE_LIMIT = 119
 
     private val NOTE_NAMES = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-")
@@ -24,11 +24,15 @@ object Songs {
 
     fun blankPattern(song: Song, name: String = "Pattern"): Pattern = Pattern.blank(song.system.channels.size, ROWS, name)
 
-    /** "C-0".."B-9" (semitones from C-0), "---" for no note, "OFF" for an explicit note cut ([Cell.CUT]). */
-    fun noteName(note: Int): String = when {
+    /**
+     * Name of [note] (scientific pitch, 0 = C0) with the octave number raised by [octaveOffset] (a system's naming,
+     * [org.thortracker.system.SoundSystem.nameOctaveOffset]), "---" for no note, "OFF" for an explicit note cut
+     * ([Cell.CUT]). Use the song system's [org.thortracker.system.SoundSystem.noteName].
+     */
+    fun noteName(note: Int, octaveOffset: Int): String = when {
         note == Cell.EMPTY -> "---"
         note == Cell.CUT -> "OFF"
-        note in 0..NOTE_LIMIT -> NOTE_NAMES[note % 12] + (note / 12)
+        note in 0..NOTE_LIMIT -> NOTE_NAMES[note % 12] + (note / 12 + octaveOffset)
         else -> "???"
     }
 

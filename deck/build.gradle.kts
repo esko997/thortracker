@@ -23,6 +23,7 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("third_party/binjgb/src/common.c").asFile,
         engineSrc.file("nes/nes_chip.c").asFile,
         engineSrc.file("nes/nes_machine.c").asFile,
+        engineSrc.file("nes/nes_image.c").asFile,
         engineSrc.file("nes/nes_apu.c").asFile,
         engineSrc.file("third_party/blip_buf/blip_buf.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
@@ -31,7 +32,7 @@ val buildEngine by tasks.registering(Exec::class) {
     val includeDirs = listOf(engineSrc.asFile) +
         listOf("third_party/binjgb/src", "nes", "third_party/chips", "third_party/blip_buf").map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
-    inputs.files(sources, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_apu.h",
+    inputs.files(sources, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h", "nes/nes_apu.h",
         "generated/nes_player_image.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)

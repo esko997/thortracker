@@ -16,7 +16,7 @@ class BuiltInTuningsTest {
         assertEquals(listOf("19-tet.scl", "22-edo.scl", "24-tet.scl", "just-5-limit.scl"), files)
         for (f in files) {
             val t = load(f)
-            assertEquals(f, emptyList<String>(), t.problems(GbSystem.noteRange))
+            assertEquals(f, emptyList<String>(), t.problems(GbSystem))
             assertTrue(f, TuningMap(t, GbSystem).pitches.isNotEmpty())
         }
     }

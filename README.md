@@ -12,7 +12,7 @@ Download the latest APK from the [GitHub Releases page](https://github.com/esko9
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
-The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** starts a new composition.
+The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy or NES) and starts a new composition; **Load demo** asks the same.
 
 ## Steam Deck
 
@@ -51,6 +51,10 @@ Title, tempo, loop point and the order list with a density strip for each patter
 ![Top screen: the Wave view editing wave 5, a 32-step V shape, with Sine, Triangle, Saw, Square, Invert, Shift and Smooth tools. Bottom screen: the Instrument view's Wave bank, with sound 01 Triangle bass using wave 5 at 100% output](docs/media/sound-design-wave-instrument.png)
 
 Fifteen instruments in each of the pulse, wave and noise banks, each with live sliders and a preview of its envelope or waveform, plus sixteen 32-sample wave tables you draw directly or start from a preset shape.
+
+### NES instruments: envelopes
+
+An NES song has one bank of 64 instruments shared by Pulse 1, Pulse 2, Triangle and Noise. Each instrument is four FamiStudio envelopes (volume, arpeggio, pitch and duty), one value per frame, edited with the controller: ↑/↓ choose a row (slot, name, the channel **Listen** plays on, envelope, length, loop, release, pitch mode, then the steps), ←/→ move along the steps, **hold A + ↑/↓** changes a step's value and **hold A + ←/→** carries it to the next step (adding steps at the end). **B** deletes a step, **L1/R1** switch envelope. The loop region and release point are drawn on the steps; a release (volume only) needs a loop. Tabs a channel ignores are greyed for the Listen channel (Triangle has no volume or duty; on Noise, duty picks long or short noise). NES songs have no Wave view; **R2 + →** says so.
 
 ### Sketch: chords and generated phrases
 
@@ -142,11 +146,11 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | Hold B + D-pad | Move or jump without clearing on release |
 | Hold X | Audition without writing |
 | Hold Y + D-pad | Mark a pattern block |
-| L1 / R1 | Change channel, instrument bank, wave or help page |
+| L1 / R1 | Change channel, instrument bank, wave or help page; NES Instrument view: envelope |
 | L2 / R2 alone | No action; chord modifiers only |
 | L2 + A / L2 + B | Undo / redo |
 | R2 + A / B / X / Y | Show Song / Instrument / Sketch / Keyboard on the focused display; the same chord again returns to the previous view |
-| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise |
+| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise (Wave: Game Boy songs only) |
 | L2 + X | Swap complete views, including their cursors and scrolling |
 | Select + X / A / B | Copy / paste / cut |
 | Select + Y | Duplicate |
@@ -279,7 +283,7 @@ Export is `.uge` only. GB-specific editing semantics live in the backend; future
 - Replacing a document retains one previous-project recovery backup. A later replacement overwrites that single slot: use named project files for permanent versions.
 - Unreadable recovery files are quarantined intact rather than replaced in place. The app reports the failure and retained location.
 - Opening a project validates its version and structure before replacing the working document.
-- The next release saves project format 8: the song names its sound system (`backend`, `gb-huge` for the Game Boy), keeps the chip's instruments and waves in its `sound` object, and stores notes counted from C-0 (C-3 = 36). Earlier releases cannot open format 8 files. Format 1-7 projects (all Game Boy songs) still open and upgrade; their `.uge` export is byte-identical. 0.8.2 saved format 7 (per-pattern scale and length, extended scale list, song tuning, the song's scale for new patterns and parked orders); format 1-6 projects read as Chromatic, 64-row, untuned patterns with nothing parked where those fields are absent.
+- The next release saves project format 9: the song names its sound system (`backend`: `gb-huge` for the Game Boy, `nes-famistudio` for the NES), keeps the chip's instruments in its `sound` object, and stores notes in scientific pitch (0 = C0, A4 = 57 = 440 Hz), so a note number is the same pitch on every system; names stay each tracker's own (hUGETracker's C-3 is C2). Earlier releases cannot open format 9 files. Format 1-7 projects (all Game Boy songs) still open and upgrade, as do development builds' format 8 files; their `.uge` export is byte-identical. 0.8.2 saved format 7 (per-pattern scale and length, extended scale list, song tuning, the song's scale for new patterns and parked orders); format 1-6 projects read as Chromatic, 64-row, untuned patterns with nothing parked where those fields are absent.
 - Recovery writes use a separate queue from document-provider I/O, so a stalled external save cannot block recovery of newer edits. Both run off the UI thread.
 - Saving captures the version selected for that operation. If editing continues, the app reports that newer edits remain unsaved. Completing an older save cannot attach its destination to a different document.
 - Android document providers control the durability and atomicity of writes to their own destinations; the app-private recovery copy remains separate.

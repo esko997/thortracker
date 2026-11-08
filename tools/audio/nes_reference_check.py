@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """Compare the native NES machine's output with independent references (developer evidence, not CI).
 
-Inputs come from the host test (tools/audio/run_native_host_test.sh <dir>): <dir>/nes_demo.nsf (the
-player image + demo song as an NSF), <dir>/nes_trace.txt (per-frame APU writes) and <dir>/nes_demo.wav.
+Inputs come from the host test (tools/audio/run_native_host_test.sh <dir>): <dir>/nes_ft.nsf (the
+player image + FamiStudio's export of tools/audio/nes/ft_test.txt as an NSF), <dir>/nes_trace.txt
+(per-frame APU writes; the host test proves the Thor Tracker layout of the song writes the same) and
+<dir>/nes_ft.wav / nes_ft_tonal.wav.
 
   1. CPU reference: py65 (an independent 6502 emulator) runs the NSF's init/play routines with the
      same calling convention and logs APU register writes per frame; they must equal nes_trace.txt.
   2. Audio reference: libgme (Game_Music_Emu: its own 6502 + blargg's Nes_Apu) renders the NSF;
-     its loudness envelope and spectra are compared with nes_demo.wav.
-  3. Optional, with --famistudio <dir of the FamiStudio 4.5.3 Linux release> (needs `dotnet`, e.g.
-     in the ubuntu distrobox): FamiStudio's own WAV export and own NSF export of Shatterhand.fms,
-     compared the same way (FamiStudio's player and NSF kernel are separate code paths from ours).
+     its loudness envelope and spectra are compared with nes_ft.wav.
+  3. FamiStudio 4.5.3 (the pinned Linux release, fetched and verified into the cache by
+     tools/audio/fetch_famistudio.sh, or the release directory given with --famistudio; needs
+     `dotnet`, e.g. in the ubuntu distrobox): FamiStudio's own NSF export of ft_test.txt (its own
+     FamiTracker-tempo NSF kernel and its own data) run in py65 must write the same APU registers
+     frame by frame; FamiStudio's WAV export and libgme rendering its NSF are compared like 2.
 
 Requirements: python3 with numpy and py65 (`python3 -m venv /tmp/nesref && /tmp/nesref/bin/pip install
 numpy py65`), libgme.so.0 (Fedora: game-music-emu, Ubuntu: libgme0).
-Usage: tools/audio/nes_reference_check.py <evidence-dir> [--famistudio DIR]
+Usage: tools/audio/nes_reference_check.py <evidence-dir> [--famistudio DIR]   (DIR overrides the fetched release)
 Exit status 1 if a comparison is below its threshold.
 """
 import argparse
 import ctypes
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +35,7 @@ import numpy as np
 RATE = 48000
 SECONDS = 30
 FRAME_HZ = 1789773 / 29780.5
+FETCH_FAMISTUDIO = Path(__file__).resolve().parent / "fetch_famistudio.sh"
 
 
 def read_trace(path: Path) -> list:
@@ -49,10 +55,24 @@ def py65_trace(nsf: bytes, frames: int) -> list:
     load = nsf[8] | nsf[9] << 8
     init = nsf[10] | nsf[11] << 8
     play = nsf[12] | nsf[13] << 8
+    banks = list(nsf[0x70:0x78])
     mem = ObservableMemory()
     data = nsf[128:]
-    for i, b in enumerate(data):
-        mem[load + i] = b
+    if any(banks):
+        # Bank-switched NSF (FamiStudio's export): 4 KiB banks, the first one padded by load & $FFF.
+        data = bytes(load & 0xFFF) + data
+
+        def map_bank(slot, bank):
+            chunk = data[bank * 4096:(bank + 1) * 4096]
+            for i in range(4096):
+                mem[0x8000 + slot * 4096 + i] = chunk[i] if i < len(chunk) else 0
+
+        for slot, bank in enumerate(banks):
+            map_bank(slot, bank)
+        mem.subscribe_to_write(range(0x5FF8, 0x6000), lambda addr, value: map_bank(addr - 0x5FF8, value))
+    else:
+        for i, b in enumerate(data):
+            mem[load + i] = b
     log = []
 
     def on_write(addr, value):
@@ -175,11 +195,11 @@ def compare(name: str, ours: np.ndarray, ref: np.ndarray) -> dict:
 
 
 def famistudio(app: Path, out: Path) -> tuple:
-    song = app / "Demo Songs" / "Shatterhand.fms"
+    song = Path(__file__).resolve().parent / "nes" / "ft_test.txt"
     cmd = ["dotnet", str(app / "FamiStudio.dll")]
     prefix = [] if shutil.which("dotnet") else ["distrobox", "enter", "ubuntu", "--"]
-    wav, tonal, nsf = (out / "famistudio_shatterhand.wav", out / "famistudio_shatterhand_tonal.wav",
-                       out / "famistudio_shatterhand.nsf")
+    wav, tonal, nsf = (out / "famistudio_ft_test.wav", out / "famistudio_ft_test_tonal.wav",
+                       out / "famistudio_ft_test.nsf")
     export = [str(song), "wav-export"]
     opts = ["-wav-export-rate:48000", f"-wav-export-duration:{SECONDS}"]
     subprocess.run(prefix + cmd + export + [str(wav)] + opts, check=True, capture_output=True)
@@ -193,11 +213,15 @@ def main() -> int:
     ap.add_argument("dir", type=Path)
     ap.add_argument("--famistudio", type=Path)
     args = ap.parse_args()
+    if args.famistudio is None:
+        # Progress goes to stderr (shown); the last stdout line is the release directory.
+        fetched = subprocess.run([str(FETCH_FAMISTUDIO)], stdout=subprocess.PIPE, text=True, check=True).stdout
+        args.famistudio = Path(fetched.splitlines()[-1])
     d = args.dir
     ok = True
 
     ours_trace = read_trace(d / "nes_trace.txt")
-    ref_trace = py65_trace((d / "nes_demo.nsf").read_bytes(), len(ours_trace))
+    ref_trace = py65_trace((d / "nes_ft.nsf").read_bytes(), len(ours_trace))
     mismatch = next((i for i, (a, b) in enumerate(zip(ours_trace, ref_trace)) if a != b), None)
     writes = sum(len(f) for f in ours_trace)
     if mismatch is None:
@@ -206,29 +230,58 @@ def main() -> int:
         ok = False
         print(f"py65 6502 reference: first mismatch at frame {mismatch}:\n  ours {ours_trace[mismatch]}\n  py65 {ref_trace[mismatch]}")
 
-    # Thresholds sit below the agreement of the two references with each other (printed with
-    # --famistudio): noise is random, and every player filters its output differently.
-    ours = read_wav(d / "nes_demo.wav", SECONDS)
-    gme = gme_render(d / "nes_demo.nsf", SECONDS)
+    # Thresholds sit below the agreement of the two references with each other (printed below):
+    # noise is random, and every player filters its output differently. On
+    # ft_test libgme agrees with FamiStudio's own WAV export no better than with ours (strongest
+    # partial in the same pitch class in ~45% of windows for both), so libgme only gets loose bounds;
+    # FamiStudio's WAV export is the strict audio reference.
+    ours = read_wav(d / "nes_ft.wav", SECONDS)
+    gme = gme_render(d / "nes_ft.nsf", SECONDS)
     r = compare("libgme rendering the same NSF", ours, gme)
-    ok &= r["envelope_r"] > 0.85 and r["spectrum_r"] > 0.65
-    tonal = read_wav(d / "nes_demo_tonal.wav", SECONDS)
-    gme_tonal = gme_render(d / "nes_demo.nsf", SECONDS, mute_mask=0x18)
+    ok &= r["envelope_r"] > 0.75 and r["spectrum_r"] > 0.75
+    tonal = read_wav(d / "nes_ft_tonal.wav", SECONDS)
+    gme_tonal = gme_render(d / "nes_ft.nsf", SECONDS, mute_mask=0x18)
     r = compare("pulses + triangle only, libgme on the same NSF", tonal, gme_tonal)
-    ok &= r["envelope_r"] > 0.9 and r["spectrum_r"] > 0.85 and r["peak_pitch_agree"] > 0.85
+    ok &= r["envelope_r"] > 0.75 and r["spectrum_r"] > 0.8
 
-    if args.famistudio:
-        wav, fs_tonal, nsf = famistudio(args.famistudio, d)
-        fs = read_wav(wav, SECONDS)
-        r = compare("FamiStudio 4.5.3 wav-export", ours, fs)
-        ok &= r["envelope_r"] > 0.85
-        fs_t = read_wav(fs_tonal, SECONDS)
-        r = compare("pulses + triangle only, FamiStudio 4.5.3 wav-export", tonal, fs_t)
-        ok &= r["envelope_r"] > 0.9 and r["spectrum_r"] > 0.85 and r["peak_pitch_agree"] > 0.85
-        r = compare("libgme rendering FamiStudio 4.5.3 nsf-export", ours, gme_render(nsf, SECONDS))
-        ok &= r["envelope_r"] > 0.85
-        compare("baseline, reference vs reference: libgme(our NSF) vs FamiStudio wav-export", gme, fs)
-        compare("baseline, reference vs reference, pulses + triangle", gme_tonal, fs_t)
+    wav, fs_tonal, nsf = famistudio(args.famistudio, d)
+    fs_trace = py65_trace(nsf.read_bytes(), len(ours_trace))
+    # FamiStudio's asm export computes slide-note steps for NTSC and PAL together (the larger
+    # step of the two), its NSF export for NTSC only, so the two data sets differ exactly in
+    # those step bytes; frames may then differ only in pulse/triangle period writes.
+    steps = lambda data: re.findall(rb"\x50(.)(.)(.)", data)  # noqa: E731
+    ours_steps = [(m[0][0], m[1][0], m[2][0]) for m in steps(bytes(int(x, 16) for x in re.findall(
+        r"\$([0-9a-f]{2})", (Path(__file__).resolve().parent / "nes" / "ft_test_ca65.s").read_text())))]
+    fs_bytes = nsf.read_bytes()
+    diff_steps = [(f, t, a, next((m[0][0] for m in steps(fs_bytes) if (m[1][0], m[2][0]) == (f, t)), None))
+                  for a, f, t in ours_steps]
+    period = {"4002", "4003", "4006", "4007", "400A", "400B"}
+    differing, other = 0, None
+    for i, (a, b) in enumerate(zip(ours_trace, fs_trace)):
+        if a != b:
+            differing += 1
+            regs = {x.split("=")[0] for x in set(a) ^ set(b)}
+            if not regs <= period and other is None:
+                other = i
+    print("slide steps (from, to, asm export, NSF export): " +
+          ", ".join(f"${f:02X}->${t:02X} ${a:02X}/${n:02X}" for f, t, a, n in diff_steps if n is not None))
+    if other is None:
+        print(f"FamiStudio's own NSF (its kernel + its NTSC data) in py65: {len(ours_trace)} frames, identical APU "
+              f"writes except {differing} frames of pulse/triangle period during slides with a different step")
+    else:
+        ok = False
+        print(f"FamiStudio's own NSF in py65: frame {other} differs beyond slide pitch:\n  ours {ours_trace[other]}\n"
+              f"  FamiStudio {fs_trace[other]}")
+    fs = read_wav(wav, SECONDS)
+    r = compare("FamiStudio 4.5.3 wav-export", ours, fs)
+    ok &= r["envelope_r"] > 0.85
+    fs_t = read_wav(fs_tonal, SECONDS)
+    r = compare("pulses + triangle only, FamiStudio 4.5.3 wav-export", tonal, fs_t)
+    ok &= r["envelope_r"] > 0.9 and r["spectrum_r"] > 0.85 and r["peak_pitch_agree"] > 0.85
+    r = compare("libgme rendering FamiStudio 4.5.3 nsf-export", ours, gme_render(nsf, SECONDS))
+    ok &= r["envelope_r"] > 0.75
+    compare("baseline, reference vs reference: libgme(our NSF) vs FamiStudio wav-export", gme, fs)
+    compare("baseline, reference vs reference, pulses + triangle", gme_tonal, fs_t)
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

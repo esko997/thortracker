@@ -172,7 +172,8 @@ internal object DemoSong {
     private fun n(name: String): Int {
         val index = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-").indexOf(name.substring(0, 2))
         require(index >= 0) { "bad note $name" }
-        return name.substring(2).toInt() * 12 + index
+        // hUGETracker names: octave numbers one above scientific pitch.
+        return (name.substring(2).toInt() - GbSystem.nameOctaveOffset) * 12 + index
     }
 
     private class PatternBuilder(private val title: String) {

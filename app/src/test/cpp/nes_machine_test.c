@@ -1,11 +1,12 @@
-/* Host regression test for the NES machine: the FamiStudio sound engine 4.5.3 player on m6502 +
- * nes_apu, playing FamiStudio's own export of a demo song (nes_demo_song.h), plus APU unit checks
- * against the NESdev-documented behaviour.
+/* Host regression test for the NES machine: the FamiStudio sound engine 4.5.3 player (FamiTracker
+ * tempo) on m6502 + nes_apu, playing FamiStudio's own export of the test song ft_test.txt and the
+ * same rows in the Thor Tracker image layout (nes_ft_song.h): row timing, delays/cuts/releases,
+ * seek, live relocation, audition; plus APU unit checks against the NESdev-documented behaviour.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
- * Writes <dir>/nes_demo.wav (48 kHz stereo), <dir>/nes_trace.txt (per-frame APU register writes)
- * and <dir>/nes_demo.nsf (the same player + song bytes as an NSF, for reference players; see
- * tools/audio/nes_reference_check.py). */
+ * Writes <dir>/nes_ft.wav and nes_ft_tonal.wav (48 kHz stereo, 30 s), <dir>/nes_trace.txt
+ * (per-frame APU register writes) and <dir>/nes_ft.nsf (the player + FamiStudio's export as an NSF,
+ * for reference players; see tools/audio/nes_reference_check.py). */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +16,7 @@
 #include "blip_buf.h"
 #include "chip_engine.h"
 #include "nes_apu.h"
-#include "nes_demo_song.h"
+#include "nes_ft_song.h"
 #include "nes_machine.h"
 
 static int failures = 0;
@@ -33,7 +34,6 @@ static int checks = 0;
 
 #define CPU_HZ 1789773.0
 #define RATE 48000
-#define SONG_FRAMES (NES_DEMO_ORDER_COUNT * NES_DEMO_ROWS_PER_ORDER * NES_DEMO_FRAMES_PER_ROW)
 
 static float g_out[NM_MAX_TICK_FRAMES * 2];
 
@@ -288,15 +288,26 @@ static void test_apu_counters(void) {
 
 /* ---- the player on the machine ------------------------------------------------------------ */
 
-static NesImage g_demo;
+static NesImage g_raw, g_thor, g_moved, g_edited, g_short;
 
-static void build_demo(NesImage* img, int timing) {
-    if (timing) {
-        nm_build_image(img, nes_demo_song, NES_DEMO_SONG_SIZE, 0, NES_DEMO_FRAMES_PER_ROW, NES_DEMO_ROWS_PER_ORDER,
-                       NES_DEMO_ORDER_COUNT, NES_DEMO_LOOP_ORDER);
-    } else {
-        nm_build_image(img, nes_demo_song, NES_DEMO_SONG_SIZE, 0, 0, 0, 0, 0);
-    }
+/* FamiStudio note numbers of ft_test.txt (engine note = FamiStudio C0 = 1). */
+#define NOTE_C2 25
+#define NOTE_C3 37
+#define NOTE_A3 46 /* 440 Hz on a pulse */
+#define NOTE_E4 53
+#define NOTE_B4 60
+#define NOTE_C5 61
+#define NOTE_D5 63
+
+#define FIRST_PASS_ROWS (NES_FT_ORDERS * NES_FT_ROWS)
+#define LOOP_ROWS ((NES_FT_ORDERS - NES_FT_LOOP) * NES_FT_ROWS)
+
+static int load_fixture(NesImage* image, const uint8_t* bytes, size_t size, const char* name) {
+    memset(image, 0, sizeof *image);
+    memcpy(image->bytes, bytes, size);
+    int r = nm_load_image(image);
+    EXPECT(r == 0, "%s loads (%s at %u)", name, image->info.problem ? image->info.problem : "-", image->info.problem_at);
+    return r;
 }
 
 static int note_table_period(NesMachine* m, int index) {
@@ -304,32 +315,124 @@ static int note_table_period(NesMachine* m, int index) {
            nm_peek(m, (uint16_t)(NES_FAMISTUDIO_NOTE_TABLE_MSB + index)) << 8;
 }
 
+/* Straight play of ft_test: (order, row, frames) of row k (k counts rows from the song start
+ * through the loop), at tempo 150 a row lasts its speed in frames. */
+static void song_row(int k, int* order, int* row, int* frames) {
+    if (k >= FIRST_PASS_ROWS) k = NES_FT_LOOP * NES_FT_ROWS + (k - FIRST_PASS_ROWS) % LOOP_ROWS;
+    *order = k / NES_FT_ROWS;
+    *row = k % NES_FT_ROWS;
+    *frames = nes_ft_speed[*order][*row];
+}
+
+static int song_frames(int rows) {
+    int total = 0, o, r, f;
+    for (int k = 0; k < rows; ++k) {
+        song_row(k, &o, &r, &f);
+        total += f;
+    }
+    return total;
+}
+
+/* Frame at which row (order, row) of the first pass starts. */
+static int row_frame(int order, int row) { return song_frames(order * NES_FT_ROWS + row); }
+
 static void test_player_image(NesMachine* m) {
-    printf("player image: entry table and FamiStudio note table\n");
-    EXPECT(nm_start(m, &g_demo, 0, 0, 0) == NM_OK, "demo starts");
+    printf("player image: entry table, FamiTracker tempo, FamiStudio note table\n");
+    int mode;
+    EXPECT(nm_start(m, &g_thor, 0, 0, 0, &mode) == NM_OK, "test song starts");
     EXPECT(nm_peek(m, NES_PLAYER_INIT) == 0x4C && nm_peek(m, NES_PLAYER_PLAY) == 0x4C, "JMP entry table at $8000");
     EXPECT((nm_peek(m, NES_PLAYER_PLAY + 1) | nm_peek(m, NES_PLAYER_PLAY + 2) << 8) == NES_FAMISTUDIO_UPDATE,
            "play entry jumps to famistudio_update");
-    EXPECT(nm_peek(m, NES_FAMISTUDIO_SONG_SPEED) != 0, "famistudio_music_play started the song");
-    /* Index i is A-4 = 440 Hz at 46 (FamiTracker octave naming; note byte n = C-1 + n - 1):
+    EXPECT(nm_peek(m, NES_FAMISTUDIO_SONG_SPEED) == 6 && nm_peek(m, NES_FAMISTUDIO_TEMPO_ACC_HI) == 6,
+           "famistudio_music_play: FamiTracker speed 6, accumulator ready for row 0");
+    EXPECT((nm_peek(m, NES_FAMISTUDIO_TEMPO_STEP_LO) | nm_peek(m, NES_FAMISTUDIO_TEMPO_STEP_HI) << 8) == NES_FT_TEMPO_NTSC,
+           "NTSC tempo step from the song header (tempo 150 = 256)");
+    /* Index i is A440 at 46 (FamiStudio names it A3; Thor Tracker's absolute note is i + 11, A-4):
      * period = clock / (16 f) - 1 rounded. */
     int worst = 0;
     for (int i = 1; i <= 96; ++i) {
-        double f = 440.0 * pow(2.0, (i - 46) / 12.0);
+        double f = 440.0 * pow(2.0, (i - NOTE_A3) / 12.0);
         double exact = CPU_HZ / (16.0 * f) - 1.0;
         int err = (int)lround(fabs(note_table_period(m, i) - exact) * 100);
         if (err > worst) worst = err;
     }
     EXPECT(worst <= 100, "note table within 1 period unit of 12-TET A440 (worst %.2f)", worst / 100.0);
-    EXPECT(note_table_period(m, 46) == 0xFD, "index 46 (A-4) = $0FD, got $%03X", note_table_period(m, 46));
+    EXPECT(note_table_period(m, NOTE_A3) == 0xFD, "index 46 (A440) = $0FD, got $%03X", note_table_period(m, NOTE_A3));
+}
+
+static void test_images(void) {
+    printf("images: Thor layout derived timing and validation\n");
+    const NesImageInfo* t = &g_thor.info;
+    EXPECT(t->layout == NM_LAYOUT_THOR && t->orders == NES_FT_ORDERS && t->loop == NES_FT_LOOP &&
+               t->instruments == NES_FT_INSTRUMENTS,
+           "orders %d loop %d instruments %d", t->orders, t->loop, t->instruments);
+    int rows_ok = 1, speed_ok = 1;
+    for (int o = 0; o < NES_FT_ORDERS; ++o) {
+        rows_ok &= t->rows[o] == NES_FT_ROWS && g_raw.info.rows[o] == NES_FT_ROWS;
+        /* The speed an order starts with is the last speed of the order before (the text's table). */
+        speed_ok &= t->speed[o] == (o ? nes_ft_speed[o - 1][NES_FT_ROWS - 1] : 6);
+    }
+    EXPECT(rows_ok, "rows per order derived from the streams (raw: from the header)");
+    EXPECT(speed_ok, "speed at each order start derived from the $46 opcodes = ft_test.txt");
+    EXPECT(g_short.info.orders == 2 && g_short.info.loop == 1, "short variant: 2 orders, loop 1");
+    EXPECT(g_moved.info.used_count == t->used_count && t->used_count == 33, "33 envelopes in the directory");
+
+    /* Rejections: each corrupts one thing in nes_ft_thor. */
+    static NesImage bad;
+    const uint32_t region = NM_REGION_OFFSET;
+    const uint8_t* s = nm_region(&g_thor);
+    const uint16_t ch0 = nm_rd16(s + 5), ch3 = nm_rd16(s + 11), ch4 = nm_rd16(s + 13);
+    const uint16_t pat0 = nm_rd16(s + (ch0 + 2 - NES_SONG_BASE)), pat4 = nm_rd16(s + (ch4 + 2 - NES_SONG_BASE));
+    const uint16_t pat3 = nm_rd16(s + (ch3 + 2 - NES_SONG_BASE));
+    const uint8_t* dir = g_thor.bytes + NES_IMAGE_HEADER_SIZE;
+    const uint16_t lead_vol = nm_rd16(dir + 4 * (4 * NES_FT_INSTRUMENT_LEAD));
+    const uint16_t lead_len = dir[4 * (4 * NES_FT_INSTRUMENT_LEAD) + 2];
+    struct {
+        uint32_t at;
+        uint8_t value;
+        const char* what;
+    } cases[] = {
+        {0, 'X', "bad magic"},
+        {4, 0, "other player build"},
+        {13, 2, "unknown layout"},
+        {14, 0, "no instruments"},
+        {14, NES_FT_INSTRUMENTS + 1, "instrument table past the data"},
+        {17, 0x03, "envelope count above the directory"},
+        {NES_IMAGE_HEADER_SIZE + 4 * 300, 1, "directory entry beyond the count"},
+        {NES_IMAGE_HEADER_SIZE + 3, 4, "envelope kind 4"},
+        {NES_IMAGE_HEADER_SIZE + 3, NM_KIND_PITCH, "instrument envelope of the wrong kind"},
+        {NES_IMAGE_HEADER_SIZE + 4, dir[0], "overlapping / unordered envelopes"},
+        {region + lead_vol - NES_SONG_BASE + 1, 0xD0, "volume value 16"},
+        {region + lead_vol - NES_SONG_BASE + lead_len - 2, 0xC0, "envelope without a final loop"},
+        {region + lead_vol - NES_SONG_BASE, 5, "release index on a loop code"},
+        {region + 0, 2, "two songs"},
+        {region + ch0 - NES_SONG_BASE, 0x40, "order stream entry is not $41"},
+        {region + ch0 - NES_SONG_BASE + 4 * NES_FT_ORDERS + 1, (uint8_t)(ch0 + 4 * NES_FT_LOOP + 1), "loop between entries"},
+        {region + ch0 - NES_SONG_BASE + 1, 0, "pattern with no entries"},
+        {region + ch4 - NES_SONG_BASE + 1, 2, "entry count past the pattern"},
+        {region + pat4 - NES_SONG_BASE, 0x9D, "DPCM pattern one row short"},
+        {region + pat4 - NES_SONG_BASE, 0x25, "a note on the DPCM channel"},
+        {region + pat0 - NES_SONG_BASE + 1, 0, "speed 0"},
+        {region + pat3 - NES_SONG_BASE, 0x4E, "fine pitch on the noise channel"},
+        {region + pat0 - NES_SONG_BASE + 4, 0xFC, "instrument beyond the table"},
+        {region + pat0 - NES_SONG_BASE + 6, 0x55, "VRC6 opcode"},
+        {region + g_thor.info.size + 3, 1, "bytes after the data size"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        bad = g_thor;
+        bad.bytes[cases[i].at] = cases[i].value;
+        int r = nm_load_image(&bad);
+        EXPECT(r != 0, "rejected: %s", cases[i].what);
+        if (r) printf("  rejected %-40s -> %s (byte %u)\n", cases[i].what, bad.info.problem, bad.info.problem_at);
+    }
+    bad = g_thor;
+    EXPECT(nm_load_image(&bad) == 0, "the unmodified copy still loads");
 }
 
 typedef struct {
     uint16_t period[4]; /* pulse 1/2, triangle timer, noise mode/period */
     uint8_t vol[4];     /* audible level indicator per channel */
 } FrameState;
-
-static FrameState* g_states;
 
 static void capture_state(const NesApu* a, FrameState* s) {
     for (int i = 0; i < 2; ++i) {
@@ -344,53 +447,134 @@ static void capture_state(const NesApu* a, FrameState* s) {
     s->vol[3] = (uint8_t)(a->noise.length ? ((a->noise.ctrl & 0x10) ? (a->noise.ctrl & 15) : a->noise.env.decay) : 0);
 }
 
-/* Longest run of frames where channel `ch` keeps one period audibly (skipping the first 3 frames
- * of the run for attack envelopes). */
-static void longest_run(int ch, int frames, int* start, int* len) {
-    *start = 0;
-    *len = 0;
-    int s = 0;
-    for (int f = 1; f <= frames; ++f) {
-        int same = f < frames && g_states[f].vol[ch] > 0 && g_states[f].period[ch] == g_states[s].period[ch] &&
-                   g_states[s].vol[ch] > 0;
-        if (!same) {
-            if (f - s > *len) {
-                *len = f - s;
-                *start = s;
-            }
-            s = f;
-        }
+/* Per-frame APU writes of a straight play (the reference other runs are compared with). */
+typedef struct {
+    int frames;
+    uint8_t (*w)[512];
+    int* n;
+} Trace;
+
+static void trace_alloc(Trace* t, int frames) {
+    t->frames = frames;
+    t->w = calloc((size_t)frames, 512);
+    t->n = (int*)calloc((size_t)frames, sizeof(int));
+}
+
+static void trace_free(Trace* t) {
+    free(t->w);
+    free(t->n);
+}
+
+static void record(NesMachine* m, Trace* t, int f) { t->n[f] = nm_apu_log(m, t->w[f], 256); }
+
+static int same_frame(const Trace* a, const Trace* b, int f) {
+    return a->n[f] == b->n[f] && !memcmp(a->w[f], b->w[f], (size_t)a->n[f] * 2);
+}
+
+/* First frame in [from, to) where traces differ, or -1. */
+static int first_difference(const Trace* a, const Trace* b, int from, int to) {
+    for (int f = from; f < to; ++f) {
+        if (!same_frame(a, b, f)) return f;
+    }
+    return -1;
+}
+
+static void play_trace(NesMachine* m, const NesImage* image, Trace* t) {
+    int mode;
+    nm_start(m, image, 0, 0, 0, &mode);
+    nm_set_apu_logging(m, 1);
+    for (int f = 0; f < t->frames; ++f) {
+        nm_tick_silent(m);
+        record(m, t, f);
     }
 }
 
-static void test_demo_playback(NesMachine* m, const char* dir) {
-    printf("demo song: FamiStudio's export of Shatterhand \"Final Area\" (%d bytes)\n", NES_DEMO_SONG_SIZE);
-    const int frames = SONG_FRAMES + 600; /* one pass, the loop, and 10 s more */
-    g_states = (FrameState*)calloc((size_t)frames + 1, sizeof *g_states);
-    uint8_t (*trace)[512] = calloc((size_t)frames, 512);
-    int* trace_len = (int*)calloc((size_t)frames, sizeof(int));
-    float* wav = (float*)malloc(sizeof(float) * 2 * NM_MAX_TICK_FRAMES * 60 * 30);
-    EXPECT(nm_start(m, &g_demo, 0, 0, 0) == NM_OK, "start");
+static void write_evidence(NesMachine* m, const char* dir, const Trace* raw) {
+    char path[512];
+    static float wav[NM_MAX_TICK_FRAMES * 2 * 60 * 30];
+    int mode;
+    for (int tonal = 0; tonal < 2; ++tonal) {
+        nm_start(m, &g_raw, 0, 0, 0, &mode);
+        if (tonal) nm_mute_channel(m, 3, 1);
+        int frames = 0;
+        for (int f = 0; f < 60 * 30; ++f) {
+            int n = nm_tick(m, wav + 2 * frames);
+            frames += n > 0 ? n : 0;
+        }
+        snprintf(path, sizeof path, "%s/%s", dir, tonal ? "nes_ft_tonal.wav" : "nes_ft.wav");
+        write_wav(path, wav, frames);
+        if (!tonal) printf("  wrote %s (%.1f s)\n", path, frames / (double)RATE);
+    }
+    snprintf(path, sizeof path, "%s/nes_trace.txt", dir);
+    FILE* ft = fopen(path, "w");
+    if (ft) {
+        fprintf(ft, "# frame: APU writes as reg=value (hex), FamiStudio %s player (FamiTracker tempo), ft_test\n", "4.5.3");
+        for (int f = 0; f < raw->frames; ++f) {
+            fprintf(ft, "%d:", f);
+            for (int i = 0; i < raw->n[f]; ++i) fprintf(ft, " 40%02X=%02X", raw->w[f][2 * i], raw->w[f][2 * i + 1]);
+            fprintf(ft, "\n");
+        }
+        fclose(ft);
+    }
+    snprintf(path, sizeof path, "%s/nes_ft.nsf", dir);
+    FILE* fn = fopen(path, "wb");
+    if (fn) {
+        uint8_t h[128];
+        memset(h, 0, sizeof h);
+        memcpy(h, "NESM\x1A", 5);
+        h[5] = 1;                 /* version */
+        h[6] = 1;                 /* songs */
+        h[7] = 1;                 /* starting song */
+        h[8] = 0x00, h[9] = 0x80; /* load */
+        h[10] = (uint8_t)NES_PLAYER_INIT, h[11] = (uint8_t)(NES_PLAYER_INIT >> 8);
+        h[12] = (uint8_t)NES_PLAYER_PLAY, h[13] = (uint8_t)(NES_PLAYER_PLAY >> 8);
+        strcpy((char*)h + 0x0E, "Thor Tracker NES test");
+        strcpy((char*)h + 0x2E, "Thor Tracker");
+        strcpy((char*)h + 0x4E, "FamiStudio 4.5.3 engine");
+        h[0x6E] = 0xFF, h[0x6F] = 0x40; /* 16639 us: the NTSC frame rate, as FamiStudio's NSF export */
+        h[0x78] = 0x20, h[0x79] = 0x4E; /* PAL speed (unused) */
+        fwrite(h, 1, sizeof h, fn);
+        static uint8_t body[NES_SONG_BASE - 0x8000 + NES_FT_RAW_SIZE];
+        memset(body, 0, sizeof body);
+        memcpy(body, nes_player_code, NES_PLAYER_SIZE);
+        memcpy(body + (NES_SONG_BASE - 0x8000), nes_ft_raw, NES_FT_RAW_SIZE);
+        fwrite(body, 1, sizeof body, fn);
+        fclose(fn);
+    }
+}
+
+static void test_playback(NesMachine* m, const char* dir) {
+    const int pass_rows = FIRST_PASS_ROWS + 2 * LOOP_ROWS;
+    const int frames = song_frames(pass_rows);
+    printf("FamiStudio's FamiTracker-tempo export of ft_test.txt: %d rows (first pass + 2 loops), %d frames\n", pass_rows,
+           frames);
+    Trace raw, thor;
+    trace_alloc(&raw, frames);
+    trace_alloc(&thor, frames);
+    play_trace(m, &g_raw, &raw);
+    int mode;
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
     nm_set_apu_logging(m, 1);
-    int faults = 0, min_n = 1 << 30, max_n = 0, wav_frames = 0, nans = 0;
+    static FrameState states[8192];
+    static int pos[8192][3];
+    static uint8_t note0[8192], note2[8192], env0[8192];
+    int faults = 0, min_n = 1 << 30, max_n = 0, nans = 0, writes = 0;
     uint32_t worst_call = 0;
     double sum2 = 0, peak = 0, t0 = now_us();
     uint64_t hash = 0xCBF29CE484222325ull;
     for (int f = 0; f < frames; ++f) {
-        int order, row, tick;
-        nm_position(m, &order, &row, &tick);
-        int expect = f % SONG_FRAMES;
-        if (f == 0 || f == 477 || f == SONG_FRAMES + 5) {
-            EXPECT(order == expect / 144 && row == (expect % 144) / 9 && tick == expect % 9,
-                   "position at frame %d: %d/%d/%d", f, order, row, tick);
-        }
-        capture_state(nm_apu(m), &g_states[f]);
+        nm_position(m, &pos[f][0], &pos[f][1], &pos[f][2]);
         int n = nm_tick(m, g_out);
         if (n <= 0) {
             ++faults;
             break;
         }
-        trace_len[f] = nm_apu_log(m, trace[f], 256);
+        record(m, &thor, f);
+        writes += thor.n[f];
+        capture_state(nm_apu(m), &states[f]);
+        note0[f] = nm_peek(m, NES_FAMISTUDIO_CHN_NOTE + 0);
+        note2[f] = nm_peek(m, NES_FAMISTUDIO_CHN_NOTE + 2);
+        env0[f] = nm_peek(m, NES_FAMISTUDIO_ENV_VALUE + 0);
         if (nm_last_call_cycles(m) > worst_call) worst_call = nm_last_call_cycles(m);
         if (n < min_n) min_n = n;
         if (n > max_n) max_n = n;
@@ -401,143 +585,61 @@ static void test_demo_playback(NesMachine* m, const char* dir) {
             if (v > peak) peak = v;
             sum2 += g_out[i] * g_out[i];
         }
-        if (f < 60 * 30) {
-            memcpy(wav + 2 * wav_frames, g_out, sizeof(float) * 2 * (size_t)n);
-            wav_frames += n;
-        }
     }
     double per_tick = (now_us() - t0) / frames;
-    EXPECT(faults == 0, "no driver faults over %d frames", frames);
-    EXPECT(nans == 0, "no NaN samples");
+    EXPECT(faults == 0 && nans == 0, "no driver faults or NaNs over %d frames", frames);
     EXPECT(min_n >= 798 && max_n <= 800, "48 kHz frames per 60.1 Hz tick in [798, 800] (got %d..%d)", min_n, max_n);
     double rms = sqrt(sum2 / (2.0 * frames * 798.7));
-    EXPECT(rms > 0.05 && peak < 1.0, "non-silent, unclipped: rms %.4f peak %.4f", rms, peak);
+    EXPECT(rms > 0.03 && peak < 1.0, "non-silent, unclipped: rms %.4f peak %.4f", rms, peak);
     EXPECT(worst_call < 29780 / 4, "engine frame within a quarter frame (worst %u cycles)", worst_call);
+    EXPECT(writes > frames * 4, "engine writes the APU every frame (%d writes)", writes);
     printf("  rms %.4f, peak %.4f, worst engine frame %u CPU cycles, %.1f us per tick (%.0fx realtime)\n", rms, peak,
            worst_call, per_tick, 16639.0 / per_tick);
 
-    /* The song loops after order_count * rows * frames_per_row frames: same writes as the first pass. */
-    int loop_ok = 1;
-    for (int f = 200; f < 600; ++f) {
-        if (trace_len[f] != trace_len[f + SONG_FRAMES] ||
-            memcmp(trace[f], trace[f + SONG_FRAMES], (size_t)trace_len[f] * 2) != 0) {
-            loop_ok = 0;
-            printf("  loop mismatch at frame %d\n", f);
-            break;
-        }
-    }
-    EXPECT(loop_ok, "register writes repeat with the %d-frame song period (timing metadata matches the engine)", SONG_FRAMES);
+    /* The layout plays FamiStudio's own rows: the same register writes as FamiStudio's export. */
+    int d = first_difference(&raw, &thor, 0, frames);
+    EXPECT(d < 0, "Thor layout writes the same APU registers as FamiStudio's export, all %d frames (first difference %d)",
+           frames, d);
 
-    /* Note pitches written by the engine: most sounding pulse frames sit exactly on note-table periods. */
-    int on_table = 0, sounding = 0;
-    for (int f = 0; f < SONG_FRAMES; ++f) {
-        for (int ch = 0; ch < 2; ++ch) {
-            if (!g_states[f].vol[ch]) continue;
-            ++sounding;
-            for (int i = 1; i <= 96; ++i) {
-                if (note_table_period(m, i) == g_states[f].period[ch]) {
-                    ++on_table;
-                    break;
-                }
-            }
-        }
-    }
-    EXPECT(sounding > SONG_FRAMES / 2 && on_table * 10 >= sounding * 5,
-           "pulse periods on the note table in %d of %d sounding frames", on_table, sounding);
-    printf("  pulse periods on the FamiStudio note table: %d / %d sounding frames\n", on_table, sounding);
-
-    int writes = 0, w4003 = 0;
+    /* Rows: every row starts on the frame FamiTracker tempo gives it (speed per row from the text), in
+     * play order through the loop; position() predicts the row with tick 0 the frame before. */
+    int k = 0, bad_rows = 0, row_start = 0;
     for (int f = 0; f < frames; ++f) {
-        writes += trace_len[f];
-        for (int i = 0; i < trace_len[f]; ++i) w4003 += trace[f][2 * i] == 0x03;
-    }
-    EXPECT(writes > frames * 4, "engine writes the APU every frame (%d writes)", writes);
-    printf("  %d APU writes, %d to $4003 (FamiStudio avoids phase resets)\n", writes, w4003);
-
-    /* Write the evidence: WAVs (full mix, and pulse + triangle only for waveform comparisons
-     * without the random noise channel), trace, NSF. */
-    char path[512];
-    snprintf(path, sizeof path, "%s/nes_demo.wav", dir);
-    write_wav(path, wav, wav_frames);
-    printf("  wrote %s (%.1f s)\n", path, wav_frames / (double)RATE);
-    nm_start(m, &g_demo, 0, 0, 0);
-    nm_mute_channel(m, 3, 1);
-    nm_mute_channel(m, 4, 1);
-    wav_frames = 0;
-    for (int f = 0; f < 60 * 30; ++f) {
-        int n = nm_tick(m, wav + 2 * wav_frames);
-        wav_frames += n > 0 ? n : 0;
-    }
-    nm_mute_channel(m, 3, 0);
-    nm_mute_channel(m, 4, 0);
-    snprintf(path, sizeof path, "%s/nes_demo_tonal.wav", dir);
-    write_wav(path, wav, wav_frames);
-    snprintf(path, sizeof path, "%s/nes_trace.txt", dir);
-    FILE* ft = fopen(path, "w");
-    if (ft) {
-        fprintf(ft, "# frame: APU writes as reg=value (hex), FamiStudio %s player, demo song\n", "4.5.3");
-        for (int f = 0; f < frames; ++f) {
-            fprintf(ft, "%d:", f);
-            for (int i = 0; i < trace_len[f]; ++i) fprintf(ft, " 40%02X=%02X", trace[f][2 * i], trace[f][2 * i + 1]);
-            fprintf(ft, "\n");
+        if (pos[f][2] == 0) {
+            int o, r, len;
+            song_row(k, &o, &r, &len);
+            if (pos[f][0] != o || pos[f][1] != r || f != row_start) {
+                if (bad_rows++ < 3) printf("  row %d: frame %d at %d/%d, expected %d/%d at frame %d\n", k, f, pos[f][0], pos[f][1], o, r, row_start);
+            }
+            row_start += len;
+            ++k;
+        } else if (f > 0 && (pos[f][0] != pos[f - 1][0] || pos[f][1] != pos[f - 1][1] || pos[f][2] != pos[f - 1][2] + 1)) {
+            ++bad_rows;
         }
-        fclose(ft);
     }
-    snprintf(path, sizeof path, "%s/nes_demo.nsf", dir);
-    FILE* fn = fopen(path, "wb");
-    if (fn) {
-        uint8_t h[128];
-        memset(h, 0, sizeof h);
-        memcpy(h, "NESM\x1A", 5);
-        h[5] = 1;                /* version */
-        h[6] = 1;                /* songs */
-        h[7] = 1;                /* starting song */
-        h[8] = 0x00, h[9] = 0x80; /* load */
-        h[10] = (uint8_t)NES_PLAYER_INIT, h[11] = (uint8_t)(NES_PLAYER_INIT >> 8);
-        h[12] = (uint8_t)NES_PLAYER_PLAY, h[13] = (uint8_t)(NES_PLAYER_PLAY >> 8);
-        strcpy((char*)h + 0x0E, "Final Area");
-        strcpy((char*)h + 0x2E, "Shatterhand (FamiStudio demo)");
-        strcpy((char*)h + 0x4E, "Thor Tracker NES spike");
-        h[0x6E] = 0xFF, h[0x6F] = 0x40; /* 16639 us: the NTSC frame rate, as FamiStudio's NSF export */
-        h[0x78] = 0x20, h[0x79] = 0x4E; /* PAL speed (unused) */
-        fwrite(h, 1, sizeof h, fn);
-        static uint8_t body[NES_SONG_BASE - 0x8000 + NES_DEMO_SONG_SIZE];
-        memset(body, 0, sizeof body);
-        memcpy(body, nes_player_code, NES_PLAYER_SIZE);
-        memcpy(body + (NES_SONG_BASE - 0x8000), nes_demo_song, NES_DEMO_SONG_SIZE);
-        fwrite(body, 1, sizeof body, fn);
-        fclose(fn);
-    }
+    EXPECT(bad_rows == 0 && k == pass_rows, "%d row starts at the frames speed (Fxx 6/7/4/8) gives, loop to order %d (%d wrong)",
+           k, NES_FT_LOOP, bad_rows);
 
-    /* Pitch of known notes: the longest held pulse 1 and triangle notes, rendered alone. */
-    for (int ch = 0; ch <= 2; ch += 2) {
-        int start, len;
-        longest_run(ch, SONG_FRAMES, &start, &len);
-        start += 3;
-        len -= 3;
-        EXPECT(len >= 8, "channel %d has a held note (%d frames)", ch, len);
-        if (len < 8) continue;
-        nm_start(m, &g_demo, 0, 0, 0);
-        for (int c = 0; c < NM_CHANNELS; ++c) nm_mute_channel(m, c, c != ch);
-        static float mono[NM_MAX_TICK_FRAMES * 600];
-        int got = 0;
-        for (int f = 0; f < start + len; ++f) {
-            int n = nm_tick(m, g_out);
-            if (f < start || n <= 0) continue;
-            for (int i = 0; i < n && got < (int)(sizeof mono / sizeof mono[0]); ++i) mono[got++] = g_out[2 * i];
-        }
-        for (int c = 0; c < NM_CHANNELS; ++c) nm_mute_channel(m, c, 0);
-        int p = g_states[start].period[ch];
-        double want = CPU_HZ / ((ch == 2 ? 32.0 : 16.0) * (p + 1)), hz = zero_cross_hz(mono, got, RATE);
-        EXPECT(fabs(hz / want - 1) < 0.01, "%s note at frame %d (period %d): %.2f Hz, want %.2f",
-               ch == 2 ? "triangle" : "pulse 1", start, p, hz, want);
-        printf("  %s: frames %d-%d period %d -> %.2f Hz measured, %.2f Hz from the timer\n", ch == 2 ? "triangle" : "pulse 1",
-               start, start + len - 1, p, hz, want);
-    }
+    /* Note delay / cut / release at the frames the text asks for. */
+    int f8 = row_frame(0, 12);
+    EXPECT(note0[f8] == NOTE_C5 && note0[f8 + 3] == NOTE_C5 && note0[f8 + 4] == 0,
+           "order 0 row 12 C5 CutDelay=4: sounds frames 0-3 of the row, cut at frame 4 (%d %d %d)", note0[f8], note0[f8 + 3],
+           note0[f8 + 4]);
+    int f2 = row_frame(1, 2);
+    EXPECT(note2[f2 + 1] != NOTE_C3 && note2[f2 + 2] == NOTE_C3,
+           "order 1 row 2 triangle C3 NoteDelay=2: starts at frame 2 of the row (%d %d)", note2[f2 + 1], note2[f2 + 2]);
+    EXPECT(states[f2 + 2].period[2] == note_table_period(m, NOTE_C3), "  ... with the C3 timer period %d", states[f2 + 2].period[2]);
+    int f3 = row_frame(3, 8);
+    EXPECT(note0[f3 + 4] != NOTE_E4 && note0[f3 + 5] == NOTE_E4,
+           "order 3 row 8 E4 NoteDelay=5 at speed 8: starts at frame 5 (%d %d)", note0[f3 + 4], note0[f3 + 5]);
+    int f10 = row_frame(0, 10);
+    EXPECT(env0[f10 - 1] == 12 && env0[f10] == 10 && env0[f10 + 1] == 7 && env0[f10 + 2] == 4 && env0[f10 + 3] == 0,
+           "order 0 row 10 release: Lead volume leaves its sustain 12 for the tail 10 7 4 0 (%d|%d %d %d %d)", env0[f10 - 1],
+           env0[f10], env0[f10 + 1], env0[f10 + 2], env0[f10 + 3]);
 
     /* Determinism: the same render twice. */
     for (int pass = 0; pass < 2; ++pass) {
-        nm_start(m, &g_demo, 0, 0, 0);
+        nm_start(m, &g_thor, 0, 0, 0, &mode);
         uint64_t h2 = 0xCBF29CE484222325ull;
         for (int f = 0; f < frames; ++f) {
             int n = nm_tick(m, g_out);
@@ -547,63 +649,322 @@ static void test_demo_playback(NesMachine* m, const char* dir) {
         EXPECT(h2 == hash, "render %d hash %016llx equals the first %016llx", pass + 2, (unsigned long long)h2,
                (unsigned long long)hash);
     }
-    printf("  render hash %016llx\n", (unsigned long long)hash);
 
-    /* Seek: (order 3, row 5) is frame 477; the next frames match straight play exactly. */
-    double s0 = now_us();
-    EXPECT(nm_start(m, &g_demo, 3, 5, 12000) == NM_OK, "seek to order 3 row 5");
-    double seek_us = now_us() - s0;
-    EXPECT(nm_frames(m) == 477, "seek fast-forwards 477 frames (got %u)", nm_frames(m));
-    int order, row, tick;
-    nm_position(m, &order, &row, &tick);
-    EXPECT(order == 3 && row == 5 && tick == 0, "position after seek %d/%d/%d", order, row, tick);
-    nm_set_apu_logging(m, 1);
-    int seek_ok = 1;
-    uint8_t pairs[512];
-    for (int f = 477; f < 677; ++f) {
-        nm_tick(m, g_out);
-        int n = nm_apu_log(m, pairs, 256);
-        if (n != trace_len[f] || memcmp(pairs, trace[f], (size_t)n * 2) != 0) {
-            seek_ok = 0;
-            printf("  seek mismatch at frame %d\n", f);
-            break;
+    /* Pitch of a held note rendered alone: pulse 1 and triangle. */
+    for (int ch = 0; ch <= 2; ch += 2) {
+        int best = 0, best_len = 0, s = 0;
+        for (int f = 1; f <= frames; ++f) {
+            int same = f < frames && states[f].vol[ch] > 0 && states[s].vol[ch] > 0 && states[f].period[ch] == states[s].period[ch];
+            if (!same) {
+                if (f - s > best_len) best_len = f - s, best = s;
+                s = f;
+            }
         }
+        best += 3;
+        best_len -= 3;
+        EXPECT(best_len >= 8, "channel %d holds a note (%d frames)", ch, best_len);
+        if (best_len < 8) continue;
+        nm_start(m, &g_thor, 0, 0, 0, &mode);
+        for (int c = 0; c < NM_CHANNELS; ++c) nm_mute_channel(m, c, c != ch);
+        static float mono[NM_MAX_TICK_FRAMES * 600];
+        int got = 0;
+        for (int f = 0; f < best + best_len; ++f) {
+            int n = nm_tick(m, g_out);
+            if (f < best || n <= 0) continue;
+            for (int i = 0; i < n && got < (int)(sizeof mono / sizeof mono[0]); ++i) mono[got++] = g_out[2 * i];
+        }
+        int p = states[best].period[ch];
+        double want = CPU_HZ / ((ch == 2 ? 32.0 : 16.0) * (p + 1)), hz = zero_cross_hz(mono, got, RATE);
+        EXPECT(fabs(hz / want - 1) < 0.01, "%s note at frame %d (period %d): %.2f Hz, want %.2f",
+               ch == 2 ? "triangle" : "pulse 1", best, p, hz, want);
+        printf("  %s: frames %d-%d period %d -> %.2f Hz measured, %.2f Hz from the timer\n", ch == 2 ? "triangle" : "pulse 1",
+               best, best + best_len - 1, p, hz, want);
     }
-    EXPECT(seek_ok, "seeked machine writes the same registers as straight play");
+
+    /* Another tempo: the row starts follow FamiTracker's accumulator (step = 256 * tempo / 150 per
+     * frame; a row starts when the whole part reaches the speed, which it then pays). */
+    static NesImage slow;
+    slow = g_thor;
+    uint8_t* hdr = slow.bytes + NM_REGION_OFFSET + 15;
+    const int step = 256 * 125 / 150; /* FamiStudio's integer formula for tempo 125 */
+    hdr[2] = (uint8_t)step;
+    hdr[3] = (uint8_t)(step >> 8);
+    EXPECT(nm_load_image(&slow) == 0 && slow.info.tempo_ntsc == step, "tempo 125 image (step %d)", step);
+    nm_start(m, &slow, 0, 0, 0, &mode);
+    int acc = 6 << 8, speed = 6, rows = 0, mismatched = 0, model_frames = 0;
+    for (int f = 0; rows < FIRST_PASS_ROWS + 4; ++f) {
+        int starts_model = (acc >> 8) >= speed, o, r, t;
+        nm_position(m, &o, &r, &t);
+        if (starts_model != (t == 0)) ++mismatched;
+        if (starts_model) {
+            acc -= speed << 8;
+            int len;
+            song_row(rows++, &o, &r, &len);
+            speed = len;
+        }
+        acc += step;
+        nm_tick_silent(m);
+        model_frames = f + 1;
+    }
+    EXPECT(mismatched == 0, "tempo 125: %d rows start on the accumulator's frames (%d mismatches)", rows, mismatched);
+    printf("  tempo 125: %d rows in %d frames (tempo 150: %d)\n", rows, model_frames, song_frames(rows));
+
+    write_evidence(m, dir, &raw);
+    trace_free(&raw);
+    trace_free(&thor);
+}
+
+static void test_seek(NesMachine* m) {
+    printf("seek: exact rows from engine state\n");
+    const int frames = song_frames(FIRST_PASS_ROWS + LOOP_ROWS);
+    Trace ref, t;
+    trace_alloc(&ref, frames);
+    trace_alloc(&t, frames);
+    play_trace(m, &g_thor, &ref);
+    const int targets[][2] = {{0, 1}, {1, 0}, {2, 8}, {2, 9}, {3, 15}, {0, 12}};
+    for (size_t i = 0; i < sizeof targets / sizeof targets[0]; ++i) {
+        const int o = targets[i][0], r = targets[i][1], f0 = row_frame(o, r);
+        int mode = -1, po, pr, pt;
+        double s0 = now_us();
+        int res = nm_start(m, &g_thor, o, r, 12000, &mode);
+        double us = now_us() - s0;
+        nm_position(m, &po, &pr, &pt);
+        EXPECT(res == NM_OK && mode == NM_SEEK_FROM_START && po == o && pr == r && pt == 0 && nm_frames(m) == (uint32_t)f0,
+               "seek %d/%d: from start, %u frames (row starts at %d), position %d/%d/%d", o, r, nm_frames(m), f0, po, pr, pt);
+        nm_set_apu_logging(m, 1);
+        int same = 1;
+        for (int f = f0; f < f0 + 200 && f < frames; ++f) {
+            nm_tick_silent(m);
+            record(m, &t, f);
+            same &= same_frame(&ref, &t, f);
+        }
+        EXPECT(same, "seek %d/%d writes the same registers as straight play for 200 frames (%.2f ms)", o, r, us / 1000.0);
+    }
+    int mode = -1, o, r, tk;
+    EXPECT(nm_start(m, &g_raw, 2, 8, 12000, &mode) == NM_OK && mode == NM_SEEK_FROM_START, "raw layout seeks from the start");
+    /* Budget too small for the song start: placed at order 2's start (speed 7 from order 1) and its 8
+     * rows replayed: 56 frames. */
+    double s0 = now_us();
+    EXPECT(nm_start(m, &g_thor, 2, 8, 60, &mode) == NM_OK && mode == NM_SEEK_FROM_ORDER, "budget 60: seek from order 2's start");
+    printf("  fallback seek 2/8: %.3f ms, %u frames\n", (now_us() - s0) / 1000.0, nm_frames(m));
+    nm_position(m, &o, &r, &tk);
+    EXPECT(o == 2 && r == 8 && tk == 0 && nm_frames(m) == 56, "fallback lands on 2/8 after 56 frames (%d/%d/%d, %u)", o, r, tk,
+           nm_frames(m));
+    int rows_ok = 1, f = row_frame(2, 8);
+    for (int i = 0; i < 300; ++i, ++f) {
+        int a, b, c, x, y, z;
+        nm_position(m, &a, &b, &c);
+        /* compare with straight play's positions */
+        int k = 0, start = 0, len = 0;
+        for (;; ++k) {
+            song_row(k, &x, &y, &len);
+            if (start + len > f) break;
+            start += len;
+        }
+        z = f - start;
+        rows_ok &= a == x && b == y && c == z;
+        nm_tick_silent(m);
+    }
+    EXPECT(rows_ok, "after the fallback the rows run in step with straight play (300 frames)");
+    EXPECT(nm_start(m, &g_thor, 2, 8, 50, &mode) == NM_ERR_IMAGE, "budget 50: not even the order replay fits");
+    EXPECT(nm_start(m, &g_raw, 2, 8, 60, &mode) == NM_ERR_IMAGE, "raw layout: no order fallback");
+    EXPECT(nm_start(m, &g_thor, NES_FT_ORDERS, 0, 12000, &mode) == NM_ERR_IMAGE, "order past the song rejected");
+    EXPECT(nm_start(m, &g_thor, 0, NES_FT_ROWS, 12000, &mode) == NM_ERR_IMAGE, "row past the order rejected");
     s0 = now_us();
-    EXPECT(nm_start(m, &g_demo, 24, 15, 12000) == NM_OK, "seek to the last row");
-    printf("  seek to order 3 row 5: %.2f ms; to order 24 row 15 (%d frames): %.2f ms\n", seek_us / 1000.0,
-           SONG_FRAMES - 9, (now_us() - s0) / 1000.0);
-    EXPECT(nm_start(m, &g_demo, 25, 0, 12000) == NM_ERR_IMAGE, "order past the song is rejected");
-    EXPECT(nm_start(m, &g_demo, 0, 16, 12000) == NM_ERR_IMAGE, "row past the pattern is rejected");
-    EXPECT(nm_start(m, &g_demo, 10, 0, 100) == NM_ERR_IMAGE, "target beyond the tick budget is rejected");
-    NesImage untimed;
-    build_demo(&untimed, 0);
-    EXPECT(nm_start(m, &untimed, 1, 0, 12000) == NM_ERR_IMAGE, "no timing: only (0, 0) can start");
-    EXPECT(nm_start(m, &untimed, 0, 0, 12000) == NM_OK, "no timing: start at (0, 0)");
-    for (int f = 0; f < 50; ++f) nm_tick(m, g_out);
-    nm_position(m, &order, &row, &tick);
-    EXPECT(order == 0 && row == 0 && tick == 50, "no timing: position reports frames (%d/%d/%d)", order, row, tick);
+    EXPECT(nm_start(m, &g_thor, 3, 15, 12000, &mode) == NM_OK, "seek to the last row");
+    printf("  seek to 3/15 (%u frames): %.3f ms\n", nm_frames(m), (now_us() - s0) / 1000.0);
+    trace_free(&ref);
+    trace_free(&t);
+}
 
-    /* Live apply of an identical image keeps transport and output. */
-    nm_start(m, &g_demo, 0, 0, 0);
-    uint64_t h3 = 0xCBF29CE484222325ull;
-    for (int f = 0; f < 600; ++f) {
-        if (f == 300) nm_apply_image(m, &g_demo);
-        int n = nm_tick(m, g_out);
-        h3 = fnv(h3, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
-    }
-    nm_start(m, &g_demo, 0, 0, 0);
-    uint64_t h4 = 0xCBF29CE484222325ull;
-    for (int f = 0; f < 600; ++f) {
-        int n = nm_tick(m, g_out);
-        h4 = fnv(h4, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
-    }
-    EXPECT(h3 == h4 && nm_frames(m) == 600, "apply_image keeps the transport and the sound");
+static void test_live_apply(NesMachine* m) {
+    printf("live apply: relocation at tick boundaries\n");
+    const int frames = song_frames(FIRST_PASS_ROWS + 2 * LOOP_ROWS);
+    Trace ref, t;
+    trace_alloc(&ref, frames);
+    trace_alloc(&t, frames);
+    play_trace(m, &g_thor, &ref);
+    int mode;
 
-    /* Mute: all five channels muted -> silence (after the output filter settles) while the song
-     * keeps running; unmuted -> sound again. Per-channel isolation is the pitch check above. */
-    nm_start(m, &g_demo, 0, 0, 0);
+    /* Every block moved, applied before every single frame (alternating images): nothing audible changes. */
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
+    nm_set_apu_logging(m, 1);
+    double worst_us = 0;
+    for (int f = 0; f < frames; ++f) {
+        double a0 = now_us();
+        nm_apply_image(m, (f & 1) ? &g_moved : &g_thor);
+        double us = now_us() - a0;
+        if (us > worst_us) worst_us = us;
+        nm_tick_silent(m);
+        record(m, &t, f);
+    }
+    int d = first_difference(&ref, &t, 0, frames);
+    EXPECT(d < 0, "moved data applied before each of %d frames: same register writes as straight play (first difference %d)",
+           frames, d);
+    printf("  worst apply_image: %.1f us\n", worst_us);
+
+    /* The moved image really moves the engine's pointers (relocation, not luck). */
+    nm_start(m, &g_thor, 1, 3, 12000, &mode);
+    nm_tick_silent(m);
+    const uint16_t p_before = nm_peek(m, NES_FAMISTUDIO_CHN_PTR_LO) | nm_peek(m, NES_FAMISTUDIO_CHN_PTR_HI) << 8;
+    const uint16_t e_before = nm_peek(m, NES_FAMISTUDIO_ENV_ADDR_LO) | nm_peek(m, NES_FAMISTUDIO_ENV_ADDR_HI) << 8;
+    nm_apply_image(m, &g_moved);
+    const uint16_t p_after = nm_peek(m, NES_FAMISTUDIO_CHN_PTR_LO) | nm_peek(m, NES_FAMISTUDIO_CHN_PTR_HI) << 8;
+    const uint16_t e_after = nm_peek(m, NES_FAMISTUDIO_ENV_ADDR_LO) | nm_peek(m, NES_FAMISTUDIO_ENV_ADDR_HI) << 8;
+    EXPECT(p_before != p_after && e_before != e_after && p_after >= NES_SONG_BASE && p_after < NES_SONG_BASE + g_moved.info.size,
+           "apply re-points stream ($%04X -> $%04X) and envelope ($%04X -> $%04X)", p_before, p_after, e_before, e_after);
+
+    /* Speed edits: order 2 row 8's Fxx 4 -> 5. Applied when straight play's speed at the playhead
+     * changes; an Fxx the current order already ran (order 3 row 0: 8) is kept. */
+    static NesImage fast;
+    fast = g_thor;
+    uint8_t* fr = fast.bytes + NM_REGION_OFFSET;
+    int edits = 0;
+    for (uint32_t i = 0; i + 2 < fast.info.size; ++i) {
+        if (fr[i] == 0x46 && fr[i + 1] == 0x04 && fr[i + 2] == 0x53) fr[i + 1] = 5, ++edits;
+    }
+    EXPECT(edits == 1 && nm_load_image(&fast) == 0 && fast.info.speed[3] == 5, "speed edit image (order 3 starts at 5)");
+    const struct {
+        int order, row, before, after;
+    } speed_cases[] = {{2, 10, 4, 5}, {3, 4, 8, 8}, {2, 6, 7, 7}, {1, 3, 7, 7}};
+    for (size_t i = 0; i < sizeof speed_cases / sizeof speed_cases[0]; ++i) {
+        nm_start(m, &g_thor, speed_cases[i].order, speed_cases[i].row, 12000, &mode);
+        nm_tick_silent(m);
+        const int b = nm_peek(m, NES_FAMISTUDIO_SONG_SPEED);
+        nm_apply_image(m, &fast);
+        const int a = nm_peek(m, NES_FAMISTUDIO_SONG_SPEED);
+        EXPECT(b == speed_cases[i].before && a == speed_cases[i].after, "speed edit at %d/%d: %d -> %d (want %d -> %d)",
+               speed_cases[i].order, speed_cases[i].row, b, a, speed_cases[i].before, speed_cases[i].after);
+    }
+    nm_start(m, &g_thor, 2, 6, 12000, &mode);
+    nm_apply_image(m, &fast);
+    while (nm_frames(m) < (uint32_t)row_frame(2, 8) + 1) nm_tick_silent(m);
+    EXPECT(nm_peek(m, NES_FAMISTUDIO_SONG_SPEED) == 5, "the edited Fxx runs when its row is reached");
+
+    /* Identical image: same render. */
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
+    uint64_t h1 = 0xCBF29CE484222325ull, h2 = h1;
+    for (int f = 0; f < 600; ++f) {
+        if (f == 300) nm_apply_image(m, &g_thor);
+        int n = nm_tick(m, g_out);
+        h1 = fnv(h1, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+    }
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
+    for (int f = 0; f < 600; ++f) {
+        int n = nm_tick(m, g_out);
+        h2 = fnv(h2, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+    }
+    EXPECT(h1 == h2, "applying the playing image changes nothing");
+
+    /* Edits: the Lead sustain 12 -> 8 heard on the note already sustaining (order 0 row 9), the note
+     * edit at order 2 row 8 heard when reached, rows unchanged. */
+    nm_start(m, &g_thor, 0, 9, 12000, &mode);
+    nm_tick_silent(m);
+    nm_tick_silent(m);
+    const uint8_t before = nm_peek(m, NES_FAMISTUDIO_ENV_VALUE + 0);
+    nm_apply_image(m, &g_edited);
+    nm_tick_silent(m);
+    const uint8_t after = nm_peek(m, NES_FAMISTUDIO_ENV_VALUE + 0);
+    EXPECT(before == 12 && after == 8, "sustaining Lead note follows its edited volume envelope (%d -> %d)", before, after);
+    int o, r, tk, f = row_frame(0, 9) + 3, bad_rows = 0, note_at = -1;
+    for (; f < row_frame(2, 9); ++f) {
+        nm_position(m, &o, &r, &tk);
+        int a, b, len, k = 0, start = 0;
+        for (;; ++k) {
+            song_row(k, &a, &b, &len);
+            if (start + len > f) break;
+            start += len;
+        }
+        bad_rows += o != a || r != b || tk != f - start;
+        nm_tick_silent(m);
+        if (o == 2 && r == 8 && note_at < 0 && nm_peek(m, NES_FAMISTUDIO_CHN_NOTE) == NOTE_D5) note_at = tk;
+    }
+    EXPECT(bad_rows == 0, "rows continue unchanged after the edit (%d wrong)", bad_rows);
+    EXPECT(note_at == 0, "edited note D5 plays at order 2 row 8 (straight play: B4)");
+
+    /* Shrunk song while in order 3: clamps to the last row of order 1, then loops to order 1. */
+    nm_start(m, &g_thor, 3, 4, 12000, &mode);
+    nm_tick_silent(m);
+    nm_apply_image(m, &g_short);
+    int seen_loop = 0, faults = 0;
+    for (int i = 0; i < 400; ++i) {
+        nm_position(m, &o, &r, &tk);
+        if (i < 9 && tk == 0 && o == 1 && r == 0) seen_loop = 1;
+        if (o >= 2) ++faults;
+        if (nm_tick_silent(m) != NM_OK) ++faults;
+    }
+    EXPECT(seen_loop && faults == 0, "orders removed under the playhead: next row is the loop order, no fault");
+
+    /* Raw layout: byte copy. */
+    nm_start(m, &g_raw, 0, 0, 0, &mode);
+    for (int i = 0; i < 50; ++i) nm_tick_silent(m);
+    nm_apply_image(m, &g_raw);
+    nm_position(m, &o, &r, &tk);
+    EXPECT(nm_tick_silent(m) == NM_OK && o == 0 && r == 8, "raw apply keeps the transport (%d/%d)", o, r);
+    trace_free(&ref);
+    trace_free(&t);
+}
+
+static double energy(NesMachine* m, int ticks) {
+    double e = 0;
+    for (int i = 0; i < ticks; ++i) {
+        int n = nm_tick(m, g_out);
+        for (int k = 0; k < 2 * n; ++k) e += g_out[k] * g_out[k];
+    }
+    return e;
+}
+
+static void test_audition(NesMachine* m) {
+    printf("audition: one held note through the engine, release\n");
+    EXPECT(nm_audition(m, &g_thor, 0, NOTE_A3, NES_FT_INSTRUMENT_LEAD, 0) == NM_OK, "audition pulse 1 A440 Lead");
+    EXPECT(nm_release(m) == 0, "release before the first tick: nothing to release");
+    nm_audition(m, &g_thor, 0, NOTE_A3, NES_FT_INSTRUMENT_LEAD, 0);
+    int n = nm_tick(m, g_out);
+    const NesApu* a = nm_apu(m);
+    EXPECT(n > 0 && a->pulse[0].period == note_table_period(m, NOTE_A3), "first tick sounds A440 (period %d)", a->pulse[0].period);
+    double e = energy(m, 120);
+    a = nm_apu(m);
+    EXPECT(e > 1.0 && (a->pulse[0].ctrl & 15) == 12 && !(a->pulse[1].ctrl & 15) && !(a->noise.ctrl & 15),
+           "held 2 s at the sustain level 12, other channels silent (energy %.1f)", e);
+    int ticks = 0, r;
+    EXPECT(nm_release(m) == 1, "Lead has a release point: release phase");
+    while ((r = nm_tick(m, g_out)) > 0 && ticks < 100) ++ticks;
+    EXPECT(r == 0 && ticks == 4, "release tail 10 7 4 0 plays 4 ticks, then tick returns 0 (%d ticks)", ticks);
+    EXPECT(nm_tick(m, g_out) == 0, "stays ended");
+
+    nm_audition(m, &g_thor, 0, NOTE_A3, NES_FT_INSTRUMENT_LEAD, 10);
+    nm_tick(m, g_out);
+    EXPECT(nm_apu(m)->pulse[0].period == note_table_period(m, NOTE_A3) + 10, "fine +10 adds 10 to the period (%d)",
+           nm_apu(m)->pulse[0].period);
+    nm_audition(m, &g_thor, 1, NOTE_C3, NES_FT_INSTRUMENT_ARPY, 0);
+    int arp_ok = 1;
+    for (int i = 0; i < 6; ++i) {
+        nm_tick(m, g_out);
+        static const int steps[3] = {0, 4, 7};
+        arp_ok &= nm_apu(m)->pulse[1].period == note_table_period(m, NOTE_C3 + steps[i % 3]);
+    }
+    EXPECT(arp_ok, "pulse 2 Arpy: the instrument's arpeggio 0 4 7 runs");
+    nm_audition(m, &g_thor, 2, NOTE_C2, NES_FT_INSTRUMENT_BASS, -5);
+    nm_tick(m, g_out);
+    EXPECT(nm_apu(m)->tri.period == note_table_period(m, NOTE_C2) - 5 && energy(m, 30) > 1.0, "triangle C2 fine -5 (period %d)",
+           nm_apu(m)->tri.period);
+    EXPECT(nm_release(m) == 0, "Bass has no release point: cut");
+    nm_audition(m, &g_thor, 3, 32, NES_FT_INSTRUMENT_HAT, 99);
+    nm_tick(m, g_out);
+    EXPECT((nm_apu(m)->noise.mode_period & 0x8F) == (0x80 | ((32 & 15) ^ 15)), "noise Hat: period index 15, short mode ($%02X)",
+           nm_apu(m)->noise.mode_period);
+    EXPECT(nm_audition(m, &g_thor, 4, 40, 0, 0) == NM_ERR_IMAGE, "no DPCM audition");
+    EXPECT(nm_audition(m, &g_thor, 0, 0, 0, 0) == NM_ERR_IMAGE && nm_audition(m, &g_thor, 0, 97, 0, 0) == NM_ERR_IMAGE,
+           "notes outside 1..96 rejected");
+    EXPECT(nm_audition(m, &g_thor, 0, 40, NES_FT_INSTRUMENTS, 0) == NM_ERR_IMAGE, "instrument past the table rejected");
+    EXPECT(nm_audition(m, &g_thor, 0, 40, 0, 128) == NM_ERR_IMAGE, "fine outside -128..127 rejected");
+    EXPECT(nm_audition(m, &g_raw, 0, 40, 0, 0) == NM_ERR_IMAGE, "raw layout cannot audition");
+}
+
+static void test_mute(NesMachine* m) {
+    printf("mute: mixer-level channel borrowing\n");
+    int mode;
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
     double e_all = 0, e_muted = 0, e_back = 0;
     for (int f = 0; f < 900; ++f) {
         if (f == 300 || f == 600) {
@@ -616,47 +977,47 @@ static void test_demo_playback(NesMachine* m, const char* dir) {
         else if (f >= 310 && f < 600) e_muted += e;
         else if (f >= 600) e_back += e;
     }
-    EXPECT(e_muted < e_all * 1e-6 && e_back > e_all * 0.5 && nm_frames(m) == 900,
+    EXPECT(e_muted < e_all * 1e-6 && e_back > e_all * 0.2 && nm_frames(m) == 900,
            "mute silences, unmute restores, transport runs (energy %.1f, %.2g, %.1f)", e_all, e_muted, e_back);
     EXPECT(nm_mute_channel(m, 5, 1) == NM_ERR_IMAGE, "channel 5 does not exist");
-
-    free(g_states);
-    free(trace);
-    free(trace_len);
-    free(wav);
+    nm_mute_channel(m, 0, 1);
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
+    EXPECT(nm_apu(m)->mute == 0, "start clears mutes (power-on)");
 }
 
 static void test_faults(NesMachine* m) {
     printf("faults: invalid opcodes, BRK, runaway code, invalid stream data\n");
-    nm_start(m, &g_demo, 0, 0, 0);
+    int mode;
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
     nm_poke(m, 0x0300, 0x02); /* JAM */
     EXPECT(nm_call(m, 0x0300, 0) == NM_ERR_FAULT, "JAM opcode faults");
     EXPECT(nm_tick(m, g_out) == NM_ERR_FAULT, "a faulted machine stays silent");
-    nm_start(m, &g_demo, 0, 0, 0);
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
     nm_poke(m, 0x0300, 0x00);
     EXPECT(nm_call(m, 0x0300, 0) == NM_ERR_FAULT, "BRK faults");
-    nm_start(m, &g_demo, 0, 0, 0);
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
     nm_poke(m, 0x0300, 0x4C);
     nm_poke(m, 0x0301, 0x00);
     nm_poke(m, 0x0302, 0x03); /* JMP $0300 */
     EXPECT(nm_call(m, 0x0300, 0) == NM_ERR_FAULT, "a call longer than one frame faults");
-    nm_start(m, &g_demo, 0, 0, 0);
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
     nm_poke(m, 0x0300, 0xA9);
     nm_poke(m, 0x0301, 0x42);
     nm_poke(m, 0x0302, 0x60); /* LDA #$42; RTS */
     EXPECT(nm_call(m, 0x0300, 0) == NM_OK && nm_last_call_cycles(m) == 8, "a valid call returns (%u cycles)",
            nm_last_call_cycles(m));
 
-    /* An opcode byte the engine does not know ($55: VRC6 saw volume, no VRC6 here) at the start
-     * of the pulse 1 stream: the engine executes its BRK trap on the first frame. */
-    NesImage bad = g_demo;
-    uint8_t* song = bad.bytes + NM_HEADER_SIZE;
+    /* Raw layout streams are not walked: an opcode the build does not know ($55: VRC6 saw volume)
+     * reaches the engine's BRK trap on the first frame. */
+    static NesImage bad;
+    bad = g_raw;
+    uint8_t* song = bad.bytes + NM_REGION_OFFSET;
     int ch0 = (song[5] | song[6] << 8) - NES_SONG_BASE;
     song[ch0] = 0x55;
+    EXPECT(nm_load_image(&bad) == 0, "the raw image passes header validation");
     const ChipEngineOps* ops = chip_engine_ops("nes-famistudio");
     ChipMachine* cm = ops->create(RATE);
-    int mode = -1;
-    EXPECT(ops->start(cm, (const ChipImage*)&bad, 0, 0, 0, &mode) == CHIP_OK, "the bad image passes header validation");
+    EXPECT(ops->start(cm, (const ChipImage*)&bad, 0, 0, 0, &mode) == CHIP_OK, "starts");
     EXPECT(ops->tick(cm, g_out) == CHIP_ERR_FAULT, "unknown stream opcode -> engine BRK -> CHIP_ERR_FAULT");
     ops->destroy(cm);
 }
@@ -667,67 +1028,82 @@ static void test_chip_engine_ops(void) {
     EXPECT(ops != NULL, "registered");
     if (!ops) return;
     EXPECT(chip_engine_ops("gb-huge") != NULL && chip_engine_ops("gb-huge") != ops, "Game Boy still registered");
-    EXPECT(ops->image_size == NM_HEADER_SIZE + NM_SONG_SIZE && ops->image_storage >= ops->image_size, "image sizes");
+    EXPECT(ops->image_size == NES_IMAGE_SIZE && ops->image_storage >= ops->image_size, "image sizes (%zu)", ops->image_size);
     ChipImage* img = (ChipImage*)malloc(ops->image_storage);
-    EXPECT(ops->load_image(img, g_demo.bytes, ops->image_size) == CHIP_OK, "demo image loads");
-    EXPECT(ops->load_image(img, g_demo.bytes, ops->image_size - 1) == CHIP_ERR_IMAGE, "wrong size rejected");
-    NesImage bad = g_demo;
-    bad.bytes[0] ^= 1;
-    EXPECT(ops->load_image(img, bad.bytes, ops->image_size) == CHIP_ERR_IMAGE, "bad magic rejected");
-    bad = g_demo;
+    ChipImage* edited = (ChipImage*)malloc(ops->image_storage);
+    EXPECT(ops->load_image(img, g_thor.bytes, ops->image_size) == CHIP_OK, "test image loads");
+    EXPECT(ops->load_image(edited, g_edited.bytes, ops->image_size) == CHIP_OK, "edited image loads");
+    EXPECT(ops->load_image(img, g_thor.bytes, ops->image_size - 1) == CHIP_ERR_IMAGE, "wrong size rejected");
+    static NesImage bad;
+    bad = g_thor;
     bad.bytes[4] ^= 1;
     EXPECT(ops->load_image(img, bad.bytes, ops->image_size) == CHIP_ERR_IMAGE, "other player build rejected");
-    bad = g_demo;
-    bad.bytes[NM_HEADER_SIZE + 6] = 0x60; /* channel 0 pointer -> $60xx */
-    EXPECT(ops->load_image(img, bad.bytes, ops->image_size) == CHIP_ERR_IMAGE, "stream pointer outside the song rejected");
-    bad = g_demo;
-    bad.bytes[NM_HEADER_SIZE + NES_DEMO_SONG_SIZE + 10] = 1;
-    EXPECT(ops->load_image(img, bad.bytes, ops->image_size) == CHIP_ERR_IMAGE, "bytes past the data size rejected");
-    bad = g_demo;
-    bad.bytes[12] = 1;
-    EXPECT(ops->load_image(img, bad.bytes, ops->image_size) == CHIP_ERR_IMAGE, "song index past the song count rejected");
-    bad = g_demo;
-    bad.bytes[17] = NES_DEMO_ORDER_COUNT;
-    EXPECT(ops->load_image(img, bad.bytes, ops->image_size) == CHIP_ERR_IMAGE, "loop order past the orders rejected");
-    ops->load_image(img, g_demo.bytes, ops->image_size);
+    ops->load_image(img, g_thor.bytes, ops->image_size);
 
     ChipMachine* cm = ops->create(RATE);
-    EXPECT(cm != NULL, "create(48000)");
+    ChipMachine* au = ops->create(RATE);
+    EXPECT(cm != NULL && au != NULL, "create(48000)");
     EXPECT(ops->create(CHIP_MAX_SAMPLE_RATE + 1) == NULL, "unsupported rate");
     int mode = -1, order, row, tick;
     EXPECT(ops->start(cm, img, 2, 0, 12000, &mode) == CHIP_OK && mode == CHIP_SEEK_FROM_START, "start at order 2");
     ops->position(cm, &order, &row, &tick);
     EXPECT(order == 2 && row == 0 && tick == 0, "position %d/%d/%d", order, row, tick);
+    const int ticks = row_frame(2, 10) - row_frame(2, 0);
     double e = 0;
-    for (int i = 0; i < 90; ++i) {
+    for (int i = 0; i < ticks; ++i) {
         int n = ops->tick(cm, g_out);
         EXPECT(n > 0 && n <= (int)CHIP_MAX_TICK_FRAMES, "tick frames %d", n);
         for (int k = 0; k < 2 * n; ++k) e += g_out[k] * g_out[k];
     }
     EXPECT(e > 1.0, "non-silent through the ops (energy %.2f)", e);
     ops->position(cm, &order, &row, &tick);
-    EXPECT(order == 2 && row == 10 && tick == 0, "90 ticks = 10 rows (%d/%d/%d)", order, row, tick);
-    ops->apply_image(cm, img);
-    EXPECT(ops->mute(cm, 2, 1) == CHIP_OK && ops->mute(cm, 2, 0) == CHIP_OK, "mute/unmute triangle");
-    EXPECT(ops->audition(cm, img, 0, 57, 1, 0) == CHIP_ERR_IMAGE, "audition not supported yet");
-    EXPECT(ops->release(cm) == 0, "release: no release phase");
+    EXPECT(order == 2 && row == 10 && tick == 0, "%d ticks (8 rows at speed 7, 2 at speed 4) = 10 rows (%d/%d/%d)", ticks, order,
+           row, tick);
+    ops->apply_image(cm, edited);
+    ops->position(cm, &order, &row, &tick);
+    EXPECT(order == 2 && row == 10 && tick == 0, "apply keeps the position");
+    /* Audition borrowing pulse 1, as the hosts do it. */
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, 0, 0) == CHIP_ERR_IMAGE, "ops audition: slot 0 (no instrument) rejected");
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENTS + 1, 0) == CHIP_ERR_IMAGE, "ops audition: slot past the table rejected");
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENTS, 0) == CHIP_OK, "ops audition: last slot = last table index");
+    /* The hosts pass the cell's 1-based slot: Lead is table index 2, slot 3. */
+    EXPECT(ops->audition(au, img, 0, NOTE_A3, NES_FT_INSTRUMENT_LEAD + 1, 0) == CHIP_OK, "audition through the ops");
+    EXPECT(ops->mute(cm, 0, 1) == CHIP_OK, "song's pulse 1 muted while auditioning");
+    int n1 = ops->tick(cm, g_out), n2 = ops->tick(au, g_out);
+    EXPECT(n1 > 0 && n2 > 0, "both machines tick");
+    EXPECT(ops->release(au) == 1, "release phase");
+    int left = 0;
+    while (ops->tick(au, g_out) > 0 && left < 100) ++left;
+    EXPECT(left == 4, "released audition ends after its tail (%d ticks)", left);
+    EXPECT(ops->mute(cm, 0, 0) == CHIP_OK, "unmute");
     ops->destroy(cm);
+    ops->destroy(au);
     free(img);
+    free(edited);
 }
 
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
-    build_demo(&g_demo, 1);
+    nm_build_raw_image(&g_raw, nes_ft_raw, NES_FT_RAW_SIZE, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
+    EXPECT(nm_load_image(&g_raw) == 0, "raw FamiStudio export loads (%s)", g_raw.info.problem ? g_raw.info.problem : "-");
+    load_fixture(&g_thor, nes_ft_thor, NES_FT_THOR_SIZE, "Thor layout");
+    load_fixture(&g_moved, nes_ft_moved, NES_FT_MOVED_SIZE, "moved");
+    load_fixture(&g_edited, nes_ft_edited, NES_FT_EDITED_SIZE, "edited");
+    load_fixture(&g_short, nes_ft_short, NES_FT_SHORT_SIZE, "short");
     NesMachine* m = nm_create(RATE);
     if (!m) {
         printf("nm_create failed\n");
         return 2;
     }
-    EXPECT(nm_validate(&g_demo) == NM_OK, "demo image validates");
     test_apu_pitch();
     test_apu_counters();
     test_player_image(m);
-    test_demo_playback(m, dir);
+    test_images();
+    test_playback(m, dir);
+    test_seek(m);
+    test_live_apply(m);
+    test_audition(m);
+    test_mute(m);
     test_faults(m);
     test_chip_engine_ops();
     nm_destroy(m);

@@ -17,6 +17,8 @@ import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
 import org.thortracker.system.ExportFormat
+import org.thortracker.system.SoundSystem
+import org.thortracker.system.SoundSystems
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared
@@ -247,9 +249,9 @@ class AppMenus(
                 host.loadTuningFile { parsed -> applyTuning(if (previous == null) parsed else parsed.copy(root = previous.root, tolerance = previous.tolerance)) }
             })
             if (t != null && map != null) {
-                add("1/1 sounds on ${Songs.noteName(t.root)}…" to {
+                add("1/1 sounds on ${session.song.system.noteName(t.root)}…" to {
                     val range = session.song.system.noteRange
-                    menu("1/1 sounds on", range.map { n -> Songs.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root - range.first)
+                    menu("1/1 sounds on", range.map { n -> session.song.system.noteName(n) to { applyTuning(t.copy(root = n)) } }, selected = t.root - range.first)
                 })
                 add("Accuracy limit: ${t.tolerance}¢…" to {
                     choose("Accuracy limit", TOLERANCES.map { "$it cents" + if (it == 5) " (default)" else "" }) { applyTuning(t.copy(tolerance = TOLERANCES[it])) }
@@ -289,15 +291,23 @@ class AppMenus(
     fun fileMenu() {
         val system = session.song.system
         menu("Project", listOf(
-            "New blank song" to { confirmReplace { host.replace(system.blank()) } },
+            "New blank song" to { chooseSystem("New song for") { confirmReplace { host.replace(it.blank()) } } },
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
         ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
             "Rename song" to ::rename,
-            "Load demo" to { confirmReplace { host.replace(system.demo()) } },
+            "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
             "Recover previous project" to { confirmReplace { host.recoverPrevious() } },
         ))
+    }
+
+    /** Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows one. */
+    private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
+        val systems = SoundSystems.ALL
+        val current = session.song.system
+        if (systems.size == 1) return chosen(current)
+        menu(title, systems.map { it.name to { chosen(it) } }, selected = systems.indexOf(current).coerceAtLeast(0))
     }
 
     private fun export(format: ExportFormat) {

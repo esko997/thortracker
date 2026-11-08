@@ -170,7 +170,7 @@ object GbSoundView : SystemView() {
             }
         }
         h += Hint(v.k(Action.AUDITION), "Listen")
-        h += Hint(v.octaves(), "Listen at ${Songs.noteName(v.defaultNote())}")
+        h += Hint(v.octaves(), "Listen at ${GbSystem.noteName(v.defaultNote())}")
         h += Hint(v.copyPaste(), "Copy/paste sound")
     }
 
@@ -343,7 +343,7 @@ object GbWaveView : SystemView() {
         }
         h += Hint(v.channels(), "Wave")
         h += Hint(v.k(Action.AUDITION), "Listen")
-        h += Hint(v.octaves(), "Listen at ${Songs.noteName(v.defaultNote())}")
+        h += Hint(v.octaves(), "Listen at ${GbSystem.noteName(v.defaultNote())}")
     }
 
     override fun painter(pane: PaneView): Painter = WavePainter(pane)

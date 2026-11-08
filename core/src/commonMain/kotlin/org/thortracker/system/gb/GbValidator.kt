@@ -60,7 +60,7 @@ object GbValidator {
             if (samples.size != HugeRules.WAVE_SAMPLES) out += "Wave ${HugeRules.hex2(w)} has ${samples.size} samples; waves have ${HugeRules.WAVE_SAMPLES}"
             else if (samples.any { it !in 0..HugeRules.WAVE_MAX }) out += "Wave ${HugeRules.hex2(w)} has samples outside 0-15"
         }
-        song.tuning?.problems(GbSystem.noteRange)?.forEach { out += it }
+        song.tuning?.problems(GbSystem)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
         if (song.parkedOrders.any { it !in song.orders.indices } || song.parkedOrders.zipWithNext().any { (a, b) -> a >= b }) {
             out += "Parked orders ${song.parkedOrders} must be ascending, distinct orders 0-${song.orders.size - 1}"
@@ -197,7 +197,7 @@ object GbValidator {
                                 "${HugeRules.effectText(cell.effect, cell.param)}; it plays at the plain 12-note pitch"
                         }
                         map.index(cell.note, detune) < 0 -> {
-                            val pitch = Songs.noteName(cell.note) + if (detune > 0) " +$detune" else ""
+                            val pitch = GbSystem.noteName(cell.note) + if (detune > 0) " +$detune" else ""
                             out += "$where: $pitch is outside the song tuning \"$name\"; use Fit notes to tuning or re-enter it"
                         }
                     }
@@ -281,7 +281,7 @@ object GbValidator {
                 } else {
                     state.silencedBy?.let { cause ->
                         found.getOrPut(where) {
-                            "$where: ${Songs.noteName(cell.note)} has no instrument, so hUGEDriver changes the pitch without " +
+                            "$where: ${GbSystem.noteName(cell.note)} has no instrument, so hUGEDriver changes the pitch without " +
                                 "restarting (legato) and it stays silent after $cause; enter the instrument number"
                         }
                     }

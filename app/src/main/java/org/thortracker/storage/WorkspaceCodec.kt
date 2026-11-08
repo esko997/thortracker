@@ -24,13 +24,16 @@ import org.thortracker.model.Songs
  * The stored pane layout ([WorkspaceStore]): one JSON object per display, read leniently (a missing or odd value
  * falls back to its default, like `org.json`'s `opt` getters this format was first written with).
  *
- * The only note numbers stored are a Sketch phrase's. `phraseNotes` counts semitones from C-0; workspaces saved
- * before notes became absolute have `phrase`, counted from C-3 (the Game Boy's lowest note, the only system then),
- * and are moved up by [LEGACY_NOTE_BASE]. Octaves were always counted from C-0 and keyboard keys from the octave's C.
+ * The only note numbers stored are a Sketch phrase's, under `phrasePitches` in scientific pitch (0 = C0, A4 = 57 =
+ * 440 Hz). Workspaces saved before notes became absolute have `phrase`, hUGE note numbers (0 = hUGETracker's C-3 = C2,
+ * the Game Boy being the only system then), moved up by [LEGACY_NOTE_BASE]. Development builds briefly wrote
+ * `phraseNotes` in each system's own octave naming; without knowing the song's system that is ambiguous, so it is
+ * ignored and the phrase regenerates from its seed. Octaves are stored as the system's note-name octave and keyboard
+ * keys from the octave's C, as always.
  */
 object WorkspaceCodec {
-    /** C-3 in semitones from C-0: note 0 of the old `phrase` key. */
-    const val LEGACY_NOTE_BASE = 36
+    /** hUGE note 0 (C2 in scientific pitch): note 0 of the old `phrase` key. */
+    const val LEGACY_NOTE_BASE = 24
 
     fun decode(text: String): MutableList<ViewState> {
         val defaults = mutableListOf(ViewState(kind = ViewKind.PATTERN), ViewState(kind = ViewKind.KEYBOARD))
@@ -85,11 +88,14 @@ object WorkspaceCodec {
                     motion = PhraseMotion.entries.firstOrNull { it.name == string("phraseMotion") } ?: PhraseMotion.STEPS,
                     chordTones = bool("phraseChordTones", true),
                 ),
-                sketchPhrase = phrase(item["phraseNotes"] as? JsonArray, 0)
+                sketchPhrase = phrase(item["phrasePitches"] as? JsonArray, 0)
                     ?: phrase(item["phrase"] as? JsonArray, LEGACY_NOTE_BASE),
                 sketchPhraseSeed = number(item, "phraseSeed")?.toLong() ?: 1L,
                 sketchKeepRhythm = bool("keepRhythm", false),
                 sketchKeepPitches = bool("keepPitches", false) && !bool("keepRhythm", false),
+                envelope = int("envelope", 0).coerceAtLeast(0),
+                envStep = int("envStep", 0).coerceAtLeast(0),
+                listenChannel = int("listenChannel", 0).coerceAtLeast(0),
             )
         }
         return defaults
@@ -114,7 +120,8 @@ object WorkspaceCodec {
             put("phraseRhythm", s.sketchPhraseSettings.rhythm.name); put("phraseMotion", s.sketchPhraseSettings.motion.name)
             put("phraseChordTones", s.sketchPhraseSettings.chordTones); put("phraseSeed", s.sketchPhraseSeed)
             put("keepRhythm", s.sketchKeepRhythm); put("keepPitches", s.sketchKeepPitches)
-            s.sketchPhrase?.let { p -> put("phraseNotes", buildJsonArray { p.steps.forEach { add(JsonPrimitive(it ?: -1)) } }) }
+            put("envelope", s.envelope); put("envStep", s.envStep); put("listenChannel", s.listenChannel)
+            s.sketchPhrase?.let { p -> put("phrasePitches", buildJsonArray { p.steps.forEach { add(JsonPrimitive(it ?: -1)) } }) }
         })
     }.toString()
 

@@ -22,9 +22,12 @@ FAMISTUDIO_CFG_NTSC_SUPPORT    = 1
 FAMISTUDIO_CFG_SMOOTH_VIBRATO  = 1
 FAMISTUDIO_CFG_DPCM_SUPPORT    = 1
 FAMISTUDIO_DPCM_OFF            = $c000
-; Every 2A03 feature the FamiStudio exporter can ask for, as in FamiStudio's own NSF kernel
-; (FamiStudio/Nsf/nsf.s), except the DPCM bank-switching / extended-range encodings and
-; FamiTracker tempo mode, which change the data format. Extra features only add opcodes.
+; Every 2A03 feature the FamiStudio exporter can ask for, as in FamiStudio's own FamiTracker-tempo NSF
+; kernel (FamiStudio/Nsf/nsf.s with FAMISTUDIO_USE_FAMITRACKER_TEMPO), except the DPCM bank-switching /
+; extended-range encodings. Extra features only add opcodes. FamiTracker tempo: the engine owns rows
+; (speed = frames per row at tempo 150, the $46 opcode = Fxx), note delays ($47) and cuts ($48).
+FAMISTUDIO_USE_FAMITRACKER_TEMPO                 = 1
+FAMISTUDIO_USE_FAMITRACKER_DELAYED_NOTES_OR_CUTS = 1
 FAMISTUDIO_USE_VOLUME_TRACK              = 1
 FAMISTUDIO_USE_VOLUME_SLIDES             = 1
 FAMISTUDIO_USE_PITCH_TRACK               = 1

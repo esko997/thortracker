@@ -23,9 +23,12 @@ Steps 1 and 2 are done for the Game Boy (branch `systems`).
   `GbSoundView`/`GbWaveView` with `SoundPainter`, `WavePainter`, `SoundParams` and the bank/wave edits (`GbEdits`).
   Tuned notes are realised as `40y` (`GbSystem.fine`).
 - `Song` holds the shared fields plus `sound: SystemSound`; `Song.system` is the sound's system. `Cell.note` counts
-  semitones from C-0 (C-3 = 36); lowering subtracts 36, so `.uge` bytes are unchanged. Scales, Sketch, phrases, the
+  semitones in scientific pitch (0 = C0, A4 = 57 = 440 Hz), the same pitch on every system; Game Boy lowering subtracts
+  24 (hUGE note 0 = C2), so `.uge` bytes are unchanged. Note names are the system's (`SoundSystem.noteName`,
+  `nameOctaveOffset`): hUGETracker's (an octave above scientific: its C-3 is C2) and FamiTracker's (A-4 = 440 Hz); the
+  editor's octave fields count in those names. Scales, Sketch, phrases, the
   keyboard and tunings work in that absolute pitch; octave limits come from the note range.
-- `ProjectCodec` writes version 8 (`song.backend` + `song.sound`) and upgrades versions 1-7 through
+- `ProjectCodec` writes version 9 (`song.backend` + `song.sound`, scientific pitch) and upgrades versions 1-8 through
   `SoundSystem.upgradeProject`. `TrackerAudio` takes absolute notes; the song's system converts them.
 - Shared code and both audio hosts no longer name the Game Boy. `SoundSystem.engine` (`PlaybackEngine`) is what a
   host needs to play a system: the native engine id, the image size and `lower(song, out)`, the seek tick budget,
@@ -72,7 +75,7 @@ data class GbSound(val pulse: List<GbInstrument>, val wave: List<GbInstrument>, 
 data class NesSound(val instruments: List<NesInstrument>) : SystemSound
 ```
 
-- **Notes become absolute.** `Cell.note` counts semitones from C-0 (so today's C-3 = 36). Each backend declares its
+- **Notes become absolute.** `Cell.note` counts semitones in scientific pitch (0 = C0, A4 = 57 = 440 Hz; the Game Boy's C-3, which sounds C2, = 24). Each backend declares its
   range (Game Boy C-3..B-8; NES: FamiStudio note byte `n` = absolute `n + 11`, table C-1..B-8 with A-4 = 440 Hz on the
   pulses, pulses reach down to A-1 and the triangle sounds an octave below — confirmed in step 4) and lowering subtracts its
   own offset, so `.uge` bytes do not change. Sketch, the Keyboard view, scales and tunings then work in one pitch
@@ -83,7 +86,8 @@ data class NesSound(val instruments: List<NesInstrument>) : SystemSound
   keeps the hUGE numbers exactly.
 - **Tuning realisation moves to the backend:** `realise(cents) -> (note, fine)`. Game Boy keeps `40y`, NES uses the
   engine's fine-pitch track. Each chip reports its own "N of M degrees reachable within 5¢".
-- **Project files version 8** add `system` and nest the chip data; version 1-7 files open as Game Boy songs.
+- **Project files version 8** add `system` and nest the chip data; version 1-7 files open as Game Boy songs. Version 9
+  makes notes scientific pitch on every system (8 counted in each system's naming; Game Boy 8 files move down 12).
 
 ## Backend interface (core)
 
@@ -126,18 +130,43 @@ muted in the song) stay in the hosts and work for every chip.
   noise, DMC output level; no DPCM samples), band-limited through blip_buf (LGPL-2.1+). The player image is assembled
   once (`tools/audio/prepare_nes_player.py`, committed like hUGEDriver's) and the song data is placed at the fixed
   song region `$A000-$FFF9`. Details in `docs/AUDIO_ENGINE.md` (NES section).
-- **Lowering:** Kotlin encodes songs into the FamiStudio engine's data format. A golden test compares it with
-  FamiStudio's own export of the same song.
-- **Instruments:** duty, volume, arpeggio and pitch envelopes, each with loop and release points. A new instrument
-  editor; Wave view hidden; triangle has no volume (the editor says so instead of offering it).
-- **Export:** `.nsf` (plays in any NSF player and on hardware via flash carts) and FamiStudio's text format (opens in
-  FamiStudio, from which it exports to ca65/asm6/NESASM projects).
+- **Model** (`system/nes`): `NesSound` = one bank of 64 `NesInstrument`s (slot n = index n − 1), each four
+  `NesEnvelope`s (values, loop, release; FamiStudio ranges: volume 0-15, arpeggio and pitch −64..63, duty 0-3, at most
+  256 steps; a release only on volume and only after a loop, as FamiStudio's import enforces) plus the pitch
+  envelope's relative flag. Notes C-1..B-8 (12-107); FamiStudio note n = absolute − 11 (A-4 = 440 Hz on the pulses).
+  The pulses and the triangle cannot go below A-1; Noise notes pick one of 16 rates (note mod 16). Project files store
+  NES songs as backend `"nes-famistudio"` (backendVersion 1); versions before 8 are Game Boy songs only.
+- **Effects** (one column; codes are the base-36 value of their character): `0xy` arpeggio (a FamiStudio arpeggio
+  0, x, y on that note), `4xy` vibrato (speed 1-C, depth 1-F; persists across notes until `400`), `Axy` volume x
+  sliding to y by the next volume effect, `Cxx` volume, `Fxx` speed 1-1F, `Gxx` note delay, `Pxx` fine pitch (80 =
+  none; for the note it is on, so tunings use it), `Qxx`/`Rxx` glide up/down xx semitones arriving at the next note,
+  `Sxx` cut, `Vxx` duty (Noise: mode). No jumps: FamiStudio's engine has none, so the loop order and pattern lengths
+  arrange the song. OFF releases a note whose instrument has a volume release point, otherwise (or when already
+  released) it stops. A note without instrument is legato (FamiStudio "no attack") on the current instrument.
+- **Lowering** (`backend/FsSong`, `FamiStudioLowering`, `FamiStudioEnvelopes`, `NesImageLayout`): the song becomes
+  FamiStudio's simple-note model (`FsSong`), then engine data in the image layout of `docs/AUDIO_ENGINE.md`. Each
+  order's pattern stream is what FamiStudio's own exporter (`FamitoneMusicFile.GetSongData`) emits for those rows —
+  opcode order, tracked state, slide and volume-slide step arithmetic (slides take FamiStudio's larger NTSC/PAL
+  step, as its music export always targets both) — and envelopes are its `ProcessEnvelope` bytes. Its layout is ours:
+  instruments and their envelopes in stable slots, `$41` per order, identical order streams stored once; each order
+  re-sends its first note's instrument and a held volume so it can be entered by seek, loop or live edit.
+- **Golden test** (`NesGoldenTest`): FamiStudio 4.5.3 imports our text export of three songs (the demo, an effects
+  song, an envelope song) and exports its own data (`tools/audio/nes_golden.py`). Our envelope bytes must appear in
+  its export, and both datas, run by the embedded player on a 6502 (`NesTracer`), must write identical APU registers
+  every frame through two passes and the loop. Whole-file bytes are not compared: FamiStudio sorts and merges
+  instruments, orders envelopes by CRC and compresses streams by a size search, none of which affects what plays.
+- **Export:** `.nsf` (`NsfExporter`: NSF 1, NTSC, the player at `$8000`, the lowered data at `$A000`; plays in NSF
+  players and on hardware via flash carts) and FamiStudio's text format (`FamiStudioText`; FamiStudio 4.5.3 opens
+  it, the golden script proves it, and exports it to ca65/asm6/NESASM for games; instruments are named "slot
+  name", one pattern per distinct order content so note durations and releases stay exact).
+- **Demo:** "Thor Quest" (`NesDemoSong`), loaded by Load demo on NES songs. `exportSamples` writes it as
+  `thor-quest.{thor,nsf,txt,nesimg}`; `tools/audio/render_nes_image.sh` renders an image through the native engine.
 
 ## Steps
 
 1. **Declare the Game Boy** — done. `SoundSystem` + `GbSystem` (`system/gb`); the editor, painters, Help and menus
    read channels, banks, effects, limits and views from the song's system. Screenshots identical.
-2. **Model** — done. `GbSound`, absolute notes (C-3 = 36), project version 8 with migration from 1-7, Sketch
+2. **Model** — done. `GbSound`, absolute notes, project version 8 with migration from 1-7 (since version 9: scientific pitch, Game Boy C-3 = 24), Sketch
    phrases in saved workspaces migrated, tuning realisation through the system.
 3. **Native engine interface** — done. Game Boy behind `ChipEngineOps` on Android and Deck. `TrackerAudio` takes
    absolute notes; the song's system lowers, names its engine and converts audition notes (`SoundSystem.engine`), and
@@ -171,7 +200,8 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
 - **Parameter locks as effects**: brightness, ratio, waveform and similar effects on a row, applied at note start.
 - **Chord effect** written like the arpeggio (`xy` = +x and +y semitones) but sounding together on spare chip voices
   (OPL3 has 18 two-operator voices); larger chords through a second column or a numbered chord-shape table with
-  inversions.
+  inversions. Only systems with voices to spare declare it; on the others (Game Boy, NES, YM2612) chords stay notes
+  spread across channels.
 - **Drums are pitched instruments**: the note is the pitch, the instrument the drum sound, built from ordinary FM
   voices with a pitch sweep (start pitch, end pitch, speed) so every drum is independent. OPL3's rhythm mode may come
   later as an option; its snare/hi-hat and tom/cymbal pairs share a pitch.

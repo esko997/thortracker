@@ -435,7 +435,7 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
             if (note != null) {
                 noteOn = true
                 val inKey = guide.scale.contains(note)
-                ink.mono(c, Songs.noteName(note), mid, t, noteH, if (inKey) Palette.TEXT else Palette.DIM, i % 4 == 0, noteSize, Align.CENTER)
+                ink.mono(c, song.system.noteName(note), mid, t, noteH, if (inKey) Palette.TEXT else Palette.DIM, i % 4 == 0, noteSize, Align.CENTER)
                 c.fillCircle(mid, lineY, ink.dp(3f), held)
                 if (i + 1 < n && phrase.steps[i + 1] == null) ink.rect(c, mid, lineY - ink.dp(1.5f), x0 + cw, lineY + ink.dp(1.5f), held)
             } else if (noteOn) {
@@ -533,7 +533,7 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
             val note = ctl.sketchNote(i)
             if (note != toneNotes[i]) {
                 toneNotes[i] = note
-                toneNames[i] = if (note in song.system.noteRange) Songs.noteName(note) else "—"
+                toneNames[i] = if (note in song.system.noteRange) song.system.noteName(note) else "—"
             }
         }
         // The circle hides the triads, so it marks no chord on the note pads.

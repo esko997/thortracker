@@ -149,7 +149,7 @@ class UgeExporterTest {
             loopOrder = 1,
         )
         song = withCell(song, 0, 1, 4, Cell(Cell.CUT))
-        song = withCell(song, 1, 2, 0, Cell(69, 2, 0x9, 0x03))
+        song = withCell(song, 1, 2, 0, Cell(57, 2, 0x9, 0x03))
         val uge = parse(UgeExporter.export(song))
         assertEquals((0..8).toList(), uge.patterns.keys.toList())
         // Each order column: entries, then hUGETracker's ignored trailing 0.
@@ -169,7 +169,7 @@ class UgeExporterTest {
 
     @Test
     fun refusesUnexportableSongs() {
-        val routine = withCell(Songs.blank(), 0, 0, 0, Cell(60, 1, 0x6, 0x01))
+        val routine = withCell(Songs.blank(), 0, 0, 0, Cell(48, 1, 0x6, 0x01))
         assertThrows(IllegalArgumentException::class.java) { UgeExporter.export(routine) }
         val longName = Songs.blank().copy(comment = "x".repeat(256))
         assertThrows(IllegalArgumentException::class.java) { UgeExporter.export(longName) }

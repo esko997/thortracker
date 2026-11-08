@@ -25,7 +25,7 @@ interface TrackerAudio : AutoCloseable {
     fun stop()
 
     /**
-     * Sounds absolute [note] (semitones from C-0) with [instrument] (a slot of the channel's bank) on [channel] until
+     * Sounds absolute [note] (scientific pitch, 0 = C0) with [instrument] (a slot of the channel's bank) on [channel] until
      * [releaseAudition], with the current song's sounds. [detune] > 0 plays the note with the system's fine pitch
      * ([org.thortracker.system.FinePitch]; Game Boy: effect 40y). The implementation converts both for its engine
      * ([org.thortracker.system.PlaybackEngine.note], [org.thortracker.system.PlaybackEngine.fine]).

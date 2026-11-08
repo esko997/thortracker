@@ -7,6 +7,7 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.nes.NesSystem
 
 /** What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. */
 enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE }
@@ -21,7 +22,10 @@ data class ChannelSpec(val name: String, val kind: ChannelKind, val bank: Int, v
 /** An instrument bank of a [SoundSystem]: [slots] sounds, numbered 1..[slots] in cells. */
 data class BankSpec(val name: String, val slots: Int)
 
-/** One effect number of a [SoundSystem]: what it means, its parameter layout and whether it can be played/exported. */
+/**
+ * One effect number of a [SoundSystem]: what it means, its parameter layout and whether it can be played/exported.
+ * [code] is also its name: one character, 0-9 then A-Z ([char]), so the Game Boy's hexadecimal 0-F stay as they are.
+ */
 data class EffectSpec(
     val code: Int,
     val name: String,
@@ -30,7 +34,24 @@ data class EffectSpec(
     val description: String,
     /** False when the effect can never be exported/previewed. */
     val supported: Boolean,
-)
+) {
+    /** The character the effect is written with. */
+    val char: Char get() = charOf(code)
+
+    companion object {
+        /** Most effect codes a cell can name: one character, 0-9 then A-Z. */
+        const val MAX_CODE = 35
+
+        private const val CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        private val TEXT = Array(CHARS.length) { CHARS[it].toString() }
+
+        /** The character effect [code] is written with: 0-9, then A-Z; '?' beyond. */
+        fun charOf(code: Int): Char = if (code in 0..MAX_CODE) CHARS[code] else '?'
+
+        /** [charOf] as text, without allocating (pattern grids draw it per cell). */
+        fun textOf(code: Int): String = if (code in 0..MAX_CODE) TEXT[code] else "?"
+    }
+}
 
 /** A file format a song exports to, e.g. hUGETracker's `.uge`. [export] receives a song with no [SoundSystem.errors]. */
 class ExportFormat(val extension: String, val export: (Song) -> ByteArray)
@@ -121,7 +142,7 @@ interface PlaybackEngine {
     fun lower(song: Song, out: ByteArray)
 
     /**
-     * Why the engine cannot sound absolute [note] (semitones from C-0) with sound [instrument] on [channel] at the
+     * Why the engine cannot sound absolute [note] (scientific pitch, 0 = C0) with sound [instrument] on [channel] at the
      * system's fine pitch [fine] ([FinePitch]), or null when it can.
      */
     fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String?
@@ -155,10 +176,19 @@ interface SoundSystem {
     val channels: List<ChannelSpec>
     val banks: List<BankSpec>
 
-    /** Playable notes, in semitones from C-0. */
+    /** Playable notes, in scientific pitch: semitones from C0 (16.35 Hz), so A4 = 57 = 440 Hz in 12-TET. */
     val noteRange: IntRange
 
-    /** Every effect number (0..F), including unsupported ones. */
+    /**
+     * How much higher this system's note names number octaves than scientific pitch: 0 for FamiTracker/FamiStudio
+     * (A-4 = 440 Hz), 1 for hUGETracker (its C-3 sounds C2, 65.4 Hz). The editor's octave fields count in these names.
+     */
+    val nameOctaveOffset: Int
+
+    /** [note]'s name in this system's convention ("A-4"), "---" for no note, "OFF" for a note cut. */
+    fun noteName(note: Int): String = org.thortracker.model.Songs.noteName(note, nameOctaveOffset)
+
+    /** Every effect number the system names (Game Boy: 0-F), including unsupported ones. */
     val effects: List<EffectSpec>
 
     /** View kinds this system can show; the shared ones plus its own (e.g. the Game Boy's Wave view). */
@@ -244,7 +274,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

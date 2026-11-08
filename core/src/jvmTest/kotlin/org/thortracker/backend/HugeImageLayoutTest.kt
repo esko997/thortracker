@@ -102,13 +102,13 @@ class HugeImageLayoutTest {
         val image = ByteArray(engine.imageSize) { 0x55 }
         engine.lower(song, image)
         assertArrayEquals(expected, image)
-        assertEquals(0, engine.note(36))   // C-3
-        assertEquals(71, engine.note(107)) // B-8
+        assertEquals(0, engine.note(24))   // C-3
+        assertEquals(71, engine.note(95))  // B-8
         assertEquals(7, engine.fine(60, 7))
         assertNull(engine.auditionProblem(3, 36, 15, 15))
         assertEquals("Choose an instrument (01-0F) to audition", engine.auditionProblem(0, 60, 0, 0))
-        assertEquals("Cannot audition note 35 on channel 0", engine.auditionProblem(0, 35, 1, 0))
-        assertEquals("Cannot audition note 60 on channel 4", engine.auditionProblem(4, 60, 1, 0))
+        assertEquals("Cannot audition note B-2 on channel 0", engine.auditionProblem(0, 23, 1, 0)) // below C-3
+        assertEquals("Cannot audition note C-5 on channel 4", engine.auditionProblem(4, 48, 1, 0))
         assertEquals("Cannot audition detune 16 (00-0F)", engine.auditionProblem(0, 60, 1, 16))
     }
 }

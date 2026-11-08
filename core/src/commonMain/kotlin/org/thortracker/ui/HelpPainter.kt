@@ -2,7 +2,6 @@ package org.thortracker.ui
 
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
-import org.thortracker.editor.EditorSession.Companion.hex1
 import org.thortracker.editor.ViewController
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
@@ -145,7 +144,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(k.pair(Action.UNDO, Action.REDO), "Undo / redo (whole document, both displays)"),
             Line.Row(Keymap.MODIFIERS.joinToString(" ") { Keymap.buttonName(it) }, "Alone: only start chords, so a brushed trigger never edits"),
             Line.Row(k.label(Control.SWAP), "Swap the complete views of the two displays"),
-            Line.Row(Control.entries.filter { it.shows != null && k.binding(it) != null }.joinToString("  ") { "${k.label(it)} ${it.short}" }
+            Line.Row(Control.entries.filter { it.shows != null && it.shows in system.views && k.binding(it) != null }.joinToString("  ") { "${k.label(it)} ${it.short}" }
                 .ifEmpty { "Menu → Controls" }, "Show that view on this display; the same chord again returns to the previous view"),
             Line.Row(k.group(Action.COPY, Action.PASTE, Action.CUT), "Copy / paste / cut"),
             Line.Row(k.label(Action.DUPLICATE), "Duplicate"),
@@ -165,7 +164,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
             Line.Row("OFF", help.off),
-            Line.Row("$editLr effect", "· is no effect, then 0 arpeggio, 1 slide up and on. 0 waits as 000 until you set its value"),
+            Line.Row("$editLr effect", "· is no effect, then ${system.effects.filter { it.supported }.take(2).joinToString(", ") { "${it.char} ${it.name.lowercase()}" }} and on. " +
+                "0 waits as 000 until you set its value"),
             Line.Row("$mark hold+$dpad", "Select a block for copy, cut, clear or duplicate"),
             Line.Row(k.pair(Action.INSERT_ROW, Action.DELETE_ROW), "Insert / delete a row in the channel or selection"),
             Line.Row(k.label(Action.SCALE), "Pattern panel: root, scale and length. A scale (major/minor and modes, pentatonics, blues, whole tone, exotic scales; Chromatic is all notes) makes " +
@@ -187,7 +187,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(edit, "Listen: play.  Write: write at the pattern cursor and advance"),
             Line.Row(clear, "Write mode: place OFF and advance"),
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
-            Line.Row("Dark keys", "Above ${Songs.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
+            Line.Row("Dark keys", "Above ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
             Line.Heading("Sketch"),
             Line.Text("Tonal playground. Root/scale experiments stay local to this display; chords, notes and the circle only sound. Only the phrase's Insert writes notes (one undo step)."),
             Line.Row("$ud / $lr", "Settings, chords, notes or phrase / choose within the row"),
@@ -226,7 +226,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 missing.isNotEmpty() -> "${e.name}, not on ${missing.joinToString(", ")}"
                 else -> e.name
             }
-            out += Line.Row("${hex1(e.code)}$layout", if (meaning.isEmpty()) title else "$title ($meaning)", if (e.supported) Palette.TEXT else Palette.FAINT)
+            out += Line.Row("${e.char}$layout", if (meaning.isEmpty()) title else "$title ($meaning)", if (e.supported) Palette.TEXT else Palette.FAINT)
             if (e.description.isNotBlank()) out += Line.Row("", e.description, if (e.supported) Palette.DIM else Palette.FAINT)
         }
         return out
@@ -247,7 +247,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         out += Line.Row("Orders", "${s.orders.size} of ${s.system.maxOrders}")
         out += Line.Row("Patterns", "${s.patterns.size} of ${EditorSession.MAX_PATTERNS} (${s.orders.toSet().size} in the arrangement)")
         for ((key, text) in s.system.help.limits(s)) out += Line.Row(key, text)
-        out += Line.Row("Notes", "${Songs.noteName(s.system.noteRange.first)} to ${Songs.noteName(s.system.noteRange.last)}")
+        out += Line.Row("Notes", "${s.system.noteName(s.system.noteRange.first)} to ${s.system.noteName(s.system.noteRange.last)}")
         out += Line.Row("Rows", "1 to ${Songs.ROWS} per pattern (L2+→ Length), ticks per row 1 to ${EditorSession.MAX_TICKS}")
         return out
     }

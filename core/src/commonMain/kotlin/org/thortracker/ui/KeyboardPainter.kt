@@ -107,7 +107,7 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
                 }
                 ink.round(c, r, ink.dp(4f), fill)
                 val labelColor = if (!playable) Palette.FAINT else if (k == sounding) Palette.BG else 0xFF3A4450.toInt()
-                val label = if (playable) Songs.noteName(ctl.keyNote(k)) else "—"
+                val label = if (playable) song.system.noteName(ctl.keyNote(k)) else "—"
                 ink.label(c, label, r.centerX(), r.bottom - ink.unit * 1.8f, ink.unit * 1.4f, labelColor, k % 12 == 0, ink.unit * 0.8f, Align.CENTER)
                 wi++
             }
