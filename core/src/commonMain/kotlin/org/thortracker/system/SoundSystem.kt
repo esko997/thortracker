@@ -8,12 +8,14 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.sid.SidSystem
 
 /**
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
  * recorded samples (the NES DPCM channel): its notes pick samples, not pitches.
  */
-enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE }
+/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices). */
+enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE }
 
 /**
  * One channel of a [SoundSystem]. [bank] indexes [SoundSystem.banks]: the instruments its cells' sound numbers name.
@@ -308,7 +310,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem
