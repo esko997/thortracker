@@ -1,4 +1,18 @@
-# Thor Tracker verification — 2026-11-05
+# Thor Tracker verification — 2026-11-07
+
+## 0.9.0 NES songs, true pitch, GPL
+
+Thor Tracker now writes music for a second sound chip: the NES (2A03), played by the FamiStudio sound engine 4.5.3 on an emulated 6502, on the Thor and the Steam Deck.
+
+- **New blank song** and **Load demo** ask for the chip: Game Boy (hUGEDriver) or NES (FamiStudio). The NES demo is **Thor Quest**.
+- NES songs have Pulse 1, Pulse 2, Triangle and Noise (no DPCM samples yet) and one bank of 64 instruments shared by all four channels. Each instrument has volume, arpeggio, pitch and duty envelopes with loop and release points, edited in the new controller-only instrument view; envelopes a channel ignores are greyed out.
+- NES effects: `0xy` arpeggio, `4xy` vibrato, `Axy` volume slide, `Cxx` volume, `Fxx` speed, `Gxx` note delay, `Pxx` fine pitch (tunings use it), `Qxx`/`Rxx` glide up/down, `Sxx` note cut, `Vxx` duty (noise mode on Noise). There are no jumps: the loop point and pattern lengths shape the song. OFF plays the instrument's release when its volume envelope has one.
+- Export NES songs as `.nsf` (any NSF player, or hardware via a flash cart) or FamiStudio text (opens in FamiStudio 4.5.3, which exports to NES game projects).
+- **True pitch:** a note number is the same pitch on every chip (A4 = 440 Hz). Each chip keeps its own note names, so Game Boy songs look exactly as before. Projects save as format 9; older projects and saved Sketch phrases upgrade when opened. Earlier releases cannot open format 9 files.
+- Thor Tracker is now free software under the GNU GPL, version 3 or later (Help → Controls → About).
+- On the Deck, auditioning a note during playback now mutes that channel in the song, as on the Thor.
+
+Verified: 297 unit tests (JVM and Linux); native engine checks: Game Boy 145, NES 240 (exact rows, seek, auditions with release, live edits); for three test songs our NES data writes the same APU registers every frame as FamiStudio 4.5.3's own export; the Game Boy factory `.uge` is byte-identical and all 32 Game Boy view renders are pixel-identical to 0.8.6; 18 Android tests on the emulator; the NES demo loads and plays on the Android emulator and the Deck build.
 
 ## 0.8.6 Steam Deck build, more view chords
 
