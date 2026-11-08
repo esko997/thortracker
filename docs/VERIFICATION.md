@@ -17,9 +17,10 @@ remain unchanged. The VRC7 held-copy regression failed on three wrong-patch asse
 Mega Drive feedback regression differed on 1,531 post-unmute samples before its fix and now matches exactly.
 Unmuted NTSC/PAL Mega Drive reference WAVs remain byte-identical.
 
-A production-signed candidate passed the 18 existing Android instrumentation tests plus a temporary render
-capture on Nova. All 32 Game Boy views are pixel-identical to the same-device 0.14.1 baseline; the factory `.uge`
-is byte-identical. Reserved-handheld smoke tracks reported zero AudioFlinger underruns on Nova, DMG and Konkr.
+The final production-signed candidate passed all 18 existing Android instrumentation tests on Nova. A separate
+temporary capture test produced 32 Game Boy views, all pixel-identical to the same-device 0.14.1 baseline;
+the harness source and test package were removed. The factory `.uge` is byte-identical. Reserved-handheld
+smoke tracks reported zero AudioFlinger underruns on Nova, DMG and Konkr.
 Nova exercised thirteen-channel scrolling, wave audition and live sample editing; its edited NSF and FamiStudio
 text exports through the document picker are byte-identical to desktop exports. Its edited no-fade WAV is
 non-silent 48 kHz, 16-bit stereo PCM, 1,226,779 frames. DMG exercised the one-channel variant and wave presets.

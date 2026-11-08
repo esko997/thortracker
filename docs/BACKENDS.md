@@ -263,8 +263,9 @@ VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions)
     exporter misses loop restoration and retriggers that mid-song legato case. The independent `vrc7_patch_restore`
     golden demonstrates both differences (`AUDIO_ENGINE.md`). A custom sound starting while another FM channel holds a note of
     a different custom sound (different registers) changes that note's timbre on the chip itself: the song check warns
-    where. VRC7 sounds identical but for their names are one instrument on the FM channels, as FamiStudio's export
-    merges them, so a copied custom sound shares the patch without reloading it.
+    where. VRC7 sounds identical but for their names are musically equivalent, so a copied custom sound shares the
+    patch without reloading it. Runtime bank identities remain distinct: a held note follows edits to its actual
+    slot, not an identical original or copy.
   - **Sustain overrides** (`NesSound.vrc7Sustain`: `release`, `stop`; FamiStudio's `Vrc7OverrideRelease` /
     `Vrc7OverrideStop`). FamiStudio stores them per instrument, but its engine keeps one copy
     (`famistudio_chn_vrc7_sustain`, the last VRC7 instrument loaded on any channel), so per-sound values would apply
