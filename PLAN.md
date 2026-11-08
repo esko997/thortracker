@@ -19,7 +19,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
    Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
 3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) is
    implemented for 0.15.0 as the "NES + VRC6" variant, with native/driver parity, desktop and reserved-handheld checks
-   recorded in `docs/VERIFICATION.md`. Next: VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
+   recorded in `docs/VERIFICATION.md`. MMC5 (2 extra pulses; its PCM channel is not driven by the pinned
+   FamiStudio engine) is implemented source-only on branch `nes-mmc5` as "NES + MMC5", awaiting the parent's
+   generation, builds and checks. Next: VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS,
    EPSM (YM2608). Source-only worktrees do not count as verified releases.
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).

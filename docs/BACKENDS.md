@@ -198,15 +198,18 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
 
 - **One system per expansion, one family.** FamiStudio assembles its engine for one expansion (its project picks
   one in practice for NSF/ROM export), and a Thor Tracker system has fixed channels, so each expansion is its own
-  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels) and `NesVrc6System`
-  (`"nes-famistudio-vrc6"`, 8 channels). Both are `NesFamiStudioSystem`s sharing every rule, view, lowering and
-  export; they differ only in `NesExpansion` (`NONE`, `VRC6`). `SoundSystem.family` (`"NES"`) groups them: **New
-  blank song** and **Load demo** list "NES…" once, which opens the variants ("NES (FamiStudio)", "NES + VRC6
-  (FamiStudio)"). The plain NES is unchanged: same id, channels, files, lowering bytes, image and `.nsf`.
+  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels), `NesVrc6System`
+  (`"nes-famistudio-vrc6"`, 8 channels) and `NesMmc5System` (`"nes-famistudio-mmc5"`, 7 channels). All are
+  `NesFamiStudioSystem`s sharing every rule, view, lowering and export; they differ only in `NesExpansion` (`NONE`,
+  `VRC6`, `MMC5`). `SoundSystem.family` (`"NES"`) groups them: **New blank song** and **Load demo** list "NES…" once,
+  which opens the variants ("NES (FamiStudio)", "NES + VRC6 (FamiStudio)", "NES + MMC5 (FamiStudio)"). The plain
+  NES is unchanged: same id, channels, files, lowering bytes, image and `.nsf`.
 - **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"`, left out when none) names the chip; the
   song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is rejected.
-  Channels keep FamiStudio's engine order: the 2A03's five, then the expansion's (`NesRules.CHANNEL_NAMES` lists them
-  all; a song has the first `expansion.channels`). The one bank of 64 sounds stays shared; each sound has a `chip`
+  Channels keep FamiStudio's engine order: the 2A03's five, then the expansion's (`NesExpansion.channelNames` /
+  `channelKinds`; `NesRules.channelName(expansion, ch)`, `kind`, `chip`, `pitched`, `lowestNote`, `effectsFor` take the
+  expansion, since channel 5 is a VRC6 pulse on one variant and an MMC5 pulse on another). The one bank of 64 sounds
+  stays shared; each sound has a `chip`
   (`NesChip.APU` = 2A03, `VRC6`; FamiStudio's instrument expansion; omitted in files for 2A03), because the same
   envelope means different things on each chip (VRC6 duties 0-7). A channel plays only its chip's sounds
   (validation, audition); only 2A03 sounds map DPCM samples. NES data version stays 2: VRC6 songs are new files,
@@ -232,8 +235,28 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   cartridge with a VRC6). FamiStudio text with `Expansions="VRC6"`, `Expansion="VRC6"` and `Vrc6SawMasterVolume` on
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
+- **MMC5** (Nintendo's MMC5 mapper: two more pulses and an 8-bit PCM DAC): channels MMC5 Pulse 1 (5) and MMC5
+  Pulse 2 (6), `ChannelKind.PULSE`. FamiStudio 4.5.3 has no MMC5 instrument type: MMC5 squares play 2A03 instruments
+  (its `Channel.SupportsInstrument`), so `NesExpansion.MMC5.chip` is `NesChip.APU`, the song holds only 2A03 sounds
+  and the Instrument view has no Chip row. Duties 0-3 (`Vxx` 00-03), every 2A03-pulse effect, notes A-1..B-8 (the
+  same 11-bit periods and note table as the 2A03 pulses: absolute 57 is engine note 46 and 440 Hz on every pulse).
+  Differences the musician hears, both from the hardware and the pinned driver: no sweep unit; the driver writes the
+  period-high register only when it changes, without the 2A03 pulses' smooth-vibrato trick, so a pitch crossing a
+  period-high boundary restarts the waveform (FamiStudio's documentation: "the reset bug cannot be worked
+  around"); periods below 8 are not silenced. **PCM is not available**: the pinned engine's header says "Nintendo
+  MMC5 (2 extra squares, extra DPCM not supported)" (`famistudio_ca65.s` line 107), its MMC5 init writes `$5010 = $00`
+  and `$5015 = $03` only (lines 1390-1399) and nothing ever writes `$5011`; FamiStudio 4.5.3 itself never activates
+  its `Mmc5Dpcm` channel type (`Project.IsChannelActive`). So songs have no MMC5 PCM channel, sounds, effects or
+  export data, and no substitute playback; the console's own DPCM channel is unchanged. Demo: "Tandem Skies"
+  (`NesMmc5DemoSong`): the MMC5 pulses as a lead/harmony pair over the 2A03's echo, triangle bass, noise drums and
+  the DPCM starter kit; `exportSamples` writes `tandem-skies.{thor,nsf,txt,nesimg}` and the shortest valid MMC5 song
+  `mmc5-shortest.nesimg` for the WAV test. Engine: a third player build (`FAMISTUDIO_EXP_MMC5 = 1`,
+  `NesMmc5PlayerImage`, `nes_mmc5_player_image.h`) whose song base is measured by `prepare_nes_player.py` (the first
+  page after the player), the MMC5 audio unit `nes/nes_mmc5.c`; exports `.nsf` with `$7B` = `$08` and FamiStudio text
+  with `Expansions="MMC5"` and the `MMC5Square1/MMC5Square2` channels (instruments without an `Expansion`). Golden
+  test songs `mmc5_demo` and `mmc5_effects`. Contract: `docs/AUDIO_ENGINE.md`, "MMC5".
 
-**Adding the next expansion** (VRC7, N163, S5B, FDS, MMC5, EPSM) follows the same path:
+**Adding the next expansion** (VRC7, N163, S5B, FDS, EPSM) follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
    base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
    FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
@@ -860,3 +883,12 @@ Decisions:
   Half (FamiStudio's default). Review.
 - VRC6 mixing level: one DAC step = the 2A03's full pulse ÷ 15 (NESdev's "roughly equal" full pulses); no
   hardware or reference-emulator comparison yet. Listening may ask for a different balance.
+- MMC5 PCM (decided with the integrator): not offered, because the pinned FamiStudio 4.5.3 engine and FamiStudio
+  itself do not drive it (evidence in "NES expansion chips", MMC5). Adding it would mean a different driver or a
+  FamiStudio extension and a new song format, which this slice does not invent. The native MMC5 unit models the
+  registers the driver touches (`$5010`, `$5015`) and the write-mode DAC (`$5011`) for completeness; read-mode PCM
+  (the DAC fed by CPU reads of `$8000-$BFFF`) is outside this music-driver machine. Review if a PCM-capable driver
+  appears.
+- MMC5 mixing: the two pulses at the 2A03 pulses' level (NESdev: "equivalent in volume") with inverted polarity, the
+  240 Hz envelope/length clock at CPU ÷ 7424 (NESdev: from die images, not bench-confirmed). No hardware or
+  reference-emulator comparison yet; listening may ask for a different balance.

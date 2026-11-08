@@ -150,7 +150,7 @@ assembled at app runtime or per Play.
 src/main/cpp/CMakeLists.txt`, ABIs `arm64-v8a`, `x86_64`. The CMake project builds a static C11
 library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implementation), `huge_chip.c`,
 `huge_machine.c`, which `#include`s binjgb's `emulator.c`, plus `common.c`; the NES files `nes/nes_chip.c`,
-`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c`, `nes/nes_vrc6.c`, `nes/nes_players.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
+`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c`, `nes/nes_vrc6.c`, `nes/nes_mmc5.c`, `nes/nes_players.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
 `sid/sid_machine.c`, `sid/sid_image.c`; the OPL3 files `opl3/opl3_chip.c`, `opl3/opl3_machine.c`,
 `opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; `vgm_gd3.c` (the VGM exports'
 GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
@@ -821,6 +821,85 @@ VPulse sustain edited.
   the `.nsf`/text exports, files and the editor.
 - Not done: listening on hardware or a VRC6 cartridge, comparison with a reference VRC6 emulator's audio
   (libgme/NSFPlay), Thor measurements.
+
+## MMC5: the same engine with Nintendo's MMC5 (`"nes-famistudio-mmc5"`)
+
+The second NES expansion (design in `docs/BACKENDS.md`, "NES expansion chips", MMC5). Everything in the NES
+section holds; this section lists what differs. Source-only so far: the numbers below that depend on the assembled
+player (size, id, RAM, song base, image size) are written by `prepare_nes_player.py` into the generated files and
+are not repeated here until the parent generates and verifies them.
+
+- **Player** (`generated/nes_mmc5_player_image.h`, `NesMmc5PlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_MMC5=1`, nothing else changed (same entry table and configuration, the 2A03
+  note tables; no extra tables). 17 envelope slots (`3+3+2+3+3+3`) and 5 pitch envelope slots; the MMC5 pulses'
+  envelopes start at slots 11 and 14, their pitch envelopes are 3 and 4; RAM adds `famistudio_mmc5_pulse1_prev` /
+  `_pulse2_prev` (the period-high caches, `$80` at init).
+- **Song base** `NES_MMC5_SONG_BASE`: the first page after the player, measured by `prepare_nes_player.py` (it
+  assembles once at a provisional base, then at the page after the measured end; the base only changes the operands
+  of the init call). Region = song base..`$FFF9`, samples as before; image = 32-byte header + directory + region
+  (`NES_MMC5_IMAGE_SIZE`, at most the 2A03 build's).
+- **Channels**: 0-4 as the 2A03 build, then **5 MMC5 Pulse 1, 6 MMC5 Pulse 2**; the FamiStudio song header has
+  **seven** stream words, the Thor layout seven order streams.
+- **Opcodes**: the plain 2A03 set; the engine has no MMC5 opcode (`$55`, VRC6 saw volume, is refused). `$4F d` takes
+  0-3 on the MMC5 pulses (`famistudio_duty_lookup`, as the 2A03 pulses); `$53` (phase reset) is valid on the 2A03 and
+  MMC5 pulses (`famistudio_channel_to_phase_reset_mask` `$20`, `$40`; it rewrites `$5003`/`$5007` with the cached
+  period high). Duty envelopes 0-3. Notes use the 2A03 pulse table: the same period on MMC5 Pulse 1 as on Pulse 1 for
+  every note (absolute 57 = engine note 46 = A4 ≈ 440 Hz); A-1 is the lowest note (11-bit periods).
+- **Register writes** (`famistudio_ca65.s`): init `$5010 = $00`, `$5015 = $03` (lines 1390-1399); every frame
+  `famistudio_update_channel_sound` per MMC5 pulse (lines 4292-4294): `$5002`/`$5006` (period low), `$5003`/`$5007`
+  only when the period high changes (no `FAMISTUDIO_CFG_SMOOTH_VIBRATO` sweep trick, which needs a sweep unit: a
+  crossing restarts the duty sequence, audible as a click), `$5000`/`$5004` = duty | `$30` | volume. Never written:
+  `$5001`/`$5005` (sweep), `$5011` (PCM) and `$5104` (ExRAM mode).
+- **PCM: not supported by the driver.** Header line 107: "Nintendo MMC5 (2 extra squares, extra DPCM not
+  supported)"; no PCM channel, envelope, opcode or register write exists in the MMC5 build, and FamiStudio 4.5.3
+  never activates its `Mmc5Dpcm` channel type. Thor Tracker offers no MMC5 PCM authoring, export data or substitute
+  playback; the 2A03's DPCM channel is unchanged and fully supported.
+- **MMC5 audio** (`nes/nes_mmc5.c`, written here from the NESdev wiki "MMC5 audio"; see its header): pulses as the
+  2A03's (shared `nes_duty_table` and `nes_length_table` from `nes_apu.c`) without a sweep unit and without
+  silencing periods below 8; envelopes and length counters clocked together every 7424 CPU cycles (241.08 Hz;
+  NESdev's die-image figure, not bench-confirmed); `$5015` enables (reads give the length status); `$5010` mode and
+  IRQ enable, `$5011` write-mode 8-bit DAC (`$00` keeps the DAC and trips the IRQ flag; ignored in read mode).
+  **Read-mode PCM (the DAC fed by CPU reads of `$8000-$BFFF`) is not emulated**: it is outside this music-driver
+  machine, whose driver never selects it. The DAC powers on at 0 (hardware: `$EF`/`$FF`, a DC level the high-pass
+  removes). Mix: the pulses through the 2A03 pulse formula, the DAC as a DMC level of the same value (up to twice
+  the DMC's 127) through the tnd formula, the sum **negated** (NESdev: every MMC5 channel has the opposite polarity)
+  into the 2A03's band-limited buffer. Event-driven with output; arithmetic without, so seeks clock every timer,
+  sequencer, envelope and length counter.
+- **Machine** (`nes_machine.c`): `nm_create(rate, &nes_player_mmc5)`; writes to `$5000-$5FFF` go to `nm_write_log`
+  (so a stray ExRAM write would show) and the audio registers to the unit; `$5010`/`$5015` reads come from the unit.
+  Seek, live relocation, audition (channels 0-3 and 5-6, fine pitch on 0-2 and 5-6) and mute (5-6) as on the other
+  builds.
+- **Validation** (`nes_image.c`): seven streams against this build's song base; duty 0-3 everywhere ("MMC5 duty
+  outside 0..3" on the MMC5 pulses), `$53` on channels 0, 1, 5, 6, `$55` refused.
+- **Ops** (`nes_chip.c`): `nes_mmc5_chip_ops`, id `"nes-famistudio-mmc5"`, `image_size` `NES_MMC5_IMAGE_SIZE`.
+  `.nsf` export: the MMC5 player at `$8000`, the data at its song base, header byte `$7B` = `$08` (MMC5).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py --famistudio "$(tools/audio/fetch_famistudio.sh)"` once (it writes
+FamiStudio 4.5.3's export of `tools/audio/nes/mmc5_test.txt` to `mmc5_test_ca65.s` when missing), then plain runs.
+It writes `nes_mmc5_player_image.h`, `NesMmc5PlayerImage.kt` and the fixtures `app/src/test/cpp/nes_mmc5_song.h`
+(raw at the song base, the Thor layout, every block moved, and order 2 MMC5 Pulse 1 row 8 E4 → G4 plus the
+MPulse sustain edited), and checks the seven existing outputs are unchanged. `mmc5_test.txt` (`Expansions="MMC5"`,
+2A03 instruments only) covers duty envelopes 0-3 and `Vxx`, vibrato, slides (one crossing a period-high
+boundary), arpeggio, fine pitch, volume and volume slide, delay, cut, release, no-attack, phase reset, the A-1 and
+B-8 edges and instruments shared between 2A03 and MMC5 pulses. FamiStudio's text names notes an octave below
+scientific pitch (its "A3" is absolute 57, 440 Hz).
+
+### Verification (to be run by the parent; nothing here has been built or run yet)
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_mmc5_test.c`: unit checks
+  against NESdev (duty steps, no sweep, periods below 8 audible, the 7424-cycle clock, `$5015`, length halt, `$5011`
+  write and read modes, inverted polarity, mute); pitch (the MMC5 and 2A03 pulse periods equal for engine note 46,
+  ≈ 440 Hz); FamiStudio's export vs the Thor layout (identical APU + MMC5 writes and row timing through a loop);
+  seek with clocked unit state; live relocation and edits; audition and mute on 5-6; image rules; the ops; the
+  driver's init writes and the registers it never writes. Evidence: `nes_mmc5.wav`, `nes_mmc5_trace.txt`,
+  `nes_mmc5.nsf` (`$7B` = `$08`). `wav_render_test.c` renders `tandem-skies.nesimg` and the shortest valid MMC5
+  song `mmc5-shortest.nesimg` (one row, speed 1).
+- Kotlin: `NesGoldenTest` golden songs `mmc5_demo` and `mmc5_effects` (fixtures generated with
+  `THOR_UPDATE_NES_GOLDEN=1` and `tools/audio/nes_golden.py`), `NesLoweringTest`, `NesExportTest`,
+  `NesProjectCodecTest`, `NesInstrumentViewTest`.
+- Not done: any build or run, listening, an MMC5 cartridge, a reference-emulator comparison.
 
 ## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
 
