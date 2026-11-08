@@ -7,6 +7,7 @@ import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.Vrc7Sustain
 import org.thortracker.system.nes.nes
 
 /**
@@ -81,6 +82,8 @@ internal class FsSong(
     val samples: List<DpcmSample>,
     /** The song's expansion chip: its channels follow the 2A03's five in [notes]. */
     val expansion: NesExpansion = NesExpansion.NONE,
+    /** VRC7 songs: the release/stop sustain overrides every VRC7 instrument carries. */
+    val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
 ) {
     val orderStart = IntArray(lengths.size + 1).also { for (i in lengths.indices) it[i + 1] = it[i] + lengths[i] }
     val totalRows get() = orderStart[lengths.size]
@@ -153,7 +156,7 @@ internal class FsSong(
             }
             return FsSong(song.title, song.artist, song.ticksPerRow, song.loopOrder, lengths,
                 IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples,
-                song.nes.expansion)
+                song.nes.expansion, song.nes.vrc7Sustain)
         }
 
         private fun convert(cell: Cell, ch: Int, vrc7: Boolean, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,

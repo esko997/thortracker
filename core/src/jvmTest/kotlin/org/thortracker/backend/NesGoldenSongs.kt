@@ -11,7 +11,11 @@ import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc6SawVolume
+import org.thortracker.system.nes.Vrc7Patch
+import org.thortracker.system.nes.Vrc7Presets
+import org.thortracker.system.nes.Vrc7Sustain
 import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -21,7 +25,9 @@ import org.thortracker.system.nes.DpcmStarterKit
  * Songs whose FamiStudio text export FamiStudio 4.5.3 itself turned into engine data (tools/audio/nes_golden.py):
  * the fixtures in src/jvmTest/resources/nes-golden. Between them they use every NES effect, OFF as release and stop,
  * legato, identical and differing instruments, custom pattern lengths, speed changes on several channels, parked
- * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides.
+ * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides; the
+ * VRC7 ones built-in and custom patches, two custom sounds taking the chip's one custom patch in turn, key-off releases
+ * and stops with the song's sustain overrides, and FM pitch effects.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -31,6 +37,8 @@ object NesGoldenSongs {
         "dpcm" to ::dpcm,
         "vrc6_demo" to NesVrc6System::demo,
         "vrc6_effects" to ::vrc6Effects,
+        "vrc7_demo" to NesVrc7System::demo,
+        "vrc7_effects" to ::vrc7Effects,
     )
 
     private fun n(name: String): Int {
@@ -293,6 +301,111 @@ object NesGoldenSongs {
             title = "VRC6 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
             sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * VRC7: two custom sounds (and an identical twin of one) loading the chip's one custom patch in turn, also on the
+     * same row, and built-in patches beside them; the song's release and stop sustain overrides with OFF as key-off
+     * release ($56) and as stop, Sxx cuts and note delays; legato, slides, vibrato, Pxx (converted to frequency steps),
+     * volume and volume slides, 0xy, pitch and arpeggio envelopes, the FM channels' lowest and a high note, the speed
+     * set on an FM channel, and 2A03 channels alongside. The last custom-sound note before the song's end is FM 1's
+     * (FM 1 holds that sound when the loop is entered), so FamiStudio's exporter and the lowering send the same
+     * instruments at the loop.
+     */
+    fun vrc7Effects(): Song {
+        val base = NesVrc7System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val vrc7 = NesChip.VRC7
+        val lead = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0xF1, 0x61, 0x9B, 0x1F, 0xD2, 0x74, 0x31, 0x57))
+        bank[0] = NesInstrument("Custom lead", volume = NesEnvelope(listOf(15, 14, 13, 12, 11, 9, 6, 3, 0), loop = 3, release = 5), chip = vrc7, fm = lead)
+        bank[1] = NesInstrument("Custom bass", volume = NesEnvelope(listOf(15, 13, 12), loop = 2), chip = vrc7,
+            fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)))
+        bank[2] = NesInstrument("Piano arp", arpeggio = NesEnvelope(listOf(0, 4, 7), loop = 0), chip = vrc7, fm = Vrc7Patch().withPreset(3))
+        bank[3] = NesInstrument("Bass guitar bend", pitch = NesEnvelope(listOf(6, 3, 1, 0)), chip = vrc7, fm = Vrc7Patch().withPreset(13))
+        bank[4] = NesInstrument("Bell decay", volume = NesEnvelope(listOf(15, 13, 11, 9, 7, 5, 3, 1)), chip = vrc7, fm = Vrc7Patch().withPreset(Vrc7Presets.BELL))
+        bank[5] = NesInstrument("Custom lead twin", volume = NesEnvelope(listOf(15, 14, 13, 12, 11, 9, 6, 3, 0), loop = 3, release = 5), chip = vrc7, fm = lead)
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val fm1 = NesRules.VRC7_FM1
+        val fm2 = fm1 + 1
+        val fm3 = fm1 + 2
+        val fm4 = fm1 + 3
+        val fm5 = fm1 + 4
+        val fm6 = fm1 + 5
+        val a = P("VRC7 A", channels = 11)
+        // FM 1: custom lead, legato, effects, release then stop, the range ends, delays and cuts, its twin.
+        a.note(fm1, 0, "C-4", 1)
+        a.note(fm1, 4, "E-4", 0) // legato
+        a.note(fm1, 8, "G-4", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(fm1, 12, NesRules.FX_VIBRATO, 0x00)
+        a.note(fm1, 14, "A-4", 1, NesRules.FX_SLIDE_UP, 0x05)
+        a.note(fm1, 18, "D-5", 1, NesRules.FX_SLIDE_DOWN, 0x07)
+        a.note(fm1, 22, "C-5", 1, NesRules.FX_FINE_PITCH, 0x8C)
+        a.note(fm1, 24, "C-5", 1) // the next note resets the fine pitch
+        a.off(fm1, 26) // key-off release ($56)
+        a.off(fm1, 28) // already released: stop
+        a.note(fm1, 30, "C-1", 1) // the FM channels' lowest note
+        a.note(fm1, 32, "B-7", 1)
+        a.note(fm1, 34, "F-4", 1, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(fm1, 36, "F-4", 1, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(fm1, 38, "A-4", 1, NesRules.FX_VOLUME, 0x09)
+        a.note(fm1, 40, "A-4", 1, NesRules.FX_VOLUME_SLIDE, 0xF3)
+        a.note(fm1, 44, "E-4", 1, NesRules.FX_ARPEGGIO, 0x37)
+        a.note(fm1, 48, "E-4", 6) // the twin: identical but for its name, so FamiStudio's export merges it with the lead
+        a.note(fm1, 50, "G-4", 0) // legato on the twin
+        a.off(fm1, 52)
+        a.note(fm1, 60, "A-4", 1) // the song's last custom-sound note
+        // FM 2: the second custom sound, on FM 1's rows too (both load; the higher channel's patch stays).
+        a.note(fm2, 0, "C-3", 2)
+        a.off(fm2, 16)
+        a.note(fm2, 20, "G-2", 2)
+        a.note(fm2, 32, "C-3", 2, NesRules.FX_SLIDE_UP, 0x07)
+        a.off(fm2, 44)
+        // FM 3: built-in Piano, its arpeggio envelope and 0xy, the speed changes.
+        a.note(fm3, 0, "A-3", 3)
+        a.note(fm3, 8, "C-4", 3, NesRules.FX_ARPEGGIO, 0x47)
+        a.off(fm3, 16)
+        a.fx(fm3, 20, NesRules.FX_SPEED, 0x05)
+        a.note(fm3, 32, "E-4", 3, NesRules.FX_VOLUME, 0x0C)
+        a.fx(fm3, 44, NesRules.FX_SPEED, 0x04)
+        a.off(fm3, 48)
+        // FM 4: built-in Bass guitar with a pitch envelope, cuts, a slide, vibrato and Pxx.
+        a.note(fm4, 0, "A-1", 4)
+        a.note(fm4, 8, "A-1", 4, NesRules.FX_NOTE_CUT, 0x02)
+        a.note(fm4, 16, "E-2", 4, NesRules.FX_SLIDE_UP, 0x0C)
+        a.note(fm4, 32, "C-2", 4, NesRules.FX_VIBRATO, 0x38)
+        a.fx(fm4, 40, NesRules.FX_VIBRATO, 0x00)
+        a.note(fm4, 48, "C-2", 4, NesRules.FX_FINE_PITCH, 0x70)
+        a.off(fm4, 56)
+        // FM 5: built-in Bell, a volume slide, notes after the last custom one.
+        a.note(fm5, 0, "C-5", 5, NesRules.FX_VOLUME_SLIDE, 0x4F)
+        for (r in 8 until 64 step 8) a.note(fm5, r, if (r % 16 == 0) "G-5" else "E-5", 5)
+        a.note(fm5, 62, "C-6", 5)
+        // FM 6: the twin (one instrument with the lead in FamiStudio's export) while FM 1 holds the lead.
+        a.note(fm6, 24, "G-4", 6)
+        a.off(fm6, 32)
+        a.note(fm6, 46, "B-4", 6, NesRules.FX_NOTE_DELAY, 0x01)
+        a.off(fm6, 54)
+        // 2A03 alongside.
+        a.note(0, 0, "E-4", 7)
+        a.note(0, 32, "G-4", 7)
+        a.off(0, 56)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
+        val b = P("VRC7 B", length = 32, channels = 11)
+        b.note(fm1, 0, "E-5", 1)
+        b.off(fm1, 8)
+        b.note(fm1, 16, "E-4", 2) // FM 1 switches to the other custom sound and back
+        b.note(fm1, 24, "A-4", 1)
+        b.note(fm2, 4, "C-3", 2)
+        b.off(fm2, 12)
+        b.note(fm3, 0, "A-3", 3)
+        b.note(fm5, 16, "E-5", 5)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "VRC7 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank, vrc7Sustain = Vrc7Sustain(release = true, stop = true)),
         )
     }
 }

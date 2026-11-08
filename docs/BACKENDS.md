@@ -194,23 +194,27 @@ muted in the song) stay in the hosts and work for every chip.
 ## NES expansion chips
 
 FamiStudio's engine also drives the Famicom cartridge sound chips; roadmap step 3 adds them one at a time,
-VRC6 first. Decisions (made on the user's behalf; see Open questions):
+VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions):
 
 - **One system per expansion, one family.** FamiStudio assembles its engine for one expansion (its project picks
   one in practice for NSF/ROM export), and a Thor Tracker system has fixed channels, so each expansion is its own
-  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels) and `NesVrc6System`
-  (`"nes-famistudio-vrc6"`, 8 channels). Both are `NesFamiStudioSystem`s sharing every rule, view, lowering and
-  export; they differ only in `NesExpansion` (`NONE`, `VRC6`). `SoundSystem.family` (`"NES"`) groups them: **New
-  blank song** and **Load demo** list "NES…" once, which opens the variants ("NES (FamiStudio)", "NES + VRC6
-  (FamiStudio)"). The plain NES is unchanged: same id, channels, files, lowering bytes, image and `.nsf`.
-- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"`, left out when none) names the chip; the
-  song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is rejected.
-  Channels keep FamiStudio's engine order: the 2A03's five, then the expansion's (`NesRules.CHANNEL_NAMES` lists them
-  all; a song has the first `expansion.channels`). The one bank of 64 sounds stays shared; each sound has a `chip`
-  (`NesChip.APU` = 2A03, `VRC6`; FamiStudio's instrument expansion; omitted in files for 2A03), because the same
-  envelope means different things on each chip (VRC6 duties 0-7). A channel plays only its chip's sounds
-  (validation, audition); only 2A03 sounds map DPCM samples. NES data version stays 2: VRC6 songs are new files,
-  2A03 files are byte-identical.
+  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels), `NesVrc6System`
+  (`"nes-famistudio-vrc6"`, 8 channels) and `NesVrc7System` (`"nes-famistudio-vrc7"`, 11 channels). All are
+  `NesFamiStudioSystem`s sharing every rule, view, lowering and export; they differ only in `NesExpansion` (`NONE`,
+  `VRC6`, `VRC7`). `SoundSystem.family` (`"NES"`) groups them: **New blank song** and **Load demo** list "NES…" once,
+  which opens the variants ("NES (FamiStudio)", "NES + VRC6 (FamiStudio)", "NES + VRC7 (FamiStudio)"). The plain NES
+  is unchanged: same id, channels, files, lowering bytes, image and `.nsf`. Each variant's engine refuses another
+  variant's song (its image would be laid out for another player build).
+- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"` / `"vrc7"`, left out when none) names the chip;
+  the song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is
+  rejected. Channels keep FamiStudio's engine order: the 2A03's five (`NesRules.APU_NAMES`), then the expansion's
+  (`NesExpansion.channelNames` / `channelKinds`; `NesRules.channelName` and `NesRules.kind` take the expansion). The
+  one bank of 64 sounds stays shared; each sound has a `chip` (`NesChip.APU` = 2A03, `VRC6`, `VRC7`; FamiStudio's
+  instrument expansion; omitted in files for 2A03), because the same envelope means different things on each chip
+  (VRC6 duties 0-7, no duty on the VRC7). A channel plays only its chip's sounds (validation, audition); only 2A03
+  sounds map DPCM samples. A sound pasted into a song without its chip becomes a 2A03 sound (`forChip`: duty clamped,
+  saw volume and FM patch reset). NES data version stays 2: expansion songs are new files, 2A03 files are
+  byte-identical.
 - **VRC6** (two pulses with eight duties and 12-bit periods, a sawtooth): channels VRC6 Pulse 1 (5), VRC6 Pulse 2 (6),
   VRC6 Saw (7, `ChannelKind.SAW`). VRC6 sounds have duty 0-7 (1/16 to 8/16) and the saw's master volume
   (`Vrc6SawVolume` Full / Half / Quarter = volume × 4 / × 2 / × 1 into the 6-bit accumulator rate; Full distorts
@@ -232,8 +236,50 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   cartridge with a VRC6). FamiStudio text with `Expansions="VRC6"`, `Expansion="VRC6"` and `Vrc6SawMasterVolume` on
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
+- **VRC7** (a YM2413 derivative: six 2-operator FM channels, 15 patches in ROM and one programmable patch): channels
+  VRC7 FM 1-6 (5-10, `ChannelKind.VOICE`), reaching every note C-1..B-8. A VRC7 sound (`NesChip.VRC7`) has volume,
+  arpeggio and pitch envelopes (no duty) and its patch (`Vrc7Patch`: FamiStudio's `Vrc7Patch` 0-15, 0 = custom, and
+  `Vrc7PatchRegs`, the 8 registers `$00-$07`; a built-in patch holds its ROM values, as FamiStudio's setter copies
+  them, so switching to Custom starts from that sound; `Vrc7Presets` = FamiStudio's table = emu2413's VRC7 ROM set).
+  Volume is the chip's 4-bit level (the engine writes `patch << 4 | 15 − volume` to `$30+`, so 0 is −45 dB, not
+  silent); pitch envelopes, Pxx and slides work on the FM frequency number (FamiStudio's pitch shift 3: × 8,
+  + raises). Effects: everything but `Vxx` (no duty) and `Zxx`. `Pxx` keeps one meaning on every channel: the cell's
+  detune is the pitch the same Pxx gives a 2A03 pulse on that note, converted to the nearest FM step
+  (`NesRules.vrc7FinePitch`; FamiStudio's own fine pitch is raw FM steps), so tunings work on FM within the chip's
+  step size. OFF on a sounding FM note is FamiStudio's release (`CanRelease` is always true on VRC7 channels): opcode
+  `$56` keys off (the patch's release, or the sustain rate 5) and the volume envelope continues from its release
+  point; OFF on a released note, or `Sxx`, is a stop (key off without the release override). Two shared settings
+  are the chip's, not a sound's:
+  - **One custom patch.** The chip has one set of custom registers for all six channels; loading a custom sound writes
+    them. The lowering follows FamiStudio's exporter (`OtherVrc7ChannelUsesCustomPatch`: a channel whose custom sound
+    another FM channel's different custom sound may have replaced sends its instrument again with its next note),
+    never re-sends a custom sound per order (Thor Tracker's per-order re-send is skipped for it: it would rewrite the
+    registers under another channel), and corrects FamiStudio's exporter at the loop: an FM channel whose custom patch
+    another custom sound replaced before the song's end loads it again at the loop order, as FamiStudio's own player
+    (`ChannelStateVrc7.IntrumentLoadedNotify`) does. A custom sound starting while another FM channel holds a note of
+    a different custom sound (different registers) changes that note's timbre on the chip itself: the song check warns
+    where. VRC7 sounds identical but for their names are one instrument on the FM channels, as FamiStudio's export
+    merges them, so a copied custom sound shares the patch without reloading it.
+  - **Sustain overrides** (`NesSound.vrc7Sustain`: `release`, `stop`; FamiStudio's `Vrc7OverrideRelease` /
+    `Vrc7OverrideStop`). FamiStudio stores them per instrument, but its engine keeps one copy
+    (`famistudio_chn_vrc7_sustain`, the last VRC7 instrument loaded on any channel), so per-sound values would apply
+    to the wrong notes. Thor Tracker makes them one song setting, written into every VRC7 instrument of the exports, so
+    FamiStudio's player, its exporter and our engine agree.
+  Editor: the Chip row offers 2A03 / VRC7; a VRC7 sound's fourth page (Duty's place) is **FM patch**: Patch (Custom or
+  the 15 built-ins), Release and Stop sustain (the song's setting, shown on every VRC7 sound), then each register
+  field per operator (`Vrc7Param`: multiplier, half-sine, modulation level, feedback, AR, DR, SL, RR, sustained, KSL,
+  KSR, tremolo, vibrato; ←/→ picks modulator or carrier). Editing a built-in patch's field makes it Custom from that
+  patch's registers. Demo: "Lantern Point" (`NesVrc7DemoSong`): a custom-patch lead with vibrato and key-off releases,
+  built-in Bass guitar, Brass pads, Piano arpeggio chords and Bell sparkles, a 2A03 echo, triangle, noise drums and
+  the DPCM starter kit. `exportSamples` writes `lantern-point.{thor,nsf,txt,nesimg}`.
+  Engine: the `FAMISTUDIO_EXP_VRC7 = 1` player build (`NesVrc7PlayerImage`, `nes_vrc7_player_image.h`, song base the
+  first page after it) with FamiStudio's VRC7 note tables, its header gaining the expansion instrument pointer (16-byte
+  instruments after the 2A03 table, one per slot), on emu2413 1.6.4 in VRC7 mode. Contract: `docs/AUDIO_ENGINE.md`,
+  "VRC7". Exports: `.nsf` with header byte `$7B` = 2; FamiStudio text with `Expansions="VRC7"`, `Expansion="VRC7"`,
+  `Vrc7Patch`, `Vrc7Reg0-7` (custom only) and both overrides, and the `VRC7FM1-6` channels; `.wav`. Golden songs
+  `vrc7_demo` and `vrc7_effects` (VRC7 register writes, `$9010`/`$9030`, compared every frame).
 
-**Adding the next expansion** (VRC7, N163, S5B, FDS, MMC5, EPSM) follows the same path:
+**Adding the next expansion** (N163, S5B, FDS, MMC5, EPSM) follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
    base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
    FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
@@ -241,14 +287,15 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
    `NesPlayer` entry in `nes_players.c` (`NES_EXPANSION_<CHIP>`, channels, duty range, symbols), its opcode and
    duty rules in `nm_walk_entry`, an ops table in `nes_chip.c` registered in `chip_engine.c`, a host test.
    `NM_MAX_*` grow to the largest build.
-3. Kotlin: a `NesExpansion` entry (chip, extra channels), a `NesChip` (label, duty range, its instrument fields), a
-   `NesPlayer` entry, channel names/kinds appended to `NesRules`, its effects/opcodes in `FamiStudioLowering`, its
-   text attributes in `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the
-   "NES" family shows it under New/Load demo), Instrument view rows for chip-specific fields, help, golden songs.
+3. Kotlin: a `NesExpansion` entry (chip, channel names and kinds), a `NesChip` (label, duty range, its instrument
+   fields), a `NesPlayer` entry, its effects/opcodes in `NesRules` and `FamiStudioLowering`, its text attributes in
+   `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the "NES" family shows it
+   under New/Load demo), Instrument view rows or pages for chip-specific fields, help, golden songs.
 4. Docs: a section here and in `docs/AUDIO_ENGINE.md`.
-Chips with instruments unlike envelopes (VRC7 patches, N163 waves, FDS waves and modulation) need their own
-instrument fields and editor pages; songs combining several expansions would need FamiStudio's multi-expansion
-engine build and a system per combination, so they are left out unless asked.
+Chips with instruments unlike envelopes need their own instrument fields and editor pages (the VRC7's patch page; N163
+waves, FDS waves and modulation next); chip state the engine keeps once (the VRC7's sustain overrides) is a song
+setting. Songs combining several expansions would need FamiStudio's multi-expansion engine build and a system per
+combination, so they are left out unless asked.
 
 ## SID backend (C64)
 
@@ -860,3 +907,17 @@ Decisions:
   Half (FamiStudio's default). Review.
 - VRC6 mixing level: one DAC step = the 2A03's full pulse ÷ 15 (NESdev's "roughly equal" full pulses); no
   hardware or reference-emulator comparison yet. Listening may ask for a different balance.
+- VRC7 sustain overrides (decided on the user's behalf): one song setting (`NesSound.vrc7Sustain`) instead of
+  FamiStudio's per-instrument checkboxes, because FamiStudio's engine applies the last loaded VRC7 instrument's to all
+  six channels; the exports write it into every VRC7 instrument. Review.
+- VRC7 custom patches stay per sound (FamiStudio's model, several custom sounds may take turns) rather than one song
+  patch; holding notes of two different custom sounds at once is a warning, not an error, since the chip itself plays
+  it (both sound like the one loaded last). The lowering corrects FamiStudio's exporter in one place: the loop order
+  reloads a custom patch another channel replaced before the song's end (FamiStudio's player does; its NSF/asm export
+  would play the second pass with the wrong patch). Review.
+- VRC7 `Pxx` means the pulse's detune converted to FM steps (one meaning on every channel, tunings work) rather than
+  FamiStudio's raw FM steps; the FamiStudio text carries the converted steps. Pitch envelopes stay raw (FamiStudio's
+  meaning: frequency steps × 8, + raises). Review.
+- VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
+  +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
+  listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.

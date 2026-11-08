@@ -5,6 +5,7 @@ import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.nes.Dpcm
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.Vrc6SawVolume
@@ -27,8 +28,11 @@ import kotlin.math.sign
  * emits for those rows: the same opcode order, the same state it tracks (instrument, arpeggio, last volume, vibrato
  * override, the VRC7 custom patch another channel loads), the same slide and volume-slide step arithmetic. Two
  * deliberate additions make an order self-contained for seeking, looping and live edits without changing what plays:
- * each order re-sends its first note's instrument and, when a set volume (not a slide) is in force, the channel volume.
- * (On a VRC7 channel a re-sent custom patch rewrites the chip's patch registers with the values they hold.)
+ * each order re-sends its first note's instrument (not a custom-patch VRC7 sound: loading it writes the chip's shared
+ * patch registers) and, when a set volume (not a slide) is in force, the channel volume. One deliberate correction: at
+ * the loop order a VRC7 channel whose custom patch another channel's custom sound replaced before the song's end sends
+ * its instrument again, as FamiStudio's own player does (its exporter does not, so the second pass played the wrong
+ * patch).
  * FamiStudio's own byte layout (instrument sorting and merging, CRC-ordered envelopes, its search-based stream
  * compression) is not reproduced; the golden test therefore compares register traces of both through the same player.
  */
@@ -260,13 +264,15 @@ internal object FamiStudioLowering {
         }
         if (exp) {
             // `FamitoneMusicFile.OutputInstruments` for a VRC7 instrument: volume, arpeggio and pitch envelopes, the
-            // release/stop overrides ($20 / $80), the patch number << 4 and the custom patch's 8 registers.
+            // release/stop overrides ($20 / $80: the song's, so every instrument carries the same), the patch number << 4
+            // and the 8 patch registers (a preset's ROM values, as FamiStudio's `Vrc7PatchRegs` holds them; the engine
+            // loads them only for the custom patch, 0).
             check(out.size == expInstrumentsAt)
             for ((slot, ins) in fs.instruments.withIndex()) {
                 for (kind in listOf(Kind.VOLUME, Kind.ARPEGGIO, Kind.PITCH)) out.word(bySlot.getValue(slot * 4 + kind.ordinal).address)
-                out.byte((if (ins.fm.sustainRelease) 0x20 else 0) or (if (ins.fm.sustainStop) 0x80 else 0))
+                out.byte(fs.vrc7Sustain.engine)
                 out.byte(ins.fm.preset shl 4)
-                for (r in ins.fm.regs) out.byte(r)
+                for (r in ins.fm.sounding) out.byte(r)
             }
         }
         for (e in envelopes) out.bytes(e.bytes)
@@ -316,6 +322,39 @@ internal object FamiStudioLowering {
                 }
             }
             best
+        }
+
+        /**
+         * The instrument each VRC7 sound is in FamiStudio's export, which merges identical instruments
+         * (`Project.MergeIdenticalInstruments`): the first slot with the same exported sound ([FamiStudioText.mergeKey]).
+         * FM channels play such copies as that one slot, so the custom patch they load, the instrument a channel holds
+         * (no-attack notes, the custom-patch reloads) and the loop's first and last instrument follow FamiStudio's.
+         * 2A03 and VRC6 sounds keep their own slots, as before.
+         */
+        private val merged: IntArray = IntArray(fs.instruments.size + 1) { it }.also { m ->
+            if (fs.expansion != NesExpansion.VRC7) return@also
+            val first = HashMap<List<String>, Int>()
+            for (slot in 1..fs.instruments.size) {
+                if (fs.instruments[slot - 1].chip == NesChip.VRC7) m[slot] = first.getOrPut(FamiStudioText.mergeKey(fs, slot)) { slot }
+            }
+        }
+
+        /** The slot channel [c] plays [n]'s instrument as (0: none): FM channels play merged copies as one ([merged]). */
+        private fun slotOf(c: Int, n: FsNote): Int = if (NesRules.isVrc7(fs.expansion, c)) merged[n.instrument] else n.instrument
+
+        /**
+         * The custom-patch VRC7 sound whose registers the chip holds when the song reaches its end (0: none): the last
+         * note of a custom sound on the FM channels in engine order (rows, then channels). Every custom sound's note
+         * on a row makes the other FM channels' streams send their custom sound again (`OtherVrc7ChannelUsesCustomPatch`),
+         * so the last such note's sound is the last one loaded.
+         */
+        val customAtEnd: Int = run {
+            if (fs.expansion != NesExpansion.VRC7) return@run 0
+            for (row in fs.totalRows - 1 downTo 0) for (ch in fs.channels - 1 downTo NesRules.VRC7_FM1) {
+                val n = fs.notes[ch][row] ?: continue
+                if (n.isMusical && n.instrument != 0 && isCustomVrc7(n.instrument)) return@run merged[n.instrument]
+            }
+            0
         }
 
         /**
@@ -381,8 +420,8 @@ internal object FamiStudioLowering {
             for (row in fs.orderStart[fs.loopOrder] until fs.totalRows) {
                 val n = fs.notes[c][row] ?: continue
                 if (n.isMusical && n.instrument != 0) {
-                    if (firstInLoop == 0) firstInLoop = n.instrument
-                    lastInLoop = n.instrument
+                    if (firstInLoop == 0) firstInLoop = slotOf(c, n)
+                    lastInLoop = slotOf(c, n)
                 }
             }
             val usesArpeggios = fs.notes[c].any { it != null && it.isMusical && it.arpeggio >= 0 }
@@ -393,6 +432,9 @@ internal object FamiStudioLowering {
                 var instrumentSent = false
                 if (o == fs.loopOrder) {
                     if (lastInLoop != firstInLoop) instrument = 0
+                    // Thor Tracker's addition (FamiStudio's player reloads too, its exporter does not): the loop is also
+                    // entered from the song's end, where the chip may hold another custom patch than this channel's.
+                    if (isVrc7 && instrument != 0 && isCustomVrc7(instrument) && customAtEnd != instrument) instrument = 0
                     lastVolume = -1
                     if (usesArpeggios) b.byte(OP_CLEAR_ARP_OVERRIDE)
                 }
@@ -470,22 +512,26 @@ internal object FamiStudioLowering {
                     }
                     if (note.isValid) {
                         if (note.isMusical && note.instrument != 0) {
-                            val attack = note.attack || !canDisableAttack(instrument, note.instrument)
+                            val slot = slotOf(c, note)
+                            val attack = note.attack || !canDisableAttack(instrument, slot)
                             if (!attack) b.byte(OP_DISABLE_ATTACK)
                             else if (!frameVibrato && vibratoOverride) {
                                 vibratoOverride = false
                                 instrument = 0
                             }
-                            if (note.instrument != instrument || !instrumentSent) {
+                            // The per-order re-send skips custom-patch VRC7 sounds: loading one rewrites the chip's one
+                            // custom patch ($00-$07), which another FM channel may have loaded since this channel did.
+                            val resend = !instrumentSent && !(isVrc7 && isCustomVrc7(slot))
+                            if (slot != instrument || resend) {
                                 // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
                                 // also sends it with its first instrument, so the order is self-contained.
-                                val volume = fs.instruments[note.instrument - 1].sawVolume
+                                val volume = fs.instruments[slot - 1].sawVolume
                                 if (isSaw && (volume != sawVolume || !instrumentSent)) {
                                     b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
                                     sawVolume = volume
                                 }
-                                b.byte(0x80 or ((note.instrument - 1) shl 1))
-                                instrument = note.instrument
+                                b.byte(0x80 or ((slot - 1) shl 1))
+                                instrument = slot
                                 instrumentSent = true
                             }
                         }
@@ -537,15 +583,15 @@ internal object FamiStudioLowering {
 
         /**
          * FamiStudio's `OtherVrc7ChannelUsesCustomPatch`: true when VRC7 channel [c]'s current instrument [instrument] is
-         * a custom patch and another VRC7 channel has a note with another custom-patch instrument on [row], which loads
-         * the chip's one custom patch; the channel then sends its instrument again with its next note.
+         * a custom patch and another VRC7 channel has a note with another custom-patch instrument (after the merge) on
+         * [row], which loads the chip's one custom patch; the channel then sends its instrument again with its next note.
          */
         private fun otherVrc7ChannelUsesCustomPatch(c: Int, instrument: Int, row: Int): Boolean {
             if (instrument == 0 || !isCustomVrc7(instrument)) return false
             for (other in NesRules.VRC7_FM1 until fs.channels) {
                 if (other == c) continue
                 val n = fs.notes[other][row] ?: continue
-                if (n.instrument != 0 && n.instrument != instrument && isCustomVrc7(n.instrument)) return true
+                if (n.instrument != 0 && merged[n.instrument] != instrument && isCustomVrc7(n.instrument)) return true
             }
             return false
         }

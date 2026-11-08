@@ -4,24 +4,30 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.ChannelKind
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc6SawVolume
+import org.thortracker.system.nes.Vrc7Patch
+import org.thortracker.system.nes.Vrc7Presets
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
  * The image contract of the native `"nes-famistudio"` engines (docs/AUDIO_ENGINE.md, NES image layout), checked on
- * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`): header,
- * envelope directory, instrument table, channel streams of `$41` per order plus `$42`, flat pattern streams with one
- * terminator per row, and the engine-facing numbers of [NesSystem.engine] and [NesVrc6System.engine].
+ * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`, the VRC7 ones
+ * on `"nes-famistudio-vrc7"`): header, envelope directory, instrument tables, channel streams of `$41` per order plus
+ * `$42`, flat pattern streams with one terminator per row, and the engine-facing numbers of each variant's engine.
  */
 class NesLoweringTest {
     private fun u16(b: ByteArray, at: Int) = (b[at].toInt() and 0xff) or ((b[at + 1].toInt() and 0xff) shl 8)
@@ -59,8 +65,11 @@ class NesLoweringTest {
         val samplesAt = region + songEnd - base
         assertTrue(image.copyOfRange(region + size, samplesAt).all { it == 0.toByte() }, "$name: region not zero after the data")
         assertTrue(image.copyOfRange(samplesAt + sampleSize, image.size).all { it == 0.toByte() }, "$name: region not zero after the samples")
-        // Every sample list entry points at whole samples inside the sample block.
-        val listAt = u16(image, region + 3) + 4 - base
+        // Every sample list entry points at whole samples inside the sample block. The FamiStudio header's sample list
+        // pointer follows the instrument pointer (and, on the VRC7 build, the expansion instrument pointer).
+        val exp = player.expInstruments
+        val firstStream = if (exp) 7 else 5
+        val listAt = u16(image, region + firstStream - 2) + 4 - base
         for (k in 0 until u8(image, NesPlayerImage.HEADER_DPCM_COUNT)) {
             val e = region + listAt + 4 * k
             val from = NesPlayerImage.SAMPLE_BASE + 64 * u8(image, e)
@@ -91,12 +100,28 @@ class NesLoweringTest {
         val instruments = at(u16(data, 1))
         val channels = player.channels
         assertEquals(song.nes.expansion.channels, channels, "$name: a stream per channel")
-        val streams = IntArray(channels) { at(u16(data, 5 + 2 * it)) }
-        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, 5 + 2 * channels))
-        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, 7 + 2 * channels))
+        val streams = IntArray(channels) { at(u16(data, firstStream + 2 * it)) }
+        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, firstStream + 2 * channels))
+        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, firstStream + 2 + 2 * channels))
         for (slot in 0 until NesSystem.SLOTS) for (kind in 0 until 4) {
             val addr = u16(data, instruments + slot * 8 + kind * 2)
             assertEquals(slot * 4 + kind to kind, dir[addr]!!.let { it.first to it.third }, "$name: instrument $slot envelope $kind")
+        }
+        if (exp) {
+            // FamiStudio's VRC7 instruments, one per slot after the 2A03 table: volume, arpeggio and pitch envelopes (the
+            // slot's directory entries), the song's sustain overrides, patch << 4, then the 8 registers the patch plays.
+            val expAt = at(u16(data, 3))
+            assertEquals(instruments + NesSystem.SLOTS * 8, expAt, "$name: expansion instruments follow the 2A03 table")
+            for (slot in 0 until NesSystem.SLOTS) {
+                val e = expAt + FamiStudioLowering.EXP_INSTRUMENT_SIZE * slot
+                for ((k, kind) in listOf(0, 1, 3).withIndex()) {
+                    assertEquals(slot * 4 + kind to kind, dir[u16(data, e + 2 * k)]!!.let { it.first to it.third }, "$name: VRC7 instrument $slot envelope $kind")
+                }
+                val ins = song.nes.instruments[slot]
+                assertEquals(song.nes.vrc7Sustain.engine, u8(data, e + 6), "$name: VRC7 instrument $slot sustain overrides")
+                assertEquals(ins.fm.preset shl 4, u8(data, e + 7), "$name: VRC7 instrument $slot patch")
+                assertEquals(ins.fm.sounding, (0 until 8).map { u8(data, e + 8 + it) }, "$name: VRC7 instrument $slot registers")
+            }
         }
         val arranged = NesSystem.arranged(song)
         val orders = arranged.orders.size
@@ -106,7 +131,7 @@ class NesLoweringTest {
                 assertEquals(0x41, u8(data, s + 4 * o), "$name: channel $c order $o")
                 val n = u8(data, s + 4 * o + 1)
                 val rows = arranged.patterns[arranged.orders[o]].length
-                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base), "$name: channel $c order $o rows")
+                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base, song.nes.expansion), "$name: channel $c order $o rows")
             }
             assertEquals(0x42, u8(data, s + 4 * orders))
             assertEquals(base + s + 4 * arranged.loopOrder, u16(data, s + 4 * orders + 1))
@@ -114,7 +139,7 @@ class NesLoweringTest {
     }
 
     /** Walks [n] row terminators of a flat pattern stream; returns the rows they cover. Checks opcode limits. */
-    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int): Int {
+    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int, expansion: NesExpansion): Int {
         var p = start
         var rows = 0
         var terms = 0
@@ -139,7 +164,8 @@ class NesLoweringTest {
                 op in 0x70..0x7f -> assertTrue(channel != NesRules.TRIANGLE, "volume on the Triangle")
                 else -> when (op) {
                     0x40 -> { assertTrue(u8(data, p++) in 1..96); rows++; terms++; delays = 0 }
-                    0x45 -> { rows++; terms++; delays = 0 }
+                    0x45 -> { assertFalse(NesRules.isVrc7(expansion, channel), "FM channels release with \$56"); rows++; terms++; delays = 0 }
+                    0x56 -> { assertTrue(NesRules.isVrc7(expansion, channel), "\$56 off the VRC7 FM channels"); rows++; terms++; delays = 0 }
                     0x50 -> { p += 3; rows++; terms++; delays = 0 }
                     0x43, 0x4a, 0x4c, 0x4d -> Unit
                     0x46 -> assertTrue(u8(data, p++) in 1..127)
@@ -147,11 +173,11 @@ class NesLoweringTest {
                     0x48 -> p++
                     0x4e -> { assertTrue(channel != NesRules.NOISE); p++ }
                     0x4f -> {
-                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW)
-                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(
-                            if (channel >= NesRules.APU_CHANNELS) org.thortracker.system.nes.NesExpansion.VRC6 else org.thortracker.system.nes.NesExpansion.NONE, channel))
+                        val kind = NesRules.kind(expansion, channel)
+                        assertTrue(kind == ChannelKind.PULSE || kind == ChannelKind.NOISE, "duty on ${NesRules.channelName(expansion, channel)}")
+                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(expansion, channel))
                     }
-                    0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
+                    0x55 -> { assertTrue(NesRules.isVrc6Saw(expansion, channel), "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -227,6 +253,75 @@ class NesLoweringTest {
         e.lower(song, image)
         check("vrc6 blank", song, image)
         assertFailsWith<IllegalArgumentException> { NesSystem.engine.lower(song, ByteArray(NesSystem.engine.imageSize)) }
+    }
+
+    /** The VRC7 variant: eleven channels, its own engine and song base; FM channels reach C-1 and take only VRC7 sounds. */
+    @Test
+    fun vrc7EngineNumbers() {
+        val e = NesVrc7System.engine
+        val base = NesVrc7System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("Piano", chip = NesChip.VRC7, fm = Vrc7Patch().withPreset(3))
+        val song = base.copy(sound = base.nes.copy(instruments = bank))
+        val fm = NesRules.VRC7_FM1
+        assertEquals("nes-famistudio-vrc7", e.id)
+        assertEquals(NesVrc7PlayerImage.IMAGE_SIZE, e.imageSize)
+        assertEquals(NesVrc7PlayerImage.SONG_BASE, NesPlayer.VRC7.songBase)
+        assertEquals(11, NesVrc7System.channels.size)
+        assertEquals(46, e.note(song, fm, 57, 2))
+        assertEquals(null, e.auditionProblem(song, fm, 12, 2, 0)) // C-1: the FM channels reach every note
+        assertTrue(e.auditionProblem(song, fm, 57, 1, 0)!!.contains("2A03 sound"))
+        assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("VRC7 sound"))
+        // Fine pitch: a 2A03 period offset (up = shorter period), on FM the frequency step (× 8) nearest the same detune.
+        assertEquals(-5, e.fine(0, 57, 5))
+        val period = FamiStudioLowering.NOTE_TABLE[46] + 1.0
+        val freq = FamiStudioLowering.NOTE_TABLE_VRC7[46].toDouble()
+        for (fine in listOf(-40, -5, 5, 40)) {
+            val pulseCents = 1200 * kotlin.math.log2(period / (period - fine))
+            val fmCents = 1200 * kotlin.math.log2((freq + 8 * e.fine(fm, 57, fine)) / freq)
+            val halfStep = 1200 * kotlin.math.log2((freq + 4) / freq)
+            assertTrue(kotlin.math.abs(fmCents - pulseCents) <= halfStep, "Pxx $fine: FM $fmCents cents, pulse $pulseCents")
+        }
+        val image = ByteArray(e.imageSize)
+        e.lower(song, image)
+        check("vrc7 blank", song, image)
+        assertFailsWith<IllegalArgumentException> { NesVrc6System.engine.lower(song, ByteArray(NesVrc6System.engine.imageSize)) }
+    }
+
+    /**
+     * The VRC7's one custom patch: an FM channel's custom sound is not sent again with each order's first note (that
+     * would rewrite the chip's patch registers under another channel's custom sound), but it is at the loop when another
+     * custom sound was loaded before the song's end, so the second pass plays the right patch.
+     */
+    @Test
+    fun vrc7CustomPatchIsSentAgainOnlyAfterAnotherLoaded() {
+        val base = NesVrc7System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Lead", chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)))
+        bank[1] = NesInstrument("Bass", chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)))
+        val fm1 = NesRules.VRC7_FM1
+        fun song(otherCustom: Boolean): Song {
+            val blank = base.patterns[0]
+            val first = blank.copy(tracks = blank.tracks.mapIndexed { ch, t -> if (ch == fm1) t.toMutableList().also { it[0] = Cell(57, 1) } else t })
+            val loop = blank.copy(name = "Loop", tracks = blank.tracks.mapIndexed { ch, t ->
+                when {
+                    ch == fm1 -> t.toMutableList().also { it[0] = Cell(60, 1) }
+                    ch == fm1 + 1 && otherCustom -> t.toMutableList().also { it[8] = Cell(45, 2) }
+                    else -> t
+                }
+            })
+            return base.copy(patterns = listOf(first, loop), orders = listOf(0, 1), loopOrder = 1, sound = base.nes.copy(instruments = bank))
+        }
+        // FM 1's stream for the loop order (order 1): row 0 is C-5 (single-byte note $25), after slot 1's `$80` if sent.
+        fun loopOrderStart(s: Song): List<Int> {
+            val data = FamiStudioLowering.lower(s).data
+            val songBase = NesPlayer.VRC7.songBase
+            val stream = u16(data, 7 + 2 * fm1) - songBase
+            val order = u16(data, stream + 4 + 2) - songBase
+            return listOf(u8(data, order), u8(data, order + 1))
+        }
+        assertEquals(0x25, loopOrderStart(song(otherCustom = false))[0], "the chip still holds FM 1's patch: no reload")
+        assertEquals(listOf(0x80, 0x25), loopOrderStart(song(otherCustom = true)), "FM 2 loaded its patch before the end: reload")
     }
 
     /** The saw's master volume: `$55` before an instrument of another volume, and with each order's first instrument. */
