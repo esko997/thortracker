@@ -255,15 +255,20 @@ def pack_pattern(rows, instrmap) -> bytes:
     return bytes(dest)
 
 
-def instrument_map(song: Song, multiplier: int = 1):
+def instrument_map(song: Song, multiplier: int = 1, reverse_groups: bool = False):
     """greloc.c's instrument order (normal, then no-hard-restart ($80), then legato ($40), each by
     number) for every instrument of the song, and the player's FIRSTNOHRINSTR / FIRSTLEGATOINSTR.
     In multispeed (multiplier > 1) gt2reloc raises FIRSTLEGATOINSTR by one (it increments its no-HR
-    count after numbering); that is mirrored so exports equal GoatTracker's."""
+    count after numbering); that is mirrored so exports equal GoatTracker's. `reverse_groups` numbers
+    each group backwards except player number 1, which channels use before their first instrument
+    byte (an equally valid order that plays the same; test fixtures)."""
     groups = ([], [], [])
     for i, ins in enumerate(song.instruments, start=1):
         g = 2 if ins.gatetimer & 0x40 else 1 if ins.gatetimer & 0x80 else 0
         groups[g].append(i)
+    if reverse_groups:
+        first = next(g for g in groups if g)
+        groups = tuple(g[:1] + g[:0:-1] if g is first else g[::-1] for g in groups)
     order = groups[0] + groups[1] + groups[2]
     instrmap = {num: k + 1 for k, num in enumerate(order)}
     nohr = len(groups[1]) + (1 if multiplier > 1 else 0)
@@ -318,8 +323,11 @@ class Lowered:
 
 
 def lower(song: Song, player_id: bytes, model: int = MODEL_8580, multiplier: int = 1,
-          hr_ad: int = 0x0F, hr_sr: int = 0x00) -> Lowered:
-    """Thor Tracker image of subtune 0 (docs/AUDIO_ENGINE.md, SID "Image layout")."""
+          hr_ad: int = 0x0F, hr_sr: int = 0x00, relayout: bool = False) -> Lowered:
+    """Thor Tracker image of subtune 0 (docs/AUDIO_ENGINE.md, SID "Image layout"). `relayout` lays the
+    same song out differently (instrument numbers reversed within their groups, pattern numbers
+    reversed, patterns stored backwards with gaps before the orderlists): it plays the same, and live
+    edits between the two layouts must relocate (host-test fixture)."""
     n = len(song.orderlists[0])
     for c in range(3):
         ol = song.orderlists[c]
@@ -331,7 +339,7 @@ def lower(song: Song, player_id: bytes, model: int = MODEL_8580, multiplier: int
         raise ValueError("bad orderlist length or restart")
     if not 1 <= len(song.instruments) <= 63:
         raise ValueError("1..63 instruments")
-    instrmap, order, firstnohr, firstlegato = instrument_map(song, multiplier)
+    instrmap, order, firstnohr, firstlegato = instrument_map(song, multiplier, reverse_groups=relayout)
     region = bytearray(REGION_END - REGION_BASE)
 
     def put(addr, data):
@@ -350,27 +358,40 @@ def lower(song: Song, player_id: bytes, model: int = MODEL_8580, multiplier: int
         put(LABELS[TABLE_RIGHT[t]], right)
     # patterns used by the orderlists, numbered in pattern-number order (greloc's pattmap)
     used = sorted({p for ol in song.orderlists for p in ol})
-    pattmap = {p: k for k, p in enumerate(used)}
+    pattmap = {p: (len(used) - 1 - k if relayout else k) for k, p in enumerate(used)}
     if len(used) > MAX_PATT:
         raise ValueError("too many patterns")
     heap = HEAP_BASE
     orderlists = []
-    for c in range(3):
-        ol = bytes([pattmap[p] for p in song.orderlists[c]] + [LOOPSONG, song.restart[c]])
-        orderlists.append(ol)
-        region[LABELS["mt_songtbllo"] + c - REGION_BASE] = heap & 0xFF
-        region[LABELS["mt_songtblhi"] + c - REGION_BASE] = heap >> 8
-        put(heap, ol)
-        heap += len(ol)
     patterns = {}
-    for p in used:
-        packed = pack_pattern(song.patterns[p], instrmap)
-        k = pattmap[p]
-        region[LABELS["mt_patttbllo"] + k - REGION_BASE] = heap & 0xFF
-        region[LABELS["mt_patttblhi"] + k - REGION_BASE] = heap >> 8
-        put(heap, packed)
-        patterns[p] = (k, packed, heap)
-        heap += len(packed)
+
+    def place_orderlists():
+        nonlocal heap
+        for c in range(3):
+            ol = bytes([pattmap[p] for p in song.orderlists[c]] + [LOOPSONG, song.restart[c]])
+            orderlists.append(ol)
+            region[LABELS["mt_songtbllo"] + c - REGION_BASE] = heap & 0xFF
+            region[LABELS["mt_songtblhi"] + c - REGION_BASE] = heap >> 8
+            put(heap, ol)
+            heap += len(ol)
+
+    def place_patterns():
+        nonlocal heap
+        for p in (used[::-1] if relayout else used):
+            packed = pack_pattern(song.patterns[p], instrmap)
+            k = pattmap[p]
+            region[LABELS["mt_patttbllo"] + k - REGION_BASE] = heap & 0xFF
+            region[LABELS["mt_patttblhi"] + k - REGION_BASE] = heap >> 8
+            put(heap, packed)
+            patterns[p] = (k, packed, heap)
+            heap += len(packed) + (5 if relayout else 0)
+
+    if relayout:
+        place_patterns()
+        place_orderlists()
+    else:
+        place_orderlists()
+        place_patterns()
     if heap > REGION_END:
         raise ValueError("song data exceeds the region")
     tempo = default_tempo(song, multiplier)
