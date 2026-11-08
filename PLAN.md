@@ -42,6 +42,20 @@ design notes for the chip work live in `docs/BACKENDS.md`.
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
 
+### Testing feedback and QoL proposals (2026-11-08)
+
+- **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
+  hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
+  display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence
+  before implementation; retain a visible collapsed-state indicator.
+- **Mixer view:** proposed channel faders for fixed volume levels, separate from per-row volume effects.
+  Design remains open: distinguish chip-supported gain that survives native export from preview-only mixing.
+  Do not promise independent gain on chips whose voices share an analogue mix or silently change exported sound.
+- **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
+  compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
+  Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware
+  for UI smoke tests. The host reset alone does not establish the crash cause.
+
 ## Agreed MVP scope
 
 ### Song editing
