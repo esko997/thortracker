@@ -1,5 +1,64 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: VIC-20 (VIC) and C16 / Plus/4 (TED) — source slice, NOT verified
+
+Branch `vic-ted-systems` adds two systems on Thor Tracker's own player (one image layout, `cbm/`): **VIC-20 (VIC)**
+(`"vic20-vic"`: bass/alto/soprano squares and noise, one master volume, VICE's VIC sound adapted) and **C16 / Plus/4
+(TED)** (`"c16-ted"`: two squares, voice 2 noise, one volume, D/A samples on a DAC lane, plus4emu's TED sound adapted),
+PAL or NTSC per song; project and WAV export; demos **Kernal Lights** and **Plus Four Parade**. It was written
+source-only: **nothing has been built, compiled, generated, tested, run on a device or listened to** (not even the
+pure-Python reference), and no version was bumped. The parent runs everything below before anything is called
+verified, then replaces this section with the results.
+
+1. Constants and fixture (pure Python 3; a second run must be byte-identical), then commit
+   `app/src/test/cpp/cbm_test_song.h`:
+
+   ```sh
+   python3 tools/audio/prepare_cbm.py
+   python3 tools/audio/prepare_cbm.py && git status --short   # no new changes
+   ```
+
+   It fails before writing if `cbm_tables.c`, `cbm_image.h` or `CbmImage.kt` disagree with the reference
+   (`tools/audio/cbm/cbm_ref.py`) on a table entry, a constant or a lane range.
+2. Builds, tests and evidence:
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   python3 tools/audio/cbm/cbm_reference_check.py /tmp/thor-evidence --images app/build/samples \
+     --pitch /tmp/thor-evidence/cbm_vic_shortest.wav=444.07 /tmp/thor-evidence/cbm_ted_shortest.wav=439.84
+   tools/audio/render_cbm_image.sh app/build/samples/vic-demo.cbimg /tmp/kernal-lights.wav 90
+   tools/audio/render_cbm_image.sh app/build/samples/ted-demo.cbimg /tmp/plus-four-parade.wav 90
+   ```
+
+   Kotlin: `CbmModelTest`, `CbmEditorTest` and every existing test. Native: `cbm_machine_test.c` (loader rejects at
+   their bytes; batches equal to the reference's for every tick and interrupt of the four fixture songs; A-4 by zero
+   crossings; per-lane pitch spot checks; shared volume and owner envelope across lanes; TED noise vs square; D/A
+   playback, timer rate and level steps; the `$3FE` decay driven on the unit; mute silence with the other lanes
+   sounding and unmute continuity against an unmuted run's chip state; seek bit-identical to straight play and the
+   order fallback; live edits incl. a PAL→NTSC switch; audition release ends; tick cost) and `wav_render_test.c`
+   (both demos, both shortest songs).
+   Expected from the specification (not observed): VIC PAL soprano A-4 = period 39 = 444.07 Hz (+15.9 cents), NTSC 36 =
+   443.89 Hz; TED PAL A-4 = reload 252 = 439.84 Hz (−0.6 cents), NTSC 254 = 440.40 Hz; ticks 50.036 / 60.285 Hz (VIC),
+   49.861 / 59.923 Hz (TED) × multispeed. Thresholds in the native test (pitch tolerance, mute rms, level ratios, release
+   timing, tick cost) were set without running and may need tuning. Release-standard checks: Game Boy views
+   pixel-identical to the baseline, every existing golden and sample export unchanged, the other `render_*_image.sh`
+   scripts still link (they now compile the `cbm` sources because `chip_engine.c` lists their ops).
+3. Listen: both demos and the fixture songs; watch the VIC's output level (VICE's voltage table, 1.6 kHz board
+   low-pass), the TED's D/A level against the squares, clicks at master-volume steps (a VIC volume change steps the
+   DC level, as on the hardware) and the TED's square→noise drums.
+4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → VIC-20 and
+   C16 / Plus/4; demo playback without underruns (tick cost on the Konkr: the VIC unit steps every φ2 counter expiry,
+   the TED unit 221 k sound cycles per second plus ~8 k timer interrupts while D/A plays), seeks up to 3600 ticks, the
+   Instrument pages, the TED sample menu (starter kit, `.wav` import through the document picker), audition on every
+   lane, the Song view's Machine/Multispeed/Master volume/DAC rate rows, lane tags (`VOL`, `D/A`) and WAV export.
+
+Known approximations to review: the Kotlin shared-state walk (lane tags, inspector) steps ticks without following
+jumps and ends one-shot samples per tick, not per interrupt; notes 120-127 (VIC noise rates, TED voice 2) are named
+with octave "A" because the shared note names stop at B-9. Reference material fetched for this slice lies untracked in
+`victed-ref-src/` (VICE and plus4emu sources, read only) for the parent to remove.
+
 ## 0.16.0 NES + Konami VRC7
 
 - **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.

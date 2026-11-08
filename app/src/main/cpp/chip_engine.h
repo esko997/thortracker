@@ -15,6 +15,9 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "vic20-vic"       Thor Tracker's own VIC-20 player on the VIC's sound part (VICE's model)
+ *   "c16-ted"         the same player on the C16/Plus/4 TED's sound part (plus4emu's model), D/A samples from the timer
+ *                     (cbm/cbm_chip.c over cbm/cbm_machine.c, cbm_player.c, cbm_image.c, cbm_vic.c, cbm_ted.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

@@ -36,7 +36,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
-   - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
+   - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives. Source slice written (branch
+     `vic-ted-systems`, unverified): "VIC-20 (VIC)" and "C16 / Plus/4 (TED)", our own player on VICE's VIC and
+     plus4emu's TED sound, PAL/NTSC per song, shared master volume, TED D/A samples; project + WAV only.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).

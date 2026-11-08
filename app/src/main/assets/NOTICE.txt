@@ -41,6 +41,17 @@ Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
 commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
 xgmtool's conversion (MIT).
 
+VIC-20 (VIC) and C16 / Plus/4 (TED) playback uses Thor Tracker's own player
+(GPL-3.0-or-later). The VIC's sound is emulated by code adapted from VICE's
+vic20sound.c by Rami Rasanen and Ville-Matias Heikkila (GNU General Public License
+2 or later, notice below; github.com/VICE-Team/svn-mirror at commit
+c60cc7afd46b739e84d28b300cdbcb6cb6ba2f5b) and the TED's by code adapted from
+plus4emu's TED sound by Istvan Varga (GNU General Public License 2 or later,
+notice below; github.com/istvan-v/plus4emu at commit
+939e65233b227a47e5523eca149de8247176e28f), both in app/src/main/cpp/cbm with
+their original copyright headers and marked as modified, resampled with the same
+blip_buf.
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -234,6 +245,29 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+VICE (vic20sound.c)
+https://vice-emu.sourceforge.io/ (github.com/VICE-Team/svn-mirror)
+
+Written by Rami Rasanen and Ville-Matias Heikkila. This file is part of VICE,
+the Versatile Commodore Emulator.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version. Thor Tracker's adaptation (app/src/main/cpp/cbm/cbm_vic.c) is
+distributed under the GNU General Public License version 3 or later.
+
+plus4emu (TED sound)
+https://github.com/istvan-v/plus4emu
+
+Copyright (C) 2003-2008 Istvan Varga <istvanv@users.sourceforge.net>
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version. Thor Tracker's adaptation (app/src/main/cpp/cbm/cbm_ted.c) is
+distributed under the GNU General Public License version 3 or later.
 
 Android/Kotlin libraries are distributed under their respective Apache 2.0
 licenses; see https://www.apache.org/licenses/LICENSE-2.0 and upstream sources.

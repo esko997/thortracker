@@ -39,6 +39,8 @@ body:
         - C64 SID (GoatTracker)
         - OPL3 FM
         - Mega Drive (YM2612 + PSG)
+        - VIC-20 (VIC)
+        - C16 / Plus/4 (TED)
         - Not song-related
     validations:
       required: true

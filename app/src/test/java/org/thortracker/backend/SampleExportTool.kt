@@ -2,6 +2,10 @@ package org.thortracker.backend
 
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.cbm.CbmChip
+import org.thortracker.system.cbm.CbmDemoSong
+import org.thortracker.system.cbm.TedSystem
+import org.thortracker.system.cbm.VicSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
@@ -57,5 +61,18 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The VIC-20 and C16/Plus/4 demos (project and engine image; no register-log export exists for these chips) and
+        // each chip's shortest valid song (one one-row order at speed 6, A-4 held with slot 01): the native WAV export
+        // test renders all four images (tools/audio/render_cbm_image.sh renders one).
+        for ((system, chip, file) in listOf(Triple(VicSystem, CbmChip.VIC, "kernal-lights"), Triple(TedSystem, CbmChip.TED, "plus-four-parade"))) {
+            val prefix = if (chip == CbmChip.VIC) "vic" else "ted"
+            val demo = system.demo()
+            File(directory, "$file.thor").writeText(ProjectCodec.encode(demo), Charsets.UTF_8)
+            File(directory, "$prefix-demo.cbimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(demo, it) })
+            val shortest = CbmDemoSong.shortest(chip)
+            check(system.errors(shortest).isEmpty()) { "the shortest ${system.name} song is invalid: ${system.errors(shortest)}" }
+            File(directory, "$prefix-shortest.cbimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+            println("Exported ${demo.title} and the shortest ${system.name} song to ${directory.absolutePath}")
+        }
     }
 }

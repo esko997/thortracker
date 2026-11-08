@@ -864,6 +864,59 @@ Decisions:
   columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
   and song settings).
 
+## VIC-20 (VIC) and C16 / Plus/4 (TED): decisions (branch `vic-ted-systems`, unverified source slice)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "VIC-20 and C16/Plus/4". Decided on the user's behalf (approved autonomous
+work through the chip roadmap; every onboard sound feature, stock NTSC/PAL variants, no invented per-voice volume):
+
+- **Two systems, one engine design**: `"vic20-vic"` "VIC-20 (VIC)" and `"c16-ted"` "C16 / Plus/4 (TED)", no family
+  (different machines). Neither has a standard driver with a GPL-compatible licence, so both follow the OPL3: **our
+  own player** (`cbm/cbm_player.c`, one image layout with a chip byte, mirrored by `tools/audio/cbm/cbm_ref.py`) on an
+  emulated chip. No VGM (the format defines neither chip) and no `.prg` (a console executable); project + WAV only.
+- **Cores**: VICE's `vic20sound.c` (viznut's reverse-engineered 6561 model: Johnson-counter squares, the noise LFSR
+  clocking the fourth shift register, the measured nonlinear `voltagefunction`, the board's 1.6 kHz low-pass and
+  159 Hz high-pass) and plus4emu's TED sound (István Varga: the 221 kHz sound clock, the `$3FE` no-toggle case and its
+  decay, D/A mode, the noise LFSR, the volume curve and output nonlinearity) — both GPL-2.0-or-later, adapted in
+  `cbm/cbm_vic.c` and `cbm/cbm_ted.c` with their headers, pinned by commit and hash. VICE's own TED sound was not used:
+  it steps per output sample.
+- **Variants**: PAL and NTSC per song (the Song view's **Machine** row), not separate systems: the chip and its
+  features are identical, only the clock and frame change. Ticks are the machine's real frame (PAL VIC 50.04 Hz, NTSC
+  60.28; TED 49.86 / 59.92) × multispeed 1-4 — a raster-interrupt driver's clock, not the host's 60 Hz.
+- **Lanes = hardware voices, no chords**: VIC Bass, Alto, Soprano, Noise; TED Voice 1, Voice 2 (square or noise, the
+  chip's own switch), DAC. Note ranges per lane and machine are the notes the chip sounds within ±50 cents (VIC
+  lanes ~3⅓ octaves each, worst 46.5 cents PAL; TED A-2..C-8). The VIC Noise lane's notes are the 128 noise rates
+  (higher = brighter); TED Voice 2 reaches note 127 for bright noise (a square up there is out of tune: warning).
+- **Shared volume, honestly**: neither chip has a per-voice volume, so sounds have no per-voice volume. The one
+  master volume is song state (`Vxx`, `Axy`) and a sound's **Master vol** envelope, which while its note sounds takes
+  the master volume for every voice (the "owner"; the last key-on with such an envelope wins, shown as the `VOL` lane
+  tag). Per-voice shaping is the **Wave** envelope (per tick off/square/noise: gating and square↔noise drums),
+  arpeggio and pitch envelopes. A volume or wave envelope with a release point makes OFF a release.
+- **TED D/A**: samples (9 levels, 0..8) on the DAC lane, one frame per TED timer 1 interrupt at a shared rate
+  (`Txx`: reload 64 + 4·T single clocks, 13.9 kHz..818 Hz PAL), pitched against a root note. D/A mode holds both voice
+  oscillators and outputs the volume register as the level, so a sounding DAC note silences both voices (lane tag
+  `D/A`); the voices resume when it ends. The DAC ignores the master volume. The VIC has no D/A: VIC-20 "digis" that
+  write the volume register exploit the chip's DC offset (which the core reproduces: a volume change steps the level)
+  but are not an onboard sample facility, so they are not offered.
+- **Not offered** (documented, not hidden): the VIC's cycle-timed shift-register waveform tricks (loading patterns by
+  toggling bit 7 at chosen cycles) need a cycle-exact CPU routine, not a frame-tick player; the TED's `$3FE` value
+  (no tone, decays high) is a register the player never produces (periods are 2..1024).
+- **Model** (`system/cbm/CbmSound.kt`): `CbmSound` = chip, 64 slots of `CbmInstrument?`, TED `samples` (≤ 64, 1..65535
+  frames 0..8), `video`, `multispeed`, start `volume`, TED `dacTimer`. `CbmInstrument`: name, kind (tone/sample), wave
+  (1 square, 2 noise on the TED), envelopes volume (master) / arpeggio / pitch (abs/rel) / wave with loop and release,
+  sample fields. Backend version 1.
+- **Lowering/validation** (`backend/CbmLowering.kt`, `CbmValidator.kt`): the layout of `docs/AUDIO_ENGINE.md`;
+  patterns, then envelopes, then samples, each deduplicated among its own kind; the validator mirrors the loader
+  (lane ranges by machine, placement: sample sounds on the DAC lane only, noise-capable sounds on TED Voice 2 only;
+  effects per lane; 64 KB offset reach; capacity) and warns about square notes above C-8 on Voice 2, overlapping master
+  envelopes and DAC notes silencing the voices.
+- **Editor**: Instrument view (rows Slot, Name, Listen on, Kind and Wave on the TED, Preset; pages Master vol,
+  Arpeggio, Pitch, Wave, and Sample on the TED) on the NES envelope plot, a TED sample menu (`.wav` import resampled to
+  the song's DAC rate and quantised to 0..8, an integer-synthesised starter kit), presets per chip, Song view rows
+  Machine, Multispeed, Master volume and DAC rate, lane tags and inspector lines from `CbmSharedState`.
+- Demos (original): **Kernal Lights** (VIC-20, A minor: master-volume swells owned by the alto, gated arpeggios, noise
+  drums picking rates) and **Plus Four Parade** (C16 / Plus/4, D minor: both voices, Voice 2 square↔noise drums, D/A
+  drums with DAC-rate changes).
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -927,3 +980,13 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- VIC/TED master-volume owner (decided on the user's behalf): the last key-on of a sound with a Master vol envelope
+  drives the chip's one volume for every voice; `Vxx` sets the level the envelope is offset by. Alternatives: only
+  effects (no envelope), or a fixed "volume lane". Review once listened to.
+- VIC/TED machine as a song setting (PAL/NTSC) rather than four systems: notes keep their pitch; a song whose notes
+  leave the new machine's lane ranges shows errors after the switch. Review.
+- TED D/A rate `Txx` = timer reload 64 + 4·T single clocks (a driver choice: the hardware timer is 16-bit); DAC writes
+  always enable both voice outputs (the louder of the TED's two D/A curves). Review.
+- VIC output level: VICE's per-sample average of the voice count is applied per cycle before the nonlinear table
+  (what the DAC does); no comparison with a real VIC-20 recording. TED: no board filter modelled. Listening may ask
+  for changes.
