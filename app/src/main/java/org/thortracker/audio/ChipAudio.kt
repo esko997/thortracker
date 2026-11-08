@@ -66,6 +66,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     override fun stop() = post {
+        commandError = null   // a failed command is over once its sound is
         val h = handle
         if (h != 0L) nativeStop(h)
         scheduleIdleCheck()
@@ -94,6 +95,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     override fun releaseAudition() = post {
+        commandError = null
         val h = handle
         if (h != 0L) nativeReleaseAudition(h)
         scheduleIdleCheck()

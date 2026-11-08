@@ -41,6 +41,19 @@ class NesInstrumentViewTest {
     private val sound get() = session.song.nes.instruments[0]
 
     @Test
+    fun anUnplayableAuditionIsAPassingMessageNotAnAudioCommand() {
+        val floor = NesRules.LOWEST_TONAL   // A-1: the pulses' and triangle's longest period
+        session.audition(channel = 0, note = floor - 1, instrument = 1)
+        assertTrue(auditions.isEmpty())
+        assertEquals("Pulse 1 cannot play below A-1", session.message)
+        session.audition(channel = 0, note = floor, instrument = 1)
+        assertEquals(listOf(Triple(0, floor, 1)), auditions)
+        // The noise channel has no such floor.
+        session.audition(channel = 3, note = floor - 1, instrument = 1)
+        assertEquals(Triple(3, floor - 1, 1), auditions.last())
+    }
+
+    @Test
     fun rowsFollowTheEnvelope() {
         val st = ViewState()
         assertTrue(Row.RELEASE in NesInstrumentView.rows(st))

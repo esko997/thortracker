@@ -225,10 +225,13 @@ class EditorSession(initial: Song) {
     /**
      * Sounds [note] with [instrument] on [channel]; [detune] adds the tuning bend (the system's fine pitch) the cell
      * would carry. The callback receives the absolute note; the audio host converts it for the song's engine.
+     * A note the system cannot sound there (e.g. below the NES pulses' A-1) is reported as a status message, which
+     * passes like any other, rather than reaching the audio host, whose errors stay on screen until cleared.
      */
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         val system = song.system
         if (note !in system.noteRange || detune !in 0..system.fine.max) return
+        system.engine.auditionProblem(channel, note, instrument, detune)?.let { return note(it) }
         onAudition?.invoke(channel, note, instrument, detune)
     }
 
@@ -375,6 +378,7 @@ class EditorSession(initial: Song) {
     fun auditionSequence(channel: Int, steps: List<Int?>, instrument: Int, stepMillis: Long = 180) {
         val system = song.system
         if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in system.noteRange }) return
+        steps.firstNotNullOfOrNull { it?.let { n -> system.engine.auditionProblem(channel, n, instrument, 0) } }?.let { return note(it) }
         onAuditionSequence?.invoke(channel, steps, instrument, stepMillis)
     }
 
