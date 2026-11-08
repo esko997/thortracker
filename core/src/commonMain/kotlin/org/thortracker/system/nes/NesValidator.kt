@@ -37,16 +37,16 @@ object NesValidator {
             if (pattern.scale.root !in 0..11) out += "$label has scale root ${pattern.scale.root}; roots are 0-11 (C-B)"
             if (pattern.length !in 1..Songs.ROWS) out += "$label is ${pattern.length} rows long; lengths are 1-${Songs.ROWS}"
             if (pattern.tracks.size != channels) {
-                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.chip.label}"} patterns have $channels"
+                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.label}"} patterns have $channels"
                 return@forEachIndexed
             }
             pattern.tracks.forEachIndexed { ch, track ->
                 if (track.size != Songs.ROWS) {
-                    out += "$label, ${NesRules.CHANNEL_NAMES[ch]} has ${track.size} rows; patterns have ${Songs.ROWS}"
+                    out += "$label, ${NesRules.channelName(expansion, ch)} has ${track.size} rows; patterns have ${Songs.ROWS}"
                     return@forEachIndexed
                 }
                 track.forEachIndexed { row, cell ->
-                    NesRules.cellRangeProblem(cell)?.let { out += "$label, ${NesRules.CHANNEL_NAMES[ch]} row $row: $it" }
+                    NesRules.cellRangeProblem(cell)?.let { out += "$label, ${NesRules.channelName(expansion, ch)} row $row: $it" }
                 }
             }
         }
@@ -129,7 +129,7 @@ object NesValidator {
             val label = Songs.patternLabel(song, p).cap()
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
-                    NesRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${NesRules.CHANNEL_NAMES[ch]} row $row: $it" }
+                    NesRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${NesRules.channelName(song.nes.expansion, ch)} row $row: $it" }
                 }
             }
         }
@@ -213,7 +213,7 @@ object NesValidator {
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
-                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row"
+                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row"
                     val fx = NesRules.effectText(cell.effect, cell.param)
                     if (cell.effect == NesRules.FX_NOTE_DELAY && cell.param in 1..NesRules.DELAY_MAX && cell.param >= speed) {
                         out += "$where: $fx delays by ${cell.param} frames, but rows last $speed frames at the song speed, so it lands in a later row"
@@ -249,7 +249,7 @@ object NesValidator {
                     val cell = pattern.tracks[ch][row]
                     if (cell.note < 0) continue
                     if (cell.instrument == 0) {
-                        out += "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row: ${NesSystem.noteName(cell.note)} has no " +
+                        out += "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row: ${NesSystem.noteName(cell.note)} has no " +
                             "instrument and none has played on this channel yet; enter the instrument number"
                     }
                     break@loop
@@ -264,11 +264,11 @@ object NesValidator {
         val out = ArrayList<String>()
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
-                if (!NesRules.pitched(ch)) return@forEachIndexed
+                if (!NesRules.pitched(song.nes.expansion, ch)) return@forEachIndexed
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     if (cell.note < 0) continue
-                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row"
+                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row"
                     val fine = NesSystem.fine.of(cell)
                     when {
                         fine == null -> if (map.index(cell.note, 0) < 0) {

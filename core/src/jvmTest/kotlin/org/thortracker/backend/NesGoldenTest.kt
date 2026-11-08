@@ -95,6 +95,7 @@ class NesGoldenTest {
             var writes = 0
             var dpcmStarts = 0
             var vrc6 = 0
+            var mmc5 = 0
             for (f in 0 until frames) {
                 val ta = a.frame()
                 val tb = b.frame()
@@ -104,6 +105,7 @@ class NesGoldenTest {
                 writes += ta.size
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 vrc6 += ta.count { (it shr 8) >= 0x9000 }
+                mmc5 += ta.count { (it shr 8) in 0x5000..0x5015 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
@@ -113,6 +115,10 @@ class NesGoldenTest {
             if (lowered.player == NesPlayer.VRC6) {
                 // The trace covers the VRC6: its pulses and saw are written (and compared) every frame they sound.
                 assertTrue(vrc6 > frames, "$name: only $vrc6 VRC6 register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.MMC5) {
+                // The trace covers the MMC5: its pulses are written (and compared) every frame.
+                assertTrue(mmc5 > frames, "$name: only $mmc5 MMC5 register writes in $frames frames")
             }
         }
     }

@@ -2,6 +2,8 @@ package org.thortracker.backend
 
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.NesMmc5DemoSong
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.opl3.Opl3System
@@ -32,6 +34,16 @@ object SampleExportTool {
         for (format in NesVrc6System.exports) File(directory, "saw-sunrise.${format.extension}").writeBytes(format.export(vrc6))
         File(directory, "saw-sunrise.nesimg").writeBytes(ByteArray(NesVrc6System.engine.imageSize).also { NesVrc6System.engine.lower(vrc6, it) })
         println("Exported ${vrc6.title} to ${directory.absolutePath}")
+        // The NES + MMC5 demo, the same way (its image plays on "nes-famistudio-mmc5"), and the shortest valid MMC5
+        // song (one one-row order at speed 1) whose image the native WAV export test renders through loops.
+        val mmc5 = NesMmc5System.demo()
+        File(directory, "tandem-skies.thor").writeText(ProjectCodec.encode(mmc5), Charsets.UTF_8)
+        for (format in NesMmc5System.exports) File(directory, "tandem-skies.${format.extension}").writeBytes(format.export(mmc5))
+        File(directory, "tandem-skies.nesimg").writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(mmc5, it) })
+        val shortest = NesMmc5DemoSong.shortest()
+        check(NesMmc5System.errors(shortest).isEmpty()) { "the shortest MMC5 song is invalid: ${NesMmc5System.errors(shortest)}" }
+        File(directory, "mmc5-shortest.nesimg").writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(shortest, it) })
+        println("Exported ${mmc5.title} and the shortest MMC5 song to ${directory.absolutePath}")
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

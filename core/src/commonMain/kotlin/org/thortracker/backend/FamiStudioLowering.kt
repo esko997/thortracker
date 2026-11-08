@@ -323,7 +323,7 @@ internal object FamiStudioLowering {
 
         fun channel(c: Int): List<Chunk> {
             val isSpeedChannel = c == speedChannel
-            val isSaw = c == NesRules.VRC6_SAW
+            val isSaw = NesRules.isVrc6Saw(fs.expansion, c)
             var currentSpeed = fs.speed
             var instrument = 0
             var arpeggio = -1
@@ -524,8 +524,9 @@ internal object FamiStudioLowering {
         }
 
         private fun slideStep(c: Int, row: Int, note: FsNote, speed: Int, pal: Boolean): Int? {
+            // The MMC5 pulses play the 2A03 pulses' note table (no pitch shift), so only the VRC6 saw has its own.
             val table = when {
-                c == NesRules.VRC6_SAW -> if (pal) NOTE_TABLE_SAW_PAL else NOTE_TABLE_SAW
+                NesRules.isVrc6Saw(fs.expansion, c) -> if (pal) NOTE_TABLE_SAW_PAL else NOTE_TABLE_SAW
                 pal -> NOTE_TABLE_PAL
                 else -> NOTE_TABLE
             }

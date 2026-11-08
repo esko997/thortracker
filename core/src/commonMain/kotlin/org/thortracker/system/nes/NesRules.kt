@@ -18,18 +18,15 @@ object NesRules {
     const val NOTE_COUNT = 96
 
     /**
-     * The lowest note the 2A03's pulses and triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in
-     * its note table (the triangle sounds it an octave lower). The VRC6's 12-bit periods reach every note.
+     * The lowest note the channels with an 11-bit period can play (the 2A03's pulses and triangle, the MMC5's pulses):
+     * FamiStudio note 10 (A-1), the longest period in its note table (the triangle sounds it an octave lower). The
+     * VRC6's 12-bit periods reach every note.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
-    /**
-     * Every NES channel in FamiStudio's engine order: the 2A03's five, then the expansion's ([NesExpansion]); a song
-     * has the first [NesExpansion.channels]. Indices are the same in every variant.
-     */
-    val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM", "VRC6 Pulse 1", "VRC6 Pulse 2", "VRC6 Saw")
-    val CHANNEL_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE, ChannelKind.SAMPLE,
-        ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.SAW)
+    /** The 2A03's channels in FamiStudio's engine order; an expansion's follow ([NesExpansion.channelNames]). */
+    val APU_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM")
+    private val APU_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE, ChannelKind.SAMPLE)
     const val TRIANGLE = 2
     const val NOISE = 3
 
@@ -41,6 +38,24 @@ object NesRules {
     const val VRC6_PULSE1 = 5
     const val VRC6_PULSE2 = 6
     const val VRC6_SAW = 7
+
+    /** The MMC5's pulses (MMC5 Pulse 1 and 2 are channels 5 and 6). */
+    const val MMC5_PULSE1 = 5
+    const val MMC5_PULSE2 = 6
+
+    /** Channel [ch]'s name in a song with [expansion]. */
+    fun channelName(expansion: NesExpansion, ch: Int): String =
+        if (ch < APU_CHANNELS) APU_NAMES[ch] else expansion.channelNames.getOrElse(ch - APU_CHANNELS) { "Channel $ch" }
+
+    /** Channel [ch]'s hardware kind in a song with [expansion]. */
+    fun kind(expansion: NesExpansion, ch: Int): ChannelKind =
+        if (ch < APU_CHANNELS) APU_KINDS[ch] else expansion.channelKinds[ch - APU_CHANNELS]
+
+    /** True for the VRC6 saw of a VRC6 song. */
+    fun isVrc6Saw(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.VRC6 && ch == VRC6_SAW
+
+    /** True for the two pulses of an MMC5 song. */
+    fun isMmc5(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.MMC5 && ch >= MMC5_PULSE1
 
     /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
     const val MAX_ORDERS = 255
@@ -111,30 +126,45 @@ object NesRules {
         "VRC6 pulse duty from this row on: 00 = 1/16 (6.25%) up to 07 = 8/16 (50%) (an instrument duty envelope takes over " +
             "at its next step). Not on the saw.", true)
 
+    /**
+     * The duty effect on the MMC5 pulses: the 2A03's four duties. FamiStudio's engine hides the 2A03 pulses' phase reset
+     * with their sweep unit (`FAMISTUDIO_CFG_SMOOTH_VIBRATO`); the MMC5 has no sweep, so its waveform restarts audibly
+     * whenever the period's high byte changes.
+     */
+    private val MMC5_DUTY = EffectSpec(FX_DUTY, "Duty", "xx: 00-03",
+        "MMC5 pulse duty 12.5/25/50/75% from this row on (an instrument duty envelope takes over at its next step). The " +
+            "MMC5 has no sweep unit, so FamiStudio cannot smooth its pitch changes: when a note, slide or vibrato moves " +
+            "the period across a high-byte boundary the waveform restarts with a click (a phase reset).", true)
+
     private val BY_CODE = EFFECTS.associateBy { it.code }
 
     fun effect(code: Int): EffectSpec? = BY_CODE[code]
 
-    fun kind(channel: Int): ChannelKind = CHANNEL_KINDS[channel]
-
-    /** The chip whose instruments [channel] plays. */
-    fun chip(channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else NesChip.VRC6
+    /** The chip whose instruments [channel] plays in a song with [expansion]. */
+    fun chip(expansion: NesExpansion, channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else expansion.chip
 
     /** True for the channels whose notes are note-table pitches (pulses, triangle and the VRC6 saw). */
-    fun pitched(channel: Int): Boolean = kind(channel).let { it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW }
+    fun pitched(expansion: NesExpansion, channel: Int): Boolean = kind(expansion, channel).let {
+        it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW
+    }
 
-    /** The lowest note [channel] plays: A-1 on the 2A03's pulses and triangle, every note elsewhere. */
-    fun lowestNote(channel: Int): Int = if (channel < APU_CHANNELS && pitched(channel)) LOWEST_TONAL else 1 + NOTE_OFFSET
+    /**
+     * The lowest note [channel] plays: A-1 on the channels with an 11-bit period (the 2A03's pulses and triangle, the
+     * MMC5's pulses), every note elsewhere.
+     */
+    fun lowestNote(expansion: NesExpansion, channel: Int): Int =
+        if (pitched(expansion, channel) && (channel < APU_CHANNELS || isMmc5(expansion, channel))) LOWEST_TONAL else 1 + NOTE_OFFSET
 
     /** The highest duty the duty effect (`Vxx`) takes on [channel]: the VRC6 pulses have eight. */
-    fun dutyMax(channel: Int): Int = if (chip(channel) == NesChip.VRC6) NesChip.VRC6.duty.last else 3
+    fun dutyMax(expansion: NesExpansion, channel: Int): Int =
+        if (chip(expansion, channel) == NesChip.VRC6) NesChip.VRC6.duty.last else 3
 
     /**
      * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, duty on the VRC6
      * saw, everything but speed, delay, cut and the DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), and the
-     * DMC level elsewhere.
+     * DMC level elsewhere. The MMC5 pulses take every 2A03 pulse effect.
      */
-    private fun unusable(channel: Int): Set<Int> = when (kind(channel)) {
+    private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when (kind(expansion, channel)) {
         ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER)
         ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER)
         ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
@@ -142,8 +172,15 @@ object NesRules {
         else -> setOf(FX_DELTA_COUNTER)
     }
 
-    fun effectsFor(channel: Int): List<EffectSpec> = unusable(channel).let { no ->
-        EFFECTS.filter { it.code !in no }.map { if (it.code == FX_DUTY && chip(channel) == NesChip.VRC6) VRC6_DUTY else it }
+    fun effectsFor(expansion: NesExpansion, channel: Int): List<EffectSpec> = unusable(expansion, channel).let { no ->
+        EFFECTS.filter { it.code !in no }.map {
+            when {
+                it.code != FX_DUTY -> it
+                chip(expansion, channel) == NesChip.VRC6 -> VRC6_DUTY
+                isMmc5(expansion, channel) -> MMC5_DUTY
+                else -> it
+            }
+        }
     }
 
     fun hex2(value: Int) = NumberText.hex(value, 2)
@@ -172,18 +209,21 @@ object NesRules {
      * The first reason [cell] cannot be played/exported on [channel], or null. Assumes [cellRangeProblem] is null.
      */
     fun cellProblem(song: Song, channel: Int, cell: Cell): String? {
+        val expansion = song.nes.expansion
+        val channelName = channelName(expansion, channel)
         if (cell.note == Cell.CUT && cell.instrument != 0) return "OFF cannot load instrument ${hex2(cell.instrument)}; clear the instrument"
         if (cell.note == Cell.EMPTY && cell.instrument != 0) {
             return "instrument ${hex2(cell.instrument)} without a note does nothing; add a note or clear the instrument"
         }
-        if (cell.note >= 0 && pitched(channel) && cell.note < lowestNote(channel)) {
-            return "${CHANNEL_NAMES[channel]} cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
+        if (cell.note >= 0 && pitched(expansion, channel) && cell.note < lowestNote(expansion, channel)) {
+            return "$channelName cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
         }
         if (cell.note >= 0 && cell.instrument != 0) {
             val ins = song.nes.instruments.getOrNull(cell.instrument - 1)
-            if (ins != null && ins.chip != chip(channel)) {
-                return "instrument ${hex2(cell.instrument)} is a ${ins.chip.label} sound and ${CHANNEL_NAMES[channel]} plays " +
-                    "${chip(channel).label} sounds; use a ${chip(channel).label} sound or change the sound's chip"
+            val chip = chip(expansion, channel)
+            if (ins != null && ins.chip != chip) {
+                return "instrument ${hex2(cell.instrument)} is a ${ins.chip.label} sound and $channelName plays " +
+                    "${chip.label} sounds; use a ${chip.label} sound or change the sound's chip"
             }
         }
         if (cell.note >= 0 && channel == DPCM && cell.instrument != 0) {
@@ -195,7 +235,7 @@ object NesRules {
         val y = p and 0xF
         val spec = effect(cell.effect) ?: return "effect ${effectChar(cell.effect)} does not exist on the NES"
         val fx = effectText(cell.effect, p)
-        if (cell.effect in unusable(channel)) return "${spec.name.lowercase()} ($fx) has no effect on ${CHANNEL_NAMES[channel]}"
+        if (cell.effect in unusable(expansion, channel)) return "${spec.name.lowercase()} ($fx) has no effect on $channelName"
         val noteName = if (cell.note >= 0) NesSystem.noteName(cell.note) else null
         return when (cell.effect) {
             FX_ARPEGGIO -> if (cell.note < 0) "$fx needs a note on its row (FamiStudio arpeggios belong to a note)" else null
@@ -221,15 +261,16 @@ object NesRules {
                     val target = cell.note + if (cell.effect == FX_SLIDE_UP) p else -p
                     when {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
-                        pitched(channel) && target < lowestNote(channel) -> "$fx from $noteName would end below A-1, which ${CHANNEL_NAMES[channel]} cannot play"
+                        pitched(expansion, channel) && target < lowestNote(expansion, channel) ->
+                            "$fx from $noteName would end below A-1, which $channelName cannot play"
                         else -> null
                     }
                 }
             }
             FX_NOTE_CUT -> if (p > DELAY_MAX) "$fx: cuts are S00-S1F frames" else null
             FX_DUTY -> when {
-                kind(channel) == ChannelKind.NOISE && p > 1 -> "$fx: Noise modes are V00 (hiss) and V01 (metallic)"
-                p > dutyMax(channel) -> "$fx: duties are V00-V0${dutyMax(channel)}"
+                kind(expansion, channel) == ChannelKind.NOISE && p > 1 -> "$fx: Noise modes are V00 (hiss) and V01 (metallic)"
+                p > dutyMax(expansion, channel) -> "$fx: duties are V00-V0${dutyMax(expansion, channel)}"
                 else -> null
             }
             FX_DELTA_COUNTER -> if (p > DELTA_COUNTER_MAX) "$fx: DMC levels are Z00-Z7F" else null
@@ -249,11 +290,13 @@ object NesRules {
         return null
     }
 
-    fun describeEffect(channel: Int, effect: Int, param: Int): String {
+    fun describeEffect(expansion: NesExpansion, channel: Int, effect: Int, param: Int): String {
         val x = param shr 4
         val y = param and 0xF
         val spec = effect(effect) ?: return "Unknown effect"
-        if (effect in unusable(channel) && (effect != FX_ARPEGGIO || param != 0)) return "${spec.name}: no effect on ${CHANNEL_NAMES[channel]}"
+        if (effect in unusable(expansion, channel) && (effect != FX_ARPEGGIO || param != 0)) {
+            return "${spec.name}: no effect on ${channelName(expansion, channel)}"
+        }
         return when (effect) {
             FX_ARPEGGIO -> if (param == 0) "No effect" else "Arpeggio: note, +$x, +$y semitones"
             FX_VIBRATO -> if (param == 0) "Vibrato off" else "Vibrato speed $x, depth $y"
@@ -266,8 +309,8 @@ object NesRules {
             FX_SLIDE_DOWN -> "Glide down $param semitones by the next note"
             FX_NOTE_CUT -> if (param == 0) "Cut immediately" else "Cut after $param frames"
             FX_DUTY -> when {
-                kind(channel) == ChannelKind.NOISE -> if (param == 1) "Noise metallic" else "Noise hiss"
-                chip(channel) == NesChip.VRC6 -> "Duty ${dutyText(NesChip.VRC6, param)}"
+                kind(expansion, channel) == ChannelKind.NOISE -> if (param == 1) "Noise metallic" else "Noise hiss"
+                chip(expansion, channel) == NesChip.VRC6 -> "Duty ${dutyText(NesChip.VRC6, param)}"
                 else -> "Duty ${dutyText(NesChip.APU, param)}"
             }
             FX_DELTA_COUNTER -> "DMC level $param"

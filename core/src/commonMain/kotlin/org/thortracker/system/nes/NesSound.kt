@@ -8,6 +8,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
+import org.thortracker.system.ChannelKind
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemSound
 
@@ -20,11 +21,32 @@ import org.thortracker.system.SystemSound
 enum class NesExpansion(
     /** The chip whose instruments the expansion's channels play. */
     val chip: NesChip,
-    /** Channels after the 2A03's five, in FamiStudio's engine order. */
-    val extraChannels: Int,
+    /** The channels after the 2A03's five, in FamiStudio's engine order: their names and kinds. */
+    val channelNames: List<String>,
+    val channelKinds: List<ChannelKind>,
 ) {
-    @SerialName("none") NONE(NesChip.APU, 0),
-    @SerialName("vrc6") VRC6(NesChip.VRC6, 3);
+    @SerialName("none") NONE(NesChip.APU, emptyList(), emptyList()),
+    @SerialName("vrc6") VRC6(NesChip.VRC6, listOf("VRC6 Pulse 1", "VRC6 Pulse 2", "VRC6 Saw"),
+        listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.SAW)),
+
+    /**
+     * The Nintendo MMC5's two pulse channels. They play 2A03 sounds (FamiStudio has no MMC5 instrument type), so the
+     * chip is the 2A03's. The MMC5's PCM channel is left out: FamiStudio 4.5.3 and its engine never drive it.
+     */
+    @SerialName("mmc5") MMC5(NesChip.APU, listOf("MMC5 Pulse 1", "MMC5 Pulse 2"), listOf(ChannelKind.PULSE, ChannelKind.PULSE));
+
+    /**
+     * The expansion as messages name it ("NES + MMC5") and FamiStudio's internal expansion name (text `Expansions="…"`);
+     * not its chip's label, as the MMC5's pulses play 2A03 sounds.
+     */
+    val label: String get() = when (this) {
+        NONE -> "2A03"
+        VRC6 -> "VRC6"
+        MMC5 -> "MMC5"
+    }
+
+    /** Channels after the 2A03's five. */
+    val extraChannels: Int get() = channelNames.size
 
     /** All channels of a song with this expansion. */
     val channels: Int get() = NesRules.APU_CHANNELS + extraChannels
@@ -33,6 +55,7 @@ enum class NesExpansion(
     val system: NesFamiStudioSystem get() = when (this) {
         NONE -> NesSystem
         VRC6 -> NesVrc6System
+        MMC5 -> NesMmc5System
     }
 
     /** The chips whose instruments a song with this expansion may hold. */

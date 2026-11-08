@@ -35,7 +35,8 @@ import kotlin.math.log2
  * Pulse 2, Triangle, Noise and DPCM, one bank of [SLOTS] envelope instruments shared by all five channels (on DPCM an
  * instrument is its note → sample mappings) and the song's DPCM samples.
  * Lowering ([FamiStudioLowering]) and both exports (`.nsf`, FamiStudio text) read the same [FsSong].
- * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels.
+ * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels, [NesMmc5System]
+ * the Nintendo MMC5's two pulses.
  */
 object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
     override val id = "nes-famistudio"
@@ -61,6 +62,19 @@ object NesVrc6System : NesFamiStudioSystem(NesExpansion.VRC6) {
 }
 
 /**
+ * The NES with the Nintendo MMC5 cartridge chip (FamiStudio's MMC5 expansion): the 2A03's five channels, then MMC5
+ * Pulse 1 and 2 — two more 2A03-style pulses (four duties, 4-bit volume, 11-bit periods, no sweep unit). They play 2A03
+ * sounds, so the bank has one chip. The FamiStudio engine assembled with `FAMISTUDIO_EXP_MMC5` plays it (native
+ * `"nes-famistudio-mmc5"`). The MMC5's PCM channel is not offered: FamiStudio 4.5.3 and its engine never drive it.
+ */
+object NesMmc5System : NesFamiStudioSystem(NesExpansion.MMC5) {
+    override val id = "nes-famistudio-mmc5"
+    override val name = "NES + MMC5 (FamiStudio)"
+
+    override fun demo(): Song = NesMmc5DemoSong.build()
+}
+
+/**
  * What every NES variant shares: the FamiStudio sound engine on the 2A03 plus at most one [expansion] chip (one
  * system per expansion: FamiStudio builds its engine for one, and a system's channels are fixed). Everything is
  * driven by the song's own [NesSound.expansion], so shared NES code may call [NesSystem] for any NES song.
@@ -69,7 +83,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     override val family = "NES"
 
     override val channels = (0 until expansion.channels).map { ch ->
-        ChannelSpec(NesRules.CHANNEL_NAMES[ch], NesRules.CHANNEL_KINDS[ch], 0, tonal = NesRules.pitched(ch))
+        ChannelSpec(NesRules.channelName(expansion, ch), NesRules.kind(expansion, ch), 0, tonal = NesRules.pitched(expansion, ch))
     }
     override val banks = listOf(BankSpec("Instruments", NesSystem.SLOTS))
     override val noteRange = (1 + NesRules.NOTE_OFFSET)..(NesRules.NOTE_COUNT + NesRules.NOTE_OFFSET)
@@ -83,7 +97,11 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         ExportFormat("txt") { FamiStudioText.export(it) },
     )
     override val fine: FinePitch = Fine
-    override val help: SystemHelp = if (expansion == NesExpansion.NONE) Help else Vrc6Help
+    override val help: SystemHelp = when (expansion) {
+        NesExpansion.NONE -> Help
+        NesExpansion.VRC6 -> Vrc6Help
+        NesExpansion.MMC5 -> Mmc5Help
+    }
 
     /** OFF is a note event of its own (release or stop); it needs no effect slot. */
     override val offEffect: String? = null
@@ -123,8 +141,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         })))
     }
 
-    override fun effectsFor(channel: Int): List<EffectSpec> = NesRules.effectsFor(channel)
-    override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) = NesRules.describeEffect(channel, effect, param)
+    override fun effectsFor(channel: Int): List<EffectSpec> = NesRules.effectsFor(expansion, channel)
+    override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) = NesRules.describeEffect(expansion, channel, effect, param)
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? =
         NesRules.cellRangeProblem(cell) ?: NesRules.cellProblem(song, channel, cell)
 
@@ -227,7 +245,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
         override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU" +
-            (if (expansion == NesExpansion.VRC6) " + VRC6" else "") + ", blip_buf 1.1.0"
+            (if (expansion == NesExpansion.NONE) "" else " + ${expansion.label}") + ", blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
@@ -238,16 +256,16 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
             channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
-            NesRules.pitched(channel) && note < NesRules.lowestNote(channel) ->
+            NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
                     "Sample memory or the sample list is full: ${noteName(note)} of instrument ${NesRules.hex2(instrument)} cannot be auditioned"
                 } else null
-            song.nes.instruments[instrument - 1].chip != NesRules.chip(channel) ->
+            song.nes.instruments[instrument - 1].chip != NesRules.chip(expansion, channel) ->
                 "Sound ${NesRules.hex2(instrument)} is a ${song.nes.instruments[instrument - 1].chip.label} sound; " +
-                    "${channels[channel].name} plays ${NesRules.chip(channel).label} sounds"
+                    "${channels[channel].name} plays ${NesRules.chip(expansion, channel).label} sounds"
             else -> null
         }
 
@@ -342,5 +360,21 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
         override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
             NesInstrumentView.helpSections(keys, NesExpansion.VRC6)
+    }
+
+    private object Mmc5Help : NesHelp() {
+        override val effectsIntro = super.effectsIntro + listOf(
+            "MMC5 Pulse 1/2 are two more pulses that play 2A03 sounds from the same bank, with every 2A03 pulse effect: " +
+                "Vxx takes duties 00-03, and there is no sweep (FamiStudio has none either).",
+            "The MMC5 pulses have no sweep unit to hide a period change, so their waveform restarts (a soft click) " +
+                "whenever a note, slide or vibrato moves the period across a high-byte boundary.",
+            "The MMC5's PCM channel is not available: the pinned FamiStudio 4.5.3 engine does not drive it.",
+        )
+        override val tonalChannels = "Pulse, Triangle and MMC5 Pulse"
+        override val tonalChannelsShort = "Pulse/Tri/MMC5"
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle or MMC5 Pulse 1/2; Noise and DPCM have no tonal chord reference"
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, NesExpansion.MMC5)
     }
 }

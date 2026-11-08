@@ -6,6 +6,8 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesExpansion
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.Vrc6SawVolume
@@ -19,9 +21,9 @@ import kotlin.test.assertTrue
 
 /**
  * The image contract of the native `"nes-famistudio"` engines (docs/AUDIO_ENGINE.md, NES image layout), checked on
- * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`): header,
- * envelope directory, instrument table, channel streams of `$41` per order plus `$42`, flat pattern streams with one
- * terminator per row, and the engine-facing numbers of [NesSystem.engine] and [NesVrc6System.engine].
+ * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`, the MMC5
+ * ones on `"nes-famistudio-mmc5"`): header, envelope directory, instrument table, channel streams of `$41` per order
+ * plus `$42`, flat pattern streams with one terminator per row, and the engine-facing numbers of each system's engine.
  */
 class NesLoweringTest {
     private fun u16(b: ByteArray, at: Int) = (b[at].toInt() and 0xff) or ((b[at + 1].toInt() and 0xff) shl 8)
@@ -106,7 +108,7 @@ class NesLoweringTest {
                 assertEquals(0x41, u8(data, s + 4 * o), "$name: channel $c order $o")
                 val n = u8(data, s + 4 * o + 1)
                 val rows = arranged.patterns[arranged.orders[o]].length
-                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base), "$name: channel $c order $o rows")
+                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base, song.nes.expansion), "$name: channel $c order $o rows")
             }
             assertEquals(0x42, u8(data, s + 4 * orders))
             assertEquals(base + s + 4 * arranged.loopOrder, u16(data, s + 4 * orders + 1))
@@ -114,7 +116,7 @@ class NesLoweringTest {
     }
 
     /** Walks [n] row terminators of a flat pattern stream; returns the rows they cover. Checks opcode limits. */
-    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int): Int {
+    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int, expansion: NesExpansion): Int {
         var p = start
         var rows = 0
         var terms = 0
@@ -147,10 +149,13 @@ class NesLoweringTest {
                     0x48 -> p++
                     0x4e -> { assertTrue(channel != NesRules.NOISE); p++ }
                     0x4f -> {
-                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW)
-                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(channel))
+                        assertTrue(channel != NesRules.TRIANGLE && !NesRules.isVrc6Saw(expansion, channel))
+                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(expansion, channel))
                     }
-                    0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
+                    0x55 -> {
+                        assertTrue(NesRules.isVrc6Saw(expansion, channel), "saw master volume off the saw")
+                        assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff))
+                    }
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -226,6 +231,72 @@ class NesLoweringTest {
         e.lower(song, image)
         check("vrc6 blank", song, image)
         assertFailsWith<IllegalArgumentException> { NesSystem.engine.lower(song, ByteArray(NesSystem.engine.imageSize)) }
+    }
+
+    /**
+     * The MMC5 variant: its own engine and song base, seven streams; its pulses play 2A03 sounds from true pitch on the
+     * 2A03 pulse note table (A-4 = FamiStudio note 46 as on Pulse 1) and reach down to A-1 only, like the 2A03 pulses.
+     */
+    @Test
+    fun mmc5EngineNumbers() {
+        val e = NesMmc5System.engine
+        val song = NesMmc5System.blank()
+        assertEquals("nes-famistudio-mmc5", e.id)
+        assertEquals(NesMmc5PlayerImage.IMAGE_SIZE, e.imageSize)
+        assertEquals(NesMmc5PlayerImage.SONG_BASE, NesPlayer.MMC5.songBase)
+        assertEquals(7, NesPlayer.MMC5.channels)
+        assertEquals(7, NesMmc5System.channels.size)
+        assertEquals(listOf("MMC5 Pulse 1", "MMC5 Pulse 2"), NesMmc5System.channels.drop(5).map { it.name })
+        assertEquals(0x08, NesPlayer.MMC5.nsfChips)
+        assertEquals(46, e.note(song, NesRules.MMC5_PULSE1, 57, 1))
+        assertEquals(e.note(song, 0, 57, 1), e.note(song, NesRules.MMC5_PULSE1, 57, 1))
+        assertEquals(-5, e.fine(57, 5))
+        assertEquals(null, e.auditionProblem(song, NesRules.MMC5_PULSE1, 57, 1, 0)) // a 2A03 sound
+        assertEquals(null, e.auditionProblem(song, NesRules.MMC5_PULSE2, NesRules.LOWEST_TONAL, 1, 0))
+        assertTrue(e.auditionProblem(song, NesRules.MMC5_PULSE2, NesRules.LOWEST_TONAL - 1, 1, 0)!!.contains("A-1"))
+        val image = ByteArray(e.imageSize)
+        e.lower(song, image)
+        check("mmc5 blank", song, image)
+        // The demo fits the MMC5 build's region with its samples.
+        val demo = NesMmc5System.demo()
+        val demoImage = ByteArray(e.imageSize)
+        e.lower(demo, demoImage)
+        check("mmc5 demo", demo, demoImage)
+    }
+
+    /**
+     * An MMC5 pulse lowers exactly as a 2A03 pulse: the same cells on Pulse 2 and MMC5 Pulse 1 give one shared pattern
+     * stream (notes from the pulse table, `Vxx` duty bytes 00-03, slides, vibrato, no VRC6 saw opcode).
+     */
+    @Test
+    fun mmc5PulsesLowerLikeThe2A03Pulses() {
+        val base = NesMmc5System.blank()
+        val cells = listOf(
+            0 to Cell(57, 1, NesRules.FX_DUTY, 0x02),
+            8 to Cell(60, 1, NesRules.FX_SLIDE_UP, 0x03),
+            16 to Cell(64, 1, NesRules.FX_VIBRATO, 0x63),
+            24 to Cell(NesRules.LOWEST_TONAL, 1, NesRules.FX_DUTY, 0x03),
+            32 to Cell(Cell.CUT),
+        )
+        val song = base.copy(patterns = listOf(base.patterns[0].copy(tracks = base.patterns[0].tracks.mapIndexed { ch, t ->
+            if (ch == 1 || ch == NesRules.MMC5_PULSE1) t.toMutableList().also { track -> for ((row, cell) in cells) track[row] = cell } else t
+        })))
+        assertEquals(emptyList(), NesMmc5System.errors(song))
+        val lowered = FamiStudioLowering.lower(song)
+        assertEquals(NesPlayer.MMC5, lowered.player)
+        val data = lowered.data
+        val songBase = NesPlayer.MMC5.songBase
+        fun firstPattern(channel: Int) = u16(data, u16(data, 5 + 2 * channel) - songBase + 2)
+        assertEquals(firstPattern(1), firstPattern(NesRules.MMC5_PULSE1), "MMC5 Pulse 1 shares Pulse 2's pattern stream")
+        val stream = firstPattern(NesRules.MMC5_PULSE1) - songBase
+        val head = (0 until minOf(48, data.size - stream)).map { u8(data, stream + it) }
+        assertTrue(head.windowed(2).contains(listOf(0x4f, 0x02)), head.toString())
+        assertTrue(head.windowed(2).contains(listOf(0x4f, 0x03)), head.toString())
+        // Seven channel streams after the song count, instrument and sample pointers, then the tempo words.
+        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, 5 + 2 * 7))
+        val image = ByteArray(NesMmc5System.engine.imageSize)
+        NesMmc5System.engine.lower(song, image)
+        check("mmc5 pulses", song, image)
     }
 
     /** The saw's master volume: `$55` before an instrument of another volume, and with each order's first instrument. */

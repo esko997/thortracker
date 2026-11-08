@@ -16,14 +16,22 @@ import org.thortracker.system.nes.NesSound
  * plays first and in [NesDpcm]'s order, so FamiStudio packs them at the same addresses), instruments (named "slot
  * name", with their DPCM mappings), one arpeggio per `0xy` used, and per channel one FamiStudio pattern per distinct
  * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
- * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`), its instruments of
- * that chip carry `Expansion="VRC6"` and the saw master volume, and its channels follow the 2A03's.
+ * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`, `"MMC5"`) and its
+ * channels follow the 2A03's; instruments of the VRC6 carry `Expansion="VRC6"` and the saw master volume (the MMC5's
+ * pulses play 2A03 instruments, which carry no expansion).
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-    /** FamiStudio's channel type names (`ChannelType.InternalNames`), in engine order. */
-    private val CHANNEL_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM", "VRC6Square1", "VRC6Square2", "VRC6Saw")
+    /** FamiStudio's channel type names (`ChannelType.InternalNames`) of the 2A03, in engine order. */
+    private val APU_CHANNEL_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM")
+
+    /** FamiStudio's channel type names of a song with [expansion], in engine order. */
+    private fun channelTypes(expansion: NesExpansion): List<String> = APU_CHANNEL_TYPES + when (expansion) {
+        NesExpansion.NONE -> emptyList()
+        NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")
+        NesExpansion.MMC5 -> listOf("MMC5Square1", "MMC5Square2")
+    }
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
 
@@ -42,7 +50,7 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else "") +
-            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.chip.label) else ""))
+            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.label) else ""))
         val names = instrumentNames(fs)
         val samples = sampleNames(fs, names.keys)
         for ((data, name) in samples) {
@@ -84,8 +92,9 @@ object FamiStudioText {
         for (o in 0 until fs.orders) if (fs.lengths[o] != common) {
             line(2, "PatternCustomSettings" + attr("Time", o) + attr("Length", fs.lengths[o]))
         }
+        val channelTypes = channelTypes(fs.expansion)
         for (c in 0 until fs.channels) {
-            line(2, "Channel" + attr("Type", CHANNEL_TYPES[c]))
+            line(2, "Channel" + attr("Type", channelTypes[c]))
             val patterns = LinkedHashMap<List<String>, String>()
             val instances = ArrayList<Pair<Int, String>>()
             val variants = HashMap<Int, Int>()

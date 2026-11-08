@@ -57,13 +57,14 @@ object NesInstrumentView : SystemView() {
     fun pages(song: Song, state: ViewState): Int = if (chip(song, state) == NesChip.APU) DPCM_PAGE + 1 else DPCM_PAGE
 
     /**
-     * The rows of the shown page. Songs with an expansion chip add Chip after Name, and VRC6 sounds the saw volume;
-     * 2A03-only songs keep the rows they always had.
+     * The rows of the shown page. Songs whose expansion brings a chip of its own add Chip after Name, and VRC6 sounds
+     * the saw volume; songs with one chip (2A03 only, or the MMC5, whose pulses play 2A03 sounds) keep the rows they
+     * always had.
      */
     fun rows(state: ViewState, song: Song): List<Row> {
         if (dpcmPage(state)) return DPCM_ROWS
         val base = ROWS.getValue(kind(state))
-        if (song.nes.expansion == NesExpansion.NONE) return base
+        if (song.nes.expansion.chips.size == 1) return base
         val extra = if (chip(song, state) == NesChip.VRC6) listOf(Row.CHIP, Row.SAW) else listOf(Row.CHIP)
         return base.take(2) + extra + base.drop(2)
     }
@@ -200,9 +201,11 @@ object NesInstrumentView : SystemView() {
     }
 
     /** [current] if it plays [chip] sounds, else the song's first channel that does. */
-    private fun listenFor(song: Song, chip: NesChip, current: Int): Int =
-        if (NesRules.chip(current) == chip) current
-        else song.system.channels.indices.firstOrNull { NesRules.chip(it) == chip } ?: current
+    private fun listenFor(song: Song, chip: NesChip, current: Int): Int {
+        val expansion = song.nes.expansion
+        return if (NesRules.chip(expansion, current) == chip) current
+        else song.system.channels.indices.firstOrNull { NesRules.chip(expansion, it) == chip } ?: current
+    }
 
     /** The channel whose arranged rows use sound [slot] most, or null when none does. */
     fun mostUsedChannel(song: Song, slot: Int): Int? {
@@ -429,7 +432,7 @@ object NesInstrumentView : SystemView() {
 
     /**
      * Help rows for this view (heading, then key → meaning), named with the current [keys]; [expansion] adds its chip's
-     * rows (the VRC6's Chip and Saw rows and envelope meanings).
+     * rows (the VRC6's Chip and Saw rows and envelope meanings, what the MMC5's pulses play).
      */
     fun helpSections(keys: Keymap, expansion: NesExpansion = NesExpansion.NONE): List<Pair<String, List<Pair<String, String>>>> {
         val edit = keys.label(Action.EDIT)
@@ -456,14 +459,25 @@ object NesInstrumentView : SystemView() {
                     "Without one, OFF stops the note. Setting a release on an envelope without a loop loops it from step 0",
             ),
             "DPCM samples" to NesDpcmPage.helpRows(keys),
-        ) + if (expansion != NesExpansion.VRC6) emptyList() else listOf(
-            "VRC6 sounds" to listOf(
-                "Chip" to "On songs with the VRC6: whether the sound plays on the 2A03's channels or on VRC6 Pulse 1/2 and the Saw " +
-                    "($edit+$lr there). VRC6 sounds have eight duties and no DPCM page",
-                "Saw volume" to "VRC6 sounds: how the saw turns volume 0-15 into its accumulator rate: Quarter ×1, Half ×2 " +
-                    "(FamiStudio's default), Full ×4 (rates above 42 overflow and distort, so Full distorts above volume 10)",
-            ) + NesEnvelopeKind.entries.map { it.label to envelopeSummary(it, NesChip.VRC6) },
-        )
+        ) + when (expansion) {
+            NesExpansion.NONE -> emptyList()
+            NesExpansion.VRC6 -> listOf(
+                "VRC6 sounds" to listOf(
+                    "Chip" to "On songs with the VRC6: whether the sound plays on the 2A03's channels or on VRC6 Pulse 1/2 and the Saw " +
+                        "($edit+$lr there). VRC6 sounds have eight duties and no DPCM page",
+                    "Saw volume" to "VRC6 sounds: how the saw turns volume 0-15 into its accumulator rate: Quarter ×1, Half ×2 " +
+                        "(FamiStudio's default), Full ×4 (rates above 42 overflow and distort, so Full distorts above volume 10)",
+                ) + NesEnvelopeKind.entries.map { it.label to envelopeSummary(it, NesChip.VRC6) },
+            )
+            NesExpansion.MMC5 -> listOf(
+                "MMC5 Pulse 1/2" to listOf(
+                    "Sounds" to "The MMC5 pulses play the bank's 2A03 sounds with every envelope, as Pulse 1/2 do (duty 0-3), " +
+                        "so sounds have no Chip row; Listen on can pick MMC5 Pulse 1 or 2",
+                    "Phase reset" to "Without a sweep unit FamiStudio cannot smooth an MMC5 pulse's pitch changes: a pitch envelope, " +
+                        "slide or vibrato that crosses a period high-byte boundary restarts the waveform with a soft click",
+                ),
+            )
+        }
     }
 
     override fun painter(pane: PaneView): Painter = NesInstrumentPainter(pane)
