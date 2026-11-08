@@ -402,15 +402,30 @@ def write_kotlin():
         "    /**",
         "     * Instrument record: flags ([FLAG_DEFINED], [FLAG_PSG]; all-zero = no instrument). FM: algorithm 0..7,",
         "     * operator-1 feedback 0..7, AMS/FMS (register $B4 without pan), operator k (0..3 = operators 1..4) at [I_OPS] +",
-        "     * 7 k = registers $30 $40 $50 $60 $70 $80 $90 (reserved bits 0). PSG: attack, decay (ticks per",
-        "     * envelope step), sustain level 0..15, release, noise mode (bit 2 white, bits 0-1 source; 3 = PSG 3's period),",
-        "     * bytes 6..31 zero. Both: drum sweep start/end (s8 semitones -96..96 from the note) and speed (1/16 semitone",
-        "     * per tick, 0 = none) at [I_SWEEP_START]..[I_SWEEP_SPEED], bytes 35..39 zero.",
+        "     * 7 k = registers $30 $40 $50 $60 $70 $80 $90 (reserved bits 0). PSG: noise mode at [I_PSG_NOISE] (bit 2 white,",
+        "     * bits 0-1 source; 3 = PSG 3's period), [PSG_PITCH_RELATIVE] at [I_PSG_FLAGS], byte 3 zero, the u16 data-region",
+        "     * offsets of the volume, arpeggio and pitch envelopes at [I_ENV_VOLUME], [I_ENV_ARPEGGIO], [I_ENV_PITCH]",
+        "     * ([NO_ENVELOPE] = none: volume 15, no arpeggio, no pitch offset), bytes 10..31 zero. Both: drum sweep start/end",
+        "     * (s8 semitones -96..96 from the note) and speed (1/16 semitone per tick, 0 = none) at [I_SWEEP_START]..",
+        "     * [I_SWEEP_SPEED], bytes 35..39 zero.",
         "     */",
     ]
     for name in ("I_FLAGS", "FLAG_DEFINED", "FLAG_PSG", "I_ALG", "I_FEEDBACK", "I_AMS_FMS", "I_OPS", "OP_BYTES",
-                 "I_ATTACK", "I_DECAY", "I_SUSTAIN", "I_RELEASE", "I_NOISE", "I_SWEEP_START", "I_SWEEP_END",
-                 "I_SWEEP_SPEED"):
+                 "I_PSG_NOISE", "I_PSG_FLAGS", "PSG_PITCH_RELATIVE", "I_ENV_VOLUME", "I_ENV_ARPEGGIO", "I_ENV_PITCH"):
+        lines.append(kt(name))
+    lines += [
+        "    /**",
+        "     * PSG envelope in the data region (patterns and envelopes share [DATA_CAPACITY]): u16 length",
+        "     * 1..[ENV_MAX_LENGTH], u16 loop index, u16 release index (volume only; needs loop < release < length;",
+        "     * [NO_ENVELOPE] = none), then the values (s8): volume 0..15, arpeggio -64..63 semitones, pitch -64..63 x",
+        "     * [PITCH_UNIT] pitch units (absolute, or accumulated every tick with [PSG_PITCH_RELATIVE]).",
+        "     */",
+        kt("ENV_HEADER"),
+        kt("ENV_MAX_LENGTH"),
+        kt("NO_ENVELOPE"),
+        kt("PITCH_UNIT"),
+    ]
+    for name in ("I_SWEEP_START", "I_SWEEP_END", "I_SWEEP_SPEED"):
         lines.append(kt(name))
     lines += [
         "    const val SWEEP_LIMIT = 96",

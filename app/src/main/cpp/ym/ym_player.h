@@ -28,7 +28,17 @@ extern "C" {
 #define YMP_DUMP_WRITES (1 + 6 * (4 * 7 + 4) + 3 * 3 + 2)
 
 enum { YM_W_PORT0 = 0, YM_W_PORT1 = 1, YM_W_PSG = 2 };
-enum { YM_ENV_ATTACK = 0, YM_ENV_DECAY, YM_ENV_SUSTAIN, YM_ENV_RELEASE, YM_ENV_OFF };
+enum { YM_PSG_OFF = 0, YM_PSG_ON, YM_PSG_RELEASED }; /* PSG note phase */
+
+/* A PSG envelope copied from the instrument at key-on (instrument edits apply to the next note, as FM's). */
+typedef struct YmEnvelope {
+    int length;  /* 0 = no envelope */
+    int loop;    /* -1 none */
+    int release; /* -1 none */
+    int8_t value[YM_ENV_MAX_LENGTH];
+} YmEnvelope;
+
+enum { YM_ENV_VOL = 0, YM_ENV_ARP, YM_ENV_PITCH };
 
 typedef struct YmWrite {
     uint8_t kind; /* YM_W_PORT0 / YM_W_PORT1 (reg, val) or YM_W_PSG (val = the byte) */
@@ -49,7 +59,10 @@ typedef struct YmChannel {
     int key_pending;     /* FM: the key-on is written by the next update */
     uint8_t ops[4][YM_OP_BYTES]; /* FM: the note's operator registers (locks applied, TL without volume) */
     int alg, feedback, ams_fms, carriers; /* carriers: bit k = operator k + 1 */
-    int env, phase, counter, attack, decay, sustain, release; /* PSG envelope */
+    int phase;           /* PSG: YM_PSG_OFF / ON / RELEASED */
+    int pos[3];          /* PSG: envelope positions (volume, arpeggio, pitch) */
+    int level;           /* PSG: this tick's volume envelope value 0..15 */
+    int pitch_relative, pitch_acc; /* PSG: pitch envelope mode and accumulator (pitch units) */
     int noise;           /* Noise: the note's mode (bit 2 white, bits 0-1 source) */
     int base, target;    /* pitch units */
     int fine;
@@ -78,6 +91,7 @@ typedef struct YmPlayer {
     uint8_t noise_ctrl;          /* shadow of the PSG noise control */
     int writes;
     int offs;                    /* write[0 .. offs - 1] is the key-off phase */
+    YmEnvelope env[4][3];        /* PSG 1-3 and Noise: the sounding note's volume, arpeggio and pitch envelopes */
     YmWrite write[YMP_MAX_WRITES];
     int pending_offs;            /* key-off writes of the batch being built */
     YmWrite off[YM_FM_CHANNELS * 2];

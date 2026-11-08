@@ -201,15 +201,36 @@ class Image:
                     "psg": False, "alg": rec[1], "fb": rec[2], "amsfms": rec[3],
                     "ops": [list(rec[4 + 7 * k: 11 + 7 * k]) for k in range(4)], "sweep": sweep}
             else:
-                need(rec[3] <= 15 and not rec[5] & 0xF8, "PSG instrument", at)
+                need(rec[1] <= 7 and rec[2] <= 1 and rec[3] == 0 and not any(rec[10:32]), "PSG instrument", at)
+                envs = []
+                for k in range(3):
+                    off = struct.unpack_from("<H", rec, 4 + 2 * k)[0]
+                    envs.append(None if off == 0xFFFF else self._envelope(off, k, at))
                 self.instruments[slot] = {
-                    "psg": True, "attack": rec[1], "decay": rec[2], "sustain": rec[3], "release": rec[4],
-                    "noise": rec[5], "sweep": sweep}
+                    "psg": True, "noise": rec[1], "relative": bool(rec[2] & 1), "envs": envs, "sweep": sweep}
         self._decoded = {}
         for o in range(self.orders):  # light validation: decode everything once
             for c in range(CHANNELS):
                 self._check(o, c, self.pattern_rows(o, c))
         self.start_speed = self.start_speeds()
+
+    def _envelope(self, off, kind, at):
+        """(values, loop, release) of the envelope at data offset `off`; kind 0 volume, 1 arpeggio, 2 pitch."""
+        if off + 6 > self.data_size:
+            raise ImageError("envelope outside the data (byte %d)" % at)
+        length, loop, release = struct.unpack_from("<HHH", self.data, OFF_DATA + off)
+        if not 1 <= length <= 256 or off + 6 + length > self.data_size:
+            raise ImageError("envelope length (data %d)" % off)
+        loop = None if loop == 0xFFFF else loop
+        release = None if release == 0xFFFF else release
+        if loop is not None and loop >= length:
+            raise ImageError("envelope loop (data %d)" % off)
+        if release is not None and (kind != 0 or loop is None or not loop < release < length):
+            raise ImageError("envelope release (data %d)" % off)
+        values = list(struct.unpack_from("%db" % length, self.data, OFF_DATA + off + 6))
+        if not all((0 <= v <= 15) if kind == 0 else (-64 <= v <= 63) for v in values):
+            raise ImageError("envelope value (data %d)" % off)
+        return values, loop, release
 
     def instrument(self, slot):
         return self.instruments.get(slot)
@@ -289,7 +310,7 @@ class Image:
 
 # ---- player ----------------------------------------------------------------------------------------------
 
-ATTACK, DECAY, SUSTAIN, RELEASE, OFF = "attack", "decay", "sustain", "release", "off"
+ON, RELEASED, OFF = "on", "released", "off"
 
 
 class Track:
@@ -319,11 +340,12 @@ class Track:
         self.vol8 = 0x7F * 8 if self.kind == "fm" else 0x0F * 8
         self.volume_slide = 0
         self.pan = 0xC0
-        # PSG / Noise envelope
-        self.env = None            # the instrument's (attack, decay, sustain, release)
-        self.level = 0
+        # PSG / Noise envelopes: the keyed note's (values, loop, release) or None, per volume, arpeggio, pitch
+        self.envs = [None, None, None]
+        self.pos = [0, 0, 0]
+        self.relative = False
+        self.acc = 0               # relative pitch envelope accumulator
         self.phase = OFF
-        self.counter = 0
         self.mode = 0              # Noise: the note's noise mode
 
 
@@ -431,24 +453,25 @@ class Player:
 
     # -- PSG --
     def psg_key_off(self, t):
+        """Key-off: a volume envelope with a release point plays its tail from there, anything else is silent."""
         if t.keyed:
             t.keyed = False
-            t.counter = 0
-            if t.env[3] == 0:
-                t.level, t.phase = 0, OFF
+            vol = t.envs[0]
+            if vol is not None and vol[2] is not None:
+                t.pos[0] = vol[2]
+                t.phase = RELEASED
             else:
-                t.phase = RELEASE
+                t.phase = OFF
 
     def psg_key_on(self, t, note, noise_lock):
         inst = self.img.instrument(t.slot)
         if inst is None or not inst["psg"]:
             return
-        t.env = (inst["attack"], inst["decay"], inst["sustain"], inst["release"])
-        t.counter = 0
-        if inst["attack"] == 0:
-            t.level, t.phase = 15, DECAY
-        else:
-            t.level, t.phase = 0, ATTACK
+        t.envs = list(inst["envs"])  # copied: an instrument edit applies to the next note
+        t.pos = [0, 0, 0]
+        t.relative = inst["relative"]
+        t.acc = 0
+        t.phase = ON
         if t.kind == "noise":
             t.mode = inst["noise"] if noise_lock is None else noise_lock
         self.pitch_start(t, note, inst)
@@ -525,12 +548,12 @@ class Player:
 
     # -- update --
     @staticmethod
-    def pitch(t):
+    def pitch(t, extra=0):
         arp = 0
         if t.arp and t.arp_phase:
             arp = (t.arp >> 4) if t.arp_phase == 1 else (t.arp & 15)
         vib = (SINE[t.vib_phase] * t.vib[1]) >> 4 if t.vib[1] else 0  # floor shift
-        return max(0, min(PITCH_MAX, t.base + arp * 64 + t.fine + t.slide + vib + t.sweep))
+        return max(0, min(PITCH_MAX, t.base + arp * 64 + t.fine + t.slide + vib + t.sweep + extra))
 
     @staticmethod
     def advance(t, vol_max):
@@ -556,41 +579,28 @@ class Player:
             t.vol8 = max(0, min(vol_max, t.vol8 + (t.volume_slide >> 4) - (t.volume_slide & 15)))
 
     @staticmethod
-    def envelope(t):
-        attack, decay, sustain, release = t.env
-        if t.phase == ATTACK:
-            t.counter += 1
-            if t.counter >= attack:
-                t.counter = 0
-                t.level += 1
-                if t.level >= 15:
-                    t.phase = DECAY
-        elif t.phase == DECAY:
-            if t.level <= sustain:
-                t.phase = SUSTAIN
-            elif decay == 0:
-                t.level, t.phase = sustain, SUSTAIN
-            else:
-                t.counter += 1
-                if t.counter >= decay:
-                    t.counter = 0
-                    t.level -= 1
-                    if t.level <= sustain:
-                        t.phase = SUSTAIN
-        elif t.phase == RELEASE:
-            if t.level == 0:
-                t.phase = OFF
-            else:
-                t.counter += 1
-                if t.counter >= release:
-                    t.counter = 0
-                    t.level -= 1
-                    if t.level == 0:
-                        t.phase = OFF
+    def envelopes(t):
+        """Steps the three envelopes (FamiStudio's rules): before key-off the volume envelope loops back from its
+        release point; after it the tail plays and holds its last value; otherwise an envelope loops at its end or
+        holds its last value. A released note holding volume 0 is off."""
+        released = t.phase == RELEASED
+        for k, env in enumerate(t.envs):
+            if env is None:
+                continue
+            values, loop, release = env
+            nxt = t.pos[k] + 1
+            if release is not None and not released and nxt == release:
+                nxt = loop
+            elif nxt >= len(values):
+                nxt = loop if (loop is not None and release is None) else len(values) - 1
+            t.pos[k] = nxt
+        vol = t.envs[0]
+        if released and t.pos[0] == len(vol[0]) - 1 and vol[0][-1] == 0:
+            t.phase = OFF
 
     @staticmethod
-    def psg_attenuation(t):
-        return 15 - (t.level * (t.vol8 >> 3) + 7) // 15
+    def psg_attenuation(t, level):
+        return 15 - (level * (t.vol8 >> 3) + 7) // 15
 
     def noise_owns_tone3(self):
         n = self.tracks[9]
@@ -600,8 +610,8 @@ class Player:
         t = self.tracks[ch]
         if not t.started:
             return
-        p = self.pitch(t)
         if t.kind == "fm":
+            p = self.pitch(t)
             port, off = self.port_off(ch)
             for k in range(4):
                 if k in t.note["carriers"]:
@@ -616,20 +626,29 @@ class Player:
                 t.pending_on = False
             self.advance(t, 1016)
             return
+        vol, arp, bend = (env[0][t.pos[k]] if env else None for k, env in enumerate(t.envs))
+        level = 0 if t.phase == OFF else (15 if vol is None else vol)
+        offset = 64 * (arp or 0)
+        if t.relative:
+            t.acc = max(-6144, min(6144, t.acc + 4 * (bend or 0)))
+            offset += t.acc
+        else:
+            offset += 4 * (bend or 0)
+        p = self.pitch(t, offset)
         if t.kind == "psg":
             i = ch - 6
             if ch == 8 and self.noise_owns_tone3():
                 self.psg_att(i, 15)
             else:
                 self.psg_tone(i, psg_period(p, self.region))
-                self.psg_att(i, self.psg_attenuation(t))
+                self.psg_att(i, self.psg_attenuation(t, level))
         else:
             self.psg_noise(t.mode)
             if t.mode & 3 == 3:
                 self.psg_tone(2, psg_period(p + 48 * 64, self.region))
-            self.psg_att(3, self.psg_attenuation(t))
+            self.psg_att(3, self.psg_attenuation(t, level))
         self.advance(t, 120)
-        self.envelope(t)
+        self.envelopes(t)
 
     # -- sequencing --
     def begin_row(self):

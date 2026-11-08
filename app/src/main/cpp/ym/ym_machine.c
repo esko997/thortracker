@@ -97,6 +97,9 @@ static void run(YmMachine* m, uint32_t cycles, int emit, uint32_t t0) {
     uint64_t pins = m->pins;
     for (uint32_t c = 0; c < cycles; ++c) {
         pins = z80_tick(&m->cpu, pins);
+#ifdef YMM_PROFILE_HOOK
+        YMM_PROFILE_HOOK(m);
+#endif
         if (pins & Z80_MREQ) {
             const uint16_t a = Z80_GET_ADDR(pins);
             if (pins & Z80_RD) {
@@ -468,7 +471,7 @@ static int audition_silent(const YmMachine* m) {
         return 1;
     }
     const int i = c == YM_CH_NOISE ? 3 : c - YM_CH_PSG;
-    return ch->phase == YM_ENV_OFF && m->psg.att[i] == 15;
+    return ch->phase == YM_PSG_OFF && m->psg.att[i] == 15;
 }
 
 int ymm_release(YmMachine* m) {

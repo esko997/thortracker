@@ -57,7 +57,32 @@ static int effect_problem(const YmInfo* info, int c, int code, int param, const 
     }
 }
 
-static int check_instrument(YmImage* image, int slot) {
+/* The envelope at instrument field `at` (u16 data offset or YM_NO_ENVELOPE) of kind 0 volume, 1 arpeggio, 2 pitch. */
+static int check_envelope(YmImage* image, int at, int kind, int size) {
+    const uint8_t* b = image->bytes;
+    const int off = ym_u16(b + at);
+    if (off == YM_NO_ENVELOPE) return 0;
+    if (off + YM_ENV_HEADER > size) return fail(image, "envelope outside the data size", at);
+    const uint8_t* e = b + YM_OFF_DATA + off;
+    const int length = ym_u16(e), loop = ym_u16(e + 2), release = ym_u16(e + 4);
+    if (length < 1 || length > YM_ENV_MAX_LENGTH) return fail(image, "envelope length outside 1..256", YM_OFF_DATA + off);
+    if (off + YM_ENV_HEADER + length > size) return fail(image, "envelope outside the data size", YM_OFF_DATA + off);
+    if (loop != YM_NO_ENVELOPE && loop >= length) return fail(image, "envelope loop past its end", YM_OFF_DATA + off + 2);
+    if (release != YM_NO_ENVELOPE) {
+        if (kind != 0) return fail(image, "release point on an arpeggio or pitch envelope", YM_OFF_DATA + off + 4);
+        if (loop == YM_NO_ENVELOPE || release <= loop || release >= length)
+            return fail(image, "volume release point needs a loop before it", YM_OFF_DATA + off + 4);
+    }
+    for (int i = 0; i < length; ++i) {
+        const int v = (int8_t)e[YM_ENV_HEADER + i];
+        if (kind == 0 ? v < 0 || v > 15 : v < -64 || v > 63)
+            return fail(image, kind == 0 ? "volume envelope value outside 0..15" : "arpeggio or pitch envelope value outside -64..63",
+                        YM_OFF_DATA + off + YM_ENV_HEADER + i);
+    }
+    return 0;
+}
+
+static int check_instrument(YmImage* image, int slot, int size) {
     const int base = YM_OFF_INSTRUMENTS + YM_INSTRUMENT_SIZE * (slot - 1);
     const uint8_t* p = image->bytes + base;
     if (zero(p, YM_INSTRUMENT_SIZE)) return 0;
@@ -65,9 +90,12 @@ static int check_instrument(YmImage* image, int slot) {
     if ((p[YM_I_FLAGS] & ~(YM_FLAG_DEFINED | YM_FLAG_PSG)) || !(p[YM_I_FLAGS] & YM_FLAG_DEFINED))
         return fail(image, "instrument flags", base + YM_I_FLAGS);
     if (p[YM_I_FLAGS] & YM_FLAG_PSG) {
-        if (p[YM_I_SUSTAIN] > 15) return fail(image, "PSG sustain level above 15", base + YM_I_SUSTAIN);
-        if (p[YM_I_NOISE] > 7) return fail(image, "PSG noise mode above 7", base + YM_I_NOISE);
-        if (!zero(p + 6, YM_I_SWEEP_START - 6)) return fail(image, "PSG instrument reserved bytes 6..31", base + 6);
+        if (p[YM_I_PSG_NOISE] > 7) return fail(image, "PSG noise mode above 7", base + YM_I_PSG_NOISE);
+        if (p[YM_I_PSG_FLAGS] & ~YM_PSG_PITCH_RELATIVE) return fail(image, "PSG flags: only bit 0", base + YM_I_PSG_FLAGS);
+        if (p[3]) return fail(image, "PSG instrument reserved byte 3", base + 3);
+        for (int k = 0; k < 3; ++k)
+            if (check_envelope(image, base + YM_I_ENV_VOLUME + 2 * k, k, size)) return -1;
+        if (!zero(p + 10, YM_I_SWEEP_START - 10)) return fail(image, "PSG instrument reserved bytes 10..31", base + 10);
     } else {
         if (p[YM_I_ALG] > 7) return fail(image, "FM algorithm above 7", base + YM_I_ALG);
         if (p[YM_I_FEEDBACK] > 7) return fail(image, "FM feedback above 7", base + YM_I_FEEDBACK);
@@ -127,7 +155,7 @@ int ym_load_image(YmImage* image) {
     }
     for (int o = 0; o < info->orders; ++o) info->rows[o] = b[YM_OFF_ROWS + o] ? b[YM_OFF_ROWS + o] : 256;
     for (int n = 1; n <= YM_MAX_INSTRUMENTS; ++n)
-        if (check_instrument(image, n)) return -1;
+        if (check_instrument(image, n, size)) return -1;
 
     /* Patterns: every (order, channel) decodes rows(o) rows inside the used data. */
     int speed = info->speed;

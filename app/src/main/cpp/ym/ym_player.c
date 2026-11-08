@@ -101,11 +101,12 @@ static int psg_period(int region, int units) {
     return clamp(n, 1, 1023);
 }
 
-static int pitch(const YmChannel* ch) {
+/* `extra`: the PSG envelopes' arpeggio and pitch offset (pitch units). */
+static int pitch(const YmChannel* ch, int extra) {
     int arp = 0;
     if (ch->arp && ch->arp_step) arp = ch->arp_step == 1 ? ch->arp >> 4 : ch->arp & 15;
     const int vib = ch->vib_depth ? (YM_SINE[ch->vib_phase] * ch->vib_depth) >> 4 : 0;
-    return clamp(ch->base + arp * 64 + ch->fine + ch->slide + vib + ch->sweep, 0, YMP_PITCH_MAX);
+    return clamp(ch->base + arp * 64 + ch->fine + ch->slide + vib + ch->sweep + extra, 0, YMP_PITCH_MAX);
 }
 
 /* ---- notes ----------------------------------------------------------------------------------- */
@@ -125,12 +126,12 @@ static void key_off(YmPlayer* p, int c) {
         ch->key_pending = 0;
         key_write(p, c, 0);
     } else {
-        ch->counter = 0;
-        if (ch->release == 0) {
-            ch->env = 0;
-            ch->phase = YM_ENV_OFF;
+        const YmEnvelope* vol = &p->env[c - YM_CH_PSG][YM_ENV_VOL];
+        if (vol->length && vol->release >= 0) {
+            ch->pos[YM_ENV_VOL] = vol->release;
+            ch->phase = YM_PSG_RELEASED;
         } else {
-            ch->phase = YM_ENV_RELEASE;
+            ch->phase = YM_PSG_OFF;
         }
     }
 }
@@ -184,20 +185,25 @@ static void key_on(YmPlayer* p, const YmImage* image, int c, int note, const YmR
         wr(p, port, fm_reg(0xB4, c), ch->pan | ch->ams_fms);
         ch->key_pending = 1;
     } else {
-        ch->attack = rec[YM_I_ATTACK];
-        ch->decay = rec[YM_I_DECAY];
-        ch->sustain = rec[YM_I_SUSTAIN];
-        ch->release = rec[YM_I_RELEASE];
-        ch->counter = 0;
-        if (ch->attack == 0) {
-            ch->env = 15;
-            ch->phase = YM_ENV_DECAY;
-        } else {
-            ch->env = 0;
-            ch->phase = YM_ENV_ATTACK;
+        for (int k = 0; k < 3; ++k) {
+            YmEnvelope* e = &p->env[c - YM_CH_PSG][k];
+            const int off = ym_u16(rec + YM_I_ENV_VOLUME + 2 * k);
+            e->length = 0;
+            if (off != YM_NO_ENVELOPE) {
+                const uint8_t* b = image->bytes + YM_OFF_DATA + off;
+                const int loop = ym_u16(b + 2), release = ym_u16(b + 4);
+                e->length = ym_u16(b);
+                e->loop = loop == YM_NO_ENVELOPE ? -1 : loop;
+                e->release = release == YM_NO_ENVELOPE ? -1 : release;
+                memcpy(e->value, b + YM_ENV_HEADER, (size_t)e->length);
+            }
+            ch->pos[k] = 0;
         }
+        ch->pitch_relative = rec[YM_I_PSG_FLAGS] & YM_PSG_PITCH_RELATIVE;
+        ch->pitch_acc = 0;
+        ch->phase = YM_PSG_ON;
         if (c == YM_CH_NOISE) {
-            ch->noise = rec[YM_I_NOISE];
+            ch->noise = rec[YM_I_PSG_NOISE];
             for (int e = 0; row && e < row->effects; ++e)
                 if (row->code[e] == YM_FX_NOISE) ch->noise = (row->param[e] >> 4) << 2 | (row->param[e] & 3);
         }
@@ -250,10 +256,10 @@ static void process_row(YmPlayer* p, const YmImage* image, int c) {
 
 int ymp_noise_owns_tone3(const YmPlayer* p) {
     const YmChannel* n = &p->ch[YM_CH_NOISE];
-    return n->active && (n->noise & 3) == 3 && n->phase != YM_ENV_OFF;
+    return n->active && (n->noise & 3) == 3 && n->phase != YM_PSG_OFF;
 }
 
-static int attenuation(const YmChannel* ch) { return 15 - (ch->env * (ch->vol8 >> 3) + 7) / 15; }
+static int attenuation(const YmChannel* ch) { return 15 - (ch->level * (ch->vol8 >> 3) + 7) / 15; }
 
 static void advance_effects(YmChannel* ch, int vol_max) {
     if (ch->arp) ch->arp_step = (ch->arp_step + 1) % 3;
@@ -271,39 +277,23 @@ static void advance_effects(YmChannel* ch, int vol_max) {
     if (ch->volslide) ch->vol8 = clamp(ch->vol8 + (ch->volslide >> 4) - (ch->volslide & 15), 0, vol_max);
 }
 
-static void advance_envelope(YmChannel* ch) {
-    switch (ch->phase) {
-    case YM_ENV_ATTACK:
-        if (++ch->counter >= ch->attack) {
-            ch->counter = 0;
-            if (++ch->env >= 15) {
-                ch->env = 15;
-                ch->phase = YM_ENV_DECAY;
-            }
-        }
-        break;
-    case YM_ENV_DECAY:
-        if (ch->env <= ch->sustain) {
-            ch->phase = YM_ENV_SUSTAIN;
-        } else if (ch->decay == 0) {
-            ch->env = ch->sustain;
-            ch->phase = YM_ENV_SUSTAIN;
-        } else if (++ch->counter >= ch->decay) {
-            ch->counter = 0;
-            if (--ch->env <= ch->sustain) ch->phase = YM_ENV_SUSTAIN;
-        }
-        break;
-    case YM_ENV_RELEASE:
-        if (ch->env == 0) {
-            ch->phase = YM_ENV_OFF;
-        } else if (++ch->counter >= ch->release) {
-            ch->counter = 0;
-            if (--ch->env == 0) ch->phase = YM_ENV_OFF;
-        }
-        break;
-    default:
-        break;
-    }
+/* The position after `pos`: a held volume note loops before its release point; a released one plays its tail and
+ * holds the last value; others loop at the end, or hold the last value without a loop. */
+static int envelope_next(const YmEnvelope* e, int pos, int released) {
+    const int n = pos + 1;
+    if (!released && e->release >= 0 && n == e->release) return e->loop;
+    if (n < e->length) return n;
+    return e->loop >= 0 && e->release < 0 ? e->loop : e->length - 1;
+}
+
+static void advance_envelopes(YmPlayer* p, int c) {
+    YmChannel* ch = &p->ch[c];
+    const YmEnvelope* env = p->env[c - YM_CH_PSG];
+    const int released = ch->phase == YM_PSG_RELEASED;
+    for (int k = 0; k < 3; ++k)
+        if (env[k].length) ch->pos[k] = envelope_next(&env[k], ch->pos[k], released);
+    const YmEnvelope* vol = &env[YM_ENV_VOL];
+    if (released && ch->pos[YM_ENV_VOL] == vol->length - 1 && vol->value[vol->length - 1] == 0) ch->phase = YM_PSG_OFF;
 }
 
 static void update_fm(YmPlayer* p, int c) {
@@ -312,7 +302,7 @@ static void update_fm(YmPlayer* p, int c) {
     for (int k = 0; k < 4; ++k)
         if (ch->carriers >> k & 1) wr(p, port, fm_reg(0x40, c) + YMP_OP_OFFSET[k], tl_out(ch, k));
     int a4, a0;
-    fm_frequency(p->region, pitch(ch), &a4, &a0);
+    fm_frequency(p->region, pitch(ch, 0), &a4, &a0);
     wr_pair(p, port, fm_reg(0xA4, c), a4, a0);
     if (ch->key_pending) {
         ch->key_pending = 0;
@@ -323,7 +313,18 @@ static void update_fm(YmPlayer* p, int c) {
 
 static void update_psg(YmPlayer* p, int c) {
     YmChannel* ch = &p->ch[c];
-    const int units = pitch(ch);
+    const YmEnvelope* env = p->env[c - YM_CH_PSG];
+    const YmEnvelope* vol = &env[YM_ENV_VOL];
+    ch->level = ch->phase == YM_PSG_OFF ? 0 : vol->length ? vol->value[ch->pos[YM_ENV_VOL]] : 15;
+    int extra = env[YM_ENV_ARP].length ? 64 * env[YM_ENV_ARP].value[ch->pos[YM_ENV_ARP]] : 0;
+    const int bend = env[YM_ENV_PITCH].length ? YM_PITCH_UNIT * env[YM_ENV_PITCH].value[ch->pos[YM_ENV_PITCH]] : 0;
+    if (ch->pitch_relative) {
+        ch->pitch_acc = clamp(ch->pitch_acc + bend, -6144, 6144);
+        extra += ch->pitch_acc;
+    } else {
+        extra += bend;
+    }
+    const int units = pitch(ch, extra);
     if (c == YM_CH_NOISE) {
         psg_noise(p, ch->noise);
         if ((ch->noise & 3) == 3) psg_tone(p, 2, psg_period(p->region, units + 48 * 64));
@@ -335,7 +336,7 @@ static void update_psg(YmPlayer* p, int c) {
         psg_att(p, c - YM_CH_PSG, attenuation(ch));
     }
     advance_effects(ch, 120);
-    advance_envelope(ch);
+    advance_envelopes(p, c);
 }
 
 static void read_rows(YmPlayer* p, const YmImage* image) {
@@ -514,7 +515,7 @@ void ymp_reset(YmPlayer* p, const YmImage* image) {
     shadow_reset(p);
     for (int c = 0; c < YM_CHANNELS; ++c) {
         p->ch[c].cut = -1;
-        p->ch[c].phase = YM_ENV_OFF;
+        p->ch[c].phase = YM_PSG_OFF;
         p->ch[c].vol8 = c < YM_FM_CHANNELS ? 1016 : 120;
         p->ch[c].pan = 0xC0;
     }

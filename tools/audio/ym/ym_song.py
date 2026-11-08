@@ -58,17 +58,34 @@ class FmInstrument:
 
 
 @dataclass
+class Env:
+    values: list              # volume 0..15, arpeggio -64..63 semitones, pitch -64..63 x 1/16 semitone
+    loop: int = None          # index, None = hold the last value at the end
+    release: int = None       # volume only: where key-off continues (needs loop < release)
+
+    def encode(self):
+        none = 0xFFFF
+        return struct.pack("<HHH", len(self.values), none if self.loop is None else self.loop,
+                           none if self.release is None else self.release) + struct.pack("%db" % len(self.values), *self.values)
+
+
+@dataclass
 class PsgInstrument:
-    attack: int = 0           # ticks per step 0 -> 15; 0 = start at 15
-    decay: int = 0            # ticks per step 15 -> sustain; 0 = straight to it
-    sustain: int = 15
-    release: int = 0          # ticks per step down after key-off; 0 = silent at once
+    volume: Env = None        # None = constant 15
+    arpeggio: Env = None      # None = 0
+    pitch: Env = None         # None = 0
+    relative: bool = False    # the pitch envelope accumulates
     noise: int = 0            # Noise channel: bit 2 white, bits 0-1 source (3 = pitched by PSG 3)
     sweep: tuple = (0, 0, 0)
 
-    def record(self):
+    def envelopes(self):
+        return [self.volume, self.arpeggio, self.pitch]
+
+    def record(self, offsets):
+        """`offsets`: data offset of each envelope (None = no envelope)."""
         rec = bytearray(INSTRUMENT_SIZE)
-        rec[0:6] = bytes((0x81, self.attack, self.decay, self.sustain, self.release, self.noise))
+        rec[0:3] = bytes((0x81, self.noise, 1 if self.relative else 0))
+        struct.pack_into("<HHH", rec, 4, *(0xFFFF if o is None else o for o in offsets))
         struct.pack_into("bbB", rec, 32, *self.sweep)
         return bytes(rec)
 
@@ -127,14 +144,14 @@ def encode_pattern(cells, rows):
 
 
 def build(song, relayout=False):
+    """The image. Data region: every distinct (order, channel) pattern in first-use order (orders, then channels),
+    then the PSG envelopes of slots 1..64 ascending (volume, arpeggio, pitch), each deduplicated by its bytes against
+    the envelopes before it; no padding. `relayout` moves everything (a gap, patterns reversed)."""
     img = bytearray(IMAGE_SIZE)
     img[0:4] = b"TTYM"
     img[4], img[5], img[6], img[7] = 1, song.region, song.speed, song.lfo
     struct.pack_into("<HH", img, 8, len(song.orders), song.loop)
     img[12] = max(song.instruments) if song.instruments else 0
-    for slot, inst in song.instruments.items():
-        at = OFF_INSTRUMENTS + INSTRUMENT_SIZE * (slot - 1)
-        img[at: at + INSTRUMENT_SIZE] = inst.record()
     blobs, uses = [], []  # distinct encoded patterns, deduplicated by bytes
     for o, order in enumerate(song.orders):
         img[OFF_ROWS + o] = order.rows & 0xFF
@@ -152,6 +169,24 @@ def build(song, relayout=False):
     for blob in (list(reversed(blobs)) if relayout else blobs):
         where[blob] = len(data)
         data.extend(blob)
+    envelope_at = {}
+    for slot in sorted(song.instruments):
+        inst = song.instruments[slot]
+        at = OFF_INSTRUMENTS + INSTRUMENT_SIZE * (slot - 1)
+        if isinstance(inst, PsgInstrument):
+            offsets = []
+            for env in inst.envelopes():
+                if env is None:
+                    offsets.append(None)
+                    continue
+                blob = env.encode()
+                if blob not in envelope_at:
+                    envelope_at[blob] = len(data)
+                    data.extend(blob)
+                offsets.append(envelope_at[blob])
+            img[at: at + INSTRUMENT_SIZE] = inst.record(offsets)
+        else:
+            img[at: at + INSTRUMENT_SIZE] = inst.record()
     assert len(data) <= IMAGE_SIZE - OFF_DATA
     struct.pack_into("<H", img, 14, len(data))
     img[OFF_DATA: OFF_DATA + len(data)] = data
@@ -169,14 +204,17 @@ def test_song():
     Exercises all 8 FM algorithms with feedback on the six FM channels (FM 6 included), LFO (header, Lxx, AMS/FMS,
     operator AM), SSG-EG, DT/MUL variety, every effect on the channels that allow it with up to 4 columns (blank
     columns before used ones), OFF cells, same-note retriggers, an FM kick with a pitch sweep, white/periodic noise
-    at fixed rates and pitched (muting PSG 3 while it sounds), PSG envelopes (attack/decay/release 0 cases), empty
-    runs and patterns used twice. Slot 1 = sine (A-4 measurement), slot 2 = plain PSG square."""
+    at fixed rates and pitched (muting PSG 3 while it sounds), PSG envelopes (volume loops before a release point,
+    release tails, held ends, no envelope at all; arpeggio and absolute and relative pitch envelopes; one envelope
+    shared by two instruments), empty runs and patterns used twice. Slot 1 = sine (A-4 measurement), slot 2 = plain
+    PSG square."""
     I = {}
     mute = dict(tl=0x7F, ar=31, rr=15)
     # 1: pure sine: algorithm 7, only operator 4 audible
     I[1] = FmInstrument([FmOp(**mute), FmOp(**mute), FmOp(**mute), FmOp(tl=0, ar=31, rr=6)], alg=7, fb=0)
-    # 2: plain PSG square
-    I[2] = PsgInstrument(attack=0, decay=0, sustain=15, release=3)
+    # 2: plain PSG square: full level until key-off, then down one step every 2 ticks
+    fade = Env([15] + [v for v in range(14, -1, -1) for _ in range(2)], loop=0, release=1)
+    I[2] = PsgInstrument(volume=fade)
     # 3: bass, algorithm 0 (serial 1->2->3->4), feedback 5, detune variety
     I[3] = FmInstrument([FmOp(dt=3, mul=1, tl=0x23, ar=31, d1r=12, d2r=3, d1l=4, rr=8),
                          FmOp(dt=7, mul=2, tl=0x2C, ar=28, d1r=10, d2r=2, d1l=3, rr=8),
@@ -223,22 +261,27 @@ def test_song():
                           FmOp(mul=1, tl=0x7F, ar=31, rr=15),
                           FmOp(mul=1, tl=0x7F, ar=31, rr=15),
                           FmOp(mul=1, tl=0x00, ar=31, d1r=12, d2r=8, d1l=6, rr=12)], alg=0, fb=0, sweep=(36, 0, 64))
-    # 12: PSG lead: attack 2, decay 3 to 8, release 4
-    I[12] = PsgInstrument(attack=2, decay=3, sustain=8, release=4)
-    # 13: PSG pad: attack 4, decay 0 (straight to the sustain 10), release 6
-    I[13] = PsgInstrument(attack=4, decay=0, sustain=10, release=6)
-    # 14: PSG pluck: attack 0, decay 2 to 0, release 0
-    I[14] = PsgInstrument(attack=0, decay=2, sustain=0, release=0)
-    # 15: snare: white noise, clock/1024
-    I[15] = PsgInstrument(attack=0, decay=1, sustain=4, release=2, noise=4 | 1)
-    # 16: hat: white noise, clock/512, release 0
-    I[16] = PsgInstrument(attack=0, decay=1, sustain=0, release=0, noise=4 | 0)
-    # 17: buzz: periodic noise, clock/2048, attack 1, decay 0
-    I[17] = PsgInstrument(attack=1, decay=0, sustain=12, release=3, noise=0 | 2)
-    # 18: tom: white noise pitched by PSG 3, sweeping +12 -> -12
-    I[18] = PsgInstrument(attack=0, decay=2, sustain=6, release=2, noise=4 | 3, sweep=(12, -12, 24))
-    # 19: PSG zap: tone with a downward sweep
-    I[19] = PsgInstrument(attack=0, decay=0, sustain=13, release=1, sweep=(24, 0, 32))
+    # 12: PSG lead: swell to 15, settle at 8 (loop before the release point), release tail; looping vibrato in pitch
+    I[12] = PsgInstrument(volume=Env([4, 8, 12, 15, 13, 11, 9, 8, 6, 4, 2, 0], loop=7, release=8),
+                          pitch=Env([0, 1, 2, 1, 0, -1, -2, -1], loop=0))
+    # 13: PSG pad: slow attack held at 10 with a looping major-chord arpeggio, long release
+    I[13] = PsgInstrument(volume=Env([3, 6, 9, 10, 8, 6, 5, 4, 3, 2, 1, 0], loop=3, release=4),
+                          arpeggio=Env([0, 4, 7], loop=0))
+    # 14: PSG pluck: an octave blip, then decays to 0 and holds it (no release point: key-off is silent at once)
+    I[14] = PsgInstrument(volume=Env([15, 13, 11, 9, 7, 5, 3, 1, 0]), arpeggio=Env([12, 0]))
+    # 15: snare: white noise, clock/1024, decays to 4 and holds it
+    I[15] = PsgInstrument(volume=Env([15, 12, 9, 7, 5, 4]), noise=4 | 1)
+    # 16: hat: white noise, clock/512, short
+    I[16] = PsgInstrument(volume=Env([12, 8, 4, 0]), noise=4 | 0)
+    # 17: buzz: periodic noise, clock/2048, a two-step loop before the release point
+    I[17] = PsgInstrument(volume=Env([8, 12, 11, 9, 6, 3, 0], loop=1, release=3), noise=0 | 2)
+    # 18: tom: white noise pitched by PSG 3, sweeping +12 -> -12, and a relative pitch envelope falling on
+    I[18] = PsgInstrument(volume=Env([15, 13, 11, 9, 8, 7, 6]), pitch=Env([-4], loop=0), relative=True,
+                          noise=4 | 3, sweep=(12, -12, 24))
+    # 19: PSG zap: tone with a downward sweep, the square's volume envelope (shared bytes)
+    I[19] = PsgInstrument(volume=fade, sweep=(24, 0, 32))
+    # 20: no envelopes: constant level 15 (Cxx and Axy only), silent at key-off
+    I[20] = PsgInstrument()
 
     P = {}
     C = Cell
@@ -302,7 +345,7 @@ def test_song():
     P["o3d"] = {2: C(48, 8, [("8", 0x01)]), 12: C(50, 8, [("8", 0x10)]), 20: C(OFF)}
     P["o3psg1"] = {2: C(72, 14), 3: C(72, 14), 4: C(74, 14, [("0", 0x37)]), 8: C(76, 12, [("S", 0x03)]),
                    12: C(None, None, [("L", 0x0D)])}
-    P["o3psg2"] = {2: C(57, 2, [("A", 0x01)]), 16: C(None, None, [("A", 0x00)])}
+    P["o3psg2"] = {2: C(57, 20, [("A", 0x01)]), 16: C(None, None, [("A", 0x00)]), 20: C(OFF)}
     P["o3psg3"] = {4: C(40, 13), 18: C(OFF)}
     P["o3noise"] = {2: C(24, 15, [("N", 0x13)]), 6: C(OFF), 8: C(36, 16), 16: C(36, 15, [("G", 0x02), ("S", 0x04)])}
 

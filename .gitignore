@@ -11,3 +11,4 @@ evidence/
 dist/
 *.iml
 /deck/deps/
+__pycache__/
