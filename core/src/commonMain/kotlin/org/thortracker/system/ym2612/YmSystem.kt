@@ -191,7 +191,7 @@ object YmSystem : SoundSystem {
         return if (found >= 0) found + 1 else 1
     }
 
-    override fun view(kind: ViewKind): SystemView? = null
+    override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) YmInstrumentView else null
 
     override val songSettings: List<SongSetting> get() = YmSongSettings.ALL
 
@@ -273,7 +273,7 @@ object YmSystem : SoundSystem {
         override val untonalNote = "Noise keeps every pitch (it only matters in pitched mode)."
         override val sketchChannels = "FM 1-6 or PSG 1-3; Noise has no tonal chord reference"
 
-        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = emptyList()
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = YmInstrumentView.helpSections(keys)
 
         override fun limits(song: Song): List<Pair<String, String>> = YmValidator.limits(song)
     }
