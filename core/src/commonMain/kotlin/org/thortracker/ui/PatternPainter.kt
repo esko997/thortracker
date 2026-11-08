@@ -122,9 +122,12 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
         // The chip's shared state (SID: which voice owns the filter) where the song is heard: the playhead, else the cursor.
         val shared = if (playing) s.system.sharedState(s, v.playback.order, v.playback.row) else s.system.sharedState(s, st.order, st.row)
+        val rightScrollLabel = if (variableLanes && lastLane < channels - 1) "${channels - 1 - lastLane}▶" else ""
+        val rightScrollW = if (rightScrollLabel.isEmpty()) 0f else ink.labelWidth(rightScrollLabel, ink.unit * 0.75f, true) + cw
         for (ch in firstLane..lastLane) {
             val x = laneLeft(ch)
             val laneW = laneWidth(ch)
+            val headerW = laneW - (if (ch == lastLane) rightScrollW else 0f)
             val col = Palette.channel(ch)
             val heard = if (ch != auditionChannel) 0f else if (auditionLit) 1f else motion.fade(auditionEnd, 320)
             val lamp = maxOf(playLamp(ch), heard)
@@ -136,20 +139,20 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val hidden = if (multi) ctl.usedColumns(ch) - ctl.shownColumns(ch) else 0
             val tag = shared?.tags?.getOrNull(ch) ?: if (hidden > 0) "+$hidden fx" else null
             val tagW = if (tag == null) 0f else ink.labelWidth(tag, ink.unit * 0.7f, true) + cw * 1.2f
-            val name = ink.fit(names[ch], (laneW - cw * 1.2f - tagW).coerceAtLeast(0f), ink.unit, true)
+            val name = ink.fit(names[ch], (headerW - cw * 1.2f - tagW).coerceAtLeast(0f), ink.unit, true)
             ink.label(c, name, x + cw * 0.6f, laneTop, laneHeaderH, col, true)
             val nw = ink.labelWidth(name, ink.unit, true)
             if (tag != null) {
-                val tr = Rect(x + laneW - tagW, laneTop + laneHeaderH * 0.2f, x + laneW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
+                val tr = Rect(x + headerW - tagW, laneTop + laneHeaderH * 0.2f, x + headerW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
                 ink.round(c, tr, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 60))
                 ink.label(c, tag, tr.centerX(), tr.top, tr.height(), Palette.PLAYHEAD, true, ink.unit * 0.7f, Align.CENTER)
             }
-            val penW = laneW - nw - cw * 2f - tagW
+            val penW = headerW - nw - cw * 2f - tagW
             if (penW >= ink.labelWidth("…", ink.unit * 0.8f)) {
                 ink.label(c, ink.fit("${hex2(pen)} $penName", penW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
             }
         }
-        if (variableLanes) drawLaneScroll(c, area, laneHeaderH)
+        if (variableLanes) drawLaneScroll(c, area, laneHeaderH, rightScrollLabel, rightScrollW)
 
         // rows background + ruler
         for (r in first..last) {
@@ -337,7 +340,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     }
 
     /** "◀ 2" / "3 ▶" beside the lane headers when lanes are scrolled out of view (tap to move there). */
-    private fun drawLaneScroll(c: Surface, area: Rect, h: Float) {
+    private fun drawLaneScroll(c: Surface, area: Rect, h: Float, rightLabel: String, rightWidth: Float) {
         scrollLeft.set(0f, 0f, 0f, 0f)
         scrollRight.set(0f, 0f, 0f, 0f)
         val size = ink.unit * 0.75f
@@ -346,13 +349,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             ink.rect(c, scrollLeft, Palette.alpha(Palette.PLAYHEAD, 40))
             ink.label(c, "◀$firstLane", scrollLeft.centerX(), laneTop, h, Palette.PLAYHEAD, true, size, Align.CENTER)
         }
-        val more = laneCount - 1 - lastLane
-        if (more > 0) {
+        if (rightLabel.isNotEmpty()) {
             val right = laneRight(lastLane)
-            val w = ink.labelWidth("$more▶", size, true) + cw
-            scrollRight.set(right - w, laneTop + h * 0.1f, right - cw * 0.2f, laneTop + h * 0.9f)
+            scrollRight.set(right - rightWidth, laneTop + h * 0.1f, right - cw * 0.2f, laneTop + h * 0.9f)
             ink.round(c, scrollRight, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 90))
-            ink.label(c, "$more▶", scrollRight.centerX(), scrollRight.top, scrollRight.height(), Palette.TEXT, true, size, Align.CENTER)
+            ink.label(c, rightLabel, scrollRight.centerX(), scrollRight.top, scrollRight.height(), Palette.TEXT, true, size, Align.CENTER)
         }
     }
 

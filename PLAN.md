@@ -18,10 +18,11 @@ Order below is the current intent; design notes for the chip work live in `docs/
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
    Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
 3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0),
-   VRC7 (six two-operator FM voices, 0.16.0) and N163 (1-8 wavetable voices, 0.17.0) are implemented, with
-   driver/native, desktop and reserved-handheld checks recorded in `docs/VERIFICATION.md`.
+   VRC7 (six two-operator FM voices, 0.16.0), N163 (1-8 wavetable voices, 0.17.0) and Sunsoft 5B
+   (three squares with shared noise/envelope, 0.18.0) are implemented, with driver/native, desktop and
+   reserved-handheld checks recorded in `docs/VERIFICATION.md`.
    N163's eight channel-count variants are grouped under NES → NES + N163….
-   Next: Sunsoft 5B (AY-style), FDS, MMC5, EPSM (YMF288/OPN3-L).
+   Next: FDS, MMC5, EPSM (YMF288/OPN3-L).
    Source-only worktrees do not count as verified releases.
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
