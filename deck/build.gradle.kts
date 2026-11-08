@@ -32,6 +32,12 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("sid/sid_chip.c").asFile,
         engineSrc.file("sid/sid_machine.c").asFile,
         engineSrc.file("sid/sid_image.c").asFile,
+        engineSrc.file("opl3/opl3_chip.c").asFile,
+        engineSrc.file("opl3/opl3_machine.c").asFile,
+        engineSrc.file("opl3/opl3_player.c").asFile,
+        engineSrc.file("opl3/opl3_image.c").asFile,
+        engineSrc.file("opl3/opl3_vgm.c").asFile,
+        engineSrc.file("third_party/nuked-opl3/opl3.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
@@ -39,12 +45,14 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0")
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
+            "third_party/nuked-opl3")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
         "nes/nes_apu.h", "generated/nes_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
-        "generated/sid_player_image.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
+        "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h",
+        "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
