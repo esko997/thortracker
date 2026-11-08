@@ -17,13 +17,38 @@ import org.thortracker.system.nes.NesSound
  * name", with their DPCM mappings), one arpeggio per `0xy` used, and per channel one FamiStudio pattern per distinct
  * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
  * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`), its instruments of
- * that chip carry `Expansion="VRC6"` and the saw master volume, and its channels follow the 2A03's.
+ * that chip carry `Expansion="VRC6"` and the saw master volume (`Expansion="EPSM"`: the FM patch as Custom patch 0
+ * with its 31 registers, register 30 the song's LFO, the SSG envelope shape, auto-pitch and octave, and the
+ * `MixerSettings` and `NoiseFreq` envelopes), its channels follow the 2A03's, and an SSG envelope period is the
+ * `EnvelopePeriod` of SSG 1's note.
+ *
+ * FamiStudio 4.5.3's text format has no attribute for the EPSM SSG's manual envelope period (its import keeps the
+ * default 4000), so an EPSM sound with another manual period cannot be exported as text ([manualPeriodProblem]);
+ * `.nsf`, WAV and playback carry it.
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-    /** FamiStudio's channel type names (`ChannelType.InternalNames`), in engine order. */
-    private val CHANNEL_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM", "VRC6Square1", "VRC6Square2", "VRC6Saw")
+    /** FamiStudio's channel type names (`ChannelType.InternalNames`), in engine order: the 2A03's, then the expansion's. */
+    private val APU_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM")
+
+    private fun channelType(expansion: NesExpansion, c: Int): String = when {
+        c < APU_TYPES.size -> APU_TYPES[c]
+        expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
+        NesRules.isEpsmSsg(expansion, c) -> "EPSMSquare${c - NesRules.EPSM_SSG1 + 1}"
+        NesRules.isEpsmFm(expansion, c) -> "EPSMFM${c - NesRules.EPSM_FM1 + 1}"
+        else -> "EPSMRythm${c - NesRules.EPSM_RHYTHM1 + 1}"
+    }
+
+    /** FamiStudio's expansion names (`ExpansionType.InternalNames`). */
+    private fun expansionName(chip: NesChip): String = when (chip) {
+        NesChip.APU -> ""
+        NesChip.VRC6 -> "VRC6"
+        NesChip.EPSM -> "EPSM"
+    }
+
+    /** FamiStudio's EPSM manual envelope period default, the only one its text import yields. */
+    const val EPSM_TEXT_PERIOD = 4000
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
 
@@ -35,6 +60,7 @@ object FamiStudioText {
     }
 
     internal fun text(fs: FsSong): String {
+        manualPeriodProblem(fs)?.let { throw IllegalArgumentException(it) }
         val out = StringBuilder()
         fun line(depth: Int, s: String) {
             repeat(depth) { out.append('\t') }
@@ -42,7 +68,7 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else "") +
-            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.chip.label) else ""))
+            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", expansionName(fs.expansion.chip)) else ""))
         val names = instrumentNames(fs)
         val samples = sampleNames(fs, names.keys)
         for ((data, name) in samples) {
@@ -56,6 +82,12 @@ object FamiStudioText {
             line(1, "Instrument" + attr("Name", name) + when (ins.chip) {
                 NesChip.APU -> ""
                 NesChip.VRC6 -> attr("Expansion", "VRC6") + attr("Vrc6SawMasterVolume", ins.sawVolume.label)
+                // `FamistudioTextFile`: EpsmPatch (always Custom, 0) and its 31 registers, then the SSG envelope settings.
+                NesChip.EPSM -> attr("Expansion", "EPSM") + attr("EpsmPatch", 0) +
+                    ins.epsm.registers(fs.epsmLfo).withIndex().joinToString("") { (i, r) -> attr("EpsmReg$i", r) } +
+                    attr("EPSMSquareEnvelopeShape", ins.epsmEnvelope.shape.famiStudio) +
+                    attr("EPSMSquareEnvelopeAutoPitch", if (ins.epsmEnvelope.autoPitch) "True" else "False") +
+                    attr("EPSMSquareEnvelopeAutoPitchOctave", ins.epsmEnvelope.octave)
             })
             for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
                 val sample = fs.samples.getOrNull(m.sample) ?: continue
@@ -70,6 +102,10 @@ object FamiStudioText {
             envelope(::line, "Arpeggio", ins.arpeggio, 0, false)
             envelope(::line, "Pitch", ins.pitch, 0, ins.pitchRelative)
             envelope(::line, "DutyCycle", ins.duty, 0, false)
+            if (ins.chip == NesChip.EPSM) {
+                envelope(::line, "MixerSettings", ins.mixer, FamiStudioEnvelopes.MIXER_TONE, false)
+                envelope(::line, "NoiseFreq", ins.noise, 0, false)
+            }
         }
         val arpeggios = HashSet<Int>()
         for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.arpeggio >= 0) arpeggios += n.arpeggio
@@ -85,7 +121,7 @@ object FamiStudioText {
             line(2, "PatternCustomSettings" + attr("Time", o) + attr("Length", fs.lengths[o]))
         }
         for (c in 0 until fs.channels) {
-            line(2, "Channel" + attr("Type", CHANNEL_TYPES[c]))
+            line(2, "Channel" + attr("Type", channelType(fs.expansion, c)))
             val patterns = LinkedHashMap<List<String>, String>()
             val instances = ArrayList<Pair<Int, String>>()
             val variants = HashMap<Int, Int>()
@@ -108,6 +144,22 @@ object FamiStudioText {
             for ((o, name) in instances) line(3, "PatternInstance" + attr("Time", o) + attr("Pattern", name))
         }
         return out.toString()
+    }
+
+    /**
+     * Why the song's FamiStudio text would not play as the song does, or null: an EPSM sound the text holds whose SSG
+     * hardware envelope takes a manual period other than [EPSM_TEXT_PERIOD] (FamiStudio 4.5.3 writes no
+     * `EPSMSquareEnvelopePitch`, so its import reads 4000).
+     */
+    internal fun manualPeriodProblem(fs: FsSong): String? {
+        for (slot in instrumentNames(fs).keys) {
+            val ins = fs.instruments[slot - 1]
+            if (ins.chip != NesChip.EPSM || ins.epsmEnvelope.autoPitch || ins.epsmEnvelope.period == EPSM_TEXT_PERIOD) continue
+            return "Sound ${NesRules.hex2(slot)} ${ins.name} uses a manual SSG envelope period of ${ins.epsmEnvelope.period}, " +
+                "which FamiStudio 4.5.3's text format cannot store (its import reads $EPSM_TEXT_PERIOD). Set the period to " +
+                "$EPSM_TEXT_PERIOD or use auto period for the text export, or export .nsf or WAV, which keep it"
+        }
+        return null
     }
 
     /** FamiStudio instrument names by slot ("slot name"), for every slot the song uses or that was edited. */
@@ -184,6 +236,7 @@ object FamiStudioText {
                 if (n.noteDelay >= 0) s.append(attr("NoteDelay", n.noteDelay))
                 if (n.cutDelay >= 0) s.append(attr("CutDelay", n.cutDelay))
                 if (n.deltaCounter >= 0) s.append(attr("DeltaCounter", n.deltaCounter))
+                if (n.envelopePeriod >= 0) s.append(attr("EnvelopePeriod", n.envelopePeriod))
             }
             lines += s.toString()
         }

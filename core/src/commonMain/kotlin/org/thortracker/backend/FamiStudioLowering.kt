@@ -4,6 +4,7 @@ import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.nes.Dpcm
+import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.Vrc6SawVolume
@@ -15,18 +16,25 @@ import kotlin.math.sign
 /**
  * Lowers an NES song to FamiStudio sound engine 4.5.3 data (FamiTracker tempo) at its player's song base
  * ([NesPlayer.songBase]), in the layout the native `"nes-famistudio"` engines expect (docs/AUDIO_ENGINE.md, NES image
- * layout): the FamiStudio song header, an instrument table of all [NesSystem.SLOTS] slots (index = slot − 1), every
- * envelope as an entry of the envelope directory (instrument envelopes at `slot × 4 + kind`, effect envelopes from
- * 256), and one stream per channel (the 2A03's five, then the expansion's) made only of `$41 n ptr` (play order o's
- * pattern stream) per order and a `$42` loop to the loop order. Identical pattern streams are stored once.
+ * layout): the FamiStudio song header, an instrument table of all [NesSystem.SLOTS] slots (index = slot − 1; with the
+ * EPSM, FamiStudio's expansion instrument table of all slots too and each slot's 31-byte FM patch block), every
+ * envelope as an entry of the envelope directory (instrument envelopes at `slot × 4 + kind`, the EPSM's SSG mixer and
+ * noise envelopes at `256 + slot × 2 + 0/1`, effect envelopes from the player's [NesPlayer.effectEnvelopes]), and one
+ * stream per channel (the 2A03's five, then the expansion's) made only of `$41 n ptr` (play order o's pattern stream)
+ * per order and a `$42` loop to the loop order. Identical pattern streams are stored once.
  *
  * Each pattern stream is what FamiStudio's own exporter (`FamitoneMusicFile.GetSongData`, FamiStudio kernel, NTSC)
  * emits for those rows: the same opcode order, the same state it tracks (instrument, arpeggio, last volume, vibrato
- * override), the same slide and volume-slide step arithmetic. Two deliberate additions make an order self-contained
- * for seeking, looping and live edits without changing what plays: each order re-sends its first note's instrument
- * and, when a set volume (not a slide) is in force, the channel volume. FamiStudio's own byte layout (instrument
- * sorting and merging, CRC-ordered envelopes, its search-based stream compression) is not reproduced; the golden
- * test therefore compares APU register traces of both through the same player.
+ * and SSG envelope-period overrides), the same slide and volume-slide step arithmetic. Two deliberate additions make an
+ * order self-contained for seeking, looping and live edits without changing what plays: each order re-sends its first
+ * note's instrument and, when a set volume (not a slide) is in force, the channel volume. Two exceptions keep orders
+ * exactly FamiStudio's stream: an EPSM FM channel does not re-send the sound it holds (loading one rewrites the
+ * channel's 31 patch registers, which FamiStudio's export does not), nor does an SSG square re-send a held sound with a
+ * manual envelope period (its load would set the shared period, which FamiStudio's export may hold at another value
+ * there); the seek fallback that starts such an order on its own plays that channel without its sound until its next
+ * instrument. FamiStudio's own byte layout (instrument sorting and merging, CRC-ordered envelopes, its search-based
+ * stream compression) is not reproduced; the golden test therefore compares register traces of both through the same
+ * player.
  */
 internal object FamiStudioLowering {
     /** FamiStudio's NTSC note table (`famistudio_note_table_lsb/msb.bin`), index = FamiStudio note 0..96. */
@@ -67,13 +75,57 @@ internal object FamiStudioLowering {
         75, 70, 66, 63, 59, 56, 53, 50, 47, 44, 42, 39, 37, 35, 33, 31, 29, 27, 26, 24, 23, 22, 20, 19, 18, 17, 16, 15, 14,
     )
 
+    /**
+     * FamiStudio's EPSM FM note table (`famistudio_epsm_note_table_lsb/msb.bin` of the pinned release;
+     * `NesApu.GetOrCreateNoteTableSet`: octave 0 = 144 f × 2^20 / 8 MHz / 4, every higher octave that shifted left): the
+     * frequency number shifted by the block (the engine halves it below `$200` to find the block). Larger is higher;
+     * NTSC and PAL share it (the EPSM has its own clock). FamiStudio note n sounds an octave below its name here.
+     */
+    val NOTE_TABLE_EPSM_FM = intArrayOf(
+        0, 154, 163, 173, 183, 194, 205, 218, 231, 244, 259, 274, 291, 308, 326, 346, 366, 388, 410, 436, 462, 488, 518, 548,
+        582, 616, 652, 692, 732, 776, 820, 872, 924, 976, 1036, 1096, 1164, 1232, 1304, 1384, 1464, 1552, 1640, 1744, 1848,
+        1952, 2072, 2192, 2328, 2464, 2608, 2768, 2928, 3104, 3280, 3488, 3696, 3904, 4144, 4384, 4656, 4928, 5216, 5536,
+        5856, 6208, 6560, 6976, 7392, 7808, 8288, 8768, 9312, 9856, 10432, 11072, 11712, 12416, 13120, 13952, 14784, 15616,
+        16576, 17536, 18624, 19712, 20864, 22144, 23424, 24832, 26240, 27904, 29568, 31232, 33152, 35072, 37248,
+    )
+
+    /**
+     * FamiStudio's EPSM SSG note table (`famistudio_epsm_s_note_table_lsb/msb.bin`; 8 MHz / 32 / f rounded): the SSG tone
+     * period, f = 8 MHz / 64 / period, so FamiStudio note n sounds an octave below its name (note 58 = 440.1 Hz).
+     */
+    val NOTE_TABLE_EPSM_SSG = intArrayOf(
+        0, 7645, 7215, 6810, 6428, 6067, 5727, 5405, 5102, 4816, 4545, 4290, 4050, 3822, 3608, 3405, 3214, 3034, 2863, 2703,
+        2551, 2408, 2273, 2145, 2025, 1911, 1804, 1703, 1607, 1517, 1432, 1351, 1276, 1204, 1136, 1073, 1012, 956, 902, 851,
+        804, 758, 716, 676, 638, 602, 568, 536, 506, 478, 451, 426, 402, 379, 358, 338, 319, 301, 284, 268, 253, 239, 225,
+        213, 201, 190, 179, 169, 159, 150, 142, 134, 127, 119, 113, 106, 100, 95, 89, 84, 80, 75, 71, 67, 63, 60, 56, 53,
+        50, 47, 45, 42, 40, 38, 36, 34, 32,
+    )
+
+    /** FamiStudio's EPSM FM slide shift (`Channel.GetShiftsForType`): slide deltas lose 3 bits, the engine shifts back. */
+    private const val EPSM_FM_SLIDE_SHIFT = 3
+
+    /** Bytes of one expansion instrument (FamiStudio's `instruments_exp` entries). */
+    const val EXP_INSTRUMENT_SIZE = 16
+
+    /** An EPSM expansion instrument's octave byte for "manual period" (FamiStudio's special code). */
+    private const val EPSM_MANUAL_PERIOD = 0x80
+
+    /**
+     * FamiStudio's `epsmRegOrder`: the order an EPSM patch block holds `EpsmPatchRegs` in (`$B0`, `$B4`, each operator's
+     * registers but its level, then the four operator levels, then `$22`).
+     */
+    private val EPSM_REG_ORDER = intArrayOf(0, 1, 2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23, 25, 26,
+        27, 28, 29, 3, 10, 17, 24, 30)
+
     /** FamiTracker tempo 150: one row per `speed` frames (FamiStudio's integer formula for NTSC and PAL). */
     const val TEMPO = 150
     const val TEMPO_PAL = 256 * TEMPO / 125
     const val TEMPO_NTSC = 256 * TEMPO / 150
 
     const val DPCM = 4
-    const val EFFECT_ENVELOPES_START = 256
+
+    /** The EPSM build's SSG mixer (`+ slot × 2`) and noise (`+ slot × 2 + 1`) envelopes start at this directory index. */
+    const val MIXER_ENVELOPES = 256
 
     private const val OP_EXTENDED_NOTE = 0x40
     private const val OP_SET_REFERENCE = 0x41
@@ -94,6 +146,8 @@ internal object FamiStudioLowering {
     private const val OP_VOLUME_SLIDE = 0x51
     private const val OP_DELTA_COUNTER = 0x52
     private const val OP_VRC6_SAW_VOLUME = 0x55
+    private const val OP_EPSM_RELEASE_NOTE = 0x5c
+    private const val OP_EPSM_ENV_PERIOD = 0x5d
     private const val OP_VOLUME_BITS = 0x70
     private const val SINGLE_BYTE_NOTE_MIN = 12
     private const val SINGLE_BYTE_NOTE_MAX = SINGLE_BYTE_NOTE_MIN + 0x3f
@@ -138,12 +192,29 @@ internal object FamiStudioLowering {
         val base = player.songBase
         val channels = fs.channels
         val out = Bytes()
-        // Header: song count, instruments, samples - 4, a stream per channel, tempo words.
-        val headerSize = 1 + 2 + 2 + channels * 2 + 4
+        // Header: song count, instruments, [expansion instruments,] samples - 4, a stream per channel, tempo words.
+        val exp = player.expInstruments
+        val epsm = fs.expansion == NesExpansion.EPSM
+        val headerSize = 1 + 2 + (if (exp) 2 else 0) + 2 + channels * 2 + 4
         val instrumentsAt = headerSize
         val instrumentCount = NesSystem.SLOTS
-        var at = instrumentsAt + instrumentCount * 8
-        // Envelopes: per slot in kind order (volume, arpeggio, duty, pitch), then effect envelopes.
+        // FamiStudio's expansion instrument table (EPSM: 16 bytes per instrument) follows the 2A03 table, one entry per
+        // slot as well: the expansion's channels load entry slot - 1.
+        val expInstrumentsAt = instrumentsAt + instrumentCount * 8
+        var at = expInstrumentsAt + if (exp) instrumentCount * EXP_INSTRUMENT_SIZE else 0
+        // EPSM patch blocks (FamiStudio's `instrument_epsm_extra_patch`): one per distinct block, shared by equal patches.
+        val patchAt = LinkedHashMap<List<Int>, Int>()
+        val slotPatch = ArrayList<List<Int>>()
+        if (epsm) for (ins in fs.instruments) {
+            val regs = ins.epsm.registers(fs.epsmLfo)
+            val block = EPSM_REG_ORDER.map { regs[it] }
+            slotPatch += block
+            if (block !in patchAt) {
+                patchAt[block] = at
+                at += block.size
+            }
+        }
+        // Envelopes: per slot in kind order (volume, arpeggio, duty, pitch), the EPSM's mixer and noise, then effect envelopes.
         val envelopes = ArrayList<Envelope>()
         for ((slot, ins) in fs.instruments.withIndex()) {
             envelopes += Envelope(slot * 4 + Kind.VOLUME.ordinal, Kind.VOLUME, FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME))
@@ -151,7 +222,11 @@ internal object FamiStudioLowering {
             envelopes += Envelope(slot * 4 + Kind.DUTY.ordinal, Kind.DUTY, FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY))
             envelopes += Envelope(slot * 4 + Kind.PITCH.ordinal, Kind.PITCH, FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative))
         }
-        var next = EFFECT_ENVELOPES_START
+        if (epsm) for ((slot, ins) in fs.instruments.withIndex()) {
+            envelopes += Envelope(MIXER_ENVELOPES + slot * 2, Kind.MIXER, FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER))
+            envelopes += Envelope(MIXER_ENVELOPES + slot * 2 + 1, Kind.NOISE, FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE))
+        }
+        var next = player.effectEnvelopes
         val noArpeggio = Envelope(next++, Kind.ARPEGGIO, FamiStudioEnvelopes.DEFAULT_ENV).also { envelopes += it }
         val vibratoOff = Envelope(next++, Kind.PITCH, FamiStudioEnvelopes.DEFAULT_PITCH_OR_RELEASE_ENV).also { envelopes += it }
         val arpeggios = LinkedHashMap<Int, Envelope>()
@@ -165,6 +240,10 @@ internal object FamiStudioLowering {
                 vibratos[n.vibrato] = Envelope(next++, Kind.PITCH, FamiStudioEnvelopes.vibrato(n.vibrato)).also { envelopes += it }
             }
         }
+        require(next <= NesPlayerImage.MAX_ENVELOPES) {
+            "The song uses ${next - player.effectEnvelopes - 2} different 0xy arpeggios and vibratos; the player's envelope " +
+                "directory holds ${NesPlayerImage.MAX_ENVELOPES - player.effectEnvelopes - 2} with this chip. Reuse fewer distinct ones"
+        }
         for (e in envelopes) {
             require(e.bytes.size in 2..255) { "An envelope is ${e.bytes.size} bytes once encoded; FamiStudio's limit is 255. Shorten it" }
             e.address = base + at
@@ -173,7 +252,7 @@ internal object FamiStudioLowering {
         // FamiStudio's DPCM sample list (`samples:`); the header points 4 bytes before it (entries count from 1).
         val samplesAt = at
         at += 4 * dpcm.entries.size
-        val bySlot = envelopes.filter { it.index < EFFECT_ENVELOPES_START }.associateBy { it.index }
+        val bySlot = envelopes.filter { it.index < player.effectEnvelopes }.associateBy { it.index }
         val instrumentArpeggios = IntArray(instrumentCount) { bySlot.getValue(it * 4 + Kind.ARPEGGIO.ordinal).address }
         val streams = Streams(fs, noArpeggio, vibratoOff, arpeggios, vibratos, instrumentArpeggios, dpcm)
         val patterns = LinkedHashMap<Bytes.Key, Int>() // pattern stream bytes → offset
@@ -219,6 +298,7 @@ internal object FamiStudioLowering {
         }
         out.byte(1)
         out.word(base + instrumentsAt)
+        if (exp) out.word(base + expInstrumentsAt)
         out.word(base + samplesAt - 4)
         for (c in 0 until channels) out.word(base + channelAt[c])
         out.word(TEMPO_PAL)
@@ -226,6 +306,22 @@ internal object FamiStudioLowering {
         check(out.size == instrumentsAt)
         for (slot in 0 until instrumentCount) {
             for (kind in listOf(Kind.VOLUME, Kind.ARPEGGIO, Kind.DUTY, Kind.PITCH)) out.word(bySlot.getValue(slot * 4 + kind.ordinal).address)
+        }
+        if (exp) {
+            // `FamitoneMusicFile.OutputInstruments` for an EPSM instrument: volume, arpeggio and pitch envelopes, the SSG
+            // mixer and noise envelopes, the hardware envelope shape ($08-$0F, 0 = none), the auto-period octave ($80 =
+            // manual period), the manual period and the pointer to its FM patch block.
+            check(out.size == expInstrumentsAt)
+            for ((slot, ins) in fs.instruments.withIndex()) {
+                for (kind in listOf(Kind.VOLUME, Kind.ARPEGGIO, Kind.PITCH)) out.word(bySlot.getValue(slot * 4 + kind.ordinal).address)
+                out.word(bySlot.getValue(MIXER_ENVELOPES + slot * 2).address)
+                out.word(bySlot.getValue(MIXER_ENVELOPES + slot * 2 + 1).address)
+                out.byte(ins.epsmEnvelope.shape.register)
+                out.byte(if (ins.epsmEnvelope.autoPitch) ins.epsmEnvelope.octave and 0xff else EPSM_MANUAL_PERIOD)
+                out.word(ins.epsmEnvelope.period)
+                out.word(base + patchAt.getValue(slotPatch[slot]))
+            }
+            for (block in patchAt.keys) for (r in block) out.byte(r)
         }
         for (e in envelopes) out.bytes(e.bytes)
         check(out.size == samplesAt)
@@ -323,7 +419,9 @@ internal object FamiStudioLowering {
 
         fun channel(c: Int): List<Chunk> {
             val isSpeedChannel = c == speedChannel
-            val isSaw = c == NesRules.VRC6_SAW
+            val isSaw = NesRules.isVrc6Saw(fs.expansion, c)
+            val isFm = NesRules.isEpsmFm(fs.expansion, c)
+            val isSsg = NesRules.isEpsmSsg(fs.expansion, c)
             var currentSpeed = fs.speed
             var instrument = 0
             var arpeggio = -1
@@ -331,6 +429,9 @@ internal object FamiStudioLowering {
             var sawVolume = Vrc6SawVolume.HALF
             var lastVolume = 15
             var vibratoOverride = false
+            // FamiStudio's `OverrideFlags.EnvPeriod`: an SSG envelope period effect played since this square last loaded
+            // its instrument, so its next note with attack loads it again (restoring a manual period).
+            var envOverride = false
             // Volume the engine holds (null while a volume slide may still be moving), for re-sending per order.
             var heldVolume: Int? = 15
             var firstInLoop = 0
@@ -371,6 +472,8 @@ internal object FamiStudioLowering {
                             b.byte(OP_SPEED); b.byte(speed)
                         }
                     }
+                    val frameEnv = isSsg && ssg1SetsEnvPeriod(row)
+                    if (frameEnv) envOverride = true
                     val at = row++
                     if (note.noteDelay >= 0) {
                         b.byte(OP_DELAYED_NOTE); b.byte(note.noteDelay - 1)
@@ -421,6 +524,9 @@ internal object FamiStudioLowering {
                     if (note.duty >= 0) {
                         b.byte(OP_DUTY); b.byte(note.duty)
                     }
+                    if (note.envelopePeriod >= 0) {
+                        b.byte(OP_EPSM_ENV_PERIOD); b.word(note.envelopePeriod)
+                    }
                     if (note.cutDelay >= 0) {
                         b.byte(OP_DELAYED_CUT); b.byte(note.cutDelay)
                     }
@@ -428,11 +534,23 @@ internal object FamiStudioLowering {
                         if (note.isMusical && note.instrument != 0) {
                             val attack = note.attack || !canDisableAttack(instrument, note.instrument)
                             if (!attack) b.byte(OP_DISABLE_ATTACK)
-                            else if (!frameVibrato && vibratoOverride) {
-                                vibratoOverride = false
-                                instrument = 0
+                            else {
+                                if (!frameEnv && envOverride) {
+                                    envOverride = false
+                                    instrument = 0
+                                }
+                                if (!frameVibrato && vibratoOverride) {
+                                    vibratoOverride = false
+                                    instrument = 0
+                                }
                             }
-                            if (note.instrument != instrument || !instrumentSent) {
+                            // Each order re-sends its first instrument (self-contained orders), except the sound an FM
+                            // channel holds (its load rewrites the channel's patch registers) and an SSG sound with a manual
+                            // envelope period the square holds (its load would set the shared period FamiStudio's export
+                            // leaves alone there), so those orders play exactly the stream FamiStudio exports.
+                            val held = note.instrument == instrument
+                            val keepHeld = isFm || (isSsg && !fs.instruments[note.instrument - 1].epsmEnvelope.autoPitch)
+                            if (!held || (!instrumentSent && !keepHeld)) {
                                 // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
                                 // also sends it with its first instrument, so the order is self-contained.
                                 val volume = fs.instruments[note.instrument - 1].sawVolume
@@ -442,8 +560,8 @@ internal object FamiStudioLowering {
                                 }
                                 b.byte(0x80 or ((note.instrument - 1) shl 1))
                                 instrument = note.instrument
-                                instrumentSent = true
                             }
+                            instrumentSent = true
                         }
                         var emittedSlide = false
                         if (note.isMusical && note.slideTarget != 0) {
@@ -455,7 +573,8 @@ internal object FamiStudioLowering {
                         }
                         if (!emittedSlide) {
                             when {
-                                note.value == FsNote.RELEASE -> b.byte(OP_RELEASE_NOTE)
+                                // EPSM FM channels release with their own opcode (key off, then the volume envelope's release).
+                                note.value == FsNote.RELEASE -> b.byte(if (isFm) OP_EPSM_RELEASE_NOTE else OP_RELEASE_NOTE)
                                 note.isMusical && (note.value <= SINGLE_BYTE_NOTE_MIN || note.value > SINGLE_BYTE_NOTE_MAX) -> {
                                     b.byte(OP_EXTENDED_NOTE); b.byte(note.value)
                                 }
@@ -468,6 +587,7 @@ internal object FamiStudioLowering {
                         while (row < end) {
                             val n = fs.notes[c][row] ?: EMPTY
                             if (empty >= MAX_REPEAT || n.isValid || n.hasRunBreakingEffect || (isSpeedChannel && fs.speedAt(row) >= 0)) break
+                            if (isSsg && ssg1SetsEnvPeriod(row)) envOverride = true
                             empty++
                             row++
                         }
@@ -482,6 +602,9 @@ internal object FamiStudioLowering {
 
         /** Address of instrument [slot]'s own arpeggio envelope (what a note without 0xy returns to). */
         private fun instrumentArpeggio(slot: Int): Int = instrumentArpeggios[slot - 1]
+
+        /** FamiStudio's `Square1HasEnvelopePeriodEffect`: SSG 1 sets the envelope period on [row]. */
+        private fun ssg1SetsEnvPeriod(row: Int): Boolean = (fs.notes[NesRules.EPSM_SSG1][row]?.envelopePeriod ?: -1) >= 0
 
         private fun canDisableAttack(i1: Int, i2: Int): Boolean = when {
             i1 == 0 || i2 == 0 -> false
@@ -524,14 +647,22 @@ internal object FamiStudioLowering {
         }
 
         private fun slideStep(c: Int, row: Int, note: FsNote, speed: Int, pal: Boolean): Int? {
+            val fm = NesRules.isEpsmFm(fs.expansion, c)
             val table = when {
-                c == NesRules.VRC6_SAW -> if (pal) NOTE_TABLE_SAW_PAL else NOTE_TABLE_SAW
+                fm -> NOTE_TABLE_EPSM_FM
+                NesRules.isEpsmSsg(fs.expansion, c) -> NOTE_TABLE_EPSM_SSG
+                NesRules.isVrc6Saw(fs.expansion, c) -> if (pal) NOTE_TABLE_SAW_PAL else NOTE_TABLE_SAW
                 pal -> NOTE_TABLE_PAL
                 else -> NOTE_TABLE
             }
             var delta = if (c == NesRules.NOISE) note.value - note.slideTarget else table[note.value] - table[note.slideTarget]
             if (delta == 0) return null
-            delta = delta shl if (c == NesRules.NOISE) 4 else 1
+            // `GetShiftsForType`: 1 fraction bit on most channels, 4 on Noise; EPSM FM frequency deltas drop 3 bits.
+            delta = when {
+                fm -> delta shr EPSM_FM_SLIDE_SHIFT
+                c == NesRules.NOISE -> delta shl 4
+                else -> delta shl 1
+            }
             val next = if (note.cutDelay >= 0) row else minOf(row + minOf(distanceToNextNote(c, row), 256), fs.totalRows)
             val frames = if (next != row) {
                 var delay = -(if (note.noteDelay >= 0) note.noteDelay else 0)

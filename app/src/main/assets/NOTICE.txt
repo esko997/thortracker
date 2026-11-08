@@ -36,6 +36,15 @@ Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
 commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
 xgmtool's conversion (MIT).
 
+NES + EPSM songs run the FamiStudio sound engine 4.5.3 built with its EPSM support
+(with FamiStudio's EPSM note tables, MIT, notice below) on the same m6502.h, and
+emulate the EPSM's Yamaha YMF288 (OPN3-L: FM, SSG and rhythm) with the same ymfm
+by Aaron Giles (BSD-3-Clause, notice below; its ymf288 class).
+The Yamaha YM2608 rhythm ROM (the 8 KB of ADPCM-A drum samples the rhythm channels
+play) is NOT included in Thor Tracker, its source, its builds, its demo songs or
+anything it exports. Users who own a copy import it themselves; Thor Tracker only
+checks it (size and SHA-256) and keeps it in its private storage on that device.
+
 binjgb
 https://github.com/binji/binjgb
 

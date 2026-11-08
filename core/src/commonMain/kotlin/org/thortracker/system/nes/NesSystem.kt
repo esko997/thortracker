@@ -4,6 +4,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.thortracker.backend.FamiStudioEnvelopes
 import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.backend.FamiStudioText
 import org.thortracker.backend.FsSong
@@ -25,6 +26,7 @@ import org.thortracker.system.ExportFormat
 import org.thortracker.system.FinePitch
 import org.thortracker.system.NoteSample
 import org.thortracker.system.PlaybackEngine
+import org.thortracker.system.SongSetting
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemHelp
 import org.thortracker.system.SystemView
@@ -35,7 +37,8 @@ import kotlin.math.log2
  * Pulse 2, Triangle, Noise and DPCM, one bank of [SLOTS] envelope instruments shared by all five channels (on DPCM an
  * instrument is its note → sample mappings) and the song's DPCM samples.
  * Lowering ([FamiStudioLowering]) and both exports (`.nsf`, FamiStudio text) read the same [FsSong].
- * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels.
+ * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels, [NesEpsmSystem]
+ * the EPSM's fifteen.
  */
 object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
     override val id = "nes-famistudio"
@@ -50,14 +53,30 @@ object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
 /**
  * The NES with the Konami VRC6 cartridge chip (FamiStudio's VRC6 expansion): the 2A03's five channels, then VRC6
  * Pulse 1 and 2 (eight duties, 4-bit volume, 12-bit periods) and the VRC6 Saw (a 6-bit accumulator rate: the volume
- * shifted by the instrument's saw master volume). The FamiStudio engine assembled with `FAMISTUDIO_EXP_VRC6` plays
- * it (native `"nes-famistudio-vrc6"`); VRC6 channels take VRC6 instruments ([NesChip.VRC6]) from the same bank.
+ * shifted by the instrument's saw master volume). The FamiStudio engine assembled with `FAMISTUDIO_EXP_VRC6` plays it
+ * (native `"nes-famistudio-vrc6"`); VRC6 channels take VRC6 instruments ([NesChip.VRC6]) from the same bank.
  */
 object NesVrc6System : NesFamiStudioSystem(NesExpansion.VRC6) {
     override val id = "nes-famistudio-vrc6"
     override val name = "NES + VRC6 (FamiStudio)"
 
     override fun demo(): Song = NesVrc6DemoSong.build()
+}
+
+/**
+ * The NES with the EPSM (Perkka's Expansion Port Sound Module: a Yamaha YMF288, OPN3-L, at 8 MHz; FamiStudio's EPSM
+ * expansion): the 2A03's five channels, then SSG 1-3 (YM2149-compatible squares sharing one noise and one envelope
+ * generator: mixer and noise envelopes, a hardware envelope with auto or manual period, `Ixx`/`Jyy`), FM 1-6 (4-operator
+ * OPN voices, [EpsmPatch], sharing the chip's one LFO: the song's [NesSound.epsmLfo]) and the rhythm unit's six fixed
+ * drums (Kick, Snare, Cymbal, Hi-hat, Tom, Rim: a note triggers the drum at the sound's volume and pan; the YM2608 rhythm
+ * ROM the user imports plays them, [EpsmRhythmRom]). The FamiStudio engine assembled with `FAMISTUDIO_EXP_EPSM` plays it
+ * on ymfm's YMF288 (native `"nes-famistudio-epsm"`); every EPSM channel takes EPSM sounds ([NesChip.EPSM]).
+ */
+object NesEpsmSystem : NesFamiStudioSystem(NesExpansion.EPSM) {
+    override val id = "nes-famistudio-epsm"
+    override val name = "NES + EPSM (FamiStudio)"
+
+    override fun demo(): Song = NesEpsmDemoSong.build()
 }
 
 /**
@@ -69,7 +88,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     override val family = "NES"
 
     override val channels = (0 until expansion.channels).map { ch ->
-        ChannelSpec(NesRules.CHANNEL_NAMES[ch], NesRules.CHANNEL_KINDS[ch], 0, tonal = NesRules.pitched(ch))
+        ChannelSpec(NesRules.channelName(expansion, ch), NesRules.kind(expansion, ch), 0, tonal = NesRules.pitched(expansion, ch))
     }
     override val banks = listOf(BankSpec("Instruments", NesSystem.SLOTS))
     override val noteRange = (1 + NesRules.NOTE_OFFSET)..(NesRules.NOTE_COUNT + NesRules.NOTE_OFFSET)
@@ -83,7 +102,14 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         ExportFormat("txt") { FamiStudioText.export(it) },
     )
     override val fine: FinePitch = Fine
-    override val help: SystemHelp = if (expansion == NesExpansion.NONE) Help else Vrc6Help
+    override val help: SystemHelp = when (expansion) {
+        NesExpansion.NONE -> Help
+        NesExpansion.VRC6 -> Vrc6Help
+        NesExpansion.EPSM -> EpsmHelp
+    }
+
+    /** The EPSM's one LFO is a song setting (Song view). */
+    override val songSettings: List<SongSetting> get() = if (expansion == NesExpansion.EPSM) NesEpsmSongSettings.ALL else emptyList()
 
     /** OFF is a note event of its own (release or stop); it needs no effect slot. */
     override val offEffect: String? = null
@@ -123,8 +149,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         })))
     }
 
-    override fun effectsFor(channel: Int): List<EffectSpec> = NesRules.effectsFor(channel)
-    override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) = NesRules.describeEffect(channel, effect, param)
+    override fun effectsFor(channel: Int): List<EffectSpec> = NesRules.effectsFor(expansion, channel)
+    override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) = NesRules.describeEffect(expansion, channel, effect, param)
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? =
         NesRules.cellRangeProblem(cell) ?: NesRules.cellProblem(song, channel, cell)
 
@@ -187,14 +213,22 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     override fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? =
         if (channel == NesRules.DPCM) dpcmSoundingRows(song, pattern, row) else null
 
+    /**
+     * On DPCM the sample the note plays; on an EPSM rhythm channel its fixed drum (every note triggers the same ROM
+     * sample: the note's pitch is not heard).
+     */
     override fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? {
+        if (NesRules.isEpsmRhythm(expansion, channel)) return NoteSample(NesRules.channelName(expansion, channel), RHYTHM_DETAIL)
         if (channel != NesRules.DPCM) return null
         val m = song.dpcmMapping(instrument, note) ?: return null
         val sample = song.nes.samples.getOrNull(m.sample) ?: return null
         return NoteSample(sample.name, dpcmDetail(m))
     }
 
-    /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6 sounds: "VRC6 · …", saw volume). */
+    /**
+     * "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6 sounds: "VRC6 · …", saw volume; EPSM
+     * sounds: "EPSM · alg 4 · …", mixer, noise, hardware envelope).
+     */
     fun summary(ins: NesInstrument): String {
         fun env(name: String, e: NesEnvelope, neutral: Int, text: (Int) -> String = Int::toString): String? {
             if (e.values.isEmpty() || e.values.all { it == neutral }) return null
@@ -203,12 +237,23 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             return "$name $shown" + if (marks.isEmpty()) "" else " (${marks.joinToString()})"
         }
         val vrc6 = ins.chip == NesChip.VRC6
+        val epsm = ins.chip == NesChip.EPSM
         val parts = listOfNotNull(
-            "VRC6".takeIf { vrc6 },
+            ins.chip.label.takeIf { vrc6 || epsm },
+            "alg ${ins.epsm.algorithm}".takeIf { epsm },
             env("vol", ins.volume, 15),
             env("arp", ins.arpeggio, 0),
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
-            env("duty", ins.duty, 0) { NesRules.dutyText(ins.chip, it) },
+            env("duty", ins.duty, 0) { NesRules.dutyText(ins.chip, it) }.takeIf { ins.chip.hasDuty },
+            env("mixer", ins.mixer, FamiStudioEnvelopes.MIXER_TONE) { mixerText(it) }.takeIf { epsm },
+            env("noise", ins.noise, 0).takeIf { epsm },
+            envelopeText(ins.epsmEnvelope).takeIf { epsm && ins.epsmEnvelope.shape != S5bShape.OFF },
+            when {
+                !epsm || (ins.epsm.left && ins.epsm.right) -> null
+                ins.epsm.left -> "left"
+                ins.epsm.right -> "right"
+                else -> "muted"
+            },
             "saw ${ins.sawVolume.label.lowercase()}".takeIf { vrc6 && ins.sawVolume != Vrc6SawVolume.HALF },
             ins.dpcm.size.takeIf { it > 0 }?.let { "DPCM $it note${if (it == 1) "" else "s"}" },
         )
@@ -227,45 +272,70 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
         override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU" +
-            (if (expansion == NesExpansion.VRC6) " + VRC6" else "") + ", blip_buf 1.1.0"
+            (if (expansion == NesExpansion.VRC6) " + VRC6" else "") +
+            (if (expansion == NesExpansion.EPSM) " + EPSM (YMF288 / OPN3-L on ymfm)" else "") + ", blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
 
-        override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        /**
+         * @throws IllegalArgumentException as [FamiStudioLowering.lower], and on the EPSM when the played orders hold a
+         * rhythm note but no rhythm ROM is installed ([EpsmRhythmRom.MISSING]): the drums cannot sound without it.
+         */
+        override fun lower(song: Song, out: ByteArray) {
+            require(expansion != NesExpansion.EPSM || EpsmRhythmRom.installed || !NesRules.playsRhythm(song)) { EpsmRhythmRom.MISSING }
+            NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        }
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
             channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
-            NesRules.pitched(channel) && note < NesRules.lowestNote(channel) ->
+            note > NesRules.highestNote(expansion, channel) ->
+                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))}"
+            NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
                     "Sample memory or the sample list is full: ${noteName(note)} of instrument ${NesRules.hex2(instrument)} cannot be auditioned"
                 } else null
-            song.nes.instruments[instrument - 1].chip != NesRules.chip(channel) ->
+            song.nes.instruments[instrument - 1].chip != NesRules.chip(expansion, channel) ->
                 "Sound ${NesRules.hex2(instrument)} is a ${song.nes.instruments[instrument - 1].chip.label} sound; " +
-                    "${channels[channel].name} plays ${NesRules.chip(channel).label} sounds"
+                    "${channels[channel].name} plays ${NesRules.chip(expansion, channel).label} sounds"
+            NesRules.isEpsmRhythm(expansion, channel) && !EpsmRhythmRom.installed -> EpsmRhythmRom.MISSING
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1; on DPCM the sample list entry (1..63). */
+        /**
+         * FamiStudio's note numbers: 1 = C-1 (the EPSM's SSG and FM channels an octave up, so they sound true pitch:
+         * [NesRules.engineNote]); on DPCM the sample list entry (1..63).
+         */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.engineNote(expansion, channel, note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
 
-        /** The engine's fine pitch adds to the period, so raising the pitch is negative. */
-        override fun fine(note: Int, fine: Int): Int = -fine
+        /**
+         * The engine's fine pitch adds to the period on the 2A03, VRC6 and EPSM SSG, so raising the pitch is negative (on
+         * the SSG converted to its own periods, [NesRules.epsmSsgFinePitch]); on the EPSM's FM channels it adds (× 8) to
+         * the frequency number, converted as a cell's Pxx is ([NesRules.epsmFmFinePitch]).
+         */
+        override fun fine(channel: Int, note: Int, fine: Int): Int = when {
+            NesRules.isEpsmFm(expansion, channel) -> NesRules.epsmFmFinePitch(note - NesRules.NOTE_OFFSET, fine)
+            NesRules.isEpsmSsg(expansion, channel) -> -NesRules.epsmSsgFinePitch(note - NesRules.NOTE_OFFSET, fine)
+            else -> -fine
+        }
     }
 
     /**
      * Tuned pitches are a note-table note plus `Pxx` (xx = 80 + fine): the engine subtracts fine from the timer period
      * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
-     * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic).
+     * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic). The
+     * EPSM's FM channels convert a Pxx to their nearest frequency step for the same pitch ([NesRules.epsmFmFinePitch]),
+     * its SSG squares to their own periods ([NesRules.epsmSsgFinePitch]), so tuned EPSM notes are as exact as the chip
+     * allows there.
      */
     private object Fine : FinePitch {
         override val name = "Pxx"
@@ -294,7 +364,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             }
         }
 
-        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note).coerceIn(1, NesRules.NOTE_COUNT)]
+        /** The 2A03 pulse period of absolute [note] (its plain FamiStudio note byte, note − 11). */
+        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[(note - NesRules.NOTE_OFFSET).coerceIn(1, NesRules.NOTE_COUNT)]
     }
 
     private open class NesHelp : SystemHelp {
@@ -343,4 +414,88 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
             NesInstrumentView.helpSections(keys, NesExpansion.VRC6)
     }
+
+    private object EpsmHelp : NesHelp() {
+        override val off = "Releases the note: on the EPSM FM channels a key off (the patch's release rates) plus the volume " +
+            "envelope's release; elsewhere a sound whose volume envelope has a release point plays its tail, any other note " +
+            "stops at once; on the drums OFF stops. For a cut inside a row use Sxx"
+        override val offEntered = "OFF: release (FM: key off; sounds with a volume release point fade out; others and drums stop)"
+        override val offInspector = "OFF: release the note (FM: key off and its release; tail or silence elsewhere; drums stop)"
+        override val effectsIntro = super.effectsIntro + listOf(
+            "SSG 1-3, FM 1-6 and the six drums play EPSM sounds (Chip: EPSM on the Instrument view; the EPSM is a Yamaha YMF288, " +
+                "OPN3-L); the 2A03 channels play 2A03 sounds. EPSM sounds have no duty: no Vxx.",
+            "SSG and FM notes sound at true pitch, C-1..B-7 (FamiStudio's EPSM tables sound its notes an octave below their " +
+                "names, so the export carries them an octave up). Pxx detunes by the pitch the same Pxx gives a pulse, in the " +
+                "chip's own steps.",
+            "SSG: a mixer envelope (tone, noise, both, neither), a noise envelope and an optional hardware envelope. The three " +
+                "squares share one noise generator and one envelope generator: the highest square sounding such a sound sets them " +
+                "(the check warns when two sounds fight). Ixx / Jyy set the shared envelope period's high / low byte, together " +
+                "on one row for xxyy; it drives manual-period sounds until a note reloads its sound.",
+            "FM: 4-operator patches; the chip's one LFO is the song's (Song view: LFO), the patches set its depths (AMS, PMS).",
+            "Drums (Kick, Snare, Cymbal, Hi-hat, Tom, Rim) have a fixed pitch: any note triggers the drum at the sound's first " +
+                "volume value (times Cxx) and its patch's L/R pan; only Axx, Cxx, Fxx, Gxx and Sxx apply. They need the YM2608 " +
+                "rhythm ROM, which you import once (\"EPSM rhythm ROM…\"); FM, SSG and the exports work without it.",
+        )
+        override val tonalChannels = "Pulse, Triangle, SSG and FM"
+        override val tonalChannelsShort = "Pulse/Tri/SSG/FM"
+        override val untonalNote = "Noise keeps every pitch (16 noise rates, repeating every 16 semitones); DPCM notes pick samples; " +
+            "EPSM drums have a fixed pitch."
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle, SSG 1-3 or FM 1-6; Noise, DPCM and the drums have no tonal chord reference"
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, NesExpansion.EPSM)
+
+        override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
+            "Rhythm ROM" to if (EpsmRhythmRom.installed) "installed (YM2608 drums)" else "not imported: the drums need it; FM and SSG play",
+        )
+    }
+
+    companion object {
+        /** What [noteSample] says about an EPSM drum note. */
+        const val RHYTHM_DETAIL = "YMF288 rhythm ROM · fixed pitch"
+
+        /** The EPSM SSG mixer value as text (`0` tone + noise, `1` noise, `2` tone, `3` none). */
+        fun mixerText(value: Int): String = when (value) {
+            0 -> "T+N"
+            1 -> "N"
+            2 -> "T"
+            3 -> "-"
+            else -> "?"
+        }
+
+        /** An SSG hardware envelope as text: "env decay auto oct 3" / "env saw down period 4000". */
+        fun envelopeText(e: S5bEnvelope): String =
+            "env ${e.shape.label.lowercase()} " + if (e.autoPitch) "auto oct ${e.octave}" else "period ${e.period}"
+    }
+}
+
+/**
+ * The Song view's EPSM row: the chip's one LFO (`$22`), shared by all FM channels; every EPSM sound's patch carries it
+ * when exported, as FamiStudio's engine writes `$22` with each FM sound it loads.
+ */
+object NesEpsmSongSettings {
+    private fun with(song: Song, f: (NesSound) -> NesSound): Song = f(song.nes).let { if (it == song.nes) song else song.copy(sound = it) }
+
+    /** LFO choices in stepping order: off, then rates 0-7 (register values 0, 8..15). */
+    private val LFO_STEPS = listOf(0) + (NesSound.EPSM_LFO_ON..NesSound.EPSM_LFO_ON + 7)
+
+    /** The OPN LFO frequencies (Hz) of rates 0-7 at the YMF288's 8 MHz (the YM2608 manual's table). */
+    val LFO_HZ = listOf("3.98", "5.56", "6.02", "6.37", "6.88", "9.63", "48.1", "72.2")
+
+    val ALL: List<SongSetting> = listOf(
+        SongSetting("LFO", "EPSM LFO rate", "Set LFO",
+            value = { s ->
+                val v = s.nes.epsmLfo
+                if (v == 0) "Off   FM sounds' AMS/PMS have no effect"
+                else "Rate ${v and 7}   ${LFO_HZ[v and 7]} Hz (FM sounds set the depth)"
+            },
+            adjust = { s, f, c ->
+                with(s) {
+                    val i = LFO_STEPS.indexOf(it.epsmLfo).coerceAtLeast(0)
+                    it.copy(epsmLfo = LFO_STEPS[(i + f + 4 * c).coerceIn(LFO_STEPS.indices)])
+                }
+            },
+            reset = { s -> with(s) { it.copy(epsmLfo = 0) } },
+        ),
+    )
 }

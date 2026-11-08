@@ -1,4 +1,4 @@
-/* NES machine: m6502 + nes_apu (+ nes_vrc6) running a FamiStudio player build (see nes_machine.h). */
+/* NES machine: m6502 + nes_apu (+ nes_vrc6 or the EPSM unit) running a FamiStudio player build (see nes_machine.h). */
 #include "nes_machine.h"
 
 #include <math.h>
@@ -7,6 +7,7 @@
 
 #include "blip_buf.h"
 #include "nes_apu.h"
+#include "nes_epsm_unit.h"
 #include "nes_vrc6.h"
 
 #include "m6502.h"
@@ -18,6 +19,8 @@
 #define LOWPASS_HZ 14000.0f
 
 _Static_assert(NM_MAX_SAMPLE_RATE * 29781ull / NM_CPU_HZ + 1 <= NM_MAX_TICK_FRAMES, "tick fits the host buffer");
+_Static_assert(NES_EPSM_SAMPLE_UNITS == NES_EPSM_CLOCKS_PER_SAMPLE * NM_CPU_HZ, "the EPSM unit counts NTSC CPU cycles");
+_Static_assert(NES_EPSM_CHANNELS == NM_MAX_CHANNELS - NM_FIRST_EXP, "EPSM unit channels = machine channels 5..19");
 
 /* Documented 6502 opcodes except BRK (FamiStudio's invalid-data trap). Anything else fetched by
  * the CPU is a fault. */
@@ -39,7 +42,9 @@ struct NesMachine {
     const NesPlayer* player;
     NesApu apu;
     NesVrc6 vrc6;         /* written only with the VRC6 build */
+    NesEpsm epsm;         /* used only by the EPSM build (its chip allocated by nm_create) */
     blip_t* blip;
+    blip_t* side[2];      /* EPSM build: the chip's left and right outputs (the 2A03 in `blip` is added to both) */
     uint32_t sample_rate;
     uint32_t time;        /* CPU cycle within the current frame */
     uint32_t frame_index; /* frames since power-on (29780/29781 alternation) */
@@ -48,9 +53,21 @@ struct NesMachine {
     int order, row;       /* row most recently started (-1: none yet in `order`) */
     uint32_t row_ticks;   /* frames run in that row */
     int audition, released, ended, aud_channel, rel_slot, rel_end;
+    /* EPSM build, seen on the bus: the expansion instrument each SSG loaded last (famistudio_set_epsm_instrument stores
+     * its shape byte just read from entry + 10) and the one whose manual period the engine holds (stored after reading
+     * entry + 12; a `$5D` makes it none), with serials ordering those loads and the period's last store (an SSG's 0:
+     * its load came after a `$5D` in the same frame); the instrument whose patch each FM channel loaded last (the
+     * index stored in famistudio_chn_epsm_fm_instrument); the instrument each rhythm drum took its level and pan from
+     * (the expansion entry the CPU read last when the level is stored); -1: none. */
+    uint16_t last_song_read; /* address of the CPU's last read in the song region */
+    int16_t last_exp_entry;  /* expansion entry of the CPU's last read inside the expansion instrument table */
+    int8_t epsm_ssg_instrument[3], epsm_period_instrument;
+    uint32_t epsm_serial, epsm_load_serial[3], epsm_period_serial;
+    int8_t epsm_fm_instrument[6], epsm_rhythm_instrument[6];
     uint64_t driver_cycles;
     uint32_t last_call;
     float hp_a, lp_a, hp_in, hp_out, lp_out;
+    float hp_in_r, hp_out_r, lp_out_r; /* EPSM build: the right channel's output stage */
     int logging, log_len;
     uint8_t official[32];
     uint8_t channel_env[NM_MAX_CHANNELS];   /* engine tables read from the player image */
@@ -61,6 +78,7 @@ struct NesMachine {
     uint8_t prg[0x8000];
     uint8_t log[3 * LOG_CAPACITY];          /* (address low, address high, value) per write */
     short samples[NM_MAX_TICK_FRAMES];
+    short side_samples[2][NM_MAX_TICK_FRAMES]; /* EPSM build */
 };
 
 /* Engine RAM by symbol of the machine's player build. */
@@ -71,7 +89,15 @@ struct NesMachine {
 
 static uint8_t bus_read(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];
-    if (addr >= 0x8000) return m->prg[addr - 0x8000]; /* VRC6 registers are write-only: reads see the ROM */
+    if (addr >= 0x8000) { /* VRC6/EPSM registers are write-only: reads see the ROM */
+        if (m->player->expansion == NES_EXPANSION_EPSM && addr >= m->player->song_base) {
+            m->last_song_read = addr;
+            const NesEpsmSymbols* sym = &m->player->epsm;
+            const int32_t off = (int32_t)addr - (int32_t)(m->ram[sym->exp_instrument_lo] | m->ram[sym->exp_instrument_hi] << 8);
+            if (off >= 0 && off < NM_EXP_INSTRUMENT_SIZE * NES_IMAGE_MAX_INSTRUMENTS) m->last_exp_entry = (int16_t)(off / NM_EXP_INSTRUMENT_SIZE);
+        }
+        return m->prg[addr - 0x8000];
+    }
     if (addr == 0x4015) return nes_apu_read_status(&m->apu, m->time);
     return 0;
 }
@@ -85,15 +111,64 @@ static void log_write(NesMachine* m, uint16_t addr, uint8_t v) {
     }
 }
 
+/* The EPSM expansion instrument entry the CPU's last song-region read was byte `offset` of, if that byte holds
+ * `value` (what the engine just stored); else -1. */
+static int epsm_entry_read(const NesMachine* m, int offset, uint8_t value) {
+    const NesEpsmSymbols* sym = &m->player->epsm;
+    const uint16_t table = (uint16_t)(m->ram[sym->exp_instrument_lo] | m->ram[sym->exp_instrument_hi] << 8);
+    const int32_t off = (int32_t)m->last_song_read - offset - table;
+    if (off < 0 || off % NM_EXP_INSTRUMENT_SIZE || off / NM_EXP_INSTRUMENT_SIZE >= NES_IMAGE_MAX_INSTRUMENTS) return -1;
+    if (m->last_song_read < m->player->song_base || m->prg[m->last_song_read - 0x8000] != value) return -1;
+    return off / NM_EXP_INSTRUMENT_SIZE;
+}
+
+/* Engine RAM stores of the EPSM build that tell which instrument a channel holds:
+ *  - famistudio_set_epsm_instrument stores SSG k's shape byte right after reading it from its expansion entry + 10
+ *    (`lda (ptr),y` / `sta famistudio_epsm_chn_env_shape - 5,x`), and, for a manual-period instrument (octave $80, no
+ *    `$5D` this frame: famistudio_epsm_env_override 0), the period low byte right after reading entry + 12. Other
+ *    stores there (the note attack's ORA $80, the update's AND $0F, init's clears; `$5D`'s period from the stream)
+ *    resolve to no entry: the shape owner is kept, the period owner becomes none.
+ *  - it stores an FM channel's instrument index into famistudio_chn_epsm_fm_instrument (the next update loads that
+ *    patch, then stores $FF);
+ *  - and a rhythm drum's level (the volume envelope's first value) after reading the entry's volume pointer. */
+static void epsm_ram_stored(NesMachine* m, uint16_t addr, uint8_t v) {
+    const NesEpsmSymbols* sym = &m->player->epsm;
+    unsigned k = (unsigned)(addr - sym->chn_env_shape);
+    if (k < 3) {
+        const int j = epsm_entry_read(m, 10, v);
+        if (j >= 0) {
+            m->epsm_ssg_instrument[k] = (int8_t)j;
+            m->epsm_load_serial[k] = m->ram[sym->env_override] ? 0 : ++m->epsm_serial;
+        }
+        return;
+    }
+    if (addr == sym->env_period_lo) {
+        m->epsm_period_instrument = (int8_t)epsm_entry_read(m, 12, v);
+        m->epsm_period_serial = ++m->epsm_serial;
+        return;
+    }
+    k = (unsigned)(addr - sym->chn_fm_instrument);
+    if (k < 6) {
+        if (v < NES_IMAGE_MAX_INSTRUMENTS) m->epsm_fm_instrument[k] = (int8_t)v;
+        return;
+    }
+    k = (unsigned)(addr - sym->chn_rhythm_volume);
+    if (k < 6) m->epsm_rhythm_instrument[k] = (int8_t)m->last_exp_entry;
+}
+
 static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     if (addr < 0x2000) {
         m->ram[addr & 0x7FF] = v;
+        if (m->player->expansion == NES_EXPANSION_EPSM) epsm_ram_stored(m, (uint16_t)(addr & 0x7FF), v);
     } else if (addr >= 0x4000 && addr <= 0x4017 && addr != 0x4014 && addr != 0x4016) {
         log_write(m, addr, v);
         nes_apu_write(&m->apu, m->time, addr, v);
     } else if (m->player->expansion == NES_EXPANSION_VRC6 && nes_vrc6_register(addr)) {
         log_write(m, addr, v);
         nes_vrc6_write(&m->vrc6, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_EPSM && nes_epsm_register(addr)) {
+        log_write(m, addr, v);
+        nes_epsm_write(&m->epsm, m->time, addr, v);
     }
 }
 
@@ -148,11 +223,13 @@ fault:
 static void set_output(NesMachine* m, blip_t* out) {
     nes_apu_set_output(&m->apu, out);
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_set_output(&m->vrc6, out);
+    if (m->player->expansion == NES_EXPANSION_EPSM) nes_epsm_set_output(&m->epsm, out ? m->side[0] : NULL, out ? m->side[1] : NULL);
 }
 
 static void end_frame(NesMachine* m, uint32_t cycles) {
     nes_apu_end_frame(&m->apu, cycles);
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_end_frame(&m->vrc6, cycles);
+    if (m->player->expansion == NES_EXPANSION_EPSM) nes_epsm_end_frame(&m->epsm, cycles);
 }
 
 /* ---- lifecycle ---------------------------------------------------------------------------- */
@@ -169,15 +246,39 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
     blip_set_rates(m->blip, (double)NM_CPU_HZ, (double)sample_rate);
     m->sample_rate = sample_rate;
     m->player = player;
-    for (size_t i = 0; i < sizeof kOfficialOpcodes; ++i) m->official[kOfficialOpcodes[i] >> 3] |= (uint8_t)(1 << (kOfficialOpcodes[i] & 7));
-    /* famistudio_channel_env: first envelope slot of each channel (volume, arpeggio, duty follow; $FF: none). */
-    for (int c = 0; c < player->channels; ++c) m->channel_env[c] = player->code[player->sym.channel_env - player->base + c];
-    for (int s = 0; s < player->envelopes; ++s) {
-        int base = 0;
-        for (int c = 0; c < player->channels; ++c) {
-            if (m->channel_env[c] != 0xFF && m->channel_env[c] <= s && m->channel_env[c] >= base) base = m->channel_env[c];
+    if (player->expansion == NES_EXPANSION_EPSM) {
+        for (int s = 0; s < 2; ++s) {
+            m->side[s] = blip_new((int)(sample_rate / 10));
+            if (m->side[s]) blip_set_rates(m->side[s], (double)NM_CPU_HZ, (double)sample_rate);
         }
-        m->slot_kind[s] = (uint8_t)(s - base);
+        if (!m->side[0] || !m->side[1] || nes_epsm_init(&m->epsm) != 0) {
+            for (int s = 0; s < 2; ++s) {
+                if (m->side[s]) blip_delete(m->side[s]);
+            }
+            blip_delete(m->blip);
+            free(m);
+            return NULL;
+        }
+    }
+    for (size_t i = 0; i < sizeof kOfficialOpcodes; ++i) m->official[kOfficialOpcodes[i] >> 3] |= (uint8_t)(1 << (kOfficialOpcodes[i] & 7));
+    /* famistudio_channel_env: first envelope slot of each channel (volume, arpeggio, duty follow; $FF: none). The
+     * table has entries for the channels with envelopes only (not the EPSM's rhythm drums). An EPSM SSG's slots are
+     * volume, arpeggio, mixer, noise (FAMISTUDIO_ENV_MIXER_IDX_OFF 2, _NOISE_IDX_OFF 3); an FM channel's volume and
+     * arpeggio. */
+    for (int c = 0; c < player->channels; ++c) {
+        m->channel_env[c] = c < player->envelope_channels ? player->code[player->sym.channel_env - player->base + c] : 0xFF;
+    }
+    for (int s = 0; s < player->envelopes; ++s) {
+        int base = 0, owner = 0;
+        for (int c = 0; c < player->channels; ++c) {
+            if (m->channel_env[c] != 0xFF && m->channel_env[c] <= s && m->channel_env[c] >= base) {
+                base = m->channel_env[c];
+                owner = c;
+            }
+        }
+        int kind = s - base;
+        if (nes_player_epsm_ssg(player, owner) && kind >= 2) kind = kind == 2 ? NM_KIND_MIXER : NM_KIND_NOISE;
+        m->slot_kind[s] = (uint8_t)kind;
     }
     const float dt = 1.0f / (float)sample_rate;
     const float hp_rc = 1.0f / (2.0f * 3.14159265f * HIGHPASS_HZ);
@@ -196,6 +297,11 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
 void nm_destroy(NesMachine* m) {
     if (!m) return;
     blip_delete(m->blip);
+    if (m->player->expansion == NES_EXPANSION_EPSM) {
+        nes_epsm_free(&m->epsm);
+        blip_delete(m->side[0]);
+        blip_delete(m->side[1]);
+    }
     free(m);
 }
 
@@ -222,8 +328,23 @@ static int reset(NesMachine* m, const NesImage* image) {
     nes_apu_set_mute(&m->apu, 0);
     nes_vrc6_reset(&m->vrc6);
     nes_vrc6_set_mute(&m->vrc6, 0);
+    if (p->expansion == NES_EXPANSION_EPSM) {
+        nes_epsm_reset(&m->epsm);
+        nes_epsm_set_mute(&m->epsm, 0);
+        blip_clear(m->side[0]);
+        blip_clear(m->side[1]);
+        m->last_song_read = 0;
+        m->last_exp_entry = -1;
+        memset(m->epsm_ssg_instrument, -1, sizeof m->epsm_ssg_instrument);
+        m->epsm_period_instrument = -1;
+        m->epsm_serial = m->epsm_period_serial = 0;
+        memset(m->epsm_load_serial, 0, sizeof m->epsm_load_serial);
+        memset(m->epsm_fm_instrument, -1, sizeof m->epsm_fm_instrument);
+        memset(m->epsm_rhythm_instrument, -1, sizeof m->epsm_rhythm_instrument);
+    }
     blip_clear(m->blip);
     m->hp_in = m->hp_out = m->lp_out = 0.0f;
+    m->hp_in_r = m->hp_out_r = m->lp_out_r = 0.0f;
     m->time = 0;
     m->frame_index = 0;
     m->frames = 0;
@@ -370,9 +491,10 @@ static StreamState stream_state(const NmView* v, int c, int order, int consumed,
     return st;
 }
 
-/* Instrument envelopes retain their stable directory slot, including edits. Effect envelopes can be
- * renumbered, so prefer matching bytes before an edited slot. Keep a valid read position, otherwise
- * restart; a removed envelope falls back to the silent dummy. */
+/* New address for an engine envelope pointer (and its read position) when `image` replaces the
+ * playing one: the same directory entry if unchanged; else (effect envelopes only) an entry of the same
+ * kind with the same bytes; else the same entry edited (position kept if still an instruction start, else
+ * the envelope restarts); else the engine's silent dummy. Pointers outside the directory are kept. */
 static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int kind, uint16_t addr, uint8_t* ptr,
                                uint8_t* repeat) {
     const uint8_t* odir = m->meta + NES_IMAGE_HEADER_SIZE;
@@ -387,7 +509,10 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
 #define SAME(i) (ndir[4 * (i) + 3] == kind && ndir[4 * (i) + 2] == len && !memcmp(NEW_BYTES(i), old, (size_t)len))
     const int same_index = idx < ni->envelopes && nm_rd16(ndir + 4 * idx) && ndir[4 * idx + 3] == kind;
     if (same_index && SAME(idx)) return nm_rd16(ndir + 4 * idx);
-    if (!(same_index && idx < 4 * NES_IMAGE_MAX_INSTRUMENTS)) {
+    /* Instrument envelopes keep their directory index (an instrument slot's, below player->effect_envelopes: 256,
+     * the EPSM build 384 with its mixer and noise envelopes): an edited one stays its own slot's even when another
+     * slot holds identical bytes. Only effect envelopes (renumbered by the lowering) are followed by content. */
+    if (!(same_index && idx < m->player->effect_envelopes)) {
         for (int u = 0; u < ni->used_count; ++u) {
             if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
         }
@@ -434,6 +559,90 @@ static void follow_sample(NesMachine* m, const NesImage* image) {
     nes_apu_dmc_stop(a);
 }
 
+#define EPSM_ENTRY(info, region, j) ((region) + ((info)->exp_instruments - m->player->song_base) + NM_EXP_INSTRUMENT_SIZE * (j))
+
+/* EPSM, Thor layout to Thor layout, decided while the old bytes are still in place: the FM channels whose loaded
+ * instrument's patch block (31 bytes, wherever it now lives) is different in `image`. */
+static unsigned epsm_patch_changes(const NesMachine* m, const NesImage* image) {
+    const NesImageInfo* oi = &m->info;
+    const NesImageInfo* ni = &image->info;
+    const uint8_t* old_region = m->prg + (m->player->song_base - 0x8000);
+    const uint8_t* new_region = nm_region(image);
+    const uint32_t base = m->player->song_base;
+    unsigned changed = 0;
+    for (int k = 0; k < 6; ++k) {
+        const int j = m->epsm_fm_instrument[k];
+        if (j < 0 || j >= ni->instruments) continue;
+        if (j >= oi->instruments) {
+            changed |= 1u << k;
+            continue;
+        }
+        const uint16_t op = nm_rd16(EPSM_ENTRY(oi, old_region, j) + 14), np = nm_rd16(EPSM_ENTRY(ni, new_region, j) + 14);
+        if (memcmp(old_region + (op - base), new_region + (np - base), NM_EPSM_PATCH_SIZE)) changed |= 1u << k;
+    }
+    return changed;
+}
+
+/* EPSM, Thor layout to Thor layout (after the region copy): the channels' instrument settings follow their edited
+ * instruments now, rather than at each channel's next instrument load (the engine loads one only when the
+ * instrument changes). Expansion entries keep their index (slot - 1).
+ *  - FM: a channel whose loaded instrument's patch changed (`patch_changed`, bit per FM channel) gets that
+ *    instrument stored into famistudio_chn_epsm_fm_instrument again: the engine's next update of the channel
+ *    reloads the patch registers, algorithm, pan and operator levels exactly as its own instrument load does.
+ *  - SSG, from the entry each SSG loaded last: famistudio_epsm_chn_env_shape's low nibble (bit 7, a pending envelope
+ *    reset after a note attack, is kept) and famistudio_epsm_chn_env_octave. The shared manual period
+ *    famistudio_epsm_env_period is re-read from the entry it came from. An SSG whose entry turned manual (octave $80)
+ *    and that loaded it after the period's last store (and not behind a `$5D` of the same frame) sets the period from
+ *    it, the latest such load winning, as the engine's own load would have. A period a `$5D` set stays otherwise.
+ *    Not reconstructed: an owner entry turned auto (the engine's period would be an earlier store's; the owner's
+ *    new bytes are used).
+ *  - Rhythm: each drum's level (its instrument's volume envelope's first value, & 15) and pan (patch byte 1 & $C0),
+ *    as famistudio_set_epsm_instrument sets them.
+ * An identical image changes nothing. The table pointer moves with the table. */
+static void epsm_follow_instruments(NesMachine* m, const NesImage* image, unsigned patch_changed) {
+    const NesPlayer* p = m->player;
+    const NesEpsmSymbols* sym = &p->epsm;
+    const NesImageInfo* ni = &image->info;
+    const uint8_t* region = nm_region(image);
+    const uint32_t base = p->song_base;
+    for (int k = 0; k < 6; ++k) {
+        if (patch_changed >> k & 1) m->ram[sym->chn_fm_instrument + k] = (uint8_t)m->epsm_fm_instrument[k];
+    }
+    int period = m->epsm_period_instrument < ni->instruments ? m->epsm_period_instrument : -1;
+    uint32_t latest = m->epsm_period_serial;
+    for (int k = 0; k < 3; ++k) {
+        const int j = m->epsm_ssg_instrument[k];
+        if (j < 0 || j >= ni->instruments) continue;
+        const uint8_t* e = EPSM_ENTRY(ni, region, j);
+        uint8_t* shape = &m->ram[sym->chn_env_shape + k];
+        uint8_t* octave = &m->ram[sym->chn_env_octave + k];
+        *shape = (uint8_t)((*shape & 0x80) | (e[10] & 0x0F));
+        if (*octave != 0x80 && e[11] == 0x80 && m->epsm_load_serial[k] > latest) { /* turned manual */
+            period = j;
+            latest = m->epsm_load_serial[k];
+        }
+        *octave = e[11];
+    }
+    if (latest != m->epsm_period_serial) m->epsm_period_serial = ++m->epsm_serial; /* a turned-manual load set it */
+    if (period >= 0) {
+        const uint8_t* e = EPSM_ENTRY(ni, region, period);
+        m->ram[sym->env_period_lo] = e[12];
+        m->ram[sym->env_period_hi] = e[13];
+        m->epsm_period_instrument = (int8_t)period;
+    }
+    for (int k = 0; k < 6; ++k) {
+        const int j = m->epsm_rhythm_instrument[k];
+        if (j < 0 || j >= ni->instruments) continue;
+        const uint8_t* e = EPSM_ENTRY(ni, region, j);
+        m->ram[sym->chn_rhythm_volume + k] = (uint8_t)(region[nm_rd16(e) - base + 1] & 0x0F);
+        m->ram[sym->chn_rhythm_stereo + k] = (uint8_t)(region[nm_rd16(e + 14) - base + 1] & 0xC0);
+    }
+    m->ram[sym->exp_instrument_lo] = (uint8_t)ni->exp_instruments;
+    m->ram[sym->exp_instrument_hi] = (uint8_t)(ni->exp_instruments >> 8);
+}
+
+#undef EPSM_ENTRY
+
 void nm_apply_image(NesMachine* m, const NesImage* image) {
     if (m->faulted || m->audition || !loaded(m, image)) return;
     const NesPlayer* p = m->player;
@@ -478,6 +687,7 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
      * got another way (a loop, an Fxx later edited away) is otherwise kept. */
     const int speed_new = nm_speed_at(&nv, o, r);
     const int set_speed = clamped || nm_speed_at(&ov, m->order, m->row) != speed_new;
+    const unsigned patch_changed = p->expansion == NES_EXPANSION_EPSM ? epsm_patch_changes(m, image) : 0;
     memcpy(m->prg + (p->song_base - 0x8000), nm_region(image), p->region_size);
     for (int c = 0; c < p->channels; ++c) {
         RAMX(chn_ptr_lo, c) = (uint8_t)st[c].ptr;
@@ -497,10 +707,12 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
         RAMX(pitch_env_addr_hi, s) = (uint8_t)(pitch[s] >> 8);
     }
     const uint8_t* s = nm_region(image);
+    const int head = nes_player_head(p);
     RAM(instrument_lo) = s[1];
     RAM(instrument_hi) = s[2];
-    RAM(dpcm_list_lo) = s[3];
-    RAM(dpcm_list_hi) = s[4];
+    RAM(dpcm_list_lo) = s[head - 2];
+    RAM(dpcm_list_hi) = s[head - 1];
+    if (p->expansion == NES_EXPANSION_EPSM) epsm_follow_instruments(m, image, patch_changed);
     RAM(tempo_step_lo) = (uint8_t)ni->tempo_ntsc;
     RAM(tempo_step_hi) = (uint8_t)(ni->tempo_ntsc >> 8);
     if (set_speed && !(RAM(song_speed) & 0x80)) RAM(song_speed) = (uint8_t)speed_new;
@@ -514,7 +726,7 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
 
 #define AUDITION_SILENT NES_AUDITION_RAM          /* $FF (64 empty rows), $42 back */
 #define AUDITION_NOTE (NES_AUDITION_RAM + 4)      /* [$54 i] [$4E f] $40 n, $42 to the silent loop; DPCM: k, $42 */
-#define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45, $42 to the silent loop */
+#define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45 (EPSM FM: $5C), $42 to the silent loop */
 _Static_assert(AUDITION_RELEASE + 4 <= 0x800, "audition streams fit RAM");
 
 static void put_stream(NesMachine* m, uint16_t at, const uint8_t* bytes, int n) { memcpy(m->ram + at, bytes, (size_t)n); }
@@ -547,7 +759,7 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
     held[n++] = 0x42;
     held[n++] = lo;
     held[n++] = hi;
-    const uint8_t release[] = {0x45, 0x42, lo, hi};
+    const uint8_t release[] = {(uint8_t)(nes_player_epsm_fm(p, channel) ? 0x5C : 0x45), 0x42, lo, hi};
     put_stream(m, AUDITION_SILENT, silent, sizeof silent);
     put_stream(m, AUDITION_NOTE, held, n);
     put_stream(m, AUDITION_RELEASE, release, sizeof release);
@@ -561,12 +773,21 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
     return NM_OK;
 }
 
+/* 2A03/VRC6/EPSM SSG channels: a release only with a volume release point (the tail ends at the envelope's final
+ * loop). EPSM FM: always a key-off (`$5C`: then also the volume envelope's release, if any); the note ends once that
+ * tail is done and the channel's carriers are quiet. EPSM rhythm: the drum is a one-shot of the ROM and plays on to
+ * its end address (nothing is sent); the audition ends there. */
 int nm_release(NesMachine* m) {
     if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM) return 0; /* DPCM: stop */
+    if (nes_player_epsm_rhythm(m->player, m->aud_channel)) {
+        m->released = 1;
+        return 1;
+    }
     const int slot = m->channel_env[m->aud_channel];
     const uint16_t addr = (uint16_t)(RAMX(env_addr_lo, slot) | RAMX(env_addr_hi, slot) << 8);
     const int idx = nm_find_envelope(&m->info, m->meta + NES_IMAGE_HEADER_SIZE, addr);
-    if (idx < 0 || !m->prg[addr - 0x8000]) return 0; /* no release point: cut */
+    const int tail = idx >= 0 && m->prg[addr - 0x8000];
+    if (!tail && !nes_player_epsm_fm(m->player, m->aud_channel)) return 0; /* no release point: cut */
     const int c = m->aud_channel;
     RAMX(chn_ptr_lo, c) = (uint8_t)AUDITION_RELEASE;
     RAMX(chn_ptr_hi, c) = (uint8_t)(AUDITION_RELEASE >> 8);
@@ -576,7 +797,7 @@ int nm_release(NesMachine* m) {
     RAM(tempo_acc_hi) = RAM(song_speed); /* the next frame reads the release */
     m->released = 1;
     m->rel_slot = slot;
-    m->rel_end = m->meta[NES_IMAGE_HEADER_SIZE + 4 * idx + 2] - 2; /* the final loop: release tail done */
+    m->rel_end = tail ? m->meta[NES_IMAGE_HEADER_SIZE + 4 * idx + 2] - 2 : 0; /* the final loop: release tail done */
     return 1;
 }
 
@@ -586,11 +807,14 @@ int nm_mute_channel(NesMachine* m, int channel, int muted) {
         uint8_t mask = m->apu.mute;
         mask = muted ? (uint8_t)(mask | (1 << channel)) : (uint8_t)(mask & ~(1 << channel));
         nes_apu_set_mute(&m->apu, mask);
-    } else { /* VRC6 pulse 1, pulse 2, saw */
+    } else if (m->player->expansion == NES_EXPANSION_VRC6) { /* VRC6 pulse 1, pulse 2, saw */
         const int bit = 1 << (channel - NES_APU_CHANNELS);
         uint8_t mask = m->vrc6.mute;
         mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
         nes_vrc6_set_mute(&m->vrc6, mask);
+    } else { /* EPSM SSG 1-3, FM 1-6, rhythm 1-6 */
+        const unsigned bit = 1u << (channel - NM_FIRST_EXP);
+        nes_epsm_set_mute(&m->epsm, (uint16_t)(muted ? m->epsm.mute | bit : m->epsm.mute & ~bit));
     }
     return NM_OK;
 }
@@ -613,7 +837,18 @@ static int run_frame(NesMachine* m, int synth) {
     } else {
         ++m->row_ticks;
     }
-    if (m->released && RAMX(env_ptr, m->rel_slot) >= m->rel_end) m->ended = 1;
+    if (m->released) {
+        const NesPlayer* p = m->player;
+        const int c = m->aud_channel;
+        int over;
+        if (nes_player_epsm_rhythm(p, c)) {
+            over = !(nes_epsm_chip_rhythm_playing(m->epsm.chip) >> (c - NM_EPSM_RHYTHM1) & 1);
+        } else {
+            over = RAMX(env_ptr, m->rel_slot) >= m->rel_end;
+            if (over && nes_player_epsm_fm(p, c)) over = nes_epsm_chip_fm_quiet(m->epsm.chip, c - NM_EPSM_FM1);
+        }
+        if (over) m->ended = 1;
+    }
     return NM_OK;
 }
 
@@ -622,18 +857,41 @@ int nm_tick_silent(NesMachine* m) { return run_frame(m, 0); }
 int nm_tick(NesMachine* m, float* out) {
     if (m->ended) return 0;
     if (run_frame(m, 1) != NM_OK) return NM_ERR_FAULT;
-    blip_end_frame(m->blip, (m->frame_index & 1) ? 29780u : 29781u); /* the frame just run */
+    const uint32_t clocks = (m->frame_index & 1) ? 29780u : 29781u; /* the frame just run */
+    blip_end_frame(m->blip, clocks);
     int n = blip_samples_avail(m->blip);
     if (n > (int)NM_MAX_TICK_FRAMES) n = (int)NM_MAX_TICK_FRAMES;
     n = blip_read_samples(m->blip, m->samples, n, 0);
+    if (m->player->expansion != NES_EXPANSION_EPSM) {
+        for (int i = 0; i < n; ++i) {
+            const float x = (float)m->samples[i] * (1.0f / 32768.0f);
+            m->hp_out = m->hp_a * (m->hp_out + x - m->hp_in);
+            m->hp_in = x;
+            m->lp_out += m->lp_a * (m->hp_out - m->lp_out);
+            const float y = m->lp_out * OUTPUT_GAIN;
+            out[2 * i] = y;
+            out[2 * i + 1] = y;
+        }
+        return n;
+    }
+    /* EPSM: true stereo, the centred 2A03 plus each side of the chip, through one output stage per side. The same
+     * OUTPUT_GAIN: FamiStudio's levels (nes_epsm_unit.h) put its 16-bit clipping point at the hosts' +-1. */
+    for (int s = 0; s < 2; ++s) {
+        blip_end_frame(m->side[s], clocks);
+        blip_read_samples(m->side[s], m->side_samples[s], n, 0);
+    }
     for (int i = 0; i < n; ++i) {
-        const float x = (float)m->samples[i] * (1.0f / 32768.0f);
-        m->hp_out = m->hp_a * (m->hp_out + x - m->hp_in);
-        m->hp_in = x;
+        const float c = (float)m->samples[i];
+        const float xl = (c + (float)m->side_samples[0][i]) * (1.0f / 32768.0f);
+        const float xr = (c + (float)m->side_samples[1][i]) * (1.0f / 32768.0f);
+        m->hp_out = m->hp_a * (m->hp_out + xl - m->hp_in);
+        m->hp_in = xl;
         m->lp_out += m->lp_a * (m->hp_out - m->lp_out);
-        const float y = m->lp_out * OUTPUT_GAIN;
-        out[2 * i] = y;
-        out[2 * i + 1] = y;
+        m->hp_out_r = m->hp_a * (m->hp_out_r + xr - m->hp_in_r);
+        m->hp_in_r = xr;
+        m->lp_out_r += m->lp_a * (m->hp_out_r - m->lp_out_r);
+        out[2 * i] = m->lp_out * OUTPUT_GAIN;
+        out[2 * i + 1] = m->lp_out_r * OUTPUT_GAIN;
     }
     return n;
 }
@@ -692,4 +950,18 @@ int nm_call(NesMachine* m, uint16_t addr, uint8_t a) {
 
 const NesApu* nm_apu(const NesMachine* m) { return &m->apu; }
 const NesVrc6* nm_vrc6(const NesMachine* m) { return &m->vrc6; }
+const NesEpsm* nm_epsm(const NesMachine* m) { return &m->epsm; }
+int nm_epsm_instrument(const NesMachine* m, int channel) {
+    const NesPlayer* p = m->player;
+    if (nes_player_epsm_ssg(p, channel)) return m->epsm_ssg_instrument[channel - NM_EPSM_SSG1];
+    if (nes_player_epsm_fm(p, channel)) return m->epsm_fm_instrument[channel - NM_EPSM_FM1];
+    if (nes_player_epsm_rhythm(p, channel)) return m->epsm_rhythm_instrument[channel - NM_EPSM_RHYTHM1];
+    return -1;
+}
+int nm_epsm_period_instrument(const NesMachine* m) {
+    return m->player->expansion == NES_EXPANSION_EPSM ? m->epsm_period_instrument : -1;
+}
+int nm_epsm_rhythm_missing(const NesMachine* m) {
+    return m->player->expansion == NES_EXPANSION_EPSM && nes_epsm_chip_rhythm_missing(m->epsm.chip);
+}
 const NesPlayer* nm_player(const NesMachine* m) { return m->player; }

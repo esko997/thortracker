@@ -4,7 +4,7 @@
 ;
 ; CPU memory map (NTSC 2A03, no mapper):
 ;   $0000-$00FF  engine zero page            $0200-$07FF  engine RAM (BSS)
-;   $0100-$01FF  stack                       $4000-$4017  APU
+;   $0100-$01FF  stack                       $4000-$4017  APU ($401C-$401F: EPSM, EPSM build)
 ;   $8000-...    this player (code + tables) NES_SONG_BASE-$BFFF  song data (FamiStudio export format)
 ;   $C000-$FFF9  DPCM samples (FAMISTUDIO_DPCM_OFF; the song's DPCM list holds their $4012/$4013 values)
 ;   $FFFA-$FFFF  vectors, written by the native machine (not part of the song image)
@@ -20,7 +20,9 @@
 ; (generated/nes_vrc6_player_image.h) is this file assembled with -D FAMISTUDIO_EXP_VRC6=1 on the
 ; command line as well (the engine defaults it to 0): VRC6 pulse 1/2 and saw as channels 5-7, their
 ; registers $9000-$9003, $A000-$A002, $B000-$B002, and its own song base (the page after the larger
-; player). Nothing here changes for it, so the plain build's bytes stay the same.
+; player). The EPSM build (generated/nes_epsm_player_image.h) is the same with -D FAMISTUDIO_EXP_EPSM=1
+; and the engine's default EPSM configuration (3 SSG, 6 FM, 6 rhythm channels as channels 5-19; YMF288
+; registers through $401C-$401F). Nothing here changes for them, so the plain build's bytes stay the same.
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

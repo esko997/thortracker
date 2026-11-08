@@ -20,7 +20,10 @@ Order below is the current intent; design notes for the chip work live in `docs/
 3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) is
    implemented for 0.15.0 as the "NES + VRC6" variant, with native/driver parity, desktop and reserved-handheld checks
    recorded in `docs/VERIFICATION.md`. Next: VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
-   EPSM (YM2608). Source-only worktrees do not count as verified releases.
+   EPSM. **EPSM** (Yamaha YMF288 / OPN3-L: SSG 1-3, FM 1-6 and six rhythm drums from the user-imported YM2608 rhythm
+   ROM, never bundled) exists as an **unverified source slice** on branch `nes-epsm` ("NES + EPSM", demo "Expansion
+   Port"): not yet built, generated, tested or listened to; `docs/VERIFICATION.md` lists what the parent must run.
+   Source-only worktrees do not count as verified releases.
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
 5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode

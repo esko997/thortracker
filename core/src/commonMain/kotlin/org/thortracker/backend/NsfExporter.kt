@@ -7,8 +7,9 @@ import org.thortracker.model.Song
  * the song's player build ([NesPlayer]) at its load address with its NSF entry table (init = load, play = load + 3),
  * zeros up to its song base, the lowered FamiStudio data, and when the song plays DPCM samples, zeros up to the sample
  * block's start (the top of `$C000-$FFF9`, where the image puts it) and the samples (without bank switching the whole
- * image is loaded at once). Header byte `$7B` names the expansion chip the player drives (bit 0: VRC6), so NSF players
- * emulate it. Plays in NSF players and on hardware through cartridges that load NSFs (with the chip, for VRC6).
+ * image is loaded at once). Header byte `$7B` names the expansion chip the player drives (bit 0: VRC6, bit 7: EPSM, as
+ * FamiStudio's `NsfFile` writes it), so NSF players emulate it. Plays in NSF players and on hardware through
+ * cartridges that load NSFs (with the chip). An EPSM `.nsf` never holds the rhythm ROM: players supply their own.
  */
 object NsfExporter {
     /** NTSC play rate in microseconds (NSF convention for 60.1 Hz). */

@@ -42,13 +42,20 @@ internal class FsNote {
     /** DPCM `Zxx`: DMC output level 0..127, -1 = none. */
     var deltaCounter = -1
 
+    /**
+     * The EPSM SSG's envelope period (FamiStudio's `EnvelopePeriod`, 0..65535), -1 = none. Only on SSG 1: a row's
+     * `Ixx`/`Jyy` on any SSG square land here, as FamiStudio's exporter moves every period effect to its first square.
+     */
+    var envelopePeriod = -1
+
     val isMusical get() = value in 1..96
     val isValid get() = value != INVALID
     val hasVolume get() = volume >= 0
 
     /** Any attribute that keeps FamiStudio's exporter from folding the row into an empty run. */
     val hasRunBreakingEffect
-        get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0
+        get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0 ||
+            envelopePeriod >= 0
 
     val isEmpty get() = !isValid && !hasRunBreakingEffect && speed < 0
 
@@ -81,6 +88,8 @@ internal class FsSong(
     val samples: List<DpcmSample>,
     /** The song's expansion chip: its channels follow the 2A03's five in [notes]. */
     val expansion: NesExpansion = NesExpansion.NONE,
+    /** EPSM songs: the chip LFO register `$22` every EPSM instrument's patch carries ([org.thortracker.system.nes.NesSound.epsmLfo]). */
+    val epsmLfo: Int = 0,
 ) {
     val orderStart = IntArray(lengths.size + 1).also { for (i in lengths.indices) it[i + 1] = it[i] + lengths[i] }
     val totalRows get() = orderStart[lengths.size]
@@ -103,10 +112,18 @@ internal class FsSong(
          * The song as FamiStudio plays it: [song]'s arrangement ([NesSystem.arranged]) with each cell's meaning
          * (see [NesRules.EFFECTS]) as FamiStudio note attributes. Context the cells leave implicit is resolved along
          * the played order here, so both consumers agree:
+         * - a note is FamiStudio's note byte for it on its channel ([NesRules.engineNote]: the EPSM's SSG and FM channels
+         *   take FamiStudio's note an octave up, so it sounds at its true pitch);
          * - a note without an instrument is legato (no attack) on the channel's current instrument;
-         * - OFF releases a sounding note whose instrument has a volume release point, otherwise (or when the note was
-         *   already released) it stops the channel;
-         * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none.
+         * - OFF releases a sounding note whose instrument has a volume release point, and on the EPSM's FM channels any
+         *   sounding note (key off: FamiStudio's `CanRelease`), otherwise (or when the note was already released) it
+         *   stops the channel; on the EPSM's drums it always stops (FamiStudio's engine has no volume envelope slot for
+         *   them, so its release opcode there would corrupt another channel's envelope);
+         * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none; on the
+         *   EPSM's FM and SSG channels it is converted to their step nearest the same pitch ([NesRules.epsmFmFinePitch],
+         *   [NesRules.epsmSsgFinePitch]);
+         * - a row's SSG envelope period (`Ixx` high byte, `Jyy` low byte, on any SSG squares: [NesRules.envPeriod]) is one
+         *   `EnvelopePeriod` on SSG 1.
          * Requires a song without [NesSystem.errors].
          */
         fun of(document: Song): FsSong {
@@ -114,18 +131,21 @@ internal class FsSong(
             val instruments = song.nes.instruments
             val lengths = IntArray(song.orders.size) { song.patterns[song.orders[it]].length }
             val total = lengths.sum()
-            val channels = song.nes.expansion.channels
+            val expansion = song.nes.expansion
+            val channels = expansion.channels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
                 var current = 0 // instrument slot sounding on the channel
                 var sounding = false // a note is playing and has not been released or stopped
                 var fine = 0
+                var playing = 0 // plain FamiStudio note of the last note (the one a Pxx without note detunes)
                 var row = 0
                 for (o in song.orders.indices) {
                     val pattern = song.patterns[song.orders[o]]
                     for (r in 0 until pattern.length) {
                         val cell = pattern.tracks[ch][r]
-                        val n = convert(cell, ch, current, sounding, instruments, fine)
+                        if (cell.note >= 0) playing = cell.note - NesRules.NOTE_OFFSET
+                        val n = convert(cell, ch, expansion, current, sounding, instruments, fine, playing)
                         if (n != null) {
                             if (n.isMusical) {
                                 if (n.instrument != 0) current = n.instrument
@@ -140,6 +160,22 @@ internal class FsSong(
                     }
                 }
             }
+            if (expansion == NesExpansion.EPSM) {
+                // FamiStudio keeps every SSG envelope period effect on SSG 1 (`MoveAllEnvelopePeriodsOnFirstChannel`).
+                val squares = NesRules.EPSM_SSG1 until NesRules.EPSM_FM1
+                var row = 0
+                for (o in song.orders.indices) {
+                    val pattern = song.patterns[song.orders[o]]
+                    for (r in 0 until pattern.length) {
+                        val period = NesRules.envPeriod(squares.map { pattern.tracks[it][r] }) ?: -1
+                        if (period >= 0) {
+                            val ch = NesRules.EPSM_SSG1
+                            notes[ch][row] = (notes[ch][row] ?: FsNote()).also { it.envelopePeriod = period }
+                        }
+                        row++
+                    }
+                }
+            }
             // The song speed is set again at the first row (a loop to order 0 starts at the song speed, and the engine
             // starts at 6); FamiStudio's text export says the same, so both lowerings pick the same speed channel.
             if ((0 until channels).none { (notes[it][0]?.speed ?: -1) >= 0 }) {
@@ -147,16 +183,17 @@ internal class FsSong(
             }
             return FsSong(song.title, song.artist, song.ticksPerRow, song.loopOrder, lengths,
                 IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples,
-                song.nes.expansion)
+                expansion, song.nes.epsmLfo)
         }
 
-        private fun convert(cell: Cell, ch: Int, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int): FsNote? {
+        private fun convert(cell: Cell, ch: Int, expansion: NesExpansion, current: Int, sounding: Boolean, bank: List<NesInstrument>,
+                            fine: Int, playing: Int): FsNote? {
             if (cell.isBlank) return null
             val n = FsNote()
             val p = cell.param
             when {
                 cell.note >= 0 -> {
-                    n.value = NesRules.fsNote(cell.note)
+                    n.value = NesRules.engineNote(expansion, ch, cell.note)
                     if (cell.instrument != 0) n.instrument = cell.instrument
                     else if (current != 0) {
                         n.instrument = current
@@ -165,9 +202,9 @@ internal class FsSong(
                     if (fine != 0 && !(cell.effect == NesRules.FX_FINE_PITCH && cell.hasEffect)) n.finePitch = 0
                 }
                 cell.note == Cell.CUT -> {
-                    // DPCM has no release: OFF stops the sample.
-                    val releases = ch != NesRules.DPCM && sounding && current != 0 &&
-                        bank[current - 1].let { it.volume.release >= 0 && it.volume.loop >= 0 }
+                    // DPCM has no release: OFF stops the sample; nor have the EPSM drums (see above).
+                    val releases = ch != NesRules.DPCM && !NesRules.isEpsmRhythm(expansion, ch) && sounding && current != 0 &&
+                        (NesRules.isEpsmFm(expansion, ch) || bank[current - 1].let { it.volume.release >= 0 && it.volume.loop >= 0 })
                     n.value = if (releases) FsNote.RELEASE else FsNote.STOP
                 }
             }
@@ -182,12 +219,17 @@ internal class FsSong(
                 NesRules.FX_VOLUME -> n.volume = p
                 NesRules.FX_SPEED -> n.speed = p
                 NesRules.FX_NOTE_DELAY -> n.noteDelay = p
-                NesRules.FX_FINE_PITCH -> n.finePitch = NesRules.FINE_CENTRE - p
+                NesRules.FX_FINE_PITCH -> n.finePitch = when {
+                    NesRules.isEpsmFm(expansion, ch) -> NesRules.epsmFmFinePitch(playing, p - NesRules.FINE_CENTRE)
+                    NesRules.isEpsmSsg(expansion, ch) -> -NesRules.epsmSsgFinePitch(playing, p - NesRules.FINE_CENTRE)
+                    else -> NesRules.FINE_CENTRE - p
+                }
                 NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
                 NesRules.FX_SLIDE_DOWN -> n.slideTarget = n.value - p
                 NesRules.FX_NOTE_CUT -> n.cutDelay = p
                 NesRules.FX_DUTY -> n.duty = p
                 NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
+                // SSG envelope period: gathered per row on SSG 1 by [of].
             }
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.
             if (ch == NesRules.NOISE) n.finePitch = FsNote.NO_FINE

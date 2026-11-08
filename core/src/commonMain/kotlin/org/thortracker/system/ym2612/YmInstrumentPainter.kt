@@ -1,15 +1,14 @@
 package org.thortracker.system.ym2612
 
 import kotlin.math.abs
-import kotlin.math.pow
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
 import org.thortracker.model.NumberText
 import org.thortracker.system.fm.FmEnvelopeSketch
 import org.thortracker.system.fm.FmInstrumentPainter
-import org.thortracker.system.fm.FmNode
 import org.thortracker.system.fm.FmRouting
+import org.thortracker.system.fm.OpnTiming
 import org.thortracker.system.nes.EnvelopePlot
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesEnvelopeKind
@@ -183,7 +182,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val k = YmCurated.controls(ins)
         val lfoOff = song.ym.lfo == 0
         fun approx(exact: Boolean) = if (exact) "" else "≈ "
-        val slDb = slDb(15 - k.sustain)
+        val slDb = OpnTiming.slDb(15 - k.sustain)
         return when (r) {
             Row.PRESET, Row.DRUM_PRESET -> presetText(ins)
             Row.ALGORITHM -> YmCurated.ALGORITHMS[k.algorithm].let { "${it.number} ${it.name}   ${it.diagram}" }
@@ -192,16 +191,16 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             Row.BRIGHTNESS -> if (k.brightness < 0) "—   additive: no modulators" else "${k.brightness}   ${bar(k.brightness, 127)}"
             Row.LEVEL -> "${k.level}   ${bar(k.level, 127)}"
             Row.FEEDBACK -> "${k.feedback}   ${if (k.feedback == 0) "pure" else bar(k.feedback, 7)}"
-            Row.ATTACK -> approx(k.envelopeExact) + "${k.attack}   ${timeText(attackMs(k.attack))} to full"
-            Row.DECAY -> approx(k.envelopeExact) + "${k.decay}   ${timeText(fallMs(2 * k.decay, slDb))} to sustain"
+            Row.ATTACK -> approx(k.envelopeExact) + "${k.attack}   ${timeText(TIMING.attackMs(k.attack))} to full"
+            Row.DECAY -> approx(k.envelopeExact) + "${k.decay}   ${timeText(TIMING.fallMs(2 * k.decay, slDb))} to sustain"
             Row.SUSTAIN -> approx(k.envelopeExact) + when (k.sustain) {
                 15 -> "15   held at full level"
                 0 -> "0   percussive: decays to silence"
                 else -> "${k.sustain}   at −${slDb.toInt()} dB"
             }
-            Row.SUSTAIN_RATE -> approx(k.envelopeExact) + if (k.sustainRate == 0) "0   held while the key is down" else "${k.sustainRate}   keeps fading: −96 dB in ${timeText(fallMs(2 * k.sustainRate, 96f))}"
-            Row.RELEASE -> approx(k.envelopeExact) + "${k.release}   ${timeText(fallMs(4 * k.release + 2, 96f))} after OFF"
-            Row.TONE_DECAY -> if (k.toneDecay < 0) "—   additive: no modulators" else approx(k.envelopeExact) + "${k.toneDecay}   brightness fades in ${timeText(fallMs(2 * k.toneDecay, 96f))}"
+            Row.SUSTAIN_RATE -> approx(k.envelopeExact) + if (k.sustainRate == 0) "0   held while the key is down" else "${k.sustainRate}   keeps fading: −96 dB in ${timeText(TIMING.fallMs(2 * k.sustainRate, 96f))}"
+            Row.RELEASE -> approx(k.envelopeExact) + "${k.release}   ${timeText(TIMING.fallMs(4 * k.release + 2, 96f))} after OFF"
+            Row.TONE_DECAY -> if (k.toneDecay < 0) "—   additive: no modulators" else approx(k.envelopeExact) + "${k.toneDecay}   brightness fades in ${timeText(TIMING.fallMs(2 * k.toneDecay, 96f))}"
             Row.KEY_SCALE -> approx(k.keyScaleExact) + YmCurated.KEY_SCALES[k.keyScale.coerceIn(0, 3)]
             Row.VIBRATO -> YmCurated.FMS_TEXT[k.vibrato] + if (k.vibrato > 0 && lfoOff) "   (song LFO off)" else ""
             Row.TREMOLO -> approx(k.tremoloExact) + YmCurated.AMS_TEXT[k.tremolo] + if (k.tremolo > 0 && lfoOff) "   (song LFO off)" else ""
@@ -271,7 +270,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         Row.OP_AM -> if (o.am) "■ on" else "·"
         Row.OP_D1R -> hex2(o.d1r)
         Row.OP_D2R -> hex2(o.d2r)
-        Row.OP_SL -> "${NumberText.hex(o.sl)} −${slDb(o.sl).toInt()}dB"
+        Row.OP_SL -> "${NumberText.hex(o.sl)} −${OpnTiming.slDb(o.sl).toInt()}dB"
         Row.OP_RR -> NumberText.hex(o.rr)
         Row.OP_SSG -> if (o.ssgEg < 8) "·" else "${NumberText.hex(o.ssgEg)} ${ssgShape(o.ssgEg)}"
         else -> ""
@@ -282,11 +281,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** The algorithm's routing: operators placed by depth (modulators left of what they modulate), carriers on the right. */
     private fun routing(ins: YmFmInstrument): FmRouting {
         val alg = ins.algorithm.coerceIn(0, 7)
-        val layout = LAYOUTS[alg]
-        val nodes = layout.mapIndexed { op, (column, row) -> FmNode(op, column, row, ins.isCarrier(op)) }
-            .sortedWith(compareBy({ it.column }, { it.row }))
-        val edges = YmCurated.ALGORITHMS[alg].edges.map { (a, b) -> (a - 1) to (b - 1) }
-        return FmRouting(layout.maxOf { it.first } + 1, ROWS[alg], nodes, edges)
+        return FmRouting.opn(alg, YmCurated.ALGORITHMS[alg].edges) { ins.isCarrier(it) }
     }
 
     private fun algorithm(c: Surface, r: Rect, ins: YmFmInstrument, col: Int, focus: Int) {
@@ -299,8 +294,8 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private fun envelope(ins: YmFmInstrument): FmEnvelopeSketch {
         val k = YmCurated.controls(ins)
         val car = ins.operators[(0..3).first { ins.isCarrier(it) }]
-        val sustainDb = slDb(car.sl)
-        val holdFall = if (car.d2r == 0) 0f else 96f * HOLD_MS / fallMs(2 * car.d2r, 96f)
+        val sustainDb = OpnTiming.slDb(car.sl)
+        val holdFall = if (car.d2r == 0) 0f else 96f * HOLD_MS / TIMING.fallMs(2 * car.d2r, 96f)
         val ssg = if (car.ssgEg >= 8) car.ssgEg else -1
         val title = when {
             ssg >= 0 -> "Envelope · SSG-EG ${ssgShape(ssg)} ${YmCurated.SSG_EG_NAMES[ssg]?.substringAfter(' ') ?: ""} until OFF"
@@ -310,12 +305,12 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         }
         return FmEnvelopeSketch(
             title = title,
-            attackMs = attackMs(car.ar),
-            decayMs = fallMs(2 * car.d1r, sustainDb),
+            attackMs = TIMING.attackMs(car.ar),
+            decayMs = TIMING.fallMs(2 * car.d1r, sustainDb),
             sustainDb = sustainDb,
             holdMs = HOLD_MS,
-            releaseMs = fallMs(4 * car.rr + 2, 96f),
-            toneDecayMs = if (k.toneDecay >= 0) fallMs(2 * k.toneDecay, 96f) else null,
+            releaseMs = TIMING.fallMs(4 * car.rr + 2, 96f),
+            toneDecayMs = if (k.toneDecay >= 0) TIMING.fallMs(2 * k.toneDecay, 96f) else null,
             floorDb = 96f,
             heldEndDb = (sustainDb + holdFall).coerceAtMost(96f),
             ssgEg = ssg,
@@ -386,43 +381,10 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         /** The envelope generator's clock: the chip's sample rate (NTSC 53267 Hz) / 3. */
         const val EG_HZ = 53267f / 3f
 
-        /** Operator positions (column, row) per algorithm, matching [YmCurated.Algorithm.edges]; carriers in the last column. */
-        val LAYOUTS: List<List<Pair<Int, Float>>> = listOf(
-            listOf(0 to 0f, 1 to 0f, 2 to 0f, 3 to 0f),          // 1→2→3→4
-            listOf(0 to 0f, 0 to 1f, 1 to 0.5f, 2 to 0.5f),      // (1+2)→3→4
-            listOf(1 to 0f, 0 to 1f, 1 to 1f, 2 to 0.5f),        // (1+(2→3))→4
-            listOf(0 to 0f, 1 to 0f, 1 to 1f, 2 to 0.5f),        // ((1→2)+3)→4
-            listOf(0 to 0f, 1 to 0f, 0 to 1f, 1 to 1f),          // (1→2)+(3→4)
-            listOf(0 to 1f, 1 to 0f, 1 to 1f, 1 to 2f),          // 1→(2+3+4)
-            listOf(0 to 0f, 1 to 0f, 1 to 1f, 1 to 2f),          // (1→2)+3+4
-            listOf(0 to 0f, 0 to 1f, 0 to 2f, 0 to 3f),          // 1+2+3+4
-        )
-        val ROWS = listOf(1, 2, 2, 2, 2, 3, 3, 4)
+        val TIMING = OpnTiming(EG_HZ)
 
         /** The fixed noise rates at the NTSC PSG clock (3579545 / 32 / divider). */
         val NOISE_HZ = listOf("6991 Hz", "3496 Hz", "1748 Hz")
-
-        /** D1L/SL [sl] as decibels below full: 3 dB steps, 15 = 93 dB. */
-        fun slDb(sl: Int): Float = if (sl >= 15) 93f else sl * 3f
-
-        /**
-         * Time to fall [db] at envelope rate [rate] (0..63, a register rate ×2 plus its own offset; 0 never): the OPN2
-         * steps its 10-bit attenuation every 2^(11 − rate/4) EG clocks by 1, 1.25, 1.5 or 1.75 (rate mod 4); key
-         * scaling ignored.
-         */
-        fun fallMs(rate: Int, db: Float): Float {
-            if (rate <= 0) return Float.POSITIVE_INFINITY
-            val r = rate.coerceAtMost(63)
-            val perClock = (1f + 0.25f * (r % 4)) * 2f.pow(r / 4 - 11)
-            return 1024f / perClock / EG_HZ * 1000f * (db / 96f)
-        }
-
-        /** Attack to full at register rate [ar] (0 never, 31 instant): about a fourteenth of the same rate's full decay. */
-        fun attackMs(ar: Int): Float = when {
-            ar <= 0 -> Float.POSITIVE_INFINITY
-            ar >= 31 -> 0f
-            else -> fallMs(2 * ar, 96f) * 0.072f
-        }
 
         /** An SSG-EG value's outline ("\\\\", "/‾‾‾"…). */
         fun ssgShape(v: Int): String = YmCurated.SSG_EG_NAMES[v]?.substringBefore(' ') ?: "?"

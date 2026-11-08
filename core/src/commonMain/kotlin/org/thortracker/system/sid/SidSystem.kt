@@ -194,7 +194,7 @@ object SidSystem : SoundSystem {
         /** GoatTracker's note numbers are absolute notes (0 = C-0). */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int = note
 
-        override fun fine(note: Int, fine: Int): Int = 0
+        override fun fine(channel: Int, note: Int, fine: Int): Int = 0
     }
 
     /** No per-note fine pitch: a tuning retunes the song's frequency table instead ([SidTuning]). */

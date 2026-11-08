@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesRules
 import kotlin.test.fail
 
@@ -60,8 +61,13 @@ class NesGoldenTest {
                 val ins = fs.instruments[slot - 1]
                 ours += "slot $slot volume" to FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME)
                 ours += "slot $slot arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO)
-                ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
+                // FamiStudio exports only the envelopes a sound's expansion has: no duty on the EPSM, its mixer and noise.
+                if (ins.chip.hasDuty) ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
                 ours += "slot $slot pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative)
+                if (ins.chip == NesChip.EPSM) {
+                    ours += "slot $slot mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER)
+                    ours += "slot $slot noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE)
+                }
             }
             for (ch in fs.notes) for (n in ch) {
                 if (n == null) continue
@@ -95,6 +101,7 @@ class NesGoldenTest {
             var writes = 0
             var dpcmStarts = 0
             var vrc6 = 0
+            var epsm = 0
             for (f in 0 until frames) {
                 val ta = a.frame()
                 val tb = b.frame()
@@ -104,6 +111,7 @@ class NesGoldenTest {
                 writes += ta.size
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 vrc6 += ta.count { (it shr 8) >= 0x9000 }
+                epsm += ta.count { (it shr 8) in NesTracer.EPSM_PORTS }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
@@ -113,6 +121,11 @@ class NesGoldenTest {
             if (lowered.player == NesPlayer.VRC6) {
                 // The trace covers the VRC6: its pulses and saw are written (and compared) every frame they sound.
                 assertTrue(vrc6 > frames, "$name: only $vrc6 VRC6 register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.EPSM) {
+                // The trace covers the YMF288: SSG and FM register selects and data (patch loads, LFO, key on/off, the
+                // drums' levels and key bits) are written and compared every frame they sound.
+                assertTrue(epsm > frames, "$name: only $epsm EPSM port writes in $frames frames")
             }
         }
     }

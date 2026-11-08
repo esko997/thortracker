@@ -2,6 +2,8 @@ package org.thortracker.backend
 
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.NesEpsmDemoSong
+import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.opl3.Opl3System
@@ -32,6 +34,17 @@ object SampleExportTool {
         for (format in NesVrc6System.exports) File(directory, "saw-sunrise.${format.extension}").writeBytes(format.export(vrc6))
         File(directory, "saw-sunrise.nesimg").writeBytes(ByteArray(NesVrc6System.engine.imageSize).also { NesVrc6System.engine.lower(vrc6, it) })
         println("Exported ${vrc6.title} to ${directory.absolutePath}")
+        // The NES + EPSM demo, the same way (its image plays on "nes-famistudio-epsm"; it has no drums, so it needs no
+        // rhythm ROM), and the shortest valid EPSM song (one one-row order at speed 1) whose image the native WAV export
+        // test renders through loops.
+        val epsm = NesEpsmSystem.demo()
+        File(directory, "expansion-port.thor").writeText(ProjectCodec.encode(epsm), Charsets.UTF_8)
+        for (format in NesEpsmSystem.exports) File(directory, "expansion-port.${format.extension}").writeBytes(format.export(epsm))
+        File(directory, "expansion-port.nesimg").writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(epsm, it) })
+        val shortest = NesEpsmDemoSong.shortest()
+        check(NesEpsmSystem.errors(shortest).isEmpty()) { "the shortest EPSM song is invalid: ${NesEpsmSystem.errors(shortest)}" }
+        File(directory, "epsm-shortest.nesimg").writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(shortest, it) })
+        println("Exported ${epsm.title} and the shortest EPSM song to ${directory.absolutePath}")
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

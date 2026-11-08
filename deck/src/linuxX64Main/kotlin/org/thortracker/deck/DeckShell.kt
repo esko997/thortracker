@@ -25,11 +25,15 @@ import platform.posix.remove
 import platform.posix.uname
 import platform.posix.utsname
 import kotlin.time.TimeSource
+import decknative.nes_epsm_install_rhythm_rom
+import org.thortracker.system.nes.EpsmRhythmRom
+import org.thortracker.system.nes.EpsmRomMenu
 
 /**
  * The Deck's platform side of the shared menus: projects and exports in ~/ThorTracker via the in-app [FileBrowser],
- * working-song recovery and keymap in ~/.local/share/thortracker, bundled tunings beside the executable. WAV exports
- * render in slices of the frame loop ([pumpExport]) behind a progress popup.
+ * working-song recovery, keymap and imported firmware (the EPSM rhythm ROM, firmware/) in ~/.local/share/thortracker,
+ * bundled tunings beside the executable. WAV exports render in slices of the frame loop ([pumpExport]) behind a
+ * progress popup.
  */
 class DeckShell(
     private val session: EditorSession,
@@ -49,6 +53,9 @@ class DeckShell(
     private val keymapFile = "$data/keymap.json"
     /** Where a WAV export renders before it moves to its destination (removed when the export ends, and at startup). */
     private val wavSpool = "$data/wav-export.wav.part"
+    /** Device firmware the user imports (the EPSM's rhythm ROM): kept here, never in projects or exports. */
+    private val firmware = "$data/firmware"
+    private val rhythmRom = "$firmware/${EpsmRhythmRom.FILE_NAME}"
 
     /** The project file the working song was opened from or last saved to. */
     private var currentFile: String? = null
@@ -65,6 +72,7 @@ class DeckShell(
         Files.mkdirs(data)
         remove(wavSpool)   // a render the last run did not live to finish
         Files.readText(keymapFile)?.let { text -> runCatching { Keymap.fromJson(text) }.getOrNull() }?.let { applyKeymap(it, null) }
+        loadRhythmRom()
     }
 
     /** The song to start with: the recovered working song, or null for the demo. */
@@ -290,6 +298,30 @@ class DeckShell(
             val bytes = Files.readBytes(path, max = maxBytes.toLong()) ?: return@FileBrowser error("$file could not be read or is larger than ${maxBytes / 1024} KiB")
             loaded(file.dropLast(extension.length), extension, bytes)
         }.show(documents)
+
+    /** [MenuHost.installEpsmRhythmRom]: saves the checked [bytes] (temporary file and rename), then installs them. */
+    override fun installEpsmRhythmRom(bytes: ByteArray): String? {
+        Files.mkdirs(firmware)
+        if (!Files.write(rhythmRom, bytes)) return "it could not be saved in ${Files.pretty(firmware)}"
+        return installRhythmRomNative(bytes)
+    }
+
+    /** Hands checked ROM [bytes] to the native engine and marks the ROM installed; returns why not, or null. */
+    private fun installRhythmRomNative(bytes: ByteArray): String? {
+        val result = bytes.usePinned { nes_epsm_install_rhythm_rom(it.addressOf(0).reinterpret<UByteVar>(), bytes.size.convert()) }
+        if (result != 0) return "the audio engine refused it (error $result)"
+        EpsmRhythmRom.markInstalled()
+        return null
+    }
+
+    /** At start: installs a ROM imported earlier after checking it again; a changed or damaged file is reported, not used. */
+    private fun loadRhythmRom() {
+        if (!Files.exists(rhythmRom)) return
+        val bytes = Files.readBytes(rhythmRom, max = EpsmRomMenu.MAX_FILE.toLong())
+        val problem = if (bytes == null) "it could not be read" else EpsmRhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
+        if (problem != null) error("The saved EPSM rhythm ROM (${Files.pretty(rhythmRom)}) was not installed: $problem. " +
+            "Import it again (${EpsmRomMenu.LABEL} in the menu)")
+    }
 
     override fun extraMenuItems(): List<Pair<String, () -> Unit>> = listOf("Quit" to quit)
 

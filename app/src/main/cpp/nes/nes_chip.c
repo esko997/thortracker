@@ -1,5 +1,6 @@
-/* "nes-famistudio" and "nes-famistudio-vrc6": the FamiStudio sound engine (FamiTracker tempo), the 2A03
- * build and the Konami VRC6 build, on the NES machine (nes_machine.h) behind the chip engine interface.
+/* "nes-famistudio", "nes-famistudio-vrc6" and "nes-famistudio-epsm": the FamiStudio sound engine (FamiTracker tempo),
+ * the 2A03 build, the Konami VRC6 build and the EPSM build, on the NES machine (nes_machine.h) behind the chip engine
+ * interface.
  * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
  * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
@@ -19,6 +20,7 @@ _Static_assert(NM_MAX_TICK_FRAMES <= CHIP_MAX_TICK_FRAMES && NM_MAX_SAMPLE_RATE 
 
 static ChipMachine* nes_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_2a03); }
 static ChipMachine* vrc6_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_vrc6); }
+static ChipMachine* epsm_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_epsm); }
 
 static void nes_destroy(ChipMachine* m) { nm_destroy(MACHINE(m)); }
 
@@ -37,6 +39,10 @@ static int nes_load_image(ChipImage* storage, const uint8_t* bytes, size_t size)
 
 static int vrc6_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
     return load_for(&nes_player_vrc6, storage, bytes, size);
+}
+
+static int epsm_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_epsm, storage, bytes, size);
 }
 
 static int nes_start(ChipMachine* m, const ChipImage* image, int order, int row, int max_ticks, int* seek_mode) {
@@ -87,6 +93,26 @@ const ChipEngineOps nes_vrc6_chip_ops = {
     .create = vrc6_create,
     .destroy = nes_destroy,
     .load_image = vrc6_load_image,
+    .start = nes_start,
+    .apply_image = nes_apply_image,
+    .audition = nes_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};
+
+/* Channels 0-4 as "nes-famistudio", then EPSM SSG 1-3 (5..7), FM 1-6 (8..13) and the rhythm drums bass drum, snare,
+ * top cymbal, hi-hat, tom, rim shot (14..19). On an EPSM channel the instrument slot addresses the image's expansion
+ * instrument table (the same index as the 2A03 table). The rhythm drums need the rhythm ROM installed
+ * (nes_epsm.h); the frontend refuses to play or audition them without it. Output is true stereo. */
+const ChipEngineOps nes_epsm_chip_ops = {
+    .system_id = "nes-famistudio-epsm",
+    .image_size = NES_EPSM_IMAGE_SIZE,
+    .image_storage = sizeof(NesImage),
+    .create = epsm_create,
+    .destroy = nes_destroy,
+    .load_image = epsm_load_image,
     .start = nes_start,
     .apply_image = nes_apply_image,
     .audition = nes_audition,
