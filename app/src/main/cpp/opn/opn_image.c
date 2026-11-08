@@ -368,9 +368,6 @@ int opn_load_image(OpnImage* image, int chip) {
     for (int n = 1; n <= OPN_MAX_INSTRUMENTS; ++n)
         if (check_instrument(image, n, size)) return -1;
     if (check_patterns(image, size)) return -1;
-    uint64_t h = 0xCBF29CE484222325ull;
-    for (uint32_t i = 0; i < info->adpcm_size; ++i) h = (h ^ b[OPN_OFF_ADPCM + i]) * 0x100000001B3ull;
-    info->adpcm_hash = h;
     info->problem = NULL;
     info->problem_offset = -1;
     info->loaded = OPN_LOADED;
@@ -378,11 +375,12 @@ int opn_load_image(OpnImage* image, int chip) {
 }
 
 void opn_copy_image(OpnImage* dest, const OpnImage* src) {
-    const int same_adpcm = dest->info.loaded == OPN_LOADED && dest->info.adpcm_size == src->info.adpcm_size &&
-                           dest->info.adpcm_hash == src->info.adpcm_hash;
     dest->info = src->info;
     memcpy(dest->bytes, src->bytes, OPN_OFF_DATA + (size_t)src->info.data_size);
-    if (!same_adpcm) memcpy(dest->bytes + OPN_OFF_ADPCM, src->bytes + OPN_OFF_ADPCM, src->info.adpcm_size);
+    /* The used ADPCM-B memory only when its bytes differ (an edit that keeps the samples writes none of them). */
+    uint8_t* d = dest->bytes + OPN_OFF_ADPCM;
+    const uint8_t* s = src->bytes + OPN_OFF_ADPCM;
+    if (memcmp(d, s, src->info.adpcm_size) != 0) memcpy(d, s, src->info.adpcm_size);
 }
 
 void opn_next_row(const uint8_t* bytes, OpnCursor* cursor, OpnRow* row) {

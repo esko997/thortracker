@@ -2525,10 +2525,10 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
   counters, rhythm and ADPCM-B positions, a running CSM timer all included). The cost is rendering the skipped stretch
   (not measured; WAV-export speed), bounded by `max_ticks`.
 - **Live edits** (`opnm_apply_image`, at a tick boundary, realtime-safe): the machine copies only what it reads
-  (`opn_copy_image`): the info, header and tables and the used data region (at most 64 KiB), plus the used ADPCM-B
-  memory only when its size or FNV-1a 64 digest (computed by the loader, off the audio thread) changed — an edit that
-  keeps the samples copies no sample bytes (a digest collision, about 2^-64 per edit, would keep stale samples). The
-  host's own hand-over of loaded images is unchanged (Android copies `image_storage` on its control thread); the player keeps (order,
+  (`opn_copy_image`): the info, header and tables and the used data region (at most 64 KiB), and the used ADPCM-B
+  memory only when its bytes differ from the machine's copy (compared exactly with `memcmp`, then copied): an edit
+  that keeps the samples reads them once and writes none. The host's own hand-over of loaded images is unchanged
+  (Android copies `image_storage` on its control thread); the player keeps (order,
   row, tick), clamps them to the new song and re-reads the current rows (the Mega Drive's relocation), and takes the
   header's LFO, timer A, rhythm level and FM 3 mode when they changed. A sample under way continues from its address
   in the new bytes; new start/end addresses apply at the next note. Switching FM 3's mode while FM 3 holds a note

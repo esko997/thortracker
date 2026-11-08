@@ -227,7 +227,6 @@ typedef struct OpnInfo {
     int samples;
     uint32_t adpcm_size;
     int data_size;                         /* bytes of the data region the patterns and envelopes use */
-    uint64_t adpcm_hash;                   /* FNV-1a 64 of the used ADPCM-B memory (opn_copy_image skips equal memory) */
     uint32_t tick_samples;                 /* native samples per tick: opn_tick_samples(timer_b) */
     uint16_t rows[OPN_MAX_ORDERS];         /* rows of each order, 1..256 */
     uint8_t start_speed[OPN_MAX_ORDERS];   /* ticks per row each order starts with in sequential straight play */
@@ -265,9 +264,9 @@ static inline size_t opn_image_size(int chip) { return chip == OPN_CHIP_YM2608 ?
  * and fills image->info. Returns 0 or -1 (info.problem says why). */
 int opn_load_image(OpnImage* image, int chip);
 /* Copies a loaded image into `dest` for playing (realtime-safe, no allocation): the info, the header and fixed tables
- * and the used data region (OPN_OFF_DATA + data_size bytes), and the used ADPCM-B memory unless `dest` is a loaded
- * image whose ADPCM-B memory has the same size and digest (a live edit that kept the samples copies at most 64 KiB).
- * `dest` bytes past those are left as they were: nothing reads them (the chip reads ADPCM-B up to adpcm_size only). */
+ * and the used data region (OPN_OFF_DATA + data_size bytes), and the used ADPCM-B memory only where `dest` holds other
+ * bytes (compared exactly with memcmp; a live edit that kept the samples writes none of them). `dest` bytes past those
+ * are left as they were: nothing reads them (the chip reads ADPCM-B up to adpcm_size only). */
 void opn_copy_image(OpnImage* dest, const OpnImage* src);
 
 /* Decodes the next row at the cursor (no bounds checks: loaded images only). */
