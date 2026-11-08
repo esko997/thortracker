@@ -4,6 +4,7 @@ import org.thortracker.audio.Transport
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Follow
+import org.thortracker.editor.MenuContext
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
@@ -60,6 +61,12 @@ interface MenuHost {
     fun builtInTunings(): List<Tuning>
     /** Lets the user choose a .scl file; [loaded] receives it parsed (errors go through [error]). */
     fun loadTuningFile(loaded: (Tuning) -> Unit)
+    /**
+     * Lets the user choose a file ending in one of [extensions] (lower case, with the dot); [loaded] receives its
+     * name without the extension, the extension and its bytes. Unreadable files, files over [maxBytes] and other
+     * extensions go through [error] instead.
+     */
+    fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (name: String, extension: String, bytes: ByteArray) -> Unit)
     /** Platform rows at the end of the main menu (e.g. Quit on the Deck). */
     fun extraMenuItems(): List<Pair<String, () -> Unit>> = emptyList()
 }
@@ -83,6 +90,18 @@ class AppMenus(
 
     fun choose(title: String, labels: List<String>, selected: (Int) -> Unit) =
         menu(title, labels.mapIndexed { index, label -> label to { selected(index) } })
+
+    /** The menus a view opens through [EditorSession.requestMenu]; hosts route `session.onMenuRequest` to [open]. */
+    private val context = object : MenuContext {
+        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = this@AppMenus.menu(title, entries, selected)
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) =
+            host.loadFile(title, extensions, maxBytes, picked)
+        override fun status(message: String) = host.status(message)
+        override fun error(message: String) = host.error(message)
+    }
+
+    /** Runs a view's menu request ([EditorSession.onMenuRequest]). */
+    fun open(build: (MenuContext) -> Unit) = build(context)
 
     fun chooseView(index: Int) {
         val kinds = ViewKind.entries.filter { it in session.song.system.views }

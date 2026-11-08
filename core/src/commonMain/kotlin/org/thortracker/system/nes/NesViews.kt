@@ -10,31 +10,48 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.input.Keymap
 import org.thortracker.model.Song
-import org.thortracker.model.Songs
 import org.thortracker.system.ChannelKind
 import org.thortracker.system.SystemView
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The NES instrument editor: the one shared bank, the selected sound's name, the channel Listen plays on, and its
- * four envelopes edited step by step with the controller. State: [ViewState.instrument], [ViewState.instField] (a
- * [Row] of [rows]), [ViewState.envelope] ([NesEnvelopeKind] ordinal), [ViewState.envStep] (0..size; size is the
- * append position) and [ViewState.listenChannel].
+ * The NES instrument editor: the one shared bank, the selected sound's name, the channel Listen plays on, its four
+ * envelopes edited step by step with the controller, and a fifth page, DPCM: the sound's note → sample mappings and
+ * the song's samples ([NesDpcmPage]). State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]),
+ * [ViewState.envelope] (the page: a [NesEnvelopeKind] ordinal or [DPCM_PAGE]), [ViewState.envStep] (0..size; size is
+ * the append position), [ViewState.listenChannel], and on the DPCM page [ViewState.dpcmKey] and
+ * [ViewState.dpcmSample].
  */
 object NesInstrumentView : SystemView() {
-    enum class Row { SLOT, NAME, LISTEN, ENVELOPE, LENGTH, LOOP, RELEASE, MODE, STEPS }
-
-    private val ROWS = NesEnvelopeKind.entries.associateWith { kind ->
-        Row.entries.filter { (it != Row.RELEASE || kind.canRelease) && (it != Row.MODE || kind == NesEnvelopeKind.PITCH) }
+    enum class Row {
+        SLOT, NAME, LISTEN, ENVELOPE, LENGTH, LOOP, RELEASE, MODE, STEPS,
+        // DPCM page: the mapping of one key, then the song's samples
+        KEY, SAMPLE, PITCH, SAMPLE_LOOP, LEVEL, SAMPLES, SAMPLE_NAME, SAMPLE_LEVEL, ADD,
     }
+
+    /** The page after the four envelopes: DPCM mappings and samples. */
+    val DPCM_PAGE = NesEnvelopeKind.entries.size
+    private val PAGES = DPCM_PAGE + 1
+
+    private val ENVELOPE_ROWS = listOf(Row.SLOT, Row.NAME, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.MODE, Row.STEPS)
+    private val ROWS = NesEnvelopeKind.entries.associateWith { kind ->
+        ENVELOPE_ROWS.filter { (it != Row.RELEASE || kind.canRelease) && (it != Row.MODE || kind == NesEnvelopeKind.PITCH) }
+    }
+
+    /** DPCM plays only on its own channel, so the page has no Listen row. */
+    val DPCM_ROWS = listOf(Row.SLOT, Row.NAME, Row.ENVELOPE, Row.KEY, Row.SAMPLE, Row.PITCH, Row.SAMPLE_LOOP, Row.LEVEL,
+        Row.SAMPLES, Row.SAMPLE_NAME, Row.SAMPLE_LEVEL, Row.ADD)
 
     /** Envelope rows jump by this much with the coarse ([Action.UP]/[Action.DOWN]) direction while editing. */
     private const val COARSE = 8
 
+    fun dpcmPage(state: ViewState): Boolean = state.envelope == DPCM_PAGE
+
+    /** The envelope shown; on the DPCM page the last one (callers check [dpcmPage] first). */
     fun kind(state: ViewState): NesEnvelopeKind = NesEnvelopeKind.entries[state.envelope.coerceIn(0, NesEnvelopeKind.entries.size - 1)]
 
-    fun rows(state: ViewState): List<Row> = ROWS.getValue(kind(state))
+    fun rows(state: ViewState): List<Row> = if (dpcmPage(state)) DPCM_ROWS else ROWS.getValue(kind(state))
 
     fun row(state: ViewState): Row = rows(state).let { it[state.instField.coerceIn(0, it.size - 1)] }
 
@@ -46,15 +63,16 @@ object NesInstrumentView : SystemView() {
     fun lastStep(e: NesEnvelope): Int = minOf(e.values.size, NesEnvelope.MAX_LENGTH - 1)
 
     /** Why [channel] ignores (or treats specially) envelope [kind], or null when it plays it as written. */
-    fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind): String? = when (kind) {
-        NesEnvelopeKind.VOLUME -> if (channel == ChannelKind.TRIANGLE) "Triangle has no volume: 0 silences it, any other value plays full" else null
-        NesEnvelopeKind.DUTY -> when (channel) {
+    fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind): String? = when {
+        channel == ChannelKind.SAMPLE -> "DPCM plays samples: envelopes do not apply"
+        kind == NesEnvelopeKind.VOLUME -> if (channel == ChannelKind.TRIANGLE) "Triangle has no volume: 0 silences it, any other value plays full" else null
+        kind == NesEnvelopeKind.DUTY -> when (channel) {
             ChannelKind.TRIANGLE -> "Triangle ignores duty"
             ChannelKind.NOISE -> "On Noise, duty is the mode: 0 long noise, 1 short (metallic)"
             else -> null
         }
-        NesEnvelopeKind.ARPEGGIO -> if (channel == ChannelKind.NOISE) "On Noise, arpeggio steps the noise rate" else null
-        NesEnvelopeKind.PITCH -> if (channel == ChannelKind.NOISE) "On Noise, pitch moves the noise rate" else null
+        kind == NesEnvelopeKind.ARPEGGIO -> if (channel == ChannelKind.NOISE) "On Noise, arpeggio steps the noise rate" else null
+        else -> if (channel == ChannelKind.NOISE) "On Noise, pitch moves the noise rate" else null
     }
 
     /** One line per envelope: what each channel does with it. */
@@ -78,11 +96,12 @@ object NesInstrumentView : SystemView() {
     override fun normalise(v: ViewController) {
         val st = v.state
         st.instrument = st.instrument.coerceIn(1, NesSystem.SLOTS)
-        st.envelope = st.envelope.coerceIn(0, NesEnvelopeKind.entries.size - 1)
+        st.envelope = st.envelope.coerceIn(0, PAGES - 1)
         st.instField = st.instField.coerceIn(0, rows(st).size - 1)
         st.listenChannel = st.listenChannel.coerceIn(0, v.session.song.system.channels.size - 1)
         val e = envelope(v.session.song, st)
         st.envStep = st.envStep.coerceIn(0, if (e == null) 0 else lastStep(e))
+        NesDpcmPage.normalise(v)
     }
 
     override fun subject(state: ViewState): Int = state.instrument
@@ -94,6 +113,13 @@ object NesInstrumentView : SystemView() {
     override fun follow(state: ViewState, selection: Selection, song: Song) {
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
+        // The DPCM channel's sounds are their sample mappings: show that page, on the selected note's key.
+        val onDpcm = selection.channel == NesRules.DPCM
+        if (onDpcm != dpcmPage(state)) state.envelope = if (onDpcm) DPCM_PAGE else 0
+        if (onDpcm && selection.order in song.orders.indices) {
+            val note = song.patterns[song.orders[selection.order]].tracks.getOrNull(selection.channel)?.getOrNull(selection.row)?.note ?: -1
+            if (note >= 0) state.dpcmKey = note
+        }
     }
 
     fun publish(v: ViewController) {
@@ -102,23 +128,27 @@ object NesInstrumentView : SystemView() {
         session.select(session.selection.copy(bank = 0, instrument = v.state.instrument, context = ViewKind.KEYBOARD))
     }
 
-    /** Shows envelope [index] (wrapping), keeping the cursor on the same kind of row where the new envelope has it. */
+    /** Shows page [index] (wrapping), keeping the cursor on the same kind of row where the new page has it. */
     fun showEnvelope(v: ViewController, index: Int) {
         val st = v.state
         val row = row(st)
-        st.envelope = index.mod(NesEnvelopeKind.entries.size)
+        val wasDpcm = dpcmPage(st)
+        st.envelope = index.mod(PAGES)
         val rows = rows(st)
-        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: rows.indexOf(Row.LOOP)
+        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: rows.indexOf(if (dpcmPage(st)) Row.KEY else Row.LOOP)
         envelope(v.session.song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
+        // Arriving on DPCM from an envelope page: start on the sound's first mapped key if the shown one has none.
+        if (dpcmPage(st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
     }
 
     /** Moves to another slot; Listen moves to the channel that slot plays on most, so a bass sounds on Triangle. */
-    private fun moveSlot(v: ViewController, delta: Int) {
+    internal fun moveSlot(v: ViewController, delta: Int) {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, NesSystem.SLOTS)
         if (slot == st.instrument) return
         st.instrument = slot
         mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
+        if (dpcmPage(st)) NesDpcmPage.showFirstMapping(v)
         publish(v)
     }
 
@@ -137,6 +167,7 @@ object NesInstrumentView : SystemView() {
         val st = v.state
         val rows = rows(st)
         val row = row(st)
+        if (dpcmPage(st) && !v.editHeld && dy == 0 && NesDpcmPage.direction(v, row, dx)) return
         val e = envelope(v.session.song, st)
         when {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
@@ -156,7 +187,7 @@ object NesInstrumentView : SystemView() {
         val kind = kind(st)
         val slot = st.instrument
         val name = kind.label.lowercase()
-        when (row(st)) {
+        when (val row = row(st)) {
             Row.SLOT -> moveSlot(v, dx - COARSE * dy)
             Row.NAME -> session.editNesInstrument(slot, "Rename sound") {
                 it.copy(name = NameEdit.edit(it.name, st.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
@@ -191,6 +222,7 @@ object NesInstrumentView : SystemView() {
                     envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
                 }
             }
+            else -> NesDpcmPage.adjust(v, row, dx, dy)
         }
     }
 
@@ -199,7 +231,7 @@ object NesInstrumentView : SystemView() {
         val st = v.state
         val session = v.session
         val kind = kind(st)
-        when (row(st)) {
+        when (val row = row(st)) {
             Row.SLOT -> { publish(v); session.note("Sound ${EditorSession.hex2(st.instrument)} selected for entry") }
             Row.MODE -> session.editNesInstrument(st.instrument, "Set pitch mode") { it.copy(pitchRelative = !it.pitchRelative) }
             Row.STEPS -> {
@@ -211,7 +243,8 @@ object NesInstrumentView : SystemView() {
                     envelope(session.song, st)?.let { st.envStep = lastStep(it) }
                 }
             }
-            else -> Unit
+            Row.NAME, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE -> Unit
+            else -> NesDpcmPage.editTap(v, row)
         }
     }
 
@@ -222,7 +255,7 @@ object NesInstrumentView : SystemView() {
         val slot = st.instrument
         val name = kind.label.lowercase()
         val blank = kind.of(defaultNesInstrument(slot))
-        when (row(st)) {
+        when (val row = row(st)) {
             Row.SLOT -> session.setNesInstrument(slot, defaultNesInstrument(slot), "Reset sound")
             Row.NAME -> session.editNesInstrument(slot, "Rename sound") { it.copy(name = ViewController.deleteChar(it.name, st.textPos)) }
             Row.LISTEN, Row.ENVELOPE -> Unit
@@ -234,22 +267,26 @@ object NesInstrumentView : SystemView() {
                 session.editNesEnvelope(slot, kind, "Delete $name step") { NesEnvelopes.removed(kind, it, st.envStep) }
                 envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
             }
+            else -> NesDpcmPage.clear(v, row)
         }
     }
 
     override fun audition(v: ViewController) {
-        v.startAudition(v.state.listenChannel, v.defaultNote(), v.state.instrument)
+        // DPCM plays the shown key's mapping, whichever page is up.
+        if (dpcmPage(v.state) || v.state.listenChannel == NesRules.DPCM) NesDpcmPage.audition(v)
+        else v.startAudition(v.state.listenChannel, v.defaultNote(), v.state.instrument)
     }
 
     /** Rows about the whole sound copy, cut and paste the sound; envelope rows the shown envelope. */
-    private fun envelopeRow(row: Row) = row != Row.SLOT && row != Row.NAME && row != Row.LISTEN
+    private fun envelopeRow(state: ViewState, row: Row) =
+        !dpcmPage(state) && row != Row.SLOT && row != Row.NAME && row != Row.LISTEN
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
         val session = v.session
         val kind = kind(st)
         val slot = st.instrument
-        val onEnvelope = envelopeRow(row(st))
+        val onEnvelope = envelopeRow(st, row(st))
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> showEnvelope(v, st.envelope + if (a == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> if (onEnvelope) session.copyNesEnvelope(slot, kind) else session.copyNesInstrument(slot)
@@ -282,7 +319,7 @@ object NesInstrumentView : SystemView() {
             Row.SLOT -> { h += Hint(v.lr(), "Sound slot"); h += Hint(v.editUd(), "$COARSE slots"); h += Hint(v.k(Action.CLEAR), "Reset sound") }
             Row.NAME -> { h += Hint(v.lr(), "Letter position"); h += Hint(v.editLr(), "Change letter"); h += Hint(v.k(Action.CLEAR), "Delete letter") }
             Row.LISTEN -> h += Hint(v.lr(), "Channel Listen plays on")
-            Row.ENVELOPE -> h += Hint(v.lr(), "Envelope")
+            Row.ENVELOPE -> h += Hint(v.lr(), "Page")
             Row.LENGTH -> { h += Hint(v.editLr(), "Steps ±1 (${v.ud()} ±$COARSE)"); h += Hint(v.k(Action.CLEAR), "Empty $name envelope") }
             Row.LOOP -> { h += Hint(v.editLr(), "Loop start"); h += Hint(v.k(Action.CLEAR), "No loop") }
             Row.RELEASE -> { h += Hint(v.editLr(), "Release step"); h += Hint(v.k(Action.CLEAR), "No release") }
@@ -293,12 +330,18 @@ object NesInstrumentView : SystemView() {
                 h += Hint(v.editLr(), "Draw value along")
                 h += Hint(v.k(Action.CLEAR), "Delete step")
             }
+            else -> NesDpcmPage.hints(v, row, h)
         }
         if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE) h += Hint(v.lr(), "Sound slot")
-        h += Hint(v.channels(), "Envelope")
+        h += Hint(v.channels(), "Page")
+        if (dpcmPage(st)) {
+            h += Hint(v.k(Action.AUDITION), "Listen to ${NesSystem.noteName(st.dpcmKey)}")
+            h += Hint(v.copyPaste(), "Copy/paste sound")
+            return
+        }
         h += Hint(v.k(Action.AUDITION), "Listen on ${v.session.song.system.channels.getOrNull(st.listenChannel)?.name ?: ""}")
         h += Hint(v.octaves(), "Listen at ${NesSystem.noteName(v.defaultNote())}")
-        h += Hint(v.copyPaste(), if (envelopeRow(row)) "Copy/paste envelope" else "Copy/paste sound")
+        h += Hint(v.copyPaste(), if (envelopeRow(st, row)) "Copy/paste envelope" else "Copy/paste sound")
     }
 
     /** Help rows for this view (heading, then key → meaning), named with the current [keys]. */
@@ -310,9 +353,9 @@ object NesInstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         return listOf(
             "Instruments" to listOf(
-                ud to "Sound slot, name, Listen channel, envelope, length, loop, release (volume), mode (pitch), then the steps",
+                ud to "Sound slot, name, Listen channel, page, length, loop, release (volume), mode (pitch), then the steps",
                 lr to "On settings: the sound slot; on the steps: move along them",
-                channels to "Volume, arpeggio, pitch or duty envelope",
+                channels to "Pages: volume, arpeggio, pitch or duty envelope, then DPCM samples",
                 "Listen on" to "The channel ${keys.label(Action.AUDITION)} plays the sound on ($lr there). Choosing a slot moves it to the channel that sound plays on most; " +
                     "envelope tabs that channel ignores are greyed",
                 keys.held(Action.EDIT, ud) to "On a step: raise / lower its value; past the last step it adds one",
@@ -326,6 +369,7 @@ object NesInstrumentView : SystemView() {
                 "Release" to "Volume only, and only with a loop: the loop runs before the release point until OFF, then the steps from it play out. " +
                     "Without one, OFF stops the note. Setting a release on an envelope without a loop loops it from step 0",
             ),
+            "DPCM samples" to NesDpcmPage.helpRows(keys),
         )
     }
 

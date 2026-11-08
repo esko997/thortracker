@@ -55,10 +55,11 @@ class WorkspaceCodecTest {
     }
 
     @Test fun nesInstrumentEditorCursorPersists() {
-        val state = org.thortracker.editor.ViewState(kind = ViewKind.INSTRUMENT, envelope = 2, envStep = 17, listenChannel = 3)
+        val state = org.thortracker.editor.ViewState(kind = ViewKind.INSTRUMENT, envelope = 4, envStep = 17, listenChannel = 3, dpcmKey = 45, dpcmSample = 2)
         val back = WorkspaceCodec.decode(WorkspaceCodec.encode(listOf(state, org.thortracker.editor.ViewState())))[0]
-        assertEquals(listOf(2, 17, 3), listOf(back.envelope, back.envStep, back.listenChannel))
+        assertEquals(listOf(4, 17, 3, 45, 2), listOf(back.envelope, back.envStep, back.listenChannel, back.dpcmKey, back.dpcmSample))
         // Workspaces from before these fields read the defaults.
-        assertEquals(listOf(0, 0, 0), WorkspaceCodec.decode(v086)[0].let { listOf(it.envelope, it.envStep, it.listenChannel) })
+        assertEquals(listOf(0, 0, 0, org.thortracker.editor.ViewState.DEFAULT_DPCM_KEY, 0),
+            WorkspaceCodec.decode(v086)[0].let { listOf(it.envelope, it.envStep, it.listenChannel, it.dpcmKey, it.dpcmSample) })
     }
 }

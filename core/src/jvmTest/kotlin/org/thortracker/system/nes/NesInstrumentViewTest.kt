@@ -95,11 +95,13 @@ class NesInstrumentViewTest {
         v.goTo(Row.STEPS)
         v.hold(Action.EDIT, *Array(10) { Action.UP })
         assertEquals(listOf(3), session.song.nes.instruments[1].duty.values)
+        v.tap(Action.NEXT_CHANNEL) // the DPCM page
+        assertTrue(NesInstrumentView.dpcmPage(v.state))
         v.tap(Action.NEXT_CHANNEL) // to volume (wraps)
         assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
-        v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL) // pitch
+        v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL) // DPCM, duty, pitch
         assertEquals(NesEnvelopeKind.PITCH, NesInstrumentView.kind(v.state))
-        assertEquals(Row.STEPS, NesInstrumentView.row(v.state))
+        v.goTo(Row.STEPS)
         v.hold(Action.EDIT, *Array(80) { Action.DOWN })
         assertEquals(listOf(-64), session.song.nes.instruments[1].pitch.values)
     }
@@ -206,5 +208,119 @@ class NesInstrumentViewTest {
         assertEquals(40, pattern.pen(0))
         gb.replaceSong(GbSystem.blank())
         assertEquals("a GB bank has 15 slots", 15, pattern.pen(0))
+    }
+
+    private fun sample(name: String, size: Int = 17) = DpcmSample(name, List(size) { 0x55 })
+
+    private fun dpcmView() = view { instrument = 1; envelope = NesInstrumentView.DPCM_PAGE }
+
+    @Test
+    fun theDpcmPageMapsKeysWithTheController() {
+        session.addDpcmSamples(listOf(sample("Kick"), sample("Snare")), "Add")
+        val v = dpcmView()
+        val key = v.state.dpcmKey
+        v.goTo(Row.SAMPLE)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(DpcmMapping(0), sound.dpcm[key])
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(1, sound.dpcm[key]?.sample)
+        v.goTo(Row.PITCH)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(14, sound.dpcm[key]?.pitch)
+        v.goTo(Row.SAMPLE_LOOP)
+        v.tap(Action.EDIT)
+        assertEquals(true, sound.dpcm[key]?.loop)
+        v.goTo(Row.LEVEL)
+        v.hold(Action.EDIT, Action.RIGHT, Action.UP)
+        assertEquals(8, sound.dpcm[key]?.dmcInitial)
+        v.tap(Action.CLEAR)
+        assertEquals(-1, sound.dpcm[key]?.dmcInitial)
+        // Listen plays the shown key on the DPCM channel, whichever channel Listen was on.
+        v.tap(Action.AUDITION)
+        assertEquals(Triple(NesRules.DPCM, key, 1), auditions.last())
+        // The sample list maps the selected sample to another key.
+        v.goTo(Row.KEY)
+        v.tap(Action.RIGHT)
+        v.goTo(Row.SAMPLES)
+        v.tap(Action.LEFT)
+        assertEquals(0, v.state.dpcmSample)
+        v.tap(Action.EDIT)
+        assertEquals(0, sound.dpcm[key + 1]?.sample)
+        // Edit+← on the key jumps to the previous mapped key.
+        v.goTo(Row.KEY)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(key, v.state.dpcmKey)
+        assertEquals(1, v.state.dpcmSample)
+        // Deleting a sample removes the keys that played it and renumbers the others.
+        v.goTo(Row.SAMPLES)
+        v.tap(Action.LEFT)
+        v.tap(Action.CLEAR)
+        assertEquals(listOf("Snare"), session.song.nes.samples.map { it.name })
+        assertEquals(mapOf(key to 0), sound.dpcm.mapValues { it.value.sample })
+        session.undo()
+        assertEquals(2, session.song.nes.samples.size)
+    }
+
+    @Test
+    fun samplesAreRenamedAndTheirLevelSet() {
+        session.addDpcmSamples(listOf(sample("Hat")), "Add")
+        val v = dpcmView()
+        v.goTo(Row.SAMPLE_NAME)
+        v.tap(Action.RIGHT); v.tap(Action.RIGHT); v.tap(Action.RIGHT)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals("HatA", session.song.nes.samples[0].name)
+        v.goTo(Row.SAMPLE_LEVEL)
+        v.hold(Action.EDIT, Action.DOWN)
+        assertEquals(DpcmSample.DEFAULT_DMC_INITIAL - 8, session.song.nes.samples[0].dmcInitial)
+    }
+
+    @Test
+    fun addingSamplesMapsThemOnFreeKeysAndReusesKnownBytes() {
+        session.addAndMapDpcmSamples(1, listOf(sample("Kick")), 36, 15, "Add")
+        val keys = session.addAndMapDpcmSamples(1, listOf(sample("Kick again"), sample("Snare", 33)), 36, 12, "Add")
+        assertEquals(listOf(37, 38), keys)
+        assertEquals(listOf("Kick", "Snare"), session.song.nes.samples.map { it.name })
+        assertEquals(DpcmMapping(0, pitch = 12), sound.dpcm[37])
+        assertEquals("Samples", sound.name)
+    }
+
+    @Test
+    fun theAddRowOpensTheStarterKitMenu() {
+        val menus = ArrayList<List<Pair<String, () -> Unit>>>()
+        session.onMenuRequest = { build ->
+            build(object : org.thortracker.editor.MenuContext {
+                override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { menus += entries }
+                override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
+                override fun status(message: String) = Unit
+                override fun error(message: String) = throw AssertionError(message)
+            })
+        }
+        val v = dpcmView()
+        v.goTo(Row.ADD)
+        v.tap(Action.EDIT)
+        assertEquals(2, menus.single().size)
+        menus.single()[0].second()
+        val kit = DpcmStarterKit.samples()
+        assertEquals(kit.map { it.name }, session.song.nes.samples.map { it.name })
+        // Laid out on General MIDI drum keys from C-3 (the shown key's octave); both toms share one sample.
+        assertEquals(DpcmStarterKit.NOTES.mapValues { it.value.first }, sound.dpcm.mapValues { it.value.sample })
+        assertEquals(15, sound.dpcm[36]?.pitch)
+    }
+
+    @Test
+    fun patternNotesOnDpcmStepThroughMappedKeys() {
+        session.addAndMapDpcmSamples(1, listOf(sample("Kick"), sample("Snare", 33)), 40, 15, "Add")
+        session.setDpcmMapping(1, 45, DpcmMapping(1), "Map")
+        val p = ViewController(session, ViewState(kind = ViewKind.PATTERN, channel = NesRules.DPCM))
+        p.tap(Action.EDIT)
+        assertEquals(40, session.song.patterns[0].tracks[NesRules.DPCM][0].note)
+        assertEquals("E-3: Kick · rate F", session.message)
+        p.tap(Action.UP)
+        p.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(45, session.song.patterns[0].tracks[NesRules.DPCM][0].note)
+        p.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(45, session.song.patterns[0].tracks[NesRules.DPCM][0].note)
+        assertEquals(listOf(40, 41, 45), NesSystem.mappedNotes(session.song, NesRules.DPCM, 1))
+        assertNull(NesSystem.mappedNotes(session.song, 0, 1))
     }
 }
