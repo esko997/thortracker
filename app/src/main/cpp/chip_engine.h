@@ -15,6 +15,9 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "atari2600-tia-ntsc", "atari2600-tia-pal"  Thor Tracker's own Atari 2600 player on the TIA's two audio channels
+ *                     (Stella 7.0's AudioChannel), NTSC or PAL timing (tia/tia_chip.c over tia/tia_machine.c,
+ *                     tia_player.c, tia_image.c, tia_stella.cpp)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

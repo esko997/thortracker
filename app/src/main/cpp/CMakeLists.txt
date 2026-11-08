@@ -20,6 +20,8 @@ set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
+set(TIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tia)
+set(STELLA_TIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stella-tia)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -87,12 +89,21 @@ add_library(chip_engines STATIC
     ${YM_DIR}/ym_xgm.c
     ${YM_DIR}/ym_vgm.c
     ${YM_DIR}/ym_psg.c
+    ${TIA_DIR}/tia_chip.c
+    ${TIA_DIR}/tia_machine.c
+    ${TIA_DIR}/tia_player.c
+    ${TIA_DIR}/tia_image.c
+    ${TIA_DIR}/tia_stella.cpp
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${TIA_DIR} ${BLIP_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${STELLA_TIA_DIR} ${STELLA_TIA_DIR}/shim)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)
+# tia/tia_stella.cpp (C++) compiles Stella's AudioChannel.cxx, unmodified, against its shim: vendored code, warnings
+# off; its save()/load() hold try/catch, so exceptions stay enabled.
+set_source_files_properties(${TIA_DIR}/tia_stella.cpp PROPERTIES COMPILE_OPTIONS "-w;-fexceptions")
 set_target_properties(chip_engines PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(chip_engines PUBLIC resid ymfm)
 

@@ -41,6 +41,17 @@ Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
 commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
 xgmtool's conversion (MIT).
 
+Atari 2600 (TIA) playback uses Thor Tracker's own player (GPL-3.0-or-later) on
+the TIA audio channel of Stella 7.0 by Christian Speckner and the Stella Team
+(GNU General Public License 2 or later, notice below; src/emucore/tia/
+AudioChannel.cxx and AudioChannel.hxx, unmodified, in
+app/src/main/cpp/third_party/stella-tia with Stella's License.txt and
+Copyright.txt, github.com/stella-emu/stella tag 7.0, commit
+d55b1aec0d067a4c901a6dcdf81cb8f579685659), resampled with the same blip_buf.
+Thor Tracker adds minimal compatibility headers (shim/), a C interface
+(tia/tia_stella.cpp) and a mixer reimplementing Stella's mono mixing formula
+and audio event timing (tia/tia_machine.c).
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -143,6 +154,17 @@ This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
 Foundation; either version 2 of the License, or (at your option) any later
 version.
+
+Stella (TIA audio channel: src/emucore/tia/AudioChannel.cxx, .hxx)
+https://github.com/stella-emu/stella
+
+Copyright (c) 1995-2024 by Bradford W. Mott, Stephen Anthony and the Stella
+Team.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or any later version
+(app/src/main/cpp/third_party/stella-tia/License.txt and Copyright.txt).
 
 chips (m6502.h)
 https://github.com/floooh/chips

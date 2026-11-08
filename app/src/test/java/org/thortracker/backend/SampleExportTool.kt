@@ -7,6 +7,9 @@ import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.tia.TiaDemoSong
+import org.thortracker.system.tia.TiaNtscSystem
+import org.thortracker.system.tia.TiaPalSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
 
@@ -57,5 +60,18 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The Atari 2600 demos: NTSC and PAL projects and engine images (WAV only: the TIA has no VGM), and the
+        // shortest valid song (one row, A-4 held on TIA 1 with a div 6 square: AUDF 11) whose image the native WAV
+        // export test renders.
+        val tia = TiaNtscSystem.demo()
+        File(directory, "cartridge-dawn.thor").writeText(ProjectCodec.encode(tia), Charsets.UTF_8)
+        File(directory, "tia-demo.tiaimg").writeBytes(ByteArray(TiaNtscSystem.engine.imageSize).also { TiaNtscSystem.engine.lower(tia, it) })
+        val tiaPal = TiaPalSystem.demo()
+        File(directory, "cartridge-dawn-pal.thor").writeText(ProjectCodec.encode(tiaPal), Charsets.UTF_8)
+        File(directory, "tia-pal-demo.tiaimg").writeBytes(ByteArray(TiaPalSystem.engine.imageSize).also { TiaPalSystem.engine.lower(tiaPal, it) })
+        val tiaShortest = TiaDemoSong.shortest()
+        check(TiaNtscSystem.errors(tiaShortest).isEmpty()) { "the shortest Atari 2600 song is invalid: ${TiaNtscSystem.errors(tiaShortest)}" }
+        File(directory, "tia-shortest.tiaimg").writeBytes(ByteArray(TiaNtscSystem.engine.imageSize).also { TiaNtscSystem.engine.lower(tiaShortest, it) })
+        println("Exported ${tia.title} (NTSC, PAL) and the shortest Atari 2600 song to ${directory.absolutePath}")
     }
 }

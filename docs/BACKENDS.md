@@ -864,6 +864,70 @@ Decisions:
   columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
   and song settings).
 
+## Atari 2600 (TIA): decisions (branch `tia-system`, unverified source slice)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "Atari 2600". Decided on the user's behalf (roadmap item 7, "TIA"; every
+onboard sound feature, nothing invented):
+
+- **Two systems, one family**: `"atari2600-tia-ntsc"` "Atari 2600 NTSC (TIA)" and `"atari2600-tia-pal"` "Atari 2600 PAL
+  (TIA)", family "Atari 2600" (New and Load demo list it with both variants, as the NES). The TV standard is not a
+  song setting because it is the chip's clock: NTSC 3579545.45 Hz, PAL 3546894 Hz, so every waveform's 32 pitches and
+  the frame rate (the tick: 262 or 312 lines of 228 colour clocks, 59.92 / 49.86 Hz) differ. A song stores its region
+  (`TiaSound.region`); a project's backend must match it. SECAM consoles (PAL timing, different video; a reported AUDC
+  0/B difference no source pins down) are not modelled.
+- **Own player**, as the OPL3 and PC Engine: 2600 games ship their own 6507 drivers (TIATracker's is console assembly),
+  so `tia/tia_player.c` implements the specification and the independent Python reference (`tools/audio/tia/`) checks
+  it write for write. **Core**: Stella 7.0's `AudioChannel` (Christian Speckner's gate-level model of the counters,
+  GPL-2.0-or-later), vendored unmodified; Stella's event positions (line clocks 9/81 and 37/149) and its mono mixing
+  formula (two channels at full volume = 1.5 × one, the console's shared output node) reimplemented and credited.
+  Power-on counter state 0 (Stella's; real consoles start arbitrary). Nothing restarts a waveform: new notes continue the
+  running counters, as on hardware.
+- **Honest pitch**: notes are true pitch (0 = C-0, A-4 = 440 Hz) and a **tonal** sound plays the AUDF whose frequency
+  is nearest in log frequency for the waveform playing that frame (`TIP_AUDF_EDGE`, generated into
+  `TiaPlayerImage.AUDF_EDGE_NTSC/PAL`; `TiaRules.audf` mirrors the native lookup). The note sounds at the divider's
+  real frequency (A-4 on div 6: AUDF 11, 436.10 Hz NTSC / 432.13 Hz PAL); out-of-span notes play the nearest end
+  (AUDF 0 or 31) and are a validator **warning**, not an error. Slides, vibrato, portamento, `Pxx` and pitch envelopes
+  work in 1/64 semitones and are heard where they cross a divider edge: they step, as on the chip. A **raw** sound (for
+  noise and drums, where the waveform's fundamental is a repetition rate) takes AUDF = 31 − ((note + arpeggio) mod 32)
+  and ignores fine pitch, slides, portamento, vibrato and the pitch envelope. Constant waveforms (AUDC 0, B) write no
+  AUDF in tonal mode.
+- **Two channels, no chords, no shared controls**: `TIA 1`, `TIA 2` (`ChannelKind.VOICE`, tonal), each owning its AUDC,
+  AUDF and AUDV; two effect columns. What the channels share (the audio clock, the output node) is documented, not a
+  control.
+- **No samples**: the TIA has no DAC or sample hardware; writing AUDV on a constant waveform (AUDC 0) many times a frame
+  is a CPU technique that would need a cycle-timed 6507 driver. It is offered only at the frame rate, through volume
+  envelopes on AUDC 0/B (the "DC click" preset).
+- **Exports**: WAV only (the generic `chip_wav.c` over the variant's ops). VGM has no TIA (its specification lists no
+  such chip, command or clock field), so nothing is invented; no register dump, no cartridge (that needs a 6507 driver
+  and a display kernel).
+- **Seek**: fully clocked replay up to `TIM_SEEK_TICKS` 7200 frames (2 min NTSC, 2 min 24 s PAL), then the order
+  fallback, as the other systems.
+- **Model** (`system/tia/TiaSound.kt`, backend version 1): `TiaSound(region: TiaRegion ("ntsc"/"pal"), instruments: 64
+  × TiaInstrument?)`; `TiaInstrument(name, waveform 0..15 (AUDC), raw, relativePitch, volume 0..15, arpeggio −64..63,
+  pitch −128..127, waveforms 0..15)` — four `TiaEnvelope(values, loop, release)` of up to 255 steps. New songs get 16
+  presets in slots 01-16 (`TiaPresets`: squares at div 6 and div 2, a div 6 pluck, div 31 bass, div 93 low, 4-bit
+  buzz, poly leads 7 and F, raw rumble 3 and engine 2, a noise-then-div-93 kick (waveform envelope), snare and hats on
+  raw AUDC 8, an AUDC 0 click, a raw div 2 zap), each named for its waveform.
+- **Lowering** (`backend/TiaLowering.kt`): the layout of `docs/AUDIO_ENGINE.md` — header with the region byte,
+  patterns (byte-identical encodings once, first use), then envelopes in slot order (byte-identical value lists once),
+  every filled slot its own record (never aliased, so a live edit of one of two identical sounds changes only it);
+  `TiaGoldenTest` compares it with the Python builder. `TiaValidator` mirrors every loader check with a user-facing
+  message (speed, orders and rows, notes C-0..B-9 or OFF, defined slots, effect codes, `Bxx`/`Cxx`/`F00`/`Wxx`, sound
+  records and envelope shapes, the 62144-byte data region) and warns about tonal notes outside the span of the waveform
+  they key on with (the sound carried per channel along straight play, `Wxx` and the waveform envelope's first step
+  included), `Wxx` on a sound with a waveform envelope (ignored), unreachable delays and first notes without a sound.
+- **Editor** (`TiaInstrumentView`/`Painter` on the shared FM painter base and the NES envelope plot; `TiaEdits`): rows
+  Slot, Name, Listen on, Waveform (with its span on the song's standard), Pitch mode (tonal/raw), Preset; pages Volume,
+  Arpeggio, Pitch (with relative/absolute), Waveform seq and **Pitch guide** (the waveform's 32 dividers: AUDF → Hz →
+  nearest note ± cents; Edit plays the divider under the cursor). No Wave view and no song settings. The Pattern
+  inspector and lane tags (`TiaSharedState`) show the **key-on registers** straight play reaches per channel at the
+  cursor (note, AUDC incl. `Wxx` and the waveform envelope's first step, AUDF, Hz, cents), computed from row data and
+  the carried sound only (envelopes, slides and volume are not run).
+- Demo: "Cartridge Dawn" (original, D Dorian, Dm-C-G-Dm with an F-C bridge): a div 6 lead on the notes div 6 plays in
+  tune, a div 2 sparkle arpeggio, div 31 bass sharing TIA 2 with raw noise drums and a waveform-envelope kick, a slide
+  and a portamento that step through the dividers, and `W01` turning held notes into the 4-bit buzz at the same pitch.
+  NTSC at 7 frames per row, PAL the same composition at 6.
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -927,3 +991,18 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- Atari 2600 regions as two systems (decided on the user's behalf): NTSC and PAL are variants of one family because
+  the clock sets every pitch and the tick; converting a song between them would keep its notes and frames per row
+  (re-quantizing every divider). SECAM is not a variant. Review.
+- Atari 2600 tonal quantization picks the nearest divider in log frequency for the waveform playing that frame, and
+  out-of-span notes play the nearest end with a warning. Alternatives (refusing out-of-span notes, or a per-sound
+  "tuned" note table) were not taken. Review once listened to.
+- Atari 2600 raw pitch mode maps C-0 to AUDF 31 and each semitone to one divider step, repeating every 32 semitones
+  (the PC Engine noise convention); an alternative is a raw sound whose note column names the AUDF directly
+  (00-1F). Review.
+- Atari 2600 power-on state: all counters 0 after start and audition (Stella's); real consoles start arbitrary, so the
+  first notes of a song may differ slightly on hardware.
+- Atari 2600 output level: Stella's mixing formula (two full channels = 1.5 × one) with blip_buf's high-pass; no
+  hardware comparison yet.
+- Atari 2600 sample playback: not offered (no DAC); fast AUDV writes from the CPU would need a cycle-timed driver.
+  A per-frame volume envelope on AUDC 0 is the only "DC" sound. Review if the user wants a software-sample mode.

@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the Atari 2600 engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -23,6 +23,11 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The Atari 2600 systems (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`, unverified source slice) play the TIA's two
+audio channels with Thor Tracker's own player (specified here, mirrored by an independent Python reference) on Stella
+7.0's TIA audio channel, every AUDC waveform with honest AUDF pitch quantization; they export WAV only (VGM has no
+TIA). See [Atari 2600](#atari-2600-thor-trackers-own-player-on-the-tia-atari2600-tia-ntsc-atari2600-tia-pal).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -123,6 +128,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| Stella 7.0 TIA audio channel | `app/src/main/cpp/third_party/stella-tia/` (`AudioChannel.cxx`, `AudioChannel.hxx`, `License.txt`, `Copyright.txt`), unmodified, compiled through `tia/tia_stella.cpp` against our shim (`shim/bspf.hxx`, `shim/Serializable.hxx`) | github.com/stella-emu/stella tag `7.0`, commit `d55b1aec0d067a4c901a6dcdf81cb8f579685659`; `AudioChannel.cxx` sha256 `348a1269…be847d74`, `AudioChannel.hxx` `1f9e25bc…92c718c0`, `License.txt` `58530d09…a5e75455`, `Copyright.txt` `e2a32d2f…0174b0e1` (full digests in the Atari 2600 section) | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -2322,3 +2328,360 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## Atari 2600: Thor Tracker's own player on the TIA (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`)
+
+**Status: unverified source slice** (branch `tia-system`): written without building, generating or running anything.
+The Atari 2600's sound is the TIA's two audio channels (Television Interface Adaptor, CO10444): per channel a 4-bit
+control register (AUDC: which of the counters' feedback and division modes), a 5-bit frequency divider (AUDF) and a
+4-bit volume (AUDV), clocked twice per scanline from the video timing, the two outputs tied together into one mono
+signal. There is no standard sound driver (games ship their own 6507 code; TIATracker's player is assembly for the
+console), so the system follows the OPL3 and PC Engine: **our own player** (`tia/tia_player.c`, pure integer C
+without a chip) whose behaviour is the specification in this section; `tools/audio/tia/tia_ref.py` implements the
+same specification separately in Python and the host test requires identical register writes per tick. Songs export
+as **WAV only**: VGM has no TIA chip (its specification lists none, so no TIA command or clock field exists) and no
+other register-log format is supported, so nothing is invented; there is no cartridge/ROM export (that would need a
+real 6507 driver and a display kernel). This section is the contract of the Kotlin systems and lowering (`core`
+`system/tia`, `backend/TiaLowering.kt`); the numbers they share with the engine are generated into
+`backend/TiaPlayerImage.kt` (below, "Preparing").
+
+### Variants, clocks and timing
+
+Two systems, one family **"Atari 2600"** (New and Load demo list it with both variants): **NTSC** (`"atari2600-tia-ntsc"`,
+the engine of the same id) and **PAL** (`"atari2600-tia-pal"`). They differ only in the TIA's clock and the frame:
+
+| | Colour clock *C* | Lines per frame | Frame (tick) | Audio clock *A* = *C* / 114 |
+|---|---|---|---|---|
+| NTSC | 39375000 / 11 = 3579545.45 Hz | 262 | 262 × 228 = 59736 clocks = 59.9227 Hz | 31399.52 Hz |
+| PAL | 3546894 Hz | 312 | 312 × 228 = 71136 clocks = 49.8607 Hz | 31113.11 Hz |
+
+Sources: the TIA is clocked by the colour clock (3.579545 MHz NTSC, 3.546894 MHz PAL), 228 colour clocks per scanline,
+262 / 312 scanlines in a standard frame (Atari, *Stella Programmer's Guide*, Steve Wright 1979; Martin Korth's
+*Atari 2600 Specifications*, "Clocks", "Video Dimensions and Timings": its "30KHz" audio rate is "DOTCLK/114",
+31399.5 / 31113.1 Hz). SECAM consoles (PAL timing, different video) are not a separate variant: their audio differs
+only in a reported AUDC 0/B "background sound" that no source pins down; not modelled.
+
+- **Tick** = one TV frame of the standard length: the player runs once per frame, as 2600 music drivers do in
+  vertical blank. Tick *k* (from the start/audition reset) spans colour clocks *k*·F .. (*k* + 1)·F, F = 59736 (NTSC) or
+  71136 (PAL). Every tick is a whole number of scanlines, so every scanline (and its audio events) has the same
+  position in every tick. Speed (`Fxx`) counts frames; `SoundSystem.ticksPerSecond` = *C* / F.
+- **Batch timing**: the player's batch is written to the chip at the tick's first colour clock (clock 0 of its line
+  0), in order, before any audio event of that clock.
+- **Audio events** (the TIA's two-phase audio clock): in every scanline at line clocks 9 and 81 both channels run
+  phase 0 (the divider), at clocks 37 and 149 phase 1 (the pulse and noise counters, the output) — the positions
+  Stella 7.0's `Audio::tick` uses (counter values 9, 81, 37, 149 of its 0..227 line counter, the event run after the
+  clock's output sample). A channel's output level is the channel's `actualVolume()` = (pulse counter bit 0) × AUDV:
+  it can change only at a write (clock 0 of a tick) and at a phase 1, where the new level holds from the next clock
+  (line clock 38 and 150).
+
+### Core: Stella 7.0's TIA audio channel
+
+- **Core**: Stella 7.0's `AudioChannel` (`src/emucore/tia/AudioChannel.cxx`, `.hxx`; Christian Speckner's gate-level
+  model of the TIA audio counters, GPL-2.0-or-later), vendored **unmodified** in
+  `app/src/main/cpp/third_party/stella-tia/` with Stella's `License.txt` and `Copyright.txt`, compiled once in
+  `tia/tia_stella.cpp` against a minimal shim (`third_party/stella-tia/shim/`: `bspf.hxx` with the integer types and a
+  no-op `cerr`, `Serializable.hxx` with the `Serializable` base and a fixed-buffer `Serializer` that the machine uses
+  to read a channel's ten state bytes for diagnostics). Pin: github.com/stella-emu/stella tag `7.0` (commit
+  `d55b1aec0d067a4c901a6dcdf81cb8f579685659`); `AudioChannel.cxx` sha256
+  `348a1269d50f22b634d6b12c65cdafbac1fc3e80d30fbece55f3dbdbbe847d74`, `AudioChannel.hxx`
+  `1f9e25bcd8d68698e82937d65297fb6159e0c0263d335f6b5d1bfccb92c718c0`, `License.txt`
+  `58530d09b6fcb91ae27071be0081af90e6c2d7fdf991d34a29e234a2a5e75455`, `Copyright.txt`
+  `e2a32d2f61341d40b79e6ec9381dbb4d31bcc48971d5009c39d5595c0174b0e1`. It models the hardware's 5-bit (noise) and
+  4-bit (pulse) counters, their feedback selection by AUDC, the AUDF divider (a counter compared with AUDF that also
+  wraps at 31, so a new AUDF below the running count takes effect after the wrap) and the hold logic, rather than
+  tabulated waveforms. Stella's mixing and its timeline (`Audio.cxx`/`.hxx`) are not vendored: the machine below
+  reimplements the event positions and Stella's mono mixing formula (credited in the source).
+- **Waveforms** (AUDC; the pattern periods Korth's specification lists, which follow from the counters' logic): the
+  channel's waveform repeats every P × (AUDF + 1) audio clocks, so its fundamental is **A / (P · (AUDF + 1))**:
+
+  | AUDC | Hardware (Wright 1979) | P | Class |
+  |---|---|---|---|
+  | 0, B | set to 1 (constant output: AUDV acts as a 4-bit DC level) | — | none |
+  | 4, 5 | div 2: pure tone | 2 | 0 |
+  | C, D | div 6: pure tone | 6 | 1 |
+  | 1 | 4-bit poly | 15 | 2 |
+  | 6, A | div 31: pure tone (18 high, 13 low) | 31 | 3 |
+  | 7, 9 | 5-bit poly → div 2 / 5-bit poly | 31 | 3 |
+  | E | div 93: pure tone | 93 | 4 |
+  | F | 5-bit poly div 6 | 93 | 4 |
+  | 2 | div 15 → 4-bit poly | 465 | 5 |
+  | 3 | 5-bit poly → 4-bit poly | 465 | 5 |
+  | 8 | 9-bit poly (white noise) | 511 | 6 |
+
+  `TIP_CLASS[16]` = −1, 2, 5, 5, 0, 0, 3, 3, 6, 3, 3, −1, 1, 1, 4, 4 and `TIP_PERIOD[7]` = 2, 6, 15, 31, 93, 465, 511.
+  Equal-period codes are kept distinct (7 and 9 sound the same; 6 and A; 4 and 5; C and D; 0 and B; their counter
+  states differ). `tools/audio/tia/tia_reference_check.py --periods` measures every period from an independent port
+  of the counter logic.
+- **Phase**: nothing in the TIA restarts a waveform: AUDC, AUDF and AUDV writes never reset the counters, so a new
+  note continues the running divider and polynomial phases (an honest property of the chip, not emulated away). After
+  a reset all counters are 0 (Stella's power-on state; real consoles power on with arbitrary counter states).
+- **Output**: the machine's mono level is L = `TIM_MIX[v0 + v1]` with v = the channel's `actualVolume()` (0 when
+  muted), `TIM_MIX[s]` = floor(32767 · 60 · s / (30 · (30 + s))) (exact rational floor) for s = 0..30: 0, 2114, 4095,
+  …, 21844 (s = 15), …, 32767 — Stella's `mixingTableEntry(s, 0x1e)` with R_MAX 30, R 1, whose double evaluation
+  order gives the same integers: the console's two audio pins drive one node, so two channels at full volume give 1.5× one
+  channel, not 2×. L changes are fed to blip_buf 1.1.0 as deltas at their colour clock (clock rate *C*, the host
+  rate out), read once per tick; its ~15 Hz high-pass removes the unipolar output's DC. Float = sample / 32768, the
+  same on both stereo sides.
+- **Mute** (`tim_mute`): the mix takes a muted channel's level as 0; the chip, its registers and the player are
+  untouched (AUDV gates only the output on the TIA, so the counters run on exactly as unmuted). A toggle between ticks
+  takes effect at the next tick's clock 0 (the level is recomputed after that tick's batch).
+- **Chip reset**: `start` and `audition` call both channels' `reset()`, clear blip_buf and the level (0), clear the
+  mutes, and restart the colour-clock count at 0; no allocation outside `tim_create`.
+
+### Channels
+
+2 tracker channels = the TIA's channels 0 and 1, `TIA 1`, `TIA 2` (`ChannelKind.VOICE`, tonal). **No chord effect, no
+voice allocation, no shared registers**: each channel owns its AUDC/AUDF/AUDV. What the two share is real and
+documented rather than presented as controls: the audio clock (both channels' events fall on the same scanline
+clocks) and the output node (the mixing formula above).
+
+### Pitch: honest AUDF quantization
+
+Units: **pitch** in 1/64 semitone, 0 = C-0 (16.35 Hz, A-4 = 57 · 64 = 440 Hz); notes are pitch = note · 64. Notes
+`TI_NOTE_MIN` 0 (C-0) .. `TI_NOTE_MAX` 119 (B-9), the span the waveforms reach (div 93's lowest is below C-0, div 2's
+highest at AUDF 0 is 15.7 kHz ≈ B-9). The player clamps pitches to `TIP_PITCH_MIN` 0 .. `TIP_PITCH_MAX` 7679.
+
+A tonal instrument's pitch selects the **AUDF whose actual frequency is nearest in log frequency** for the waveform
+playing this tick: for class *c* of region *r*, AUDF(p) = the smallest *k* (0..30) with p ≥ `TIP_AUDF_EDGE[r][c][k]`,
+else 31, where `TIP_AUDF_EDGE[r][c][k]` = ceil(768 · log2(A_r / (P_c · C0 · sqrt((k + 1)(k + 2))))) is the lowest
+pitch closer to divider k + 1 than to k + 2 (A_NTSC = 39375000 / 11 / 114, A_PAL = 3546894 / 114, C0 = 440 ·
+2^(−57/12), IEEE double; the closest midpoint is 0.000114 units from an integer, so no rounding is ambiguous). The table
+is written out in `tia_player.c`; `tia_ref.py` computes it with this formula and `prepare_tia.py` fails on any
+difference. The note keeps sounding at the divider's frequency: **A-4 on div 6 (AUDC C) = AUDF 11 = 436.10 Hz NTSC
+(−15.4 cents), 432.13 Hz PAL (−31.3 cents)**; the error per note depends on the waveform (div 2 reaches only B-4 and above, its
+top octaves step by whole tones and more; div 31 covers C-1 .. B-5 but its dividers are far apart above C-4). The
+lowest and highest pitches each class reaches (AUDF 31 and 0):
+
+| Class (P) | NTSC | PAL |
+|---|---|---|
+| div 2 | 490.6 Hz (≈ B-4 −11¢) .. 15699.8 Hz | 486.1 .. 15556.6 Hz |
+| div 6 | 163.5 (≈ E-3 −13¢) .. 5233.3 Hz | 162.0 .. 5185.5 Hz |
+| 4-bit poly (15) | 65.4 (C-2 +0¢) .. 2093.3 Hz (C-7) | 64.8 .. 2074.2 Hz |
+| div 31 | 31.65 (≈ C-1 −57¢) .. 1012.9 Hz | 31.36 .. 1003.6 Hz |
+| div 93 | 10.55 .. 337.6 Hz | 10.45 .. 334.6 Hz |
+| 465 | 2.11 .. 67.5 Hz | 2.09 .. 66.9 Hz |
+| 511 | 1.92 .. 61.4 Hz | 1.90 .. 60.9 Hz |
+
+Pitches outside a class's range play its nearest end (AUDF 0 or 31); the Kotlin validator warns about such notes and
+the editor shows each note's AUDF and error. Slides, vibrato, fine pitch (`Pxx`) and pitch envelopes move the pitch in
+1/64 semitones and are heard only when they cross an edge: the audible pitch steps exactly as the hardware's dividers
+do. Constant waveforms (AUDC 0, B) write no AUDF in tonal mode.
+
+**Raw instruments** (flag bit 0, for noise and percussion, where the class's fundamental is a repetition rate rather
+than a heard pitch): AUDF = 31 − ((note + semitones) mod 32) (non-negative modulus; semitones = the arpeggio effect
+and envelope): C-0 is AUDF 31 and each semitone up one divider step brighter, repeating every 32 semitones. Fine
+pitch, slides, portamento, vibrato and the pitch envelope do not apply.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = **65536** bytes, little-endian, every pattern and envelope reference a u16 offset into the data region
+(any layout that passes `ti_load_image` (`tia/tia_image.c`) relocates). Constants: `tia/tia_image.h` (`TI_*`); the
+reference builder is `tools/audio/tia/tia_song.py` (`build()`). The loader rejects anything off-contract with a reason
+and the byte (`TiInfo.problem`, `problem_offset`); the Kotlin validator mirrors its checks with user-facing messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTIA"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | region: 0 NTSC, 1 PAL (must be the loading engine's) |
+| 6 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 7 | 1 | instrument count I = highest slot present, 0..64 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 8 | 0 |
+| 20 | 4 | data size D: bytes of the data region used, ≤ 62144 |
+| 24 | 40 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 1024 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (2 *o* + *c*); entries ≥ count 0 |
+| 1344 | 2048 | instrument slot *n* (1..64) at 1344 + 32 (*n* − 1) |
+| 3392 | 62144 | data region `[0, D)`: patterns, then envelopes |
+
+**Instrument** (32 bytes; an all-zero record = no instrument; records above I must be zero):
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 = defined (1); bit 0 = raw pitch (AUDF from the note number); bit 2 = pitch envelope is relative; others 0 |
+| 1 | waveform: AUDC 0..15 |
+| 2..7 | 0 |
+| 8 + 6 *k* | envelope *k* (0 volume, 1 arpeggio, 2 pitch, 3 waveform): u16 offset into the data region, u8 length L (0 = none: offset 0, loop and release `$FF`), u8 loop (`$FF` none, else < L), u8 release (`$FF` none, else 1..L − 1, and > loop when both), u8 0 |
+
+Envelope values (L bytes at the offset, L ≤ 255): volume 0..15; arpeggio s8 −64..63 semitones; pitch s8 −128..127
+(1/64 semitone, absolute or relative per the flag); waveform 0..15 (AUDC per tick).
+
+**Patterns**: decoded from the offset for exactly rows(*o*) rows (a run longer than the order's remaining rows is cut
+there); every byte read must lie inside `[0, D)`. Row encoding, as the OPL3's and PC Engine's:
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x0B), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..2; bits 5-6 zero, m ≠ 0 |
+| note | 0..119 = absolute note C-0..B-9 (57 = A-4), `0xFE` = OFF |
+| instrument | slot 1..64, defined |
+| effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+Load-time checks: header (magic, layout, region = the engine's, speed ≥ 1, I ≤ 64, order count 1..256, loop < count,
+D ≤ capacity, rows 1..256 per used order and 0 above the count, pattern offsets < D and 0 above the count, reserved
+bytes 0); instruments (flags, waveform ≤ 15, reserved bytes 0, envelope shapes as above, each envelope inside `[0, D)`,
+values in range, records above I zero); patterns (masks, notes 0..119 or `0xFE`, slots defined, effect codes,
+parameters: `Bxx` < order count, `Cxx` ≤ 0F, `F00` rejected, `Wxx` ≤ 0F). Codes without an effect (`5`-`9`, `E`, `H`-`O`,
+`Q`, `R`, `T`, `U`, `V`, `X`-`Z`) are rejected ("unknown effect code"); the other effects take any parameter.
+`ti_load_image` derives (`TiInfo`) the order count, loop, speed, rows per order and the speed each order starts with
+in sequential straight play (header speed, then the last `Fxx` of each order: rows, then channels, then columns;
+jumps ignored).
+
+**What the lowering writes** from a `Cell` with up to 2 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
+an absolute note → itself; instrument 0 → no byte; effect columns in column order, blank columns (code 0, parameter
+0) omitted; empty rows in runs of at most 128; byte-identical (order, channel) encodings stored once in first-use
+order (orders, then channels), then each instrument's envelopes in slot order (volume, arpeggio, pitch, waveform;
+byte-identical envelopes stored once, first use); every filled slot written (the instrument count is the highest).
+
+### Player
+
+**Writes** are (register, value) pairs with the TIA's own addresses: `$15` AUDC0, `$16` AUDC1, `$17` AUDF0, `$18`
+AUDF1, `$19` AUDV0, `$1A` AUDV1. Shadows (the value last written) for all six; a write equal to its shadow is not
+emitted. Per channel the update writes AUDC, AUDF, AUDV in that order.
+
+**Reset** (start, audition): all state cleared; channels: instrument 0, volume 15 (vol8 120), cut −1, waveform
+override −1, not sounding; position (0, 0, tick 0) with the header speed. The reset batch (every write emitted,
+setting the shadows): `$15` 0, `$17` 0, `$19` 0, `$16` 0, `$18` 0, `$1A` 0.
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
+
+1. Tick 0 of a row: read both channels' rows at (order, row). Then, over channels 0..1 and their effect columns in
+   order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position: `B`
+   only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop order;
+   both → (B's order, D's row). Then for each channel 0..1: its cut is cleared; if the row has `Gxx` with xx > 0 (the
+   last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel whose
+   delayed row is due (tick = xx) runs it, channels in order.
+2. Each channel whose cut tick (`Sxx`) equals this tick gets OFF, channels in order.
+3. Each sounding channel 0..1 is updated (below), channels in order.
+4. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the target
+   order's last row), else row + 1, after the last row of an order the next order, after the last order the loop
+   order. **Loop speed**: whenever the next row is row 0 of the loop order the speed becomes `TiInfo.start_speed[loop]`.
+
+**Running a row** of a channel: if the row has a note (0..119), the arpeggio, fine pitch and waveform override are
+cleared; an instrument byte sets the channel's instrument; the effect columns run in order (table below; `B`, `D`,
+`F`, `G` already acted); then the note: OFF → **OFF** (below); a note with portamento active (`3xx`, xx > 0) while the
+channel is sounding a tonal instrument (its latched slot's record in the current image has no raw flag) only sets the
+glide target (no key-on); any other note keys on (a raw sound never glides).
+
+**Key-on** (note *n*, channel *c*): if the channel's instrument is not a defined slot, nothing happens. Else: slot
+latched; envelope indices 0, released = 0, relative pitch accumulator 0; base = target = 64 *n*, slide offset 0,
+arpeggio step 0, vibrato phase 0; sounding = 1. Nothing is written now (the update writes; no register restarts the
+waveform).
+
+**OFF**: if the channel is not sounding nothing happens. If the instrument's volume envelope has a release point:
+released = 1 and every envelope of the instrument with a release point jumps to it (the value used by the next
+update). Else **stop**: sounding = 0, AUDV = 0 through the shadow (AUDC and AUDF keep their values; the counters run
+on).
+
+**Envelopes** (value at index *idx* read in the update, then advanced): held part [0, H) with H = release if set, else
+L. Not released, or released without a release point of its own: next = idx + 1; if next ≥ H: next = loop if set,
+else H − 1. Released with a release point: next = idx + 1, at most L − 1. Without an envelope: volume 15, arpeggio 0,
+pitch 0, waveform = the override (`Wxx`) if set, else the instrument's waveform. A relative pitch envelope adds its
+value to the accumulator (clamped ±`TIP_SLIDE_LIMIT` 7680) before use; an absolute one is used as is. An instrument
+with a waveform envelope ignores `Wxx`.
+
+**Update** of a sounding channel *c* (per tick, after the rows): vol = max(0, volume value + (vol8 >> 3) − 15);
+semitones = arpeggio effect (0, x, y for step 0, 1, 2 of `0xy`) + arpeggio value; waveform *w* (envelope, override or
+instrument). AUDF *a*: raw instrument: 31 − (((base >> 6) + semitones) mod 32); tonal: class = `TIP_CLASS[w]`, none
+for −1 (AUDC 0/B: no AUDF write), else *a* = AUDF(clamp(base + 64 · semitones + fine + slide + vibrato + pitch value,
+0, 7679)) for the song's region, vibrato = floor(SINE[phase] · depth / 16) (arithmetic right shift by 4) with
+`TIP_SINE[i]` = floor(127 sin(2πi/64) + 0.5) (the OPL3's table). Writes: AUDC*c* = *w*, AUDF*c* = *a* (if any),
+AUDV*c* = vol. Then the envelopes and effects advance: envelope indices; arpeggio step (mod 3) if an arpeggio is set;
+slide offset ± speed (clamped ±7680) for `1xx`/`2xx`; base toward target by the speed (no overshoot) for `3xx`;
+vibrato phase + speed (mod 64) when speed and depth are set; vol8 + x − y (clamped 0..120) for `Axy`.
+
+### Effects (what Kotlin's effect specs declare for both variants)
+
+Up to 2 effect columns per channel. "Note" = for the note keyed on this row only; "now" = from this row on.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: steps note, +x, +y every tick (raw instruments: divider steps); also sets the step to 0 (on a row without a note it changes the sounding note's arpeggio); the next note without `0xy` plays plain |
+| `1xx` slide up | 1/64 semitones per tick | now: until `100`/`200`/`300`; a new note restarts the offset at 0 but keeps sliding; heard where it crosses a divider |
+| `2xx` slide down | 1/64 semitones per tick | now: as `1xx`, down |
+| `3xx` portamento | 1/64 semitones per tick | now: while active a note on a sounding channel glides there without key-on |
+| `4xy` vibrato | x speed, y depth | now: depth F ±1.86 semitones, heard only across divider edges; `4x0` off |
+| `Axy` volume slide | x up, y down, 1/8 AUDV step per tick | now: until `A00` |
+| `Bxx` jump | order | after this row play order xx row 0 (with `Dxx`: its row) |
+| `Cxx` volume | 00-0F | now: channel volume (start 0F), subtracted from the envelope's level: AUDV = max(0, env + C − 15) |
+| `Dxx` break | row | after this row play row xx (clamped) of the next order |
+| `Fxx` speed | 01-FF | now, global, this row included; the last of the row wins |
+| `Gxx` note delay | ticks | the channel's row runs at tick xx; never if xx ≥ the speed |
+| `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones until the next note (tonal instruments) |
+| `Sxx` note off | tick | OFF at tick xx of this row |
+| `Wxx` waveform | 00-0F (AUDC) | now: the waveform of the sounding note (next update) and of later notes until the next note row without `W`; ignored by instruments with a waveform envelope |
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the player alone finds the number of ticks straight play needs to reach (order, row,
+  0); if it is ≤ `max_ticks` the machine resets and plays that many ticks with the chip and blip_buf clocked exactly as
+  audible playback and the output discarded (`CHIP_SEEK_FROM_START`: every counter, divider phase and filter state
+  equals straight play's; the host test compares the following output bit for bit). Otherwise
+  (`CHIP_SEEK_FROM_ORDER`): reset, `tip_place` at the order start with the speed straight play starts it with, and the
+  order's earlier rows replayed the same clocked way (instruments, volumes and slides of earlier orders are lost there,
+  as on the other systems; the counters' phases are the replay's); a row behind a `Dxx` of the same order that is
+  unreachable = `CHIP_ERR_IMAGE`. **Bounded seek policy**: `TIM_SEEK_TICKS` = 7200 clocked ticks (2 min NTSC, 2 min 24 s
+  PAL) is the Kotlin `seekTicks`; beyond it the order fallback applies. A clocked tick costs the two channels' 4 × lines
+  events and the blip read (an estimate, not measured: ~10 µs on a desktop core, so the worst seek is ~70 ms there).
+- `apply_image` (live edit at a tick boundary, realtime-safe): an image of the other region is ignored (invalid for
+  this engine). (1) **position**: an order past the new count becomes the last order's last row, a row past its order's
+  rows that order's last row; a clamped position drops the recorded jump and delayed rows, takes the speed straight play
+  has at that row in the new song (its own `Fxx` included) and, if its row had not started (tick 0), counts as played:
+  the next tick starts the row after it. (2) **speed**: otherwise, when the speed straight play has at (order, row) —
+  the order's start speed and the `Fxx` of earlier rows, plus the row's own once it has started — differs between the
+  old and the new image, the new one is taken. (3) a started row's jump and still-delayed rows are re-read from the new
+  data (a delayed row stays pending when its new `Gxx` ≥ the tick about to run). (4) Sounding notes keep their state
+  and read their latched slot's record from the new image each tick (envelope indices clamped to L − 1 of the new
+  lengths); a slot that is no longer defined stops the note (AUDV 0) at its next update. Slots are never aliased: two
+  byte-identical instruments in different slots stay separate records.
+
+### Audition
+
+`audition(channel 0..1, note 0..119, slot 1..64, fine −128..127)`: the machine is reset and the player keys on the note
+with the slot's instrument, `fine` added like `Pxx`; ticks only update (no rows). An undefined slot or arguments outside
+these ranges are `CHIP_ERR_IMAGE`. `release()`: 0 before any tick (the audition is then over: `tick` returns 0); else
+OFF is applied and its batch written to the chip at once; returns 0 when that stopped the channel (no release point),
+else 1. `tick` returns 0 once the channel stopped, or, after a release, once its written AUDV is 0 with its volume
+envelope at its last step, or `TIM_RELEASE_SECONDS` 10 s after the release.
+
+### Ops behaviour
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `ti_load_image` with the ops' region; `image_storage` = `sizeof(TiaImage)` |
+| `start`, `apply_image`, `audition`, `release`, `mute`, `position` | above |
+| `tick` | one frame: 801-802 stereo frames at 48 kHz NTSC, 962-963 PAL; ≤ `TIM_MAX_TICK_FRAMES` 1927 at 96 kHz; 0 after a released audition ended |
+
+**Kotlin** (`PlaybackEngine` for both ids): `imageSize` 65536, `seekTicks` 7200, `note(n)` = n, `fine` = the system's
+fine pitch in 1/64 semitones (−128..127), `ticksPerSecond` = *C* / F of the variant.
+
+**Exports**: WAV through the generic `chip_wav.c` over the variant's ops (no system code); the project file. No VGM (no
+TIA in the VGM specification), no register dump or cartridge.
+
+### Preparing the fixtures and constants
+
+`python3 tools/audio/prepare_tia.py` (pure Python 3) writes
+`core/src/commonMain/kotlin/org/thortracker/backend/TiaPlayerImage.kt` (every `TI_*` constant of `tia_image.h`
+without its prefix, `TIP_PITCH_MIN`/`MAX`, `TIP_SLIDE_LIMIT`, `TIM_SEEK_TICKS`, the clocks and lines, the effect codes,
+`TIP_CLASS`, `TIP_PERIOD`, `TIP_AUDF_EDGE` per region, `TIM_MIX`, `LOADER_PROBLEMS` from `tia_image.c`) and
+`app/src/test/cpp/tia_test_song.h` (test images, the reference player's reset batch and per-tick writes and positions,
+the reference chip's per-phase-1 channel levels for the first ticks, byte offsets for the loader corruption checks),
+and fails when a table or shared number disagrees with the Python reference. `python3 tools/audio/tia/tia_golden.py`
+writes `core/src/jvmTest/resources/tia-golden/*.bin.gz` for `TiaGoldenTest`.
+
+### Verification (to be run by the parent; nothing here has been run)
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/tia_machine_test.c` (it writes
+  `tia_song.bin`, `tia_trace.txt` — one line per tick, `order row tick:` then ` RR=VV` per write —, `tia_song.wav`,
+  `tia_song_pal.wav`, `tia_tone.wav` and `tia_tone_pal.wav` into `dir`); `wav_render_test.c` renders
+  `tia-demo.tiaimg`, `tia-pal-demo.tiaimg` and `tia-shortest.tiaimg` (one row: A-4 held on TIA 1 with a div 6 square)
+  from `exportSamples`.
+- `tools/audio/tia/tia_reference_check.py <dir> [--pitch]`: the reference player against the native trace, and A-4's
+  pitch in the native WAVs against A / (6 · 12); `--periods` (no directory needed) measures every AUDC's period at four
+  AUDF values from the independent counter port and matches its output against Korth's published pattern shapes;
+  `--edges` checks the AUDF edge table against a direct nearest-divider search at every pitch.
+- `tools/audio/render_tia_image.sh image out.wav [seconds] [mute=...]` (the region from the image header).
+- Kotlin: `TiaGoldenTest` (the lowering against the reference builder), `TiaModelTest`, `TiaEditorTest`.

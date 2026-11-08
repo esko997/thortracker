@@ -15,11 +15,17 @@
 # YM2612: <dir>/ym_song.wav, ym_song_pal.wav, ym_tone_fm.wav, ym_tone_psg.wav, ym_trace.txt (per-tick player
 # writes, = the Python reference player's), ym_song.vgm, ym_song.xgm and ym_song.bin (the XGC; = xgmtool's) and
 # ym_image.bin (the image).
+# Atari 2600 (TIA): <dir>/tia_song.wav (the test song, NTSC, 30 s), tia_song_pal.wav (its PAL variant), tia_tone.wav
+# and tia_tone_pal.wav (A-4 on AUDC C held on TIA 1, ~2 s), tia_trace.txt and tia_song.bin (the test song's image),
+# the inputs of tools/audio/tia/tia_reference_check.py. tia_trace.txt: one line per player tick of the test song
+# (reset batch excluded, TIA_REF_TICKS lines), printf "%d %d %d:" with the position (order, row, tick) before the
+# tick, then " %02X=%02X" (register, value; uppercase hex) per write of the tick's batch in order, then '\n'.
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
-# The engines are C except reSID and ymfm (C++17): C sources (emu2413, the VRC7's FM chip, included) build with $CC,
-# reSID, ymfm and their C wrappers with $CXX, and the tests link with $CXX (libstdc++), as the app (CMake) and the Deck
-# (deck/build.gradle.kts) do.
+# The engines are C except reSID, ymfm and Stella's TIA audio channel (C++17): C sources (emu2413, the VRC7's FM chip,
+# included) build with $CC, reSID, ymfm, the TIA channel and their C wrappers with $CXX (the TIA channel through
+# tia/tia_stella.cpp, which includes the vendored AudioChannel.cxx against its shim headers), and the tests link with
+# $CXX (libstdc++), as the app (CMake) and the Deck (deck/build.gradle.kts) do.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="${1:-$root/evidence/audio}"
@@ -30,8 +36,9 @@ CC="${CC:-gcc}"
 CXX="${CXX:-g++}"
 warn=(-Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare
   -Wno-missing-field-initializers -Wno-enum-compare)
-includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/third_party/chips"
-  -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm"
+includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/tia"
+  -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3"
+  -I "$cpp/third_party/ymfm" -I "$cpp/third_party/stella-tia" -I "$cpp/third_party/stella-tia/shim"
   -I "$root/app/src/test/cpp")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
@@ -44,8 +51,9 @@ c_engines=(
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/tia/tia_chip.c" "$cpp/tia/tia_machine.c" "$cpp/tia/tia_player.c" "$cpp/tia/tia_image.c"
 )
-cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp")
+cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/tia/tia_stella.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
 for f in sid voice wave envelope filter dac extfilt pot; do cxx_engines+=("$cpp/third_party/resid-1.0/$f.cc"); done
 objs=()
@@ -60,7 +68,7 @@ for src in "${cxx_engines[@]}"; do
   objs+=("$o")
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test sid_machine_test opl3_machine_test ym_machine_test \
-  wav_render_test; do
+  tia_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -72,5 +80,6 @@ status=0
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/tia_machine_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 exit $status

@@ -35,7 +35,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, noise, two LFOs.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
-   - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
+   - TIA — Atari 2600: two voices with odd, tuning-limited pitches: source slice on branch `tia-system` (NTSC and
+     PAL variants, own player on Stella 7.0's TIA audio channel, honest AUDF quantization, WAV export; no VGM exists
+     for the TIA), not yet built or verified.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.

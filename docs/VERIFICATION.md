@@ -1,5 +1,68 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: Atari 2600 (TIA) — source slice, NOT verified
+
+Branch `tia-system` adds the **Atari 2600** family with two systems, **Atari 2600 NTSC (TIA)** (`"atari2600-tia-ntsc"`)
+and **Atari 2600 PAL (TIA)** (`"atari2600-tia-pal"`): Thor Tracker's own player on Stella 7.0's TIA `AudioChannel`
+(vendored unmodified), both audio channels, all sixteen AUDC values, honest AUDF quantization (each note plays the
+nearest divider of its waveform), tonal and raw sounds, WAV export only (VGM has no TIA), and the demo **Cartridge
+Dawn** (NTSC and PAL). It was written source-only: **nothing has been built, compiled, generated, tested, run on a
+device or listened to**, and no version was bumped. The parent runs everything below before anything is called
+verified; record the results here then, replacing this section.
+
+1. Generate the Kotlin constants, the native fixture and the golden images (pure Python 3), check a second run is
+   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/TiaPlayerImage.kt`,
+   `app/src/test/cpp/tia_test_song.h` (six images, the reference player's writes for 1500 ticks of five traces, the
+   reference chip's levels and counter states) and `core/src/jvmTest/resources/tia-golden/{spike,features}.bin.gz`:
+
+   ```sh
+   python3 tools/audio/prepare_tia.py
+   python3 tools/audio/tia/tia_golden.py
+   python3 tools/audio/prepare_tia.py && python3 tools/audio/tia/tia_golden.py && git status --short   # no new changes
+   python3 tools/audio/tia/tia_reference_check.py --periods --edges
+   ```
+
+   `prepare_tia.py` fails before writing if the C sources and the Python reference disagree on any shared number,
+   `TIP_CLASS`, `TIP_PERIOD`, `TIP_AUDF_EDGE`, `TIP_SINE` or `TIM_MIX`. `--periods` measures every AUDC's period at
+   AUDF 0, 1, 7 and 31 from the reference's independent port of the counter logic and matches each output against
+   Martin Korth's published pattern shapes (an inverted match is reported, not failed: same sound); `--edges` checks the
+   AUDF edge table against a brute-force nearest-divider search at all 7680 pitches, both regions, every class.
+2. The usual full run (Kotlin: `TiaGoldenTest`, `TiaModelTest`, `TiaEditorTest` and every existing test), the app and
+   Deck builds (CMake through Gradle with the Stella include dirs, `tia/tia_stella.cpp` as C++17 with exceptions; the
+   Deck's `buildEngine`), the sample exports (`cartridge-dawn.thor`, `cartridge-dawn-pal.thor`, `tia-demo.tiaimg`,
+   `tia-pal-demo.tiaimg`, `tia-shortest.tiaimg`) and the native host test (`tia_machine_test.c`, and `wav_render_test.c`
+   with the three TIA images):
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   python3 tools/audio/tia/tia_reference_check.py /tmp/thor-evidence --pitch
+   tools/audio/render_tia_image.sh app/build/samples/tia-demo.tiaimg /tmp/cartridge-dawn.wav 90
+   tools/audio/render_tia_image.sh app/build/samples/tia-pal-demo.tiaimg /tmp/cartridge-dawn-pal.wav 90
+   ```
+
+   Expected from the specification (not yet observed): A-4 on AUDC C = AUDF 11 = 436.10 Hz NTSC (−15.4 cents) and
+   432.13 Hz PAL (−31.3 cents); the engine's per-tick writes equal `tia_ref.py`'s for 1500 ticks of the test song and
+   its edited, tempo, PAL and live-edit traces (the relaid-out image identical to the song); the chip's per-phase-1
+   levels and counter states after 8 frames equal the reference port's (NTSC and PAL); seeks bit-identical to straight
+   play; 801/802 frames per tick at 48 kHz NTSC and 962/963 PAL. Thresholds the native test sets without having run
+   (pitch ±0.3 Hz, div-2/div-31 notes within 0.5 %, song rms above 0.01, muted rms below 1e-4, the 10 s release cap,
+   the shortest song's row under 6 s) may need tuning once measured. Also the release-standard checks: Game Boy views
+   pixel-identical to the baseline, every existing golden and sample export unchanged, the four other
+   `render_*_image.sh` scripts still link (they now compile the TIA sources because `chip_engine.c` lists its ops).
+3. Listen: the demo on both standards (the div 6 lead in tune, the div 2 sparkle, div 31 bass, raw noise drums, the
+   noise-then-div-93 kick, the stepped slide and portamento, `W01` turning held notes into the 4-bit buzz) and the test
+   song. Watch the output level (Stella's mixing; two full channels = 1.5 × one) and whether the stepped pitch effects
+   read as intended.
+4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → Atari 2600 →
+   NTSC and PAL; demo playback (no underruns; the tick cost on the Konkr, including a seek of up to 7200 clocked
+   frames), the Instrument pages (Waveform span, Pitch mode, the envelopes, the Pitch guide), audition on TIA 1-2 incl.
+   raw sounds, the Pattern inspector's key-on register lines and lane tags, WAV export through the document picker.
+
+Scratch left untracked for the parent to remove (exact paths): `.tia-ref-tiasystem/` (fetched Stella 7.0 sources,
+Korth's specification page, working notes) and `.tia-kotlin-ref/` (a copy of the PC Engine template files).
+
 ## 0.16.0 NES + Konami VRC7
 
 - **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.

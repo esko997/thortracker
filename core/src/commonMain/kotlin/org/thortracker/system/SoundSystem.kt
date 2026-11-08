@@ -12,6 +12,8 @@ import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.tia.TiaNtscSystem
+import org.thortracker.system.tia.TiaPalSystem
 import org.thortracker.system.ym2612.YmSystem
 
 /**
@@ -391,7 +393,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System, SidSystem, Opl3System, YmSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System, SidSystem, Opl3System, YmSystem, TiaNtscSystem, TiaPalSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem
