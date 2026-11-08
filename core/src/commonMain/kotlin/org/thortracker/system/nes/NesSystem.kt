@@ -277,7 +277,8 @@ object NesSystem : SoundSystem {
             val used = HashSet<Int>()
             for (p in song.orders.toSet()) for (track in song.patterns[p].tracks) for (cell in track) if (cell.instrument > 0) used += cell.instrument
             add("Instruments" to "${used.size} of $SLOTS used")
-            add("Samples" to "${song.nes.samples.size}, ${Dpcm.memoryUsed(song)} of ${Dpcm.MEMORY} bytes of sample memory (\$C000-\$FFF9)")
+            add("Samples" to "${song.nes.samples.size} taking ${NesSampleMenu.stored(song)} of ${Dpcm.MEMORY} bytes of sample memory (\$C000-\$FFF9); " +
+                "the export places the ${Dpcm.memoryUsed(song)} bytes notes play")
             if (NesValidator.errors(song).isEmpty()) {
                 val bytes = FamiStudioLowering.lower(FsSong.of(song)).data.size
                 val room = org.thortracker.backend.NesPlayerImage.SONG_END - org.thortracker.backend.NesPlayerImage.SONG_BASE

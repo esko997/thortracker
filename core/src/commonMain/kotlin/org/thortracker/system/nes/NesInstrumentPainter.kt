@@ -281,7 +281,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
         // samples
         ink.round(c, right, ink.dp(4f), Palette.LANE)
-        val used = Dpcm.memoryUsed(s)
+        val used = NesSampleMenu.stored(s)
         val over = used > Dpcm.MEMORY
         ink.label(c, ink.fit("Samples · ${NesSampleMenu.kb(used)} of ${NesSampleMenu.kb(Dpcm.MEMORY)}", right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH,
             if (over) Palette.ERROR else Palette.DIM, size = small)

@@ -75,10 +75,10 @@ fun EditorSession.addAndMapDpcmSamples(slot: Int, samples: List<DpcmSample>, fro
 /**
  * Adds DPCM [samples] and maps [layout] (key → index into [samples] and pitch) onto instrument [slot] as one undo
  * step, leaving keys the instrument already maps as they are. A sample whose bytes the song already holds is reused
- * rather than stored twice; samples no key ends up playing are not added. A blank sound is renamed "Samples".
+ * rather than stored twice; samples no key ends up playing are not added. A blank sound is renamed [name].
  * Returns the keys mapped.
  */
-fun EditorSession.addDpcmLayout(slot: Int, samples: List<DpcmSample>, layout: Map<Int, Pair<Int, Int>>, label: String): List<Int> {
+fun EditorSession.addDpcmLayout(slot: Int, samples: List<DpcmSample>, layout: Map<Int, Pair<Int, Int>>, label: String, name: String = "Samples"): List<Int> {
     val ins = song.nesInstrument(slot) ?: return emptyList()
     val all = song.nes.samples.toMutableList()
     val map = LinkedHashMap(ins.dpcm)
@@ -92,7 +92,7 @@ fun EditorSession.addDpcmLayout(slot: Int, samples: List<DpcmSample>, layout: Ma
         keys += key
     }
     if (keys.isEmpty()) return keys
-    val renamed = if (ins.dpcm.isEmpty() && ins.name == defaultNesInstrument(slot).name) "Samples" else ins.name
+    val renamed = if (ins.dpcm.isEmpty() && ins.name == defaultNesInstrument(slot).name) name else ins.name
     apply(label) { s ->
         s.copy(sound = s.nes.copy(
             samples = all,

@@ -28,8 +28,14 @@ internal object NesSampleMenu {
         ))
     }
 
-    /** Sample memory left: [Dpcm.MEMORY] less what the song's samples take. */
-    fun free(song: Song): Int = Dpcm.MEMORY - Dpcm.memoryUsed(song)
+    /**
+     * Sample memory left once every sample of the song is placed: [Dpcm.MEMORY] less their 64-byte slots. Exports
+     * place only the samples notes play ([Dpcm.memoryUsed]), but a sample in the list is meant to be played.
+     */
+    fun free(song: Song): Int = Dpcm.MEMORY - stored(song)
+
+    /** The 64-byte aligned bytes all of the song's samples take. */
+    fun stored(song: Song): Int = song.nes.samples.sumOf { Dpcm.aligned(it.data.size) }
 
     /** "2.3 KB" (1 KB = 1024 bytes, as the 16 KB sample memory is counted). */
     fun kb(bytes: Int): String = "${NumberText.fixed(bytes / 1024.0, 1)} KB"
@@ -45,7 +51,7 @@ internal object NesSampleMenu {
         val before = session.song
         val shift = key / 12 * 12 - DpcmStarterKit.NOTES.keys.min() / 12 * 12
         val layout = DpcmStarterKit.NOTES.entries.associate { (note, use) -> note + shift to use }
-        val keys = session.addDpcmLayout(slot, kit, layout, "Add starter kit")
+        val keys = session.addDpcmLayout(slot, kit, layout, "Add starter kit", name = "Drum kit")
         if (keys.isEmpty()) return menu.error("Sound ${hex2(slot)} already maps every key of the kit from ${NesSystem.noteName(key / 12 * 12)}")
         menu.status("Starter kit: ${keys.size} keys ${keys.joinToString(" ") { NesSystem.noteName(it) }} in sound ${hex2(slot)} · ${kb(free(session.song))} free")
         overflowNote(session, menu, before)
