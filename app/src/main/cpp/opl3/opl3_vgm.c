@@ -3,9 +3,9 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "opl3_export.h"
+#include "vgm_gd3.h"
 
 #define VGM_HEADER 0x100
 
@@ -19,13 +19,6 @@ static void put(Out* o, int byte) {
     if (o->n < o->cap) o->p[o->n] = (uint8_t)byte;
     else o->overflow = 1;
     ++o->n;
-}
-
-static void put32(uint8_t* p, uint32_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16);
-    p[3] = (uint8_t)(v >> 24);
 }
 
 static void put_writes(Out* o, const O3Player* p, int from, int to) {
@@ -119,18 +112,18 @@ size_t o3_vgm_render(const Opl3Image* image, uint32_t max_ticks, O3Player* playe
     if (o.overflow) return 0;
     memset(out, 0, VGM_HEADER);
     memcpy(out, "Vgm ", 4);
-    put32(out + 0x04, (uint32_t)(o.n - 4));
-    put32(out + 0x08, 0x171);
-    put32(out + 0x18, samples);
+    vgm_put32(out + 0x04, (uint32_t)(o.n - 4));
+    vgm_put32(out + 0x08, 0x171);
+    vgm_put32(out + 0x18, samples);
     if (looped) {
-        put32(out + 0x1C, (uint32_t)(loop_offset - 0x1C));
-        put32(out + 0x20, samples - loop_samples);
+        vgm_put32(out + 0x1C, (uint32_t)(loop_offset - 0x1C));
+        vgm_put32(out + 0x20, samples - loop_samples);
         info->loop_offset = (uint32_t)loop_offset;
         info->loop_samples = samples - loop_samples;
     }
-    put32(out + 0x24, 60);
-    put32(out + 0x34, VGM_HEADER - 0x34);
-    put32(out + 0x5C, 14318180);
+    vgm_put32(out + 0x24, 60);
+    vgm_put32(out + 0x34, VGM_HEADER - 0x34);
+    vgm_put32(out + 0x5C, 14318180);
     info->samples = samples;
     return o.n;
 }
@@ -139,60 +132,6 @@ size_t o3_vgm_render(const Opl3Image* image, uint32_t max_ticks, O3Player* playe
 
 #define GD3_SYSTEM "OPL3 (Thor Tracker)"
 #define GD3_CONVERTER "Thor Tracker"
-
-/* UTF-8 -> UTF-16LE with a terminating 0; malformed bytes become U+FFFD. Returns bytes written (or needed when
- * out is NULL). */
-static size_t utf16(const char* s, uint8_t* out) {
-    size_t n = 0;
-    const uint8_t* p = (const uint8_t*)(s ? s : "");
-    while (1) {
-        uint32_t c = *p++;
-        if (c >= 0x80) {
-            const int extra = c >= 0xF8 ? -1 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC2 ? 1 : -1;
-            if (extra < 0) {
-                c = 0xFFFD;
-            } else {
-                c &= 0x3F >> extra;
-                for (int i = 0; i < extra; ++i) {
-                    if ((*p & 0xC0) != 0x80) {
-                        c = 0xFFFD;
-                        break;
-                    }
-                    c = c << 6 | (*p++ & 0x3F);
-                }
-                if (c > 0x10FFFF || (c >= 0xD800 && c < 0xE000)) c = 0xFFFD;
-            }
-        }
-        uint16_t units[2];
-        int count = 1;
-        if (c > 0xFFFF) {
-            units[0] = (uint16_t)(0xD800 | (c - 0x10000) >> 10);
-            units[1] = (uint16_t)(0xDC00 | (c & 0x3FF));
-            count = 2;
-        } else {
-            units[0] = (uint16_t)c;
-        }
-        for (int i = 0; i < count; ++i, n += 2)
-            if (out) {
-                out[n] = (uint8_t)units[i];
-                out[n + 1] = (uint8_t)(units[i] >> 8);
-            }
-        if (!c) return n;
-    }
-}
-
-/* GD3 1.00: track, track (JP), game, game (JP), system, system (JP), author, author (JP), date, converter, notes. */
-static size_t gd3(const char* title, const char* author, const char* date, uint8_t* out) {
-    const char* fields[11] = {title, "", "", "", GD3_SYSTEM, "", author, "", date, GD3_CONVERTER, ""};
-    size_t n = 12;
-    for (int i = 0; i < 11; ++i) n += utf16(fields[i], out ? out + n : NULL);
-    if (out) {
-        memcpy(out, "Gd3 ", 4);
-        put32(out + 4, 0x100);
-        put32(out + 8, (uint32_t)(n - 12));
-    }
-    return n;
-}
 
 uint8_t* o3_export_vgm(const uint8_t* image, size_t image_size, uint32_t max_ticks, const char* title,
                        const char* author, const char* date, size_t* size, const char** problem) {
@@ -216,22 +155,18 @@ uint8_t* o3_export_vgm(const uint8_t* image, size_t image_size, uint32_t max_tic
     }
     O3VgmInfo info;
     char today[16];
-    if (!date || !*date) {
-        const time_t now = time(NULL);
-        struct tm local;
-        date = localtime_r(&now, &local) && strftime(today, sizeof today, "%Y/%m/%d", &local) ? today : "";
-    }
+    date = vgm_date(date, today);
     o3_vgm_render(img, max_ticks, player, NULL, 0, &info); /* measure: the player is deterministic */
-    const size_t body = info.size, tag = gd3(title, author, date, NULL);
+    const size_t body = info.size, tag = vgm_gd3(title, GD3_SYSTEM, author, date, GD3_CONVERTER, NULL);
     vgm = (uint8_t*)malloc(body + tag);
     if (!vgm) {
         *problem = "out of memory";
         goto done;
     }
     o3_vgm_render(img, max_ticks, player, vgm, body, &info);
-    gd3(title, author, date, vgm + body);
-    put32(vgm + 0x04, (uint32_t)(body + tag - 4));
-    put32(vgm + 0x14, (uint32_t)(body - 0x14));
+    vgm_gd3(title, GD3_SYSTEM, author, date, GD3_CONVERTER, vgm + body);
+    vgm_put32(vgm + 0x04, (uint32_t)(body + tag - 4));
+    vgm_put32(vgm + 0x14, (uint32_t)(body - 0x14));
     *size = body + tag;
 done:
     free(img);

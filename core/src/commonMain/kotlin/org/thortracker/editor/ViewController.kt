@@ -249,7 +249,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun maxSlots(): Int = system.banks.maxOf { it.slots }
 
     /** The entry sound of [bank]: the slot new notes on its channels get (kept within the bank after a system change). */
-    fun pen(bank: Int): Int = (penSound[bank] ?: 1).coerceIn(1, slots(bank))
+    fun pen(bank: Int): Int = (penSound[bank] ?: system.defaultInstrument(session.song, bank)).coerceIn(1, slots(bank))
 
     internal fun setPen(bank: Int, slot: Int) {
         penSound[bank] = slot.coerceIn(1, slots(bank))

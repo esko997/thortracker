@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine and the OPL3 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -17,6 +17,10 @@ The OPL3 system (`"opl3-fm"`, design step 8, native spike) has no console driver
 Thor Tracker's **own player** (C, specified in this document and mirrored by an independent Python reference)
 on a YMF262 emulated by Nuked-OPL3 1.8, and exports VGM. Core choice, image layout, player specification,
 effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trackers-own-player-on-a-ymf262-opl3-fm).
+
+The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
+through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
+it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -78,6 +82,10 @@ Game Boy through the ops table as well as through `hm_*` directly.
 | GoatTracker 2.77 playroutine | `third_party/goattracker-2.77/player.s` (unmodified `src/player.s`, CRLF kept by `.gitattributes`); assembled into `app/src/main/cpp/generated/sid_player_image.h`; the test song `tools/audio/sid/gt_test_song.py` → `gt_test.sng` (ours) and GoatTracker's own packing `gt_test.sid` | SourceForge `GoatTracker 2/2.77/GoatTracker_2.77.zip` (Lasse Öörni, 2025-01-20), sha256 `96c2bd6a…4561ef` (the digest SourceForge lists); `player.s` sha256 `ee9ddbe9…5fad609a`, identical to the copy embedded in the release's packer (`goatdata.c`) | its own notice: "This playroutine source code does not fall under the GPL license! Use it, or song binaries created from it freely for any purpose, commercial or noncommercial." In `NOTICE.txt` |
 | reSID 1.0 | `app/src/main/cpp/third_party/resid-1.0/` (`sid`, `voice`, `wave`, `envelope`, `filter`, `dac`, `extfilt`, `pot` `.cc/.h`, `spline.h`, the eight generated `wave*.h` tables, `siddefs.h.in`, `COPYING`, `AUTHORS`, `README`, `NEWS`), unmodified; plus `siddefs.h` (ours: `siddefs.h.in` with configure's defaults) | github.com/daglem/reSID commit `02c456abfe23cc4f06d94424e40beab8c90fa31f` (2021-12-10: the reSID 1.0 lineage as maintained in VICE, with Leandro Nini's fixes; the last commit before the 2022 rework, whose compile-time `exp()` tables only build with g++) | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | GoatTracker 2.77 `gt2reloc` + `gtasm` | offline only (`tools/audio/fetch_goattracker.sh`, `prepare_sid_player.py`): the release's command-line packer, and `tools/audio/sid/gtasm.c` over its embedded assembler (Magnus Lind's, from Exomizer) | built from the pinned release | GPL-2.0-or-later (packer) / Exomizer's licence (assembler); tools are not shipped, their output is the free playroutine |
+| SGDK XGM driver | `third_party/sgdk-xgm/` (`drv_xgm.s80`, `z80_def.i80`, `z80_mac.i80`, `z80_fct.i80`, `xgm.txt`, `LICENSE.txt`), unmodified; assembled into `app/src/main/cpp/generated/xgm_driver_image.h` by `tools/audio/prepare_ym.py` | github.com/Stephane-D/SGDK commit `9a78a44143a867cd8c5053b95cd061a21f0b73c2` (2026-10-20); `drv_xgm.s80` sha256 `aae47f6f…6e81b63`; image (5888 bytes) sha256 `557fe542…cf31e` = `drv_xgm` in SGDK's `lib/libmd.a` | MIT — notice in `NOTICE.txt` |
+| SGDK sjasm 0.39j, xgmtool 1.76 | offline only (`tools/audio/fetch_sgdk.sh` builds both from the pinned commit) | the SGDK pin | sjasm zlib, xgmtool MIT; not shipped (xgmtool's conversion is ported in `ym/ym_xgm.c`, MIT notice kept) |
+| z80.h (floooh/chips) | `app/src/main/cpp/third_party/chips/z80.h`; implemented once in `cpuz80.c` | the `m6502.h` commit `9e88298c`; `z80.h` sha256 `6ca70ffd…de734f3` | zlib (the chips notice) |
+| ymfm | `app/src/main/cpp/third_party/ymfm/` (`ymfm.h`, `ymfm_opn.h/.cpp`, `ymfm_fm.h/.ipp`, `ymfm_adpcm.h/.cpp`, `ymfm_ssg.h/.cpp`, `LICENSE`), unmodified | github.com/aaronsgiles/ymfm commit `81aec25ccbb98f4873a255f7551ac4dadac59b4a` (2026-07-27); `ymfm_opn.cpp` sha256 `8734c6d5…913b489`, `ymfm_fm.ipp` `4fb7fe59…f6ab4b9` | BSD-3-Clause — notice in `NOTICE.txt` |
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
@@ -112,9 +120,11 @@ library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implemen
 `huge_machine.c`, which `#include`s binjgb's `emulator.c`, plus `common.c`; the NES files `nes/nes_chip.c`,
 `nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
 `sid/sid_machine.c`, `sid/sid_image.c`; the OPL3 files `opl3/opl3_chip.c`, `opl3/opl3_machine.c`,
-`opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; always with `NDEBUG`),
-a static C++17 library `resid` (reSID 1.0 and `sid/sid_resid.cpp`, its C interface; `-O2 -w`) that
-`chip_engines` links, and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with
+`opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; `vgm_gd3.c` (the VGM exports'
+GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
+`ym/ym_xgm.c`, `ym/ym_vgm.c`, `ym/ym_psg.c`; always with `NDEBUG`), static C++17 libraries `resid` (reSID 1.0 and
+`sid/sid_resid.cpp`, its C interface; `-O2 -w`) and `ymfm` (`ym/ym_ymfm.cpp`, which compiles ymfm's `ymfm_opn.cpp`
+itself, plus `ymfm_adpcm.cpp`, `ymfm_ssg.cpp`) that `chip_engines` links, and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with
 NDK `aaudio`, `log`, `m`, `dl` and the NDK's default static C++ runtime. No third-party Java/Gradle
 dependency. The engines the hosts call
 are C; the Deck compiles the same files with Kotlin/Native's clang and reSID with its clang++ against the
@@ -1507,3 +1517,565 @@ mode) concern and the same for every system.
 The hosts treat the machine like the SID's (`Engine::create` on the control thread, seeks and auditions on spare
 machines, the callback only ticks, mutes and applies images); nothing in `audio_engine.cpp` or `deck_audio.c` is
 system-specific.
+
+## YM2612: SGDK's XGM driver on a Z80 + YM2612 + PSG (`"ym2612-fm"`)
+
+Design step 8 (FM), second chip, native spike (branch `ym2612-spike`): `chip_engine_ops("ym2612-fm")` plays songs
+lowered into the image layout below **through SGDK's XGM Z80 driver**, the driver Mega Drive homebrew ships. The
+driver investigation and the reasons for each choice are in `docs/BACKENDS.md`, "YM2612 (Mega Drive)". XGM is a
+register stream, so the musical part is Thor Tracker's **own player** (`ym/ym_player.c`, pure integer C, specified
+here and mirrored by the independent Python reference `tools/audio/ym/ym_ref.py`; the host test requires identical
+writes in every tick). Its per-tick writes are the VGM export; xgmtool's VGM → XGM → XGC conversion (ported to C,
+`ym/ym_xgm.c`, proven byte-equal to xgmtool 1.76) turns them into the XGC frames the driver reads from the emulated
+cartridge, one frame per vertical interrupt, exactly as `XGM_startPlay` plays a song in a game. This section is the
+contract of the Kotlin system and lowering (`core` `system/ym2612`, `backend/YmLowering`); the numbers they share
+with the engine are generated into `core/.../backend/YmPlayerImage.kt` (below, "Preparing").
+
+### What runs
+
+- **Z80** (floooh `z80.h`, the pinned `m6502.h` commit, cycle-stepped, `cpuz80.c` its one implementation) at
+  MCLK / 15 with the Mega Drive's Z80 map: 8 KiB RAM at `$0000` (mirrored to `$3FFF`), YM2612 ports at
+  `$4000-$4003` (mirrored to `$5FFF`; reads return the status byte with the busy flag), the bank register at
+  `$6000` (9 serial bit-0 writes select A15-A23 of the 68000 address the window shows), the PSG at `$7F11`
+  (`$7F11/13/15/17`), the 32 KiB bank window at `$8000`. The emulated 68000 address space holds only what the
+  driver reads: a 256-byte null sample (`YM_NULL_SAMPLE` = `$010000`, zeros) and the music ring (`YM_RING` =
+  `$020000`, 64 KiB); everything else reads `$FF`. Z80 accesses to the 68000 bus take no extra wait states (real
+  hardware adds about 3 cycles each; it slows the driver's PCM mixing, not its frame processing). No interrupts:
+  the driver runs with interrupts disabled. Most of its cycles are not stepped but replayed (below, "Pass replay").
+- **Driver**: `drv_xgm.s80` (SGDK `9a78a441`, MIT), unmodified, assembled with SGDK's sjasm into
+  `generated/xgm_driver_image.h` (5888 bytes; byte-identical to `drv_xgm` in SGDK's `lib/libmd.a`).
+- **YM2612**: ymfm (`81aec25c`, BSD-3-Clause) `ymfm::ym2612` behind a C interface (`ym/ym_ymfm.cpp`, built like
+  reSID: C++17, `-O2 -w`), clocked at MCLK / 7 (one sample per 1008 MCLK = 53267.0 Hz NTSC, 52781.2 Hz PAL); a
+  data write sets the busy flag for 32 × 6 chip clocks (ymfm's figure; 89.6 Z80 cycles), which the driver polls.
+  Writes take effect at the next chip sample (ymfm is sample-based); the driver's busy waits keep a key-off and a
+  key-on of one channel at least one sample apart.
+- **PSG**: `ym/ym_psg.c`, an SN76489 as integrated in the Mega Drive VDP (written for Thor Tracker from the SMS Power
+  documentation): three 10-bit tone counters and a noise counter decremented at MCLK / 240 (PSG clock / 16), a tone
+  output flips when its counter reloads (period 0 counts as 1), 16-bit noise LFSR (white noise: feedback from bits
+  0 and 3, i.e. taps 0x0009; periodic: bit 0 recirculated), reset to `$8000` by every noise-register write, shifted
+  each time the noise counter's flip-flop rises; noise rates clock/512, /1024, /2048 (counter 16, 32, 64) or tone 3's
+  period; 4-bit attenuation in 2 dB steps (15 = off). Bipolar output (±level).
+- **Timing**: one engine tick = one vertical interrupt: 3420 MCLK per line × 262 lines (NTSC, MCLK 53693175 Hz,
+  59.92 Hz) or 313 lines (PAL, MCLK 53203424 Hz, 49.70 Hz): 59736 (71364) Z80 cycles, 888.9 (1061.96) YM samples,
+  3733.5 (4460.25) PSG counter steps per tick, all accumulated exactly in master clocks. (The VGM export uses
+  VGM's 1/60 s and 1/50 s, as xgmtool does.)
+- **Mix and resampling**: YM2612 left/right and the PSG (centred) go through band-limited steps (blip_buf 1.1.0, as
+  the NES/OPL3) clocked at the Z80 rate (one step per YM sample, one per PSG change) to the host rate, with
+  blip_buf's ~15 Hz high-pass. Levels: ymfm's 14-bit sum × `YM_FM_GAIN`, the PSG's channel level table × 
+  `YM_PSG_GAIN` (see "Mix"), float = sample / 32768.
+- **68000 side** (`ym/ym_machine.c`, what SGDK's `xgm.c` does): at reset `YM2612_reset()` and `PSG_reset()`'s writes
+  go to the chips (below, "Machine reset writes"), the driver is copied to Z80 RAM and the Z80 reset; it runs until
+  it reports ready (`STATUS` bit 7, 20.4 k cycles); then the null sample entry at `$1C00` and the 63 sample ids at
+  `$1C04` (all the null sample: no PCM), the music address `PARAMS+$00` = `YM_RING`, `COMMAND` |= `$40` (play).
+  Per tick: if `MODIFYING_F` (`PARAMS+$0E`) is set the Z80 runs until it clears (inside the tick's cycles), then
+  `PENDING_FRM` (`PARAMS+$0F`) += 1, then the tick's Z80 cycles run with the chips.
+
+### Streaming XGC frames (driver in the loop)
+
+The driver executes a frame when `PENDING_FRM` > 0 and, right after, **prefetches the next frame** into its buffer.
+So the engine keeps the player one tick ahead: at engine tick *k* it runs player tick *k* + 1, encodes its writes
+into XGC frames (`ym/ym_xgm.c`, xgmtool's algorithm, below) and appends them to the ring; then it releases tick *k*,
+in which the driver executes the frames of player tick *k* (prefetched during tick *k* − 1) and prefetches those of
+*k* + 1. Starting play encodes player tick 0, sets the play command and runs one tick in which the driver picks the
+command up (its `external_com` runs after a processed frame) and prefetches; that tick's output is discarded.
+`position()` reports the position of the player tick whose frames the next engine tick executes.
+
+- A player tick may become several XGC frames (a frame holds ≤ 250 bytes; xgmtool ends a full frame with the
+  frame-skip command, so the driver executes the parts back to back in the same interrupt).
+- **Ring wrap**: when a tick's frames would not fit before the ring's end, the engine first writes a frame holding
+  only frame-skip + loop to offset 0 (`$FA $FC 00 00 00`, a 6-byte frame), which the driver executes within the same
+  interrupt as the next frame (the frame-skip adds the interrupt the loop's frame end consumes), then writes the
+  tick's frames from the ring start. The driver counts loops down in `REM_LOOP` (`PARAMS+$38`) and stops at 0; the
+  engine sets it to 0 (= 256 more loops) at every wrap.
+- The engine never writes the XGC file's 3 leading empty frames (they only align PCM, which this system has none of)
+  nor its loop command (the player follows the song's loop itself). Every arrival at (loop order, row 0, tick 0)
+  encodes the **loop frame** as the export has it: the player's register dump and xgmtool's loop start (the frame
+  carries every register). From the song start the stream is therefore **byte-identical to xgmtool's XGC** of the
+  exported VGM for the whole first pass, loop frame included (host test); later passes dump the player's state then
+  (the game re-executes the first arrival's dump; they differ only in registers the song leaves changed at its end).
+- **Driver lag (heavy frames)**: the XGM v1 driver spends most of each frame mixing PCM (silent here) and executes
+  about 70-100 YM writes per vertical interrupt; a heavier frame spills into the next interrupts and the frames
+  queued behind it then run back to back until it has caught up (`PENDING_FRM` counts the interrupts it owes). Measured
+  on the test song: the song start (the machine reset writes, ~280 writes) and each loop frame (the full dump) lag up
+  to 3 ticks, 31 of 1500 ticks lag at all. A game does exactly the same with this XGC; the Kotlin validator should warn
+  about rows whose writes exceed the budget. `position()` follows the driver: it is the position of the first tick the
+  driver has not finished (`encoded − 1 − PENDING_FRM`), so behind a heavy frame it waits and then catches up.
+
+### Pass replay (the driver's idle work, `ym/ym_machine.c`)
+
+Without PCM the driver spends ~92 % of its Z80 cycles in two pieces of fixed code: its PCM mixer (`pcm_mix`, 43917
+cycles per 256 silent samples, about one pass per tick) and its frame-wait loop (`sync_frame_loop`, 254 cycles per
+iteration). Neither reads the music. The machine records one execution of such a **pass** — from the opcode fetch at
+one of the two labels (addresses from the sjasm listing, `XGM_DRIVER_PCM_MIX`, `XGM_DRIVER_SYNC_FRAME_LOOP` in
+`generated/xgm_driver_image.h`) to the next fetch at either — and replays it whenever a pass starts with the same
+inputs: the chips run alone for its cycles and receive its chip and bank writes at the same cycles, its memory
+writes land at its end, and the Z80 continues in the recorded exit state. Driver, timing and output are exactly the
+fully stepped machine's.
+
+- **Inputs compared**: the first read of every byte (code included, ROM reads by address), the YM address latch,
+  the bank register if read before the pass sets it, the registers a pass reads (not those it loads before use:
+  the mixer's AF BC DE HL SP, the frame wait's AF HL).
+- **Re-based, not compared**: the PCM read pointer BC' (each `LD A,(BC)` under EXX is a relative read: its value is
+  compared at the re-based address, which must not be one the pass writes; wherever the pass reads B' its page is
+  compared; BC' ends advanced by the pass's reads), R (advanced, or exact after an `LD R,A`), the frame-wait
+  counter (`IDLE_LOOP` + 1, and HL with it), and registers neither pass touches (IY, AF'; the frame wait's BC, SP:
+  carried through, checked unchanged when recorded).
+- **Ticks**: a pass may run on across the tick boundary (the vertical interrupt, the ring append) unless it read
+  memory the 68000 side changes there (`PENDING_FRM`, `REM_LOOP`, the ring): such a pass (the frame wait) only
+  replays if it ends within the tick, else it is stepped.
+- **Recording** aborts on anything else (a YM status read, an I/O access, a write to the 68000's variables, `LD A,R`,
+  `LD A,C` on the pointer); those passes are simply stepped. At most 64 passes and 640 KiB per machine (allocated
+  at creation); the test song keeps 18 (190 KiB), 40 with PAL and auditions. The memo survives `start` and
+  `audition` (same driver); the first ticks of a new machine record (a cold tick costs what a stepped one does).
+- **Proof**: the host test runs a replayed and a fully stepped machine side by side (the song across a ring wrap,
+  PAL, a seek with mutes, FM/PSG/Noise auditions with release; 4817 ticks) and requires identical samples, chip
+  writes with their cycles, lag and positions every tick, and identical Z80 state and RAM whenever the replayed one
+  is between passes; 95 % of the Z80's cycles were replayed. `ymm_set_replay(m, 0)` steps every cycle (test hook).
+
+### Machine reset writes (SGDK's `YM2612_reset()` + `PSG_reset()`)
+
+In this order, to the chips at machine reset and as the first commands of the VGM: port 0 `$22`=0, `$27`=0,
+`$2B`=0; for port 0 and 1, channel 0..2, slot 0..3, register `$30`=0, `$40`=`$7F`, `$50`=0, `$60`=0, `$70`=0,
+`$80`=`$FF`, `$90`=0 at register + 4·slot + channel; for port 0 and 1, channel 0..2: `$A0`=0, `$A4`=0, `$A8`=0,
+`$AC`=0, `$B0`=0, `$B4`=`$C0` (+ channel); port 0 `$28` = 0, 4, 1, 5, 2, 6 (channel 0..2: `0|ch`, `4|ch`); PSG
+for i = 0..3: `$80 | i<<5`, `$00`, `$90 | i<<5 | $0F`.
+
+### Channels
+
+| Channel | 0-5 | 6, 7, 8 | 9 |
+|---|---|---|---|
+| Name | FM 1-6 | PSG 1-3 | Noise |
+| Chip | YM2612 channel *c*: port *c* / 3, register offset *c* mod 3, key select (`$28`) 4·(*c* / 3) + *c* mod 3 | SN76489 tone *c* − 6 | SN76489 noise (index 3) |
+| Instruments | FM slots | PSG slots | PSG slots |
+
+FM 6 is an ordinary FM channel (the driver's DAC is off without PCM). No channel 3 special mode, no DAC.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian, every pattern reference an offset into the data region (so any layout
+that passes `ym_load_image` relocates). Constants: `ym/ym_image.h` (`YM_*`); the reference builder is
+`tools/audio/ym/ym_song.py` (`build()`). The loader rejects anything off-contract with a reason and the byte
+(`YmInfo.problem`, `problem_offset`): mirror its checks in Kotlin validation for user-facing messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTYM"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | region: 0 = NTSC (60 Hz), 1 = PAL (50 Hz) |
+| 6 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 7 | 1 | LFO (register `$22`) at the start: 0 = off, `$08`-`$0F` = on, rate 0..7 (3.98 … 72.2 Hz) |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | instrument count I = highest slot present, 0..64 |
+| 13 | 1 | 0 |
+| 14 | 2 | data size D: bytes of pattern and envelope data used, ≤ 57536 |
+| 16 | 48 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 5120 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (10 *o* + *c*); entries ≥ count 0 |
+| 5440 | 2560 | instrument slot *n* (1..64) at 5440 + 40 (*n* − 1) |
+| 8000 | 57536 | data region: patterns and PSG envelopes, `[0, D)` |
+
+
+**Instrument** (40 bytes; an all-zero record = no instrument; records above I must be zero). Byte 0, flags: bit 7
+= defined (1), bit 0 = PSG instrument (1) or FM (0); other bits 0.
+
+FM instrument (flags `$80`):
+
+| Byte | Field |
+|---|---|
+| 1 | algorithm 0..7 (register `$B0` bits 0-2) |
+| 2 | feedback of operator 1, 0..7 (`$B0` bits 3-5) |
+| 3 | AMS (bits 4-5) and FMS (bits 0-2), register `$B4` without the pan bits; bits 3, 6, 7 zero |
+| 4 + 7 *k* | operator *k* + 1 (*k* = 0..3): registers `$30` (DT bits 4-6, MUL 0-3; bit 7 0), `$40` (TL 0..127; bit 7 0), `$50` (RS bits 6-7, AR 0-4; bit 5 0), `$60` (AM bit 7, D1R 0-4; bits 5-6 0), `$70` (D2R 0-4; bits 5-7 0), `$80` (D1L 4-7, RR 0-3), `$90` (SSG-EG 0-3; bits 4-7 0) |
+| 32 | drum sweep start, s8 semitones relative to the note, −96..96 |
+| 33 | drum sweep end, s8 semitones, −96..96 |
+| 34 | drum sweep speed, 1/16 semitone per tick toward the end; 0 = no sweep (start/end ignored) |
+| 35 | 5 bytes 0 |
+
+Operators are numbered as in the algorithm diagrams (operator 1 has the feedback); their registers sit at offsets
++0, +8, +4, +12 (operator 1, 2, 3, 4) from the channel's. **Carriers** (what volume scales and brightness leaves
+alone), bit *k* = operator *k* + 1: algorithms 0-3 {4}, 4 {2, 4}, 5 and 6 {2, 3, 4}, 7 {1, 2, 3, 4}.
+
+PSG instrument (flags `$81`): references up to three FamiStudio-style envelopes (one value per tick) in the data
+region, so instruments can share them.
+
+| Byte | Field |
+|---|---|
+| 1 | noise mode (Noise channel only, ignored elsewhere): bit 2 white (1) / periodic (0), bits 0-1 source: 0..2 = clock/512, /1024, /2048, 3 = PSG 3's period ("pitched"); bits 3-7 zero |
+| 2 | flags: bit 0 = the pitch envelope is relative (accumulates every tick); bits 1-7 zero |
+| 3 | 0 |
+| 4 | u16: data offset of the volume envelope (values 0..15), `$FFFF` = none (level 15) |
+| 6 | u16: data offset of the arpeggio envelope (−64..63 semitones), `$FFFF` = none |
+| 8 | u16: data offset of the pitch envelope (−64..63 × 4 pitch units = 1/16 semitone), `$FFFF` = none |
+| 10 | 22 bytes 0 |
+| 32 | drum sweep start, end, speed (as FM) |
+| 35 | 5 bytes 0 |
+
+**Envelope** (at its offset, wholly inside `[0, D)`): u16 length L 1..256, u16 loop index (< L, `$FFFF` = none),
+u16 release index (`$FFFF` = none; volume only, and only with a loop: loop < release < L), then L signed bytes.
+The reference builder places envelopes after the patterns, slots 1..64 ascending (volume, arpeggio, pitch), each
+deduplicated by its bytes against the envelopes before it; any placement that passes the loader plays.
+
+**Patterns** (as the OPL3's): a pattern is decoded from its offset for exactly rows(*o*) rows (a run longer than the
+order's remaining rows is cut there, so one pattern can serve orders of different lengths); every row read must lie
+inside `[0, D)`. Row encoding:
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
+| note | 0..95 = absolute note C-0..B-7 (0 = C-0, 57 = A-4 = 440 Hz), `0xFE` = OFF (key off) |
+| instrument | slot 1..64, defined, FM on channels 0-5, PSG on 6-9 |
+| effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+**What the lowering writes** from a `Cell(note, instrument, effect, param)` with up to 4 effect columns: note
+`EMPTY` → no note byte, `CUT` → `0xFE`, an absolute note 0..95 → itself; instrument 0 → no byte, else the slot;
+effect columns in column order, blank columns (code 0, parameter 0) omitted. Empty rows pack into runs. The
+lowering may share byte-identical patterns between orders and channels (the reference builder deduplicates).
+Load-time effect checks: the effect must exist on the channel (table below), `Bxx` < order count, `Cxx` ≤ 7F (FM) or
+≤ 0F (PSG, Noise), `Exx` ≤ 7, `F00` rejected, `Ixx` ≤ 7F, `Lxx` = 00 or 08..0F, `Mxy` x 1..4, `Nxy` x ≤ 1 and y ≤ 3.
+Envelope checks: as above, values in range (volume 0..15, others −64..63), release only on volume.
+
+**Should** (not checked): an instrument on the first note of every order; locks only on rows with a note
+(otherwise ignored: warn); PSG 3 silent while pitched noise sounds (it is muted then: warn).
+
+`ym_load_image` derives (`YmInfo`) order count, loop, region, speed, rows per order and the speed each order starts
+with in sequential straight play (header speed, then the last `Fxx` of each order: rows, then channels, then
+columns; jumps ignored).
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, at most 8 · 768 − 1 = 6143 (just below C-8); notes are pitch = note · 64.
+
+**FM pitch → registers**: octave = pitch / 768, f = pitch mod 768, F-number = `YM_FNUM[region][f]`, block =
+octave − 1 if f < `YM_FNUM_SPLIT[region]` else octave; block −1 becomes block 0 with the F-number halved
+(`>> 1`). With F_C = 440 · 2^(−57/12) · 2^21 / fs (C-n's F-number at block n), fs = MCLK / 1008 (NTSC 53267.04 Hz: F_C = 643.76; PAL
+52781.17 Hz: 649.69) and x = 2 · F_C · 2^(f/768): `YM_FNUM[f]` = floor(x + 0.5) for f < SPLIT, floor(x / 2 + 0.5)
+from SPLIT on, SPLIT = the first f with floor(x + 0.5) > 2047 (NTSC 514, PAL 504). Registers: `$A4` = block << 3
+| F-number >> 8, `$A0` = F-number & 255, **always as a pair, `$A4` first** (the chip latches `$A4` until `$A0`): if
+either differs from the shadow both are written. A-4 = F-number 1083 at block 4 = 440.13 Hz (NTSC; PAL 1093,
+440.14 Hz); every note from C-1 is within 0.66 cents of 12-TET A440, octave 0 (halved F-numbers) within 1.9.
+
+**PSG pitch → period**: N = clamp((`YM_PSG_DIV[region][f]` + (128 << octave)) >> (8 + octave), 1, 1023) with
+`YM_PSG_DIV[f]` = floor(256 · PSG_clock / (32 · C0 · 2^(f/768)) + 0.5), C0 = 440 · 2^(−57/12) Hz, PSG_clock =
+MCLK / 15 (3579545 Hz NTSC, 3546894.9 Hz PAL). A-4 = 254 (440.40 Hz; PAL 252, 439.84 Hz); notes below A-2 (N > 1023) sound at the
+lowest period (109.3 Hz); high notes are coarse (10-bit periods). **Pitched noise** (source 3) writes PSG 3's
+period N(pitch + 48 · 64): periodic noise then sounds at the note (the LFSR's period of 16 shifts at tone 3's
+rate is 4 octaves below tone 3).
+
+`generated/ym_tables.h` holds both tables per region and the vibrato sine `YM_SINE[i] = floor(127 sin(2πi/64) +
+0.5)` (the OPL3's).
+
+**Writes** are records: `YM0 reg val` (port 0), `YM1 reg val` (port 1), `PSG byte`. Every YM register write goes
+through a shadow of both ports' 256 registers, every PSG write through a shadow of the three tone periods, four
+attenuations and the noise control: a write equal to the shadow is not emitted (the frequency pair: above).
+Key-on/off (`YM0 $28`) is not shadowed: it is written when a channel's key state changes (a retrigger writes off
+then on). PSG encodings: tone period of tone *i*: if only the low 4 bits differ from the shadow one byte `$80 | i<<5
+| N & 15`, else two: that and `N >> 4`; attenuation `$90 | i<<5 | a`; noise control `$E0 | mode`. A batch is the
+key-off phase — every `$28` key-off write, in the order made — followed by every other write in the order made
+(`YmPlayer.offs` = length of the first part).
+
+**Shadow at reset** = the chips after the machine reset writes: per port and channel the operator registers `$30` 0,
+`$40` `$7F`, `$50`-`$70` 0, `$80` `$FF`, `$90` 0, `$A0`-`$AC` 0, `$B0` 0, `$B4` `$C0`; `$22`, `$27`, `$2B` 0; all
+other registers 0; tone periods 0, attenuations 15, noise control 0; every FM channel keyed off.
+
+**Reset** (start, audition): all state cleared; FM channels: instrument 0, volume `$7F`, pan both (`$C0`); PSG and
+Noise: instrument 0, volume `$0F`; LFO = header byte 7; speed = header speed; position (0, 0, tick 0). Writes:
+`YM0 $22` = LFO (emitted only if not 0).
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
+
+1. `YM0 $22` = the LFO value.
+2. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..9 and their effect columns in
+   order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position:
+   `B` only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop
+   order; both → (B's order, D's row). Then for each channel 0..9: its cut is cleared; if the row has `Gxx` with xx >
+   0 (the last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel
+   whose delayed row is due (tick = xx) runs it, channels in order.
+3. Each channel whose cut tick (`Sxx`) equals this tick is keyed off, channels in order.
+4. Each channel 0..9 that has keyed any note since reset is updated (below), channels in order.
+5. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the target
+   order's last row), else row + 1, after the last row of an order the next order, after the last order the loop
+   order. **Loop speed**: whenever the next row is row 0 of the loop order the speed becomes the speed sequential
+   straight play starts that order with (`YmInfo.start_speed`; an `Fxx` on that row still applies at its row start).
+
+**Running a row** of a channel: if the row has a note 0..95, the arpeggio and fine pitch are cleared; an instrument
+byte sets the channel's instrument; the effect columns run in order (table below); then the note: OFF keys the
+channel off; a note with portamento active (`3xx`, xx > 0) while the channel is keyed only sets the glide target
+(no key-on: the row's locks are not used); any other note keys on.
+
+**FM key-on** (note *n*, channel *c*): if the channel's instrument is not a defined FM slot, nothing happens. Else
+the channel is keyed off (below), the instrument's operators, algorithm, feedback and AMS/FMS are copied and the
+row's locks applied in column order (`E` feedback, `I` brightness, `M` ratio), then written operator by operator
+(1..4): `$30`, `$40` (carriers: TL + 127 − volume, at most 127), `$50`, `$60`, `$70`, `$80`, `$90`; then `$B0` =
+feedback << 3 | algorithm, `$B4` = pan | AMS/FMS. Pitch state: base = target = 64 *n*, slide offset 0, arpeggio
+step 0, vibrato phase 0, sweep offset = 64 · start (when the sweep speed is not 0, else 0), sweep end 64 · end,
+sweep step 4 · speed. Keyed, and the key-on is pending (written by the update).
+
+**FM key-off**: if keyed, `$28` = key select (operators off), keyed = 0, and a pending key-on is dropped (a
+key-on and a cut in the same tick, e.g. `S00`, leave the channel off).
+
+**PSG key-on** (channels 6-9): if the instrument is not a defined PSG slot, nothing happens. Else the channel is
+keyed off (below), the instrument's three envelopes are copied (an instrument edit applies from the next note, as
+FM's) with every position 0, the pitch accumulator 0 and the relative flag; phase on. Noise channel: the note's
+noise mode = the instrument's byte 1, or (x << 2) | y of the row's `Nxy` (lock). Pitch state as FM. Keyed.
+
+**PSG key-off**: if keyed: keyed = 0; a volume envelope with a release point continues there (phase released),
+anything else is silent at once (phase off).
+
+**FM update** (per tick, after the row): pitch = clamp(base + 64 · arpeggio + fine + slide + vibrato + sweep, 0,
+6143), with arpeggio = 0, x, y for step 0, 1, 2 of `0xy` and vibrato = floor(SINE[phase] · depth / 16)
+(arithmetic right shift). Writes: the carriers' `$40` (operators 1..4, TL + 127 − volume, ≤ 127), the frequency
+pair, then a pending key-on: `$28` = `$F0` | key select. Then the effects advance: arpeggio step (mod 3) if an
+arpeggio is set; slide offset ± speed (clamped to ±6144) for `1xx`/`2xx`; base toward target by the speed (no
+overshoot) for `3xx`; vibrato phase + speed (mod 64) when speed and depth are set; sweep offset toward the end by
+its step (no overshoot); volume · 8 + x − y (clamped 0..1016) for `Axy`. A released note keeps updating.
+
+**PSG update** (channels 6-9). Envelope values at the current positions: level = 0 if the phase is off, else the
+volume envelope's value (15 without one); arpeggio = its value (0 without); bend = 4 · the pitch envelope's value
+(0 without); with the relative flag the accumulator += bend (clamped ±6144) and the offset is the accumulator,
+else the offset is the bend. Pitch as FM with 64 · arpeggio + offset added inside the clamp. Tone channels 6-8
+(tone *i* = *c* − 6): if *c* = 8 and pitched noise owns PSG 3 (the Noise channel has keyed a note since reset, its
+note's mode has source 3 and its phase is not off), only attenuation 15 is written; else the period N(pitch) and
+attenuation 15 − (level · volume + 7) / 15 (volume = the channel volume 0..15, i.e. volume · 8 >> 3; integer
+division). **Noise** (channel 9): noise control = the note's mode; if its source is 3, PSG 3's period N(pitch +
+3072); attenuation of index 3 as above. Then the effects advance as FM (volume clamped 0..120), then each envelope
+steps (FamiStudio's rules): next = position + 1; not released and next = the release point → the loop index;
+else next = L → the loop index if the envelope has a loop and no release point, else L − 1 (hold the last value).
+A released note whose volume position is now L − 1 with value 0 turns off (pitched noise frees PSG 3).
+
+### Effects (what Kotlin's effect specs declare for `"ym2612-fm"`)
+
+Names are one character (`docs/BACKENDS.md`, "Effect columns"); up to 4 columns per channel. "Note" = applies to
+the note keyed on this row only (parameter lock); "now" = from this row on, persisting. Channels: FM = 0-5, PSG =
+6-8, N = 9; an effect on a channel it does not list is rejected by the loader.
+
+| Effect | Channels | Parameter | Meaning |
+|---|---|---|---|
+| `0xy` arpeggio | all | x, y semitones | note: steps note, +x, +y every tick; the next note without `0xy` plays plain (also sets the step to 0; on a row without a note it changes the sounding note's arpeggio) |
+| `1xx` slide up | all | 1/64 semitones per tick | now: the pitch rises until `100`/`200`/`300`; a new note restarts the offset at 0 but keeps sliding |
+| `2xx` slide down | all | 1/64 semitones per tick | now: as `1xx`, down |
+| `3xx` portamento | all | 1/64 semitones per tick | now: while active a note on a keyed channel glides there without key-on; `300` (or `1xx`/`2xx`) ends it |
+| `4xy` vibrato | all | x speed 0-F (64-step cycle), y depth 0-F | now: offset floor(SINE · y / 16) (depth F: ±1.86 semitones); `4x0` off; the phase restarts with each note |
+| `8xy` pan | FM | x ≠ 0 left, y ≠ 0 right | now: `$B4` bits 7/6, written at once to the sounding note; `800` silences |
+| `Axy` volume slide | all | x up, y down, 1/8 step per tick | now: until `A00` |
+| `Bxx` jump | all | order | after this row play order xx row 0 (with `Dxx`: its row) |
+| `Cxx` volume | all | FM 00-7F, PSG 00-0F | now: channel volume (start 7F / 0F); FM 0.75 dB per step on the carriers' TL, PSG scales the envelope level |
+| `Dxx` break | all | row | after this row play row xx (clamped) of the next order (`Bxx`'s with both) |
+| `Exx` feedback | FM | 0-7 | note: operator 1 feedback |
+| `Fxx` speed | all | 01-FF ticks per row | now, global, this row included; the last of the row wins |
+| `Gxx` note delay | all | ticks | the channel's row (note, instrument, all its effects except `B`/`D`/`F`) runs at tick xx; never if xx ≥ the speed |
+| `Ixx` brightness | FM | 00-7F | note: TL of every modulator (non-carrier) = 7F − xx: 7F = brightest; algorithm 7 (no modulators) = no effect |
+| `Lxx` LFO | all | 00, 08-0F | now, global: register `$22` (00 off, 08-0F on at rate 0-7: 3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2 Hz); depth per instrument (AMS/FMS, operator AM) |
+| `Mxy` ratio | FM | operator x 1-4, MUL y 0-F | note: frequency multiplier (0 = ×½), DT kept |
+| `Nxy` noise mode | N | x 0 periodic / 1 white, y source 0-3 | note: overrides the instrument's mode (y 3 = pitched by the note, owning PSG 3) |
+| `Pxx` fine pitch | all | 80 = none | xx − 80 in 1/64 semitones (±2 semitones) until the next note |
+| `Sxx` note off | all | tick | key off at tick xx of this row (release phase), like an OFF cell at that tick |
+
+FM locks (`E`, `I`, `M`) apply at key-on only (changing a TL or multiplier of a sounding note steps audibly).
+Volume, pan and LFO change at once. No chord effect (no spare voices); drums are ordinary instruments with the
+sweep, the note giving the pitch.
+
+**`Lxx` and the header LFO**: `Lxx` writes `$22` at once and sets the player's LFO value, which step 1 rewrites
+every tick (emitted only on change).
+
+### XGM / XGC encoding (`ym/ym_xgm.c`: xgmtool 1.76's algorithm)
+
+The player's writes, frame by frame (one frame per tick; the VGM's frame), become XGM and XGC as xgmtool converts
+the exported VGM (`xgmtool song.vgm song.xgm` / `song.bin`); the host test checks byte equality with xgmtool built
+from the pinned SGDK. Per frame (with a loop-start marker on the first arrival at the loop point):
+
+1. **Clean** (`VGM_cleanCommands`): YM writes update a register state (`YM2612_set`: `$28` keeps the channel's
+   key nibble, `$27` keeps bits 6-7; registers xgmtool ignores — port 1 `$22`-`$2B`, `$30`-`$B7` with offset 3,
+   everything below `$22` and from `$B8` — are dropped). A key write (`$28`) is kept as is; a non-key write after
+   key writes first flushes: the state's delta since the last flush, then those key writes. At the frame end: the
+   remaining delta, the remaining key writes, then the PSG delta (`PSG_getDelta`: per index 0..3, tone then
+   attenuation; a tone whose high bits are unchanged is one byte). The YM delta lists the register pairs
+   (`$24`/`$25`, `$A4`/`$A0`, `$A5`/`$A1`, `$A6`/`$A2`, `$AC`/`$A8`, `$AD`/`$A9`, `$AE`/`$AA`; port 1 too except
+   `$24`) first, both when either differs, then port 0 and port 1 registers in ascending order. A loop-start marker
+   resets the old state (the loop frame carries every register written so far).
+2. **XGM** (`XGM_extractMusic`): PSG writes, key writes and port 0/1 writes are grouped; a port write after key
+   writes flushes port 0, port 1, then keys; at the end port 0 (≤ 16 writes per `$2X`), port 1 (`$3X`), keys (≤ 16 per
+   `$4X`), PSG (≤ 16 per `$1X`); then `$00` (frame), or at the very end the loop command `$7E` (offset of the loop
+   frame) and `$7F`.
+3. **XGC** (`XGC_extractMusic`): per XGM frame a size byte, then the PSG writes (split per XGM PSG command into
+   envelope writes, ≤ 4 per command, then tone writes, ≤ 8), the YM commands in order with key commands split at 6
+   writes and `$2B` writes removed, then **state** commands (`$60 | n−1`, pairs (index, value): D1L/RR registers
+   `$80`-`$8E` that changed, index `$44` + slot, port 0 then 1), a frame skip + loop at the loop's end; command
+   bytes are the XGM codes << 1 (frame skip `$7D` → `$FA`, loop `$FC`); a frame reaching 250 bytes is closed with a
+   frame skip and continued in a new frame. The file has 3 empty frames first, the sample table (all "silent":
+   `$FFFF`, `$0001`), `$FE` = 0, `$FF` = PAL flag.
+
+`.xgm` files carry a GD3 tag (flag bit 1) when the export has one; xgmtool appends " - Optimized with XGMTool" to the
+converter field, Thor Tracker writes its own GD3 (as the VGM's).
+
+### VGM export
+
+`ym_vgm_render` (`ym/ym_vgm.c`) runs the player headless and logs its writes as a VGM 1.71 for one YM2612 and one
+SN76489; `tools/audio/ym/ym_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference. File:
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x0C = SN76489 clock (3579545 NTSC,
+  3546895 PAL), 0x18 = total samples (44.1 kHz), 0x1C = loop offset − 0x1C and 0x20 = loop samples (both 0
+  without a loop), 0x24 = 60 / 50 (rate), 0x28 = 0x0009 (SN76489 feedback), 0x2A = 16 (shift register width), 0x2B =
+  0 (flags), 0x2C = YM2612 clock (7670453 / 7600489), 0x34 = 0xCC (data at 0x100). `ym_vgm_render` writes no GD3 tag;
+  the hosts' entry point appends one and sets 0x14.
+- Data: the machine reset writes, then the player's reset batch; then per tick: at the first arrival at (loop order,
+  row 0, tick 0) the loop point and a dump of the player's register state (`YM0 $22`; per FM channel 0..5: operators
+  1..4 `$30`-`$90`, `$B0`, `$B4`, `$A4`, `$A0`; per tone 0..2 its period as two bytes and its attenuation; the noise
+  control and attenuation 3 — all values, including zeros), so each pass of the loop starts from the same registers;
+  the key-off phase writes; if there were any, a one-sample wait (`0x70`, so the key-off reaches VGM players' chips
+  one sample before a key-on: a retrigger); the other writes; the rest of the tick's wait: 735 (`0x62`, NTSC) or 882
+  (`0x63`, PAL) samples, after a one-sample gap 734 / 881 (`0x61 nn nn`). Writes are `0x52 reg val` (port 0), `0x53
+  reg val` (port 1) and `0x50 byte` (PSG). The song ends at the second arrival at the loop point (or at the tick limit,
+  then without a loop), then `0x66`.
+
+### Position, seek and live edits
+
+- `position()`: above (the player runs one tick ahead; the heard position lags behind heavy frames).
+- `start(order, row, max_ticks)`: machine reset (chips reset, SGDK's reset writes, driver boot), then the **player and
+  the encoder's state** run alone from the song start until the next tick starts (order, row) (`CHIP_SEEK_FROM_START`;
+  0.18 µs per tick: `ymx_absorb` keeps the encoder state without encoding, exact because the clean and XGC states are
+  both every register written so far); then, from `YMM_PREROLL_TICKS` (60) ticks before the target, the chips receive
+  the player's register dump (and a key-on for its keyed FM channels) directly (the 68000's part; the YM address latch
+  is left on `$2A` as the driver expects) and the last 60 ticks stream through the driver with the output discarded.
+  The player and the stream after a seek equal straight play's; the sound is **identical to straight play when the
+  target is within 60 ticks of the start** (the whole way streams from the song start, host test: bit-identical); beyond,
+  notes keyed earlier restart 1 s before the target. Measured on the test song: each channel's 20 ms loudness
+  envelope over 0.5 s stays 0.012-0.028 from straight play (channels with at least 2 % of the energy; limit 0.1 —
+  FM release tails and SSG-EG phases of notes keyed before the pre-roll), the mix 0.005-0.103 (limit 0.15: it also
+  depends on the channels' relative phases, as PSG counters and FM phases restart at the restore; the OPL3's mix
+  measures 0.026), loudness 0.5-1 s after within 0.8-1.25×. Beyond `max_ticks` the player is placed at the order
+  start (`CHIP_SEEK_FROM_ORDER`, as the OPL3). Cost: ~20 ms on the dev PC (60 ticks of driver and chips, the
+  driver's idle work replayed: 36-44 ms stepped); suggested `seekTicks` 12000 (2.5 ms more). The hosts seek on a
+  spare machine off the audio thread (Android's control thread, the Deck's main thread), as for every system.
+- `apply_image` (realtime-safe, 2.7 µs mean / 13 µs worst): `ymp_relocate`, the OPL3's rules, plus: a changed header
+  LFO byte replaces the player's LFO value. The player is one tick ahead, so an edit is heard from the tick after next
+  (≤ 2 ticks, 33 ms). A changed region applies at the next start.
+
+### Audition
+
+`audition(channel 0..9, note 0..95, slot, fine −128..127)`: FM slots on channels 0-5, PSG slots on 6-9 (else
+`CHIP_ERR_IMAGE`). The (spare) machine is reset and the driver booted (0.35 ms); the stream starts with the audition
+batch alone (the encoder knows the reset registers, so the frame is light and the driver executes it at once); ticks
+then only update (sweeps and envelopes play). `release()`: 0 before any tick or when the note is already silent (FM:
+every carrier's envelope at `0x3FF` in ymfm; PSG: phase off and attenuation 15 on the chip); else the key-off goes
+into the next frame and `tick` returns 0 once the driver has executed it and the note is silent, or after 10 s.
+Measured: A-4 440.126 Hz (FM sine, F-number 1083) and 440.397 Hz (PSG period 254); release 112 ticks (sine, RR 6),
+30 ticks (PSG square: the volume envelope's 30-value tail), 1-3 ticks for a PSG or Noise instrument without a release
+point (silent at key-off, once the driver has executed it); the Noise channel's pitched noise follows the note and
+the relative pitch envelope (PSG 3's period).
+
+### Mute, mix and ops behaviour
+
+`mute(channel 0-9)` leaves the channel out of the chips' output only: an FM channel contributes what the chip outputs
+for a channel with its `$B4` output bits clear (the DAC offset; `ym/ym_ymfm.cpp` sums ymfm's channels itself), a PSG
+channel contributes nothing; the player, the driver and the chips run on, so the stream and the VGM are unchanged and
+unmuting resumes mid-note. `start`/`audition` clear mutes.
+
+**Mix**: ymfm's YM2612 sum × 192/256 (one full-level FM channel peaks at 0.125 of full scale, six at 0.75) and the PSG
+level table (2 dB steps, 4096 at attenuation 0) × 65/256, both through blip_buf, float = sample / 32768. The FM:PSG
+balance is libvgm's default (VGMPlay volumes YM2612 0x200 : SN76489 0x100): a full-level PSG square has 0.35 times
+the rms of a full-level FM sine. Test song: rms 0.07, peak 0.39.
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `ym_load_image`; `image_storage` = `sizeof(YmImage)` |
+| `start(order, row)` | above; `seek_mode` from start or order |
+| `apply_image` | above; ignored while auditioning |
+| `audition`, `release` | above |
+| `mute(channel 0-9)` | above |
+| `position` | the next tick the driver executes |
+| `tick` | one vertical interrupt: 801-802 frames at 48 kHz NTSC (965-966 PAL), ≤ 1933 at 96 kHz PAL; 0 after a released audition ended; `CHIP_ERR_FAULT` if the driver stopped playing |
+
+**Kotlin** (`PlaybackEngine` for `"ym2612-fm"`): `imageSize` 65536, `seekTicks` 12000, `note(n)` = n (absolute
+0..95), `fine` = the system's fine pitch in 1/64 semitones (0 by default), `ticksPerSecond` = 59.92 (NTSC) or 49.70
+(PAL) — the console's vertical interrupt; the VGM's 60/50 Hz is its own convention. Validation should mirror
+`YmPlayerImage.LOADER_PROBLEMS` and warn about heavy rows (driver lag), PSG 3 notes under pitched noise, locks without a
+note and PSG notes below A-2.
+
+### Exports on the hosts
+
+`ym_export(image, 65536, format, max_ticks, title, author, date, &size, &problem)` (`ym/ym_export.h`, self-contained
+for cinterop; `ym_export_free`): format `YM_EXPORT_VGM` (the VGM above plus a GD3 1.00 tag: system "Mega Drive (Thor
+Tracker)", converter "Thor Tracker", date today unless given), `YM_EXPORT_XGM` (`.xgm`: xgmtool's XGM of that VGM, the
+same GD3 tag appended and flag bit 1 set — the input of SGDK's `rescomp` `XGM` resource) or `YM_EXPORT_XGC` (`.bin`:
+xgmtool's compiled XGC, what `XGM_startPlay` plays; no tag). Rejected images report the loader's reason ("image size",
+"format", "out of memory", "frame too large" otherwise). Android: JNI
+`Java_org_thortracker_audio_ChipAudio_nativeYmExport(image, format, maxTicks, title, author, date)` (strings as UTF-8
+byte arrays; `IllegalArgumentException(problem)` on rejection) in `audio_jni.cpp`, declared in `ChipAudio`'s companion,
+which registers it as `YmExport.renderer`; Deck: `ym_export.h` is in `decknative.def`, `DeckYmExport` (`DeckVgm.kt`)
+is registered by `main`. The 30 s test song renders its XGM in 1.2 ms on the dev PC.
+
+### Preparing the driver, tables and fixtures
+
+`python3 tools/audio/prepare_ym.py [--sgdk DIR]` (needs `tools/audio/fetch_sgdk.sh`: clones the pinned SGDK into
+`~/.cache/thor-tracker/sgdk-9a78a441` and builds sjasm and xgmtool) checks the vendored `third_party/sgdk-xgm` files
+against the checkout, assembles the driver with sjasm and compares it with `drv_xgm` in SGDK's `lib/libmd.a`, then
+writes `generated/xgm_driver_image.h`, `generated/ym_tables.h` (from `ym_ref.py`'s table functions),
+`core/.../backend/YmPlayerImage.kt` (layout, limits, effect codes, timing, export formats, F-number tables and
+`LOADER_PROBLEMS` parsed from the C headers) and `app/src/test/cpp/ym_test_song.h` (the test images: the song, the
+same song laid out anew, a note edit, a tempo edit, the song cut to two orders and a PAL version; the reference
+player's per-tick writes, key-off phase lengths and positions for 1500 ticks of four of them; the reference VGM's
+size, FNV-1a hash and loop for NTSC and PAL; xgmtool's XGM and XGC of those VGMs; byte offsets for the corruption
+checks). Rerun after changing the driver pin, the player specification, the reference player or the test song.
+
+### Verification
+
+- The test song (`tools/audio/ym/ym_song.py`, 4 orders of 16/32/16/24 rows, `B01` back to the loop order 1): all 8
+  algorithms with feedback (FM 6 included), LFO (header, `Lxx`, AMS/FMS, operator AM), SSG-EG, DT/MUL variety, every
+  effect where allowed, 4 columns, OFF cells, retriggers, an FM kick sweep, PSG envelopes (a volume loop before its
+  release point, release tails, ends held at 0 and above 0, no envelope at all, an arpeggio envelope, absolute and
+  relative pitch envelopes, one envelope shared by two instruments), white/periodic noise at fixed rates and pitched
+  (muting PSG 3), runs, shared patterns.
+- `tools/audio/run_native_host_test.sh [dir]` runs `app/src/test/cpp/ym_machine_test.c` — 2026-11-08: **500 checks, 0
+  failures** (Game Boy 145, NES 336, SID 151, OPL3 282 unchanged): pitch tables (A-4 = 440.13 Hz NTSC / 440.14 PAL, FM
+  notes from C-1 within 0.66 cents, PSG A-2..A-6 within 12 cents); 67 single-byte corruptions rejected with their
+  reason (envelopes included); **the player's writes and positions equal the independent Python reference's in all
+  1500 ticks, NTSC and PAL**; the machine's player (one tick ahead), its heard positions (lagging behind heavy frames,
+  max 3 ticks) and **the driver's chip writes equal to the streamed XGC frames, in order** (18501 writes, the DAC kept
+  off); **the engine's XGC stream equals xgmtool's XGC of the reference VGM for the whole first pass** (9933 bytes); a
+  3126-tick run across a ring wrap; **pass replay = every cycle stepped** (4817 ticks: samples, chip writes,
+  positions; Z80 state and RAM at 4537 tick ends; 95 % of the Z80's cycles replayed; 40 passes, 444 KiB); 30 s NTSC
+  and PAL non-silent in every second, no clipping, bit-identical on a second start; tick cost flat (≤ 3× the mean);
+  loop passes step through identical positions = the VGM loop; eight seeks with exact positions and writes, sound
+  inside the pre-roll bit-identical, beyond within the per-channel and mix envelope limits; the order fallback; live
+  edits (same and re-laid-out image before every tick, a note edit, tempo edits ahead of and behind the playhead, the
+  song cut under the playhead); audition (A-4 on FM and PSG measured, NTSC and PAL, fine +64, every algorithm, the
+  kick sweep, release incl. the PSG release tail and instruments without a release point, pitched noise on the Noise
+  channel, argument limits); mute (writes unchanged, silence, resume, FM 6/Noise/PSG alone, before the first tick,
+  after a seek); PAL timing (71364 Z80 cycles per tick); **VGM bytes = the reference's (NTSC, PAL), XGM and XGC bytes
+  = xgmtool's (NTSC, PAL)**; the export entry point (GD3 fields incl. 4-byte UTF-8, default date, rejections); the
+  ops table. Evidence: `ym_song.wav`, `ym_song_pal.wav`, `ym_tone_fm.wav`, `ym_tone_psg.wav`, `ym_trace.txt`,
+  `ym_song.vgm`, `ym_song.xgm`, `ym_song.bin` (XGC), `ym_image.bin`.
+- `tools/audio/ym_reference_check.py <dir> [--xgmtool PATH] [--vgm2wav PATH]` (developer evidence) — 2026-11-08: the
+  reference reproduces the engine's trace in 1500/1500 ticks and the VGM byte for byte; the VGM parsed from the format
+  alone (header, waits = 346185 samples, loop point on the dump, stream = trace); xgmtool's XGM/XGC of the VGM = the
+  engine's exports; played by libvgm's vgm2wav (local patch: env `VGM2WAV_YM2612_CORE`) over the first pass against the
+  engine's render: Nuked-OPN2 envelope correlation 0.947, log-spectrum 0.788, same pitch class 91 %, level ×4.1;
+  Genesis Plus GX 0.935 / 0.765 / 88 %. Per channel soloed (Nuked): envelope 0.98-1.00 except FM 2 (the bell and
+  E-piano, where GPGX and Nuked themselves differ by 2-3×) and PSG 2 after the first pass (its volume slide runs across
+  the loop: the VGM replays pass 1, the player plays on).
+- `tools/audio/render_ym_image.sh image out.wav [seconds] [mute=190] [--vgm|--xgm|--xgc out]` renders an image through
+  the ops table and the exports through `ym_export`.
+- **Bench**: `tools/audio/build_ym_bench.sh [dir]` builds `tools/audio/ym_bench.c` for the host and as static arm64
+  executables (`-O2`, `-O3`); `adb push` and run `ym_bench-arm64 [seconds] [rate] [paced_seconds]`: cold, warm and
+  paced ticks with pass replay, the same machine with replay off (the spike's cost, for before/after on one device),
+  live edits, auditions and seeks. Built 2026-11-08 into `/tmp/ym_bench2/` (the spike's in `/tmp/ym_bench/`).
+- Not done: listening on hardware, a comparison with a real YM2612 or an emulator running a whole game.
+
+### Hosts: threads and costs
+
+Dev PC (`ym_bench-host`, 48 kHz, 30 s of the test song, 2026-11-08). Konkr, spike (before pass replay, measured by
+the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 ms mean / 10.5 ms worst, seek 3/20
+112 ms. The devices have not run `/tmp/ym_bench2/` yet.
+
+| Work | Thread | Dev PC |
+|---|---|---|
+| `tick` (player + encoder + driver + ymfm + PSG + resample) | audio callback | 353 µs mean (p99 532, worst 744); ymfm alone 235 µs, the rest (the driver's frame work stepped, its idle work replayed, PSG, player, XGC encoder, blip) 118 µs; paced at 59.92 Hz 487 µs mean (p99 885; the CPU clocks down between ticks); cold first 60 ticks 402 µs. Replay off (the spike): 695 µs warm |
+| `apply_image` (relocating) | audio callback, tick boundary | 2.4 µs mean, worst 19 µs |
+| machine creation | control | 0.4 ms (640 KiB replay arena reserved, touched as passes are kept) |
+| `audition` setup (driver boot) | control, spare machine | 0.35 ms |
+| `start` (seek) | control, spare machine | 10.7 ms within the first second (all through the driver), 20 ms for 3/20 (60 ticks through the driver; 36 ms stepped) + 2.9 ms for 12000 player ticks |
+
+Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
+replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.

@@ -1,5 +1,19 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.13.0 Sega Mega Drive songs
+
+A fifth sound chip pair: the Mega Drive's **YM2612** FM chip and **SN76489** PSG, played through SGDK's real **XGM** sound driver on an emulated Z80, so exports drop straight into Mega Drive homebrew made with SGDK.
+
+- **New blank song** and **Load demo** offer **Mega Drive (YM2612 + PSG)**. The demo is **Neon Causeway**.
+- Ten channels: FM 1-6, PSG 1-3 and Noise, with up to four effect columns each (as on OPL3). NTSC by default; PAL and the chip LFO are song settings.
+- **FM voices** use the same editor as OPL3: a **Sound** page of curated choices (the YM2612's 8 algorithms drawn as diagrams, ratios with detune, brightness, level, envelope with sustain rate, key scaling, vibrato/tremolo, SSG-EG), an **Expert** page with every operator register, and a **Drum** page for pitched FM drums with a sweep.
+- **PSG sounds** are volume, arpeggio and pitch envelopes (like NES instruments), plus noise mode and rate. A slot's **Type** row switches it between FM voice and PSG sound; each lane starts on a sound of the right kind.
+- 24 presets: slap bass, brass, e-piano, bell, strings, lead, FM drums, PSG leads and arpeggios, noise drums.
+- **Export .vgm**, **.xgm** (for SGDK projects) and **.xgc**.
+- Not in this release: channel 3's special mode, PCM samples (DAC) and XGM2.
+
+Verified: 408 unit tests; native engine checks: Game Boy 145, NES 336, SID 151, OPL3 282, Mega Drive 500 (the driver's chip writes equal the streamed frames; our XGM and XGC exports are byte-identical to SGDK's own xgmtool converting our VGM, NTSC and PAL; the player's writes equal an independent Python implementation every tick; a fast-path that replays the driver's idle Z80 passes is proven sample- and register-identical to stepping every cycle); Mega Drive project lowering byte-identical to the reference builder for two golden songs; other systems' project files encode byte-identically; Game Boy factory `.uge` byte-identical and all 32 Game Boy view renders pixel-identical; 18 Android tests on the emulator. On an AYANEO Pocket DMG the Mega Drive demo plays with 0 audio underruns and the FM/PSG instrument pages work. Cost per tick on the Konkr: 0.9 ms warm (4.9 ms when the CPU clocks down between ticks).
+
 ## 0.12.0 OPL3 FM songs
 
 A fourth sound chip: the Yamaha **OPL3** (YMF262), the Sound Blaster's FM chip, emulated by Nuked-OPL3 and played by Thor Tracker's own player (no console shipped an OPL3 sound driver, so this system is music-only and exports VGM).

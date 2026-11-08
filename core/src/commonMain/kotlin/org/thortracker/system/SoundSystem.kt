@@ -10,6 +10,7 @@ import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.ym2612.YmSystem
 
 /**
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
@@ -340,6 +341,12 @@ interface SoundSystem {
      */
     fun selectSound(selection: Selection, song: Song): Selection
 
+    /**
+     * The sound number a new entry on a channel of [bank] starts with when the editor has none chosen for that bank
+     * yet (the Mega Drive: the first FM voice for FM channels, the first PSG sound for PSG channels).
+     */
+    fun defaultInstrument(song: Song, bank: Int): Int = 1
+
     /** The editor and painter of one of the system's own [views] (Instrument, Wave), or null for shared views. */
     fun view(kind: ViewKind): SystemView?
 
@@ -368,7 +375,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem, Opl3System)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem, Opl3System, YmSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

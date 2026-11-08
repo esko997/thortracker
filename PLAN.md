@@ -130,6 +130,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - 0.10.0: NES DPCM channel (samples, starter kit, .wav/.dmc import), shared song+sample memory.
 - 0.11.0: C64 SID sound system (GoatTracker 2.77 playroutine + reSID), .sid/.prg/.sng export.
 - 0.12.0: OPL3 FM sound system (own player on Nuked-OPL3), up to 4 effect columns on OPL3, chord effect, curated FM editor, VGM export.
+- 0.13.0: Mega Drive sound system (YM2612 + PSG through SGDK's XGM Z80 driver), .vgm/.xgm/.xgc export.
 - Idea (user, 2026-11-06), not scheduled: a third chord layer with L2 and R2 held together, cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous (`HostInput`); it would need a modifier-set binding (`Binding.modifiers`), keymap file support and capture of two-modifier chords.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.

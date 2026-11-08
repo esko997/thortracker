@@ -38,21 +38,34 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("opl3/opl3_image.c").asFile,
         engineSrc.file("opl3/opl3_vgm.c").asFile,
         engineSrc.file("third_party/nuked-opl3/opl3.c").asFile,
+        engineSrc.file("vgm_gd3.c").asFile,
+        engineSrc.file("cpuz80.c").asFile,
+        engineSrc.file("ym/ym_chip.c").asFile,
+        engineSrc.file("ym/ym_machine.c").asFile,
+        engineSrc.file("ym/ym_player.c").asFile,
+        engineSrc.file("ym/ym_image.c").asFile,
+        engineSrc.file("ym/ym_xgm.c").asFile,
+        engineSrc.file("ym/ym_vgm.c").asFile,
+        engineSrc.file("ym/ym_psg.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
-    val cxxSources = listOf("sid/sid_resid.cpp") +
+    // ymfm (the YM2612): ym/ym_ymfm.cpp compiles ymfm_opn.cpp itself.
+    val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp", "third_party/ymfm/ymfm_ssg.cpp") +
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
-            "third_party/nuked-opl3")
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
+            "third_party/nuked-opl3", "third_party/ymfm")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
         "nes/nes_apu.h", "generated/nes_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
-        "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
+        "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
+        "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
+        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm_driver_image.h"),
+        engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
@@ -93,7 +106,7 @@ kotlin {
             }
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
-                includeDirs(layout.projectDirectory.dir("native"), engineSrc.dir("opl3"))
+                includeDirs(layout.projectDirectory.dir("native"), engineSrc.dir("opl3"), engineSrc.dir("ym"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }
@@ -102,7 +115,7 @@ kotlin {
             entryPoint = "org.thortracker.deck.main"
             // Links against deps/lib/libSDL3.so. The AppImage bundles that library in lib/ beside the executable, found
             // through the rpath; without it the system's SDL3 is used (SteamOS ships one).
-            // libstdc++: reSID (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
+            // libstdc++: reSID and ymfm (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
             linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
         }
     }

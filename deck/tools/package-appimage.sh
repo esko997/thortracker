@@ -20,9 +20,15 @@ cp packaging/AppRun packaging/thortracker.desktop packaging/thortracker.svg "$ap
 cp packaging/thortracker.svg "$app/.DirIcon"
 chmod -R u=rwX,go=rX "$app"
 chmod a+x "$app/AppRun" "$app/usr/bin/thortracker"
-tool=build/appimagetool-x86_64.AppImage
+# appimagetool 1.9.1, pinned by checksum (GitHub's release-asset digest) so every build uses the same tool.
+tool=build/appimagetool-1.9.1-x86_64.AppImage
+tool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
 if [ ! -x "$tool" ]; then
-  curl -sSL -o "$tool" https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+  # -f: an HTTP error page must not be saved as the tool; download beside it so a failure leaves nothing behind.
+  curl -sSfL --retry 5 --retry-all-errors -o "$tool.part" \
+    https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+  echo "$tool_sha256  $tool.part" | sha256sum -c --quiet
+  mv "$tool.part" "$tool"
   chmod +x "$tool"
 fi
 mkdir -p ../dist

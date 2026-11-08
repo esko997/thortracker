@@ -13,6 +13,8 @@ set(BLIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/blip_buf)
 set(RESID_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/resid-1.0)
 set(OPL3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opl3)
 set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
+set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
+set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -31,8 +33,20 @@ target_compile_definitions(resid PRIVATE NDEBUG=1)
 target_compile_options(resid PRIVATE -O2 -fPIC -w)
 set_target_properties(resid PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# ymfm (C++), the YM2612; only ym/ym_ymfm.cpp (a C interface, which compiles ymfm_opn.cpp itself) talks to it.
+add_library(ymfm STATIC
+    ${YM_DIR}/ym_ymfm.cpp
+    ${YMFM_DIR}/ymfm_adpcm.cpp
+    ${YMFM_DIR}/ymfm_ssg.cpp
+)
+target_include_directories(ymfm PRIVATE ${YMFM_DIR} ${YM_DIR})
+target_compile_definitions(ymfm PRIVATE NDEBUG=1)
+target_compile_options(ymfm PRIVATE -O2 -fPIC -w)
+set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # The chip machines behind chip_engine.h. huge_machine.c includes binjgb's emulator.c; the NES and
-# SID machines share chips' m6502.h (header-only, implemented once in cpu6502.c).
+# SID machines share chips' m6502.h (header-only, implemented once in cpu6502.c); the YM2612 machine's Z80 is
+# chips' z80.h (implemented once in cpuz80.c).
 add_library(chip_engines STATIC
     chip_engine.c
     cpu6502.c
@@ -53,14 +67,23 @@ add_library(chip_engines STATIC
     ${OPL3_DIR}/opl3_image.c
     ${OPL3_DIR}/opl3_vgm.c
     ${NUKED_DIR}/opl3.c
+    vgm_gd3.c
+    cpuz80.c
+    ${YM_DIR}/ym_chip.c
+    ${YM_DIR}/ym_machine.c
+    ${YM_DIR}/ym_player.c
+    ${YM_DIR}/ym_image.c
+    ${YM_DIR}/ym_xgm.c
+    ${YM_DIR}/ym_vgm.c
+    ${YM_DIR}/ym_psg.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)
 set_target_properties(chip_engines PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(chip_engines PUBLIC resid)
+target_link_libraries(chip_engines PUBLIC resid ymfm)
 
 add_library(thortracker_audio SHARED
     audio_engine.cpp

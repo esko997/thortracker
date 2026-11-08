@@ -1,11 +1,12 @@
-// JNI bridge for org.thortracker.audio.ChipAudio. Every call except nativePosition, nativeStats and
-// nativeOpl3Vgm must come from ChipAudio's single control thread.
+// JNI bridge for org.thortracker.audio.ChipAudio. Every call except nativePosition, nativeStats, nativeOpl3Vgm and
+// nativeYmExport must come from ChipAudio's single control thread.
 #include <jni.h>
 
 #include <string>
 
 #include "audio_engine.h"
 #include "opl3/opl3_export.h"
+#include "ym/ym_export.h"
 
 using thortracker::Engine;
 
@@ -108,6 +109,33 @@ JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeOpl3Vgm(
     jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
     if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
     o3_export_free(vgm);
+    return out;
+}
+
+// The YM2612 exports (any thread; allocates, renders the whole song: not the audio thread): format 0 VGM, 1 XGM, 2 XGC
+// (ym_export.h). Kotlin: `@JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int,
+// title: ByteArray, author: ByteArray, date: ByteArray): ByteArray`. Returns the file, or throws
+// IllegalArgumentException with the loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeYmExport(JNIEnv* env, jclass, jbyteArray image,
+                                                                                jint format, jint max_ticks,
+                                                                                jbyteArray title, jbyteArray author,
+                                                                                jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* file = ym_export(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                              static_cast<int>(format), static_cast<uint32_t>(max_ticks < 0 ? 0 : max_ticks), t.c_str(),
+                              a.c_str(), d.c_str(), &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!file) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "YM2612 export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(file));
+    ym_export_free(file);
     return out;
 }
 
