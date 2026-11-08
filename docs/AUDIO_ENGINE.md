@@ -2322,3 +2322,422 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## AY-3-8910 / YM2149: Thor Tracker's own player on the ZX Spectrum 128, MSX and Atari ST (`"ay-zx128"`, `"ay-msx"`, `"ay-atari-st"`)
+
+Roadmap step 7 ("More chips"), source only (branch `ay-systems`, unbuilt: the integrator runs every generation step,
+build and test listed under "Preparing" and "Verification"). Three system variants, one per stock computer, play
+songs lowered into the image layout below through **our own player** (`ay/ay_player.c`, pure integer C without a
+chip, mirrored by the independent Python reference `tools/audio/ay/ay_ref.py`) on **our own AY-3-8910 / YM2149 core**
+(`ay/ay_psg.c`), and export VGM. No computer is emulated (no Z80 or 68000): none of these machines has one standard
+music driver, and songs leave as VGM register logs, never as fake native executables. This section is the contract
+of the native engine, the Python reference and the Kotlin system (`core` `system/ay`, `backend/AyLowering.kt`); the
+numbers they share are generated into `backend/AyPlayerImage.kt` ("Preparing").
+
+### Variants: chips, clocks, ticks and wiring (primary sources)
+
+Each variant is the stock computer: its chip, its clock, its frame interrupt as the player's tick, and its mono
+output. Times are kept as exact integer ratios of the machine's master clock *M*: the chip clock is *M* / `ay_div`,
+one tick is `frame_div` master clocks, one chip **step** (the generators' clock, chip clock / 8) is 8 · `ay_div`
+master clocks.
+
+| Image byte 5 | System id | Name | Chip | *M* (Hz) | `ay_div` | Chip clock | `frame_div` | Tick | R7 bits 7-6 | VGM `0x78` type / `0x74` clock |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | `ay-zx128` | ZX Spectrum 128 (AY-3-8912) | GI AY-3-8912 (the 28-pin AY-3-8910: same sound, one I/O port) | 3546900 (Z80) | 2 | 1773450 Hz | 70908 (T-states per frame) | 50.0212 Hz | `11` | `0x01` / 1773450 |
+| 1 | `ay-msx` | MSX (AY-3-8910) | GI AY-3-8910 | 10738635 (VDP crystal; Z80 = *M*/3) | 6 | 1789772.5 Hz | 179208 (2 · 342 · 262: one NTSC TMS9918A frame) | 59.9227 Hz | `10` | `0x00` / 1789772 |
+| 2 | `ay-atari-st` | Atari ST (YM2149F) | Yamaha YM2149F | 32084988 (PAL ST master) | 16 | 2005311.75 Hz | 641024 (4 · 160256: 512 cycles · 313 lines of the 8 MHz CPU) | 50.0527 Hz | `11` | `0x10` / 2005312 |
+
+Sources: World of Spectrum's 128K reference ("The main processor runs at 3.54690 MHz", "70908 T states per frame",
+the AY clocked at half the CPU clock) and the 128 ROM 0 disassembly (Matthew Wilson: the ROM writes register 7 as
+`$FF`/`$F8`, i.e. both I/O direction bits set); the MSX2 Technical Handbook chapter 5a ("in MSX, it is defined that
+fc = 1.7897725 MHz"; "it should always be set so that bit 6 = 0 and bit 7 = 1"); Hatari `src/clocks_timings.c`
+(`ATARI_STF_PAL_MCLK 32084988`, CPU = MCLK/4, YM = CPU/4 "2 MHz", `ATARI_STF_CYCLES_PER_VBL_PAL 160256`). The ST's
+I/O bits (both ports outputs: port A drives drive select, RS-232 handshake and the printer strobe, port B the printer
+data) follow the ST's use of the ports [INFERENCE: not quoted from a primary source]; they never affect sound. The
+VGM clock field is an integer: the MSX's 1789772.5 Hz is written as 1789772 (the value MSX VGM rips use), the ST's
+as 2005312. MSX machines with the later MSX-ENGINE (a YM2149 inside) are not a separate variant: the MSX standard
+names the AY-3-8910. The MSX tick is the NTSC (Japanese) 60 Hz frame; PAL MSX machines are not modelled.
+
+**Wiring (all three)**: the stock machines mix the three channels into **one mono output** (the 128's TV/sound
+socket, the MSX's sound output, the ST's monitor/TV audio). No variant has per-channel panning or stereo; the engine
+outputs the mono mix on both host channels and the VGM declares the chip's default single mixed output. The three
+outputs are summed linearly; the real machines tie them together through resistors, which compresses loud chords
+slightly (MAME models it as a resistor network) — not modelled (see `docs/BACKENDS.md`, "Open questions").
+
+### Chip core (`ay/ay_psg.c`)
+
+Written for Thor Tracker from the GI AY-3-8910/8912 data manual, the Yamaha YM2149 manual and the MSX2 Technical
+Handbook; MAME's `ay8910.cpp` (BSD-3-Clause, Couriersud) and ayumi (MIT, Peter Sovietov) were read for behaviour the
+manuals leave implicit; the per-level DAC curves are **ayumi's measured tables** (`AY_dac_table`: 16 levels of the
+AY-3-8910, `YM_dac_table`: 32 levels of the YM2149; ayumi commit `07c08b4874c359169e4a028edf73f046d8b763e2`,
+`ayumi.c` sha256 `8824bc34…f19401d`), copied as data with ayumi's MIT notice. ayumi itself is vendored unmodified in
+`third_party/ayumi/` (`ayumi.c`, `ayumi.h`, `LICENSE`) for the host test's independent comparison only; it is not
+linked into the app.
+
+Registers R0-R13 are the sound registers (R14/R15 are I/O ports: not modelled, writes ignored):
+R0/R1, R2/R3, R4/R5 tone periods A-C (12 bits, fine + coarse; unused bits ignored), R6 noise period (5 bits), R7
+mixer (bits 0-2 tone **disable** A-C, bits 3-5 noise disable A-C, bits 6-7 I/O direction), R8-R10 amplitude A-C
+(bit 4 M: the envelope's level, else the 4-bit level), R11/R12 envelope period (16 bits), R13 envelope shape
+(bits 0-3: hold, alternate, attack, continue).
+
+Per step (chip clock / 8; the state machine both models — AY and YM — share; MAME and ayumi agree on it):
+
+- **Tone** (per channel): counter + 1; when counter ≥ period (0 acts as 1) the output flips and the counter becomes
+  0. So f = clock / (16 · TP), and a period shortened below the counter flips on the next step.
+- **Noise**: counter + 1; when counter ≥ 2 · period (0 acts as 1) the counter becomes 0 and the 17-bit LFSR steps:
+  new bit 16 = bit 0 ⊕ bit 3, shift right (seed 1 at reset). Noise output = bit 0. f(noise clock) = clock / (16 · NP).
+- **Envelope**: when not holding, counter + 1; when counter ≥ period · `env_div` (period 0 acts as 1) the counter
+  becomes 0 and the envelope takes one step. **AY-3-8910/8912**: 16 levels, `env_div` 2; **YM2149**: 32 levels,
+  `env_div` 1 — the same cycle (256 · EP clocks per ramp), twice the resolution on the YM. Shapes (as MAME's
+  `set_shape` and the manuals' table): attack = bit 2; continue = 0 behaves as hold = 1 with alternate = attack (so
+  0-3 = 9, 4-7 = 15); a ramp runs from the top (level max, falling) or bottom (0, rising) according to attack; at a
+  ramp's end: hold → (alternate flips the direction once) and hold the last level of that direction; otherwise
+  alternate flips the direction and continues, else the ramp restarts. **A write to R13 (any value, also an
+  unchanged one) restarts the envelope**: counter 0, level at the ramp's start, holding cleared.
+- **Channel output**: (tone output | tone disable) & (noise output | noise disable) — a channel with both disabled
+  outputs a constant level. Level: M set → the envelope level; else the fixed volume V: AY level V (16 steps), YM
+  level 2V + 1 (V = 0 → 0). DAC: AY `AY_DAC[level]` (0..15), YM `YM_DAC[level]` (0..31), both 0..1 (level max = 1.0).
+- **Mix**: mono sum of the three channels' DAC values × `AY_AMP` (10922 per channel at 1.0: three full channels
+  reach 32766), the sum's changes sent to one blip_buf 1.1.0 buffer as band-limited deltas at their step (clock rate =
+  the step rate *M* / (8 · `ay_div`)), with blip_buf's high-pass (bass shift 9, ~15 Hz) removing the DC the unipolar
+  outputs carry; float = sample / 32768, written to both host channels.
+- **Mute** (bit per channel): a muted channel is left out of the sum; every generator keeps running.
+- **Silent advance** (seeking, `out` = NULL): every counter, flip, the LFSR, the envelope step and hold state advance
+  **arithmetically to exactly the state stepping would reach** (tone: the first flip after max(1, TP − counter)
+  steps, then every TP; noise: the same on 2 · NP, the LFSR stepped once per event; envelope: steps counted the same
+  way, periodic shapes reduced modulo their cycle, held shapes saturated). The host test compares the two paths'
+  states after every tick of a song.
+
+Register writes take effect at the step boundary they are applied at (the player's writes at a tick's start, in
+order).
+
+### Machine (`ay/ay_machine.c`)
+
+`AyMachine`: the image copy, the player, the chip, one blip buffer (mono), the tick remainder. A tick: the player
+runs once; its writes (in order) go to the chip at the tick's first step; the chip runs `steps` steps, `steps` from
+exact accumulation (`acc += frame_div; steps = acc / (8 · ay_div); acc %= 8 · ay_div`: ZX 4431/4432, MSX 3733/3734,
+ST 5008); blip_end_frame(steps); all available samples are read (at most 2048 frames at 96 kHz) and written as
+stereo frames (L = R). No allocation outside create; no key-off gap (the AY has no key bits).
+
+### Channels
+
+| Channel | 0 | 1 | 2 |
+|---|---|---|---|
+| Name | Channel A | Channel B | Channel C |
+| Chip | tone A, R0/R1, R8, R7 bits 0/3 | tone B, R2/R3, R9, bits 1/4 | tone C, R4/R5, R10, bits 2/5 |
+
+Every channel plays every instrument; the noise generator (R6) and the envelope generator (R11-R13) are **shared**
+(below, "Shared noise and envelope").
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian, every pattern and envelope reference an offset into the data region (any
+layout that passes `ay_load_image` relocates). Constants: `ay/ay_image.h` (`AY_*`); the reference builder is
+`tools/audio/ay/ay_song.py` (`build()`). The loader rejects anything off-contract with a reason and the byte
+(`AyInfo.problem`, `problem_offset`): the Kotlin validator mirrors every reason with user-facing messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTAY"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | variant: 0 ZX Spectrum 128, 1 MSX, 2 Atari ST (each engine accepts only its own) |
+| 6 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 7 | 1 | 0 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | instrument count I = highest slot present, 0..64 |
+| 13 | 1 | 0 |
+| 14 | 2 | data size D: bytes of pattern and envelope data used, ≤ 61440 |
+| 16 | 48 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 1536 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (3 *o* + *c*); entries ≥ count 0 |
+| 1856 | 192 | 0 |
+| 2048 | 2048 | instrument slot *n* (1..64) at 2048 + 32 (*n* − 1) |
+| 4096 | 61440 | data region: patterns and envelopes, `[0, D)` |
+
+**Instrument** (32 bytes; an all-zero record = no instrument; records above I must be zero):
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 = defined (1); bit 0 = the pitch envelope is relative (accumulates every tick); bit 1 = **auto envelope period** (follows the note) else manual; bit 2 = **tone synced to the envelope** (auto only); bits 3-6 zero |
+| 1 | hardware envelope shape: 0 = off (fixed volume), 8..15 = the shape written to R13 |
+| 2 | auto octave offset, s8 −8..7 (auto only; else 0) |
+| 3 | 0 |
+| 4 | u16 manual envelope period 0..65535 (manual only; else 0) |
+| 6 | u16 data offset of the volume envelope (0..15), `$FFFF` = none (15) |
+| 8 | u16 arpeggio envelope (−64..63 semitones), `$FFFF` = none (0) |
+| 10 | u16 pitch envelope (−64..63 × 4 pitch units = 1/16 semitone), `$FFFF` = none (0) |
+| 12 | u16 mixer envelope (0..3: bit 0 tone, bit 1 noise), `$FFFF` = none (1: tone only) |
+| 14 | u16 noise envelope (noise period 0..31), `$FFFF` = none (the note does not set R6) |
+| 16 | drum sweep start, s8 semitones relative to the note, −96..96 |
+| 17 | drum sweep end, s8 semitones, −96..96 |
+| 18 | drum sweep speed, 1/16 semitone per tick toward the end; 0 = no sweep (start/end ignored) |
+| 19 | 13 bytes 0 |
+
+**Envelope** (at its offset, wholly inside `[0, D)`), as the Mega Drive's PSG envelopes: u16 length L 1..256, u16
+loop index (< L, `$FFFF` = none), u16 release index (`$FFFF` = none; volume only, and only with a loop: loop <
+release < L), then L signed bytes. The reference builder places envelopes after the patterns, slots 1..64 ascending
+(volume, arpeggio, pitch, mixer, noise), each deduplicated by its bytes (header included) against the envelopes
+before it; any placement that passes the loader plays.
+
+**Patterns**: exactly the OPL3's and Mega Drive's encoding (`0x80 | k` = k + 1 empty rows; mask `m` 0x01..0x13: bit
+0 note, bit 1 instrument, bits 2-4 effect count 0..4, bits 5-7 zero, m ≠ 0; note 0..95 or `0xFE` OFF; instrument 1..64
+defined; effects (code 0..35, parameter) per column in order), each (order, channel) decoded for exactly rows(*o*)
+rows, every byte read inside `[0, D)`.
+
+**What the lowering writes** from a `Cell` with up to 4 effect columns: as the Mega Drive (note `EMPTY` → no byte,
+`CUT` → `0xFE`; instrument 0 → no byte; blank columns omitted; empty rows packed into runs; byte-identical patterns
+may be shared). Load-time effect checks: the effect exists (table below), `Bxx` < order count, `Cxx` ≤ 0F, `Exx` = 00
+or 08..0F, `F00` rejected, `Jxx` ∈ 00..07 ∪ F8..FF, `Vxx` ≤ 03, `Wxx` ≤ 1F. Envelope checks: as above, values in
+their kind's range, release only on volume.
+
+**Should** (not checked; validator warnings): an instrument on the first note of every order; shared noise and
+envelope conflicts ("Shared noise and envelope"); notes below the variant's lowest reachable note (the period
+clamps at 4095).
+
+`ay_load_image` derives (`AyInfo`) variant, order count, loop, speed, rows per order and the speed each order starts
+with in sequential straight play (header speed, then the last `Fxx` of each order: rows, then channels, then
+columns; jumps ignored).
+
+### Pitch
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, at most 6143 (just below C-8); note *n* = pitch 64 *n*. With pitch =
+768 · *o* + *f* (*o* = octave 0..7, *f* 0..767) and the variant's table `AY_DIV[v][f]` = floor(256 · clock / (16 · C0
+· 2^(f/768)) + 0.5), C0 = 440 · 2^(−57/12) Hz, clock = *M* / `ay_div` exactly:
+
+- **Tone period** TP(pitch) = clamp((`AY_DIV[f]` + (128 << *o*)) >> (8 + *o*), 1, 4095).
+- **Auto envelope period** EP(pitch, J, shape) = clamp((`AY_DIV[f]` + (1 << (*s* − 1))) >> *s*, 1, 65535), *s* = 8 +
+  *o* + 4 + *t* − J, *t* = 1 for the triangle shapes 10 and 14 (two ramps per cycle) else 0, J = the octave offset
+  −8..7: the envelope's audible cycle sounds the note J octaves up (saw shapes 8 and 12: 256 · EP clocks per cycle;
+  triangles 512 · EP).
+- **Synced tone** (instrument flag bit 2, auto mode, while the note uses the hardware envelope): TP = EP · 2^*k*,
+  *k* = 4 + *t* − J (*k* < 0: (EP + (1 << (−*k* − 1))) >> −*k*), clamped 1..4095: tone and envelope share one exact
+  period ratio (no beating; the pitch is the envelope period's, coarser up high).
+
+A-4 = 57: ZX 1773450 / (16 · 252) = 439.84 Hz, MSX 1789772.5 / (16 · 254) = 440.40 Hz, ST 2005311.75 / (16 · 285) =
+439.76 Hz. Lowest notes with TP ≤ 4095 (the lowest reachable, the system's note range from it to B-7): ZX and MSX A-0,
+ST B-0. `generated/ay_tables.h` holds the three tables and the vibrato sine `AY_SINE[i] = floor(127 sin(2πi/64) +
+0.5)` (the OPL3's).
+
+### Player
+
+**Writes** are `(register, value)` pairs for R0-R13. Every write except R13 goes through a shadow of R0-R12 (reset
+state: all 0): a write equal to the shadow is not emitted. R13 is written only when the player restarts the envelope
+(below) and is always emitted then (the chip restarts on any R13 write).
+
+**Reset** (start, audition): all player state cleared; channels: instrument 0, volume 15 (stored × 8 = 120), no
+effects, phase off, never keyed; stamp counter 0; envelope owner none; speed = header speed; position (0, 0, tick
+0). Writes: R7 = `io` | `0x3F` (`io` = the variant's bits 7-6: ZX/ST `0xC0`, MSX `0x80`), so every tone and noise
+is disabled before the first note.
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
+
+1. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..2 and their effect columns in
+   order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position as
+   the OPL3 (`B` only → (xx, 0); `D` only → (next order, xx); both → (B's order, D's row)). Then for each channel
+   0..2: its cut is cleared; if the row has `Gxx` with xx > 0 (the last `G` of the row) its row is delayed to tick xx;
+   otherwise the row runs now. Other ticks: each channel whose delayed row is due (tick = xx) runs it, channels in
+   order.
+2. Each channel whose cut tick (`Sxx`) equals this tick is keyed off, channels in order.
+3. Each channel 0..2 that has keyed any note since reset is **evaluated** (below), channels in order; then the
+   shared resources are resolved and the tick's writes emitted in this order: per channel 0..2 R(2c) then R(2c + 1)
+   (tone period low, high), R6, R7, R8, R9, R10, R11, R12, R13 (if restarted).
+4. Each evaluated channel's effects and envelopes advance (below).
+5. tick + 1; when it reaches the speed: tick 0 and the next row (the OPL3's rule: the recorded jump with the row
+   clamped to the target order's last row, else row + 1, after an order's last row the next order, after the last
+   order the loop order), with the **loop speed** rule (row 0 of the loop order starts at `AyInfo.start_speed` of that
+   order; an `Fxx` on that row still applies).
+
+**Running a row** of a channel: if the row has a note 0..95, the arpeggio and fine pitch are cleared; an instrument
+byte sets the channel's instrument; the effect columns run in order (table below; the **note settings** `E`, `H`,
+`I`, `J`, `V`, `W` are collected in column order into the row's settings); then the note: OFF keys off; a note while
+portamento is active (`3xx`, xx > 0) and the channel's phase is on only sets the glide target; any other note keys
+on. After that, if the row did not key on, the row's collected settings are applied to the channel's **current**
+note settings at once (on a row with a key-on they were applied by the key-on).
+
+**Key-on** (note *n*): if the channel's instrument is not a defined slot nothing else happens. Else: the five
+envelopes are **copied** from the image (so an instrument edit applies from the next note) with every position 0,
+the pitch accumulator 0, the relative flag; the note settings are loaded from the instrument (shape, auto/manual,
+octave J, manual period, sync; mixer override none, noise override none), then the row's collected settings applied
+in column order; phase on; pitch state base = target = 64 *n*, slide offset 0, arpeggio step 0, vibrato phase 0, sweep
+offset 64 · start (when the sweep speed ≠ 0, else 0), sweep end 64 · end, sweep step 4 · speed; **stamp** = ++stamp
+counter; restart pending (if the note uses the hardware envelope).
+
+**Note settings** (current per channel; `E`, `H`, `I`, `J`, `V`, `W` change them): `Exx` shape (00 = off, else
+08..0F; a change of shape on the sounding note sets restart pending), `Hxx` manual period high byte / `Ixx` low byte
+(the other byte kept; both switch the channel to manual), `Jxx` auto with octave offset J = xx as s8 (−8..7), `Vxx`
+mixer override 0..3, `Wxx` noise override 0..31.
+
+**Key-off** (OFF, `Sxx`): if the phase is on: a volume envelope with a release point continues there (phase
+released); anything else turns the phase off at once.
+
+**Evaluating a channel** (per tick): envelope values at the current positions — level = 0 if the phase is off, else
+the volume envelope's value (15 without one); arpeggio value (0 without); bend = 4 · the pitch envelope's value (0
+without), with the relative flag the accumulator += bend (clamped ±6144) and the offset is the accumulator, else the
+bend; mixer *m* = the override if set, else the mixer envelope's value (1 without one); noise *nz* = the override if
+set, else the noise envelope's value, else none. Pitch = clamp(base + 64 · (arpeggio effect + arpeggio value) + fine
++ slide + vibrato + sweep + offset, 0, 6143), vibrato = floor(`AY_SINE`[phase] · depth / 16), arpeggio effect = 0,
+x, y for step 0, 1, 2 of `0xy`. *v* = (level · (volume8 >> 3) + 14) / 15 (integer division: non-zero whenever both
+are). The channel **sounds** when the phase is not off and *v* > 0. It **uses the envelope** when it sounds and its
+shape ≠ 0; its EP is the auto period EP(pitch, J, shape) or the manual period. TP = the synced tone period when it
+uses the envelope in auto mode with sync, else TP(pitch). Register values: tone period TP (written as R(2c) = TP & 255,
+R(2c + 1) = TP >> 8); amplitude = 0 when it does not sound, `0x10` when it uses the envelope, else *v*; mixer bits:
+tone enabled iff it sounds and *m* bit 0, noise enabled iff it sounds and *m* bit 1 (a disabled source sets its
+R7 bit). R7 = `io` | the three channels' disable bits (a never-keyed channel: both disabled).
+
+### Shared noise and envelope
+
+The AY has one noise generator and one envelope generator for three channels; the player arbitrates them by the
+**most recent key-on**, the rule the editor shows and the validator explains:
+
+- **Noise**: the channels that sound with noise enabled and an *nz* compete; the one with the highest stamp owns R6,
+  which is written with its *nz* (shadowed). A channel with noise enabled but no *nz* plays whatever R6 holds. No
+  candidate: R6 keeps its value.
+- **Envelope**: the channels that use the envelope compete; the one with the highest stamp is the **envelope owner**:
+  R11/R12 = its EP (shadowed, low byte first), and R13 = its shape when restart is pending for it (its key-on, or an
+  `Exx` changing its shape) or when ownership moved to it from another channel (or from none) and its shape differs
+  from the last R13 written (an unchanged shape keeps running: a held buzzer bass is not retriggered when a short note
+  that borrowed the envelope ends). Every channel that uses the envelope sets M, so it plays the owner's envelope:
+  exactly what the hardware does. Restart pending is cleared every tick for every channel.
+- The stamp is the key-on counter, so a later note always wins; channels keyed on the same tick are ordered by
+  channel (C wins over A).
+
+**Advancing** a channel (step 4): arpeggio step (mod 3) if set; slide offset ± speed (clamped ±6144); base toward
+target by the portamento speed; vibrato phase + speed (mod 64) when speed and depth are set; sweep offset toward its
+end by its step; volume8 + x − y clamped 0..120 for `Axy`; then each envelope steps (FamiStudio's rules, as the Mega
+Drive's PSG envelopes: next = position + 1; not released and next = the release point → the loop index; else next =
+L → the loop index if the envelope has a loop and no release point, else L − 1). A released note whose volume position
+is now L − 1 with value 0 turns its phase off.
+
+### Effects (what Kotlin's effect specs declare)
+
+Up to 4 effect columns per channel; every effect plays on every channel. "Note" = set for the note keyed on this row;
+on a row without a key-on it changes the sounding note at once.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | as the Mega Drive |
+| `1xx` / `2xx` slide | 1/64 semitone per tick | as the Mega Drive |
+| `3xx` portamento | 1/64 semitone per tick | as the Mega Drive |
+| `4xy` vibrato | speed, depth | as the Mega Drive |
+| `Axy` volume slide | x up, y down, 1/8 step per tick | now: volume 0..15 |
+| `Bxx` jump, `Dxx` break, `Fxx` speed, `Gxx` delay | | as the Mega Drive |
+| `Cxx` volume | 00-0F | now: channel volume (start 0F), scales the level; 00 silences (also a hardware-envelope note) |
+| `Exx` envelope shape | 00 off, 08-0F | note: the hardware envelope shape (8 `\\\\`, 9 `\___`, A `\/\/`, B `\‾‾`, C `////`, D `/‾‾`, E `/\/\`, F `/___`); a change restarts the envelope |
+| `Hxx` envelope period high | 00-FF | note: manual envelope period, high byte (low kept) |
+| `Ixx` envelope period low | 00-FF | note: manual envelope period, low byte (high kept) |
+| `Jxx` auto envelope | 00-07 up, F8-FF down (s8) | note: the envelope period follows the note, xx octaves up (J00 = the note's own pitch) |
+| `Pxx` fine pitch | 80 = none | as the Mega Drive (1/64 semitone) |
+| `Sxx` note off | tick | as the Mega Drive |
+| `Vxx` mixer | 00-03 | note: tone (bit 0) and noise (bit 1) gates; 00 = neither (the constant level, or the bare hardware envelope: the classic buzzer) |
+| `Wxx` noise period | 00-1F | note: the noise period this note asks for (0 acts as 1 on the chip) |
+
+### Position, seek and live edits
+
+- `position()`: the player's (order, row, tick), exact through `Fxx`, `Gxx` and jumps.
+- `start(order, row, max_ticks)`: machine reset (chip power-on: registers 0, LFSR 1, envelope holding at 0), then
+  the player runs from the song start until the next tick starts (order, row) (`CHIP_SEEK_FROM_START`) with **every
+  tick's writes applied to the chip and the chip silently advanced through every step** (no pre-roll, no register
+  restore: the chip state after a seek is bit-identical to straight play's, which the host test proves by comparing
+  states and the following output). Beyond `max_ticks`: the OPL3's order fallback (`CHIP_SEEK_FROM_ORDER`: reset, the
+  player placed at the order's row 0 with its start speed, earlier rows of the order replayed with the chip silently
+  clocked). Cost estimate ~0.5 µs per tick (player + arithmetic chip) [INFERENCE: not measured]; `seekTicks` 12000.
+- `apply_image` (realtime-safe): the OPL3's relocation rules (`ay_player_relocate`): the player keeps no pointers into
+  an image (rows read by (order, row) at row start; envelopes copied at key-on), positions clamped, speed rules,
+  started rows re-read their jumps and delays. A changed variant byte is ignored (the engine is the variant's).
+
+### Audition
+
+`audition(channel 0..2, note 0..95, slot 1..64, fine −128..127)`: the (spare) machine is reset and the player keys on
+the note on that channel with the slot's instrument and its own settings (no row settings), `fine` added like `Pxx`;
+ticks then only evaluate and advance (envelopes and sweeps play; the shared resources are the auditioned channel's).
+An undefined slot or arguments outside these ranges: `CHIP_ERR_IMAGE`. `release()`: 0 before any tick or when the
+phase is already off; else the key-off applies from the next tick, returning 1, and `tick` returns 0 once the phase
+is off or after 10 s (a looping volume envelope without a release point is silenced at key-off).
+
+### Mute, mix and ops behaviour
+
+`mute(channel 0..2)` leaves the channel out of the chip's mix only (the player and the chip run on; the VGM is
+unchanged; unmuting resumes mid-note; a muted envelope owner still drives the envelope the others hear).
+`start`/`audition` clear mutes.
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `ay_load_image` for the engine's variant; `image_storage` = `sizeof(AyImage)` |
+| `start(order, row)` | above |
+| `apply_image` | above; ignored while auditioning |
+| `audition`, `release` | above |
+| `mute(channel 0-2)` | above |
+| `position` | the player's |
+| `tick` | one frame interrupt: 959-960 frames at 48 kHz (ZX), 801-802 (MSX), 958-959 (ST); ≤ 1920 at 96 kHz; 0 after a released audition ended |
+
+**Kotlin** (`PlaybackEngine` of each variant): `id` the variant's, `imageSize` 65536, `seekTicks` 12000, `note(n)` =
+n, `fine` = the system's fine pitch in 1/64 semitone, `ticksPerSecond` = *M* / `frame_div`.
+
+### VGM export
+
+`ay_vgm_render` (`ay/ay_vgm.c`) runs the player headless and logs its writes as a VGM 1.71 for one AY8910-family
+chip; `tools/audio/ay/ay_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference.
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz), 0x1C
+  = loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 50 (ZX, ST) or 60 (MSX), 0x34 = 0xCC
+  (data at 0x100), 0x74 = the chip clock and 0x78 = the chip type from the variants table, 0x79 = 0x01 (flags:
+  legacy single mixed output), 0x7A-0x7B = 0.
+- Data: the player's reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the loop point
+  and a dump of R0-R12 (all values, zeros included; **not R13**, whose write would restart the envelope); the tick's
+  writes `0xA0 reg val`; the tick's wait in 44.1 kHz samples by exact accumulation (`acc += 44100 · frame_div; wait =
+  acc / M; acc %= M` in 64 bits: ZX 881/882, MSX 735/736, ST 881), as `0x62` (735), `0x63` (882), `0x70`-`0x7F` (1-16)
+  or `0x61 nn nn`. The song ends at the second arrival at the loop point (or at the tick limit, then without a loop),
+  then `0x66`. A loop that starts while a hardware-envelope note is held continues the envelope as the previous pass
+  left it.
+- **Hosts' entry point** (`ay/ay_export.h`, self-contained for cinterop): `ay_export_vgm(variant, image, 65536,
+  max_ticks, title, author, date, &size, &problem)` validates the image for that variant, renders the file above and
+  appends a GD3 1.00 tag (`vgm_gd3.c`; system "ZX Spectrum 128 (Thor Tracker)", "MSX (Thor Tracker)" or "Atari ST
+  (Thor Tracker)", converter "Thor Tracker", date today unless given); free with `ay_export_free`. Android: JNI
+  `ChipAudio.nativeAyVgm(variant, image, maxTicks, title, author, date)` (strings as UTF-8 byte arrays;
+  `IllegalArgumentException(problem)`), registered as `AyVgm.renderer`; Deck: `ay_export.h` in `decknative.def`,
+  `DeckAyVgm` registered by `main`. Ten minutes of ticks at the variant's rate end songs that never loop back.
+
+### Shared names (`ay/ay_image.h`, `ay_player.h`, `ay_machine.h` → `backend/AyPlayerImage.kt`)
+
+`prepare_ay.py` parses the C headers and writes `object AyPlayerImage` with: `ENGINE_IDS` (list by variant),
+`IMAGE_SIZE`, `MAGIC`, `LAYOUT`, header offsets `H_MAGIC H_LAYOUT H_VARIANT H_SPEED H_ORDERS H_LOOP H_INSTRUMENTS
+H_DATA_SIZE HEADER_SIZE`, variants `VARIANT_ZX128 VARIANT_MSX VARIANT_ATARI_ST`, `OFF_ROWS OFF_ORDERS OFF_INSTRUMENTS
+INSTRUMENT_SIZE OFF_DATA DATA_CAPACITY`, instrument fields `I_FLAGS FLAG_DEFINED FLAG_PITCH_RELATIVE FLAG_AUTO_PERIOD
+FLAG_SYNC I_SHAPE I_OCTAVE I_PERIOD I_ENV_VOLUME I_ENV_ARPEGGIO I_ENV_PITCH I_ENV_MIXER I_ENV_NOISE I_SWEEP_START
+I_SWEEP_END I_SWEEP_SPEED SWEEP_LIMIT OCTAVE_MIN OCTAVE_MAX`, envelopes `ENV_HEADER ENV_MAX_LENGTH NO_ENVELOPE
+PITCH_UNIT`, patterns `RUN MAX_RUN MASK_NOTE MASK_INSTRUMENT MASK_EFFECT_SHIFT NOTE_OFF NOTES`, limits `CHANNELS
+MAX_ORDERS MAX_INSTRUMENTS MAX_EFFECTS TONE_PERIOD_MAX NOISE_PERIOD_MAX ENV_PERIOD_MAX`, pitch
+`PITCH_UNITS_PER_SEMITONE PITCH_MAX`, effect codes `EFFECT_LETTERS FX_ARPEGGIO FX_SLIDE_UP FX_SLIDE_DOWN
+FX_PORTAMENTO FX_VIBRATO FX_VOLUME_SLIDE FX_JUMP FX_VOLUME FX_BREAK FX_ENV_SHAPE FX_SPEED FX_DELAY FX_ENV_HIGH
+FX_ENV_LOW FX_ENV_AUTO FX_FINE FX_CUT FX_MIXER FX_NOISE`, timing `MASTER_HZ AY_DIV FRAME_DIV` (IntArrays by variant),
+`IO_BITS` (by variant), `SEEK_TICKS`, `GD3_SYSTEMS` (by variant), `GD3_CONVERTER`, the tables `DIV_ZX128 DIV_MSX
+DIV_ATARI_ST` (768 entries each) and `LOADER_PROBLEMS` (every reason `ay_load_image` reports, in `ay_image.c` order).
+
+### Preparing the tables and fixtures
+
+`python3 tools/audio/prepare_ay.py` (pure Python 3) writes `app/src/main/cpp/generated/ay_tables.h` (from
+`ay_ref.py`'s table functions), `core/.../backend/AyPlayerImage.kt` and `app/src/test/cpp/ay_test_song.h` (the test
+images per variant: the song, the same song laid out anew, a note edit, a tempo edit and the song cut to two orders;
+the reference player's per-tick writes and positions for 1500 ticks; the reference VGM's size, FNV-1a hash and loop
+per variant; byte offsets for the corruption checks). `python3 tools/audio/ay/ay_golden.py` writes the Kotlin golden
+images (`core/src/jvmTest/resources/ay-golden/`). Rerun both after changing the player specification, the engine
+headers, the reference or the test songs.
+
+### Verification (to be run by the integrator; nothing here has been run)
+
+- `tools/audio/run_native_host_test.sh [dir]` adds `app/src/test/cpp/ay_machine_test.c`: the tables (A-4 per
+  variant, every note in range within the period quantisation), corruption checks, the player's writes and positions
+  equal to the reference in every tick for every variant, chip unit checks (tone frequency by zero crossings, noise
+  LFSR sequence, all 16 shapes on both chip types against the manuals' tables, period-0 behaviour, R13 restart),
+  silent advance = stepping (states after every tick of the test song), seek bit-identical to straight play, loop
+  passes, live edits, audition (A-4 measured per variant, envelope buzzer pitch, release), mute, VGM bytes = the
+  reference's, the export entry point and the ops tables; **independent comparison**: the engine's register writes
+  replayed into the vendored ayumi (each channel soloed and mixed): loudness-envelope correlation and pitch per
+  window against the engine's render. `wav_render_test.c` renders the three demos and the shortest valid song (one
+  order of one row, speed 1) per variant.
+- `tools/audio/ay_reference_check.py <dir> [--vgm2wav PATH]`: the reference reproduces the trace and the VGM; the VGM
+  parsed from the format alone; optionally played by libvgm.
+- `tools/audio/render_ay_image.sh image out.wav [seconds] [mute=mask] [--vgm out.vgm]` renders an image through the
+  ops table (the variant from the image) and its VGM through `ay_export_vgm`.
+- Not done: listening on hardware; any measurement.
