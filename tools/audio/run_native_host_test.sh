@@ -15,6 +15,10 @@
 # YM2612: <dir>/ym_song.wav, ym_song_pal.wav, ym_tone_fm.wav, ym_tone_psg.wav, ym_trace.txt (per-tick player
 # writes, = the Python reference player's), ym_song.vgm, ym_song.xgm and ym_song.bin (the XGC; = xgmtool's) and
 # ym_image.bin (the image).
+# SCC / SCC+: <dir>/scc_song.wav, scc_plus_song.wav (30 s), scc_tone.wav (A-4 + release), scc_trace.txt (per tick:
+# position, then the player writes port:reg=val; = the Python reference player's), scc_chip_trace.txt (a scripted
+# register sequence and the core's level events), scc_song.vgm, scc_plus_song.vgm (the VGM exports) and scc_song.bin,
+# scc_plus_song.bin (the images), the inputs of tools/audio/scc_reference_check.py.
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # The engines are C except reSID and ymfm (C++17): C sources (emu2413, the VRC7's FM chip, included) build with $CC,
@@ -30,9 +34,9 @@ CC="${CC:-gcc}"
 CXX="${CXX:-g++}"
 warn=(-Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare
   -Wno-missing-field-initializers -Wno-enum-compare)
-includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/third_party/chips"
-  -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm"
-  -I "$root/app/src/test/cpp")
+includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/scc"
+  -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3"
+  -I "$cpp/third_party/ymfm" -I "$root/app/src/test/cpp")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -44,6 +48,8 @@ c_engines=(
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/scc/scc_chip.c" "$cpp/scc/scc_machine.c" "$cpp/scc/scc_player.c" "$cpp/scc/scc_image.c" "$cpp/scc/scc_vgm.c"
+  "$cpp/scc/scc_k051649.c"
 )
 cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
@@ -60,7 +66,7 @@ for src in "${cxx_engines[@]}"; do
   objs+=("$o")
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test sid_machine_test opl3_machine_test ym_machine_test \
-  wav_render_test; do
+  scc_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -72,5 +78,6 @@ status=0
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/scc_machine_test" "$out" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 exit $status

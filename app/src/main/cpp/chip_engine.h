@@ -15,6 +15,10 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "msx-scc"         Thor Tracker's own SCC player on a Konami K051649 (our port of MAME's k051649) at the
+ *                     MSX's 3.58 MHz (scc/scc_chip.c over scc/scc_machine.c, scc_player.c, scc_image.c,
+ *                     scc_k051649.c)
+ *   "msx-scc-plus"    the same player and core as a K052539 in SCC+ mode (five wave RAMs; same files)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

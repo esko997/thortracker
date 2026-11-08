@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the SCC engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -23,6 +23,11 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The Konami SCC systems (`"msx-scc"`: the K051649 of Konami's MSX megaROM cartridges, `"msx-scc-plus"`: the K052539 of
+the Sound Cartridge in SCC+ mode) play songs with Thor Tracker's **own player** (C, specified here, mirrored by an
+independent Python reference) on a K051649/K052539 sound core ported from MAME, at the MSX's 3579545 Hz, and export
+VGM. See [SCC](#scc-and-scc-thor-trackers-own-player-on-a-konami-k051649--k052539-msx-scc-msx-scc-plus).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -123,6 +128,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| MAME k051649 (port) | `app/src/main/cpp/scc/scc_k051649.c/.h`: our C port of the Konami 051649/052539 sound logic (counter, latch, halting, period-write restart, test bits 5-7, `>> 4` output), restructured as an analytic advance and an event renderer; test bits 0-1 added from openMSX's documented model (no openMSX code) | github.com/mamedev/mame `src/devices/sound/k051649.cpp` at commit `20d4667cdf485066a113f1ef24bae0887cd7134c` (2025-07-17, its last change), sha256 `003db1a4…07122`; `k051649.h` `3d3031cc…f87ef87` | BSD-3-Clause (copyright-holders Bryan McPhail) — the port keeps that licence and notice in its header; notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -2322,3 +2328,451 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## SCC and SCC+: Thor Tracker's own player on a Konami K051649 / K052539 (`"msx-scc"`, `"msx-scc-plus"`)
+
+Roadmap step 7 (wavetable chips). No MSX sound driver is in the loop: Konami's drivers are not free, and the systems are
+the sound chip alone, not an MSX (no PSG, no AY+SCC combination). Like the OPL3, songs play through **our own player**
+(`scc/scc_player.c`, pure integer C without a chip) whose behaviour is this section; `tools/audio/scc/scc_ref.py`
+implements the same specification separately in Python and the host test requires identical register writes in every
+tick. Songs export as VGM (the player's register log). This section is the contract of the Kotlin systems and lowering
+(`core` `system/scc`, `backend/SccLowering.kt`); the numbers they share with the engine are generated into
+`backend/SccPlayerImage.kt` ("Preparing" below). One image layout, player and machine serve both variants; the image
+says which chip it is for and each engine id loads only its own.
+
+### The chips (primary documentation and audited emulators)
+
+Sources: Sean Young (BiFi), "Konami SCC Sound Chip" and "Konami Sound Cartridge - SCC+" (msxnet technical pages,
+archived at web.archive.org/web/2020/http://bifi.msxnet.org/msxnet/tech/scc.html and `.../soundcartridge`); MAME
+`src/devices/sound/k051649.cpp` (BSD-3-Clause, Bryan McPhail; last change commit
+`20d4667cdf485066a113f1ef24bae0887cd7134c`, 2025-07-17; file sha256 `003db1a4…7122`); openMSX `src/sound/SCC.cc`
+(commit `aecaaf6c89620e0f601bfe7830d23c24ad5eecbc`, sha256 `348b61fe…2d19`), whose comments record the hardware
+measurements of Jon De Schrijder (output), Manuel Pazos (test register) and NYYRIKKI (frequency writes); libvgm
+`emu/cores/k051649.c` (`c5c03a2c`) and vgmplay-legacy for the VGM side. openMSX is read as documentation of measured
+behaviour only; no openMSX code is used.
+
+- **Five channels**, each: 32 signed 8-bit samples (wave RAM, played 0 → 31 and again), a 12-bit period P, a 4-bit
+  volume, a key-enable bit. Frequency = 3579545 / (32 · (P + 1)) Hz (BiFi: "fclock is the clock frequency of the
+  computer, 3,579,545 Hz", the PSG's formula), so A-4 needs P = 253 (440.40 Hz).
+- **K051649 (SCC)**: four wave RAMs; **channels 4 and 5 share the fourth** (BiFi; MAME writes `0x60-0x7F` to both).
+  Whatever is written there, both channels play. **K052539 (SCC+, "SCC-I")** in SCC+ mode: five wave RAMs, one per
+  channel; otherwise identical (BiFi: "the sound chip itself is identical"; MAME's 052539 waveform handlers).
+- **Clock**: the MSX bus clock, 3579545 Hz (3.579545 MHz NTSC colour subcarrier; the same on 50 Hz MSX machines).
+- **Counter** (MAME): every clock, a channel whose effective period E > 8 counts `clk + 1`; when it passes E the
+  waveform position advances (mod 32) and `clk` = 0; whenever `clk` is 0 the channel latches its output sample
+  = (key ? wave[position] : 0) · volume. So volume, key and wave RAM changes are heard at the next step, not at once
+  (NYYRIKKI: "change of volume is not implemented immediately"). **E ≤ 8 halts the channel**: position and latch
+  freeze (MAME "channel is halted for freq < 9"; openMSX `incr = 0`; NYYRIKKI's sample players stop the counter this
+  way).
+- **Frequency writes restart the step** (openMSX `count = 0`, MAME `clock = -1` "sample reload pending", libvgm
+  "behaviour according to openMSX"; NYYRIKKI: "writing value to frequency causes current byte to be started again"):
+  `clk` = −1, so one clock later the latch reloads at the current position with the current volume/key/wave and the
+  next step follows E + 1 clocks after that. A pitch rewritten every tick (slides, vibrato, pitch envelopes) therefore
+  loses the partial step at each tick boundary: up to one step per tick, which flattens very low notes slightly
+  (P near 4095: up to ~7 %). This is the chip, not the player.
+- **Output** (Jon De Schrijder's scope measurements, MAME's `>> 4`): per channel (sample · volume) with the low 4 bits
+  dropped before the sum (arithmetic shift, so −1 · 1 → −1): −120..119 per channel, five channels −600..595 (plus a
+  DC offset the analog stage removes).
+- **Test ("deformation") register** (SCC: `98E0h-98FFh`, SCC+: `B8C0h-B8DFh`; "not used by Konami"): bit 5 = a
+  frequency write also resets the waveform position to 0 (MAME and openMSX); bit 6 = every wave RAM is read-only
+  (writes ignored; reads show the rotating counter); bit 7 = on the SCC, the shared fourth RAM is read-only (ignored by
+  the SCC+); bit 0 = "4-bit frequency": the counter uses P >> 8; bit 1 = "8-bit frequency": P & 0xFF (bit 1 wins when
+  both are set) — openMSX's model of Manuel Pazos's measurements, applied when a frequency register is written (the
+  only emulator implementing bits 0-1; MAME and libvgm ignore them; BiFi's early tests reported different multipliers,
+  so treat them as **unverified**); bits 2-4: no known function. Reading the register writes 0xFF to it (the player
+  never reads).
+- **Power-on** (MAME `device_reset`): periods 0, volumes 15, keys off, test 0; wave RAM content unknown (openMSX: 0xFF
+  with random bits). The player's reset batch writes every register, so nothing depends on it.
+
+### Core: our port of MAME's k051649 (`scc/scc_k051649.c`)
+
+`scc_k051649.c/.h` is a C port of MAME's sound logic above (BSD-3-Clause, its notice kept in the file and in
+`NOTICE.txt`), extended with the test-register bits 0, 1 and 7-on-SCC+-ignored as documented, an exact **analytic
+advance** (no output) and an **event renderer**: a channel's output changes only when its latch reloads, so rendering
+walks reload events instead of 3.58 million clocks per second. Both leave bit-identical state, so a silent seek clocks
+the chip exactly as audible playback does. API (`scc_k051649.h`):
+
+- `sck_reset(core, plus)`; `sck_write(core, port, reg, val)` with the VGM `0xD2` ports: 0 = wave RAM (SCC: reg
+  `0x00-0x7F`, `0x60-0x7F` the shared RAM; ignored on the SCC+), 4 = wave RAM (SCC+: reg `0x00-0x9F`; ignored on the
+  SCC), 1 = period (reg 2c = bits 0-7 of channel c, 2c + 1 = bits 8-11; `0x0A`-`0xFF` ignored), 2 = volume (reg c, low
+  4 bits), 3 = key enables (bits 0-4), 5 = test register.
+- `sck_advance(core, clocks)`: the state after `clocks` clocks, O(1) per channel.
+- `sck_render(core, clocks, emit, ctx)`: the same advance, calling `emit(ctx, clock, channel, level)` (clock offset
+  0..clocks − 1, in increasing order per channel) whenever a channel's level = latch >> 4 changes.
+- State (`SccCore`, plain data, compared with `memcmp` by the tests): test, key, `ram[5][32]` (the SCC uses RAMs 0-3),
+  per channel period, effective period, `clk` (−1 = reload pending), position, volume, latch.
+
+Cost: one event per step of a sounding channel (A-4: 14 kHz, 236 per tick), O(1) per halted or keyed-off channel.
+
+### What runs
+
+- **Tick** = 1/60 s / multispeed (header, N = 1..8): the player runs once, its writes reach the core at the tick's first
+  clock in the order made, then the core renders 3579545 / (60 · N) clocks (exact integer accumulation: 59659 or 59660
+  at N = 1).
+- **Resampling**: blip_buf 1.1.0 at clock rate 3579545 Hz to the host rate (its ~15 Hz high-pass removes the SCC's DC).
+  Input = the sum of the channels' levels · 48 (±28800 at most); output float = sample / 32768; mono, written to both
+  stereo channels.
+- **Size**: `SccImage` = 65536 bytes + `ScInfo`; a machine holds an image copy, the core (~300 bytes), the player and
+  one blip buffer. Creation allocates once; no tables are built.
+
+### Channels and wave RAMs
+
+Tracker channels `SCC 1`-`SCC 5` = chip channels 0-4, one bank of instruments for all. Wave RAM *k* on the SCC+ belongs
+to channel *k*. On the SCC, RAMs 0-2 belong to channels 1-3 and **RAM 3 to whichever of channels 4 and 5 claimed it
+last** (the player's rule below): both channels always play its content. The Kotlin side never pretends otherwise: the
+song check warns where SCC 4 and SCC 5 overlap with different waves and the Pattern lane headers and inspector show
+which wave the shared RAM holds (`SoundSystem.sharedState`).
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian, position-independent (every pattern and envelope reference is an offset into
+the data region, so any layout that passes `sc_load_image` relocates). Constants: `scc/scc_image.h` (`SC_*`); the
+reference builder is `tools/audio/scc/scc_song.py` (`build()`). The loader rejects anything off-contract with a reason
+and the byte (`ScInfo.problem`, `problem_offset`); the Kotlin validator mirrors its checks with user-facing messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTSC"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | variant: 0 = SCC (K051649), 1 = SCC+ (K052539) |
+| 6 | 1 | multispeed N, 1..8 (player ticks per 60 Hz frame) |
+| 7 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | instrument count I = highest slot present, 0..64 |
+| 13 | 1 | wave count W, 1..64 (waves 1..W) |
+| 14 | 2 | data size D: bytes of the data region used, ≤ 59584 |
+| 16 | 48 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 2560 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (5 *o* + *c*); entries ≥ count 0 |
+| 2880 | 1024 | instrument slot *n* (1..64) at 2880 + 16 (*n* − 1) |
+| 3904 | 2048 | wave *k* (1..64) at 3904 + 32 (*k* − 1): 32 signed bytes; waves above W are 0 |
+| 5952 | 59584 | data region: patterns and envelopes, `[0, D)` |
+
+**Instrument** (16 bytes; all zero = no instrument; records above I must be zero):
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 defined (1); bit 0 `RESTART` = the waveform restarts at each note (below); bit 1 `PITCH_RELATIVE` = the pitch envelope accumulates; other bits 0 |
+| 1 | 0 |
+| 2, 4, 6, 8 | u16 offsets into the data region of the volume, arpeggio, pitch and wave envelopes; `0xFFFF` = none (the wave envelope is required) |
+| 10 | 6 bytes 0 |
+
+**Envelope** (at its offset, wholly inside `[0, D)`): u16 length L (1..256), u16 loop (0..L − 1, `0xFFFF` none), u16
+release (1..L − 1, `0xFFFF` none; only volume envelopes may have one; with both, loop < release), then L value bytes:
+volume 0..15; arpeggio s8 −64..63 semitones; pitch s8 −64..63 sixteenths of a semitone; wave 1..W. Instruments may
+share an envelope's bytes.
+
+**Patterns**: decoded from their offset for exactly rows(*o*) rows (a run longer than the order's remaining rows is cut
+there, so one pattern can serve orders of different lengths); every row read must lie inside `[0, D)`. Row encoding (the
+OPL3's):
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
+| note | 0..95 = absolute note C-0..B-7 (0 = C-0, 57 = A-4 = 440 Hz), `0xFE` = OFF |
+| instrument | slot 1..64, defined |
+| effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+**What the lowering writes** (the arranged song: parked orders removed) from a `Cell` with up to 4 effect columns: note
+`EMPTY` → no note byte, `CUT` → `0xFE`, an absolute note → itself; instrument 0 → no byte, else the slot; effect columns
+in column order, blank columns (code 0, parameter 0) omitted; a cell with none of these is an empty row. Load-time
+parameter checks: `Bxx` < order count, `Cxx` ≤ 0F, `F00` rejected, `Wxx` 1..W; other effects (`0 1 2 3 4 A D G P S T`)
+take any parameter; any other code is rejected.
+
+**Canonical layout** (the Kotlin lowering and the reference builder produce the same bytes; the golden test compares
+them): header speed = the song's ticks per row, multispeed, variant, I = the highest defined slot (0 if none), W = 64
+(every wave of the song, as two's-complement bytes), rows of order *o* = its pattern's length. The data region is
+filled in this order, each new byte string appended at the end and **an identical byte string already placed reused**
+(its first offset): (1) the tracks, order 0..count − 1, channel 0..4 within each order: the pattern's rows 0..length − 1
+of that channel, empty rows as maximal runs of at most 128 (so a track decodes exactly its rows); (2) the envelopes,
+slot 1..64 (defined only), volume, arpeggio, pitch, wave within each: an envelope without values is `0xFFFF` (the wave
+envelope always has values), else its 6-byte header (L, loop or `0xFFFF`, release or `0xFFFF`) and values (s8 for
+arpeggio and pitch). D = the bytes used. Instrument flags = defined | `RESTART` if `restart` | `PITCH_RELATIVE` if
+`pitchRelative`; everything else in the image is 0.
+
+**Should** (not checked): an instrument on the first note of every order (an order is also entered by the loop, the seek
+fallback and a live edit that clamps).
+
+`sc_load_image` derives (`ScInfo`) variant, order count, loop, multispeed, speed, rows per order and the speed each
+order starts with in sequential straight play (header speed, then the last `Fxx` of each order: rows, then channels,
+then columns; jumps ignored).
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, at most 6143 (just below C-8); a note is pitch 64 · note.
+**Period**: o = pitch / 768, f = pitch mod 768, P = min(4095, ((`SC_DIV[f]` + 2^(7+o)) >> (8 + o)) − 1), where
+`SC_DIV[f]` = floor(D · 2^(−f/768) · 256 + 0.5) and D = 3579545 / (32 · 440 · 2^(−57/12)) = 6840.9695 (P + 1 of C-0
+in Q8). A-4 = P 253 (440.40 Hz, +1.6 cents); every note A-0..G#5 is within 4.2 cents of 12-TET A440, ≤ G#6 within 12.0,
+B-7 is +19.2 cents (P 27): the 12-bit divider's resolution, not the table's. Notes below A-0 (P would exceed 4095)
+clamp to P 4095 (27.3 Hz); the highest pitch gives P 26, so the player never halts a channel by pitch.
+`generated/scc_tables.h` holds `SC_DIV` and the vibrato sine `SC_SINE[i]` = floor(127 sin(2πi/64) + 0.5).
+
+**Writes** are `{port, reg, val}` in the VGM `0xD2` port numbering of the core API (wave port 0 on the SCC, 4 on the
+SCC+). Every write goes through a **shadow** of what the chip holds (test, key, ten period bytes, five volumes, five
+wave RAMs): a write equal to the shadow is not emitted, except where marked *forced*. A wave write to a RAM the test
+register protects (bit 6; on the SCC bit 7 for RAM 3) is never made, so the shadow stays what the chip holds. A tick's
+writes form one batch, applied at one instant in the order made (no key-off phase: the SCC samples nothing per write).
+
+**Reset** (start, audition): all state cleared; channels: instrument 0, channel volume 15, no effects, no wave lock;
+SCC RAM 3 has no owner; speed = header speed; position (0, 0, tick 0); test value 0. Writes (all *forced*, the shadow
+then equals them): test = 0; key = 0; per channel 0..4 period bytes 0 and 1 = 0; volumes 0..4 = 0; every wave RAM
+byte = 0 (SCC: port 0 regs `0x00-0x7F`; SCC+: port 4 regs `0x00-0x9F`), in register order. So any VGM player starts
+from the same registers whatever its own reset does.
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run): as the OPL3's steps
+2 to 5, with five channels:
+
+1. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..4 and their effect columns in
+   order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position: `B`
+   only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop order;
+   both → (B's order, D's row). Then for each channel 0..4: its cut is cleared; if the row has `Gxx` with xx > 0 (the
+   last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel whose
+   delayed row is due (tick = xx) runs it, channels in order.
+2. Each channel whose cut tick (`Sxx`) equals this tick is keyed off, channels in order.
+3. Each channel 0..4 that is active (has keyed a note since reset and its slot is still defined) is updated (below).
+4. The wave pass (below), then the key register: bit *c* = channel *c* keyed (shadowed write, port 3).
+5. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the target order's
+   last row), else row + 1, after the last row of an order the next order, after the last order the loop order.
+   **Loop speed**: whenever the next row is row 0 of the loop order the speed becomes `ScInfo.start_speed[loop]`
+   (an `Fxx` on that row still applies at its row start), exactly as the OPL3's.
+
+**Running a row** of a channel: if the row has a note 0..95, the arpeggio effect, fine pitch and wave lock are cleared;
+an instrument byte sets the channel's instrument; the effect columns run in order (table below); then the note: OFF
+keys the channel off; a note with portamento active (`3xx`, xx > 0) while the channel is keyed only sets the glide
+target (no key-on); any other note keys on.
+
+**Key-on** (note *n*): if the channel's instrument is not a defined slot, nothing happens. Else the channel's note slot
+= that instrument; every envelope index = 0, not released, the relative pitch accumulator = 0; base = target = 64 *n*,
+slide offset 0 (the slide mode persists), arpeggio step 0, vibrato phase 0; keyed; active; this tick's update writes the
+period **forced** (both bytes, so the step restarts at the note), and if the instrument has `RESTART` that write is
+wrapped in test = value | 0x20 … test = value (shadowed), so the waveform restarts at position 0 (the chip's bit 5).
+On the SCC a key-on on channel 4 or 5 is a **wave claim** (below).
+
+**Key-off** (OFF, `Sxx`): if keyed: when the note's volume envelope has a release point and the note is not released,
+it is released (volume envelope index = the release point); otherwise the channel is no longer keyed (its key bit
+clears: silence at its next step). OFF on a released note therefore cuts it.
+
+**Update** (per tick, active channels 0..4 in order): the note slot's record and envelopes are read from the
+**current** image (live edits reach sounding notes; an index past an edited envelope's length is first set to its last
+value). Values at the current indexes: volume e (15 without an envelope), arpeggio a (0), pitch v (0), wave w; the
+wave lock, if set, replaces w. Pitch offset q = 4 v, or with `PITCH_RELATIVE` accumulator = clamp(accumulator + 4 v,
+−6144, 6144) and q = accumulator. Pitch = clamp(base + 64 (a + arp) + fine + slide + vibrato + q, 0, 6143), arp = 0,
+x, y for step 0, 1, 2 of `0xy`, vibrato = floor(`SC_SINE`[phase] · depth / 16) (arithmetic shift). Writes: period
+low byte then high byte of P(pitch) (port 1, regs 2c, 2c + 1; forced at key-on, wrapped as above); volume (port 2, reg
+c) = e · cv / 15 (integer division), at least 1 when e > 0 and cv > 0, cv = channel volume / 16 (0..15). Then on the
+SCC, a channel 4 or 5 whose wave number w differs from its previous tick's is a **wave claim**. Then everything
+advances: each envelope index (below); arpeggio step (mod 3) while `0xy` ≠ 0; slide offset ± speed (clamped to
+±6144) for `1xx`/`2xx`; base toward target by the speed (no overshoot) for `3xx`; vibrato phase + speed (mod 64) while
+speed and depth are set; channel volume (in 1/16 steps, 0..240) + x − y for `Axy`. A released or keyed-off note keeps
+updating (its release follows slides and vibrato).
+
+**Envelope index advance**: end = the release point while the note is not released and the envelope has one, else L.
+If index + 1 < end: index + 1; else if the envelope loops and the note is not released: the loop point; else it holds
+(index = end − 1). So a released note plays from the release point to the end and holds the last value, and a note
+held before a release point without a loop sustains the value before it (FamiStudio's envelope behaviour).
+
+**Wave pass**: for each wave RAM with an active owner — the SCC+'s RAM *k* and the SCC's RAMs 0-2: channel *k*; the
+SCC's RAM 3: the channel among 4 and 5 that made the latest wave claim (in a tick, channel 5's claim comes last, so it
+wins a tie; before any claim RAM 3 has no owner) — the 32 bytes of the owner's wave w are read from the current image
+and every byte that differs from the shadow is written (index order), unless the test register protects that RAM. A
+wave edited live is therefore heard at the next tick; an owner that is no longer active writes nothing.
+
+**Test register** (`Txx`): the value is written at once (shadowed, port 5) when the row runs. If bits 0-1 changed,
+every active channel's period is written forced in this tick's update, so the new frequency mode applies at once.
+
+### Effects (what Kotlin's effect specs declare for `"msx-scc"` and `"msx-scc-plus"`)
+
+One character each (`docs/BACKENDS.md`, "Effect columns"); up to 4 columns per channel. "Note" = applies to the note
+keyed on this row only; "now" = from this row on, persisting.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: steps note, +x, +y every tick (on a row without a note it changes the sounding note's) |
+| `1xx` slide up | 1/64 semitone per tick | now: until `100`/`200`/`300`; a new note restarts the offset at 0 but keeps sliding |
+| `2xx` slide down | 1/64 semitone per tick | now: as `1xx`, down |
+| `3xx` portamento | 1/64 semitone per tick | now: while active a note on a keyed channel glides there without key-on; `300` ends it |
+| `4xy` vibrato | x speed 0-F (64-step cycle), y depth 0-F | now: offset floor(SINE · y / 16) (depth F: ±1.86 semitones); `4x0` off |
+| `Axy` volume slide | x up, y down, 1/16 step per tick | now: the channel volume, until `A00` (`A01`: 15 steps in 4 s) |
+| `Bxx` jump | order | after this row play order xx row 0 (with `Dxx`: its row) |
+| `Cxx` volume | 00-0F | now: channel volume (start 0F), scales the volume envelope |
+| `Dxx` break | row | after this row play row xx (clamped) of the next order (`Bxx`'s with both) |
+| `Fxx` speed | 01-FF ticks per row | now, global, this row included; the last of the row wins |
+| `Gxx` note delay | ticks | the channel's row (all but `B`/`D`/`F`) runs at tick xx; never if xx ≥ the speed |
+| `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones (±2 semitones) until the next note |
+| `Sxx` note off | tick | key off at tick xx of this row, like an OFF cell at that tick |
+| `Txx` test register | bits | now, global: the chip's test register = xx (bit 5 waves restart at period writes, bit 6 all waves frozen, bit 7 SCC: the shared wave frozen; bits 0/1 unverified frequency modes; 2-4 nothing) |
+| `Wxx` wave | 01-W | note: the note keyed on this row plays wave xx instead of its instrument's wave envelope; on a row without a note the sounding note switches to xx until its next note |
+
+No chord effect: the SCC has five fixed voices (`docs/BACKENDS.md`); chords are written across channels. Drums are
+instruments with volume, pitch (relative: sweeps) and wave envelopes.
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the core and player are reset and the player runs alone from the song start until
+  the next tick starts (order, row) (`CHIP_SEEK_FROM_START`), counting *n* ticks; beyond `max_ticks`, from the order's
+  row 0 with its start speed (`CHIP_SEEK_FROM_ORDER`, the OPL3's fallback and bounds; a row behind a `Dxx` of the same
+  order is `CHIP_ERR_IMAGE`). Then from the reset again: the first *n* − P ticks run the player and apply its writes to
+  the core with **`sck_advance`** (no output), **P = `SCM_PREROLL_TICKS` 60 × multispeed**, and the last P ticks run
+  as in play (`sck_render` into the resampler, output discarded). The core's state at the target is therefore
+  **bit-identical to straight play** (phases, latches, wave RAMs: checked with `memcmp`); the only difference is the
+  resampler's history, which after the 1 s pre-roll leaves every output sample within 1 LSB (1/32768) of straight
+  play's (blip_buf's integer high-pass converges to a sub-LSB remainder; checked). With *n* ≤ P the whole way is
+  rendered and the output is bit-identical. Cost: ~0.3 µs per silent tick plus 60 rendered ticks.
+- `apply_image` (live edit at a tick boundary, realtime-safe: a 64 KB copy plus a few row decodes): the player keeps no
+  pointer into an image. The OPL3's rules (1)-(3) and (5) hold as written there (clamped position; speed; re-read jump
+  and delays; multispeed from the next tick). Rule (4) differs: **sounding notes keep their slot** and read its edited
+  envelopes and waves from the next tick (an index past a shortened envelope moves to its last value; a slot that is no
+  longer defined cuts the note: key bit cleared, channel inactive); the wave RAM follows its owner's edited wave at the
+  next tick. Edited cells are heard from the next row processed.
+
+### Audition
+
+`audition(channel 0..4, note 0..95, slot 1..64, fine −128..127)`: the (spare) machine is reset and the player keys on
+the note on that channel with the slot's instrument, no wave lock, `fine` added like `Pxx`; ticks then only update the
+channel (envelopes, wave pass, key register), no rows. An undefined slot or arguments outside these ranges are
+`CHIP_ERR_IMAGE`. `release()`: 0 before any tick (cut), when the channel is no longer keyed, or when the note's
+volume envelope has no release point (the key-off clears the key bit: silent now); else the player's key-off from the
+next tick, returning 1, and `tick` returns 0 once the released volume envelope holds its last value and that value
+(after the channel volume) is 0, or after 10 s (`SCM_RELEASE_SECONDS`). While the song plays, the host mutes the channel
+with `mute`.
+
+### Mute and ops behaviour
+
+`mute(channel 0-4)` leaves the channel out of the resampler input only (its level steps to 0 at the next tick's first
+clock; unmuting steps it back to the channel's current level): the player, the core and the VGM are untouched, so
+unmuting resumes mid-note. On the SCC a muted channel 4 still plays the shared RAM's wave into nothing; channel 5 is
+unaffected. `start`/`audition` clear mutes.
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `sc_load_image`, then the variant must be the ops' (`"msx-scc"` 0, `"msx-scc-plus"` 1); `image_storage` = `sizeof(SccImage)` |
+| `start(order, row)` | above; `seek_mode` from start or order |
+| `apply_image` | above; ignored while auditioning or for an image of the other variant |
+| `audition`, `release` | above |
+| `mute(channel 0-4)` | above |
+| `position` | the player's |
+| `tick` | one tick: 800 frames at 48 kHz (multispeed N: 800 / N), ≤ 1601 at 96 kHz; 0 after a released audition ended |
+
+**Kotlin** (`PlaybackEngine` for both ids): `imageSize` 65536, `seekTicks` 12000, `note(n)` = n (absolute 0..95),
+`fine` = the system's fine pitch in 1/64 semitones (0 by default), `ticksPerSecond` = 60 × multispeed.
+
+### VGM export
+
+`sc_vgm_render` (`scc/scc_vgm.c`) runs the player headless and logs its writes as a VGM 1.71 for one K051649 (SCC) or
+K052539 (SCC+); `tools/audio/scc/scc_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference. File:
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz),
+  0x1C = loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 60, 0x34 = 0xCC (data at 0x100),
+  **0x9C = 1789773** (SCC) or **0x8000_0000 | 1789773** (SCC+: bit 31 = K052539). The VGM convention halves the MSX
+  clock: the VGM 1.71 specification gives 1789773 as the typical K051649 clock, and its players (libvgm, VGMPlay, from
+  older MAME) play f = clock / (16 (P + 1)) = 3579546 / (32 (P + 1)), the chip's pitch. `sc_vgm_render` writes no GD3
+  tag; the hosts' entry point appends one.
+- Data: the reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the loop point and a dump
+  of the whole register state from the shadow: test = shadow & 0x03 (frequency mode kept, protection and restart off),
+  every wave RAM byte, then periods (low, high per channel), volumes, key, test = shadow — so each pass starts from the
+  same registers although the writes are diffed; then the tick's writes as `0xD2 pp aa dd`; then the tick's wait
+  (44100 / (60 · N) samples by exact accumulation: 735 = `0x62` at N = 1; `0x70`-`0x7F` for 1-16, `0x61 nn nn`
+  otherwise). The song ends at the second arrival at the loop point (or at the tick limit, then without a loop), then
+  `0x66`. The dump's period writes restart steps at the loop point, so a VGM player's phase there may differ from the
+  engine's by under one step (inaudible).
+- VGM players do not model the test register's bits 0-1 (libvgm, VGMPlay); songs using them play differently there.
+- **Hosts' entry point** (`scc/scc_export.h`, self-contained for cinterop): `sc_export_vgm(image, 65536, max_ticks,
+  title, author, date, &size, &problem)` validates the image, renders the file above (measured, then rendered into one
+  allocation) and appends a **GD3 1.00** tag (`vgm_gd3.h`): track = title, system "MSX SCC (Thor Tracker)" or "MSX
+  SCC+ (Thor Tracker)", author, date (`"yyyy/mm/dd"`, empty = today), converter "Thor Tracker"; free with
+  `sc_export_free`. Control thread only.
+- **Kotlin** (`core` `system/scc/SccVgm.kt`): `SccVgm.export(song)` lowers the song and calls
+  `SccVgm.renderer.render(image, maxTicks, SccVgmTags(title, author, date))`, registered at startup by Android's
+  `ChipAudio` (JNI `ChipAudio.nativeSccVgm(image, maxTicks, title, author, date)`, UTF-8 byte arrays) and the Deck's
+  `main` (`DeckSccVgm` over cinterop). WAV export needs nothing system-specific (`chip_wav.c` through the ops).
+
+### Preparing the tables and fixtures
+
+`python3 tools/audio/prepare_scc.py` (pure Python 3) writes `app/src/main/cpp/generated/scc_tables.h` (`SC_DIV`,
+`SC_SINE` from `scc_ref.py`'s table functions), `core/src/commonMain/kotlin/org/thortracker/backend/SccPlayerImage.kt`
+(the layout, limits, effect codes, period table, clock, seek and GD3 constants parsed from `scc_image.h`,
+`scc_player.h`, `scc_machine.h` and `scc_vgm.h`, a `period(pitch)` function and `LOADER_PROBLEMS`: every reason
+`sc_load_image` reports) and `app/src/test/cpp/scc_test_song.h` (the host test's fixtures, below).
+`python3 tools/audio/scc/scc_golden.py` writes the Kotlin golden images `core/src/jvmTest/resources/scc-golden/*.bin.gz`.
+Rerun both after changing this specification, the engine headers, the reference player or the test song.
+
+`SccPlayerImage` (Kotlin, generated; the names the Kotlin code uses): `ENGINE_ID_SCC` = `"msx-scc"`,
+`ENGINE_ID_PLUS` = `"msx-scc-plus"`, `IMAGE_SIZE`, `MAGIC`, `LAYOUT`, `H_MAGIC`, `H_LAYOUT`, `H_VARIANT`,
+`H_MULTISPEED`, `H_SPEED`, `H_ORDERS`, `H_LOOP`, `H_INSTRUMENTS`, `H_WAVES`, `H_DATA_SIZE`, `HEADER_SIZE`,
+`VARIANT_SCC`, `VARIANT_PLUS`, `OFF_ROWS`, `OFF_ORDERS`, `OFF_INSTRUMENTS`, `INSTRUMENT_SIZE`, `OFF_WAVES`,
+`WAVE_BYTES`, `OFF_DATA`, `DATA_CAPACITY`, `I_FLAGS`, `I_VOLUME`, `I_ARPEGGIO`, `I_PITCH`, `I_WAVE`, `FLAG_DEFINED`,
+`FLAG_RESTART`, `FLAG_PITCH_RELATIVE`, `ENV_NONE`, `ENV_HEADER`, `MAX_ENVELOPE`, `RUN`, `MAX_RUN`, `MASK_NOTE`,
+`MASK_INSTRUMENT`, `MASK_EFFECT_SHIFT`, `NOTE_OFF`, `NOTES`, `CHANNELS`, `MAX_ORDERS`, `MAX_INSTRUMENTS`, `MAX_WAVES`,
+`MAX_EFFECTS`, `MAX_MULTISPEED`, `PITCH_UNITS_PER_SEMITONE`, `PITCH_MAX`, `PERIOD_MAX`, `PERIOD_HALT`, `EFFECT_LETTERS`,
+`FX_ARPEGGIO`, `FX_SLIDE_UP`, `FX_SLIDE_DOWN`, `FX_PORTAMENTO`, `FX_VIBRATO`, `FX_VOLUME_SLIDE`, `FX_JUMP`,
+`FX_VOLUME`, `FX_BREAK`, `FX_SPEED`, `FX_DELAY`, `FX_FINE`, `FX_CUT`, `FX_TEST`, `FX_WAVE`, `CLOCK`, `VGM_CLOCK`,
+`SEEK_TICKS`, `PREROLL_TICKS`, `GD3_SYSTEM_SCC`, `GD3_SYSTEM_PLUS`, `GD3_CONVERTER`, `DIV` (768 entries), `DIV_SHIFT`,
+`fun period(pitch: Int): Int` (the formula above), `fun hz(period: Int): Double` (3579545 / (32 (P + 1))) and
+`LOADER_PROBLEMS`.
+
+`scc_test_song.h` (C, generated; images are stored up to their last non-zero byte, the test zero-pads them to 65536):
+`SCC_REF_TICKS` 1500; images `scc_song_image` (the test song on the SCC), `scc_plus_image` (the same song as SCC+),
+`scc_moved_image` (the song laid out anew: patterns and envelopes reversed behind a 37-byte gap), `scc_edited_image` (a
+note edit), `scc_tempo_image` (an `Fxx` edit), `scc_short_image` (cut to two orders), `scc_x2_image` (multispeed 2),
+`scc_wave_edit_image` (one wave's bytes changed); for `song`, `plus`, `edited`, `tempo`: the reference player's batches
+(the reset batch, then one per tick) as `scc_ref_NAME_offsets[SCC_REF_TICKS + 2]` (start of batch *i* in the flat
+arrays; last = total), `scc_ref_NAME_ports[]`, `scc_ref_NAME_regs[]`, `scc_ref_NAME_vals[]` (unsigned char) and
+`scc_ref_NAME_pos[3 · (SCC_REF_TICKS + 1)]` (order, row, tick before each batch; −1 for the reset batch); VGM checks
+`SCC_REF_VGM_SIZE`, `SCC_REF_VGM_FNV` (FNV-1a 64 of the file), `SCC_REF_VGM_TICKS`, `SCC_REF_VGM_LOOP_OFFSET`,
+`SCC_REF_VGM_LOOP_SAMPLES`, `SCC_REF_VGM_SAMPLES` and the same six `SCC_PLUS_REF_VGM_*` for the SCC+ image; corruption
+offsets `SCC_OFFSET_MASK`, `SCC_OFFSET_NOTE`, `SCC_OFFSET_INST`, `SCC_OFFSET_EFFECT` (a row's mask, note, instrument
+and first effect code bytes, absolute image offsets), `SCC_OFFSET_PARAM_<X>` for the parameter byte of effect X in
+`B C F W`, `SCC_OFFSET_ENV_VOLUME` (a volume envelope with a release point: its header), `SCC_OFFSET_ENV_WAVE` (the
+first value of a wave envelope) and `SCC_OFFSET_INSTRUMENT` (slot 1's record).
+
+The test song (`tools/audio/scc/scc_song.py`, 4 orders of 16/32/16/24 rows, `B01` back to the loop order 1): every
+effect in several columns, OFF cells, delays and cuts, empty runs, patterns used twice; instruments with looping and
+releasing volume envelopes, absolute and relative pitch envelopes, arpeggio envelopes, multi-wave envelopes and
+`RESTART`; SCC 4 and SCC 5 claiming the shared RAM alternately with different waves; `T20` (restart at period writes),
+`T40` (all waves frozen across a wave change, then `T00`), `T01`/`T02` (frequency modes, briefly); speed changes, a break
+to order 3 row 2, order 3 ending at speed 5 and jumping back to the loop order, which has no `Fxx`.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/scc_machine_test.c`: core unit checks
+  (the output formula, halting at E ≤ 8, the step restart one clock after a period write, volume/key/wave changes heard
+  at the next step, test bits 5/6/7 on both chips and 0/1, shared RAM 3 on the SCC and five RAMs on the SCC+, writes to
+  the wrong wave port ignored, `sck_advance` ≡ `sck_render` state after random write streams); every single-byte
+  corruption rejected with its reason; **the machine's writes equal the Python reference player's in all 1500 ticks**
+  for `song`, `plus`, `edited`, `tempo`, with identical positions; the reset batch; 30 s non-silent in every second, no
+  clipping, bit-identical on a second start, tick cost flat; loop passes with identical positions; seeks (several
+  targets beyond and within the pre-roll): position, writes equal to straight play for 200 ticks, **core state
+  `memcmp`-equal to straight play's at the target**, output within 1/32768 (bit-identical within the pre-roll); the
+  order fallback; live edits: the same image and `moved` alternating before every tick write the reference, a note edit
+  applied before its row equals straight play of the edited song, a tempo edit, the cut song clamping, x2 halving the
+  tick, `wave_edit` applied while that wave sounds rewrites the RAM at the next tick, an instrument deleted under a
+  sounding note cuts it; audition: **A-4 measured 440.40 Hz** (sine wave, P 253), `fine` +64 = A#4 (P 239, 466.09 Hz),
+  release with and without a release point, held notes, argument limits; mute silences and leaves the writes equal to
+  the reference; the SCC's shared wave: channel 5's claim changes what channel 4 plays (core RAM 3 = channel 5's wave,
+  channel 4's output follows it) while the SCC+ keeps both; **VGM bytes equal the reference player's** for both
+  variants (header clock and bit 31); `sc_export_vgm` with GD3 decoded back; the ops tables as the hosts drive them,
+  including the variant check. Evidence in the directory: `scc_song.wav`, `scc_plus_song.wav` (30 s), `scc_tone.wav`
+  (A-4 + release), `scc_trace.txt` (per tick: position, then the writes `port:reg=val`), `scc_chip_trace.txt` (a
+  scripted register sequence: `W clock port reg val` lines and the core's `E clock channel level` events),
+  `scc_song.vgm`, `scc_plus_song.vgm`, `scc_song.bin`, `scc_plus_song.bin`.
+- `app/src/test/cpp/wav_render_test.c`: the demo images of both variants and the shortest valid songs
+  (`scc-shortest.sccimg`, `scc-plus-shortest.sccimg`: one order of one row at speed 1, A-4 held on SCC 1) through
+  `chip_wav.c`.
+- `tools/audio/scc_reference_check.py <dir> [--vgm2wav PATH]` (developer evidence; the audio part needs numpy): the
+  reference player reproduces `scc_trace.txt`; an independent per-clock model of the chip (MAME's loop, one clock at a
+  time) reproduces every event of `scc_chip_trace.txt`; the VGMs parse from the format alone (header, clock and bit 31,
+  waits summing to the header's samples, the loop point at the register dump, the `0xD2` stream equal to the trace);
+  **pitch**: `scc_tone.wav` measured by FFT against 3579545 / (32 · 254) = 440.397 Hz, and with `--vgm2wav` (libvgm,
+  an independent player) the exported VGM rendered and measured the same, which also proves the header clock
+  convention; envelope/spectrum correlation of the libvgm render against `scc_song.wav`.
+- `tools/audio/render_scc_image.sh image out.wav [seconds] [mute=45] [--vgm out.vgm] [title=..] [author=..]
+  [date=..]` renders a lowered image through the ops table as the hosts do, and its VGM through `sc_export_vgm`.
+- Not done: listening on hardware, a comparison with a real SCC or SCC+ cartridge.
+
+**Nothing in this section has been built or run yet** (source-only branch `scc-systems`): the parent runs
+`python3 tools/audio/prepare_scc.py`, `python3 tools/audio/scc/scc_golden.py`, the Kotlin tests,
+`tools/build.sh exportSamples`, `tools/audio/run_native_host_test.sh` and `tools/audio/scc_reference_check.py`, then
+fills in the measured numbers.

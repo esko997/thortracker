@@ -53,6 +53,12 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ym/ym_xgm.c").asFile,
         engineSrc.file("ym/ym_vgm.c").asFile,
         engineSrc.file("ym/ym_psg.c").asFile,
+        engineSrc.file("scc/scc_chip.c").asFile,
+        engineSrc.file("scc/scc_machine.c").asFile,
+        engineSrc.file("scc/scc_player.c").asFile,
+        engineSrc.file("scc/scc_image.c").asFile,
+        engineSrc.file("scc/scc_vgm.c").asFile,
+        engineSrc.file("scc/scc_k051649.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
@@ -61,8 +67,8 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
-            "third_party/nuked-opl3", "third_party/ymfm")
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "scc", "third_party/chips", "third_party/blip_buf",
+            "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
@@ -72,7 +78,9 @@ val buildEngine by tasks.registering(Exec::class) {
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
-        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm_driver_image.h"),
+        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm_driver_image.h",
+        "scc/scc_k051649.h", "scc/scc_image.h", "scc/scc_player.h", "scc/scc_machine.h", "scc/scc_vgm.h", "scc/scc_export.h",
+        "generated/scc_tables.h"),
         engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
@@ -114,7 +122,7 @@ kotlin {
             }
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
-                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"))
+                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("scc"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

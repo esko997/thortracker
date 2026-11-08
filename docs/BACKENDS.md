@@ -864,6 +864,96 @@ Decisions:
   columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
   and song settings).
 
+## Konami SCC and SCC+ (MSX)
+
+Roadmap step 7 (more chips): the Konami SCC wavetable chip of MSX megaROM cartridges and its SCC+ variant, as two
+systems of one family ("MSX SCC…" in New and Load demo). The contract is `docs/AUDIO_ENGINE.md`, "SCC and SCC+".
+Decisions (made on the user's behalf; see Open questions):
+
+- **The chip alone, two variants.** `"msx-scc"` = K051649 (megaROM SCC: channels 4 and 5 share one wave RAM),
+  `"msx-scc-plus"` = K052539 in SCC+ mode (Sound Cartridge: five wave RAMs). Not an MSX: no PSG, no AY + SCC
+  combination, no machine emulation. Everything else is identical, so one image layout, player and machine serve both;
+  the image's variant byte picks the chip and each engine id loads only its own.
+- **Own player + chip core + VGM**, the OPL3 precedent: Konami's drivers are not free and no free MSX SCC driver is a
+  de-facto standard to run in the loop. Songs export as VGM (K051649 / K052539, which VGM 1.70 added) and WAV; no MSX
+  executable is claimed.
+- **Core: our C port of MAME's k051649** (BSD-3-Clause, notice kept), the emulator whose counter/latch model agrees
+  with openMSX's hardware notes and with libvgm (the VGM players' core). Rejected: emu2212 (MIT, plain C) — its key
+  enables change only at waveform wrap, its test-register rotation moves playback and it point-samples without band
+  limiting, all contrary to the measured hardware notes. The port renders level-change events into blip_buf (no
+  3.58 MHz loop) and advances silently in O(1), with identical state, so seeking is chip-exact.
+- **Clock**: 3579545 Hz (the MSX bus clock: BiFi's "fclock = 3,579,545 Hz"); f = 3579545 / (32 (P + 1)). The VGM header
+  carries 1789773 (the format's halved convention its players use; checked against libvgm's formula).
+- **Shared wave, honestly**: on the SCC the player gives RAM 3 to whichever of SCC 4 / SCC 5 made the latest wave claim
+  (a key-on or a change of its wave); both channels always play it. The song check warns where the two overlap with
+  different waves, the Pattern lane headers and inspector show what RAM 3 holds (`sharedState`), and Help and the
+  editors say so. SCC+ songs have no such rule.
+- **Instruments** are FamiStudio-style envelopes run by the player (the chip has none): volume (with loop and release),
+  arpeggio, pitch (absolute or relative) and a **wave envelope** (wave numbers per tick: wave sequences/morphs), plus
+  a `restart` flag (the waveform restarts at each note through the test register's bit 5). Envelopes reuse
+  `NesEnvelope` (same values/loop/release semantics and ranges). 64 slots, `null` = empty, like the OPL3.
+- **Waves**: 64 per song, 32 signed 8-bit samples each, always all present (an unused wave is silent), drawn in the
+  Wave view. Live edits of a sounding wave or instrument are heard from the next tick (the player reads the image every
+  tick), which suits wavetable editing; this differs from the OPL3 (sounding notes keep their registers).
+- **Effects**: the OPL3's movement/sequencing set (`0 1 2 3 4 A B C D F G P S`) with `Cxx` 00-0F, plus `Wxx` (wave lock)
+  and `Txx` (the chip's test register, exposed as hardware: restart, freeze, the unverified frequency modes). No chord
+  effect: five fixed voices.
+- **Pitch**: true pitch through a 768-step-per-octave period table (A-4 = P 253 = 440.40 Hz); the 12-bit divider limits
+  accuracy at the top (≤ 4.2 cents to G#5, ≤ 12 cents to G#6, +19 cents at B-7). Notes A-0..B-7.
+
+### SCC model, lowering and exports
+
+- **Systems** (`system/scc`): `KonamiSccSystem(variant)` with `SccSystem` (`"msx-scc"`, "Konami SCC (K051649)") and
+  `SccPlusSystem` (`"msx-scc-plus"`, "Konami SCC+ (K052539)"), family "MSX SCC"; five channels `SCC 1`-`SCC 5`
+  (`ChannelKind.WAVE`, tonal), four effect columns, notes A-0..B-7 (9..95; FamiTracker names), one bank of 64 slots,
+  60 ticks per second × multispeed (Song view: Multispeed 1-8), at most 256 orders, OFF = release (or cut without a
+  release point), fine pitch `Pxx` like the OPL3's. Constants come from `backend/SccPlayerImage` (generated).
+- **Chip data** (`SccSound`): `variant`, 64 nullable `SccInstrument`s (`volume`, `arpeggio`, `pitch`, `wave`
+  `NesEnvelope`s, `pitchRelative`, `restart`), 64 `SccWave`s, `multispeed`. A project whose backend and `variant`
+  disagree is a structural error. New songs get ten starter waves (Sine, Triangle, Saw, Square, Pulse 25 %, Pulse
+  12.5 %, Organ, Bell, Bass, Noise; the rest silent) and twelve presets in slots 01-12 (Lead, Bass, Bell, Pad, Pluck,
+  Organ, Kick, Snare, Hat, Arp lead, Echo, Morph: a wave-envelope sequence); `SccWaveShapes` makes the shapes.
+- **Lowering** (`backend/SccLowering`): the arranged song in the canonical layout (`docs/AUDIO_ENGINE.md`): tracks then
+  envelopes, one dedup map, W = 64, I = the highest filled slot; `dataSize` for the validator.
+- **Validation** (`SccValidator`): every `sc_load_image` check as a message naming pattern, channel and row (empty
+  slots, envelope lengths/loop/release/values, wave numbers, `Bxx`, `Cxx` above 0F, `F00`, `W00`/`Wxx` beyond 64,
+  unknown effects, data capacity), plus an empty envelope that still carries a loop or release point. Warnings (a
+  row-level walk of straight play, `SccWalk`, shared with the shared-state display): on the SCC, SCC 4 and SCC 5
+  sounding together with waves whose samples differ (once per stretch: order, row, both waves and who claimed last);
+  `Txx` bits 0-1 (unverified, VGM players ignore them), 2-4 (no effect), 7 on the SCC+ (ignored) and 6-7 (later wave
+  changes are lost until cleared); `Wxx` where nothing sounds; `Gxx` beyond the speed; an order's first note without
+  an instrument; notes above G#6 with their actual cents and period.
+- **Shared state** (`sharedState`): on the SCC the lane tags of SCC 4 and SCC 5 name the wave RAM 3 holds (`W05`, `W05+`
+  when the claiming instrument's wave envelope steps through several waves) and the inspector says who claimed it and
+  where; a non-zero test register is listed on both variants.
+- **Exports**: `.vgm` (`SccVgm`, the native renderer registered by each host, like the OPL3's) and `.wav` (the generic
+  path). No MSX executable export: no MSX driver is in the loop.
+- **Demos**: "Cartridge Dusk" (SCC; D minor, 150 BPM): SCC 4 and SCC 5 play one organ instrument together or alternate
+  phrases ended by OFF, as the shared RAM allows; "Prism Lane" (SCC+; A major, 180 BPM): five waves at once, two waves
+  of its own and a `T20` bridge (waveform restart at every period write: vibrato buzzes like hard sync). Both without
+  errors or warnings; `SccDemoSong.shortest(variant)` is the one-row song the WAV test renders. `exportSamples` writes
+  `cartridge-dusk.thor`, `prism-lane.thor`, `scc-demo.sccimg`, `scc-plus-demo.sccimg`, `scc-shortest.sccimg` and
+  `scc-plus-shortest.sccimg`.
+- **Tests**: `SccModelTest` (round trips of both variants, validation and warnings, the shared-wave warning on the SCC
+  only, lowering bytes and dedup, arrangement, fine pitch, audition problems, shared state, demos), `SccGoldenTest`
+  (the reference builder's test, features and SCC+ songs rebuilt from the model lower to the same 65536 bytes) and
+  `SccEditorTest`.
+
+### SCC editor
+
+- **Instrument view** (`SccInstrumentView`, `SccInstrumentPainter`): the 64-slot bank (empty slots say how to start),
+  then rows Slot, Name, Preset, Listen on, Restart, Page, Length, Loop, Release (volume), Mode (pitch), Steps; L1/R1
+  switch the Volume, Arpeggio, Pitch and Wave pages, edited step by step like the NES envelope editor (`EnvelopePlot`,
+  given a value-range overload that leaves NES and Mega Drive drawing unchanged); the Wave page shows the waves it
+  steps through and points a following Wave view at the one under the cursor. Listening on SCC 4 or 5 of an SCC song
+  notes the shared RAM. Unlike the NES editor, a release point without a loop is allowed (the player defines it).
+- **Wave view** (`SccWaveView`, `SccWavePainter`): 64 waves of 32 signed samples; a name row, a thumbnail strip, tools
+  (Sine, Triangle, Saw, Square, Pulse with Edit+←→ width, Noise with Edit+←→ reseed, Invert, Shift left/right, Smooth,
+  Normalise, Use in sound) and the drawing grid (↑↓ pen by 8, Clear held + ↑↓ by 1, Edit held draws). Listen plays the
+  wave through a sound that uses it. On the SCC a wave SCC 4 or 5 plays carries the shared-RAM note.
+- **Help**: the effects page from `SccRules`, the Instrument, Envelopes and Waves sections and an "SCC and SCC+ wave
+  RAM" section.
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -927,3 +1017,16 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- SCC shared wave (decided on the user's behalf): on the K051649 the latest claim by SCC 4 or SCC 5 wins RAM 3 and the
+  song check warns about overlaps, rather than forbidding different waves on the two channels or silently giving SCC 5
+  priority. Review.
+- SCC test register bits 0-1 ("4-bit"/"8-bit frequency"): modelled as openMSX documents Manuel Pazos's measurements
+  (applied at period writes); BiFi's early tests reported other multipliers, MAME and libvgm ignore the bits. Exposed
+  through `Txx` with a warning; unverified on hardware.
+- SCC test register bit 7 on the SCC (freezes the shared RAM) and bit 6 (freezes all): the read-side rotation they also
+  cause is not modelled (the player never reads), and the bus-conflict spikes MAME lists for simultaneous CPU and chip
+  wave RAM access are not emulated.
+- SCC mixing: one channel at full volume and full-scale wave = 120 output units of the chip's 11-bit sum, × 48 into the
+  resampler (five full channels reach 0.88). No comparison with a recorded cartridge yet; listening may ask for
+  another level or the cartridge's analog filtering.
+- SCC 50 Hz (European MSX) timing is not offered: ticks are 60 Hz × multispeed, as Konami's Japanese releases ran.

@@ -1,5 +1,32 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: MSX SCC and SCC+ (branch `scc-systems`, source only — nothing verified yet)
+
+The two Konami SCC systems (`msx-scc`, `msx-scc-plus`; `docs/BACKENDS.md` "Konami SCC and SCC+", contract in
+`docs/AUDIO_ENGINE.md` "SCC and SCC+") were written without compiling, generating or running anything. No result below
+exists yet; the integrator runs, in the worktree, in this order (serialised, no emulator during builds):
+
+1. `python3 tools/audio/prepare_scc.py` — writes `app/src/main/cpp/generated/scc_tables.h`,
+   `core/src/commonMain/kotlin/org/thortracker/backend/SccPlayerImage.kt` and `app/src/test/cpp/scc_test_song.h`
+   (commit them, as the OPL3's generated files are).
+2. `python3 tools/audio/scc/scc_golden.py` — writes `core/src/jvmTest/resources/scc-golden/{spike,features,plus}.bin.gz`.
+3. `tools/build.sh :core:jvmTest` (at least `SccModelTest`, `SccGoldenTest`, `org.thortracker.system.scc.*`, and the
+   NES/Mega Drive editor tests that use the generalised `EnvelopePlot`), then `tools/build.sh exportSamples` (writes the
+   four `.sccimg` images and the two demo projects).
+4. `tools/audio/run_native_host_test.sh evidence/audio` — `scc_machine_test` plus every existing system's test and
+   `wav_render_test` (SCC demos and shortest songs); existing counts must not change.
+5. `python3 tools/audio/scc_reference_check.py evidence/audio [--vgm2wav PATH]` — trace, per-clock chip model, VGM
+   structure, A-4 pitch; with libvgm's vgm2wav also the VGM clock convention and render correlation.
+6. `tools/audio/render_scc_image.sh evidence/audio/scc_song.bin /tmp/scc.wav 10 --vgm /tmp/scc.vgm`, and the four
+   existing `render_*_image.sh` scripts (their source lists now include the SCC engine).
+7. The Android build (CMake, JNI `nativeSccVgm`) and the Deck build (cinterop `scc_export.h`, `DeckSccVgm`); UI smoke
+   of New/Load demo → MSX SCC…, the Instrument and Wave views, playback, seek, audition, VGM and WAV export on a
+   reserved handheld and the Deck.
+
+Assumptions to confirm by those runs or by listening: the hand-derived test-song VGM figures (455 ticks, loop 359 ticks
+= 263865 samples, 334425 samples in all); the reference check's ±0.1 Hz pitch and copied correlation thresholds; the
+test register bits 0-1 model; the mixing level (× 48); the K051649 VGM clock 1789773 against libvgm.
+
 ## 0.16.0 NES + Konami VRC7
 
 - **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.
