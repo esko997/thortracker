@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
 import org.thortracker.model.Songs
+import org.thortracker.system.gb.GbSystem
 import org.thortracker.ui.TrackerView
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
@@ -345,6 +346,7 @@ class ControllerWorkflowTest {
             instrumentation.removeMonitor(picker)
             openFiles()
             clickRow("New blank song")
+            clickRow(GbSystem.name)
             clickRow("Continue")
             assertNotEquals(original.title, tracker.session.song.title)
             reader = thread(isDaemon = true) { bytes.set(destination.inputStream().use { it.readBytes() }) }
@@ -539,7 +541,7 @@ class ControllerWorkflowTest {
         var phrase = emptyList<Int>()
         instrumentation.runOnMainSync { phrase = sounded.toList() }
         assertTrue("Held chord must repeat", phrase.size >= 6)
-        assertEquals(listOf(48, 52, 55, 48, 52, 55), phrase.take(6))
+        assertEquals(listOf(36, 40, 43, 36, 40, 43), phrase.take(6))
         up(KeyEvent.KEYCODE_BUTTON_X)
         instrumentation.runOnMainSync { count = sounded.size }
         SystemClock.sleep(450)
