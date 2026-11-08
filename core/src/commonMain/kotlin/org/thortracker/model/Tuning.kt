@@ -43,6 +43,20 @@ data class Tuning(
         return out
     }
 
+    /** Degree [degree]'s pitch above 1/1, in cents (degree 0 = 1/1; negative degrees lie below it). */
+    fun degreeCents(degree: Int): Double {
+        val q = degree.floorDiv(steps)
+        val r = degree.mod(steps)
+        return q * period + if (r == 0) 0.0 else cents[r - 1]
+    }
+
+    /** The degree closest to [cents] above 1/1 (the lower one on ties). */
+    fun nearestDegree(cents: Double): Int {
+        var d = floor(cents / period).toInt() * steps - 1
+        while (degreeCents(d + 1) <= cents) d++
+        return if (abs(degreeCents(d + 1) - cents) < abs(cents - degreeCents(d))) d + 1 else d
+    }
+
     companion object {
         /** Allowed note-entry accuracy limits, in cents. */
         val TOLERANCES = listOf(5, 10, 20)
@@ -247,15 +261,17 @@ class TuningMap(val tuning: Tuning, val system: SoundSystem) {
         return if (q == 0) "$r/$steps" else "$r/$steps ·$q"
     }
 
-    /** Nominal pitch of [note] + [detune] in cents above 1/1 on the note-table grid. */
-    fun cents(note: Int, detune: Int): Double = 100.0 * (note - tuning.root) + fine.cents(note, detune)
+    /**
+     * Nominal pitch of [note] + [detune] in cents above 1/1 on the note-table grid; on a system that retunes its note
+     * table ([org.thortracker.system.FinePitch.retunesTable]) the degree nearest to the note, which it plays exactly.
+     */
+    fun cents(note: Int, detune: Int): Double {
+        val grid = 100.0 * (note - tuning.root)
+        return if (fine.retunesTable) tuning.degreeCents(tuning.nearestDegree(grid)) else grid + fine.cents(note, detune)
+    }
 
     /** Target of [degree] in cents above 1/1. */
-    private fun target(degree: Int): Double {
-        val q = degree.floorDiv(steps)
-        val r = degree.mod(steps)
-        return q * tuning.period + if (r == 0) 0.0 else tuning.cents[r - 1]
-    }
+    private fun target(degree: Int): Double = tuning.degreeCents(degree)
 
     private fun realise(degree: Int): TunedPitch {
         val target = target(degree)
@@ -263,7 +279,8 @@ class TuningMap(val tuning: Tuning, val system: SoundSystem) {
         var bestNote = -1
         var bestDetune = 0
         var bestError = Double.POSITIVE_INFINITY
-        for (note in intArrayOf(below, below + 1).map { it.coerceIn(range) }.distinct()) {
+        val candidates = if (fine.retunesTable) intArrayOf(below - 1, below, below + 1, below + 2) else intArrayOf(below, below + 1)
+        for (note in candidates.map { it.coerceIn(range) }.distinct()) {
             for (detune in fine.range(note)) {
                 val error = cents(note, detune) - target
                 if (abs(error) < abs(bestError) || (abs(error) == abs(bestError) && detune < bestDetune)) {

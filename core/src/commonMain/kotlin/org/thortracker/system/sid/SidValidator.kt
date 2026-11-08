@@ -1,5 +1,8 @@
 package org.thortracker.system.sid
 
+import org.thortracker.backend.GtSong
+import org.thortracker.backend.SidLowering
+import org.thortracker.backend.SidPlayerImage
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 
@@ -15,8 +18,8 @@ import org.thortracker.model.Songs
 object SidValidator {
     const val MAX_REPORTED = 100
 
-    /** PSID title/author/released fields: 31 Latin-1 characters plus a terminating zero. */
-    const val PSID_TEXT = 31
+    /** PSID title/author/released fields: 32 Latin-1 characters (zero-padded when shorter). */
+    const val PSID_TEXT = 32
 
     fun structuralErrors(song: Song): List<String> {
         val out = Report()
@@ -140,12 +143,21 @@ object SidValidator {
                 }
             }
         }
-        firstNotesWithoutInstrument(song).forEach { out += it }
         gateTimers(song).forEach { out += it }
+        if (out.isEmpty()) {
+            try {
+                SidLowering.lower(GtSong.of(song), ByteArray(SidPlayerImage.IMAGE_SIZE))
+            } catch (e: IllegalArgumentException) {
+                out += e.message ?: "The song cannot be lowered for the C64 player"
+            }
+        }
         return out.list()
     }
 
-    /** A note without instrument before any instrument has played on its voice: GoatTracker would read instrument 0. */
+    /**
+     * A note without instrument before any instrument has played on its voice: the player then plays its instrument
+     * number 1 (the first hard-restart instrument by slot), which is rarely what was meant.
+     */
     private fun firstNotesWithoutInstrument(song: Song): List<String> {
         val out = ArrayList<String>()
         for (ch in SidRules.CHANNEL_NAMES.indices) {
@@ -156,7 +168,7 @@ object SidValidator {
                     if (cell.instrument != 0) break@loop
                     if (cell.note < 0) continue
                     out += "${Songs.patternLabel(song, p).cap()}, ${SidRules.CHANNEL_NAMES[ch]} row $row: ${SidSystem.noteName(cell.note)} has no " +
-                        "instrument and none has played on this voice yet; enter the instrument number"
+                        "instrument and none has played on this voice yet, so the player's first instrument sounds; enter the instrument number"
                     break@loop
                 }
             }
@@ -199,6 +211,7 @@ object SidValidator {
         if (structuralErrors(document).isNotEmpty()) return emptyList()
         val song = SidSystem.arranged(document)
         val out = Report()
+        firstNotesWithoutInstrument(song).forEach { out += it }
         if (song.title.length > PSID_TEXT || song.title.any { it.code !in 0x20..0xFF }) {
             out += "The .sid title field holds $PSID_TEXT Latin-1 characters; the title will be shortened or changed there"
         }
