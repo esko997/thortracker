@@ -64,6 +64,7 @@ object NesValidator {
             if (ins.chip !in expansion.chips) out += "$where is a ${ins.chip.label} sound; this song has no ${ins.chip.label} chip"
             if (ins.chip != NesChip.VRC6 && ins.sawVolume != Vrc6SawVolume.HALF) out += "$where: only VRC6 sounds have a saw volume"
             if (ins.chip != NesChip.VRC7 && ins.fm != Vrc7Patch.DEFAULT) out += "$where: only VRC7 sounds have an FM patch"
+            if (ins.chip != NesChip.N163 && ins.wave != N163Wave.DEFAULT) out += "$where: only N163 sounds have waves"
             if (ins.chip != NesChip.APU && ins.dpcm.isNotEmpty()) out += "$where: only 2A03 sounds map DPCM samples"
             if (ins.chip == NesChip.VRC7) {
                 if (ins.duty.values.isNotEmpty()) out += "$where: VRC7 sounds have no duty envelope; clear it"
@@ -73,6 +74,10 @@ object NesValidator {
                 if (ins.fm.preset in Vrc7Presets.PRESETS && ins.fm.regs != Vrc7Presets.data(ins.fm.preset)) {
                     out += "$where: built-in VRC7 patch ${ins.fm.preset} keeps its ROM registers (as FamiStudio does); only Custom (0) has its own"
                 }
+            }
+            if (ins.chip == NesChip.N163) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: N163 sounds have no duty envelope; clear it"
+                n163Shape(out, where, ins.wave)
             }
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
@@ -100,6 +105,29 @@ object NesValidator {
             out += "Parked orders ${song.parkedOrders} must be ascending, distinct orders 0-${song.orders.size - 1}"
         }
         return out.list()
+    }
+
+    /** The shape of an N163 sound's waves: what every consumer relies on (sizes, ranges, one repeat per wave). */
+    private fun n163Shape(out: Report, where: String, w: N163Wave) {
+        if (w.size < N163Wave.MIN_SIZE || w.size % 4 != 0 || w.size > NesRules.N163_RAM_SAMPLES) {
+            out += "$where: the N163 wave size ${w.size} is not a multiple of 4 from ${N163Wave.MIN_SIZE} to ${NesRules.N163_RAM_SAMPLES}"
+            return
+        }
+        if (w.position < 0 || w.position % 2 != 0 || w.position >= NesRules.N163_RAM_SAMPLES) {
+            out += "$where: the N163 wave position ${w.position} is not an even sample 0-${NesRules.N163_RAM_SAMPLES - 2} (waves start on a byte)"
+        }
+        if (w.waves.size !in 1..N163Wave.maxWaves(w.size)) {
+            out += "$where: ${w.waves.size} N163 waves; a sound holds 1-${N163Wave.maxWaves(w.size)} of ${w.size} samples " +
+                "(FamiStudio keeps at most ${N163Wave.MAX_SAMPLES} samples and ${N163Wave.MAX_WAVES} waves)"
+        }
+        w.waves.forEachIndexed { i, wave ->
+            if (wave.size != w.size) out += "$where: N163 wave ${i + 1} has ${wave.size} samples; the sound's waves have ${w.size}"
+            wave.firstOrNull { it !in N163Wave.SAMPLE }?.let { out += "$where: N163 wave ${i + 1} sample $it is outside 0-15" }
+        }
+        if (w.repeat.size != w.waves.size) out += "$where: ${w.repeat.size} N163 wave repeats for ${w.waves.size} waves; each wave has one"
+        w.repeat.firstOrNull { it !in N163Wave.REPEAT }?.let { out += "$where: an N163 wave plays for $it frames; 1-15 frames per wave" }
+        if (w.loop !in -1 until w.waves.size) out += "$where: the N163 wave loop ${w.loop} is outside the sequence"
+        if (w.release !in -1 until w.waves.size) out += "$where: the N163 wave release ${w.release} is outside the sequence"
     }
 
     private fun envelopeShape(out: Report, where: String, name: String, e: NesEnvelope, valid: IntRange) {
@@ -134,6 +162,7 @@ object NesValidator {
                 "pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative).size,
                 "duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY).size,
             )) if (size > 255) out += "$where: the $name envelope takes $size bytes once encoded; FamiStudio's limit is 255. Shorten it or repeat fewer changes"
+            if (ins.chip == NesChip.N163) n163Rules(out, where, ins.wave, song.nes.expansion.n163Channels)
         }
         val played = song.orders.toSet()
         document.patterns.forEachIndexed { p, pattern ->
@@ -241,6 +270,7 @@ object NesValidator {
         }
         firstNotesWithoutInstrument(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
+        if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
         }
@@ -311,6 +341,120 @@ object NesValidator {
             }
         }
         return out
+    }
+
+    /** What FamiStudio's engine and text import require of an N163 sound's waves with [channels] N163 channels enabled. */
+    private fun n163Rules(out: Report, where: String, w: N163Wave, channels: Int) {
+        val ram = NesRules.n163WaveRam(channels)
+        if (w.position + w.size > ram) {
+            out += "$where: its N163 wave (RAM samples ${w.position}-${w.position + w.size - 1}) runs into the channel registers: with " +
+                "$channels N163 channel${if (channels == 1) "" else "s"} waves fit samples 0-${ram - 1} (each channel's registers take 16 " +
+                "samples at the top). Move it to ${maxOf(0, ram - w.size)} or below, or shrink it"
+        }
+        if (w.release >= 0 && w.loop < 0) {
+            out += "$where: the N163 wave release needs a wave loop before it (FamiStudio sustains a note by looping until it is released); set a loop"
+        }
+        if (w.release >= 0 && w.loop >= 0 && w.loop >= w.release) {
+            out += "$where: the N163 wave loop (wave ${w.loop + 1}) must come before the release (wave ${w.release + 1})"
+        }
+        val size = FamiStudioEnvelopes.waveIndex(w).size
+        if (size > 255) out += "$where: the N163 wave sequence takes $size bytes once encoded; FamiStudio's limit is 255. Use fewer waves or repeats"
+    }
+
+    /**
+     * The N163's shared RAM as FamiStudio's engine uses it: each channel uploads its sound's current wave to that sound's
+     * RAM position whenever the sequence moves to another wave (on every attack and every wave change), so two channels
+     * sounding at once with overlapping RAM ranges overwrite each other's waves (identical single waves at the same place,
+     * or the same single-wave sound, share safely). Also off-key wave sizes and silent all-zero waves of played sounds.
+     * [song] is the arrangement of a structurally valid song.
+     */
+    private fun n163Warnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val expansion = song.nes.expansion
+        val n163 = NesRules.N163_FIRST until fs.channels
+        val playing = IntArray(fs.channels) // slot each N163 channel sounds (0: none)
+        val attack = IntArray(fs.channels) // row of its last attack
+        val reported = HashSet<Pair<Int, Int>>()
+        val used = HashSet<Int>()
+        // One pass, then the loop again: notes still sounding at the end overlap the loop's first rows.
+        val rows = (0 until fs.totalRows) + (fs.orderStart[fs.loopOrder] until fs.totalRows)
+        for (row in rows) {
+            for (ch in n163) {
+                val n = fs.notes[ch][row] ?: continue
+                when {
+                    n.isMusical && n.instrument != 0 -> {
+                        if (n.attack || playing[ch] != n.instrument) attack[ch] = row
+                        playing[ch] = n.instrument
+                        used += n.instrument
+                    }
+                    n.value == FsNote.STOP -> playing[ch] = 0
+                }
+                if (n.cutDelay >= 0) playing[ch] = 0
+            }
+            for (a in n163) for (b in n163) {
+                if (b <= a || playing[a] == 0 || playing[b] == 0) continue
+                val sa = playing[a]
+                val sb = playing[b]
+                val wa = fs.instruments[sa - 1].wave
+                val wb = fs.instruments[sb - 1].wave
+                val shared = maxOf(wa.position, wb.position)..minOf(wa.position + wa.size, wb.position + wb.size) - 1
+                if (shared.isEmpty() || sharesSafely(sa, wa, sb, wb, attack[a] == attack[b])) continue
+                if (!reported.add(minOf(sa, sb) to maxOf(sa, sb))) continue
+                val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+                out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()} row ${row - fs.orderStart[o]}: " +
+                    "${NesRules.channelName(expansion, a)} plays sound ${NesRules.hex2(sa)} (N163 RAM ${ramText(wa)}) while " +
+                    "${NesRules.channelName(expansion, b)} plays sound ${NesRules.hex2(sb)} (RAM ${ramText(wb)}): they share samples " +
+                    "${shared.first}-${shared.last}, so each overwrites the other's wave when it loads one. Give one of them another " +
+                    "wave position (Instrument view, Wave page) or play them apart"
+            }
+        }
+        for (slot in used.sorted()) {
+            val ins = fs.instruments[slot - 1]
+            val w = ins.wave
+            if (!NesRules.n163InTune(w.size)) {
+                val t = NesRules.n163Transpose(w.size)
+                out += "Sound ${NesRules.hex2(slot)} \"${ins.name}\": its ${w.size}-sample N163 wave sounds " +
+                    "${formatSemitones(kotlin.math.abs(t))} semitones ${if (t < 0) "below" else "above"} the notes (FamiStudio tunes the " +
+                    "N163 for 16-sample waves; 4, 8, 32, 64 or 128 samples stay in tune, whole octaves away)"
+            }
+            if (w.waves.all { wave -> wave.all { it == 0 } }) {
+                out += "Sound ${NesRules.hex2(slot)} \"${ins.name}\": all its N163 samples are 0, which is silent (a constant level " +
+                    "only clicks as the volume changes); draw a wave or pick a preset on the Wave page"
+            }
+        }
+        return out
+    }
+
+    /** Two sounds overlapping in N163 RAM that never disagree there: one single wave, the same place and the same samples. */
+    private fun sharesSafely(sa: Int, wa: N163Wave, sb: Int, wb: N163Wave, sameAttack: Boolean): Boolean = when {
+        sa == sb -> wa.waves.size == 1 || sameAttack
+        else -> wa.waves.size == 1 && wb.waves.size == 1 && wa.position == wb.position && wa.size == wb.size && wa.waves == wb.waves
+    }
+
+    private fun ramText(w: N163Wave) = "${w.position}-${w.position + w.size - 1}"
+
+    private fun formatSemitones(v: Double): String {
+        val tenths = kotlin.math.round(v * 10).toInt()
+        return "${tenths / 10}.${tenths % 10}"
+    }
+
+    /**
+     * N163 RAM samples the song's played N163 sounds occupy (the union of their wave ranges), for Help's limits. 0 for
+     * songs without the N163 or with errors in their structure.
+     */
+    fun n163RamUsed(document: Song): Int {
+        if (document.nes.expansion.chip != NesChip.N163 || structuralErrors(document).isNotEmpty()) return 0
+        val song = NesSystem.arranged(document)
+        val samples = HashSet<Int>()
+        for (p in song.orders.toSet()) for (ch in NesRules.N163_FIRST until song.nes.expansion.channels) {
+            for (cell in song.patterns[p].tracks[ch]) {
+                if (cell.note >= 0 && cell.instrument != 0) {
+                    song.nes.instruments.getOrNull(cell.instrument - 1)?.takeIf { it.chip == NesChip.N163 }?.let { samples += it.wave.ram }
+                }
+            }
+        }
+        return samples.size
     }
 
     /** Tonal notes of a tuned song that do not sound a tuned pitch (their Pxx missing, wrong or the slot taken). */

@@ -90,6 +90,29 @@ class NesProjectCodecTest {
         assertTrue(demo.keys.toString(), "vrc7Sustain" !in demo.keys)
     }
 
+    /**
+     * Each N163 channel count is its own backend; its sound names the expansion with the count, its N163 sounds their chip
+     * and waves, and a file whose count disagrees with its backend is rejected (the channels and RAM differ).
+     */
+    @Test
+    fun n163SongsNameTheirChannelCount() {
+        for (system in org.thortracker.system.nes.NesN163System.ALL) {
+            for (song in listOf(system.blank(), system.demo())) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+        }
+        val demo = org.thortracker.system.nes.NesN163System.of(3).demo()
+        val root = Json.parseToJsonElement(ProjectCodec.encode(demo)).jsonObject
+        assertEquals("nes-famistudio-n163-3", root["backend"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("n163-3", sound["expansion"]!!.jsonPrimitive.content)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(instruments.any { it["chip"]?.jsonPrimitive?.content == "n163" && "wave" in it.keys })
+        assertTrue(instruments.none { it["chip"] == null && "wave" in it.keys })
+        val other = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio-n163-4")) +
+            ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio-n163-4")))))
+        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
+        assertTrue(e.message!!, e.message!!.contains("NES + N163, 3 channels"))
+    }
+
     @Test
     fun envelopeDetailsSurvive() {
         val song = NesSystem.blank().let { s ->

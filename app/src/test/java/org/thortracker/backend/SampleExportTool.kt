@@ -1,10 +1,21 @@
 package org.thortracker.backend
 
+import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.N163Preset
+import org.thortracker.system.nes.N163Presets
+import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesEnvelope
+import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesN163System
+import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
@@ -39,6 +50,52 @@ object SampleExportTool {
         for (format in NesVrc7System.exports) File(directory, "lantern-point.${format.extension}").writeBytes(format.export(vrc7))
         File(directory, "lantern-point.nesimg").writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(vrc7, it) })
         println("Exported ${vrc7.title} to ${directory.absolutePath}")
+        // Held identical copies: native live edits must follow the played bank slot, not an equal earlier slot.
+        val copyBase = NesVrc7System.blank()
+        val copyBank = copyBase.nes.instruments.toMutableList()
+        copyBank[0] = NesInstrument("Preset original", chip = NesChip.VRC7,
+            volume = NesEnvelope(listOf(15, 12, 9, 6), loop = 3), fm = Vrc7Patch().withPreset(1))
+        copyBank[1] = copyBank[0].copy(name = "Preset copy")
+        copyBank[2] = copyBank[0].copy(name = "Unused custom original",
+            fm = Vrc7Patch(0, listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)))
+        copyBank[3] = copyBank[2].copy(name = "Held custom copy")
+        val copyPattern = copyBase.patterns[0].copy(tracks = copyBase.patterns[0].tracks.mapIndexed { ch, rows ->
+            rows.toMutableList().also {
+                when (ch) {
+                    NesRules.VRC7_FM1 -> it[0] = Cell(57, 1)
+                    NesRules.VRC7_FM1 + 1 -> it[0] = Cell(64, 2)
+                    NesRules.VRC7_FM1 + 2 -> it[0] = Cell(60, 4)
+                }
+            }
+        })
+        val copies = copyBase.copy(patterns = listOf(copyPattern), orders = listOf(0), loopOrder = 0,
+            sound = copyBase.nes.copy(instruments = copyBank))
+        File(directory, "vrc7-held-copies.nesimg")
+            .writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(copies, it) })
+        // The NES + N163 demo for every channel count (wavetable-garden-<n>ch; each image plays on "nes-famistudio-n163-<n>").
+        for (system in NesN163System.ALL) {
+            val n163 = system.demo()
+            val name = "wavetable-garden-${system.n163Channels}ch"
+            File(directory, "$name.thor").writeText(ProjectCodec.encode(n163), Charsets.UTF_8)
+            for (format in system.exports) File(directory, "$name.${format.extension}").writeBytes(format.export(n163))
+            File(directory, "$name.nesimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(n163, it) })
+            println("Exported ${n163.title} (${system.name}) to ${directory.absolutePath}")
+            // The shortest song on that build: one order of one row at speed 1, an N163 sine A-4 on N163 1
+            // (n163-shortest-<n>ch; wav_render_test.c renders the one-row, one-tick edge case).
+            val blank = system.blank()
+            val bank = blank.nes.instruments.toMutableList()
+            bank[0] = NesInstrument("Sine", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(N163Preset.SINE, 16, 0, 1))))
+            val first = blank.patterns[0]
+            val shortest = blank.copy(
+                ticksPerRow = 1, orders = listOf(0), loopOrder = 0,
+                patterns = listOf(first.copy(length = 1, tracks = first.tracks.mapIndexed { ch, rows ->
+                    if (ch == NesRules.N163_FIRST) rows.toMutableList().also { it[0] = Cell(57, 1) } else rows
+                })),
+                sound = blank.nes.copy(instruments = bank),
+            )
+            File(directory, "n163-shortest-${system.n163Channels}ch.nesimg")
+                .writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+        }
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

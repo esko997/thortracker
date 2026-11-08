@@ -2,7 +2,9 @@ package org.thortracker.backend
 
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
+import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
+import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesExpansion
@@ -18,9 +20,10 @@ import org.thortracker.system.nes.Vrc7Presets
  * plays first and in [NesDpcm]'s order, so FamiStudio packs them at the same addresses), instruments (named "slot
  * name", with their DPCM mappings), one arpeggio per `0xy` used, and per channel one FamiStudio pattern per distinct
  * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
- * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`), its instruments of
- * that chip carry `Expansion="VRC6"` and the saw master volume (`Expansion="VRC7"`: the patch, the custom patch's
- * registers and the release/stop overrides), and its channels follow the 2A03's.
+ * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`; the N163 also
+ * `NumN163Channels`), its instruments of that chip carry `Expansion="VRC6"` and the saw master volume
+ * (`Expansion="VRC7"`: the patch, the custom patch's registers and the release/stop overrides; `Expansion="N163"`: the
+ * wave size, position and count with the `N163Wave` and `Repeat` envelopes), and its channels follow the 2A03's.
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -31,6 +34,7 @@ object FamiStudioText {
     private fun channelType(expansion: NesExpansion, c: Int): String = when {
         c < APU_TYPES.size -> APU_TYPES[c]
         expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
+        expansion.chip == NesChip.N163 -> "N163Wave${c - APU_TYPES.size + 1}"
         else -> "VRC7FM${c - APU_TYPES.size + 1}"
     }
 
@@ -51,7 +55,8 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else "") +
-            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.chip.label) else ""))
+            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.chip.label) else "") +
+            (if (fs.expansion.chip == NesChip.N163) attr("NumN163Channels", fs.expansion.n163Channels) else ""))
         val names = instrumentNames(fs)
         val samples = sampleNames(fs, names.keys)
         for ((data, name) in samples) {
@@ -66,11 +71,9 @@ object FamiStudioText {
             for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
                 val sample = fs.samples.getOrNull(m.sample) ?: continue
                 val shared = samples.getValue(sample.data)
-                val sampleDefault = fs.samples.first { it.data == sample.data }.dmcInitial
-                val initial = if (m.dmcInitial >= 0) m.dmcInitial else sample.dmcInitial
                 line(2, "DPCMMapping" + attr("Note", noteName(note - NesRules.NOTE_OFFSET)) + attr("Sample", shared) +
                     attr("Pitch", m.pitch) + attr("Loop", if (m.loop) "True" else "False") + attr("Bank", 0) +
-                    (if (initial != sampleDefault || m.dmcInitial >= 0) attr("DmcInitialValue", initial) else ""))
+                    (dmcInitialOverride(fs, sample, m)?.let { attr("DmcInitialValue", it) } ?: ""))
             }
             for (e in envelopeLines(ins)) line(2, e)
         }
@@ -187,6 +190,7 @@ object FamiStudioText {
                 if (n.noteDelay >= 0) s.append(attr("NoteDelay", n.noteDelay))
                 if (n.cutDelay >= 0) s.append(attr("CutDelay", n.cutDelay))
                 if (n.deltaCounter >= 0) s.append(attr("DeltaCounter", n.deltaCounter))
+                if (n.phaseReset) s.append(attr("PhaseReset", 1))
             }
             lines += s.toString()
         }
@@ -220,7 +224,8 @@ object FamiStudioText {
     /**
      * An instrument's attributes after its name: its expansion's (`FamistudioTextFile`). VRC7: `Vrc7Patch`, the
      * registers only for Custom (0), then both overrides (the song's setting, the same on every VRC7 instrument:
-     * FamiStudio's engine keeps only the last loaded one's).
+     * FamiStudio's engine keeps only the last loaded one's). N163: preset, size, position, count (the waves themselves
+     * in the N163Wave envelope).
      */
     private fun chipAttributes(fs: FsSong, ins: NesInstrument): String = when (ins.chip) {
         NesChip.APU -> ""
@@ -229,6 +234,8 @@ object FamiStudioText {
             (if (ins.fm.preset == Vrc7Presets.CUSTOM) ins.fm.regs.withIndex().joinToString("") { (i, r) -> attr("Vrc7Reg$i", r) } else "") +
             attr("Vrc7OverrideRelease", if (fs.vrc7Sustain.release) "True" else "False") +
             attr("Vrc7OverrideStop", if (fs.vrc7Sustain.stop) "True" else "False")
+        NesChip.N163 -> attr("Expansion", "N163") + attr("N163WavePreset", "Custom") + attr("N163WaveSize", ins.wave.size) +
+            attr("N163WavePos", ins.wave.position) + attr("N163WaveCount", ins.wave.waves.size)
     }
 
     /** An instrument's envelope lines; empty and all-neutral envelopes are left out (FamiStudio's defaults). */
@@ -237,20 +244,53 @@ object FamiStudioText {
         envelope("Arpeggio", ins.arpeggio, 0, false),
         envelope("Pitch", ins.pitch, 0, ins.pitchRelative),
         envelope("DutyCycle", ins.duty, 0, false),
-    )
+    ) + if (ins.chip == NesChip.N163) n163Envelopes(ins.wave) else emptyList()
 
     /**
      * What FamiStudio's export compares when it merges identical instruments (`Project.MergeIdenticalInstruments`: a
-     * CRC of the imported instrument without its name and colour), for a sound without DPCM mappings: sounds of equal
-     * keys are one instrument in FamiStudio's export.
+     * CRC of the imported instrument without its name and colour; DPCM mappings count with their note, pitch, loop and
+     * initial value override but not their sample, whose ID the CRC skips): sounds of equal keys are one instrument in
+     * FamiStudio's export.
      */
-    internal fun mergeKey(fs: FsSong, slot: Int): List<String> = fs.instruments[slot - 1].let { listOf(chipAttributes(fs, it)) + envelopeLines(it) }
+    internal fun mergeKey(fs: FsSong, slot: Int): List<String> = fs.instruments[slot - 1].let { ins ->
+        val mappings = ins.dpcm.entries.sortedBy { it.key }.mapNotNull { (note, m) ->
+            val sample = fs.samples.getOrNull(m.sample) ?: return@mapNotNull null
+            "DPCMMapping" + attr("Note", note) + attr("Pitch", m.pitch) + attr("Loop", m.loop) +
+                (dmcInitialOverride(fs, sample, m)?.let { attr("DmcInitialValue", it) } ?: "")
+        }
+        listOf(chipAttributes(fs, ins)) + mappings + envelopeLines(ins)
+    }
+
+    /** A mapping's DMC initial value when it overrides its sample's (FamiStudio's `DmcInitialValue`), else null. */
+    private fun dmcInitialOverride(fs: FsSong, sample: DpcmSample, m: DpcmMapping): Int? {
+        val sampleDefault = fs.samples.first { it.data == sample.data }.dmcInitial
+        val initial = if (m.dmcInitial >= 0) m.dmcInitial else sample.dmcInitial
+        return initial.takeIf { it != sampleDefault || m.dmcInitial >= 0 }
+    }
 
     private fun envelope(type: String, e: NesEnvelope, neutral: Int, relative: Boolean): String? {
         if (e.values.isEmpty() || e.values.all { it == neutral }) return null
         return "Envelope" + attr("Type", type) + attr("Length", e.values.size) +
             (if (e.loop >= 0) attr("Loop", e.loop) else "") + (if (e.release >= 0) attr("Release", e.release) else "") +
             (if (relative) attr("Relative", "True") else "") + attr("Values", e.values.joinToString(","))
+    }
+
+    /**
+     * An N163 sound's waves as FamiStudio stores them: the `N163Wave` envelope holds every wave's samples one after the
+     * other (its loop and release in samples, at wave boundaries) and `Repeat` the frames each wave plays (loop and
+     * release in waves; FamiStudio derives them from the wave envelope's). Both are written even when trivial so the
+     * import never falls back to its defaults (an all-0 wave is real data here).
+     */
+    private fun n163Envelopes(w: N163Wave): List<String> {
+        val loop = if (w.loop >= 0) attr("Loop", w.loop * w.size) else ""
+        val release = if (w.release >= 0) attr("Release", w.release * w.size) else ""
+        return listOf(
+            "Envelope" + attr("Type", "N163Wave") + attr("Length", w.size * w.waves.size) + loop + release +
+                attr("Values", w.waves.flatten().joinToString(",")),
+            "Envelope" + attr("Type", "Repeat") + attr("Length", w.waves.size) +
+                (if (w.loop >= 0) attr("Loop", w.loop) else "") + (if (w.release >= 0) attr("Release", w.release) else "") +
+                attr("Values", w.repeat.joinToString(",")),
+        )
     }
 
     private fun arpName(param: Int) = "Arp 0${NumberText.hex(param, 2)}"

@@ -43,13 +43,17 @@ internal class FsNote {
     /** DPCM `Zxx`: DMC output level 0..127, -1 = none. */
     var deltaCounter = -1
 
+    /** N163 `X00`: FamiStudio's phase reset (the wave restarts from its first sample). */
+    var phaseReset = false
+
     val isMusical get() = value in 1..96
     val isValid get() = value != INVALID
     val hasVolume get() = volume >= 0
 
     /** Any attribute that keeps FamiStudio's exporter from folding the row into an empty run. */
     val hasRunBreakingEffect
-        get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0
+        get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0 ||
+            phaseReset
 
     val isEmpty get() = !isValid && !hasRunBreakingEffect && speed < 0
 
@@ -107,11 +111,12 @@ internal class FsSong(
          * (see [NesRules.EFFECTS]) as FamiStudio note attributes. Context the cells leave implicit is resolved along
          * the played order here, so both consumers agree:
          * - a note without an instrument is legato (no attack) on the channel's current instrument;
-         * - OFF releases a sounding note whose instrument has a volume release point, and on the VRC7's FM channels any
-         *   sounding note (key off: FamiStudio's `CanRelease`), otherwise (or when the note was already released) it
-         *   stops the channel;
+         * - OFF releases a sounding note whose instrument has a volume release point (on the N163's channels also one whose
+         *   wave sequence has a release point), and on the VRC7's FM channels any sounding note (key off: FamiStudio's
+         *   `CanRelease`), otherwise (or when the note was already released) it stops the channel;
          * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none; on the
-         *   VRC7's FM channels it is converted to the frequency step nearest the same pitch ([NesRules.vrc7FinePitch]).
+         *   VRC7's FM and the N163's channels it is converted to the frequency step nearest the same pitch
+         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]).
          * Requires a song without [NesSystem.errors].
          */
         fun of(document: Song): FsSong {
@@ -162,6 +167,7 @@ internal class FsSong(
                             playing: Int): FsNote? {
             if (cell.isBlank) return null
             val vrc7 = NesRules.isVrc7(expansion, ch)
+            val n163 = NesRules.isN163(expansion, ch)
             val n = FsNote()
             val p = cell.param
             when {
@@ -177,7 +183,9 @@ internal class FsSong(
                 cell.note == Cell.CUT -> {
                     // DPCM has no release: OFF stops the sample.
                     val releases = ch != NesRules.DPCM && sounding && current != 0 &&
-                        (vrc7 || bank[current - 1].let { it.volume.release >= 0 && it.volume.loop >= 0 })
+                        (vrc7 || bank[current - 1].let {
+                            it.volume.release >= 0 && it.volume.loop >= 0 || n163 && it.wave.release >= 0 && it.wave.loop >= 0
+                        })
                     n.value = if (releases) FsNote.RELEASE else FsNote.STOP
                 }
             }
@@ -192,13 +200,17 @@ internal class FsSong(
                 NesRules.FX_VOLUME -> n.volume = p
                 NesRules.FX_SPEED -> n.speed = p
                 NesRules.FX_NOTE_DELAY -> n.noteDelay = p
-                NesRules.FX_FINE_PITCH -> n.finePitch =
-                    if (vrc7) NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE) else NesRules.FINE_CENTRE - p
+                NesRules.FX_FINE_PITCH -> n.finePitch = when {
+                    vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
+                    n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
+                    else -> NesRules.FINE_CENTRE - p
+                }
                 NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
                 NesRules.FX_SLIDE_DOWN -> n.slideTarget = n.value - p
                 NesRules.FX_NOTE_CUT -> n.cutDelay = p
                 NesRules.FX_DUTY -> n.duty = p
                 NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
+                NesRules.FX_PHASE_RESET -> n.phaseReset = true
             }
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.
             if (ch == NesRules.NOISE) n.finePitch = FsNote.NO_FINE

@@ -68,6 +68,13 @@ class NesGoldenTest {
                 ours += "slot $slot arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO)
                 ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
                 ours += "slot $slot pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative)
+                if (ins.chip == org.thortracker.system.nes.NesChip.N163) {
+                    // FamiStudio stores an N163 sound's wave-index envelope and each distinct wave among its envelopes.
+                    ours += "slot $slot wave index" to FamiStudioEnvelopes.waveIndex(ins.wave)
+                    for ((i, w) in FamiStudioEnvelopes.n163Waves(ins.wave).stored.withIndex()) {
+                        ours += "slot $slot wave $i" to FamiStudioEnvelopes.n163WaveBytes(w)
+                    }
+                }
             }
             for (ch in fs.notes) for (n in ch) {
                 if (n == null) continue
@@ -101,6 +108,7 @@ class NesGoldenTest {
             var writes = 0
             var dpcmStarts = 0
             var expansionWrites = 0
+            var n163 = 0
             val patchA = IntArray(8) { -1 }
             val patchB = IntArray(8) { -1 }
             for (f in 0 until frames) {
@@ -112,16 +120,21 @@ class NesGoldenTest {
                 writes += ta.size
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 expansionWrites += ta.count { (it shr 8) >= 0x9000 }
+                n163 += ta.count { (it shr 8) == 0x4800 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
                 // The trace covers DPCM: sample starts write $4012/$4013/$4010 and start the DMC through $4015.
                 assertTrue(dpcmStarts > 0, "$name: no DPCM sample started")
             }
-            if (lowered.player != NesPlayer.APU) {
+            if (lowered.player == NesPlayer.VRC6 || lowered.player == NesPlayer.VRC7) {
                 // The trace covers the expansion chip: the VRC6's pulses and saw, the VRC7's FM channels (a select and a
                 // data write per register, patch loads included) are written and compared every frame they sound.
                 assertTrue(expansionWrites > frames, "$name: only $expansionWrites expansion register writes in $frames frames")
+            }
+            if (lowered.player in NesPlayer.N163) {
+                // The trace covers the N163: frequencies, volumes and wave uploads through its data port, every frame.
+                assertTrue(n163 > frames, "$name: only $n163 N163 data writes in $frames frames")
             }
         }
     }
