@@ -230,8 +230,6 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
             env("duty", ins.duty, 0) { NesRules.dutyText(ins.chip, it) },
             "saw ${ins.sawVolume.label.lowercase()}".takeIf { vrc6 && ins.sawVolume != Vrc6SawVolume.HALF },
-            "sustain on release".takeIf { vrc7 && ins.fm.sustainRelease },
-            "sustain on stop".takeIf { vrc7 && ins.fm.sustainStop },
             ins.dpcm.size.takeIf { it > 0 }?.let { "DPCM $it note${if (it == 1) "" else "s"}" },
         )
         return when {
@@ -248,13 +246,25 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      */
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
-        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU, blip_buf 1.1.0"
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo${when (expansion) {
+            NesExpansion.NONE -> ""
+            NesExpansion.VRC6 -> ", FAMISTUDIO_EXP_VRC6"
+            NesExpansion.VRC7 -> ", FAMISTUDIO_EXP_VRC7"
+        }}) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU${when (expansion) {
+            NesExpansion.NONE -> ""
+            NesExpansion.VRC6 -> " + VRC6"
+            NesExpansion.VRC7 -> ", emu2413 1.6.4 (commit a1d5120) in VRC7 mode"
+        }}, blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
 
-        override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        override fun lower(song: Song, out: ByteArray) {
+            // Each variant's engine runs its own player build: another variant's song would be laid out for that player.
+            require(song.nes.expansion == expansion) { "The song is for ${song.nes.expansion.system.name}, not ${this@NesFamiStudioSystem.name}" }
+            NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        }
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
@@ -373,7 +383,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     private object Vrc7Help : NesHelp() {
         override val off = "Releases the note: on the VRC7 FM channels a key off (the FM patch's release, or the slow sustain " +
-            "fade with Release: sustain) plus the volume envelope's release; on the 2A03 as there. For a cut inside a row use Sxx"
+            "fade when the song's Release sustain is on) plus the volume envelope's release; on the 2A03 as there. For a cut inside a row use Sxx"
         override val offEntered = "OFF: release (FM: key off; 2A03 sounds with a volume release point fade out, others stop)"
         override val offInspector = "OFF: release the note (FM: key off and its release; 2A03: tail or silence)"
         override val effectsIntro = super.effectsIntro + listOf(

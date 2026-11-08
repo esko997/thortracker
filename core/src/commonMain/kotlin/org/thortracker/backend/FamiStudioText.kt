@@ -6,8 +6,9 @@ import org.thortracker.system.nes.DpcmSample
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesExpansion
-import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesSound
+import org.thortracker.system.nes.Vrc7Presets
 
 /**
  * FamiStudio 4.5 text export (`FamistudioTextFile`): a FamiTracker-tempo project FamiStudio 4.5.3 opens (File →
@@ -60,17 +61,7 @@ object FamiStudioText {
         }
         for ((slot, name) in names) {
             val ins = fs.instruments[slot - 1]
-            line(1, "Instrument" + attr("Name", name) + when (ins.chip) {
-                NesChip.APU -> ""
-                NesChip.VRC6 -> attr("Expansion", "VRC6") + attr("Vrc6SawMasterVolume", ins.sawVolume.label)
-                // `FamistudioTextFile`: Vrc7Patch, the registers only for Custom (0), then both overrides.
-                NesChip.VRC7 -> attr("Expansion", "VRC7") + attr("Vrc7Patch", ins.fm.preset) +
-                    (if (ins.fm.preset == org.thortracker.system.nes.Vrc7Presets.CUSTOM) {
-                        ins.fm.regs.withIndex().joinToString("") { (i, r) -> attr("Vrc7Reg$i", r) }
-                    } else "") +
-                    attr("Vrc7OverrideRelease", if (ins.fm.sustainRelease) "True" else "False") +
-                    attr("Vrc7OverrideStop", if (ins.fm.sustainStop) "True" else "False")
-            })
+            line(1, "Instrument" + attr("Name", name) + chipAttributes(fs, ins))
             for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
                 val sample = fs.samples.getOrNull(m.sample) ?: continue
                 val shared = samples.getValue(sample.data)
@@ -80,10 +71,7 @@ object FamiStudioText {
                     attr("Pitch", m.pitch) + attr("Loop", if (m.loop) "True" else "False") + attr("Bank", 0) +
                     (if (initial != sampleDefault || m.dmcInitial >= 0) attr("DmcInitialValue", initial) else ""))
             }
-            envelope(::line, "Volume", ins.volume, 15, false)
-            envelope(::line, "Arpeggio", ins.arpeggio, 0, false)
-            envelope(::line, "Pitch", ins.pitch, 0, ins.pitchRelative)
-            envelope(::line, "DutyCycle", ins.duty, 0, false)
+            for (e in envelopeLines(ins)) line(2, e)
         }
         val arpeggios = HashSet<Int>()
         for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.arpeggio >= 0) arpeggios += n.arpeggio
@@ -228,11 +216,40 @@ object FamiStudioText {
         return fs.totalRows - abs
     }
 
-    private fun envelope(line: (Int, String) -> Unit, type: String, e: NesEnvelope, neutral: Int, relative: Boolean) {
-        if (e.values.isEmpty() || e.values.all { it == neutral }) return
-        line(2, "Envelope" + attr("Type", type) + attr("Length", e.values.size) +
+    /**
+     * An instrument's attributes after its name: its expansion's (`FamistudioTextFile`). VRC7: `Vrc7Patch`, the
+     * registers only for Custom (0), then both overrides (the song's setting, the same on every VRC7 instrument:
+     * FamiStudio's engine keeps only the last loaded one's).
+     */
+    private fun chipAttributes(fs: FsSong, ins: NesInstrument): String = when (ins.chip) {
+        NesChip.APU -> ""
+        NesChip.VRC6 -> attr("Expansion", "VRC6") + attr("Vrc6SawMasterVolume", ins.sawVolume.label)
+        NesChip.VRC7 -> attr("Expansion", "VRC7") + attr("Vrc7Patch", ins.fm.preset) +
+            (if (ins.fm.preset == Vrc7Presets.CUSTOM) ins.fm.regs.withIndex().joinToString("") { (i, r) -> attr("Vrc7Reg$i", r) } else "") +
+            attr("Vrc7OverrideRelease", if (fs.vrc7Sustain.release) "True" else "False") +
+            attr("Vrc7OverrideStop", if (fs.vrc7Sustain.stop) "True" else "False")
+    }
+
+    /** An instrument's envelope lines; empty and all-neutral envelopes are left out (FamiStudio's defaults). */
+    private fun envelopeLines(ins: NesInstrument): List<String> = listOfNotNull(
+        envelope("Volume", ins.volume, 15, false),
+        envelope("Arpeggio", ins.arpeggio, 0, false),
+        envelope("Pitch", ins.pitch, 0, ins.pitchRelative),
+        envelope("DutyCycle", ins.duty, 0, false),
+    )
+
+    /**
+     * What FamiStudio's export compares when it merges identical instruments (`Project.MergeIdenticalInstruments`: a
+     * CRC of the imported instrument without its name and colour), for a sound without DPCM mappings: sounds of equal
+     * keys are one instrument in FamiStudio's export.
+     */
+    internal fun mergeKey(fs: FsSong, slot: Int): List<String> = fs.instruments[slot - 1].let { listOf(chipAttributes(fs, it)) + envelopeLines(it) }
+
+    private fun envelope(type: String, e: NesEnvelope, neutral: Int, relative: Boolean): String? {
+        if (e.values.isEmpty() || e.values.all { it == neutral }) return null
+        return "Envelope" + attr("Type", type) + attr("Length", e.values.size) +
             (if (e.loop >= 0) attr("Loop", e.loop) else "") + (if (e.release >= 0) attr("Release", e.release) else "") +
-            (if (relative) attr("Relative", "True") else "") + attr("Values", e.values.joinToString(",")))
+            (if (relative) attr("Relative", "True") else "") + attr("Values", e.values.joinToString(","))
     }
 
     private fun arpName(param: Int) = "Arp 0${NumberText.hex(param, 2)}"

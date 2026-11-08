@@ -94,7 +94,7 @@ class NesGoldenTest {
             val b = NesTracer(ours, lowered.player)
             var writes = 0
             var dpcmStarts = 0
-            var vrc6 = 0
+            var expansionWrites = 0
             for (f in 0 until frames) {
                 val ta = a.frame()
                 val tb = b.frame()
@@ -103,16 +103,17 @@ class NesGoldenTest {
                 }
                 writes += ta.size
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
-                vrc6 += ta.count { (it shr 8) >= 0x9000 }
+                expansionWrites += ta.count { (it shr 8) >= 0x9000 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
                 // The trace covers DPCM: sample starts write $4012/$4013/$4010 and start the DMC through $4015.
                 assertTrue(dpcmStarts > 0, "$name: no DPCM sample started")
             }
-            if (lowered.player == NesPlayer.VRC6) {
-                // The trace covers the VRC6: its pulses and saw are written (and compared) every frame they sound.
-                assertTrue(vrc6 > frames, "$name: only $vrc6 VRC6 register writes in $frames frames")
+            if (lowered.player != NesPlayer.APU) {
+                // The trace covers the expansion chip: the VRC6's pulses and saw, the VRC7's FM channels (a select and a
+                // data write per register, patch loads included) are written and compared every frame they sound.
+                assertTrue(expansionWrites > frames, "$name: only $expansionWrites expansion register writes in $frames frames")
             }
         }
     }

@@ -373,9 +373,10 @@ object NesInstrumentView : SystemView() {
         v.session.editNesFm(v.state.instrument, "Set VRC7 patch") { it.withPreset((it.preset + delta).coerceIn(0, Vrc7Presets.PRESETS.last)) }
     }
 
+    /** Toggles one of the song's VRC7 sustain overrides (shared by every VRC7 sound, as the engine keeps one). */
     private fun toggleSustain(v: ViewController, release: Boolean) {
-        v.session.editNesFm(v.state.instrument, if (release) "Set release sustain" else "Set stop sustain") {
-            if (release) it.copy(sustainRelease = !it.sustainRelease) else it.copy(sustainStop = !it.sustainStop)
+        v.session.editVrc7Sustain(if (release) "Set release sustain" else "Set stop sustain") {
+            if (release) it.copy(release = !it.release) else it.copy(stop = !it.stop)
         }
     }
 
@@ -448,8 +449,8 @@ object NesInstrumentView : SystemView() {
                 envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
             }
             Row.PATCH -> session.editNesFm(slot, "Set VRC7 patch") { it.withPreset(Vrc7Presets.BELL) }
-            Row.SUSTAIN_RELEASE -> session.editNesFm(slot, "Set release sustain") { it.copy(sustainRelease = false) }
-            Row.SUSTAIN_STOP -> session.editNesFm(slot, "Set stop sustain") { it.copy(sustainStop = false) }
+            Row.SUSTAIN_RELEASE -> session.editVrc7Sustain("Set release sustain") { it.copy(release = false) }
+            Row.SUSTAIN_STOP -> session.editVrc7Sustain("Set stop sustain") { it.copy(stop = false) }
             in FM_PARAMS -> setFmParam(v, FM_PARAMS.getValue(row)) { 0 }
             else -> NesDpcmPage.clear(v, row)
         }
@@ -586,12 +587,12 @@ object NesInstrumentView : SystemView() {
                     "FM patch page" to "The fourth page: the patch, one of the chip's 15 built-in sounds (Bell … Chorus) or Custom, " +
                         "the chip's one programmable patch. Changing any field of a built-in patch makes the sound Custom, starting " +
                         "from that patch",
-                    "One custom patch" to "All six FM channels share the custom patch: two different Custom sounds playing at " +
-                        "once both sound like the one loaded last (the song check warns)",
+                    "One custom patch" to "All six FM channels share the custom patch: a Custom sound starting while another FM channel " +
+                        "holds a note of a different Custom sound changes that note's patch too (the song check warns)",
                     "Operators" to "$lr picks the modulator or the carrier column; $edit+$lr changes the value, $edit+$ud in bigger steps",
-                    "Release sustain" to "On: notes keep the chip's sustain flag, so OFF fades slowly (rate 5) instead of with the " +
-                        "patch's release. FamiStudio's engine keeps the last VRC7 sound's setting for all six channels",
-                    "Stop sustain" to "On: a stop or cut lets the note fade at that rate instead of ending with the patch's release",
+                    "Release sustain" to "Song setting, the same for every VRC7 sound (FamiStudio's engine keeps one): on, OFF keys the " +
+                        "note off with the chip's sustain bit, so it fades at rate 5 instead of the patch's release",
+                    "Stop sustain" to "Song setting as well: on, a stop or cut fades at rate 5 too; off, it uses the patch's release",
                 ) + Vrc7Param.entries.map { it.label to fmHelp(it) } +
                     NesEnvelopeKind.entries.dropLast(1).map { it.label to envelopeSummary(it, NesChip.VRC7) },
             )
@@ -607,8 +608,9 @@ object NesInstrumentView : SystemView() {
         Vrc7Param.AR -> "Attack rate 0-15 (0 never rises, 15 at once)"
         Vrc7Param.DR -> "Decay rate 0-15, from full level down to the sustain level"
         Vrc7Param.SL -> "Sustain level 0 (full) to 15 (-45 dB), where the decay stops"
-        Vrc7Param.RR -> "Release rate 0-15 after OFF (with Sustained on); without it, the rate the note decays at past the sustain level"
-        Vrc7Param.EG -> "Sustained: the envelope holds at the sustain level while the note is held; off: it keeps decaying (percussive)"
+        Vrc7Param.RR -> "Release rate 0-15 after OFF on sustained patches (percussive ones release at 7); percussive patches " +
+            "also fall at this rate below the sustain level while the note holds"
+        Vrc7Param.EG -> "Sustained: the level holds at the sustain level while the note is held; off: it keeps falling (percussive)"
         Vrc7Param.KSL -> "Key scale level: higher notes get quieter by 0, 1.5, 3 or 6 dB per octave"
         Vrc7Param.KSR -> "Key scale rate: higher notes get faster envelopes"
         Vrc7Param.AM -> "Tremolo from the chip's LFO (3.7 Hz, 4.8 dB)"

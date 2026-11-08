@@ -60,22 +60,16 @@ enum class NesChip(val label: String, val duty: IntRange) {
 }
 
 /**
- * A VRC7 sound's FM patch (FamiStudio's `Vrc7Patch`, `Vrc7PatchRegs`, `Vrc7OverrideRelease`, `Vrc7OverrideStop`). The
- * VRC7 (a YM2413 derivative: six 2-operator FM channels) holds 15 patches in ROM ([preset] 1-15, [Vrc7Presets]) and
- * one custom patch in its registers `$00-$07` ([preset] 0: [regs]), shared by every channel that plays preset 0, so
- * two different custom sounds cannot sound at once. [regs] is kept for presets too (a copy of the preset's ROM data, as
- * FamiStudio keeps it), so switching a preset to Custom starts from that sound.
- * [sustainRelease]: notes keep the chip's sustain flag, so OFF fades at the sustain rate (release rate 5) instead of
- * the patch's own release. [sustainStop]: a stop or cut sets the sustain flag, so the note fades at that rate instead
- * of ending at the patch's release. FamiStudio's engine keeps the two flags of the last VRC7 sound loaded for all six
- * channels.
+ * A VRC7 sound's FM patch (FamiStudio's `Vrc7Patch` and `Vrc7PatchRegs`). The VRC7 (a YM2413 derivative: six
+ * 2-operator FM channels) holds 15 patches in ROM ([preset] 1-15, [Vrc7Presets]) and one custom patch in its registers
+ * `$00-$07` ([preset] 0: [regs]), shared by every channel that plays preset 0, so two different custom sounds cannot
+ * sound at once. [regs] is kept for presets too (a copy of the preset's ROM data, as FamiStudio keeps it), so switching
+ * a preset to Custom starts from that sound. The release/stop sustain overrides are the song's ([Vrc7Sustain]).
  */
 @Serializable
 data class Vrc7Patch(
     val preset: Int = Vrc7Presets.BELL,
     val regs: List<Int> = Vrc7Presets.data(Vrc7Presets.BELL),
-    val sustainRelease: Boolean = false,
-    val sustainStop: Boolean = false,
 ) {
     /** The custom patch's registers as the engine loads them; for presets the ROM's (what plays). */
     val sounding: List<Int> get() = if (preset == Vrc7Presets.CUSTOM) regs else Vrc7Presets.data(preset)
@@ -91,6 +85,20 @@ data class Vrc7Patch(
         val DEFAULT = Vrc7Patch()
         const val REGS = 8
     }
+}
+
+/**
+ * How the VRC7's FM notes fade when they end (FamiStudio's `Vrc7OverrideRelease` / `Vrc7OverrideStop`, instrument
+ * settings there). FamiStudio's sound engine keeps one copy of them (`famistudio_chn_vrc7_sustain`, taken from the
+ * last VRC7 instrument loaded on any FM channel), so a song has one setting that every VRC7 sound exports with.
+ * [release]: notes keep the chip's sustain bit, so OFF (key off) fades at the sustain rate (5) instead of the patch's
+ * release rate (sustained patches: RR; percussive ones: 7). [stop]: a stop or cut keys off with the sustain bit set,
+ * so the note fades at rate 5 instead of the patch's release.
+ */
+@Serializable
+data class Vrc7Sustain(val release: Boolean = false, val stop: Boolean = false) {
+    /** Byte 6 of FamiStudio's VRC7 instrument (`OutputInstruments`): `$20` release override, `$80` stop override. */
+    val engine: Int get() = (if (release) 0x20 else 0) or (if (stop) 0x80 else 0)
 }
 
 /**
@@ -281,7 +289,8 @@ data class DpcmMapping(val sample: Int, val pitch: Int = 15, val loop: Boolean =
 /**
  * An NES song's chip data: one bank of exactly [NesSystem.SLOTS] instruments shared by all channels (slot n =
  * index n-1), the song's DPCM [samples] (at most [NesSystem.MAX_SAMPLES], referenced by instruments' DPCM
- * mappings) and its [expansion] chip (left out of project files when none, so 2A03 songs are stored as before).
+ * mappings), its [expansion] chip and, with the VRC7, how its FM notes fade ([vrc7Sustain]); the last two are left
+ * out of project files at their defaults, so 2A03 songs are stored as before.
  * Stored in project files as the song's `sound` object.
  */
 @Serializable
@@ -289,6 +298,7 @@ data class NesSound(
     val instruments: List<NesInstrument>,
     val samples: List<DpcmSample> = emptyList(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val expansion: NesExpansion = NesExpansion.NONE,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
 ) : SystemSound {
     override val system: SoundSystem get() = expansion.system
 
