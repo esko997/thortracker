@@ -24,8 +24,14 @@ object Dpcm {
         9419.857f, 11186.081f, 12604.035f, 13982.602f, 16884.65f, 21306.822f, 24857.959f, 33143.945f,
     )
 
-    /** Bytes of sample memory without bank switching: $C000-$FFF9 (the CPU vectors follow). */
-    const val MEMORY = 0xFFFA - 0xC000
+    /**
+     * Most bytes of samples without bank switching: whole 64-byte slots in $C000-$FFF9 (the CPU vectors follow). Song
+     * data and samples share $8C00-$FFF9 ([REGION]): the samples sit at the top, the song must end below them.
+     */
+    const val MEMORY = (0xFFFA - 0xC000) / 64 * 64
+
+    /** Bytes song data and samples share: $8C00-$FFF9. */
+    const val REGION = 0xFFFA - 0x8C00
 
     /** Samples start on 64-byte boundaries ($4012 counts in 64 bytes). */
     const val ALIGN = 64
@@ -33,7 +39,7 @@ object Dpcm {
     /** Bytes [size] bytes of sample take in memory: rounded up to the next 64-byte slot. */
     fun aligned(size: Int): Int = (size + ALIGN - 1) / ALIGN * ALIGN
 
-    /** Aligned bytes of the samples [song] plays (identical samples count once), as the lowering places them. */
+    /** Bytes of the samples [song] plays in 64-byte slots (identical samples count once), as the lowering places them. */
     fun memoryUsed(song: Song): Int = NesDpcm.memoryUsed(song)
 
     /**

@@ -170,16 +170,16 @@ object NesValidator {
             }
         }
         if (!out.isEmpty()) return
-        val layout = NesDpcm.layout(fs, withUnplayed = false)
-        if (layout.playedEnd > Dpcm.MEMORY) {
+        val layout = NesDpcm.layout(fs)
+        if (layout.playedBytes > Dpcm.MEMORY) {
             val used = fs.notes[NesRules.DPCM].mapNotNull { n ->
                 if (n == null || !n.isMusical || n.instrument == 0) null
                 else fs.instruments[n.instrument - 1].dpcm[n.value + NesRules.NOTE_OFFSET]?.sample
             }.toSet()
             val largest = used.sortedByDescending { fs.samples[it].data.size }.take(3)
                 .joinToString { "\"${fs.samples[it].name}\" ${fs.samples[it].data.size}" }
-            out += "The DPCM samples the song plays need ${layout.playedEnd} bytes; the NES has ${Dpcm.MEMORY} for samples " +
-                "(\$C000-\$FFF9, each sample starting on a 64-byte boundary). Use fewer or shorter samples (largest: $largest bytes)"
+            out += "The DPCM samples the song plays need ${layout.playedBytes} bytes in 64-byte slots; at most ${Dpcm.MEMORY} fit " +
+                "(\$C000-\$FFF9, shared with the song data). Use fewer or shorter samples (largest: $largest bytes)"
         }
         if (layout.playedMappings > NesDpcm.MAX_ENTRIES) {
             out += "The song plays ${layout.playedMappings} different DPCM sample mappings (sample, rate, loop, initial value); " +

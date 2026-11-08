@@ -7,8 +7,8 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
    `dotnet FamiStudio.dll <name>.txt famistudio-asm-export <name>_ca65.s -famistudio-asm-format:ca65`
    (a failed import or export fails this script, so it also proves FamiStudio opens our text).
 2. cc65's ca65/ld65 assemble that export alone at the song base $8C00 (tools/audio/nes/nes_song.cfg) into <name>.bin,
-   with FAMISTUDIO_DPCM_PTR = 0 (samples at $C000). A song with DPCM samples also gets FamiStudio's sample bank,
-   <name>_ca65.dmc.
+   with FAMISTUDIO_DPCM_PTR at the sample block Thor Tracker uses (the top of $C000-$FFF9, 64-aligned). A song with
+   DPCM samples also gets FamiStudio's sample bank, <name>_ca65.dmc.
 
 NesGoldenTest then compares the APU register traces of <name>.bin and our lowering through the embedded player, and
 our sample memory with <name>_ca65.dmc.
@@ -72,12 +72,17 @@ def main() -> int:
             asm = t / f"{name}_ca65.s"
             if not asm.exists() or "Error" in log:
                 sys.exit(f"FamiStudio did not export {txt.name}:\n{log}")
-            (t / f"{name}_song.s").write_text(f'FAMISTUDIO_DPCM_PTR = 0\n.segment "SONG"\n.include "{name}_ca65.s"\n')
+            # Thor Tracker puts the sample block at the top of $C000-$FFF9 (NesDpcm.startFor); FamiStudio's list bytes
+            # are offsets from FAMISTUDIO_DPCM_PTR, so point it there.
+            dmc = t / f"{name}_ca65.dmc"
+            size = dmc.stat().st_size if dmc.exists() else 0
+            start = (0xFFFA - size) // 64 * 64 if size else 0xC000
+            (t / f"{name}_song.s").write_text(
+                f'FAMISTUDIO_DPCM_PTR = ${(start & 0x3FFF) >> 6:02x}\n.segment "SONG"\n.include "{name}_ca65.s"\n')
             run(cc65 + ["ca65", "-o", f"{name}.o", f"{name}_song.s"], t)
             run(cc65 + ["ld65", "-C", str(SONG_CFG), "-o", f"{name}.bin", f"{name}.o"], t)
             shutil.copy(asm, FIXTURES / asm.name)
             shutil.copy(t / f"{name}.bin", FIXTURES / f"{name}.bin")
-            dmc = t / f"{name}_ca65.dmc"
             (FIXTURES / dmc.name).unlink(missing_ok=True)
             if dmc.exists():
                 shutil.copy(dmc, FIXTURES / dmc.name)
