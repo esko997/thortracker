@@ -1,4 +1,5 @@
-/* NES machine: m6502 + nes_apu (+ nes_vrc6 or nes_s5b) running a FamiStudio player build (see nes_machine.h). */
+/* NES machine: m6502 + nes_apu (+ nes_vrc6, nes_vrc7, nes_n163 or nes_s5b) running a FamiStudio player build (see
+ * nes_machine.h). */
 #include "nes_machine.h"
 
 #include <math.h>
@@ -7,14 +8,20 @@
 
 #include "blip_buf.h"
 #include "nes_apu.h"
+#include "nes_n163.h"
 #include "nes_s5b.h"
 #include "nes_vrc6.h"
+#include "nes_vrc7.h"
 
 #include "m6502.h"
 
 #define INIT_BUDGET 200000u   /* famistudio_init + famistudio_music_play */
+#define INSTRUMENT_BUDGET 29780u /* one famistudio_set_instrument call (the seek fallback) */
 #define LOG_CAPACITY 4096     /* register writes buffered between nm_apu_log / nm_write_log calls */
 #define OUTPUT_GAIN 2.0f      /* mixer level 1.0 (all channels at full) ~ peak 2.0 before DC removal */
+/* The VRC7 build, by the same rule: its full-scale mixer swing is the 2A03's 1.0 plus the six FM channels'
+ * +-NES_VRC7_FULL_SCALE each (NES_VRC7_STEP per unit, measured balance: nes_vrc7.h), mapped to the same 2.0. */
+#define OUTPUT_GAIN_VRC7 ((float)(2.0 / (1.0 + 2.0 * NES_VRC7_VOICES * NES_VRC7_FULL_SCALE * NES_VRC7_STEP)))
 /* The 5B build, by the same rule: its full-scale mixer level is the 2A03's 1.0 plus three 5B channels at full
  * (NES_S5B_LEVEL each, nes_s5b.h), mapped to the same 2.0. */
 #define OUTPUT_GAIN_S5B ((float)(2.0 / (1.0 + NES_S5B_VOICES * NES_S5B_LEVEL)))
@@ -43,8 +50,10 @@ struct NesMachine {
     const NesPlayer* player;
     NesApu apu;
     NesVrc6 vrc6;         /* used only by the VRC6 build */
+    NesVrc7 vrc7;         /* used only by the VRC7 build (its emu2413 instance allocated by nm_create) */
+    float gain;           /* OUTPUT_GAIN, OUTPUT_GAIN_VRC7 for the VRC7 build, OUTPUT_GAIN_S5B for the 5B build */
+    NesN163 n163;         /* used only by the N163 builds */
     NesS5b s5b;           /* used only by the 5B build */
-    float gain;           /* OUTPUT_GAIN, or OUTPUT_GAIN_S5B for the 5B build */
     blip_t* blip;
     uint32_t sample_rate;
     uint32_t time;        /* CPU cycle within the current frame */
@@ -54,11 +63,16 @@ struct NesMachine {
     int order, row;       /* row most recently started (-1: none yet in `order`) */
     uint32_t row_ticks;   /* frames run in that row */
     int audition, released, ended, aud_channel, rel_slot, rel_end;
+    uint16_t last_song_read; /* address of the CPU's last read in the song region */
+    /* VRC7 build, seen on the bus: the expansion instrument each FM channel loaded last (famistudio_set_vrc7_
+     * instrument stores its patch byte, just read from entry + 7), the entry the custom patch registers $00-$07
+     * came from (a patch byte 0 loads them), the entry loaded last (its override byte is the engine's), -1: none. */
+    int8_t fm_instrument[NES_VRC7_VOICES];
+    int16_t custom_instrument, last_instrument;
     /* 5B build, seen on the bus: the expansion instrument each 5B square loaded last (famistudio_set_s5b_instrument
      * stores its shape byte, just read from entry + 10) and the one whose manual period the engine holds (stored
      * after reading entry + 12; a `$5E` makes it none); -1: none. The serials order those loads and the period's
      * last store (a square's 0: its load came after a `$5E` in the same frame, so it could not set the period). */
-    uint16_t last_song_read; /* address of the CPU's last read in the song region */
     int8_t s5b_instrument[NES_S5B_VOICES];
     int8_t s5b_period_instrument;
     uint32_t s5b_serial, s5b_load_serial[NES_S5B_VOICES], s5b_period_serial;
@@ -74,32 +88,51 @@ struct NesMachine {
     uint8_t ram[0x800];
     uint8_t prg[0x8000];
     uint8_t log[3 * LOG_CAPACITY];          /* (address low, address high, value) per write */
+    uint32_t log_time[LOG_CAPACITY];        /* frame-relative CPU cycle of each logged write */
     short samples[NM_MAX_TICK_FRAMES];
 };
 
-/* Engine RAM by symbol of the machine's player build. */
+/* Engine RAM by symbol of the machine's player build (N163_RAM: the N163 builds' own symbols). */
 #define RAM(f) m->ram[m->player->sym.f]
 #define RAMX(f, i) m->ram[m->player->sym.f + (i)]
+#define N163_RAM(f) m->ram[m->player->n163.f]
+#define N163_RAMX(f, i) m->ram[m->player->n163.f + (i)]
 
 /* ---- bus ---------------------------------------------------------------------------------- */
 
 static uint8_t bus_read(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];
-    if (addr >= 0x8000) { /* VRC6/5B registers are write-only: reads see the ROM */
+    if (addr >= 0x8000) { /* VRC6/VRC7/5B registers and the N163 address port are write-only: reads see the ROM */
         if (addr >= m->player->song_base) m->last_song_read = addr;
         return m->prg[addr - 0x8000];
     }
     if (addr == 0x4015) return nes_apu_read_status(&m->apu, m->time);
+    if (addr >= 0x4800 && addr <= 0x4FFF && m->player->expansion == NES_EXPANSION_N163) return nes_n163_read(&m->n163, m->time);
     return 0;
 }
 
 static void log_write(NesMachine* m, uint16_t addr, uint8_t v) {
     if (m->logging && m->log_len < LOG_CAPACITY) {
-        uint8_t* e = m->log + 3 * m->log_len++;
+        const int i = m->log_len++;
+        uint8_t* e = m->log + 3 * i;
         e[0] = (uint8_t)addr;
         e[1] = (uint8_t)(addr >> 8);
         e[2] = v;
+        m->log_time[i] = m->time;
     }
+}
+
+/* famistudio_set_vrc7_instrument stores FM channel k's patch byte right after reading it from its expansion
+ * instrument entry + 7 (`lda (ptr),y` / `sta famistudio_chn_vrc7_patch - 5,x`); a patch byte 0 then loads the
+ * entry's 8 custom registers. Records which entry each channel and the custom patch hold. */
+static void vrc7_patch_stored(NesMachine* m, int k, uint8_t patch) {
+    const uint16_t table = (uint16_t)(m->ram[m->player->vrc7.exp_instrument_lo] | m->ram[m->player->vrc7.exp_instrument_hi] << 8);
+    const int32_t off = (int32_t)m->last_song_read - 7 - table;
+    int j = -1;
+    if (off >= 0 && off % NM_EXP_INSTRUMENT_SIZE == 0 && off / NM_EXP_INSTRUMENT_SIZE < 256) j = off / NM_EXP_INSTRUMENT_SIZE;
+    m->fm_instrument[k] = (int8_t)(j < 128 ? j : -1);
+    m->last_instrument = (int16_t)m->fm_instrument[k];
+    if (!patch) m->custom_instrument = (int16_t)m->fm_instrument[k];
 }
 
 /* The 5B expansion instrument entry the CPU's last song-region read was byte `offset` of, if that byte holds
@@ -136,6 +169,10 @@ static void s5b_ram_stored(NesMachine* m, uint16_t addr, uint8_t v) {
 static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     if (addr < 0x2000) {
         m->ram[addr & 0x7FF] = v;
+        if (m->player->expansion == NES_EXPANSION_VRC7) {
+            const unsigned k = (unsigned)((addr & 0x7FF) - m->player->vrc7.chn_vrc7_patch);
+            if (k < NES_VRC7_VOICES) vrc7_patch_stored(m, (int)k, v);
+        }
         if (m->player->expansion == NES_EXPANSION_S5B) s5b_ram_stored(m, (uint16_t)(addr & 0x7FF), v);
     } else if (addr >= 0x4000 && addr <= 0x4017 && addr != 0x4014 && addr != 0x4016) {
         log_write(m, addr, v);
@@ -143,6 +180,13 @@ static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     } else if (m->player->expansion == NES_EXPANSION_VRC6 && nes_vrc6_register(addr)) {
         log_write(m, addr, v);
         nes_vrc6_write(&m->vrc6, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_VRC7 && nes_vrc7_register(addr)) {
+        log_write(m, addr, v);
+        if (addr == 0xE000 && (v & 0x40)) m->custom_instrument = -1; /* the chip's registers cleared */
+        nes_vrc7_write(&m->vrc7, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_N163 && nes_n163_register(addr)) {
+        log_write(m, addr, v);
+        nes_n163_write(&m->n163, m->time, addr, v);
     } else if (m->player->expansion == NES_EXPANSION_S5B && nes_s5b_register(addr)) {
         log_write(m, addr, v);
         nes_s5b_write(&m->s5b, m->time, addr, v);
@@ -200,12 +244,16 @@ fault:
 static void set_output(NesMachine* m, blip_t* out) {
     nes_apu_set_output(&m->apu, out);
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_set_output(&m->vrc6, out);
+    if (m->player->expansion == NES_EXPANSION_VRC7) nes_vrc7_set_output(&m->vrc7, out);
+    if (m->player->expansion == NES_EXPANSION_N163) nes_n163_set_output(&m->n163, out);
     if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_set_output(&m->s5b, out);
 }
 
 static void end_frame(NesMachine* m, uint32_t cycles) {
     nes_apu_end_frame(&m->apu, cycles);
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_end_frame(&m->vrc6, cycles);
+    if (m->player->expansion == NES_EXPANSION_VRC7) nes_vrc7_end_frame(&m->vrc7, cycles);
+    if (m->player->expansion == NES_EXPANSION_N163) nes_n163_end_frame(&m->n163, cycles);
     if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_end_frame(&m->s5b, cycles);
 }
 
@@ -224,9 +272,18 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
     m->sample_rate = sample_rate;
     m->player = player;
     m->gain = player->expansion == NES_EXPANSION_S5B ? OUTPUT_GAIN_S5B : OUTPUT_GAIN;
+    if (player->expansion == NES_EXPANSION_VRC7) {
+        if (nes_vrc7_init(&m->vrc7) != 0) {
+            blip_delete(m->blip);
+            free(m);
+            return NULL;
+        }
+        m->gain = OUTPUT_GAIN_VRC7;
+    }
     for (size_t i = 0; i < sizeof kOfficialOpcodes; ++i) m->official[kOfficialOpcodes[i] >> 3] |= (uint8_t)(1 << (kOfficialOpcodes[i] & 7));
-    /* famistudio_channel_env: first envelope slot of each channel (volume, arpeggio, duty follow; $FF: none). A 5B
-     * square's slots are volume, arpeggio, mixer, noise (FAMISTUDIO_ENV_MIXER_IDX_OFF 2, _NOISE_IDX_OFF 3). */
+    /* famistudio_channel_env: first envelope slot of each channel (volume, arpeggio, duty or N163 wave index
+     * follow; $FF: none). A 5B square's slots are volume, arpeggio, mixer, noise (FAMISTUDIO_ENV_MIXER_IDX_OFF 2,
+     * _NOISE_IDX_OFF 3). */
     for (int c = 0; c < player->channels; ++c) m->channel_env[c] = player->code[player->sym.channel_env - player->base + c];
     for (int s = 0; s < player->envelopes; ++s) {
         int base = 0, owner = 0;
@@ -239,6 +296,9 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
         int kind = s - base;
         if (nes_player_s5b_channel(player, owner) && kind >= 2) kind = kind == 2 ? NM_KIND_MIXER : NM_KIND_NOISE;
         m->slot_kind[s] = (uint8_t)kind;
+    }
+    if (player->expansion == NES_EXPANSION_N163) { /* FAMISTUDIO_ENV_N163_WAVE_IDX_OFF = 2 */
+        for (int c = NM_FIRST_EXP; c < player->channels; ++c) m->slot_kind[m->channel_env[c] + 2] = NM_KIND_WAVE;
     }
     const float dt = 1.0f / (float)sample_rate;
     const float hp_rc = 1.0f / (2.0f * 3.14159265f * HIGHPASS_HZ);
@@ -257,6 +317,7 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
 void nm_destroy(NesMachine* m) {
     if (!m) return;
     blip_delete(m->blip);
+    if (m->player->expansion == NES_EXPANSION_VRC7) nes_vrc7_free(&m->vrc7);
     free(m);
 }
 
@@ -285,11 +346,21 @@ static int reset(NesMachine* m, const NesImage* image) {
         nes_vrc6_reset(&m->vrc6);
         nes_vrc6_set_mute(&m->vrc6, 0);
     }
+    if (p->expansion == NES_EXPANSION_VRC7) {
+        nes_vrc7_reset(&m->vrc7);
+        nes_vrc7_set_mute(&m->vrc7, 0);
+    }
+    if (p->expansion == NES_EXPANSION_N163) {
+        nes_n163_reset(&m->n163);
+        nes_n163_set_mute(&m->n163, 0);
+    }
     if (p->expansion == NES_EXPANSION_S5B) {
         nes_s5b_reset(&m->s5b);
         nes_s5b_set_mute(&m->s5b, 0);
     }
     m->last_song_read = 0;
+    memset(m->fm_instrument, -1, sizeof m->fm_instrument);
+    m->custom_instrument = m->last_instrument = -1;
     memset(m->s5b_instrument, -1, sizeof m->s5b_instrument);
     m->s5b_period_instrument = -1;
     m->s5b_serial = m->s5b_period_serial = 0;
@@ -387,6 +458,65 @@ static void place_at_order(NesMachine* m, int order) {
     m->row_ticks = 0;
 }
 
+/* Thor layout, channel c of the song playing: the instrument index of the last instrument change in orders
+ * 0..order-1 (what straight play has loaded when it enters `order`), or -1. */
+static int held_instrument(const NmView* v, int c, int order) {
+    const uint32_t base = v->info->player->song_base;
+    int held = -1;
+    for (int o = 0; o < order; ++o) {
+        const uint8_t* e = v->region + (v->info->streams[c] + 4u * (uint32_t)o - base);
+        uint16_t a = nm_rd16(e + 2);
+        for (int k = 0; k < e[1]; ++k) {
+            NmEntry entry;
+            if (nm_walk_entry(v, a, c, &entry)) return held; /* cannot happen for a loaded image */
+            if (entry.instrument >= 0) held = entry.instrument;
+            a = entry.end;
+        }
+    }
+    return held;
+}
+
+/* Whether `order` starts a note on channel c before an instrument change of its own: the order plays an instrument
+ * loaded earlier. The lowering re-sends each order's first instrument except where that would rewrite shared chip
+ * state (a held custom-patch VRC7 sound, a held 5B sound with a manual envelope period), and a note may carry no
+ * instrument at all. */
+static int order_plays_held_instrument(const NmView* v, int c, int order) {
+    const uint32_t base = v->info->player->song_base;
+    const uint8_t* e = v->region + (v->info->streams[c] + 4u * (uint32_t)order - base);
+    uint16_t a = nm_rd16(e + 2);
+    for (int k = 0; k < e[1]; ++k) {
+        NmEntry entry;
+        if (nm_walk_entry(v, a, c, &entry) || entry.instrument >= 0) return 0;
+        if (entry.note) return 1;
+        a = entry.end;
+    }
+    return 0;
+}
+
+/* The seek fallback after place_at_order: the engine was reset, so a channel whose order plays an instrument it does
+ * not load itself would play the engine's silent dummy envelopes (and, VRC7, patch 0 over cleared custom registers)
+ * until its next instrument change. famistudio_set_instrument loads the instrument straight play holds there, in
+ * channel order, as the stream's own instrument change does (envelopes, VRC7 patch and custom registers, N163 wave,
+ * 5B shape, octave and manual period). Shared chip state is approximate: the last channel loaded owns the VRC7 custom
+ * patch and the 5B manual period, where straight play's could be another channel's or an `Ixx`/`Jyy`'s. */
+static int restore_instruments(NesMachine* m, int order) {
+    const NesPlayer* p = m->player;
+    const NmView v = {m->prg + (p->song_base - 0x8000), m->meta + NES_IMAGE_HEADER_SIZE, &m->info};
+    int called = 0;
+    m->time = 0;
+    for (int c = 0; c < p->channels; ++c) {
+        if (!nes_player_tonal(p, c) || !order_plays_held_instrument(&v, c, order)) continue;
+        const int instrument = held_instrument(&v, c, order);
+        if (instrument < 0) continue;
+        m->ram[p->sym.r0] = (uint8_t)c;
+        m->ram[p->sym.r1] = 0; /* with attack: the envelopes load */
+        if (call(m, p->sym.set_instrument, (uint8_t)instrument, INSTRUMENT_BUDGET) != NM_OK) return NM_ERR_FAULT;
+        called = 1;
+    }
+    if (called) end_frame(m, m->time); /* before the first frame, as init */
+    return NM_OK;
+}
+
 int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_ticks, int* seek_mode) {
     *seek_mode = NM_SEEK_FROM_START;
     if (!loaded(m, image) || order < 0 || row < 0) return NM_ERR_IMAGE;
@@ -401,6 +531,7 @@ int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_t
     if (info->layout != NM_LAYOUT_THOR) return NM_ERR_IMAGE;
     if (reset(m, image) != NM_OK) return NM_ERR_FAULT;
     place_at_order(m, order);
+    if (restore_instruments(m, order) != NM_OK) return NM_ERR_FAULT;
     *seek_mode = NM_SEEK_FROM_ORDER;
     r = fast_forward(m, order, row, budget);
     return r < 0 ? r : r ? NM_OK : NM_ERR_IMAGE;
@@ -442,10 +573,11 @@ static StreamState stream_state(const NmView* v, int c, int order, int consumed,
     return st;
 }
 
-/* New address for an engine envelope pointer (and its read position) when `image` replaces the
- * playing one: the same directory entry if unchanged; else (effect envelopes only) an entry of the same
- * kind with the same bytes; else the same entry edited (position kept if still an instruction start, else
- * the envelope restarts); else the engine's silent dummy. Pointers outside the directory are kept. */
+/* New address for an engine envelope pointer (and its read position) when `image` replaces the playing one: the
+ * same directory entry if unchanged. Instrument envelopes retain their stable directory slot, including edits;
+ * effect envelopes can be renumbered, so an entry of the same kind with the same bytes is preferred before an
+ * edited slot. Keep a valid read position, otherwise restart; a removed envelope falls back to the silent dummy.
+ * Pointers outside the directory are kept. */
 static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int kind, uint16_t addr, uint8_t* ptr,
                                uint8_t* repeat) {
     const uint8_t* odir = m->meta + NES_IMAGE_HEADER_SIZE;
@@ -461,8 +593,9 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
     const int same_index = idx < ni->envelopes && nm_rd16(ndir + 4 * idx) && ndir[4 * idx + 3] == kind;
     if (same_index && SAME(idx)) return nm_rd16(ndir + 4 * idx);
     /* Instrument envelopes keep their directory index (an instrument slot's, below player->effect_envelopes: 256,
-     * the 5B build 384 with its mixer and noise envelopes): an edited one stays its own slot's even when another
-     * slot holds identical bytes. Only effect envelopes (renumbered by the lowering) are followed by content. */
+     * N163 builds 320 with their wave-index envelopes, the 5B build 384 with its mixer and noise envelopes): an
+     * edited one stays its own slot's even when another slot holds identical bytes. Only effect envelopes
+     * (renumbered by the lowering) are followed by content. */
     if (!(same_index && idx < m->player->effect_envelopes)) {
         for (int u = 0; u < ni->used_count; ++u) {
             if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
@@ -508,6 +641,83 @@ static void follow_sample(NesMachine* m, const NesImage* image) {
         }
     }
     nes_apu_dmc_stop(a);
+}
+
+/* N163, Thor layout to Thor layout: the channels whose current instrument (famistudio_chn_n163_instrument, an entry of
+ * the table at famistudio_exp_instrument_lo/hi) has another wave in `image`: wave position, size, wave table length
+ * or the bytes of any of its waves differ (compared by content: a moved but identical wave is unchanged). The engine
+ * uploads a wave only when the wave index changes, so the caller sets those channels' wave index to $FF. Decided
+ * while the old bytes are still in place; bit k = N163 channel k. */
+static uint8_t n163_changed_waves(const NesMachine* m, const NesImage* image) {
+    const NesPlayer* p = m->player;
+    const uint32_t base = p->song_base;
+    const NmView ov = {m->prg + (base - 0x8000), m->meta + NES_IMAGE_HEADER_SIZE, &m->info};
+    const NmView nv = nm_view(image);
+    const NesImageInfo* ni = &image->info;
+    const uint32_t old_table = (uint32_t)(N163_RAM(exp_instrument_lo) | N163_RAM(exp_instrument_hi) << 8);
+    const uint8_t all = (uint8_t)((1u << p->n163_channels) - 1u);
+    if (old_table != m->info.exp_instruments) return all; /* not the playing image's table: reload every wave */
+    uint8_t changed = 0;
+    for (int k = 0; k < p->n163_channels; ++k) {
+        const uint32_t i = N163_RAMX(chn_n163_instrument, k);
+        const uint32_t oe = old_table + NM_EXP_INSTRUMENT_SIZE * i, ne = ni->exp_instruments + NM_EXP_INSTRUMENT_SIZE * i;
+        if (i >= m->info.instruments || i >= ni->instruments) {
+            changed |= (uint8_t)(1 << k);
+            continue;
+        }
+        const uint8_t* o = ov.region + (oe - base);
+        const uint8_t* n = nv.region + (ne - base);
+        const int waves = nm_n163_waves(&ov, (uint16_t)oe);
+        if (waves < 1 || o[8] != n[8] || o[9] != n[9] || waves != nm_n163_waves(&nv, (uint16_t)ne)) {
+            changed |= (uint8_t)(1 << k);
+            continue;
+        }
+        const uint8_t* ot = ov.region + (nm_rd16(o + 10) - base);
+        const uint8_t* nt = nv.region + (nm_rd16(n + 10) - base);
+        for (int w = 0; w < waves; ++w) {
+            if (memcmp(ov.region + (nm_rd16(ot + 2 * w) - base), nv.region + (nm_rd16(nt + 2 * w) - base), o[9] / 2u)) {
+                changed |= (uint8_t)(1 << k);
+                break;
+            }
+        }
+    }
+    return changed;
+}
+
+/* VRC7, Thor layout to Thor layout: the patches the FM channels play follow their edited instruments now, rather
+ * than at each channel's next instrument load (the engine loads one only when the instrument changes). Instrument
+ * entries keep their index (slot - 1). For every FM channel the new entry's patch byte replaces its
+ * famistudio_chn_vrc7_patch (written to $3x by the next engine frame); the override byte of the entry loaded last
+ * replaces famistudio_chn_vrc7_sustain; the custom patch registers $00-$07 are rewritten from the entry they came
+ * from when its registers changed, or from a channel's entry that became a custom patch (the chip has one custom
+ * patch: as the engine's own next load of it would). Writes only what changed (an identical image writes nothing). */
+static void vrc7_follow_instruments(NesMachine* m, const NesImage* image) {
+    const NesPlayer* p = m->player;
+    const NesImageInfo* ni = &image->info;
+    const uint8_t* table = nm_region(image) + (ni->exp_instruments - p->song_base);
+#define ENTRY(j) (table + NM_EXP_INSTRUMENT_SIZE * (j))
+    int custom = m->custom_instrument < ni->instruments ? m->custom_instrument : -1;
+    for (int k = 0; k < NES_VRC7_VOICES; ++k) {
+        const int j = m->fm_instrument[k];
+        if (j < 0 || j >= ni->instruments) continue;
+        uint8_t* patch = &m->ram[p->vrc7.chn_vrc7_patch + k];
+        if (*patch && !ENTRY(j)[7]) custom = j; /* became a custom patch: load it, as the engine's own load would */
+        *patch = ENTRY(j)[7];
+    }
+    if (m->last_instrument >= 0 && m->last_instrument < ni->instruments) m->ram[p->vrc7.chn_vrc7_sustain] = ENTRY(m->last_instrument)[6];
+    if (custom >= 0) {
+        NesVrc7* v = &m->vrc7;
+        const uint8_t* regs = ENTRY(custom) + 8;
+        for (int r = 0; r < 8; ++r) {
+            if (v->reg[r] == regs[r]) continue;
+            nes_vrc7_write(v, v->time, 0x9010, (uint8_t)r);
+            nes_vrc7_write(v, v->time, 0x9030, regs[r]);
+        }
+        m->custom_instrument = (int16_t)custom;
+    }
+#undef ENTRY
+    m->ram[p->vrc7.exp_instrument_lo] = (uint8_t)ni->exp_instruments;
+    m->ram[p->vrc7.exp_instrument_hi] = (uint8_t)(ni->exp_instruments >> 8);
 }
 
 /* 5B, Thor layout to Thor layout: the squares' hardware envelope settings follow their edited instruments now,
@@ -558,6 +768,8 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
     const NesPlayer* p = m->player;
     const NesImageInfo* ni = &image->info;
     follow_sample(m, image);
+    const uint8_t n163_reupload =
+        p->expansion == NES_EXPANSION_N163 && m->info.layout == NM_LAYOUT_THOR && ni->layout == NM_LAYOUT_THOR ? n163_changed_waves(m, image) : 0;
     if (m->info.layout != NM_LAYOUT_THOR || ni->layout != NM_LAYOUT_THOR) {
         memcpy(m->prg + (p->song_base - 0x8000), nm_region(image), p->region_size);
         m->info = *ni;
@@ -621,6 +833,14 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
     RAM(instrument_hi) = s[2];
     RAM(dpcm_list_lo) = s[head - 2];
     RAM(dpcm_list_hi) = s[head - 1];
+    if (p->expansion == NES_EXPANSION_N163) {
+        N163_RAM(exp_instrument_lo) = s[3];
+        N163_RAM(exp_instrument_hi) = s[4];
+        for (int k = 0; k < p->n163_channels; ++k) {
+            if (n163_reupload >> k & 1) N163_RAMX(chn_n163_wave_index, k) = 0xFF;
+        }
+    }
+    if (p->expansion == NES_EXPANSION_VRC7) vrc7_follow_instruments(m, image);
     if (p->expansion == NES_EXPANSION_S5B) s5b_follow_instruments(m, image);
     RAM(tempo_step_lo) = (uint8_t)ni->tempo_ntsc;
     RAM(tempo_step_hi) = (uint8_t)(ni->tempo_ntsc >> 8);
@@ -635,7 +855,7 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
 
 #define AUDITION_SILENT NES_AUDITION_RAM          /* $FF (64 empty rows), $42 back */
 #define AUDITION_NOTE (NES_AUDITION_RAM + 4)      /* [$54 i] [$4E f] $40 n, $42 to the silent loop; DPCM: k, $42 */
-#define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45, $42 to the silent loop */
+#define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45 (VRC7 FM: $56, N163 channels: $5A), $42 to the silent loop */
 _Static_assert(AUDITION_RELEASE + 4 <= 0x800, "audition streams fit RAM");
 
 static void put_stream(NesMachine* m, uint16_t at, const uint8_t* bytes, int n) { memcpy(m->ram + at, bytes, (size_t)n); }
@@ -668,7 +888,8 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
     held[n++] = 0x42;
     held[n++] = lo;
     held[n++] = hi;
-    const uint8_t release[] = {0x45, 0x42, lo, hi};
+    const uint8_t release_op = (uint8_t)(nes_player_vrc7_channel(p, channel) ? 0x56 : nes_player_n163_channel(p, channel) ? 0x5A : 0x45);
+    const uint8_t release[] = {release_op, 0x42, lo, hi};
     put_stream(m, AUDITION_SILENT, silent, sizeof silent);
     put_stream(m, AUDITION_NOTE, held, n);
     put_stream(m, AUDITION_RELEASE, release, sizeof release);
@@ -682,13 +903,29 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
     return NM_OK;
 }
 
-int nm_release(NesMachine* m) {
-    if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM) return 0; /* DPCM: stop */
-    const int slot = m->channel_env[m->aud_channel];
+/* Directory index of the envelope engine slot `slot` plays when it has a release point (header byte), else -1. */
+static int release_point(const NesMachine* m, int slot) {
     const uint16_t addr = (uint16_t)(RAMX(env_addr_lo, slot) | RAMX(env_addr_hi, slot) << 8);
     const int idx = nm_find_envelope(&m->info, m->meta + NES_IMAGE_HEADER_SIZE, addr);
-    if (idx < 0 || !m->prg[addr - 0x8000]) return 0; /* no release point: cut */
+    return idx >= 0 && m->prg[addr - 0x8000] ? idx : -1;
+}
+
+/* 2A03/VRC6 channels: a release only with a volume release point (the tail ends at the envelope's final loop).
+ * N163 channels: likewise, or without a volume release point with a wave-index release point (the tail ends at that
+ * envelope's final loop; the engine's `$5A` releases both). VRC7 FM: always a key-off (`$56`: then also the volume
+ * envelope's release, if any); the note ends once that tail is done and the chip's carrier is silent or can no
+ * longer change (nes_vrc7_release_over). */
+int nm_release(NesMachine* m) {
+    if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM) return 0; /* DPCM: stop */
     const int c = m->aud_channel;
+    int slot = m->channel_env[c];
+    int idx = release_point(m, slot);
+    if (idx < 0 && nes_player_n163_channel(m->player, c)) {
+        slot += 2; /* FAMISTUDIO_ENV_N163_WAVE_IDX_OFF */
+        idx = release_point(m, slot);
+    }
+    const int fm = nes_player_vrc7_channel(m->player, c);
+    if (idx < 0 && !fm) return 0; /* no release point: cut */
     RAMX(chn_ptr_lo, c) = (uint8_t)AUDITION_RELEASE;
     RAMX(chn_ptr_hi, c) = (uint8_t)(AUDITION_RELEASE >> 8);
     RAMX(chn_repeat, c) = 0;
@@ -697,7 +934,7 @@ int nm_release(NesMachine* m) {
     RAM(tempo_acc_hi) = RAM(song_speed); /* the next frame reads the release */
     m->released = 1;
     m->rel_slot = slot;
-    m->rel_end = m->meta[NES_IMAGE_HEADER_SIZE + 4 * idx + 2] - 2; /* the final loop: release tail done */
+    m->rel_end = idx >= 0 ? m->meta[NES_IMAGE_HEADER_SIZE + 4 * idx + 2] - 2 : 0; /* the final loop: release tail done */
     return 1;
 }
 
@@ -707,16 +944,26 @@ int nm_mute_channel(NesMachine* m, int channel, int muted) {
         uint8_t mask = m->apu.mute;
         mask = muted ? (uint8_t)(mask | (1 << channel)) : (uint8_t)(mask & ~(1 << channel));
         nes_apu_set_mute(&m->apu, mask);
+    } else if (m->player->expansion == NES_EXPANSION_N163) { /* N163 1..n: bit k = FamiStudio N163 channel k */
+        const int bit = 1 << (channel - NM_FIRST_EXP);
+        uint8_t mask = m->n163.mute;
+        mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
+        nes_n163_set_mute(&m->n163, mask);
     } else if (m->player->expansion == NES_EXPANSION_VRC6) { /* VRC6 pulse 1, pulse 2, saw */
         const int bit = 1 << (channel - NES_APU_CHANNELS);
         uint8_t mask = m->vrc6.mute;
         mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
         nes_vrc6_set_mute(&m->vrc6, mask);
-    } else { /* 5B square 1-3 */
+    } else if (m->player->expansion == NES_EXPANSION_S5B) { /* 5B square 1-3 */
         const int bit = 1 << (channel - NES_APU_CHANNELS);
         uint8_t mask = m->s5b.mute;
         mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
         nes_s5b_set_mute(&m->s5b, mask);
+    } else { /* VRC7 FM 1-6 */
+        const int bit = 1 << (channel - NES_APU_CHANNELS);
+        uint8_t mask = m->vrc7.mute;
+        mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
+        nes_vrc7_set_mute(&m->vrc7, mask);
     }
     return NM_OK;
 }
@@ -739,7 +986,10 @@ static int run_frame(NesMachine* m, int synth) {
     } else {
         ++m->row_ticks;
     }
-    if (m->released && RAMX(env_ptr, m->rel_slot) >= m->rel_end) m->ended = 1;
+    if (m->released && RAMX(env_ptr, m->rel_slot) >= m->rel_end &&
+        (!nes_player_vrc7_channel(m->player, m->aud_channel) || nes_vrc7_release_over(&m->vrc7, m->aud_channel - NM_FIRST_EXP))) {
+        m->ended = 1;
+    }
     return NM_OK;
 }
 
@@ -788,12 +1038,15 @@ int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity) {
     return n;
 }
 
-int nm_write_log(NesMachine* m, uint8_t* triples, int capacity) {
+int nm_write_log_timed(NesMachine* m, uint8_t* triples, uint32_t* cycles, int capacity) {
     const int n = m->log_len < capacity ? m->log_len : capacity;
     memcpy(triples, m->log, (size_t)n * 3);
+    if (cycles) memcpy(cycles, m->log_time, (size_t)n * sizeof *cycles);
     m->log_len = 0;
     return n;
 }
+
+int nm_write_log(NesMachine* m, uint8_t* triples, int capacity) { return nm_write_log_timed(m, triples, NULL, capacity); }
 
 uint8_t nm_peek(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];
@@ -818,6 +1071,12 @@ int nm_call(NesMachine* m, uint16_t addr, uint8_t a) {
 
 const NesApu* nm_apu(const NesMachine* m) { return &m->apu; }
 const NesVrc6* nm_vrc6(const NesMachine* m) { return &m->vrc6; }
+const NesVrc7* nm_vrc7(const NesMachine* m) { return &m->vrc7; }
+int nm_vrc7_instrument(const NesMachine* m, int channel) {
+    return nes_player_vrc7_channel(m->player, channel) ? m->fm_instrument[channel - NM_FIRST_EXP] : -1;
+}
+int nm_vrc7_custom_instrument(const NesMachine* m) { return m->player->expansion == NES_EXPANSION_VRC7 ? m->custom_instrument : -1; }
+const NesN163* nm_n163(const NesMachine* m) { return &m->n163; }
 const NesS5b* nm_s5b(const NesMachine* m) { return &m->s5b; }
 int nm_s5b_instrument(const NesMachine* m, int channel) {
     return nes_player_s5b_channel(m->player, channel) ? m->s5b_instrument[channel - NM_FIRST_EXP] : -1;

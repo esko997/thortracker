@@ -22,7 +22,7 @@ class TruePitchTest {
     private fun gbHz(note: Int) = HugeRules.pitchHz(note, 0)
 
     /** NES (NTSC) pulse: CPU 1789773 Hz / (16 * (period + 1)). */
-    private fun nesHz(note: Int) = 1789773.0 / (16.0 * (FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note)] + 1))
+    private fun nesHz(note: Int) = 1789773.0 / (16.0 * (FamiStudioLowering.NOTE_TABLE[note - NesRules.NOTE_OFFSET] + 1))
 
     @Test fun a4IsFiftySevenAnd440HzOnBothSystems() {
         assertTrue(57 in GbSystem.noteRange && 57 in NesSystem.noteRange)
@@ -39,6 +39,23 @@ class TruePitchTest {
             val tolerance = when { note < 72 -> 8.0; note < 84 -> 30.0; else -> 50.0 }
             assertTrue("note $note: GB ${gbHz(note)} Hz vs NES ${nesHz(note)} Hz", abs(cents(gbHz(note), nesHz(note))) < tolerance)
             assertTrue("note $note: GB vs 12-TET", abs(cents(gbHz(note), twelveTet(note))) < tolerance)
+        }
+    }
+
+    /**
+     * The 5B divides by 32 × period from the pulses' table: each square note sounds as the same note on a pulse, C-1..B-7,
+     * within one step of the 5B's (half as long) period, which is coarser at the top.
+     */
+    @Test fun s5bSquaresSoundTheSameNoteAsThePulses() {
+        val square = NesRules.S5B_SQUARE1
+        val expansion = org.thortracker.system.nes.NesExpansion.S5B
+        val top = NesRules.highestNote(expansion, square)
+        assertEquals("B-7", NesSystem.noteName(top))
+        for (note in NesRules.LOWEST_TONAL..top) {
+            val period = FamiStudioLowering.NOTE_TABLE[NesRules.engineNote(expansion, square, note)] + 1
+            val hz = 1789773.0 / (32.0 * period)
+            val step = 1200.0 * log2((period + 1.0) / period)
+            assertTrue("note $note: 5B $hz Hz vs pulse ${nesHz(note)} Hz", abs(cents(hz, nesHz(note))) <= maxOf(10.0, step))
         }
     }
 

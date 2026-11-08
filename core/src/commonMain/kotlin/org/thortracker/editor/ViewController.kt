@@ -583,6 +583,21 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         publishPattern()
     }
 
+    /**
+     * Moves the Pattern cursor to the first ([bottom] false) or last row of the pattern it is in; the host's
+     * right-stick double flick. Like a direction: a held Select block extends to it, an unheld block stays
+     * anchored. Nothing happens outside the Pattern view, under the pattern panel, or while Edit or Clear is
+     * held (their directions change values or jump by 16). Returns whether the cursor was placed.
+     */
+    fun jumpPatternEdge(bottom: Boolean): Boolean {
+        normalise()
+        if (state.kind != ViewKind.PATTERN || systemView() != null || state.scalePanel || editHeld || clearHeld) return false
+        if (markHeld) markUsed = true
+        state.row = if (bottom) song.rowCount(pattern) - 1 else 0
+        publishPattern()
+        return true
+    }
+
     private fun patternDirection(dx: Int, dy: Int) {
         when {
             editHeld -> { editUsed = true; adjustCell(dx, dy) }

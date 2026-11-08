@@ -30,12 +30,13 @@ public:
         output_data temp;
         int const last_fm_channel = m_dac_enable ? 5 : 6;
         for (int chan = 0; chan < last_fm_channel; chan++) {
+            // ymfm advances operator feedback during output, not clock; mute only the resulting signal.
+            m_fm.output(temp.clear(), 5, 256, 1 << chan);
             if (mute >> chan & 1) {
                 out[0] += dac_discontinuity(0);
                 out[1] += dac_discontinuity(0);
                 continue;
             }
-            m_fm.output(temp.clear(), 5, 256, 1 << chan);
             out[0] += dac_discontinuity(temp.data[0]);
             out[1] += dac_discontinuity(temp.data[1]);
         }
@@ -74,8 +75,8 @@ YmOpn2* ymo_create(void) {
 void ymo_destroy(YmOpn2* chip) { delete chip; }
 
 void ymo_reset(YmOpn2* chip) {
-    // A new chip in place (no allocation): ymfm's reset() leaves engine counters (envelope clock, LFO) running, and a
-    // reused machine must sound like a fresh one.
+    // Rebuild at the same address: ymfm's reset() leaves envelope/LFO counters running.
+    // Construction allocates internally; hosts reset spare machines off the audio thread.
     chip->~YmOpn2();
     new (chip) YmOpn2();
     chip->chip.reset();

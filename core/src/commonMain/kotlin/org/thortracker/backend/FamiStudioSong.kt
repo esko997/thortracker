@@ -7,6 +7,7 @@ import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.Vrc7Sustain
 import org.thortracker.system.nes.nes
 
 /**
@@ -48,6 +49,9 @@ internal class FsNote {
      */
     var envelopePeriod = -1
 
+    /** N163 `X00`: FamiStudio's phase reset (the wave restarts from its first sample). */
+    var phaseReset = false
+
     val isMusical get() = value in 1..96
     val isValid get() = value != INVALID
     val hasVolume get() = volume >= 0
@@ -55,7 +59,7 @@ internal class FsNote {
     /** Any attribute that keeps FamiStudio's exporter from folding the row into an empty run. */
     val hasRunBreakingEffect
         get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0 ||
-            envelopePeriod >= 0
+            phaseReset || envelopePeriod >= 0
 
     val isEmpty get() = !isValid && !hasRunBreakingEffect && speed < 0
 
@@ -88,6 +92,8 @@ internal class FsSong(
     val samples: List<DpcmSample>,
     /** The song's expansion chip: its channels follow the 2A03's five in [notes]. */
     val expansion: NesExpansion = NesExpansion.NONE,
+    /** VRC7 songs: the release/stop sustain overrides every VRC7 instrument carries. */
+    val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
 ) {
     val orderStart = IntArray(lengths.size + 1).also { for (i in lengths.indices) it[i + 1] = it[i] + lengths[i] }
     val totalRows get() = orderStart[lengths.size]
@@ -111,11 +117,13 @@ internal class FsSong(
          * (see [NesRules.EFFECTS]) as FamiStudio note attributes. Context the cells leave implicit is resolved along
          * the played order here, so both consumers agree:
          * - a note without an instrument is legato (no attack) on the channel's current instrument;
-         * - OFF releases a sounding note whose instrument has a volume release point, and on the VRC7's FM channels any
-         *   sounding note (key off: FamiStudio's `CanRelease`), otherwise (or when the note was already released) it
-         *   stops the channel;
+         * - OFF releases a sounding note whose instrument has a volume release point (on the N163's channels also one whose
+         *   wave sequence has a release point), and on the VRC7's FM channels any sounding note (key off: FamiStudio's
+         *   `CanRelease`), otherwise (or when the note was already released) it stops the channel;
          * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none; on the
-         *   VRC7's FM channels it is converted to the frequency step nearest the same pitch ([NesRules.vrc7FinePitch]);
+         *   VRC7's FM and the N163's channels it is converted to the frequency step nearest the same pitch
+         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]), on the 5B squares to their own periods
+         *   ([NesRules.s5bFinePitch]);
          * - a row's 5B envelope period (`Ixx` high byte, `Jyy` low byte, on any 5B squares: [NesRules.envPeriod]) is one
          *   `EnvelopePeriod` on 5B Square 1.
          * Requires a song without [NesSystem.errors].
@@ -129,8 +137,7 @@ internal class FsSong(
             val channels = expansion.channels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
-                val vrc7 = NesRules.isVrc7(expansion, ch)
-                val s5b = NesRules.isS5b(expansion, ch)
+
                 var current = 0 // instrument slot sounding on the channel
                 var sounding = false // a note is playing and has not been released or stopped
                 var fine = 0
@@ -140,8 +147,8 @@ internal class FsSong(
                     val pattern = song.patterns[song.orders[o]]
                     for (r in 0 until pattern.length) {
                         val cell = pattern.tracks[ch][r]
-                        if (cell.note >= 0) playing = NesRules.fsNote(cell.note)
-                        val n = convert(cell, ch, vrc7, s5b, current, sounding, instruments, fine, playing)
+                        if (cell.note >= 0) playing = NesRules.engineNote(expansion, ch, cell.note)
+                        val n = convert(cell, ch, expansion, current, sounding, instruments, fine, playing)
                         if (n != null) {
                             if (n.isMusical) {
                                 if (n.instrument != 0) current = n.instrument
@@ -179,18 +186,20 @@ internal class FsSong(
             }
             return FsSong(song.title, song.artist, song.ticksPerRow, song.loopOrder, lengths,
                 IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples,
-                song.nes.expansion)
+                song.nes.expansion, song.nes.vrc7Sustain)
         }
 
-        private fun convert(cell: Cell, ch: Int, vrc7: Boolean, s5b: Boolean, current: Int, sounding: Boolean, bank: List<NesInstrument>,
-                            fine: Int, playing: Int): FsNote? {
+        private fun convert(cell: Cell, ch: Int, expansion: NesExpansion, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,
+                            playing: Int): FsNote? {
             if (cell.isBlank) return null
+            val vrc7 = NesRules.isVrc7(expansion, ch)
+            val n163 = NesRules.isN163(expansion, ch)
+            val s5b = NesRules.isS5b(expansion, ch)
             val n = FsNote()
             val p = cell.param
             when {
                 cell.note >= 0 -> {
-                    // The 5B squares play FamiStudio's note an octave up, so the note sounds at its true pitch.
-                    n.value = NesRules.fsNote(cell.note) + if (s5b) NesRules.S5B_OCTAVE else 0
+                    n.value = NesRules.engineNote(expansion, ch, cell.note)
                     if (cell.instrument != 0) n.instrument = cell.instrument
                     else if (current != 0) {
                         n.instrument = current
@@ -201,7 +210,9 @@ internal class FsSong(
                 cell.note == Cell.CUT -> {
                     // DPCM has no release: OFF stops the sample.
                     val releases = ch != NesRules.DPCM && sounding && current != 0 &&
-                        (vrc7 || bank[current - 1].let { it.volume.release >= 0 && it.volume.loop >= 0 })
+                        (vrc7 || bank[current - 1].let {
+                            it.volume.release >= 0 && it.volume.loop >= 0 || n163 && it.wave.release >= 0 && it.wave.loop >= 0
+                        })
                     n.value = if (releases) FsNote.RELEASE else FsNote.STOP
                 }
             }
@@ -218,6 +229,7 @@ internal class FsSong(
                 NesRules.FX_NOTE_DELAY -> n.noteDelay = p
                 NesRules.FX_FINE_PITCH -> n.finePitch = when {
                     vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
+                    n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
                     s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
                     else -> NesRules.FINE_CENTRE - p
                 }
@@ -226,6 +238,7 @@ internal class FsSong(
                 NesRules.FX_NOTE_CUT -> n.cutDelay = p
                 NesRules.FX_DUTY -> n.duty = p
                 NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
+                NesRules.FX_PHASE_RESET -> n.phaseReset = true
                 // 5B envelope period: gathered per row on 5B Square 1 by [of].
             }
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.

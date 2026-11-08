@@ -20,12 +20,16 @@ import org.thortracker.ui.Painter
  * (and on VRC6 sounds the saw volume), the channel Listen plays on, its envelopes edited step by step with the
  * controller, and on 2A03 sounds a fifth page, DPCM: the sound's note → sample mappings and the song's samples
  * ([NesDpcmPage]). VRC7 sounds have no duty: their fourth page is the FM patch ([FM_PAGE]): the built-in patch or the
- * custom patch's registers per operator, and the release/stop sustain. 5B sounds have no duty either: after volume,
- * arpeggio and pitch come their mixer and noise envelopes and the hardware envelope page ([S5B_ENV_PAGE]: shape,
- * auto/manual period, octave, period). State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]),
- * [ViewState.envelope] (the page: see [pageKind], [FM_PAGE], [DPCM_PAGE], [S5B_ENV_PAGE]), [ViewState.envStep]
- * (0..size; size is the append position), [ViewState.listenChannel], on the DPCM page [ViewState.dpcmKey] and
- * [ViewState.dpcmSample], and on the FM page [ViewState.programField] (the operator column: 0 modulator, 1 carrier).
+ * custom patch's registers per operator, and the release/stop sustain. N163 sounds have no duty either: their fourth
+ * page is the Waves page ([WAVE_PAGE]): the preset, wave size and RAM position, the sequence of waves with each wave's
+ * repeat, its loop and release, and the shown wave's samples. 5B sounds have no duty either: after volume, arpeggio and
+ * pitch come their mixer and noise envelopes and the hardware envelope page ([S5B_ENV_PAGE]: shape, auto/manual period,
+ * octave, period). State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope] (the
+ * page: see [pageKind], [FM_PAGE], [WAVE_PAGE], [DPCM_PAGE], [S5B_ENV_PAGE]), [ViewState.envStep] (0..size; size is the
+ * append position), [ViewState.listenChannel], on the DPCM page [ViewState.dpcmKey] and [ViewState.dpcmSample], on the
+ * FM page [ViewState.programField] (the operator column: 0 modulator, 1 carrier), and on the Waves page
+ * [ViewState.wave] (the shown wave of the sequence) and [ViewState.waveCol] (the sample under the cursor), as the Game
+ * Boy's Wave view uses them.
  */
 object NesInstrumentView : SystemView() {
     enum class Row {
@@ -35,6 +39,9 @@ object NesInstrumentView : SystemView() {
         // FM page (VRC7 sounds): the patch, the sustain overrides, then one row per patch register field
         PATCH, SUSTAIN_RELEASE, SUSTAIN_STOP,
         FM_MULT, FM_WAVE, FM_LEVEL, FM_FEEDBACK, FM_AR, FM_DR, FM_SL, FM_RR, FM_EG, FM_KSL, FM_KSR, FM_AM, FM_VIB,
+        // Waves page (N163 sounds): preset, size, RAM position, the shown wave, its repeat, the sequence's loop and
+        // release, then the shown wave's samples
+        WAVE_PRESET, WAVE_SIZE, WAVE_POSITION, WAVE_INDEX, WAVE_REPEAT, WAVE_LOOP, WAVE_RELEASE, WAVE_SAMPLES,
         // 5B envelope page (5B sounds): the shape, auto or manual period, the auto octave, the manual period
         ENV_SHAPE, ENV_AUTO, ENV_OCTAVE, ENV_PERIOD,
     }
@@ -44,6 +51,9 @@ object NesInstrumentView : SystemView() {
 
     /** VRC7 sounds: the FM patch page, in the duty envelope's place (the FM channels have no duty). */
     val FM_PAGE = NesEnvelopeKind.DUTY.ordinal
+
+    /** N163 sounds: the Waves page, in the duty envelope's place (the N163's channels have no duty). */
+    val WAVE_PAGE = NesEnvelopeKind.DUTY.ordinal
 
     /** 5B sounds: the hardware envelope page, after volume, arpeggio, pitch, mixer and noise. */
     const val S5B_ENV_PAGE = 5
@@ -68,6 +78,16 @@ object NesInstrumentView : SystemView() {
     val FM_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.PATCH, Row.SUSTAIN_RELEASE, Row.SUSTAIN_STOP) +
         Vrc7Param.entries.map { Row.valueOf("FM_${it.name}") }
 
+    /** The Waves page (only on N163 songs, so it has the Chip row). */
+    val WAVE_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.WAVE_PRESET, Row.WAVE_SIZE, Row.WAVE_POSITION,
+        Row.WAVE_INDEX, Row.WAVE_REPEAT, Row.WAVE_LOOP, Row.WAVE_RELEASE, Row.WAVE_SAMPLES)
+
+    /** The Waves page's own rows (the rest are the sound's). */
+    private val WAVE_SETTINGS = WAVE_ROWS.drop(5).toSet()
+
+    /** The rows of the Waves page that work on the shown wave itself: copy, cut and paste take that wave. */
+    private val WAVE_SHAPE_ROWS = setOf(Row.WAVE_INDEX, Row.WAVE_SAMPLES)
+
     /** The 5B envelope page (only on 5B songs, so it has the Chip row). */
     val S5B_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.ENV_SHAPE, Row.ENV_AUTO, Row.ENV_OCTAVE, Row.ENV_PERIOD)
 
@@ -80,19 +100,22 @@ object NesInstrumentView : SystemView() {
     /** Whether the FM patch page of a VRC7 sound is shown. */
     fun fmPage(song: Song, state: ViewState): Boolean = state.envelope == FM_PAGE && chip(song, state) == NesChip.VRC7
 
+    /** Whether the Waves page of an N163 sound is shown. */
+    fun wavePage(song: Song, state: ViewState): Boolean = state.envelope == WAVE_PAGE && chip(song, state) == NesChip.N163
+
     /** Whether the hardware envelope page of a 5B sound is shown. */
     fun s5bEnvPage(song: Song, state: ViewState): Boolean = state.envelope == S5B_ENV_PAGE && chip(song, state) == NesChip.S5B
 
-    /** The envelope page [page] of a [chip] sound shows, or null for its DPCM, FM or 5B envelope page. */
+    /** The envelope page [page] of a [chip] sound shows, or null for its DPCM, FM, Waves or 5B envelope page. */
     fun pageKind(chip: NesChip, page: Int): NesEnvelopeKind? = when (chip) {
         NesChip.S5B -> S5B_PAGES.getOrNull(page)
-        NesChip.VRC7 -> APU_PAGES.getOrNull(page)?.takeIf { it != NesEnvelopeKind.DUTY }
+        NesChip.VRC7, NesChip.N163 -> APU_PAGES.getOrNull(page)?.takeIf { it != NesEnvelopeKind.DUTY }
         else -> APU_PAGES.getOrNull(page)
     }
 
     /**
-     * The envelope shown; on the DPCM, FM and 5B envelope pages the page's neighbour (duty, or noise on the 5B: callers
-     * check [dpcmPage], [fmPage] and [s5bEnvPage] first).
+     * The envelope shown; on the DPCM, FM, Waves and 5B envelope pages the page's neighbour (duty, or noise on the 5B:
+     * callers check [dpcmPage], [fmPage], [wavePage] and [s5bEnvPage] first).
      */
     fun kind(song: Song, state: ViewState): NesEnvelopeKind = if (chip(song, state) == NesChip.S5B) {
         S5B_PAGES[state.envelope.coerceIn(0, S5B_PAGES.size - 1)]
@@ -105,8 +128,8 @@ object NesInstrumentView : SystemView() {
 
     /**
      * Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples); a VRC7 sound's
-     * volume, arpeggio and pitch envelopes and its FM patch; a 5B sound's volume, arpeggio, pitch, mixer and noise
-     * envelopes and its hardware envelope.
+     * volume, arpeggio and pitch envelopes and its FM patch; an N163 sound's three and its Waves page; a 5B sound's
+     * volume, arpeggio, pitch, mixer and noise envelopes and its hardware envelope.
      */
     fun pages(song: Song, state: ViewState): Int = when (chip(song, state)) {
         NesChip.APU -> DPCM_PAGE + 1
@@ -121,6 +144,7 @@ object NesInstrumentView : SystemView() {
     fun rows(state: ViewState, song: Song): List<Row> {
         if (dpcmPage(song, state)) return DPCM_ROWS
         if (fmPage(song, state)) return FM_ROWS
+        if (wavePage(song, state)) return WAVE_ROWS
         if (s5bEnvPage(song, state)) return S5B_ROWS
         val base = ROWS.getValue(kind(song, state))
         if (song.nes.expansion == NesExpansion.NONE) return base
@@ -132,9 +156,60 @@ object NesInstrumentView : SystemView() {
 
     fun sound(song: Song, state: ViewState): NesInstrument? = song.nesInstrument(state.instrument)
 
-    /** The shown envelope; null on the FM and 5B envelope pages (no step envelope there). */
+    /** The shown envelope; null on the FM, Waves and 5B envelope pages (no step envelope there). */
     fun envelope(song: Song, state: ViewState): NesEnvelope? =
-        if (fmPage(song, state) || s5bEnvPage(song, state)) null else sound(song, state)?.let { kind(song, state).of(it) }
+        if (fmPage(song, state) || wavePage(song, state) || s5bEnvPage(song, state)) null
+        else sound(song, state)?.let { kind(song, state).of(it) }
+
+    /** The shown sound's waves when it is an N163 sound, else null. */
+    fun n163Wave(song: Song, state: ViewState): N163Wave? = sound(song, state)?.takeIf { it.chip == NesChip.N163 }?.wave
+
+    /** The shown wave of the sequence, kept inside it. */
+    fun waveIndex(state: ViewState, w: N163Wave): Int = state.wave.coerceIn(0, w.waves.size - 1)
+
+    /** The sample under the cursor, kept inside the wave. */
+    fun sampleIndex(state: ViewState, w: N163Wave): Int = state.waveCol.coerceIn(0, w.size - 1)
+
+    /**
+     * What a wave of [size] samples does to the pitch (FamiStudio's N163 note tables are for 16 samples): "16 samples:
+     * in tune", "32 samples: one octave lower", "24 samples: 7.0 semitones lower — out of tune".
+     */
+    fun sizeText(size: Int): String {
+        val t = NesRules.n163Transpose(size)
+        if (NesRules.n163InTune(size)) {
+            val octaves = kotlin.math.round(t / 12.0).toInt()
+            return "$size samples: " + when {
+                octaves == 0 -> "in tune"
+                octaves == -1 -> "one octave lower"
+                octaves == 1 -> "one octave higher"
+                octaves < 0 -> "${-octaves} octaves lower"
+                else -> "$octaves octaves higher"
+            }
+        }
+        val semis = org.thortracker.model.NumberText.fixed(kotlin.math.abs(t), 1)
+        return "$size samples: $semis semitones ${if (t < 0) "lower" else "higher"} — out of tune"
+    }
+
+    /** Where [w] lies in the wave RAM of [channels] N163 channels: "RAM 0-15 of 0-127 (8 channels: 128 bytes minus 64 for registers)". */
+    fun ramText(w: N163Wave, channels: Int): String {
+        val ram = NesRules.n163WaveRam(channels)
+        return "RAM ${w.position}-${w.position + w.size - 1} of 0-${ram - 1} " +
+            "($channels channel${if (channels == 1) "" else "s"}: 128 bytes minus ${8 * channels} for registers)"
+    }
+
+    /**
+     * The other N163 sounds of [song] whose RAM overlaps sound [slot]'s (slot numbers): a channel playing one overwrites
+     * the waves of a channel playing the other. Sounds with the same size, position and waves share the RAM safely and
+     * are left out.
+     */
+    fun n163Overlaps(song: Song, slot: Int): List<Int> {
+        val w = song.nesInstrument(slot)?.takeIf { it.chip == NesChip.N163 }?.wave ?: return emptyList()
+        return song.nes.instruments.withIndex().filter { (i, ins) ->
+            val o = ins.wave
+            i + 1 != slot && ins.chip == NesChip.N163 && o.position < w.position + w.size && w.position < o.position + o.size &&
+                !(o.position == w.position && o.size == w.size && o.waves == w.waves)
+        }.map { it.index + 1 }
+    }
 
     /** The operator column of the FM page: 0 modulator, 1 carrier (modulator-only fields always the modulator). */
     fun fmOperator(state: ViewState, param: Vrc7Param): Int = if (param.modulatorOnly) 0 else state.programField.coerceIn(0, 1)
@@ -154,10 +229,11 @@ object NesInstrumentView : SystemView() {
 
     /**
      * Why [channel] ignores (or treats specially) envelope [kind] of a [chip] sound, or null when it plays it as written;
-     * [shape] is a 5B sound's hardware envelope (its level then replaces the volume envelope's).
+     * [shape] is a 5B sound's hardware envelope (its level then replaces the volume envelope's); [n163Channels] (the
+     * song's N163 channel count) sets the N163's pitch step.
      */
     fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind, chip: NesChip = NesChip.APU, saw: Vrc6SawVolume = Vrc6SawVolume.HALF,
-                    channelChip: NesChip = chip, shape: S5bShape = S5bShape.OFF): String? = when {
+                    channelChip: NesChip = chip, shape: S5bShape = S5bShape.OFF, n163Channels: Int = 1): String? = when {
         channelChip != chip -> "${chip.label} sounds play on the ${chip.label} channels only"
         channel == ChannelKind.SAMPLE -> "DPCM plays samples: envelopes do not apply"
         channel == ChannelKind.SAW -> when (kind) {
@@ -169,6 +245,12 @@ object NesInstrumentView : SystemView() {
             NesEnvelopeKind.VOLUME -> "FM: the carrier's 4-bit level, 3 dB per step"
             NesEnvelopeKind.PITCH -> "FM: + raises the pitch (frequency steps × 8)"
             NesEnvelopeKind.DUTY -> "The FM channels have no duty"
+            else -> null
+        }
+        channel == ChannelKind.WAVE -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "N163: 4-bit linear volume"
+            NesEnvelopeKind.PITCH -> "+ raises the pitch (N163 frequency steps of 2^${NesRules.n163PitchShift(n163Channels)})"
+            NesEnvelopeKind.DUTY -> "The N163 channels have no duty"
             else -> null
         }
         chip == NesChip.S5B -> when (kind) {
@@ -224,6 +306,13 @@ object NesInstrumentView : SystemView() {
             NesEnvelopeKind.MIXER -> "Per frame: tone+noise (the square gated by noise), noise, tone, or off (a constant level). Empty: tone"
             NesEnvelopeKind.NOISE -> "Noise period 0-31 per frame (higher is lower). One generator: the highest sounding square sets it"
         }
+        NesChip.N163 -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "N163 channels: linear level 0-15 per frame (0 is silent), times the wave"
+            NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame"
+            NesEnvelopeKind.PITCH -> "Frequency offset per frame in N163 steps (2^2 with 1 channel … 2^5 with 5-8): + raises the pitch"
+            NesEnvelopeKind.DUTY -> "The N163 channels have no duty: this page is the waves"
+            NesEnvelopeKind.MIXER, NesEnvelopeKind.NOISE -> "5B sounds only"
+        }
     }
 
     /** A step value as the editor writes it: duty as a fraction or percentage (or noise mode), offsets signed, the 5B mixer by name. */
@@ -259,6 +348,10 @@ object NesInstrumentView : SystemView() {
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         val e = envelope(song, st)
         st.envStep = st.envStep.coerceIn(0, if (e == null) 0 else lastStep(e))
+        n163Wave(song, st)?.let { w ->
+            st.wave = waveIndex(st, w)
+            st.waveCol = sampleIndex(st, w)
+        }
         NesDpcmPage.normalise(v)
     }
 
@@ -294,9 +387,10 @@ object NesInstrumentView : SystemView() {
         val wasDpcm = dpcmPage(song, st)
         st.envelope = index.mod(pages(song, st))
         val rows = rows(st, song)
-        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: rows.indexOf(when {
+        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: SAME_ROW[row]?.let { rows.indexOf(it) }?.takeIf { it >= 0 } ?: rows.indexOf(when {
             dpcmPage(song, st) -> Row.KEY
             fmPage(song, st) -> Row.PATCH
+            wavePage(song, st) -> Row.WAVE_PRESET
             s5bEnvPage(song, st) -> Row.ENV_SHAPE
             else -> Row.LOOP
         })
@@ -304,6 +398,13 @@ object NesInstrumentView : SystemView() {
         // Arriving on DPCM from an envelope page: start on the sound's first mapped key if the shown one has none.
         if (dpcmPage(song, st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
     }
+
+    /** Rows of the Waves page and of the envelope pages that do the same thing: page changes keep the cursor on them. */
+    private val SAME_ROW = mapOf(
+        Row.STEPS to Row.WAVE_SAMPLES, Row.WAVE_SAMPLES to Row.STEPS,
+        Row.LOOP to Row.WAVE_LOOP, Row.WAVE_LOOP to Row.LOOP,
+        Row.RELEASE to Row.WAVE_RELEASE, Row.WAVE_RELEASE to Row.RELEASE,
+    )
 
     /**
      * Moves to another slot; Listen moves to the channel that slot plays on most, so a bass sounds on Triangle, or
@@ -340,7 +441,7 @@ object NesInstrumentView : SystemView() {
         return if (counts[best] > 0) best else null
     }
 
-    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6 / VRC7 / 5B); Listen follows to a channel of that chip. */
+    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6 / VRC7 / N163 / 5B); Listen follows to a channel of that chip. */
     private fun stepChip(v: ViewController, delta: Int) {
         val st = v.state
         val session = v.session
@@ -385,11 +486,15 @@ object NesInstrumentView : SystemView() {
         when {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e))
+            // Clear held on the samples: ←→ jump along the wave, ↑↓ show the previous / next wave.
+            row == Row.WAVE_SAMPLES && v.clearHeld -> { moveSample(v, COARSE * dx); stepWave(v, -dy) }
             dy != 0 -> { st.instField = (st.instField - dy).coerceIn(0, rows.size - 1); st.textPos = 0 }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
             row == Row.LISTEN -> st.listenChannel = (st.listenChannel + dx).mod(song.system.channels.size)
             row == Row.ENVELOPE -> showEnvelope(v, st.envelope + dx)
             row == Row.STEPS -> if (e != null) st.envStep = (st.envStep + dx).coerceIn(0, lastStep(e))
+            row == Row.WAVE_INDEX -> stepWave(v, dx)
+            row == Row.WAVE_SAMPLES -> moveSample(v, dx)
             // FM fields: left/right picks the operator (modulator / carrier).
             row in FM_PARAMS -> st.programField = (st.programField + dx).coerceIn(0, 1)
             else -> moveSlot(v, dx)
@@ -448,6 +553,17 @@ object NesInstrumentView : SystemView() {
                 val coarse = when { param.max >= 63 -> 8; param.max >= 15 -> 4; else -> 1 }
                 setFmParam(v, param) { it + dx + coarse * dy }
             }
+            Row.WAVE_PRESET -> stepPreset(v, dx - dy)
+            Row.WAVE_SIZE -> editWave(v, "Set wave size") { w, ram -> N163Waves.withSize(w, w.size + 4 * dx + 16 * dy, ram) }
+            Row.WAVE_POSITION -> editWave(v, "Set wave position") { w, ram -> N163Waves.withPosition(w, w.position + 2 * dx + 16 * dy, ram) }
+            Row.WAVE_INDEX -> editWave(v, "Set wave count") { w, ram -> N163Waves.withCount(w, w.waves.size + dx + COARSE * dy, ram) }
+            Row.WAVE_REPEAT -> editWave(v, "Set wave repeat") { w, ram ->
+                val i = waveIndex(st, w)
+                N163Waves.withRepeat(w, i, w.repeat.getOrElse(i) { 1 } + dx + 4 * dy, ram)
+            }
+            Row.WAVE_LOOP -> editWave(v, "Set wave loop") { w, ram -> N163Waves.withLoop(w, w.loop + dx + COARSE * dy, ram) }
+            Row.WAVE_RELEASE -> editWave(v, "Set wave release") { w, ram -> N163Waves.withRelease(w, w.release + dx + COARSE * dy, ram) }
+            Row.WAVE_SAMPLES -> drawSample(v, dx, dy)
             // 5B envelope page: Edit+←→ steps, Edit+↑↓ steps the octave coarsely / doubles or halves the manual period.
             Row.ENV_SHAPE -> stepShape(v, dx - dy)
             Row.ENV_AUTO -> if (dx != 0 || dy != 0) session.editNesS5b(slot, "Set 5B envelope period mode") { it.copy(autoPitch = !it.autoPitch) }
@@ -457,14 +573,103 @@ object NesInstrumentView : SystemView() {
         }
     }
 
+    /** Edits the shown N163 sound's waves; [f] gets the waves and the song's wave RAM in samples. */
+    private fun editWave(v: ViewController, label: String, f: (N163Wave, Int) -> N163Wave): Boolean {
+        val ram = N163Waves.ram(v.session.song)
+        return v.session.editNesWave(v.state.instrument, label) { f(it, ram) }
+    }
+
+    /** Shows the previous / next wave of the sequence. */
+    private fun stepWave(v: ViewController, delta: Int) {
+        val w = n163Wave(v.session.song, v.state) ?: return
+        v.state.wave = (waveIndex(v.state, w) + delta).coerceIn(0, w.waves.size - 1)
+    }
+
+    /** Moves the sample cursor along the wave. */
+    private fun moveSample(v: ViewController, delta: Int) {
+        val w = n163Wave(v.session.song, v.state) ?: return
+        v.state.waveCol = (sampleIndex(v.state, w) + delta).coerceIn(0, w.size - 1)
+    }
+
+    /**
+     * Edit held on the samples: ↑↓ raise / lower the sample under the cursor; ←→ carry its value to the next sample (draws
+     * flat runs), as on an envelope's steps.
+     */
+    private fun drawSample(v: ViewController, dx: Int, dy: Int) {
+        val st = v.state
+        val w = n163Wave(v.session.song, st) ?: return
+        val wave = waveIndex(st, w)
+        val at = sampleIndex(st, w)
+        val value = w.waves[wave][at]
+        if (dy != 0) editWave(v, "Set wave sample") { cur, ram -> N163Waves.withSample(cur, wave, at, value + dy, ram) }
+        if (dx != 0) {
+            val next = (at + dx).coerceIn(0, w.size - 1)
+            if (next == at) return
+            st.waveCol = next
+            editWave(v, "Draw wave") { cur, ram -> N163Waves.withSample(cur, wave, next, value, ram) }
+        }
+    }
+
+    /**
+     * Steps the waves' preset through [N163Preset] and applies it to every wave; from drawn ("Custom") waves the first
+     * step goes to the first or last preset. Presets that would make the same waves are passed over.
+     */
+    private fun stepPreset(v: ViewController, delta: Int) {
+        if (delta == 0) return
+        val w = n163Wave(v.session.song, v.state) ?: return
+        val presets = N163Preset.entries
+        val step = if (delta > 0) 1 else -1
+        var i = N163Presets.presetOf(w.waves, w.size)?.ordinal ?: if (step > 0) -1 else presets.size
+        do {
+            i += step
+            if (i !in presets.indices) return
+        } while (N163Presets.waves(presets[i], w.size, w.waves.size) == w.waves)
+        val preset = presets[i]
+        editWave(v, "Set wave preset") { cur, ram -> N163Waves.withPreset(cur, preset, ram) }
+    }
+
+    /** Inserts a copy of the shown wave after it and shows the copy. */
+    private fun duplicateWave(v: ViewController) {
+        val st = v.state
+        val w = n163Wave(v.session.song, st) ?: return
+        if (N163Waves.full(w)) {
+            return v.session.note("Sound ${EditorSession.hex2(st.instrument)} holds ${w.waves.size} waves, the most of ${w.size} samples FamiStudio keeps")
+        }
+        val i = waveIndex(st, w)
+        if (editWave(v, "Duplicate wave") { cur, ram -> N163Waves.duplicated(cur, i, ram) }) st.wave = i + 1
+    }
+
+    /** Deletes the shown wave (a sound keeps at least one). */
+    private fun deleteWave(v: ViewController) {
+        val st = v.state
+        val w = n163Wave(v.session.song, st) ?: return
+        if (w.waves.size == 1) return v.session.note("Sound ${EditorSession.hex2(st.instrument)} keeps at least one wave")
+        val i = waveIndex(st, w)
+        if (editWave(v, "Delete wave") { cur, ram -> N163Waves.removed(cur, i, ram) }) st.wave = i.coerceAtMost(w.waves.size - 2)
+    }
+
+    /** Copies the shown wave, then deletes it; the only wave becomes silent instead. */
+    private fun cutWave(v: ViewController) {
+        val st = v.state
+        val w = n163Wave(v.session.song, st) ?: return
+        val i = waveIndex(st, w)
+        v.session.copyNesWave(st.instrument, i)
+        if (w.waves.size > 1) {
+            if (editWave(v, "Cut wave") { cur, ram -> N163Waves.removed(cur, i, ram) }) st.wave = i.coerceAtMost(w.waves.size - 2)
+        } else {
+            editWave(v, "Cut wave") { cur, ram -> N163Waves.withWave(cur, i, List(cur.size) { N163Waves.CENTRE }, ram) }
+        }
+    }
+
     /** Steps the VRC7 sound's patch: Custom, then the 15 built-in patches (a preset loads its ROM values). */
     private fun stepPatch(v: ViewController, delta: Int) {
         v.session.editNesFm(v.state.instrument, "Set VRC7 patch") { it.withPreset((it.preset + delta).coerceIn(0, Vrc7Presets.PRESETS.last)) }
     }
 
+    /** Toggles one of the song's VRC7 sustain overrides (shared by every VRC7 sound, as the engine keeps one). */
     private fun toggleSustain(v: ViewController, release: Boolean) {
-        v.session.editNesFm(v.state.instrument, if (release) "Set release sustain" else "Set stop sustain") {
-            if (release) it.copy(sustainRelease = !it.sustainRelease) else it.copy(sustainStop = !it.sustainStop)
+        v.session.editVrc7Sustain(if (release) "Set release sustain" else "Set stop sustain") {
+            if (release) it.copy(release = !it.release) else it.copy(stop = !it.stop)
         }
     }
 
@@ -511,6 +716,9 @@ object NesInstrumentView : SystemView() {
                 }
             }
             Row.NAME, Row.SAW, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.ENV_OCTAVE, Row.ENV_PERIOD -> Unit
+            Row.WAVE_PRESET -> stepPreset(v, 1)
+            Row.WAVE_INDEX -> duplicateWave(v)
+            Row.WAVE_SIZE, Row.WAVE_POSITION, Row.WAVE_REPEAT, Row.WAVE_LOOP, Row.WAVE_RELEASE, Row.WAVE_SAMPLES -> Unit
             in FM_PARAMS -> FM_PARAMS.getValue(row).let { p -> if (p.max == 1) setFmParam(v, p) { 1 - it } }
             else -> NesDpcmPage.editTap(v, row)
         }
@@ -539,9 +747,19 @@ object NesInstrumentView : SystemView() {
                 envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
             }
             Row.PATCH -> session.editNesFm(slot, "Set VRC7 patch") { it.withPreset(Vrc7Presets.BELL) }
-            Row.SUSTAIN_RELEASE -> session.editNesFm(slot, "Set release sustain") { it.copy(sustainRelease = false) }
-            Row.SUSTAIN_STOP -> session.editNesFm(slot, "Set stop sustain") { it.copy(sustainStop = false) }
+            Row.SUSTAIN_RELEASE -> session.editVrc7Sustain("Set release sustain") { it.copy(release = false) }
+            Row.SUSTAIN_STOP -> session.editVrc7Sustain("Set stop sustain") { it.copy(stop = false) }
             in FM_PARAMS -> setFmParam(v, FM_PARAMS.getValue(row)) { 0 }
+            Row.WAVE_PRESET -> editWave(v, "Set wave preset") { w, ram -> N163Waves.withPreset(w, N163Preset.SINE, ram) }
+            Row.WAVE_SIZE -> editWave(v, "Set wave size") { w, ram -> N163Waves.withSize(w, N163Wave.DEFAULT.size, ram) }
+            Row.WAVE_POSITION -> editWave(v, "Set wave position") { w, ram -> N163Waves.withPosition(w, 0, ram) }
+            Row.WAVE_INDEX -> deleteWave(v)
+            Row.WAVE_REPEAT -> editWave(v, "Set wave repeat") { w, ram -> N163Waves.withRepeat(w, waveIndex(st, w), 1, ram) }
+            Row.WAVE_LOOP -> editWave(v, "Clear wave loop") { w, ram -> N163Waves.withLoop(w, -1, ram) }
+            Row.WAVE_RELEASE -> editWave(v, "Clear wave release") { w, ram -> N163Waves.withRelease(w, -1, ram) }
+            Row.WAVE_SAMPLES -> editWave(v, "Clear wave sample") { w, ram ->
+                N163Waves.withSample(w, waveIndex(st, w), sampleIndex(st, w), N163Waves.CENTRE, ram)
+            }
             Row.ENV_SHAPE -> session.editNesS5b(slot, "Set 5B envelope shape") { it.copy(shape = S5bShape.OFF) }
             Row.ENV_AUTO -> session.editNesS5b(slot, "Set 5B envelope period mode") { it.copy(autoPitch = S5bEnvelope.DEFAULT.autoPitch) }
             Row.ENV_OCTAVE -> session.editNesS5b(slot, "Set 5B envelope octave") { it.copy(octave = S5bEnvelope.DEFAULT.octave) }
@@ -560,21 +778,35 @@ object NesInstrumentView : SystemView() {
     private fun envelopeRow(song: Song, state: ViewState, row: Row) =
         !dpcmPage(song, state) && !s5bEnvPage(song, state) && row != Row.SLOT && row != Row.NAME && row != Row.CHIP &&
             row != Row.SAW && row != Row.LISTEN && row != Row.PATCH && row != Row.SUSTAIN_RELEASE && row != Row.SUSTAIN_STOP &&
-            row !in FM_PARAMS
+            row !in FM_PARAMS && row !in WAVE_SETTINGS
+
+    /** On the Waves page's Wave and Samples rows, copy, cut and paste take the shown wave. */
+    private fun waveRow(song: Song, state: ViewState, row: Row) = row in WAVE_SHAPE_ROWS && wavePage(song, state)
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
         val session = v.session
         val kind = kind(session.song, st)
         val slot = st.instrument
-        val onEnvelope = envelopeRow(session.song, st, row(st, session.song))
+        val row = row(st, session.song)
+        val onEnvelope = envelopeRow(session.song, st, row)
+        val onWave = waveRow(session.song, st, row)
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> showEnvelope(v, st.envelope + if (a == Action.NEXT_CHANNEL) 1 else -1)
-            Action.COPY -> if (onEnvelope) session.copyNesEnvelope(slot, kind) else session.copyNesInstrument(slot)
-            Action.PASTE -> if (s5bEnvPage(session.song, st) && session.clipboard is NesClip.Envelope) {
-                session.note("An envelope pastes into an envelope page")
-            } else session.pasteNes(slot, kind)
-            Action.CUT -> if (onEnvelope) {
+            Action.COPY -> when {
+                onWave -> n163Wave(session.song, st)?.let { session.copyNesWave(slot, waveIndex(st, it)) }
+                onEnvelope -> session.copyNesEnvelope(slot, kind)
+                else -> session.copyNesInstrument(slot)
+            }
+            Action.PASTE -> when {
+                onWave -> n163Wave(session.song, st)?.let { session.pasteNesWave(slot, waveIndex(st, it), kind) }
+                wavePage(session.song, st) && session.clipboard is NesClip.Envelope ->
+                    session.note("The Waves page has no envelope: paste envelopes on the volume, arpeggio or pitch page")
+                s5bEnvPage(session.song, st) && session.clipboard is NesClip.Envelope ->
+                    session.note("An envelope pastes into an envelope page")
+                else -> session.pasteNes(slot, kind)
+            }
+            Action.CUT -> if (onWave) cutWave(v) else if (onEnvelope) {
                 session.copyNesEnvelope(slot, kind)
                 session.editNesEnvelope(slot, kind, "Cut ${kind.label.lowercase()} envelope") { kind.of(defaultNesInstrument(slot)) }
             } else {
@@ -624,6 +856,25 @@ object NesInstrumentView : SystemView() {
                 h += Hint(v.editLr(), if (param.max == 1) "On / off" else "Value (${v.ud()} coarse)")
                 h += Hint(v.k(Action.CLEAR), "0")
             }
+            Row.WAVE_PRESET -> { h += Hint(v.editLr(), "Preset (all waves)"); h += Hint(v.k(Action.EDIT), "Next preset"); h += Hint(v.k(Action.CLEAR), "Sine") }
+            Row.WAVE_SIZE -> { h += Hint(v.editLr(), "Size ±4 (${v.ud()} ±16)"); h += Hint(v.k(Action.CLEAR), "16 samples") }
+            Row.WAVE_POSITION -> { h += Hint(v.editLr(), "RAM position ±2 (${v.ud()} ±16)"); h += Hint(v.k(Action.CLEAR), "0") }
+            Row.WAVE_INDEX -> {
+                h += Hint(v.lr(), "Previous / next wave")
+                h += Hint(v.editLr(), "Waves ±1 (${v.ud()} ±$COARSE)")
+                h += Hint(v.k(Action.EDIT), "Duplicate wave")
+                h += Hint(v.k(Action.CLEAR), "Delete wave")
+            }
+            Row.WAVE_REPEAT -> { h += Hint(v.editLr(), "Frames ±1 (${v.ud()} ±4)"); h += Hint(v.k(Action.CLEAR), "1 frame") }
+            Row.WAVE_LOOP -> { h += Hint(v.editLr(), "Loop wave"); h += Hint(v.k(Action.CLEAR), "No loop") }
+            Row.WAVE_RELEASE -> { h += Hint(v.editLr(), "Release wave"); h += Hint(v.k(Action.CLEAR), "No release") }
+            Row.WAVE_SAMPLES -> {
+                h += Hint(v.lr(), "Sample")
+                h += Hint(v.editUd(), "Value")
+                h += Hint(v.editLr(), "Draw value along")
+                h += Hint(v.keys.held(Action.CLEAR, v.ud()), "Previous / next wave")
+                h += Hint(v.k(Action.CLEAR), "Sample to 8")
+            }
             Row.ENV_SHAPE -> { h += Hint(v.editLr(), "Shape"); h += Hint(v.k(Action.CLEAR), "Off") }
             Row.ENV_AUTO -> { h += Hint(v.k(Action.EDIT), "Auto / manual period"); h += Hint(v.k(Action.CLEAR), "Auto") }
             Row.ENV_OCTAVE -> { h += Hint(v.editLr(), "Octave ±1 (${v.ud()} ±4)"); h += Hint(v.k(Action.CLEAR), "3") }
@@ -631,7 +882,8 @@ object NesInstrumentView : SystemView() {
             else -> NesDpcmPage.hints(v, row, h)
         }
         if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE || row == Row.CHIP || row == Row.SAW ||
-            row == Row.PATCH || row == Row.SUSTAIN_RELEASE || row == Row.SUSTAIN_STOP || row in S5B_ROWS.drop(5)) h += Hint(v.lr(), "Sound slot")
+            row == Row.PATCH || row == Row.SUSTAIN_RELEASE || row == Row.SUSTAIN_STOP ||
+            (row in WAVE_SETTINGS && row !in WAVE_SHAPE_ROWS) || row in S5B_ROWS.drop(5)) h += Hint(v.lr(), "Sound slot")
         h += Hint(v.channels(), "Page")
         if (dpcmPage(song, st)) {
             h += Hint(v.k(Action.AUDITION), "Listen to ${NesSystem.noteName(st.dpcmKey)}")
@@ -640,13 +892,17 @@ object NesInstrumentView : SystemView() {
         }
         h += Hint(v.k(Action.AUDITION), "Listen on ${song.system.channels.getOrNull(st.listenChannel)?.name ?: ""}")
         h += Hint(v.octaves(), "Listen at ${NesSystem.noteName(v.defaultNote())}")
-        h += Hint(v.copyPaste(), if (envelopeRow(song, st, row)) "Copy/paste envelope" else "Copy/paste sound")
+        h += Hint(v.copyPaste(), when {
+            waveRow(song, st, row) -> "Copy/paste wave"
+            envelopeRow(song, st, row) -> "Copy/paste envelope"
+            else -> "Copy/paste sound"
+        })
     }
 
     /**
      * Help rows for this view (heading, then key → meaning), named with the current [keys]; [expansion] adds its chip's
-     * rows (the VRC6's Chip and Saw rows, the VRC7's FM patch page, the 5B's mixer, noise and hardware envelope pages,
-     * and their envelope meanings).
+     * rows (the VRC6's Chip and Saw rows, the VRC7's FM patch page, the N163's Waves page for its channel count, the
+     * 5B's mixer, noise and hardware envelope pages, and their envelope meanings).
      */
     fun helpSections(keys: Keymap, expansion: NesExpansion = NesExpansion.NONE): List<Pair<String, List<Pair<String, String>>>> {
         val edit = keys.label(Action.EDIT)
@@ -690,12 +946,12 @@ object NesInstrumentView : SystemView() {
                     "FM patch page" to "The fourth page: the patch, one of the chip's 15 built-in sounds (Bell … Chorus) or Custom, " +
                         "the chip's one programmable patch. Changing any field of a built-in patch makes the sound Custom, starting " +
                         "from that patch",
-                    "One custom patch" to "All six FM channels share the custom patch: two different Custom sounds playing at " +
-                        "once both sound like the one loaded last (the song check warns)",
+                    "One custom patch" to "All six FM channels share the custom patch: a Custom sound starting while another FM channel " +
+                        "holds a note of a different Custom sound changes that note's patch too (the song check warns)",
                     "Operators" to "$lr picks the modulator or the carrier column; $edit+$lr changes the value, $edit+$ud in bigger steps",
-                    "Release sustain" to "On: notes keep the chip's sustain flag, so OFF fades slowly (rate 5) instead of with the " +
-                        "patch's release. FamiStudio's engine keeps the last VRC7 sound's setting for all six channels",
-                    "Stop sustain" to "On: a stop or cut lets the note fade at that rate instead of ending with the patch's release",
+                    "Release sustain" to "Song setting, the same for every VRC7 sound (FamiStudio's engine keeps one): on, OFF keys the " +
+                        "note off with the chip's sustain bit, so it fades at rate 5 instead of the patch's release",
+                    "Stop sustain" to "Song setting as well: on, a stop or cut fades at rate 5 too; off, it uses the patch's release",
                 ) + Vrc7Param.entries.map { it.label to fmHelp(it) } +
                     APU_PAGES.dropLast(1).map { it.label to envelopeSummary(it, NesChip.VRC7) },
             )
@@ -719,7 +975,44 @@ object NesInstrumentView : SystemView() {
                         "period ±1 (${keys.held(Action.EDIT, ud)}: × 2 / ÷ 2)",
                 ) + S5B_PAGES.map { it.label to envelopeSummary(it, NesChip.S5B) },
             )
+            else -> n163Help(keys, expansion.n163Channels)
         }
+    }
+
+    /** The N163 section of Help for songs with [channels] N163 channels: the Chip row, the Waves page and its keys. */
+    private fun n163Help(keys: Keymap, channels: Int): List<Pair<String, List<Pair<String, String>>>> {
+        val edit = keys.label(Action.EDIT)
+        val clear = keys.label(Action.CLEAR)
+        val lr = keys.pair(Action.LEFT, Action.RIGHT)
+        val ud = keys.pair(Action.UP, Action.DOWN)
+        val ram = NesRules.n163WaveRam(channels)
+        return listOf(
+            "N163 sounds" to listOf(
+                "Chip" to "On songs with the N163: whether the sound plays on the 2A03's channels or on N163 1-$channels ($edit+$lr there). " +
+                    "N163 sounds have volume, arpeggio and pitch envelopes, no duty and no DPCM page; their fourth page is Waves",
+                "Waves page" to "The sound's waves: 4-bit samples (0-15, 8 is silence) the channel plays over and over, one or a sequence " +
+                    "of several, each for its repeat frames, then looping",
+                "Preset" to "$edit+$lr: Sine, Triangle, Sawtooth, Square 50%/25%, Flat, PWM 1-4 (FamiStudio's), made for every wave " +
+                    "(the PWM presets change the width from wave to wave); $edit tap: the next one; $clear: Sine. Drawn waves show Custom",
+                "Size" to "Samples per wave, 4 to what fits after the position, in fours ($edit+$lr ±4, $edit+$ud ±16; $clear: 16). " +
+                    "The note tables are tuned for 16: 32 sounds an octave lower, 8 an octave higher, sizes that are not 16 × 2^k " +
+                    "out of tune. Presets are made again at the new size, drawn waves are resampled",
+                "Position" to "Where the wave lies in the N163's RAM, an even sample 0-${ram - 4} ($edit+$lr ±2, $edit+$ud ±16; $clear: 0). " +
+                    "With $channels channel${if (channels == 1) "" else "s"} waves have samples 0-${ram - 1}: the RAM's 128 bytes " +
+                    "minus ${8 * channels} for the channel registers",
+                "RAM map" to "This sound's samples highlighted over the other N163 sounds' ranges and the registers. Sounds whose " +
+                    "ranges overlap overwrite each other's waves when they play at once (the same waves at the same place share safely)",
+                "Wave" to "$lr: the previous / next wave of the sequence; $edit tap: duplicate it; $clear: delete it; " +
+                    "$edit+$lr: waves ±1 at the end ($edit+$ud ±$COARSE). At most ${N163Wave.MAX_WAVES} waves and " +
+                    "${N163Wave.MAX_SAMPLES} samples in all (FamiStudio's limit: ${N163Wave.maxWaves(240)} waves of 240 samples)",
+                "Repeat" to "Frames the shown wave plays (1-15) before the next ($edit+$lr, $edit+$ud ±4; $clear: 1)",
+                "Loop / release" to "As on a volume envelope, in waves: after the last wave the sequence goes back to the loop wave " +
+                    "(none: the last wave holds); after OFF the waves from the release play out. A release needs a loop",
+                "Samples" to "$lr: the sample; $edit+$ud: raise / lower it; $edit+$lr: carry its value along; $clear: back to 8; " +
+                    "$clear hold+$lr: jump $COARSE samples, $clear hold+$ud: previous / next wave",
+                "Copy / paste" to "On Wave and Samples: the shown wave (pasted waves are resampled to the size); elsewhere the sound",
+            ) + APU_PAGES.dropLast(1).map { it.label to envelopeSummary(it, NesChip.N163) },
+        )
     }
 
     /** What one patch field does, for Help. */
@@ -731,8 +1024,9 @@ object NesInstrumentView : SystemView() {
         Vrc7Param.AR -> "Attack rate 0-15 (0 never rises, 15 at once)"
         Vrc7Param.DR -> "Decay rate 0-15, from full level down to the sustain level"
         Vrc7Param.SL -> "Sustain level 0 (full) to 15 (-45 dB), where the decay stops"
-        Vrc7Param.RR -> "Release rate 0-15 after OFF (with Sustained on); without it, the rate the note decays at past the sustain level"
-        Vrc7Param.EG -> "Sustained: the envelope holds at the sustain level while the note is held; off: it keeps decaying (percussive)"
+        Vrc7Param.RR -> "Release rate 0-15 after OFF on sustained patches (percussive ones release at 7); percussive patches " +
+            "also fall at this rate below the sustain level while the note holds"
+        Vrc7Param.EG -> "Sustained: the level holds at the sustain level while the note is held; off: it keeps falling (percussive)"
         Vrc7Param.KSL -> "Key scale level: higher notes get quieter by 0, 1.5, 3 or 6 dB per octave"
         Vrc7Param.KSR -> "Key scale rate: higher notes get faster envelopes"
         Vrc7Param.AM -> "Tremolo from the chip's LFO (3.7 Hz, 4.8 dB)"

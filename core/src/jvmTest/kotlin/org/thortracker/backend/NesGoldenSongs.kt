@@ -8,13 +8,21 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.N163Preset
+import org.thortracker.system.nes.N163Presets
+import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.S5bEnvelope
 import org.thortracker.system.nes.S5bShape
 import org.thortracker.system.nes.Vrc6SawVolume
+import org.thortracker.system.nes.Vrc7Patch
+import org.thortracker.system.nes.Vrc7Presets
+import org.thortracker.system.nes.Vrc7Sustain
 import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -24,8 +32,14 @@ import org.thortracker.system.nes.DpcmStarterKit
  * Songs whose FamiStudio text export FamiStudio 4.5.3 itself turned into engine data (tools/audio/nes_golden.py):
  * the fixtures in src/jvmTest/resources/nes-golden. Between them they use every NES effect, OFF as release and stop,
  * legato, identical and differing instruments, custom pattern lengths, speed changes on several channels, parked
- * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides; the 5B
- * ones its mixer and noise envelopes, every hardware envelope mode and the envelope period effects.
+ * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides; the
+ * VRC7 ones built-in and custom patches, two custom sounds taking the chip's one custom patch in turn, key-off releases
+ * and stops with the song's sustain overrides, and FM pitch effects; the N163 ones wave sequences (repeats, loop,
+ * release), wave sizes and positions, shared waves, the phase reset and 1, 2, 4 and 8 channels (each count has its own
+ * note table, pitch shift and engine build); the 5B ones its mixer and noise envelopes, every hardware envelope mode and
+ * the envelope period effects. The copies songs (2A03, VRC6, N163, 5B) hold identical sounds under different names,
+ * which FamiStudio's export merges into one instrument, with a legato loop entry across the copies. Every trace covers
+ * the 2A03's registers as well as the expansion's.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -33,11 +47,43 @@ object NesGoldenSongs {
         "effects" to ::effects,
         "envelopes" to ::envelopes,
         "dpcm" to ::dpcm,
+        "copies" to ::copies,
         "vrc6_demo" to NesVrc6System::demo,
         "vrc6_effects" to ::vrc6Effects,
+        "vrc6_copies" to ::vrc6Copies,
+        "vrc7_demo" to NesVrc7System::demo,
+        "vrc7_effects" to ::vrc7Effects,
+        "n163_demo" to { NesN163System.of(8).demo() },
+        "n163_demo_1" to { NesN163System.of(1).demo() },
+        "n163_effects" to ::n163Effects,
+        "n163_copies" to ::n163Copies,
         "s5b_demo" to NesS5bSystem::demo,
         "s5b_effects" to ::s5bEffects,
+        "s5b_copies" to ::s5bCopies,
+        "s5b_manual_copies" to ::s5bManualCopies,
     )
+    /** Independently exported witnesses for intentional corrections, not trace-equality fixtures. */
+    val CORRECTIONS: Map<String, () -> Song> = mapOf("vrc7_patch_restore" to ::vrc7PatchRestore)
+
+    fun vrc7PatchRestore(): Song {
+        val base = NesVrc7System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Held lead", volume = NesEnvelope(listOf(15, 12, 9, 6), loop = 3),
+            chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM,
+                listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)))
+        bank[1] = NesInstrument("Other patch", chip = NesChip.VRC7,
+            fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)))
+        val fm1 = NesRules.VRC7_FM1
+        val first = P("Mid-song legato", length = 32, channels = base.system.channels.size)
+        first.note(fm1, 0, "A-4", 1)
+        first.note(fm1 + 1, 8, "C-3", 2)
+        first.note(fm1, 16, "C-5") // Restore lead without restarting its held envelope.
+        val loop = P("Loop restoration", length = 16, channels = base.system.channels.size)
+        loop.note(fm1, 0, "E-5") // The previous loop ended with the other channel's patch.
+        loop.note(fm1 + 1, 8, "C-3", 2)
+        return base.copy(patterns = listOf(first.build(), loop.build()), orders = listOf(0, 1),
+            loopOrder = 1, sound = base.nes.copy(instruments = bank))
+    }
 
     private fun n(name: String): Int {
         val index = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-").indexOf(name.substring(0, 2))
@@ -403,6 +449,408 @@ object NesGoldenSongs {
         return base.copy(
             title = "5B effects", artist = "Golden", ticksPerRow = 4, loopOrder = 2,
             patterns = listOf(a.build(), b.build(), c.build(), d.build(), e.build()), orders = listOf(0, 1, 2, 3, 4),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * VRC7: two custom sounds (and an identical twin of one) loading the chip's one custom patch in turn, also on the
+     * same row, and built-in patches beside them; the song's release and stop sustain overrides with OFF as key-off
+     * release ($56) and as stop, Sxx cuts and note delays; legato, slides, vibrato, Pxx (converted to frequency steps),
+     * volume and volume slides, 0xy, pitch and arpeggio envelopes, the FM channels' lowest and a high note, the speed
+     * set on an FM channel, and 2A03 channels alongside. The last custom-sound note before the song's end is FM 1's
+     * (FM 1 holds that sound when the loop is entered), so FamiStudio's exporter and the lowering have the same
+     * patch state at the loop. The two intentional export corrections have their own adversarial fixture.
+     */
+    fun vrc7Effects(): Song {
+        val base = NesVrc7System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val vrc7 = NesChip.VRC7
+        val lead = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0xF1, 0x61, 0x9B, 0x1F, 0xD2, 0x74, 0x31, 0x57))
+        bank[0] = NesInstrument("Custom lead", volume = NesEnvelope(listOf(15, 14, 13, 12, 11, 9, 6, 3, 0), loop = 3, release = 5), chip = vrc7, fm = lead)
+        bank[1] = NesInstrument("Custom bass", volume = NesEnvelope(listOf(15, 13, 12), loop = 2), chip = vrc7,
+            fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)))
+        bank[2] = NesInstrument("Piano arp", arpeggio = NesEnvelope(listOf(0, 4, 7), loop = 0), chip = vrc7, fm = Vrc7Patch().withPreset(3))
+        bank[3] = NesInstrument("Bass guitar bend", pitch = NesEnvelope(listOf(6, 3, 1, 0)), chip = vrc7, fm = Vrc7Patch().withPreset(13))
+        bank[4] = NesInstrument("Bell decay", volume = NesEnvelope(listOf(15, 13, 11, 9, 7, 5, 3, 1)), chip = vrc7, fm = Vrc7Patch().withPreset(Vrc7Presets.BELL))
+        bank[5] = NesInstrument("Custom lead twin", volume = NesEnvelope(listOf(15, 14, 13, 12, 11, 9, 6, 3, 0), loop = 3, release = 5), chip = vrc7, fm = lead)
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val fm1 = NesRules.VRC7_FM1
+        val fm2 = fm1 + 1
+        val fm3 = fm1 + 2
+        val fm4 = fm1 + 3
+        val fm5 = fm1 + 4
+        val fm6 = fm1 + 5
+        val a = P("VRC7 A", channels = 11)
+        // FM 1: custom lead, legato, effects, release then stop, the range ends, delays and cuts, its twin.
+        a.note(fm1, 0, "C-4", 1)
+        a.note(fm1, 4, "E-4", 0) // legato
+        a.note(fm1, 8, "G-4", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(fm1, 12, NesRules.FX_VIBRATO, 0x00)
+        a.note(fm1, 14, "A-4", 1, NesRules.FX_SLIDE_UP, 0x05)
+        a.note(fm1, 18, "D-5", 1, NesRules.FX_SLIDE_DOWN, 0x07)
+        a.note(fm1, 22, "C-5", 1, NesRules.FX_FINE_PITCH, 0x8C)
+        a.note(fm1, 24, "C-5", 1) // the next note resets the fine pitch
+        a.off(fm1, 26) // key-off release ($56)
+        a.off(fm1, 28) // already released: stop
+        a.note(fm1, 30, "C-1", 1) // the FM channels' lowest note
+        a.note(fm1, 32, "B-7", 1)
+        a.note(fm1, 34, "F-4", 1, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(fm1, 36, "F-4", 1, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(fm1, 38, "A-4", 1, NesRules.FX_VOLUME, 0x09)
+        a.note(fm1, 40, "A-4", 1, NesRules.FX_VOLUME_SLIDE, 0xF3)
+        a.note(fm1, 44, "E-4", 1, NesRules.FX_ARPEGGIO, 0x37)
+        a.note(fm1, 48, "E-4", 6) // the twin: identical but for its name, so FamiStudio's export merges it with the lead
+        a.note(fm1, 50, "G-4", 0) // legato on the twin
+        a.off(fm1, 52)
+        a.note(fm1, 60, "A-4", 1) // the song's last custom-sound note
+        // FM 2: the second custom sound, on FM 1's rows too (both load; the higher channel's patch stays).
+        a.note(fm2, 0, "C-3", 2)
+        a.off(fm2, 16)
+        a.note(fm2, 20, "G-2", 2)
+        a.note(fm2, 32, "C-3", 2, NesRules.FX_SLIDE_UP, 0x07)
+        a.off(fm2, 44)
+        // FM 3: built-in Piano, its arpeggio envelope and 0xy, the speed changes.
+        a.note(fm3, 0, "A-3", 3)
+        a.note(fm3, 8, "C-4", 3, NesRules.FX_ARPEGGIO, 0x47)
+        a.off(fm3, 16)
+        a.fx(fm3, 20, NesRules.FX_SPEED, 0x05)
+        a.note(fm3, 32, "E-4", 3, NesRules.FX_VOLUME, 0x0C)
+        a.fx(fm3, 44, NesRules.FX_SPEED, 0x04)
+        a.off(fm3, 48)
+        // FM 4: built-in Bass guitar with a pitch envelope, cuts, a slide, vibrato and Pxx.
+        a.note(fm4, 0, "A-1", 4)
+        a.note(fm4, 8, "A-1", 4, NesRules.FX_NOTE_CUT, 0x02)
+        a.note(fm4, 16, "E-2", 4, NesRules.FX_SLIDE_UP, 0x0C)
+        a.note(fm4, 32, "C-2", 4, NesRules.FX_VIBRATO, 0x38)
+        a.fx(fm4, 40, NesRules.FX_VIBRATO, 0x00)
+        a.note(fm4, 48, "C-2", 4, NesRules.FX_FINE_PITCH, 0x70)
+        a.off(fm4, 56)
+        // FM 5: built-in Bell, a volume slide, notes after the last custom one.
+        a.note(fm5, 0, "C-5", 5, NesRules.FX_VOLUME_SLIDE, 0x4F)
+        for (r in 8 until 64 step 8) a.note(fm5, r, if (r % 16 == 0) "G-5" else "E-5", 5)
+        a.note(fm5, 62, "C-6", 5)
+        // FM 6: the twin (one instrument with the lead in FamiStudio's export) while FM 1 holds the lead.
+        a.note(fm6, 24, "G-4", 6)
+        a.off(fm6, 32)
+        a.note(fm6, 46, "B-4", 6, NesRules.FX_NOTE_DELAY, 0x01)
+        a.off(fm6, 54)
+        // 2A03 alongside.
+        a.note(0, 0, "E-4", 7)
+        a.note(0, 32, "G-4", 7)
+        a.off(0, 56)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
+        val b = P("VRC7 B", length = 32, channels = 11)
+        b.note(fm1, 0, "E-5", 1)
+        b.off(fm1, 8)
+        b.note(fm1, 16, "E-4", 2) // FM 1 switches to the other custom sound and back
+        b.note(fm1, 24, "A-4", 1)
+        b.note(fm2, 4, "C-3", 2)
+        b.off(fm2, 12)
+        b.note(fm3, 0, "A-3", 3)
+        b.note(fm5, 16, "E-5", 5)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "VRC7 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank, vrc7Sustain = Vrc7Sustain(release = true, stop = true)),
+        )
+    }
+
+    /**
+     * N163 with 4 channels: a wave sequence with repeats, a loop and a release (OFF releases volume and waves: `$5A`), a
+     * sound that releases through its waves only, 32- and 8-sample waves, two sounds sharing one identical wave at one
+     * position, legato on the same sound and an instrument change (always an attack on the N163), the phase reset with
+     * and without a note, slides both ways, vibrato, fine pitch, volume and a volume slide, arpeggio, delays, a cut, a
+     * stop, the speed set on an N163 channel, and 2A03 channels alongside.
+     */
+    fun n163Effects(): Song {
+        val system = NesN163System.of(4)
+        val base = system.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val n163 = NesChip.N163
+        fun wave(preset: N163Preset, size: Int) = N163Presets.wave(preset, size, 0, 1)
+        bank[0] = NesInstrument("Sequence", volume = NesEnvelope(listOf(14, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), chip = n163,
+            wave = N163Wave(waves = N163Presets.waves(N163Preset.PWM2, 16, 3), repeat = listOf(2, 3, 1), loop = 1, release = 2, position = 0))
+        bank[1] = NesInstrument("Wave release", volume = NesEnvelope(listOf(11)), chip = n163,
+            wave = N163Wave(waves = listOf(wave(N163Preset.SQUARE50, 16), wave(N163Preset.SINE, 16)), repeat = listOf(1, 1),
+                loop = 0, release = 1, position = 16))
+        bank[2] = NesInstrument("Big 32", volume = NesEnvelope(listOf(12, 11, 10), loop = 2), arpeggio = NesEnvelope(listOf(0, 12), loop = 0),
+            chip = n163, wave = N163Wave(size = 32, waves = listOf(wave(N163Preset.TRIANGLE, 32)), position = 32))
+        bank[3] = NesInstrument("Tiny 8", volume = NesEnvelope(listOf(10, 8, 6, 4)), pitch = NesEnvelope(listOf(0, 2, 4, 2), loop = 0),
+            chip = n163, wave = N163Wave(size = 8, waves = listOf(wave(N163Preset.SAWTOOTH, 8)), position = 64))
+        bank[4] = NesInstrument("Shared A", volume = NesEnvelope(listOf(9)), chip = n163,
+            wave = N163Wave(waves = listOf(wave(N163Preset.SINE, 16)), position = 80))
+        bank[5] = NesInstrument("Shared B", volume = NesEnvelope(listOf(13, 11, 9), loop = 2), chip = n163,
+            wave = N163Wave(waves = listOf(wave(N163Preset.SINE, 16)), position = 80))
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val w1 = NesRules.N163_FIRST
+        val w2 = w1 + 1
+        val w3 = w1 + 2
+        val w4 = w1 + 3
+        val a = P("N163 A", channels = 9)
+        // N163 1: the sequence, legato, release then stop, slides, vibrato, fine pitch, phase reset, delay, cut.
+        a.note(w1, 0, "A-4", 1)
+        a.note(w1, 4, "C-5", 0) // legato: the sequence continues
+        a.off(w1, 8) // release: volume and waves jump to their release points
+        a.off(w1, 12) // already released: stop
+        a.note(w1, 16, "E-4", 1, NesRules.FX_SLIDE_UP, 0x07)
+        a.note(w1, 20, "B-4", 1, NesRules.FX_SLIDE_DOWN, 0x05)
+        a.note(w1, 24, "D-5", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(w1, 28, NesRules.FX_VIBRATO, 0x00)
+        a.note(w1, 30, "D-5", 1, NesRules.FX_FINE_PITCH, 0x8A)
+        a.fx(w1, 33, NesRules.FX_PHASE_RESET, 0x00) // without a note
+        a.note(w1, 36, "F-4", 1, NesRules.FX_PHASE_RESET, 0x00) // with a note
+        a.note(w1, 40, "G-4", 1, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(w1, 44, "G-4", 1, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(w1, 48, "C-1", 1) // the N163 reaches every note down to C-1
+        a.note(w1, 52, "F-8", 1) // and high up with 4 channels
+        a.off(w1, 56)
+        // N163 2: release through the waves only, then an instrument change (no legato across sounds on the N163).
+        a.note(w2, 0, "E-4", 2)
+        a.off(w2, 6)
+        a.note(w2, 8, "G-4", 2, NesRules.FX_VOLUME, 0x09)
+        a.note(w2, 12, "G-4", 6) // another sound: an attack even without one written
+        a.note(w2, 16, "B-4", 0, NesRules.FX_VOLUME_SLIDE, 0xF4)
+        a.fx(w2, 24, NesRules.FX_VOLUME, 0x0C)
+        a.note(w2, 28, "C-5", 2, NesRules.FX_ARPEGGIO, 0x47)
+        a.fx(w2, 32, NesRules.FX_SPEED, 0x05)
+        a.fx(w2, 40, NesRules.FX_SPEED, 0x04)
+        a.off(w2, 48)
+        // N163 3: the 32-sample triangle (an octave below the note) with its octave arpeggio, then the shared sine.
+        a.note(w3, 0, "C-4", 3)
+        a.note(w3, 16, "G-4", 3, NesRules.FX_SLIDE_DOWN, 0x0C)
+        a.note(w3, 32, "A-3", 5)
+        a.off(w3, 60)
+        // N163 4: the 8-sample saw (an octave above) with its pitch envelope, then the other shared sine alongside N163 3.
+        a.note(w4, 0, "C-3", 4)
+        a.note(w4, 8, "E-3", 4, NesRules.FX_FINE_PITCH, 0x70)
+        a.note(w4, 32, "E-4", 6)
+        a.note(w4, 40, "E-4", 0, NesRules.FX_PHASE_RESET, 0x00) // legato with a phase reset
+        a.off(w4, 60)
+        // 2A03 alongside.
+        a.note(0, 0, "E-4", 7)
+        a.note(2, 0, "C-3", 7)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
+        val b = P("N163 B", length = 32, channels = 9)
+        b.note(w1, 0, "A-4", 1) // the loop enters with the sequence restarted
+        b.note(w2, 0, "C-5", 2)
+        b.off(w2, 16)
+        b.note(w3, 0, "E-4", 5)
+        b.note(w4, 0, "E-4", 6)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "N163 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * N163 with 2 channels: two identical sounds under different names (FamiStudio's export merges them into one
+     * instrument, `Project.MergeIdenticalInstruments`, which ignores names) and a third that differs only in its volume.
+     * N163 1 switches between the copies with attacks and legato, and the loop's first note is legato on one copy while
+     * the loop's last instrument is the other: one instrument after the merge, so the loop keeps that note without an
+     * attack (unmerged copies would force one: the N163 allows no attack only on the same instrument). N163 2 plays the
+     * other copy at the same RAM position alongside, and the differing sound (always an attack). 2A03 pulse and noise
+     * alongside, so their registers are traced too.
+     */
+    fun n163Copies(): Song {
+        val system = NesN163System.of(2)
+        val base = system.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val n163 = NesChip.N163
+        val copy = NesInstrument("Copy", volume = NesEnvelope(listOf(13, 11, 9, 8), loop = 3), chip = n163,
+            wave = N163Wave(waves = listOf(N163Presets.wave(N163Preset.SINE, 16, 0, 1)), position = 0))
+        bank[0] = copy
+        bank[1] = copy.copy(name = "Renamed twin")
+        bank[2] = copy.copy(name = "Quieter", volume = NesEnvelope(listOf(10, 9, 8, 7), loop = 3),
+            wave = copy.wave.copy(position = 32))
+        bank[3] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        bank[4] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val w1 = NesRules.N163_FIRST
+        val w2 = w1 + 1
+        val a = P("Copies A", length = 16, channels = 7)
+        a.note(w1, 0, "C-4", 1)
+        a.note(w1, 4, "E-4", 2) // the twin with an attack: no instrument change after the merge
+        a.note(w1, 8, "G-4", 0) // legato on the twin
+        a.note(w1, 12, "A-4", 1)
+        a.note(w2, 2, "C-3", 2)
+        a.note(w2, 10, "C-3", 3) // the differing sound: an attack even without one written
+        a.note(w2, 14, "D-3", 0)
+        a.note(0, 0, "E-4", 4)
+        a.note(3, 0, "C-3", 5)
+        a.note(3, 8, "C-3", 5)
+        val b = P("Copies B", length = 16, channels = 7)
+        b.note(w1, 0, "C-5", 0) // legato: on Copy the first time, on the twin each time the loop comes round
+        b.note(w1, 8, "E-5", 2)
+        b.note(w1, 12, "D-5", 0) // the loop's last instrument: the twin
+        b.note(w2, 4, "G-3", 1)
+        b.off(w2, 12)
+        b.note(0, 0, "A-4", 4)
+        return base.copy(
+            title = "N163 copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * Identical sounds under different names on the [legato] channels (FamiStudio's export merges them into one
+     * instrument, `Project.MergeIdenticalInstruments`, which ignores names) and one that differs only slightly: on each
+     * channel the copies take turns with attacks and legato, and the loop's first note is legato on one copy while the
+     * loop's last instrument is the other. After the merge that is one instrument, so the loop keeps the note without an
+     * attack (comparing the copies by slot would force one). Pattern A is the intro, B the loop.
+     */
+    private fun copyPatterns(channels: Int, legato: List<Int>, copy: Int, twin: Int, other: Int): Pair<P, P> {
+        val a = P("Copies A", length = 16, channels = channels)
+        val b = P("Copies B", length = 16, channels = channels)
+        for ((k, ch) in legato.withIndex()) {
+            // Every other channel runs the copies the other way round.
+            val (first, second) = if (k % 2 == 0) copy to twin else twin to copy
+            a.note(ch, 0, "C-4", first)
+            a.note(ch, 4, "E-4", second) // the other copy with an attack: the same instrument after the merge
+            a.note(ch, 8, "G-4", 0) // legato on it
+            a.note(ch, 10, "G-4", other) // the differing sound: an instrument change
+            a.note(ch, 12, "A-4", first)
+            b.note(ch, 0, "C-5", 0) // legato: on the first copy the first time, on the second when the loop comes round
+            b.note(ch, 8, "E-5", second)
+            b.note(ch, 12, "D-5", 0) // the loop's last instrument: the second copy
+        }
+        return a to b
+    }
+
+    /** 2A03: renamed identical copies on both pulses ([copyPatterns]), the triangle and noise alongside. */
+    fun copies(): Song {
+        val base = NesSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val lead = NesInstrument("Lead", volume = NesEnvelope(listOf(13, 11, 9, 8), loop = 3), duty = NesEnvelope(listOf(2, 1), loop = 1))
+        bank[0] = lead
+        bank[1] = lead.copy(name = "Lead, renamed")
+        bank[2] = lead.copy(name = "Lead, quieter", volume = NesEnvelope(listOf(10, 9, 8, 7), loop = 3))
+        bank[3] = NesInstrument("Bass")
+        bank[4] = NesInstrument("Noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val (a, b) = copyPatterns(NesSystem.channels.size, listOf(0, 1), 1, 2, 3)
+        a.note(2, 0, "C-3", 4)
+        b.note(2, 0, "G-2", 4)
+        for (r in 0 until 16 step 8) a.note(3, r, "C-3", 5)
+        return base.copy(
+            title = "Copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /** VRC6: renamed identical copies on VRC6 Pulse 1 and the saw ([copyPatterns]), 2A03 Pulse 1 alongside. */
+    fun vrc6Copies(): Song {
+        val base = NesVrc6System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val vrc6 = NesChip.VRC6
+        val pulse = NesInstrument("VRC6 lead", volume = NesEnvelope(listOf(13, 11, 9, 8), loop = 3),
+            duty = NesEnvelope(listOf(6, 3), loop = 1), chip = vrc6)
+        bank[0] = pulse
+        bank[1] = pulse.copy(name = "VRC6 lead, renamed")
+        bank[2] = pulse.copy(name = "VRC6 lead, quieter", volume = NesEnvelope(listOf(10, 9, 8, 7), loop = 3))
+        val saw = NesInstrument("Saw", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), chip = vrc6, sawVolume = Vrc6SawVolume.FULL)
+        bank[3] = saw
+        bank[4] = saw.copy(name = "Saw, renamed")
+        bank[5] = saw.copy(name = "Saw, half", sawVolume = Vrc6SawVolume.HALF)
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        val channels = NesVrc6System.channels.size
+        val (a, b) = copyPatterns(channels, listOf(NesRules.VRC6_PULSE1), 1, 2, 3)
+        val (sa, sb) = copyPatterns(channels, listOf(NesRules.VRC6_SAW), 4, 5, 6)
+        for (r in 0 until 16) {
+            a.tracks[NesRules.VRC6_SAW][r] = sa.tracks[NesRules.VRC6_SAW][r]
+            b.tracks[NesRules.VRC6_SAW][r] = sb.tracks[NesRules.VRC6_SAW][r]
+        }
+        a.note(0, 0, "E-4", 7)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "VRC6 copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * 5B: renamed identical copies on 5B Square 1 (volume and a tone/off mixer envelope) and 5B Square 2 (an auto-period
+     * saw buzz) ([copyPatterns]); the buzz's differing sound changes only its hardware envelope octave, which FamiStudio's
+     * merge compares but its legato rule does not. 2A03 Pulse 1 alongside.
+     */
+    fun s5bCopies(): Song {
+        val base = NesS5bSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val s5b = NesChip.S5B
+        val lead = NesInstrument("5B lead", volume = NesEnvelope(listOf(13, 11, 9, 8), loop = 3), chip = s5b,
+            mixer = NesEnvelope(listOf(2, 2, 3, 2), loop = 1))
+        bank[0] = lead
+        bank[1] = lead.copy(name = "5B lead, renamed")
+        bank[2] = lead.copy(name = "5B lead, quieter", volume = NesEnvelope(listOf(10, 9, 8, 7), loop = 3))
+        val buzz = NesInstrument("Buzz", chip = s5b, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = true, octave = 4))
+        bank[3] = buzz
+        bank[4] = buzz.copy(name = "Buzz, renamed")
+        bank[5] = buzz.copy(name = "Buzz, octave 3", s5b = buzz.s5b.copy(octave = 3))
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        val channels = NesS5bSystem.channels.size
+        val sq1 = NesRules.S5B_SQUARE1
+        val sq2 = sq1 + 1
+        val (a, b) = copyPatterns(channels, listOf(sq1), 1, 2, 3)
+        val (sa, sb) = copyPatterns(channels, listOf(sq2), 4, 5, 6)
+        for (r in 0 until 16) {
+            a.tracks[sq2][r] = sa.tracks[sq2][r]
+            b.tracks[sq2][r] = sb.tracks[sq2][r]
+        }
+        a.note(0, 0, "E-4", 7)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "5B copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * 5B: two manual-period sounds identical but for their names (one instrument in FamiStudio's merged export) on Square
+     * 1 while another square's manual sound or an `Jyy` changes the shared envelope period. Order A: Square 2's manual saw
+     * sets 2000, then Square 1 switches to the renamed copy with an attack (FamiStudio's export loads nothing there: the
+     * same instrument after the merge, so 2000 stays), a `J40` from Square 3, a legato note (no reload). Order B (the
+     * loop): the saw again, then the switch back to the first copy, and the loop's first note is legato on the other copy
+     * (merged: no attack, no load). Each switch loads the copy's own slot in our streams (live edits follow the played
+     * slot) with `$5F`, which keeps the shared period, so every frame must match FamiStudio's export, where the other
+     * square's period stays.
+     */
+    fun s5bManualCopies(): Song {
+        val base = NesS5bSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val s5b = NesChip.S5B
+        val tremolo = NesInstrument("Manual tremolo", volume = NesEnvelope(listOf(13)), chip = s5b,
+            s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
+        bank[0] = tremolo
+        bank[1] = tremolo.copy(name = "Manual tremolo, renamed")
+        bank[2] = NesInstrument("Manual saw", chip = s5b, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = false, period = 2000))
+        bank[3] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        val sq1 = NesRules.S5B_SQUARE1
+        val sq2 = sq1 + 1
+        val sq3 = sq1 + 2
+        val a = P("Manual copies A", length = 16, channels = 8)
+        a.note(sq1, 0, "C-4", 1)
+        a.note(sq2, 4, "E-3", 3) // Square 2's manual saw: the shared period is 2000
+        a.note(sq1, 8, "E-4", 2) // the renamed copy with an attack: FamiStudio loads nothing (one instrument)
+        a.fx(sq3, 10, NesRules.FX_ENV_PERIOD_LO, 0x40) // period $0040, Square 1's override pending
+        a.note(sq1, 12, "G-4") // legato: no reload, $0040 stays
+        a.note(0, 0, "E-4", 4)
+        val b = P("Manual copies B", length = 16, channels = 8)
+        b.note(sq1, 0, "C-5") // legato on the renamed copy; looping, the first copy is held (merged: still no attack)
+        b.note(sq2, 4, "D-3", 3) // the saw reloads 2000
+        b.note(sq1, 8, "E-5", 1) // back to the first copy with an attack: one instrument after the merge, no load
+        b.note(sq1, 12, "D-5") // legato; the loop's last instrument is the first copy
+        b.note(0, 0, "A-4", 4)
+        return base.copy(
+            title = "5B manual copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
             sound = base.nes.copy(instruments = bank),
         )
     }

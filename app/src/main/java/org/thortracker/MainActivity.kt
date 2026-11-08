@@ -13,6 +13,7 @@ import android.os.BatteryManager
 import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
+import android.hardware.input.InputManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -25,6 +26,7 @@ import android.os.Looper
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -71,7 +73,7 @@ import org.thortracker.ui.hideFromAccessibility
 import java.io.File
 
 /** Two display hosts, one document. Musical edits and driver state never live here. */
-class MainActivity : Activity(), DisplayManager.DisplayListener {
+class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.InputDeviceListener {
     private lateinit var session: EditorSession
     private lateinit var projectStore: ProjectStore
     private lateinit var workspace: WorkspaceStore
@@ -80,6 +82,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private val states: MutableList<ViewState> get() = panes.panes
     private val focus: Int get() = panes.focus
     private lateinit var displays: DisplayManager
+    private lateinit var inputDevices: InputManager
     private val main = Handler(Looper.getMainLooper())
     private val hosts = mutableMapOf<Int, Host>()
     private val popups = Popups({ hosts[it]?.popup }, { hosts.keys })
@@ -279,6 +282,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             if (start) session.selection.let { transport.start(it.order, it.row) } else transport.stop()
         }
         popups.onOpenChanged = { open ->
+            input.resetStick()
             if (open) {
                 hosts.values.forEach { it.tracker.cancelInteraction() }
             } else {
@@ -289,6 +293,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         displays = getSystemService(DisplayManager::class.java)
         displays.registerDisplayListener(this, main)
+        inputDevices = getSystemService(InputManager::class.java)
+        inputDevices.registerInputDeviceListener(this, main)
         // Once per process: a previous activity's cancelled worker may still own a spool while it exits.
         if (!wavSpoolsCleaned) {
             cacheDir.listFiles { _, name -> name.startsWith(WAV_SPOOL_PREFIX) && name.endsWith(".part") }
@@ -378,6 +384,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
 
     override fun onDestroy() {
         displays.unregisterDisplayListener(this)
+        inputDevices.unregisterInputDeviceListener(this)
         main.removeCallbacksAndMessages(null)
         detachSecondary()
         // Nothing can pick a destination for a render any more: free it (a file being written still completes).
@@ -425,6 +432,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 }
                 override fun dispatchKeyEvent(event: KeyEvent): Boolean =
                     routeKey(event) || super.dispatchKeyEvent(event)
+                override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+                    rightStick(event)
+                    return super.dispatchGenericMotionEvent(event)
+                }
             }
             presentation.setOnDismissListener {
                 if (secondary === presentation) {
@@ -462,6 +473,59 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     override fun onDisplayChanged(displayId: Int) = updateSecondary()
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean = routeKey(event) || super.dispatchKeyEvent(event)
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        rightStick(event)
+        return super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // A shade, dialog or the other window took the input: a flick from before must not finish a jump.
+        input.resetStick()
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) = input.resetStick()
+    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
+    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
+
+    /**
+     * Feeds the right stick's vertical axis, including the samples batched into [event], to
+     * [HostInput.rightStick]; a quick double flick moves the focused Pattern view to its pattern's first or last
+     * row. Only observes: the event still goes to the window, so Android keeps turning the left stick and hat
+     * into D-pad keys.
+     */
+    private fun rightStick(event: MotionEvent) {
+        if (event.actionMasked != MotionEvent.ACTION_MOVE || !event.isFromSource(InputDevice.SOURCE_JOYSTICK)) return
+        val device = event.device ?: return
+        val range = rightStickY(device) ?: return
+        val host = hosts[focus]
+        val pattern = active && documentReady && host?.tracker?.patternFocused == true
+        fun sample(value: Float, millis: Long) {
+            val y = (value - range.min) / range.range * 2f - 1f
+            val jump = input.rightStick(device.id, y, millis, focus, states[focus].kind, pattern, popups.isOpen, toolbarFocused())
+            if (jump != 0) host?.tracker?.jumpPatternEdge(jump > 0)
+        }
+        for (i in 0 until event.historySize) sample(event.getHistoricalAxisValue(range.axis, i), event.getHistoricalEventTime(i))
+        sample(event.getAxisValue(range.axis), event.eventTime)
+    }
+
+    /**
+     * [device]'s right-stick vertical axis, or null. Android's standard gamepad layout puts the right stick on
+     * Z/RZ and the analog triggers on LTRIGGER/RTRIGGER (or BRAKE/GAS); controllers without a key layout file
+     * get Linux's raw axes, right stick on RX/RY and triggers on Z/RZ. So Z/RZ is the stick when RX/RY are absent
+     * or dedicated trigger axes exist, otherwise RX/RY. Both axes of a pair must exist and be centred, so a
+     * trigger or a lone axis is never paired with half of a stick.
+     */
+    private fun rightStickY(device: InputDevice): InputDevice.MotionRange? {
+        fun centred(axis: Int) = device.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK)?.takeIf { it.min < 0f && it.max > 0f }
+        fun present(axis: Int) = device.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK) != null
+        val zPair = centred(MotionEvent.AXIS_Z)?.let { centred(MotionEvent.AXIS_RZ) }
+        val rPair = centred(MotionEvent.AXIS_RX)?.let { centred(MotionEvent.AXIS_RY) }
+        val triggers = present(MotionEvent.AXIS_LTRIGGER) || present(MotionEvent.AXIS_RTRIGGER) ||
+            present(MotionEvent.AXIS_BRAKE) || present(MotionEvent.AXIS_GAS)
+        return if (zPair != null && (rPair == null || triggers)) zPair else rPair
+    }
 
     /**
      * Every key from either window. Layers in order: binding capture, open popup, host chords and global

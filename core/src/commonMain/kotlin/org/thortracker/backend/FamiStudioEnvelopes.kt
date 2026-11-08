@@ -1,5 +1,6 @@
 package org.thortracker.backend
 
+import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import kotlin.math.PI
@@ -8,17 +9,19 @@ import kotlin.math.sin
 
 /**
  * FamiStudio 4.5.3's envelope encoding, ported from its exporter (`FamitoneMusicFile.ProcessEnvelope`,
- * `ProcessMixerEnvelope`, `CleanupEnvelopes`, `Envelope.Optimize`, `Envelope.CreateVibratoEnvelope`) so the bytes the
- * engine reads are the ones FamiStudio itself would export. Envelope bytes: a value is byte − 192 (`$80-$FF`),
- * `$01-$7F` holds the previous value that many frames, `$00 n` jumps to index n. Volume envelopes start with their
- * release index, pitch envelopes with the relative flag (`$80`).
+ * `ProcessMixerEnvelope`, `CleanupEnvelopes`, `Envelope.Optimize`, `Envelope.CreateVibratoEnvelope`,
+ * `Instrument.BuildWaveformsAndWaveIndexEnvelope`) so the bytes the engine reads are the ones FamiStudio itself would
+ * export. Envelope bytes: a value is byte − 192 (`$80-$FF`), `$01-$7F` holds the previous value that many frames,
+ * `$00 n` jumps to index n. Volume and N163 wave-index envelopes start with their release index, pitch envelopes with
+ * the relative flag (`$80`).
  */
 internal object FamiStudioEnvelopes {
     /**
-     * Envelope kinds in the image's directory order (the ordinal is the directory's kind byte): the 2A03 four, then the
-     * 5B's mixer (FamiStudio `S5BMixer`) and noise period (`S5BNoiseFreq`) envelopes.
+     * Envelope kinds in the image's directory order (the ordinal is the directory's kind byte): the 2A03 four, the
+     * N163's wave-index envelope ([WAVE]), then the 5B's mixer (FamiStudio `S5BMixer`) and noise period
+     * (`S5BNoiseFreq`) envelopes.
      */
-    enum class Kind { VOLUME, ARPEGGIO, DUTY, PITCH, MIXER, NOISE }
+    enum class Kind { VOLUME, ARPEGGIO, DUTY, PITCH, WAVE, MIXER, NOISE }
 
     /** An envelope as FamiStudio holds it after import and the exporter's clean-up (see [effective]). */
     data class Env(val values: List<Int>, val loop: Int, val release: Int, val relative: Boolean)
@@ -77,7 +80,7 @@ internal object FamiStudioEnvelopes {
     fun encode(e: NesEnvelope, kind: Kind, relative: Boolean = false): ByteArray {
         val env = effective(e, kind, relative).let { if (kind == Kind.MIXER) it.copy(values = it.values.map(::mixerBits)) else it }
         return process(env, kind == Kind.VOLUME, kind == Kind.PITCH) ?: when (kind) {
-            Kind.VOLUME, Kind.PITCH -> DEFAULT_PITCH_OR_RELEASE_ENV
+            Kind.VOLUME, Kind.PITCH, Kind.WAVE -> DEFAULT_PITCH_OR_RELEASE_ENV
             Kind.DUTY -> DEFAULT_DUTY_ENV
             Kind.ARPEGGIO, Kind.MIXER, Kind.NOISE -> DEFAULT_ENV
         }
@@ -91,6 +94,51 @@ internal object FamiStudioEnvelopes {
      * bit 0 and noise-off in bit 3, so square n's value shifted left by n gives its bits of the 5B's `$07` register.
      */
     fun mixerBits(value: Int): Int = (value and 1) or ((value and 2) shl 2)
+
+    /**
+     * An N163 sound's waves as FamiStudio exports them (`BuildWaveformsAndWaveIndexEnvelope`): identical waves stored
+     * once, in order of first use; [index] = for each of the sound's waves the stored wave it plays.
+     */
+    class N163Waves(val index: IntArray, val stored: List<List<Int>>)
+
+    fun n163Waves(w: N163Wave): N163Waves {
+        val stored = ArrayList<List<Int>>()
+        val index = IntArray(w.waves.size) { i ->
+            val at = stored.indexOf(w.waves[i])
+            if (at >= 0) at else { stored += w.waves[i]; stored.size - 1 }
+        }
+        return N163Waves(index, stored)
+    }
+
+    /** One wave's bytes in N163 RAM (`Envelope.GetN163Waveform`): two samples per byte, the even one in the low nibble. */
+    fun n163WaveBytes(wave: List<Int>): ByteArray = ByteArray(wave.size / 2) { ((wave[2 * it + 1] shl 4) or wave[2 * it]).toByte() }
+
+    /**
+     * The wave-index envelope FamiStudio exports for an N163 sound: `WaveformRepeat.CreateWaveIndexEnvelope` (wave i's
+     * stored index for [N163Wave.repeat]\[i] frames; the loop and release at their waves' first frames), then
+     * `ProcessEnvelope(…, allowReleases = true)`: all-zero (one stored wave) is its default, a non-looping one drops
+     * trailing repeats (`Envelope.Optimize`), the rest is encoded like a volume envelope (release index first).
+     */
+    fun waveIndex(w: N163Wave): ByteArray {
+        val map = n163Waves(w).index
+        val values = ArrayList<Int>()
+        var loop = -1
+        var release = -1
+        for (i in w.waves.indices) {
+            if (i == w.loop) loop = values.size
+            if (i == w.release) release = values.size
+            repeat(w.repeat[i]) { values += map[i] }
+        }
+        if (values.all { it == 0 }) return DEFAULT_PITCH_OR_RELEASE_ENV
+        var kept: List<Int> = values
+        if (loop < 0) {
+            var i = kept.size - 2
+            while (i >= 0 && i > release && kept[i] == kept[i + 1]) i--
+            kept = kept.subList(0, i + 2)
+            if (release >= kept.size) release = -1
+        }
+        return process(Env(kept, loop, release, false), allowReleases = true, newPitchEnvelope = false)!!
+    }
 
     /** The arpeggio FamiStudio plays for effect `0xy`: note, +x, +y, looping. */
     fun arpeggio(param: Int): ByteArray =

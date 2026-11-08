@@ -8,7 +8,8 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
    (a failed import or export fails this script, so it also proves FamiStudio opens our text).
 2. cc65's ca65/ld65 assemble that export alone at the song base of the player build the song needs ($8C00 for the 2A03
    build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"`, `"VRC7"` or `"S5B"` (e.g. the golden songs
-   s5b_demo and s5b_effects) at NES_<CHIP>_SONG_BASE from app/src/main/cpp/generated/nes_<chip>_player_image.h) into
+   s5b_demo and s5b_effects) at NES_<CHIP>_SONG_BASE from app/src/main/cpp/generated/nes_<chip>_player_image.h; a text
+   with `Expansions="N163" NumN163Channels="n"` at NES_N163_<n>_SONG_BASE from nes_n163_<n>_player_image.h) into
    <name>.bin, with FAMISTUDIO_DPCM_PTR at the sample block Thor Tracker uses (the top of $C000-$FFF9, 64-aligned). A
    song with DPCM samples also gets FamiStudio's sample bank, <name>_ca65.dmc. FamiStudio 4.5.3 prints a few negative
    operands as 32-bit hex (a VRC6 Quarter saw volume, an S5B instrument's negative auto-period octave: `$ffffffXX`),
@@ -32,19 +33,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "core" / "src" / "jvmTest" / "resources" / "nes-golden"
 SONG_CFG = ROOT / "tools" / "audio" / "nes" / "nes_song.cfg"
-VRC6_HEADER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_vrc6_player_image.h"
+GENERATED = ROOT / "app" / "src" / "main" / "cpp" / "generated"
 FETCH_FAMISTUDIO = ROOT / "tools" / "audio" / "fetch_famistudio.sh"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 REGION_END = 0xFFFA
 
 
 def song_cfg(text: str, tmp: Path) -> Path:
-    """The ld65 layout for a song text: the 2A03 build's, or one at the VRC6 / VRC7 / S5B build's song base."""
-    m = re.search(r'^Project [^\n]*Expansions="(VRC6|VRC7|S5B)"', text, re.M)
+    """The ld65 layout for a song text: the 2A03 build's, or one at the song base of the VRC6 / VRC7 / S5B build, or of
+    the N163 build with the text's NumN163Channels (FamiStudio's default without it: 1)."""
+    m = re.search(r'^Project [^\n]*Expansions="(VRC6|VRC7|N163|S5B)"', text, re.M)
     if not m:
         return SONG_CFG
     chip = m.group(1)
-    header = ROOT / "app" / "src" / "main" / "cpp" / "generated" / f"nes_{chip.lower()}_player_image.h"
+    if chip == "N163":
+        count = re.search(r'^Project [^\n]*NumN163Channels="([1-8])"', text, re.M)
+        chip = f"N163_{count.group(1) if count else 1}"
+    header = GENERATED / f"nes_{chip.lower()}_player_image.h"
     base = int(re.search(rf"#define NES_{chip}_SONG_BASE 0x([0-9A-F]{{4}})", header.read_text()).group(1), 16)
     cfg = tmp / f"nes_{chip.lower()}_song.cfg"
     cfg.write_text(f"MEMORY {{\n    SONG: start = ${base:04X}, size = ${REGION_END - base:04X}, type = ro, file = %O, fill = no;\n}}\n"

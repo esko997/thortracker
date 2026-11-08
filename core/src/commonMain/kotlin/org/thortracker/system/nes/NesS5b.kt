@@ -2,10 +2,10 @@ package org.thortracker.system.nes
 
 import org.thortracker.backend.FamiStudioEnvelopes
 import org.thortracker.backend.FamiStudioEnvelopes.Kind
+import org.thortracker.backend.FamiStudioText
 import org.thortracker.backend.FsNote
 import org.thortracker.backend.FsSong
 import org.thortracker.editor.EditorSession.Companion.hex2
-import org.thortracker.model.Cell
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
@@ -181,12 +181,25 @@ object NesS5b {
     private var cacheOrder = -1
     private var cacheRow = -1
     private var cacheState: SharedState? = null
+    private var cacheArrangement: Arrangement? = null
+
+    /** Normalization and semantic instrument keys are shared by all cursor positions in this immutable song. */
+    private class Arrangement(val source: Song, val parked: Int) {
+        val orders = if (parked >= 0) listOf(parked) else Songs.playedOrders(source)
+        val fs = FsSong.of(if (parked >= 0) source.copy(
+            orders = listOf(source.orders[parked]), parkedOrders = emptyList(), loopOrder = 0,
+        ) else source)
+        val equivalent = IntArray(fs.instruments.size + 1) { it }.also { ids ->
+            val first = HashMap<List<String>, Int>()
+            for (slot in 1..fs.instruments.size) ids[slot] = first.getOrPut(FamiStudioText.mergeKey(fs, slot)) { slot }
+        }
+    }
 
     /**
      * Who drives the 5B's envelope and noise generators when row [row] of order [order] plays, as straight play reaches
      * it: a tag on those squares' lane headers and one inspector line each. Rows are taken in play order (orders that
-     * play, then rows, squares in channel order); a sound loads (and with a manual period sets the shared period) on a
-     * note with an instrument number and on each order's first note, `Ixx`/`Jyy` set the period. Cached per position.
+     * play, then rows, squares in channel order). Instrument identity, equivalent copies and envelope/vibrato overrides
+     * follow the lowering's load rules; held manual-period instruments are not resent at order boundaries.
      */
     fun state(song: Song, order: Int, row: Int): SharedState? {
         if (song.sound !is NesSound || song.nes.expansion != NesExpansion.S5B || order !in song.orders.indices) return null
@@ -197,45 +210,85 @@ object NesS5b {
     }
 
     private fun compute(song: Song, order: Int, row: Int): SharedState {
+        val parked = if (order in song.parkedOrders) order else -1
+        val arrangement = cacheArrangement?.takeIf { it.source === song && it.parked == parked }
+            ?: Arrangement(song, parked).also { cacheArrangement = it }
+        val fs = arrangement.fs
+        val equivalent = arrangement.equivalent
         val expansion = song.nes.expansion
         val channels = expansion.channels
         val squares = NesRules.S5B_SQUARE1 until channels
         val bank = song.nes.instruments
         val slot = IntArray(channels)
-        val note = IntArray(channels)
+        // The compiler may invalidate its held instrument at a loop entry or after an override; the sounding slot
+        // remains unchanged until a note loads the next instrument.
+        val loadedSlot = IntArray(channels)
+        val envelopeOverride = BooleanArray(channels)
+        val vibratoOverride = BooleanArray(channels)
         val sounding = BooleanArray(channels)
-        var period = 0 // famistudio_music_play clears the engine's manual period
+        var period = 0
         var periodFrom = "the start (0)"
-        val before = if (order in song.parkedOrders) emptyList() else Songs.playedOrders(song).filter { it < order }
-        for (o in before + order) {
-            val p = song.patterns[song.orders[o]]
-            val last = if (o == order) minOf(row, p.length - 1) else p.length - 1
-            val loaded = BooleanArray(channels)
+        val target = arrangement.orders.indexOf(order)
+        for (o in 0..target) {
+            if (o == fs.loopOrder) {
+                for (ch in squares) {
+                    var first = 0
+                    var last = 0
+                    for (at in fs.orderStart[o] until fs.totalRows) {
+                        val n = fs.notes[ch][at] ?: continue
+                        if (n.isMusical && n.instrument != 0) {
+                            if (first == 0) first = n.instrument
+                            last = n.instrument
+                        }
+                    }
+                    if (equivalent[first] != equivalent[last]) loadedSlot[ch] = 0
+                }
+            }
+            val last = if (o == target) minOf(row, fs.lengths[o] - 1) else fs.lengths[o] - 1
             for (r in 0..last) {
-                val cells = squares.map { p.tracks.getOrNull(it)?.getOrNull(r) ?: Cell.BLANK }
-                val effect = NesRules.envPeriod(cells) ?: -1
+                val at = fs.orderStart[o] + r
+                val effect = fs.notes[NesRules.S5B_SQUARE1][at]?.envelopePeriod ?: -1
                 if (effect >= 0) {
                     period = effect
-                    periodFrom = "${hex2(o)}:${hex2(r)} (Ixx/Jyy)"
+                    periodFrom = "${hex2(arrangement.orders[o])}:${hex2(r)} (Ixx/Jyy)"
                 }
-                for ((k, ch) in squares.withIndex()) {
-                    val cell = cells[k]
-                    if (cell.note >= 0) {
-                        val load = cell.instrument != 0 || (!loaded[ch] && slot[ch] != 0)
-                        if (cell.instrument != 0) slot[ch] = cell.instrument
-                        note[ch] = cell.note
-                        sounding[ch] = true
-                        loaded[ch] = true
-                        val ins = bank.getOrNull(slot[ch] - 1)
-                        if (load && effect < 0 && ins != null && ins.chip == NesChip.S5B && !ins.s5b.autoPitch) {
-                            period = ins.s5b.period
-                            periodFrom = "${hex2(o)}:${hex2(r)} (sound ${hex2(slot[ch])})"
+                for (ch in squares) {
+                    if (effect >= 0) envelopeOverride[ch] = true
+                    val n = fs.notes[ch][at] ?: continue
+                    val frameVibrato = n.vibrato > 0 && n.vibrato shr 4 != 0 && n.vibrato and 15 != 0
+                    if (frameVibrato) vibratoOverride[ch] = true
+                    if (n.isMusical && n.instrument != 0) {
+                        val next = n.instrument
+                        val old = loadedSlot[ch]
+                        val attack = n.attack || old == 0 || !(old == next || equivalent[old] == equivalent[next] ||
+                            FamiStudioEnvelopes.allIdentical(bank[old - 1], bank[next - 1]))
+                        if (attack) {
+                            if (effect < 0 && envelopeOverride[ch]) {
+                                envelopeOverride[ch] = false
+                                loadedSlot[ch] = 0
+                            }
+                            if (!frameVibrato && vibratoOverride[ch]) {
+                                vibratoOverride[ch] = false
+                                loadedSlot[ch] = 0
+                            }
                         }
-                    } else if (cell.note == Cell.CUT) {
+                        val previous = loadedSlot[ch]
+                        val ins = bank[next - 1]
+                        val keepPeriod = previous != 0 && equivalent[previous] == equivalent[next]
+                        if (previous != next && !keepPeriod && effect < 0 && !ins.s5b.autoPitch) {
+                            period = ins.s5b.period
+                            periodFrom = "${hex2(arrangement.orders[o])}:${hex2(r)} (sound ${hex2(next)})"
+                        }
+                        loadedSlot[ch] = next
+                        slot[ch] = next
+                        sounding[ch] = true
+                    } else if (n.value == FsNote.STOP) {
+                        sounding[ch] = false
+                    } else if (n.value == FsNote.RELEASE) {
                         val ins = bank.getOrNull(slot[ch] - 1)
                         sounding[ch] = ins != null && ins.volume.release >= 0 && ins.volume.loop >= 0
                     }
-                    if (cell.hasEffect && cell.effect == NesRules.FX_NOTE_CUT && r < last) sounding[ch] = false
+                    if (n.cutDelay >= 0 && r < last) sounding[ch] = false
                 }
             }
         }

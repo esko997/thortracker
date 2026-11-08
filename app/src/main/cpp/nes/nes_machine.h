@@ -1,8 +1,9 @@
 /* One emulated NTSC NES (6502 core m6502.h with BCD disabled + the 2A03 APU in nes_apu.c, + the Konami
- * VRC6 audio in nes_vrc6.c for the VRC6 build, or the Sunsoft 5B audio in nes_s5b.c for the 5B build) running a
- * pinned FamiStudio sound engine 4.5.3 player build in FamiTracker tempo (nes_player.h: nes_player_2a03,
- * nes_player_vrc6 or nes_player_s5b, fixed at nm_create). Only the build's own expansion unit is reset, clocked
- * and mixed.
+ * VRC6 audio in nes_vrc6.c for the VRC6 build, the Konami VRC7 FM audio in nes_vrc7.c (emu2413) for the VRC7
+ * build, the Namco 163 audio in nes_n163.c for the N163 builds, or the Sunsoft 5B audio in nes_s5b.c for the 5B
+ * build) running a pinned FamiStudio sound engine 4.5.3 player build in FamiTracker tempo (nes_player.h:
+ * nes_player_2a03, nes_player_vrc6, nes_player_vrc7, nes_player_n163[n - 1] or nes_player_s5b, fixed at
+ * nm_create). Only the build's own expansion unit is reset, clocked, decoded and mixed.
  *
  * CPU address space:
  *   $0000-$07FF  RAM (mirrored to $1FFF): engine zero page/variables, stack, audition streams at
@@ -13,6 +14,10 @@
  *                and its DPCM sample block (64-aligned, >= $C000) above it; the DMC reads samples by DMA
  *   $9000-$9003, $A000-$A002, $B000-$B002  VRC6 build: VRC6 audio register writes (timestamped); reads
  *                there return the ROM (song data) as on the cartridge
+ *   $4800-$4FFF  N163 builds: the N163 data port (writes and reads of its sound RAM, timestamped)
+ *   $E000-$E7FF, $F800-$FFFF  N163 builds: the sound disable bit (bit 6) and the N163 address port (writes,
+ *                timestamped); reads there return the ROM
+ *   $9010, $9030, $E000  VRC7 build: VRC7 register select / write and the audio reset latch (timestamped)
  *   $C000-$DFFF, $E000-$FFFF  5B build: 5B audio register select / data writes (timestamped); reads there
  *                return the ROM (song data, samples) as on the cartridge
  *   $FFFA-$FFFF  vectors -> the player's trap entry (an interrupt or BRK is a driver fault)
@@ -30,9 +35,10 @@
  * edits are exact rows from engine state; orders come from the image (nes_image.h).
  *
  * Images are loaded with nm_load_image (nes_image.h) for the machine's player; everything here takes
- * loaded images of that player (others are NM_ERR_IMAGE / ignored). No allocation after nm_create.
- * Seeking runs the expansion unit silently (5B: tone phases, the noise LFSR and the envelope advance as in
- * straight play). Threading: one thread at a time. */
+ * loaded images of that player (others are NM_ERR_IMAGE / ignored). nm_create allocates (the VRC7 build also
+ * its emu2413 instance); nothing after it does. Seeking runs the expansion chip silently (FM envelopes, phases
+ * and LFOs; 5B tone phases, the noise LFSR and the envelope advance as in straight play). Threading: one thread at
+ * a time. */
 #ifndef THORTRACKER_NES_MACHINE_H_
 #define THORTRACKER_NES_MACHINE_H_
 
@@ -61,48 +67,60 @@ enum {
     NM_SEEK_FROM_ORDER = 1, /* budget exceeded: streams placed at the order start, its earlier rows replayed */
 };
 
-/* A machine for one player build (nes_player_2a03 / nes_player_vrc6 / nes_player_s5b); NULL for an unsupported
- * rate. */
+/* A machine for one player build (nes_player_2a03 / nes_player_vrc6 / nes_player_vrc7 / nes_player_n163[n - 1] /
+ * nes_player_s5b); NULL for an unsupported rate or when out of memory. */
 NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player);
 void nm_destroy(NesMachine* m);
 
 /* Power-on reset, load the image, init + play the song, then position the real engine so the next
  * tick plays (order, row): silent fast-forward from the song start for at most max_ticks frames
  * (*seek_mode = NM_SEEK_FROM_START); if that is not enough (Thor layout only) the channel streams
- * are placed at the order's start with the speed that order starts with, and its earlier rows are
- * replayed silently, again within max_ticks (NM_SEEK_FROM_ORDER). The DMC runs through the fast-
- * forward, so a sample started before the target is heard from its position there. NM_ERR_IMAGE for
+ * are placed at the order's start with the speed that order starts with, a channel whose order starts a
+ * note before loading an instrument gets the instrument straight play holds there (famistudio_set_instrument,
+ * channels in order: the last one loaded owns shared VRC7 custom patch and 5B manual period state), and the
+ * order's earlier rows are replayed silently, again within max_ticks (NM_SEEK_FROM_ORDER). The DMC runs through
+ * the fast-forward, so a sample started before the target is heard from its position there. NM_ERR_IMAGE for
  * a target outside the song or not reached. */
 int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_ticks, int* seek_mode);
 
 /* Live edit at a tick boundary (realtime-safe, bounded work). Thor layout to Thor layout: the
  * playing order/row is kept (clamped to the new song) and every channel's stream state is placed at
  * the same row of the new data (pending note delays and empty-run remainders kept); engine envelope
- * pointers move to the same directory entry (instrument envelopes, below player->effect_envelopes, always
- * stay their slot's; effect envelopes may move to an identical one), keeping their position when it is
- * still an instruction start; instrument tables, DPCM list, tempo and a changed order-start speed are
- * re-read. 5B: the squares' hardware envelope settings follow their edited instruments at once (shape,
- * auto-period octave, and the manual period of the instrument it came from; nm_s5b_instrument). Otherwise
- * the region is copied (correct only when no data moved). Either way a sample the
- * DMC is playing continues if its bytes are unchanged in place, continues at the same position of an
- * identical sample of the new DPCM list if it moved, and stops otherwise. Ignored while faulted or
- * auditioning. */
+ * pointers move to the same directory entry (instrument envelopes, below player->effect_envelopes, always stay
+ * their slot's; effect envelopes may move to an identical one), keeping their position when it is still an
+ * instruction start; instrument tables, DPCM list, tempo and a changed order-start speed are re-read. A speed the
+ * engine got another way (a loop, an Fxx later edited away) is otherwise kept. VRC7: the FM channels' patches follow
+ * their edited instruments at once (patch number, override byte, the custom patch registers of the
+ * instrument they came from). N163: the expansion instrument table is re-read too, and an N163 channel whose
+ * current instrument's wave changed (position, size or wave bytes, by content) re-uploads it at the engine's
+ * next update (its wave index is set to $FF); N163 RAM and phases are untouched. 5B: the squares' hardware
+ * envelope settings follow their edited instruments at once (shape, auto-period octave, and the manual period of
+ * the instrument it came from; nm_s5b_instrument). Otherwise the region is copied (correct only when no data
+ * moved). Either way a sample the DMC is playing continues if its bytes are unchanged in place, continues at the
+ * same position of an identical sample of the new DPCM list if it moved, and stops otherwise. Ignored while
+ * faulted or auditioning. */
 void nm_apply_image(NesMachine* m, const NesImage* image);
 
 /* Resets the machine to sound one held note through the engine with a one-note stream in RAM, using
- * the image's instruments and DPCM list (Thor layout). Tonal channels (0..3; VRC6 and 5B builds also 5..7):
- * engine note 1..96 (absolute - 11), instrument table index, fine pitch -128..127 (period offset,
- * +lowers; channels with a pitch envelope: 0..2, 5..7). Channel 4 (DPCM): `note` = DPCM list entry
- * 1..mappings (the stream's note byte); instrument and fine are ignored. */
+ * the image's instruments and DPCM list (Thor layout). Tonal channels (0..3; VRC6 and 5B builds also 5..7, VRC7
+ * build 5..10, N163 builds 5..4+n): engine note 1..96 (absolute - 11), instrument table index, fine pitch -128..127
+ * (period offset, +lowers; VRC7: FM frequency offset; N163: frequency offset, +raises; channels with a pitch
+ * envelope: 0..2 and the expansion channels). Channel 4 (DPCM): `note` = DPCM list entry 1..mappings (the
+ * stream's note byte); instrument and fine are ignored. */
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine);
 
 /* Key-off of an audition: with a volume release point the engine releases the note (returns 1;
  * nm_tick returns 0 once the release tail has reached its final loop); otherwise, and always on the
- * DPCM channel, 0 (cut now: the host drops the machine). */
+ * DPCM channel, 0 (cut now: the host drops the machine). VRC7 FM channels always release (returns 1): the
+ * engine's `$56` keys the FM note off and starts the volume envelope's release, if any; nm_tick returns 0 once
+ * that tail is done and the channel's carrier is silent or can no longer change (release rate 0). N163 channels
+ * release with `$5A` (the volume and wave-index envelopes jump to their release points): with a volume release
+ * point the tail ends at the volume envelope's final loop, else with a wave-index release point at that
+ * envelope's final loop. */
 int nm_release(NesMachine* m);
 
-/* Forces channel (0..4; VRC6 and 5B builds 0..7) silent in the mixer (state keeps running, so unmuting resumes
- * mid-note). */
+/* Forces channel (0..4; VRC6 and 5B builds 0..7, VRC7 build 0..10, N163 builds 0..4+n) silent in the mixer (state
+ * keeps running, so unmuting resumes mid-note). */
 int nm_mute_channel(NesMachine* m, int channel, int muted);
 
 /* Order/row/frame-in-row the next tick plays, from engine state (tick 0 = the next tick starts the
@@ -123,18 +141,26 @@ void nm_set_apu_logging(NesMachine* m, int enabled);
 /* (address low byte, value) pairs of the APU ($40xx) writes since the last log call, at most `capacity`
  * pairs. Both log calls drain the log. */
 int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity);
-/* (address low, address high, value) triples of every sound write (APU, VRC6 or 5B) since the last log call,
- * at most `capacity`. */
+/* (address low, address high, value) triples of every sound write (APU, VRC6, VRC7, N163 ports or 5B) since the last
+ * log call, at most `capacity`. */
 int nm_write_log(NesMachine* m, uint8_t* triples, int capacity);
+/* The same, with the frame-relative CPU cycle each write happened at in `cycles` (the sound units' timebase). */
+int nm_write_log_timed(NesMachine* m, uint8_t* triples, uint32_t* cycles, int capacity);
 uint8_t nm_peek(NesMachine* m, uint16_t addr);
 void nm_poke(NesMachine* m, uint16_t addr, uint8_t value); /* RAM/PRG, for fault tests */
 /* Calls a routine with A, returning NM_OK or NM_ERR_FAULT (test hook). */
 int nm_call(NesMachine* m, uint16_t addr, uint8_t a);
-/* The APU, the VRC6 and the 5B units (tests read channel periods, levels and chip registers; only the machine's
- * own build's unit is in use), and the machine's player. */
+/* The APU, the VRC6, VRC7, N163 and 5B units (tests read channel periods, levels, chip registers, N163 RAM and
+ * phases; only the machine's own build's unit is in use), and the machine's player. */
 const struct NesApu* nm_apu(const NesMachine* m);
 const struct NesVrc6* nm_vrc6(const NesMachine* m);
+const struct NesVrc7* nm_vrc7(const NesMachine* m);
+const struct NesN163* nm_n163(const NesMachine* m);
 const struct NesS5b* nm_s5b(const NesMachine* m);
+/* VRC7 build: the expansion instrument (table index) FM channel `channel` (5..10) loaded last, and the one the
+ * chip's custom patch registers $00-$07 came from; -1: none (or not the VRC7 build). */
+int nm_vrc7_instrument(const NesMachine* m, int channel);
+int nm_vrc7_custom_instrument(const NesMachine* m);
 /* 5B build: the expansion instrument (table index) 5B square `channel` (5..7) loaded last, and the one whose manual
  * envelope period is the engine's (famistudio_s5b_env_period); -1: none (a `$5E` set it, or not the 5B build). */
 int nm_s5b_instrument(const NesMachine* m, int channel);

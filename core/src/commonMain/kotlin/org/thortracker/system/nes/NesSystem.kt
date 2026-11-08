@@ -38,7 +38,8 @@ import kotlin.math.log2
  * instrument is its note → sample mappings) and the song's DPCM samples.
  * Lowering ([FamiStudioLowering]) and both exports (`.nsf`, FamiStudio text) read the same [FsSong].
  * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels, [NesVrc7System]
- * the Konami VRC7's six FM channels, [NesS5bSystem] the Sunsoft 5B's three squares.
+ * the Konami VRC7's six FM channels, [NesN163System] the Namco 163's 1-8 wavetable channels, [NesS5bSystem] the
+ * Sunsoft 5B's three squares.
  */
 object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
     override val id = "nes-famistudio"
@@ -77,6 +78,32 @@ object NesVrc7System : NesFamiStudioSystem(NesExpansion.VRC7) {
 }
 
 /**
+ * The NES with the Namco 163 cartridge chip (FamiStudio's N163 expansion) with [n163Channels] (1..8) wavetable channels
+ * enabled: the 2A03's five channels, then N163 1..n, each playing 4-bit waves from the chip's 128 bytes of RAM
+ * ([N163Wave]) at a 4-bit linear volume. The chip updates one channel every 15 CPU cycles in turn, so the count is fixed
+ * per song (FamiStudio's `NumN163Channels`): more channels lower each channel's update rate (the note table and its top
+ * change), leave less RAM for waves and, at 7-8 channels, put the switching whine in the audible range. One system per
+ * count, grouped as "NES + N163" under the NES family; the FamiStudio engine assembled with `FAMISTUDIO_EXP_N163` and
+ * `FAMISTUDIO_EXP_N163_CHN_CNT` = n plays it (native `"nes-famistudio-n163-<n>"`).
+ */
+class NesN163System private constructor(expansion: NesExpansion) : NesFamiStudioSystem(expansion) {
+    val n163Channels: Int = expansion.n163Channels
+    override val id = "nes-famistudio-n163-$n163Channels"
+    override val name = "NES + N163, $n163Channels channel${if (n163Channels == 1) "" else "s"} (FamiStudio)"
+    override val familyGroup = "NES + N163"
+
+    override fun demo(): Song = NesN163DemoSong.build(n163Channels)
+
+    companion object {
+        /** The eight variants, 1..8 N163 channels. */
+        val ALL: List<NesN163System> = (1..NesRules.N163_MAX_CHANNELS).map { NesN163System(NesExpansion.n163(it)) }
+
+        /** The variant with [channels] N163 channels. */
+        fun of(channels: Int): NesN163System = ALL[channels - 1]
+    }
+}
+
+/**
  * The NES with the Sunsoft 5B cartridge chip (FamiStudio's S5B expansion; a YM2149F): the 2A03's five channels, then
  * 5B Square 1-3, three square tones with a 4-bit logarithmic volume (12-bit periods: every note), sharing one noise
  * generator (a mixer envelope per sound picks tone, noise, both or neither) and one envelope generator (a sound's
@@ -107,7 +134,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     /** FamiTracker/FamiStudio names are scientific pitch: A-4 = 440 Hz. */
     override val nameOctaveOffset = 0
-    override val effects: List<EffectSpec> get() = NesRules.EFFECTS
+    override val effects: List<EffectSpec> get() = NesRules.effects(expansion)
     override val views = ViewKind.entries.toSet() - ViewKind.WAVE
     override val exports = listOf(
         ExportFormat("nsf") { NsfExporter.export(it) },
@@ -119,6 +146,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         NesExpansion.VRC6 -> Vrc6Help
         NesExpansion.VRC7 -> Vrc7Help
         NesExpansion.S5B -> S5bHelp
+        else -> N163Help(expansion.n163Channels)
     }
 
     /** OFF is a note event of its own (release or stop); it needs no effect slot. */
@@ -198,7 +226,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     override fun instrumentSummary(song: Song, bank: Int, slot: Int): String? = instrument(song, bank, slot)?.let(::summary)
 
-    override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? = null
+    /** An N163 sound's first wave (0..15 as 0..1), for thumbnails; other chips have no waveform to show. */
+    override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? =
+        instrument(song, bank, slot)?.takeIf { it.chip == NesChip.N163 }?.wave?.waves?.firstOrNull()?.map { it / 15f }
 
     /** Instrument [slot] (1..[NesSystem.SLOTS]) of the one bank, or null. */
     fun instrument(song: Song, bank: Int, slot: Int): NesInstrument? = if (bank != 0) null else song.nes.instruments.getOrNull(slot - 1)
@@ -233,7 +263,10 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     /** The 5B's shared envelope and noise generators: which square drives them (5B songs only). */
     override fun sharedState(song: Song, order: Int, row: Int): SharedState? = NesS5b.state(song, order, row)
 
-    /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6/VRC7/5B sounds: "VRC6 · …", saw volume, patch, mixer). */
+    /**
+     * "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6/VRC7/N163/5B sounds: "VRC6 · …", saw
+     * volume, patch, waves, mixer).
+     */
     fun summary(ins: NesInstrument): String {
         fun env(name: String, e: NesEnvelope, neutral: Int, text: (Int) -> String = Int::toString): String? {
             if (e.values.isEmpty() || e.values.all { it == neutral }) return null
@@ -243,10 +276,12 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         }
         val vrc6 = ins.chip == NesChip.VRC6
         val vrc7 = ins.chip == NesChip.VRC7
+        val n163 = ins.chip == NesChip.N163
         val s5b = ins.chip == NesChip.S5B
         val parts = listOfNotNull(
-            ins.chip.label.takeIf { vrc6 || vrc7 || s5b },
+            ins.chip.label.takeIf { vrc6 || vrc7 || n163 || s5b },
             Vrc7Presets.NAMES[ins.fm.preset.coerceIn(Vrc7Presets.NAMES.indices)].lowercase().takeIf { vrc7 },
+            n163Summary(ins.wave).takeIf { n163 },
             env("vol", ins.volume, 15),
             env("arp", ins.arpeggio, 0),
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
@@ -255,8 +290,6 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             env("noise", ins.noise, 0).takeIf { s5b },
             NesS5b.summary(ins.s5b).takeIf { s5b && ins.s5b.shape != S5bShape.OFF },
             "saw ${ins.sawVolume.label.lowercase()}".takeIf { vrc6 && ins.sawVolume != Vrc6SawVolume.HALF },
-            "sustain on release".takeIf { vrc7 && ins.fm.sustainRelease },
-            "sustain on stop".takeIf { vrc7 && ins.fm.sustainStop },
             ins.dpcm.size.takeIf { it > 0 }?.let { "DPCM $it note${if (it == 1) "" else "s"}" },
         )
         return when {
@@ -266,6 +299,14 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         }
     }
 
+    /** "sine 16 @ 0" or "3 waves of 32 @ 64 (loop, rel)": an N163 sound's waves, their size and RAM position. */
+    private fun n163Summary(w: N163Wave): String {
+        val preset = N163Presets.presetOf(w.waves, w.size)?.label?.lowercase()
+        val what = if (w.waves.size == 1) (preset ?: "wave") + " ${w.size}" else "${w.waves.size} ${preset ?: "waves"} of ${w.size}"
+        val marks = listOfNotNull("loop".takeIf { w.loop >= 0 }, "rel".takeIf { w.release >= 0 })
+        return "$what @ ${w.position}" + if (marks.isEmpty()) "" else " (${marks.joinToString()})"
+    }
+
     /**
      * FamiStudio 4.5.3 on a 6502 + 2A03 (+ the expansion chip) — native `"nes-famistudio"` or the expansion build's
      * engine (app/src/main/cpp/nes): the song lowered as for `.nsf` export ([FamiStudioLowering]) in the engine's image
@@ -273,14 +314,29 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      */
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
-        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU" +
-            (if (expansion == NesExpansion.S5B) " and Sunsoft 5B (YM2149F, after NESdev and emu2149)" else "") + ", blip_buf 1.1.0"
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo${when (expansion.chip) {
+            NesChip.APU -> ""
+            NesChip.VRC6 -> ", FAMISTUDIO_EXP_VRC6"
+            NesChip.VRC7 -> ", FAMISTUDIO_EXP_VRC7"
+            NesChip.N163 -> ", FAMISTUDIO_EXP_N163, FAMISTUDIO_EXP_N163_CHN_CNT = ${expansion.n163Channels}"
+            NesChip.S5B -> ", FAMISTUDIO_EXP_S5B"
+        }}) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU${when (expansion.chip) {
+            NesChip.APU -> ""
+            NesChip.VRC6 -> " + VRC6"
+            NesChip.VRC7 -> ", emu2413 1.6.4 (commit a1d5120) in VRC7 mode"
+            NesChip.N163 -> " + Namco 163 (${expansion.n163Channels} channel${if (expansion.n163Channels == 1) "" else "s"})"
+            NesChip.S5B -> " and Sunsoft 5B (YM2149F, after NESdev and emu2149)"
+        }}, blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
 
-        override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        override fun lower(song: Song, out: ByteArray) {
+            // Each variant's engine runs its own player build: another variant's song would be laid out for that player.
+            require(song.nes.expansion == expansion) { "The song is for ${song.nes.expansion.system.name}, not ${this@NesFamiStudioSystem.name}" }
+            NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        }
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
@@ -289,6 +345,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
                 "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))}"
             NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
+            note > NesRules.highestNote(expansion, channel) ->
+                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))}" +
+                    if (NesRules.isN163(expansion, channel)) " with ${expansion.n163Channels} N163 channels" else ""
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
@@ -300,9 +359,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1 (the 5B squares' an octave up, so they sound true pitch); on DPCM the sample list entry (1..63). */
+        /** Chip-specific engine note number; on DPCM the sample list entry (1..63). */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(expansion, channel, note)
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.engineNote(expansion, channel, note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
@@ -310,11 +369,14 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         /**
          * The engine's fine pitch adds to the period on the 2A03, VRC6 and 5B, so raising the pitch is negative (on the 5B
          * converted to its own periods, [NesRules.s5bFinePitch]); on the VRC7's FM channels it adds (× 8) to the frequency
-         * number, converted as a cell's Pxx is ([NesRules.vrc7FinePitch]).
+         * number, on the N163's (× 2^shift) to its frequency, both converted as a cell's Pxx is ([NesRules.vrc7FinePitch],
+         * [NesRules.n163FinePitch]).
          */
         override fun fine(channel: Int, note: Int, fine: Int): Int = when {
-            NesRules.isVrc7(expansion, channel) -> NesRules.vrc7FinePitch(NesRules.fsNote(note), fine)
-            NesRules.isS5b(expansion, channel) -> -NesRules.s5bFinePitch(NesRules.fsNote(note), fine)
+            NesRules.isVrc7(expansion, channel) -> NesRules.vrc7FinePitch(NesRules.engineNote(expansion, channel, note), fine)
+            NesRules.isN163(expansion, channel) ->
+                NesRules.n163FinePitch(NesRules.engineNote(expansion, channel, note), fine, expansion.n163Channels)
+            NesRules.isS5b(expansion, channel) -> -NesRules.s5bFinePitch(NesRules.engineNote(expansion, channel, note), fine)
             else -> -fine
         }
     }
@@ -324,7 +386,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
      * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic). The VRC7's
      * FM channels convert a Pxx to their nearest frequency step for the same pitch ([NesRules.vrc7FinePitch]): one step
-     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there. The 5B squares convert a
+     * is 0.3 cents at B-7, 40 at C-1, so tuned FM notes are as exact as the chip allows there. The 5B squares convert a
      * Pxx to their own (about half as long) periods for the same pitch ([NesRules.s5bFinePitch]).
      */
     private object Fine : FinePitch {
@@ -354,7 +416,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             }
         }
 
-        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note).coerceIn(1, NesRules.NOTE_COUNT)]
+        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[(note - NesRules.NOTE_OFFSET).coerceIn(1, NesRules.NOTE_COUNT)]
     }
 
     private open class NesHelp : SystemHelp {
@@ -406,7 +468,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     private object Vrc7Help : NesHelp() {
         override val off = "Releases the note: on the VRC7 FM channels a key off (the FM patch's release, or the slow sustain " +
-            "fade with Release: sustain) plus the volume envelope's release; on the 2A03 as there. For a cut inside a row use Sxx"
+            "fade when the song's Release sustain is on) plus the volume envelope's release; on the 2A03 as there. For a cut inside a row use Sxx"
         override val offEntered = "OFF: release (FM: key off; 2A03 sounds with a volume release point fade out, others stop)"
         override val offInspector = "OFF: release the note (FM: key off and its release; 2A03: tail or silence)"
         override val effectsIntro = super.effectsIntro + listOf(
@@ -432,8 +494,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             "The three squares share one noise generator and one envelope generator: the highest square sounding a noise or " +
                 "envelope sound sets them for all (the lane headers tag who does: ENV, NOISE; the check warns when two sounds fight).",
             "Ixx / Jyy (5B squares): the shared envelope period's high / low byte, together on one row (on two squares) for xxyy, " +
-                "alone xx00 / 00yy. It drives sounds with a manual period until a note reloads its sound (a new sound, a note with " +
-                "attack after it, or an order's first note).",
+                "alone xx00 / 00yy. It drives sounds with a manual period until a note reloads its sound (a new sound, or a note " +
+                "with attack after it).",
         )
         override val tonalChannels = "Pulse, Triangle and 5B Square"
         override val tonalChannelsShort = "Pulse/Tri/5B"
@@ -441,5 +503,38 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
         override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
             NesInstrumentView.helpSections(keys, NesExpansion.S5B)
+    }
+
+    private class N163Help(private val n163Channels: Int) : NesHelp() {
+        private val expansion = NesExpansion.n163(n163Channels)
+        private val names = if (n163Channels == 1) "N163 1" else "N163 1-$n163Channels"
+
+        override val off = "Releases the note: an instrument whose volume envelope or (N163) wave sequence has a release point " +
+            "plays its release tail, any other note (or one already released) stops at once. For a cut inside a row use Sxx"
+        override val offEntered = "OFF: release (sounds with a volume or wave release point play their tail; others stop at once)"
+        override val offInspector = "OFF: release the note (volume and wave release tails, else silent)"
+        override val effectsIntro = super.effectsIntro + listOf(
+            "$names play N163 sounds (Chip: N163 on the Instrument view): 4-bit waves of 4-${NesRules.n163WaveRam(n163Channels)} " +
+                "samples in the chip's RAM, a sequence of waves (Wave page), shaped by the volume, arpeggio and pitch envelopes.",
+            "With $n163Channels channel${if (n163Channels == 1) "" else "s"} the chip keeps ${NesRules.n163WaveRam(n163Channels)} of its " +
+                "256 samples for waves (the registers take the rest) and updates each channel once every ${15 * n163Channels} CPU " +
+                "cycles: notes reach ${NesSystem.noteName(NesRules.highestNote(expansion, NesRules.N163_FIRST))}" +
+                (if (n163Channels >= 7) ", and the chip's switching whine is audible (as on hardware)." else "."),
+            "Notes are in tune for 16-sample waves: 32 samples sound an octave lower, 8 an octave higher, other sizes off-key. " +
+                "Sounds playing at once on different channels need separate RAM (Wave position), or identical waves at the same place (the check warns).",
+            "On the N163 channels Vxx has no effect (no duty), Pxx detunes by the pitch the same Pxx gives a pulse, to the chip's " +
+                "nearest frequency step, and X00 restarts the wave (phase reset).",
+        )
+        override val tonalChannels = "Pulse, Triangle and N163"
+        override val tonalChannelsShort = "Pulse/Tri/N163"
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle or $names; Noise and DPCM have no tonal chord reference"
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, expansion)
+
+        override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
+            "N163 RAM" to "${NesValidator.n163RamUsed(song)} of ${NesRules.n163WaveRam(n163Channels)} wave samples used by N163 sounds " +
+                "(${NesRules.N163_RAM_SAMPLES - NesRules.n163WaveRam(n163Channels)} hold the $n163Channels channels' registers)",
+        )
     }
 }
