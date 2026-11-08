@@ -80,7 +80,7 @@ int nes_vrc6_channel_out(const NesVrc6* v, int channel) {
 
 static int dac_input(const NesVrc6* v) {
     int sum = 0;
-    for (int c = 0; c < NES_VRC6_CHANNELS; ++c) {
+    for (int c = 0; c < NES_VRC6_VOICES; ++c) {
         if (!(v->mute & (1 << c))) sum += nes_vrc6_channel_out(v, c);
     }
     return sum;

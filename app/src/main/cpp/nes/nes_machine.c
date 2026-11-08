@@ -144,15 +144,15 @@ fault:
     return NM_ERR_FAULT;
 }
 
-/* Both sound units: attach/detach the output, end a frame. */
+/* Attach/detach and advance only the sound units present in this player build. */
 static void set_output(NesMachine* m, blip_t* out) {
     nes_apu_set_output(&m->apu, out);
-    nes_vrc6_set_output(&m->vrc6, out);
+    if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_set_output(&m->vrc6, out);
 }
 
 static void end_frame(NesMachine* m, uint32_t cycles) {
     nes_apu_end_frame(&m->apu, cycles);
-    nes_vrc6_end_frame(&m->vrc6, cycles);
+    if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_end_frame(&m->vrc6, cycles);
 }
 
 /* ---- lifecycle ---------------------------------------------------------------------------- */
@@ -370,10 +370,9 @@ static StreamState stream_state(const NmView* v, int c, int order, int consumed,
     return st;
 }
 
-/* New address for an engine envelope pointer (and its read position) when `image` replaces the
- * playing one: the same directory entry if unchanged; else an entry of the same kind with the
- * same bytes; else the same entry edited (position kept if still an instruction start, else the
- * envelope restarts); else the engine's silent dummy. Pointers outside the directory are kept. */
+/* Instrument envelopes retain their stable directory slot, including edits. Effect envelopes can be
+ * renumbered, so prefer matching bytes before an edited slot. Keep a valid read position, otherwise
+ * restart; a removed envelope falls back to the silent dummy. */
 static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int kind, uint16_t addr, uint8_t* ptr,
                                uint8_t* repeat) {
     const uint8_t* odir = m->meta + NES_IMAGE_HEADER_SIZE;
@@ -388,8 +387,10 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
 #define SAME(i) (ndir[4 * (i) + 3] == kind && ndir[4 * (i) + 2] == len && !memcmp(NEW_BYTES(i), old, (size_t)len))
     const int same_index = idx < ni->envelopes && nm_rd16(ndir + 4 * idx) && ndir[4 * idx + 3] == kind;
     if (same_index && SAME(idx)) return nm_rd16(ndir + 4 * idx);
-    for (int u = 0; u < ni->used_count; ++u) {
-        if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
+    if (!(same_index && idx < 4 * NES_IMAGE_MAX_INSTRUMENTS)) {
+        for (int u = 0; u < ni->used_count; ++u) {
+            if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
+        }
     }
     if (same_index) {
         if (!nm_envelope_instruction_at(NEW_BYTES(idx), ndir[4 * idx + 2], kind, *ptr)) {
