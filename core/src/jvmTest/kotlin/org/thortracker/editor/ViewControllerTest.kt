@@ -869,4 +869,43 @@ class ViewControllerTest {
         assertEquals(Scale(2, ScaleKind.MAJOR), session.song.patterns[2].scale)
         assertEquals(tracks, session.song.patterns[2].tracks)
     }
+
+    @Test
+    fun patternEdgeJumpLandsOnThePatternsOwnFirstAndLastRow() {
+        val p = session.song.orders[0]
+        assertTrue(session.setPatternLength(p, 48))
+        val v = view(ViewKind.PATTERN) { row = 10; channel = 2 }
+        assertTrue(v.jumpPatternEdge(bottom = true))
+        assertEquals(47, v.state.row) // the last played row, not the 64-row storage
+        assertEquals(0, v.state.order)
+        assertEquals(2, v.state.channel)
+        assertEquals(47, session.selection.row)
+        assertTrue(v.jumpPatternEdge(bottom = false))
+        assertEquals(0, v.state.row)
+        assertEquals(0, session.selection.row)
+    }
+
+    @Test
+    fun patternEdgeJumpExtendsAHeldBlockButNeverActsUnderEditClearThePanelOrOutsidePattern() {
+        val v = view(ViewKind.PATTERN) { row = 5 }
+        v.press(Action.MARK)
+        assertTrue(v.jumpPatternEdge(bottom = true))
+        v.release(Action.MARK)
+        assertTrue("a held Select used for the jump keeps its block", v.state.mark)
+        assertEquals(Block(0, 0, 5, session.song.rowCount(session.song.orders[0]) - 1), v.block())
+
+        val w = view(ViewKind.PATTERN) { row = 5 }
+        for (held in listOf(Action.EDIT, Action.CLEAR)) {
+            w.press(held)
+            assertFalse(w.jumpPatternEdge(bottom = true))
+            assertEquals(5, w.state.row)
+            w.release(held)
+            w.state.row = 5 // an Edit tap may have advanced by the step
+        }
+        w.tap(Action.SCALE)
+        assertFalse(w.jumpPatternEdge(bottom = false))
+        assertEquals(5, w.state.row)
+        val song = view(ViewKind.SONG)
+        assertFalse(song.jumpPatternEdge(bottom = true))
+    }
 }

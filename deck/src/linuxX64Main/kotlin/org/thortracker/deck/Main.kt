@@ -42,7 +42,8 @@ fun main(args: Array<String>) {
     val quitAfterMs = args.firstOrNull { it.startsWith("seconds=") }?.substringAfter('=')?.toULong()?.times(1000uL)
     // Test hook: script=96+22,20,99~1500 taps buttons (Android key codes; "a+b" holds a while tapping b, "b~ms" holds b
     // for ms), one step per 150 ms,
-    // through the same routing as the gamepad. With seconds=N the last frame is saved as deck-screenshot.bmp.
+    // through the same routing as the gamepad; "ry=V" moves the right stick's vertical axis to V (-1 up .. 1 down),
+    // e.g. ry=-1,ry=0,ry=-1,ry=0 is a double flick up. With seconds=N the last frame is saved as deck-screenshot.bmp.
     val script = args.firstOrNull { it.startsWith("script=") }?.substringAfter('=')?.split(',')?.filter { it.isNotBlank() }.orEmpty()
     // Test hook: size=WxH[@density] draws into a WxH window (no full screen) at that UI density, e.g. the Thor's displays
     // (1920x1080@2.31, 1240x1080@2.31) under SDL_VIDEO_DRIVER=offscreen, whose full-screen mode is 1024 x 768.
@@ -112,7 +113,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         session.onTransport = { start -> if (start) transport.start(session.selection.order, session.selection.row) else transport.stop() }
         val start = opened ?: shell.recovered()
         if (start != null) { session.replaceSong(start); session.note(if (opened != null) "${start.title} opened" else "Recovered working project") }
-        popups.onOpenChanged = { open -> if (open) pane.cancelInteraction() }
+        popups.onOpenChanged = { open -> input.resetStick(); if (open) pane.cancelInteraction() }
     }
 
     fun run(quitAfterMs: ULong?) = memScoped {
@@ -125,11 +126,16 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             if (repeatCode != 0 && now >= repeatAt) { route(repeatCode, true, ++repeats); repeatAt = now + 60u }
             if (script.isNotEmpty() && now - start >= scriptAt) {
                 val step = script.removeFirst()
-                // "a+b" holds a while tapping b; "b~ms" holds b for ms (the next step waits until it is released).
-                val held = step.substringAfter('~', "").toULongOrNull()
-                val codes = step.substringBefore('~').split('+').map { it.trim().toInt() }
-                codes.forEach { button(it, true) }
-                if (held != null) { heldScript = codes to now + held } else codes.reversed().forEach { button(it, false) }
+                // "ry=V" moves the right stick; "a+b" holds a while tapping b; "b~ms" holds b for ms (the next step waits
+                // until it is released).
+                val stick = if (step.startsWith("ry=")) step.substringAfter('=').toFloat() else null
+                val held = if (stick != null) null else step.substringAfter('~', "").toULongOrNull()
+                if (stick != null) rightStick(SCRIPT_STICK, stick, now.toLong())
+                else {
+                    val codes = step.substringBefore('~').split('+').map { it.trim().toInt() }
+                    codes.forEach { button(it, true) }
+                    if (held != null) { heldScript = codes to now + held } else codes.reversed().forEach { button(it, false) }
+                }
                 val st = pane.state
                 println("script $step -> view=${st.kind} popup=${popups.top?.title} order=${st.order} row=${st.row} " +
                     "cell=${session.song.patterns[session.song.patternAt(st.order)].tracks[st.channel][st.row]} msg=${session.message}")
@@ -165,11 +171,23 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
     private fun handle(e: SDL_Event) {
         when (e.type) {
             SDL_EVENT_QUIT -> running = false
-            SDL_EVENT_GAMEPAD_ADDED -> SDL_OpenGamepad(e.gdevice.which)?.let { println("gamepad: ${SDL_GetGamepadName(it)?.toKString()}") }
+            SDL_EVENT_GAMEPAD_ADDED -> {
+                SDL_OpenGamepad(e.gdevice.which)?.let { println("gamepad: ${SDL_GetGamepadName(it)?.toKString()}") }
+                input.resetStick()
+            }
+            SDL_EVENT_GAMEPAD_REMOVED, SDL_EVENT_GAMEPAD_REMAPPED -> { input.forgetStick(e.gdevice.which.toInt()); input.resetStick() }
+            // Another window took the input: a flick from before must not finish a jump.
+            SDL_EVENT_WINDOW_FOCUS_LOST, SDL_EVENT_WINDOW_FOCUS_GAINED -> input.resetStick()
             SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_EVENT_GAMEPAD_BUTTON_UP ->
                 Pad.code(e.gbutton.button.toInt())?.let { button(it, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) }
             SDL_EVENT_GAMEPAD_AXIS_MOTION -> {
-                val code = Pad.triggerCode(e.gaxis.axis.toInt()) ?: return
+                val axis = e.gaxis.axis.toInt()
+                // Event timestamps are SDL_GetTicksNS nanoseconds: monotonic, the clock the script steps use too.
+                if (axis == SDL_GAMEPAD_AXIS_RIGHTY.toInt()) {
+                    rightStick(e.gaxis.which.toInt(), e.gaxis.value / 32767f, (e.gaxis.timestamp / 1_000_000uL).toLong())
+                    return
+                }
+                val code = Pad.triggerCode(axis) ?: return
                 val down = e.gaxis.value > 16000
                 if (down != (code in input.heldModifiers)) button(code, down)
             }
@@ -194,6 +212,12 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         route(code, down, 0)
         if (down && code in Pad.DPAD) { repeatCode = code; repeats = 0; repeatAt = SDL_GetTicks() + 320u }
         if (!down && code == repeatCode) repeatCode = 0
+    }
+
+    /** The right stick's vertical axis ([y] -1 up .. 1 down): a quick double flick jumps Pattern to the first or last row. */
+    private fun rightStick(device: Int, y: Float, millis: Long) {
+        val jump = input.rightStick(device, y.coerceIn(-1f, 1f), millis, 0, pane.state.kind, pane.patternFocused, popups.isOpen, false)
+        if (jump != 0) pane.jumpPatternEdge(jump > 0)
     }
 
     /** The same layers as Android's MainActivity.routeKey: binding capture, popup, host controls, then the pane. */
@@ -244,6 +268,9 @@ private fun outputSize(renderer: CPointer<SDL_Renderer>): Output = memScoped {
     SDL_GetRenderOutputSize(renderer, w.ptr, h.ptr)
     Output(w.value, h.value)
 }
+
+/** Device id the script hook's "ry=" steps use; SDL joystick ids are never 0 or negative. */
+private const val SCRIPT_STICK = -1
 
 /** UI scale like Android's density: 12 x 1.5 = 18 px text on the Deck's 1280 x 800 seven-inch panel. */
 private const val DENSITY = 1.5f

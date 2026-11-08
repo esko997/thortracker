@@ -160,6 +160,7 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | Hold B + D-pad | Move or jump without clearing on release |
 | Hold X | Audition without writing |
 | Hold Y + D-pad | Mark a pattern block |
+| Right stick ↑ ↑ / ↓ ↓ | Pattern (controller-focused, pattern panel closed): two quick flicks the same way, letting the stick return to centre between them, move the cursor to the pattern's first / last row (its last played row for a shortened pattern). One flick, holding the stick, or flicks interrupted by a button press, a popup, the toolbar or a focus change do nothing; the D-pad and left stick are unchanged. Not rebindable |
 | L1 / R1 | Change channel, instrument bank, wave or help page; NES Instrument view: envelope or DPCM page; C64 Instrument view: envelope, program, vibrato or tables page |
 | L2 / R2 alone | No action; chord modifiers only |
 | L2 + A / L2 + B | Undo / redo |

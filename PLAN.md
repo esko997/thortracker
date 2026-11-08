@@ -52,9 +52,11 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 - **Mixer view:** proposed channel faders for fixed volume levels, separate from per-row volume effects.
   Design remains open: distinguish chip-supported gain that survives native export from preview-only mixing.
   Do not promise independent gain on chips whose voices share an analogue mix or silently change exported sound.
-- **Pattern right-stick shortcuts (requested):** with Pattern focused, two quick Up flicks jump to its first row;
-  two quick Down flicks jump to its last row. Preserve single-flick behavior. Require a return to neutral between
-  flicks; holding the stick must not trigger a jump. Scope the gesture to the focused Pattern view on both hosts.
+- **Right-stick pattern jump** — implemented in 0.14.1, verified in the Deck frontend and Android input path: two
+  quick same-direction right-stick flicks, neutral between them, move the focused Pattern cursor to the pattern's
+  first/last row. Shared detector `input/StickFlicks` (engage 0.6, neutral 0.3, flick ≤ 300 ms, gap ≤ 300 ms)
+  behind `HostInput.rightStick`; Android reads Z/RZ or RX/RY per device, the Deck SDL's right Y. Fixed gesture, not
+  in the keymap; the L2+R2 layer is unaffected. Thresholds may need tuning on the Thor's sticks.
 - **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
   compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
   Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware
