@@ -37,7 +37,11 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
-   - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
+   - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes. Source-only branch
+     `saa1099-systems`: two systems, SAM Coupé (one chip, 8 MHz, six lanes) and Creative Music System (two chips,
+     7.15909 MHz, twelve lanes), own player on a clock-exact port of SAASound's model, shared noise generators and
+     lane-3/6 hardware envelopes kept shared and visible, VGM (dual-chip) and WAV export (`docs/BACKENDS.md`, "Philips
+     SAA1099"); not yet built or verified.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.

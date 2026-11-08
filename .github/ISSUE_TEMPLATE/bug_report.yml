@@ -39,6 +39,8 @@ body:
         - C64 SID (GoatTracker)
         - OPL3 FM
         - Mega Drive (YM2612 + PSG)
+        - SAM Coupé (SAA1099)
+        - Creative Music System (2x SAA1099)
         - Not song-related
     validations:
       required: true

@@ -15,6 +15,10 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "sam-saa1099"     Thor Tracker's own SAA1099 player on one Philips SAA1099 (our clock-exact port of SAASound's
+ *                     model) at the SAM Coupe's 8 MHz (saa/saa_chip.c over saa/saa_machine.c, saa_player.c,
+ *                     saa_image.c, saa_core.c)
+ *   "cms-saa1099"     the same player on two SAA1099s at 7159090 Hz: Creative Music System / Game Blaster (same files)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:
