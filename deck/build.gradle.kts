@@ -51,7 +51,7 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
         "nes/nes_apu.h", "generated/nes_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
-        "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h",
+        "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
@@ -93,7 +93,7 @@ kotlin {
             }
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
-                includeDirs(layout.projectDirectory.dir("native"))
+                includeDirs(layout.projectDirectory.dir("native"), engineSrc.dir("opl3"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }
