@@ -24,7 +24,10 @@
  *    start() and audition(), which hosts run off the audio thread on a spare machine.
  *  - A machine is used by one thread at a time (hosts hand machines over between threads).
  *  - Positions are (order, row, tick) of the row the next tick processes; order is the
- *    played-order position the frontend gave start().
+ *    played-order position the frontend gave start(). tick 0 means the next tick starts that
+ *    row: a row is entered exactly when the position before a tick has tick 0 (a one-row loop
+ *    at speed 1 reports the same (order, row, 0) before every tick, and enters it every time),
+ *    unless the engine provides row_serial() (below).
  */
 #ifndef THORTRACKER_CHIP_ENGINE_H_
 #define THORTRACKER_CHIP_ENGINE_H_
@@ -97,6 +100,14 @@ typedef struct ChipEngineOps {
     /* Runs one driver tick and writes its frames to `out`. Returns the frame count (> 0),
      * 0 when a released audition has finished, or CHIP_ERR_FAULT. */
     int (*tick)(ChipMachine* m, float* out);
+
+    /* Optional (NULL: tick 0 marks row starts, above). For engines whose position follows a
+     * lagging driver (the Mega Drive's XGM: behind a heavy frame the position waits, so tick 0
+     * repeats without a new row, then catches up several rows in one tick): a counter of row
+     * starts, the value belonging to the row instance position() reports. It changes exactly
+     * when position() moves into a newly started row instance (also a row re-entered by a jump
+     * to itself). start() resets it. Used by the WAV export's loop detection (chip_wav.c). */
+    uint32_t (*row_serial)(const ChipMachine* m);
 } ChipEngineOps;
 
 /* The implementation for a system id, or NULL if this build has none. */

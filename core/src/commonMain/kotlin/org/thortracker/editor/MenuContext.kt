@@ -17,4 +17,7 @@ interface MenuContext {
 
     fun status(message: String)
     fun error(message: String)
+
+    /** Help → About's actions popup: report a bug, copy diagnostics. */
+    fun about() = status("About is not available here")
 }

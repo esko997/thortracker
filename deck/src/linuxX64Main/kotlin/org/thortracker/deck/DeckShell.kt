@@ -1,5 +1,10 @@
+@file:OptIn(ExperimentalForeignApi::class)
+
 package org.thortracker.deck
 
+import kotlinx.cinterop.*
+import org.thortracker.audio.WavExport
+import org.thortracker.audio.WavOptions
 import org.thortracker.system.ExportFormat
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
@@ -15,10 +20,16 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.PopupItem
 import org.thortracker.ui.PopupSpec
 import org.thortracker.ui.Popups
+import org.thortracker.ui.RecentMessages
+import platform.posix.remove
+import platform.posix.uname
+import platform.posix.utsname
+import kotlin.time.TimeSource
 
 /**
  * The Deck's platform side of the shared menus: projects and exports in ~/ThorTracker via the in-app [FileBrowser],
- * working-song recovery and keymap in ~/.local/share/thortracker, bundled tunings beside the executable.
+ * working-song recovery and keymap in ~/.local/share/thortracker, bundled tunings beside the executable. WAV exports
+ * render in slices of the frame loop ([pumpExport]) behind a progress popup.
  */
 class DeckShell(
     private val session: EditorSession,
@@ -27,12 +38,17 @@ class DeckShell(
     private val input: HostInput,
     private val appDir: String,
     private val quit: () -> Unit,
+    private val audio: DeckAudio,
+    /** The output for the diagnostics: size, density, video driver. */
+    private val display: () -> String,
 ) : MenuHost {
     private val documents = "${Files.home}/ThorTracker"
     private val data = "${Files.home}/.local/share/thortracker"
     private val working = "$data/working.thor"
     private val previous = "$data/previous.thor"
     private val keymapFile = "$data/keymap.json"
+    /** Where a WAV export renders before it moves to its destination (removed when the export ends, and at startup). */
+    private val wavSpool = "$data/wav-export.wav.part"
 
     /** The project file the working song was opened from or last saved to. */
     private var currentFile: String? = null
@@ -47,6 +63,7 @@ class DeckShell(
     init {
         Files.mkdirs(documents)
         Files.mkdirs(data)
+        remove(wavSpool)   // a render the last run did not live to finish
         Files.readText(keymapFile)?.let { text -> runCatching { Keymap.fromJson(text) }.getOrNull() }?.let { applyKeymap(it, null) }
     }
 
@@ -64,9 +81,10 @@ class DeckShell(
     }
 
     override fun refresh() = pane.refresh()
-    override fun status(message: String) { session.note(message); pane.refresh() }
+    override fun status(message: String) { RecentMessages.record("status", message); session.note(message); pane.refresh() }
 
     override fun error(message: String) {
+        RecentMessages.record("error", message)
         popups.show(PopupSpec("Thor Tracker", message = message, items = listOf(PopupItem("OK", PopupItem.Tone.PRIMARY) {})), 0)
     }
 
@@ -125,6 +143,116 @@ class DeckShell(
         FileBrowser(popups, "Export .${format.extension}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
             if (Files.write(path, format.export(song))) status("${format.extension.uppercase()} exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
         }.show(documents)
+
+    override fun exportWav(song: Song, options: WavOptions) =
+        FileBrowser(popups, "Export .wav", listOf(".wav"), saveName = Files.safeName(song.title) + ".wav") { path ->
+            startWav(path, song, options)
+        }.show(documents)
+
+    override fun showWavExport(): Boolean {
+        val run = wav ?: return false
+        popups.closeAll()
+        run.popup = null
+        showProgress(run)
+        return true
+    }
+
+    /** The WAV export in progress: its destination, progress popup (null until shown) and cancel request. */
+    private class WavRun(val export: WavExport, val path: String) {
+        var popup: PopupSpec? = null
+        var cancelled = false
+        var shownAt = TimeSource.Monotonic.markNow()
+    }
+
+    private var wav: WavRun? = null
+
+    private fun startWav(path: String, song: Song, options: WavOptions) {
+        if (wav != null) return error("A WAV export is already running")
+        val export = try {
+            WavExport(song, options, wavSpool)
+        } catch (e: IllegalArgumentException) {
+            return error("WAV export failed: ${e.message}")
+        } catch (e: IllegalStateException) {
+            return error("WAV export failed: ${e.message}")
+        }
+        val run = WavRun(export, path)
+        wav = run
+        popups.closeAll()   // the file browser: the progress popup stands alone, so it leaves nothing behind
+        showProgress(run)
+    }
+
+    /** Shows or refreshes the progress popup, unless Back hid it (or another popup covers it). */
+    private fun showProgress(run: WavRun) {
+        val spec = run.export.popup { run.cancelled = true }
+        when {
+            run.popup == null -> popups.show(spec, 0)
+            popups.top === run.popup -> popups.replaceTop(spec)
+            else -> return
+        }
+        run.popup = spec
+        run.shownAt = TimeSource.Monotonic.markNow()
+    }
+
+    /**
+     * Call every frame: renders the running WAV export for about [budgetMs] milliseconds (the frame loop stays
+     * responsive), refreshes its popup a few times a second and writes the file when it is complete.
+     */
+    fun pumpExport(budgetMs: Long = 8) {
+        val run = wav ?: return
+        val start = TimeSource.Monotonic.markNow()
+        try {
+            while (!run.cancelled && !run.export.done && start.elapsedNow().inWholeMilliseconds < budgetMs) run.export.step()
+        } catch (e: IllegalStateException) {
+            endWav(run)
+            return error("WAV export failed: ${e.message}")
+        }
+        if (run.cancelled) {
+            endWav(run)
+            return status("WAV export cancelled")
+        }
+        if (!run.export.done) {
+            if (run.shownAt.elapsedNow().inWholeMilliseconds >= 100) showProgress(run)
+            return
+        }
+        run.export.close()   // complete: the spool stays for the move
+        val ok = Files.move(wavSpool, run.path)
+        endWav(run)
+        val message = "WAV exported to ${Files.pretty(run.path)} (${run.export.summary()})"
+        when {
+            !ok -> error("Could not write ${Files.pretty(run.path)}")
+            run.export.capped -> error(message)   // not the whole song: say so where it cannot be missed
+            else -> status(message)
+        }
+    }
+
+    /** Ends [run]: frees the job (an incomplete spool goes with it) and closes its popup if it is on top. */
+    private fun endWav(run: WavRun) {
+        run.export.close()
+        wav = null
+        if (run.popup != null && popups.top === run.popup) popups.back()
+    }
+
+    override fun diagnostics(): List<Pair<String, String>> = listOf(
+        "Platform" to "Steam Deck / desktop Linux: ${osName()}",
+        "Device" to (Files.readText("/sys/devices/virtual/dmi/id/product_name")?.trim()?.ifEmpty { null } ?: "unknown"),
+        "Display" to display(),
+    ) + audio.diagnostics()
+
+    override fun shareDiagnostics(text: String) {
+        val path = "$documents/diagnostics.txt"
+        if (Files.write(path, text.encodeToByteArray())) status("Diagnostics written to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
+    }
+
+    /** "SteamOS 3.6 (Linux 6.5.0-valve22)": os-release's name and the kernel. */
+    private fun osName(): String {
+        val pretty = Files.readText("/etc/os-release")?.lineSequence()?.firstOrNull { it.startsWith("PRETTY_NAME=") }
+            ?.substringAfter('=')?.trim('"')
+        val kernel = memScoped {
+            val u = alloc<utsname>()
+            if (uname(u.ptr) == 0) "${u.sysname.toKString()} ${u.release.toKString()} ${u.machine.toKString()}" else "Linux"
+        }
+        return if (pretty != null) "$pretty ($kernel)" else kernel
+    }
 
     override fun recoverPrevious() {
         val song = Files.readText(previous)?.let { runCatching { ProjectCodec.decode(it) }.getOrNull() }

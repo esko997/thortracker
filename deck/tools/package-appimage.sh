@@ -39,6 +39,7 @@ chmod +x "$tool"
 mkdir -p ../dist
 out="../dist/thor-tracker-$version-x86_64.AppImage"
 # Run the tool without FUSE (CI runners and containers often lack it).
-APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$tool" --no-appstream --runtime-file "$runtime" "$app" "$out"
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$tool" --no-appstream --runtime-file "$runtime" \
+  --mksquashfs-opt -processors --mksquashfs-opt 2 "$app" "$out"
 (cd ../dist && sha256sum "thor-tracker-$version-x86_64.AppImage" > "thor-tracker-$version-x86_64.AppImage.sha256")
 echo "packaged $out"
