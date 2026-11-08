@@ -214,8 +214,8 @@ def test_song():
     P["snare"] = {4: C(50, 7), 12: C(50, 7, [("S", 0x03)]), 15: C(52, 7, [("G", 0x01), ("S", 0x04)])}
     P["hat"] = {r: C(84 if r % 4 else 86, 8, [("S", 0x02)] if r % 4 == 2 else []) for r in range(0, 16, 2)}
     # Order 1 (32 rows, the loop): every channel on 2-op chords drains the pool; then 4-op takes secondaries back.
-    # F06 on its first row: the loop (B01 from order 3, at speed 5) replays it exactly as the first pass.
-    P["c1a"] = {0: C(60, 12, [("K", 0x02), ("F", 0x06)]), 8: C(62, 1, []), 16: C(57, 12, [("K", 0x01)]), 24: C(59, 10, []),
+    # No Fxx: the loop (B01 from order 3, at speed 5) starts again at the speed the first pass had (the player's rule).
+    P["c1a"] = {0: C(60, 12, [("K", 0x02)]), 8: C(62, 1, []), 16: C(57, 12, [("K", 0x01)]), 24: C(59, 10, []),
                 31: C(NOTE_OFF)}
     P["c1b"] = {2: C(55, 12, [("K", 0x01)]), 10: C(52, 12, [("H", 0x37)]), 18: C(50, 4, [("8", 0x01)]),
                 26: C(48, 12, [("K", 0x04)])}

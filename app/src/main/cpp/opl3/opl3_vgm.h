@@ -19,10 +19,12 @@ typedef struct O3VgmInfo {
     uint32_t samples;      /* total 44.1 kHz samples */
     uint32_t loop_samples; /* 0 = no loop (max_ticks reached first) */
     uint32_t loop_offset;  /* file offset of the loop point, 0 = none */
+    size_t size;           /* file size, also when `capacity` was too small (the capacity needed) */
 } O3VgmInfo;
 
 /* Renders until straight play returns to (loop order, row 0) a second time, or max_ticks ticks. `player` is
- * scratch space. Returns the file size, or 0 if `capacity` was too small (size needed in info->samples = 0). */
+ * scratch space; `out` may be NULL with capacity 0 to measure. Returns the file size, or 0 if `capacity` was too
+ * small (info->size = the size needed) or the image is not loaded. */
 size_t o3_vgm_render(const Opl3Image* image, uint32_t max_ticks, O3Player* player, uint8_t* out, size_t capacity,
                      O3VgmInfo* info);
 
