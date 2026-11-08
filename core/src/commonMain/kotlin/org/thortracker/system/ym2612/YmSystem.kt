@@ -107,6 +107,10 @@ object YmSystem : SoundSystem {
 
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int): String = YmRules.describe(song, channel, effect, param)
 
+    /** Arpeggios read with the notes they step through; locks on rows without a note say they are ignored ([YmEffectText]). */
+    override fun effectDetail(song: Song, pattern: Int, channel: Int, row: Int, column: Int): String? =
+        YmEffectText.detail(song, pattern, channel, row, column)
+
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? = YmValidator.cellProblem(song, channel, cell)
 
     override fun structuralErrors(song: Song) = YmValidator.structuralErrors(song)
