@@ -37,9 +37,10 @@ internal fun Song.withPattern(index: Int, pattern: Pattern): Song =
 
 /**
  * A cell normalised to what [system] can represent: notes within its range, sound numbers within its largest bank, a
- * cut, key on or empty note carrying no instrument; effect within the system's codes and parameter within a byte.
+ * cut, key on or empty note carrying no instrument; effects within the system's codes and parameters within a byte,
+ * in at most the effect columns [channel] has ([SoundSystem.effectColumns]; every channel's most when -1).
  */
-fun normaliseCell(cell: Cell, system: SoundSystem): Cell {
+fun normaliseCell(cell: Cell, system: SoundSystem, channel: Int = -1): Cell {
     val note = when {
         cell.note == Cell.CUT -> Cell.CUT
         cell.note == system.keyOn -> cell.note
@@ -47,9 +48,12 @@ fun normaliseCell(cell: Cell, system: SoundSystem): Cell {
         else -> cell.note.coerceIn(system.noteRange)
     }
     val instrument = if (note < 0) 0 else cell.instrument.coerceIn(0, system.banks.maxOf { it.slots })
-    val effect = cell.effect.coerceIn(0, system.effects.maxOf { it.code })
-    val param = cell.param.coerceIn(0, 255)
-    val out = Cell(note, instrument, effect, param)
+    val maxCode = system.effects.maxOf { it.code }
+    var out = Cell(note, instrument, cell.effect.coerceIn(0, maxCode), cell.param.coerceIn(0, 255))
+    if (cell.more.isNotEmpty()) {
+        val columns = if (channel in system.channels.indices) system.effectColumns(channel) else system.channels.indices.maxOf { system.effectColumns(it) }
+        for (col in 1 until columns) out = out.withEffect(col, cell.effectCode(col).coerceIn(0, maxCode), cell.effectParam(col).coerceIn(0, 255))
+    }
     return if (out == cell) cell else out
 }
 

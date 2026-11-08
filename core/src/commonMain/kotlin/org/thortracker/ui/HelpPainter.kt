@@ -160,7 +160,14 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(k.label(Control.FOCUS), "Move controller focus to the other display"),
             Line.Row("Menu", "Controls: rebind any button or chord; hints and this page follow"),
             Line.Heading("Pattern"),
-            Line.Row("Columns", "Note, sound number, effect type and effect value per channel"),
+        ) + (if (maxColumns() <= 1) listOf(Line.Row("Columns", "Note, sound number, effect type and effect value per channel")) else listOf(
+            Line.Row("Columns", "Note, sound number, then effect type and value in each shown effect column: up to ${maxColumns()} per channel, " +
+                "all heard. ${k.label(Action.SCALE)} → Columns sets how many this display shows per channel ($lr; $channels changes channel; " +
+                "$clear: automatic, the columns the song uses)"),
+            Line.Row("Hidden", "Effects in hidden columns still play: the row shows a dot after its last column, the lane header \"+n fx\""),
+            Line.Row("Lanes", "When the channels do not all fit, the lanes scroll sideways with the cursor; ◀n / n▶ beside the headers count " +
+                "the lanes out of view (tap to go there)"),
+        )) + listOf(
             Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
@@ -217,9 +224,14 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         )
     }
 
+    /** Most effect columns a channel of the song's system has. */
+    private fun maxColumns(): Int = song.system.channels.indices.maxOfOrNull { song.system.effectColumns(it) } ?: 1
+
     private fun effects(): List<Line> {
         val out = ArrayList<Line>()
-        out += Line.Text("One effect per channel per row. Values are hexadecimal. 000 is no effect.")
+        val columns = maxColumns()
+        out += Line.Text(if (columns <= 1) "One effect per channel per row. Values are hexadecimal. 000 is no effect."
+            else "Up to $columns effects per channel per row, one per effect column. Values are hexadecimal. 000 is no effect.")
         out += Line.Text("Effects marked unavailable cannot be exported or previewed and are refused.")
         val system = song.system
         for (text in system.help.effectsIntro) out += Line.Text(text)
