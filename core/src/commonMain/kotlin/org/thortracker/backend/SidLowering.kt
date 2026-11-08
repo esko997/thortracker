@@ -154,7 +154,7 @@ object SidLowering {
             }
         }
         // Patterns the orderlists use, numbered in pattern-number order (greloc's pattmap).
-        val used = song.orderlists.flatten().toSortedSet().toList()
+        val used = song.orderlists.flatten().distinct().sorted()
         require(used.size <= P.MAX_PATTERNS) { "The song has ${used.size} voice patterns; GoatTracker holds ${P.MAX_PATTERNS}" }
         val pattMap = HashMap<Int, Int>().apply { used.forEachIndexed { k, p -> put(p, k) } }
         var heap = P.HEAP_BASE
