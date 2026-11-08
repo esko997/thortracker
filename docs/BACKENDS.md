@@ -191,6 +191,70 @@ muted in the song) stay in the hosts and work for every chip.
   DPCM under the noise drums, with tom fills. `exportSamples` writes it as `thor-quest.{thor,nsf,txt,nesimg}`;
   `tools/audio/render_nes_image.sh` renders an image through the native engine.
 
+## SID backend (C64)
+
+- **Driver:** the GoatTracker 2.77 playroutine (Lasse Öörni; "does not fall under the GPL … use it, or song
+  binaries created from it freely for any purpose"), GoatTracker's packer configuration without
+  optimizations so one player build plays every song. GoatTracker is the de-facto C64 tracker; songs and
+  `.sid`/`.prg` exports from it play in SID players, on hardware and in games.
+- **Engine:** the 6510 is the shared `m6502.h`; the chip is reSID 1.0 (Dag Lem, GPL-2.0-or-later, C++ behind a
+  C interface), cycle-exact writes, band-limited resampling, MOS 6581 or 8580 per song (8580 recommended for
+  new songs). PAL, 50 Hz ticks, multispeed 2-16× as GoatTracker's CIA timing. Details, costs and the image
+  layout: `docs/AUDIO_ENGINE.md` → SID.
+- **Spike result** (step 6, branch `sid-spike`): a song written in GoatTracker's format, packed by GoatTracker's
+  own packer, and our lowering of it into the fixed-address image layout are byte-identical data; on the
+  machine the image writes **the same SID registers as py65 running GoatTracker's packed `.sid`** in every
+  frame, with row starts on the reference player's frames; 440.07 Hz for A-4; deterministic; seek, mute,
+  audition and release through the player; audio matches sidplayfp's reSID by loudness envelope (0.985 on the
+  8580). The Deck links reSID through Kotlin/Native's clang++ and libstdc++.
+
+### What SID step 2 needs (data model and lowering)
+
+A `SidSystem` (`system/sid`, id `"c64-sid"`) whose `SidSound` is GoatTracker's instrument model, lowered by a
+Kotlin port of `tools/audio/sid/gt_song.py` (`lower()`; byte-identical to GoatTracker's packer for the test
+song):
+
+- **Channels:** three voices, all tonal, one shared filter. Notes C-0..G#7 (absolute 0..92: GoatTracker's
+  note = Thor Tracker's absolute note; its pattern range ends at G#7, the wavetable reaches B-7). Tunings go
+  into the song's 96-entry frequency table (GoatTracker's base-pitch and Scala tunings work that way); there is
+  no per-note fine pitch, so `fine` realises nothing and a tuning's "N of M degrees within 5¢" is exact.
+- **Instruments** (63 slots, shared by all voices, like the NES): attack/decay, sustain/release, wavetable,
+  pulsetable and filtertable start rows, vibrato (speedtable row + delay), hard restart / gate timer (ticks
+  before the note: fetch, gate off and hard restart; flags: no hard restart, legato = no gate off) and the
+  first-frame waveform (usually `$09` test + gate; `$00` keep, `$FE`/`$FF` gate off/on). The lowering orders
+  them hard-restart / no-HR / legato and writes the slot map.
+- **Tables** (song-wide, 255 rows each; GoatTracker's editor shows them as a table view): wavetable (waveform
+  incl. combined waves, sync/ring/test/gate bits, delays, relative/absolute notes for arpeggios and drums,
+  embedded commands, jumps), pulsetable (set width, modulate for n ticks at a signed speed, jumps),
+  filtertable (passband + resonance + voice routing, cutoff, modulation, jumps), speedtable (vibrato
+  speed/depth, portamento speed, funktempo pairs; `$80` = note-independent). Proposed editor: per-instrument
+  "programs" that the lowering allocates rows for, keeping each instrument's rows stable across edits (live
+  edits then follow the playing program; see AUDIO_ENGINE "What step 2 needs (native side)"), with the raw
+  table view available.
+- **The global filter:** one cutoff, resonance, routing and passband for the chip. Instruments take it over
+  through their filtertable row (GoatTracker's model: the last instrument started with a filter program owns
+  it); pattern commands `A` (filter program), `B` (resonance/routing; `B00` off), `C` (cutoff). The editor
+  should show which channel last took the filter.
+- **Hard restart:** per instrument (gate timer, flags) plus the song's hard-restart ADSR (default `$0F00`;
+  GoatTracker's alternative player for `$Fxxx` values is not in the engine).
+- **Tempo:** ticks per row 2..128 as `DEFAULTTEMPO` = ticks − 1 and `F03-F7F` (all channels); funktempo
+  (`Exx` and `F00/F01`) alternates two tempos; channel tempos (`F83-FFF`) break the shared row clock and
+  should not be offered. Multispeed 1-16 per song (ticks per frame); GoatTracker's advice applies:
+  multiply tempos and gate timers.
+- **Effects** (one column, GoatTracker numbers 1-F): `1xx`/`2xx` portamento up/down and `3xx` toneportamento
+  (speedtable rows; `300` = tie note), `4xx` vibrato, `5xx`/`6xx` attack-decay / sustain-release, `7xx`
+  waveform, `8xx`/`9xx`/`Axx` wave/pulse/filter program, `Bxx` filter control, `Cxx` cutoff, `Dxx` master
+  volume (0-F), `Exx` funktempo, `Fxx` tempo; rows have key off / key on. One-shot commands 5-F let a running
+  1-4 effect continue; command 0 returns to instrument vibrato. No jumps or pattern breaks: orders arrange
+  the song (like the NES). Effects with speedtable parameters need the lowering to allocate speedtable rows
+  (Thor Tracker's effect parameter → a row holding it).
+- **Orders:** one pattern per channel per order (the Thor shape), ≤ 254 orders, ≤ 208 distinct
+  channel-patterns, ≤ 128 rows; packed pattern ≤ 256 bytes (64 rows with instrument, command and note on every
+  row would not fit: validation must say so); song data ≤ 43776 bytes after the fixed tables.
+- **Export:** `.sid` (PSID v2, as gt2reloc writes it) and `.prg`; GoatTracker `.sng` export/import is a
+  natural addition (`tools/audio/sid/gt_song.py` reads and writes it).
+- **Validation** (mirrors `sm_load_image`), Help prose, New → C64 SID, a demo song.
+
 ## Steps
 
 1. **Declare the Game Boy** — done. `SoundSystem` + `GbSystem` (`system/gb`); the editor, painters, Help and menus
@@ -208,7 +272,12 @@ muted in the song) stay in the hosts and work for every chip.
    note mapping `n + 11`) are listed in `docs/AUDIO_ENGINE.md` → "What step 5 needs".
 5. **NES backend.** Lowering, instruments and their editor, New → system, Help, validation, `.nsf` and FamiStudio
    text export. Release.
-6. **SID**, then **FM**: OPL3 first, YM2612 second (see below).
+6. **SID spike** — done (branch `sid-spike`). `chip_engine_ops("c64-sid")`: GoatTracker 2.77 playroutine on
+   `m6502.h` + reSID 1.0 (see "SID backend"); native host test 130 checks; register writes identical to py65
+   running GoatTracker's own packing in every frame; image layout and lowering contract in
+   `docs/AUDIO_ENGINE.md`.
+7. **SID backend.** Model, lowering, editor (instruments, tables), New → system, Help, validation, export.
+8. **FM**: OPL3 first, YM2612 second (see below).
 
 ## Effect columns
 

@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview and the NES engine
+# Audio engine: hUGEDriver preview, the NES engine and the SID engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -8,6 +8,10 @@ behaviour are whatever the driver code does on the emulated CPU and APU.
 The NES system (`"nes-famistudio"`) follows the same principle: the FamiStudio sound engine 4.5.3
 (FamiTracker tempo) runs on an emulated 6502 + 2A03 with all five channels, DPCM samples included;
 its image layout, seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
+
+The C64 SID system (`"c64-sid"`, design step 6, native spike) runs the GoatTracker 2.77 playroutine
+on an emulated 6510 + reSID 1.0 (MOS 6581 or 8580, PAL); its image layout, timing, seek, audition and
+what the Kotlin lowering must produce are in [SID](#c64-sid-goattracker-2-playroutine-on-a-6510--resid-c64-sid).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -62,9 +66,12 @@ Game Boy through the ops table as well as through `hm_*` directly.
 | binjgb | `app/src/main/cpp/third_party/binjgb/` (`src/emulator.c/.h`, `common.c/.h`, `memory.c/.h`, `builtin-palettes.def`, `LICENSE`) | github.com/binji/binjgb commit `16621111ed0ee73bcc45c912a823bcebedcffc0f` | MIT — **ship the copyright and permission notice** (`LICENSE`) with the app (credits/about screen or bundled notices) |
 | GBDK-2020 4.5.0 `sdar`/`sdldgb` | offline only (`tools/audio/prepare_huge_player.py`) | gbdk-linux64.tar.gz sha256 `d7857a5f…605c` (gbc-puzzler `tools/fetch-gbdk`) | tools are not shipped; output is the PD driver |
 | FamiStudio sound engine 4.5.3 | `third_party/famistudio-4.5.3/` (`famistudio_ca65.s`, `NoteTables/famistudio_note_table_{lsb,msb}.bin`, `readme.txt`, `LICENSE`); assembled into `app/src/main/cpp/generated/nes_player_image.h`; the test song `tools/audio/nes/ft_test.txt` (ours) and its FamiStudio 4.5.3 export `ft_test_ca65.s` | github.com/BleuBleu/FamiStudio tag `4.5.3`, commit `c09dca64788606c09fcb5e70db28b9dd1f34be78` (the engine file is unchanged since tag 4.5.0 and still says 4.5.0 in its banner); `famistudio_ca65.s` sha256 `e126a8f3…71fe`, note tables `b917b0eb…ee41` / `b52e4924…69fb` | engine: all-permissive ("copyright notice and this notice are preserved"); note tables: FamiStudio's MIT licence. Both notices are in `NOTICE.txt` |
-| m6502.h (floooh/chips) | `app/src/main/cpp/third_party/chips/` (`m6502.h`, `LICENSE`) | github.com/floooh/chips commit `9e88298ce56319953ac7a43213a1120359f7a3a6`, `m6502.h` sha256 `b3fc32a0…868d46e` | zlib — keep the notice; it is in `NOTICE.txt` |
+| m6502.h (floooh/chips) | `app/src/main/cpp/third_party/chips/` (`m6502.h`, `LICENSE`); implemented once in `cpu6502.c` for the NES and SID machines | github.com/floooh/chips commit `9e88298ce56319953ac7a43213a1120359f7a3a6`, `m6502.h` sha256 `b3fc32a0…868d46e` | zlib — keep the notice; it is in `NOTICE.txt` |
 | blip_buf 1.1.0 | `app/src/main/cpp/third_party/blip_buf/` (`blip_buf.c/.h`, `license.txt`, `readme.txt`, `changes.txt`) | Shay Green's release archive `blip_buf-1.1.0.zip` (code.google.com archive of blip-buf, sha256 `37a9b4f0…2b398e4c`); `blip_buf.c` sha256 `66c4a3f3…0c7573`, unmodified | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | cc65 `ca65`/`ld65` | offline only (`tools/audio/prepare_nes_player.py`) | Ubuntu 24.04 package `cc65 2.19-1` ("ca65 V2.18 - Ubuntu 2.19-1"), checked by the script | tools are not shipped |
+| GoatTracker 2.77 playroutine | `third_party/goattracker-2.77/player.s` (unmodified `src/player.s`, CRLF kept by `.gitattributes`); assembled into `app/src/main/cpp/generated/sid_player_image.h`; the test song `tools/audio/sid/gt_test_song.py` → `gt_test.sng` (ours) and GoatTracker's own packing `gt_test.sid` | SourceForge `GoatTracker 2/2.77/GoatTracker_2.77.zip` (Lasse Öörni, 2025-01-20), sha256 `96c2bd6a…4561ef` (the digest SourceForge lists); `player.s` sha256 `ee9ddbe9…5fad609a`, identical to the copy embedded in the release's packer (`goatdata.c`) | its own notice: "This playroutine source code does not fall under the GPL license! Use it, or song binaries created from it freely for any purpose, commercial or noncommercial." In `NOTICE.txt` |
+| reSID 1.0 | `app/src/main/cpp/third_party/resid-1.0/` (`sid`, `voice`, `wave`, `envelope`, `filter`, `dac`, `extfilt`, `pot` `.cc/.h`, `spline.h`, the eight generated `wave*.h` tables, `siddefs.h.in`, `COPYING`, `AUTHORS`, `README`, `NEWS`), unmodified; plus `siddefs.h` (ours: `siddefs.h.in` with configure's defaults) | github.com/daglem/reSID commit `02c456abfe23cc4f06d94424e40beab8c90fa31f` (2021-12-10: the reSID 1.0 lineage as maintained in VICE, with Leandro Nini's fixes; the last commit before the 2022 rework, whose compile-time `exp()` tables only build with g++) | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
+| GoatTracker 2.77 `gt2reloc` + `gtasm` | offline only (`tools/audio/fetch_goattracker.sh`, `prepare_sid_player.py`): the release's command-line packer, and `tools/audio/sid/gtasm.c` over its embedded assembler (Magnus Lind's, from Exomizer) | built from the pinned release | GPL-2.0-or-later (packer) / Exomizer's licence (assembler); tools are not shipped, their output is the free playroutine |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -94,12 +101,16 @@ assembled at app runtime or per Play.
 
 `ndkVersion = "27.0.12077973"`, CMake `3.22.1`, `externalNativeBuild.cmake.path =
 src/main/cpp/CMakeLists.txt`, ABIs `arm64-v8a`, `x86_64`. The CMake project builds a static C11
-library `chip_engines` (`chip_engine.c`, `huge_chip.c`, `huge_machine.c`, which `#include`s
-binjgb's `emulator.c`, plus `common.c`; and the NES files `nes/nes_chip.c`, `nes/nes_machine.c`
-(which `#include`s the header-only `m6502.h`), `nes/nes_image.c`, `nes/nes_apu.c` and `blip_buf.c`; always with
-`NDEBUG`) and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with NDK
-`aaudio`, `log`, `m`, `dl`. No third-party Java/Gradle dependency. Everything is C, so the Deck
-compiles the same files with Kotlin/Native's clang (`deck/build.gradle.kts`, `buildEngine`).
+library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implementation), `huge_chip.c`,
+`huge_machine.c`, which `#include`s binjgb's `emulator.c`, plus `common.c`; the NES files `nes/nes_chip.c`,
+`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
+`sid/sid_machine.c`, `sid/sid_image.c`; always with `NDEBUG`), a static C++17 library `resid` (reSID 1.0
+and `sid/sid_resid.cpp`, its C interface; `-O2 -w`) that `chip_engines` links, and the shared
+`thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with NDK `aaudio`, `log`, `m`, `dl` and
+the NDK's default static C++ runtime. No third-party Java/Gradle dependency. The engines the hosts call
+are C; the Deck compiles the same files with Kotlin/Native's clang and reSID with its clang++ against the
+sysroot's GCC 8.3 libstdc++ (`--gcc-toolchain`), and links `-lstdc++` (`deck/build.gradle.kts`,
+`buildEngine`).
 
 ## Memory map of the preview cartridge
 
@@ -668,3 +679,299 @@ text asks for, derived from the text alone. Two runs produce identical files.
     the two references agree with each other less (0.89 / 0.79 / 36%).
 - Not done: listening on hardware, blargg's APU test ROMs (they need a PPU and IRQs), a comparison
   with a real NES capture, Thor measurements.
+
+## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
+
+Design step 6, native spike (branch `sid-spike`): `chip_engine_ops("c64-sid")` plays GoatTracker songs
+lowered into the image layout below, proven in the host test. No Kotlin system, lowering or UI yet; what
+step 2 needs is listed at the end and in `docs/BACKENDS.md`.
+
+### What runs
+
+- **Player image** (`generated/sid_player_image.h`, 1249 bytes at `$1000`): GoatTracker 2.77's
+  `player.s`, unmodified, assembled by the assembler GoatTracker itself embeds (Magnus Lind's, from
+  Exomizer; `tools/audio/sid/gtasm.c` is a command-line front end for it) with the defines GoatTracker's
+  packer (`src/greloc.c`) writes for **"Disable optimization"**: every feature of the playroutine is
+  present, so any song plays without re-assembling the player. Fixed choices: unbuffered SID writes, no
+  sound-effect or volume entry points, no ghost registers, no author info, one subtune, three channels,
+  the full 96-note frequency table (C-0..B-7), zero page `$FC/$FD`, and GoatTracker's defaults for pulse
+  skipping on sequencer ticks and realtime-command skipping on tick 0 (the editor's `PO`/`RO` options,
+  on by default). The song data labels (`mt_insad`, `mt_wavetbl`, `mt_patttbllo`, …) are equates at the
+  fixed addresses of the layout instead of data appended after the code.
+- **Parameters**: five song-dependent defines are immediate operands. The prepare script assembles the
+  player with two value sets and requires exactly five differing bytes, one per define; the machine writes
+  each image's values there (`SID_PATCH_*`): `FIRSTNOHRINSTR`, `FIRSTLEGATOINSTR` (the instrument order,
+  below), `ADPARAM`/`SRPARAM` (the hard-restart attack/decay and sustain/release, GoatTracker's `-A`,
+  default `$0F00`; values from `$F000`, which select GoatTracker's alternative player, are not supported)
+  and `DEFAULTTEMPO`.
+- **CPU**: `m6502.h` with decimal mode (a 6510; the player does not use it), 64 KiB RAM, the SID at
+  `$D400-$D7FF` (registers mirrored every 32 bytes). The machine calls the player like a PSID player:
+  `init` (`$1000`, A = 0) once, then `play` (`$1003`) once per tick, each call returning to
+  `SID_PLAYER_IDLE` (`$0FF0`). Faults (`CHIP_ERR_FAULT`, then silent until the next start): an undocumented,
+  JAM or BRK opcode fetch, a fetch of `SID_PLAYER_TRAP` (the vectors), or a call longer than a tick. The
+  player's worst call in the test song is 1046 cycles (5% of a PAL frame).
+- **Tick** = one `play` call = one GoatTracker tick: 19656 cycles (63 × 312, PAL, 50.1245 Hz at 985248 Hz)
+  at speed 1. **Multispeed** (header byte 14 = N, 2..16): `$4CC7 / N + 1` cycles, the CIA timer period
+  gt2reloc's multispeed PSIDs program (x2: 9828 cycles, ~479 frames at 48 kHz); tempos and gate timers
+  are then in N-times-faster ticks, as in GoatTracker. Its 25 Hz mode (`-S0`) is rejected (a tick of 39311
+  cycles would exceed `CHIP_MAX_TICK_FRAMES` at 96 kHz); NTSC is not offered (GoatTracker's default is PAL).
+- **SID**: reSID 1.0 through `sid/sid_resid.cpp` (C interface; the hosts and the machine stay C). Each
+  play call's writes are timestamped to their CPU cycle; the SID is clocked to each write, written, then
+  clocked to the end of the tick, cycle by cycle, and resampled with reSID's `SAMPLE_RESAMPLE`
+  (Kaiser-windowed sinc FIR, passband 20 kHz at 44.1/48 kHz, 16-bit stop band). Cost on the dev PC
+  (48 kHz): 593 µs per tick for the 8580 and 735 µs for the 6581 (34× / 27× realtime, 3.0 / 3.7 % of a
+  core); `SAMPLE_INTERPOLATE` saves only 18 % (483 / 614 µs) because reSID's per-cycle chip emulation, not
+  the FIR, dominates, so the band-limited method is kept. Device numbers come from the bench (below).
+  Creating the first SID machine in a process builds reSID's filter tables (71 ms on the dev PC); later
+  machines take 0.6 ms (their FIR table). A machine is 252 KB plus reSID's (~90 KB: FIR table, ring).
+- **Power-on**: reSID's `reset()` is the chip's RES pin (oscillator phases kept); `sid_resid_reset` also
+  restores the power-up oscillator value `$555555`, the 8580 write pipeline and the resampler, so every
+  start renders bit-identical samples (checked). Not changed in reSID's sources.
+- **Chip model** per song (header byte 13). Recommendation for new Thor Tracker songs: **8580**. Its
+  filter is close to linear and consistent between chips, so a cutoff value sounds the same on any 8580
+  and in reSID, whereas 6581 filters vary by up to an octave between chips and reSID models one; it has
+  no volume-write click and cleaner combined waveforms; current replacement chips and FPGA cores default
+  to it. The 6581 (GoatTracker's own default and most classic music) stays selectable per song.
+- **Output**: reSID's 16-bit output (after its model of the C64 output stage: ~16 Hz high-pass, 16 kHz
+  low-pass, so DC-free) ÷ 32768, L = R, with reSID's default voice mask (no external input). The test
+  song peaks at 0.39 (8580) / 0.46 (6581), RMS 0.094 / 0.100 (the NES test song: 0.67 / 0.15).
+
+### C64 memory map
+
+| Range | Use |
+|---|---|
+| `$00FC-$00FD` | player zero page (`mt_temp1/2`) |
+| `$0100-$01FF` | stack (host calls start at S = `$FB` with the idle return address pushed) |
+| `$0E00-$0E1F` | audition orderlists and patterns (spare machines only) |
+| `$0FF0` / `$0FF3` | `SID_PLAYER_IDLE` (host-call return) / `SID_PLAYER_TRAP` (vector target) |
+| `$1000-$14E0` | player code and its variables (self-modifying, as on a C64) |
+| `$1800-$CFFF` | the image's region |
+| `$D400-$D7FF` | SID, writes timestamped to their cycle; other `$Dxxx` reads 0 |
+| `$FFFA-$FFFF` | vectors → `SID_PLAYER_TRAP` |
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 47200 bytes: a 96-byte header and the region, C64 RAM `$1800-$CFFF` (address *a* at image
+offset 96 + *a* − `$1800`). Numbers are generated into `sid_player_image.h` (`SID_*`). The native loader
+is `sid/sid_image.c` (`sm_load_image`), which rejects anything off-contract with a reason
+(`SidImageInfo.problem`; the host test prints them): mirror its checks in Kotlin validation. The
+reference lowering is `tools/audio/sid/gt_song.py` (`lower()`), proven to be GoatTracker's own packing (see
+Verification). Header, little-endian:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTSD"` |
+| 4 | 4 | player id = first 4 bytes of the player image sha256 (`SID_PLAYER_ID`, currently `0x4CAFC832`) |
+| 8 | 2 | region base `$1800` |
+| 10 | 2 | data end: address after the last song byte (`$2500` < end ≤ `$D000`; patterns and orderlists must lie below it; export stops there) |
+| 12 | 1 | layout: 1 = Thor Tracker (below) |
+| 13 | 1 | chip model: 0 = MOS 6581, 1 = MOS 8580 |
+| 14 | 1 | speed multiplier 1..16 (player calls per frame) |
+| 15 | 1 | `DEFAULTTEMPO`: ticks per row − 1 at song start, 2..127 (gt2reloc: 6 × multiplier − 1, or instrument 63's attack/decay − 1 when that instrument has A/D ≥ 2 and no wavetable) |
+| 16 | 1 | `FIRSTNOHRINSTR` |
+| 17 | 1 | `FIRSTLEGATOINSTR` |
+| 18 | 1 | hard restart attack/decay (`ADPARAM`, GoatTracker default `$0F`) |
+| 19 | 1 | hard restart sustain/release (`SRPARAM`, default `$00`) |
+| 20 | 1 | instrument count *I*, 1..63 |
+| 21 | 11 | 0 |
+| 32 | 64 | slot map: byte *s* = player instrument number of the editor's instrument slot *s* (1..63), 0 = no instrument; byte 32 (slot 0) is 0; numbers 1..*I*, each at most once |
+| 96 | 47104 | region |
+
+Region, fixed tables (the player's labels; *n* = 1-based index, `label + n − 1`):
+
+| Address | Label | Content |
+|---|---|---|
+| `$1800` / `$1860` | `mt_freqtbllo` / `hi` | 96 frequency-register values, note 0 (C-0) .. 95 (B-7). GoatTracker's default table (`gt_song.FREQ_LO/HI`): A-4 = note 57 = `$1D46` = 440.09 Hz, within 1.5 cents of 12-TET from C-1 up. A song's tuning is realised here (GoatTracker's `-G` base pitch and Scala tunings compute this table); the SID has no per-note fine pitch |
+| `$18C0` / `$18C3` | `mt_songtbllo` / `hi` | the three orderlist addresses |
+| `$1900` / `$19D0` | `mt_patttbllo` / `hi` | pattern addresses, patterns 0..207 |
+| `$1AC0` + 64 *k* | `mt_insad`, `mt_inssr`, `mt_inswaveptr`, `mt_inspulseptr`, `mt_insfiltptr`, `mt_insvibparam`, `mt_insvibdelay`, `mt_insgatetimer`, `mt_insfirstwave` (*k* = 0..8) | instrument columns, instrument *n* at offset *n* − 1 |
+| `$1D00` / `$1E00` | `mt_wavetbl` / `mt_notetbl` | wavetable left / right, rows 1..255 |
+| `$1F00` / `$2000` | `mt_pulsetimetbl` / `mt_pulsespdtbl` | pulsetable |
+| `$2100` / `$2200` | `mt_filttimetbl` / `mt_filtspdtbl` | filtertable |
+| `$2301` / `$2401` | `mt_speedlefttbl` / `mt_speedrighttbl` | speedtable; `$2300` and `$2400` stay 0 (index 0 = no speed) |
+| `$2500`.. | | orderlists, then patterns, up to the data end |
+
+**What the lowering writes** (GoatTracker's packed format as `greloc.c` writes it without
+optimizations; all table rows and all instruments are kept, so row and instrument numbers need no
+remapping beyond the instrument order):
+
+- **Instrument order**: player numbers put hard-restart instruments first, then no-hard-restart ones
+  (gate timer bit 7), then legato ones (bit 6), each group by slot. `FIRSTNOHRINSTR` = normal + 1,
+  `FIRSTLEGATOINSTR` = normal + no-HR + 1 (gt2reloc adds one more in multispeed, where it counts an extra
+  no-HR instrument: the first legato instrument then plays without legato; mirror it for exports that must
+  equal GoatTracker's, or not, since the operand is ours to set). Patterns use player numbers; the slot map
+  records the order. Columns: A/D, S/R, wave/pulse/filter pointers, vibrato speedtable index and
+  vibrato delay − 1 (both 0 when the delay is 0), gate timer & `$3F`, first-frame wave.
+- **Wavetable** left: waveforms `$10-$DF` + `$10`; inaudible waveforms `$E0-$EF` → `$10-$1F`; delays
+  `$01-$0F`, commands `$F0-$FE`, jump `$FF` and `$00` unchanged. Right: notes XOR `$80` (relative
+  `$00-$7F` → `$80-$FF`, keep frequency `$80` → `$00`, absolute `$81-$DF` → `$01-$5F`); command
+  parameters and jump targets unchanged (they are row numbers).
+- **Pulsetable** unchanged. **Filtertable** left: set-filter steps `$81-$FE` → `((x & $70) >> 1) | $80`;
+  everything else unchanged. **Speedtable** unchanged.
+- **Orderlists** (Thor layout): per channel *n* pattern numbers (0..207), `$FF`, the restart order; *n*
+  (1..254) and the restart are the same on all three channels. No repeat (`$D0-$DF`) or transpose
+  (`$E0-$FE`) commands.
+- **Patterns** (GoatTracker's packed rows, `packpattern`): per row an optional instrument byte `$01-$3F`
+  (only when it differs from the previous row's instrument in the pattern; always on row 0), then, when
+  the command or its parameter differs from the previous row's (always on row 0), `$40|c` (a note
+  follows) or `$50|c` (the row is a rest) with a parameter byte unless *c* = 0, then the note byte:
+  `$60-$BC` notes C-0..G#7 (absolute note *n* = byte − `$60`), `$BD` rest, `$BE` key off, `$BF` key on;
+  runs of 2..64 bare rests after row 0 pack into one byte `$100 − count` (`$C0-$FE`). A pattern ends with
+  `$00` after its last row (or at exactly 256 bytes); at most 256 bytes, 1..128 rows, equal rows on the
+  three channels of an order. Command parameters are GoatTracker's with two packer conversions: `Fxx` with
+  `xx & $7F` ≥ 3 is stored minus one, and `Dxx` with `xx` ≥ `$10` (timing marks) becomes command 0.
+- **Should** (not checked): each order's patterns re-send the instrument on row 0 (an order is also
+  entered by the loop and by the seek fallback); no channel tempo (`F8x`-`FFx`), so all channels keep
+  one row clock; gate timers below the tempo (GoatTracker's rule; otherwise rows are not fetched).
+
+`sm_load_image` derives (`SidImageInfo`): order count and restart, rows per order, the pattern of each
+channel and order, and the global tempo (and funktempo speedtable entry) each order starts with in
+straight play.
+
+### Position, rows and seek
+
+- GoatTracker reads a row's pattern data `gate timer` ticks before the row starts (hard restart and gate
+  off happen then) and starts it when the channel's counter counts from 1 to 0 (tick 0). The machine reads
+  channel 1's counter (`mt_chncounter`) before each tick: `position()` is the row the next tick
+  processes, from player state, exact through `Fxx`, funktempo and multispeed; orders and rows per order
+  come from the image (rows wrap to the restart order).
+- Start-up: the first play call after init resets the player, the next tick 0 only loads the first
+  patterns, and row 0 starts `tempo + 1` ticks later (7 ticks at the default tempo, with row 0 fetched and
+  hard-restarted on the way). `start(0, 0)` runs these silently, so the next tick is row 0's first.
+- `start(order, row, max_ticks)`: power-on, init, then the real player runs from the song start until the
+  next tick starts (order, row) (`CHIP_SEEK_FROM_START`). The SID is **deferred** while seeking: the
+  writes of the last 150 ticks (× the multiplier; ~3 s) wait in a ring and are played clocked when the
+  target is reached, the last of them with samples so the resampler's history is straight play's; older
+  ticks reach the SID as bare writes one cycle apart. The player state is exact (register writes after a
+  seek equal straight play's); the SID's state from before that window (oscillator phases, envelopes of
+  notes older than ~3 s) is approximate: 2 s after a seek the loudness envelope is within 0.7 % (target
+  inside the window) and 0.3 % (beyond it) of straight play. Clocked-silent ticks cost 39 µs on the dev PC
+  and bare ticks 6.7 µs, so a seek is ~6 ms plus 6.7 µs per tick (12000 ticks, ~4 min: ~86 ms). Suggested
+  `seekTicks` 12000, as for the Game Boy and NES; check the bench on the Thor.
+- Fallback (`CHIP_SEEK_FROM_ORDER`, beyond `max_ticks`): power-on, the reset call, then every orderlist
+  is pointed at the order and every channel tempo set to the order's start tempo (and the funktempo pair
+  from the speedtable), so the next tick 0 loads that order's patterns; its earlier rows replay silently.
+  Lost, as on the Game Boy and NES: instruments, table programs, filter and volume from earlier orders,
+  and the funktempo phase.
+- `bulk` clocking (`SID::clock(delta)`) is not sample-identical to per-cycle clocking (reSID integrates its
+  filters in multi-cycle steps and the noise generator does not repeat the per-cycle sequence), so seeking
+  is compared by loudness, not samples; `sid_resid_clock` keeps the resampler's phase on straight play's
+  sample grid.
+
+### Live edits (spike: in place)
+
+`apply_image` copies the region into the running machine at a tick boundary, rewrites the five
+parameters, moves each channel's current instrument number to the new number of its slot (slot map) and
+clamps the position to the new song. The player's sequencer state (orderlist index, pattern number,
+byte offset in the packed pattern, packed-rest count) and table pointers are kept as they are, so the
+result is right when the playing patterns and orderlists did not move or change before the playhead
+(the host test applies the same image every 7 ticks for 300 ticks: writes identical). What step 2 needs
+is below.
+
+### Audition
+
+`audition(channel 0..2, note, slot, fine)`: the hosts pass the cell's slot (1..63); the image's slot map
+gives the player number (slot without instrument: `CHIP_ERR_IMAGE`). The spare machine is reset with the
+image, its song table and pattern table entries 0/1 are pointed at scratch data in RAM (`$0E00`): the
+auditioned channel plays a 64-row pattern `instrument, $40, note, $C1` (one note, 63 packed rests) and
+then loops a 64-row rest pattern; the other channels loop the rest pattern. The start-up ticks (reset,
+pattern load, the note's fetch and hard restart) run silently, so the first tick is the note's first, as
+when a song row plays it, through the image's own instruments and tables. `note` is the absolute note =
+GoatTracker note 0..92 (C-0..G#7, the pattern range); `fine` must be 0. `release()`: 0 before any tick
+(cut); otherwise the player's key-off state (`mt_chngate = $FE`, exactly what a key-off row sets) from
+the next tick, returning 1; `tick` returns 0 once the voice's envelope counter is 0 (Tone, release 0: 1
+tick; Lead, release 9 from sustain A: 35 ticks).
+
+### Ops behaviour
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `sm_load_image`; `image_storage` = `sizeof(SidImage)` (48768: bytes + info) |
+| `start(order, row)` | above; `seek_mode` from start or order |
+| `apply_image` | above (in place); ignored on a faulted or auditioning machine |
+| `audition`, `release` | above |
+| `mute(channel 0-2)` | reSID's voice mask: the voice leaves the filter and the mix, keeps running (its sync and ring modulation still act; unmuting resumes mid-note); `start`/`audition` clear mutes |
+| `position` | above |
+| `tick` | one player call: 957-958 frames at 48 kHz (speed 1); 0 after a released audition ended |
+
+### Preparing the player (once, when the pin, configuration or layout changes)
+
+```
+/tmp/sidref/bin/python tools/audio/prepare_sid_player.py [--goattracker DIR]
+```
+
+`tools/audio/fetch_goattracker.sh` downloads the pinned GoatTracker 2.77 release into
+`${THOR_TRACKER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/thor-tracker}/goattracker-2.77/` (sha256 checked,
+as `fetch_famistudio.sh` does), builds its packer `gt2reloc` (it links GoatTracker's SDL 1.2 front-end
+library, so it builds and runs in the `ubuntu` distrobox when the host has no `sdl-config`: install
+`build-essential libsdl1.2-compat-dev` there) and `gtasm`, and prints their directory. The prepare script
+checks the vendored `player.s`, assembles the player and finds the parameter operands and player symbols
+(words appended after the code), checks the low-byte jump tables stay in their pages and the player ends
+below `$1800`, writes `tools/audio/sid/gt_test.sng` from `gt_test_song.py`, packs it with
+`gt2reloc gt_test.sng gt_test.sid -I0 -J1` (gt2reloc's `-I` case falls through into `-J`, so `-I0` alone
+would also switch full buffering on; it keeps file names in 60-byte buffers, so it runs from the song's
+directory), lowers the song, proves the lowering is the packer's data, records py65's reference
+(below) and writes `generated/sid_player_image.h` and `app/src/test/cpp/sid_gt_song.h`. Committed
+`gt_test.sng`/`gt_test.sid` must be reproduced byte for byte. Needs py65 (`python3 -m venv /tmp/sidref &&
+/tmp/sidref/bin/pip install numpy py65`).
+
+### Verification
+
+- The test song (`tools/audio/sid/gt_test_song.py`, written for these tests as a GoatTracker song in the
+  Thor shape: 4 orders of 16/32/16/24 rows looping to order 1): hard-restart, no-HR and legato
+  instruments (first wave `$00`/`$FF`), instrument vibrato with normal and note-independent speeds,
+  commands 1-F, key off/on, wavetable delays, keep-frequency, relative/absolute notes, inaudible
+  waveforms and wavetable commands, pulse and filter programs with loops, packed rests, a pattern used
+  twice, and a held A-4 triangle. Every table row is reached and no table part repeats, so GoatTracker's
+  packer keeps them all.
+- **Lowering = GoatTracker's packer**: the player source plus `gt_song.lower`'s data written with
+  greloc's labels and order, assembled by `gtasm`, is **byte-identical to gt2reloc's PSID payload**
+  (1839 bytes: 1249 of player, 590 of song data); the Thor image holds the same bytes at the layout's addresses.
+- **Independent CPU reference**: py65 runs gt2reloc's PSID (init, then one play call per frame) for 1500
+  frames (30 s) and records 20390 SID writes and the frames where its channel-1 counter starts rows; it
+  also runs the Thor image on the player image (parameters patched) and gets the same writes. Both are in
+  the fixture.
+- `tools/audio/run_native_host_test.sh [dir]` builds the engines (C with `$CC`, reSID with `$CXX`, linked by
+  `$CXX`) and runs `app/src/test/cpp/sid_machine_test.c` — 2026-11-07: **130 checks, 0 failures** (Game Boy
+  145, NES 336 unchanged): player image and frequency table (A-4 440.09 Hz, ≤ 1.51 cents from 12-TET);
+  derived orders/rows/start tempos; 22 single-byte corruptions each rejected with its reason; the Thor
+  image on this machine **writes the same SID registers as py65's reference in all 1500 frames** and its
+  287 row starts fall on the reference player's frames with the right (order, row); gt2reloc's own PSID
+  on this machine also equals py65 in all frames; six seek targets land exactly (ticks = the reference row
+  start) with writes in step for 200 ticks; the order fallback lands and stays in row step; loudness after
+  seeks (above); audition of A-4 on the Tone instrument **440.07 Hz measured** (register 440.09 Hz),
+  sustained 2 s, other voices silent, release tails, argument limits; the held A-4 in the song with
+  voices 2-3 muted 440.00 Hz; all voices muted < 0.002 after 100 ms; muting leaves writes unchanged; BRK,
+  JAM and runaway faults; x2 multispeed ticks of 9828 cycles; same-image live apply in step; the ops
+  table as the hosts drive it; 30 s on each model non-silent, no samples at full scale, bit-identical on
+  a second start. Evidence: `sid_gt_8580.wav`, `sid_gt_6581.wav` (30 s), `sid_tone_8580.wav`,
+  `sid_trace.txt` (the machine's writes per tick), `sid_gt.sid`.
+- `tools/audio/sid_reference_check.py <dir>` (developer evidence: numpy, py65; sidplayfp 2.6, e.g. in the
+  `ubuntu` distrobox) — 2026-11-07, PASS: py65 running `sid_gt.sid` equals `sid_trace.txt` in 1500/1500
+  frames; against **sidplayfp's reSID** (its own C64 environment, aligned by envelope): 8580 envelope
+  correlation 0.985, log-spectrum 0.863, same pitch class in 95 % of windows; 6581 0.884 / 0.860 / 96 %
+  (libsidplayfp configures the 6581 filter differently); against reSIDfp (another filter model, reported
+  only) 0.842 / 0.936 / 96 % and 0.968 / 0.850 / 95 %.
+- **Bench**: `tools/audio/build_sid_bench.sh [dir]` builds `tools/audio/sid_bench.c` for the host and with
+  the NDK as static-libc++ arm64 executables (`-O2` as the app, and `-O3`): `adb push` and run
+  `sid_bench-arm64 [seconds] [rate]`; it prints cost per tick, realtime factor and share of a core for
+  both models and sampling methods, and seek costs.
+- Not done: listening on hardware, device measurements (Thor), a comparison with a real C64 capture.
+
+### What step 2 needs (native side)
+
+- **Relocating live edits** (as the NES does): per channel, derive the sequencer position from player
+  state in the old image — the orderlist entry being read (`mt_chnsongptr` − 1) and the rows already
+  fetched from its pattern (parse the old pattern up to `mt_chnpattptr` and `mt_chnpackedrest`; at
+  offset 0 the pattern is either fresh or fully fetched with the orderlist advance pending: the advance
+  happens at tick 0 of the pattern's last row, so whether that row has started decides) — then set
+  `mt_chnsongptr`, `mt_chnpattnum`, `mt_chnpattptr` and `mt_chnpackedrest` to the same place in the new
+  image. Table programs (wave/pulse/filter pointers, `mt_filtstep`) index rows: the lowering should keep
+  each instrument's table rows stable (or the machine maps them like NES envelopes).
+- `Fxx`/funktempo edits before the playhead: re-derive the tempo as the NES re-derives its speed.
+- Audition with fine pitch is not possible per note; tunings go into the song's frequency table.
+- Kotlin: `SidSystem.engine` (id `"c64-sid"`, `imageSize` 47200, `seekTicks`, `note(n)` = n,
+  `fine` → 0) and a generated `SidPlayerImage.kt` (player bytes and layout numbers) for `.sid`/`.prg`
+  export: a PSID v2 like gt2reloc's (load `$1000`, init `$1000`, play `$1003`; for multispeed the 10-byte
+  CIA speed code at `$0FF6` and init there; flags PAL + the model) = header + player with the parameters
+  written + the region up to the data end.

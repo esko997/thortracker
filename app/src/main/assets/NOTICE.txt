@@ -14,6 +14,13 @@ and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public License 2.1 or later
 source in app/src/main/cpp/third_party/blip_buf with its license.txt). The 2A03 APU
 emulation is Thor Tracker's own code (GPL-3.0-or-later).
 
+Commodore 64 SID playback uses the GoatTracker 2.77 playroutine by Lasse Oorni
+(Cadaver), which is not under the GPL and may be used freely (notice below), the
+same m6502.h, and reSID 1.0 by Dag Lem (GNU General Public License 2 or later;
+source in app/src/main/cpp/third_party/resid-1.0 with its COPYING, AUTHORS and
+README, github.com/daglem/reSID at commit 02c456abfe23cc4f06d94424e40beab8c90fa31f).
+Thor Tracker adds a configured siddefs.h and a C interface (sid/sid_resid.cpp).
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -71,6 +78,26 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+GoatTracker 2 playroutine
+https://sourceforge.net/projects/goattracker2/ (GoatTracker 2.77, src/player.s)
+
+Copyright (c) Lasse Oorni (Cadaver, Covert Bitops)
+
+NOTE: This playroutine source code does not fall under the GPL license! Use it,
+or song binaries created from it freely for any purpose, commercial or
+noncommercial.
+
+reSID
+https://github.com/daglem/reSID
+
+Copyright (C) 2010 Dag Lem <resid@nimrod.no> (authors: Dag Lem, Antti S. Lankila;
+later fixes by Leandro Nini).
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version.
 
 chips (m6502.h)
 https://github.com/floooh/chips
