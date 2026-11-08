@@ -5,6 +5,7 @@ import org.thortracker.model.Songs
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.ym2612.YmSystem
 import java.io.File
 
 /** Host utility; sample generation is explicit, never a unit-test side effect. */
@@ -34,5 +35,11 @@ object SampleExportTool {
         File(directory, "glass-harbour.thor").writeText(ProjectCodec.encode(opl3), Charsets.UTF_8)
         File(directory, "glass-harbour.o3img").writeBytes(ByteArray(Opl3System.engine.imageSize).also { Opl3System.engine.lower(opl3, it) })
         println("Exported ${opl3.title} to ${directory.absolutePath}")
+        // The Mega Drive demo: project and engine image (its VGM/XGM/XGC need the native player:
+        // tools/audio/render_ym_image.sh neon-causeway.ymimg out.wav --vgm neon-causeway.vgm renders them).
+        val ym = YmSystem.demo()
+        File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
+        File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
+        println("Exported ${ym.title} to ${directory.absolutePath}")
     }
 }

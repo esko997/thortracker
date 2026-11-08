@@ -28,6 +28,9 @@ object YmValidator {
     /** An FM key-on of the instrument already loaded: the frequency pair, key off and on. */
     private const val RETRIGGER_WRITES = 4
 
+    /** A retrigger whose locks differ from the last note's: a few operator registers change (or are restored). */
+    private const val LOCK_CHANGE_WRITES = 8
+
     fun structuralErrors(song: Song): List<String> {
         val out = Report()
         if (song.sound !is YmSound) {
@@ -161,6 +164,7 @@ object YmValidator {
         val sound = song.ym
         val instrument = IntArray(CHANNELS)
         val loaded = IntArray(CHANNELS)
+        val loadedLocks = arrayOfNulls<List<Pair<Int, Int>>>(CHANNELS)
         var pitchedNoise = false
         var speed = song.ticksPerRow
         var warnedLow = 0
@@ -181,14 +185,14 @@ object YmValidator {
                     val where = "$label, ${YmRules.CHANNEL_NAMES[ch]} row $row"
                     if (c.instrument != 0) instrument[ch] = c.instrument
                     var noteFx: Char? = null
-                    var locks = 0
+                    val locks = ArrayList<Pair<Int, Int>>()
                     var noiseLock: Int? = null
                     for (col in 0..c.more.size) {
                         val code = c.effectCode(col)
                         val param = c.effectParam(col)
                         if (code == 0 && param == 0) continue
                         if (code in YmRules.NOTE_EFFECTS) {
-                            locks++
+                            locks += code to param
                             if (noteFx == null) noteFx = YmRules.effectText(code, param)[0]
                         }
                         if (code == YmRules.FX_NOISE) noiseLock = ((param shr 4) shl 2) or (param and 3)
@@ -204,13 +208,18 @@ object YmValidator {
                     val ins = sound.instrument(instrument[ch])
                     if (YmRules.isFm(ch)) {
                         if (ins is YmFmInstrument) {
-                            if (loaded[ch] != instrument[ch] || locks > 0) { writes += INSTRUMENT_LOAD_WRITES; loads++ } else writes += RETRIGGER_WRITES
-                            // Locks change registers the next plain note restores.
-                            loaded[ch] = if (locks > 0) -1 else instrument[ch]
+                            // Registers are shadowed: only what differs from the last note is written.
+                            writes += when {
+                                loaded[ch] != instrument[ch] -> INSTRUMENT_LOAD_WRITES.also { loads++ }
+                                loadedLocks[ch] != locks -> LOCK_CHANGE_WRITES
+                                else -> RETRIGGER_WRITES
+                            }
+                            loaded[ch] = instrument[ch]
+                            loadedLocks[ch] = locks
                         }
                         continue
                     }
-                    writes += 3
+                    // PSG writes go to the PSG port without the YM2612's busy waits: not counted.
                     if (ch == YmRules.NOISE) {
                         if (ins is YmPsgInstrument) pitchedNoise = ((noiseLock ?: ins.noise) and 3) == YmPsgInstrument.PITCHED
                         continue
