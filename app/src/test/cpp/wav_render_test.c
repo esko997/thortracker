@@ -11,8 +11,9 @@
  * arguments. Plus chip_wav_pcm16's rounding and clamping.
  *
  * The shortest songs (epsm-shortest.nesimg: one order of one row at speed 1, a held note on EPSM FM 1, looping to
- * order 0) run the same render paths at the other extreme: once through is a single engine tick (under 1 s), and
- * it must still render a valid non-silent file equal to straight ticking, deterministically for any step size, with
+ * order 0; opm-shortest.omimg: likewise, A-4 held on the OPM's FM 1) run the same render paths at the other extreme:
+ * once through is a single engine tick (under 1 s), and it must still render a valid non-silent file equal to straight
+ * ticking, deterministically for any step size, with
  * loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
@@ -58,11 +59,13 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"opm-demo.omimg", "ym2151-opm"},
 };
 
 /* The shortest valid songs (written by exportSamples beside the demos). */
 static const Demo kShortest[] = {
     {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
+    {"opm-shortest.omimg", "ym2151-opm"},
 };
 
 static char spool[512];

@@ -11,6 +11,8 @@ import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
+import org.thortracker.system.opm.OpmVgm
+import org.thortracker.system.opm.OpmVgmRenderer
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.system.ym2612.YmExportRenderer
 
@@ -280,10 +282,13 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
         init {
             System.loadLibrary("thortracker_audio")
-            // VGM export of OPL3 songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of every system through
-            // the native players (core has no native code).
+            // VGM export of OPL3 and OPM songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of every system
+            // through the native players (core has no native code).
             Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
                 nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            OpmVgm.renderer = OpmVgmRenderer { image, maxTicks, tags ->
+                nativeOpmVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
@@ -328,6 +333,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
+        @JvmStatic private external fun nativeOpmVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** `chip_wav.h`: a job rendering into [spool]; throws IllegalArgumentException(problem) when it cannot start. */

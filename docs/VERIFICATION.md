@@ -1,5 +1,54 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: OPM (YM2151) — source slice, NOT verified
+
+Branch `opm-systems` adds the standalone **OPM FM (YM2151)** system (`"ym2151-opm"`: Thor Tracker's own player on
+ymfm's YM2151 at the X68000's 4 MHz; eight FM channels, the shared LFO, noise on FM 8 and CSM; VGM and WAV export) and
+the demo **Sharp Corners**. It was written source-only: **nothing has been built, compiled, generated, tested, run on
+a device or listened to**, and no version was bumped. The parent runs everything below before anything is called
+verified; record the results here then, replacing this section.
+
+1. Generate the Kotlin constants, the native fixtures and the golden images (pure Python 3), check a second run is
+   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/OpmPlayerImage.kt`,
+   `app/src/test/cpp/opm_test_song.h` and `core/src/jvmTest/resources/opm-golden/{spike,features}.bin.gz`:
+
+   ```sh
+   python3 tools/audio/prepare_opm.py
+   python3 tools/audio/opm/opm_golden.py
+   python3 tools/audio/prepare_opm.py && python3 tools/audio/opm/opm_golden.py && git status --short   # no new changes
+   ```
+
+   `prepare_opm.py` fails if the C headers and the Python reference disagree on a shared number.
+2. The usual full run (Kotlin: `OpmGoldenTest`, `OpmModelTest`, `OpmEditorTest` and every existing test), the app and
+   Deck builds (CMake through Gradle, cinterop `decknative` with `opm_export.h`), the sample exports (`sharp-corners.thor`,
+   `opm-demo.omimg`, `opm-shortest.omimg`) and the native host test (`opm_machine_test.c`, and `wav_render_test.c` with
+   the two OPM images):
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   python3 tools/audio/opm/opm_reference_check.py /tmp/thor-evidence --pitch
+   python3 tools/audio/opm/opm_reference_check.py /tmp/thor-evidence --vgm2wav /path/to/libvgm/bin/vgm2wav   # optional, needs numpy
+   tools/audio/render_opm_image.sh app/build/samples/opm-demo.omimg /tmp/sharp-corners.wav 90 --vgm /tmp/sharp-corners.vgm
+   ```
+
+   Expected from the specification (not yet observed): A-4 at 439.88 Hz (key code `$48`, fraction 5), every note
+   D#0..D-8 within 4.4 cents; the engine's per-tick writes equal `opm_ref.py`'s for 1500 ticks; the VGM byte-equal to
+   the reference's (7168 bytes, 455 ticks, loop 263865 samples, as `opm_ref.py` computed in memory for the fixture
+   song). Thresholds the native test sets without having run (vibrato spread, noise roughness, CSM rate within 1 %,
+   seek envelopes within 0.15, audition release 3-400 ticks, tick cost ≤ 3× the mean) may need tuning once measured.
+   Also the release-standard checks: Game Boy views pixel-identical to the baseline, every existing golden and sample
+   export unchanged, the four other `render_*_image.sh` scripts still link (they now compile the OPM sources because
+   `chip_engine.c` lists its ops).
+3. Listen: the demo (LFO vibrato and tremolo, DT2 bells, noise drums on FM 8, the CSM passage) and the test song; check
+   the CSM passage also in an independent VGM player (stock ymfm/MAME cores hold a CSM key-on until their next register
+   write, so they may sound different from the engine; see `docs/AUDIO_ENGINE.md`, "OPM: VGM export").
+4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → OPM FM
+   (YM2151); demo playback (stereo, no underruns; the tick cost on the Konkr), the Sound/Expert/Drum pages, audition on
+   FM 1-8 (a noise sound only on FM 8, refused elsewhere with the message), the Song view's LFO/CSM/Timer A rows and the
+   Pattern inspector's shared-state lines, VGM and WAV exports through the document picker.
+
 ## Unreleased: NES + EPSM — source slice, NOT verified
 
 Branch `nes-epsm` adds the **NES + EPSM** variant (`"nes-famistudio-epsm"`: FamiStudio 4.5.3 built with

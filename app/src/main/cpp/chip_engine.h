@@ -16,6 +16,8 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "ym2151-opm"      Thor Tracker's own OPM player on a YM2151 (ymfm) at the X68000's 4 MHz
+ *                     (opm/opm_chip.c over opm/opm_machine.c, opm_player.c, opm_image.c, opm_ymfm.cpp)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

@@ -39,6 +39,7 @@ body:
         - C64 SID (GoatTracker)
         - OPL3 FM
         - Mega Drive (YM2612 + PSG)
+        - OPM FM (YM2151)
         - Not song-related
     validations:
       required: true

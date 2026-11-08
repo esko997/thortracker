@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the OPM engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -24,6 +24,10 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The OPM system (`"ym2151-opm"`, unverified source slice) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
+own player (specified here, mirrored by an independent Python reference) on ymfm's YM2151, with the chip's LFO,
+noise and CSM as shared song state, and exports VGM. See [OPM](#opm-thor-trackers-own-player-on-a-ym2151-ym2151-opm).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -120,7 +124,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | SGDK XGM driver | `third_party/sgdk-xgm/` (`drv_xgm.s80`, `z80_def.i80`, `z80_mac.i80`, `z80_fct.i80`, `xgm.txt`, `LICENSE.txt`), unmodified; assembled into `app/src/main/cpp/generated/xgm_driver_image.h` by `tools/audio/prepare_ym.py` | github.com/Stephane-D/SGDK commit `9a78a44143a867cd8c5053b95cd061a21f0b73c2` (2026-10-20); `drv_xgm.s80` sha256 `aae47f6f…6e81b63`; image (5888 bytes) sha256 `557fe542…cf31e` = `drv_xgm` in SGDK's `lib/libmd.a` | MIT — notice in `NOTICE.txt` |
 | SGDK sjasm 0.39j, xgmtool 1.76 | offline only (`tools/audio/fetch_sgdk.sh` builds both from the pinned commit) | the SGDK pin | sjasm zlib, xgmtool MIT; not shipped (xgmtool's conversion is ported in `ym/ym_xgm.c`, MIT notice kept) |
 | z80.h (floooh/chips) | `app/src/main/cpp/third_party/chips/z80.h`; implemented once in `cpuz80.c` | the `m6502.h` commit `9e88298c`; `z80.h` sha256 `6ca70ffd…de734f3` | zlib (the chips notice) |
-| ymfm | `app/src/main/cpp/third_party/ymfm/` (`ymfm.h`, `ymfm_opn.h/.cpp`, `ymfm_fm.h/.ipp`, `ymfm_adpcm.h/.cpp`, `ymfm_ssg.h/.cpp`, `LICENSE`), unmodified | github.com/aaronsgiles/ymfm commit `81aec25ccbb98f4873a255f7551ac4dadac59b4a` (2026-07-27); `ymfm_opn.cpp` sha256 `8734c6d5…913b489`, `ymfm_fm.ipp` `4fb7fe59…f6ab4b9` | BSD-3-Clause — notice in `NOTICE.txt` |
+| ymfm | `app/src/main/cpp/third_party/ymfm/` (`ymfm.h`, `ymfm_opn.h/.cpp`, `ymfm_opm.h/.cpp`, `ymfm_fm.h/.ipp`, `ymfm_adpcm.h/.cpp`, `ymfm_ssg.h/.cpp`, `LICENSE`), unmodified | github.com/aaronsgiles/ymfm commit `81aec25ccbb98f4873a255f7551ac4dadac59b4a` (2026-07-27); `ymfm_opn.cpp` sha256 `8734c6d5…913b489`, `ymfm_fm.ipp` `4fb7fe59…f6ab4b9`; `ymfm_opm.cpp` `2235d571…98b22dc` and `ymfm_opm.h` `cab75025…a9aee7b` fetched from `raw.githubusercontent.com/aaronsgiles/ymfm/81aec25c…/src/` for the OPM (the vendored `ymfm.h`, `ymfm_fm.ipp` and `ymfm_opn.cpp` match that commit's byte for byte) | BSD-3-Clause — notice in `NOTICE.txt` |
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
@@ -2387,3 +2391,355 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## OPM: Thor Tracker's own player on a YM2151 (`"ym2151-opm"`)
+
+**Status: unverified source slice** (branch `opm-systems`): written without building, generating or running anything.
+The YM2151 (OPM) is the Sharp X68000's sound chip (also many arcade boards); like the OPL3 it plays through **our own
+player** (`opm/opm_player.c`, pure integer C without a chip) whose behaviour is the specification in this section;
+`tools/audio/opm/opm_ref.py` implements the same specification separately in Python and the host test requires
+identical register writes in every tick. Songs export as VGM (the player's register log) and WAV. This section is the
+contract of the Kotlin system and lowering (`core` `system/opm`, `backend/OpmLowering.kt`); the numbers they share with
+the engine are generated into `backend/OpmPlayerImage.kt` (below, "Preparing").
+
+### Chip and clock
+
+- **Core**: ymfm's `ym2151` (`third_party/ymfm/ymfm_opm.h/.cpp`, the files fetched at the vendored pin `81aec25c`,
+  unmodified; `ymfm_opm.cpp` sha256 `2235d571…98b22dc`, `ymfm_opm.h` `cab75025…a9aee7b`), compiled once in
+  `opm/opm_ymfm.cpp` (`#include "ymfm_opm.cpp"`; `ymfm_fm.ipp`, which `ym/ym_ymfm.cpp` also includes through
+  `ymfm_opn.cpp`, holds only templates and inline functions).
+- **Clock: 4 MHz**, the X68000's (its 16 MHz crystal / 4; MAME `src/mame/sharp/x68k.cpp`:
+  `YM2151(config, m_ym2151, 16_MHz_XTAL / 4)`), not the 3.579545 MHz the YM2151 application manual's tables assume.
+  Native rate = 4000000 / 64 = **62500 Hz** (32 operator slots × prescale 2), envelope generator every third sample.
+- **Pitch at 4 MHz**: a key code sounds 1200 · log2(4000000 / 3579545) = **192.27 cents** above the manual's note
+  (ymfm's phase-step table is David Viens' chip-verified table for the 3.579545 MHz nominal clock: key code 4/A =
+  439.94 Hz there). The player subtracts `OMP_PITCH_OFFSET` = 123 sixty-fourths of a semitone (123.05 exact), so
+  absolute notes keep Thor Tracker's true pitch (0 = C-0, 57 = A-4 = 440 Hz): A-4 = key code `$48` (4/G) + key
+  fraction 5 = **439.88 Hz (−0.46 cents)**; every playable note within 4.4 cents of 12-TET A440 (the table's octave
+  shift truncates in octave 0; computed from ymfm's table: `tools/audio/opm/opm_reference_check.py --pitch`).
+- **Playable notes** at 4 MHz: key codes C#0 (fraction 0) … C-8 (fraction 63) = pitch units 187..6330, so notes
+  **D#0 (3) .. D-8 (98)** (`OM_NOTE_MIN`, `OM_NOTE_MAX`); pitch effects clamp there.
+- **Tick** = 1/60 s / multispeed (header byte 5, N = 1..8): the player runs once, then the chip renders 4000000 / (64 ·
+  60 · N) samples (exact integer accumulation: 1041/1042 at N = 1). As the OPL3, the player's tempo is its own
+  host timer, not the chip's timer B (timer B only raises status flags; nothing sounds from it, so it is not used).
+- **Key-off phase**: as the OPL3's, the machine writes the batch's key-offs, renders one native sample, then the rest
+  (ymfm samples the key state once per sample in `fm_operator::prepare`, so a key-off followed by a key-on in the same
+  instant would not retrigger).
+- **Timers and CSM**: ymfm leaves timers to its host; `opm/opm_ymfm.cpp` runs both on the sample clock (a timer of
+  *p* · 64 input clocks — ymfm's `period · OPERATORS · prescale` — expires after *p* samples, checked before each
+  sample is generated) and reports expiry to ymfm (`engine_timer_expired`), which in **CSM mode** (`$14` bit 7) keys
+  on all four operators of **all eight channels** for one sample at every timer A overflow (`CSM_TRIGGER_MASK` =
+  all channels on the OPM; the key returns to each channel's own state at the next sample). Unmodified ymfm only
+  re-evaluates key states when it re-prepares its operators (after a register write, or every 4096 samples), so after
+  a sample in which timer A expired the wrapper calls `ym2151::invalidate_caches()`: the next sample re-prepares and
+  the CSM key-on lasts one sample, as on the chip (a momentary pulse, as Nuked-OPM models it). A channel keyed by the
+  player is unaffected (already on); a released channel restarts its attack. Timer A period = (1024 − NA) samples:
+  **62500 / (1024 − NA) Hz**, 61.0 Hz (NA 0) to 62.5 kHz (NA 1023).
+- **Output**: ymfm's 16-bit sum (14-bit channels, then the YM3012 DAC's 10.3 floating-point round trip) per channel
+  pair, resampled band-limited with blip_buf 1.1.0 from 62500 Hz to the host rate (its ~15 Hz high-pass), float =
+  sample / 32768. Muted channels are left out of ymfm's output sum (`fm_engine::output` channel mask) before the DAC
+  round trip; registers and the player are untouched.
+- **Chip reset**: `start` and `audition` rebuild the chip in place (`omc_reset`: ymfm's `reset()` leaves the envelope,
+  LFO and noise counters running, and a reused machine must sound like a fresh one), as the YM2612's machine does;
+  ymfm allocates its channel and operator objects then. Both run off the audio thread (`chip_engine.h`); `tick`,
+  `apply_image`, `mute` and `release` never allocate.
+- **Not used**: the CT1/CT2 output pins (`$1B` bits 6-7; on the X68000 they select the ADPCM clock and the floppy
+  drive's ready signal — not sound), timer B, IRQs, the test register `$01` (its undocumented bit 1 holds the LFO in
+  reset; not exposed), the OKI MSM6258 ADPCM of the X68000 (a separate chip, not the OPM).
+
+### Channels and shared resources
+
+8 tracker channels = the chip's 8 channels, `FM 1`-`FM 8`, each a 4-operator voice. **No chord effect, no voice
+allocation**: every channel is one hardware channel. The YM2151 has state shared by every channel, which is song
+data (header) and changed by global effects, never per-instrument data pretending to be per voice:
+
+| Shared resource | Registers | Song start (header) | Effect | Per channel |
+|---|---|---|---|---|
+| LFO frequency | `$18` LFRQ 0..255: 62500 · ((16 + LFRQ mod 16) << (LFRQ / 16)) / 2^30 Hz (0.0009 Hz .. 59.1 Hz at 4 MHz) | byte 16 | `Lxx` | — |
+| LFO waveform | `$1B` bits 0-1: 0 saw, 1 square, 2 triangle, 3 noise | byte 7 | `Wxx` | — |
+| LFO amplitude depth AMD | `$19` (bit 7 clear) 0..127 | byte 17 | `Txx` | AMS 0..3 (`$38` bits 0-1) and each operator's AMS-EN (`$A0` bit 7) |
+| LFO pitch depth PMD | `$19` (bit 7 set) 0..127 | byte 18 | `Vxx` | PMS 0..7 (`$38` bits 4-6) |
+| Noise generator | `$0F` bit 7 enable, bits 0-4 NFRQ: 4000000 / (32 · (32 − NFRQ)) Hz | off | `Nxx` (FM 8 only) | **only FM 8's operator 4 (C2)** plays it |
+| Timer A / CSM | `$10` NA high 8 bits, `$11` low 2 bits; `$14` bit 7 CSM, bit 0 load timer A | bytes 20-21, 13 | `Qxx` (high byte), `Xxx` (mode) | all channels |
+
+Noise is modelled as what it is: the instrument flag "operator 4 is noise" with its frequency, legal on FM 8 only (the
+loader rejects a noise instrument named on another channel, and `Nxx` off FM 8); a key-on on FM 8 sets `$0F` from its
+instrument (noise on with its NFRQ, or noise off keeping the frequency).
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian, every pattern reference an offset into the data region, so any layout that
+passes `om_load_image` (`opm/opm_image.c`) relocates. Constants: `opm/opm_image.h` (`OM_*`); the reference builder is
+`tools/audio/opm/opm_song.py` (`build()`). The loader rejects anything off-contract with a reason and the byte
+(`OmInfo.problem`, `problem_offset`): the Kotlin validator mirrors its checks with user-facing messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTOM"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | multispeed N, 1..8 (player ticks per 60 Hz frame) |
+| 6 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 7 | 1 | LFO waveform 0..3 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | instrument count I = highest slot present, 0..64 |
+| 13 | 1 | CSM at the start: 0 off, 1 on |
+| 14 | 2 | data size D: bytes of pattern data used, ≤ 59072 |
+| 16 | 1 | LFO frequency LFRQ 0..255 |
+| 17 | 1 | AMD 0..127 |
+| 18 | 1 | PMD 0..127 |
+| 19 | 1 | 0 |
+| 20 | 2 | timer A NA 0..1023 |
+| 22 | 42 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 4096 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (8 *o* + *c*); entries ≥ count 0 |
+| 4416 | 2048 | instrument slot *n* (1..64) at 4416 + 32 (*n* − 1) |
+| 6464 | 59072 | data region: patterns, `[0, D)` |
+
+**Instrument** (32 bytes; an all-zero record = no instrument; records above I must be zero). Operators are numbered
+as the YM2151's algorithm diagrams: **operator 1 = M1, 2 = C1, 3 = M2, 4 = C2**.
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 = defined (1), bit 0 = noise (operator 4 plays the noise generator; FM 8 only); other bits 0 |
+| 1 | `$20` bits 0-5: feedback (of operator 1) << 3 \| algorithm 0..7; bits 6-7 0 |
+| 2 | `$38`: PMS 0..7 << 4 \| AMS 0..3; bits 7, 3, 2 zero |
+| 3 | noise frequency NFRQ 0..31; 0 without the noise flag |
+| 4 + 6 *k* | operator *k* + 1 (*k* = 0..3): `$40` (DT1 << 4 \| MUL; bit 7 0), `$60` (TL 0..127; bit 7 0), `$80` (KS << 6 \| AR; bit 5 0), `$A0` (AMS-EN << 7 \| D1R; bits 5-6 0), `$C0` (DT2 << 6 \| D2R; bit 5 0), `$E0` (D1L << 4 \| RR) |
+| 28 | drum sweep start, s8 semitones relative to the note, −96..96 |
+| 29 | drum sweep end, s8 semitones, −96..96 |
+| 30 | drum sweep speed, 1/16 semitone per tick toward the end; 0 = no sweep (start/end ignored) |
+| 31 | 0 |
+
+**Register addresses**: channel *c* (0..7): `$20`/`$28`/`$30`/`$38` + *c*; operator *k* (0..3) of channel *c*: bank +
+8 · slot + *c* with slot = (0, 2, 1, 3)[*k*] (M1, C1, M2, C2 occupy slots 0, 2, 1, 3: ymfm's `operator_map` lists a
+channel's operators as opnum *c*, 16 + *c*, 8 + *c*, 24 + *c*). Key register `$08` = operator mask << 3 \| channel,
+mask bit *k* = operator *k* + 1 (`$78` = all four). **Carriers** (bit *k* = operator *k* + 1, the OPN family's
+routing): algorithms 0-3 `$8`, 4 `$A`, 5 `$E`, 6 `$E`, 7 `$F`.
+
+**Patterns**: decoded from the offset for exactly rows(*o*) rows (a run longer than the order's remaining rows is cut
+there); every row read must lie inside `[0, D)`. Row encoding, as the OPL3's:
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
+| note | 3..98 = absolute note D#0..D-8 (0 = C-0, 57 = A-4), `0xFE` = OFF (key off) |
+| instrument | slot 1..64, defined; a noise instrument only on channel 7 (FM 8) |
+| effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+Load-time parameter checks: `Bxx` < order count, `Cxx` ≤ 7F, `Exx` ≤ 7, `F00` rejected, `Hxy` x ≤ 7 and y ≤ 3,
+`Ixx` ≤ 7F, `Mxy` x 1..4, `Nxx` ≤ 1F and only on channel 7, `Txx` ≤ 7F, `Vxx` ≤ 7F, `Wxx` ≤ 3, `Xxx` ≤ 1; header:
+magic, layout, multispeed 1..8, speed ≥ 1, wave ≤ 3, CSM ≤ 1, AMD/PMD ≤ 127, timer A ≤ 1023, reserved bytes 0. Codes
+without an effect (`5`, `6`, `7`, `9`, `J`, `K`, `O`, `R`, `U`, `Y`, `Z`) are rejected ("unknown effect code"); the
+other effects take any parameter. `om_load_image` derives (`OmInfo`) the order count, loop, multispeed, speed, rows per order
+and the speed each order starts with in sequential straight play (header speed, then the last `Fxx` of each order:
+rows, then channels, then columns; jumps ignored).
+
+**What the lowering writes** from a `Cell` with up to 4 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
+an absolute note → itself; instrument 0 → no byte; effect columns in column order, blank columns (code 0, parameter 0)
+omitted; empty rows in runs; byte-identical (order, channel) encodings stored once in first-use order (orders, then
+channels); every filled instrument slot written (the instrument count is the highest).
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0; notes are pitch = note · 64.
+
+**Pitch → registers** (`omp_key_code`): p = clamp(pitch, 187, 6330); c = p − 123; n = c >> 6 (1..96: semitones above
+C-0 in the 3.579545 MHz table), kf = c & 63; i = n − 1; octave = i / 12, s = i mod 12; note code = s + s / 3 (the
+gappy 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14 = C#, D, …, B, C of the next octave); `$28 + c` = octave << 4 \| note
+code, `$30 + c` = kf << 2.
+
+**Writes**: every write goes through a shadow of the 256 registers (reset state 0); a write equal to its shadow is not
+emitted. `$19` is two registers: AMD is shadowed at `$19` (written `$19` = AMD), PMD at the unused `$1A` (written
+`$19` = `$80` \| PMD). `$08` is not shadowed: the player writes it when a channel's key state changes. A batch is the
+key-off phase — every `$08` write with operator mask 0, in the order made — followed by every other write in the order
+made (`OmPlayer.offs` = length of the first part).
+
+**Shared writes** (the "globals", in this order, each through the shadow): `$18` = LFO rate, `$1B` = LFO waveform,
+`$19` = AMD, `$19` = `$80` \| PMD, `$0F` = noise, `$10` = timer A >> 2, `$11` = timer A & 3, `$14` = `$81` if CSM else
+`$00` (CSM mode with timer A loaded; timer A's flag and IRQ stay off).
+
+**Reset** (start, audition): all state cleared; channels: instrument 0, volume 7F (vol8 1016), pan `$C0` (both),
+cut −1, not keyed; shared state from the header (LFO rate, waveform, AMD, PMD, CSM, timer A; audition: CSM off), noise
+`$00`; speed = header speed; position (0, 0, tick 0). Writes: `$20 + c` = `$C0` for c = 0..7 (the chip resets these to
+0 = both outputs off; ymfm to `$C0`, so the explicit writes make every chip and VGM player agree), then the globals.
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
+
+1. The globals (emitted only where they changed: a live edit).
+2. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..7 and their effect columns in
+   order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position: `B`
+   only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop order;
+   both → (B's order, D's row). Then for each channel 0..7: its cut is cleared; if the row has `Gxx` with xx > 0 (the
+   last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel whose
+   delayed row is due (tick = xx) runs it, channels in order.
+3. Each channel whose cut tick (`Sxx`) equals this tick is keyed off, channels in order.
+4. Each channel 0..7 that has keyed any note since reset is updated (below), channels in order.
+5. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the target order's
+   last row), else row + 1, after the last row of an order the next order, after the last order the loop order.
+   **Loop speed**: whenever the next row is row 0 of the loop order the speed becomes `OmInfo.start_speed[loop]` (an
+   `Fxx` on that row still applies at its row start).
+
+**Running a row** of a channel: if the row has a note (3..98), the arpeggio and fine pitch are cleared; an instrument
+byte sets the channel's instrument; the effect columns run in order (table below; `B`, `D`, `F`, `G` already acted);
+then the note: OFF keys the channel off; a note with portamento active (`3xx`, xx > 0) while the channel is keyed only
+sets the glide target (no key-on: the row's locks are not used); any other note keys on.
+
+**Key-on** (note *n*, channel *c*): if the channel's instrument is not a defined slot, nothing happens. Else the
+channel is keyed off (below); the instrument's operator registers, connection (byte 1), sensitivity (byte 2) and the
+algorithm's carriers are copied; on FM 8 the noise becomes `$80` \| NFRQ for a noise instrument, else noise & `$1F`
+(off, frequency kept); then the row's locks in column order: `Exx` connection = (connection & 7) \| xx << 3; `Ixx` every
+modulator's TL = 7F − xx; `Mxy` operator x's MUL = y (DT1 kept); `Hxy` sensitivity = x << 4 \| y; `Nxx` (FM 8) noise =
+(noise & `$80`) \| xx. Writes, operator by operator (1..4): `$40`, `$60` (carriers: TL + 127 − volume, at most 127),
+`$80`, `$A0`, `$C0`, `$E0`; then `$20 + c` = pan \| connection, `$38 + c` = sensitivity; on FM 8 the globals. Pitch
+state: base = target = 64 *n*, slide offset 0, arpeggio step 0, vibrato phase 0, sweep offset = 64 · start (when the
+sweep speed is not 0, else 0), sweep end 64 · end, sweep step 4 · speed. The key-on is pending (written by the update).
+
+**Key-off**: a pending key-on is dropped; if keyed (on the chip), `$08` = *c* (operator mask 0; key-off phase), not
+keyed.
+
+**Update** (per tick, after the rows): pitch = clamp(base + 64 · arpeggio + fine + slide + vibrato + sweep, 187, 6330),
+arpeggio = 0, x, y for step 0, 1, 2 of `0xy`, vibrato = floor(SINE[phase] · depth / 16) (arithmetic right shift) with
+`SINE[i]` = floor(127 sin(2πi/64) + 0.5) (the OPL3's table, written out in `opm_player.c` and `opm_ref.py`). Writes:
+the carriers' `$60` (operators 1..4, TL + 127 − volume, ≤ 127), `$28 + c`, `$30 + c`, then a pending key-on: `$08` =
+`$78` \| *c*, keyed. Then the effects advance: arpeggio step (mod 3) if an arpeggio is set; slide offset ± speed
+(clamped ±6144) for `1xx`/`2xx`; base toward target by the speed (no overshoot) for `3xx`; vibrato phase + speed (mod
+64) when speed and depth are set; sweep offset toward the end by its step (no overshoot); vol8 + x − y (clamped
+0..1016) for `Axy`, volume = vol8 >> 3. A released note keeps updating (its release tail follows slides and vibrato).
+
+### Effects (what Kotlin's effect specs declare for `"ym2151-opm"`)
+
+Names are one character (`docs/BACKENDS.md`, "Effect columns"); up to 4 columns per channel. "Note" = applies to the
+note keyed on this row only (parameter lock); "now" = from this row on; "shared" = the chip's one resource, for every
+channel, written at once (the globals) and kept until changed.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: steps note, +x, +y every tick; the next note without `0xy` plays plain (also sets the step to 0; on a row without a note it changes the sounding note's arpeggio) |
+| `1xx` slide up | 1/64 semitones per tick | now: until `100`/`200`/`300`; a new note restarts the offset at 0 but keeps sliding |
+| `2xx` slide down | 1/64 semitones per tick | now: as `1xx`, down |
+| `3xx` portamento | 1/64 semitones per tick | now: while active a note on a keyed channel glides there without key-on; `300` (or `1xx`/`2xx`) ends it |
+| `4xy` vibrato | x speed 0-F, y depth 0-F | now: the player's own vibrato (depth F ±1.86 semitones), independent of the chip's LFO; `4x0` off; restarts with each note |
+| `8xy` pan | x ≠ 0 left, y ≠ 0 right | now: `$20` bits 6 (left) / 7 (right), written at once to the sounding note; `800` silences |
+| `Axy` volume slide | x up, y down, 1/8 step per tick | now: until `A00` (`A01`: 127 steps in 16.9 s) |
+| `Bxx` jump | order | after this row play order xx row 0 (with `Dxx`: its row) |
+| `Cxx` volume | 00-7F | now: channel volume (start 7F), 0.75 dB per step on the carriers' TL |
+| `Dxx` break | row | after this row play row xx (clamped) of the next order (`Bxx`'s with both) |
+| `Exx` feedback | 0-7 | note: operator 1 feedback |
+| `Fxx` speed | 01-FF | now, global, this row included; the last of the row wins |
+| `Gxx` note delay | ticks | the channel's row (note, instrument, its effects except `B`/`D`/`F`) runs at tick xx; never if xx ≥ the speed |
+| `Hxy` LFO sensitivity | x PMS 0-7, y AMS 0-3 | now: the channel's `$38` at once (the sounding note) and the lock of a note on this row; the next note without `H` takes its instrument's |
+| `Ixx` brightness | 00-7F | note: TL of every modulator = 7F − xx (7F brightest); algorithm 7 (no modulators) = no effect |
+| `Lxx` LFO frequency | LFRQ 00-FF | shared: `$18` |
+| `Mxy` ratio | operator x 1-4, MUL y 0-F | note: frequency multiplier (0 = ×½), DT1/DT2 kept |
+| `Nxx` noise frequency | NFRQ 00-1F | FM 8 only: shared `$0F` bits 0-4 at once (noise on/off stays as FM 8's note set it) and the lock of a note on this row |
+| `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones (±2 semitones) until the next note |
+| `Qxx` timer A | NA high byte | shared: `$10` (CSM rate 62500 / (1024 − NA) Hz, NA = xx · 4 + the low 2 bits, from the next overflow) |
+| `Sxx` note off | tick | key off at tick xx of this row (release phase) |
+| `Txx` LFO amplitude depth | AMD 00-7F | shared: `$19` |
+| `Vxx` LFO pitch depth | PMD 00-7F | shared: `$19` \| `$80` |
+| `Wxx` LFO waveform | 00 saw, 01 square, 02 triangle, 03 noise | shared: `$1B` |
+| `Xxx` CSM | 00 off, 01 on | shared: `$14` (`$81` on, `$00` off): at each timer A overflow every channel's four operators are keyed on for one sample |
+
+Shared effects run in the row order of the channels (channels 0..7, columns in order), so the last one in a row wins;
+each sets the player's shared value and writes the globals at once. FM locks (`E`, `I`, `M`) apply at key-on only.
+Volume, pan, `H` and the shared registers change sounding notes at once. Drums are ordinary instruments with the sweep
+(pitch) and, on FM 8, noise.
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: as the OPL3's (`OMM_PREROLL_TICKS` = 60 × multispeed, `CHIP_SEEK_FROM_START`
+  within `max_ticks`, else the order fallback `CHIP_SEEK_FROM_ORDER`, its own bound 256 × 256 ticks, a row behind a
+  `Dxx` of the same order unreachable = `CHIP_ERR_IMAGE`). The restore onto the reset chip after the player-only part
+  writes: `$0F`, `$10`, `$11`, `$18`, `$19` (AMD), `$19` (`$80` \| PMD), `$1B`, `$14`, then `$20`-`$27` (always),
+  `$28`-`$3F`, every operator register `$40`-`$FF` (non-zero values, as everything except `$20`-`$27`), then `$08` =
+  `$78` \| *c* for every keyed channel. Within the pre-roll the chip state equals straight play's when the target is
+  ≤ 1 s from the start; beyond, envelopes, the LFO phase, the noise generator and the CSM timer's phase restart 1 s
+  before the target (the same approximation as the OPL3's).
+- `apply_image` (live edit at a tick boundary, realtime-safe): the OPL3's rules 1-4 (clamping, speed, a started row's
+  jump and delays re-read, sounding notes keep their registers), and (5) multispeed follows the header from the next
+  tick; (6) each shared header field (LFO rate, waveform, AMD, PMD, CSM, timer A) whose value differs between the old
+  and the new image sets the player's shared value to the new one (written by the next tick's globals) — an edit of the
+  song's start values is heard at once, while values set by effects persist when the start values are not edited.
+
+### Audition
+
+`audition(channel 0..7, note 3..98, slot 1..64, fine −128..127)`: the machine is reset (header LFO, **CSM off**: CSM
+would retrigger the released note forever) and the player keys on the note with the slot's instrument, no locks,
+`fine` added like `Pxx`; ticks only update pitch and volume (no rows). A noise instrument off channel 7, an undefined
+slot or arguments outside these ranges are `CHIP_ERR_IMAGE`. `release()`: 0 before any tick or when every carrier's
+envelope attenuation is ≥ `0x380` (ymfm's `EG_QUIET`, where it stops computing the operator); else the player's key-off
+batch is written to the chip at once (as the OPL3's), returning 1, and `tick` returns 0 once every carrier is quiet or
+after 10 s.
+
+### Mute and ops behaviour
+
+`mute(channel 0-7)` leaves the channel out of the output sum (ymfm keeps computing it, so feedback and envelopes run as
+unmuted); the player's writes and the VGM are unchanged. `start`/`audition` clear mutes.
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `om_load_image`; `image_storage` = `sizeof(OpmImage)` |
+| `start`, `apply_image`, `audition`, `release`, `mute`, `position` | above |
+| `tick` | one tick: 800 frames at 48 kHz (multispeed N: 800 / N), ≤ 1601 at 96 kHz; 0 after a released audition ended |
+
+**Kotlin** (`PlaybackEngine` for `"ym2151-opm"`): `imageSize` 65536, `seekTicks` 12000, `note(n)` = n, `fine` = the
+system's fine pitch in 1/64 semitones, `ticksPerSecond` = 60 × multispeed.
+
+### VGM export
+
+`om_vgm_render` (`opm/opm_vgm.c`) runs the player headless and logs its writes as a VGM 1.71 for one YM2151;
+`tools/audio/opm/opm_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference.
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz), 0x1C =
+  loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 60, **0x30 = 4000000** (YM2151 clock),
+  0x34 = 0xCC (data at 0x100).
+- Data: the reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the loop point and a dump
+  of the whole register state as the player's shadow holds it: `$0F`, `$10`, `$11`, `$18`, `$19` (AMD), `$19` (`$80`
+  \| PMD), `$1B`, `$14`, `$20`-`$3F`, `$40`-`$FF` (all values including zeros), then `$08` = `$78` \| *c* for keyed
+  channels and *c* for the others (*c* = 0..7); the key-off phase writes; if there were any, a one-sample wait (`0x70`);
+  the other writes; the rest of the tick's wait (44100 / (60 · N) by exact accumulation; `0x62` for 735, `0x70`-`0x7F`
+  for 1-16, `0x61 nn nn` otherwise). Writes are `0x54 reg val`. The song ends at the second arrival at the loop point
+  (or the tick limit, then without a loop), then `0x66`.
+- Hosts' entry point (`opm/opm_export.h`): `om_export_vgm(image, 65536, max_ticks, title, author, date, &size,
+  &problem)`, as `o3_export_vgm` with GD3 system "OPM (Thor Tracker)", converter "Thor Tracker" (`vgm_gd3.c`).
+- Kotlin (`system/opm/OpmVgm.kt`): `OpmVgm.export(song)` = lower + `OpmVgm.renderer.render(image, maxTicks,
+  OpmVgmTags(title, author))`; Android registers JNI `ChipAudio.nativeOpmVgm`, the Deck `DeckOpmVgm` (cinterop).
+  `maxTicks` = 60 × multispeed × 600 (ten minutes).
+- WAV: the generic `chip_wav.c` over the `"ym2151-opm"` ops (no system code).
+- VGM players' CSM: the VGM holds the `$10`/`$11`/`$14` writes only; whether and how long a player keys on at timer A
+  overflows depends on its YM2151 core (stock ymfm, also inside MAME, keeps the CSM key-on until its next register
+  write re-prepares the operators, so it may sound different from the engine). Not checked against any player.
+
+### Preparing the fixtures and constants
+
+`python3 tools/audio/prepare_opm.py` (pure Python 3) writes `core/src/commonMain/kotlin/org/thortracker/backend/OpmPlayerImage.kt`
+(layout, limits, effect codes, carriers, pitch constants, seek and GD3 constants parsed from `opm_image.h`,
+`opm_player.h`, `opm_machine.h` and `opm_vgm.c`, and `LOADER_PROBLEMS` from `opm_image.c`) and
+`app/src/test/cpp/opm_test_song.h` (test images: the song, relaid, a note edit, a tempo edit, a cut song, x2
+multispeed, a header-LFO edit; the reference player's per-tick writes, key-off phase lengths and positions for 1500
+ticks; the reference VGM's size, FNV-1a hash and loop; byte offsets for corruption checks). `python3
+tools/audio/opm/opm_golden.py` writes `core/src/jvmTest/resources/opm-golden/*.bin.gz` for `OpmGoldenTest`. No
+generated table header: the vibrato sine is written out in both implementations.
+
+### Verification (to be run by the parent; nothing here has been run)
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opm_machine_test.c`: key code mapping
+  for every note, A-4 measured on a sine instrument at 439.88 Hz (± 0.5 Hz), every loader reason by single-byte
+  corruption, the machine's writes against the Python reference for 1500 ticks with positions, loop passes against the
+  VGM loop, seeks landing with straight play's writes, live edits (re-laid image, note and tempo edits, cut song, x2,
+  header LFO edit), audition (pitch, `fine`, release, noise only on FM 8, CSM off), mute (silence, writes unchanged),
+  LFO pitch modulation measured (PMD/PMS vibrato depth), noise on FM 8 (spectral flatness), CSM (retrigger rate =
+  62500 / (1024 − NA) Hz measured from envelope restarts), the VGM bytes against the reference and the export entry
+  point's GD3 tag. Evidence: `opm_song.wav`, `opm_tone.wav`, `opm_trace.txt`, `opm_song.vgm`, `opm_song.bin`.
+- `wav_render_test.c` renders `opm-demo.omimg` (the demo) and `opm-shortest.omimg` (one row, A-4 held on FM 1) from
+  `exportSamples`.
+- `tools/audio/opm/opm_reference_check.py <dir> [--vgm2wav PATH] [--pitch]`: the reference player against the trace
+  and the VGM, the VGM parsed from the format alone (header, waits sum, loop, command stream), the 4 MHz pitch table
+  derived from ymfm's phase-step table; optionally libvgm's vgm2wav against the engine's WAV.
+- `tools/audio/render_opm_image.sh image out.wav [seconds] [mute=...] [--vgm out.vgm]`.
+- Kotlin: `OpmGoldenTest` (the lowering against the reference builder), `OpmModelTest`, `OpmEditorTest`.
+- Not done: any build or run; listening; a real YM2151 or X68000; the device cost (ymfm's OPM is expected near its
+  OPN2 cost, 235 µs per tick on the dev PC for the YM2612).
