@@ -49,6 +49,8 @@ static int checks = 0;
 #define SINE_SLOT 1
 #define SQUARE_SLOT 2
 #define KICK_SLOT 11
+#define PLUCK_SLOT 14
+#define TOM_SLOT 18
 #define SEEK_BUDGET 12000
 #define NTSC_TICK_HZ (53693175.0 / (3420.0 * 262.0))
 #define PAL_TICK_HZ (53203424.0 / (3420.0 * 313.0))
@@ -254,6 +256,9 @@ static void corrupt(int offset, int value, const char* want) {
 
 #define INST(slot) (YM_OFF_INSTRUMENTS + YM_INSTRUMENT_SIZE * ((slot) - 1))
 
+/* Image offset of envelope k (0 volume, 1 arpeggio, 2 pitch) of a PSG slot in the test song. */
+static int env_at(int slot, int k) { return YM_OFF_DATA + ym_u16(g_song.bytes + INST(slot) + YM_I_ENV_VOLUME + 2 * k); }
+
 static void test_images(void) {
     printf("images\n");
     EXPECT(g_song.info.loaded == YM_LOADED && g_song.info.orders == 4 && g_song.info.loop == 1, "song info");
@@ -288,14 +293,27 @@ static void test_images(void) {
     corrupt(INST(3) + YM_I_OPS + 6, 0x10, "reserved bits");      /* $90 bit 4 */
     corrupt(INST(11) + YM_I_SWEEP_START, 97, "sweep");
     corrupt(INST(3) + 36, 1, "reserved bytes 35");
-    corrupt(INST(12) + YM_I_SUSTAIN, 16, "sustain");
-    corrupt(INST(12) + YM_I_NOISE, 8, "noise mode");
-    corrupt(INST(12) + 10, 1, "reserved bytes 6");
+    corrupt(INST(12) + YM_I_PSG_NOISE, 8, "noise mode");
+    corrupt(INST(12) + YM_I_PSG_FLAGS, 2, "PSG flags");
+    corrupt(INST(12) + 3, 1, "reserved byte 3");
+    corrupt(INST(12) + 10, 1, "reserved bytes 10");
+    corrupt(INST(12) + YM_I_ENV_VOLUME + 1, 0xF0, "envelope outside the data size");
+    corrupt(env_at(12, 0), 0, "envelope length");
+    corrupt(env_at(12, 0) + 1, 1, "envelope length");                   /* 268 */
+    corrupt(env_at(12, 0), 200, "envelope outside the data size");
+    corrupt(env_at(12, 0) + 2, 12, "loop past its end");
+    corrupt(env_at(12, 0) + 4, 7, "needs a loop before it");            /* release = loop */
+    corrupt(env_at(12, 0) + 4, 12, "needs a loop before it");           /* release = length */
+    corrupt(env_at(14, 0) + 4, 4, "needs a loop before it");            /* release without a loop */
+    corrupt(env_at(13, 1) + 4, 1, "release point on an arpeggio");
+    corrupt(env_at(12, 0) + YM_ENV_HEADER, 16, "volume envelope value");
+    corrupt(env_at(12, 2) + YM_ENV_HEADER, 64, "pitch envelope value");
+    corrupt(env_at(13, 1) + YM_ENV_HEADER, 0xBF, "pitch envelope value"); /* -65 */
     corrupt(INST(3) + YM_I_FLAGS, 0, "flags");
     corrupt(YM_OFFSET_MASK, 0x20, "mask");
     corrupt(YM_OFFSET_MASK, 0x17, "mask");
     corrupt(YM_OFFSET_NOTE, 96, "note");
-    corrupt(YM_OFFSET_INST_FM, 20, "does not define");
+    corrupt(YM_OFFSET_INST_FM, 21, "does not define");
     corrupt(YM_OFFSET_INST_FM, 12, "PSG instrument on an FM");
     corrupt(YM_OFFSET_INST_PSG, 3, "FM instrument on a PSG");
     corrupt(YM_OFFSET_EFFECT, 36, "effect code");
@@ -863,7 +881,8 @@ static void test_audition(const char* dir) {
            hz_psg, psg_hz(0, 254));
     EXPECT(ymm_release(m) == 1, "PSG release phase");
     const int psg_ticks = release_ticks(m, &tail, &tail_frames);
-    EXPECT(psg_ticks > 2 && psg_ticks < 120, "PSG release ends (%d ticks: 15 steps of 3)", psg_ticks);
+    EXPECT(psg_ticks >= 30 && psg_ticks <= 34, "PSG release plays the volume envelope's tail (%d ticks: 30 values from the release point)",
+           psg_ticks);
     both = (float*)malloc(sizeof(float) * 2 * (size_t)(frames + tail_frames));
     memcpy(both, buf, sizeof(float) * 2 * (size_t)frames);
     memcpy(both + 2 * frames, tail, sizeof(float) * 2 * (size_t)tail_frames);
@@ -872,6 +891,27 @@ static void test_audition(const char* dir) {
     free(both);
     free(tail);
     free(buf);
+    /* a volume envelope without a release point: key-off is silent at once (the driver executes it next tick) */
+    EXPECT(ymm_audition(m, &g_song, 7, 60, PLUCK_SLOT, 0) == YMM_OK, "pluck");
+    for (int i = 0; i < 4; ++i) ymm_tick(m, g_out);
+    EXPECT(ymm_release(m) == 1, "pluck release");
+    const int pluck_ticks = release_ticks(m, &tail, &tail_frames);
+    EXPECT(pluck_ticks >= 1 && pluck_ticks <= 3, "pluck (no release point) stops at key-off (%d ticks)", pluck_ticks);
+    free(tail);
+    /* the Noise channel: pitched white noise (PSG 3's period follows the note and the relative pitch envelope) */
+    EXPECT(ymm_audition(m, &g_song, 9, 48, TOM_SLOT, 0) == YMM_OK, "tom on Noise");
+    const YmPlayer* np = ymm_player(m);
+    ymm_tick(m, g_out);
+    const int period0 = np->tone[2];
+    for (int i = 0; i < 30; ++i) ymm_tick(m, g_out);
+    EXPECT(np->noise_ctrl == (4 | 3) && np->tone[2] > period0 && np->att[3] < 15,
+           "pitched noise: mode 7, PSG 3's period falls in pitch (%d -> %d), audible", period0, np->tone[2]);
+    float* nb;
+    const int nf = render(m, 10, &nb);
+    EXPECT(rms(nb, nf) > 0.002, "noise audition sounds (rms %.4f)", rms(nb, nf));
+    free(nb);
+    EXPECT(ymm_release(m) == 1 && release_ticks(m, &tail, &tail_frames) <= 3, "noise without a release point stops at key-off");
+    free(tail);
     /* PAL: A-4 on both chips */
     const double hz_pal = audition_hz(m, &g_pal, 2, A4, SINE_SLOT, 0, NULL, NULL);
     const double hz_pal_psg = audition_hz(m, &g_pal, 7, A4, SQUARE_SLOT, 0, NULL, NULL);

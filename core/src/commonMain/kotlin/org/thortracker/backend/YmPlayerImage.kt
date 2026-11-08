@@ -49,10 +49,12 @@ object YmPlayerImage {
     /**
      * Instrument record: flags ([FLAG_DEFINED], [FLAG_PSG]; all-zero = no instrument). FM: algorithm 0..7,
      * operator-1 feedback 0..7, AMS/FMS (register $B4 without pan), operator k (0..3 = operators 1..4) at [I_OPS] +
-     * 7 k = registers $30 $40 $50 $60 $70 $80 $90 (reserved bits 0). PSG: attack, decay (ticks per
-     * envelope step), sustain level 0..15, release, noise mode (bit 2 white, bits 0-1 source; 3 = PSG 3's period),
-     * bytes 6..31 zero. Both: drum sweep start/end (s8 semitones -96..96 from the note) and speed (1/16 semitone
-     * per tick, 0 = none) at [I_SWEEP_START]..[I_SWEEP_SPEED], bytes 35..39 zero.
+     * 7 k = registers $30 $40 $50 $60 $70 $80 $90 (reserved bits 0). PSG: noise mode at [I_PSG_NOISE] (bit 2 white,
+     * bits 0-1 source; 3 = PSG 3's period), [PSG_PITCH_RELATIVE] at [I_PSG_FLAGS], byte 3 zero, the u16 data-region
+     * offsets of the volume, arpeggio and pitch envelopes at [I_ENV_VOLUME], [I_ENV_ARPEGGIO], [I_ENV_PITCH]
+     * ([NO_ENVELOPE] = none: volume 15, no arpeggio, no pitch offset), bytes 10..31 zero. Both: drum sweep start/end
+     * (s8 semitones -96..96 from the note) and speed (1/16 semitone per tick, 0 = none) at [I_SWEEP_START]..
+     * [I_SWEEP_SPEED], bytes 35..39 zero.
      */
     const val I_FLAGS = 0
     const val FLAG_DEFINED = 128
@@ -68,11 +70,15 @@ object YmPlayerImage {
     const val I_ENV_VOLUME = 4
     const val I_ENV_ARPEGGIO = 6
     const val I_ENV_PITCH = 8
-    /** PSG envelope in the data region: u16 length 1..[ENV_MAX_LENGTH], u16 loop, u16 release ([NO_ENVELOPE] = none), then the values (s8). */
+    /**
+     * PSG envelope in the data region (patterns and envelopes share [DATA_CAPACITY]): u16 length
+     * 1..[ENV_MAX_LENGTH], u16 loop index, u16 release index (volume only; needs loop < release < length;
+     * [NO_ENVELOPE] = none), then the values (s8): volume 0..15, arpeggio -64..63 semitones, pitch -64..63 x
+     * [PITCH_UNIT] pitch units (absolute, or accumulated every tick with [PSG_PITCH_RELATIVE]).
+     */
     const val ENV_HEADER = 6
     const val ENV_MAX_LENGTH = 256
-    const val NO_ENVELOPE = 0xFFFF
-    /** PSG pitch envelope unit in player pitch units (1/16 semitone = 4/64). */
+    const val NO_ENVELOPE = 65535
     const val PITCH_UNIT = 4
     const val I_SWEEP_START = 32
     const val I_SWEEP_END = 33
@@ -244,11 +250,19 @@ object YmPlayerImage {
         "Nxy: x must be 0..1 and y 0..3",
         "Nxy noise mode outside the Noise channel",
         "unknown effect code",
+        "envelope outside the data size",
+        "envelope length outside 1..256",
+        "envelope loop past its end",
+        "release point on an arpeggio or pitch envelope",
+        "volume release point needs a loop before it",
+        "volume envelope value outside 0..15",
+        "arpeggio or pitch envelope value outside -64..63",
         "instrument record past the instrument count",
         "instrument flags",
-        "PSG sustain level above 15",
         "PSG noise mode above 7",
-        "PSG instrument reserved bytes 6..31",
+        "PSG flags: only bit 0",
+        "PSG instrument reserved byte 3",
+        "PSG instrument reserved bytes 10..31",
         "FM algorithm above 7",
         "FM feedback above 7",
         "FM AMS/FMS byte: only bits 0-2 and 4-5",

@@ -37,7 +37,7 @@ enum { YM_NTSC = 0, YM_PAL = 1 };
 #define YM_H_ORDERS 8       /* u16 order count 1..256 */
 #define YM_H_LOOP 10        /* u16 loop order < order count */
 #define YM_H_INSTRUMENTS 12 /* highest instrument slot present, 0..64 */
-#define YM_H_DATA_SIZE 14   /* u16 bytes of pattern data used (<= YM_DATA_CAPACITY) */
+#define YM_H_DATA_SIZE 14   /* u16 bytes of pattern and envelope data used (<= YM_DATA_CAPACITY) */
 #define YM_HEADER_SIZE 64   /* byte 13 and bytes 16..63 are 0 */
 
 /* Fixed tables. */
@@ -45,7 +45,7 @@ enum { YM_NTSC = 0, YM_PAL = 1 };
 #define YM_OFF_ORDERS 320       /* 256 x 10 x u16: pattern of (order o, channel c) at 320 + 2 (10 o + c) */
 #define YM_OFF_INSTRUMENTS 5440 /* 64 x 40: slot n (1..64) at 5440 + 40 (n - 1) */
 #define YM_INSTRUMENT_SIZE 40
-#define YM_OFF_DATA 8000        /* pattern data region */
+#define YM_OFF_DATA 8000        /* data region: patterns and PSG envelopes */
 #define YM_DATA_CAPACITY (YM_IMAGE_SIZE - YM_OFF_DATA) /* 57536 */
 
 /* Instrument record (40 bytes). Byte 0: flags. */
@@ -58,12 +58,19 @@ enum { YM_NTSC = 0, YM_PAL = 1 };
 #define YM_I_AMS_FMS 3      /* register $B4 without pan: AMS bits 4-5, FMS bits 0-2 */
 #define YM_I_OPS 4          /* operator k (0..3) at 4 + 7k: $30 $40 $50 $60 $70 $80 $90 */
 #define YM_OP_BYTES 7
-/* PSG instrument (flags 0x81). */
-#define YM_I_ATTACK 1       /* ticks per envelope step up (0 = start at 15) */
-#define YM_I_DECAY 2        /* ticks per step down to sustain (0 = at once) */
-#define YM_I_SUSTAIN 3      /* sustain level 0..15 */
-#define YM_I_RELEASE 4      /* ticks per step down to 0 after key-off (0 = at once) */
-#define YM_I_NOISE 5        /* noise mode: bit 2 white, bits 0-1 source (3 = PSG 3's period) */
+/* PSG instrument (flags 0x81). Envelopes are FamiStudio-style sequences, one value per tick, in the data region. */
+#define YM_I_PSG_NOISE 1    /* noise mode: bit 2 white, bits 0-1 source (3 = PSG 3's period); Noise channel only */
+#define YM_I_PSG_FLAGS 2    /* YM_PSG_PITCH_RELATIVE; other bits 0 */
+#define YM_PSG_PITCH_RELATIVE 0x01 /* the pitch envelope accumulates every tick instead of offsetting */
+#define YM_I_ENV_VOLUME 4   /* u16 data offset of the volume envelope (0..15), YM_NO_ENVELOPE = constant 15 */
+#define YM_I_ENV_ARPEGGIO 6 /* u16 data offset of the arpeggio envelope (-64..63 semitones), none = 0 */
+#define YM_I_ENV_PITCH 8    /* u16 data offset of the pitch envelope (-64..63 x YM_PITCH_UNIT), none = 0 */
+#define YM_NO_ENVELOPE 0xFFFF
+/* Envelope: u16 length 1..YM_ENV_MAX_LENGTH, u16 loop index (< length, YM_NO_ENVELOPE = none), u16 release index
+ * (volume only, YM_NO_ENVELOPE = none; needs a loop, loop < release < length), then `length` signed bytes. */
+#define YM_ENV_HEADER 6
+#define YM_ENV_MAX_LENGTH 256
+#define YM_PITCH_UNIT 4     /* pitch envelope step in pitch units: 1/16 semitone */
 /* Both. */
 #define YM_I_SWEEP_START 32 /* s8 semitones relative to the note, -96..96 */
 #define YM_I_SWEEP_END 33   /* s8 semitones, -96..96 */
