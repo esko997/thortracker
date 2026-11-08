@@ -35,7 +35,7 @@ data class YmOperator(
     val sl: Int = 0,
     /** Release rate 0..15 after key off (15 = fastest). */
     val rr: Int = 15,
-    /** SSG-EG 0..15: 0 off, 8..15 on with the mode in bits 0-2 ([YmCurated.SSG_EG]). */
+    /** SSG-EG 0..15: bit 3 switches it on (8..15), bits 0-2 the shape ([YmCurated.SSG_EG_NAMES]); 0..7 are off. */
     val ssgEg: Int = 0,
 ) {
     val reg30: Int get() = (dt shl 4) or mul
@@ -54,7 +54,7 @@ data class YmOperator(
         ks !in 0..3 -> "key scale $ks is outside 0-3"
         ar !in 0..31 || d1r !in 0..31 || d2r !in 0..31 -> "attack and decay rates must be 0-31"
         sl !in 0..15 || rr !in 0..15 -> "sustain level and release must be 0-15"
-        ssgEg !in 0..15 || ssgEg in 1..7 -> "SSG-EG $ssgEg must be 0 (off) or 8-15"
+        ssgEg !in 0..15 -> "SSG-EG $ssgEg is outside 0-15"
         else -> null
     }
 

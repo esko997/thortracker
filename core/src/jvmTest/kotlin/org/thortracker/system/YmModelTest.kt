@@ -281,8 +281,8 @@ class YmModelTest {
             s.copy(sound = s.ym.withInstrument(1, YmPsgInstrument("x", arpeggio = NesEnvelope(listOf(0, 4, 7), loop = 0, release = 1))))
         }
         assertTrue(YmSystem.errors(badRelease).joinToString().contains("only the volume envelope has a release point"))
-        val badSsg = YmSystem.blank().let { s -> s.copy(sound = s.ym.withInstrument(1, fm("Lead").withOperator(0, fm("Lead").operators[0].copy(ssgEg = 3)))) }
-        assertTrue(YmSystem.errors(badSsg).joinToString().contains("SSG-EG 3 must be 0 (off) or 8-15"))
+        val badSsg = YmSystem.blank().let { s -> s.copy(sound = s.ym.withInstrument(1, fm("Lead").withOperator(0, fm("Lead").operators[0].copy(ssgEg = 16)))) }
+        assertTrue(YmSystem.errors(badSsg).joinToString().contains("SSG-EG 16 is outside 0-15"))
         val badLfo = YmSystem.blank().let { s -> s.copy(sound = s.ym.copy(lfo = 3)) }
         assertTrue(YmSystem.errors(badLfo).joinToString().contains("LFO 03 must be 00 (off) or 08-0F"))
     }
@@ -386,6 +386,17 @@ class YmModelTest {
         val pal = demo.copy(sound = demo.ym.copy(pal = true))
         YmSystem.exports[0].export(pal)
         assertEquals(30000, seen.last().second)
+    }
+
+    @Test
+    fun effectDetailNamesArpeggioNotesAndIgnoredLocks() {
+        var song = blankWith(0, 0, Cell(57, 1, YmRules.FX_ARPEGGIO, 0x47))
+        song = with(song, 0, 0, 2, Cell(effect = YmRules.FX_ARPEGGIO, param = 0x37))
+        song = with(song, 0, 0, 3, Cell(effect = YmRules.FX_BRIGHTNESS, param = 0x40))
+        assertEquals("A-4 → C#5 → E-5 every tick", YmSystem.effectDetail(song, 0, 0, 0, 0))
+        assertEquals("A-4 → C-5 → E-5 every tick", YmSystem.effectDetail(song, 0, 0, 2, 0))
+        assertTrue(YmSystem.effectDetail(song, 0, 0, 3, 0)!!.contains("ignored"))
+        assertNull(YmSystem.effectDetail(song, 0, 0, 1, 0))
     }
 
     @Test
