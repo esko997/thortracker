@@ -229,7 +229,7 @@ song):
   filtertable (passband + resonance + voice routing, cutoff, modulation, jumps), speedtable (vibrato
   speed/depth, portamento speed, funktempo pairs; `$80` = note-independent). Proposed editor: per-instrument
   "programs" that the lowering allocates rows for, keeping each instrument's rows stable across edits (live
-  edits then follow the playing program; see AUDIO_ENGINE "What step 2 needs (native side)"), with the raw
+  edits then follow the playing program; see AUDIO_ENGINE, SID "Live edits"), with the raw
   table view available.
 - **The global filter:** one cutoff, resonance, routing and passband for the chip. Instruments take it over
   through their filtertable row (GoatTracker's model: the last instrument started with a filter program owns

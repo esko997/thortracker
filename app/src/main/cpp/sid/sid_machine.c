@@ -459,6 +459,8 @@ static void place_channel(SidMachine* m, const SidImage* image, int c, int o, in
     CHN(CHNPATTPTR, c) = f.pattptr;
     CHN(CHNPACKEDREST, c) = f.packedrest;
     if (f.instrument) CHN(CHNINSTR, c) = f.instrument;
+    /* its instrument was deleted: the player's default, as after init */
+    if (CHN(CHNINSTR, c) == 0 || CHN(CHNINSTR, c) > ni->instruments) CHN(CHNINSTR, c) = 1;
     if (f.fx >= 0) {
         CHN(CHNNEWFX, c) = (uint8_t)f.fx;
         if (f.fx) CHN(CHNNEWPARAM, c) = (uint8_t)f.param;
@@ -518,11 +520,11 @@ void sm_apply_image(SidMachine* m, const SidImage* image) {
     uint8_t old_pair[2], new_pair[2];
     if (!m->preroll) sm_tempo_at(oreg, &m->info, m->order, m->row, &old_tempo, &old_funk);
     funk_pair(oreg, old_funk, old_pair);
-    for (int c = 0; c < SM_CHANNELS; ++c) { /* the playing instrument keeps its slot */
+    for (int c = 0; c < SM_CHANNELS; ++c) { /* the playing instrument keeps its slot (deleted: number 1) */
         const uint8_t n = CHN(CHNINSTR, c);
         for (int s = 1; s < 64; ++s) {
-            if (m->slots[s] == n && slots[s]) {
-                CHN(CHNINSTR, c) = slots[s];
+            if (m->slots[s] == n) {
+                CHN(CHNINSTR, c) = slots[s] ? slots[s] : 1;
                 break;
             }
         }
