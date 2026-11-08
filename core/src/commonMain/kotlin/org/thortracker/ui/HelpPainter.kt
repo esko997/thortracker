@@ -202,7 +202,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(edit, "Listen: play.  Write: write at the pattern cursor and advance"),
             Line.Row(clear, "Write mode: place OFF and advance"),
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
-            Line.Row("Dark keys", "Above ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
+            Line.Row("Dark keys", (if (system.noteRange.first % 12 == 0) "Above" else "Below ${system.noteName(system.noteRange.first)}, the lowest note, and above") +
+                " ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
         ) + (if (system.channels.none { it.kind == ChannelKind.SAMPLE }) emptyList() else listOf(
             Line.Row("Sample keys", "On ${system.channels.filter { it.kind == ChannelKind.SAMPLE }.joinToString { it.name }} each key shows the sample the sound maps to it; " +
                 "unnamed keys play nothing. In the pattern, ${k.held(Action.EDIT, lr)} on such a note steps through the mapped keys"),

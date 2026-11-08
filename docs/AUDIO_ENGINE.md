@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the PC Engine engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -23,6 +23,11 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The PC Engine system (`"pce-huc6280"`, unverified source slice) plays the HuC6280's six-channel wavetable PSG with
+Thor Tracker's own player (specified here, mirrored by an independent Python reference) on Mednafen's cycle-timed PSG,
+with noise on channels 5-6, the channel 2 → channel 1 LFO, stereo balances and DDA samples streamed from the CPU
+timer, and exports VGM. See [PC Engine](#pc-engine-thor-trackers-own-player-on-a-huc6280-psg-pce-huc6280).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -123,6 +128,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| Mednafen 1.32.1 PSG | `app/src/main/cpp/third_party/mednafen-pce-psg/` (`pce_psg.cpp`, `pce_psg.h`, `COPYING`), unmodified, compiled through `pce/pce_psg.cpp` against our shim (`shim/mednafen/mednafen.h`, `shim/trio/trio.h`) | `mednafen-1.32.1.tar.xz` (mednafen.github.io/releases/files/) sha256 `de7eb94ab66212ae7758376524368a8ab208234b33796625ca630547dbc83832`; `src/hw_sound/pce_psg/pce_psg.cpp` sha256 `e6a029e33e0c1fe9330b358b0610c146eec481b5a2e7b804324b10f87d55f8c5`, `pce_psg.h` `5307959029251c8f85e43f1231215f0add2e59d12ce15ec486053f1fe31f796c`, `COPYING` `8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643` | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -2322,3 +2328,389 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## PC Engine: Thor Tracker's own player on a HuC6280 PSG (`"pce-huc6280"`)
+
+**Status: unverified source slice** (branch `huc6280-system`): written without building, generating or running
+anything. The NEC PC Engine / TurboGrafx-16 sound generator is the PSG inside Hudson's HuC6280 CPU: six channels, each
+a 32-step 5-bit wavetable or a direct D/A (DDA) output, noise on the last two, one shared LFO (channel 2's waveform
+modulating channel 1's frequency) and a two-stage stereo volume (per channel and master). There is no standard sound
+driver to run, so it follows the OPL3 and OPM: **our own player** (`pce/pce_player.c`, pure integer C without a chip)
+whose behaviour is the specification in this section; `tools/audio/pce/pce_ref.py` implements the same specification
+separately in Python and the host test requires identical register writes (tick batches and timer-interrupt batches).
+Songs export as VGM (the player's register log) and WAV. Not a console executable: no HuCard/HES export (that would
+need a real 6280 driver). This section is the contract of the Kotlin system and lowering (`core` `system/pce`,
+`backend/PceLowering.kt`); the numbers they share with the engine are generated into `backend/PcePlayerImage.kt`
+(below, "Preparing").
+
+### Chip, clocks and core
+
+- **Core**: Mednafen 1.32.1's PSG (`src/hw_sound/pce_psg/pce_psg.cpp`, `pce_psg.h`; GPL-2.0-or-later), vendored
+  **unmodified** in `app/src/main/cpp/third_party/mednafen-pce-psg/` with Mednafen's `COPYING`, compiled once in
+  `pce/pce_psg.cpp` (`#include "pce_psg.cpp"`) against a minimal shim (`third_party/mednafen-pce-psg/shim/`:
+  `mednafen/mednafen.h` with the integer types, `INLINE`, `MDFN_COLD` and no-op save-state macros; an empty
+  `trio/trio.h`). Pin: `mednafen-1.32.1.tar.xz` from `mednafen.github.io/releases/files/`, sha256
+  `de7eb94ab66212ae7758376524368a8ab208234b33796625ca630547dbc83832`; `pce_psg.cpp` sha256
+  `e6a029e33e0c1fe9330b358b0610c146eec481b5a2e7b804324b10f87d55f8c5`, `pce_psg.h`
+  `5307959029251c8f85e43f1231215f0add2e59d12ce15ec486053f1fe31f796c`, `COPYING`
+  `8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643`. Mednafen's PSG was chosen because it is timed
+  per CPU cycle (waveform counters, the noise LFSR, the LFO, the DDA latch, the hardware's sequential volume latching)
+  and its behaviour was checked by its author on hardware (comments in the source); MAME's `c6280.cpp` (BSD-3-Clause,
+  per output sample) is the cross-check for register semantics: both agree on the LFO (channel 2 modulates channel 1
+  with shift 0, 2 or 4; channel 2 is **not** muted while it is the modulator), on the DDA index reset and on the noise
+  LFSR taps.
+- **Revision**: the original HuC6280 (Mednafen `REVISION_HUC6280`, its default for the PC Engine; the HuC6280A of the
+  SuperGrafx and CoreGrafx I centres the channel amplitude, not modelled). Channels output only with control bit 7 set;
+  samples are unipolar (0..62 × volume).
+- **Clocks** (NTSC): master 21477272.73 Hz (= 236250000 / 11); the CPU, its timer and Mednafen's PSG timestamps run at
+  master / 3 = **7159090.91 Hz** (78750000 / 11, "cycles" below); the waveform counters step at master / 6 =
+  3579545.45 Hz. A channel with 12-bit period *N* (register value 0 = 4096) sounds **3579545.45 / (32 · N) Hz**; a
+  noise channel's LFSR is clocked every (31 − NF) · 128 cycles (NF 31: 64). VGM's HuC6280 clock is 3579545.
+- **DDA timer**: the HuC6280's own timer (Mednafen `src/pce/huc6280.cpp` `TimerSync`: a 7-bit reload value *R*,
+  decremented every 1024 cycles, an interrupt and reload when it passes below 0) interrupts every **1024 · (R + 1)
+  cycles = 6991.3 / (R + 1) Hz**. A new reload value applies from the next reload (after the next interrupt): the first
+  interrupt comes 1024 · (R + 1) cycles after the start/audition reset (R = the header's), each next one 1024 · (R + 1)
+  cycles later with R as the player holds it at that interrupt. An interrupt on a tick's first cycle runs after that
+  tick's batch. The player streams DDA samples from this interrupt (`pcp_timer`), as PC Engine sound drivers do.
+- **Output**: Mednafen writes band-limited deltas (its 7-tap phase filter, gain 2048) into two 32-bit buffers at master
+  / 12 = 1789772.73 Hz (index = cycle >> 2). The wrapper integrates them per index (level += delta; value = level >> 12,
+  i.e. Mednafen's scale ÷ 2048 ÷ 2: one channel at full volume swings 0..5290, leaving headroom for six unipolar
+  channels) and feeds the value changes to blip_buf 1.1.0 at 1789772.73 Hz → the host rate (its ~15 Hz high-pass removes
+  the HuC6280's DC), float = sample / 32768. `SetVolume(1.0)` (Mednafen's PC Engine HuCard level). The last 8 indices of
+  a tick (the filter's tail past the tick end) carry into the next tick; timestamps restart each tick at the
+  leftover `(start + L) & 3`.
+- **Tick** = 1/60 s / multispeed (header byte 5, N = 1..8): tick *k* (from the song start or audition) spans cycles
+  ⌊k · 1312500 / (11 N)⌋ .. ⌊(k + 1) · 1312500 / (11 N)⌋ (119318.18 / N cycles, exact). The player's batch is written at
+  the tick's first cycle (all at one timestamp, in order); the DDA timer interrupts falling inside the tick are written
+  at their cycles. As the OPL3 and OPM, the tempo is the host timer, not a console's vblank.
+- **Mute** (`pcm_mute`): the machine forces bits 0-4 of every register 4 value it sends to a muted channel to 0
+  (volume 0 = attenuation ≥ 31 steps = silence in Mednafen's volume table), keeping bits 6-7 (so waveform-index side
+  effects are those of the unmuted song); toggling writes the channel's register 4 (from the player's shadow, masked
+  or not) and restores the select register. The player, its writes and the VGM are unchanged; waveform, noise and LFO
+  phases keep running (a muted channel 2 still modulates channel 1).
+- **Chip reset**: `start` and `audition` rebuild Mednafen's `PCE_PSG` object in place (its `Power()` keeps per-channel
+  filter history and timestamps, which would offset the cleared integrator), then `SetVolume(1.0)`, `Power(0)`; the
+  delta buffers and blip are cleared and mutes cleared; no allocation outside `pcm_create`.
+
+### Channels and shared resources
+
+6 tracker channels = the PSG's channels 0-5, `PSG 1`-`PSG 6`. **No chord effect, no voice allocation.** A channel plays
+one of three instrument kinds: **tone** (its 32-step wave, loaded into the channel's waveform RAM), **noise** (the
+LFSR; channels 5 and 6 only — the hardware has noise only on channels 4 and 5 counting from 0) and **sample** (DDA:
+the channel's D/A latch written from the timer interrupt; any channel). Shared chip resources are song state (header)
+changed by global effects, never per-instrument data:
+
+| Shared resource | Register | Song start (header) | Effect |
+|---|---|---|---|
+| Master balance | R1 = left << 4 \| right (0..15 each; 15 = full, 3 dB per step) | byte 14 | `Xxy` |
+| LFO frequency | R8 0..255 (0 = 256): channel 2's step period × this | byte 15 | `Lxx` |
+| LFO control | R9: bits 0-1 mode (0 off; 1, 2, 3 = channel 2's sample − 16 shifted left 0, 2, 4 and added to channel 1's period), bit 7 = halt and reset channel 2's waveform index | byte 16 | `Mxx` |
+| DDA timer | the CPU timer's reload value *R* 0..127 (not a PSG register: no write) | byte 17 | `Txx` |
+
+**Volume** (both cores, "verified from both patent and manual" in MAME): attenuation in 1.5 dB steps = (31 −
+volume) + (31 − scale(channel balance side)) + (31 − scale(master side)), at most 31 (= silence), with scale =
+`0, 3, 5, 7, 9, 11, 13, 15, 16, 19, 21, 23, 25, 27, 29, 31` for 0..15 (so a balance step is 3 dB). The player's 5-bit
+channel volume is R4 bits 0-4.
+
+**LFO**: when R9's mode is not 0, channel 2's waveform (stepping at its own period × the LFO frequency, 0 = 256) offsets
+channel 1's period by (sample − 16) << (0, 2, 4)[mode − 1]; it acts only while channel 2 is enabled (R4 bit 7) and R9
+bit 7 is clear. Channel 2 keeps sounding at its volume (both cores): a song that wants only the vibrato sets channel 2's
+volume to 0 (`C00`) while keeping a note on it. In the tracker: channel 2's note and wave are the LFO's rate and shape.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = **131072** bytes, little-endian, every pattern and envelope reference a u16 offset and every sample a
+u32 offset into the data region, so any layout that passes `pc_load_image` (`pce/pce_image.c`) relocates. Constants:
+`pce/pce_image.h` (`PC_*`); the reference builder is `tools/audio/pce/pce_song.py` (`build()`). The loader rejects
+anything off-contract with a reason and the byte (`PcInfo.problem`, `problem_offset`); the Kotlin validator mirrors its
+checks with user-facing messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTPC"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | multispeed N, 1..8 (player ticks per 60 Hz frame) |
+| 6 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 7 | 1 | instrument count I = highest slot present, 0..64 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | wave count W, 0..64 |
+| 13 | 1 | sample count S, 0..64 |
+| 14 | 1 | master balance R1 at the start (left << 4 \| right) |
+| 15 | 1 | LFO frequency R8 at the start, 0..255 |
+| 16 | 1 | LFO control R9 at the start: 0..3 or `$80`..`$83` |
+| 17 | 1 | DDA timer reload *R* at the start, 0..127 |
+| 18 | 2 | 0 |
+| 20 | 4 | data size D: bytes of the data region used, ≤ 123072 |
+| 24 | 40 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 3072 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (6 *o* + *c*); entries ≥ count 0 |
+| 3392 | 2048 | instrument slot *n* (1..64) at 3392 + 32 (*n* − 1) |
+| 5440 | 2048 | wave *w* (0..63) at 5440 + 32 *w*: 32 samples 0..31 in play order; waves ≥ W all zero |
+| 7488 | 512 | sample *s* (0..63) at 7488 + 8 *s*: u32 offset into the data region, u32 length (frames, ≥ 1); entries ≥ S zero |
+| 8000 | 123072 | data region `[0, D)`: patterns, envelopes, sample data (5-bit values 0..31, one per byte) |
+
+Pattern and envelope offsets are u16, so the lowering places patterns, then envelopes, then sample data (the samples
+may lie beyond 65535). The lowering refuses a song whose patterns or envelopes would start beyond data offset 65535
+(the validator: "patterns and envelopes pass the 64 KB their offsets reach"); samples may lie anywhere below D, each
+1..65535 frames (`PC_MAX_SAMPLE_FRAMES`: the u16 loop start).
+
+**Instrument** (32 bytes; an all-zero record = no instrument; records above I must be zero):
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 = defined (1); bits 0-1 kind: 0 tone, 1 noise, 2 sample (3 invalid); bit 2 = pitch envelope is relative; others 0 |
+| 1 | tone: wave 0..W − 1; other kinds 0 |
+| 2 | sample: sample index 0..S − 1; other kinds 0 |
+| 3 | sample: root note 9..95 (the note that plays one sample frame per timer interrupt); other kinds 0 |
+| 4 | sample: 1 = loop, 0 = one-shot; other kinds 0 |
+| 5 | 0 |
+| 6 | u16 sample loop start frame (< the sample's length; 0 without loop or for other kinds) |
+| 8 + 6 *k* | envelope *k* (0 volume, 1 arpeggio, 2 pitch, 3 wave): u16 offset into the data region, u8 length L (0 = none: offset 0, loop and release `$FF`), u8 loop (`$FF` none, else < L), u8 release (`$FF` none, else 1..L − 1, and > loop when both), u8 0 |
+
+Envelope values (L bytes at the offset): volume 0..31; arpeggio s8 −64..63 semitones; pitch s8 −128..127 (1/64
+semitone, absolute or relative per the flag); wave 0..W − 1, only on tone instruments (other kinds: length 0).
+
+**Patterns**: decoded from the offset for exactly rows(*o*) rows (a run longer than the order's remaining rows is cut
+there); every row read must lie inside `[0, D)`. Row encoding, as the OPL3's and OPM's:
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
+| note | 9..95 = absolute note A-0..B-7 (0 = C-0, 57 = A-4), `0xFE` = OFF |
+| instrument | slot 1..64, defined; a noise instrument only on channels 4 and 5 (`PSG 5`, `PSG 6`) |
+| effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+Load-time parameter checks: `Bxx` < order count, `Cxx` ≤ 1F, `F00` rejected, `Mxx` ∈ 00..03 or 80..83, `Txx` ≤ 7F,
+`Wxx` < W; header: magic, layout, multispeed 1..8, speed ≥ 1, I/W/S ≤ 64, R9 value as `Mxx`, timer ≤ 127, D ≤ capacity,
+reserved bytes 0; instruments: flags, kind fields and envelopes as above, every envelope and sample range inside
+`[0, D)` (sample lengths 1..65535 frames, `PC_MAX_SAMPLE_FRAMES`), values in range; waves ≤ 31 and zero above W; sample entries zero above S. Codes without
+an effect (`5`, `6`, `7`, `9`, `E`, `H`, `I`, `J`, `K`, `N`, `O`, `Q`, `R`, `U`, `V`, `Y`, `Z`) are rejected ("unknown
+effect code"); the other effects take any parameter. `pc_load_image` derives (`PcInfo`) the order count, loop,
+multispeed, speed, rows per order and the speed each order starts with in sequential straight play (header speed, then
+the last `Fxx` of each order: rows, then channels, then columns; jumps ignored).
+
+**What the lowering writes** from a `Cell` with up to 4 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
+an absolute note → itself; instrument 0 → no byte; effect columns in column order, blank columns (code 0, parameter 0)
+omitted; empty rows in runs; byte-identical (order, channel) encodings stored once in first-use order (orders, then
+channels), then each instrument's envelopes in slot order (volume, arpeggio, pitch, wave; byte-identical envelopes
+stored once, first use), then the samples in sample order (identical data stored once); every filled instrument slot
+written (the instrument count is the highest), every wave of the song (W = its count), every sample of the song (S).
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0; notes are pitch = note · 64. Clamp range `PCP_PITCH_MIN` = 569 ..
+`PCP_PITCH_MAX` = 6143 (569 is the lowest pitch whose period fits 12 bits, 4093; 6143 = B-7 + 63/64).
+
+**Period** (`pcp_period`): `PCP_PERIOD_Q16[i]` (*i* = 0..767) = round(39375000 / 11 / (32 · 440 · 2^((i / 64 − 57) /
+12)) · 65536) in IEEE double precision (39375000 / 11 = 3579545.4545… Hz exactly; a rounded decimal clock changes 4
+entries) — the C-0 octave in 16.16 fixed point, written out in `pce_player.c` (`pce_ref.py` computes it with that
+formula and `prepare_pce.py` fails on any difference); for pitch *p* (clamped), *o* = p / 768, *i* = p mod 768: N =
+(T[i] + (1 << (15 + o))) >> (16 + o). A-4 = N 254 = **440.40 Hz (+1.56 cents)**; A-0 4068; B-7 28 (+19.2 cents). Within
+A-0..B-7 the worst error is 19.2 cents (the 12-bit period's resolution at the top; 4.2 cents up to C-6, 14.5 at C-7).
+
+**Sample step** (`pcp_sample_step(pitch, root)`): frames per timer interrupt in 16.16 = Q(root · 64) / Q(pitch) ·
+65536 with Q(p) = T[p mod 768] / 2^(p / 768), in integers: rp = root · 64, d = p / 768 − rp / 768; d ≥ 0: (T[rp mod
+768] << (16 + d)) / T[p mod 768]; d < 0: ((T[rp mod 768] << 16) / T[p mod 768]) >> −d (unsigned 64-bit, truncating).
+The root note plays 65536 (one frame per interrupt).
+
+**Writes** are (register 0..9, value) pairs. Registers 2-7 act on the selected channel: before a write to channel *c*'s
+register the player emits R0 = *c* if its select (`select`, −1 after reset until R0 is written) differs. Shadows (the
+value last written): global R1, R8, R9; per channel R2, R3, R4, R5, R7 (channels 4, 5). A write equal to its shadow is
+not emitted (and emits no R0). R6 (wave/DDA data) is never shadowed. Wave loads write R4 twice explicitly (below).
+
+**Reset** (start, audition): all state cleared; channels: instrument 0, volume 31 (vol8 248), pan `$FF`, cut −1, not
+sounding, loaded wave −1; shared state from the header; position (0, 0, tick 0) with the header speed. The reset batch
+(explicit, every write emitted, setting the shadows): R1 = master, R8 = LFO frequency, R9 = LFO control; then for *c*
+= 0..5: R0 = *c*, R2 = 0, R3 = 0, R4 = 0, R5 = `$FF`, and for *c* ≥ 4 R7 = 0. Select is 5 afterwards.
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
+
+1. The globals through their shadows: R1 = master, R8 = LFO frequency, R9 = LFO control (emitted only when changed: an
+   effect of the previous tick is written at once, so this matters only for live edits).
+2. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..5 and their effect columns in
+   order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position: `B`
+   only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop order;
+   both → (B's order, D's row). Then for each channel 0..5: its cut is cleared; if the row has `Gxx` with xx > 0 (the
+   last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel whose
+   delayed row is due (tick = xx) runs it, channels in order.
+3. Each channel whose cut tick (`Sxx`) equals this tick gets OFF, channels in order.
+4. Each sounding channel 0..5 is updated (below), channels in order.
+5. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the target order's
+   last row), else row + 1, after the last row of an order the next order, after the last order the loop order.
+   **Loop speed**: whenever the next row is row 0 of the loop order the speed becomes `PcInfo.start_speed[loop]`.
+
+**Running a row** of a channel: if the row has a note (9..95), the arpeggio, fine pitch and wave override are cleared;
+an instrument byte sets the channel's instrument; the effect columns run in order (table below; `B`, `D`, `F`, `G`
+already acted); then the note: OFF → **OFF** (below); a note with portamento active (`3xx`, xx > 0) while the channel is
+sounding a tone or sample only sets the glide target (no key-on); any other note keys on.
+
+**Key-on** (note *n*, channel *c*): if the channel's instrument is not a defined slot, nothing happens. Else: kind and
+instrument latched; envelope indices 0, released = 0, relative pitch accumulator 0; base = target = 64 *n*, slide offset
+0, arpeggio step 0, vibrato phase 0; sounding = 1, fresh = 1; DDA active = (kind is sample), and for a sample position =
+`$10000` (frame 1 next). Nothing is written now: the update writes (the first update of a sample writes frame 0).
+
+**OFF**: if the channel is not sounding nothing happens. If the instrument's volume envelope has a release point: released
+= 1 and every envelope of the instrument with a release point jumps to it (the value used by the next update). Else
+**stop**: sounding = 0, DDA inactive, R4 = `$00` (tone, noise) or `$40` (sample) through the shadow.
+
+**Envelopes** (value at index *idx* read in the update, then advanced): held part [0, H) with H = release if set, else
+L. Not released, or released without a release point of its own: next = idx + 1; if next ≥ H: next = loop if set, else
+H − 1. Released with a release point: next = idx + 1, at most L − 1. Without an envelope: volume 31, arpeggio 0, pitch
+0, wave = the override (`Wxx`) if set, else the instrument's wave. A relative pitch envelope adds its value to the
+accumulator (clamped ±6144) before use; an absolute one is used as is. A tone instrument with a wave envelope ignores
+`Wxx`.
+
+**Update** of a sounding channel *c* (per tick, after the rows): vol = max(0, volume value + (vol8 >> 3) − 31);
+semitones = arpeggio effect (0, x, y for step 0, 1, 2 of `0xy`) + arpeggio value; pitch = clamp(base + 64 · semitones +
+fine + slide + vibrato + pitch value, 569, 6143), vibrato = floor(SINE[phase] · depth / 16) (arithmetic right shift
+by 4) with `SINE[i]` = floor(127 sin(2πi/64) + 0.5) (the OPL3's table, written out in both implementations). Writes:
+
+- **tone**: wave *w* (envelope, override or instrument); if the channel's loaded wave ≠ *w*: **wave load** = R4 =
+  `$40`, R4 = `$00` (both emitted unconditionally: bit 6 falling resets the write index), 32 × R6 = the wave's samples,
+  loaded = *w*, shadow R4 = `$00`. Then R2 = N & `$FF`, R3 = N >> 8 (N = period(pitch)), on channels 4-5 R7 = `$00`, R5
+  = pan, R4 = `$80` \| vol.
+- **noise** (channels 4-5): NF = ((base >> 6) + semitones) & 31 (the note picks the noise rate: note mod 32, so C-0..G-2
+  = 0..31, repeating every 32 semitones; NF 31 is the fastest); R7 = `$80` \| NF, R5 = pan, R4 = `$80` \| vol. Pitch
+  effects other than arpeggios do not apply.
+- **sample**: step = sample step(pitch, root); on channels 4-5 R7 = `$00`; R5 = pan; R4 = `$C0` \| vol; if fresh: R6 =
+  the sample's frame 0 (after R4: DDA mode set, so the write goes to the latch, never to the wave RAM).
+
+Then fresh = 0 and the envelopes and effects advance: envelope indices; arpeggio step (mod 3) if an arpeggio is set;
+slide offset ± speed (clamped ±6144) for `1xx`/`2xx`; base toward target by the speed (no overshoot) for `3xx`; vibrato
+phase + speed (mod 64) when speed and depth are set; vol8 + x − y (clamped 0..248) for `Axy`.
+
+**Timer interrupt** (`pcp_timer`, a batch of its own): for each channel 0..5 with DDA active: f = position >> 16; if f
+≥ length: with loop, position = (loop start << 16) + (position − (length << 16)) mod ((length − loop start) << 16) and f
+= position >> 16; without loop: stop (DDA inactive, sounding = 0, R4 = `$40`) and next channel. Else R6 = frame *f*
+(R0 first when needed), position += step (the step of the last update).
+
+### Effects (what Kotlin's effect specs declare for `"pce-huc6280"`)
+
+Up to 4 effect columns per channel. "Note" = for the note keyed on this row only; "now" = from this row on; "shared" =
+the chip's one resource, for every channel, written at once (the globals) and kept until changed.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: steps note, +x, +y every tick (also noise rates); also sets the step to 0 (on a row without a note it changes the sounding note's arpeggio); the next note without `0xy` plays plain |
+| `1xx` slide up | 1/64 semitones per tick | now: until `100`/`200`/`300`; a new note restarts the offset at 0 but keeps sliding |
+| `2xx` slide down | 1/64 semitones per tick | now: as `1xx`, down |
+| `3xx` portamento | 1/64 semitones per tick | now: while active a note on a sounding tone/sample channel glides there without key-on |
+| `4xy` vibrato | x speed, y depth | now: the player's vibrato (depth F ±1.86 semitones), independent of the chip's LFO; `4x0` off |
+| `8xy` pan | x left, y right, 0-F | now: the channel's balance R5 (`$FF` at reset; `800` silences) |
+| `Axy` volume slide | x up, y down, 1/8 step per tick | now: until `A00` |
+| `Bxx` jump | order | after this row play order xx row 0 (with `Dxx`: its row) |
+| `Cxx` volume | 00-1F | now: channel volume (start 1F), 1.5 dB per step below 1F, added to the envelope's attenuation |
+| `Dxx` break | row | after this row play row xx (clamped) of the next order |
+| `Fxx` speed | 01-FF | now, global, this row included; the last of the row wins |
+| `Gxx` note delay | ticks | the channel's row runs at tick xx; never if xx ≥ the speed |
+| `Lxx` LFO frequency | 00-FF (00 = 256) | shared: R8 |
+| `Mxx` LFO control | 00 off, 01-03 depth (shift 0, 2, 4), +80 halt/reset | shared: R9 |
+| `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones until the next note |
+| `Sxx` note off | tick | OFF at tick xx of this row |
+| `Txx` DDA rate | timer reload 00-7F | shared: 6991.3 / (xx + 1) Hz from the next timer reload |
+| `Wxx` wave | 00..W − 1 | now: the tone wave of the sounding note (loaded at the next update) and of later notes until the next note row without `W`; ignored by instruments with a wave envelope |
+| `Xxy` master balance | x left, y right, 0-F | shared: R1 |
+
+Shared effects run in the row order of the channels (channels 0..5, columns in order), so the last one in a row wins;
+each sets the player's shared value and writes R1/R8/R9 at once (in this tick's batch, through the shadows; `Txx`
+writes nothing). Volume, pan and wave change sounding notes at the next update (this tick).
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the player alone finds the number of ticks straight play needs to reach (order, row,
+  0); if it is ≤ `max_ticks` the machine resets and plays that many ticks with the chip, the DDA timer and blip_buf
+  clocked exactly as audible playback and the output discarded (`CHIP_SEEK_FROM_START`: every phase, LFSR, latch and
+  filter state equals straight play's). Otherwise (`CHIP_SEEK_FROM_ORDER`): reset, `pcp_place` at the order start with
+  the speed straight play starts it with (shared state from the header: `X`/`L`/`M`/`T` effects of earlier orders are
+  not replayed), and the order's earlier rows replayed the same clocked way; a row behind a
+  `Dxx` of the same order that is unreachable = `CHIP_ERR_IMAGE`. `PCM_SEEK_TICKS` = 3600 is the suggested budget.
+- `apply_image` (live edit at a tick boundary, realtime-safe): (1) **position**: an order past the new count becomes
+  the last order's last row, a row past its order's rows that order's last row; a clamped position drops the recorded
+  jump and delayed rows, takes the speed straight play has at that row in the new song (its own `Fxx` included) and, if
+  its row had not started (tick 0), counts as played: the next tick starts the row after it. (2) **speed**: otherwise,
+  when the speed straight play has at (order, row) — the order's start speed and the `Fxx` of earlier rows, plus the
+  row's own once it has started — differs between the old and the new image, the new one is taken (an edit of an
+  earlier `Fxx` is heard at once; a speed set by a jump-reached path is kept when nothing relevant changed). (3) a
+  started row's jump and still-delayed rows are re-read from the new data (a delayed row stays pending when its new
+  `Gxx` ≥ the tick about to run). (4) Sounding notes keep their state and read their instrument's
+  envelopes, wave and sample from the new image each tick (indices clamped to the new lengths; a sample position past
+  the new length follows the end rule); a channel whose loaded wave's 32 bytes changed reloads it at its next update
+  (loaded = −1); multispeed follows the header from the next tick; each shared header field (master, LFO frequency, LFO
+  control, timer reload) whose value differs between the old and the new image sets the player's shared value to the
+  new one (written by the next tick's globals). Robustness (live edits only): a sounding note reads its latched slot's
+  record as it now is with its kind kept latched, envelope indices clamped to L − 1; a timer interrupt for a DDA
+  channel whose slot is no longer a defined sample stops it like a one-shot end; a key-on of a noise sound on channels
+  0-3 does nothing. A multispeed change rebases the tick timeline at the next tick (tick *k* from the edit's tick
+  *k₀*: base + ⌊(k − k₀) · 1312500 / (11 N)⌋).
+
+### Audition
+
+`audition(channel 0..5, note 9..95, slot 1..64, fine −128..127)`: the machine is reset (header shared state) and the
+player keys on the note with the slot's instrument, no locks, `fine` added like `Pxx`; ticks only update (no rows). A
+noise instrument off channels 4-5, an undefined slot or arguments outside these ranges are `CHIP_ERR_IMAGE`.
+`release()`: 0 before any tick (the audition is then over: `tick` returns 0); else OFF is applied and its batch written to the chip at once; returns 0 when that
+stopped the channel (no release point), else 1. `tick` returns 0 once the channel stopped (with or without a release: a
+one-shot sample ended), or, after a release, once its written R4 volume is 0 with its volume envelope at its last step,
+or 10 s after the release.
+
+### Mute and ops behaviour
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `pc_load_image`; `image_storage` = `sizeof(PceImage)` |
+| `start`, `apply_image`, `audition`, `release`, `mute`, `position` | above |
+| `tick` | one tick: 800 frames at 48 kHz (multispeed N: 800 / N), ≤ 1601 at 96 kHz; 0 after a released audition ended |
+
+**Kotlin** (`PlaybackEngine` for `"pce-huc6280"`): `imageSize` 131072, `seekTicks` 3600, `note(n)` = n, `fine` = the
+system's fine pitch in 1/64 semitones, `ticksPerSecond` = 60 × multispeed.
+
+### VGM export
+
+`pc_vgm_render` (`pce/pce_vgm.c`) runs the player and the timer headless and logs their writes as a VGM 1.71 for one
+HuC6280 (`tools/audio/pce/pce_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference).
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz), 0x1C =
+  loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 60, 0x34 = 0xCC (data at 0x100), **0xA4 =
+  3579545** (HuC6280 clock; VGM 1.61+). Writes are `0xB9 reg val`.
+- Time: an event at absolute cycle *t* (ticks: ⌊k · 1312500 / (11 N)⌋; interrupts: their cycles) is at 44.1 kHz sample
+  ⌊t · 4851 / 787500⌋ (= t · 44100 / 7159090.91). Before each event's writes, a wait of (its sample − the current
+  sample): `0x62` for 735, `0x63` for 882, `0x70`-`0x7F` for 1-16, else `0x61 nn nn` (split at 65535). An event without
+  writes emits nothing (no wait). The trace hook reports the reset batch as kind 0 at cycle 0.
+- Data: the reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the wait to that tick's
+  start, then the loop point and a dump
+  of the chip state as the player's shadows hold it: R1, R8, R9; for *c* = 0..5: R0 = *c*, a wave load of the loaded
+  wave (if any; R4 `$40`, R4 `$00`, 32 × R6), R2, R3, R5, R7 (*c* ≥ 4), R4 = its shadow; then R0 = the player's select
+  (if not −1); then the tick's writes, then each timer interrupt of the tick at its time. The song ends at the second
+  arrival at the loop point (or the tick limit, then without a loop) with the wait to that tick's start, then `0x66`.
+  The dump re-establishes waves at the loop point, so a VGM player's first pass restarts the loaded waves' phases there
+  (the engine does not): an intended, inaudible-in-practice difference.
+- Hosts' entry point (`pce/pce_export.h`): `pc_export_vgm(image, 131072, max_ticks, title, author, date, &size,
+  &problem)`, as `o3_export_vgm` with GD3 system "PC Engine (Thor Tracker)", converter "Thor Tracker" (`vgm_gd3.c`).
+- Kotlin (`system/pce/PceVgm.kt`): `PceVgm.export(song)` = lower + `PceVgm.renderer.render(image, maxTicks,
+  PceVgmTags(title, author))`; Android registers JNI `ChipAudio.nativePceVgm`, the Deck `DeckPceVgm` (cinterop).
+  `maxTicks` = 60 × multispeed × 600 (ten minutes). DDA streams are written one R6 per interrupt (about 7 KB/s per
+  sample channel at the default rate), not as VGM DAC-stream commands (those cannot express the per-note step).
+- WAV: the generic `chip_wav.c` over the `"pce-huc6280"` ops (no system code).
+
+### Preparing the fixtures and constants
+
+`python3 tools/audio/prepare_pce.py` (pure Python 3) writes `core/src/commonMain/kotlin/org/thortracker/backend/PcePlayerImage.kt`
+(every `PC_*` constant of `pce_image.h` without its prefix, `PCP_PITCH_MIN`/`MAX`, `PCM_SEEK_TICKS`, the effect codes,
+`LOADER_PROBLEMS` from `pce_image.c`, the GD3 strings) and `app/src/test/cpp/pce_test_song.h` (test images and the
+reference player's per-tick and per-interrupt writes, positions, the reference VGM's size, hash and loop), and fails
+when `PCP_PERIOD_Q16` or any shared number disagrees with the Python reference. `python3 tools/audio/pce/pce_golden.py`
+writes `core/src/jvmTest/resources/pce-golden/*.bin.gz` for `PceGoldenTest`.
+
+### Verification (to be run by the parent; nothing here has been run)
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/pce_machine_test.c` (see that file
+  and `docs/VERIFICATION.md`). `wav_render_test.c` renders `pce-demo.pcimg` (the demo) and `pce-shortest.pcimg` (one
+  row, A-4 held on PSG 1) from `exportSamples`.
+- `tools/audio/pce/pce_reference_check.py <dir> [--pitch] [--vgm2wav PATH]`: the reference player against the trace
+  and the VGM, the VGM parsed from the format alone, the period table and A-4's pitch computed independently from the
+  clock, optionally libvgm's vgm2wav (its HuC6280 core) against the engine's WAV.
+- `tools/audio/render_pce_image.sh image out.wav [seconds] [mute=...] [--vgm out.vgm]`.
+- Kotlin: `PceGoldenTest` (the lowering against the reference builder), `PceModelTest`, `PceEditorTest`.

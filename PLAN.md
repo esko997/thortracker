@@ -29,7 +29,8 @@ Order below is the current intent; design notes for the chip work live in `docs/
    (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
 7. **More chips** (unordered):
    - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST, Amstrad CPC (the hardware envelope as a buzzer bass).
-   - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
+   - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise, DDA samples: source slice on branch
+     `huc6280-system` (own player on Mednafen's PSG, VGM/WAV export), not yet built or verified.
    - Konami SCC — MSX wavetable cartridge (five channels).
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
    - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, noise, two LFOs.

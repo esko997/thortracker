@@ -15,6 +15,8 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "pce-huc6280"     Thor Tracker's own PC Engine player on the HuC6280's PSG (Mednafen 1.32.1), DDA samples from
+ *                     the CPU timer (pce/pce_chip.c over pce/pce_machine.c, pce_player.c, pce_image.c, pce_psg.cpp)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

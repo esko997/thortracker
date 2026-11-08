@@ -1,5 +1,60 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: PC Engine (HuC6280) — source slice, NOT verified
+
+Branch `huc6280-system` adds the standalone **PC Engine (HuC6280)** system (`"pce-huc6280"`: Thor Tracker's own
+player on Mednafen 1.32.1's HuC6280 PSG, vendored unmodified; six wavetable channels, noise on PSG 5-6, the channel 2 →
+channel 1 LFO, channel and master balance, DDA samples streamed from the CPU timer; VGM and WAV export) and the demo
+**Turbo Lanterns**. It was written source-only: **nothing has been built, compiled, generated, tested, run on a device
+or listened to**, and no version was bumped. (The pure-Python reference was exercised on /tmp copies during review:
+its loader against the test's corruption cases, its VGM against its own checker; that is not engine evidence.) The
+parent runs everything below before anything is called verified; record the results here then, replacing this section.
+
+1. Generate the Kotlin constants, the native fixture and the golden images (pure Python 3), check a second run is
+   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/PcePlayerImage.kt`,
+   `app/src/test/cpp/pce_test_song.h` (about 2.1 MB: per-tick and per-interrupt reference writes for 1500 ticks of
+   four songs) and `core/src/jvmTest/resources/pce-golden/{spike,features}.bin.gz`:
+
+   ```sh
+   python3 tools/audio/prepare_pce.py
+   python3 tools/audio/pce/pce_golden.py
+   python3 tools/audio/prepare_pce.py && python3 tools/audio/pce/pce_golden.py && git status --short   # no new changes
+   ```
+
+   `prepare_pce.py` fails before writing if the C sources and the Python reference disagree on any shared number,
+   `PCP_PERIOD_Q16` or `PCP_SINE`.
+2. The usual full run (Kotlin: `PceGoldenTest`, `PceModelTest`, `PceEditorTest` and every existing test), the app and
+   Deck builds (CMake through Gradle with the shim include dir, `pce/pce_psg.cpp` as C++; cinterop `decknative` with
+   `pce_export.h`), the sample exports (`turbo-lanterns.thor`, `pce-demo.pcimg`, `pce-shortest.pcimg`) and the native
+   host test (`pce_machine_test.c`, and `wav_render_test.c` with the two PCE images):
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   python3 tools/audio/pce/pce_reference_check.py /tmp/thor-evidence --pitch
+   python3 tools/audio/pce/pce_reference_check.py /tmp/thor-evidence --vgm2wav /path/to/libvgm/bin/vgm2wav   # optional, needs numpy
+   tools/audio/render_pce_image.sh app/build/samples/pce-demo.pcimg /tmp/turbo-lanterns.wav 90 --vgm /tmp/turbo-lanterns.vgm
+   ```
+
+   Expected from the specification (not yet observed): A-4 = period 254 = 440.40 Hz (+1.56 cents), every note A-0..C-6
+   within 4.2 cents and B-7 at +19.2 cents; the engine's tick and timer-interrupt writes (with their cycles) equal
+   `pce_ref.py`'s for 1500 ticks of the test song and its edited, tempo and x2 variants; the VGM byte-equal to the
+   reference's; seeks bit-identical to straight play. Thresholds the native test sets without having run (A-4 within
+   ±0.3 Hz by zero crossings, sample rate ±0.5 %, balance ratios ±5 %, LFO pitch spread > 15 Hz with `M01`, noise
+   roughness, muted rms < 0.0005, release and one-shot end within a few ticks, 116-117 interrupts per tick at reload
+   0, tick cost ≤ 4× the mean) may need tuning once measured. Also the release-standard checks: Game Boy views
+   pixel-identical to the baseline, every existing golden and sample export unchanged, the four other
+   `render_*_image.sh` scripts still link (they now compile the PCE sources because `chip_engine.c` lists its ops).
+3. Listen: the demo (wave-sequence lead, `Wxx` arpeggios, D/A drums and the `T01` half-rate fill, noise on PSG 5-6, the
+   LFO passage, the master fade-in) and the test song; the demo's VGM in an independent player (libvgm's HuC6280 core).
+   Watch for clicks from the original HuC6280's uncentred outputs and for the output level (Mednafen's level ÷ 2).
+4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → PC Engine
+   (HuC6280); demo playback (no underruns; the tick cost on the Konkr, including a seek of up to 3600 clocked ticks and
+   six machines × ~0.65 MB), the Instrument pages per kind, the Wave view, the starter kit and a `.wav` import through
+   the document picker, audition on PSG 1-6 (a noise sound only on PSG 5-6), the Song view's shared rows and the Pattern
+   inspector's shared-state lines, VGM and WAV exports through the document picker.
+
 ## 0.16.0 NES + Konami VRC7
 
 - **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.

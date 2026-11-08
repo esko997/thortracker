@@ -6,6 +6,8 @@ import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.pce.PceDemoSong
+import org.thortracker.system.pce.PceSystem
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
@@ -57,5 +59,15 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The PC Engine demo: project and engine image (its VGM needs the native player: tools/audio/render_pce_image.sh
+        // pce-demo.pcimg out.wav --vgm turbo-lanterns.vgm renders both), and the shortest valid PC Engine song (one
+        // one-row order at speed 1, A-4 held on PSG 1 with slot 01) whose image the native WAV export test renders.
+        val pce = PceSystem.demo()
+        File(directory, "turbo-lanterns.thor").writeText(ProjectCodec.encode(pce), Charsets.UTF_8)
+        File(directory, "pce-demo.pcimg").writeBytes(ByteArray(PceSystem.engine.imageSize).also { PceSystem.engine.lower(pce, it) })
+        val pceShortest = PceDemoSong.shortest()
+        check(PceSystem.errors(pceShortest).isEmpty()) { "the shortest PC Engine song is invalid: ${PceSystem.errors(pceShortest)}" }
+        File(directory, "pce-shortest.pcimg").writeBytes(ByteArray(PceSystem.engine.imageSize).also { PceSystem.engine.lower(pceShortest, it) })
+        println("Exported ${pce.title} and the shortest PC Engine song to ${directory.absolutePath}")
     }
 }

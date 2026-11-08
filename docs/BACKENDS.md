@@ -864,6 +864,57 @@ Decisions:
   columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
   and song settings).
 
+## PC Engine (HuC6280 PSG): decisions (branch `huc6280-system`, unverified source slice)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "PC Engine". Decided on the user's behalf (the user approved working through the
+chip roadmap autonomously and asked for every onboard feature, including the direct-DAC sample mode):
+
+- **Standalone system** `"pce-huc6280"`, "PC Engine (HuC6280)", no family. PC Engine games ship their own sound
+  drivers (no standard one with a GPL-compatible licence to run), so it follows the OPL3 and OPM: **our own player**
+  (C, mirrored by an independent Python reference) on an emulated PSG, exporting VGM and WAV; no HuCard/HES export.
+- **Core**: Mednafen 1.32.1's PSG (GPL-2.0-or-later), vendored unmodified behind a small shim: cycle-timed, the
+  hardware's sequential volume latching, the LFO and DDA as the author measured them on hardware. MAME's `c6280`
+  (BSD-3) was used only to cross-check register semantics. The **original HuC6280** revision (PC Engine; uncentred
+  amplitudes), not the HuC6280A.
+- **Clock**: NTSC, the CPU's 7.16 MHz (master 21.48 MHz / 3); periods are 12-bit at 3.58 MHz, so notes are A-0..B-7
+  (A-4 = period 254 = 440.40 Hz; the 12-bit period limits accuracy at the top, 19 cents at B-7). Tick: 60 Hz ×
+  multispeed from the host timer, like the OPL3/OPM.
+- **Six channels, no chords**, three sound kinds in one 64-slot bank: **tone** (a song wave: 32 steps × 5 bits, up to
+  64 waves per song, plus an optional per-tick wave sequence), **noise** (channels 5-6 only, as on the chip; the note
+  picks one of the 32 noise rates, note mod 32) and **sample** (the DDA: 5-bit frames streamed by the player from the
+  HuC6280's timer interrupt, as PC Engine drivers do; any channel; pitched by stepping through the frames relative to a
+  root note; loop or one-shot). Every kind has volume, arpeggio and pitch envelopes (loop and release points,
+  FamiStudio-style); there is no hardware envelope.
+- **Shared resources are song state**, changed by global effects: master balance (`X`), the LFO frequency and control
+  (`L`, `M`; channel 2's waveform modulates channel 1's period, channel 2 keeps sounding as on the chip) and the DDA
+  timer rate (`T`, 6991 Hz / (R + 1)). Per channel: volume (`C`, `A`), balance (`8xy`), wave (`W`).
+- **Samples** are user data: imported `.wav` files (resampled to the song's DDA rate and quantised to 5 bits on the
+  device) or the built-in starter kit synthesised in integer arithmetic (no third-party audio). Samples, patterns and
+  envelopes share the image's 120 KB data region.
+- **Model** (`system/pce/PceSound.kt`): `PceSound` = 64 slots of `PceInstrument?` (null = empty), up to 64 waves (32
+  values 0..31 each), up to 64 `PceSample`s (5-bit frames, 1..65535), multispeed and the shared state at the song start
+  (master, LFO frequency and control, timer reload). `PceInstrument`: name, `PceKind` (TONE, NOISE, SAMPLE), wave,
+  four `PceEnvelope`s (volume 0..31, arpeggio −64..63, pitch −128..127 in 1/64 semitone, absolute or relative, and the
+  tone-only wave sequence; up to 255 steps, loop and release points), and the sample fields (sample, root note, loop,
+  loop start). Switching a sound's kind keeps the other kinds' fields. New songs get 12 built-in waves and 20 presets
+  (15 tone, 5 noise) in slots 01-20; samples come from the Sample page. Project files store `"pce-huc6280"`, backend
+  version 1.
+- **Lowering** (`backend/PceLowering.kt`): the layout of `docs/AUDIO_ENGINE.md` — patterns, then envelopes (identical
+  bytes stored once), then samples (identical data stored once); `PceGoldenTest` compares it with the independent
+  Python builder (`tools/audio/pce/pce_song.py`). `PceValidator` mirrors every loader check with a user-facing message
+  (noise sounds named on PSG 1-4, wave and sample indices, envelope shapes, the 64 KB reach of pattern and envelope
+  offsets, the shared data budget with sample bytes).
+- **Editor** (`PceInstrumentView`/`Painter`, reusing the shared FM painter base and the NES envelope plot;
+  `PceWaveView`/`Painter`; `PceSampleMenu`; `PceEdits`): rows Slot, Name, Listen on, Kind, Preset, Wave; pages per kind
+  (tone: Volume, Arpeggio, Pitch, Wave seq; noise: Volume, Arpeggio; sample: Sample, Volume, Arpeggio, Pitch). A noise
+  sound listens on PSG 5. The Wave view draws and reshapes waves and renumbers sounds, wave sequences and `Wxx` when
+  waves are inserted or deleted; deleting a sample renumbers the sounds that play later samples. The Song view rows are
+  Multispeed, Master left/right, LFO frequency, LFO control and DDA rate; the Pattern inspector and lane tags show the
+  shared state at the cursor (`PceSharedState`).
+- Demo: "Turbo Lanterns" (original, D minor): a pulse-width-cycling lead (wave sequence), `Wxx` glass arpeggios with
+  pans, bass, starter-kit D/A drums with a `T01` half-rate fill, noise hats and snares on PSG 5-6, an LFO passage
+  (PSG 2 silent with `C00`, `L`/`M` bending PSG 1) and a master fade-in (`X88`..`XFF`).
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -927,3 +978,14 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- PC Engine revision (decided on the user's behalf): the original HuC6280 (Mednafen's PC Engine default). The HuC6280A
+  (SuperGrafx, CoreGrafx I) centres channel amplitudes and clicks less; it would be a song setting. Review.
+- PC Engine noise: the note picks the rate (note mod 32, as Deflemask/Furnace map it) on a noise sound, rather than a
+  noise-rate envelope; arpeggios step through rates. Review.
+- PC Engine DDA: samples play from the CPU timer at one shared rate with a per-note step (nearest frame), as drivers
+  do on hardware; the VGM writes one register per interrupt (about 7 KB/s per sample channel) instead of VGM DAC-stream
+  commands. CD-ROM² ADPCM (a separate chip on the CD unit) is not part of the HuC6280 and is not modelled.
+- PC Engine LFO: exposed raw (channel 2's note, wave and volume are the modulator's rate, shape and audibility) rather
+  than hidden behind a vibrato abstraction, because that is what the chip does. Review once listened to.
+- PC Engine output gain: Mednafen's level ÷ 2 so six full unipolar channels do not clip after the high-pass; no
+  hardware comparison yet.
