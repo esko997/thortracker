@@ -153,14 +153,16 @@ class NesLoweringTest {
     @Test
     fun engineNumbers() {
         val e = NesSystem.engine
+        val song = NesSystem.blank()
         assertEquals("nes-famistudio", e.id)
         assertEquals(NesPlayerImage.IMAGE_SIZE, e.imageSize)
-        assertEquals(46, e.note(57)) // A-4 = FamiStudio note 46, 440 Hz on the pulses
+        assertEquals(46, e.note(song, 0, 57, 1)) // A-4 = FamiStudio note 46, 440 Hz on the pulses
         assertEquals(-5, e.fine(57, 5))
-        assertEquals(null, e.auditionProblem(0, 57, 1, 0))
-        assertTrue(e.auditionProblem(0, 57, 0, 0)!!.contains("instrument"))
-        assertTrue(e.auditionProblem(2, 20, 1, 0)!!.contains("A-1"))
-        assertEquals(null, e.auditionProblem(3, 12, 1, 0))
+        assertEquals(null, e.auditionProblem(song, 0, 57, 1, 0))
+        assertTrue(e.auditionProblem(song, 0, 57, 0, 0)!!.contains("instrument"))
+        assertTrue(e.auditionProblem(song, 2, 20, 1, 0)!!.contains("A-1"))
+        assertEquals(null, e.auditionProblem(song, 3, 12, 1, 0))
+        assertTrue(e.auditionProblem(song, NesRules.DPCM, 48, 1, 0)!!.contains("maps no DPCM sample to C-4"))
     }
 
     @Test
