@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "opl3_export.h"
 
@@ -214,6 +215,12 @@ uint8_t* o3_export_vgm(const uint8_t* image, size_t image_size, uint32_t max_tic
         goto done;
     }
     O3VgmInfo info;
+    char today[16];
+    if (!date || !*date) {
+        const time_t now = time(NULL);
+        struct tm local;
+        date = localtime_r(&now, &local) && strftime(today, sizeof today, "%Y/%m/%d", &local) ? today : "";
+    }
     o3_vgm_render(img, max_ticks, player, NULL, 0, &info); /* measure: the player is deterministic */
     const size_t body = info.size, tag = gd3(title, author, date, NULL);
     vgm = (uint8_t*)malloc(body + tag);

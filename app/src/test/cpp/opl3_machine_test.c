@@ -809,7 +809,16 @@ static void test_export(void) {
     vgm = o3_export_vgm(g_song.bytes, 100, 36000, NULL, NULL, NULL, &size, &problem);
     EXPECT(!vgm && problem && !strcmp(problem, "image size"), "short image: '%s'", problem ? problem : "");
     vgm = o3_export_vgm(g_song.bytes, sizeof g_song.bytes, 100, NULL, NULL, NULL, &size, &problem);
-    EXPECT(vgm && (vgm[0x1C] | vgm[0x20]) == 0 && size > 0x100, "tick limit before the loop closes: no loop, empty tags");
+    EXPECT(vgm && (vgm[0x1C] | vgm[0x20]) == 0 && size > 0x100, "tick limit before the loop closes: no loop");
+    if (vgm) {
+        /* no date given: today's, "yyyy/mm/dd" (ASCII in UTF-16LE: every other byte) */
+        const uint8_t* d = vgm + 0x14 + (vgm[0x14] | vgm[0x15] << 8) + 12;
+        for (int f = 0; f < 8; ++f, d += 2)
+            while (d[0] | d[1]) d += 2;
+        char date[16] = {0};
+        for (int i = 0; i < 15 && (d[2 * i] | d[2 * i + 1]); ++i) date[i] = (char)d[2 * i];
+        EXPECT(strlen(date) == 10 && date[4] == '/' && date[7] == '/' && !strncmp(date, "20", 2), "default date today: %s", date);
+    }
     o3_export_free(vgm);
 }
 
