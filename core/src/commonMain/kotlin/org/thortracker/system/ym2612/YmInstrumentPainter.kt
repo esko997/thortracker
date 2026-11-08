@@ -188,7 +188,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             Row.PRESET, Row.DRUM_PRESET -> presetText(ins)
             Row.ALGORITHM -> YmCurated.ALGORITHMS[k.algorithm].let { "${it.number} ${it.name}   ${it.diagram}" }
             Row.RATIO -> approx(k.ratioExact) + YmCurated.RATIOS[k.ratio].name + if (k.ratioExact) "" else "   (now " +
-                ins.operators.joinToString(":") { YmCurated.multText(it.mul) + if (YmCurated.detuneSteps(it.dt) != 0) YmCurated.detuneText(it.dt) else "" } + ")"
+                ins.operators.joinToString(":") { YmCurated.multText(it.mul) + if (YmCurated.detuneSteps(it.dt) != 0) "(${YmCurated.detuneText(it.dt)})" else "" } + ")"
             Row.BRIGHTNESS -> if (k.brightness < 0) "—   additive: no modulators" else "${k.brightness}   ${bar(k.brightness, 127)}"
             Row.LEVEL -> "${k.level}   ${bar(k.level, 127)}"
             Row.FEEDBACK -> "${k.feedback}   ${if (k.feedback == 0) "pure" else bar(k.feedback, 7)}"
