@@ -93,7 +93,6 @@ internal object YmDemoSong {
                 note(SNARE_CH, r + 12, SNARE_NOTE, SNARE)
             }
         }
-        fx(ARP_CH, 0, 0, FX_VOLUME, 0x0B)
         // A snare roll into theme A, getting louder.
         for ((row, volume) in listOf(56 to 0x58, 58 to 0x60, 60 to 0x68, 61 to 0x70, 62 to 0x78, 63 to 0x7F)) {
             note(SNARE_CH, row, SNARE_NOTE, SNARE)
@@ -118,7 +117,7 @@ internal object YmDemoSong {
         )
         lead(melody)
         echo(melody)
-        fx(LEAD_CH, 0, 1, FX_VOLUME, 0x76)
+        fx(LEAD_CH, 0, 0, FX_VOLUME, 0x78)
         // Vibrato on the held notes; the next note restarts its phase.
         for (row in listOf(8, 16, 24, 48)) fx(LEAD_CH, row, 1, FX_VIBRATO, 0x52)
         fx(LEAD_CH, 32, 1, FX_VIBRATO, 0x50)
@@ -138,7 +137,6 @@ internal object YmDemoSong {
             cut(BRASS_L, r + 15)
             cut(BRASS_R, r + 15)
         }
-        fx(ARP2_CH, 0, 0, FX_VOLUME, 0x07)
         fx(BRASS_L, 0, 0, FX_PAN, 0x10)
         fx(BRASS_R, 0, 0, FX_PAN, 0x01)
         fx(BRASS_L, 0, 1, FX_VOLUME, 0x68)
@@ -195,8 +193,10 @@ internal object YmDemoSong {
         val root = n(chord.bass)
         for ((row, offset) in listOf(0 to 0, 3 to 0, 4 to 12, 6 to 0, 8 to 0, 10 to 12, 11 to 0, 12 to 7, 14 to 12)) {
             note(BASS_CH, r + row, root + offset, BASS)
-            if (offset == 12) fx(BASS_CH, r + row, 0, FX_BRIGHTNESS, 0x5C)
+            if (offset == 12) fx(BASS_CH, r + row, 0, FX_BRIGHTNESS, 0x68)
         }
+        // The bass sits under the lead; every pattern sets it, so a seek or the loop hears the same mix.
+        if (bar == 0) fx(BASS_CH, 0, 0, FX_VOLUME, 0x7A)
     }
 
     /** Brass stabs on the off-beats: the chord's third on the left, its fifth on the right. */
@@ -205,14 +205,14 @@ internal object YmDemoSong {
         for (row in listOf(2, 7, 10)) {
             note(BRASS_L, r + row, n(chord.third), BRASS)
             note(BRASS_R, r + row, n(chord.fifth), BRASS)
-            cut(BRASS_L, r + row + 1)
-            cut(BRASS_R, r + row + 1)
+            cut(BRASS_L, r + row + 2)
+            cut(BRASS_R, r + row + 2)
         }
         if (bar == 0) {
             fx(BRASS_L, r + 2, 0, FX_PAN, 0x10)
             fx(BRASS_R, r + 2, 0, FX_PAN, 0x01)
-            fx(BRASS_L, r + 2, 1, FX_VOLUME, 0x6C)
-            fx(BRASS_R, r + 2, 1, FX_VOLUME, 0x6C)
+            fx(BRASS_L, r + 2, 1, FX_VOLUME, 0x7A)
+            fx(BRASS_R, r + 2, 1, FX_VOLUME, 0x7A)
         }
     }
 
@@ -220,6 +220,8 @@ internal object YmDemoSong {
     private fun PatternBuilder.arpeggio(channel: Int, bar: Int, chord: Chord, octave: Int = 0) {
         val r = bar * 16
         for (row in listOf(0, 8)) note(channel, r + row, n(chord.arp) + octave, if (chord.minor) ARP_MINOR else ARP_MAJOR)
+        // The PSG is about 10 dB under the FM at full volume: the arpeggios play at the top, the octave double a little lower.
+        if (bar == 0) fx(channel, 0, 0, FX_VOLUME, if (octave == 0) 0x0F else 0x0C)
     }
 
     private fun PatternBuilder.hats(bar: Int) {
@@ -247,7 +249,7 @@ internal object YmDemoSong {
     /** The lead's notes three rows later on PSG 2, quieter. */
     private fun PatternBuilder.echo(notes: List<Pair<Int, String>>) {
         for ((row, name) in notes) if (row + 3 < Songs.ROWS) note(ECHO_CH, row + 3, n(name), PSG_LEAD)
-        fx(ECHO_CH, 3, 0, FX_VOLUME, 0x07)
+        fx(ECHO_CH, 3, 0, FX_VOLUME, 0x0B)
     }
 
     private fun n(name: String): Int {
