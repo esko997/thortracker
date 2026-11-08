@@ -38,7 +38,10 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
-   - Virtual Boy VSU and WonderSwan — wavetable handhelds.
+   - Virtual Boy VSU — wavetable handheld.
+   - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
+     DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
+     APU, VGM/WAV export), not yet built or verified.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
 9. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid

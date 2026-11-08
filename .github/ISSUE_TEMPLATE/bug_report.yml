@@ -39,6 +39,8 @@ body:
         - C64 SID (GoatTracker)
         - OPL3 FM
         - Mega Drive (YM2612 + PSG)
+        - WonderSwan
+        - WonderSwan Color
         - Not song-related
     validations:
       required: true

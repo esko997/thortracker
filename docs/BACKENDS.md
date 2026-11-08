@@ -864,6 +864,47 @@ Decisions:
   columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
   and song settings).
 
+## WonderSwan and WonderSwan Color: decisions (branch `wonderswan-system`, unverified source slice)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "WonderSwan". Decided on the user's behalf (the user approved working through
+the chip roadmap autonomously and asked for the onboard PCM/DMA facilities and an honest original/Color distinction):
+
+- **Two systems, family "WonderSwan"**: `"ws-wonderswan"` ("WonderSwan", the original ASWAN SoC: CH1-CH4) and
+  `"ws-wonderswan-color"` ("WonderSwan Color", SPHINX; the SwanCrystal's SPHINX2 sound unit is the same: CH1-CH4 and
+  **Hyper Voice**). Primary-source basis: the WSdev wiki (asie's hardware-tested register documentation, CC0) lists
+  Sound DMA (`$4A`-`$52`) and Hyper Voice (`$64`-`$6B`) as introduced with the Color, and ares and Mesen 2 gate those
+  ports on the Color model. A single system with a "Color" switch would let an original-model song name Color-only
+  hardware; two systems make the distinction a project-level fact. Each has backend version 1.
+- **Own player** (C, mirrored by an independent Python reference), like the OPL3/OPM/PC Engine: WonderSwan games ship
+  their own drivers and none has a GPL-compatible licence. No `.ws`/`.wsc`/`.wsr` export (that needs a V30MZ driver);
+  VGM (VGM 1.71's WonderSwan chip: ports `$80`-`$FF` and wave RAM) and WAV.
+- **Emulation**: a C port of the ares WonderSwan APU (ISC; ares is nall C++, so it is ported, not vendored) with seven
+  deviations where the wiki says otherwise (voice-volume bit order, `$8D` resetting the sweep counter, sweep only with
+  CH3 enabled, `$6B` flip-flop reset, the failing DMA enable with length 0, Hyper Voice re-conversion, 16-bit
+  headphone wrap), cross-checked against Mesen 2 and Mednafen (read only). The LFSR formula reproduces the wiki's eight
+  sequence lengths exactly (checked by arithmetic; the host test checks the engine).
+- **Timing**: one player tick per display frame (75.47 Hz, 40704 cycles), as WonderSwan drivers run on VBlank; no
+  multispeed (the HBlank timer is the voice-sample timer). CPU-fed samples stream at 12000 / R Hz (the HBlank timer,
+  shared, `Txx`).
+- **Notes G-1..B-7** (19..95): the 11-bit period at 96000 / N Hz; A-4 = 440.37 Hz; worst error 23.3 cents (F#-7),
+  stated in Help. Noise notes set the same register (the LFSR at 32 × the tone frequency); tap modes 0-7 are an
+  instrument field, a tap sequence envelope or `Nxx`.
+- **Kinds**: tone (CH1-CH4; CH3 tones may sweep: instrument sweep value/time, `Uxx`/`Vxx`), noise (CH4), sample (CH2
+  voice, mono; Hyper Voice, mono or stereo). Sample feed: CPU (pitched by a root note, both systems) or Sound DMA (Color:
+  4/6/12/24 kHz, fixed pitch, one-shot or whole-sample loop, optionally backwards; `Hxx` holds). One DMA engine: a DMA
+  sample on one lane stops the other lane's DMA sample.
+- **Levels**: tone/noise 4 bits per side from volume × pan; CH2 voice off/50/100 % per side; Hyper Voice four shift
+  levels and side selection (headphones only). Volumes map to those steps; Help states them.
+- **Output path** (song setting): Headphones (stereo, with Hyper Voice) or Speaker (mono, 8-bit with the song's
+  speaker shift `Kxx`, which wraps like the console). The console's SOUND button / `$9E` is the listener's volume and
+  is not a song control.
+- **Samples** are 8-bit unsigned; the lowering adds XOR-`$80` signed copies for samples played by DMA instruments
+  (Hyper Voice through DMA reads memory as is and is driven in signed mode).
+- **VGM**: the player's logged writes and DMA transfers to `$89`; songs with Hyper Voice notes are refused (no VGM form);
+  exact loops without injected writes.
+- Model, editor, presets, starter kit, demos and tests: the Kotlin slice (`core` `system/ws`, `backend/WsLowering.kt`;
+  README "WonderSwan").
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -927,3 +968,15 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- WonderSwan variant split (decided on the user's behalf): two systems rather than one with a Color switch, so an
+  original-model song can never name Sound DMA or Hyper Voice. Converting an original song to the Color is not
+  offered (no conversion between systems yet). Review.
+- WonderSwan output path as a song setting (Headphones/Speaker) rather than an app-wide listening preference; Hyper
+  Voice is silent on Speaker, as on the console. Review once listened to on both.
+- WonderSwan sweep reset value and `$8D` behaviour: the wiki says the internal counter is reset on writes; the value
+  (the new step time) and the free-running 375 Hz prescaler are our reading of ares plus the wiki. Hardware test
+  needed.
+- WonderSwan voice / Hyper Voice level mapping (volumes 1-11 → 50 %, 12-15 → 100 % on CH2; 12+/6+/3+/1+ → shift
+  0/1/2/3 on Hyper Voice) is a proposal. Review by ear.
+- WonderSwan DMA one-shot end: the player keeps the note "sounding" (the chip holds the last byte, as with a driver
+  that does not clean up); only auditions read the chip's DMA state. Review if lane displays should show the end.

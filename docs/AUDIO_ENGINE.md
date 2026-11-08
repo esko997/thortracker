@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the WonderSwan engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -23,6 +23,12 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The WonderSwan systems (`"ws-wonderswan"`, `"ws-wonderswan-color"`, unverified source slice) play the WonderSwan's
+four wavetable channels (channel 2 voice samples streamed from the CPU timer, channel 3's sweep, channel 4's noise) and,
+on the Color, Sound DMA and Hyper Voice, with Thor Tracker's own player (specified here, mirrored by an independent
+Python reference) on a C port of ares's APU, and export VGM. See
+[WonderSwan](#wonderswan-thor-trackers-own-player-on-the-wonderswan-sound-unit-ws-wonderswan-ws-wonderswan-color).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -123,6 +129,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| ares WonderSwan APU (ported) | `app/src/main/cpp/ws/ws_apu.c`, `ws_apu.h`: a C port of `ares/ws/apu/{apu,channel1-5,dma,io}.cpp` with seven documented deviations (WonderSwan section); the ISC licence in `app/src/main/cpp/third_party/ares-ws-apu/LICENSE` | github.com/ares-emulator/ares commit `038bcb91c230d33fc8911e2bc21b53c66d70a2b0` (2025-09-14); sha256 of the files read: `apu.cpp` `890f82b2…906889`, `apu.hpp` `ddf5740b…7e7506`, `channel1.cpp` `9e9d625d…df4a74a`, `channel2.cpp` `20fe0c07…7abf`, `channel3.cpp` `41e544df…62a7`, `channel4.cpp` `401d8df7…07af`, `channel5.cpp` `c33abe24…43dd`, `dma.cpp` `957aa980…b710f0`, `io.cpp` `77ada8b9…219fb`, `LICENSE` `a1053dec…fc7a97` | ISC — keep the notice; it is in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -2322,3 +2329,557 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## WonderSwan: Thor Tracker's own player on the WonderSwan sound unit (`"ws-wonderswan"`, `"ws-wonderswan-color"`)
+
+**Status: unverified source slice** (branch `wonderswan-system`): written without building, generating or running
+anything. Bandai's WonderSwan (SoC "ASWAN", 1999) has four 32-step 4-bit wavetable channels with per-side 4-bit
+volumes; channel 2 can instead output 8-bit PCM ("voice"), channel 3 has a hardware frequency sweep, channel 4 a
+15-bit LFSR noise generator. The WonderSwan Color (SoC "SPHINX", 2000; the SwanCrystal's "SPHINX2" has the same
+sound unit) adds two facilities: **Sound DMA** (one engine streaming bytes from memory to channel 2's voice or to
+Hyper Voice at 4/6/12/24 kHz) and **Hyper Voice** (a headphone-only 8-bit PCM channel, mono or interleaved stereo).
+Because those two exist only on the Color, there are **two systems**: `"ws-wonderswan"` ("WonderSwan", four lanes,
+voice samples streamed by the CPU) and `"ws-wonderswan-color"` ("WonderSwan Color", five lanes: the four channels and
+Hyper Voice, samples streamed by the CPU or by Sound DMA), family "WonderSwan". A Color song is not playable on the
+original model; the original's songs would play unchanged on a Color, but the two are separate systems so that no
+original-model song can name a Color-only facility.
+
+No standard WonderSwan sound driver with a GPL-compatible licence exists, so this follows the OPL3, OPM and PC Engine:
+**our own player** (`ws/ws_player.c`, pure integer C without a chip) whose behaviour is the specification in this
+section; `tools/audio/ws/ws_ref.py` implements the same specification separately in Python and the host test requires
+identical writes (tick batches and timer-interrupt batches). Songs export as VGM (the chip's register log, original
+model and Color songs without Hyper Voice) and WAV. Not a console executable: no `.ws`/`.wsc`/`.wsr` export (that
+would need a real V30MZ driver). This section is the contract of the Kotlin systems and lowering (`core`
+`system/ws`, `backend/WsLowering.kt`); the numbers they share with the engine are generated into
+`backend/WsPlayerImage.kt` (below, "Preparing").
+
+### Sources and hardware decisions
+
+- **Hardware documentation**: the WSdev wiki (ws.nesdev.org, CC0), pages *Sound* (revision 658, 2025-08-22), *Hyper
+  Voice* (revision 613, 2025-05-04) and *DMA* (revision 562, 2025-03-11), written by asie from hardware tests (the
+  same author's tests drove the 2023-2025 ares and Mesen 2 fixes). Every register behaviour below cites it unless
+  marked otherwise.
+- **Emulation**: `ws/ws_apu.c` is a C port of the **ares** WonderSwan APU (`ares/ws/apu/*.cpp`, ISC licence,
+  github.com/ares-emulator/ares commit `038bcb91c230d33fc8911e2bc21b53c66d70a2b0`, 2025-09-14, the last commit touching
+  `ares/ws/apu`), its cycle-accurate ("accurate") mode: per-cycle channel counters, the 13-bit 375 Hz sweep prescaler,
+  the 128-cycle output sequencer (DMA at cycle 122, Hyper Voice 123, channels 1-4 at 124-127), Sound DMA and Hyper
+  Voice. ares is nall-based C++ (`n11`, `Thread`, `Node`), so it is ported rather than vendored; ISC permits that with
+  the notice kept (`app/src/main/cpp/third_party/ares-ws-apu/LICENSE`, `NOTICE.txt`). Where ares disagrees with the
+  WSdev wiki the port follows the wiki, cross-checked against **Mesen 2** (`Core/WS/APU`, GPL-3.0, commit
+  `998ab6e3de004857474396c0b4ce47e74d522dd7`, whose last `Core/WS/APU` change is `88462e6f` of 2025-06-25; read only, no
+  code taken) and Mednafen 1.32.1 `src/wswan/sound.cpp` (read only; the tarball pinned in the PC Engine work, sha256
+  `de7eb94a…3832`):
+  1. `$94` voice volume bit order: bit 0 right 100 %, bit 1 right 50 %, bit 2 left 100 %, bit 3 left 50 % (wiki,
+     Mesen 2 and Mednafen agree; ares has the 50 %/100 % bits swapped).
+  2. Writing `$8D` resets the sweep step counter (wiki: "reset on every write to port `$8D`"; the reset value is the
+     new step time, so the first step comes `time + 1` prescaler ticks later — the reset value is our reading); the
+     375 Hz prescaler is not reset (ares).
+  3. The sweep acts only while channel 3 is enabled (`$90` bit 2) and its sweep bit is set (wiki: "Channel 3's sweep
+     mode *is* only active when channel 3's wavetable mode is enabled"; ares ignores the enable).
+  4. `$6B` bit 4 resets the Hyper Voice stereo flip-flop (the next sample goes left) (wiki, Mesen 2; ares misses it).
+  5. A Sound DMA enable (`$52` bit 7) with the length counter at 0 fails: the enable bit stays 0 (wiki).
+  6. Every Hyper Voice output update re-converts both latched samples with the current shift and mode (Mesen 2; ares
+     converts only a side whose sample changed: equal results unless the shift or mode changes between samples).
+  7. The headphone adder wraps to 16 bits (wiki: "none of the adders are clamped"; ares adds Hyper Voice unwrapped, Mesen
+     2 clamps).
+  Not modelled: `$95` (the hardware test register: stored, no effect; the player never writes it), `$9E` (the Color's
+  speaker master volume, the same internal setting as the console's SOUND button: the listener's volume, rendered at
+  100 %; the player never writes it), the readable output ports `$96`-`$9B`, the CPU cycles Sound DMA steals.
+- **Output path** is a song setting, since a game cannot choose it (the listener plugs headphones in or not):
+  **Headphones** (stereo: `(L10 << 5) + Hyper Voice` per side, 16 bits, wrapping) or **Speaker** (mono:
+  `((L10 + R10) >> shift) & $FF) << 7`, the internal speaker's 8 bits with the song's speaker shift; Hyper Voice is
+  silent on the speaker, as on the console). The original model's headphones need Bandai's headphone adapter (an
+  official accessory on the EXT port; so do the Color's and the SwanCrystal's), which is stock enough to offer.
+- **Pitch**: wavetable sample rate = 3072000 / (2048 − d) Hz for the 11-bit frequency register d, so a 32-step wave
+  sounds at **96000 / N Hz with N = 2048 − d = 1..2048** — notes G-1..B-7 (19..95; F#-1 would need N = 2076). A-4 = N
+  218 (d 1830) = **440.37 Hz (+1.44 cents)**; the worst error is 23.3 cents at F#-7 (N 27), ≤ 6.4 cents up to C-6 and
+  ≤ 16.4 up to C-7: the 11-bit period's resolution, shown in Help, not hidden.
+- **Noise** is channel 4's LFSR clocked once per period of channel 4's frequency register (3072000 / N Hz), with eight
+  tap modes whose sequence lengths are 32767, 1953, 254, 217, 73, 63, 42 and 28 (wiki table; the formula below
+  reproduces them from the reset state). A noise note sets the same register a tone note would (the LFSR runs at 32 ×
+  the note's tone frequency), so a short tap mode sounds a pitch of 3072000 / (N · length) Hz: honest, documented in
+  Help, no hidden remapping.
+- **Samples on the original model**: channel 2's voice mode outputs the byte in `$89` (unsigned) at the `$94` level
+  (per side off, 50 %, 100 %). Original-model drivers stream it from the CPU, on the HBlank timer interrupt; the player
+  does the same (the machine's timer, 256 · R cycles = 12000 / R Hz with the song's reload R), pitched by stepping
+  through the frames relative to a root note.
+- **Samples on the Color**: the same CPU-streamed voice samples, plus **Sound DMA** samples (fixed rate 4000, 6000,
+  12000 or 24000 bytes/s, not pitched: the note only triggers; one-shot or looping the whole sample, optionally
+  backwards) on channel 2 or Hyper Voice, and **Hyper Voice** samples fed by the CPU (its `$69` port, pitched like voice
+  samples) or by Sound DMA, mono or stereo. There is one DMA engine: a DMA sample starting on one lane stops the DMA
+  sample sounding on the other (shown in the lane tags).
+- **Levels are the chip's**: wavetable and noise volumes are 4 bits per side (`$88`-`$8B`); channel 2's voice has
+  three levels per side (`$94`); Hyper Voice has four (shift 0-3 = 100, 50, 25, 12.5 %) and a side selection. The
+  player's volume (0..15, envelope × `Cxx`) maps to them as below; Help states the steps.
+
+### Clocks and timing
+
+- **Clock**: 3072000 Hz (the 12.288 MHz master ÷ 4: the V30MZ's and the sound unit's clock, "cycles" below). One
+  display line = 256 cycles (12 kHz), one frame = 159 lines = **40704 cycles (75.4717 Hz)**.
+- **Tick** = one frame (the player runs on the VBlank interrupt, as WonderSwan drivers do; no multispeed): tick *k*
+  (from the start or audition reset) spans cycles 40704 *k* .. 40704 (*k* + 1). 636 host frames per tick at 48 kHz.
+  `PlaybackEngine` ticks per second = 3072000 / 40704.
+- **Voice timer** (the HBlank timer; not a sound register: the machine's): interrupts every **256 · R cycles = 12000 /
+  R Hz**, R = 1..255 (the song's reload, header byte 14, effect `Txx`). The first interrupt comes 256 · R cycles after
+  the start/audition reset (R = the header's), each next one 256 · R′ cycles later with R′ the reload the player holds
+  after that interrupt's batch (a new reload applies from the next reload, as the hardware timer reloads). An interrupt
+  on a tick's first cycle runs after that tick's batch.
+- **Blocks**: the sound unit works in 128-cycle blocks (one 24 kHz output frame each). Every event (tick start, timer
+  interrupt) falls on a block boundary (40704 = 318 · 128, 256 = 2 · 128), so writes are applied between blocks.
+
+### The sound unit (`ws/ws_apu.c`)
+
+State (all zero at reset): channels 1-4: frequency `pitch` (11 bits), `volL`, `volR` (4 bits), `enable`, `counter`
+(11 bits), `offset` (5 bits); channel 2: `voice`, `voiceLeftFull`, `voiceLeftHalf`, `voiceRightFull`,
+`voiceRightHalf`; channel 3: `sweepValue` (s8), `sweepTime` (5 bits), `sweep`, `sweepCounter` (int); channel 4:
+`noiseMode` (3 bits), `noiseUpdate`, `noise`, `lfsr` (15 bits), `noiseOutput` (1 bit); Hyper Voice: `shift` (2),
+`scaling` (2), `speed` (3), `enable`, `chanMode` (2), `flip` (next manual/stereo byte goes right), `latchL`, `latchR`
+(u8), `outL`, `outR` (s16), `clock`; Sound DMA (Color): `source`, `length` (20 bits each), `shadowSource`,
+`shadowLength`, `rate` (2), `hold`, `loop`, `target`, `direction`, `enable`, `clock`; global: `waveBase` (u8),
+`speakerEnable`, `speakerShift` (2), `headphoneEnable`, `sweepClock` (13 bits), `model` (original or Color); 64 KiB
+internal RAM (the original has 16 KiB: wave addresses are masked to 14 bits on it). Ports (writes):
+
+| Port | Effect |
+|---|---|
+| `$80`-`$87` | channel *c* = (port − `$80`) / 2 + 1 frequency: even port bits 0-7, odd port bits 8-10 (`& 7`) |
+| `$88`-`$8B` | channel volume: bits 4-7 left, 0-3 right (`$89` is also channel 2's voice sample) |
+| `$8C` | channel 3 sweep value (s8) |
+| `$8D` | channel 3 sweep time (bits 0-4); **resets** `sweepCounter` = the new time |
+| `$8E` | `noiseMode` = bits 0-2, `noiseUpdate` = bit 4; bit 3 set: `lfsr` = 0 |
+| `$8F` | `waveBase`: channel *c*'s wave at RAM (`waveBase` << 6) + 16 (*c* − 1), sample *i* in byte *i* / 2, low nibble for even *i* |
+| `$90` | enables bits 0-3, channel 2 `voice` bit 5, channel 3 `sweep` bit 6, channel 4 `noise` bit 7 |
+| `$91` | `speakerEnable` bit 0, `speakerShift` bits 1-2, `headphoneEnable` bit 3 |
+| `$92`, `$93` | `lfsr` bits 0-7, 8-14 |
+| `$94` | `voiceRightFull` bit 0, `voiceRightHalf` bit 1, `voiceLeftFull` bit 2, `voiceLeftHalf` bit 3 |
+| `$95`, `$9E` | stored, not modelled (above) |
+| `$4A`-`$4C` (Color) | DMA `source` byte 0/1/2 **and** the same byte of `shadowSource` (bits above 19 dropped) |
+| `$4E`-`$50` (Color) | DMA `length` byte 0/1/2 and the same byte of `shadowLength` |
+| `$52` (Color) | `rate` bits 0-1, `hold` bit 2, `loop` bit 3, `target` bit 4 (0 channel 2, 1 Hyper Voice), `direction` bit 6 (1 = decrement), `enable` bit 7 — the enable stays 0 when `length` is 0 |
+| `$64`/`$65`, `$66`/`$67` (Color) | `outL` / `outR` low / high byte (direct 16-bit output) |
+| `$69` (Color) | manual sample: to `latchR` if `flip` else `latchL`; `flip` toggles (the channel mode is ignored) |
+| `$6A` (Color) | `shift` bits 0-1, `scaling` bits 2-3, `speed` bits 4-6, `enable` bit 7 |
+| `$6B` (Color) | `chanMode` bits 5-6; bit 4 set: `flip` = 0 |
+
+Other ports, and the Color ports on the original model, are ignored. RAM writes (`ws_apu_write_ram`) store a byte.
+
+**One cycle** *j* (0..127) of a block, in this order (ares's accurate `APU::main`):
+
+1. Channels 1, 2, 3 tick; then `sweepClock` = (`sweepClock` + 1) & 8191 and, when it became 0, the **sweep**; then
+   channel 4 ticks. *Tick* of an enabled channel: `counter` = (`counter` − 1) & 2047; if `counter` == `pitch`:
+   `counter` = 0, `offset` = (`offset` + 1) & 31, and on channel 4 with `noiseUpdate`: `noiseOutput` = 1 ^ (`lfsr` >> 7
+   & 1) ^ (`lfsr` >> T & 1) with T = (14, 10, 13, 4, 8, 6, 9, 11)[`noiseMode`], `lfsr` = ((`lfsr` << 1) |
+   `noiseOutput`) & `$7FFF`. (So a channel steps every 2048 − `pitch` cycles; a disabled channel's counters hold.)
+   *Sweep*: if channel 3's `enable` and `sweep`: `sweepCounter` − 1; if it is now < 0: `sweepCounter` =
+   `sweepTime`, `pitch` = (`pitch` + `sweepValue`) & 2047.
+2. *j* = 122: **DMA** (Color, if `enable`): `clock` + 1; unless `clock` reached the divisor (6, 4, 2, 1 for `rate` 0,
+   1, 2, 3), nothing more; else `clock` = 0, data = `hold` ? 0 : the byte at linear address `source` (the machine's
+   ROM: below), and without `hold` `source` ± 1 (& `$FFFFF`); target 0: channel 2's volume byte = data (`$89`), target 1:
+   Hyper Voice DMA input (below); the transfer hook reports (target, data). Then, without `hold`: `length` − 1; at 0:
+   `loop` ? (`source` = `shadowSource`, `length` = `shadowLength`) : `enable` = 0. Then the output sums are cleared.
+   Hyper Voice DMA input by `chanMode`: 0 (stereo) as a manual write; 1 → `latchL`; 2 → `latchR`; 3 → both.
+3. *j* = 123: **Hyper Voice** (if `enable`): `clock` + 1; when it reaches the divisor (1, 2, 3, 4, 5, 6, 8, 12)[`speed`]:
+   `clock` = 0, `outL` = convert(`latchL`), `outR` = convert(`latchR`). convert(*v*) = the low 16 bits (as s16) of:
+   `scaling` 0: (*v* << 8) >> `shift`; 1: ((*v* << 8) − 65536) >> `shift` (arithmetic); 2: ((s8) *v* << 8) >> `shift`; 3:
+   *v* << 8 (no shift) — the wiki's bit table.
+4. *j* = 124..127: channel 1..4 adds its output to the sums `sumL`, `sumR` (if enabled; channel 2 also when `voice`):
+   wavetable sample *s* (RAM nibble at its `offset`) × `volL` / × `volR`; channel 4 with `noise`: *s* = `noiseOutput` ?
+   15 : 0; channel 2 with `voice`: left = `voiceLeftFull` ? *b* : `voiceLeftHalf` ? *b* >> 1 : 0 with *b* = the volume
+   byte (and right likewise). A **muted** channel's output is computed and discarded (not added): mute never changes
+   any state.
+5. After *j* = 127, the block's **frame**: L10 = `sumL`, R10 = `sumR` (≤ 930: no wrap). Headphones: left =
+   `headphoneEnable` ? s16((L10 << 5) + (Hyper Voice `enable` and not muted ? `outL` : 0)) : 0 (wrapping), right
+   likewise. Speaker: `speakerEnable` ? (((L10 + R10) >> `speakerShift`) & `$FF`) << 7 on both sides : 0.
+
+The implementation may advance counters in closed form between events and output cycles (it must; the per-cycle loop
+is the specification and the host test compares both bit for bit). **DMA memory**: the machine maps the image's data
+region at linear address `WS_DMA_BASE` = `$40000` (the cartridge ROM area): address *a* reads data byte *a* −
+`$40000`; any other address reads 0. `ws_apu_dma_rebase(delta)` adds *delta* to `source` and `shadowSource` (a live
+edit that moved a byte-identical sample: an editor operation on the emulated cartridge, not a register write).
+
+**Machine output**: each block's frame (as s16) is halved (arithmetic `>> 1`, headroom for the unipolar sums) and fed
+as a level change to blip_buf 1.1.0 at clock rate 3072000 Hz, time = the block's last cycle within the tick; the
+tick ends with `blip_end_frame(40704)`; blip's high-pass (~15 Hz) removes the DC; float = sample / 32768.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = **131072** bytes, little-endian; every pattern and envelope reference is a u16 offset and every sample
+a u32 offset into the data region, so any layout that passes `ws_load_image` (`ws/ws_image.c`) relocates. Constants:
+`ws/ws_image.h` (`WS_*`, exactly the names below: `tools/audio/prepare_ws.py` reads them); the reference builder is
+`tools/audio/ws/ws_song.py`. The loader rejects anything off-contract with a reason and the byte (`WsInfo.problem`,
+`problem_offset`); the Kotlin validator mirrors its checks with user-facing messages.
+
+| Offset | Size | Field (`WS_H_*`) |
+|---|---|---|
+| 0 | 4 | `"TTWS"` (`WS_H_MAGIC`) |
+| 4 | 1 | layout 1 (`WS_H_LAYOUT`, `WS_LAYOUT`) |
+| 5 | 1 | model (`WS_H_MODEL`): 0 original (`WS_MODEL_MONO`, 4 lanes), 1 Color (`WS_MODEL_COLOR`, 5 lanes) |
+| 6 | 1 | speed at the song start, 1..255 (`WS_H_SPEED`) |
+| 7 | 1 | instrument count I = highest slot present, 0..64 (`WS_H_INSTRUMENTS`) |
+| 8 | 2 | order count, 1..256 (`WS_H_ORDERS`) |
+| 10 | 2 | loop order < count (`WS_H_LOOP`) |
+| 12 | 1 | wave count W, 0..64 (`WS_H_WAVES`) |
+| 13 | 1 | sample count S, 0..64 (`WS_H_SAMPLES`) |
+| 14 | 1 | voice timer reload R at the start, 1..255 (`WS_H_TIMER`) |
+| 15 | 1 | speaker shift at the start, 0..3 (`WS_H_SHIFT`) |
+| 16 | 1 | output: 0 headphones (`WS_OUTPUT_HEADPHONES`), 1 speaker (`WS_OUTPUT_SPEAKER`) (`WS_H_OUTPUT`) |
+| 17 | 3 | 0 |
+| 20 | 4 | data size D ≤ 122880 (`WS_H_DATA_SIZE`) |
+| 24 | 40 | 0 (`WS_HEADER_SIZE` = 64) |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 (`WS_OFF_ROWS`) |
+| 320 | 2560 | pattern of (order *o*, lane *c*) = u16 data offset at 320 + 2 (5 *o* + *c*); entries ≥ count 0; on the original model lane 4 is 0 (`WS_OFF_ORDERS`) |
+| 2880 | 2048 | instrument slot *n* (1..64) at 2880 + 32 (*n* − 1) (`WS_OFF_INSTRUMENTS`, `WS_INSTRUMENT_SIZE` 32) |
+| 4928 | 2048 | wave *w* (0..63) at 4928 + 32 *w*: 32 samples 0..15 in play order; waves ≥ W all zero (`WS_OFF_WAVES`, `WS_WAVE_SIZE` 32, `WS_WAVE_MAX` 15) |
+| 6976 | 1024 | sample *s* at 6976 + 16 *s*: u32 data offset of the unsigned bytes, u32 frames (1..65535), u32 data offset of the signed copy (0 without), u8 flags (bit 0 `WS_SAMPLE_STEREO`: frames are L, R byte pairs; bit 1 `WS_SAMPLE_SIGNED`: a signed copy exists), 3 × 0; entries ≥ S zero (`WS_OFF_SAMPLES`, `WS_SAMPLE_ENTRY_SIZE` 16) |
+| 8000 | 192 | 0 |
+| 8192 | 122880 | data region `[0, D)`: patterns, envelopes, sample bytes (`WS_OFF_DATA`, `WS_DATA_CAPACITY`) |
+
+Other `WS_*` constants: `WS_IMAGE_SIZE` 131072, `WS_CHANNELS` 5 (lanes, Color), `WS_CHANNELS_MONO` 4,
+`WS_HYPER_VOICE` 4 (its lane), `WS_VOICE_CHANNEL` 1, `WS_SWEEP_CHANNEL` 2, `WS_NOISE_CHANNEL` 3, `WS_MAX_ORDERS` 256,
+`WS_MAX_INSTRUMENTS` 64, `WS_MAX_WAVES` 64, `WS_MAX_SAMPLES` 64, `WS_MAX_EFFECTS` 4, `WS_MAX_TIMER` 255,
+`WS_MAX_SHIFT` 3, `WS_MAX_ENVELOPE` 255, `WS_MAX_SAMPLE_FRAMES` 65535, `WS_MAX_TAP` 7, `WS_MAX_SWEEP_TIME` 31,
+`WS_MAX_DMA_RATE` 3, `WS_DMA_BASE` `0x40000`, `WS_WAVE_RAM` `0x3FC0` (the player's `$8F` = `$FF`), `WS_NOTE_OFF` `0xFE`,
+`WS_NOTE_MIN` 19, `WS_NOTE_MAX` 95, `WS_I_*`, `WS_ENV_*`, `WS_FLAG_*`, `WS_KIND_*` (below). Samples' signed copies
+are byte *b* XOR `$80` of the unsigned bytes (the same frames, for Hyper Voice through DMA, which reads memory as is);
+the lowering writes one for every sample a DMA instrument plays (Color) and none otherwise. A stereo sample has 2 ×
+frames bytes (L, R per frame). Pattern and envelope offsets are u16: the lowering places patterns, then envelopes, then
+sample bytes, and refuses a song whose patterns or envelopes would start beyond data offset 65535.
+
+**C names the generator reads** (one `#define NAME value` per line with an optional trailing `/* … */`, no other
+comment style on those lines): `ws_image.h` also defines `WS_SAMPLE_STEREO` 1, `WS_SAMPLE_SIGNED` 2, the sample-entry
+field offsets `WS_S_OFFSET` 0, `WS_S_FRAMES` 4, `WS_S_SIGNED_OFFSET` 8, `WS_S_FLAGS` 12, `WS_SPACE_PORT` 0,
+`WS_SPACE_RAM` 1, `WS_CPU_HZ` 3072000, `WS_TICK_CYCLES` 40704, `WS_LINE_CYCLES` 256, `WS_BLOCK_CYCLES` 128,
+`WS_DMA_TRANSFER_CYCLE` 122, the header offsets `WS_H_*` and `WS_HEADER_SIZE`, and the effect codes as an `enum` with
+one `    WS_FX_NAME = code,` per line: `ARPEGGIO` 0, `SLIDE_UP` 1, `SLIDE_DOWN` 2, `PORTAMENTO` 3, `VIBRATO` 4, `PAN` 8,
+`VOLUME_SLIDE` 10, `JUMP` 11, `VOLUME` 12, `BREAK` 13, `SPEED` 15, `DELAY` 16, `HOLD` 17, `SHIFT` 20, `TAP` 23, `FINE`
+25, `CUT` 28, `TIMER` 29, `SWEEP` 30, `SWEEP_TIME` 31, `WAVE` 32. `ws_player.h`: `WSP_PITCH_MIN` 1167, `WSP_PITCH_MAX`
+6143, `WSP_SLIDE_LIMIT` 6144, `WSP_MAX_WRITES` (per batch; ≥ 512); `ws_player.c`: `const uint32_t WSP_PERIOD_Q16[768] =
+{…}` and `const int8_t WSP_SINE[64] = {…}` written out. `ws_machine.h`: `WSM_SEEK_TICKS` 4528, `WSM_RELEASE_SECONDS`
+10, `WSM_MAX_TICK_FRAMES` 1273, `WSM_MAX_SAMPLE_RATE` 96000u. `ws_vgm.h`: `WS_VGM_CLOCK` 3072000u; `ws_vgm.c`:
+`#define GD3_SYSTEM_MONO "…"`, `GD3_SYSTEM_COLOR`, `GD3_CONVERTER`. Engine ids: `ws_chip_ops` = `"ws-wonderswan"`
+(loads model 0 only), `wsc_chip_ops` = `"ws-wonderswan-color"` (model 1 only).
+
+**Instrument** (32 bytes; all zero = no instrument; records above I zero):
+
+| Byte | Field |
+|---|---|
+| 0 | flags (`WS_I_FLAGS`): bit 7 defined (`WS_FLAG_DEFINED`); bits 0-1 kind (`WS_KIND_MASK`: `WS_KIND_TONE` 0, `WS_KIND_NOISE` 1, `WS_KIND_SAMPLE` 2; 3 invalid); bit 2 pitch envelope relative (`WS_FLAG_RELATIVE`); bit 3 DMA feed (`WS_FLAG_DMA`, sample, Color only); bit 4 reset the LFSR at key-on (`WS_FLAG_LFSR_RESET`, noise only); bit 5 backwards (`WS_FLAG_REVERSE`, DMA samples only); bit 6 0 |
+| 1 | `WS_I_SOURCE`: tone: wave 0..W − 1; noise: tap mode 0..7; sample: sample index 0..S − 1 |
+| 2 | `WS_I_ROOT`: CPU-fed sample: root note 19..95 (plays one frame per timer interrupt); DMA sample: rate 0..3 (4000, 6000, 12000, 24000 bytes/s); other kinds 0 |
+| 3 | `WS_I_LOOP`: sample: 1 loop, 0 one-shot; other kinds 0 |
+| 4 | `WS_I_LOOP_START`: u16 loop start frame (CPU-fed looping samples: < frames; otherwise 0: DMA loops the whole sample) |
+| 6 | `WS_I_SWEEP`: tone: s8 sweep value (0 = no sweep; used on channel 3 only); other kinds 0 |
+| 7 | `WS_I_SWEEP_TIME`: tone: sweep time 0..31; other kinds 0 |
+| 8 + 6 *k* | envelope *k* (`WS_I_ENVELOPES`, `WS_ENVELOPE_BYTES` 6, `WS_ENVELOPE_COUNT` 4: `WS_ENV_VOLUME` 0, `WS_ENV_ARPEGGIO` 1, `WS_ENV_PITCH` 2, `WS_ENV_WAVE` 3): u16 data offset, u8 length L (0 = none: offset 0, loop and release `$FF` = `WS_ENV_NONE`), u8 loop (`$FF` or < L), u8 release (`$FF` or 1..L − 1, > loop when both), u8 0 |
+
+Envelope values: volume 0..15; arpeggio s8 −64..63; pitch s8 −128..127 (1/64 semitone, absolute or relative); wave
+envelope: tone 0..W − 1 (wave sequence), noise 0..7 (tap-mode sequence), samples length 0. A DMA sample has no
+arpeggio or pitch envelope (length 0: its rate is fixed) and its flags may not be relative.
+
+**Patterns**: decoded from the offset for exactly rows(*o*) rows (a run past the order's remaining rows is cut);
+every row read must lie inside `[0, D)`. Row bytes (as the OPL3's, OPM's and PC Engine's): `0x80 | k` = k + 1 empty
+rows (k 0..127); else a mask `m` (0x01..0x13): bit 0 a note byte follows, bit 1 an instrument byte, bits 2-4 the effect
+count 0..4, bits 5-6 zero; note 19..95 absolute (57 = A-4) or `0xFE` OFF; instrument slot 1..64, defined, and **fit
+for the lane**: tone on lanes 0-3, noise only on lane 3, samples only on lane 1 (mono samples) and lane 4 (Hyper
+Voice, any); effects: code (0..35), parameter, per column.
+
+Load-time checks: header (magic, layout, model 0/1, speed ≥ 1, I/W/S ≤ 64, R 1..255, shift ≤ 3, output ≤ 1, D ≤
+capacity, reserved bytes 0 (17-19, 24-63 and the padding 8000-8191), order rows, lane 4 patterns 0 on the original model); instruments (flags, kind fields,
+envelopes as above, every envelope and sample range inside `[0, D)`, DMA instruments only on the Color and only with a
+sample that has a signed copy, values in range); waves ≤ 15 and zero above W; sample entries (frames 1..65535, flags
+bits 2-7 zero, signed copy present iff flag bit 1) zero above S. Effect parameters: `Bxx` < order count, `Cxx` ≤ 0F,
+`F00`, `T00` rejected, `Hxx` ≤ 01, `Kxx` ≤ 03, `Nxx` ≤ 07, `Vxx` ≤ 1F, `Wxx` < W; lanes: `N` only lane 3, `U`/`V`
+only lane 2, `W` only lanes 0-3, `H` only lanes 1 and 4 and only on the Color. Codes without an effect (`5`, `6`, `7`,
+`9`, `E`, `I`, `J`, `L`, `M`, `O`, `Q`, `R`, `X`, `Y`, `Z`) are rejected ("unknown effect code"). Every loader reason
+is a string literal passed as `fail(image, "…")` or assigned as `why = "…"` in `ws_image.c` (the generator collects
+them). `ws_load_image` derives (`WsInfo`) the model, lane count, order count, loop, speed, rows per order and the speed
+each order starts with in sequential straight play (header speed, then the last `Fxx` of each order).
+
+**What the lowering writes** from a `Cell` with up to 4 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
+absolute notes as they are; instrument 0 → no byte; effect columns in order, blank columns omitted; empty rows in runs;
+byte-identical (order, lane) encodings stored once in first-use order, then each instrument's envelopes in slot order
+(volume, arpeggio, pitch, wave; identical bytes stored once), then sample bytes in sample order (identical data stored
+once; then each signed copy needed, identical copies stored once). Every filled slot is written (I = the highest),
+every wave (W = the song's count), every sample (S).
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, notes = note · 64, clamped to `WSP_PITCH_MIN` = 1167 (the lowest pitch
+whose N ≤ 2048) .. `WSP_PITCH_MAX` = 6143 (B-7 + 63/64).
+
+**Period** (`wsp_period`): `WSP_PERIOD_Q16[i]` (*i* = 0..767) = round(96000 / (440 · 2^((i / 64 − 57) / 12)) · 65536)
+in IEEE double precision, written out in `ws_player.c`; for pitch *p* (clamped), *o* = p / 768, *i* = p mod 768: N =
+(T[i] + (1 << (15 + o))) >> (16 + o), register d = 2048 − N. A-4: N 218, d 1830.
+
+**Sample step** (`wsp_sample_step(pitch, root)`, CPU-fed samples): frames per timer interrupt in 16.16, the PC
+Engine's formula with this table: rp = root · 64, δ = p / 768 − rp / 768; δ ≥ 0: (T[rp mod 768] << (16 + δ)) / T[p mod
+768]; δ < 0: ((T[rp mod 768] << 16) / T[p mod 768]) >> −δ (unsigned 64-bit, truncating). The root plays 65536.
+
+**Writes** are `WsWrite` {u8 `space` (0 port `WS_SPACE_PORT`, 1 RAM `WS_SPACE_RAM`), u16 `addr`, u8 `val`}. Shadows
+(the value last written, −1 = unknown): ports `$80`-`$8B`, `$8C`, `$8E` (stored without bit 3), `$90`, `$91`, `$94`,
+`$6A`, `$6B` (stored without bit 4). "Through the shadow": emitted only when different, then the shadow is set.
+"Forced": always emitted, shadow set (bits 3 / 4 stripped as above). Never shadowed (always emitted, no shadow): `$8D`,
+`$4A`-`$4C`, `$4E`-`$50`, `$52`, `$69`, RAM writes; voice frames written to `$89` are emitted and set the `$89` shadow
+to −1.
+
+**Reset** (start, audition): all state cleared; lanes: instrument 0, `vol8` 120, pan `$FF`, not sounding, loaded wave
+−1, overrides none, `was_sweep` 0; DMA owner −1; shared state from the header (timer R, shift); position (0, 0, tick 0)
+with the header speed. The reset batch (all forced, setting the shadows): `$8F` = `$FF`; `$90` = 0; `$91` = `$09` |
+shift << 1; for *c* = 0..3: `$80`+2*c* = 0, `$81`+2*c* = 0, `$88`+*c* = 0; `$8C` = 0; `$8D` = 0; `$8E` = 0; `$94` = 0;
+Color only: `$6A` = 0, `$6B` = `$10`, `$52` = 0.
+
+**Tick** (positions are (order, row, tick-in-row)):
+
+1. If a live edit asked to stop the DMA note (`dma_kill`): stop(owner) (below). Then `$91` = `$09` | shift << 1
+   through its shadow.
+2. Tick 0 of a row (**row start**): read every lane's row at (order, row). Then, over lanes 0..C − 1 (C = 4 or 5) and
+   their effect columns in order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx`
+   record the next position: `B` only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past
+   the last one, the loop order; both → (B's order, D's row); the last `B` and the last `D` win. Then for each lane:
+   cut = −1, pending cleared; if the row has `Gxx` with xx > 0 (the last `G` of the row wins) its row is delayed
+   (pending, delay = xx); otherwise the row **runs** now. Other ticks: each lane whose pending row's delay equals this
+   tick runs it (pending cleared), lanes in order. Audition: no rows, no cuts.
+3. Lanes whose cut equals this tick get OFF, in order.
+4. Each sounding lane is updated, in order.
+5. `$90` = control() through its shadow.
+6. Advance (not in audition): tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (order
+   = its order, row = min(its row, the order's rows − 1); then no jump), else row + 1, after the last row of an order
+   row 0 of the next order, after the last order the loop order. **Loop speed**: whenever the new position is row 0 of
+   the loop order the speed becomes `WsInfo.start_speed[loop]` (a row-0 `Fxx` still applies at its row start).
+
+control() = bit *c* (*c* = 0..3) for lane *c* sounding a tone (lane 3: or noise); bit 5 lane 1 sounding a sample;
+bit 6 lane 2 sounding a tone whose sweep value *s* at its last update ≠ 0; bit 7 lane 3 sounding noise. **Every batch** (tick, timer
+interrupt, release) ends with `$90` = control() through its shadow.
+
+**Running a row** of lane *c*: if it has a note (19..95): arp = 0, fine = 0, the overrides (wave, tap, sweep value,
+sweep time) are cleared and hold = 0. An instrument byte sets the lane's instrument (for later key-ons). Then the
+effect columns in order (`B`, `D`, `F`, `G` already acted): `0xy` arp = xy, arpeggio step 0; `1xx` slide mode = xx ?
+up : none, slide speed xx; `2xx` the same, down; `3xx` the same, portamento; `4xy` vibrato speed x, depth y; `8xy` pan
+= xy; `Axy` volume slide = xy; `Cxx` `vol8` = 8 · xx; `Hxx` hold = xx; `Kxx` shift = xx and at once `$91` = `$09` |
+shift << 1 through its shadow; `Nxx` tap override = xx; `Pxx` fine = xx − 128; `Sxx` cut = xx; `Txx` timer reload =
+xx; `Uxx` sweep-value override = (s8) xx (`U00` is an override too: no sweep); `Vxx` sweep-time override = xx; `Wxx` wave
+override = xx. Then the note: OFF → **OFF**; a note while the slide mode is portamento, the lane is sounding and its
+note is a tone or a CPU-fed sample → target = 64 · note only (no key-on); any other note keys on.
+
+**Key-on** (note *n*, lane *c*): if *c* owns the DMA: owner = −1 and `$52` = 0. If the instrument is not a defined
+slot or does not fit the lane (tone on lane 4, noise off lane 3, a sample off lanes 1 and 4, a stereo sample on lane
+1, a DMA sample on the original model), nothing more (live-edit robustness; the loader prevents it in rows). Else: slot
+and kind latched; envelope indices 0, released 0, relative accumulator 0; base = target = 64 *n*, slide offset 0,
+arpeggio step 0, vibrato phase 0; sounding = 1, fresh = 1; a CPU-fed sample: feeding = 1, position = `$10000` (frame 1
+next; the first update writes frame 0).
+
+**OFF**: not sounding → nothing. If the volume envelope has a release point: released = 1 and every envelope with a
+release point jumps to it. Else **stop**(*c*).
+
+**stop**(*c*): sounding = 0, feeding = 0; if *c* owns the DMA: owner = −1, `$52` = 0; lane 4: `$6A` = 0 through its
+shadow. (The `$90` bits follow at the batch end.)
+
+**Envelopes** (offset, length L, loop, release as stored; a lane's index *i* per envelope): the value at *i* is the data
+byte at offset + min(*i*, L − 1) (s8 for arpeggio and pitch). After the update, every envelope with L > 0 advances: *i*
+= min(*i*, L − 1); n = *i* + 1; if released and the envelope has a release point: *i* = min(n, L − 1); else, with H =
+release if set else L: *i* = n if n < H, else loop if set, else H − 1. Without an envelope (L = 0): volume 15, arpeggio
+0, pitch 0, wave/tap = the override if set, else the instrument's byte 1. A relative pitch envelope adds its value to
+an accumulator (clamped ±6144) each update and uses the sum; an absolute one uses the value. A tone (noise) instrument
+with a wave (tap) envelope ignores `Wxx` (`Nxx`). Kind and feed (CPU or DMA) are latched at key-on; every other field
+is read from the slot's record in the current image each update (live edits).
+
+**Update** of sounding lane *c* (lanes are numbered 0-4 in this section: CH1-CH4, Hyper Voice): E = volume value; v
+= (E · (`vol8` >> 3) + 7) / 15; l = (v · (pan >> 4) + 7) / 15, r = (v · (pan & 15) + 7) / 15 (integer division);
+semitones = arpeggio + arpeggio value, arpeggio = 0, x, y for arpeggio step 0, 1, 2 of arp = xy; pitch = clamp(base +
+64 · semitones + fine + slide + vibrato + pitch value, `WSP_PITCH_MIN`, `WSP_PITCH_MAX`) with vibrato = (`WSP_SINE`[phase]
+· depth) >> 4 (arithmetic shift; `WSP_SINE`[i] = floor(127 sin(2π i / 64) + 0.5), the OPL3's table). d = 2048 −
+N(pitch). Writes:
+
+- **tone** (lanes 0-3): wave *w* (envelope, override, instrument); if loaded ≠ *w*: 16 RAM writes `$3FC0` + 16 *c* + *k*
+  = wave[2*k*] | wave[2*k* + 1] << 4 (*k* = 0..15), loaded = *w*. Lane 2: sweep value *s* (override `Uxx`, else the
+  instrument's), time *t* (override `Vxx`, else the instrument's); `$8C` = *s* & `$FF` through its shadow; if *s* ≠ 0 and
+  (fresh or *t* ≠ the time last written — 0 after the reset batch, then every `$8D` write's): `$8D` = *t*. Period: on lane 2, if *s* ≠ 0 or `was_sweep`: when fresh, or d
+  ≠ the last d, or (*s* ≠ 0) ≠ `was_sweep`: `$84` = d & `$FF`, `$85` = d >> 8 forced; otherwise nothing; then
+  `was_sweep` = (*s* ≠ 0) and last d = d (`was_sweep` persists across notes, cleared only by reset). Other lanes (and
+  lane 2 without either): `$80`+2*c* = d & `$FF`, `$81`+2*c* = d >> 8 through the shadows. Then `$88`+*c* = l << 4 | r
+  through its shadow.
+- **noise** (lane 3): tap *t* (envelope, override `Nxx`, instrument); fresh with the LFSR-reset flag: `$8E` = `$18` |
+  *t* forced; else `$8E` = `$10` | *t* through its shadow. `$86` = d & `$FF`, `$87` = d >> 8, `$8B` = l << 4 | r through
+  the shadows.
+- **CPU-fed sample**, lane 1: step = sample step(pitch, root); `$94` = voice(l, r) through its shadow; fresh: `$89` =
+  frame 0. voice(l, r) = (r ≥ 12 ? 1 : r ≥ 1 ? 2 : 0) | (l ≥ 12 ? 4 : l ≥ 1 ? 8 : 0).
+- **CPU-fed sample**, lane 4: step as above; `$6B` = fresh ? `$10` forced : 0 through its shadow; `$6A` = hv(v, 0)
+  through its shadow; fresh: two `$69` writes (left byte, right byte) of frame 0. hv(v, speed) = (v = 0 or l = r = 0) ?
+  0 : `$80` | speed << 4 | 2 << 2 | (v ≥ 12 ? 0 : v ≥ 6 ? 1 : v ≥ 3 ? 2 : 3) (signed scaling). Frame *f*'s bytes (the
+  unsigned data): mono data[offset + *f*] for both sides; stereo data[offset + 2*f*] left, data[offset + 2*f* + 1]
+  right. Written bytes: left = l > 0 ? (left byte ^ `$80`) : 0, right = r > 0 ? (right byte ^ `$80`) : 0. (Lane 1's
+  samples are mono: `$89` = data[offset + *f*].)
+- **DMA sample** (Color, lanes 1, 4), fresh: if another lane owns the DMA: stop(owner). Then the **DMA program**: `$52`
+  = 0; *a* = `WS_DMA_BASE` + (lane 1: the unsigned offset; lane 4: the signed copy's), bytes *B* = frames × (stereo ? 2
+  : 1), backwards: *a* += *B* − 1; `$4A`, `$4B`, `$4C` = *a* bytes 0-2; `$4E`, `$4F`, `$50` = *B* bytes 0-2; lane 1:
+  the `$89` shadow = −1 (the DMA writes `$89` from now on), then `$94` = voice(l, r) through its shadow; lane 4: `$6B` = `$10` | mode << 5 forced, `$6A` = hv(v, (5, 3, 1, 0)[rate])
+  through its shadow, mode = stereo ? 0 : (l > 0 ? 1 : 0) | (r > 0 ? 2 : 0); `$52` = `$80` | rate | hold << 2 | loop <<
+  3 | (lane 4) << 4 | backwards << 6; owner = *c*, hold written = hold. Not fresh: lane 1 `$94` = voice(l, r), lane 4
+  `$6B` = mode << 5 then `$6A` = hv(…) through the shadows; if owner = *c* and hold ≠ hold written: `$52` = the program's
+  control value with the new hold (forced; after a one-shot ended the length is 0 and the enable fails, as on the
+  chip). A stereo DMA sample's per-side pan cannot be applied (the stream alternates sides); both sides off silences
+  it.
+
+Then fresh = 0 and the lane advances: envelopes (above); if arp ≠ 0, arpeggio step = (step + 1) mod 3; slide mode up:
+slide = clamp(slide + speed, −6144, 6144), down: clamp(slide − speed, …); portamento: base moves toward target by the
+speed without overshooting; if vibrato depth and speed are both non-zero: phase = (phase + speed) & 63; if the volume
+slide xy ≠ 0: `vol8` = clamp(`vol8` + x − y, 0, 120).
+
+**Timer interrupt** (`wsp_timer`, its own batch): for lane 1 then lane 4, if feeding: if the latched slot's record is
+no longer a defined CPU-fed sample (a live edit), stop(lane) and next lane. f = position >> 16; if f ≥ frames: with
+loop (and loop start < frames), position = (loop start << 16) + (position − (frames << 16)) mod ((frames − loop
+start) << 16) and f = position >> 16; without: stop(lane) and next lane. Write frame f (lane 1: `$89` = the byte; lane
+4: two `$69` writes as above, with the l and r of the lane's last update), then position += step (the step of the last
+update). The batch ends with `$90` = control().
+
+**DMA note end**: a one-shot DMA sample ends in the chip (enable cleared); the player still counts the note as
+sounding until OFF or the next note (its writes stay those of a sounding note; the voice output holds the last byte,
+as the console's does without a driver write). The machine reads the chip for auditions.
+
+### Effects (what Kotlin's effect specs declare)
+
+Up to 4 effect columns per lane. "Note" = this row's note only; "now" = from this row; "shared" = the console's one
+setting, for every lane, kept until changed.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: note, +x, +y per tick (also on noise and CPU-fed samples) |
+| `1xx` / `2xx` slide | 1/64 semitone per tick | now: until `100`/`200`/`300` (a sweeping CH3 note restarts its sweep when its period changes) |
+| `3xx` portamento | 1/64 semitone per tick | now: glide to new notes on a sounding tone or CPU-fed sample |
+| `4xy` vibrato | x speed, y depth | now: the player's vibrato (depth F ±1.86 semitones) |
+| `8xy` pan | x left, y right 0-F | now: per-side scale (start `FF`); voice: per side off / 50 % / 100 %; Hyper Voice: side on/off |
+| `Axy` volume slide | x up, y down (1/8 step per tick) | now: until `A00` |
+| `Bxx` jump | order | after this row play order xx |
+| `Cxx` volume | 00-0F | now: the lane's volume (start 0F), multiplying the envelope |
+| `Dxx` break | row | after this row play row xx of the next order |
+| `Fxx` speed | 01-FF | now, global |
+| `Gxx` delay | ticks | the lane's row runs at tick xx |
+| `Hxx` DMA hold | 00 run, 01 hold | now (Color, CH2 and Hyper Voice): pauses the lane's DMA sample (the DMA writes 0s) until `H00` or the next note row |
+| `Kxx` speaker shift | 00-03 | shared: `$91` (Speaker output: 100, 50, 25, 12.5 % before the 8-bit wrap) |
+| `Nxx` noise tap | 00-07 | now (CH4 noise): tap mode until the next note row without `N` |
+| `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones until the next note |
+| `Sxx` note off | tick | OFF at tick xx of this row |
+| `Txx` voice timer | 01-FF | shared: CPU-fed samples interrupt at 12000 / xx Hz, from the next reload |
+| `Uxx` sweep value | signed, 00 off | now (CH3): `$8C` added per sweep step (wrapping 11-bit register) until the next note row without `U` |
+| `Vxx` sweep time | 00-1F | now (CH3): a step every (xx + 1) / 375 s |
+| `Wxx` wave | 00..W − 1 | now (CH1-CH4 tones) until the next note row without `W` |
+
+`Kxx` writes `$91` through its shadow at once (in this tick's batch); `Txx` writes nothing.
+
+### Position, seek, live edits, audition, mute
+
+- **Position**: the player's (order, row, tick) — the row the next tick processes; tick 0 = the next tick starts it.
+- **Start** (`wsm_start(image, order, row, max_ticks, &mode)`): the player alone counts the ticks straight play needs
+  to reach (order, row, 0); if ≤ `max_ticks`, the machine resets and plays them fully clocked — the player, the timer,
+  the sound unit with Sound DMA and blip_buf exactly as audible playback, output discarded (`CHIP_SEEK_FROM_START`:
+  every phase, the LFSR, DMA and Hyper Voice state equal straight play's). Otherwise (`CHIP_SEEK_FROM_ORDER`): reset,
+  `wsp_place` at the order's start with the speed straight play starts it with (shared state from the header: `K`/`T`
+  effects of earlier orders are not replayed) and the order's earlier rows replayed the same clocked way; a row behind
+  a `Dxx`/`Bxx` of the same order that is unreachable = `CHIP_ERR_IMAGE`. **Bounded policy**: `WSM_SEEK_TICKS` =
+  **4528** (60 s) is the suggested budget (`PlaybackEngine.seekTicks`); beyond it the order fallback is exact for the
+  order's own rows and approximate only in the state earlier orders left (shared settings, sounding notes).
+- **Live edit** (`wsm_apply_image`, realtime-safe, at a tick boundary; `wsp_relocate(old, new)`): (1) **position**: an
+  order past the new count becomes the last order's last row, a row past its order's rows that order's last row; a
+  clamped position drops the recorded jump and delayed rows, takes the speed straight play has at that row in the new
+  song (its own `Fxx` included) and, if its row had not started (tick 0), counts as played: the next tick starts the
+  row after it. (2) **speed**: otherwise, when the speed straight play has at (order, row) — the order's start speed
+  and the `Fxx` of earlier rows, plus the row's own once it has started — differs between the old and the new image,
+  the new one is taken. (3) A started row's jump and still-delayed rows are re-read from the new data (a delayed row
+  stays pending when its new `Gxx` ≥ the tick about to run). (4) Sounding notes keep their state and read their slot's
+  record from the new image each update (kind and feed latched; envelope indices clamped to the new lengths; a CPU-fed
+  sample past its new length follows the end rule); a lane whose loaded wave's 32 values changed reloads it (loaded =
+  −1); each header field whose value differs (timer reload, speaker shift) sets the player's value; the output path
+  follows the header from the next tick. (5) **DMA**: the DMA owner keeps playing only when its latched slot in the new
+  image is still a DMA sample with the same rate, loop, backwards and stereo flags and the *B* bytes the DMA reads (the
+  copy for its lane) are **byte-identical** (`memcmp`) between the old and the new image; if they moved, the machine
+  rebases the chip's DMA source and shadow by the offset difference (`ws_apu_dma_rebase`); otherwise `dma_kill` stops
+  the note at the next tick's start. No hash decides reuse.
+- **Audition** (`wsm_audition(lane, note 19..95, slot 1..64, fine −128..127)`): reset (header shared state), then the
+  player keys on the note with the slot's instrument, `fine` added like `Pxx`; ticks only update. Lanes 0..3 (0..4 on
+  the Color); an undefined slot, a kind that does not fit the lane or other out-of-range arguments are
+  `CHIP_ERR_IMAGE`. `release()`: 0 before any tick (the audition is then over); else OFF, its batch written to the chip
+  at once; returns 0 when that stopped the lane (no release point), else 1. `tick` returns 0 once the lane stopped
+  (released or not: a one-shot CPU-fed sample ended), once the lane owns a DMA note and the chip's DMA is disabled (a
+  one-shot ended), or, after a release, once the lane's written volume is 0 (tone/noise: `$88`+*c* = 0; voice: `$94` =
+  0; Hyper Voice: `$6A` = 0) with its volume envelope at the last step, or `WSM_RELEASE_SECONDS` = 10 s after the
+  release. `WSM_MAX_TICK_FRAMES` = 1273 (96 kHz).
+- **Mute** (`wsm_mute(lane 0..4)`): the sound unit's mute mask (above): the lane's output is computed and discarded;
+  registers, phases, the LFSR, DMA and Hyper Voice latching continue. The player, its writes and the VGM are unchanged.
+
+Kotlin `PlaybackEngine` for both systems: `imageSize` 131072, `seekTicks` 4528, `note(n)` = n, `fine` = the system's
+fine pitch in 1/64 semitones; `ticksPerSecond` = 3072000 / 40704.
+
+### VGM export
+
+`ws_vgm_render` (`ws/ws_vgm.c`) runs the player, the timer and the sound unit's DMA headless (no audio) and logs a
+VGM 1.71 for one WonderSwan (`tools/audio/ws/ws_ref.py IMAGE --vgm OUT` writes the same bytes).
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 total samples, 0x1C loop offset −
+  0x1C and 0x20 loop samples (0 without a loop), 0x24 = 0 (no rate scaling), 0x34 = 0xCC, **0xC0 = 3072000**
+  (`WS_VGM_CLOCK`). VGM's WonderSwan chip has ports `$80`-`$FF` (`0xBC aa dd`: port `$80` + aa) and RAM (`0xC6 mm ll
+  dd`: big-endian offset); libvgm's player (`Cmd_WSwan_Reg`, `Cmd_Ofs16_Data8`, commit pinned in
+  `tools/audio/ws/ws_reference_check.py`) is the independent decoder.
+- Writes: port `$80`-`$9F` → `0xBC` (port − `$80`) val; RAM → `0xC6` (addr >> 8) (addr & `$FF`) val; Sound DMA
+  transfers to channel 2 → `0xBC 0x09` data at their cycle (block start + 122). Writes to `$4A`-`$52` and `$64`-`$6B`
+  have no VGM form and are not written (DMA's effect is its `$89` transfers). **A song with a note (19..95) in any row
+  of a Hyper Voice lane pattern is refused** ("VGM's WonderSwan chip has no Hyper Voice: export WAV"): VGM cannot carry
+  it.
+- Time: an event at cycle *t* (the reset batch at 0, tick *k*'s batch at 40704 *k*, timer interrupts and DMA transfers
+  at theirs; at one cycle the tick batch precedes the interrupt batch, and transfers come at block start + 122, after
+  both) is at 44.1 kHz sample ⌊*t* · 147 / 10240⌋. Before an event's writes, the wait from the current sample to its
+  sample: `0x62` for 735, `0x63` for 882, `0x70` + (n − 1) for n = 1..16, else `0x61 nn nn` (little-endian, split at
+  65535); an event with no VGM-loggable writes (only `$4A`-`$52`/`$64`-`$6B` ones, or none) emits nothing.
+- **Loop without injected writes**: the renderer runs to the arrivals A1, A2, … at (loop order, row 0, tick 0) (tick
+  numbers) and takes the first pair Ab < Aa whose complete state at those tick starts is identical — the player (every
+  field: position, speed, jump, lanes, overrides, envelopes, positions in samples, shadows, owner), the timer (reload
+  and cycles to the next interrupt) and the DMA unit (every field and its clock) — compared field by field (a 64-bit
+  digest may only propose candidates). From Ab on, the writes repeat with period Aa − Ab forever, so the file holds
+  everything before Aa's start, the loop offset at Ab's start (after the wait to it, before its writes), then the wait
+  to Aa's start and `0x66`; total samples = Aa's sample, loop samples = Aa's − Ab's. Every pass therefore sends exactly
+  native playback's writes (a held DMA loop, a sweeping or sliding note across the wrap included); only a repeat's
+  44.1 kHz rounding differs (each write within one VGM sample of native timing). Ab is one of the first 64 arrivals; Aa
+  is the first later arrival at a tick < `max_ticks` matching any of them. No such pair: no loop (all ticks before
+  `max_ticks`, the wait to its start, `0x66`). Then the GD3 tag (system "WonderSwan (Thor Tracker)" or
+  "WonderSwan Color (Thor Tracker)", converter "Thor Tracker": `GD3_SYSTEM_MONO`, `GD3_SYSTEM_COLOR`, `GD3_CONVERTER`
+  `#define`s in `ws_vgm.c`; `vgm_gd3.c` writes it as for the other systems).
+- Entry point (`ws/ws_export.h`): `ws_export_vgm(image, size, max_ticks, title, author, date, &size, &problem)` /
+  `ws_export_free`. Kotlin (`system/ws/WsVgm.kt`): `WsVgm.export(song)` with `WsVgm.renderer` (Android JNI
+  `ChipAudio.nativeWsVgm`, Deck `DeckWsVgm`), `maxTicks` = 45283 (ten minutes).
+- WAV: the generic `chip_wav.c` over the two ops tables.
+
+### Preparing the fixtures and constants
+
+`python3 tools/audio/prepare_ws.py` (pure Python 3) writes `core/src/commonMain/kotlin/org/thortracker/backend/WsPlayerImage.kt`
+(every `WS_*` constant of `ws_image.h` without its prefix, `PITCH_MIN`/`MAX`, `SEEK_TICKS`, `TICKS_PER_SECOND`, the
+effect codes `FX_*`, `LOADER_PROBLEMS` from `ws_image.c`, the GD3 strings, `ENGINE_ID_MONO`/`ENGINE_ID_COLOR`) and
+`app/src/test/cpp/ws_test_song.h` (below), and fails when `WSP_PERIOD_Q16`, `WSP_SINE` or a shared number disagrees
+with the Python reference. `python3 tools/audio/ws/ws_golden.py` writes `core/src/jvmTest/resources/ws-golden/*.bin.gz`
+for `WsGoldenTest`.
+
+`ws_test_song.h` defines, for each reference song `NAME` in (`ws_song`: original model, every lane kind and effect;
+`wsc_song`: Color, CPU-fed and DMA samples on both sample lanes, stereo, takeover, hold, backwards; `wsc_vgm`: Color
+without Hyper Voice, a DMA one-shot and loop on lane 2; `ws_tone`: A-4 held on lane 0) and `WS_TEST_TICKS` = 1500:
+`NAME_image[]` (the bytes up to the data end; the rest is zero), `NAME_image_size`; per tick *t* its writes
+`NAME_space[]`, `NAME_addr[]` (unsigned short), `NAME_vals[]` from `NAME_offsets[t]` to `NAME_offsets[t + 1]`,
+`NAME_pos[3 t ..]` = (order, row, tick) before it, `NAME_irqs[t]` = its timer interrupts; the interrupts that wrote
+anything: `NAME_ifirst[t] .. NAME_ifirst[t + 1]`, each at cycle tick start + `NAME_idelay[e]`, writing
+`NAME_icount[e]` writes from `NAME_iwfirst[t]` on in `NAME_ispace[]`, `NAME_iaddr[]`, `NAME_ivals[]`; the reference
+VGM (for `ws_song`, `wsc_vgm`, `ws_tone`): `NAME_vgm_size`, `NAME_vgm_fnv64`, `NAME_vgm_loop_offset`,
+`NAME_vgm_total_samples`, `NAME_vgm_loop_samples`; single-byte corruptions the loader must reject:
+`NAME_corrupt_n`, `NAME_corrupt_off[]`, `NAME_corrupt_val[]`.
+
+### Verification (to be run by the parent; nothing here has been run)
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/ws_machine_test.c`: the sound unit
+  (closed-form stepping = the per-cycle loop for random register programs; period 2048 − d; the eight LFSR sequence
+  lengths; the sweep's 8192-cycle prescaler, step time and `$8D` reset; the `$94` bits; Hyper Voice conversion per the
+  wiki's table, divisors, flip-flop and `$6B` reset; DMA rates, hold, loop, one-shot end, the failing enable, backwards;
+  headphone and speaker wrap; mute = state unchanged), the reference traces, loader rejections, seeks equal to straight
+  play, live edits (DMA rebase and kill, wave reloads), audition release, mute/unmute continuity, VGM bytes = the
+  reference's, and the Kotlin-generated images from `exportSamples` (`ws-demo.wsimg`, `wsc-demo.wsimg`,
+  `ws-shortest.wsimg`, `wsc-shortest.wsimg`). `wav_render_test.c` renders those demos and shortest songs.
+- `python3 tools/audio/ws/ws_reference_check.py <dir> [--vgm2wav PATH]`: the reference player against the trace and
+  the VGM, the VGM parsed from the format alone, periods and A-4 computed independently from the clock, the evidence
+  WAVs' pitch, optionally libvgm's vgm2wav against the engine's WAV (its WonderSwan core is a simpler model: pitch
+  only, not waveform equality).
+- `tools/audio/render_ws_image.sh image out.wav [seconds] [mute=...] [--vgm out.vgm]`.
+- Kotlin: `WsGoldenTest` (the lowering against the reference builder), `WsModelTest`, `WsEditorTest`.

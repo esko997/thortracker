@@ -1,5 +1,70 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: WonderSwan and WonderSwan Color — source slice, NOT verified
+
+Branch `wonderswan-system` adds the **WonderSwan** (`"ws-wonderswan"`: CH1-CH4, CPU-fed voice samples on CH2, CH3
+sweep, CH4 noise) and **WonderSwan Color** (`"ws-wonderswan-color"`: the same plus Sound DMA on CH2 and Hyper Voice)
+systems — Thor Tracker's own player on a C port of ares's WonderSwan APU, VGM and WAV export — with the demos **Paper
+Crane Run** (WonderSwan) and **Lantern Tide** (WonderSwan Color). It was written source-only: **nothing has been built,
+compiled, generated, tested, run on a device or listened to**, and no version was bumped. The parent runs everything
+below before anything is called verified; record the results here then, replacing this section.
+
+1. Generate the Kotlin constants, the native fixture and the golden images (pure Python 3), check a second run is
+   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/WsPlayerImage.kt`,
+   `app/src/test/cpp/ws_test_song.h` (per-tick and per-interrupt reference writes for 1500 ticks of four songs, the
+   reference VGMs' hashes and loader corruptions) and `core/src/jvmTest/resources/ws-golden/{mono,color}.bin.gz`:
+
+   ```sh
+   python3 tools/audio/prepare_ws.py
+   python3 tools/audio/ws/ws_golden.py
+   python3 tools/audio/prepare_ws.py && python3 tools/audio/ws/ws_golden.py && git status --short   # no new changes
+   ```
+
+   `prepare_ws.py` fails before writing if the C sources and the Python reference disagree on any shared number,
+   `WSP_PERIOD_Q16` or `WSP_SINE`; it also asserts that the reference VGMs of `ws_song`, `wsc_vgm` and `ws_tone` close
+   their loops within 45283 ticks.
+2. The usual full run (Kotlin: `WsGoldenTest`, `WsModelTest`, `WsEditorTest` and every existing test), the app and
+   Deck builds (CMake through Gradle; cinterop `decknative` with `ws_export.h`), the sample exports
+   (`paper-crane-run.thor`, `lantern-tide.thor`, `ws-demo.wsimg`, `wsc-demo.wsimg`, `ws-shortest.wsimg`,
+   `wsc-shortest.wsimg`) and the native host test (`ws_machine_test.c` with the Kotlin images, and `wav_render_test.c`
+   with the two demos and the two shortest songs):
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   python3 tools/audio/ws/ws_reference_check.py /tmp/thor-evidence
+   python3 tools/audio/ws/ws_reference_check.py /tmp/thor-evidence --vgm2wav /path/to/libvgm/bin/vgm2wav   # optional
+   tools/audio/render_ws_image.sh app/build/samples/ws-demo.wsimg /tmp/paper-crane-run.wav 90 --vgm /tmp/paper-crane-run.vgm
+   tools/audio/render_ws_image.sh app/build/samples/wsc-demo.wsimg /tmp/lantern-tide.wav 90
+   ```
+
+   Expected from the specification (not yet observed): A-4 = N 218 = 440.37 Hz (+1.44 cents), every note G-1..C-6
+   within 6.4 cents and the worst 23.3 cents (F#-7); the eight LFSR sequence lengths 32767, 1953, 254, 217, 73, 63, 42,
+   28 (already reproduced by arithmetic from the formula); the APU's closed-form blocks equal to its per-cycle loop; the
+   engine's tick and timer-interrupt writes (with cycles) and DMA transfers equal `ws_ref.py`'s for 1500 ticks of each
+   reference song; the VGMs byte-equal to the reference's and their loops repeating exactly over three passes; seeks
+   bit-identical to straight play. The native test's thresholds (A-4 within 0.25 Hz, `ws_reference_check.py` 0.3 Hz,
+   silence rms < 0.0005, non-silence rms > 0.005 / 0.002, release ends in 1-10 ticks, one-shots in 2, the 755-tick
+   release cap, and the `WsLane` size `_Static_assert` written for arm64/x86_64 layouts) may need tuning once measured.
+   Also the release-standard checks: Game Boy views pixel-identical to the baseline, every existing golden and sample
+   export unchanged, the four other `render_*_image.sh` scripts still link (they now compile the WonderSwan sources
+   because `chip_engine.c` lists their ops).
+3. Listen: both demos and the reference songs on headphones and (song setting) speaker output; the CH3 sweep, the noise
+   taps, the CPU-fed voice drums at 12000 / R Hz, the Color's DMA loops, hold, backwards and stereo Hyper Voice; the
+   proposed voice / Hyper Voice level mapping (docs/BACKENDS.md, open questions). The Paper Crane Run VGM in an
+   independent player (libvgm: its WonderSwan core differs in noise and voice details; pitch and timing should agree).
+4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → WonderSwan →
+   WonderSwan / WonderSwan Color; demo playback (no underruns; the tick cost on the Konkr incl. a 4528-tick seek), the
+   Instrument pages per kind and feed, the Wave view, the starter kit and a `.wav` import (stereo kept on the Color
+   only), audition on every lane (lane-fit refusals), the Song view's Output / speaker shift / voice timer rows and
+   the Pattern inspector's shared-state lines (timer, shift, DMA owner), VGM (refused with Hyper Voice notes) and WAV
+   exports through the document picker.
+
+Untracked reference material left in the worktree for the parent to remove: `.ws-reference/` (fetched hardware
+sources: ares, Mesen 2, Mednafen 1.32.1 `wswan`, libvgm, the VGM 1.71 text), `.ws-kotlin-ref/` and
+`.ws-native-scratch/` (the slices' read-only copies and scratch fragments).
+
 ## 0.16.0 NES + Konami VRC7
 
 - **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.

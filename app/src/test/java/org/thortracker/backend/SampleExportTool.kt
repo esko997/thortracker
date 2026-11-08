@@ -7,6 +7,9 @@ import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.ws.WsDemoSong
+import org.thortracker.system.ws.WsSystem
+import org.thortracker.system.ws.WscSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
 
@@ -57,5 +60,18 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The WonderSwan and WonderSwan Color demos: projects and engine images (tools/audio/render_ws_image.sh
+        // ws-demo.wsimg out.wav --vgm paper-crane-run.vgm renders one with its VGM; the Color demo plays Hyper Voice,
+        // which VGM cannot carry, so it renders as WAV only), and the shortest valid song of each (one one-row order at
+        // speed 1, A-4 held on CH1 with slot 01) whose images the native WAV export test renders.
+        for ((system, image) in listOf(WsSystem to "ws", WscSystem to "wsc")) {
+            val demo = system.demo()
+            File(directory, "${demo.title.lowercase().replace(' ', '-')}.thor").writeText(ProjectCodec.encode(demo), Charsets.UTF_8)
+            File(directory, "$image-demo.wsimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(demo, it) })
+            val shortest = WsDemoSong.shortest(color = system === WscSystem)
+            check(system.errors(shortest).isEmpty()) { "the shortest ${system.name} song is invalid: ${system.errors(shortest)}" }
+            File(directory, "$image-shortest.wsimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+            println("Exported ${demo.title} and the shortest ${system.name} song to ${directory.absolutePath}")
+        }
     }
 }

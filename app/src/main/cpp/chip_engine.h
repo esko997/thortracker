@@ -15,6 +15,9 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "ws-wonderswan"   Thor Tracker's own WonderSwan player on the sound unit (a port of ares's APU), voice samples
+ *                     from the HBlank timer (ws/ws_chip.c over ws/ws_machine.c, ws_player.c, ws_image.c, ws_apu.c)
+ *   "ws-wonderswan-color"  the same on the WonderSwan Color, plus Sound DMA and Hyper Voice (ws/ws_chip.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:
