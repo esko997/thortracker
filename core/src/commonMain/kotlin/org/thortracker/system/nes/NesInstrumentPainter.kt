@@ -114,8 +114,8 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     NesChip.VRC7 -> "VRC7: FM 1-6"
                 }, rx, vx, y, h, sel, false)
                 Row.PATCH -> setting(c, "Patch", when (ins.fm.preset) {
-                    Vrc7Presets.CUSTOM -> "Custom: the chip's one programmable patch (shared by all FM channels)"
-                    else -> "${Vrc7Presets.NAMES.getOrElse(ins.fm.preset) { "?" }}: built-in (${ins.fm.preset} of 15); edit a field to make it Custom"
+                    Vrc7Presets.CUSTOM -> "Custom (shared by all six FM channels)"
+                    else -> "${Vrc7Presets.NAMES.getOrElse(ins.fm.preset) { "?" }} (${ins.fm.preset}/15): edit to make Custom"
                 }, rx, vx, y, h, sel, false)
                 // The song's setting (every VRC7 sound plays with it), shown on each VRC7 sound's FM page.
                 Row.SUSTAIN_RELEASE -> s.nes.vrc7Sustain.release.let { on ->

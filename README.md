@@ -12,7 +12,7 @@ Download the latest APK from the [GitHub Releases page](https://github.com/esko9
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
-The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy, NES, C64 SID, OPL3 or Mega Drive; **NES…** then offers the plain NES or NES + VRC6) and starts a new composition; **Load demo** asks the same.
+The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy, NES, C64 SID, OPL3 or Mega Drive; **NES…** then offers the plain NES, NES + VRC6 or NES + VRC7) and starts a new composition; **Load demo** asks the same.
 
 ## Steam Deck
 

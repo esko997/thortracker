@@ -1,5 +1,22 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.16.0 NES + Konami VRC7
+
+- **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.
+- The shared instrument bank offers the VRC7's 15 built-in patches and editable custom patches. The editor exposes both operators, feedback, modulation level, envelopes, key scaling, tremolo and vibrato. All six FM channels share one physical custom patch; the song check warns about conflicting held custom sounds.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV export use the pinned FamiStudio 4.5.3 VRC7 driver and emu2413 in VRC7 mode.
+- FM notes use true pitch: A-4 is approximately 440 Hz, with a C-1–B-7 range. The FamiStudio FM note index is one octave higher than its 2A03 index for the same pitch; text export and audition use that conversion too.
+- Fixed custom-patch restoration at loop boundaries, including delayed notes that change the final patch writer. Restoring a shared patch preserves legato notes and their held envelopes. This corrects a measured FamiStudio 4.5.3 export-loop bug; details and upstream links are in `AUDIO_ENGINE.md`.
+- Shared emu2413 table initialization is serialized when playback and background WAV rendering create instances concurrently; ticking/rendering never takes that lock.
+
+Verified: 416 JVM core tests, 13 Linux core tests and six Android-host unit tests; native checks passed (Game Boy 145, NES 336, VRC6 105, VRC7 111, SID 151, OPL3 282, Mega Drive 500, WAV 290). VRC7 golden songs compare real 6502 register traces against independent FamiStudio exports, ignoring only writes of unchanged custom-patch bytes. Separate real-driver regressions cover true pitch, delayed loop restoration and legato envelopes. Existing Game Boy factory `.uge` bytes are unchanged.
+
+The production-signed candidate passed the 18 existing Android instrumentation tests plus a temporary render capture on Nova. All 32 Game Boy views are pixel-identical to the same-device 0.14.1 baseline. The automated audio suite recorded one xrun, no driver faults and a 0.508 ms maximum callback; sustained VRC7 playback smoke tracks reported zero underruns on Nova, DMG and Konkr.
+
+Reserved-handheld checks exercised eleven-channel scrolling, custom/preset FM editors and audition controls. Nova's NSF and FamiStudio-text exports through Android's document picker are byte-identical to desktop exports; its no-fade WAV is non-silent 48 kHz, 16-bit stereo PCM, 1,226,779 frames. Temporary test APKs, captures and exports were removed; `/ThorTunez` was untouched.
+
+The actual desktop frontend played Lantern Point and exported the shortest valid one-row, one-tick FM song without a fade: 798 non-silent frames. The exported NSF also opened as eleven voices and produced PCM in independent libgme; this is a format/playback check, not mix-level validation. These checks are not human listening or comparison with a physical VRC7 cartridge.
+
 ## 0.15.0 NES + Konami VRC6
 
 - **New blank song / Load demo → NES… → NES + VRC6** adds two eight-duty pulse channels and a sawtooth to the NES's five channels. The demo is **Saw Sunrise**.
