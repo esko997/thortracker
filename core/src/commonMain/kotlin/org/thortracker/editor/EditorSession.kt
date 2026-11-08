@@ -396,12 +396,12 @@ class EditorSession(initial: Song) {
     // ---- pattern cells ---------------------------------------------------------------------------
 
     fun setCell(pattern: Int, channel: Int, row: Int, cell: Cell): Boolean =
-        apply("Edit cell") { s -> s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(cell, song.system))) }
+        apply("Edit cell") { s -> s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(cell, song.system, channel))) }
 
     fun editCell(pattern: Int, channel: Int, row: Int, label: String = "Edit cell", f: (Cell) -> Cell): Boolean =
         apply(label) { s ->
             val old = s.cellAt(pattern, channel, row)
-            s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(f(old), song.system)))
+            s.withPattern(pattern, s.patterns[pattern].withCell(channel, row, normaliseCell(f(old), song.system, channel)))
         }
 
     /**
@@ -430,7 +430,7 @@ class EditorSession(initial: Song) {
                     map == null -> old.copy(note = note, instrument = instrument)
                     else -> map.nearest(note, 0).takeIf { it >= 0 }?.let { i -> map.pitches[i].let { t -> s.system.fine.write(old.copy(instrument = instrument), t.note, t.detune) } }
                 } ?: continue
-                track[r] = normaliseCell(cell, song.system)
+                track[r] = normaliseCell(cell, song.system, channel)
                 written++
             }
             s.withPattern(pattern, p.copy(tracks = p.tracks.mapIndexed { c, t -> if (c == channel) track else t }))
@@ -496,7 +496,7 @@ class EditorSession(initial: Song) {
     private fun pasted(p: Pattern, clip: Clip.Cells, b: Block): Pattern = p.copy(tracks = p.tracks.mapIndexed { c, track ->
         if (c !in b.firstChannel..b.lastChannel) track
         else track.mapIndexed { r, cell ->
-            if (r in b.firstRow..b.lastRow) normaliseCell(clip.tracks[c - b.firstChannel][r - b.firstRow], song.system) else cell
+            if (r in b.firstRow..b.lastRow) normaliseCell(clip.tracks[c - b.firstChannel][r - b.firstRow], song.system, c) else cell
         }
     })
 

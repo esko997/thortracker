@@ -84,6 +84,10 @@ object Opl3System : SoundSystem {
 
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int): String = Opl3Rules.describe(song, effect, param)
 
+    /** Chords and arpeggios read with the notes they sound from the row's note ([Opl3EffectText]). */
+    override fun effectDetail(song: Song, pattern: Int, channel: Int, row: Int, column: Int): String? =
+        Opl3EffectText.detail(song, pattern, channel, row, column)
+
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? = Opl3Validator.cellProblem(song, channel, cell)
 
     override fun structuralErrors(song: Song) = Opl3Validator.structuralErrors(song)
@@ -156,7 +160,7 @@ object Opl3System : SoundSystem {
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
 
-    override fun view(kind: ViewKind): SystemView? = null
+    override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) Opl3InstrumentView else null
 
     override val songSettings: List<SongSetting> get() = Opl3SongSettings.ALL
 
@@ -237,7 +241,7 @@ object Opl3System : SoundSystem {
         override val untonalNote = "Every channel is tonal; drums sweep from their note."
         override val sketchChannels = "FM 1-9"
 
-        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = emptyList()
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = Opl3InstrumentView.helpSections(keys)
 
         override fun limits(song: Song): List<Pair<String, String>> = Opl3Validator.limits(song)
     }

@@ -184,7 +184,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.order = state.order.coerceIn(0, s.orders.size - 1)
         state.channel = state.channel.coerceIn(0, s.channelCount() - 1)
         state.row = state.row.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
-        state.field = state.field.coerceIn(0, FIELDS - 1)
+        state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)
         state.instrument = state.instrument.coerceIn(1, maxSlots())
         state.octave = state.octave.coerceIn(minOctave(), maxOctave())
         state.songItem = state.songItem.coerceIn(0, ViewState.songHeaderItems(s) + s.orders.size - 1)
@@ -201,7 +201,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.scroll = state.scroll.coerceAtLeast(0)
         state.markRow = state.markRow.coerceIn(0, s.rowCount(s.patternAt(state.order)) - 1)
         state.markChannel = state.markChannel.coerceIn(0, s.channelCount() - 1)
-        state.scaleField = state.scaleField.coerceIn(0, SCALE_FIT_FIELD)
+        state.scaleField = state.scaleField.coerceIn(0, if (multiColumn()) SCALE_COLUMNS_FIELD else SCALE_FIT_FIELD)
         if (state.kind != ViewKind.PATTERN) state.scalePanel = false
         if (state.kind == ViewKind.SKETCH) {
             if (!tonal(state.channel)) state.channel = system.channels.indexOfFirst { it.tonal }.coerceAtLeast(0)
@@ -225,7 +225,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     private fun gestureLabel(): String = systemView()?.gestureLabel ?: when (state.kind) {
-        ViewKind.PATTERN -> arrayOf("Edit note", "Edit sound", "Edit effect", "Edit effect value")[state.field]
+        ViewKind.PATTERN -> when {
+            state.field == 0 -> "Edit note"
+            state.field == 1 -> "Edit sound"
+            isValueField(state.field) -> "Edit effect value"
+            else -> "Edit effect"
+        }
         ViewKind.SONG -> "Edit song"
         ViewKind.KEYBOARD -> "Keyboard"
         ViewKind.SKETCH -> "Sketch"
@@ -399,20 +404,90 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val bank = bankOf(state.channel)
         val c = cell
         val ins = if (c.instrument > 0) c.instrument else pen(bank)
-        val sel = Selection(state.order, state.row, state.channel, bank, ins, session.selection.wave, PATTERN_CONTEXT[state.field])
+        val sel = Selection(state.order, state.row, state.channel, bank, ins, session.selection.wave, PATTERN_CONTEXT[minOf(state.field, 3)])
         session.select(system.selectSound(sel, song))
     }
 
-    private fun cursorKey() = cellKey(pattern, state.channel, state.row)
+    private fun cursorKey() = cellKey(pattern, state.channel, state.row, cursorColumn())
 
     /**
-     * True when the cursor cell's stored 000 is shown as an explicitly chosen effect 0 (arpeggio) waiting for
-     * its value, rather than as "no effect". Both are the same bytes; only the display and picker position differ.
+     * True when the cursor cell's stored 000 (in the cursor's effect column) is shown as an explicitly chosen effect 0
+     * (arpeggio) waiting for its value, rather than as "no effect". Both are the same bytes; only the display and
+     * picker position differ.
      */
     fun chosenArpeggio(): Boolean {
         if (state.chosenArpeggio != cursorKey()) return false
         val c = cell
-        return c.note != Cell.CUT && !c.hasEffect
+        val column = cursorColumn()
+        return c.note != Cell.CUT && c.effectCode(column) == 0 && c.effectParam(column) == 0
+    }
+
+    // ---- effect columns ----
+
+    /** True when the song's system lets some channel use more than one effect column (the OPL3). */
+    fun multiColumn(): Boolean = (0 until song.channelCount()).any { system.effectColumns(it) > 1 }
+
+    private var usedSong: org.thortracker.model.Song? = null
+    private var usedColumns = IntArray(0)
+
+    /** Effect columns the song's cells use on [channel] (0 when none holds an effect); cached per document. */
+    fun usedColumns(channel: Int): Int {
+        val s = song
+        if (s !== usedSong) {
+            usedSong = s
+            usedColumns = IntArray(s.channelCount())
+            for (p in s.patterns) for ((ch, track) in p.tracks.withIndex()) {
+                if (ch >= usedColumns.size) break
+                for (c in track) if (c.lastEffectColumn + 1 > usedColumns[ch]) usedColumns[ch] = c.lastEffectColumn + 1
+            }
+        }
+        return usedColumns.getOrElse(channel) { 0 }
+    }
+
+    /**
+     * Effect columns the Pattern view shows on [channel]: one where the system declares one; else this pane's choice
+     * ([ViewState.effectColumns]) or, automatically, the columns the song uses there (at least one).
+     */
+    fun shownColumns(channel: Int): Int {
+        val max = system.effectColumns(channel)
+        if (max <= 1) return 1
+        val chosen = state.effectColumns.getOrElse(channel) { 0 }
+        return (if (chosen > 0) chosen else usedColumns(channel)).coerceIn(1, max)
+    }
+
+    /** Cursor fields of [channel]: note, sound, then effect type and value per shown column. */
+    fun fieldCount(channel: Int): Int = 2 + 2 * shownColumns(channel)
+
+    /** The effect column the cursor is on (0 on the note and sound fields). */
+    fun cursorColumn(): Int = columnOf(state.field)
+
+    /**
+     * Sets the effect columns shown on [channel] (all channels when [channel] is -1) to [count], clamped to what the
+     * system allows; 0 returns to automatic. Hidden columns keep their effects (they still play).
+     */
+    fun setShownColumns(channel: Int, count: Int) {
+        val n = song.channelCount()
+        val list = MutableList(n) { state.effectColumns.getOrElse(it) { 0 } }
+        for (ch in 0 until n) if (channel < 0 || ch == channel) {
+            list[ch] = if (count <= 0) 0 else count.coerceIn(1, system.effectColumns(ch))
+        }
+        state.effectColumns = if (list.all { it == 0 }) emptyList() else list
+        normalise()
+        val ch = state.channel
+        val hidden = usedColumns(ch) - shownColumns(ch)
+        val name = if (channel < 0) "Every channel" else system.channels[ch].name
+        session.note("$name: ${shownColumns(ch)} effect column${if (shownColumns(ch) == 1) "" else "s"} shown" +
+            (if (count <= 0) " (automatic: the columns its rows use)" else "") +
+            (if (hidden > 0) "; $hidden more hold effects that still play" else ""))
+    }
+
+    /** Steps the cursor channel's shown effect columns by [delta] (the Pattern panel's Columns row). */
+    fun stepShownColumns(delta: Int) {
+        state.scaleField = SCALE_COLUMNS_FIELD
+        val ch = state.channel
+        val max = system.effectColumns(ch)
+        if (max <= 1) { session.note("${system.channels[ch].name} has one effect column"); return }
+        setShownColumns(ch, (shownColumns(ch) + delta).coerceIn(1, max))
     }
 
     /** The pattern scale note stepping follows on [channel]; noise note numbers select noise rates, so stay chromatic. */
@@ -529,9 +604,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             else -> {
                 if (dy != 0) moveRows(-dy)
                 else {
-                    val pos = (state.channel * FIELDS + state.field + dx).coerceIn(0, song.channelCount() * FIELDS - 1)
-                    state.channel = pos / FIELDS
-                    state.field = pos % FIELDS
+                    // Fields run note, sound, then effect type/value per shown column, channel after channel.
+                    var ch = state.channel
+                    var f = state.field + dx
+                    if (f < 0) { if (ch > 0) { ch--; f = fieldCount(ch) - 1 } else f = 0 }
+                    else if (f >= fieldCount(ch)) { if (ch < song.channelCount() - 1) { ch++; f = 0 } else f = fieldCount(ch) - 1 }
+                    state.channel = ch
+                    state.field = f
                 }
                 publishPattern()
             }
@@ -567,26 +646,60 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 c.instrument == 0 -> { write(c.copy(instrument = pen(bank))); editInserted = true }
                 else -> { setPen(bank, c.instrument); state.instrument = c.instrument }
             }
-            else -> when {
-                offTakesSlot(c) -> session.note(offSlotTaken())
-                !c.hasEffect && !chosenArpeggio() -> {
-                    val (e, p) = lastEffectOf(ch) ?: return
-                    if (e == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey() // 000: show the chosen arpeggio, nothing to write
-                    else { write(c.copy(effect = e, param = p)); editInserted = true }
+            else -> {
+                val col = cursorColumn()
+                when {
+                    offTakesSlot(c, col) -> session.note(offSlotTaken())
+                    !hasEffectAt(c, col) && !chosenArpeggio() -> {
+                        val (e, p) = lastEffectOf(ch, col) ?: return
+                        if (e == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey() // 000: show the chosen arpeggio, nothing to write
+                        else { write(c.withEffect(col, e, p)); editInserted = true; effectNote(col) }
+                    }
+                    else -> { lastEffect[effectKey(ch, col)] = c.effectCode(col) to c.effectParam(col); effectNote(col) }
                 }
-                else -> lastEffect[ch] = c.effect to c.param
             }
         }
         publishPattern()
     }
 
-    /** [c] is an OFF that is written as an effect, so its row has no effect slot to edit. */
-    private fun offTakesSlot(c: Cell): Boolean = c.note == Cell.CUT && system.offEffect != null
+    /** [c] is an OFF that is written as an effect in column 0, so that column has no effect slot to edit. */
+    private fun offTakesSlot(c: Cell, column: Int = 0): Boolean = column == 0 && c.note == Cell.CUT && system.offEffect != null
 
     private fun offSlotTaken() = "An OFF row has no effect slot left: OFF is exported as ${system.offEffect}"
 
-    /** The effect a tap re-enters on [ch], unless it was remembered from a song of another system that lacks it. */
-    private fun lastEffectOf(ch: Int): Pair<Int, Int>? = lastEffect[ch]?.takeIf { (e, _) -> system.effects.any { it.code == e } }
+    private fun hasEffectAt(c: Cell, column: Int): Boolean = c.effectCode(column) != 0 || c.effectParam(column) != 0
+
+    /** Entry memory key of effect [column] on [ch]: the channel itself for column 0, as before columns existed. */
+    private fun effectKey(ch: Int, column: Int): Int = if (column == 0) ch else ch + 64 * column
+
+    /** The effect a tap re-enters in [column] of [ch], unless it was remembered from a song of another system that lacks it. */
+    private fun lastEffectOf(ch: Int, column: Int = 0): Pair<Int, Int>? =
+        lastEffect[effectKey(ch, column)]?.takeIf { (e, _) -> system.effects.any { it.code == e } }
+
+    /**
+     * On systems with several effect columns (whose 9 lanes leave no room for the inspector on narrow screens), names
+     * the effect in [column] of the cursor cell, with the system's longer reading (a chord's notes), in the status line.
+     */
+    private fun effectNote(column: Int) {
+        if (!multiColumn()) return
+        val c = cell
+        val code = c.effectCode(column)
+        val param = c.effectParam(column)
+        if ((code == 0 && param == 0) || system.cellProblem(song, state.channel, c) != null) return
+        session.note(effectText(state.channel, state.row, column, code, param))
+    }
+
+    /** "H47 Chord · C-4 + E-4 G-4 on 2 spare voices", or "C10 Volume 10 of 3F": effect [code]/[param] in [column] of ([channel], [row]). */
+    fun effectText(channel: Int, row: Int, column: Int, code: Int, param: Int): String {
+        val fx = "${EffectSpec.charOf(code)}${EditorSession.hex2(param)}"
+        val detail = system.effectDetail(song, pattern, channel, row, column)
+            ?: return "$fx ${system.describeEffect(song, channel, code, param)}"
+        return "$fx ${system.effects.firstOrNull { it.code == code }?.name ?: "Unknown effect"} · $detail"
+    }
+
+    /** What effect [code]/[param] in [column] of ([channel], [row]) at the cursor's order does: the system's longer reading if any. */
+    fun effectReading(channel: Int, row: Int, column: Int, code: Int, param: Int): String =
+        system.effectDetail(song, pattern, channel, row, column) ?: system.describeEffect(song, channel, code, param)
 
     private fun write(c: Cell) {
         session.setCell(pattern, state.channel, state.row, c)
@@ -648,31 +761,36 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 state.instrument = ins
                 startAudition(ch, c.note, ins)
             }
-            2 -> {
-                if (offTakesSlot(c)) { session.note(offSlotTaken()); return }
-                // Picker positions: no effect, then the channel's usable codes. A stored 000 counts as "no effect"
-                // unless effect 0 was picked here; picking 0 with value 00 writes nothing until a value is set.
-                val positions = listOf(NO_EFFECT) + system.effectsFor(ch).map { it.code }
-                val current = if (!c.hasEffect && !chosenArpeggio()) NO_EFFECT else c.effect
-                val idx = positions.indexOf(current).coerceAtLeast(0)
-                val next = positions[(idx + (if (dx != 0) dx else dy)).mod(positions.size)]
-                if (next == NO_EFFECT) {
-                    write(c.copy(effect = 0, param = 0))
-                    state.chosenArpeggio = -1
-                    lastEffect.remove(ch)
-                } else {
-                    write(c.copy(effect = next))
-                    lastEffect[ch] = next to c.param
-                    state.chosenArpeggio = if (next == ZERO_EFFECT && c.param == 0) cursorKey() else -1
-                }
-            }
             else -> {
-                if (offTakesSlot(c)) { session.note(offSlotTaken()); return }
-                val p = (c.param + dx + 16 * dy).coerceIn(0, 255)
-                write(c.copy(param = p))
-                lastEffect[ch] = c.effect to p
-                // Back to 00 on effect 0: keep showing the arpeggio being edited instead of a blank cell.
-                if (c.effect == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey()
+                val col = cursorColumn()
+                if (offTakesSlot(c, col)) { session.note(offSlotTaken()); return }
+                val code = c.effectCode(col)
+                val param = c.effectParam(col)
+                if (!isValueField(state.field)) {
+                    // Picker positions: no effect, then the channel's usable codes. A stored 000 counts as "no effect"
+                    // unless effect 0 was picked here; picking 0 with value 00 writes nothing until a value is set.
+                    val positions = listOf(NO_EFFECT) + system.effectsFor(ch).map { it.code }
+                    val current = if (!hasEffectAt(c, col) && !chosenArpeggio()) NO_EFFECT else code
+                    val idx = positions.indexOf(current).coerceAtLeast(0)
+                    val next = positions[(idx + (if (dx != 0) dx else dy)).mod(positions.size)]
+                    if (next == NO_EFFECT) {
+                        write(c.withEffect(col, 0, 0))
+                        state.chosenArpeggio = -1
+                        lastEffect.remove(effectKey(ch, col))
+                    } else {
+                        write(c.withEffect(col, next, param))
+                        lastEffect[effectKey(ch, col)] = next to param
+                        state.chosenArpeggio = if (next == ZERO_EFFECT && param == 0) cursorKey() else -1
+                        effectNote(col)
+                    }
+                } else {
+                    val p = (param + dx + 16 * dy).coerceIn(0, 255)
+                    write(c.withEffect(col, code, p))
+                    lastEffect[effectKey(ch, col)] = code to p
+                    // Back to 00 on effect 0: keep showing the arpeggio being edited instead of a blank cell.
+                    if (code == ZERO_EFFECT && p == 0) state.chosenArpeggio = cursorKey()
+                    effectNote(col)
+                }
             }
         }
         publishPattern()
@@ -695,10 +813,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 }
                 c.note == Cell.CUT || (c.note == system.keyOn) -> write(c.copy(note = Cell.EMPTY))
                 c.hasEffect && system.offEffect != null -> session.note("Clear this row's effect first: OFF uses the effect slot (as ${system.offEffect})")
-                else -> { write(Cell(note = Cell.CUT)); session.note(system.help.offEntered) }
+                // One-column systems replace the row by OFF; with several columns the row's effects stay.
+                else -> { write(if (multiColumn()) c.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT)); session.note(system.help.offEntered) }
             }
             1 -> write(c.copy(instrument = 0))
-            else -> { write(c.copy(effect = 0, param = 0)); state.chosenArpeggio = -1 }
+            else -> { write(c.withEffect(cursorColumn(), 0, 0)); state.chosenArpeggio = -1 }
         }
     }
 
@@ -706,6 +825,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 state.channel = (state.channel + if (a == Action.NEXT_CHANNEL) 1 else -1).coerceIn(0, song.channelCount() - 1)
+                state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)
                 syncLock()
                 state.instrument = pen(bankOf(state.channel))
                 publishPattern()
@@ -820,20 +940,31 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     private fun scalePanelPress(a: Action): Boolean? {
         when (a) {
             Action.UP -> state.scaleField = (state.scaleField - 1).coerceAtLeast(0)
-            Action.DOWN -> state.scaleField = (state.scaleField + 1).coerceAtMost(SCALE_FIT_FIELD)
+            Action.DOWN -> state.scaleField = (state.scaleField + 1).coerceAtMost(if (multiColumn()) SCALE_COLUMNS_FIELD else SCALE_FIT_FIELD)
             Action.LEFT, Action.RIGHT -> {
                 val d = if (a == Action.RIGHT) 1 else -1
                 when (state.scaleField) {
                     2 -> stepLength(d)
                     SCALE_FIT_FIELD -> Unit
+                    SCALE_COLUMNS_FIELD -> stepShownColumns(d)
                     else -> stepScale(state.scaleField, d)
                 }
             }
-            Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                if (state.scaleField != 2) { closeScalePanel(); return null }
-                stepLength(if (a == Action.NEXT_CHANNEL) 8 else -8)
+            Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> when (state.scaleField) {
+                2 -> stepLength(if (a == Action.NEXT_CHANNEL) 8 else -8)
+                // The Columns row walks the channels, so each can be set without closing the panel.
+                SCALE_COLUMNS_FIELD -> {
+                    state.channel = (state.channel + if (a == Action.NEXT_CHANNEL) 1 else -1).coerceIn(0, song.channelCount() - 1)
+                    state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)
+                    publishPattern()
+                }
+                else -> { closeScalePanel(); return null }
             }
-            Action.CLEAR -> if (state.scaleField != SCALE_FIT_FIELD) resetScaleField(state.scaleField)
+            Action.CLEAR -> when (state.scaleField) {
+                SCALE_FIT_FIELD -> Unit
+                SCALE_COLUMNS_FIELD -> setShownColumns(state.channel, 0)
+                else -> resetScaleField(state.scaleField)
+            }
             Action.EDIT -> if (state.scaleField == SCALE_FIT_FIELD) fitPatternToScale() else closeScalePanel()
             Action.SCALE -> closeScalePanel()
             Action.UNDO, Action.REDO, Action.AUDITION -> return null
@@ -1108,7 +1239,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val cell = if (note == Cell.CUT) {
             val off = system.offEffect
             if (off != null && old.hasEffect) { session.note("That row has an effect; clear it first: OFF uses the effect slot (as $off)"); return }
-            Cell(note = Cell.CUT)
+            if (multiColumn()) old.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT)
         } else {
             val pitch = keyPitch(note)
             if (pitch == null) old.copy(note = note, instrument = keyboardSound())
@@ -1573,11 +1704,16 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val c = cell
         val ch = state.channel
         if (state.scalePanel) {
-            h += Hint(ud(), "Root / scale / length / fit")
+            h += Hint(ud(), if (multiColumn()) "Root / scale / length / fit / columns" else "Root / scale / length / fit")
             when (state.scaleField) {
                 0 -> { h += Hint(lr(), "Root note"); h += Hint(k(Action.CLEAR), "Root C") }
                 1 -> { h += Hint(lr(), "Scale"); h += Hint(k(Action.CLEAR), "Chromatic") }
                 2 -> { h += Hint(lr(), "Length ±1"); h += Hint(channels(), "Length ±8"); h += Hint(k(Action.CLEAR), "64 rows") }
+                SCALE_COLUMNS_FIELD -> {
+                    h += Hint(lr(), "${system.channels[ch].name} effect columns ±1")
+                    h += Hint(channels(), "Channel")
+                    h += Hint(k(Action.CLEAR), "Automatic")
+                }
                 else -> h += Hint(k(Action.EDIT), "Fit notes to ${patternScale.label}")
             }
             if (state.scaleField != SCALE_FIT_FIELD) h += Hint(k(Action.EDIT), "Done")
@@ -1599,8 +1735,21 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     h += Hint(editUd(), if (tuningFor(ch) != null) "Period" else "Octave")
                 }
                 1 -> { h += Hint(editLr(), "Sound ±1"); h += Hint(editUd(), "Sound ±4") }
-                2 -> { h += Hint(editLr(), "Effect type: · none, then 0-F") }
-                else -> { h += Hint(editLr(), "Value ±1"); h += Hint(editUd(), "Value ±10h") }
+                else -> {
+                    val col = cursorColumn()
+                    val code = c.effectCode(col)
+                    val named = system.effects.firstOrNull { it.code == code }?.takeIf { hasEffectAt(c, col) || chosenArpeggio() }
+                    when {
+                        !isValueField(state.field) && multiColumn() ->
+                            h += Hint(editLr(), "Column ${col + 1} effect: ${named?.let { "${it.char} ${it.name}" } ?: "· none"}")
+                        !isValueField(state.field) -> h += Hint(editLr(), "Effect type: · none, then 0-F")
+                        multiColumn() && named != null -> {
+                            h += Hint(editLr(), "${named.char} ${named.name}: ${named.param.substringBefore(':').trim()} ±1")
+                            h += Hint(editUd(), "±10h")
+                        }
+                        else -> { h += Hint(editLr(), "Value ±1"); h += Hint(editUd(), "Value ±10h") }
+                    }
+                }
             }
             clearHeld -> { h += Hint(keys.held(Action.CLEAR, ud()), "Jump 16 rows"); h += Hint(keys.held(Action.CLEAR, lr()), "Previous/next order") }
             markHeld -> { h += Hint(keys.held(Action.MARK, keys.dpad()), "Extend selection"); h += Hint("Release", "Keep selection") }
@@ -1609,9 +1758,10 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     0 -> if (c.note < 0) "Write note ${system.noteName(entryNote(ch))}" else "Hold to change note"
                     1 -> if (c.note < 0) "Needs a note" else if (c.instrument == 0) "Write sound ${EditorSession.hex2(pen(bankOf(ch)))}" else "Hold to change sound"
                     else -> when {
-                        c.hasEffect -> "Hold to change effect"
-                        chosenArpeggio() -> if (state.field == 2) "Hold to change effect" else "Hold to set arpeggio +x +y"
-                        else -> lastEffectOf(ch)?.let { (e, p) ->
+                        hasEffectAt(c, cursorColumn()) -> if (multiColumn()) system.effects.firstOrNull { it.code == c.effectCode(cursorColumn()) }
+                            ?.let { "Hold: ${it.char} ${it.name}" } ?: "Hold to change effect" else "Hold to change effect"
+                        chosenArpeggio() -> if (!isValueField(state.field)) "Hold to change effect" else "Hold to set arpeggio +x +y"
+                        else -> lastEffectOf(ch, cursorColumn())?.let { (e, p) ->
                             if (e == ZERO_EFFECT && p == 0) "Pick ${system.effects.first { it.code == ZERO_EFFECT }.name.lowercase()} 0"
                             else "Write effect ${EffectSpec.charOf(e)}${EditorSession.hex2(p)}"
                         } ?: "Hold to pick effect"
@@ -1668,9 +1818,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     }
 
     companion object {
-        const val FIELDS = 4
-        /** Scale panel rows: 0 root, 1 scale, 2 length, 3 fit notes to the scale. */
+        /** Scale panel rows: 0 root, 1 scale, 2 length, 3 fit notes to the scale, 4 effect columns (several-column systems). */
         const val SCALE_FIT_FIELD = 3
+        const val SCALE_COLUMNS_FIELD = 4
+        /** Most cursor fields of one channel: note, sound, then effect type and value for each of up to 4 columns. */
+        const val MAX_FIELDS = 2 + 2 * Cell.MAX_EFFECT_COLUMNS
+
+        /** The effect column of Pattern cursor [field] (0 for the note and sound fields). */
+        fun columnOf(field: Int): Int = if (field < 2) 0 else (field - 2) / 2
+
+        /** True when Pattern cursor [field] is an effect value (not the note, sound or effect type). */
+        fun isValueField(field: Int): Boolean = field >= 2 && (field - 2) % 2 == 1
         const val KEYS = 25
         /** Effect picker position before effect 0: the row has no effect (000). */
         private const val NO_EFFECT = -1
@@ -1680,8 +1838,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         /** [text] without the character at [pos]. */
         internal fun deleteChar(text: String, pos: Int) = if (pos < text.length) text.removeRange(pos, pos + 1) else text
 
-        /** Identifies one pattern cell for view-local markers: pattern < 256, channel < 4, row < 64. */
-        fun cellKey(pattern: Int, channel: Int, row: Int): Int = (pattern shl 8) or (channel shl 6) or row
+        /** Identifies one pattern cell (and effect [column]) for view-local markers: pattern < 256, column < 4, channel < 16, row < 64. */
+        fun cellKey(pattern: Int, channel: Int, row: Int, column: Int = 0): Int = (pattern shl 12) or (column shl 10) or (channel shl 6) or row
         val PATTERN_CONTEXT = arrayOf(ViewKind.KEYBOARD, ViewKind.INSTRUMENT, ViewKind.HELP, ViewKind.HELP)
         val ORDER_FIELDS = listOf("Pattern", "Repeat", "New", "Clone", "Delete", "Earlier", "Later", "Loop here", "Park")
         /** Song view order command that parks/unparks the order. */
