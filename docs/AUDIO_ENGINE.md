@@ -897,7 +897,7 @@ may move freely, patterns and instruments may be renumbered:
 
 Before the player has loaded its first patterns (only inside `start`), the data is copied and the
 orderlist positions clamped. The host test applies a fully re-laid-out image (`sid_gt_moved`) before
-every one of 1500 ticks and gets py65's reference writes (dev PC: 4 µs mean per apply; worst 9-14 µs in
+every one of 1500 ticks and gets py65's reference writes (dev PC: 4 µs mean per apply; worst 9-20 µs in
 bench runs, one 59 µs outlier in a host-test run on a loaded desktop).
 
 ### Audition
@@ -1013,8 +1013,8 @@ ms):
 
 | Work | Thread | Dev PC | ≈ Konkr |
 |---|---|---|---|
-| `tick` (8580 / 6581, resample) | audio callback | 590 / 735 µs mean, p99.9 0.7-1.0 ms | 2.4 / 2.9 ms mean, ~4 ms p99.9 |
-| `apply_image` (relocating) | audio callback, tick boundary | 4 µs mean, worst 9-14 µs (one 59 µs outlier) | ≤ 0.25 ms |
+| `tick` (8580 / 6581, resample) | audio callback | 590-610 / 730-755 µs mean, p99.9 0.7-1.1 ms | 2.4 / 3.0 ms mean, ~4.5 ms p99.9 |
+| `apply_image` (relocating) | audio callback, tick boundary | 4 µs mean, worst 9-20 µs (one 59 µs outlier) | ≤ 0.25 ms |
 | machine creation | control (engine open) | 72 ms first (reSID tables), 0.6 ms later | 120-200 ms first |
 | `audition` setup | control, spare machine | 0.35 ms | ~1.4 ms |
 | `start` (seek, 12000 ticks ≈ 4 min) | control, spare machine | ~6 ms + 6.9 µs per tick ≈ 88 ms | ~280 ms |
@@ -1029,7 +1029,7 @@ ms):
   and swap pointers under it (a tick boundary: the callback runs whole ticks under the lock); live edits
   apply under the lock. Seeks no longer hold the lock.
 - The audio-thread stall per tick (worst tick + worst apply) is ~1.0-1.4 ms on the dev PC (≈ 4-5.6 ms
-  Konkr-class at the single worst tick of 30 s on a loaded desktop; the p99.9 estimate is ~4 ms; one
+  Konkr-class at the single worst tick of 30 s on a loaded desktop; the p99.9 estimate is ~4.5 ms; one
   20 ms tick is rendered per ~5 callbacks).
 - **Kotlin**: `SidSystem.engine` (id `"c64-sid"`, `imageSize` 47200, `seekTicks` 12000, `note(n)` = n,
   `fine` → 0). Exports use the generated `SidPlayerImage.kt` (player bytes, the `PATCH_` operand
