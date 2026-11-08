@@ -20,20 +20,25 @@ cp packaging/AppRun packaging/thortracker.desktop packaging/thortracker.svg "$ap
 cp packaging/thortracker.svg "$app/.DirIcon"
 chmod -R u=rwX,go=rX "$app"
 chmod a+x "$app/AppRun" "$app/usr/bin/thortracker"
-# appimagetool 1.9.1, pinned by checksum (GitHub's release-asset digest) so every build uses the same tool.
+# appimagetool 1.9.1 and the AppImage runtime it embeds (type2-runtime 20251108), pinned by checksum (GitHub's
+# release-asset digests) so every build uses the same bytes; the tool would otherwise fetch the latest runtime.
 tool=build/appimagetool-1.9.1-x86_64.AppImage
-tool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
-if [ ! -x "$tool" ]; then
-  # -f: an HTTP error page must not be saved as the tool; download beside it so a failure leaves nothing behind.
-  curl -sSfL --retry 5 --retry-all-errors -o "$tool.part" \
-    https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-  echo "$tool_sha256  $tool.part" | sha256sum -c --quiet
-  mv "$tool.part" "$tool"
-  chmod +x "$tool"
-fi
+runtime=build/appimage-runtime-20251108-x86_64
+# Downloads beside the target: -f keeps HTTP error pages out, and a failure leaves nothing behind.
+fetch() { # url sha256 dest
+  [ -f "$3" ] && return 0
+  curl -sSfL --retry 5 --retry-all-errors -o "$3.part" "$1"
+  echo "$2  $3.part" | sha256sum -c --quiet
+  mv "$3.part" "$3"
+}
+fetch https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
+  ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 "$tool"
+fetch https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
+  2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d "$runtime"
+chmod +x "$tool"
 mkdir -p ../dist
 out="../dist/thor-tracker-$version-x86_64.AppImage"
 # Run the tool without FUSE (CI runners and containers often lack it).
-APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$tool" --no-appstream "$app" "$out"
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$tool" --no-appstream --runtime-file "$runtime" "$app" "$out"
 (cd ../dist && sha256sum "thor-tracker-$version-x86_64.AppImage" > "thor-tracker-$version-x86_64.AppImage.sha256")
 echo "packaged $out"

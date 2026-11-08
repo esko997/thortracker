@@ -112,7 +112,9 @@ jobs:
         id: appimagetool
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: deck/build/appimagetool-*.AppImage
+          path: |
+            deck/build/appimagetool-*.AppImage
+            deck/build/appimage-runtime-*
           key: appimagetool-${{ runner.os }}-${{ hashFiles('deck/tools/package-appimage.sh') }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with: { distribution: temurin, java-version: '17' }
@@ -128,7 +130,9 @@ jobs:
         if: steps.appimagetool.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: deck/build/appimagetool-*.AppImage
+          path: |
+            deck/build/appimagetool-*.AppImage
+            deck/build/appimage-runtime-*
           key: ${{ steps.appimagetool.outputs.cache-primary-key }}
       - name: The AppImage starts, draws and opens the menu (offscreen video, no audio device)
         shell: bash
