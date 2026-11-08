@@ -102,6 +102,9 @@ static int pattern_rows(const SidImage* image, uint16_t addr, const char** why, 
     return rows;
 }
 
+static void walk_rows(const uint8_t* region, const SidImageInfo* info, int order, int rows, int* fx, int* param,
+                      int* tempo, int* funk);
+
 int sm_load_image(SidImage* image) {
     SidImageInfo* info = &image->info;
     memset(info, 0, sizeof *info);
@@ -185,41 +188,97 @@ int sm_load_image(SidImage* image) {
             }
         }
     }
-    /* The global tempo each order starts with in straight play: tick-0 commands persist per channel
-     * until the next command byte; F (< $80) sets mt_chntempo, E sets it to 0 (funktempo). */
+    /* The global tempo each order starts with in straight play (see walk_rows). */
     int tempo = info->default_tempo, funk = 0;
-    int fx[SM_CHANNELS] = {0, 0, 0}, param[SM_CHANNELS] = {0, 0, 0};
+    int fx[SM_CHANNELS] = {-1, -1, -1}, param[SM_CHANNELS] = {0, 0, 0};
     for (int o = 0; o < info->orders; ++o) {
         info->tempo[o] = (uint8_t)tempo;
         info->funk[o] = (uint8_t)funk;
-        const uint8_t* p[SM_CHANNELS];
-        int pos[SM_CHANNELS] = {0, 0, 0}, left[SM_CHANNELS] = {0, 0, 0};
         for (int c = 0; c < SM_CHANNELS; ++c) {
-            const int k = info->pattern[c][o];
-            p[c] = region + ((region[SID_MT_PATTTBLLO - SID_REGION_BASE + k] | region[SID_MT_PATTTBLHI - SID_REGION_BASE + k] << 8) -
-                             SID_REGION_BASE);
+            info->start_fx[c][o] = (uint8_t)(fx[c] < 0 ? 0xFF : fx[c]);
+            info->start_param[c][o] = (uint8_t)param[c];
         }
-        for (int r = 0; r < info->rows[o]; ++r) {
-            for (int c = 0; c < SM_CHANNELS; ++c) {
-                if (left[c] > 0) {
-                    --left[c];
-                } else {
-                    int n, ins, f, pr, note;
-                    pos[c] = sm_parse_row(p[c], pos[c], 256, &n, &ins, &f, &pr, &note);
-                    left[c] = n - 1;
-                    if (f >= 0) {
-                        fx[c] = f;
-                        param[c] = pr;
-                    }
-                }
-                if (fx[c] == FX_SETTEMPO && param[c] < 0x80) tempo = param[c];
-                if (fx[c] == FX_FUNKTEMPO) {
-                    tempo = 0;
-                    funk = param[c];
-                }
-            }
-        }
+        walk_rows(region, info, o, info->rows[o], fx, param, &tempo, &funk);
     }
     info->loaded = SM_LOADED;
     return 0;
+}
+
+static const uint8_t* pattern_bytes(const uint8_t* region, const SidImageInfo* info, int channel, int order, int* size) {
+    const int k = info->pattern[channel][order];
+    const int a = region[SID_MT_PATTTBLLO - SID_REGION_BASE + k] | region[SID_MT_PATTTBLHI - SID_REGION_BASE + k] << 8;
+    *size = SID_REGION_END - a < 256 ? SID_REGION_END - a : 256;
+    return region + (a - SID_REGION_BASE);
+}
+
+/* Rows 0..rows-1 of `order` as the player starts them: tick-0 commands persist per channel until the
+ * next command byte (fx/param in-out, -1 = none) and run at every row start; F (< $80) sets the global
+ * mt_chntempo, E sets it to 0 (funktempo) with its speedtable index. Channels run in order 1, 2, 3. */
+static void walk_rows(const uint8_t* region, const SidImageInfo* info, int order, int rows, int* fx, int* param,
+                      int* tempo, int* funk) {
+    const uint8_t* p[SM_CHANNELS];
+    int size[SM_CHANNELS], pos[SM_CHANNELS] = {0, 0, 0}, left[SM_CHANNELS] = {0, 0, 0};
+    for (int c = 0; c < SM_CHANNELS; ++c) p[c] = pattern_bytes(region, info, c, order, &size[c]);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < SM_CHANNELS; ++c) {
+            if (left[c] > 0) {
+                --left[c];
+            } else {
+                int n, ins, f, pr, note;
+                const int next = sm_parse_row(p[c], pos[c], size[c], &n, &ins, &f, &pr, &note);
+                if (next < 0) continue; /* not a loaded image's pattern */
+                pos[c] = next;
+                left[c] = n - 1;
+                if (f >= 0) {
+                    fx[c] = f;
+                    param[c] = pr;
+                }
+            }
+            if (fx[c] == FX_SETTEMPO && param[c] < 0x80) *tempo = param[c];
+            if (fx[c] == FX_FUNKTEMPO) {
+                *tempo = 0;
+                *funk = param[c];
+            }
+        }
+    }
+}
+
+void sm_tempo_at(const uint8_t* region, const SidImageInfo* info, int order, int row, int* tempo, int* funk) {
+    int fx[SM_CHANNELS], param[SM_CHANNELS];
+    for (int c = 0; c < SM_CHANNELS; ++c) {
+        fx[c] = info->start_fx[c][order] == 0xFF ? -1 : info->start_fx[c][order];
+        param[c] = info->start_param[c][order];
+    }
+    *tempo = info->tempo[order];
+    *funk = info->funk[order];
+    walk_rows(region, info, order, row + 1, fx, param, tempo, funk);
+}
+
+void sm_fetch_state(const uint8_t* region, const SidImageInfo* info, int channel, int order, int row, SmFetch* out) {
+    int size;
+    const uint8_t* p = pattern_bytes(region, info, channel, order, &size);
+    out->pattptr = out->packedrest = out->instrument = 0;
+    out->fx = out->param = -1;
+    out->note = GT_REST;
+    int i = 0, fetched = 0;
+    while (fetched <= row) {
+        int n, ins, fx, param, note;
+        const int next = sm_parse_row(p, i, size, &n, &ins, &fx, &param, &note);
+        if (next < 0) return;
+        if (ins) out->instrument = (uint8_t)ins;
+        if (fx >= 0) {
+            out->fx = fx;
+            out->param = param;
+        }
+        if (row < fetched + n - 1) { /* inside a packed rest: the counter has counted row - fetched + 1 */
+            out->pattptr = (uint8_t)i;
+            out->packedrest = (uint8_t)(p[i] + (row - fetched + 1));
+            out->note = GT_REST;
+            return;
+        }
+        fetched += n;
+        i = next;
+        out->note = note ? note : GT_REST;
+    }
+    out->pattptr = (uint8_t)(i >= 256 || i >= size || p[i] == 0 ? 0 : i); /* end mark or 256-byte wrap: 0 */
 }

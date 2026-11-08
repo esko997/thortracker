@@ -45,6 +45,8 @@ typedef struct SidImageInfo {
     uint8_t pattern[SM_CHANNELS][SID_MAX_ORDERS]; /* packed pattern number per channel and order */
     uint8_t tempo[SID_MAX_ORDERS];         /* global mt_chntempo when each order starts (straight play) */
     uint8_t funk[SID_MAX_ORDERS];          /* speedtable index of the last funktempo before it (0: none) */
+    uint8_t start_fx[SM_CHANNELS][SID_MAX_ORDERS];    /* command persisting into each order ($FF: none) */
+    uint8_t start_param[SM_CHANNELS][SID_MAX_ORDERS]; /* and its parameter */
     const char* problem;                   /* why sm_load_image failed (static string), else NULL */
     uint32_t problem_at;                   /* image byte offset the problem refers to */
 } SidImageInfo;
@@ -63,6 +65,23 @@ static inline const uint8_t* sm_region(const SidImage* image) { return image->by
  * (1, or the length of a packed rest), *instrument (0: none), *fx / *param (-1: no command byte), *note
  * (the note/rest/key byte, or 0 for a packed rest); -1 if the bytes are not a row. */
 int sm_parse_row(const uint8_t* p, int i, int size, int* rows, int* instrument, int* fx, int* param, int* note);
+
+/* Player sequencer state of a channel once it has fetched rows 0..row of its pattern in `order`, from
+ * the song data alone (`region` = C64 RAM view of an image region: address a at region[a -
+ * SID_REGION_BASE]; `info` its derived data): what mt_chnpattptr / mt_chnpackedrest hold, and what the
+ * fetched rows leave in mt_chninstr / mt_chnnewfx / mt_chnnewparam / the fetched note. */
+typedef struct SmFetch {
+    uint8_t pattptr;    /* offset of the next fetch; 0 = the pattern's end was fetched */
+    uint8_t packedrest; /* 0, or the packed-rest counter while inside a packed rest */
+    uint8_t instrument; /* last instrument byte in rows 0..row (0: none) */
+    int fx, param;      /* last command in rows 0..row (-1: none) */
+    int note;           /* note byte of `row` (GT note $60-$BC, $BD rest, $BE key off, $BF key on) */
+} SmFetch;
+void sm_fetch_state(const uint8_t* region, const SidImageInfo* info, int channel, int order, int row, SmFetch* out);
+
+/* Global tempo (mt_chntempo; 0 = funktempo) and funktempo speedtable index once rows 0..row of `order`
+ * have started in straight play (row -1: at the order's start). */
+void sm_tempo_at(const uint8_t* region, const SidImageInfo* info, int order, int row, int* tempo, int* funk);
 
 #ifdef __cplusplus
 }
