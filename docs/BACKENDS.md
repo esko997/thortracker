@@ -333,8 +333,10 @@ muted in the song) stay in the hosts and work for every chip.
    **OPL3 spike** — done (branch `opl3-spike`). `chip_engine_ops("opl3-fm")`: our own player (C) on Nuked-OPL3 1.8,
    image layout, player and effect specification, seek, live edits, audition, mute and VGM export in
    `docs/AUDIO_ENGINE.md` ("OPL3"); native host test 257 checks with register writes identical to an independent
-   Python reference player in every tick and VGM bytes identical to its export; the VGM plays in libvgm. Next: the
-   OPL3 backend (model, lowering, instrument editor, effect columns in the editor, VGM export, New → system, Help).
+   Python reference player in every tick and VGM bytes identical to its export; the VGM plays in libvgm.
+   **OPL3 backend**: model, curated instrument controls, presets, lowering (byte-identical to the reference builder),
+   validation, project files, VGM export through the native player and the demo — see "OPL3 model, lowering and
+   exports"; editor (instruments, effect columns), New → system and Help in the editor step.
 
 ## Effect columns
 
