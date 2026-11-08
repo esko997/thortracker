@@ -265,9 +265,9 @@ song onto an edited image in realtime and auditions notes with a release phase. 
   FamiStudio's own FamiTracker-tempo NSF kernel enables (volume track and slides, pitch track, slide
   notes incl. noise, vibrato, arpeggio, duty-cycle effect, DMC delta counter, release notes, phase
   reset, extended instrument range) except the DPCM bank-switching/extended-range encodings (so at
-  most 63 DPCM mappings and the 16378 sample bytes at `$C000-$FFF9`); no SFX. So any 2A03-only
-  FamiTracker-tempo FamiStudio export without DPCM bank switching or extended DPCM range plays, its
-  `.dmc` at `$C000`. The same bytes are in Kotlin as `core/.../backend/NesPlayerImage.kt` (generated)
+  most 63 DPCM mappings, and samples only at `$C000-$FFF9`); no SFX. So any 2A03-only
+  FamiTracker-tempo FamiStudio export without DPCM bank switching or extended DPCM range plays (its
+  `.dmc` where its `FAMISTUDIO_DPCM_PTR` says). The same bytes are in Kotlin as `core/.../backend/NesPlayerImage.kt` (generated)
   for the `.nsf` export.
 - **Tempo**: one tick = one NTSC frame (60.0988 Hz). The engine starts a row on a frame when
   `famistudio_tempo_acc_hi >= famistudio_song_speed`, subtracts the speed, runs the row, and adds
@@ -320,8 +320,7 @@ song onto an edited image in realtime and auditions notes with a release phase. 
 | `$07C0-$07FF` | audition streams, written by the machine (`NES_AUDITION_RAM`) |
 | `$4000-$4017` | APU, writes timestamped to their CPU cycle; `$4015` reads status |
 | `$8000-$8B11` | player image |
-| `$8C00-$BFFF` | song region (`NES_SONG_BASE`..`NES_SONG_END`, 13312 bytes): the image's FamiStudio data |
-| `$C000-$FFF9` | sample region (`NES_SAMPLE_BASE`..`NES_SAMPLE_END`, 16378 bytes): the image's DPCM samples, read by the DMC's DMA |
+| `$8C00-$FFF9` | the image's region (`NES_SONG_BASE`..`NES_REGION_END`, 29690 bytes), shared: FamiStudio data from `$8C00` upward, the DPCM sample block (64-aligned, at or above `$C000`, where `$4012` can reach) above it; the DMC reads samples by DMA |
 | `$FFFA-$FFFF` | vectors → `nes_player_trap`, written by the machine |
 
 Everything else reads 0 and ignores writes.
@@ -338,19 +337,25 @@ for user-facing messages. `image_size` = 31770 bytes, little-endian:
 | 0 | 4 | `"TTNS"` |
 | 4 | 4 | player id = first 4 bytes of the player image sha256 (`NesPlayerImage.PLAYER_ID`, currently `0xA9A250E3`): an image only plays on the player build it was lowered for |
 | 8 | 2 | song base `$8C00` |
-| 10 | 2 | data size: bytes of song data used (≤ 13312); the rest of the song region must be zero |
+| 10 | 2 | data size S: bytes of song data from `$8C00` (≤ 29690; with samples ≤ sample start − `$8C00`) |
 | 12 | 1 | song index: 0 |
 | 13 | 1 | layout: 1 = Thor Tracker (below). 0 = raw FamiStudio export + its `.dmc` (tests and tools only: bytes 18/19/20 = rows per order, order count, loop order or `$FF`; no directory; plays, seeks from the start, live apply only copies bytes) |
 | 14 | 1 | instrument count, 1..64 |
 | 15 | 1 | DPCM list entries (mappings), 0..63 (`NES_IMAGE_HEADER_DPCM_COUNT`; raw: 0) |
 | 16 | 2 | envelope count = highest used directory index + 1 (≤ 512) |
 | 18 | 4 | 0 |
-| 22 | 2 | sample bytes used from `$C000` (≤ 16378, `NES_IMAGE_HEADER_SAMPLE_SIZE`; both layouts); the rest of the sample region must be zero |
-| 24 | 8 | 0 |
+| 22 | 2 | sample block bytes B (`NES_IMAGE_HEADER_SAMPLE_SIZE`; both layouts); 0 = no samples |
+| 24 | 2 | sample block start A (`NES_IMAGE_HEADER_SAMPLE_START`; both layouts); 0 = no samples, else a multiple of 64, ≥ `$C000`, A + B ≤ `$FFFA`, and `$8C00` + S ≤ A |
+| 26 | 6 | 0 |
 | 32 | 2048 | envelope directory: 512 entries of {u16 address, u8 length (2..255), u8 kind (0 volume, 1 arpeggio, 2 duty, 3 pitch)}; address 0 = unused (all 4 bytes 0); entries ≥ count all zero |
-| 2080 | 29690 | region: CPU memory `$8C00-$FFF9`, i.e. the song data at region offset 0 and the sample bytes at region offset 13312 (`$C000`) |
+| 2080 | 29690 | region: CPU memory `$8C00-$FFF9` (address *a* at region offset *a* − `$8C00`): song data `[$8C00, $8C00+S)`, samples `[A, A+B)`, every other byte zero |
 
-**Song region** (all pointers absolute, so data is lowered for `$8C00`):
+One budget: song data and samples share the 29690 bytes. A song without samples may fill all of them
+(0.9.0 allowed 24570); with samples the song data must end at or below the sample block, which the
+Kotlin lowering packs as high as it fits (A = the highest multiple of 64 with A + B ≤ `$FFFA`; it
+must stay ≥ `$C000`, so samples total at most 16378 bytes). The raw layout's `.dmc` sits at `$C000`.
+
+**Song data** (all pointers absolute, so data is lowered for `$8C00`):
 
 - FamiStudio song list with exactly one song: `u8 1`, `word instruments`, `word samples−4` (the
   DPCM list; any value when byte 15 is 0), five channel stream words (pulse 1, pulse 2, triangle,
@@ -360,8 +365,8 @@ for user-facing messages. `image_size` = 31770 bytes, little-endian:
   inside the song data, entry *k* (1-based) = mapping *k*: `$4012` = (sample address − `$C000`) / 64,
   `$4013` = (sample bytes − 1) / 16, `$4010` = rate 0..15 | `$40` loop (IRQ and bits 4-5 zero), initial
   `$4011` level 0..127 (FamiStudio: the sample's `DmcInitialValue` × 2, or the mapping's override).
-  Every entry's 16 *l* + 1 bytes from 64 *a* must lie inside the used sample bytes (header 22).
-- **Samples** (sample region): DMC bytes as the hardware plays them (LSB first, 1 = +2), each from a
+  Every entry's 16 *l* + 1 bytes from `$C000` + 64 *a* must lie inside the sample block `[A, A+B)`.
+- **Samples** (the sample block): DMC bytes as the hardware plays them (LSB first, 1 = +2), each from a
   64-byte boundary, 16 *n* + 1 bytes ≤ 4081; FamiStudio's `.dmc` packs them in project order and pads
   each to the next boundary with `$55`. Several mappings may share a sample (other rate, loop or level).
 - Instrument table: count × 8 bytes, four envelope pointers each: volume, arpeggio, duty, pitch.
@@ -537,7 +542,7 @@ clear all mutes (power-on).
 
 `.nsf` export (`NsfExporter`, docs/BACKENDS.md: a 128-byte NSF header — load `$8000`, init
 `$8000`, play `$8003`, NTSC speed 16639 µs, no bank switching — + `NesPlayerImage.BYTES` + zero fill
-to `$8C00` + the region: song data, zero fill, the samples at `$C000`). Still to measure on the Thor:
+to `$8C00` + the region up to its last used byte: song data, zero fill, the sample block). Still to measure on the Thor:
 realtime cost per tick and seek cost per frame (dev PC: 129 µs per tick, 129× realtime, on ft_test;
 206 µs, 81×, on the sample-heavy DPCM test song; the engine's worst frame 4828 CPU cycles), and
 output level against the Game Boy.
@@ -577,19 +582,21 @@ notes, loop to order 1) as exported by FamiStudio 4.5.3 itself (`ft_test_ca65.s`
 `--famistudio` re-exports and checks it is unchanged). The export is linked with ld65 at `$8C00`
 (`nes_song.cfg`; raw fixture) and parsed by the script, which must give the same bytes, then rearranged into the
 Thor layout without changing any row's bytes, plus variants (every block moved; one note and one
-envelope edited; cut to two orders). The second does the same for `tools/audio/nes/dpcm_test.txt`
+envelope edited; cut to two orders; the patterns moved to the top so the song data fills all 29690
+bytes). The second does the same for `tools/audio/nes/dpcm_test.txt`
 (five DMC samples synthesized for it, eight mappings over three rates, loops and per-sample /
 per-mapping initial levels; a DPCM channel with stops, delta counter now and at the next sample, note
 delay, cut, a no-attack note and a row of samples every row; Fxx 6/5/3/7; pulse and triangle on top)
 and its export `dpcm_test_ca65.s` + `dpcm_test_ca65.dmc` (the samples; the list is assembled with
 `FAMISTUDIO_DPCM_PTR = 0`, i.e. samples at `$C000`): raw fixture with the `.dmc`, the Thor layout with
-the samples where the `.dmc` has them, every block and sample moved, one Kick byte inverted; and the
-DMC writes the text asks for, derived from the text alone. Two runs produce identical files.
+the samples where the `.dmc` has them, every block moved and the samples packed at the top, one Kick
+byte inverted, the samples at the top with the song data ending exactly at them; and the DMC writes the
+text asks for, derived from the text alone. Two runs produce identical files.
 
 ### Verification
 
 - `tools/audio/run_native_host_test.sh [dir]` also builds and runs `app/src/test/cpp/nes_machine_test.c`
-  (2026-11-07: **319 checks, 0 failures**; Game Boy unchanged at 145). APU: as in step 4 (pitch by
+  (2026-11-07: **336 checks, 0 failures**; Game Boy unchanged at 145). APU: as in step 4 (pitch by
   zero crossings, length/envelope/linear/sweep/frame counter, LFSR, mixer). Player: entry table,
   FamiTracker speed/step after init, note table vs 12-TET. Images: derived rows, loop and order-start
   speeds equal the text; 25 single-byte corruptions each rejected with its reason. Playback: the
@@ -624,10 +631,19 @@ DMC writes the text asks for, derived from the text alone. Two runs produce iden
   200 frames, the DMC heard afterwards sample-identical; the order fallback's DMC writes in step.
   Live edits: every sample moved before every frame — same writes (`$4012` mapped), 298 relocations,
   DMC output sample-identical; an edited playing Kick stops, an unchanged playing Snare continues, the
-  next Kick plays the edited bytes (model 14 vs 28); the same image mid-sample changes nothing. 17 DPCM
-  corruptions rejected with reasons. Audition of a mapping (first tick `$4012 $4013 $4010 $4011
-  $4015=$1F`, other channels silent, release = 0), a looped mapping for 2 s, limits; mute 4 silences the
-  DMC while it keeps fetching; the ops table with channel 4 borrowing.
+  next Kick plays the edited bytes (model 14 vs 28); the same image mid-sample changes nothing. 21 DPCM
+  and sample-block corruptions rejected with reasons (misaligned, below `$C000`, past the vectors, size
+  without start, samples outside the block, bytes outside song and block). Audition of a mapping (first
+  tick `$4012 $4013 $4010 $4011 $4015=$1F`, other channels silent, release = 0), a looped mapping for
+  2 s, limits; mute 4 silences the DMC while it keeps fetching; the ops table with channel 4 borrowing.
+- Shared region (same run): a sample-less ft_test image with **29690 bytes of song data** (patterns at
+  `$FF1A`; 0.9.0's limit was 24570) plays register-identical to the compact layout for 1080 frames,
+  relocates between the two before every frame with identical writes, and seeks to 2/8 in step for 200
+  frames. dpcm_test with its samples at `$F880-$FFD0` and 27776 bytes of song data ending exactly at
+  `$F880` plays register-identical to the `$C000` layout (`$4012` mapped) for 816 frames, sounds
+  DMC-identical, and alternates with it before every frame (samples moving `$C000` ↔ `$F880`) with the
+  DMC identical; one more byte of song data, or the block starting 64 bytes lower, is rejected ("song
+  data overlaps the samples").
 - Evidence written to the directory: `nes_ft.wav` / `nes_ft_tonal.wav` (30 s, 48 kHz), `nes_trace.txt`
   (per-frame APU writes), `nes_ft.nsf` (player + FamiStudio's export); `nes_dpcm.wav` /
   `nes_dpcm_dmc.wav` (the DMC alone), `nes_dpcm_trace.txt`, `nes_dpcm.nsf` (player, export, samples
