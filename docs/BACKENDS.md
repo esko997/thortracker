@@ -614,7 +614,7 @@ Decisions:
 - **Region**: NTSC (60 Hz, YM2612 7670453 Hz, PSG 3579545 Hz) by default, PAL (50 Hz, 7600489 / 3546895 Hz) per
   song; pitch tables per region so A-4 = 440 Hz on both. A PAL song in a game needs `XGM_setMusicTempo(50)` on a
   PAL console (SGDK's tempo is NTSC-based by default).
-- **Instruments**: one bank of 64 slots, each empty, an FM instrument (the chip's operator registers: DT/MUL, TL,
+- **Instruments**: 64 slots (shown as two banks, FM voices and PSG sounds, over the one numbering), each empty, an FM instrument (the chip's operator registers: DT/MUL, TL,
   RS/AR, AM/D1R, D2R, D1L/RR, SSG-EG per operator; algorithm, feedback, AMS/FMS; drum sweep) or a PSG instrument
   (software envelopes as on the NES: volume, arpeggio and pitch, one value per tick; noise mode; drum sweep — the
   spike's attack/decay/sustain/release record was replaced, see below). FM slots play on FM channels, PSG slots on PSG
@@ -630,7 +630,9 @@ Decisions:
 - **System** (`system/ym2612`): `YmSystem`, id `"ym2612-fm"`, "Mega Drive (YM2612 + PSG)", ten channels `FM 1`-`FM 6`
   (`ChannelKind.VOICE`), `PSG 1`-`PSG 3` (`PULSE`) and `Noise` (`NOISE`, not tonal: its notes only matter in pitched
   mode), four effect columns each, notes C-0..B-7 (absolute 0..95 = the player's note; FamiTracker-style names, A-4 = 57
-  = 440 Hz), one bank of 64 slots, at most 256 orders. Ticks per second follow the region: 59.92 (NTSC, MCLK / (3420 ×
+  = 440 Hz), 64 instrument slots shown as two banks over the one numbering — `FM voices` (FM 1-6) and `PSG sounds` (PSG
+  1-3, Noise), so the editor keeps a current sound per kind (`SoundSystem.defaultInstrument`: the first slot of the
+  bank's kind) — at most 256 orders. Ticks per second follow the region: 59.92 (NTSC, MCLK / (3420 ×
   262)) or 49.70 (PAL). OFF is key off (FM release; a PSG sound jumps to its volume envelope's release point, or is
   silent at once without one). Song settings (Song view): Region (NTSC/PAL) and LFO (off or rate 0-7, register $22 at
   the song start). Constants come from `backend/YmPlayerImage` (generated from the C headers).
