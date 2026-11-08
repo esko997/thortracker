@@ -74,6 +74,7 @@ struct NesMachine {
     uint8_t ram[0x800];
     uint8_t prg[0x8000];
     uint8_t log[3 * LOG_CAPACITY];          /* (address low, address high, value) per write */
+    uint32_t log_time[LOG_CAPACITY];        /* frame-relative CPU cycle of each logged write */
     short samples[NM_MAX_TICK_FRAMES];
 };
 
@@ -98,10 +99,12 @@ static uint8_t bus_read(NesMachine* m, uint16_t addr) {
 
 static void log_write(NesMachine* m, uint16_t addr, uint8_t v) {
     if (m->logging && m->log_len < LOG_CAPACITY) {
-        uint8_t* e = m->log + 3 * m->log_len++;
+        const int i = m->log_len++;
+        uint8_t* e = m->log + 3 * i;
         e[0] = (uint8_t)addr;
         e[1] = (uint8_t)(addr >> 8);
         e[2] = v;
+        m->log_time[i] = m->time;
     }
 }
 
@@ -856,12 +859,15 @@ int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity) {
     return n;
 }
 
-int nm_write_log(NesMachine* m, uint8_t* triples, int capacity) {
+int nm_write_log_timed(NesMachine* m, uint8_t* triples, uint32_t* cycles, int capacity) {
     const int n = m->log_len < capacity ? m->log_len : capacity;
     memcpy(triples, m->log, (size_t)n * 3);
+    if (cycles) memcpy(cycles, m->log_time, (size_t)n * sizeof *cycles);
     m->log_len = 0;
     return n;
 }
+
+int nm_write_log(NesMachine* m, uint8_t* triples, int capacity) { return nm_write_log_timed(m, triples, NULL, capacity); }
 
 uint8_t nm_peek(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];

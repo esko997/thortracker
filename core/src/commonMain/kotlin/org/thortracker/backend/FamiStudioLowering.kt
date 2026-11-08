@@ -382,30 +382,14 @@ internal object FamiStudioLowering {
          * (`Project.MergeIdenticalInstruments`: a CRC of the instrument without its name and colour) and then compares
          * instruments by identity: the loop's first and last instrument and `Channel.CanDisableAttack`. The first slot
          * with the same exported sound ([FamiStudioText.mergeKey]), on every chip, so those decisions treat renamed
-         * copies as one. Streams outside the VRC7 ([merged]) still load each note's own slot: the copies' data is
-         * identical, an instrument load without an attack keeps the envelope positions (`famistudio_set_instrument`
-         * only re-points them), and a live edit of either copy keeps reaching that copy's own notes.
+         * copies as one. Every stream still loads each note's own slot: equal sounds can share legato decisions and
+         * VRC7 custom-patch comparisons, but live edits must follow the played bank entry, not its first equal copy.
+         * An instrument load without an attack only re-points the envelopes, keeping their positions.
          */
         private val equivalent: IntArray = IntArray(fs.instruments.size + 1) { it }.also { m ->
             val first = HashMap<List<String>, Int>()
             for (slot in 1..fs.instruments.size) m[slot] = first.getOrPut(FamiStudioText.mergeKey(fs, slot)) { slot }
         }
-
-        /**
-         * The instrument each VRC7 sound is in FamiStudio's export ([equivalent]). FM channels play such copies as that
-         * one slot, so the custom patch they load, the instrument a channel holds (no-attack notes, the custom-patch
-         * reloads) and the loop's first and last instrument follow FamiStudio's. 2A03, VRC6 and N163 sounds keep their own
-         * slots and use [equivalent] where FamiStudio compares instruments.
-         */
-        private val merged: IntArray = IntArray(fs.instruments.size + 1) { it }.also { m ->
-            if (fs.expansion != NesExpansion.VRC7) return@also
-            for (slot in 1..fs.instruments.size) {
-                if (fs.instruments[slot - 1].chip == NesChip.VRC7) m[slot] = equivalent[slot]
-            }
-        }
-
-        /** The slot channel [c] plays [n]'s instrument as (0: none): FM channels play merged copies as one ([merged]). */
-        private fun slotOf(c: Int, n: FsNote): Int = if (NesRules.isVrc7(fs.expansion, c)) merged[n.instrument] else n.instrument
 
         /** Possible custom patches in the loop; delayed notes make the final writer unknowable from row order alone. */
         private val customPatchesInLoop: Long = run {
@@ -415,7 +399,7 @@ internal object FamiStudioLowering {
                     for (ch in NesRules.VRC7_FM1 until fs.channels) {
                         val n = fs.notes[ch][row] ?: continue
                         if (n.isMusical && n.instrument != 0 && isCustomVrc7(n.instrument)) {
-                            patches = patches or (1L shl (merged[n.instrument] - 1))
+                            patches = patches or (1L shl (equivalent[n.instrument] - 1))
                         }
                     }
                 }
@@ -488,8 +472,8 @@ internal object FamiStudioLowering {
             for (row in fs.orderStart[fs.loopOrder] until fs.totalRows) {
                 val n = fs.notes[c][row] ?: continue
                 if (n.isMusical && n.instrument != 0) {
-                    if (firstInLoop == 0) firstInLoop = slotOf(c, n)
-                    lastInLoop = slotOf(c, n)
+                    if (firstInLoop == 0) firstInLoop = n.instrument
+                    lastInLoop = n.instrument
                 }
             }
             val usesArpeggios = fs.notes[c].any { it != null && it.isMusical && it.arpeggio >= 0 }
@@ -503,7 +487,7 @@ internal object FamiStudioLowering {
                     if (equivalent[lastInLoop] != equivalent[firstInLoop]) instrument = 0
                     // Reload shared patch state without invalidating the channel's instrument/legato state.
                     if (isVrc7 && firstInLoop != 0 && isCustomVrc7(firstInLoop)) {
-                        reloadCustom = customPatchesInLoop and (1L shl (firstInLoop - 1)).inv() != 0L
+                        reloadCustom = customPatchesInLoop and (1L shl (equivalent[firstInLoop] - 1)).inv() != 0L
                     }
                     lastVolume = -1
                     if (usesArpeggios) b.byte(OP_CLEAR_ARP_OVERRIDE)
@@ -584,7 +568,7 @@ internal object FamiStudioLowering {
                     }
                     if (note.isValid) {
                         if (note.isMusical && note.instrument != 0) {
-                            val slot = slotOf(c, note)
+                            val slot = note.instrument
                             val attack = note.attack || !canDisableAttack(c, instrument, slot)
                             if (!attack) b.byte(OP_DISABLE_ATTACK)
                             else if (!frameVibrato && vibratoOverride) {
@@ -676,7 +660,7 @@ internal object FamiStudioLowering {
             for (other in NesRules.VRC7_FM1 until fs.channels) {
                 if (other == c) continue
                 val n = fs.notes[other][row] ?: continue
-                if (n.instrument != 0 && merged[n.instrument] != instrument && isCustomVrc7(n.instrument)) return true
+                if (n.instrument != 0 && equivalent[n.instrument] != equivalent[instrument] && isCustomVrc7(n.instrument)) return true
             }
             return false
         }

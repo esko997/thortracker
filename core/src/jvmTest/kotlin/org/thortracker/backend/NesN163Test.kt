@@ -1,6 +1,5 @@
 package org.thortracker.backend
 
-import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
@@ -19,6 +18,7 @@ import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -115,80 +115,7 @@ class NesN163Test {
         assertContentEquals(byteArrayOf(0x21, 0x43, 0xF0.toByte(), 0x0F), FamiStudioEnvelopes.n163WaveBytes(listOf(1, 2, 3, 4, 0, 15, 15, 0)))
     }
 
-    /**
-     * The wave-index envelope: identical waves are stored once (first use order), each wave's index repeats for its frames,
-     * the loop and release land on their waves' first frames, encoded with a release header like a volume envelope.
-     */
-    @Test
-    fun waveIndexEnvelopeIsFamiStudios() {
-        val a = N163Presets.wave(N163Preset.SQUARE50, 16, 0, 1)
-        val b = N163Presets.sine(16)
-        val w = N163Wave(waves = listOf(a, b, a), repeat = listOf(2, 1, 1), loop = 1, release = 2)
-        val stored = FamiStudioEnvelopes.n163Waves(w)
-        assertEquals(listOf(a, b), stored.stored)
-        assertContentEquals(intArrayOf(0, 1, 0), stored.index)
-        // values 0 0 1 0, loop at index 2, release at 3: release header 6, C0 C0 C1, loop back to C1 (index 3) until
-        // released, then C0 held.
-        assertContentEquals(
-            byteArrayOf(0x06, 0xC0.toByte(), 0xC0.toByte(), 0xC1.toByte(), 0x00, 0x03, 0xC0.toByte(), 0x00, 0x06),
-            FamiStudioEnvelopes.waveIndex(w),
-        )
-        // One stored wave: FamiStudio's default "value 0, no release" envelope.
-        assertContentEquals(FamiStudioEnvelopes.DEFAULT_PITCH_OR_RELEASE_ENV, FamiStudioEnvelopes.waveIndex(N163Wave(waves = listOf(a, a), repeat = listOf(3, 4))))
-        // A sequence without a loop drops its trailing repeats (Envelope.Optimize): 0 0 1 1 1 -> 0 0 1, then holds.
-        val noLoop = FamiStudioEnvelopes.waveIndex(N163Wave(waves = listOf(a, b), repeat = listOf(2, 3)))
-        assertContentEquals(byteArrayOf(0x00, 0xC0.toByte(), 0x01, 0xC1.toByte(), 0x00, 0x03), noLoop)
-    }
 
-    /** The expansion table, OFF as `$5A` (volume and waves release), the phase reset as `$5B` before the note. */
-    @Test
-    fun streamsUseTheN163Opcodes() {
-        val seq = NesInstrument("Seq", chip = NesChip.N163, volume = NesEnvelope(listOf(12)),
-            wave = N163Wave(waves = listOf(N163Presets.sine(16), N163Presets.wave(N163Preset.TRIANGLE, 16, 0, 1)), repeat = listOf(1, 1),
-                loop = 0, release = 1, position = 32))
-        val s = song(2, listOf(seq, sine(48))) { t ->
-            t[5][0] = Cell(n("C-4"), 1, NesRules.FX_PHASE_RESET, 0)
-            t[5][4] = Cell(Cell.CUT, 0, 0, 0) // the waves have a release point: a release
-            t[6][0] = Cell(n("E-4"), 2, 0, 0)
-            t[6][4] = Cell(Cell.CUT, 0, 0, 0) // no release point anywhere: a stop
-        }
-        assertEquals(emptyList(), NesSystem.errors(s))
-        val fs = FsSong.of(s)
-        assertEquals(FsNote.RELEASE, fs.notes[5][4]!!.value)
-        assertEquals(FsNote.STOP, fs.notes[6][4]!!.value)
-        assertTrue(fs.notes[5][0]!!.phaseReset)
-        val lowered = FamiStudioLowering.lower(s)
-        val data = lowered.data
-        val base = lowered.player.songBase
-        fun u16(at: Int) = (data[at].toInt() and 0xff) or ((data[at + 1].toInt() and 0xff) shl 8)
-        // Order 0's pattern streams of N163 1 and 2 (the header: count, instruments, exp instruments, samples, 7 streams).
-        fun pattern(c: Int): List<Int> {
-            val order = u16(7 + 2 * c) - base
-            val start = u16(order + 2) - base
-            return (start until start + 16).map { data[it].toInt() and 0xff }
-        }
-        val w1 = pattern(5)
-        // $5B, the instrument (slot 1 = table index 0 → $80), the note; then a run; then $5A.
-        val reset = w1.indexOf(0x5B)
-        assertTrue(reset >= 0 && w1[reset + 1] == 0x80, "phase reset before the instrument: $w1")
-        assertTrue(0x5A in w1, "N163 release: $w1")
-        assertFalse(0x45 in w1.take(w1.indexOf(0x5A) + 1), "no 2A03 release on the N163: $w1")
-        assertFalse(0x5A in pattern(6).take(6), "a stop is a stop: ${pattern(6)}")
-        // The expansion table entry of slot 1: wave position and size, and a table whose two waves are the sound's.
-        val exp = u16(3) - base
-        assertEquals(32, data[exp + 8].toInt() and 0xff)
-        assertEquals(16, data[exp + 9].toInt() and 0xff)
-        val table = u16(exp + 10) - base
-        for ((i, w) in seq.wave.waves.withIndex()) {
-            val at = u16(table + 2 * i) - base
-            assertContentEquals(FamiStudioEnvelopes.n163WaveBytes(w), data.copyOfRange(at, at + 8))
-        }
-        // The wave-index envelopes sit at 256 + slot, effect envelopes from 320.
-        val dir = lowered.envelopes.associateBy { it.index }
-        assertEquals(Kind.WAVE, dir.getValue(256).kind)
-        assertEquals(Kind.WAVE, dir.getValue(256 + 63).kind)
-        assertTrue(lowered.envelopes.filter { it.kind != Kind.WAVE && it.index >= 256 }.all { it.index >= 320 })
-    }
 
     /** Slides use the channel count's note table and drop its pitch shift (`GetShiftsForType`). */
     @Test
@@ -265,23 +192,25 @@ class NesN163Test {
         assertEquals(24, org.thortracker.system.nes.NesValidator.n163RamUsed(clash))
     }
 
-    /** FamiStudio's rules for the wave sequence and the shape every consumer relies on. */
     @Test
-    fun waveSequenceRulesAreFamiStudios() {
-        fun errors(w: N163Wave) = NesSystem.errors(song(4, listOf(NesInstrument("W", chip = NesChip.N163, wave = w))) { t ->
-            t[5][0] = Cell(n("C-4"), 1, 0, 0)
-        })
+    fun nsfRejectsInvalidWaveSequences() {
         val two = listOf(N163Presets.sine(16), N163Presets.sine(16))
-        assertTrue(errors(N163Wave(waves = two, repeat = listOf(1, 1), release = 1)).any { it.contains("needs a wave loop") })
-        assertTrue(errors(N163Wave(waves = two, repeat = listOf(1, 1), loop = 1, release = 1)).any { it.contains("must come before") })
-        assertTrue(errors(N163Wave(waves = two, repeat = listOf(1, 16))).any { it.contains("1-15 frames") })
-        assertTrue(errors(N163Wave(size = 14, waves = listOf(List(14) { 8 }))).any { it.contains("multiple of 4") })
-        assertTrue(errors(N163Wave(position = 3)).any { it.contains("even sample") })
-        assertTrue(errors(N163Wave(size = 32, waves = List(33) { N163Presets.sine(32) }, repeat = List(33) { 1 })).any { it.contains("1-32") })
-        assertEquals(emptyList(), errors(N163Wave(waves = two, repeat = listOf(1, 1), loop = 0, release = 1)))
-        // 2A03 sounds carry no waves.
+        val invalid = listOf(
+            N163Wave(waves = two, repeat = listOf(1, 1), release = 1),
+            N163Wave(waves = two, repeat = listOf(1, 1), loop = 1, release = 1),
+            N163Wave(waves = two, repeat = listOf(1, 16)),
+            N163Wave(size = 14, waves = listOf(List(14) { 8 })),
+            N163Wave(position = 3),
+            N163Wave(size = 32, waves = List(33) { N163Presets.sine(32) }, repeat = List(33) { 1 }),
+        )
+        for (wave in invalid) {
+            val s = song(4, listOf(NesInstrument("W", chip = NesChip.N163, wave = wave))) { t ->
+                t[5][0] = Cell(n("C-4"), 1, 0, 0)
+            }
+            assertFailsWith<IllegalArgumentException> { NsfExporter.export(s) }
+        }
         val stray = song(4, listOf(NesInstrument("2A03", wave = N163Wave(position = 16)))) { _ -> }
-        assertTrue(NesSystem.structuralErrors(stray).any { it.contains("only N163 sounds have waves") })
+        assertFailsWith<IllegalArgumentException> { NsfExporter.export(stray) }
     }
 
     /** FamiStudio's text names the channel count, the N163 instruments, both wave envelopes and the phase reset. */

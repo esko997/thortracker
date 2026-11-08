@@ -7,6 +7,7 @@ import org.thortracker.system.nes.N163Preset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
@@ -14,6 +15,7 @@ import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
@@ -48,6 +50,28 @@ object SampleExportTool {
         for (format in NesVrc7System.exports) File(directory, "lantern-point.${format.extension}").writeBytes(format.export(vrc7))
         File(directory, "lantern-point.nesimg").writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(vrc7, it) })
         println("Exported ${vrc7.title} to ${directory.absolutePath}")
+        // Held identical copies: native live edits must follow the played bank slot, not an equal earlier slot.
+        val copyBase = NesVrc7System.blank()
+        val copyBank = copyBase.nes.instruments.toMutableList()
+        copyBank[0] = NesInstrument("Preset original", chip = NesChip.VRC7,
+            volume = NesEnvelope(listOf(15, 12, 9, 6), loop = 3), fm = Vrc7Patch().withPreset(1))
+        copyBank[1] = copyBank[0].copy(name = "Preset copy")
+        copyBank[2] = copyBank[0].copy(name = "Unused custom original",
+            fm = Vrc7Patch(0, listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)))
+        copyBank[3] = copyBank[2].copy(name = "Held custom copy")
+        val copyPattern = copyBase.patterns[0].copy(tracks = copyBase.patterns[0].tracks.mapIndexed { ch, rows ->
+            rows.toMutableList().also {
+                when (ch) {
+                    NesRules.VRC7_FM1 -> it[0] = Cell(57, 1)
+                    NesRules.VRC7_FM1 + 1 -> it[0] = Cell(64, 2)
+                    NesRules.VRC7_FM1 + 2 -> it[0] = Cell(60, 4)
+                }
+            }
+        })
+        val copies = copyBase.copy(patterns = listOf(copyPattern), orders = listOf(0), loopOrder = 0,
+            sound = copyBase.nes.copy(instruments = copyBank))
+        File(directory, "vrc7-held-copies.nesimg")
+            .writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(copies, it) })
         // The NES + N163 demo for every channel count (wavetable-garden-<n>ch; each image plays on "nes-famistudio-n163-<n>").
         for (system in NesN163System.ALL) {
             val n163 = system.demo()

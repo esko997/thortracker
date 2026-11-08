@@ -1,5 +1,36 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.17.0 NES + Namco 163
+
+- **New blank song / Load demo → NES… → NES + N163…** offers all eight fixed channel counts. **Wavetable Garden** grows from six total lanes to thirteen; channel count changes the chip's update rate and the RAM available for waves.
+- N163 instruments have volume/arpeggio/pitch envelopes and sequences of 4-bit waves, with size, RAM position, repeats, loop and release. The editor shows the shared RAM map and warns about overlapping sounds. Wave sizes other than the driver's 16-sample tuning are explained rather than silently retuned.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV use the corresponding pinned FamiStudio 4.5.3 driver. The native chip preserves time-multiplexed DAC behavior, including the high-frequency whine at large channel counts.
+- Fixed VRC7 live edits of identical instrument copies: musical equivalence no longer aliases their runtime bank identities. Editing an unused original does not alter its held copy; held copies follow their own patch edits without restarting volume envelopes.
+- Fixed Mega Drive mute/unmute continuity: YM2612 feedback continues to evolve while muted instead of freezing inside the output calculation.
+- Fixed selected NES instrument labels being fitted with the regular font and then overflowing when drawn bold. Fitting now uses the actual face, including wave settings, tabs and sample details.
+
+Verified: 438 JVM core tests, 13 Linux core tests and six Android-host unit tests; native checks passed
+(Game Boy 145, NES 336, VRC6 105, VRC7 115, N163 225, SID 151, OPL3 282, Mega Drive 501, WAV 738).
+Independent FamiStudio exports cover N163 counts 1, 2, 4 and 8, comparing every frame's APU and N163 port writes.
+All eight counts have demo and shortest-song WAV checks. The previous player outputs and 31 existing golden files
+remain unchanged. The VRC7 held-copy regression failed on three wrong-patch assertions before the fix; the
+Mega Drive feedback regression differed on 1,531 post-unmute samples before its fix and now matches exactly.
+Unmuted NTSC/PAL Mega Drive reference WAVs remain byte-identical.
+
+A production-signed candidate passed the 18 existing Android instrumentation tests plus a temporary render
+capture on Nova. All 32 Game Boy views are pixel-identical to the same-device 0.14.1 baseline; the factory `.uge`
+is byte-identical. Reserved-handheld smoke tracks reported zero AudioFlinger underruns on Nova, DMG and Konkr.
+Nova exercised thirteen-channel scrolling, wave audition and live sample editing; its edited NSF and FamiStudio
+text exports through the document picker are byte-identical to desktop exports. Its edited no-fade WAV is
+non-silent 48 kHz, 16-bit stereo PCM, 1,226,779 frames. DMG exercised the one-channel variant and wave presets.
+Konkr exercised the eight-channel variant, shared-RAM overlap warnings and their clearing, and the corrected
+selected-label bounds at 960×720. External `/ThorTunez` songs were untouched.
+
+The actual desktop frontend played the eight-channel demo and exported the shortest valid one-row, one-tick
+N163 song without a fade: 798 non-silent frames. One- and eight-channel NSFs also produced PCM in independent
+libgme; this checks format/playback, not mix-level accuracy. These checks are not human listening or a comparison
+with a physical Namco 163 cartridge.
+
 ## 0.16.0 NES + Konami VRC7
 
 - **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.
@@ -16,6 +47,12 @@ The production-signed candidate passed the 18 existing Android instrumentation t
 Reserved-handheld checks exercised eleven-channel scrolling, custom/preset FM editors and audition controls. Nova's NSF and FamiStudio-text exports through Android's document picker are byte-identical to desktop exports; its no-fade WAV is non-silent 48 kHz, 16-bit stereo PCM, 1,226,779 frames. Temporary test APKs, captures and exports were removed; `/ThorTunez` was untouched.
 
 The actual desktop frontend played Lantern Point and exported the shortest valid one-row, one-tick FM song without a fade: 798 non-silent frames. The exported NSF also opened as eleven voices and produced PCM in independent libgme; this is a format/playback check, not mix-level validation. These checks are not human listening or comparison with a physical VRC7 cartridge.
+
+The published 0.16.0 APK and AppImage passed their checksum manifests; the APK has production certificate
+`d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`, version code 29. The official AppImage played
+Lantern Point (peak 0.19839096). The official APK was installed and cold-launch checked on Nova, DMG and Konkr;
+the Thor received only the APK in Downloads, and the Deck's stable `thor-tracker` symlink was updated without
+launching or changing Steam settings.
 
 ## 0.15.0 NES + Konami VRC6
 

@@ -136,6 +136,8 @@ int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity);
 /* (address low, address high, value) triples of every sound write (APU, VRC6 and N163 ports) since the last log
  * call, at most `capacity`. */
 int nm_write_log(NesMachine* m, uint8_t* triples, int capacity);
+/* The same, with the frame-relative CPU cycle each write happened at in `cycles` (the sound units' timebase). */
+int nm_write_log_timed(NesMachine* m, uint8_t* triples, uint32_t* cycles, int capacity);
 uint8_t nm_peek(NesMachine* m, uint16_t addr);
 void nm_poke(NesMachine* m, uint16_t addr, uint8_t value); /* RAM/PRG, for fault tests */
 /* Calls a routine with A, returning NM_OK or NM_ERR_FAULT (test hook). */

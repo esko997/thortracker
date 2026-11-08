@@ -10,19 +10,19 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
-Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive), with VRC6 in 0.15.0 and VRC7 in 0.16.0 extending the NES family.
+Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive), with VRC6 in 0.15.0, VRC7 in 0.16.0 and N163 in 0.17.0 extending the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
    Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
-3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0)
-   and VRC7 (six two-operator FM voices, 0.16.0) are implemented, with driver/native, desktop and reserved-handheld
-   checks recorded in `docs/VERIFICATION.md`. Next: N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
-   EPSM (YMF288/OPN3-L). Source-only worktrees do not count as verified releases.
-   N163: source on branch `nes-n163` as eight "NES + N163" variants (1-8 channels, grouped under
-   NES → NES + N163…), awaiting player generation, builds and device checks.
+3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0),
+   VRC7 (six two-operator FM voices, 0.16.0) and N163 (1-8 wavetable voices, 0.17.0) are implemented, with
+   driver/native, desktop and reserved-handheld checks recorded in `docs/VERIFICATION.md`.
+   N163's eight channel-count variants are grouped under NES → NES + N163….
+   Next: Sunsoft 5B (AY-style), FDS, MMC5, EPSM (YMF288/OPN3-L).
+   Source-only worktrees do not count as verified releases.
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
 5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
@@ -34,7 +34,7 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
    - Konami SCC — MSX wavetable cartridge (five channels).
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
-   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, noise, two LFOs.
+   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, FM 8 noise and a shared LFO.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.

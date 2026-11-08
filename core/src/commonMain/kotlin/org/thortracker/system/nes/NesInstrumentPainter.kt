@@ -193,8 +193,8 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                 Row.WAVE_PRESET -> setting(c, "Preset", N163Presets.presetOf(wave.waves, wave.size)?.let {
                     "${it.label}: FamiStudio's preset on ${if (wave.waves.size == 1) "the wave" else "all ${wave.waves.size} waves"}"
                 } ?: "Custom: drawn waves", rx, vx, y, h, sel, false)
-                Row.WAVE_SIZE -> setting(c, "Size", ink.fit(NesInstrumentView.sizeText(wave.size), rx + rw - vx), rx, vx, y, h, sel, false)
-                Row.WAVE_POSITION -> setting(c, "Position", ink.fit(NesInstrumentView.ramText(wave, maxOf(1, n163)), rx + rw - vx), rx, vx, y, h, sel, false)
+                Row.WAVE_SIZE -> setting(c, "Size", ink.fit(NesInstrumentView.sizeText(wave.size), rx + rw - vx, bold = sel), rx, vx, y, h, sel, false)
+                Row.WAVE_POSITION -> setting(c, "Position", ink.fit(NesInstrumentView.ramText(wave, maxOf(1, n163)), rx + rw - vx, bold = sel), rx, vx, y, h, sel, false)
                 Row.WAVE_INDEX -> setting(c, "Wave", "${shown + 1} of ${wave.waves.size}" +
                     if (N163Waves.full(wave)) "   (the most of ${wave.size} samples)" else "", rx, vx, y, h, sel, false)
                 Row.WAVE_REPEAT -> wave.repeat.getOrElse(shown) { 1 }.let { n ->
@@ -283,7 +283,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                 else -> k?.label ?: "DPCM"
             }
             val label = if (size == 0) name else "$name ($size)"
-            ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
+            ink.label(c, ink.fit(label, w - ink.unit * 0.4f, bold = on), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
             tabs += t to page
         }
     }
@@ -489,7 +489,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
             if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
             ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small), vx, y, lineH,
+            ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small, bold = sel), vx, y, lineH,
                 if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
             if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
         }
