@@ -2,6 +2,7 @@ package org.thortracker.backend
 
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
+import org.thortracker.system.nes.DpcmSample
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
@@ -37,13 +38,16 @@ internal class FsNote {
     var noteDelay = -1
     var cutDelay = -1
 
+    /** DPCM `Zxx`: DMC output level 0..127, -1 = none. */
+    var deltaCounter = -1
+
     val isMusical get() = value in 1..96
     val isValid get() = value != INVALID
     val hasVolume get() = volume >= 0
 
     /** Any attribute that keeps FamiStudio's exporter from folding the row into an empty run. */
     val hasRunBreakingEffect
-        get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0
+        get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0
 
     val isEmpty get() = !isValid && !hasRunBreakingEffect && speed < 0
 
@@ -73,6 +77,7 @@ internal class FsSong(
     /** `notes[channel][absoluteRow]`, null = empty. */
     val notes: Array<Array<FsNote?>>,
     val instruments: List<NesInstrument>,
+    val samples: List<DpcmSample>,
 ) {
     val orderStart = IntArray(lengths.size + 1).also { for (i in lengths.indices) it[i + 1] = it[i] + lengths[i] }
     val totalRows get() = orderStart[lengths.size]
@@ -134,7 +139,7 @@ internal class FsSong(
                 notes[0][0] = (notes[0][0] ?: FsNote()).also { it.speed = song.ticksPerRow }
             }
             return FsSong(song.title, song.artist, song.ticksPerRow, song.loopOrder, lengths,
-                IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments)
+                IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples)
         }
 
         private fun convert(cell: Cell, ch: Int, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int): FsNote? {
@@ -174,6 +179,7 @@ internal class FsSong(
                 NesRules.FX_SLIDE_DOWN -> n.slideTarget = n.value - p
                 NesRules.FX_NOTE_CUT -> n.cutDelay = p
                 NesRules.FX_DUTY -> n.duty = p
+                NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
             }
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.
             if (ch == NesRules.NOISE) n.finePitch = FsNote.NO_FINE

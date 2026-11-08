@@ -21,6 +21,9 @@ class DeckAudio : TrackerAudio {
     private var system: SoundSystem? = null   // whose engine the glue has open
     private var image = ByteArray(0)
     private var hasImage = false
+
+    /** The song the engine's current image was lowered from (audition note numbers depend on it, e.g. NES DPCM). */
+    private var imageSong: Song? = null
     private var auditionTicks = 0
     private var songError: String? = null
     private var commandError: String? = null
@@ -36,7 +39,7 @@ class DeckAudio : TrackerAudio {
         songError = try {
             engine.lower(song, image)
             val result = image.usePinned { da_set_image(it.addressOf(0).reinterpret(), image.size) }
-            if (result == 0) { hasImage = true; null }
+            if (result == 0) { hasImage = true; imageSong = song; null }
             else "Playing the last playable version, not your latest edits: the player rejected the song data (error $result)"
         } catch (e: IllegalArgumentException) {
             "Playing the last playable version, not your latest edits: ${e.message?.lineSequence()?.firstOrNull()}"
@@ -53,8 +56,9 @@ class DeckAudio : TrackerAudio {
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
         auditions++
         val engine = ready() ?: return
-        engine.auditionProblem(channel, note, instrument, detune)?.let { commandError = it; return }
-        commandError = failure(da_audition(channel, engine.note(note), instrument, engine.fine(note, detune), auditionTicks), "audition")
+        val song = imageSong ?: run { commandError = songError ?: "No playable song loaded"; return }
+        engine.auditionProblem(song, channel, note, instrument, detune)?.let { commandError = it; return }
+        commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(note, detune), auditionTicks), "audition")
     }
 
     override fun releaseAudition() { commandError = null; if (system != null) da_release_audition() }
@@ -68,6 +72,7 @@ class DeckAudio : TrackerAudio {
         da_close()
         system = null
         hasImage = false
+        imageSong = null
         val result = da_open(next.engine.id)
         if (result != 0) {
             da_close()

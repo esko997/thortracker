@@ -174,7 +174,7 @@ object GbSystem : SoundSystem {
 
         override fun lower(song: Song, out: ByteArray) = HugeImageLayout.build(HugeLowering.lower(song), out)
 
-        override fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
+        override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..HugeRules.INSTRUMENT_SLOTS -> "Choose an instrument (01-0F) to audition"
             note !in noteRange || channel !in channels.indices -> "Cannot audition note ${noteName(note)} on channel $channel"
             fine !in 0..Detune.max -> "Cannot audition detune $fine (00-0F)"
@@ -182,7 +182,7 @@ object GbSystem : SoundSystem {
         }
 
         /** hUGEDriver numbers notes from C-3. */
-        override fun note(note: Int): Int = note - HugeRules.NOTE_OFFSET
+        override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int = note - HugeRules.NOTE_OFFSET
 
         /** The audition plays 40y itself: the detune passes unchanged. */
         override fun fine(note: Int, fine: Int): Int = fine

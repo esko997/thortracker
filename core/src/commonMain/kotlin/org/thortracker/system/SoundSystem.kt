@@ -146,12 +146,15 @@ interface PlaybackEngine {
 
     /**
      * Why the engine cannot sound absolute [note] (scientific pitch, 0 = C0) with sound [instrument] on [channel] at the
-     * system's fine pitch [fine] ([FinePitch]), or null when it can.
+     * system's fine pitch [fine] ([FinePitch]) in the image lowered from [song], or null when it can.
      */
-    fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String?
+    fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String?
 
-    /** The engine's note number for absolute [note] (Game Boy: hUGEDriver's 0..71 from C-3). */
-    fun note(note: Int): Int
+    /**
+     * The engine's note number for absolute [note] with [instrument] on [channel] in the image lowered from [song]
+     * (Game Boy: hUGEDriver's 0..71 from C-3; NES DPCM: the sample list entry the instrument maps the note to).
+     */
+    fun note(song: Song, channel: Int, note: Int, instrument: Int): Int
 
     /** The engine's fine-pitch argument for the system's fine value [fine] on [note] (Game Boy: the 40y detune). */
     fun fine(note: Int, fine: Int): Int

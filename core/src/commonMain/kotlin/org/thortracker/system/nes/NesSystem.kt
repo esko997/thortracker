@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.backend.FamiStudioText
+import org.thortracker.backend.NesDpcm
 import org.thortracker.backend.FsSong
 import org.thortracker.backend.NesImageLayout
 import org.thortracker.backend.NsfExporter
@@ -93,7 +94,7 @@ object NesSystem : SoundSystem {
             else {
                 val rows = (tracks.firstOrNull() as? JsonArray)?.size ?: 0
                 val blank = JsonArray(listOf(JsonPrimitive(Cell.EMPTY), JsonPrimitive(0), JsonPrimitive(0), JsonPrimitive(0)))
-                JsonObject(p + ("tracks" to JsonArray(tracks + JsonArray(List(rows) { blank }))))
+                JsonObject(p + ("tracks" to JsonArray(tracks + listOf(JsonArray(List(rows) { blank })))))
             }
         })))
     }
@@ -164,7 +165,8 @@ object NesSystem : SoundSystem {
 
     /**
      * FamiStudio 4.5.3 on a 6502 + 2A03 (native `"nes-famistudio"`, app/src/main/cpp/nes): the song lowered as for
-     * `.nsf` export ([FamiStudioLowering]) in the engine's image ([NesImageLayout]).
+     * `.nsf` export ([FamiStudioLowering]) in the engine's image ([NesImageLayout]), plus every DPCM mapping the song does
+     * not play that still fits, so the editor can audition it.
      */
     private object Engine : PlaybackEngine {
         override val id = "nes-famistudio"
@@ -173,19 +175,27 @@ object NesSystem : SoundSystem {
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
 
-        override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song), out)
+        override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
 
-        override fun auditionProblem(channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
+        override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..SLOTS -> "Choose an instrument (01-${NumberText.hex(SLOTS, 2)}) to audition"
             channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
             NesRules.pitched(channel) && note < NesRules.LOWEST_TONAL ->
                 "${channels[channel].name} cannot play below A-1"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
+            channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
+                ?: if (dpcmEntry(song, note, instrument) == null) {
+                    "Sample memory or the sample list is full: ${noteName(note)} of instrument ${NesRules.hex2(instrument)} cannot be auditioned"
+                } else null
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1. */
-        override fun note(note: Int): Int = NesRules.fsNote(note)
+        /** FamiStudio's note numbers: 1 = C-1; on DPCM the sample list entry (1..63). */
+        override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
+
+        private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
+            NesDpcm.layout(FsSong.of(song), withUnplayed = true).index[instrument to note]
 
         /** The engine's fine pitch adds to the period, so raising the pitch is negative. */
         override fun fine(note: Int, fine: Int): Int = -fine
