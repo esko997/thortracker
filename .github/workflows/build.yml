@@ -82,11 +82,12 @@ jobs:
         id: version
         shell: bash
         run: echo "version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
-      # SDL3 rebuilds only when its build script (which pins the version) changes, so a GitHub download outage
-      # cannot block a release once the build is cached.
+      # SDL3 and appimagetool come from GitHub release downloads. Each is cached as soon as it exists (restore and
+      # save are separate steps, so a later failure still keeps it), and rebuilt only when its pinning script
+      # changes: a GitHub download outage then cannot block a release.
       - name: Cached SDL3
         id: sdl3
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: deck/deps
           key: sdl3-${{ runner.os }}-${{ hashFiles('deck/tools/build-sdl3.sh') }}
@@ -101,6 +102,18 @@ jobs:
       - name: Build SDL3 from source
         if: steps.sdl3.outputs.cache-hit != 'true'
         run: deck/tools/build-sdl3.sh
+      - name: Keep the SDL3 build
+        if: steps.sdl3.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deck/deps
+          key: ${{ steps.sdl3.outputs.cache-primary-key }}
+      - name: Cached appimagetool
+        id: appimagetool
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deck/build/appimagetool-*.AppImage
+          key: appimagetool-${{ runner.os }}-${{ hashFiles('deck/tools/package-appimage.sh') }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with: { distribution: temurin, java-version: '17' }
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -111,6 +124,12 @@ jobs:
         run: ./gradlew --no-daemon --console=plain :deck:linkReleaseExecutableLinuxX64
       - name: AppImage
         run: deck/tools/package-appimage.sh "${{ steps.version.outputs.version }}"
+      - name: Keep appimagetool
+        if: steps.appimagetool.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deck/build/appimagetool-*.AppImage
+          key: ${{ steps.appimagetool.outputs.cache-primary-key }}
       - name: The AppImage starts, draws and opens the menu (offscreen video, no audio device)
         shell: bash
         run: |
