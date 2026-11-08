@@ -298,6 +298,12 @@ interface SoundSystem {
 
     /** What [note] plays with [instrument] on a channel with [mappedNotes] (its sample), or null when nothing. */
     fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? = null
+
+    /**
+     * Rows the note at [row] of pattern [pattern] on [channel] sounds for when it ends by itself (a one-shot sample),
+     * counting its own row; null when it sounds until the next note or OFF. The Pattern view's sustain rails use it.
+     */
+    fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? = null
 }
 
 /** The systems this build knows, by id. */

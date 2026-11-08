@@ -114,3 +114,39 @@ fun dpcmDetail(m: DpcmMapping): String = buildString {
     if (m.loop) append(" · loop")
     if (m.dmcInitial >= 0) append(" · level ").append(m.dmcInitial * 2)
 }
+
+/** Engine frames (ticks) a one-shot sample of [bytes] sounds at DMC rate [pitch]: 8 bits per byte, rounded up. */
+fun dpcmTicks(bytes: Int, pitch: Int): Int = kotlin.math.ceil(bytes * 8.0 / Dpcm.RATES_HZ[pitch] * NesSystem.tickHz).toInt()
+
+/**
+ * Rows a one-shot DPCM note at [row] of pattern [pattern] sounds for, counting its own row: its sample's ticks
+ * ([dpcmTicks]) over the rows' speeds, which start at the song's ticks per row and follow `Fxx` on any channel from
+ * the pattern's first row (earlier orders' speed changes are not followed). Null for a looping mapping, a note
+ * without a mapped sample, or a note past the pattern's rows, which sound until the next note or OFF.
+ */
+fun dpcmSoundingRows(song: Song, pattern: Int, row: Int): Int? {
+    val p = song.patterns.getOrNull(pattern) ?: return null
+    val track = p.tracks.getOrNull(NesRules.DPCM) ?: return null
+    val cell = track.getOrNull(row)?.takeIf { it.note >= 0 } ?: return null
+    // A note without a sound number keeps the instrument of the channel's previous note.
+    val slot = if (cell.instrument > 0) cell.instrument else (row - 1 downTo 0).firstNotNullOfOrNull { r -> track[r].instrument.takeIf { it > 0 } } ?: return null
+    val m = song.dpcmMapping(slot, cell.note)?.takeIf { !it.loop } ?: return null
+    val sample = song.nes.samples.getOrNull(m.sample) ?: return null
+    fun speedAfter(r: Int, speed: Int): Int {
+        var s = speed
+        for (t in p.tracks) t[r].let { if (it.effect == NesRules.FX_SPEED && it.param in NesRules.SPEEDS) s = it.param }
+        return s
+    }
+    var speed = song.ticksPerRow
+    for (r in 0 until row) speed = speedAfter(r, speed)
+    var left = dpcmTicks(sample.data.size, m.pitch)
+    var rows = 0
+    var r = row
+    while (left > 0 && r < p.length) {
+        speed = speedAfter(r, speed)
+        left -= speed
+        rows++
+        r++
+    }
+    return if (left > 0) null else rows
+}

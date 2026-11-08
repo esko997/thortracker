@@ -157,6 +157,10 @@ object NesSystem : SoundSystem {
     private var mappedFor: NesInstrument? = null
     private var mappedKeys: List<Int> = emptyList()
 
+    /** A one-shot DPCM sample ends by itself ([dpcmSoundingRows]); every other note sounds until the next note or OFF. */
+    override fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? =
+        if (channel == NesRules.DPCM) dpcmSoundingRows(song, pattern, row) else null
+
     override fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? {
         if (channel != NesRules.DPCM) return null
         val m = song.dpcmMapping(instrument, note) ?: return null

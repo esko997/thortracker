@@ -185,13 +185,15 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val x = gridLeft + ch * laneW + cw * 0.7f
             val col = Palette.channel(ch)
             val track = p.tracks[ch]
-            var sounding = false
-            for (r in 0 until first) sounding = nextSounding(sounding, track[r])
+            // Rows still sounding after the current one: a note sounds until the next note or OFF, unless the system
+            // says it ends by itself (a one-shot sample).
+            var left = 0
+            for (r in 0 until first) left = nextSounding(left, track[r], pattern, ch, r)
             for (r in first..last) {
                 val cell = track[r]
                 val y = gridTop + (r - first) * rowH
-                val wasSounding = sounding
-                sounding = nextSounding(sounding, cell)
+                val wasSounding = left > 0
+                left = nextSounding(left, cell, pattern, ch, r)
                 val (top, bottom) = when {
                     cell.note >= 0 -> y + rowH * 0.5f to y + rowH
                     cell.note == Cell.CUT && wasSounding -> y to y + rowH * 0.5f
@@ -226,10 +228,12 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         scalePanel = if (st.scalePanel) drawScalePanel(c, area) else null
     }
 
-    private fun nextSounding(sounding: Boolean, cell: Cell): Boolean = when {
-        cell.note >= 0 -> true
-        cell.note == Cell.CUT -> false
-        else -> sounding
+    /** Rows still sounding after row [r] holding [cell], given [left] after the row before. */
+    private fun nextSounding(left: Int, cell: Cell, pattern: Int, ch: Int, r: Int): Int = when {
+        cell.note >= 0 -> song.system.soundingRows(song, pattern, ch, r)?.let { it - 1 } ?: Int.MAX_VALUE
+        cell.note == Cell.CUT -> 0
+        left > 0 -> left - 1
+        else -> 0
     }
 
     /** Notices an edit of the shown pattern (here, on the other display, or undo) and lights what changed. */
