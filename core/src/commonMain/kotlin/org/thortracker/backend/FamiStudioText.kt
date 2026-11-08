@@ -2,19 +2,23 @@ package org.thortracker.backend
 
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
-import org.thortracker.system.nes.NesSound
+import org.thortracker.system.nes.DpcmSample
 import org.thortracker.system.nes.NesEnvelope
+import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.NesSound
 
 /**
  * FamiStudio 4.5 text export (`FamistudioTextFile`): a FamiTracker-tempo project FamiStudio 4.5.3 opens (File →
  * Import, or `FamiStudio song.txt <command>` on its command line), from which it exports ca65/asm6/NESASM data for
- * games. It describes the same [FsSong] the preview lowers: instruments (named "slot name"), one arpeggio per `0xy`
- * used, and per channel one FamiStudio pattern per distinct order content (FamiStudio keeps note durations and
- * releases inside patterns, so an order whose notes end or release differently gets its own copy).
+ * games. It describes the same [FsSong] the preview lowers: DPCM samples (one per distinct data, the ones the song
+ * plays first and in [NesDpcm]'s order, so FamiStudio packs them at the same addresses), instruments (named "slot
+ * name", with their DPCM mappings), one arpeggio per `0xy` used, and per channel one FamiStudio pattern per distinct
+ * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
+ * differently gets its own copy).
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
-    private val CHANNEL_TYPES = listOf("Square1", "Square2", "Triangle", "Noise")
+    private val CHANNEL_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM")
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
 
@@ -34,9 +38,25 @@ object FamiStudioText {
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else ""))
         val names = instrumentNames(fs)
+        val samples = sampleNames(fs, names.keys)
+        for ((data, name) in samples) {
+            val first = fs.samples.first { it.data == data }
+            line(1, "DPCMSample" + attr("Name", name) +
+                (if (first.dmcInitial != DpcmSample.DEFAULT_DMC_INITIAL) attr("DmcInitialValue", first.dmcInitial) else "") +
+                attr("Data", data.joinToString("") { NumberText.hex(it, 2).lowercase() }))
+        }
         for ((slot, name) in names) {
             val ins = fs.instruments[slot - 1]
             line(1, "Instrument" + attr("Name", name))
+            for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
+                val sample = fs.samples.getOrNull(m.sample) ?: continue
+                val shared = samples.getValue(sample.data)
+                val sampleDefault = fs.samples.first { it.data == sample.data }.dmcInitial
+                val initial = if (m.dmcInitial >= 0) m.dmcInitial else sample.dmcInitial
+                line(2, "DPCMMapping" + attr("Note", noteName(note - NesRules.NOTE_OFFSET)) + attr("Sample", shared) +
+                    attr("Pitch", m.pitch) + attr("Loop", if (m.loop) "True" else "False") + attr("Bank", 0) +
+                    (if (initial != sampleDefault || m.dmcInitial >= 0) attr("DmcInitialValue", initial) else ""))
+            }
             envelope(::line, "Volume", ins.volume, 15, false)
             envelope(::line, "Arpeggio", ins.arpeggio, 0, false)
             envelope(::line, "Pitch", ins.pitch, 0, ins.pitchRelative)
@@ -96,6 +116,27 @@ object FamiStudioText {
     }
 
     /**
+     * FamiStudio sample names (unique, as its import looks samples up by name) by sample data: one sample per distinct
+     * data that [slots]' mappings reference, those the song plays first in [NesDpcm]'s placement order.
+     */
+    private fun sampleNames(fs: FsSong, slots: Set<Int>): Map<List<Int>, String> {
+        val layout = NesDpcm.layout(fs, withUnplayed = false)
+        val referenced = slots.flatMap { fs.instruments[it - 1].dpcm.values.map { m -> m.sample } }.filter { it in fs.samples.indices }.sorted()
+        val names = LinkedHashMap<List<Int>, String>()
+        val taken = HashSet<String>()
+        for (s in layout.placed + referenced) {
+            val data = fs.samples[s].data
+            if (data in names) continue
+            val base = fs.samples[s].name.ifBlank { "Sample" }
+            var name = base
+            var n = 2
+            while (!taken.add(name)) name = "$base ${n++}"
+            names[data] = name
+        }
+        return names
+    }
+
+    /**
      * The first order of each distinct FamiStudio pattern the export gives channel [c] (FamiStudio's exporter counts
      * effects per pattern, not per order, e.g. to pick its speed channel).
      */
@@ -133,6 +174,7 @@ object FamiStudioText {
                 if (n.duty >= 0) s.append(attr("DutyCycle", n.duty))
                 if (n.noteDelay >= 0) s.append(attr("NoteDelay", n.noteDelay))
                 if (n.cutDelay >= 0) s.append(attr("CutDelay", n.cutDelay))
+                if (n.deltaCounter >= 0) s.append(attr("DeltaCounter", n.deltaCounter))
             }
             lines += s.toString()
         }

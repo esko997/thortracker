@@ -231,7 +231,7 @@ class EditorSession(initial: Song) {
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         val system = song.system
         if (note !in system.noteRange || detune !in 0..system.fine.max) return
-        system.engine.auditionProblem(channel, note, instrument, detune)?.let { return note(it) }
+        system.engine.auditionProblem(song, channel, note, instrument, detune)?.let { return note(it) }
         onAudition?.invoke(channel, note, instrument, detune)
     }
 
@@ -378,7 +378,7 @@ class EditorSession(initial: Song) {
     fun auditionSequence(channel: Int, steps: List<Int?>, instrument: Int, stepMillis: Long = 180) {
         val system = song.system
         if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in system.noteRange }) return
-        steps.firstNotNullOfOrNull { it?.let { n -> system.engine.auditionProblem(channel, n, instrument, 0) } }?.let { return note(it) }
+        steps.firstNotNullOfOrNull { it?.let { n -> system.engine.auditionProblem(song, channel, n, instrument, 0) } }?.let { return note(it) }
         onAuditionSequence?.invoke(channel, steps, instrument, stepMillis)
     }
 
