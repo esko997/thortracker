@@ -148,7 +148,8 @@ class NesLoweringTest {
                     0x4e -> { assertTrue(channel != NesRules.NOISE); p++ }
                     0x4f -> {
                         assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW)
-                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(channel))
+                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(
+                            if (channel >= NesRules.APU_CHANNELS) org.thortracker.system.nes.NesExpansion.VRC6 else org.thortracker.system.nes.NesExpansion.NONE, channel))
                     }
                     0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
                     0x51 -> p += 2
@@ -196,7 +197,7 @@ class NesLoweringTest {
         assertEquals("nes-famistudio", e.id)
         assertEquals(NesPlayerImage.IMAGE_SIZE, e.imageSize)
         assertEquals(46, e.note(song, 0, 57, 1)) // A-4 = FamiStudio note 46, 440 Hz on the pulses
-        assertEquals(-5, e.fine(57, 5))
+        assertEquals(-5, e.fine(0, 57, 5))
         assertEquals(null, e.auditionProblem(song, 0, 57, 1, 0))
         assertTrue(e.auditionProblem(song, 0, 57, 0, 0)!!.contains("instrument"))
         assertTrue(e.auditionProblem(song, 2, 20, 1, 0)!!.contains("A-1"))

@@ -20,7 +20,8 @@ import org.thortracker.ui.Surface
  * with an expansion chip the sound's chip (and a VRC6 sound's saw volume), the channel Listen plays on, page tabs,
  * and on an envelope page the shown envelope's length / loop / release / pitch mode, what each channel does with it,
  * and its steps as bars with the loop region and release point; on the DPCM page the shown key's mapping, the
- * sound's mapped keys and the song's samples with the selected one's waveform.
+ * sound's mapped keys and the song's samples with the selected one's waveform; on a VRC7 sound's FM page the patch,
+ * the sustain overrides and the patch's fields for the modulator and the carrier.
  */
 internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private companion object {
@@ -88,9 +89,10 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val vx = rx + ink.unit * 6.5f
         var y = top + ink.unit * 0.3f
         val dpcm = NesInstrumentView.dpcmPage(st)
+        val fm = NesInstrumentView.fmPage(s, st)
         val mapping = if (dpcm) ins.dpcm[st.dpcmKey] else null
         for (r in NesInstrumentView.rows(st, s)) {
-            if (r == Row.SLOT || r == Row.STEPS || r in BOX_ROWS) continue
+            if (r == Row.SLOT || r == Row.STEPS || r in BOX_ROWS || r in NesInstrumentView.FM_PARAMS) continue
             val sel = r == row
             val h = if (r == Row.ENVELOPE) ink.unit * 1.9f else rowH
             if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
@@ -109,14 +111,25 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                 Row.CHIP -> setting(c, "Chip", when (ins.chip) {
                     NesChip.APU -> "2A03: Pulse 1/2, Triangle, Noise, DPCM"
                     NesChip.VRC6 -> "VRC6: VRC6 Pulse 1/2 and Saw"
+                    NesChip.VRC7 -> "VRC7: FM 1-6"
                 }, rx, vx, y, h, sel, false)
+                Row.PATCH -> setting(c, "Patch", when (ins.fm.preset) {
+                    Vrc7Presets.CUSTOM -> "Custom: the chip's one programmable patch (shared by all FM channels)"
+                    else -> "${Vrc7Presets.NAMES.getOrElse(ins.fm.preset) { "?" }}: built-in (${ins.fm.preset} of 15); edit a field to make it Custom"
+                }, rx, vx, y, h, sel, false)
+                Row.SUSTAIN_RELEASE -> setting(c, "Release", if (ins.fm.sustainRelease) "sustain: OFF fades slowly (rate 5)" else "the patch's release after OFF",
+                    rx, vx, y, h, sel, !ins.fm.sustainRelease)
+                Row.SUSTAIN_STOP -> setting(c, "Stop", if (ins.fm.sustainStop) "sustain: a stop or cut fades slowly (rate 5)" else "a stop or cut ends with the patch's release",
+                    rx, vx, y, h, sel, !ins.fm.sustainStop)
                 Row.SAW -> setting(c, "Saw volume", "${ins.sawVolume.label}: ${NesInstrumentView.sawText(ins.sawVolume)}", rx, vx, y, h, sel,
                     ins.sawVolume == Vrc6SawVolume.HALF)
                 Row.LISTEN -> {
                     ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
                     val name = listen?.name ?: ""
                     ink.label(c, name, vx, y, h, col, true)
-                    val note = listen?.let { NesInstrumentView.channelNote(kind, it.kind, ins.chip, ins.sawVolume, NesRules.chip(st.listenChannel)) }
+                    val note = if (fm) null else listen?.let {
+                        NesInstrumentView.channelNote(kind, it.kind, ins.chip, ins.sawVolume, NesRules.chip(s.nes.expansion, st.listenChannel))
+                    }
                     if (note != null) {
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
                         ink.label(c, ink.fit(note, rx + rw - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
@@ -166,6 +179,11 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             if (area.bottom - boxTop > ink.unit * 6f) drawDpcm(c, Rect(rx, boxTop, rx + rw, area.bottom - ink.unit * 0.4f), ins, row, col)
             return
         }
+        if (fm) {
+            plot.hide()
+            drawFm(c, Rect(rx, y + ink.unit * 0.3f, rx + rw, area.bottom - ink.unit * 0.4f), ins.fm, row, col)
+            return
+        }
         val small = ink.unit * 0.8f
         ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind, ins.chip), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
         y += rowH * 0.85f
@@ -208,12 +226,81 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             }
             if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
             ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
-            val size = k?.of(ins)?.values?.size ?: ins.dpcm.size
-            val name = k?.label ?: "DPCM"
+            val fmTab = k == NesEnvelopeKind.DUTY && ins.chip == NesChip.VRC7
+            val size = if (fmTab) 0 else k?.of(ins)?.values?.size ?: ins.dpcm.size
+            val name = when {
+                fmTab -> "FM patch"
+                else -> k?.label ?: "DPCM"
+            }
             val label = if (size == 0) name else "$name ($size)"
             ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
             tabs += t to page
         }
+    }
+
+    // ---- FM page: the patch's register fields, modulator and carrier side by side ---------------------------------
+
+    private var fmScroll = 0
+    private var fmRect = Rect()
+    private var fmRowH = 0f
+    private var fmColX = FloatArray(3)
+    private var fmRows: List<Row> = emptyList()
+
+    /**
+     * One line per patch field: its name, the modulator's and the carrier's value (modulator-only fields: one value),
+     * the cursor on the selected field and operator, scrolled to keep it in view; a built-in patch shows its ROM values
+     * greyed (editing one makes the sound Custom).
+     */
+    private fun drawFm(c: Surface, r: Rect, patch: Vrc7Patch, row: Row, col: Int) {
+        val small = ink.unit * 0.85f
+        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        val titleH = ink.unit * 1.3f
+        val custom = patch.preset == Vrc7Presets.CUSTOM
+        val regs = patch.sounding
+        fmColX = floatArrayOf(r.left + ink.unit * 0.5f, r.left + r.width() * 0.45f, r.left + r.width() * 0.72f)
+        ink.label(c, ink.fit(if (custom) "Custom patch" else "${Vrc7Presets.NAMES[patch.preset]} (built-in)", fmColX[1] - fmColX[0], small),
+            fmColX[0], r.top, titleH, Palette.DIM, size = small)
+        ink.label(c, "Modulator", fmColX[1], r.top, titleH, Palette.DIM, size = small)
+        ink.label(c, "Carrier", fmColX[2], r.top, titleH, Palette.DIM, size = small)
+        fmRowH = ink.unit * 1.15f
+        fmRect = Rect(r.left, r.top + titleH, r.right, r.bottom)
+        fmRows = NesInstrumentView.FM_ROWS.filter { it in NesInstrumentView.FM_PARAMS }
+        val visible = maxOf(1, (fmRect.height() / fmRowH).toInt())
+        val selected = fmRows.indexOf(row)
+        if (selected >= 0) fmScroll = fmScroll.coerceIn(maxOf(0, selected - visible + 1), selected)
+        fmScroll = fmScroll.coerceIn(0, maxOf(0, fmRows.size - visible))
+        for (i in fmScroll until minOf(fmRows.size, fmScroll + visible)) {
+            val rr = fmRows[i]
+            val param = NesInstrumentView.FM_PARAMS.getValue(rr)
+            val y = fmRect.top + (i - fmScroll) * fmRowH
+            val on = rr == row
+            if (on) ink.rect(c, r.left, y, r.right, y + fmRowH, Palette.CURSOR_FILL)
+            ink.label(c, param.label, fmColX[0], y, fmRowH, if (on) Palette.TEXT else Palette.DIM, size = small)
+            for (op in 0..1) {
+                if (param.modulatorOnly && op == 1) continue
+                val text = NesInstrumentView.fmValueText(param, param.get(regs, op))
+                val cell = op == NesInstrumentView.fmOperator(st, param)
+                ink.label(c, text, fmColX[1 + op], y, fmRowH, when {
+                    !custom -> Palette.FAINT
+                    on && cell -> col
+                    else -> Palette.TEXT
+                }, on && cell, small)
+                if (on && cell) {
+                    val w = maxOf(ink.labelWidth(text, small, true), ink.unit * 1.5f)
+                    ink.outline(c, Rect(fmColX[1 + op] - ink.dp(4f), y + 1, fmColX[1 + op] + w + ink.dp(4f), y + fmRowH - 1), cursorColor(),
+                        ink.dp(2f), ink.dp(3f))
+                }
+            }
+        }
+    }
+
+    /** Taps on an FM field select it and its operator column. Null: not on the grid. */
+    private fun fmDown(x: Float, y: Float): Boolean? {
+        if (!NesInstrumentView.fmPage(song, st) || !fmRect.contains(x, y) || fmRowH <= 0f) return null
+        val row = fmRows.getOrNull(fmScroll + ((y - fmRect.top) / fmRowH).toInt()) ?: return true
+        st.instField = NesInstrumentView.rows(st, song).indexOf(row)
+        st.programField = if (x >= fmColX[2]) 1 else 0
+        return true
     }
 
     /**
@@ -405,6 +492,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     override fun down(x: Float, y: Float): Boolean {
         if (NesInstrumentView.dpcmPage(st)) dpcmDown(x, y)?.let { return it }
+        fmDown(x, y)?.let { return it }
         tabs.firstOrNull { it.first.contains(x, y) }?.let { (_, k) ->
             NesInstrumentView.showEnvelope(ctl, k)
             return true

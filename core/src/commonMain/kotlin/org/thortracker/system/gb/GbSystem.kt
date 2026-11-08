@@ -185,7 +185,7 @@ object GbSystem : SoundSystem {
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int = note - HugeRules.NOTE_OFFSET
 
         /** The audition plays 40y itself: the detune passes unchanged. */
-        override fun fine(note: Int, fine: Int): Int = fine
+        override fun fine(channel: Int, note: Int, fine: Int): Int = fine
     }
 
     /**

@@ -199,7 +199,7 @@ class Opl3ModelTest {
         for (c in 0 until 4) full = full.withEffect(c, Opl3Rules.FX_VOLUME, 0x30)
         assertNull(fine.write(full, 57, 8))
         assertNull(fine.of(Cell(57, 1, Opl3Rules.FX_FINE, 0x70))) // a downward bend is not a tuning
-        assertEquals(16, Opl3System.engine.fine(57, 16))
+        assertEquals(16, Opl3System.engine.fine(0, 57, 16))
     }
 
     // ---- validation --------------------------------------------------------------------------------------

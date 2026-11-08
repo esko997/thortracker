@@ -3,6 +3,7 @@ package org.thortracker.system.nes
 import org.thortracker.backend.FamiStudioEnvelopes
 import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import org.thortracker.backend.FamiStudioLowering
+import org.thortracker.backend.FsNote
 import org.thortracker.backend.FsSong
 import org.thortracker.backend.NesDpcm
 import org.thortracker.model.Song
@@ -42,11 +43,11 @@ object NesValidator {
             }
             pattern.tracks.forEachIndexed { ch, track ->
                 if (track.size != Songs.ROWS) {
-                    out += "$label, ${NesRules.CHANNEL_NAMES[ch]} has ${track.size} rows; patterns have ${Songs.ROWS}"
+                    out += "$label, ${NesRules.channelName(expansion, ch)} has ${track.size} rows; patterns have ${Songs.ROWS}"
                     return@forEachIndexed
                 }
                 track.forEachIndexed { row, cell ->
-                    NesRules.cellRangeProblem(cell)?.let { out += "$label, ${NesRules.CHANNEL_NAMES[ch]} row $row: $it" }
+                    NesRules.cellRangeProblem(cell)?.let { out += "$label, ${NesRules.channelName(expansion, ch)} row $row: $it" }
                 }
             }
         }
@@ -61,7 +62,14 @@ object NesValidator {
             val where = "Instrument ${NesRules.hex2(i + 1)}"
             if (ins.chip !in expansion.chips) out += "$where is a ${ins.chip.label} sound; this song has no ${ins.chip.label} chip"
             if (ins.chip != NesChip.VRC6 && ins.sawVolume != Vrc6SawVolume.HALF) out += "$where: only VRC6 sounds have a saw volume"
+            if (ins.chip != NesChip.VRC7 && ins.fm != Vrc7Patch.DEFAULT) out += "$where: only VRC7 sounds have an FM patch"
             if (ins.chip != NesChip.APU && ins.dpcm.isNotEmpty()) out += "$where: only 2A03 sounds map DPCM samples"
+            if (ins.chip == NesChip.VRC7) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: VRC7 sounds have no duty envelope; clear it"
+                if (ins.fm.preset !in 0..Vrc7Presets.PRESETS.last) out += "$where: VRC7 patch ${ins.fm.preset} is outside 0-15 (0 = custom)"
+                if (ins.fm.regs.size != Vrc7Patch.REGS) out += "$where: the VRC7 custom patch has ${ins.fm.regs.size} registers; it has ${Vrc7Patch.REGS}"
+                ins.fm.regs.firstOrNull { it !in 0..255 }?.let { out += "$where: VRC7 patch register value $it is outside 0-255" }
+            }
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
@@ -129,7 +137,7 @@ object NesValidator {
             val label = Songs.patternLabel(song, p).cap()
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
-                    NesRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${NesRules.CHANNEL_NAMES[ch]} row $row: $it" }
+                    NesRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${NesRules.channelName(song.nes.expansion, ch)} row $row: $it" }
                 }
             }
         }
@@ -213,7 +221,7 @@ object NesValidator {
             pattern.tracks.forEachIndexed { ch, track ->
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
-                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row"
+                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row"
                     val fx = NesRules.effectText(cell.effect, cell.param)
                     if (cell.effect == NesRules.FX_NOTE_DELAY && cell.param in 1..NesRules.DELAY_MAX && cell.param >= speed) {
                         out += "$where: $fx delays by ${cell.param} frames, but rows last $speed frames at the song speed, so it lands in a later row"
@@ -228,6 +236,7 @@ object NesValidator {
             }
         }
         firstNotesWithoutInstrument(song).forEach { out += it }
+        if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
         }
@@ -249,7 +258,7 @@ object NesValidator {
                     val cell = pattern.tracks[ch][row]
                     if (cell.note < 0) continue
                     if (cell.instrument == 0) {
-                        out += "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row: ${NesSystem.noteName(cell.note)} has no " +
+                        out += "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row: ${NesSystem.noteName(cell.note)} has no " +
                             "instrument and none has played on this channel yet; enter the instrument number"
                     }
                     break@loop
@@ -259,16 +268,62 @@ object NesValidator {
         return out
     }
 
+    /**
+     * The VRC7's shared state, as FamiStudio's engine drives it: the chip has one custom patch, so a custom sound
+     * starting while another FM channel still sounds a different custom sound changes that one's patch too; and the
+     * engine keeps one release/stop sustain setting (`famistudio_chn_vrc7_sustain`), the last VRC7 sound loaded's, for
+     * all six channels. [song] is the arrangement of a structurally valid song.
+     */
+    private fun vrc7Warnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val fm = NesRules.VRC7_FM1 until fs.channels
+        fun custom(slot: Int) = slot != 0 && fs.instruments[slot - 1].let { it.chip == NesChip.VRC7 && it.fm.preset == Vrc7Presets.CUSTOM }
+        val sounding = IntArray(fs.channels) // custom slot each FM channel is sounding (0: none)
+        val reported = HashSet<Pair<Int, Int>>()
+        for (row in 0 until fs.totalRows) {
+            for (ch in fm) {
+                val n = fs.notes[ch][row] ?: continue
+                when {
+                    n.isMusical -> {
+                        if (custom(n.instrument)) {
+                            for (other in fm) {
+                                val playing = sounding[other]
+                                if (other == ch || playing == 0 || playing == n.instrument || !reported.add(playing to n.instrument)) continue
+                                val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+                                out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row " +
+                                    "${row - fs.orderStart[o]}: custom sound ${NesRules.hex2(n.instrument)} loads the VRC7's one custom patch while " +
+                                    "${NesRules.channelName(song.nes.expansion, other)} still sounds custom sound ${NesRules.hex2(playing)}, which then " +
+                                    "plays the new patch; make one of them a built-in patch or keep them apart"
+                            }
+                        }
+                        sounding[ch] = if (custom(n.instrument)) n.instrument else 0
+                    }
+                    n.value == FsNote.STOP -> sounding[ch] = 0
+                }
+                if (n.cutDelay >= 0) sounding[ch] = 0
+            }
+        }
+        val used = fm.flatMap { ch -> fs.notes[ch].mapNotNull { n -> n?.takeIf { it.isMusical && it.instrument != 0 }?.instrument } }.toSortedSet()
+        val settings = used.groupBy { fs.instruments[it - 1].fm.let { p -> p.sustainRelease to p.sustainStop } }
+        if (settings.size > 1) {
+            val names = settings.values.joinToString(" and ") { slots -> slots.joinToString(", ") { NesRules.hex2(it) } }
+            out += "VRC7 sounds $names differ in Release/Stop sustain; FamiStudio's engine applies the setting of the last VRC7 " +
+                "sound loaded to all six FM channels, so give them the same setting"
+        }
+        return out
+    }
+
     /** Tonal notes of a tuned song that do not sound a tuned pitch (their Pxx missing, wrong or the slot taken). */
     private fun tunedNoteWarnings(song: Song, map: TuningMap): List<String> {
         val out = ArrayList<String>()
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
-                if (!NesRules.pitched(ch)) return@forEachIndexed
+                if (!NesRules.pitched(song.nes.expansion, ch)) return@forEachIndexed
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     if (cell.note < 0) continue
-                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.CHANNEL_NAMES[ch]} row $row"
+                    val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row"
                     val fine = NesSystem.fine.of(cell)
                     when {
                         fine == null -> if (map.index(cell.note, 0) < 0) {

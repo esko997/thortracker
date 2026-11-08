@@ -19,19 +19,31 @@ import org.thortracker.ui.Painter
  * The NES instrument editor: the one shared bank, the selected sound's name, on songs with an expansion chip its chip
  * (and on VRC6 sounds the saw volume), the channel Listen plays on, its four envelopes edited step by step with the
  * controller, and on 2A03 sounds a fifth page, DPCM: the sound's note → sample mappings and the song's samples
- * ([NesDpcmPage]). State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope]
- * (the page: a [NesEnvelopeKind] ordinal or [DPCM_PAGE]), [ViewState.envStep] (0..size; size is the append position),
- * [ViewState.listenChannel], and on the DPCM page [ViewState.dpcmKey] and [ViewState.dpcmSample].
+ * ([NesDpcmPage]). VRC7 sounds have no duty: their fourth page is the FM patch ([FM_PAGE]): the built-in patch or the
+ * custom patch's registers per operator, and the release/stop sustain. State: [ViewState.instrument],
+ * [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope] (the page: a [NesEnvelopeKind] ordinal, [FM_PAGE] or
+ * [DPCM_PAGE]), [ViewState.envStep] (0..size; size is the append position), [ViewState.listenChannel], on the DPCM page
+ * [ViewState.dpcmKey] and [ViewState.dpcmSample], and on the FM page [ViewState.programField] (the operator column:
+ * 0 modulator, 1 carrier).
  */
 object NesInstrumentView : SystemView() {
     enum class Row {
         SLOT, NAME, CHIP, SAW, LISTEN, ENVELOPE, LENGTH, LOOP, RELEASE, MODE, STEPS,
         // DPCM page: the mapping of one key, then the song's samples
         KEY, SAMPLE, PITCH, SAMPLE_LOOP, LEVEL, SAMPLES, SAMPLE_NAME, SAMPLE_LEVEL, ADD,
+        // FM page (VRC7 sounds): the patch, the sustain overrides, then one row per patch register field
+        PATCH, SUSTAIN_RELEASE, SUSTAIN_STOP,
+        FM_MULT, FM_WAVE, FM_LEVEL, FM_FEEDBACK, FM_AR, FM_DR, FM_SL, FM_RR, FM_EG, FM_KSL, FM_KSR, FM_AM, FM_VIB,
     }
 
     /** The page after the four envelopes: DPCM mappings and samples (2A03 sounds only). */
     val DPCM_PAGE = NesEnvelopeKind.entries.size
+
+    /** VRC7 sounds: the FM patch page, in the duty envelope's place (the FM channels have no duty). */
+    val FM_PAGE = NesEnvelopeKind.DUTY.ordinal
+
+    /** The patch register field each FM row edits. */
+    val FM_PARAMS: Map<Row, Vrc7Param> = Vrc7Param.entries.associateBy { Row.valueOf("FM_${it.name}") }
 
     private val ENVELOPE_ROWS = listOf(Row.SLOT, Row.NAME, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.MODE, Row.STEPS)
     private val ROWS = NesEnvelopeKind.entries.associateWith { kind ->
@@ -42,18 +54,28 @@ object NesInstrumentView : SystemView() {
     val DPCM_ROWS = listOf(Row.SLOT, Row.NAME, Row.ENVELOPE, Row.KEY, Row.SAMPLE, Row.PITCH, Row.SAMPLE_LOOP, Row.LEVEL,
         Row.SAMPLES, Row.SAMPLE_NAME, Row.SAMPLE_LEVEL, Row.ADD)
 
+    /** The FM page (only on VRC7 songs, so it has the Chip row). */
+    val FM_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.PATCH, Row.SUSTAIN_RELEASE, Row.SUSTAIN_STOP) +
+        Vrc7Param.entries.map { Row.valueOf("FM_${it.name}") }
+
     /** Envelope rows jump by this much with the coarse ([Action.UP]/[Action.DOWN]) direction while editing. */
     private const val COARSE = 8
 
     fun dpcmPage(state: ViewState): Boolean = state.envelope == DPCM_PAGE
 
-    /** The envelope shown; on the DPCM page the last one (callers check [dpcmPage] first). */
+    /** Whether the FM patch page of a VRC7 sound is shown. */
+    fun fmPage(song: Song, state: ViewState): Boolean = state.envelope == FM_PAGE && chip(song, state) == NesChip.VRC7
+
+    /** The envelope shown; on the DPCM page the last one (callers check [dpcmPage] and [fmPage] first). */
     fun kind(state: ViewState): NesEnvelopeKind = NesEnvelopeKind.entries[state.envelope.coerceIn(0, NesEnvelopeKind.entries.size - 1)]
 
     /** The chip of the shown sound (2A03 when there is none). */
     fun chip(song: Song, state: ViewState): NesChip = sound(song, state)?.chip ?: NesChip.APU
 
-    /** Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples). */
+    /**
+     * Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples); a VRC7 sound's
+     * volume, arpeggio and pitch envelopes and its FM patch.
+     */
     fun pages(song: Song, state: ViewState): Int = if (chip(song, state) == NesChip.APU) DPCM_PAGE + 1 else DPCM_PAGE
 
     /**
@@ -62,6 +84,7 @@ object NesInstrumentView : SystemView() {
      */
     fun rows(state: ViewState, song: Song): List<Row> {
         if (dpcmPage(state)) return DPCM_ROWS
+        if (fmPage(song, state)) return FM_ROWS
         val base = ROWS.getValue(kind(state))
         if (song.nes.expansion == NesExpansion.NONE) return base
         val extra = if (chip(song, state) == NesChip.VRC6) listOf(Row.CHIP, Row.SAW) else listOf(Row.CHIP)
@@ -72,7 +95,22 @@ object NesInstrumentView : SystemView() {
 
     fun sound(song: Song, state: ViewState): NesInstrument? = song.nesInstrument(state.instrument)
 
-    fun envelope(song: Song, state: ViewState): NesEnvelope? = sound(song, state)?.let { kind(state).of(it) }
+    /** The shown envelope; null on the FM page (no envelope there). */
+    fun envelope(song: Song, state: ViewState): NesEnvelope? =
+        if (fmPage(song, state)) null else sound(song, state)?.let { kind(state).of(it) }
+
+    /** The operator column of the FM page: 0 modulator, 1 carrier (modulator-only fields always the modulator). */
+    fun fmOperator(state: ViewState, param: Vrc7Param): Int = if (param.modulatorOnly) 0 else state.programField.coerceIn(0, 1)
+
+    /** A patch field's value as the editor shows it. */
+    fun fmValueText(param: Vrc7Param, value: Int): String = when (param) {
+        Vrc7Param.MULT -> if (value == 0) "×½" else "×${listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15)[value - 1]}"
+        Vrc7Param.WAVE -> if (value == 0) "sine" else "half"
+        Vrc7Param.EG, Vrc7Param.KSR, Vrc7Param.AM, Vrc7Param.VIB -> if (value == 0) "off" else "on"
+        Vrc7Param.LEVEL -> if (value == 0) "0 dB" else "-${org.thortracker.model.NumberText.fixed(value * 0.75, 2)} dB"
+        Vrc7Param.KSL -> listOf("0", "1.5", "3", "6")[value] + " dB/oct"
+        else -> value.toString()
+    }
 
     /** The furthest step the cursor reaches: the append position after the last step, while there is room. */
     fun lastStep(e: NesEnvelope): Int = minOf(e.values.size, NesEnvelope.MAX_LENGTH - 1)
@@ -85,6 +123,12 @@ object NesInstrumentView : SystemView() {
         channel == ChannelKind.SAW -> when (kind) {
             NesEnvelopeKind.VOLUME -> "Saw: volume ${sawText(saw)}"
             NesEnvelopeKind.DUTY -> "The saw has no duty"
+            else -> null
+        }
+        channel == ChannelKind.VOICE -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "FM: the carrier's 4-bit level, 3 dB per step"
+            NesEnvelopeKind.PITCH -> "FM: + raises the pitch (frequency steps × 8)"
+            NesEnvelopeKind.DUTY -> "The FM channels have no duty"
             else -> null
         }
         kind == NesEnvelopeKind.VOLUME -> if (channel == ChannelKind.TRIANGLE) "Triangle has no volume: 0 silences it, any other value plays full" else null
@@ -116,6 +160,12 @@ object NesInstrumentView : SystemView() {
             NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame"
             NesEnvelopeKind.PITCH -> "Period offset per frame (relative: added up each frame)"
             NesEnvelopeKind.DUTY -> "VRC6 pulses: 0-7 = 1/16 to 8/16 (6.25-50%). Saw: ignored"
+        }
+        NesChip.VRC7 -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "FM channels: carrier level 0-15 per frame (the chip's volume, 3 dB steps; 0 is not silent)"
+            NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame"
+            NesEnvelopeKind.PITCH -> "Frequency offset per frame, × 8 frequency steps: + raises the pitch (relative: added up each frame)"
+            NesEnvelopeKind.DUTY -> "The FM channels have no duty: this page is the FM patch"
         }
     }
 
@@ -176,7 +226,11 @@ object NesInstrumentView : SystemView() {
         val wasDpcm = dpcmPage(st)
         st.envelope = index.mod(pages(song, st))
         val rows = rows(st, song)
-        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: rows.indexOf(if (dpcmPage(st)) Row.KEY else Row.LOOP)
+        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: rows.indexOf(when {
+            dpcmPage(st) -> Row.KEY
+            fmPage(song, st) -> Row.PATCH
+            else -> Row.LOOP
+        })
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
         // Arriving on DPCM from an envelope page: start on the sound's first mapped key if the shown one has none.
         if (dpcmPage(st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
@@ -200,9 +254,11 @@ object NesInstrumentView : SystemView() {
     }
 
     /** [current] if it plays [chip] sounds, else the song's first channel that does. */
-    private fun listenFor(song: Song, chip: NesChip, current: Int): Int =
-        if (NesRules.chip(current) == chip) current
-        else song.system.channels.indices.firstOrNull { NesRules.chip(it) == chip } ?: current
+    private fun listenFor(song: Song, chip: NesChip, current: Int): Int {
+        val expansion = song.nes.expansion
+        return if (NesRules.chip(expansion, current) == chip) current
+        else song.system.channels.indices.firstOrNull { NesRules.chip(expansion, it) == chip } ?: current
+    }
 
     /** The channel whose arranged rows use sound [slot] most, or null when none does. */
     fun mostUsedChannel(song: Song, slot: Int): Int? {
@@ -215,7 +271,7 @@ object NesInstrumentView : SystemView() {
         return if (counts[best] > 0) best else null
     }
 
-    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6); Listen follows to a channel of that chip. */
+    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6 / VRC7); Listen follows to a channel of that chip. */
     private fun stepChip(v: ViewController, delta: Int) {
         val st = v.state
         val session = v.session
@@ -250,6 +306,8 @@ object NesInstrumentView : SystemView() {
             row == Row.LISTEN -> st.listenChannel = (st.listenChannel + dx).mod(song.system.channels.size)
             row == Row.ENVELOPE -> showEnvelope(v, st.envelope + dx)
             row == Row.STEPS -> if (e != null) st.envStep = (st.envStep + dx).coerceIn(0, lastStep(e))
+            // FM fields: left/right picks the operator (modulator / carrier).
+            row in FM_PARAMS -> st.programField = (st.programField + dx).coerceIn(0, 1)
             else -> moveSlot(v, dx)
         }
     }
@@ -298,7 +356,44 @@ object NesInstrumentView : SystemView() {
                     envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
                 }
             }
+            Row.PATCH -> stepPatch(v, dx - dy)
+            Row.SUSTAIN_RELEASE -> if (dx != 0 || dy != 0) toggleSustain(v, release = true)
+            Row.SUSTAIN_STOP -> if (dx != 0 || dy != 0) toggleSustain(v, release = false)
+            in FM_PARAMS -> {
+                val param = FM_PARAMS.getValue(row)
+                val coarse = when { param.max >= 63 -> 8; param.max >= 15 -> 4; else -> 1 }
+                setFmParam(v, param) { it + dx + coarse * dy }
+            }
             else -> NesDpcmPage.adjust(v, row, dx, dy)
+        }
+    }
+
+    /** Steps the VRC7 sound's patch: Custom, then the 15 built-in patches (a preset loads its ROM values). */
+    private fun stepPatch(v: ViewController, delta: Int) {
+        v.session.editNesFm(v.state.instrument, "Set VRC7 patch") { it.withPreset((it.preset + delta).coerceIn(0, Vrc7Presets.PRESETS.last)) }
+    }
+
+    private fun toggleSustain(v: ViewController, release: Boolean) {
+        v.session.editNesFm(v.state.instrument, if (release) "Set release sustain" else "Set stop sustain") {
+            if (release) it.copy(sustainRelease = !it.sustainRelease) else it.copy(sustainStop = !it.sustainStop)
+        }
+    }
+
+    /**
+     * Sets one patch field of the shown operator; a built-in patch becomes the custom patch with that change (starting
+     * from the preset's own values), so any patch can be the start of a custom sound.
+     */
+    private fun setFmParam(v: ViewController, param: Vrc7Param, value: (Int) -> Int) {
+        val st = v.state
+        val op = fmOperator(st, param)
+        val before = sound(v.session.song, st)?.fm ?: return
+        v.session.editNesFm(st.instrument, "Set ${param.label.lowercase()}") { p ->
+            val regs = param.set(p.regs, op, value(param.get(p.regs, op)))
+            if (regs == p.regs) p else p.copy(preset = Vrc7Presets.CUSTOM, regs = regs)
+        }
+        val after = sound(v.session.song, st)?.fm ?: return
+        if (before.preset != Vrc7Presets.CUSTOM && after.preset == Vrc7Presets.CUSTOM) {
+            v.session.note("Sound ${EditorSession.hex2(st.instrument)} is now the custom patch, starting from ${Vrc7Presets.NAMES[before.preset]}")
         }
     }
 
@@ -312,6 +407,9 @@ object NesInstrumentView : SystemView() {
             Row.SLOT -> { publish(v); session.note("Sound ${EditorSession.hex2(st.instrument)} selected for entry") }
             Row.MODE -> session.editNesInstrument(st.instrument, "Set pitch mode") { it.copy(pitchRelative = !it.pitchRelative) }
             Row.CHIP -> stepChip(v, 1)
+            Row.PATCH -> stepPatch(v, 1)
+            Row.SUSTAIN_RELEASE -> toggleSustain(v, release = true)
+            Row.SUSTAIN_STOP -> toggleSustain(v, release = false)
             Row.STEPS -> {
                 val e = envelope(session.song, st) ?: return
                 if (st.envStep == e.values.size) {
@@ -322,6 +420,7 @@ object NesInstrumentView : SystemView() {
                 }
             }
             Row.NAME, Row.SAW, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE -> Unit
+            in FM_PARAMS -> FM_PARAMS.getValue(row).let { p -> if (p.max == 1) setFmParam(v, p) { 1 - it } }
             else -> NesDpcmPage.editTap(v, row)
         }
     }
@@ -348,6 +447,10 @@ object NesInstrumentView : SystemView() {
                 session.editNesEnvelope(slot, kind, "Delete $name step") { NesEnvelopes.removed(kind, it, st.envStep, chip) }
                 envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
             }
+            Row.PATCH -> session.editNesFm(slot, "Set VRC7 patch") { it.withPreset(Vrc7Presets.BELL) }
+            Row.SUSTAIN_RELEASE -> session.editNesFm(slot, "Set release sustain") { it.copy(sustainRelease = false) }
+            Row.SUSTAIN_STOP -> session.editNesFm(slot, "Set stop sustain") { it.copy(sustainStop = false) }
+            in FM_PARAMS -> setFmParam(v, FM_PARAMS.getValue(row)) { 0 }
             else -> NesDpcmPage.clear(v, row)
         }
     }
@@ -360,7 +463,8 @@ object NesInstrumentView : SystemView() {
 
     /** Rows about the whole sound copy, cut and paste the sound; envelope rows the shown envelope. */
     private fun envelopeRow(state: ViewState, row: Row) =
-        !dpcmPage(state) && row != Row.SLOT && row != Row.NAME && row != Row.CHIP && row != Row.SAW && row != Row.LISTEN
+        !dpcmPage(state) && row != Row.SLOT && row != Row.NAME && row != Row.CHIP && row != Row.SAW && row != Row.LISTEN &&
+            row != Row.PATCH && row != Row.SUSTAIN_RELEASE && row != Row.SUSTAIN_STOP && row !in FM_PARAMS
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
@@ -413,9 +517,18 @@ object NesInstrumentView : SystemView() {
                 h += Hint(v.editLr(), "Draw value along")
                 h += Hint(v.k(Action.CLEAR), "Delete step")
             }
+            Row.PATCH -> { h += Hint(v.editLr(), "Built-in patch / Custom"); h += Hint(v.k(Action.CLEAR), "Bell") }
+            Row.SUSTAIN_RELEASE, Row.SUSTAIN_STOP -> { h += Hint(v.k(Action.EDIT), "On / off"); h += Hint(v.k(Action.CLEAR), "Off") }
+            in FM_PARAMS -> {
+                val param = FM_PARAMS.getValue(row)
+                if (!param.modulatorOnly) h += Hint(v.lr(), "Modulator / carrier")
+                h += Hint(v.editLr(), if (param.max == 1) "On / off" else "Value (${v.ud()} coarse)")
+                h += Hint(v.k(Action.CLEAR), "0")
+            }
             else -> NesDpcmPage.hints(v, row, h)
         }
-        if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE || row == Row.CHIP || row == Row.SAW) h += Hint(v.lr(), "Sound slot")
+        if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE || row == Row.CHIP || row == Row.SAW ||
+            row == Row.PATCH || row == Row.SUSTAIN_RELEASE || row == Row.SUSTAIN_STOP) h += Hint(v.lr(), "Sound slot")
         h += Hint(v.channels(), "Page")
         if (dpcmPage(st)) {
             h += Hint(v.k(Action.AUDITION), "Listen to ${NesSystem.noteName(st.dpcmKey)}")
@@ -429,7 +542,7 @@ object NesInstrumentView : SystemView() {
 
     /**
      * Help rows for this view (heading, then key → meaning), named with the current [keys]; [expansion] adds its chip's
-     * rows (the VRC6's Chip and Saw rows and envelope meanings).
+     * rows (the VRC6's Chip and Saw rows, the VRC7's FM patch page, and their envelope meanings).
      */
     fun helpSections(keys: Keymap, expansion: NesExpansion = NesExpansion.NONE): List<Pair<String, List<Pair<String, String>>>> {
         val edit = keys.label(Action.EDIT)
@@ -456,14 +569,50 @@ object NesInstrumentView : SystemView() {
                     "Without one, OFF stops the note. Setting a release on an envelope without a loop loops it from step 0",
             ),
             "DPCM samples" to NesDpcmPage.helpRows(keys),
-        ) + if (expansion != NesExpansion.VRC6) emptyList() else listOf(
-            "VRC6 sounds" to listOf(
-                "Chip" to "On songs with the VRC6: whether the sound plays on the 2A03's channels or on VRC6 Pulse 1/2 and the Saw " +
-                    "($edit+$lr there). VRC6 sounds have eight duties and no DPCM page",
-                "Saw volume" to "VRC6 sounds: how the saw turns volume 0-15 into its accumulator rate: Quarter ×1, Half ×2 " +
-                    "(FamiStudio's default), Full ×4 (rates above 42 overflow and distort, so Full distorts above volume 10)",
-            ) + NesEnvelopeKind.entries.map { it.label to envelopeSummary(it, NesChip.VRC6) },
-        )
+        ) + when (expansion) {
+            NesExpansion.NONE -> emptyList()
+            NesExpansion.VRC6 -> listOf(
+                "VRC6 sounds" to listOf(
+                    "Chip" to "On songs with the VRC6: whether the sound plays on the 2A03's channels or on VRC6 Pulse 1/2 and the Saw " +
+                        "($edit+$lr there). VRC6 sounds have eight duties and no DPCM page",
+                    "Saw volume" to "VRC6 sounds: how the saw turns volume 0-15 into its accumulator rate: Quarter ×1, Half ×2 " +
+                        "(FamiStudio's default), Full ×4 (rates above 42 overflow and distort, so Full distorts above volume 10)",
+                ) + NesEnvelopeKind.entries.map { it.label to envelopeSummary(it, NesChip.VRC6) },
+            )
+            NesExpansion.VRC7 -> listOf(
+                "VRC7 sounds" to listOf(
+                    "Chip" to "On songs with the VRC7: whether the sound plays on the 2A03's channels or on VRC7 FM 1-6 ($edit+$lr there). " +
+                        "VRC7 sounds have volume, arpeggio and pitch envelopes, no duty and no DPCM page",
+                    "FM patch page" to "The fourth page: the patch, one of the chip's 15 built-in sounds (Bell … Chorus) or Custom, " +
+                        "the chip's one programmable patch. Changing any field of a built-in patch makes the sound Custom, starting " +
+                        "from that patch",
+                    "One custom patch" to "All six FM channels share the custom patch: two different Custom sounds playing at " +
+                        "once both sound like the one loaded last (the song check warns)",
+                    "Operators" to "$lr picks the modulator or the carrier column; $edit+$lr changes the value, $edit+$ud in bigger steps",
+                    "Release sustain" to "On: notes keep the chip's sustain flag, so OFF fades slowly (rate 5) instead of with the " +
+                        "patch's release. FamiStudio's engine keeps the last VRC7 sound's setting for all six channels",
+                    "Stop sustain" to "On: a stop or cut lets the note fade at that rate instead of ending with the patch's release",
+                ) + Vrc7Param.entries.map { it.label to fmHelp(it) } +
+                    NesEnvelopeKind.entries.dropLast(1).map { it.label to envelopeSummary(it, NesChip.VRC7) },
+            )
+        }
+    }
+
+    /** What one patch field does, for Help. */
+    private fun fmHelp(param: Vrc7Param): String = when (param) {
+        Vrc7Param.MULT -> "Frequency multiple of the operator: ×½, ×1 … ×15 (11, 13 and 14 repeat 10, 12 and 15)"
+        Vrc7Param.WAVE -> "Half-sine: the operator plays only the positive half of its sine (brighter, buzzier)"
+        Vrc7Param.LEVEL -> "Modulator only: how strongly it modulates the carrier, 0 (strongest) to 63 (-47 dB)"
+        Vrc7Param.FEEDBACK -> "Modulator only: feeds its output back into itself, 0 (none) to 7 (noisy)"
+        Vrc7Param.AR -> "Attack rate 0-15 (0 never rises, 15 at once)"
+        Vrc7Param.DR -> "Decay rate 0-15, from full level down to the sustain level"
+        Vrc7Param.SL -> "Sustain level 0 (full) to 15 (-45 dB), where the decay stops"
+        Vrc7Param.RR -> "Release rate 0-15 after OFF (with Sustained on); without it, the rate the note decays at past the sustain level"
+        Vrc7Param.EG -> "Sustained: the envelope holds at the sustain level while the note is held; off: it keeps decaying (percussive)"
+        Vrc7Param.KSL -> "Key scale level: higher notes get quieter by 0, 1.5, 3 or 6 dB per octave"
+        Vrc7Param.KSR -> "Key scale rate: higher notes get faster envelopes"
+        Vrc7Param.AM -> "Tremolo from the chip's LFO (3.7 Hz, 4.8 dB)"
+        Vrc7Param.VIB -> "Vibrato from the chip's LFO (6.4 Hz, 14 cents)"
     }
 
     override fun painter(pane: PaneView): Painter = NesInstrumentPainter(pane)

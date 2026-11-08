@@ -37,11 +37,14 @@ REGION_END = 0xFFFA
 
 
 def song_cfg(text: str, tmp: Path) -> Path:
-    """The ld65 layout for a song text: the 2A03 build's, or one at the VRC6 build's song base."""
-    if not re.search(r'^Project [^\n]*Expansions="VRC6"', text, re.M):
+    """The ld65 layout for a song text: the 2A03 build's, or one at the VRC6 / VRC7 build's song base."""
+    m = re.search(r'^Project [^\n]*Expansions="(VRC6|VRC7)"', text, re.M)
+    if not m:
         return SONG_CFG
-    base = int(re.search(r"#define NES_VRC6_SONG_BASE 0x([0-9A-F]{4})", VRC6_HEADER.read_text()).group(1), 16)
-    cfg = tmp / "nes_vrc6_song.cfg"
+    chip = m.group(1)
+    header = ROOT / "app" / "src" / "main" / "cpp" / "generated" / f"nes_{chip.lower()}_player_image.h"
+    base = int(re.search(rf"#define NES_{chip}_SONG_BASE 0x([0-9A-F]{{4}})", header.read_text()).group(1), 16)
+    cfg = tmp / f"nes_{chip.lower()}_song.cfg"
     cfg.write_text(f"MEMORY {{\n    SONG: start = ${base:04X}, size = ${REGION_END - base:04X}, type = ro, file = %O, fill = no;\n}}\n"
                    'SEGMENTS {\n    SONG: load = SONG, type = ro;\n}\n')
     return cfg
@@ -94,9 +97,11 @@ def main() -> int:
             size = dmc.stat().st_size if dmc.exists() else 0
             start = (0xFFFA - size) // 64 * 64 if size else 0xC000
             # FamiStudio 4.5.3 prints a VRC6 Quarter saw volume (`$55` operand 1 - 2 = -1) as `$ffffffff`, which ca65
-            # rejects; its binary export writes the low byte. Assemble a copy with `$ff` (the fixture keeps the export).
+            # rejects; its binary export writes the low byte. It also ends each VRC7 instrument's patch `.byte` row with a
+            # comma. Assemble a copy with both fixed (the fixture keeps the export).
             fixed = t / f"{name}_ca65_fixed.s"
-            fixed.write_text(re.sub(r"(\$55,\s*)\$ffffffff\b", r"\1$ff", asm.read_text()))
+            text = re.sub(r"(\$55,\s*)\$ffffffff\b", r"\1$ff", asm.read_text())
+            fixed.write_text(re.sub(r"^(\t\.byte .*?),[ \t]*$", r"\1", text, flags=re.M))
             (t / f"{name}_song.s").write_text(
                 f'FAMISTUDIO_DPCM_PTR = ${(start & 0x3FFF) >> 6:02x}\n.segment "SONG"\n.include "{fixed.name}"\n')
             run(cc65 + ["ca65", "-o", f"{name}.o", f"{name}_song.s"], t)

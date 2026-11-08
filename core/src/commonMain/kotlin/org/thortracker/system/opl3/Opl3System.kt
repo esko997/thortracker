@@ -190,7 +190,7 @@ object Opl3System : SoundSystem {
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int = note
 
         /** The system's fine pitch is already the player's unit, 1/64 semitone. */
-        override fun fine(note: Int, fine: Int): Int = fine
+        override fun fine(channel: Int, note: Int, fine: Int): Int = fine
     }
 
     /**

@@ -39,9 +39,11 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
 
     /**
      * [e] made legal for this envelope of a [chip] sound: values clamped, loop < length, and a release only on volume
-     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop).
+     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop). A VRC7 sound's duty
+     * envelope is always empty (its FM channels have no duty).
      */
     fun fixed(e: NesEnvelope, chip: NesChip = NesChip.APU): NesEnvelope {
+        if (this == DUTY && chip == NesChip.VRC7) return if (e.values.isEmpty() && e.loop < 0 && e.release < 0) e else NesEnvelope()
         val range = range(chip)
         val values = if (e.values.all { it in range }) e.values else e.values.map { it.coerceIn(range) }
         val last = values.size - 1
@@ -116,9 +118,9 @@ fun Song.nesInstrument(slot: Int): NesInstrument? = nes.instruments.getOrNull(sl
 fun defaultNesInstrument(slot: Int) = NesInstrument(name = "Sound ${hex2(slot)}")
 
 /**
- * Sound [slot] made a [chip] sound: duty values clamped to that chip's, the saw volume back to its default when it
- * leaves the VRC6. Refused (with a note) when the chip is not the song's or the sound still maps DPCM samples, which
- * only 2A03 sounds play.
+ * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7 sounds have none), the saw volume and the
+ * FM patch back to their defaults when it leaves the VRC6 / VRC7. Refused (with a note) when the chip is not the song's
+ * or the sound still maps DPCM samples, which only 2A03 sounds play.
  */
 fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
     val ins = song.nesInstrument(slot) ?: return false
@@ -128,17 +130,24 @@ fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
         note("Sound ${hex2(slot)} maps DPCM samples, which only 2A03 sounds play; clear its keys first")
         return false
     }
-    return setNesInstrument(slot, ins.copy(
-        chip = chip,
-        duty = NesEnvelopeKind.DUTY.fixed(ins.duty, chip),
-        sawVolume = if (chip == NesChip.VRC6) ins.sawVolume else Vrc6SawVolume.HALF,
-    ), "Make sound ${chip.label}")
+    return setNesInstrument(slot, ins.forChip(chip), "Make sound ${chip.label}")
 }
+
+/** This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7), other chips' settings reset. */
+fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
+    chip = chip,
+    duty = NesEnvelopeKind.DUTY.fixed(duty, chip),
+    sawVolume = if (chip == NesChip.VRC6) sawVolume else Vrc6SawVolume.HALF,
+    fm = if (chip == NesChip.VRC7) fm else Vrc7Patch.DEFAULT,
+)
 
 /** [instrument] as [song] can hold it: a sound of a chip the song lacks becomes a 2A03 sound (pasted across songs). */
 fun nesInstrumentFor(song: Song, instrument: NesInstrument): NesInstrument =
-    if (instrument.chip in song.nes.expansion.chips) instrument
-    else instrument.copy(chip = NesChip.APU, duty = NesEnvelopeKind.DUTY.fixed(instrument.duty, NesChip.APU), sawVolume = Vrc6SawVolume.HALF)
+    if (instrument.chip in song.nes.expansion.chips) instrument else instrument.forChip(NesChip.APU)
+
+/** Edits the FM patch of VRC7 sound [slot]. */
+fun EditorSession.editNesFm(slot: Int, label: String, f: (Vrc7Patch) -> Vrc7Patch): Boolean =
+    editNesInstrument(slot, label) { if (it.chip == NesChip.VRC7) it.copy(fm = f(it.fm)) else it }
 
 /** A copied NES instrument, or one of its envelopes. */
 sealed interface NesClip : Clip {

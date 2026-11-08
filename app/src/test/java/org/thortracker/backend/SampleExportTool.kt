@@ -4,6 +4,7 @@ import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
@@ -30,6 +31,12 @@ object SampleExportTool {
         for (format in NesVrc6System.exports) File(directory, "saw-sunrise.${format.extension}").writeBytes(format.export(vrc6))
         File(directory, "saw-sunrise.nesimg").writeBytes(ByteArray(NesVrc6System.engine.imageSize).also { NesVrc6System.engine.lower(vrc6, it) })
         println("Exported ${vrc6.title} to ${directory.absolutePath}")
+        // The NES + VRC7 demo (its image plays on "nes-famistudio-vrc7"; render_nes_image.sh picks it).
+        val vrc7 = NesVrc7System.demo()
+        File(directory, "lantern-point.thor").writeText(ProjectCodec.encode(vrc7), Charsets.UTF_8)
+        for (format in NesVrc7System.exports) File(directory, "lantern-point.${format.extension}").writeBytes(format.export(vrc7))
+        File(directory, "lantern-point.nesimg").writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(vrc7, it) })
+        println("Exported ${vrc7.title} to ${directory.absolutePath}")
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

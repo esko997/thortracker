@@ -17,13 +17,20 @@ import org.thortracker.system.nes.NesSound
  * name", with their DPCM mappings), one arpeggio per `0xy` used, and per channel one FamiStudio pattern per distinct
  * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
  * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`), its instruments of
- * that chip carry `Expansion="VRC6"` and the saw master volume, and its channels follow the 2A03's.
+ * that chip carry `Expansion="VRC6"` and the saw master volume (`Expansion="VRC7"`: the patch, the custom patch's
+ * registers and the release/stop overrides), and its channels follow the 2A03's.
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-    /** FamiStudio's channel type names (`ChannelType.InternalNames`), in engine order. */
-    private val CHANNEL_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM", "VRC6Square1", "VRC6Square2", "VRC6Saw")
+    /** FamiStudio's channel type names (`ChannelType.InternalNames`), in engine order: the 2A03's, then the expansion's. */
+    private val APU_TYPES = listOf("Square1", "Square2", "Triangle", "Noise", "DPCM")
+
+    private fun channelType(expansion: NesExpansion, c: Int): String = when {
+        c < APU_TYPES.size -> APU_TYPES[c]
+        expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
+        else -> "VRC7FM${c - APU_TYPES.size + 1}"
+    }
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
 
@@ -56,6 +63,13 @@ object FamiStudioText {
             line(1, "Instrument" + attr("Name", name) + when (ins.chip) {
                 NesChip.APU -> ""
                 NesChip.VRC6 -> attr("Expansion", "VRC6") + attr("Vrc6SawMasterVolume", ins.sawVolume.label)
+                // `FamistudioTextFile`: Vrc7Patch, the registers only for Custom (0), then both overrides.
+                NesChip.VRC7 -> attr("Expansion", "VRC7") + attr("Vrc7Patch", ins.fm.preset) +
+                    (if (ins.fm.preset == org.thortracker.system.nes.Vrc7Presets.CUSTOM) {
+                        ins.fm.regs.withIndex().joinToString("") { (i, r) -> attr("Vrc7Reg$i", r) }
+                    } else "") +
+                    attr("Vrc7OverrideRelease", if (ins.fm.sustainRelease) "True" else "False") +
+                    attr("Vrc7OverrideStop", if (ins.fm.sustainStop) "True" else "False")
             })
             for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
                 val sample = fs.samples.getOrNull(m.sample) ?: continue
@@ -85,7 +99,7 @@ object FamiStudioText {
             line(2, "PatternCustomSettings" + attr("Time", o) + attr("Length", fs.lengths[o]))
         }
         for (c in 0 until fs.channels) {
-            line(2, "Channel" + attr("Type", CHANNEL_TYPES[c]))
+            line(2, "Channel" + attr("Type", channelType(fs.expansion, c)))
             val patterns = LinkedHashMap<List<String>, String>()
             val instances = ArrayList<Pair<Int, String>>()
             val variants = HashMap<Int, Int>()
