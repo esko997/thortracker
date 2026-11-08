@@ -624,6 +624,18 @@ Decisions:
   00-7F) `Lxx` (LFO: 00 off, 08-0F on at rate 0-7) `Mxy` (ratio lock) `Nxy` (noise mode lock) `Pxx` `Sxx`.
 - **Noise**: fixed rates (clock/512, /1024, /2048) or PSG 3's period ("pitched": the note sets it, periodic noise
   sounds at the note); while pitched noise sounds it owns PSG 3, which is silent.
+- **Cost: exact pass replay** (2026-11-08, after the Konkr measured 1.9 ms per warm tick, 1.3 ms of it the Z80 and
+  driver): without PCM the driver spends ~92 % of its cycles in fixed code that reads nothing the music changes
+  (its PCM mixer and its frame-wait loop). The machine records such a pass once and replays it whenever it starts
+  with the same inputs (chips run alone and get its writes at the same cycles; the Z80 resumes in the recorded
+  state), so the driver and its timing stay exactly the spike's: the host test runs replayed and fully stepped
+  machines side by side and compares samples, chip writes, positions, Z80 state and RAM. Dev PC 695 → 352 µs per
+  tick, ymfm now two thirds of it. Rejected: running the Z80 only until the frame is done (or skipping the mixer)
+  — cheaper to write but it changes when the driver executes frames and how far it lags behind heavy ones, which
+  a game with the same XGC would not do.
+- **PSG instruments as envelopes** (the user's NES-like editor): the spike's ADSR record became references to
+  FamiStudio-style volume/arpeggio/pitch sequences in the image's data region (`docs/AUDIO_ENGINE.md`, "Image
+  layout"); OFF plays the volume envelope's release tail, or silences a note without one.
 
 ### YM2612 model, lowering and exports
 

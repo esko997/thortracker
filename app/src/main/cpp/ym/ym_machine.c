@@ -22,11 +22,12 @@
 #define FIFO 64 /* positions of the last encoded player ticks (the driver lags behind heavy frames) */
 #define PSG_DIV (YMS_MCLK_PER_STEP / YMM_MCLK_PER_Z80) /* Z80 cycles per PSG counter step */
 
-/* Pass replay (below, "pass replay"): capacities. A mixer pass reads ~1100 bytes (code, variables, 768 null-sample
- * bytes), writes ~1060 and makes ~190 chip writes; a frame-wait pass a few dozen. */
+/* Pass replay (below, "pass replay"): capacities. A mixer pass (43917 cycles) reads 2041 bytes first (code,
+ * variables, the null sample three times), writes 279 and makes 224 chip and bank writes; a frame-wait pass (254
+ * cycles) reads 54. The test song keeps 18 passes (~190 KB) per machine, 40 with PAL and auditions. */
 #define RP_ENTRIES 64
 #define RP_ARENA (640u * 1024u)
-#define RP_MAX_READS 2048
+#define RP_MAX_READS 4096
 #define RP_MAX_EVENTS 512
 #define RP_MAX_REL 512
 #define RP_MAX_OBS 8
