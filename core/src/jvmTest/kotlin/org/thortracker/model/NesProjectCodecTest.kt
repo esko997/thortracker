@@ -15,7 +15,12 @@ import org.thortracker.system.SoundSystems
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.DpcmMapping
+import org.thortracker.system.nes.DpcmSample
+import org.thortracker.system.nes.DpcmStarterKit
+import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.nes
+import kotlinx.serialization.json.JsonArray
 
 /** Project files hold NES songs as backend "nes-famistudio"; Game Boy files are unchanged. */
 class NesProjectCodecTest {
@@ -29,13 +34,13 @@ class NesProjectCodecTest {
     fun envelopeNamesTheNesBackendAndNestsTheBank() {
         val root = Json.parseToJsonElement(ProjectCodec.encode(NesSystem.demo())).jsonObject
         assertEquals("nes-famistudio", root["backend"]!!.jsonPrimitive.content)
-        assertEquals(ProjectCodec.BACKEND_VERSION.toString(), root["backendVersion"]!!.jsonPrimitive.content)
+        assertEquals("2", root["backendVersion"]!!.jsonPrimitive.content)
         val song = root["song"]!!.jsonObject
         assertEquals("nes-famistudio", song["backend"]!!.jsonPrimitive.content)
         val instruments = song["sound"]!!.jsonObject["instruments"]!!.jsonArray
         assertEquals(NesSystem.SLOTS, instruments.size)
         val lead = instruments[0].jsonObject
-        assertEquals(setOf("name", "volume", "arpeggio", "pitch", "pitchRelative", "duty"), lead.keys)
+        assertEquals(setOf("name", "volume", "arpeggio", "pitch", "pitchRelative", "duty", "dpcm"), lead.keys)
         assertEquals(setOf("values", "loop", "release"), lead["volume"]!!.jsonObject.keys)
     }
 
@@ -48,6 +53,38 @@ class NesProjectCodecTest {
             s.copy(sound = s.nes.copy(instruments = bank))
         }
         assertEquals(song.nes.instruments[5], ProjectCodec.decode(ProjectCodec.encode(song)).nes.instruments[5])
+    }
+
+    @Test
+    fun dpcmSamplesAndMappingsSurvive() {
+        val song = NesSystem.blank().let { s ->
+            val sound = DpcmStarterKit.addTo(s.nes, 3)
+            val bank = sound.instruments.toMutableList()
+            bank[4] = NesInstrument("Loop", dpcm = mapOf(60 to DpcmMapping(4, pitch = 9, loop = true, dmcInitial = 7)))
+            s.copy(sound = sound.copy(instruments = bank, samples = sound.samples + DpcmSample("odd", listOf(1, 2, 255), dmcInitial = 63)))
+        }
+        assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+    }
+
+    /** NES data version 1 (four channels, no samples): every pattern gains an empty DPCM track. */
+    @Test
+    fun nesDataVersion1GainsAnEmptyDpcmTrack() {
+        val song = NesSystem.demo().let { s ->
+            s.copy(patterns = s.patterns.map { p -> p.copy(tracks = p.tracks.mapIndexed { ch, t -> if (ch == NesRules.DPCM) List(t.size) { Cell.BLANK } else t }) },
+                sound = s.nes.copy(instruments = s.nes.instruments.map { it.copy(dpcm = emptyMap()) }, samples = emptyList()))
+        }
+        val root = Json.parseToJsonElement(ProjectCodec.encode(song)).jsonObject
+        val file = root["song"]!!.jsonObject
+        val sound = file["sound"]!!.jsonObject
+        val v1 = JsonObject(root + ("backendVersion" to JsonPrimitive(1)) + ("song" to JsonObject(file +
+            ("patterns" to JsonArray(file["patterns"]!!.jsonArray.map { p ->
+                JsonObject(p.jsonObject + ("tracks" to JsonArray(p.jsonObject["tracks"]!!.jsonArray.take(4))))
+            })) +
+            ("sound" to JsonObject(mapOf("instruments" to JsonArray(sound["instruments"]!!.jsonArray.map { JsonObject(it.jsonObject - "dpcm") })))))))
+        assertEquals(song, ProjectCodec.decode(v1.toString()))
+        val newer = JsonObject(root + ("backendVersion" to JsonPrimitive(3)))
+        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(newer.toString()) }
+        assertTrue(e.message!!, e.message!!.contains("reads 1-2"))
     }
 
     @Test

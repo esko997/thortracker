@@ -41,6 +41,9 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     @Volatile private var closed = false
     private val pendingSong = AtomicReference<Song?>(null)
     @Volatile private var songError: String? = null
+
+    /** The song the engine's current image was lowered from (audition note numbers depend on it, e.g. NES DPCM). */
+    private var imageSong: Song? = null
     @Volatile private var commandError: String? = null
     @Volatile private var deviceError: String? = null
 
@@ -79,12 +82,17 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             commandError = songError ?: "No playable song loaded"
             return@post
         }
-        engine.auditionProblem(channel, note, instrument, detune)?.let {
+        val song = imageSong
+        if (song == null) {
+            commandError = songError ?: "No playable song loaded"
+            return@post
+        }
+        engine.auditionProblem(song, channel, note, instrument, detune)?.let {
             commandError = it
             return@post
         }
         val h = readyHandle() ?: return@post
-        val result = nativeAudition(h, channel, engine.note(note), instrument, engine.fine(note, detune))
+        val result = nativeAudition(h, channel, engine.note(song, channel, note, instrument), instrument, engine.fine(note, detune))
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
             // A held note keeps the stream: a pending idle check must not stop it before the
@@ -195,6 +203,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         val result = nativeSetImage(h, image, imageVersion)
         if (result == 0) {
             hasImage = true
+            imageSong = song
             songError = null
         } else {
             songError = "Playing the last playable version, not your latest edits: the player rejected the song data (layout error $result)"
@@ -214,6 +223,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         }
         system = null
         hasImage = false
+        imageSong = null
         val created = nativeCreate(next.engine.id)
         if (created == 0L) {
             deviceError = "Audio engine could not start the ${next.name} player"

@@ -4,10 +4,10 @@ import org.thortracker.backend.FamiStudioEnvelopes
 import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.backend.FsSong
+import org.thortracker.backend.NesDpcm
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.TuningMap
-import org.thortracker.system.ChannelKind
 
 /**
  * NES/FamiStudio checks, layered like the Game Boy's:
@@ -62,6 +62,21 @@ object NesValidator {
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
             envelopeShape(out, where, "duty", ins.duty, NesEnvelope.DUTY)
+            for ((note, m) in ins.dpcm) {
+                val at = "$where, DPCM ${if (note in NesSystem.noteRange) NesSystem.noteName(note) else "note $note"}"
+                when {
+                    note !in NesSystem.noteRange -> out += "$at: notes are C-1..B-8 (${NesSystem.noteRange.first}-${NesSystem.noteRange.last})"
+                    m.sample !in song.nes.samples.indices -> out += "$at: sample ${m.sample + 1} does not exist; the song has ${song.nes.samples.size}"
+                    m.pitch !in DpcmMapping.PITCH -> out += "$at: rate ${m.pitch} is outside 0-15"
+                    m.dmcInitial !in -1..DpcmSample.DMC_INITIAL.last -> out += "$at: initial value ${m.dmcInitial} is outside 0-63 (or -1 for the sample's)"
+                }
+            }
+        }
+        song.nes.samples.forEachIndexed { i, s ->
+            val where = "DPCM sample ${i + 1} \"${s.name}\""
+            if (s.data.size !in 1..DpcmSample.MAX_BYTES) out += "$where has ${s.data.size} bytes; samples are 1-${DpcmSample.MAX_BYTES} bytes"
+            s.data.firstOrNull { it !in 0..255 }?.let { out += "$where: byte $it is outside 0-255" }
+            if (s.dmcInitial !in DpcmSample.DMC_INITIAL) out += "$where: initial value ${s.dmcInitial} is outside 0-63"
         }
         song.tuning?.problems(NesSystem)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
@@ -114,6 +129,7 @@ object NesValidator {
                 }
             }
         }
+        if (out.isEmpty()) dpcmErrors(song, out)
         if (out.isEmpty()) {
             try {
                 FamiStudioLowering.lower(FsSong.of(song))
@@ -122,6 +138,53 @@ object NesValidator {
             }
         }
         return out.list()
+    }
+
+    /**
+     * DPCM problems of the arrangement [song]: sample lengths the hardware cannot play, notes without a mapping (also
+     * legato ones, which play the channel's current instrument), and the sample memory and sample list budgets.
+     */
+    private fun dpcmErrors(song: Song, out: Report) {
+        song.nes.samples.forEachIndexed { i, s ->
+            if ((s.data.size - 1) % 16 != 0) {
+                val shorter = (s.data.size - 1) / 16 * 16 + 1
+                out += "DPCM sample ${i + 1} \"${s.name}\" is ${s.data.size} bytes; the DMC plays 16n + 1 bytes, e.g. " +
+                    "$shorter or ${shorter + 16}. Re-import it or trim it"
+            }
+        }
+        if (!out.isEmpty()) return
+        val fs = FsSong.of(song)
+        var row = 0
+        for (o in song.orders.indices) {
+            val p = song.orders[o]
+            for (r in 0 until song.patterns[p].length) {
+                val n = fs.notes[NesRules.DPCM][row++] ?: continue
+                if (!n.isMusical) continue
+                val where = "${Songs.patternLabel(song, p).cap()}, DPCM row $r"
+                val note = n.value + NesRules.NOTE_OFFSET
+                if (n.instrument == 0) {
+                    out += "$where: ${NesSystem.noteName(note)} has no instrument and none has played on DPCM yet; enter the instrument whose DPCM samples it plays"
+                } else {
+                    NesRules.dpcmMappingProblem(song, n.instrument, note)?.let { out += "$where: $it" }
+                }
+            }
+        }
+        if (!out.isEmpty()) return
+        val layout = NesDpcm.layout(fs)
+        if (layout.playedBytes > Dpcm.MEMORY) {
+            val used = fs.notes[NesRules.DPCM].mapNotNull { n ->
+                if (n == null || !n.isMusical || n.instrument == 0) null
+                else fs.instruments[n.instrument - 1].dpcm[n.value + NesRules.NOTE_OFFSET]?.sample
+            }.toSet()
+            val largest = used.sortedByDescending { fs.samples[it].data.size }.take(3)
+                .joinToString { "\"${fs.samples[it].name}\" ${fs.samples[it].data.size}" }
+            out += "The DPCM samples the song plays need ${layout.playedBytes} bytes in 64-byte slots; at most ${Dpcm.MEMORY} fit " +
+                "(\$C000-\$FFF9, shared with the song data). Use fewer or shorter samples (largest: $largest bytes)"
+        }
+        if (layout.playedMappings > NesDpcm.MAX_ENTRIES) {
+            out += "The song plays ${layout.playedMappings} different DPCM sample mappings (sample, rate, loop, initial value); " +
+                "FamiStudio's player holds ${NesDpcm.MAX_ENTRIES}. Reuse samples at the same rate"
+        }
     }
 
     /** FamiStudio's loop/release rules (its text import silently drops what breaks them). */
@@ -175,6 +238,7 @@ object NesValidator {
     private fun firstNotesWithoutInstrument(song: Song): List<String> {
         val out = ArrayList<String>()
         for (ch in NesRules.CHANNEL_NAMES.indices) {
+            if (ch == NesRules.DPCM) continue // an error there: a DPCM note needs an instrument's sample mapping
             loop@ for (p in song.orders) {
                 val pattern = song.patterns[p]
                 for (row in 0 until pattern.length) {
@@ -196,7 +260,7 @@ object NesValidator {
         val out = ArrayList<String>()
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
-                if (NesRules.kind(ch) == ChannelKind.NOISE) return@forEachIndexed
+                if (!NesRules.pitched(ch)) return@forEachIndexed
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     if (cell.note < 0) continue

@@ -3,23 +3,26 @@ package org.thortracker.backend
 import org.thortracker.model.Song
 
 /**
- * `.nsf` export (NSF 1, NTSC, no bank switching, no expansion chips): the same player and song data the preview
- * engine runs — the player at [NesPlayerImage.LOAD] with its NSF entry table (init = load, play = load + 3), zeros up
- * to [NesPlayerImage.SONG_BASE], then the lowered FamiStudio data. Plays in NSF players and on hardware through
- * cartridges that load NSFs.
+ * `.nsf` export (NSF 1, NTSC, no bank switching, no expansion chips): the same player, song data and samples the
+ * preview engine runs — the player at [NesPlayerImage.LOAD] with its NSF entry table (init = load, play = load + 3),
+ * zeros up to [NesPlayerImage.SONG_BASE], the lowered FamiStudio data, and when the song plays DPCM samples, zeros up
+ * to the sample block's start (the top of `$C000-$FFF9`, where the image puts it) and the samples (without bank
+ * switching the whole image is loaded at once). Plays in NSF players and on hardware through cartridges that load NSFs.
  */
 object NsfExporter {
     /** NTSC play rate in microseconds (NSF convention for 60.1 Hz). */
     private const val NTSC_SPEED = 16639
 
     /** @throws IllegalArgumentException when the song cannot be lowered. */
-    fun export(song: Song): ByteArray = export(FamiStudioLowering.lower(song).data, song.title, song.artist)
+    fun export(song: Song): ByteArray = FamiStudioLowering.lower(song).let { export(it.data, it.samples, it.sampleStart, song.title, song.artist) }
 
-    internal fun export(data: ByteArray, title: String, artist: String): ByteArray {
+    internal fun export(data: ByteArray, samples: ByteArray, sampleStart: Int, title: String, artist: String): ByteArray {
         val player = NesPlayerImage.BYTES
-        val body = ByteArray(NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD + data.size)
+        val end = if (samples.isEmpty()) NesPlayerImage.SONG_BASE + data.size else sampleStart + samples.size
+        val body = ByteArray(end - NesPlayerImage.LOAD)
         player.copyInto(body)
         data.copyInto(body, NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD)
+        if (samples.isNotEmpty()) samples.copyInto(body, sampleStart - NesPlayerImage.LOAD)
         val header = ByteArray(128)
         "NESM".forEachIndexed { i, c -> header[i] = c.code.toByte() }
         header[4] = 0x1a

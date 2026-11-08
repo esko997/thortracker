@@ -36,11 +36,18 @@ class NesExportTest {
         assertEquals(0, nsf[0x7b].toInt()) // no expansion chips
         val body = nsf.copyOfRange(128, nsf.size)
         assertContentEquals(NesPlayerImage.BYTES, body.copyOfRange(0, NesPlayerImage.BYTES.size))
-        val data = FamiStudioLowering.lower(song).data
-        assertContentEquals(data, body.copyOfRange(NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD, body.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val data = lowered.data
+        val songAt = NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD
+        val samplesAt = lowered.sampleStart - NesPlayerImage.LOAD
+        assertContentEquals(data, body.copyOfRange(songAt, songAt + data.size))
+        assertTrue(body.copyOfRange(songAt + data.size, samplesAt).all { it == 0.toByte() })
+        // The demo plays the starter kit: its samples end the file, at the top of \$C000-\$FFF9.
+        assertTrue(lowered.samples.isNotEmpty())
+        assertContentEquals(lowered.samples, body.copyOfRange(samplesAt, body.size))
         // The same bytes play: the NSF's song is what the tracer (and the preview engine) runs.
         val a = NesTracer(data)
-        val b = NesTracer(body.copyOfRange(NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD, body.size))
+        val b = NesTracer(body.copyOfRange(songAt, samplesAt))
         repeat(600) { assertContentEquals(a.frame(), b.frame()) }
     }
 
@@ -62,7 +69,7 @@ class NesExportTest {
         assertTrue(lines.any { it.trim().startsWith("Envelope Type=\"Volume\" Length=\"12\" Loop=\"4\" Release=\"5\"") })
         assertTrue(lines.any { it.trim() == "Arpeggio Name=\"Arp 037\" Length=\"3\" Loop=\"0\" Values=\"0,3,7\"" })
         assertTrue(lines.any { it.trim().startsWith("Song Name=\"Thor Quest\" Length=\"5\" LoopPoint=\"1\" PatternLength=\"64\"") })
-        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise"), lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM"), lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
         // Unused default slots are not exported.
         assertFalse(text.contains("Sound 20"))
     }

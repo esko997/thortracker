@@ -40,7 +40,25 @@ class NesLoweringTest {
         assertEquals(NesPlayerImage.PLAYER_ID, u16(image, 4) or (u16(image, 6) shl 16))
         assertEquals(base, u16(image, 8))
         val size = u16(image, 10)
-        assertTrue(image.copyOfRange(region + size, image.size).all { it == 0.toByte() }, "$name: region not zero after the data")
+        val sampleSize = u16(image, NesPlayerImage.HEADER_SAMPLE_SIZE)
+        val sampleStart = u16(image, NesPlayerImage.HEADER_SAMPLE_START)
+        assertEquals(sampleSize == 0, sampleStart == 0, "$name: sample size and start")
+        val songEnd = if (sampleSize == 0) NesPlayerImage.REGION_END else sampleStart
+        if (sampleSize > 0) {
+            assertTrue(sampleStart >= NesPlayerImage.SAMPLE_BASE && sampleStart % 64 == 0 && sampleStart + sampleSize <= NesPlayerImage.REGION_END, "$name: sample block")
+        }
+        assertTrue(base + size <= songEnd, "$name: song data runs into the samples")
+        val samplesAt = region + songEnd - base
+        assertTrue(image.copyOfRange(region + size, samplesAt).all { it == 0.toByte() }, "$name: region not zero after the data")
+        assertTrue(image.copyOfRange(samplesAt + sampleSize, image.size).all { it == 0.toByte() }, "$name: region not zero after the samples")
+        // Every sample list entry points at whole samples inside the sample block.
+        val listAt = u16(image, region + 3) + 4 - base
+        for (k in 0 until u8(image, NesPlayerImage.HEADER_DPCM_COUNT)) {
+            val e = region + listAt + 4 * k
+            val from = NesPlayerImage.SAMPLE_BASE + 64 * u8(image, e)
+            assertTrue(from >= sampleStart && from + 16 * u8(image, e + 1) + 1 <= sampleStart + sampleSize, "$name: DPCM entry $k outside the samples")
+            assertTrue(u8(image, e + 2) and 0x80 == 0 && u8(image, e + 3) <= 127, "$name: DPCM entry $k")
+        }
         assertEquals(NesPlayerImage.LAYOUT_THOR, u8(image, 13))
         assertEquals(NesSystem.SLOTS, u8(image, 14))
         val envCount = u16(image, 16)
@@ -94,9 +112,16 @@ class NesLoweringTest {
         while (terms < n) {
             val op = u8(data, p++)
             when {
-                channel == 4 -> {
-                    assertTrue(op and 0x81 == 0x81, "DPCM channel must be empty runs only")
-                    rows += 1 + ((op and 0x7f) shr 1); terms++
+                channel == NesRules.DPCM -> when {
+                    // Runs, sample list entries (0 = stop), and only speed, delays, no attack and the DMC level.
+                    op >= 0x80 -> { assertTrue(op and 1 == 1, "DPCM has no instruments"); rows += 1 + ((op and 0x7f) shr 1); terms++; delays = 0 }
+                    op < 0x40 -> { rows++; terms++; delays = 0 }
+                    op == 0x43 -> Unit
+                    op == 0x46 -> assertTrue(u8(data, p++) in 1..127)
+                    op == 0x47 -> { p++; delays++; assertTrue(delays == 1, "one note delay per row") }
+                    op == 0x48 -> p++
+                    op == 0x52 -> p++
+                    else -> error("unexpected opcode ${op.toString(16)} on DPCM")
                 }
                 op >= 0x80 && op and 1 == 1 -> { rows += 1 + ((op and 0x7f) shr 1); terms++; delays = 0 }
                 op >= 0x80 -> assertTrue((op and 0x7f) shr 1 < NesSystem.SLOTS)
@@ -153,14 +178,16 @@ class NesLoweringTest {
     @Test
     fun engineNumbers() {
         val e = NesSystem.engine
+        val song = NesSystem.blank()
         assertEquals("nes-famistudio", e.id)
         assertEquals(NesPlayerImage.IMAGE_SIZE, e.imageSize)
-        assertEquals(46, e.note(57)) // A-4 = FamiStudio note 46, 440 Hz on the pulses
+        assertEquals(46, e.note(song, 0, 57, 1)) // A-4 = FamiStudio note 46, 440 Hz on the pulses
         assertEquals(-5, e.fine(57, 5))
-        assertEquals(null, e.auditionProblem(0, 57, 1, 0))
-        assertTrue(e.auditionProblem(0, 57, 0, 0)!!.contains("instrument"))
-        assertTrue(e.auditionProblem(2, 20, 1, 0)!!.contains("A-1"))
-        assertEquals(null, e.auditionProblem(3, 12, 1, 0))
+        assertEquals(null, e.auditionProblem(song, 0, 57, 1, 0))
+        assertTrue(e.auditionProblem(song, 0, 57, 0, 0)!!.contains("instrument"))
+        assertTrue(e.auditionProblem(song, 2, 20, 1, 0)!!.contains("A-1"))
+        assertEquals(null, e.auditionProblem(song, 3, 12, 1, 0))
+        assertTrue(e.auditionProblem(song, NesRules.DPCM, 48, 1, 0)!!.contains("maps no DPCM sample to C-4"))
     }
 
     @Test
@@ -183,5 +210,65 @@ class NesLoweringTest {
         val rel = FamiStudioEnvelopes.encode(NesEnvelope(listOf(15, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), FamiStudioEnvelopes.Kind.VOLUME)
         assertEquals(0, rel[rel[0].toInt() - 2].toInt())
         assertTrue(NesInstrument.DEFAULT.volume.values == listOf(15))
+    }
+
+    /** A sample-less song with [patterns] distinct, busy patterns (pseudo-random notes and volumes on four channels). */
+    private fun busySong(patterns: Int): Song {
+        require(patterns <= NesRules.MAX_ORDERS)
+        val base = NesSystem.blank()
+        var seed = 12345
+        fun next(n: Int): Int { seed = seed * 1103515245 + 12345; return (seed ushr 16) % n }
+        val list = List(patterns) { p ->
+            org.thortracker.model.Pattern("Busy $p", List(NesSystem.channels.size) { ch ->
+                List(org.thortracker.model.Songs.ROWS) {
+                    if (ch == NesRules.DPCM || next(3) == 0) Cell.BLANK
+                    else Cell(36 + next(40), 1 + next(4), if (ch != NesRules.TRIANGLE && next(2) == 0) NesRules.FX_VOLUME else 0, next(16))
+                        .let { if (it.effect == 0) it.copy(param = 0) else it }
+                }
+            })
+        }
+        return base.copy(patterns = list, orders = list.indices.toList())
+    }
+
+    /** 0.9.0 gave song data 24570 bytes; without samples the whole $8C00-$FFF9 is the song's, so those songs still play. */
+    @Test
+    fun sampleLessSongsKeepTheWholeRegion() {
+        var patterns = 30
+        var song = busySong(patterns)
+        while (FamiStudioLowering.lower(FsSong.of(song)).data.size < 20000) song = busySong(++patterns)
+        val size = FamiStudioLowering.lower(song).data.size
+        assertTrue(size in 13313..24570, "song data $size bytes")
+        assertEquals(emptyList(), NesSystem.errors(song))
+        val image = ByteArray(NesSystem.engine.imageSize)
+        NesSystem.engine.lower(song, image)
+        check("busy", song, image)
+        assertEquals(0, u16(image, NesPlayerImage.HEADER_SAMPLE_START))
+        NesSystem.exports.forEach { it.export(song) }
+    }
+
+    /** Song data and samples share the region: too much of both is one error naming both sizes. */
+    @Test
+    fun songAndSamplesShareOneBudget() {
+        var patterns = 30
+        var busy = busySong(patterns)
+        while (FamiStudioLowering.lower(FsSong.of(busy)).data.size < 18500) busy = busySong(++patterns)
+        val big = List(3) { i -> org.thortracker.system.nes.DpcmSample("Big $i", List(4081) { (it * 7 + i) and 0xFF }) }
+        val bank = busy.nes.instruments.toMutableList()
+        bank[9] = NesInstrument("Bigs", dpcm = big.indices.associate { 48 + it to org.thortracker.system.nes.DpcmMapping(it) })
+        val tracks = busy.patterns[0].tracks.toMutableList()
+        tracks[NesRules.DPCM] = List(64) { if (it < 3) Cell(48 + it, 10) else Cell.BLANK }
+        val song = busy.copy(patterns = listOf(busy.patterns[0].copy(tracks = tracks)) + busy.patterns.drop(1),
+            sound = busy.nes.copy(instruments = bank, samples = big))
+        val errors = NesSystem.errors(song)
+        assertTrue(errors.any { it.startsWith("Song data") && "+ DPCM samples 12.0 KB" in it && "exceed the NES's 28.9 KB" in it }, errors.toString())
+        // Fewer samples fit beside the same song.
+        val fewer = song.copy(patterns = song.patterns.mapIndexed { i, p -> if (i == 0) p.copy(tracks = p.tracks.mapIndexed { ch, t ->
+            if (ch == NesRules.DPCM) List(64) { r -> if (r == 0) Cell(48, 10) else Cell.BLANK } else t }) else p })
+        assertEquals(emptyList(), NesSystem.errors(fewer))
+        // The preview image adds unplayed mappings only while the song still fits: not all of the other big samples.
+        val image = ByteArray(NesSystem.engine.imageSize)
+        NesSystem.engine.lower(fewer, image)
+        check("fewer", fewer, image)
+        assertTrue(u8(image, NesPlayerImage.HEADER_DPCM_COUNT) in 1..2)
     }
 }

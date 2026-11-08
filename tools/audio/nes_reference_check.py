@@ -4,7 +4,8 @@
 Inputs come from the host test (tools/audio/run_native_host_test.sh <dir>): <dir>/nes_ft.nsf (the
 player image + FamiStudio's export of tools/audio/nes/ft_test.txt as an NSF), <dir>/nes_trace.txt
 (per-frame APU writes; the host test proves the Thor Tracker layout of the song writes the same) and
-<dir>/nes_ft.wav / nes_ft_tonal.wav.
+<dir>/nes_ft.wav / nes_ft_tonal.wav; for the DPCM song tools/audio/nes/dpcm_test.txt the same as
+nes_dpcm.nsf (samples at $C000), nes_dpcm_trace.txt, nes_dpcm.wav and nes_dpcm_dmc.wav (the DMC alone).
 
   1. CPU reference: py65 (an independent 6502 emulator) runs the NSF's init/play routines with the
      same calling convention and logs APU register writes per frame; they must equal nes_trace.txt.
@@ -15,6 +16,8 @@ player image + FamiStudio's export of tools/audio/nes/ft_test.txt as an NSF), <d
      `dotnet`, e.g. in the ubuntu distrobox): FamiStudio's own NSF export of ft_test.txt (its own
      FamiTracker-tempo NSF kernel and its own data) run in py65 must write the same APU registers
      frame by frame; FamiStudio's WAV export and libgme rendering its NSF are compared like 2.
+  4. DPCM: 1 and 3 for dpcm_test.txt (FamiStudio's NSF places its samples itself), and the DMC alone
+     against FamiStudio's WAV export of the DPCM channel (its NesSndEmu DMC) and libgme's.
 
 Requirements: python3 with numpy and py65 (`python3 -m venv /tmp/nesref && /tmp/nesref/bin/pip install
 numpy py65`), libgme.so.0 (Fedora: game-music-emu, Ubuntu: libgme0).
@@ -194,18 +197,65 @@ def compare(name: str, ours: np.ndarray, ref: np.ndarray) -> dict:
     return res
 
 
-def famistudio(app: Path, out: Path) -> tuple:
-    song = Path(__file__).resolve().parent / "nes" / "ft_test.txt"
+def famistudio(app: Path, out: Path, name: str = "ft_test", part_channels: int = 7) -> tuple:
+    """FamiStudio's own wav-export (all channels and the `part_channels` mask) and nsf-export of tools/audio/nes/<name>.txt."""
+    song = Path(__file__).resolve().parent / "nes" / f"{name}.txt"
     cmd = ["dotnet", str(app / "FamiStudio.dll")]
     prefix = [] if shutil.which("dotnet") else ["distrobox", "enter", "ubuntu", "--"]
-    wav, tonal, nsf = (out / "famistudio_ft_test.wav", out / "famistudio_ft_test_tonal.wav",
-                       out / "famistudio_ft_test.nsf")
+    wav, part, nsf = (out / f"famistudio_{name}.wav", out / f"famistudio_{name}_part.wav", out / f"famistudio_{name}.nsf")
     export = [str(song), "wav-export"]
     opts = ["-wav-export-rate:48000", f"-wav-export-duration:{SECONDS}"]
     subprocess.run(prefix + cmd + export + [str(wav)] + opts, check=True, capture_output=True)
-    subprocess.run(prefix + cmd + export + [str(tonal)] + opts + ["-wav-export-channels:7"], check=True, capture_output=True)
+    subprocess.run(prefix + cmd + export + [str(part)] + opts + [f"-wav-export-channels:{part_channels}"], check=True,
+                   capture_output=True)
     subprocess.run(prefix + cmd + [str(song), "nsf-export", str(nsf)], check=True, capture_output=True)
-    return wav, tonal, nsf
+    return wav, part, nsf
+
+
+def check_dpcm(d: Path, app: Path) -> bool:
+    """The DPCM test song: our trace against py65 on our NSF and on FamiStudio's own NSF; our audio (all channels and
+    the DMC alone) against FamiStudio's wav-export and libgme."""
+    print("DPCM test song (dpcm_test.txt, samples at $C000):")
+    ok = True
+    ours_trace = read_trace(d / "nes_dpcm_trace.txt")
+    ref_trace = py65_trace((d / "nes_dpcm.nsf").read_bytes(), len(ours_trace))
+    mismatch = next((i for i, (a, b) in enumerate(zip(ours_trace, ref_trace)) if a != b), None)
+    dmc = sum(1 for f in ours_trace for w in f if w.split("=")[0] in ("4010", "4011", "4012", "4013", "4015"))
+    if mismatch is None:
+        print(f"py65 6502 reference: {len(ours_trace)} frames, {sum(len(f) for f in ours_trace)} APU writes "
+              f"({dmc} to $4010-$4013/$4015), identical order and values")
+    else:
+        ok = False
+        print(f"py65 6502 reference: first mismatch at frame {mismatch}:\n  ours {ours_trace[mismatch]}\n  py65 {ref_trace[mismatch]}")
+    wav, dmc_wav, nsf = famistudio(app, d, "dpcm_test", 16)
+    fs_trace = py65_trace(nsf.read_bytes(), len(ours_trace))
+    # FamiStudio's NSF kernel places the samples itself (one constant $4012 offset from ours): compare $4012 relative to it.
+    shifts = {(int(b.split("=")[1], 16) - int(a.split("=")[1], 16)) & 0xFF for fa, fb in zip(ours_trace, fs_trace)
+              for a, b in zip(fa, fb) if a.startswith("4012=") and b.startswith("4012=")}
+    shift = shifts.pop() if len(shifts) == 1 else None
+    moved = lambda frame: [f"4012={(int(w[5:], 16) - shift) & 0xFF:02X}" if w.startswith("4012=") else w for w in frame]  # noqa: E731
+    differing = [i for i, (a, b) in enumerate(zip(ours_trace, fs_trace)) if shift is None or a != moved(b)]
+    if not differing:
+        print(f"FamiStudio's own NSF (its kernel and data, samples at ${0xC000 + 64 * shift:04X}) in py65: {len(ours_trace)} "
+              f"frames, identical APU writes ($4012 relative to the sample base)")
+    else:
+        ok = False
+        i = differing[0]
+        print(f"FamiStudio's own NSF in py65: {len(differing)} frames differ (sample offsets {shifts or shift}), first {i}:\n"
+              f"  ours {ours_trace[i]}\n  FamiStudio {fs_trace[i]}")
+    # Thresholds: below the agreement of the two references with each other (printed last); libgme's DMC is blargg's
+    # Nes_Apu, FamiStudio's WAV export runs its NesSndEmu DMC through its own output filters.
+    ours, ours_dmc = read_wav(d / "nes_dpcm.wav", SECONDS), read_wav(d / "nes_dpcm_dmc.wav", SECONDS)
+    fs, fs_dmc = read_wav(wav, SECONDS), read_wav(dmc_wav, SECONDS)
+    r = compare("FamiStudio 4.5.3 wav-export", ours, fs)
+    ok &= r["envelope_r"] > 0.85 and r["spectrum_r"] > 0.85
+    r = compare("DMC only, FamiStudio 4.5.3 wav-export", ours_dmc, fs_dmc)
+    ok &= r["envelope_r"] > 0.9 and r["spectrum_r"] > 0.75
+    gme_dmc = gme_render(d / "nes_dpcm.nsf", SECONDS, mute_mask=0x0F)
+    r = compare("DMC only, libgme rendering our NSF", ours_dmc, gme_dmc)
+    ok &= r["envelope_r"] > 0.95 and r["spectrum_r"] > 0.9 and r["peak_pitch_agree"] > 0.8
+    compare("baseline, reference vs reference: DMC only, libgme(our NSF) vs FamiStudio wav-export", gme_dmc, fs_dmc)
+    return ok
 
 
 def main() -> int:
@@ -282,6 +332,7 @@ def main() -> int:
     ok &= r["envelope_r"] > 0.75
     compare("baseline, reference vs reference: libgme(our NSF) vs FamiStudio wav-export", gme, fs)
     compare("baseline, reference vs reference, pulses + triangle", gme_tonal, fs_t)
+    ok &= check_dpcm(d, args.famistudio)
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 
