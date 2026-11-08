@@ -1,5 +1,37 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.18.0 NES + Sunsoft 5B
+
+- **New blank song / Load demo → NES… → NES + Sunsoft 5B** adds three square channels after the NES's five channels. The demo is **Copper Kite**.
+- Instruments have volume, arpeggio, pitch, mixer and noise envelopes, plus a hardware-envelope page with shape, automatic pitch or a fixed manual period. The three squares share one noise generator and one hardware envelope; Pattern badges show their owners.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV use the pinned FamiStudio 4.5.3 driver. A scoped instrument-load extension preserves the shared manual period when switching between identical instrument copies without losing their independent live-edit identities.
+- Fixed order-start seek fallback dropping carried instruments. It now restores them through the real driver's instrument loader; the fallback remains approximate for earlier shared-period effects and generator phases.
+- The shared-state inspector follows actual instrument-reload suppression and pending period overrides. Lane headers reserve space for badges and horizontal-scroll indicators, and omit instrument labels when even an ellipsis cannot fit.
+
+Verified: 444 JVM core tests, 13 Linux core tests and six Android-host unit tests; the integrated native command passed
+(Game Boy 145, NES 336, VRC6 105, VRC7 115, N163 225, Sunsoft 5B 204 plus 10 seek-fallback checks,
+SID 151, OPL3 282, Mega Drive 501, WAV 794). Independent FamiStudio traces cover the demo, effect/loop behavior and
+identical manual-period instrument copies. The copy regression first differed at frame 24: period 900 instead of
+2000; it now matches. Removing fallback restoration reproduces three failures; all ten checks pass with it.
+The inspector's carried-period smoke failed before its correction and now passes all eight checked positions.
+Previous player/reference outputs, 31 prior sample exports and the factory `.uge` remain byte-identical.
+
+The final production-signed candidate passed all 18 Android instrumentation tests on Nova. A separate temporary
+capture test produced 32 Game Boy views, all RGBA-identical to the same-device 0.14.1 baseline. The capture harness,
+test package and device capture files were removed.
+
+Actual Copper Kite playback and lane headers were inspected on Nova, DMG and Konkr; each active audio track reported
+zero AudioFlinger underruns during its check. DMG exercised all eight lanes and a controller audition while changing
+the manual envelope period from 600 to 601. Its saved project retains 601. NSF and FamiStudio text exported through
+the Android document picker are byte-identical to exports made through the actual desktop frontend.
+The edited no-fade WAV has 1,226,779 frames of non-silent 48 kHz, 16-bit stereo PCM, peak 17,064.
+Android and desktop WAVs have the same length; 20 of their 2,453,558 PCM samples differ by one least-significant bit.
+The four owned Download smoke files were removed, and `/ThorTunez` was untouched.
+
+The actual desktop frontend also produced a nonzero audition peak (0.24216) and exported the shortest valid
+one-row, one-tick 5B song without a fade: 798 non-silent frames. These checks are not human listening or a comparison
+with a physical Sunsoft 5B cartridge or a reference emulator's audio.
+
 ## 0.17.0 NES + Namco 163
 
 - **New blank song / Load demo → NES… → NES + N163…** offers all eight fixed channel counts. **Wavetable Garden** grows from six total lanes to thirteen; channel count changes the chip's update rate and the RAM available for waves.
@@ -31,6 +63,15 @@ The actual desktop frontend played the eight-channel demo and exported the short
 N163 song without a fade: 798 non-silent frames. One- and eight-channel NSFs also produced PCM in independent
 libgme; this checks format/playback, not mix-level accuracy. These checks are not human listening or a comparison
 with a physical Namco 163 cartridge.
+
+Official 0.17.0 was published from `8ce6157` after the build, Deck, signing and AppImage attachment jobs passed.
+Both published checksums and the production signing certificate were verified. Nova, DMG and Konkr received
+versionCode 30 and cold-launched successfully; their actual app surfaces were inspected. The Thor received only
+the verified APK in `Downloads/Thor Tracker`, without waking, installing or launching. The Deck's verified
+AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` symlink, without launching there.
+The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
+with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
+AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
 
 ## 0.16.0 NES + Konami VRC7
 

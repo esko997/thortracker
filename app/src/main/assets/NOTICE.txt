@@ -14,13 +14,18 @@ for 1-8 channels, are part of FamiStudio, MIT, notice below), the m6502.h 6502
 emulator from floooh/chips at commit 9e88298ce56319953ac7a43213a1120359f7a3a6
 (zlib, notice below) and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public
 License 2.1 or later; source in app/src/main/cpp/third_party/blip_buf with its
-license.txt). The 2A03 APU, VRC6 audio and Namco 163 audio emulation are Thor
-Tracker's own code (GPL-3.0-or-later; the Namco 163 written from the NESdev wiki
-page "Namco 163 audio"). The VRC7's FM synthesis is emulated by emu2413 1.6.4 by
-Mitsutaka Okazaki (MIT, notice below; source in
-app/src/main/cpp/third_party/emu2413 with its LICENSE,
+license.txt). The 2A03 APU, VRC6, Namco 163 and Sunsoft 5B audio emulation are
+Thor Tracker's own code (GPL-3.0-or-later). The Namco 163 was written from the
+NESdev wiki page "Namco 163 audio"; the Sunsoft 5B from the NESdev wiki with
+emu2149's documented behaviour as a reference (no emu2149 code is included).
+The VRC7's FM synthesis is emulated by emu2413 1.6.4 by Mitsutaka Okazaki
+(MIT, notice below; source in app/src/main/cpp/third_party/emu2413 with its LICENSE,
 github.com/digital-sound-antiques/emu2413 at commit
 a1d5120903b75f93d3eb7690e34a29c0b4add903).
+Thor Tracker's Sunsoft 5B build adds a scoped $5F instrument-load opcode to keep
+the shared manual envelope period when switching between identical instrument
+copies. The generator applies this modification to a temporary copy of the
+pinned engine source; the vendored FamiStudio source is unchanged.
 
 Commodore 64 SID playback uses the GoatTracker 2.77 playroutine by Lasse Oorni
 (Cadaver), which is not under the GPL and may be used freely (notice below), the

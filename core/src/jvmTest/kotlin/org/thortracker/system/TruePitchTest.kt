@@ -42,6 +42,23 @@ class TruePitchTest {
         }
     }
 
+    /**
+     * The 5B divides by 32 × period from the pulses' table: each square note sounds as the same note on a pulse, C-1..B-7,
+     * within one step of the 5B's (half as long) period, which is coarser at the top.
+     */
+    @Test fun s5bSquaresSoundTheSameNoteAsThePulses() {
+        val square = NesRules.S5B_SQUARE1
+        val expansion = org.thortracker.system.nes.NesExpansion.S5B
+        val top = NesRules.highestNote(expansion, square)
+        assertEquals("B-7", NesSystem.noteName(top))
+        for (note in NesRules.LOWEST_TONAL..top) {
+            val period = FamiStudioLowering.NOTE_TABLE[NesRules.engineNote(expansion, square, note)] + 1
+            val hz = 1789773.0 / (32.0 * period)
+            val step = 1200.0 * log2((period + 1.0) / period)
+            assertTrue("note $note: 5B $hz Hz vs pulse ${nesHz(note)} Hz", abs(cents(hz, nesHz(note))) <= maxOf(10.0, step))
+        }
+    }
+
     @Test fun namesFollowEachTracker() {
         // hUGETracker: its C-3 is C2 (65.4 Hz), A-5 is A4.
         assertEquals("C-3", GbSystem.noteName(24))

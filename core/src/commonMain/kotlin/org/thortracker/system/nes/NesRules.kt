@@ -19,7 +19,8 @@ object NesRules {
 
     /**
      * The lowest note the 2A03's pulses and triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in
-     * its note table (the triangle sounds it an octave lower). The VRC6 reaches C-1..B-8; VRC7 reaches C-1..B-7.
+     * its note table (the triangle sounds it an octave lower). The VRC6 reaches C-1..B-8; VRC7 and the 5B reach
+     * C-1..B-7.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
@@ -93,7 +94,7 @@ object NesRules {
 
     /**
      * The highest absolute note [channel] plays: below the N163's saturated note table, B-8 elsewhere, less the
-     * channel's [engineNoteShift] (the VRC7's FM channels stop at B-7).
+     * channel's [engineNoteShift] (the VRC7's FM channels and the 5B squares stop at B-7).
      */
     fun highestNote(expansion: NesExpansion, channel: Int): Int =
         (if (isN163(expansion, channel)) n163HighestFsNote(expansion.n163Channels) else NOTE_COUNT) + NOTE_OFFSET -
@@ -115,6 +116,9 @@ object NesRules {
         return kotlin.math.round(f * (ratio - 1.0) / step).toInt().coerceIn(-127, 127)
     }
 
+    /** The 5B's squares (5B Square 1..3 are channels 5..7); FamiStudio's engine reads envelope periods on the first. */
+    const val S5B_SQUARE1 = 5
+
     /** Channel [ch]'s name in a song with [expansion]. */
     fun channelName(expansion: NesExpansion, ch: Int): String =
         if (ch < APU_CHANNELS) APU_NAMES[ch] else expansion.channelNames.getOrElse(ch - APU_CHANNELS) { "Channel $ch" }
@@ -128,6 +132,9 @@ object NesRules {
 
     /** True for the six FM channels of a VRC7 song. */
     fun isVrc7(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.VRC7 && ch >= VRC7_FM1
+
+    /** True for the three 5B squares of a 5B song. */
+    fun isS5b(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.S5B && ch >= S5B_SQUARE1
 
     /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
     const val MAX_ORDERS = 255
@@ -148,6 +155,10 @@ object NesRules {
     const val FX_DUTY = 31 // V
     const val FX_PHASE_RESET = 33 // X
     const val FX_DELTA_COUNTER = 35 // Z
+
+    /** 5B: the shared envelope generator's period, high byte (`Ixx`) and low byte (`Jxx`), FamiTracker's letters. */
+    const val FX_ENV_PERIOD_HI = 18 // I
+    const val FX_ENV_PERIOD_LO = 19 // J
 
     /** Zxx: DMC output levels 00-7F. */
     const val DELTA_COUNTER_MAX = 0x7F
@@ -195,6 +206,13 @@ object NesRules {
         EffectSpec(FX_DELTA_COUNTER, "DMC level", "xx: output level 00-7F",
             "DPCM only. Set the DMC output level (FamiStudio's delta counter): with a note, its sample starts from xx " +
                 "instead of its initial value; without a note, at once. A high level makes Triangle and Noise quieter.", true),
+        EffectSpec(FX_ENV_PERIOD_HI, "5B env period high", "xx: period xx00 (with Jyy on the row: xxyy)",
+            "5B squares only. Sets the 5B's shared envelope period (FamiStudio's EnvelopePeriod) to xx × 256, or to xxyy " +
+                "with a Jyy on another 5B square in the same row; it drives sounds with a manual period until a note " +
+                "reloads its sound's own. One step lasts 16 CPU cycles × the period, a ramp 32 steps.", true),
+        EffectSpec(FX_ENV_PERIOD_LO, "5B env period low", "yy: period 00yy (with Ixx on the row: xxyy)",
+            "5B squares only. Sets the 5B's shared envelope period to yy (00-FF: fast envelopes, audible buzzes), or to " +
+                "xxyy with an Ixx on another 5B square in the same row.", true),
     )
 
     /** The duty effect on the VRC6 pulses: eight duties (FamiStudio's `Channel.SupportsEffect`; not on the saw). */
@@ -222,20 +240,36 @@ object NesRules {
             "raises it); the N163 plays the nearest of its frequency steps (coarse at low notes, coarser with more channels). " +
             "Tuned notes use it.", true)
 
+    /** Fine pitch on the 5B squares: converted per note ([s5bFinePitch]) so one Pxx is one pitch on every channel. */
+    private val S5B_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
+        "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
+            "raises it); the 5B's shorter periods take about half as many steps. Tuned notes use it.", true)
+
     private val BY_CODE = EFFECTS.associateBy { it.code }
 
     fun effect(code: Int): EffectSpec? = BY_CODE[code]
 
-    /** The effects songs with [expansion] may use: the phase reset exists only with the N163 (its own opcode `$5B`). */
-    fun effects(expansion: NesExpansion): List<EffectSpec> =
-        if (expansion.chip == NesChip.N163) EFFECTS else EFFECTS_WITHOUT_PHASE_RESET
+    /**
+     * The effects songs with [expansion] may use: the phase reset exists only with the N163 (its own opcode `$5B`), the
+     * envelope period (`Ixx`/`Jxx`) only with the 5B.
+     */
+    fun effects(expansion: NesExpansion): List<EffectSpec> = when (expansion.chip) {
+        NesChip.N163 -> EFFECTS_N163
+        NesChip.S5B -> EFFECTS_S5B
+        else -> EFFECTS_2A03
+    }
 
-    private val EFFECTS_WITHOUT_PHASE_RESET = EFFECTS.filter { it.code != FX_PHASE_RESET }
+    private val EFFECTS_N163 = EFFECTS.filter { it.code != FX_ENV_PERIOD_HI && it.code != FX_ENV_PERIOD_LO }
+    private val EFFECTS_S5B = EFFECTS.filter { it.code != FX_PHASE_RESET }
+    private val EFFECTS_2A03 = EFFECTS_N163.filter { it.code != FX_PHASE_RESET }
 
     /** The chip whose instruments [channel] plays in a song with [expansion]. */
     fun chip(expansion: NesExpansion, channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else expansion.chip
 
-    /** True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw, the VRC7's FM and the N163's channels). */
+    /**
+     * True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw, the VRC7's FM and the N163's
+     * channels, the 5B squares).
+     */
     fun pitched(expansion: NesExpansion, channel: Int): Boolean = kind(expansion, channel).let {
         it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW || it == ChannelKind.VOICE ||
             it == ChannelKind.WAVE
@@ -245,23 +279,52 @@ object NesRules {
     fun lowestNote(expansion: NesExpansion, channel: Int): Int =
         if (channel < APU_CHANNELS && pitched(expansion, channel)) LOWEST_TONAL else 1 + NOTE_OFFSET
 
+    /**
+     * The 5B's tone divides the CPU clock by 32 × period where the 2A03 pulses divide by 16 × (period + 1), and
+     * FamiStudio's engine plays the 5B from the pulses' note table (period + 1), so a FamiStudio note sounds an octave
+     * lower on a 5B square than on a pulse. Thor Tracker's notes are true pitch (A-4 = 440 Hz on every channel but the
+     * 2A03 triangle, as FamiStudio names it), so a 5B square plays FamiStudio's note this many semitones higher
+     * ([engineNoteShift]).
+     */
+    const val S5B_OCTAVE = 12
+
+    /**
+     * A Pxx of [fine] (xx - 80, positive = up) on a 5B square playing engine note [engineNote] (FamiStudio's table note
+     * the square plays, [S5B_OCTAVE] above the pulse's for the same pitch): the period units, positive = up, that bend
+     * the 5B's period (table entry + 1) by the ratio [fine] units give a pulse on that pitch (its note [S5B_OCTAVE]
+     * lower, period p + 1). The 5B's periods are about half the pulse's, so one unit there is about two on a pulse.
+     */
+    fun s5bFinePitch(engineNote: Int, fine: Int): Int {
+        if (fine == 0) return 0
+        val pulse = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[(engineNote - S5B_OCTAVE).coerceIn(1, NOTE_COUNT)] + 1.0
+        val square = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[engineNote.coerceIn(1, NOTE_COUNT)] + 1.0
+        return kotlin.math.round(square * fine / pulse).toInt().coerceIn(-127, 127)
+    }
+
     /** The highest duty the duty effect (`Vxx`) takes on [channel]: the VRC6 pulses have eight. */
     fun dutyMax(expansion: NesExpansion, channel: Int): Int =
         if (chip(expansion, channel) == NesChip.VRC6) NesChip.VRC6.duty.last else 3
 
+    /** The 5B's envelope period effects, which exist only on its squares. */
+    private val ENV_PERIOD = setOf(FX_ENV_PERIOD_HI, FX_ENV_PERIOD_LO)
+
     /**
      * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, duty on the VRC6
-     * saw and the VRC7's FM channels, duty on the N163's channels, everything but speed, delay, cut and the DMC level on
-     * DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, and the phase reset off the N163 (the only
-     * channels whose phase reset FamiStudio's text and this player share: opcode `$5B`).
+     * saw, the VRC7's FM channels, the N163's channels and the 5B squares, everything but speed, delay, cut and the DMC
+     * level on DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, the phase reset off the N163 (the
+     * only channels whose phase reset FamiStudio's text and this player share: opcode `$5B`), and the 5B envelope period
+     * off its squares.
      */
-    private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when (kind(expansion, channel)) {
-        ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER, FX_PHASE_RESET)
-        ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
-        ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
-        ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
-        ChannelKind.WAVE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
-        else -> setOf(FX_DELTA_COUNTER, FX_PHASE_RESET)
+    private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when {
+        isS5b(expansion, channel) -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
+        else -> ENV_PERIOD + when (kind(expansion, channel)) {
+            ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER, FX_PHASE_RESET)
+            ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
+            ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
+            ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
+            ChannelKind.WAVE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
+            else -> setOf(FX_DELTA_COUNTER, FX_PHASE_RESET)
+        }
     }
 
     fun effectsFor(expansion: NesExpansion, channel: Int): List<EffectSpec> = unusable(expansion, channel).let { no ->
@@ -271,6 +334,7 @@ object NesRules {
                 it.code == FX_DUTY && chip == NesChip.VRC6 -> VRC6_DUTY
                 it.code == FX_FINE_PITCH && chip == NesChip.VRC7 -> VRC7_FINE
                 it.code == FX_FINE_PITCH && chip == NesChip.N163 -> N163_FINE
+                it.code == FX_FINE_PITCH && chip == NesChip.S5B -> S5B_FINE
                 else -> it
             }
         }
@@ -284,12 +348,15 @@ object NesRules {
     fun effectText(effect: Int, param: Int) = "${effectChar(effect)}${hex2(param)}"
 
     /**
-     * The VRC7 table's note 46 sounds A-3, unlike the 2A03's A-4: compensate before entering the driver. The N163's
-     * tables are in tune for its default 16-sample single-cycle wave, so its shift is 0 (other sizes transpose,
-     * [n163Transpose]).
+     * The VRC7 table's note 46 sounds A-3, unlike the 2A03's A-4: compensate before entering the driver. The 5B squares
+     * play the pulses' table an octave low ([S5B_OCTAVE]): the same compensation. The N163's tables are in tune for its
+     * default 16-sample single-cycle wave, so its shift is 0 (other sizes transpose, [n163Transpose]).
      */
-    fun engineNoteShift(expansion: NesExpansion, channel: Int): Int =
-        if (isVrc7(expansion, channel)) VRC7_OCTAVE else 0
+    fun engineNoteShift(expansion: NesExpansion, channel: Int): Int = when {
+        isVrc7(expansion, channel) -> VRC7_OCTAVE
+        isS5b(expansion, channel) -> S5B_OCTAVE
+        else -> 0
+    }
 
     /** The engine's note byte for absolute [note] on [channel]: [note] − [NOTE_OFFSET] + [engineNoteShift]. */
     fun engineNote(expansion: NesExpansion, channel: Int, note: Int): Int =
@@ -452,7 +519,7 @@ object NesRules {
             FX_FINE_PITCH -> (param - FINE_CENTRE).let {
                 when {
                     it == 0 -> "Fine pitch: none"
-                    chip(expansion, channel) == NesChip.VRC7 || chip(expansion, channel) == NesChip.N163 ->
+                    chip(expansion, channel).let { it == NesChip.VRC7 || it == NesChip.N163 || it == NesChip.S5B } ->
                         "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
                     else -> "Fine pitch ${if (it > 0) "+" else ""}$it units"
                 }
@@ -467,14 +534,43 @@ object NesRules {
             }
             FX_DELTA_COUNTER -> "DMC level $param"
             FX_PHASE_RESET -> "Restart the wave from its first sample"
+            FX_ENV_PERIOD_HI -> "5B envelope period ${NumberText.hex(param, 2)}00 (${param shl 8}; a Jyy in the row sets the low byte)"
+            FX_ENV_PERIOD_LO -> "5B envelope period 00${NumberText.hex(param, 2)} ($param; an Ixx in the row sets the high byte)"
             else -> "Unknown effect"
         }
     }
 
-    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7 and N163 sounds have none. */
+    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7, N163 and 5B sounds have none. */
     fun dutyText(chip: NesChip, value: Int): String = when (chip) {
         NesChip.APU -> listOf("12.5%", "25%", "50%", "75%").getOrElse(value) { "?" }
         NesChip.VRC6 -> if (value in NesChip.VRC6.duty) "${value + 1}/16" else "?"
-        NesChip.VRC7, NesChip.N163 -> "none"
+        NesChip.VRC7, NesChip.N163, NesChip.S5B -> "none"
+    }
+
+    /**
+     * The 5B envelope period each row of [cells] (one row of every 5B square, in channel order) sets, or -1: `Ixx` gives
+     * the high byte and `Jyy` the low byte, on any squares of the row; a byte without its effect is 0. Null when two
+     * squares give one byte different values (the row is ambiguous; [envPeriodConflict] says why).
+     */
+    fun envPeriod(cells: List<Cell>): Int? {
+        var hi = -1
+        var lo = -1
+        for (c in cells) {
+            if (!c.hasEffect) continue
+            when (c.effect) {
+                FX_ENV_PERIOD_HI -> if (hi >= 0 && hi != c.param) return null else hi = c.param
+                FX_ENV_PERIOD_LO -> if (lo >= 0 && lo != c.param) return null else lo = c.param
+            }
+        }
+        return if (hi < 0 && lo < 0) -1 else (maxOf(hi, 0) shl 8) or maxOf(lo, 0)
+    }
+
+    /** Why one row's 5B cells set the envelope period ambiguously, or null. */
+    fun envPeriodConflict(cells: List<Cell>): String? {
+        if (envPeriod(cells) != null) return null
+        val hi = cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_HI }.map { it.param }.distinct()
+        val which = if (hi.size > 1) hi.map { effectText(FX_ENV_PERIOD_HI, it) } else
+            cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_LO }.map { it.param }.distinct().map { effectText(FX_ENV_PERIOD_LO, it) }
+        return "${which.joinToString(" and ")} set the 5B's one envelope period twice in one row; keep one"
     }
 }

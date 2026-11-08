@@ -43,6 +43,12 @@ internal class FsNote {
     /** DPCM `Zxx`: DMC output level 0..127, -1 = none. */
     var deltaCounter = -1
 
+    /**
+     * The 5B's envelope period (FamiStudio's `EnvelopePeriod`, 0..65535), -1 = none. Only on 5B Square 1: a row's
+     * `Ixx`/`Jyy` on any 5B square land here, as FamiStudio's exporter moves every period effect to its first square.
+     */
+    var envelopePeriod = -1
+
     /** N163 `X00`: FamiStudio's phase reset (the wave restarts from its first sample). */
     var phaseReset = false
 
@@ -53,7 +59,7 @@ internal class FsNote {
     /** Any attribute that keeps FamiStudio's exporter from folding the row into an empty run. */
     val hasRunBreakingEffect
         get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0 ||
-            phaseReset
+            phaseReset || envelopePeriod >= 0
 
     val isEmpty get() = !isValid && !hasRunBreakingEffect && speed < 0
 
@@ -116,7 +122,10 @@ internal class FsSong(
          *   `CanRelease`), otherwise (or when the note was already released) it stops the channel;
          * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none; on the
          *   VRC7's FM and the N163's channels it is converted to the frequency step nearest the same pitch
-         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]).
+         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]), on the 5B squares to their own periods
+         *   ([NesRules.s5bFinePitch]);
+         * - a row's 5B envelope period (`Ixx` high byte, `Jyy` low byte, on any 5B squares: [NesRules.envPeriod]) is one
+         *   `EnvelopePeriod` on 5B Square 1.
          * Requires a song without [NesSystem.errors].
          */
         fun of(document: Song): FsSong {
@@ -128,6 +137,7 @@ internal class FsSong(
             val channels = expansion.channels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
+
                 var current = 0 // instrument slot sounding on the channel
                 var sounding = false // a note is playing and has not been released or stopped
                 var fine = 0
@@ -153,6 +163,22 @@ internal class FsSong(
                     }
                 }
             }
+            if (expansion == NesExpansion.S5B) {
+                // FamiStudio keeps every 5B envelope period effect on Square 1 (`MoveAllEnvelopePeriodsOnFirstChannel`).
+                val squares = NesRules.S5B_SQUARE1 until channels
+                var row = 0
+                for (o in song.orders.indices) {
+                    val pattern = song.patterns[song.orders[o]]
+                    for (r in 0 until pattern.length) {
+                        val period = NesRules.envPeriod(squares.map { pattern.tracks[it][r] }) ?: -1
+                        if (period >= 0) {
+                            val ch = NesRules.S5B_SQUARE1
+                            notes[ch][row] = (notes[ch][row] ?: FsNote()).also { it.envelopePeriod = period }
+                        }
+                        row++
+                    }
+                }
+            }
             // The song speed is set again at the first row (a loop to order 0 starts at the song speed, and the engine
             // starts at 6); FamiStudio's text export says the same, so both lowerings pick the same speed channel.
             if ((0 until channels).none { (notes[it][0]?.speed ?: -1) >= 0 }) {
@@ -168,6 +194,7 @@ internal class FsSong(
             if (cell.isBlank) return null
             val vrc7 = NesRules.isVrc7(expansion, ch)
             val n163 = NesRules.isN163(expansion, ch)
+            val s5b = NesRules.isS5b(expansion, ch)
             val n = FsNote()
             val p = cell.param
             when {
@@ -203,6 +230,7 @@ internal class FsSong(
                 NesRules.FX_FINE_PITCH -> n.finePitch = when {
                     vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
                     n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
+                    s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
                     else -> NesRules.FINE_CENTRE - p
                 }
                 NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
@@ -211,6 +239,7 @@ internal class FsSong(
                 NesRules.FX_DUTY -> n.duty = p
                 NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
                 NesRules.FX_PHASE_RESET -> n.phaseReset = true
+                // 5B envelope period: gathered per row on 5B Square 1 by [of].
             }
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.
             if (ch == NesRules.NOISE) n.finePitch = FsNote.NO_FINE

@@ -79,10 +79,20 @@ object NesValidator {
                 if (ins.duty.values.isNotEmpty()) out += "$where: N163 sounds have no duty envelope; clear it"
                 n163Shape(out, where, ins.wave)
             }
+            if (ins.chip == NesChip.S5B) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: 5B sounds have no duty envelope; clear it"
+                if (ins.s5b.octave !in S5bEnvelope.OCTAVES) out += "$where: 5B envelope octave ${ins.s5b.octave} is outside -8..8"
+                if (ins.s5b.period !in S5bEnvelope.PERIODS) out += "$where: 5B envelope period ${ins.s5b.period} is outside 0-65535"
+            } else {
+                if (ins.mixer.values.isNotEmpty() || ins.noise.values.isNotEmpty()) out += "$where: only 5B sounds have mixer and noise envelopes"
+                if (ins.s5b != S5bEnvelope.DEFAULT) out += "$where: only 5B sounds have a hardware envelope"
+            }
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
             envelopeShape(out, where, "duty", ins.duty, ins.chip.duty)
+            envelopeShape(out, where, "mixer", ins.mixer, NesEnvelope.MIXER)
+            envelopeShape(out, where, "noise", ins.noise, NesEnvelope.NOISE)
             for ((note, m) in ins.dpcm) {
                 val at = "$where, DPCM ${if (note in NesSystem.noteRange) NesSystem.noteName(note) else "note $note"}"
                 when {
@@ -156,15 +166,20 @@ object NesValidator {
             envelopeRules(out, where, "arpeggio", ins.arpeggio, releases = false)
             envelopeRules(out, where, "pitch", ins.pitch, releases = false)
             envelopeRules(out, where, "duty", ins.duty, releases = false)
+            envelopeRules(out, where, "mixer", ins.mixer, releases = false)
+            envelopeRules(out, where, "noise", ins.noise, releases = false)
             for ((name, size) in listOf(
                 "volume" to FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME).size,
                 "arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO).size,
                 "pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative).size,
                 "duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY).size,
+                "mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER).size,
+                "noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE).size,
             )) if (size > 255) out += "$where: the $name envelope takes $size bytes once encoded; FamiStudio's limit is 255. Shorten it or repeat fewer changes"
             if (ins.chip == NesChip.N163) n163Rules(out, where, ins.wave, song.nes.expansion.n163Channels)
         }
         val played = song.orders.toSet()
+        val squares = if (song.nes.expansion == NesExpansion.S5B) NesRules.S5B_SQUARE1 until song.nes.expansion.channels else IntRange.EMPTY
         document.patterns.forEachIndexed { p, pattern ->
             if (p !in played) return@forEachIndexed
             val label = Songs.patternLabel(song, p).cap()
@@ -172,6 +187,9 @@ object NesValidator {
                 for (row in 0 until pattern.length) {
                     NesRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${NesRules.channelName(song.nes.expansion, ch)} row $row: $it" }
                 }
+            }
+            if (!squares.isEmpty()) for (row in 0 until pattern.length) {
+                NesRules.envPeriodConflict(squares.map { pattern.tracks[it][row] })?.let { out += "$label, row $row: $it" }
             }
         }
         if (out.isEmpty()) dpcmErrors(song, out)
@@ -271,6 +289,7 @@ object NesValidator {
         firstNotesWithoutInstrument(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
         if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
+        if (song.nes.expansion == NesExpansion.S5B) NesS5b.warnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
         }

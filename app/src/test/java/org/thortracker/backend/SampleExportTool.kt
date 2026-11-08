@@ -11,7 +11,10 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.nes
+import org.thortracker.system.nes.S5bEnvelope
+import org.thortracker.system.nes.S5bShape
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
@@ -96,6 +99,62 @@ object SampleExportTool {
             File(directory, "n163-shortest-${system.n163Channels}ch.nesimg")
                 .writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
         }
+        // The NES + Sunsoft 5B demo (its image plays on "nes-famistudio-s5b"; render_nes_image.sh picks it).
+        val s5b = NesS5bSystem.demo()
+        File(directory, "copper-kite.thor").writeText(ProjectCodec.encode(s5b), Charsets.UTF_8)
+        for (format in NesS5bSystem.exports) File(directory, "copper-kite.${format.extension}").writeBytes(format.export(s5b))
+        File(directory, "copper-kite.nesimg").writeBytes(ByteArray(NesS5bSystem.engine.imageSize).also { NesS5bSystem.engine.lower(s5b, it) })
+        println("Exported ${s5b.title} to ${directory.absolutePath}")
+        // The shortest 5B song: one order of one row at speed 1, a plain 5B tone A-4 on 5B Square 1
+        // (s5b-shortest; wav_render_test.c renders the one-row, one-tick edge case).
+        val s5bBlank = NesS5bSystem.blank()
+        val s5bBank = s5bBlank.nes.instruments.toMutableList()
+        s5bBank[0] = NesInstrument("Tone", chip = NesChip.S5B, volume = NesEnvelope(listOf(15)))
+        val s5bFirst = s5bBlank.patterns[0]
+        val s5bShortest = s5bBlank.copy(
+            ticksPerRow = 1, orders = listOf(0), loopOrder = 0,
+            patterns = listOf(s5bFirst.copy(length = 1, tracks = s5bFirst.tracks.mapIndexed { ch, rows ->
+                if (ch == NesRules.S5B_SQUARE1) rows.toMutableList().also { it[0] = Cell(57, 1) } else rows
+            })),
+            sound = s5bBlank.nes.copy(instruments = s5bBank),
+        )
+        File(directory, "s5b-shortest.nesimg")
+            .writeBytes(ByteArray(NesS5bSystem.engine.imageSize).also { NesS5bSystem.engine.lower(s5bShortest, it) })
+        // Identical manual-period copies (core's golden s5b_manual_copies): Square 1 switches to the renamed copy while
+        // Square 2's manual saw holds the shared period; the switch loads the copy's own slot ($5F) keeping that period.
+        val mcBase = NesS5bSystem.blank()
+        val mcBank = mcBase.nes.instruments.toMutableList()
+        val tremolo = NesInstrument("Manual tremolo", volume = NesEnvelope(listOf(13)), chip = NesChip.S5B,
+            s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
+        mcBank[0] = tremolo
+        mcBank[1] = tremolo.copy(name = "Manual tremolo, renamed")
+        mcBank[2] = NesInstrument("Manual saw", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = false, period = 2000))
+        mcBank[3] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        val sq1 = NesRules.S5B_SQUARE1
+        fun mcPattern(name: String, cells: Map<Pair<Int, Int>, Cell>) = mcBase.patterns[0].let { p ->
+            p.copy(name = name, length = 16, tracks = p.tracks.mapIndexed { ch, rows ->
+                rows.mapIndexed { r, cell -> cells[ch to r] ?: cell }
+            })
+        }
+        val mcA = mcPattern("Manual copies A", mapOf(
+            (sq1 to 0) to Cell(48, 1), // C-4, the original
+            (sq1 + 1 to 4) to Cell(40, 3), // E-3, Square 2's manual saw: period 2000
+            (sq1 to 8) to Cell(52, 2), // E-4, the renamed copy with an attack
+            (sq1 + 2 to 10) to Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_LO, 0x40),
+            (sq1 to 12) to Cell(55, 0), // G-4 legato
+            (0 to 0) to Cell(52, 4),
+        ))
+        val mcB = mcPattern("Manual copies B", mapOf(
+            (sq1 to 0) to Cell(60, 0), // C-5 legato
+            (sq1 + 1 to 4) to Cell(38, 3), // D-3, the saw reloads 2000
+            (sq1 to 8) to Cell(64, 1), // E-5, back to the original with an attack
+            (sq1 to 12) to Cell(62, 0), // D-5 legato
+            (0 to 0) to Cell(57, 4),
+        ))
+        val manualCopies = mcBase.copy(title = "5B manual copies", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(mcA, mcB), orders = listOf(0, 1), sound = mcBase.nes.copy(instruments = mcBank))
+        File(directory, "s5b-manual-copies.nesimg")
+            .writeBytes(ByteArray(NesS5bSystem.engine.imageSize).also { NesS5bSystem.engine.lower(manualCopies, it) })
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

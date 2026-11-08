@@ -23,7 +23,9 @@ import org.thortracker.system.nes.Vrc7Presets
  * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`; the N163 also
  * `NumN163Channels`), its instruments of that chip carry `Expansion="VRC6"` and the saw master volume
  * (`Expansion="VRC7"`: the patch, the custom patch's registers and the release/stop overrides; `Expansion="N163"`: the
- * wave size, position and count with the `N163Wave` and `Repeat` envelopes), and its channels follow the 2A03's.
+ * wave size, position and count with the `N163Wave` and `Repeat` envelopes; `Expansion="S5B"`: the envelope shape,
+ * auto-pitch, octave and period, and the `MixerSettings` and `NoiseFreq` envelopes), its channels follow the 2A03's,
+ * and a 5B envelope period is the `EnvelopePeriod` of 5B Square 1's note.
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -35,7 +37,17 @@ object FamiStudioText {
         c < APU_TYPES.size -> APU_TYPES[c]
         expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
         expansion.chip == NesChip.N163 -> "N163Wave${c - APU_TYPES.size + 1}"
+        expansion == NesExpansion.S5B -> "S5BSquare${c - APU_TYPES.size + 1}"
         else -> "VRC7FM${c - APU_TYPES.size + 1}"
+    }
+
+    /** FamiStudio's expansion names (`ExpansionType.InternalNames`). */
+    private fun expansionName(chip: NesChip): String = when (chip) {
+        NesChip.APU -> ""
+        NesChip.VRC6 -> "VRC6"
+        NesChip.VRC7 -> "VRC7"
+        NesChip.N163 -> "N163"
+        NesChip.S5B -> "S5B"
     }
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
@@ -55,7 +67,7 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else "") +
-            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", fs.expansion.chip.label) else "") +
+            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", expansionName(fs.expansion.chip)) else "") +
             (if (fs.expansion.chip == NesChip.N163) attr("NumN163Channels", fs.expansion.n163Channels) else ""))
         val names = instrumentNames(fs)
         val samples = sampleNames(fs, names.keys)
@@ -191,6 +203,7 @@ object FamiStudioText {
                 if (n.cutDelay >= 0) s.append(attr("CutDelay", n.cutDelay))
                 if (n.deltaCounter >= 0) s.append(attr("DeltaCounter", n.deltaCounter))
                 if (n.phaseReset) s.append(attr("PhaseReset", 1))
+                if (n.envelopePeriod >= 0) s.append(attr("EnvelopePeriod", n.envelopePeriod))
             }
             lines += s.toString()
         }
@@ -225,7 +238,8 @@ object FamiStudioText {
      * An instrument's attributes after its name: its expansion's (`FamistudioTextFile`). VRC7: `Vrc7Patch`, the
      * registers only for Custom (0), then both overrides (the song's setting, the same on every VRC7 instrument:
      * FamiStudio's engine keeps only the last loaded one's). N163: preset, size, position, count (the waves themselves
-     * in the N163Wave envelope).
+     * in the N163Wave envelope). 5B: `S5BEnvelopeShape` 0 (off) or 1-8 = `$08-$0F`, then auto-pitch, its octave, the
+     * period.
      */
     private fun chipAttributes(fs: FsSong, ins: NesInstrument): String = when (ins.chip) {
         NesChip.APU -> ""
@@ -236,15 +250,28 @@ object FamiStudioText {
             attr("Vrc7OverrideStop", if (fs.vrc7Sustain.stop) "True" else "False")
         NesChip.N163 -> attr("Expansion", "N163") + attr("N163WavePreset", "Custom") + attr("N163WaveSize", ins.wave.size) +
             attr("N163WavePos", ins.wave.position) + attr("N163WaveCount", ins.wave.waves.size)
+        NesChip.S5B -> attr("Expansion", "S5B") + attr("S5BEnvelopeShape", ins.s5b.shape.famiStudio) +
+            attr("S5BEnvelopeAutoPitch", if (ins.s5b.autoPitch) "True" else "False") +
+            attr("S5BEnvelopeAutoPitchOctave", ins.s5b.octave) + attr("S5BEnvelopePitch", ins.s5b.period)
     }
 
-    /** An instrument's envelope lines; empty and all-neutral envelopes are left out (FamiStudio's defaults). */
+    /**
+     * An instrument's envelope lines; empty and all-neutral envelopes are left out (FamiStudio's defaults: a 5B mixer
+     * is neutral at tone only).
+     */
     private fun envelopeLines(ins: NesInstrument): List<String> = listOfNotNull(
         envelope("Volume", ins.volume, 15, false),
         envelope("Arpeggio", ins.arpeggio, 0, false),
         envelope("Pitch", ins.pitch, 0, ins.pitchRelative),
         envelope("DutyCycle", ins.duty, 0, false),
-    ) + if (ins.chip == NesChip.N163) n163Envelopes(ins.wave) else emptyList()
+    ) + when (ins.chip) {
+        NesChip.N163 -> n163Envelopes(ins.wave)
+        NesChip.S5B -> listOfNotNull(
+            envelope("MixerSettings", ins.mixer, FamiStudioEnvelopes.MIXER_TONE, false),
+            envelope("NoiseFreq", ins.noise, 0, false),
+        )
+        else -> emptyList()
+    }
 
     /**
      * What FamiStudio's export compares when it merges identical instruments (`Project.MergeIdenticalInstruments`: a

@@ -8,7 +8,10 @@ import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.nes.S5bEnvelope
+import org.thortracker.system.nes.S5bShape
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.nes.Vrc7Presets
 import org.thortracker.system.nes.Vrc7Sustain
@@ -278,6 +281,53 @@ class NesExportTest {
         assertTrue(conflicts(4).single().contains("VRC7 FM 1 still holds custom sound 03"), conflicts(4).toString())
         assertEquals(emptyList(), conflicts(5))
         assertEquals(emptyList(), conflicts(4, offRow = 2))
+    }
+
+    /**
+     * NES + Sunsoft 5B: the `.nsf` carries the 5B player and names the chip (bit 5), plays like the lowered data with the
+     * 5B's register writes; the text names the expansion, its squares and the sounds' 5B settings; 5B-only settings stay
+     * on 5B sounds.
+     */
+    @Test
+    fun s5bExportsNameTheChipAndKeepSettingsOnItsSounds() {
+        val song = NesS5bSystem.demo()
+        assertEquals(emptyList(), NesS5bSystem.errors(song))
+        val nsf = NesS5bSystem.exports.first { it.extension == "nsf" }.export(song)
+        assertEquals(NesS5bPlayerImage.LOAD, u16(nsf, 8))
+        assertEquals(NesS5bPlayerImage.INIT, u16(nsf, 10))
+        assertEquals(NesS5bPlayerImage.PLAY, u16(nsf, 12))
+        assertEquals(0x20, nsf[0x7b].toInt()) // expansion chips: Sunsoft 5B
+        val body = nsf.copyOfRange(128, nsf.size)
+        assertContentEquals(NesS5bPlayerImage.BYTES, body.copyOfRange(0, NesS5bPlayerImage.BYTES.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val songAt = NesS5bPlayerImage.SONG_BASE - NesS5bPlayerImage.LOAD
+        assertContentEquals(lowered.data, body.copyOfRange(songAt, songAt + lowered.data.size))
+        val end = if (lowered.samples.isEmpty()) songAt + lowered.data.size else lowered.sampleStart - NesS5bPlayerImage.LOAD
+        val a = NesTracer(lowered.data, NesPlayer.S5B)
+        val b = NesTracer(body.copyOfRange(songAt, end), NesPlayer.S5B)
+        var s5b = 0
+        repeat(600) {
+            val f = a.frame()
+            assertContentEquals(f, b.frame())
+            s5b += f.count { (it shr 8) >= 0xC000 }
+        }
+        assertTrue(s5b > 600, "the demo writes the 5B ($s5b register writes in 600 frames)")
+        val lines = FamiStudioText.text(song).lines()
+        assertTrue(lines[0].endsWith("Expansions=\"S5B\""), lines[0])
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM") + (1..3).map { "S5BSquare$it" },
+            lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+        assertTrue(lines.any { "Expansion=\"S5B\" S5BEnvelopeShape=" in it })
+        // 5B settings belong to 5B sounds: a 5B sound has no duty, a 2A03 sound no mixer, noise or hardware envelope.
+        val base = NesS5bSystem.blank()
+        fun errorsWith(ins: NesInstrument): List<String> {
+            val bank = base.nes.instruments.toMutableList().also { it[0] = ins }
+            return NesS5bSystem.structuralErrors(base.copy(sound = base.nes.copy(instruments = bank)))
+        }
+        assertTrue(errorsWith(NesInstrument("D", chip = NesChip.S5B, duty = NesEnvelope(listOf(1)))).isNotEmpty())
+        assertTrue(errorsWith(NesInstrument("M", mixer = NesEnvelope(listOf(0)))).isNotEmpty())
+        assertTrue(errorsWith(NesInstrument("E", s5b = S5bEnvelope(S5bShape.DECAY))).isNotEmpty())
+        assertTrue(errorsWith(NesInstrument("N", chip = NesChip.S5B, noise = NesEnvelope(listOf(32)))).isNotEmpty())
+        assertEquals(emptyList(), errorsWith(NesInstrument("Ok", chip = NesChip.S5B, mixer = NesEnvelope(listOf(0, 1, 2, 3)), noise = NesEnvelope(listOf(31)))))
     }
 
     @Test

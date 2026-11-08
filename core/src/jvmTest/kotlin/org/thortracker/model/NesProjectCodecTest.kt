@@ -14,6 +14,7 @@ import org.thortracker.backend.NesGoldenSongs
 import org.thortracker.system.SoundSystems
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.NesSystem
@@ -111,6 +112,34 @@ class NesProjectCodecTest {
             ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio-n163-4")))))
         val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
         assertTrue(e.message!!, e.message!!.contains("NES + N163, 3 channels"))
+    }
+
+    /**
+     * The 5B variant: its sound names the expansion, its 5B sounds their chip, mixer, noise and hardware envelope (each
+     * only when set); 2A03 sounds of a 5B song keep the 2A03 keys only; a file naming another backend is rejected.
+     */
+    @Test
+    fun s5bSongsNameTheirVariantAndEnvelopes() {
+        for (song in listOf(NesS5bSystem.blank(), NesS5bSystem.demo())) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+        val song = NesGoldenSongs.s5bEffects()
+        val root = Json.parseToJsonElement(ProjectCodec.encode(song)).jsonObject
+        assertEquals("nes-famistudio-s5b", root["backend"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("s5b", sound["expansion"]!!.jsonPrimitive.content)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        val snare = instruments[2]
+        assertEquals("s5b", snare["chip"]!!.jsonPrimitive.content)
+        assertTrue(snare.keys.toString(), "mixer" in snare.keys && "noise" in snare.keys && "s5b" !in snare.keys)
+        val manual = instruments[7]["s5b"]!!.jsonObject
+        assertEquals("triangle", manual["shape"]!!.jsonPrimitive.content)
+        assertEquals("false", manual["autoPitch"]!!.jsonPrimitive.content)
+        assertEquals("900", manual["period"]!!.jsonPrimitive.content)
+        val lead2a03 = instruments[9]
+        assertTrue(lead2a03.keys.toString(), listOf("chip", "mixer", "noise", "s5b").none { it in lead2a03.keys })
+        val other = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio")) +
+            ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
+        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
+        assertTrue(e.message!!, e.message!!.contains("NES + Sunsoft 5B"))
     }
 
     @Test

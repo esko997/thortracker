@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.nes
 import kotlin.test.fail
@@ -66,14 +67,19 @@ class NesGoldenTest {
                 val ins = fs.instruments[slot - 1]
                 ours += "slot $slot volume" to FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME)
                 ours += "slot $slot arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO)
-                ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
+                // FamiStudio exports only the envelopes a sound's expansion has: no duty on the VRC7 or the 5B.
+                if (ins.chip.hasDuty) ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
                 ours += "slot $slot pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative)
-                if (ins.chip == org.thortracker.system.nes.NesChip.N163) {
+                if (ins.chip == NesChip.N163) {
                     // FamiStudio stores an N163 sound's wave-index envelope and each distinct wave among its envelopes.
                     ours += "slot $slot wave index" to FamiStudioEnvelopes.waveIndex(ins.wave)
                     for ((i, w) in FamiStudioEnvelopes.n163Waves(ins.wave).stored.withIndex()) {
                         ours += "slot $slot wave $i" to FamiStudioEnvelopes.n163WaveBytes(w)
                     }
+                }
+                if (ins.chip == NesChip.S5B) {
+                    ours += "slot $slot mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER)
+                    ours += "slot $slot noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE)
                 }
             }
             for (ch in fs.notes) for (n in ch) {
@@ -109,6 +115,7 @@ class NesGoldenTest {
             var dpcmStarts = 0
             var expansionWrites = 0
             var n163 = 0
+            var s5b = 0
             val patchA = IntArray(8) { -1 }
             val patchB = IntArray(8) { -1 }
             for (f in 0 until frames) {
@@ -121,6 +128,7 @@ class NesGoldenTest {
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 expansionWrites += ta.count { (it shr 8) >= 0x9000 }
                 n163 += ta.count { (it shr 8) == 0x4800 }
+                s5b += ta.count { (it shr 8) >= 0xC000 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
@@ -135,6 +143,10 @@ class NesGoldenTest {
             if (lowered.player in NesPlayer.N163) {
                 // The trace covers the N163: frequencies, volumes and wave uploads through its data port, every frame.
                 assertTrue(n163 > frames, "$name: only $n163 N163 data writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.S5B) {
+                // The trace covers the 5B: every frame its squares sound, register selects and data writes (compared).
+                assertTrue(s5b > frames, "$name: only $s5b Sunsoft 5B register writes in $frames frames")
             }
         }
     }

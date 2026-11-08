@@ -43,7 +43,10 @@ enum class NesExpansion(
     @SerialName("n163-5") N163_5(NesChip.N163, n163Names(5), n163Kinds(5)),
     @SerialName("n163-6") N163_6(NesChip.N163, n163Names(6), n163Kinds(6)),
     @SerialName("n163-7") N163_7(NesChip.N163, n163Names(7), n163Kinds(7)),
-    @SerialName("n163-8") N163_8(NesChip.N163, n163Names(8), n163Kinds(8));
+    @SerialName("n163-8") N163_8(NesChip.N163, n163Names(8), n163Kinds(8)),
+
+    /** The Sunsoft 5B (a YM2149F): three square tone channels sharing one noise and one envelope generator. */
+    @SerialName("s5b") S5B(NesChip.S5B, List(3) { "5B Square ${it + 1}" }, List(3) { ChannelKind.PULSE });
 
     /** Channels after the 2A03's five. */
     val extraChannels: Int get() = channelNames.size
@@ -59,6 +62,7 @@ enum class NesExpansion(
         NONE -> NesSystem
         VRC6 -> NesVrc6System
         VRC7 -> NesVrc7System
+        S5B -> NesS5bSystem
         else -> NesN163System.of(n163Channels)
     }
 
@@ -80,8 +84,8 @@ private fun n163Kinds(n: Int): List<ChannelKind> = List(n) { ChannelKind.WAVE }
 /**
  * Which chip's channels an [NesInstrument] plays (FamiStudio's instrument expansion): the 2A03's, or an expansion's.
  * Instruments do not cross chips, as in FamiStudio: the same envelope means different things (the VRC6's 8 duty steps,
- * the VRC7's FM patch, the N163's waves). [duty] is the duty envelope's range; VRC7 and N163 sounds have no duty
- * envelope (it stays empty).
+ * the VRC7's FM patch, the N163's waves, the 5B's mixer). [duty] is the duty envelope's range; VRC7, N163 and 5B sounds
+ * have no duty envelope (it stays empty, [hasDuty]).
  */
 @Serializable
 enum class NesChip(val label: String, val duty: IntRange) {
@@ -89,6 +93,64 @@ enum class NesChip(val label: String, val duty: IntRange) {
     @SerialName("vrc6") VRC6("VRC6", 0..7),
     @SerialName("vrc7") VRC7("VRC7", 0..0),
     @SerialName("n163") N163("N163", 0..0),
+    @SerialName("s5b") S5B("5B", 0..0);
+
+    /** Whether this chip's sounds have a duty envelope (the 2A03's pulses and noise mode, the VRC6's pulses). */
+    val hasDuty: Boolean get() = this == APU || this == VRC6
+}
+
+/**
+ * The 5B's envelope generator shape ([S5bEnvelope.shape]; register `$0D`): [register] `$08-$0F` (the repeating and
+ * one-shot shapes FamiStudio offers as `S5BEnvelopeShape` 1-8, its value = register - 7), or [OFF] (the volume
+ * envelope sets the level). [picture] draws one period of the level as the NESdev wiki does.
+ */
+@Serializable
+enum class S5bShape(val label: String, val register: Int, val picture: String) {
+    @SerialName("off") OFF("Off", 0, ""),
+    @SerialName("saw-down") SAW_DOWN("Saw down", 0x8, "\\\\\\\\"),
+    @SerialName("decay") DECAY("Decay", 0x9, "\\___"),
+    @SerialName("triangle") TRIANGLE("Triangle", 0xA, "\\/\\/"),
+    @SerialName("decay-high") DECAY_HIGH("Decay, then high", 0xB, "\\¯¯¯"),
+    @SerialName("saw-up") SAW_UP("Saw up", 0xC, "////"),
+    @SerialName("attack") ATTACK("Attack, hold", 0xD, "/¯¯¯"),
+    @SerialName("triangle-up") TRIANGLE_UP("Triangle up", 0xE, "/\\/\\"),
+    @SerialName("attack-drop") ATTACK_DROP("Attack, then off", 0xF, "/___");
+
+    /** FamiStudio's `S5BEnvelopeShape`: 0 off, 1-8 = `$08-$0F`. */
+    val famiStudio: Int get() = if (this == OFF) 0 else register - 7
+
+    /** Shapes that repeat while the note holds (saw and triangle): the envelope is then a waveform of its own. */
+    val repeats: Boolean get() = this == SAW_DOWN || this == TRIANGLE || this == SAW_UP || this == TRIANGLE_UP
+
+    /** Triangles take two ramps per cycle, so the same period sounds an octave lower than a saw. */
+    val triangle: Boolean get() = this == TRIANGLE || this == TRIANGLE_UP
+}
+
+/**
+ * A 5B sound's use of the chip's one envelope generator (FamiStudio's `S5BEnvelopeShape`, `S5BEnvelopeAutoPitch`,
+ * `S5BEnvelopeAutoPitchOctave`, `S5BEnvelopePitch`): with a [shape] the channel's level is the generator's (the volume
+ * envelope and `Cxx` no longer matter) and every note with attack restarts it. Its period, 16 CPU cycles per step and
+ * 32 steps per ramp, either follows the note ([autoPitch]: the note's tone period shifted right by [octave], left for a
+ * negative one, as FamiStudio's engine does) or is [period] (manual; `Ixx`/`Jxx` change it until the next note that
+ * reloads a sound). The three squares share the generator: the highest-numbered square sounding such a sound sets the
+ * shape and period each frame. FamiStudio's defaults: off, auto, octave 3, period 1000.
+ */
+@Serializable
+data class S5bEnvelope(
+    val shape: S5bShape = S5bShape.OFF,
+    val autoPitch: Boolean = true,
+    val octave: Int = 3,
+    val period: Int = 1000,
+) {
+    companion object {
+        val DEFAULT = S5bEnvelope()
+
+        /** FamiStudio's auto-period octave range. */
+        val OCTAVES = -8..8
+
+        /** The 16-bit period register (`$0B-$0C`). */
+        val PERIODS = 0..0xFFFF
+    }
 }
 
 /**
@@ -292,6 +354,15 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
 
         /** 2A03: 12.5%, 25%, 50%, 75% on the pulses; on Noise 0 = long (hiss), 1 = short (metallic) LFSR. VRC6: [NesChip.duty]. */
         val DUTY = 0..3
+
+        /**
+         * 5B mixer per frame (FamiStudio's `S5BMixer`): 0 tone and noise (the square gated by the noise), 1 noise only,
+         * 2 tone only (the default of an empty envelope), 3 neither (the channel holds its level: a constant).
+         */
+        val MIXER = 0..3
+
+        /** 5B noise generator period per frame (FamiStudio's `S5BNoiseFreq`): 0-31, higher is lower. */
+        val NOISE = 0..31
     }
 }
 
@@ -304,8 +375,10 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
  * [chip] says which channels play it ([NesChip.APU]: the 2A03's; [NesChip.VRC6]: the VRC6 pulses, duty 0-7 = 1/16 to
  * 8/16, and the saw, whose volume [sawVolume] scales; [NesChip.VRC7]: the six FM channels, which play the FM patch [fm]
  * shaped by the volume, arpeggio and pitch envelopes, no duty; [NesChip.N163]: the N163's channels, which play the
- * waves [wave] shaped by the volume, arpeggio and pitch envelopes, no duty). These are left out of project files at
- * their defaults, so 2A03 instruments are stored as before.
+ * waves [wave] shaped by the volume, arpeggio and pitch envelopes, no duty; [NesChip.S5B]: the 5B squares, no duty but
+ * a [mixer] envelope (per frame 0 tone + noise, 1 noise, 2 tone, 3 neither; empty = tone, FamiStudio's default), a
+ * [noise] envelope (the shared noise generator's period 0-31 per frame) and the hardware envelope [s5b]). These are left
+ * out of project files at their defaults, so 2A03 instruments are stored as before.
  */
 @Serializable
 data class NesInstrument(
@@ -320,6 +393,9 @@ data class NesInstrument(
     @EncodeDefault(EncodeDefault.Mode.NEVER) val sawVolume: Vrc6SawVolume = Vrc6SawVolume.HALF,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val fm: Vrc7Patch = Vrc7Patch.DEFAULT,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val wave: N163Wave = N163Wave.DEFAULT,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val mixer: NesEnvelope = NesEnvelope(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val noise: NesEnvelope = NesEnvelope(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val s5b: S5bEnvelope = S5bEnvelope.DEFAULT,
 ) {
     companion object {
         /** A new slot: flat full volume, nothing else. */
