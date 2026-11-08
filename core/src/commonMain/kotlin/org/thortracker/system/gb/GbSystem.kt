@@ -167,6 +167,7 @@ object GbSystem : SoundSystem {
      */
     private object Engine : PlaybackEngine {
         override val id = "gb-huge"
+        override val driver = "hUGEDriver 6.1.3 on binjgb (commit 1662111)"
         override val imageSize = HugeImageLayout.SIZE
 
         /** At 59.73 ticks per second, ~3.3 minutes of song. */

@@ -18,6 +18,8 @@ object SampleExportTool {
         val song = Songs.demo()
         File(directory, "thor-groove.thor").writeText(ProjectCodec.encode(song), Charsets.UTF_8)
         File(directory, "thor-groove.uge").writeBytes(UgeExporter.export(song))
+        // Every demo's engine image: the native WAV export test (app/src/test/cpp/wav_render_test.c) renders them.
+        File(directory, "thor-groove.gbimg").writeBytes(ByteArray(song.system.engine.imageSize).also { song.system.engine.lower(song, it) })
         println("Exported ${song.title} to ${directory.absolutePath}")
         // The NES demo: project, both exports and the engine image (tools/audio/render_nes_image.sh renders it).
         val nes = NesSystem.demo()

@@ -280,13 +280,38 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
         init {
             System.loadLibrary("thortracker_audio")
-            // VGM export of OPL3 songs and VGM/XGM/XGC export of Mega Drive songs through the native players (core
-            // has no native code).
+            // VGM export of OPL3 songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of every system through
+            // the native players (core has no native code).
             Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
                 nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            WavExport.renderer = WavRenderer { engineId, image, options, spool ->
+                NativeWavJob(nativeWavOpen(engineId, image, options.loops, options.fadeSeconds * 1000, options.maxSeconds, spool))
+            }
+        }
+
+        /** A native WAV render (`chip_wav.h`) through JNI; one thread at a time, as [WavJob] requires. */
+        private class NativeWavJob(private var handle: Long) : WavJob {
+            private val values = LongArray(6)
+
+            override fun run(ticks: Int): Boolean = when (val r = nativeWavRun(handle, ticks)) {
+                0 -> true
+                1 -> false
+                CHIP_ERR_FAULT -> throw IllegalStateException("the driver faulted on this song data")
+                else -> throw IllegalStateException("the file could not be written (storage full?)")
+            }
+
+            override fun status(): WavStatus {
+                nativeWavStatus(handle, values)
+                return WavStatus(values[0], values[1], values[2].toInt(), values[3] != 0L, values[4], values[5] != 0L)
+            }
+
+            override fun close() {
+                if (handle != 0L) nativeWavClose(handle)
+                handle = 0L
             }
         }
 
@@ -305,5 +330,10 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** `chip_wav.h`: a job rendering into [spool]; throws IllegalArgumentException(problem) when it cannot start. */
+        @JvmStatic private external fun nativeWavOpen(systemId: String, image: ByteArray, loops: Int, fadeMs: Int, maxSeconds: Int, spool: String): Long
+        @JvmStatic private external fun nativeWavRun(handle: Long, ticks: Int): Int
+        @JvmStatic private external fun nativeWavStatus(handle: Long, out: LongArray)
+        @JvmStatic private external fun nativeWavClose(handle: Long)
     }
 }

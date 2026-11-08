@@ -20,6 +20,7 @@ import org.thortracker.input.Keys
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.audio.WavExport
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.ui.AppMenus
@@ -27,6 +28,7 @@ import org.thortracker.ui.DrawnPopup
 import org.thortracker.ui.HostInput
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.Popups
+import org.thortracker.ui.RecentMessages
 import platform.posix.*
 import sdl3.*
 
@@ -59,6 +61,7 @@ fun main(args: Array<String>) {
 
     Opl3Vgm.renderer = DeckOpl3Vgm
     YmExport.renderer = DeckYmExport
+    WavExport.renderer = DeckWav
     val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
     app.script = ArrayDeque(script)
     app.run(quitAfterMs)
@@ -81,7 +84,9 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
     val popups = Popups({ if (it == 0) popup else null }, { listOf(0) })
     val input = HostInput()
     var running = true
-    val shell = DeckShell(session, pane, popups, input, appDir, quit = { running = false })
+    val shell = DeckShell(session, pane, popups, input, appDir, quit = { running = false }, audio = audio, display = {
+        "${output.width}x${output.height} px at density $density, SDL video ${SDL_GetCurrentVideoDriver()?.toKString() ?: "?"}"
+    })
     val menus = AppMenus(session, panes, transport, popups, shell)
     private var repeatCode = 0
     private var repeatAt = 0uL
@@ -134,7 +139,8 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
                 if (now >= until) { codes.reversed().forEach { button(it, false) }; heldScript = null; println("released ${codes.joinToString("+")}: auditions=${audio.auditions} peak=${da_peak()}") }
             }
             auditionLoop.advance(now.toLong()) { ch, note, ins -> audio.audition(ch, note, ins) }
-            audio.error().let { if (it != lastAudioError) { lastAudioError = it; if (it != null) session.note(it) } }
+            audio.error().let { if (it != lastAudioError) { lastAudioError = it; if (it != null) { RecentMessages.record("audio", it); session.note(it) } } }
+            shell.pumpExport()
             shell.autosave(now)
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }

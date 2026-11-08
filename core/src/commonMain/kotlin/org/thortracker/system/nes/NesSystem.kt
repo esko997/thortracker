@@ -248,6 +248,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      */
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU, blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */

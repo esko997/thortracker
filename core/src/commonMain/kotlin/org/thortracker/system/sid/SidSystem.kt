@@ -174,6 +174,7 @@ object SidSystem : SoundSystem {
 
     private object Engine : PlaybackEngine {
         override val id = "c64-sid"
+        override val driver = "GoatTracker 2.77 playroutine on m6502.h (chips 9e88298) and reSID 1.0 (commit 02c456a), PAL C64"
         override val imageSize = SidPlayerImage.IMAGE_SIZE
 
         /** At 50.1 ticks per second, ~4 minutes of song (multispeed songs: proportionally less). */
