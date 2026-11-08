@@ -48,7 +48,7 @@ class DeckAudio : TrackerAudio {
         commandError = failure(da_play(order, row, engine.seekTicks), "play")
     }
 
-    override fun stop() { if (system != null) da_stop() }
+    override fun stop() { commandError = null; if (system != null) da_stop() }   // a failed command is over once its sound is
 
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
         auditions++
@@ -57,7 +57,7 @@ class DeckAudio : TrackerAudio {
         commandError = failure(da_audition(channel, engine.note(note), instrument, engine.fine(note, detune), auditionTicks), "audition")
     }
 
-    override fun releaseAudition() { if (system != null) da_release_audition() }
+    override fun releaseAudition() { commandError = null; if (system != null) da_release_audition() }
     override fun position() = PlaybackPosition(da_playing() != 0, da_order(), da_row())
     override fun error(): String? = deviceError ?: commandError ?: songError
     override fun close() = da_close()

@@ -165,6 +165,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private var pickerGeneration: Long? = null
     private var statusMessage = "Loading project…"
     private var flashedStatus: String? = null
+    /** A sticky audio-error chip is up; it comes down when the error clears. */
+    private var showingAudioError = false
     private var keymap = Keymap.DEFAULT
     private var pickerSong: Song? = null
 
@@ -175,6 +177,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     private var awaitingTransportUntil = 0L
     private lateinit var transport: Transport
     private val audioFeedback = Runnable { refresh() }
+    /** Looks again while an audio error shows: the audio thread clears it after the edit that fixed it was drawn. */
+    private val statusCheck = Runnable { updateStatus() }
     private val tick = object : Runnable {
         override fun run() {
             if (!active) return
@@ -321,6 +325,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
+        main.removeCallbacks(statusCheck)
         transport.halt()
         releaseAudition()
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest)
@@ -545,18 +550,27 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     /**
      * Status lives in the (usually hidden) toolbar; a new message also flashes a chip on each display. An audio
      * error (e.g. the preview could not take the latest edits) stays on screen until it clears, because what you
-     * hear no longer matches the song.
+     * hear no longer matches the song; then its chip comes down.
      */
     private fun updateStatus() {
         val audioError = audio?.error()
         val message = audioError ?: statusMessage
         hosts.values.forEach { if (it.toolbar.status.text.toString() != message) it.toolbar.status.text = message }
         if (!documentReady) { hosts.values.forEach { it.flash(message, sticky = true) }; return }
+        main.removeCallbacks(statusCheck)
+        if (audioError != null) main.postDelayed(statusCheck, 500)
+        else if (showingAudioError) {
+            // Not re-flashing the older status the error had covered.
+            showingAudioError = false
+            flashedStatus = message
+            hosts.values.forEach { it.flash(null, false) }
+            return
+        }
         if (message == WORKING) { flashedStatus = null; return }
         if (message == flashedStatus) return
         flashedStatus = message
-        val sticky = audioError != null
-        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = sticky) else it.flash(null, false) }
+        showingAudioError = audioError != null
+        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = showingAudioError) else it.flash(null, false) }
     }
 
     private fun cancelAuditionSequence() {
