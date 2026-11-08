@@ -1013,7 +1013,7 @@ object NesGoldenSongs {
         val b = P("Manual copies B", length = 16, channels = 8)
         b.note(sq1, 0, "C-5") // legato on the renamed copy; looping, the first copy is held (merged: still no attack)
         b.note(sq2, 4, "D-3", 3) // the saw reloads 2000
-        b.note(sq1, 8, "E-5", 1) // back to the first copy with an attack: one instrument after the merge, no load
+        b.note(sq1, 8, "E-5", 1) // the pending J40 override forces this attack to reload the manual period, 900
         b.note(sq1, 12, "D-5") // legato; the loop's last instrument is the first copy
         b.note(0, 0, "A-4", 4)
         return base.copy(
