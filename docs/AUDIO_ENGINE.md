@@ -8,9 +8,11 @@ behaviour are whatever the driver code does on the emulated CPU and APU.
 The NES system (`"nes-famistudio"`) follows the same principle: the FamiStudio sound engine 4.5.3
 (FamiTracker tempo) runs on an emulated 6502 + 2A03 with all five channels, DPCM samples included;
 its image layout, seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
-The expansion variants run the same engine built with an expansion chip: Konami's VRC6
-(`"nes-famistudio-vrc6"`, [VRC6](#vrc6-the-same-engine-with-konamis-vrc6-nes-famistudio-vrc6)) and Namco's 163 with 1..8
-wavetable channels (`"nes-famistudio-n163-1"`..`"-8"`, [N163](#n163-the-same-engine-with-namcos-163-nes-famistudio-n163-1--8)).
+The expansion variants run the same engine assembled with the selected chip:
+[VRC6](#vrc6-the-same-engine-with-konamis-vrc6-nes-famistudio-vrc6),
+[VRC7](#vrc7-the-same-engine-with-konamis-vrc7-nes-famistudio-vrc7), and Namco
+[N163](#n163-the-same-engine-with-namcos-163-nes-famistudio-n163-1--8) with 1..8 wavetable channels
+(`"nes-famistudio-n163-1"`..`"-8"`).
 
 The C64 SID system (`"c64-sid"`, design step 6, native spike) runs the GoatTracker 2.77 playroutine
 on an emulated 6510 + reSID 1.0 (MOS 6581 or 8580, PAL); its image layout, timing, seek, audition and
@@ -122,6 +124,8 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | z80.h (floooh/chips) | `app/src/main/cpp/third_party/chips/z80.h`; implemented once in `cpuz80.c` | the `m6502.h` commit `9e88298c`; `z80.h` sha256 `6ca70ffd…de734f3` | zlib (the chips notice) |
 | ymfm | `app/src/main/cpp/third_party/ymfm/` (`ymfm.h`, `ymfm_opn.h/.cpp`, `ymfm_fm.h/.ipp`, `ymfm_adpcm.h/.cpp`, `ymfm_ssg.h/.cpp`, `LICENSE`), unmodified | github.com/aaronsgiles/ymfm commit `81aec25ccbb98f4873a255f7551ac4dadac59b4a` (2026-07-27); `ymfm_opn.cpp` sha256 `8734c6d5…913b489`, `ymfm_fm.ipp` `4fb7fe59…f6ab4b9` | BSD-3-Clause — notice in `NOTICE.txt` |
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
+| emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
+| FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -534,13 +538,12 @@ At a tick boundary, Thor layout to Thor layout:
    pattern, empty-run remainder) is recomputed in the new data for "rows 0..row of this order
    consumed" — or "0..row−1, positioned after the row's `$47 d`" when the channel has a delayed note
    pending. Edited cells are heard from the next row processed.
-3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots) is found in the
-   old directory and moved to: the same index if its bytes are unchanged; else an entry of the same
-   kind with identical bytes (effect envelopes renumbered by the lowering); else the same index
-   edited — keeping the read position if it is still an instruction start, else restarting that
-   envelope; else the engine's silent dummy envelope. So a sustained note follows an edit of its
-   own instrument's envelope (GB: the next note does) unless an identical copy of the old envelope
-   remains elsewhere.
+3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots in the base NES build) is
+   found in the old directory. Instrument envelopes retain their stable slot even if an identical copy of the
+   old bytes remains elsewhere, so editing one instrument affects its sustained notes, not another instrument.
+   Effect envelopes can be renumbered: keep an unchanged slot, else find identical bytes of the same kind,
+   else follow the edited slot. An edited envelope keeps its read position if it is still an instruction
+   start, otherwise restarts; a removed envelope falls back to the engine's silent dummy.
 4. Instrument table pointer, DPCM list pointer and tempo step are re-read; the speed is set to
    straight play's speed at the playhead if the edit changed it (song speed, an earlier Fxx in this
    order) or the playhead was clamped; otherwise the engine keeps its speed (e.g. one inherited
@@ -556,9 +559,9 @@ At a tick boundary, Thor layout to Thor layout:
    until the engine starts the next sample, which plays the new list entry and bytes.
 
 **Contract for the builder**: any layout that passes `nm_load_image` relocates — data and samples may
-move freely between images. Keep directory indices stable for instrument envelopes (e.g. slot·4 +
-kind) so sustained notes follow envelope edits; effect envelopes and DPCM mappings may be renumbered
-(the streams carry the new numbers). Raw layouts: bytes are copied (correct only if nothing moved).
+move freely between images. Instrument envelope indices are `slot·4 + kind` (0..255); effect envelopes
+start at 256 and may be renumbered, as may DPCM mappings (the streams carry the new numbers). Raw
+layouts: bytes are copied (correct only if nothing moved).
 The host test applies a fully re-laid-out image before every one of 1080 frames and gets register
 writes identical to straight play; with the DPCM test song it moves every sample before every frame
 (298 playing samples relocated in 576 frames) and the DMC output stays sample-identical.
@@ -825,6 +828,111 @@ VPulse sustain edited.
   the `.nsf`/text exports, files and the editor.
 - Not done: listening on hardware or a VRC6 cartridge, comparison with a reference VRC6 emulator's audio
   (libgme/NSFPlay), Thor measurements.
+
+## VRC7: the same engine with Konami's VRC7 (`"nes-famistudio-vrc7"`)
+
+The second NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips", VRC7). Everything in
+the NES section holds; this section lists what differs. The 2A03 and VRC6 builds' player bytes, image
+sizes, song bases and fixtures are unchanged (`prepare_nes_player.py` checks its outputs for them stay
+byte-identical).
+
+### What runs
+
+- **Player** (`generated/nes_vrc7_player_image.h`, `NesVrc7PlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_VRC7=1`, nothing else changed: the same entry table and configuration plus
+  FamiStudio's VRC7 code and its note tables (`NoteTables/famistudio_vrc7_note_table_lsb/msb.bin`, pinned). 11
+  channels, 23 envelope slots, 9 pitch envelope slots. Song base: the first page after the player (measured by the
+  script, `NES_VRC7_SONG_BASE` / `NesVrc7PlayerImage.SONG_BASE`); the region up to `$FFF9` is shared with the DPCM
+  samples as on the 2A03 build; image = 32-byte header + directory + region (`NES_VRC7_IMAGE_SIZE`).
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5-10 VRC7 FM 1-6**.
+- **Song header** (FamiStudio's for expansions with their own instruments): count, instruments, **instruments_exp**,
+  samples − 4, eleven channel streams, PAL tempo, NTSC tempo (`famistudio_init` reads the stream words from offset
+  7). The Thor layout keeps one order stream per channel (`$41 n ptr` per order, `$42`).
+- **Instruments**: the 2A03 table (64 slots × 8 bytes, as before) and right after it the expansion table, **64 slots
+  × 16 bytes** (`FAMISTUDIO_USE_INSTRUMENT_EXTENDED_RANGE`: an FM channel's instrument byte `$80 | (slot − 1) << 1`
+  indexes it × 16): volume, arpeggio and pitch envelope words (directory entries `slot × 4 + 0/1/3`), the sustain
+  override byte (`$20` release, `$80` stop; the song's `Vrc7Sustain`, the same in every entry), `patch << 4`
+  (0 = custom), and the 8 patch registers (a built-in patch's ROM values; loaded only for patch 0). Loading an FM
+  instrument (`famistudio_set_vrc7_instrument`) sets the envelopes (not on a no-attack note), the global
+  `famistudio_chn_vrc7_sustain`, the channel's patch byte, and for patch 0 writes `$00-$07` at once.
+- **Opcodes**: `$56` (FM channels only) releases: the channel keys off at its next update and its volume envelope
+  jumps to its release point (as `$45`, which FM channels never get). `$4F` (duty) and `$55` are invalid on FM.
+  Stop (note 0) and cut key off with the sustain bit cleared, or set with the stop override.
+- **Per frame and FM channel** (`famistudio_update_vrc7_channel_sound`): a new attack on a still keyed channel first
+  writes `$20+c` = 0 (so the chip retriggers); then `$30+c` = `patch << 4 | (15 − volume)` (volume = envelope ×
+  volume track, so 0 is the chip's quietest, −45 dB, not silence), `$10+c` = F-number low, and `$20+c` = sustain
+  byte | key | block << 1 | F-number bit 8. The frequency is the VRC7 note table (F-number already shifted by the
+  block) + (pitch envelope + fine pitch) × 8 + the slide (pitch shift 3: slides carry no fraction bit here), halved
+  until it is below `$200` to find the block. Writes go through `$9010` (select) and `$9030` (data); init writes
+  `$E000` = 0 (audio on). One engine quirk is kept as it plays: a stop on a note whose `$20+c` value has no block or
+  F-number bit 8 left after masking takes the stop-override path (sustain bit set).
+- **Sounding pitch**: VRC7 engine note 46 is approximately 220 Hz, while the same 2A03 note is approximately 440 Hz.
+  `NesRules.engineNote` therefore adds 12 on the FM channels: absolute 57 becomes engine note 58. This applies to
+  audition, lowered songs and FamiStudio text. The driver table limits FM to C-1..B-7; validation also rejects
+  slides above B-7. Pxx uses the pulse period at the unshifted sounding note and the FM frequency at the shifted
+  engine note, retaining one detune meaning across both chips. The released base NES mapping is unchanged.
+- **Lowering** (Kotlin, what differs from the 2A03's): OFF on a sounding FM note is `$56` (FamiStudio's `CanRelease`
+  is always true there), else a stop. A custom-patch sound is never re-sent per order (the per-order instrument
+  re-send of the other channels would rewrite `$00-$07` under another FM channel's custom sound); FamiStudio's
+  `OtherVrc7ChannelUsesCustomPatch` makes a channel send its custom sound again after another FM channel had a note
+  of a different custom sound. At the loop, a channel reloads its first custom patch if another custom patch can
+  appear in the loop. This is deliberately conservative: Gxx can change which channel writes last. Patch restoration
+  keeps the channel's instrument identity so a legato note need not restart its envelopes.
+  FamiStudio 4.5.3's editor restores shared patches, but its exporter compares only each channel's own first/last
+  instrument: a two-order, two-custom-patch real-driver probe restored the lead at frame 385 in both exports, then
+  only Thor Tracker restored it at frames 769 and 1153. See upstream
+  [`FamitoneMusicFile.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/IO/FamitoneMusicFile.cs)
+  and [`ChannelStateVrc7.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelStateVrc7.cs).
+  Golden comparisons omit only idempotent writes of unchanged custom-patch bytes, retaining every key/envelope
+  write; separate real-driver regressions cover loop restoration, delayed final writers and held envelopes.
+  Slides use the VRC7 note table and FamiStudio's VRC7 slide shift (delta >> 3). A cell's Pxx is converted to the FM step nearest
+  the pulse's detune (`NesRules.vrc7FinePitch`); audition fine pitch on FM uses the same conversion. FM channels play
+  VRC7 sounds that differ only in their names as one instrument, the first slot of them, as FamiStudio's export
+  merges identical instruments (`Project.MergeIdenticalInstruments`), so copies of a custom sound neither reload the
+  custom patch nor make other channels reload theirs.
+- **VRC7 audio** (native): emu2413 1.6.4 in VRC7 mode (`OPLL_setChipType` 1, its `OPLL_VRC7_TONE` ROM patches,
+  which equal FamiStudio's `Vrc7InstrumentPatch` table), one OPLL sample per 36 CPU cycles (49715.9 Hz). Registers:
+  `$9010` select, `$9030` data, `$E000` bit 6 the reset latch (set: chip registers and the tremolo LFO cleared, the
+  vibrato phase kept, writes ignored, silent); only the VRC7's registers `$00-$07`, `$0F`, `$10-$15`, `$20-$25`,
+  `$30-$35` reach the chip. Mix: one emu2413 output unit = (2A03 full pulse level / 2) · 10^(11.09/20) / 1863.1 of the
+  2A03 mixer scale, from rainwarrior's VRC7 level survey (+11.3 dB, +10.88 dB on Lagrange Point) and that test
+  patch's RMS on emu2413; the VRC7 build's output gain is 2.0 / (1 + six FM channels' full swing) (the 2A03 and VRC6
+  builds keep 2.0).
+  Instance creation goes through `chip_opll_new`: a shared mutex protects emu2413's lazy global table initialization
+  when playback and background WAV rendering create chips concurrently. Chip stepping is per-instance and never
+  takes that mutex; the vendored emulator is unchanged.
+- **Machine**: seek runs the chip without output, so FM envelopes and phases advance as in straight play; the order
+  fallback leaves an FM channel whose order starts with a custom sound without an instrument until its next
+  instrument byte (custom sounds are not re-sent per order). Mute leaves a channel out of the mix (the chip keeps running). Live edits: the machine tracks which
+  expansion entry each FM channel loaded and which entry the custom registers came from; `apply_image` updates the
+  channels' patch nibble and the sustain byte, and rewrites `$00-$07` when that entry's registers changed, so a
+  custom-patch edit is heard at once. Audition release is `$56`; the audition ends when the volume envelope's tail
+  has finished and the carrier is silent (or frozen at release rate 0).
+- **Exports**: `.nsf` with the VRC7 player, header byte `$7B` = `$02` (NSF players emulate the chip); `.wav` through
+  `chip_wav_open("nes-famistudio-vrc7", …)`; FamiStudio text (`Expansions="VRC7"`, `Vrc7Patch`, `Vrc7Reg0-7` for
+  custom patches, `Vrc7OverrideRelease`/`Vrc7OverrideStop` from the song setting, channels `VRC7FM1-6`).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the VRC7 player with the others: assembled once to measure its
+size, then again at its song base (the code does not depend on it). It writes `nes_vrc7_player_image.h`,
+`NesVrc7PlayerImage.kt` and the fixtures `app/src/test/cpp/nes_vrc7_song.h` from `tools/audio/nes/vrc7_test.txt` as
+exported by FamiStudio 4.5.3 (`vrc7_test_ca65.s`; `--famistudio DIR` writes it when missing, else checks it is
+unchanged). FamiStudio's ca65 export ends each VRC7 instrument's first `.byte` row with a comma (`$00, $10, `); the
+link and the parser drop it. In the Thor layout both instrument tables have the same count.
+
+### Verification
+
+- Kotlin: `NesGoldenTest` runs the golden songs `vrc7_demo` and `vrc7_effects` (FamiStudio's export of our text vs
+  our lowering through the VRC7 player; `$9010`/`$9030`/`$E000` writes compared every frame through two passes and
+  the loop; `vrc7_effects` has two custom sounds and an identical twin taking the custom patch in turn, also on one
+  row, the song's release and stop overrides, `$56` releases and stops, cuts, delays, slides, vibrato, Pxx, volume
+  slides, arpeggios, pitch envelopes, C-1 and B-7, and speed changes on an FM channel). `NesLoweringTest` checks the
+  VRC7 image contract (header, both instrument tables, `$56` only on FM, no duty or saw opcodes there), the engine
+  numbers and Pxx conversion, and the custom-patch rules (no per-order re-send, the loop reload). `NesExportTest`,
+  `NesProjectCodecTest` and `NesInstrumentViewTest` cover the `.nsf`/text exports, validation, files and the FM page.
+- Not done: listening on a VRC7 cartridge, comparison with a reference VRC7 emulator's audio (NSFPlay), Thor
+  measurements.
 
 ## N163: the same engine with Namco's 163 (`"nes-famistudio-n163-1"`..`"-8"`)
 

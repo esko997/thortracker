@@ -397,11 +397,13 @@ def parse_famistudio_ca65(text: str, base: int, name: str = "ft_test_ca65.s"):
 # ---- stream decoding ------------------------------------------------------------------------------
 
 def read_entry(data: bytes, pos: int, player: dict):
-    """One row entry of a channel stream at region offset `pos`: prefix opcodes then one terminator.
-    Returns (end offset, rows covered, offsets of envelope pointer operands within data)."""
+    """One row fragment: prefix opcodes followed by a terminator or a compressed reference.
+    Returns (end offset, rows covered, envelope pointer operands); rows is zero before a reference."""
     ptrs, opcodes = [], player["opcodes"]
     while True:
         b = data[pos]
+        if b == 0x41:
+            return pos, 0, ptrs
         if b >= 0x80:
             if b & 1:
                 return pos + 1, 1 + ((b & 0x7F) >> 1), ptrs
@@ -411,7 +413,7 @@ def read_entry(data: bytes, pos: int, player: dict):
         elif b >= 0x70:
             pos += 1  # volume track
         else:
-            if b not in opcodes or b in (0x41, 0x42, 0x44):
+            if b not in opcodes or b in (0x42, 0x44):
                 sys.exit(f"unexpected opcode ${b:02X} inside a row at ${player['song_base'] + pos:04X}")
             size, ends = opcodes[b]
             if b in (0x49, 0x4B):
@@ -427,6 +429,7 @@ def flatten_channel(data: bytes, start: int, loop: int, player: dict):
     index of the entry that starts at the loop label)."""
     entries, loop_index = [], None
     pos, ret, ref_left = start, None, 0
+    entry, entry_ptrs = bytearray(), []
     while True:
         if ret is None and pos == loop and loop_index is None:
             loop_index = len(entries)
@@ -438,14 +441,22 @@ def flatten_channel(data: bytes, start: int, loop: int, player: dict):
             pos = u16(data, pos + 2) - player["song_base"]
             continue
         if b == 0x42:
+            if entry:
+                sys.exit("loop inside a row")
             if ret is not None:
                 sys.exit("loop inside a reference")
             if u16(data, pos + 1) - player["song_base"] != loop:
                 sys.exit("loop target is not the channel's loop label")
             return entries, loop_index
         end, rows, ptrs = read_entry(data, pos, player)
-        entries.append((data[pos:end], rows, [(o - pos, k) for o, k in ptrs]))
+        offset = len(entry)
+        entry.extend(data[pos:end])
+        entry_ptrs.extend((offset + o - pos, k) for o, k in ptrs)
         pos = end
+        if not rows:
+            continue
+        entries.append((bytes(entry), rows, entry_ptrs))
+        entry, entry_ptrs = bytearray(), []
         if ret is not None:
             ref_left -= 1
             if ref_left == 0:

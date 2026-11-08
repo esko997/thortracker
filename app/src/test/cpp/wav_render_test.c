@@ -8,7 +8,8 @@
  * irrelevant); one more loop pass adding about one loop length after an identical prefix; a fade-out adding exactly
  * its length after an identical prefix and ending near silence; the length limit stopping at the tick that reaches it
  * and reporting CHIP_WAV_CAPPED; closing a job before it completes removing its spool, a complete file staying; bad
- * arguments. Plus chip_wav_pcm16's rounding and clamping.
+ * arguments. Plus chip_wav_pcm16's rounding and clamping, and the shortest valid songs (one row, one tick; exported
+ * per N163 build as n163-shortest-<n>ch.nesimg): once through is that one tick, zero and two extra passes complete.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
@@ -48,9 +49,31 @@ typedef struct Demo {
 static const Demo kDemos[] = {
     {"thor-groove.gbimg", "gb-huge"},
     {"thor-quest.nesimg", "nes-famistudio"},
+    {"saw-sunrise.nesimg", "nes-famistudio-vrc6"},
+    {"lantern-point.nesimg", "nes-famistudio-vrc7"},
+    {"wavetable-garden-1ch.nesimg", "nes-famistudio-n163-1"},
+    {"wavetable-garden-2ch.nesimg", "nes-famistudio-n163-2"},
+    {"wavetable-garden-3ch.nesimg", "nes-famistudio-n163-3"},
+    {"wavetable-garden-4ch.nesimg", "nes-famistudio-n163-4"},
+    {"wavetable-garden-5ch.nesimg", "nes-famistudio-n163-5"},
+    {"wavetable-garden-6ch.nesimg", "nes-famistudio-n163-6"},
+    {"wavetable-garden-7ch.nesimg", "nes-famistudio-n163-7"},
+    {"wavetable-garden-8ch.nesimg", "nes-famistudio-n163-8"},
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+};
+
+/* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; an N163 note on N163 1. */
+static const Demo kShortest[] = {
+    {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
+    {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
+    {"n163-shortest-3ch.nesimg", "nes-famistudio-n163-3"},
+    {"n163-shortest-4ch.nesimg", "nes-famistudio-n163-4"},
+    {"n163-shortest-5ch.nesimg", "nes-famistudio-n163-5"},
+    {"n163-shortest-6ch.nesimg", "nes-famistudio-n163-6"},
+    {"n163-shortest-7ch.nesimg", "nes-famistudio-n163-7"},
+    {"n163-shortest-8ch.nesimg", "nes-famistudio-n163-8"},
 };
 
 static char spool[512];
@@ -301,6 +324,58 @@ static void test_demo(const char* dir, const char* samples, const Demo* d) {
     free(image);
 }
 
+/* A one-row, one-tick song: once through is exactly its first tick (the row is entered again before the second),
+ * identical to straight ticking and not silent; zero and two extra passes complete (not capped, not run to the
+ * limit), each pass one more tick after an identical prefix. */
+static void test_shortest(const char* samples, const Demo* d) {
+    printf("%s (%s, shortest)\n", d->file, d->system);
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s", samples, d->file);
+    size_t size = 0;
+    uint8_t* image = read_file(path, &size);
+    EXPECT(image != NULL, "%s missing: run `tools/build.sh exportSamples` first (or set THOR_SAMPLES)", path);
+    if (!image) return;
+    const ChipEngineOps* ops = chip_engine_ops(d->system);
+    EXPECT(ops && ops->image_size == size, "%s: image of %zu bytes for the engine", d->file, size);
+    if (!ops || ops->image_size != size) { free(image); return; }
+
+    uint64_t fs = 0, loop_start = 0;
+    int16_t* pcm = straight(ops, image, size, &fs, &loop_start);
+    EXPECT(fs > 0 && fs <= CHIP_MAX_TICK_FRAMES && loop_start == 0,
+           "%s: straight ticking re-enters its only row after one tick (%llu frames, loop at %llu)", d->file,
+           (unsigned long long)fs, (unsigned long long)loop_start);
+    uint64_t prev = 0;
+    uint8_t* prev_file = NULL;
+    for (int loops = 0; loops <= 2; loops += 2) {
+        size_t sz = 0;
+        int capped = -1;
+        const char* problem = NULL;
+        uint8_t* file = render(d->system, image, size, loops, 0, MAX_SECONDS, &sz, &capped, &problem);
+        EXPECT(file != NULL, "%s loops=%d: renders (%s)", d->file, loops, problem ? problem : "");
+        if (!file) continue;
+        EXPECT(capped == 0, "%s loops=%d: completes, not capped", d->file, loops);
+        const uint64_t f = check_header("shortest", file, sz);
+        EXPECT(f >= (uint64_t)(loops + 1) * (fs > 0 ? fs - 1 : 0) && f <= (uint64_t)(loops + 1) * (fs + 1),
+               "%s loops=%d: %d tick(s) of about %llu frames (%llu)", d->file, loops, loops + 1, (unsigned long long)fs,
+               (unsigned long long)f);
+        EXPECT(peak(file + CHIP_WAV_HEADER, 0, f) > 0, "%s loops=%d: not silent", d->file, loops);
+        if (loops == 0) {
+            int same = f == fs;
+            for (uint64_t i = 0; same && i < f * 2; ++i) same = (int16_t)u16(file + CHIP_WAV_HEADER + 2 * i) == pcm[i];
+            EXPECT(same, "%s: once through = straight ticking's one tick", d->file);
+        } else if (prev_file) {
+            EXPECT(f > prev && !memcmp(file + CHIP_WAV_HEADER, prev_file + CHIP_WAV_HEADER, (size_t)prev * 4),
+                   "%s: two extra passes extend once through", d->file);
+        }
+        free(prev_file);
+        prev_file = file;
+        prev = f;
+    }
+    free(prev_file);
+    free(pcm);
+    free(image);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
@@ -315,6 +390,7 @@ int main(int argc, char** argv) {
            "pcm16 rounds to nearest and clamps");
     EXPECT(CHIP_WAV_HEADER + 4ull * CHIP_WAV_MAX_FRAMES <= 0x7FFFFFFFull, "the largest file fits RIFF and a 32-bit off_t");
     for (size_t i = 0; i < sizeof kDemos / sizeof kDemos[0]; ++i) test_demo(dir, samples, &kDemos[i]);
+    for (size_t i = 0; i < sizeof kShortest / sizeof kShortest[0]; ++i) test_shortest(samples, &kShortest[i]);
     printf("WAV export: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

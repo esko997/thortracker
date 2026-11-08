@@ -1,8 +1,16 @@
 package org.thortracker.backend
 
+import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.N163Preset
+import org.thortracker.system.nes.N163Presets
+import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesN163System
+import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
@@ -48,6 +56,21 @@ object SampleExportTool {
             for (format in system.exports) File(directory, "$name.${format.extension}").writeBytes(format.export(n163))
             File(directory, "$name.nesimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(n163, it) })
             println("Exported ${n163.title} (${system.name}) to ${directory.absolutePath}")
+            // The shortest song on that build: one order of one row at speed 1, an N163 sine A-4 on N163 1
+            // (n163-shortest-<n>ch; wav_render_test.c renders the one-row, one-tick edge case).
+            val blank = system.blank()
+            val bank = blank.nes.instruments.toMutableList()
+            bank[0] = NesInstrument("Sine", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(N163Preset.SINE, 16, 0, 1))))
+            val first = blank.patterns[0]
+            val shortest = blank.copy(
+                ticksPerRow = 1, orders = listOf(0), loopOrder = 0,
+                patterns = listOf(first.copy(length = 1, tracks = first.tracks.mapIndexed { ch, rows ->
+                    if (ch == NesRules.N163_FIRST) rows.toMutableList().also { it[0] = Cell(57, 1) } else rows
+                })),
+                sound = blank.nes.copy(instruments = bank),
+            )
+            File(directory, "n163-shortest-${system.n163Channels}ch.nesimg")
+                .writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
         }
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()

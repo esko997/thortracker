@@ -22,6 +22,9 @@ import kotlin.test.fail
  * - every envelope we encode must be one FamiStudio encoded (byte-identical envelope data);
  * - FamiStudio's data and ours, each run by the same embedded player on a 6502, must write the same APU registers
  *   with the same values in the same order on every frame, through two passes of the song and its loop.
+ *   Rewriting an unchanged VRC7 custom-patch register is idempotent, unlike key-on/envelope registers: those
+ *   redundant patch writes are omitted on both sides. Loop restoration conservatively reloads custom patches
+ *   because delayed notes can change the final writer; the real-driver loop regressions cover that correction.
  *
  * Run with `THOR_UPDATE_NES_GOLDEN=1` to rewrite the `.txt` fixtures, then `python3 tools/audio/nes_golden.py`.
  */
@@ -101,17 +104,19 @@ class NesGoldenTest {
             val b = NesTracer(ours, lowered.player)
             var writes = 0
             var dpcmStarts = 0
-            var vrc6 = 0
+            var expansionWrites = 0
             var n163 = 0
+            val patchA = IntArray(8) { -1 }
+            val patchB = IntArray(8) { -1 }
             for (f in 0 until frames) {
-                val ta = a.frame()
-                val tb = b.frame()
+                val ta = withoutUnchangedPatchWrites(a.frame(), patchA)
+                val tb = withoutUnchangedPatchWrites(b.frame(), patchB)
                 if (!ta.contentEquals(tb)) {
                     fail("$name: frame $f differs: FamiStudio ${trace(ta)} vs ours ${trace(tb)}")
                 }
                 writes += ta.size
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
-                vrc6 += ta.count { (it shr 8) >= 0x9000 && (it shr 8) < 0xC000 }
+                expansionWrites += ta.count { (it shr 8) >= 0x9000 }
                 n163 += ta.count { (it shr 8) == 0x4800 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
@@ -119,9 +124,10 @@ class NesGoldenTest {
                 // The trace covers DPCM: sample starts write $4012/$4013/$4010 and start the DMC through $4015.
                 assertTrue(dpcmStarts > 0, "$name: no DPCM sample started")
             }
-            if (lowered.player == NesPlayer.VRC6) {
-                // The trace covers the VRC6: its pulses and saw are written (and compared) every frame they sound.
-                assertTrue(vrc6 > frames, "$name: only $vrc6 VRC6 register writes in $frames frames")
+            if (lowered.player == NesPlayer.VRC6 || lowered.player == NesPlayer.VRC7) {
+                // The trace covers the expansion chip: the VRC6's pulses and saw, the VRC7's FM channels (a select and a
+                // data write per register, patch loads included) are written and compared every frame they sound.
+                assertTrue(expansionWrites > frames, "$name: only $expansionWrites expansion register writes in $frames frames")
             }
             if (lowered.player in NesPlayer.N163) {
                 // The trace covers the N163: frequencies, volumes and wave uploads through its data port, every frame.
@@ -131,6 +137,29 @@ class NesGoldenTest {
     }
 
     private fun trace(t: IntArray) = NesTracer.text(t)
+
+    /** Only $00–$07 are idempotent patch data; retain every other write, including key-off/key-on sequences. */
+    private fun withoutUnchangedPatchWrites(trace: IntArray, patch: IntArray): IntArray {
+        val out = ArrayList<Int>(trace.size)
+        var i = 0
+        while (i < trace.size) {
+            val register = trace[i] and 0xff
+            if (trace[i] ushr 8 == 0x9010 && register < 8 &&
+                i + 1 < trace.size && trace[i + 1] ushr 8 == 0x9030
+            ) {
+                val value = trace[i + 1] and 0xff
+                if (patch[register] != value) {
+                    out += trace[i]
+                    out += trace[i + 1]
+                    patch[register] = value
+                }
+                i += 2
+            } else {
+                out += trace[i++]
+            }
+        }
+        return out.toIntArray()
+    }
 
     /** The `@envN:` byte rows of a FamiStudio ca65 export. */
     private fun famiStudioEnvelopes(asm: String): List<ByteArray> {

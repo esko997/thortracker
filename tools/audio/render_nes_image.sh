@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Renders a lowered NES image through the native engine of its player build: "nes-famistudio", or for an image
-# lowered for the VRC6 build "nes-famistudio-vrc6", for an N163 build "nes-famistudio-n163-1".."-8" (host gcc/g++,
-# the same sources as the hosts; chip_engine.c registers every engine, so all of them are linked).
+# Renders a lowered NES image through the native engine of its player build: "nes-famistudio" or, for an image
+# lowered for the VRC6 or VRC7 build, "nes-famistudio-vrc6" / "nes-famistudio-vrc7", for an N163 build
+# "nes-famistudio-n163-1".."-8" (host gcc/g++, the same sources as the hosts; chip_engine.c registers every engine,
+# so all of them are linked).
 # Usage: tools/audio/render_nes_image.sh image.nesimg out.wav [seconds]
 # Images: `tools/build.sh exportSamples` writes app/build/samples/thor-quest.nesimg (the NES demo song),
-# saw-sunrise.nesimg (the NES + VRC6 demo song) and the NES + N163 demo song's image.
+# saw-sunrise.nesimg (the NES + VRC6 demo song), lantern-point.nesimg (the NES + VRC7 demo song) and
+# wavetable-garden-<n>ch.nesimg, n = 1..8 (the NES + N163 demo song for each N163 channel count).
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 build="$root/build/host-audio/render-nes"
@@ -14,7 +16,8 @@ includes=(-I "$cpp" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/nes" -I "$cpp/sid" -I "
   -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm")
 objs=()
 for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
-  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_n163.c" "$cpp/nes/nes_players.c" \
+  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c" "$cpp/nes/nes_n163.c" \
+  "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c" "$cpp/nes/nes_players.c" \
   "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c" \
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c" \
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c" "$cpp/opl3/opl3_vgm.c" \
@@ -31,5 +34,5 @@ for src in "$cpp/sid/sid_resid.cpp" "$cpp"/third_party/resid-1.0/{sid,voice,wave
   ${CXX:-g++} -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-${CXX:-g++} "${objs[@]}" -lm -o "$build/nes_render"
+${CXX:-g++} "${objs[@]}" -lm -pthread -o "$build/nes_render"
 exec "$build/nes_render" "$@"

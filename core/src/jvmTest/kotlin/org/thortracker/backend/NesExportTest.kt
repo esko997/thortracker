@@ -8,6 +8,10 @@ import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.nes.Vrc7Patch
+import org.thortracker.system.nes.Vrc7Presets
+import org.thortracker.system.nes.Vrc7Sustain
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -185,6 +189,95 @@ class NesExportTest {
         assertTrue(NesVrc6System.structuralErrors(base.copy(sound = base.nes.copy(instruments = keyed))).joinToString().contains("only 2A03 sounds map DPCM"))
         // Each variant's songs only: a VRC6 song is not a plain NES song.
         assertTrue(NesSystem.structuralErrors(blank).single().contains("NES + VRC6"))
+    }
+
+    /** NES + VRC7: the `.nsf` carries the VRC7 player and names the chip; the text names the expansion and the patches. */
+    @Test
+    fun vrc7ExportsNameTheChipAndPatches() {
+        val song = NesVrc7System.demo()
+        assertEquals(emptyList(), NesVrc7System.errors(song))
+        assertEquals(emptyList(), NesVrc7System.warnings(song))
+        val nsf = NesVrc7System.exports.first { it.extension == "nsf" }.export(song)
+        assertEquals(NesVrc7PlayerImage.LOAD, u16(nsf, 8))
+        assertEquals(NesVrc7PlayerImage.INIT, u16(nsf, 10))
+        assertEquals(NesVrc7PlayerImage.PLAY, u16(nsf, 12))
+        assertEquals(2, nsf[0x7b].toInt()) // expansion chips: VRC7
+        val body = nsf.copyOfRange(128, nsf.size)
+        assertContentEquals(NesVrc7PlayerImage.BYTES, body.copyOfRange(0, NesVrc7PlayerImage.BYTES.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val songAt = NesVrc7PlayerImage.SONG_BASE - NesVrc7PlayerImage.LOAD
+        assertContentEquals(lowered.data, body.copyOfRange(songAt, songAt + lowered.data.size))
+        // The NSF's song plays like the lowered data, FM register writes ($9010 select, $9030 data) included.
+        val a = NesTracer(lowered.data, NesPlayer.VRC7)
+        val b = NesTracer(body.copyOfRange(songAt, lowered.sampleStart - NesVrc7PlayerImage.LOAD), NesPlayer.VRC7)
+        var fm = 0
+        repeat(600) {
+            val f = a.frame()
+            assertContentEquals(f, b.frame())
+            fm += f.count { (it shr 8) == 0x9030 }
+        }
+        assertTrue(fm > 600, "the demo writes the VRC7 ($fm data writes in 600 frames)")
+        val lines = FamiStudioText.text(song).lines()
+        assertTrue(lines[0].endsWith("Expansions=\"VRC7\""), lines[0])
+        // The custom patch carries its eight registers; a built-in patch only its number.
+        assertTrue(lines.any {
+            it.trim() == "Instrument Name=\"07 Soft lead (custom)\" Expansion=\"VRC7\" Vrc7Patch=\"0\" Vrc7Reg0=\"49\" Vrc7Reg1=\"97\" " +
+                "Vrc7Reg2=\"20\" Vrc7Reg3=\"5\" Vrc7Reg4=\"168\" Vrc7Reg5=\"100\" Vrc7Reg6=\"97\" Vrc7Reg7=\"39\" " +
+                "Vrc7OverrideRelease=\"False\" Vrc7OverrideStop=\"False\""
+        })
+        assertTrue(lines.any { it.trim() == "Instrument Name=\"08 Bass guitar\" Expansion=\"VRC7\" Vrc7Patch=\"13\" Vrc7OverrideRelease=\"False\" Vrc7OverrideStop=\"False\"" })
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM") + (1..6).map { "VRC7FM$it" },
+            lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+        // The song's sustain overrides go on every VRC7 instrument (FamiStudio's engine keeps the last loaded one's).
+        val sustained = song.copy(sound = song.nes.copy(vrc7Sustain = Vrc7Sustain(release = true)))
+        val fmLines = FamiStudioText.text(sustained).lines().filter { "Expansion=\"VRC7\"" in it }
+        assertEquals(5, fmLines.size)
+        assertTrue(fmLines.all { it.endsWith("Vrc7OverrideRelease=\"True\" Vrc7OverrideStop=\"False\"") }, fmLines.toString())
+    }
+
+    @Test
+    fun vrc7ValidationKeepsSoundsAndPatchesConsistent() {
+        val base = NesVrc7System.blank()
+        val fm = NesRules.VRC7_FM1
+        val lead = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26))
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("Piano", chip = NesChip.VRC7, fm = Vrc7Patch().withPreset(3))
+        bank[2] = NesInstrument("Lead", chip = NesChip.VRC7, fm = lead)
+        bank[3] = NesInstrument("Other", chip = NesChip.VRC7, fm = lead.copy(regs = lead.regs.mapIndexed { i, r -> if (i == 0) r xor 1 else r }))
+        bank[4] = NesInstrument("Lead copy", chip = NesChip.VRC7, fm = lead)
+        val blank = base.copy(sound = base.nes.copy(instruments = bank))
+        fun errors(ch: Int, cell: Cell) = NesVrc7System.errors(withCell(blank, ch, 0, cell)).joinToString()
+        assertEquals("", errors(fm, Cell(12, 2))) // C-1: the FM channels reach every note
+        assertEquals("", errors(fm + 5, Cell(57, 2, NesRules.FX_FINE_PITCH, 0x90)))
+        assertTrue(errors(fm, Cell(57, 1)).contains("2A03 sound"))
+        assertTrue(errors(0, Cell(57, 2)).contains("VRC7 sound"))
+        assertTrue(errors(fm, Cell(57, 2, NesRules.FX_DUTY, 0x01)).contains("VRC7 FM 1"))
+        // Structure: a built-in patch keeps its ROM registers, VRC7 sounds have no duty, sustain only on VRC7 songs.
+        val odd = bank.toMutableList().also {
+            it[1] = it[1].copy(fm = Vrc7Patch(3, Vrc7Presets.data(4)))
+            it[5] = NesInstrument("Duty", chip = NesChip.VRC7, duty = NesEnvelope(listOf(1)))
+        }
+        val e = NesVrc7System.structuralErrors(base.copy(sound = base.nes.copy(instruments = odd))).joinToString()
+        assertTrue(e.contains("keeps its ROM registers"), e)
+        assertTrue(e.contains("no duty envelope"), e)
+        val plain = NesSystem.blank()
+        assertTrue(NesSystem.structuralErrors(plain.copy(sound = plain.nes.copy(vrc7Sustain = Vrc7Sustain(stop = true)))).joinToString().contains("Only VRC7 songs"))
+        // The chip's one custom patch: another custom sound starting while FM 1 holds one changes it; warned once. A
+        // sound with the same registers, or after FM 1's note ended, is not a conflict.
+        fun conflicts(second: Int, offRow: Int = -1): List<String> {
+            val p = blank.patterns[0]
+            val tracks = p.tracks.mapIndexed { ch, t ->
+                t.toMutableList().also {
+                    if (ch == fm) { it[0] = Cell(57, 3); if (offRow >= 0) it[offRow] = Cell(Cell.CUT, 0) }
+                    if (ch == fm + 1) { it[4] = Cell(60, second); it[12] = Cell(62, second) }
+                }
+            }
+            return NesVrc7System.warnings(blank.copy(patterns = listOf(p.copy(tracks = tracks)))).filter { "custom patch" in it }
+        }
+        assertEquals(1, conflicts(4).size, conflicts(4).toString())
+        assertTrue(conflicts(4).single().contains("VRC7 FM 1 still holds custom sound 03"), conflicts(4).toString())
+        assertEquals(emptyList(), conflicts(5))
+        assertEquals(emptyList(), conflicts(4, offRow = 2))
     }
 
     @Test

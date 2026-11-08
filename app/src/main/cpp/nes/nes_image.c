@@ -85,7 +85,8 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
     const uint32_t limit = base + info->size;
     const int thor = info->layout == NM_LAYOUT_THOR;
     const int tonal = nes_player_tonal(player, channel), pitched = nes_player_pitched(player, channel);
-    const int vrc6 = nes_player_vrc6_channel(player, channel), n163 = nes_player_n163_channel(player, channel);
+    const int vrc6 = nes_player_vrc6_channel(player, channel), fm = nes_player_vrc7_channel(player, channel);
+    const int n163 = nes_player_n163_channel(player, channel);
     uint32_t a = addr;
     int delays = 0;
     out->delay_end = 0;
@@ -156,7 +157,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             return NULL;
         case 0x43: case 0x4C: case 0x4D: size = 0; break;
         case 0x4A: if (!pitched) return "vibrato opcode on a channel without pitch envelope"; size = 0; break;
-        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses and the VRC6 channels */
+        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses and the VRC6 channels (VRC7: none) */
             if (n163) return "phase reset on an N163 channel is $5B";
             if (channel > 1 && !vrc6) {
                 return player->expansion == NES_EXPANSION_VRC6 ? "phase reset only on the pulses and the VRC6 channels"
@@ -172,6 +173,12 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x5A: /* N163 release: the volume and wave-index envelopes jump to their release points */
             if (player->expansion != NES_EXPANSION_N163) return "opcode not allowed in a row";
             if (!n163) return "N163 release off the N163 channels";
+            out->rows = 1;
+            out->end = (uint16_t)(a + 1);
+            return NULL;
+        case 0x56: /* VRC7 release: key-off, then the volume envelope's release (famistudio_chn_vrc7_trigger bit 7) */
+            if (player->expansion != NES_EXPANSION_VRC7) return "opcode not allowed in a row";
+            if (!fm) return "VRC7 release off the FM channels";
             out->rows = 1;
             out->end = (uint16_t)(a + 1);
             return NULL;
@@ -193,6 +200,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x4F:
             NEED(2);
             if (channel == 2) return "duty effect on the triangle";
+            if (fm) return "duty effect on a VRC7 channel"; /* famistudio_channel_to_dutycycle has 5 entries */
             if (n163) return "duty effect on an N163 channel"; /* famistudio_channel_to_dutycycle: 2A03 only */
             if (channel == VRC6_SAW && vrc6) return "duty effect on the VRC6 saw";
             if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : "duty outside 0..3";
@@ -321,7 +329,7 @@ static int load_raw(NesImage* image) {
     for (int i = 0; i < NES_IMAGE_DIRECTORY_SIZE; ++i) {
         if (h[NES_IMAGE_HEADER_SIZE + i]) return fail(image, "raw image with an envelope directory", NES_IMAGE_HEADER_SIZE + (uint32_t)i);
     }
-    /* FamiStudio header: count, instruments, [expansion instruments (N163),] samples-4, then a channel pointer
+    /* FamiStudio header: count, instruments, [expansion instruments (VRC7, N163),] samples-4, then a channel pointer
      * per engine channel + 4 tempo bytes per song. With 5 channels the engine indexes songs with an 8-bit
      * offset, so at most 17; with more it steps the pointer itself (the count byte's limit). */
     const uint32_t head = (uint32_t)nes_player_head(player);
@@ -411,8 +419,10 @@ static int load_thor(NesImage* image) {
             if (dir[4 * idx + 3] != k) return fail(image, "instrument envelope of the wrong kind", NM_REGION_OFFSET + at);
         }
     }
-    /* N163: FamiStudio's expansion instruments, as many as the 2A03 table (instrument byte i addresses entry i on
-     * the N163 channels): volume, arpeggio, pitch and wave-index envelopes, then the wave (n163_instrument). */
+    /* VRC7, N163: FamiStudio's expansion instruments, as many as the 2A03 table (instrument byte i addresses entry i
+     * on the expansion channels). VRC7: volume, arpeggio and pitch envelopes, the release ($20) / stop ($80) override
+     * byte, the patch number << 4 (0: the custom patch) and the custom patch's 8 registers (any value). N163: volume,
+     * arpeggio, pitch and wave-index envelopes, then the wave (n163_instrument). */
     if (player->exp_instruments) {
         const uint16_t exp = nm_rd16(s + 3);
         if (exp < base || exp + (uint32_t)NM_EXP_INSTRUMENT_SIZE * info->instruments > base + size) {
@@ -428,7 +438,12 @@ static int load_thor(NesImage* image) {
                 if (idx < 0) return fail(image, "expansion instrument envelope is not a directory entry", NM_REGION_OFFSET + at + 2u * (uint32_t)k);
                 if (dir[4 * idx + 3] != kinds[k]) return fail(image, "expansion instrument envelope of the wrong kind", NM_REGION_OFFSET + at + 2u * (uint32_t)k);
             }
-            if (player->expansion == NES_EXPANSION_N163 && n163_instrument(image, &view, at)) return -1;
+            if (player->expansion == NES_EXPANSION_N163) {
+                if (n163_instrument(image, &view, at)) return -1;
+            } else {
+                if (s[at + 6] & ~0xA0) return fail(image, "VRC7 override byte not a combination of $20 and $80", NM_REGION_OFFSET + at + 6);
+                if (s[at + 7] & 0x0F) return fail(image, "VRC7 patch byte not patch << 4", NM_REGION_OFFSET + at + 7);
+            }
         }
         info->exp_instruments = exp;
     }

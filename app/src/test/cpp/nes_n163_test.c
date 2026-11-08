@@ -4,7 +4,7 @@
  * own export of tools/audio/nes/n163_test.txt and the same rows in the Thor Tracker image layout (nes_n163_song.h):
  * identical register writes (APU and N163 ports), row timing, wave uploads in N163 RAM, the wave-index sequence with
  * its repeats, loop and release, phase resets, seek, live relocation and edits, audition, mute, the image rules of
- * the N163 builds and the chip engine interface of all eight builds.
+ * the N163 builds, the chip engine interface of all eight builds and the WAV export (chip_wav.c) of the test song.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes <dir>/nes_n163.wav (48 kHz stereo, 30 s), <dir>/nes_n163_trace.txt (per-frame APU + N163 writes) and
@@ -17,6 +17,7 @@
 
 #include "blip_buf.h"
 #include "chip_engine.h"
+#include "chip_wav.h"
 #include "nes_apu.h"
 #include "nes_ft_song.h"
 #include "nes_machine.h"
@@ -1114,6 +1115,52 @@ static void test_chip_engine_ops(void) {
     }
 }
 
+/* The WAV export of the 8-channel test song (as nes_vrc7_test.c checks the VRC6 and VRC7 test songs): once through
+ * ends where straight ticking enters the loop row again, sample for sample; one more pass adds exactly the loop's
+ * ticks. */
+static void test_wav(const char* dir) {
+    printf("WAV export of the N163 test song\n");
+    const ChipEngineOps* ops = chip_engine_ops("nes-famistudio-n163-8");
+    EXPECT(ops != NULL, "nes-famistudio-n163-8 registered");
+    if (!ops) return;
+    static uint8_t bytes[NM_IMAGE_MAX_SIZE];
+    memset(bytes, 0, sizeof bytes);
+    memcpy(bytes, nes_n163_thor, NES_N163_THOR_SIZE);
+    char spool[512];
+    snprintf(spool, sizeof spool, "%s/nes_n163_wav.part", dir);
+    const int first_ticks = song_frames(FIRST_PASS_ROWS), loop_ticks = song_frames(FIRST_PASS_ROWS + LOOP_ROWS) - first_ticks;
+    const size_t cap = (size_t)(first_ticks + loop_ticks) * NM_MAX_TICK_FRAMES;
+    int16_t* ref = (int16_t*)malloc(cap * 2 * sizeof *ref);
+    int16_t* file = (int16_t*)malloc((cap * 2 + 22) * sizeof *file);
+    ChipImage* img = (ChipImage*)malloc(ops->image_storage);
+    ChipMachine* cm = ops->create(RATE);
+    int mode, n_ref = 0, n_first = 0;
+    EXPECT(ops->load_image(img, bytes, ops->image_size) == CHIP_OK && ops->start(cm, img, 0, 0, 0, &mode) == CHIP_OK,
+           "the Thor-layout test image starts");
+    for (int t = 0; t < first_ticks + loop_ticks; ++t) {
+        const int n = ops->tick(cm, g_out);
+        for (int i = 0; i < 2 * n; ++i) ref[n_ref * 2 + i] = chip_wav_pcm16(g_out[i]);
+        n_ref += n > 0 ? n : 0;
+        if (t == first_ticks - 1) n_first = n_ref;
+    }
+    ops->destroy(cm);
+    free(img);
+    for (int loops = 0; loops < 2; ++loops) {
+        const char* problem = NULL;
+        int capped = -1;
+        const int r = chip_render_wav("nes-famistudio-n163-8", bytes, ops->image_size, loops, 0, 600, spool, &capped, &problem);
+        FILE* f = r == 0 ? fopen(spool, "rb") : NULL;
+        const size_t got = f ? fread(file, 2, cap * 2 + 22, f) : 0;
+        if (f) fclose(f);
+        remove(spool);
+        const int frames = got >= 22 ? (int)(got - 22) / 2 : -1, want = loops ? n_ref : n_first;
+        EXPECT(r == 0 && capped == 0 && frames == want && !memcmp(file + 22, ref, (size_t)want * 4),
+               "loops=%d: %d frames, identical to straight ticking (%d frames)", loops, frames, want);
+    }
+    free(file);
+    free(ref);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     test_unit();
@@ -1133,6 +1180,7 @@ int main(int argc, char** argv) {
     test_audition(m);
     test_mute(m);
     test_chip_engine_ops();
+    test_wav(dir);
     nm_destroy(m);
     printf("nes_n163_test: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

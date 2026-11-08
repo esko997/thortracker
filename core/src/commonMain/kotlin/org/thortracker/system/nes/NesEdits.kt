@@ -312,6 +312,14 @@ fun EditorSession.editNesWave(slot: Int, label: String, f: (N163Wave) -> N163Wav
 fun EditorSession.editNesFm(slot: Int, label: String, f: (Vrc7Patch) -> Vrc7Patch): Boolean =
     editNesInstrument(slot, label) { if (it.chip == NesChip.VRC7) it.copy(fm = f(it.fm)) else it }
 
+/** Edits the VRC7 song's release/stop sustain overrides, which every VRC7 sound plays with ([Vrc7Sustain]). */
+fun EditorSession.editVrc7Sustain(label: String, f: (Vrc7Sustain) -> Vrc7Sustain): Boolean {
+    if (song.nes.expansion != NesExpansion.VRC7) return false
+    val next = f(song.nes.vrc7Sustain)
+    if (next == song.nes.vrc7Sustain) return false
+    return apply(label) { s -> s.copy(sound = s.nes.copy(vrc7Sustain = next)) }
+}
+
 /** A copied NES instrument, one of its envelopes, or one N163 wave's samples. */
 sealed interface NesClip : Clip {
     data class Sound(val instrument: NesInstrument) : NesClip

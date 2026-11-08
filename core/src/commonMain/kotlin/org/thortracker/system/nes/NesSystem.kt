@@ -264,8 +264,6 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
             env("duty", ins.duty, 0) { NesRules.dutyText(ins.chip, it) },
             "saw ${ins.sawVolume.label.lowercase()}".takeIf { vrc6 && ins.sawVolume != Vrc6SawVolume.HALF },
-            "sustain on release".takeIf { vrc7 && ins.fm.sustainRelease },
-            "sustain on stop".takeIf { vrc7 && ins.fm.sustainStop },
             ins.dpcm.size.takeIf { it > 0 }?.let { "DPCM $it note${if (it == 1) "" else "s"}" },
         )
         return when {
@@ -290,17 +288,27 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      */
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
-        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU" +
-            when (expansion.chip) {
-                NesChip.N163 -> " + Namco 163 (${expansion.n163Channels} channel${if (expansion.n163Channels == 1) "" else "s"})"
-                else -> ""
-            } + ", blip_buf 1.1.0"
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo${when (expansion.chip) {
+            NesChip.APU -> ""
+            NesChip.VRC6 -> ", FAMISTUDIO_EXP_VRC6"
+            NesChip.VRC7 -> ", FAMISTUDIO_EXP_VRC7"
+            NesChip.N163 -> ", FAMISTUDIO_EXP_N163, FAMISTUDIO_EXP_N163_CHN_CNT = ${expansion.n163Channels}"
+        }}) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU${when (expansion.chip) {
+            NesChip.APU -> ""
+            NesChip.VRC6 -> " + VRC6"
+            NesChip.VRC7 -> ", emu2413 1.6.4 (commit a1d5120) in VRC7 mode"
+            NesChip.N163 -> " + Namco 163 (${expansion.n163Channels} channel${if (expansion.n163Channels == 1) "" else "s"})"
+        }}, blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
 
-        override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        override fun lower(song: Song, out: ByteArray) {
+            // Each variant's engine runs its own player build: another variant's song would be laid out for that player.
+            require(song.nes.expansion == expansion) { "The song is for ${song.nes.expansion.system.name}, not ${this@NesFamiStudioSystem.name}" }
+            NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+        }
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
@@ -308,8 +316,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
             note > NesRules.highestNote(expansion, channel) ->
-                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))} with " +
-                    "${expansion.n163Channels} N163 channels"
+                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))}" +
+                    if (NesRules.isN163(expansion, channel)) " with ${expansion.n163Channels} N163 channels" else ""
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
@@ -321,9 +329,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1; on DPCM the sample list entry (1..63). */
+        /** Chip-specific engine note number; on DPCM the sample list entry (1..63). */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.engineNote(expansion, channel, note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
@@ -334,8 +342,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
          * converted as a cell's Pxx is ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]).
          */
         override fun fine(channel: Int, note: Int, fine: Int): Int = when {
-            NesRules.isVrc7(expansion, channel) -> NesRules.vrc7FinePitch(NesRules.fsNote(note), fine)
-            NesRules.isN163(expansion, channel) -> NesRules.n163FinePitch(NesRules.fsNote(note), fine, expansion.n163Channels)
+            NesRules.isVrc7(expansion, channel) -> NesRules.vrc7FinePitch(NesRules.engineNote(expansion, channel, note), fine)
+            NesRules.isN163(expansion, channel) ->
+                NesRules.n163FinePitch(NesRules.engineNote(expansion, channel, note), fine, expansion.n163Channels)
             else -> -fine
         }
     }
@@ -345,7 +354,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
      * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic). The VRC7's
      * FM channels convert a Pxx to their nearest frequency step for the same pitch ([NesRules.vrc7FinePitch]): one step
-     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there.
+     * is 0.3 cents at B-7, 40 at C-1, so tuned FM notes are as exact as the chip allows there.
      */
     private object Fine : FinePitch {
         override val name = "Pxx"
@@ -374,7 +383,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             }
         }
 
-        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note).coerceIn(1, NesRules.NOTE_COUNT)]
+        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[(note - NesRules.NOTE_OFFSET).coerceIn(1, NesRules.NOTE_COUNT)]
     }
 
     private open class NesHelp : SystemHelp {
@@ -426,7 +435,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     private object Vrc7Help : NesHelp() {
         override val off = "Releases the note: on the VRC7 FM channels a key off (the FM patch's release, or the slow sustain " +
-            "fade with Release: sustain) plus the volume envelope's release; on the 2A03 as there. For a cut inside a row use Sxx"
+            "fade when the song's Release sustain is on) plus the volume envelope's release; on the 2A03 as there. For a cut inside a row use Sxx"
         override val offEntered = "OFF: release (FM: key off; 2A03 sounds with a volume release point fade out, others stop)"
         override val offInspector = "OFF: release the note (FM: key off and its release; 2A03: tail or silence)"
         override val effectsIntro = super.effectsIntro + listOf(

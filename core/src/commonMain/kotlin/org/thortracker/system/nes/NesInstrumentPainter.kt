@@ -123,13 +123,18 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     NesChip.N163 -> "N163: " + if (n163 <= 1) "N163 1" else "N163 1-$n163"
                 }, rx, vx, y, h, sel, false)
                 Row.PATCH -> setting(c, "Patch", when (ins.fm.preset) {
-                    Vrc7Presets.CUSTOM -> "Custom: the chip's one programmable patch (shared by all FM channels)"
-                    else -> "${Vrc7Presets.NAMES.getOrElse(ins.fm.preset) { "?" }}: built-in (${ins.fm.preset} of 15); edit a field to make it Custom"
+                    Vrc7Presets.CUSTOM -> "Custom (shared by all six FM channels)"
+                    else -> "${Vrc7Presets.NAMES.getOrElse(ins.fm.preset) { "?" }} (${ins.fm.preset}/15): edit to make Custom"
                 }, rx, vx, y, h, sel, false)
-                Row.SUSTAIN_RELEASE -> setting(c, "Release", if (ins.fm.sustainRelease) "sustain: OFF fades slowly (rate 5)" else "the patch's release after OFF",
-                    rx, vx, y, h, sel, !ins.fm.sustainRelease)
-                Row.SUSTAIN_STOP -> setting(c, "Stop", if (ins.fm.sustainStop) "sustain: a stop or cut fades slowly (rate 5)" else "a stop or cut ends with the patch's release",
-                    rx, vx, y, h, sel, !ins.fm.sustainStop)
+                // The song's setting (every VRC7 sound plays with it), shown on each VRC7 sound's FM page.
+                Row.SUSTAIN_RELEASE -> s.nes.vrc7Sustain.release.let { on ->
+                    setting(c, "Release", if (on) "song: OFF fades slowly (sustain, rate 5)" else "song: OFF uses the patch's release",
+                        rx, vx, y, h, sel, !on)
+                }
+                Row.SUSTAIN_STOP -> s.nes.vrc7Sustain.stop.let { on ->
+                    setting(c, "Stop", if (on) "song: a stop or cut fades slowly (sustain, rate 5)" else "song: a stop or cut uses the patch's release",
+                        rx, vx, y, h, sel, !on)
+                }
                 Row.SAW -> setting(c, "Saw volume", "${ins.sawVolume.label}: ${NesInstrumentView.sawText(ins.sawVolume)}", rx, vx, y, h, sel,
                     ins.sawVolume == Vrc6SawVolume.HALF)
                 Row.LISTEN -> {
