@@ -185,11 +185,11 @@ object Dpcm {
                         }
                     }
                 } else when (bits) {
-                    32 -> ShortArray(dataSize shr 2) { i -> clampToShort((Float.fromBits(i32(data + 4 * i)) * 32767f).toDouble()) }
+                    32 -> ShortArray(dataSize shr 2) { i -> toShortAsDotNet((Float.fromBits(i32(data + 4 * i)) * 32767f).toDouble()) }
                     64 -> ShortArray(dataSize shr 3) { i ->
                         val lo = i32(data + 8 * i).toLong() and 0xFFFFFFFFL
                         val hi = i32(data + 8 * i + 4).toLong()
-                        clampToShort(Double.fromBits((hi shl 32) or lo) * 32767)
+                        toShortAsDotNet(Double.fromBits((hi shl 32) or lo) * 32767)
                     }
                     else -> throw IllegalArgumentException("Only 32- and 64-bit float .wav files can be imported")
                 }
@@ -197,8 +197,13 @@ object Dpcm {
                 return Wav(mono, rate)
             }
 
-            /** FamiStudio scales by 32767 (float input in single precision) and truncates; out-of-range input is clamped. */
-            private fun clampToShort(v: Double): Short = v.coerceIn(-32768.0, 32767.0).toInt().toShort()
+            /**
+             * FamiStudio scales by 32767 (float input in single precision) and casts to a 16-bit integer the way .NET 8
+             * on x64 does: truncate to 32 bits (out of that range: 0x80000000), keep the low 16. So input beyond ±1.0
+             * wraps around rather than clipping, exactly as in FamiStudio.
+             */
+            private fun toShortAsDotNet(v: Double): Short =
+                (if (v.isNaN() || v >= 2147483648.0 || v < -2147483648.0) Int.MIN_VALUE else v.toInt()).toShort()
 
             private val EXTENSIBLE_GUID_REST = listOf(0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71)
         }

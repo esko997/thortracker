@@ -60,28 +60,34 @@ object DpcmStarterKit {
         }
     }
 
-    /** A 190 Hz body under noise; the noise rings longer. */
+    /** A 190 Hz body under noise (softened so the DMC can follow it); the noise rings longer. */
     private fun snare(): ShortArray = Voice().run {
         var noiseAmp = 1 shl 16
-        ShortArray(samples(4, 25)) { i ->
+        var soft = 0
+        ShortArray(samples(4, 25)) {
             val body = sine(190_000) * amp shr 16
             amp = decay(amp, 46)
-            val hiss = (noise() shr 16) * noiseAmp shr 16
+            soft += ((noise() shr 16) - soft) shr 1
+            val hiss = soft * noiseAmp shr 16
             noiseAmp = decay(noiseAmp, 30)
-            clip((body * 14000 shr 15) + (hiss * 16000 shr 15))
+            clip((body * 18000 shr 15) + (hiss * 30000 shr 15))
         }
     }
 
-    /** High-passed noise, ~12 ms half-life. */
+    /**
+     * Noise band-passed to roughly 1.5-6 kHz, ~12 ms half-life. The DMC moves its level by at most 2 a sample, so
+     * brighter noise would come out quieter; the hat stays a soft tick under the noise channel's hats.
+     */
     private fun hat(): ShortArray = Voice().run {
-        var last = 0
+        var low = 0
+        var lower = 0
         ShortArray(samples(3, 50)) {
             val n = noise() shr 16
-            val v = (n - last) / 2
-            last = n
-            val out = v * amp shr 16
+            low += (n - low) shr 1
+            lower += (low - lower) shr 3
+            val out = (low - lower) * amp shr 16
             amp = decay(amp, 114)
-            clip(out * 9000 shr 15)
+            clip(out * 40000 shr 15)
         }
     }
 
