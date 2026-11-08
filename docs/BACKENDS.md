@@ -792,3 +792,47 @@ Decisions:
   kind. Alternative: separate FM and PSG slot ranges. Review.
 - YM2612 envelope sketch times are approximations from the OPN2's rate tables at the NTSC clock (attack ≈ 7 % of the
   same rate's full decay, key scaling ignored), like the OPL3's; listening may suggest adjustments.
+- Master System (decided on the user's behalf, branch `sms`): four systems over one Banjo engine — `sms-psg`,
+  `gg-psg`, `sms-fm`, `sms-fm-drums` — rather than one system with a layout setting (channel layouts are fixed per
+  system). Review.
+- Banjo plays 12-TET only (no fine-pitch command): tunings sound at their nearest notes. Absolute (fixed-note)
+  arpeggio steps, Banjo's master volume/fades and its sound-effect queue are not exposed. NTSC only: Banjo's tables are
+  for 3.58 MHz and a PAL game lowers speeds by one itself.
+- Banjo 7aaf837's OPLL volume write tests the extra macro's type inverted (`volume_change.inc`): an FM instrument
+  with a pitch or patch macro would corrupt its voice register, so FM voices offer volume and arpeggio envelopes only.
+  Proposed: report upstream; enable FM pitch envelopes when fixed.
+
+## Master System / Game Gear (Banjo, branch `sms`)
+
+Driver: the Banjo sound driver (joffb/banjo `7aaf837`, MIT, `third_party/banjo` unmodified; checked against upstream
+by `tools/audio/prepare_sms.py`), the one real tracker-format SMS driver with SN76489, Game Gear stereo and YM2413
+(including rhythm mode) support, used by homebrew through WLA-DX and devkitSMS/GBDK. Upstream's README and
+`format_spec.md` disagree with the assembly; the assembly (`banjo_defines_wladx.inc`, `process_new_line.inc`, the
+macro routines) is the authority and json2sms.py the independent export reference.
+
+- **Systems** (`system/sms`): `SmsSystem` per `SmsLayout` — PSG (Square 1-3, Noise), Game Gear (same + `8xy` pan),
+  FM (+ FM 1-9), FM rhythm (+ FM 1-6, Bass drum, Snare, Tom, Cymbal, Hi-hat), channels in Banjo's order. One engine
+  id `sms-banjo`; the image says the layout. 64 slots over one numbering, one bank per kind (PSG sounds, FM voices,
+  drum kits). Ticks: 59.92 Hz. Notes: PSG layouts A-2..B-8, FM layouts C-0..B-8 (FM and drums up to B-7).
+- **Instruments** (`SmsSound`): PSG sounds = Banjo macros (volume with loop/release, arpeggio, and one extra macro:
+  pitch in 1/128 semitone or the noise mode per tick); FM voices = built-in instrument 1-15 or the one custom voice
+  (OPLL registers as fields, ROM voices as emu2413 measured them for starting points) + volume/arpeggio; drum kits =
+  pitched by notes or three fixed pitches. Presets per layout fill new songs.
+- **Effects** (up to 4 columns): `0xy 1xx 2xx 3xx 4xy 8xy(GG) Bxx Cxx D00 Fxx Gxx Lxx Nxy Oxx Sxx`, mapped to Banjo
+  commands; arpeggio/slides/vibrato share Banjo's one slot; speeds apply from the next row; `Oxx` sets odd rows.
+- **Lowering** (`backend/SmsLowering`, `BanjoSong`): Banjo song data; pattern length = longest order rounded to even;
+  explicit order jumps for short orders and the loop; per (order, channel) tracks deduplicated; OFF = macro release or
+  note off by the instrument in effect; `0xy` per note (auto `ARPEGGIO_OFF`); instrument rows without a note load with
+  the next note. Differences from json2sms 7aaf837 (documented in AUDIO_ENGINE.md): arpeggio/extra macro loop index + 2,
+  first row's tic = speed + 1.
+- **Exports**: WLA-DX `.asm` and SDAS `.s` Banjo song sources (genuine driver data, call stubs for two chips), VGM 1.51
+  through the native machine (`SmsExport.renderer`, JNI `ChipAudio.nativeSmsVgm`, Deck `DeckSmsVgm`).
+- **Engine**: `sms/sms_machine.c` — Banjo on z80.h, our SN76489 (`ym/ym_psg.c`, plus Game Gear stereo), emu2413
+  1.6.4 (MIT, chosen over ymfm's OPLL: plain C like the machine, per-rhythm-drum masks, proven OPLL accuracy).
+- **Validation**: Banjo's limits as errors (note delay/cut within the row, D00 only, kinds per channel, FM ≤ B-7, data
+  ≤ 32 KB, ≤ 255 orders); warnings for two custom FM voices at once, Square 3 under pitched noise, low PSG/noise notes,
+  two pitch effects on a row, songs over one 16 KB bank.
+- **Editor**: `SmsInstrumentView`/`SmsInstrumentPainter` on the shared FM painter and NES envelope plot: PSG pages
+  Volume/Arpeggio/Pitch/Noise; FM pages Voice (instrument, modulator/carrier grid, routing and envelope sketch),
+  Volume, Arpeggio; Kit page. Demo "Harbour Lights" arranged per layout.
+- **Tests**: `SmsLoweringTest`, `SmsModelTest`, `SmsEditorTest`, native `sms_machine_test.c` (hand-built images).

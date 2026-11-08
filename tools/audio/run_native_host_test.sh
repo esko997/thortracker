@@ -11,6 +11,8 @@
 # YM2612: <dir>/ym_song.wav, ym_song_pal.wav, ym_tone_fm.wav, ym_tone_psg.wav, ym_trace.txt (per-tick player
 # writes, = the Python reference player's), ym_song.vgm, ym_song.xgm and ym_song.bin (the XGC; = xgmtool's) and
 # ym_image.bin (the image).
+# Master System (Banjo; needs app/src/main/cpp/generated/banjo_driver_image.h from tools/audio/prepare_sms.py):
+# <dir>/sms_psg.wav, sms_gg.wav, sms_fm.wav, sms_drums.wav (the test songs) and sms_fm.vgm (the VGM export).
 # The engines are C except reSID and ymfm (C++17): C sources build with $CC, reSID, ymfm and their C wrappers with
 # $CXX, and the tests link with $CXX (libstdc++), as the app (CMake) and the Deck (deck/build.gradle.kts) do.
 set -euo pipefail
@@ -23,7 +25,7 @@ CC="${CC:-gcc}"
 CXX="${CXX:-g++}"
 warn=(-Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare
   -Wno-missing-field-initializers -Wno-enum-compare)
-includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/third_party/chips"
+includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/sms" -I "$cpp/third_party/chips"
   -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm"
   -I "$root/app/src/test/cpp")
 c_engines=(
@@ -35,6 +37,8 @@ c_engines=(
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/sms/sms_chip.c" "$cpp/sms/sms_machine.c" "$cpp/sms/sms_image.c" "$cpp/sms/sms_vgm.c"
+  "$cpp/third_party/emu2413/emu2413.c"
 )
 cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
@@ -50,7 +54,7 @@ for src in "${cxx_engines[@]}"; do
   "$CXX" -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-for t in huge_machine_test nes_machine_test sid_machine_test opl3_machine_test ym_machine_test; do
+for t in huge_machine_test nes_machine_test sid_machine_test opl3_machine_test ym_machine_test sms_machine_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
 done
@@ -60,4 +64,5 @@ status=0
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/sms_machine_test" "$out" || status=1
 exit $status

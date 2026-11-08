@@ -10,6 +10,7 @@ import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.sms.SmsSystem
 import org.thortracker.system.ym2612.YmSystem
 
 /**
@@ -375,7 +376,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem, Opl3System, YmSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

@@ -2079,3 +2079,82 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## Master System: the Banjo driver on a Z80 + SN76489 + YM2413 (`"sms-banjo"`)
+
+One engine for the four Master System systems (`sms-psg`, `gg-psg`, `sms-fm`, `sms-fm-drums`); the image's layout byte
+selects the chips and channels. Sources: `sms/sms_image.{h,c}`, `sms/sms_machine.{h,c}`, `sms/sms_chip.c`,
+`sms/sms_vgm.c` + `sms/sms_export.h`; Kotlin `backend/SmsImageLayout.kt`, `BanjoSong.kt`, `SmsLowering.kt`.
+
+### Pins and preparation
+
+- Banjo `7aaf837ebbe67e567e019b5819b5467bf62253ad` (MIT), `third_party/banjo` (driver directories banjo, sn, opll,
+  opll_drums, defines, json2sms.py, README, format_spec, LICENSE), unmodified.
+- WLA-DX v10.7 (`91c52b1f4ef3cc8ba3c0638f7536539579af6a9f`, GPL-2.0-or-later, build tool only) via
+  `tools/audio/fetch_wladx.sh`.
+- `tools/audio/prepare_sms.py` checks the vendored files against upstream, assembles
+  `tools/audio/sms/thor_banjo_host.asm` (the driver with BANJO_SYS=1, a 15-channel array and the two-chip
+  init/update/mute routines json2sms would put into a song) and writes `app/src/main/cpp/generated/banjo_driver_image.h`
+  (the 16 KiB bank, its sha256, the label addresses; struct sizes 32/34/12 checked). **The native build needs this
+  generated header**; rerun after changing the pin or the host file.
+- emu2413 1.6.4 (`a1d5120903b75f93d3eb7690e34a29c0b4add903`, MIT), `third_party/emu2413`, unmodified, run at
+  clock/72 (49716 Hz, no rate converter).
+
+### Machine
+
+- Z80 map: $0000-$3FFF driver bank (an opcode fetch elsewhere, other than the return trap $FFF0, is a fault);
+  $4000-$BFFF the image region; $C000-$DFFF RAM (mirrored), audition song at $D000, stack below $DFF0.
+  I/O: $40-$7F SN76489, $F0/$F1 YM2413, $06 Game Gear stereo (Game Gear layout only); reads $FF.
+- Start: `banjo_init(15, SN | OPLL?)`, `banjo_system_flags` = GG on the Game Gear layout (what
+  `banjo_check_hardware` reports there), the region's call fields filled for the layout, `banjo_play_song($4000)`.
+- Tick = NTSC frame, 59736 Z80 cycles: `banjo_update_song` at cycle 0, the chips clocked through the frame with each
+  write at its cycle (PSG every 16 cycles, YM2413 every 72), blip_buf to the host rate, 20 Hz DC high-pass, gain 2.5.
+  Mix: PSG level × 3/8 + YM2413 × 3/4 (a full square and a full FM channel peak alike); listening may adjust.
+- Positions from driver state: a row starts when `process_new_line` is set or `tic` is 1; row = pattern_length − line;
+  an order jump or the order end predicts the next order.
+- Seek: silent ticks (driver + chip registers, chips not clocked) to the target within the budget, snapshots every 60
+  ticks; back to the last snapshot ≥ 60 ticks earlier and forward with the chips clocked (YM2413 reloaded from its
+  registers). Past the budget: channels placed at the order start with its straight-play speeds, then the same.
+- Live edit: per channel, the pointer and line wait after the current row in the new track (a pending note delay
+  continues after the same delay of the new row when it has one); instrument macro pointers re-read, positions past a
+  shortened macro stop it; the FM preset nibble refreshed; the custom voice the chip holds is rewritten when edited;
+  speeds follow when the straight-play speed at the playhead changed.
+- Audition: a one-order song in RAM (speed 255, 64 rows, no loop) loads the instrument (FM_DRUM on rhythm channels) and
+  plays the driver note. Release: NOTE_RELEASE when the volume macro has a release part, else NOTE_OFF, read on the next
+  tick through the TIC_WAIT path; returns 0 for SN sounds without a release; ends after 3 silent ticks or 10 s.
+- Mute: SN channel bits, YM2413 channel and rhythm masks (bass drum, snare, tom, cymbal, hi-hat).
+
+### Image layout
+
+Meta (0x400 bytes): "TTSB", version 1, layout (0 PSG, 1 GG, 2 FM, 3 FM rhythm), channels (4/4/13/15), orders (1-255),
+loop order, pattern length (1-64, even from the lowering), data size (u16), instrument count (u16), rows per order at
+0x20, speed 1 / speed 2 at each order's start (straight play) at 0x120 / 0x220. Region (0x8000 bytes) = Z80
+$4000-$BFFF: Banjo's 34-byte header (call fields 0), order pointer table, order rows, 12-byte instrument records,
+macros, FM patches (8 registers) and kit pitches (6 bytes), tracks. The loader validates every pointer, macro header
+(volume: sustain length/loop, release length/loop; others length/loop), command size (`$00` and `$1F` refused, note
+delay and speeds ≥ 1), row count per track, instrument and order references and the patch of every custom voice or
+fixed kit a track loads.
+
+### Song data (`BanjoSong`) and json2sms 7aaf837
+
+Same structure and commands as json2sms; deliberate differences, each because the driver reads it so: arpeggio and
+extra macro loop = value index + 2 (`music_update_arp_macro`/`ex_macro` read the loop position's own byte; json2sms's
++ 1 replays the previous step, or the loop byte itself for loop 0); volume macros as json2sms (+ 4); the header's
+`tic` = speed + 1 (the start tick counts as one of the first row's); every order shorter than the pattern length and
+the last order (when looping to a later order) end with an explicit ORDER_JUMP; D00 is an ORDER_JUMP to the next
+order (ORDER_NEXT would wrap to order 0, not the loop order); OFF is NOTE_RELEASE for instruments with a volume release
+part. Driver limits respected by the validator: one pitch effect per channel, note delay/cut within the row, one
+custom FM voice, rhythm drums without pitch effects or macros, FM voices without the extra macro (inverted type test in
+`opll/volume_change.inc`).
+
+### VGM export
+
+VGM 1.51 with GD3: the driver's own writes from a silent run (SN76489 0x50, YM2413 0x51, Game Gear 0x4F), 44.1 kHz
+waits from Z80 cycles, the driver's initialisation at time 0, the loop at the first arrival at (loop order, row 0) and
+the end at the second (or 10 minutes, no loop). SN feedback 0x0009, width 16, flags 0.
+
+### Verification
+
+`tools/audio/run_native_host_test.sh` runs `app/src/test/cpp/sms_machine_test.c` (images built by hand in C from this
+contract); `tools/audio/render_sms_image.sh` renders an image (SampleExportTool writes the demos'). JVM:
+`SmsLoweringTest`, `SmsModelTest`, `SmsEditorTest`.
