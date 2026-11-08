@@ -36,11 +36,18 @@ class NesExportTest {
         assertEquals(0, nsf[0x7b].toInt()) // no expansion chips
         val body = nsf.copyOfRange(128, nsf.size)
         assertContentEquals(NesPlayerImage.BYTES, body.copyOfRange(0, NesPlayerImage.BYTES.size))
-        val data = FamiStudioLowering.lower(song).data
-        assertContentEquals(data, body.copyOfRange(NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD, body.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val data = lowered.data
+        val songAt = NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD
+        val samplesAt = NesPlayerImage.SAMPLE_BASE - NesPlayerImage.LOAD
+        assertContentEquals(data, body.copyOfRange(songAt, songAt + data.size))
+        assertTrue(body.copyOfRange(songAt + data.size, samplesAt).all { it == 0.toByte() })
+        // The demo plays the starter kit: its samples end the file at $C000.
+        assertTrue(lowered.samples.isNotEmpty())
+        assertContentEquals(lowered.samples, body.copyOfRange(samplesAt, body.size))
         // The same bytes play: the NSF's song is what the tracer (and the preview engine) runs.
         val a = NesTracer(data)
-        val b = NesTracer(body.copyOfRange(NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD, body.size))
+        val b = NesTracer(body.copyOfRange(songAt, samplesAt))
         repeat(600) { assertContentEquals(a.frame(), b.frame()) }
     }
 
