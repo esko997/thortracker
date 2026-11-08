@@ -22,7 +22,10 @@ chmod -R u=rwX,go=rX "$app"
 chmod a+x "$app/AppRun" "$app/usr/bin/thortracker"
 tool=build/appimagetool-x86_64.AppImage
 if [ ! -x "$tool" ]; then
-  curl -sSL -o "$tool" https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+  # -f: an HTTP error page must not be saved as the tool; download beside it so a failure leaves nothing behind.
+  curl -sSfL --retry 5 --retry-all-errors -o "$tool.part" \
+    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+  mv "$tool.part" "$tool"
   chmod +x "$tool"
 fi
 mkdir -p ../dist
