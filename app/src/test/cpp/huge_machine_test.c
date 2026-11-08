@@ -649,7 +649,7 @@ static void test_chip_engine_ops(void) {
     printf("chip engine ops: gb-huge as the audio hosts drive it\n");
     const ChipEngineOps* ops = chip_engine_ops("gb-huge");
     EXPECT(ops && strcmp(ops->system_id, "gb-huge") == 0, "gb-huge is registered");
-    EXPECT(chip_engine_ops("opl3-fm") == NULL && chip_engine_ops(NULL) == NULL, "unknown systems have no engine");
+    EXPECT(chip_engine_ops("ym2612-fm") == NULL && chip_engine_ops(NULL) == NULL, "unknown systems have no engine");
     if (!ops) return;
     EXPECT(ops->image_size == 0x10000 && ops->image_storage >= ops->image_size, "image %zu bytes, storage %zu",
            ops->image_size, ops->image_storage);

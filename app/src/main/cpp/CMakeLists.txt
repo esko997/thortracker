@@ -11,6 +11,8 @@ set(NES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nes)
 set(SID_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sid)
 set(BLIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/blip_buf)
 set(RESID_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/resid-1.0)
+set(OPL3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opl3)
+set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -45,9 +47,15 @@ add_library(chip_engines STATIC
     ${SID_DIR}/sid_chip.c
     ${SID_DIR}/sid_machine.c
     ${SID_DIR}/sid_image.c
+    ${OPL3_DIR}/opl3_chip.c
+    ${OPL3_DIR}/opl3_machine.c
+    ${OPL3_DIR}/opl3_player.c
+    ${OPL3_DIR}/opl3_image.c
+    ${OPL3_DIR}/opl3_vgm.c
+    ${NUKED_DIR}/opl3.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)

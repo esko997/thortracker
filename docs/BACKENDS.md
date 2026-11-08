@@ -330,6 +330,11 @@ muted in the song) stay in the hosts and work for every chip.
    files, `.sid`/`.prg`/`.sng` export and the demo (see "Model, lowering and exports"); editor (instruments,
    programs, tables), New → system, Help.
 8. **FM**: OPL3 first, YM2612 second (see below).
+   **OPL3 spike** — done (branch `opl3-spike`). `chip_engine_ops("opl3-fm")`: our own player (C) on Nuked-OPL3 1.8,
+   image layout, player and effect specification, seek, live edits, audition, mute and VGM export in
+   `docs/AUDIO_ENGINE.md` ("OPL3"); native host test 257 checks with register writes identical to an independent
+   Python reference player in every tick and VGM bytes identical to its export; the VGM plays in libvgm. Next: the
+   OPL3 backend (model, lowering, instrument editor, effect columns in the editor, VGM export, New → system, Help).
 
 ## Effect columns
 
@@ -339,7 +344,7 @@ with the number shown adjustable per channel to save width on handheld screens. 
 0-9 then A-Z, declared per system, so chips with more than 16 effects fit without changing Game Boy songs. Each effect
 declares whether it applies when a note starts (like a parameter lock: no mid-note register clicks) or at once.
 
-## FM (planned)
+## FM
 
 Both OPL3 (YMF262) and YM2612 (OPN2), OPL3 first. Ideas from ALM Busy Circuits' Akemie's Castle / Akemie's Taiko and
 Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
@@ -359,9 +364,48 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
   the FM editor and player, and adds export for a Mega Drive sound driver so songs can go into games.
 - Cores: ymfm (BSD-3-Clause) covers both chips; the Nuked cores (LGPL-2.1) are also GPL-compatible.
 
+### OPL3 decisions (made for the spike on the user's behalf; the full contract is `docs/AUDIO_ENGINE.md`, "OPL3")
+
+- **Core: Nuked-OPL3 1.8** (die-accurate, plain C), not ymfm (3× cheaper, not cycle-exact): 460 µs per 60 Hz tick
+  on the dev PC, below the SID 8580's 593 µs (~1.6-2.1 ms estimated on a Konkr-class device). ymfm stays the option
+  for weaker devices and is a candidate core for the YM2612.
+- **Music-only, our own player**: pure integer C (`opl3/opl3_player.c`), specified in the audio document and mirrored
+  by an independent Python reference (`tools/audio/opl3/opl3_ref.py`); export is VGM 1.71 (the player's register log).
+- **9 tracker channels**: the OPL2/AdLib count and screen-friendly; channels 1-6 own the six 4-op pairs (a 4-op
+  instrument switches the pair at key-on), channels 7-9 are 2-op only. The remaining voices are the **chord pool**:
+  voices 15-17 always, plus the six pair secondaries while their channel plays 2-op (9 spare voices in a 2-op song).
+- **Tick = 1/60 s** with integer multispeed 1..8 (ticks per row count fast ticks), speed per song plus `Fxx`.
+- **Parameter locks at key-on**: `Exx` feedback, `Ixx` brightness (modulator TL), `Mxy` ratio (operator MULT),
+  `Wxy` waveform apply to the note keyed on their row only (Elektron-style locks); volume and pan change at once.
+- **Chord**: `Hxy` (+x, +y) and `Kxx` (a numbered shape of up to 4 signed intervals, so inversions), per note like
+  the NES arpeggio, 2-op instruments only; pool voices are allocated deterministically (free voice released
+  longest ago, else steal the oldest allocated) and released with the root.
+- **Drums**: instruments carry a pitch sweep (start and end in semitones relative to the note, speed in 1/16
+  semitones per tick); no rhythm mode.
+- **Effects** (FamiTracker letters where meanings match): `0xy` arpeggio, `1xx`/`2xx` slides, `3xx` portamento,
+  `4xy` vibrato, `8xy` pan (OPL3 left/right), `Axy` volume slide, `Bxx` jump, `Cxx` volume, `Dxx` break, `Exx`
+  feedback, `Fxx` speed, `Gxx` note delay, `Hxy` chord, `Ixx` brightness, `Kxx` chord shape, `Mxy` ratio, `Pxx` fine
+  pitch, `Sxx` note off, `Wxy` waveform. **Up to 4 effect columns** per channel in the image and the player now;
+  the editor generalisation (see "Effect columns") is part of the OPL3 backend step.
+- **Retrigger**: a tick's key-offs reach the chip one sample before its other writes (the chip samples key-on once
+  per sample); in the VGM a one-sample wait separates them.
+- **VGM loop**: the loop point carries a dump of the register state so every pass starts from the same registers;
+  songs that change speed should set `Fxx` on the loop order's first row (lowering warning).
+
+What the Kotlin side needs: `OplSystem` (id `"opl3-fm"`, 9 channels, 4 effect columns, effect specs from the table
+in the audio document, one bank of 64 instruments with 2-op/4-op operator data and the drum sweep, up to 64 chord
+shapes), a lowering to the image layout (byte-for-byte what `tools/audio/opl3/opl3_song.py`'s `build()` writes for
+the same song is a good golden test), validation mirroring `o3_load_image` plus the "Should" warnings, and the VGM
+export.
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
   now.
 - NES instruments: one shared bank for all four channels (FamiStudio's way) rather than per-channel banks. Proposed:
   shared, with the editor greying out what a channel ignores.
+- OPL3 VGM export from Kotlin: call the engine's `o3_vgm_render` through JNI/cinterop (one player implementation,
+  proven against the Python reference) or port the player to Kotlin (`core`, testable in jvmTest, a third
+  implementation to keep in step). Proposed: native.
+- OPL3 GD3 tags (title, author, "Thor Tracker") in the VGM: proposed yes, from the song's name and comment.
+- OPL3 rhythm mode as an option for drums later? Proposed: not unless asked (its pairs share pitches).
