@@ -218,10 +218,12 @@ object SidValidator {
         if (song.artist.length > PSID_TEXT || song.artist.any { it.code !in 0x20..0xFF }) {
             out += "The .sid author field holds $PSID_TEXT Latin-1 characters; the artist will be shortened or changed there"
         }
-        song.sid.instruments.forEachIndexed { i, ins ->
-            if (ins.attackDecay == 0 && ins.sustainRelease == 0 && ins.name != SidInstrument.DEFAULT.name) {
-                val used = song.orders.toSet().any { p -> song.patterns[p].tracks.any { t -> t.any { it.instrument == i + 1 } } }
-                if (used) out += "Instrument ${SidRules.hex2(i + 1)} \"${ins.name}\" has attack, decay, sustain and release 0: only a click sounds"
+        val used = HashSet<Int>()
+        for (p in song.orders.toSet()) for (track in song.patterns[p].tracks) for (c in track) if (c.instrument > 0) used += c.instrument
+        for (slot in used.sorted()) {
+            val ins = song.sid.instruments[slot - 1]
+            if (ins.attackDecay == 0 && ins.sustainRelease == 0) {
+                out += "Instrument ${SidRules.hex2(slot)} \"${ins.name}\" has attack, decay, sustain and release 0: only a click sounds"
             }
         }
         return out.list()
