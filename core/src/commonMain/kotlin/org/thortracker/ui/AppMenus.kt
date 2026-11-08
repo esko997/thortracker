@@ -344,29 +344,48 @@ class AppMenus(
 
     /**
      * Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows
-     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants.
+     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants; within
+     * it, variants of one group (the NES + N163's channel counts) are one entry that opens the group.
      */
     private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
         val systems = SoundSystems.ALL
         val current = session.song.system
         if (systems.size == 1) return chosen(current)
-        val entries = ArrayList<Pair<String, () -> Unit>>()
-        var selected = 0
-        val families = HashSet<String>()
-        for (system in systems) {
-            val family = system.family
-            if (family == null) {
-                if (system == current) selected = entries.size
-                entries += system.name to { chosen(system) }
-            } else if (families.add(family)) {
-                val variants = systems.filter { it.family == family }
-                if (current in variants) selected = entries.size
-                entries += "$family…" to {
-                    menu("$title $family", variants.map { it.name to { chosen(it) } }, selected = variants.indexOf(current).coerceAtLeast(0))
-                }
+        val (entries, selected) = grouped(systems, current, { it.family }, chosen) { family, variants ->
+            val (inner, innerSelected) = grouped(variants, current, { it.familyGroup }, chosen) { group, members ->
+                menu("$title $group", members.map { it.name to { chosen(it) } }, selected = members.indexOf(current).coerceAtLeast(0))
             }
+            menu("$title $family", inner, innerSelected)
         }
         menu(title, entries, selected)
+    }
+
+    /**
+     * Menu entries for [systems]: each system on its own ([chosen] picks it), except systems [key] puts in one group,
+     * listed once as "group…", which [open]s with the group's members; and the index of the entry holding [current].
+     */
+    private fun grouped(
+        systems: List<SoundSystem>,
+        current: SoundSystem,
+        key: (SoundSystem) -> String?,
+        chosen: (SoundSystem) -> Unit,
+        open: (String, List<SoundSystem>) -> Unit,
+    ): Pair<List<Pair<String, () -> Unit>>, Int> {
+        val entries = ArrayList<Pair<String, () -> Unit>>()
+        var selected = 0
+        val seen = HashSet<String>()
+        for (system in systems) {
+            val k = key(system)
+            if (k == null) {
+                if (system == current) selected = entries.size
+                entries += system.name to { chosen(system) }
+            } else if (seen.add(k)) {
+                val members = systems.filter { key(it) == k }
+                if (current in members) selected = entries.size
+                entries += "$k…" to { open(k, members) }
+            }
+        }
+        return entries to selected
     }
 
     private fun export(format: ExportFormat) {

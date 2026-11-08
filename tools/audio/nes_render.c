@@ -1,6 +1,7 @@
-/* Renders a lowered NES image (the bytes NesSystem.engine.lower or NesVrc6System.engine.lower write, e.g.
- * app/build/samples/thor-quest.nesimg or saw-sunrise.nesimg) through the native engine of the player build named in
- * its header (bytes 4..7: "nes-famistudio" or "nes-famistudio-vrc6") exactly as the audio hosts run it:
+/* Renders a lowered NES image (the bytes NesSystem.engine.lower, NesVrc6System.engine.lower or an N163 system's
+ * engine.lower write, e.g. app/build/samples/thor-quest.nesimg or saw-sunrise.nesimg) through the native engine of the
+ * player build named in its header (bytes 4..7: "nes-famistudio", "nes-famistudio-vrc6" or "nes-famistudio-n163-1"
+ * .."-8") exactly as the audio hosts run it:
  * chip_engine_ops lookup, load_image (the full image validation; its problem is printed when it fails), start at
  * order 0 row 0, then one tick per engine frame. Writes a 48 kHz stereo 16-bit WAV and prints peak/rms and any
  * driver fault. Built and run by tools/audio/render_nes_image.sh. */
@@ -26,7 +27,13 @@ int main(int argc, char** argv) {
     size_t size = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
     const uint32_t id = size >= 8 ? (uint32_t)bytes[4] | (uint32_t)bytes[5] << 8 | (uint32_t)bytes[6] << 16 | (uint32_t)bytes[7] << 24 : 0;
+    static const char* const n163_engines[NM_N163_BUILDS] = {"nes-famistudio-n163-1", "nes-famistudio-n163-2", "nes-famistudio-n163-3",
+                                                             "nes-famistudio-n163-4", "nes-famistudio-n163-5", "nes-famistudio-n163-6",
+                                                             "nes-famistudio-n163-7", "nes-famistudio-n163-8"};
     const char* engine = id == NES_VRC6_PLAYER_ID ? "nes-famistudio-vrc6" : "nes-famistudio";
+    for (int n = 0; n < NM_N163_BUILDS; ++n) {
+        if (id == nes_player_n163[n].id) engine = n163_engines[n];
+    }
     const ChipEngineOps* ops = chip_engine_ops(engine);
     if (!ops) { fprintf(stderr, "no %s engine in this build\n", engine); return 1; }
     if (size != ops->image_size) {

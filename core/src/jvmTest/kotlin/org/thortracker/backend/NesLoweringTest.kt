@@ -59,8 +59,9 @@ class NesLoweringTest {
         val samplesAt = region + songEnd - base
         assertTrue(image.copyOfRange(region + size, samplesAt).all { it == 0.toByte() }, "$name: region not zero after the data")
         assertTrue(image.copyOfRange(samplesAt + sampleSize, image.size).all { it == 0.toByte() }, "$name: region not zero after the samples")
-        // Every sample list entry points at whole samples inside the sample block.
-        val listAt = u16(image, region + 3) + 4 - base
+        // Every sample list entry points at whole samples inside the sample block (the list pointer follows the expansion
+        // instrument pointer on VRC7/N163 builds).
+        val listAt = u16(image, region + if (player.expInstruments) 5 else 3) + 4 - base
         for (k in 0 until u8(image, NesPlayerImage.HEADER_DPCM_COUNT)) {
             val e = region + listAt + 4 * k
             val from = NesPlayerImage.SAMPLE_BASE + 64 * u8(image, e)
@@ -72,7 +73,9 @@ class NesLoweringTest {
         val envCount = u16(image, 16)
         val data = image.copyOfRange(region, region + size)
         fun at(addr: Int) = addr - base
-        // Directory: ascending, non-overlapping, inside the data, lengths 2..255, kinds 0..3; instruments at slot*4+kind.
+        // Directory: ascending, non-overlapping, inside the data, lengths 2..255, kinds 0..3 (N163 images also 4, the
+        // wave-index envelopes at 256 + slot); instruments at slot*4+kind.
+        val n163 = song.nes.expansion.n163Channels > 0
         var last = 0
         val dir = HashMap<Int, Triple<Int, Int, Int>>()
         for (i in 0 until envCount) {
@@ -81,7 +84,7 @@ class NesLoweringTest {
             if (addr == 0) continue
             val len = u8(image, e + 2)
             val kind = u8(image, e + 3)
-            assertTrue(addr >= last && len in 2..255 && kind in 0..3 && at(addr) + len <= size, "$name: directory entry $i")
+            assertTrue(addr >= last && len in 2..255 && kind in 0..(if (n163) 4 else 3) && at(addr) + len <= size, "$name: directory entry $i")
             last = addr + len
             dir[addr] = Triple(i, len, kind)
         }
@@ -91,13 +94,16 @@ class NesLoweringTest {
         val instruments = at(u16(data, 1))
         val channels = player.channels
         assertEquals(song.nes.expansion.channels, channels, "$name: a stream per channel")
-        val streams = IntArray(channels) { at(u16(data, 5 + 2 * it)) }
-        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, 5 + 2 * channels))
-        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, 7 + 2 * channels))
+        // count, instruments, [expansion instruments,] samples - 4
+        val head = if (player.expInstruments) 7 else 5
+        val streams = IntArray(channels) { at(u16(data, head + 2 * it)) }
+        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, head + 2 * channels))
+        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, head + 2 + 2 * channels))
         for (slot in 0 until NesSystem.SLOTS) for (kind in 0 until 4) {
             val addr = u16(data, instruments + slot * 8 + kind * 2)
             assertEquals(slot * 4 + kind to kind, dir[addr]!!.let { it.first to it.third }, "$name: instrument $slot envelope $kind")
         }
+        if (n163) checkN163(name, song, data, at(u16(data, 3)), dir, base)
         val arranged = NesSystem.arranged(song)
         val orders = arranged.orders.size
         for (c in 0 until channels) {
@@ -106,15 +112,45 @@ class NesLoweringTest {
                 assertEquals(0x41, u8(data, s + 4 * o), "$name: channel $c order $o")
                 val n = u8(data, s + 4 * o + 1)
                 val rows = arranged.patterns[arranged.orders[o]].length
-                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base), "$name: channel $c order $o rows")
+                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base, NesRules.isN163(song.nes.expansion, c)),
+                    "$name: channel $c order $o rows")
             }
             assertEquals(0x42, u8(data, s + 4 * orders))
             assertEquals(base + s + 4 * arranged.loopOrder, u16(data, s + 4 * orders + 1))
         }
     }
 
+    /**
+     * The N163 expansion table: every slot's volume, arpeggio and pitch envelopes (the 2A03 table's), its wave-index
+     * envelope (directory 256 + slot, kind 4, FamiStudio's bytes), wave position and size, a table of pointers to its
+     * stored waves (packed two samples a byte, low nibble first) and 4 zero bytes.
+     */
+    private fun checkN163(name: String, song: Song, data: ByteArray, table: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int) {
+        val instruments = u16(data, 1) - base
+        for ((slot, ins) in song.nes.instruments.withIndex()) {
+            val e = table + FamiStudioLowering.EXP_INSTRUMENT_SIZE * slot
+            for ((w, kind) in listOf(0 to 0, 1 to 1, 2 to 3)) {
+                assertEquals(u16(data, instruments + slot * 8 + kind * 2), u16(data, e + 2 * w), "$name: slot $slot exp envelope $kind")
+            }
+            val wave = dir[u16(data, e + 6)]!!
+            assertEquals(FamiStudioLowering.N163_WAVE_ENVELOPES_START + slot to 4, wave.first to wave.third, "$name: slot $slot wave index")
+            val bytes = FamiStudioEnvelopes.waveIndex(ins.wave)
+            assertContentEquals(bytes, data.copyOfRange(u16(data, e + 6) - base, u16(data, e + 6) - base + bytes.size), "$name: slot $slot wave index bytes")
+            assertEquals(ins.wave.position, u8(data, e + 8), "$name: slot $slot wave position")
+            assertEquals(ins.wave.size, u8(data, e + 9), "$name: slot $slot wave size")
+            val waves = u16(data, e + 10) - base
+            for ((i, w) in FamiStudioEnvelopes.n163Waves(ins.wave).stored.withIndex()) {
+                val at = u16(data, waves + 2 * i) - base
+                val packed = data.copyOfRange(at, at + ins.wave.size / 2)
+                for (s in w.indices) assertEquals(w[s], (u8(packed, s / 2) shr (4 * (s % 2))) and 0xF, "$name: slot $slot wave $i sample $s")
+            }
+            assertTrue((12 until 16).all { data[e + it] == 0.toByte() }, "$name: slot $slot exp bytes 12-15")
+        }
+    }
+
     /** Walks [n] row terminators of a flat pattern stream; returns the rows they cover. Checks opcode limits. */
-    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int): Int {
+    private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int,
+                     n163: Boolean = false): Int {
         var p = start
         var rows = 0
         var terms = 0
@@ -140,6 +176,8 @@ class NesLoweringTest {
                 else -> when (op) {
                     0x40 -> { assertTrue(u8(data, p++) in 1..96); rows++; terms++; delays = 0 }
                     0x45 -> { rows++; terms++; delays = 0 }
+                    0x5a -> { assertTrue(n163, "N163 release off the N163"); rows++; terms++; delays = 0 }
+                    0x5b -> assertTrue(n163, "N163 phase reset off the N163")
                     0x50 -> { p += 3; rows++; terms++; delays = 0 }
                     0x43, 0x4a, 0x4c, 0x4d -> Unit
                     0x46 -> assertTrue(u8(data, p++) in 1..127)

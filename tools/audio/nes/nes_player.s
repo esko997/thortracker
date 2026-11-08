@@ -20,7 +20,11 @@
 ; (generated/nes_vrc6_player_image.h) is this file assembled with -D FAMISTUDIO_EXP_VRC6=1 on the
 ; command line as well (the engine defaults it to 0): VRC6 pulse 1/2 and saw as channels 5-7, their
 ; registers $9000-$9003, $A000-$A002, $B000-$B002, and its own song base (the page after the larger
-; player). Nothing here changes for it, so the plain build's bytes stay the same.
+; player). Nothing here changes for it, so the plain build's bytes stay the same. The Konami VRC7 build
+; (nes_vrc7_player_image.h) adds -D FAMISTUDIO_EXP_VRC7=1 the same way, and the Namco 163 builds
+; (nes_n163_<n>_player_image.h, n = 1..8) add -D FAMISTUDIO_EXP_N163=1 -D FAMISTUDIO_EXP_N163_CHN_CNT=n:
+; N163 channels 1..n as channels 5..4+n, address port $F800, data port $4800, each with its own song
+; base (measured: the page after the player).
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

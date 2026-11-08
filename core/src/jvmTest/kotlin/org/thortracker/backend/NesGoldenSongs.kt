@@ -8,6 +8,10 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.N163Preset
+import org.thortracker.system.nes.N163Presets
+import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
@@ -21,7 +25,9 @@ import org.thortracker.system.nes.DpcmStarterKit
  * Songs whose FamiStudio text export FamiStudio 4.5.3 itself turned into engine data (tools/audio/nes_golden.py):
  * the fixtures in src/jvmTest/resources/nes-golden. Between them they use every NES effect, OFF as release and stop,
  * legato, identical and differing instruments, custom pattern lengths, speed changes on several channels, parked
- * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides.
+ * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides; the N163
+ * ones wave sequences (repeats, loop, release), wave sizes and positions, shared waves, the phase reset and 1, 4 and 8
+ * channels (each count has its own note table, pitch shift and engine build).
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -31,6 +37,9 @@ object NesGoldenSongs {
         "dpcm" to ::dpcm,
         "vrc6_demo" to NesVrc6System::demo,
         "vrc6_effects" to ::vrc6Effects,
+        "n163_demo" to { NesN163System.of(8).demo() },
+        "n163_demo_1" to { NesN163System.of(1).demo() },
+        "n163_effects" to ::n163Effects,
     )
 
     private fun n(name: String): Int {
@@ -291,6 +300,97 @@ object NesGoldenSongs {
         b.note(0, 0, "A-4", 7)
         return base.copy(
             title = "VRC6 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * N163 with 4 channels: a wave sequence with repeats, a loop and a release (OFF releases volume and waves: `$5A`), a
+     * sound that releases through its waves only, 32- and 8-sample waves, two sounds sharing one identical wave at one
+     * position, legato on the same sound and an instrument change (always an attack on the N163), the phase reset with
+     * and without a note, slides both ways, vibrato, fine pitch, volume and a volume slide, arpeggio, delays, a cut, a
+     * stop, the speed set on an N163 channel, and 2A03 channels alongside.
+     */
+    fun n163Effects(): Song {
+        val system = NesN163System.of(4)
+        val base = system.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val n163 = NesChip.N163
+        fun wave(preset: N163Preset, size: Int) = N163Presets.wave(preset, size, 0, 1)
+        bank[0] = NesInstrument("Sequence", volume = NesEnvelope(listOf(14, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), chip = n163,
+            wave = N163Wave(waves = N163Presets.waves(N163Preset.PWM2, 16, 3), repeat = listOf(2, 3, 1), loop = 1, release = 2, position = 0))
+        bank[1] = NesInstrument("Wave release", volume = NesEnvelope(listOf(11)), chip = n163,
+            wave = N163Wave(waves = listOf(wave(N163Preset.SQUARE50, 16), wave(N163Preset.SINE, 16)), repeat = listOf(1, 1),
+                loop = 0, release = 1, position = 16))
+        bank[2] = NesInstrument("Big 32", volume = NesEnvelope(listOf(12, 11, 10), loop = 2), arpeggio = NesEnvelope(listOf(0, 12), loop = 0),
+            chip = n163, wave = N163Wave(size = 32, waves = listOf(wave(N163Preset.TRIANGLE, 32)), position = 32))
+        bank[3] = NesInstrument("Tiny 8", volume = NesEnvelope(listOf(10, 8, 6, 4)), pitch = NesEnvelope(listOf(0, 2, 4, 2), loop = 0),
+            chip = n163, wave = N163Wave(size = 8, waves = listOf(wave(N163Preset.SAWTOOTH, 8)), position = 64))
+        bank[4] = NesInstrument("Shared A", volume = NesEnvelope(listOf(9)), chip = n163,
+            wave = N163Wave(waves = listOf(wave(N163Preset.SINE, 16)), position = 80))
+        bank[5] = NesInstrument("Shared B", volume = NesEnvelope(listOf(13, 11, 9), loop = 2), chip = n163,
+            wave = N163Wave(waves = listOf(wave(N163Preset.SINE, 16)), position = 80))
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val w1 = NesRules.N163_FIRST
+        val w2 = w1 + 1
+        val w3 = w1 + 2
+        val w4 = w1 + 3
+        val a = P("N163 A", channels = 9)
+        // N163 1: the sequence, legato, release then stop, slides, vibrato, fine pitch, phase reset, delay, cut.
+        a.note(w1, 0, "A-4", 1)
+        a.note(w1, 4, "C-5", 0) // legato: the sequence continues
+        a.off(w1, 8) // release: volume and waves jump to their release points
+        a.off(w1, 12) // already released: stop
+        a.note(w1, 16, "E-4", 1, NesRules.FX_SLIDE_UP, 0x07)
+        a.note(w1, 20, "B-4", 1, NesRules.FX_SLIDE_DOWN, 0x05)
+        a.note(w1, 24, "D-5", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(w1, 28, NesRules.FX_VIBRATO, 0x00)
+        a.note(w1, 30, "D-5", 1, NesRules.FX_FINE_PITCH, 0x8A)
+        a.fx(w1, 33, NesRules.FX_PHASE_RESET, 0x00) // without a note
+        a.note(w1, 36, "F-4", 1, NesRules.FX_PHASE_RESET, 0x00) // with a note
+        a.note(w1, 40, "G-4", 1, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(w1, 44, "G-4", 1, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(w1, 48, "C-1", 1) // the N163 reaches every note down to C-1
+        a.note(w1, 52, "F-8", 1) // and high up with 4 channels
+        a.off(w1, 56)
+        // N163 2: release through the waves only, then an instrument change (no legato across sounds on the N163).
+        a.note(w2, 0, "E-4", 2)
+        a.off(w2, 6)
+        a.note(w2, 8, "G-4", 2, NesRules.FX_VOLUME, 0x09)
+        a.note(w2, 12, "G-4", 6) // another sound: an attack even without one written
+        a.note(w2, 16, "B-4", 0, NesRules.FX_VOLUME_SLIDE, 0xF4)
+        a.fx(w2, 24, NesRules.FX_VOLUME, 0x0C)
+        a.note(w2, 28, "C-5", 2, NesRules.FX_ARPEGGIO, 0x47)
+        a.fx(w2, 32, NesRules.FX_SPEED, 0x05)
+        a.fx(w2, 40, NesRules.FX_SPEED, 0x04)
+        a.off(w2, 48)
+        // N163 3: the 32-sample triangle (an octave below the note) with its octave arpeggio, then the shared sine.
+        a.note(w3, 0, "C-4", 3)
+        a.note(w3, 16, "G-4", 3, NesRules.FX_SLIDE_DOWN, 0x0C)
+        a.note(w3, 32, "A-3", 5)
+        a.off(w3, 60)
+        // N163 4: the 8-sample saw (an octave above) with its pitch envelope, then the other shared sine alongside N163 3.
+        a.note(w4, 0, "C-3", 4)
+        a.note(w4, 8, "E-3", 4, NesRules.FX_FINE_PITCH, 0x70)
+        a.note(w4, 32, "E-4", 6)
+        a.note(w4, 40, "E-4", 0, NesRules.FX_PHASE_RESET, 0x00) // legato with a phase reset
+        a.off(w4, 60)
+        // 2A03 alongside.
+        a.note(0, 0, "E-4", 7)
+        a.note(2, 0, "C-3", 7)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
+        val b = P("N163 B", length = 32, channels = 9)
+        b.note(w1, 0, "A-4", 1) // the loop enters with the sequence restarted
+        b.note(w2, 0, "C-5", 2)
+        b.off(w2, 16)
+        b.note(w3, 0, "E-4", 5)
+        b.note(w4, 0, "E-4", 6)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "N163 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
             sound = base.nes.copy(instruments = bank),
         )

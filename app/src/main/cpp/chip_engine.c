@@ -6,12 +6,17 @@
 extern const ChipEngineOps huge_chip_ops;
 extern const ChipEngineOps nes_chip_ops;
 extern const ChipEngineOps nes_vrc6_chip_ops;
+extern const ChipEngineOps nes_n163_1_chip_ops, nes_n163_2_chip_ops, nes_n163_3_chip_ops, nes_n163_4_chip_ops;
+extern const ChipEngineOps nes_n163_5_chip_ops, nes_n163_6_chip_ops, nes_n163_7_chip_ops, nes_n163_8_chip_ops;
 extern const ChipEngineOps sid_chip_ops;
 extern const ChipEngineOps opl3_chip_ops;
 extern const ChipEngineOps ym_chip_ops;
 
-static const ChipEngineOps* const systems[] = {&huge_chip_ops, &nes_chip_ops, &nes_vrc6_chip_ops, &sid_chip_ops, &opl3_chip_ops,
-                                               &ym_chip_ops};
+static const ChipEngineOps* const systems[] = {&huge_chip_ops,       &nes_chip_ops,        &nes_vrc6_chip_ops,
+                                               &nes_n163_1_chip_ops, &nes_n163_2_chip_ops, &nes_n163_3_chip_ops,
+                                               &nes_n163_4_chip_ops, &nes_n163_5_chip_ops, &nes_n163_6_chip_ops,
+                                               &nes_n163_7_chip_ops, &nes_n163_8_chip_ops, &sid_chip_ops,
+                                               &opl3_chip_ops,       &ym_chip_ops};
 
 const ChipEngineOps* chip_engine_ops(const char* system_id) {
     if (!system_id) return NULL;

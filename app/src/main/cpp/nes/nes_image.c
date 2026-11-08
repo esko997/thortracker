@@ -18,7 +18,8 @@ static int fail(NesImage* image, const char* why, uint32_t at) {
 
 /* Marks instruction starts of a well-formed envelope in `starts` (bitmap of 256); returns NULL or why
  * it is malformed. Instructions: value (>= $80), hold count ($01-$7F), loop ($00 index). The envelope
- * ends with its final loop; loops go to a value or hold of the same envelope. Duty values 0..duty_max. */
+ * ends with its final loop; loops go to a value or hold of the same envelope. Duty values 0..duty_max; wave
+ * indexes 0..63 ($C0..$FF). */
 static const char* envelope_shape(const uint8_t* e, int len, int kind, int duty_max, uint8_t* starts) {
     memset(starts, 0, 32);
     const int start = nm_envelope_start(kind);
@@ -29,6 +30,7 @@ static const char* envelope_shape(const uint8_t* e, int len, int kind, int duty_
         const uint8_t b = e[p];
         if (b >= 0x80) {
             if (kind == NM_KIND_VOLUME && (b < 0xC0 || b > 0xCF)) return "volume envelope value outside 0..15";
+            if (kind == NM_KIND_WAVE && b < 0xC0) return "wave index envelope value outside 0..63";
             if (kind == NM_KIND_DUTY && (b < 0xC0 || b > 0xC0 + duty_max)) {
                 return duty_max == 3 ? "duty envelope value outside 0..3" : "duty envelope value outside 0..7";
             }
@@ -47,6 +49,7 @@ static const char* envelope_shape(const uint8_t* e, int len, int kind, int duty_
         if ((starts[p >> 3] >> (p & 7) & 1) && e[p] == 0 && !IS_START(e[p + 1])) return "envelope loops to a non-instruction";
     }
     if (kind == NM_KIND_VOLUME && e[0] && !IS_START(e[0])) return "volume release index is not an instruction";
+    if (kind == NM_KIND_WAVE && e[0] && !IS_START(e[0])) return "wave index release index is not an instruction";
     if (kind == NM_KIND_PITCH && e[0] != 0x00 && e[0] != 0x80) return "pitch envelope flag is not $00/$80";
 #undef IS_START
     return NULL;
@@ -82,7 +85,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
     const uint32_t limit = base + info->size;
     const int thor = info->layout == NM_LAYOUT_THOR;
     const int tonal = nes_player_tonal(player, channel), pitched = nes_player_pitched(player, channel);
-    const int vrc6 = nes_player_vrc6_channel(player, channel);
+    const int vrc6 = nes_player_vrc6_channel(player, channel), n163 = nes_player_n163_channel(player, channel);
     uint32_t a = addr;
     int delays = 0;
     out->delay_end = 0;
@@ -154,12 +157,24 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x43: case 0x4C: case 0x4D: size = 0; break;
         case 0x4A: if (!pitched) return "vibrato opcode on a channel without pitch envelope"; size = 0; break;
         case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses and the VRC6 channels */
+            if (n163) return "phase reset on an N163 channel is $5B";
             if (channel > 1 && !vrc6) {
                 return player->expansion == NES_EXPANSION_VRC6 ? "phase reset only on the pulses and the VRC6 channels"
                                                                : "phase reset only on the pulses";
             }
             size = 0;
             break;
+        case 0x5B: /* N163 phase reset: famistudio_phase_reset_n163 gets the channel's bit */
+            if (player->expansion != NES_EXPANSION_N163) return "opcode not allowed in a row";
+            if (!n163) return "N163 phase reset off the N163 channels";
+            size = 0;
+            break;
+        case 0x5A: /* N163 release: the volume and wave-index envelopes jump to their release points */
+            if (player->expansion != NES_EXPANSION_N163) return "opcode not allowed in a row";
+            if (!n163) return "N163 release off the N163 channels";
+            out->rows = 1;
+            out->end = (uint16_t)(a + 1);
+            return NULL;
         case 0x46:
             NEED(2);
             if (BYTE(1) < 1 || BYTE(1) > 127) return "speed outside 1..127";
@@ -178,6 +193,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x4F:
             NEED(2);
             if (channel == 2) return "duty effect on the triangle";
+            if (n163) return "duty effect on an N163 channel"; /* famistudio_channel_to_dutycycle: 2A03 only */
             if (channel == VRC6_SAW && vrc6) return "duty effect on the VRC6 saw";
             if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : "duty outside 0..3";
             size = 1;
@@ -240,7 +256,57 @@ int nm_speed_at(const NmView* v, int order, int row) {
     return speed;
 }
 
+int nm_n163_waves(const NmView* v, uint16_t entry) {
+    const uint32_t base = v->info->player->song_base;
+    const int idx = nm_find_envelope(v->info, v->directory, nm_rd16(v->region + (entry - base) + 6));
+    if (idx < 0 || v->directory[4 * idx + 3] != NM_KIND_WAVE) return -1;
+    const uint8_t* env = v->region + (nm_rd16(v->directory + 4 * idx) - base);
+    const int len = v->directory[4 * idx + 2];
+    int top = 0;
+    for (int p = nm_envelope_start(NM_KIND_WAVE); p < len;) {
+        const uint8_t b = env[p];
+        if (b >= 0xC0) { /* value: $C0 + wave index */
+            if (b - 0xC0 > top) top = b - 0xC0;
+            ++p;
+        } else if (b) { /* hold count */
+            ++p;
+        } else { /* loop and its index */
+            p += 2;
+        }
+    }
+    return top + 1;
+}
+
 /* ---- loading ------------------------------------------------------------------------------ */
+
+/* N163 expansion instrument entry at region offset `at` (its four envelope words already checked): the wave in N163
+ * RAM (even position, size a multiple of 4 from 4, below the channel registers: 256 - 16 n samples), a wave table
+ * entry for every index its wave-index envelope produces, each wave's size / 2 bytes inside the data, bytes 12-15
+ * zero. */
+static int n163_instrument(NesImage* image, const NmView* view, uint32_t at) {
+    const NesImageInfo* info = &image->info;
+    const NesPlayer* player = info->player;
+    const uint32_t base = player->song_base, end = base + info->size;
+    const uint8_t* s = nm_region(image);
+    const uint8_t* e = s + at;
+    const uint32_t pos = e[8], wave = e[9], ram = 256u - 16u * player->n163_channels;
+    if (pos & 1) return fail(image, "N163 wave position is odd", NM_REGION_OFFSET + at + 8);
+    if (wave < 4 || wave % 4) return fail(image, "N163 wave size is not a multiple of 4 from 4", NM_REGION_OFFSET + at + 9);
+    if (pos + wave > ram) return fail(image, "N163 wave overlaps the channel registers", NM_REGION_OFFSET + at + 8);
+    for (uint32_t k = 12; k < NM_EXP_INSTRUMENT_SIZE; ++k) {
+        if (e[k]) return fail(image, "N163 instrument bytes 12-15 not zero", NM_REGION_OFFSET + at + k);
+    }
+    const int waves = nm_n163_waves(view, (uint16_t)(base + at));
+    const uint32_t table = nm_rd16(e + 10);
+    if (waves < 1 || table < base || table + 2u * (uint32_t)waves > end) {
+        return fail(image, "N163 wave table outside the data", NM_REGION_OFFSET + at + 10);
+    }
+    for (uint32_t w = 0; w < (uint32_t)waves; ++w) {
+        const uint32_t ptr = nm_rd16(s + (table - base) + 2u * w);
+        if (ptr < base || ptr + wave / 2u > end) return fail(image, "N163 wave outside the data", NM_REGION_OFFSET + (table - base) + 2u * w);
+    }
+    return 0;
+}
 
 static int load_raw(NesImage* image) {
     NesImageInfo* info = &image->info;
@@ -255,19 +321,23 @@ static int load_raw(NesImage* image) {
     for (int i = 0; i < NES_IMAGE_DIRECTORY_SIZE; ++i) {
         if (h[NES_IMAGE_HEADER_SIZE + i]) return fail(image, "raw image with an envelope directory", NES_IMAGE_HEADER_SIZE + (uint32_t)i);
     }
-    /* FamiStudio header: count, instruments, samples-4, then a channel pointer per engine channel + 4 tempo
-     * bytes per song. With 5 channels the engine indexes songs with an 8-bit offset, so at most 17; with
-     * more it steps the pointer itself (the count byte's limit). */
+    /* FamiStudio header: count, instruments, [expansion instruments (N163),] samples-4, then a channel pointer
+     * per engine channel + 4 tempo bytes per song. With 5 channels the engine indexes songs with an 8-bit
+     * offset, so at most 17; with more it steps the pointer itself (the count byte's limit). */
+    const uint32_t head = (uint32_t)nes_player_head(player);
     const uint32_t stride = 2 * channels + 4, max_songs = channels == 5 ? 17 : 255;
     const uint32_t songs = s[0], index = h[12], size = info->size;
-    if (size < 5 + stride || songs == 0 || songs > max_songs || index >= songs || 5 + stride * songs > size) {
+    if (size < head + stride || songs == 0 || songs > max_songs || index >= songs || head + stride * songs > size) {
         return fail(image, "bad FamiStudio song list", NM_REGION_OFFSET);
     }
 #define INSIDE(ptr) ((ptr) >= base && (ptr) < base + size)
     if (!INSIDE(nm_rd16(s + 1))) return fail(image, "instrument pointer outside the data", NM_REGION_OFFSET + 1);
+    if (player->exp_instruments && !INSIDE(nm_rd16(s + 3))) {
+        return fail(image, "expansion instrument pointer outside the data", NM_REGION_OFFSET + 3);
+    }
     for (uint32_t k = 0; k < songs; ++k) {
         for (uint32_t ch = 0; ch < channels; ++ch) {
-            if (!INSIDE(nm_rd16(s + 5 + stride * k + 2 * ch))) return fail(image, "channel pointer outside the data", NM_REGION_OFFSET + 5 + stride * k);
+            if (!INSIDE(nm_rd16(s + head + stride * k + 2 * ch))) return fail(image, "channel pointer outside the data", NM_REGION_OFFSET + head + stride * k);
         }
     }
 #undef INSIDE
@@ -278,7 +348,7 @@ static int load_raw(NesImage* image) {
     info->orders = (uint8_t)orders;
     info->loop = (uint8_t)loop;
     for (int o = 0; o < orders; ++o) info->rows[o] = (uint8_t)rows;
-    info->tempo_ntsc = nm_rd16(s + 5 + stride * index + 2 * channels + 2);
+    info->tempo_ntsc = nm_rd16(s + head + stride * index + 2 * channels + 2);
     return 0;
 }
 
@@ -317,7 +387,9 @@ static int load_thor(NesImage* image) {
             if (d[2] || d[3]) return fail(image, "unused directory entry not zero", at);
             continue;
         }
-        if (d[3] > NM_KIND_PITCH) return fail(image, "envelope kind outside 0..3", at + 3);
+        if (player->expansion == NES_EXPANSION_N163 ? d[3] > NM_KIND_WAVE : d[3] > NM_KIND_PITCH) {
+            return fail(image, player->expansion == NES_EXPANSION_N163 ? "envelope kind outside 0..4" : "envelope kind outside 0..3", at + 3);
+        }
         if (d[2] < 2) return fail(image, "envelope shorter than 2 bytes", at + 2);
         if (addr < prev_end || addr + (uint32_t)d[2] > base + size) return fail(image, "envelope overlaps, is out of order or outside the data", at);
         const char* why = envelope_shape(s + (addr - base), d[2], d[3], player->duty_max, starts);
@@ -325,8 +397,9 @@ static int load_thor(NesImage* image) {
         prev_end = addr + d[2];
         info->used[info->used_count++] = (uint16_t)i;
     }
-    /* FamiStudio header: one song, the instrument table, a stream per engine channel, tempo words. */
-    const uint32_t tempo = 5 + 2u * (uint32_t)channels;
+    /* FamiStudio header: one song, the instrument table, [the expansion instrument table,] the DPCM list, a stream
+     * per engine channel, tempo words. */
+    const uint32_t head = (uint32_t)nes_player_head(player), tempo = head + 2u * (uint32_t)channels;
     if (size < tempo + 4 || s[0] != 1) return fail(image, "Thor layout: exactly one song", NM_REGION_OFFSET);
     const uint16_t table = nm_rd16(s + 1);
     if (table < base || table + 8u * info->instruments > base + size) return fail(image, "instrument table outside the data", NM_REGION_OFFSET + 1);
@@ -338,13 +411,34 @@ static int load_thor(NesImage* image) {
             if (dir[4 * idx + 3] != k) return fail(image, "instrument envelope of the wrong kind", NM_REGION_OFFSET + at);
         }
     }
+    /* N163: FamiStudio's expansion instruments, as many as the 2A03 table (instrument byte i addresses entry i on
+     * the N163 channels): volume, arpeggio, pitch and wave-index envelopes, then the wave (n163_instrument). */
+    if (player->exp_instruments) {
+        const uint16_t exp = nm_rd16(s + 3);
+        if (exp < base || exp + (uint32_t)NM_EXP_INSTRUMENT_SIZE * info->instruments > base + size) {
+            return fail(image, "expansion instrument table outside the data", NM_REGION_OFFSET + 3);
+        }
+        static const uint8_t kinds[4] = {NM_KIND_VOLUME, NM_KIND_ARPEGGIO, NM_KIND_PITCH, NM_KIND_WAVE};
+        const int words = player->expansion == NES_EXPANSION_N163 ? 4 : 3;
+        const NmView view = nm_view(image);
+        for (int i = 0; i < info->instruments; ++i) {
+            const uint32_t at = exp - base + (uint32_t)NM_EXP_INSTRUMENT_SIZE * (uint32_t)i;
+            for (int k = 0; k < words; ++k) {
+                const int idx = nm_find_envelope(info, dir, nm_rd16(s + at + 2u * (uint32_t)k));
+                if (idx < 0) return fail(image, "expansion instrument envelope is not a directory entry", NM_REGION_OFFSET + at + 2u * (uint32_t)k);
+                if (dir[4 * idx + 3] != kinds[k]) return fail(image, "expansion instrument envelope of the wrong kind", NM_REGION_OFFSET + at + 2u * (uint32_t)k);
+            }
+            if (player->expansion == NES_EXPANSION_N163 && n163_instrument(image, &view, at)) return -1;
+        }
+        info->exp_instruments = exp;
+    }
     info->tempo_ntsc = nm_rd16(s + tempo + 2);
     /* DPCM list: `mappings` FamiStudio entries {$4012, $4013, $4010, $4011} in the data (the header word
      * points 4 bytes before entry 1), each sample inside the used sample bytes. */
     if (info->mappings) {
-        const uint32_t list = (uint32_t)nm_rd16(s + 3) + 4u;
+        const uint32_t list = (uint32_t)nm_rd16(s + head - 2) + 4u;
         if (list < base || list + 4u * info->mappings > base + size) {
-            return fail(image, "DPCM list outside the data", NM_REGION_OFFSET + 3);
+            return fail(image, "DPCM list outside the data", NM_REGION_OFFSET + head - 2);
         }
         info->dpcm_list = (uint16_t)list;
         for (uint32_t k = 0; k < info->mappings; ++k) {
@@ -361,12 +455,12 @@ static int load_thor(NesImage* image) {
     /* Order streams: `$41 n pattern` per order, then `$42` to the loop order's entry. */
     int orders = -1, loop = -1;
     for (int c = 0; c < channels; ++c) {
-        const uint16_t first = nm_rd16(s + 5 + 2 * c);
+        const uint16_t first = nm_rd16(s + head + 2 * c);
         info->streams[c] = first;
         int o = 0;
         for (;; ++o) {
             const uint32_t a = first + 4u * (uint32_t)o;
-            if (a < base || a + 3 > base + size) return fail(image, "order stream outside the data", NM_REGION_OFFSET + 5 + 2 * c);
+            if (a < base || a + 3 > base + size) return fail(image, "order stream outside the data", NM_REGION_OFFSET + head + 2 * c);
             const uint8_t* e = s + (a - base);
             if (e[0] == 0x42) {
                 const uint16_t target = nm_rd16(e + 1);

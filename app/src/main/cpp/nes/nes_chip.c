@@ -1,5 +1,6 @@
-/* "nes-famistudio" and "nes-famistudio-vrc6": the FamiStudio sound engine (FamiTracker tempo), the 2A03
- * build and the Konami VRC6 build, on the NES machine (nes_machine.h) behind the chip engine interface.
+/* "nes-famistudio", "nes-famistudio-vrc6" and "nes-famistudio-n163-1".."-8": the FamiStudio sound engine
+ * (FamiTracker tempo), the 2A03 build, the Konami VRC6 build and the eight Namco 163 builds (1..8 N163 channels),
+ * on the NES machine (nes_machine.h) behind the chip engine interface.
  * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
  * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
@@ -95,3 +96,37 @@ const ChipEngineOps nes_vrc6_chip_ops = {
     .position = nes_position,
     .tick = nes_tick,
 };
+
+/* "nes-famistudio-n163-<n>", n = 1..8: channels 0-4 as "nes-famistudio", then N163 1..n (5..4+n). On an N163 channel
+ * the instrument slot addresses the image's expansion instrument table (the same index as the 2A03 table). */
+#define N163_OPS(N)                                                                                                    \
+    static ChipMachine* n163_##N##_create(uint32_t sample_rate) {                                                      \
+        return (ChipMachine*)nm_create(sample_rate, &nes_player_n163[(N) - 1]);                                        \
+    }                                                                                                                  \
+    static int n163_##N##_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {                          \
+        return load_for(&nes_player_n163[(N) - 1], storage, bytes, size);                                              \
+    }                                                                                                                  \
+    const ChipEngineOps nes_n163_##N##_chip_ops = {                                                                    \
+        .system_id = "nes-famistudio-n163-" #N,                                                                        \
+        .image_size = NES_N163_##N##_IMAGE_SIZE,                                                                       \
+        .image_storage = sizeof(NesImage),                                                                             \
+        .create = n163_##N##_create,                                                                                   \
+        .destroy = nes_destroy,                                                                                        \
+        .load_image = n163_##N##_load_image,                                                                           \
+        .start = nes_start,                                                                                            \
+        .apply_image = nes_apply_image,                                                                                \
+        .audition = nes_audition,                                                                                      \
+        .release = nes_release,                                                                                        \
+        .mute = nes_mute,                                                                                              \
+        .position = nes_position,                                                                                      \
+        .tick = nes_tick,                                                                                              \
+    }
+
+N163_OPS(1);
+N163_OPS(2);
+N163_OPS(3);
+N163_OPS(4);
+N163_OPS(5);
+N163_OPS(6);
+N163_OPS(7);
+N163_OPS(8);

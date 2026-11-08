@@ -42,6 +42,75 @@ object NesRules {
     /** The VRC7's first FM channel (FM 1..6 are channels 5..10). */
     const val VRC7_FM1 = 5
 
+    /** The N163's first channel (N163 1..n are channels 5..4+n). */
+    const val N163_FIRST = 5
+
+    /** The N163 enables 1..8 channels. */
+    const val N163_MAX_CHANNELS = 8
+
+    /**
+     * The N163's sound RAM in 4-bit samples (128 bytes). The channel registers take its top 8 bytes per enabled channel
+     * ([n163WaveRam] leaves the rest for waves; FamiStudio keeps waves below the registers).
+     */
+    const val N163_RAM_SAMPLES = 256
+
+    /** Samples of N163 RAM waves may use with [channels] enabled: 256 − 16 per channel (128 at 8, 240 at 1). */
+    fun n163WaveRam(channels: Int): Int = N163_RAM_SAMPLES - 16 * channels
+
+    /** True for the N163 channels of an N163 song. */
+    fun isN163(expansion: NesExpansion, ch: Int): Boolean = expansion.chip == NesChip.N163 && ch >= N163_FIRST
+
+    /**
+     * Semitones an N163 wave of [size] samples sounds above the note: FamiStudio's N163 note tables are for 16-sample
+     * waves, and a channel steps through the whole wave once per period, so 32 samples sound an octave lower, 8 an
+     * octave higher, and sizes that are not 16 × 2^k off-key (12 log2(16 / size)).
+     */
+    fun n163Transpose(size: Int): Double = 12.0 * kotlin.math.log2(16.0 / size)
+
+    /** True when [size] keeps notes in tune (a power of two: whole octaves away). */
+    fun n163InTune(size: Int): Boolean = size > 0 && size and (size - 1) == 0
+
+    /**
+     * FamiStudio's N163 pitch shift for [channels] (`FAMISTUDIO_N163_PITCH_SHIFT`, `Channel.GetShiftsForType`): pitch
+     * envelopes, fine pitch, vibrato and slides move the 16-bit note-table frequency in steps of 2^shift.
+     */
+    fun n163PitchShift(channels: Int): Int = when {
+        channels <= 1 -> 2
+        channels == 2 -> 3
+        channels <= 4 -> 4
+        else -> 5
+    }
+
+    /**
+     * The highest FamiStudio note an N163 channel plays in tune with [channels] enabled: the last below the top of the
+     * note table, which saturates at $FFFF with 4 or more channels (8 channels stop at A-7).
+     */
+    fun n163HighestFsNote(channels: Int): Int {
+        val table = org.thortracker.backend.N163NoteTables.NTSC[channels - 1]
+        val top = table.indexOfFirst { it == 0xFFFF }
+        return if (top < 0) NOTE_COUNT else top - 1
+    }
+
+    /** The highest absolute note [channel] plays: below the N163's saturated note table, B-8 elsewhere. */
+    fun highestNote(expansion: NesExpansion, channel: Int): Int =
+        (if (isN163(expansion, channel)) n163HighestFsNote(expansion.n163Channels) else NOTE_COUNT) + NOTE_OFFSET
+
+    /**
+     * FamiStudio's fine pitch on an N163 channel for a Pxx of [fine] (xx − 80, positive = up) on FamiStudio note [fsNote]
+     * with [channels] enabled: the engine adds it × 2^[n163PitchShift] to the note's 16-bit frequency (positive = up),
+     * so the step nearest the pitch [fine] period units give a pulse on that note, within −127..127 (as for the VRC7).
+     */
+    fun n163FinePitch(fsNote: Int, fine: Int, channels: Int): Int {
+        if (fine == 0) return 0
+        val n = fsNote.coerceIn(1, NOTE_COUNT)
+        val p = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[n] + 1.0
+        if (fine >= p) return 127
+        val ratio = p / (p - fine)
+        val f = org.thortracker.backend.N163NoteTables.NTSC[channels - 1][n].toDouble()
+        val step = (1 shl n163PitchShift(channels)).toDouble()
+        return kotlin.math.round(f * (ratio - 1.0) / step).toInt().coerceIn(-127, 127)
+    }
+
     /** Channel [ch]'s name in a song with [expansion]. */
     fun channelName(expansion: NesExpansion, ch: Int): String =
         if (ch < APU_CHANNELS) APU_NAMES[ch] else expansion.channelNames.getOrElse(ch - APU_CHANNELS) { "Channel $ch" }
@@ -73,6 +142,7 @@ object NesRules {
     const val FX_SLIDE_DOWN = 27 // R
     const val FX_NOTE_CUT = 28 // S
     const val FX_DUTY = 31 // V
+    const val FX_PHASE_RESET = 33 // X
     const val FX_DELTA_COUNTER = 35 // Z
 
     /** Zxx: DMC output levels 00-7F. */
@@ -115,6 +185,9 @@ object NesRules {
         EffectSpec(FX_DUTY, "Duty", "xx: 00-03 (Noise 00-01)",
             "Pulse duty 12.5/25/50/75% from this row on (an instrument duty envelope takes over at its next step); on " +
                 "Noise 00 = hiss, 01 = metallic. Not on Triangle.", true),
+        EffectSpec(FX_PHASE_RESET, "Phase reset", "00",
+            "N163 only. Restart the channel's wave from its first sample on this row (FamiStudio's phase reset: the chip's " +
+                "phase registers are cleared after the frame's update), with or without a note.", true),
         EffectSpec(FX_DELTA_COUNTER, "DMC level", "xx: output level 00-7F",
             "DPCM only. Set the DMC output level (FamiStudio's delta counter): with a note, its sample starts from xx " +
                 "instead of its initial value; without a note, at once. A high level makes Triangle and Noise quieter.", true),
@@ -135,16 +208,33 @@ object NesRules {
         "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
             "raises it); the VRC7 plays the nearest of its frequency steps (fine low down, coarse below C-2). Tuned notes use it.", true)
 
+    /**
+     * Fine pitch on the N163's channels: the engine adds FamiStudio's fine pitch × 2^[n163PitchShift] to the note's
+     * 16-bit frequency, so a cell's Pxx is converted ([n163FinePitch]) to the step nearest the detune the same Pxx gives
+     * a 2A03 pulse on that note, as on the VRC7 (coarse low down, coarser with more channels).
+     */
+    private val N163_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
+        "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
+            "raises it); the N163 plays the nearest of its frequency steps (coarse at low notes, coarser with more channels). " +
+            "Tuned notes use it.", true)
+
     private val BY_CODE = EFFECTS.associateBy { it.code }
 
     fun effect(code: Int): EffectSpec? = BY_CODE[code]
 
+    /** The effects songs with [expansion] may use: the phase reset exists only with the N163 (its own opcode `$5B`). */
+    fun effects(expansion: NesExpansion): List<EffectSpec> =
+        if (expansion.chip == NesChip.N163) EFFECTS else EFFECTS_WITHOUT_PHASE_RESET
+
+    private val EFFECTS_WITHOUT_PHASE_RESET = EFFECTS.filter { it.code != FX_PHASE_RESET }
+
     /** The chip whose instruments [channel] plays in a song with [expansion]. */
     fun chip(expansion: NesExpansion, channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else expansion.chip
 
-    /** True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw and the VRC7's FM channels). */
+    /** True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw, the VRC7's FM and the N163's channels). */
     fun pitched(expansion: NesExpansion, channel: Int): Boolean = kind(expansion, channel).let {
-        it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW || it == ChannelKind.VOICE
+        it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW || it == ChannelKind.VOICE ||
+            it == ChannelKind.WAVE
     }
 
     /** The lowest note [channel] plays: A-1 on the 2A03's pulses and triangle, every note elsewhere. */
@@ -157,15 +247,17 @@ object NesRules {
 
     /**
      * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, duty on the VRC6
-     * saw and the VRC7's FM channels, everything but speed, delay, cut and the DMC level on DPCM (FamiStudio's
-     * `Channel.SupportsEffect`), and the DMC level elsewhere.
+     * saw and the VRC7's FM channels, duty on the N163's channels, everything but speed, delay, cut and the DMC level on
+     * DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, and the phase reset off the N163 (the only
+     * channels whose phase reset FamiStudio's text and this player share: opcode `$5B`).
      */
     private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when (kind(expansion, channel)) {
-        ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER)
-        ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER)
+        ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER, FX_PHASE_RESET)
+        ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
         ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
-        ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
-        else -> setOf(FX_DELTA_COUNTER)
+        ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
+        ChannelKind.WAVE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
+        else -> setOf(FX_DELTA_COUNTER, FX_PHASE_RESET)
     }
 
     fun effectsFor(expansion: NesExpansion, channel: Int): List<EffectSpec> = unusable(expansion, channel).let { no ->
@@ -174,6 +266,7 @@ object NesRules {
             when {
                 it.code == FX_DUTY && chip == NesChip.VRC6 -> VRC6_DUTY
                 it.code == FX_FINE_PITCH && chip == NesChip.VRC7 -> VRC7_FINE
+                it.code == FX_FINE_PITCH && chip == NesChip.N163 -> N163_FINE
                 else -> it
             }
         }
@@ -230,6 +323,9 @@ object NesRules {
         if (cell.note >= 0 && pitched(expansion, channel) && cell.note < lowestNote(expansion, channel)) {
             return "$channelName cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
         }
+        if (cell.note >= 0 && cell.note > highestNote(expansion, channel)) {
+            return n163TopProblem(expansion, channelName, NesSystem.noteName(cell.note))
+        }
         if (cell.note >= 0 && cell.instrument != 0) {
             val ins = song.nes.instruments.getOrNull(cell.instrument - 1)
             val chip = chip(expansion, channel)
@@ -247,7 +343,13 @@ object NesRules {
         val y = p and 0xF
         val spec = effect(cell.effect) ?: return "effect ${effectChar(cell.effect)} does not exist on the NES"
         val fx = effectText(cell.effect, p)
-        if (cell.effect in unusable(expansion, channel)) return "${spec.name.lowercase()} ($fx) has no effect on $channelName"
+        if (cell.effect in unusable(expansion, channel)) {
+            return if (cell.effect == FX_PHASE_RESET && kind(expansion, channel) != ChannelKind.SAMPLE) {
+                "phase reset ($fx) is for the N163's channels; $channelName has none here"
+            } else {
+                "${spec.name.lowercase()} ($fx) has no effect on $channelName"
+            }
+        }
         val noteName = if (cell.note >= 0) NesSystem.noteName(cell.note) else null
         return when (cell.effect) {
             FX_ARPEGGIO -> if (cell.note < 0) "$fx needs a note on its row (FamiStudio arpeggios belong to a note)" else null
@@ -275,6 +377,9 @@ object NesRules {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
                         pitched(expansion, channel) && target < lowestNote(expansion, channel) ->
                             "$fx from $noteName would end below A-1, which $channelName cannot play"
+                        target > highestNote(expansion, channel) ->
+                            "$fx from $noteName would end above ${NesSystem.noteName(highestNote(expansion, channel))}: " +
+                                n163TopProblem(expansion, channelName, NesSystem.noteName(target))
                         else -> null
                     }
                 }
@@ -286,8 +391,17 @@ object NesRules {
                 else -> null
             }
             FX_DELTA_COUNTER -> if (p > DELTA_COUNTER_MAX) "$fx: DMC levels are Z00-Z7F" else null
+            FX_PHASE_RESET -> if (p != 0) "$fx: the phase reset takes no value; write X00" else null
             else -> null
         }
+    }
+
+    /** Why [note] is too high for N163 channel [channelName] with the song's channel count. */
+    private fun n163TopProblem(expansion: NesExpansion, channelName: String, note: String): String {
+        val n = expansion.n163Channels
+        val top = NesSystem.noteName(n163HighestFsNote(n) + NOTE_OFFSET)
+        return "$channelName cannot play $note with $n N163 channels: FamiStudio's N163 note table tops out above $top " +
+            "(the chip updates each of $n channels once every ${15 * n} CPU cycles); play it lower or use fewer N163 channels"
     }
 
     /**
@@ -319,7 +433,8 @@ object NesRules {
             FX_FINE_PITCH -> (param - FINE_CENTRE).let {
                 when {
                     it == 0 -> "Fine pitch: none"
-                    chip(expansion, channel) == NesChip.VRC7 -> "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
+                    chip(expansion, channel) == NesChip.VRC7 || chip(expansion, channel) == NesChip.N163 ->
+                        "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
                     else -> "Fine pitch ${if (it > 0) "+" else ""}$it units"
                 }
             }
@@ -332,14 +447,15 @@ object NesRules {
                 else -> "Duty ${dutyText(NesChip.APU, param)}"
             }
             FX_DELTA_COUNTER -> "DMC level $param"
+            FX_PHASE_RESET -> "Restart the wave from its first sample"
             else -> "Unknown effect"
         }
     }
 
-    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7 sounds have none. */
+    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7 and N163 sounds have none. */
     fun dutyText(chip: NesChip, value: Int): String = when (chip) {
         NesChip.APU -> listOf("12.5%", "25%", "50%", "75%").getOrElse(value) { "?" }
         NesChip.VRC6 -> if (value in NesChip.VRC6.duty) "${value + 1}/16" else "?"
-        NesChip.VRC7 -> "none"
+        NesChip.VRC7, NesChip.N163 -> "none"
     }
 }

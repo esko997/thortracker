@@ -8,6 +8,7 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
@@ -18,7 +19,10 @@ import org.thortracker.system.ym2612.YmSystem
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
  * recorded samples (the NES DPCM channel): its notes pick samples, not pitches.
  */
-/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels), [SAW] a sawtooth (the VRC6's). */
+/**
+ * What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels), [SAW] a
+ * sawtooth (the VRC6's), [WAVE] a wavetable (the Game Boy's wave channel, the N163's channels).
+ */
 enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE, SAW }
 
 /**
@@ -232,6 +236,12 @@ interface SoundSystem {
      * New and Load demo list a family as one entry with its variants under it. Null: a system of its own.
      */
     val family: String? get() = null
+
+    /**
+     * Variants of a [family] that differ only in a count (the NES + N163 with 1-8 channels) share a group: the family's
+     * list shows the group once ("NES + N163…") with its variants under it. Null: listed on its own.
+     */
+    val familyGroup: String? get() = null
     val channels: List<ChannelSpec>
     val banks: List<BankSpec>
 
@@ -391,7 +401,8 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System, SidSystem, Opl3System, YmSystem)
+    val ALL: List<SoundSystem> =
+        listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System) + NesN163System.ALL + listOf(SidSystem, Opl3System, YmSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

@@ -20,6 +20,12 @@ changes; the outputs are committed, so app/Deck/CI builds need no 6502 assembler
                                                   the Konami VRC7 build (FAMISTUDIO_EXP_VRC7 = 1, otherwise
                                                   identical), its song base and engine addresses
   app/src/test/cpp/nes_vrc7_song.h                VRC7 host-test fixtures (below)
+  app/src/main/cpp/generated/nes_n163_<n>_player_image.h   (n = 1..8)
+  core/src/commonMain/kotlin/org/thortracker/backend/NesN163PlayerImages.kt
+                                                  the Namco 163 builds with n N163 channels (FAMISTUDIO_EXP_N163 = 1,
+                                                  FAMISTUDIO_EXP_N163_CHN_CNT = n, otherwise identical), their song bases
+                                                  and engine addresses; one Kotlin object per build
+  app/src/test/cpp/nes_n163_song.h                N163 host-test fixtures (below; the 8-channel build)
 
 Steps (all checked):
   1. Check the vendored engine files (third_party/famistudio-4.5.3, unmodified copies from
@@ -59,7 +65,19 @@ Steps (all checked):
      parsed and rearranged as in 4. FamiStudio 4.5.3's ca65 export ends each VRC7 instrument's first `.byte` row
      with a comma (`$00, $10, `); the link and the parser drop it. In the Thor layout the 2A03 and the expansion
      instrument tables have the same count (the shorter one is padded with copies of its last entry).
-  8. Write the ten outputs. Two runs produce identical files.
+  8. N163: the player assembled again with -D FAMISTUDIO_EXP_N163=1 -D FAMISTUDIO_EXP_N163_CHN_CNT=n for n = 1..8
+     (5 + n channels: the 2A03's five, then N163 1..n with three envelopes each: volume, arpeggio, wave index; the song
+     header holds the expansion instrument pointer as for VRC7), each song base measured as for VRC7, its note tables
+     NoteTables/famistudio_n163_note_table_<n>ch_lsb/msb.bin (pinned), its engine RAM below the audition area. The N163
+     test song tools/audio/nes/n163_test.txt (8 N163 channels) exported by FamiStudio 4.5.3 to n163_test_ca65.s (as for
+     VRC7: `--famistudio DIR` writes it when it is missing, else checks it is unchanged), linked at the 8-channel build's
+     song base, parsed and rearranged as in 7. Its N163 parts become blocks of their own with every pointer patched:
+     each expansion instrument's wave-index envelope (Thor directory index 256 + j, kind 4), and its wave table
+     (`@n163_inst<j>_waves:`, one word per distinct wave) with the packed waves it points at (FamiStudio labels those
+     `@env<k>` among the envelopes; they are not directory envelopes). The effect envelopes start at 320. Checked as the
+     native loader checks them: wave positions even, sizes multiples of 4, position + size within the wave RAM
+     (256 - 16 n samples), every wave-index value below the table length.
+  9. Write the twenty outputs. Two runs produce identical files.
 
 Assembler: cc65's ca65/ld65 on PATH, else run through `distrobox enter ubuntu --` (install with
 `distrobox enter ubuntu -- sudo apt-get install -y cc65`). Pinned: Ubuntu 24.04 cc65 2.19-1
@@ -89,6 +107,11 @@ OUT_VRC6_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_vrc6_song.h"
 OUT_VRC7_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_vrc7_player_image.h"
 OUT_VRC7_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesVrc7PlayerImage.kt"
 OUT_VRC7_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_vrc7_song.h"
+N163_COUNTS = range(1, 9)  # the N163 builds: 1..8 N163 channels
+N163_TEST_COUNT = 8  # the build of the N163 test song and its fixtures
+OUT_N163_PLAYER = {n: ROOT / "app" / "src" / "main" / "cpp" / "generated" / f"nes_n163_{n}_player_image.h" for n in N163_COUNTS}
+OUT_N163_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesN163PlayerImages.kt"
+OUT_N163_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_n163_song.h"
 
 FAMISTUDIO_TAG = "4.5.3"
 FAMISTUDIO_COMMIT = "c09dca64788606c09fcb5e70db28b9dd1f34be78"
@@ -100,6 +123,22 @@ PINNED = {
     ENGINE_DIR / "NoteTables/famistudio_saw_note_table_msb.bin": "ae1463a4ff123b22073620e0f3df4336fedc4034b00f8872d9730f425d2e4583",
     ENGINE_DIR / "NoteTables/famistudio_vrc7_note_table_lsb.bin": "933d38bf4a62d4a2720ca0b6ddb4263e8a68dad5c0a5b71d74c1a9a04955eb3d",
     ENGINE_DIR / "NoteTables/famistudio_vrc7_note_table_msb.bin": "1f70b8b93604bf5032a0aafd6d2a43689db66a807b702c8485b7cd6370e87210",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_1ch_lsb.bin": "8618d9132cb37c9d33b49737678b9e9af5c6fb241328a65aa33a9aa2d98c56a1",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_1ch_msb.bin": "c374c37a00cd62c412a8249e44e46939d0001e51c219bcc66dc65d6d17d8264c",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_2ch_lsb.bin": "547281d09cea6e18e4b67f9848fe2755343bb7ed14f5b46fd78682bbf244ce55",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_2ch_msb.bin": "c627600643b81c8c41f693a28369dbad0f372e9060b7b6b98637eb6bb9fe7bae",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_3ch_lsb.bin": "9eec3360a07cb5f43add87d828d59e8edf3a0c0c77cd3bfc89b98ae56f8ba453",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_3ch_msb.bin": "c83ecc6b0a58d23ef54d5d68ea43b0fdd2cffd3a4c04ac13d9804dcbc58a4545",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_4ch_lsb.bin": "ff5ceb4ef7316683b14294c363cafcb5543262c1cb2dcd71ebb3d3724ce41e5a",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_4ch_msb.bin": "70ae5d690fca7f9b2f5e5400a0adb50564a83b52e80ee15c444540e1607ded19",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_5ch_lsb.bin": "6350595152d724ec50eddd6e5ec460c80cf077e76ed07447a18d22dad37de3b3",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_5ch_msb.bin": "235a2bebbff15a7a8380cda893da05525fcf20a61c5259f642f6e93eba29b8f5",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_6ch_lsb.bin": "b18e3603dd61484874cd554c7bdf7c9f90816aca8757236819feb44c37d7cdd0",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_6ch_msb.bin": "46fa58dc0592884284ec5473ff521c87c7fdb501b7705e466122effa7ab6331d",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_7ch_lsb.bin": "5be40b8ebf43b39f6f14029152eb672834dd8a11a927bbadb6ccc0e10a02e747",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_7ch_msb.bin": "b72118c1e6d34caf18577dec549ba5b6fa61306ae2f0bc340ea73561ba00afe1",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_8ch_lsb.bin": "e039219787a4e9a610becc9765e40970e7f5cfbcf69d8aebd9ae57707982a4dc",
+    ENGINE_DIR / "NoteTables/famistudio_n163_note_table_8ch_msb.bin": "c6219aa3cadb6e4b487ae01a9acef05037da0000fe79e44a5b20361f78495ae8",
 }
 TEST_SONG_TXT = NES_DIR / "ft_test.txt"
 TEST_SONG_CA65 = NES_DIR / "ft_test_ca65.s"
@@ -110,6 +149,8 @@ VRC6_SONG_TXT = NES_DIR / "vrc6_test.txt"
 VRC6_SONG_CA65 = NES_DIR / "vrc6_test_ca65.s"
 VRC7_SONG_TXT = NES_DIR / "vrc7_test.txt"
 VRC7_SONG_CA65 = NES_DIR / "vrc7_test_ca65.s"
+N163_SONG_TXT = NES_DIR / "n163_test.txt"
+N163_SONG_CA65 = NES_DIR / "n163_test_ca65.s"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 
 PLAYER_BASE = 0x8000
@@ -139,6 +180,7 @@ MAX_ORDERS = 255
 MAX_ROWS = 255
 LAYOUT_RAW, LAYOUT_THOR = 0, 1
 KIND_VOLUME, KIND_ARPEGGIO, KIND_DUTY, KIND_PITCH = 0, 1, 2, 3
+KIND_WAVE = 4  # N163 images only: an expansion instrument's wave-index envelope (encoded like a volume envelope)
 
 # Engine symbols the native machine and host test use (RAM variables, routines and tables).
 SYMBOLS = [
@@ -166,6 +208,12 @@ VRC6_SYMBOLS = ["famistudio_vrc6_saw_volume", "famistudio_saw_note_table_lsb", "
 VRC7_SYMBOLS = ["famistudio_exp_instrument_lo", "famistudio_exp_instrument_hi", "famistudio_chn_vrc7_patch",
                 "famistudio_chn_vrc7_sustain", "famistudio_chn_vrc7_prev_hi", "famistudio_chn_vrc7_trigger",
                 "famistudio_vrc7_note_table_lsb", "famistudio_vrc7_note_table_msb"]
+# Of the N163 builds only: the expansion instrument table pointer, the per-channel instrument, current wave index ($FF:
+# upload the wave on the next update) and length register value (256 - size), the phase reset flags (2A03/VRC6 bits and
+# one bit per N163 channel) and the build's N163 note tables.
+N163_SYMBOLS = ["famistudio_exp_instrument_lo", "famistudio_exp_instrument_hi", "famistudio_chn_n163_instrument",
+                "famistudio_chn_n163_wave_index", "famistudio_chn_n163_wave_len", "famistudio_phase_reset",
+                "famistudio_phase_reset_n163", "famistudio_n163_note_table_lsb", "famistudio_n163_note_table_msb"]
 
 # Stream opcodes ($40-$6F) of this build: operand bytes, and whether the opcode ends a row entry.
 # Mirrors famistudio_advance_channel and the jump table for the configuration in nes_player.s.
@@ -194,22 +242,39 @@ OPCODES = {
 }
 VRC6_OPCODES = {**OPCODES, 0x55: (1, False)}  # + VRC6 saw master volume
 VRC7_OPCODES = {**OPCODES, 0x56: (0, True)}  # + VRC7 release note (key off, then the volume envelope's release)
+# + N163 release note (volume and wave-index envelopes jump to their release points) and N163 phase reset
+N163_OPCODES = {**OPCODES, 0x5A: (0, True), 0x5B: (0, False)}
 
-# The builds: assembler defines, song base (VRC7: measured, see assemble_vrc7), engine channel count and the engine
-# tables the native machine reads (first envelope slot per channel, pitch envelope slot per channel; $FF = none);
-# "exp": the song header holds the expansion instrument pointer.
+# The builds: assembler defines, song base (VRC7, N163: measured, see assemble_measured), engine channel count and the
+# engine tables the native machine reads (first envelope slot per channel, pitch envelope slot per channel; $FF = none);
+# "exp": the song header holds the expansion instrument pointer; "symbols": the build's engine symbols beyond SYMBOLS;
+# "n163": N163 channels (N163 builds only).
 PLAYERS = {
-    "2a03": {"defines": [], "song_base": SONG_BASE, "channels": 5, "opcodes": OPCODES, "exp": False,
+    "2a03": {"defines": [], "song_base": SONG_BASE, "channels": 5, "opcodes": OPCODES, "exp": False, "symbols": [],
              "envelopes": 11, "pitch_envelopes": 3, "channel_env": [0, 3, 6, 8, 0xFF], "channel_pitch": [0, 1, 2, 0xFF, 0xFF]},
     "vrc6": {"defines": ["FAMISTUDIO_EXP_VRC6=1"], "song_base": VRC6_SONG_BASE, "channels": 8, "opcodes": VRC6_OPCODES, "exp": False,
-             "envelopes": 20, "pitch_envelopes": 6, "channel_env": [0, 3, 6, 8, 0xFF, 11, 14, 17],
+             "symbols": VRC6_SYMBOLS, "envelopes": 20, "pitch_envelopes": 6, "channel_env": [0, 3, 6, 8, 0xFF, 11, 14, 17],
              "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5]},
     "vrc7": {"defines": ["FAMISTUDIO_EXP_VRC7=1"], "song_base": None, "channels": 11, "opcodes": VRC7_OPCODES, "exp": True,
-             "envelopes": 23, "pitch_envelopes": 9, "channel_env": [0, 3, 6, 8, 0xFF, 11, 13, 15, 17, 19, 21],
+             "symbols": VRC7_SYMBOLS, "envelopes": 23, "pitch_envelopes": 9, "channel_env": [0, 3, 6, 8, 0xFF, 11, 13, 15, 17, 19, 21],
              "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5, 6, 7, 8]},
+    **{f"n163-{n}": {"defines": ["FAMISTUDIO_EXP_N163=1", f"FAMISTUDIO_EXP_N163_CHN_CNT={n}"], "song_base": None,
+                     "channels": 5 + n, "opcodes": N163_OPCODES, "exp": True, "symbols": N163_SYMBOLS, "n163": n,
+                     "envelopes": 11 + 3 * n, "pitch_envelopes": 3 + n,
+                     "channel_env": [0, 3, 6, 8, 0xFF] + [11 + 3 * k for k in range(n)],
+                     "channel_pitch": [0, 1, 2, 0xFF, 0xFF] + [3 + k for k in range(n)]} for n in N163_COUNTS},
 }
-EXP_INSTRUMENT_SIZE = 16  # FamiStudio's expansion instruments: 3 envelope words, VRC7: overrides, patch << 4, 8 registers
+EXP_INSTRUMENT_SIZE = 16  # FamiStudio's expansion instruments: 3 envelope words, VRC7: overrides, patch << 4, 8 registers;
+                          # N163: wave-index envelope word, wave position, wave size (samples), wave table word, 4 zeros
 EXP_ENVELOPES = 128  # Thor fixture: directory index of expansion instrument j's envelope of kind k = 128 + 4 j + k
+N163_WAVE_ENVELOPES = 256  # N163 images: directory index of expansion instrument j's wave-index envelope = 256 + j
+N163_EFFECT_ENVELOPES = 320  # N163 images: the effect envelopes' first directory index (256 in every other build)
+MAX_N163_WAVES = 64  # FamiStudio: at most min(64, 1024 / size) waves per N163 instrument
+
+
+def n163_wave_ram(n: int) -> int:
+    """N163 wave RAM in samples with n channels enabled: the 128-byte sound RAM less 8 register bytes per channel."""
+    return 256 - 16 * n
 
 
 def sha256(data: bytes) -> str:
@@ -274,7 +339,8 @@ def ca65_fixed(text: str) -> str:
 def parse_famistudio_ca65(text: str, base: int, name: str = "ft_test_ca65.s"):
     """Assembles FamiStudio's ca65 music export (labels, .byte, .word, .lobyte/.hibyte, DPCM list entries
     `$nn+.lobyte(FAMISTUDIO_DPCM_PTR)` for samples at SAMPLE_BASE) at `base`.
-    Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03, VRC6 and VRC7 songs."""
+    Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03, VRC6, VRC7 and N163 songs (N163:
+    the `@n163_inst<j>_waves:` tables of `.word @env<k>` entries after the envelopes)."""
     text = ca65_fixed(text)
     items = []  # (label or None, directive, [operands])
     for raw in text.splitlines():
@@ -402,10 +468,38 @@ def split_orders(entries, rows_per_order: int, orders: int, channel: int):
     return out
 
 
+def entry_opcodes(entry: bytes, opcodes: dict) -> list:
+    """The $40-$6F opcodes of one row entry (as split by read_entry), in order."""
+    out, pos = [], 0
+    while pos < len(entry):
+        b = entry[pos]
+        if 0x40 <= b < 0x70:
+            out.append(b)
+            pos += 1 + opcodes[b][0]
+        else:
+            pos += 1  # note, instrument or empty rows, volume
+    return out
+
+
+def wave_env_indices(env: bytes) -> list:
+    """The values an N163 wave-index envelope (encoded like a volume envelope: release index byte, then values $C0 + v,
+    holds $01-$7F, loops `$00 n`) produces, minus $C0: the wave indices."""
+    out, pos = [], 1
+    while pos < len(env):
+        b = env[pos]
+        if b == 0:
+            pos += 2
+            continue
+        if b >= 0x80:
+            out.append(b - 0xC0)
+        pos += 1
+    return out
+
+
 # ---- Thor Tracker layout builder ------------------------------------------------------------------
 
 def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plain", edits=(), env_edits=None,
-                     sample_edits=None, samples_top: bool = False, song_end: int = 0) -> bytes:
+                     sample_edits=None, samples_top: bool = False, song_end: int = 0, wave_edits=None) -> bytes:
     """Lays `song` (instruments, envelopes, per-order channel entries, DPCM list and samples) out as a Thor
     Tracker image. arrangement "plain": table, DPCM list, envelopes, order streams, patterns, samples exactly
     where FamiStudio's .dmc has them ($C000); "moved": patterns (reversed), envelopes, order streams (shuffled),
@@ -415,10 +509,17 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
     the sample block). Directory indices and mapping indices are identical in all (envelopes stay ascending by
     index, as the layout requires). edits: [(order, channel, entry index, old byte, new byte)] patched into
     that row's bytes; env_edits: {directory index: (old bytes, new bytes)}; sample_edits: {$4012 offset of a
-    sample in the .dmc: (byte index, new byte)}."""
+    sample in the .dmc: (byte index, new byte)}. N163 songs also have wave tables and packed waves (blocks after the
+    envelopes; "moved": first, reversed, before the patterns); wave_edits: {FamiStudio address of a wave: (byte index,
+    new byte)}."""
     envs = song["envelopes"]  # directory index -> (kind, bytes)
     instruments = song["instruments"]  # [(vol, arp, duty, pitch) directory indices]
-    exp_instruments = song.get("exp_instruments", [])  # [(vol, arp, pitch) directory indices, 10 more bytes]
+    # [(vol, arp, pitch) directory indices, 10 more bytes[, N163: (wave-index envelope directory index, wave table key)]]
+    exp_instruments = song.get("exp_instruments", [])
+    wave_tables = song.get("n163_tables", {})  # wave table key -> [FamiStudio address of each wave]
+    waves = {w: bytearray(data) for w, data in song.get("n163_waves", {}).items()}  # FamiStudio address -> packed wave
+    for w, (i, b) in (wave_edits or {}).items():
+        waves[w][i] = b
     orders = song["orders"][:order_count]
     base, channels = song["player"]["song_base"], song["player"]["channels"]
     exp = song["player"]["exp"]
@@ -459,13 +560,18 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
         song_end = start
     stream_size = 4 * len(orders) + 3
     names = (["header", "table"] + (["exptable"] if exp else []) + ["dpcm"] + [f"env{i}" for i in sorted(envs)]
+             + [f"wtab{j}" for j in sorted(wave_tables)] + [f"wave{w:04X}" for w in sorted(waves)]
              + [f"ch{c}" for c in range(channels)] + [f"pat{i}" for i in range(len(unique))])
     size_of = {"header": (7 if exp else 5) + 2 * channels + 4, "table": 8 * len(instruments),
                "exptable": EXP_INSTRUMENT_SIZE * len(exp_instruments), "dpcm": len(dpcm),
-               **{f"env{i}": len(envs[i][1]) for i in envs}, **{f"ch{c}": stream_size for c in range(channels)}, **sizes}
+               **{f"env{i}": len(envs[i][1]) for i in envs}, **{f"ch{c}": stream_size for c in range(channels)}, **sizes,
+               **{f"wtab{j}": 2 * len(t) for j, t in wave_tables.items()}, **{f"wave{w:04X}": len(d) for w, d in waves.items()}}
     if arrangement == "moved":
-        shuffled = {5: (3, 1, 4, 0, 2), 8: (3, 6, 1, 4, 7, 0, 5, 2), 11: (3, 9, 6, 1, 10, 4, 7, 0, 8, 5, 2)}[channels]
-        names = (["header"] + [f"pat{i}" for i in reversed(range(len(unique)))]
+        shuffled = {5: (3, 1, 4, 0, 2), 8: (3, 6, 1, 4, 7, 0, 5, 2), 11: (3, 9, 6, 1, 10, 4, 7, 0, 8, 5, 2),
+                    13: (3, 9, 12, 6, 1, 10, 4, 7, 0, 11, 8, 5, 2)}[channels]
+        names = (["header"] + [f"wave{w:04X}" for w in sorted(waves, reverse=True)]
+                 + [f"wtab{j}" for j in sorted(wave_tables, reverse=True)]
+                 + [f"pat{i}" for i in reversed(range(len(unique)))]
                  + [f"env{i}" for i in sorted(envs)] + [f"ch{c}" for c in shuffled] + ["dpcm", "table"]
                  + (["exptable"] if exp else []))
     pc = base
@@ -492,9 +598,19 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
         + word(addr["dpcm"] - 4 if dpcm else base) + b"".join(word(addr[f"ch{c}"]) for c in range(channels)) + song["tempo_words"])
     put(addr["table"], b"".join(word(addr[f"env{i}"]) for ins in instruments for i in ins))
     if exp:
-        put(addr["exptable"], b"".join(b"".join(word(addr[f"env{i}"]) for i in ins[:3]) + ins[3] for ins in exp_instruments))
+        def exp_entry(ins):
+            entry = b"".join(word(addr[f"env{i}"]) for i in ins[:3])
+            if len(ins) == 4:
+                return entry + ins[3]
+            wave_env, table = ins[4]  # N163: wave-index envelope, position and size as exported, wave table, zeros
+            return entry + word(addr[f"env{wave_env}"]) + ins[3][2:4] + word(addr[f"wtab{table}"]) + bytes(4)
+        put(addr["exptable"], b"".join(exp_entry(ins) for ins in exp_instruments))
     for i in envs:
         put(addr[f"env{i}"], envs[i][1])
+    for j, table in wave_tables.items():
+        put(addr[f"wtab{j}"], b"".join(word(addr[f"wave{w:04X}"]) for w in table))
+    for w, data in waves.items():
+        put(addr[f"wave{w:04X}"], data)
     env_index = song["effect_env_index"]  # (raw address, kind) -> directory index
     for u, key in enumerate(unique):
         at = addr[f"pat{u}"]
@@ -553,8 +669,10 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
 
 def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, dmc: bytes = b""):
     """FamiStudio's export of a test song (its .dmc samples `dmc`) for `player` (PLAYERS entry + "player_id")
-    re-expressed as the parts build_thor_image lays out. With an expansion instrument table (VRC7) both tables get
-    the same count: the shorter is padded with copies of its last entry (FamiStudio numbers each table from 0)."""
+    re-expressed as the parts build_thor_image lays out. With an expansion instrument table (VRC7, N163) both tables get
+    the same count: the shorter is padded with copies of its last entry (FamiStudio numbers each table from 0). N163:
+    each expansion instrument's wave-index envelope, wave table and packed waves, checked as the native loader checks
+    them."""
     base, channels = player["song_base"], player["channels"]
     head = 7 if player["exp"] else 5  # count, instruments, [instruments_exp,] samples - 4
     song_attrs = re.search(r'^\tSong [^\n]*', txt, re.M).group(0)
@@ -565,7 +683,8 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
         sys.exit("test song: one song expected")
     table = u16(region, 1) - base
     env_labels = sorted((a - base, n) for n, a in labels_.items() if re.fullmatch(r"@env\d+", n))
-    ends = [a for a, _ in env_labels[1:]] + [labels_["@samples"] - base]
+    # Each envelope ends at the next label: the next envelope, after the last one @samples (N163: the first wave table).
+    ends = [a for a, _ in env_labels[1:]] + [min(a for a in labels_.values() if a - base > env_labels[-1][0]) - base]
     env_bytes = {base + a: region[a:e] for (a, _), e in zip(env_labels, ends)}
     # DPCM list: from @samples (the header points 4 bytes before it) to the next label.
     samples_at = labels_["@samples"]
@@ -580,7 +699,7 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
             sys.exit("DPCM list entry outside the .dmc")
     exp_table = u16(region, 3) - base if player["exp"] else None
     count = ((exp_table if player["exp"] else env_labels[0][0]) - table) // 8
-    envs, instruments, exp_instruments = {}, [], []
+    envs, instruments, exp_instruments, n163_tables, n163_waves = {}, [], [], {}, {}
     for i in range(count):
         ptrs = [u16(region, table + 8 * i + 2 * k) for k in range(4)]
         instruments.append(tuple(4 * i + k for k in range(4)))
@@ -590,19 +709,43 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
         exp_count = (env_labels[0][0] - exp_table) // EXP_INSTRUMENT_SIZE
         if count > EXP_ENVELOPES // 4 or exp_count > (256 - EXP_ENVELOPES) // 4 or not exp_count:
             sys.exit("expansion test song: at most 32 instruments of each kind, and at least one expansion instrument")
+        n163 = player.get("n163", 0)
         for j in range(exp_count):
             at = exp_table + EXP_INSTRUMENT_SIZE * j
             kinds = (KIND_VOLUME, KIND_ARPEGGIO, KIND_PITCH)
             idx = tuple(EXP_ENVELOPES + 4 * j + k for k in kinds)
             for i, k, w in zip(idx, kinds, range(3)):
                 envs[i] = (k, env_bytes[u16(region, at + 2 * w)])
-            exp_instruments.append(idx + (bytes(region[at + 6:at + EXP_INSTRUMENT_SIZE]),))
+            tail = bytes(region[at + 6:at + EXP_INSTRUMENT_SIZE])
+            if not n163:
+                exp_instruments.append(idx + (tail,))
+                continue
+            # N163: wave-index envelope, wave position and size (samples), wave table, 4 zero bytes.
+            wave_env, pos, size, table_at = N163_WAVE_ENVELOPES + j, tail[2], tail[3], u16(tail, 4)
+            envs[wave_env] = (KIND_WAVE, env_bytes[u16(tail, 0)])
+            if labels_.get(f"@n163_inst{j}_waves") != table_at or any(tail[6:]):
+                sys.exit(f"N163 instrument {j}: unexpected expansion instrument entry {tail.hex()}")
+            wave_count = (min(a for a in labels_.values() if a > table_at) - table_at) // 2
+            wave_table = [u16(region, table_at - base + 2 * k) for k in range(wave_count)]
+            if pos % 2 or size % 4 or size < 4 or pos + size > n163_wave_ram(n163) or not 1 <= wave_count <= MAX_N163_WAVES:
+                sys.exit(f"N163 instrument {j}: wave position {pos}, size {size}, {wave_count} waves do not fit "
+                         f"{n163_wave_ram(n163)} samples of wave RAM")
+            for w in wave_table:
+                if w not in env_bytes or len(env_bytes[w]) != size // 2:
+                    sys.exit(f"N163 instrument {j}: wave ${w:04X} is not {size // 2} packed bytes")
+                n163_waves[w] = env_bytes[w]
+            indices = wave_env_indices(envs[wave_env][1])
+            if not indices or min(indices) < 0 or max(indices) >= wave_count:
+                sys.exit(f"N163 instrument {j}: wave indices {indices} outside its {wave_count} waves")
+            n163_tables[j] = wave_table
+            exp_instruments.append(idx + (tail, (wave_env, j)))
         n = max(len(instruments), len(exp_instruments))
         instruments += [instruments[-1]] * (n - len(instruments)) if instruments else []
         exp_instruments += [exp_instruments[-1]] * (n - len(exp_instruments))
         if not instruments:
             sys.exit("expansion test song: at least one 2A03 instrument expected")
     per_channel, effect_index = [], {}
+    effect_base = N163_EFFECT_ENVELOPES if player.get("n163") else 256
     for c in range(channels):
         start = u16(region, head + 2 * c) - base
         loop_name = f"@song0ch{c}loop"
@@ -620,7 +763,7 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
                 for off, kind in ptrs:
                     raw = b[off] | b[off + 1] << 8
                     if (raw, kind) not in effect_index:
-                        effect_index[(raw, kind)] = 256 + len(effect_index)
+                        effect_index[(raw, kind)] = effect_base + len(effect_index)
                         envs[effect_index[(raw, kind)]] = (kind, env_bytes[raw])
         per_channel.append(groups)
     tempo = head + 2 * channels
@@ -634,6 +777,8 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
         "orders": [[per_channel[c][o] for c in range(channels)] for o in range(orders)],
         "dpcm": dpcm,
         "dmc": bytes(dmc),
+        "n163_tables": n163_tables,
+        "n163_waves": n163_waves,
     }, rows, orders, loop
 
 
@@ -730,7 +875,7 @@ def kotlin_hex(data: bytes) -> str:
 
 def assemble_player(prefix: list, t: Path, name: str, info: dict):
     """Assembles and links nes_player.s as the PLAYERS entry `name` and checks the result: entry table, the
-    song base past the player (VRC6, VRC7: the first page after it), engine RAM below the audition area, the engine
+    song base past the player (VRC6, VRC7, N163: the first page after it), engine RAM below the audition area, the engine
     symbols and the channel/envelope tables. Returns (player bytes, symbols, segments)."""
     base = info["song_base"]
     defines = [a for d in info["defines"] for a in ("-D", d)]
@@ -751,7 +896,7 @@ def assemble_player(prefix: list, t: Path, name: str, info: dict):
     zp, bss = segs["ZEROPAGE"], segs["BSS"]
     if zp[0] != 0 or zp[1] > 0x100 or bss[0] != 0x200 or bss[0] + bss[1] > AUDITION_RAM:
         sys.exit(f"{name}: unexpected RAM layout {segs} (engine RAM must end below ${AUDITION_RAM:04X})")
-    missing = [s for s in SYMBOLS + {"vrc6": VRC6_SYMBOLS, "vrc7": VRC7_SYMBOLS}.get(name, []) if s not in syms]
+    missing = [s for s in SYMBOLS + info["symbols"] if s not in syms]
     if missing:
         sys.exit(f"{name}: missing engine symbols {missing}")
     num_envelopes = syms["famistudio_env_repeat"] - syms["famistudio_env_value"]
@@ -767,18 +912,19 @@ def assemble_player(prefix: list, t: Path, name: str, info: dict):
     return player, syms, segs
 
 
-def assemble_vrc7(prefix: list, t: Path):
-    """The VRC7 build: assembled once at a provisional song base to measure the player (the base is only an operand
-    of init's famistudio_init call, so the code's size does not depend on it), then at the first page after it.
-    Returns (PLAYERS["vrc7"] with its song base, player bytes, symbols, segments)."""
-    probe = {**PLAYERS["vrc7"], "song_base": 0xC000}
+def assemble_measured(prefix: list, t: Path, name: str):
+    """The PLAYERS entry `name` without a fixed song base (VRC7, N163): assembled once at a provisional song base to
+    measure the player (the base is only an operand of init's famistudio_init call, so the code's size does not depend
+    on it), then at the first page after it. Returns (the PLAYERS entry with its song base, player bytes, symbols,
+    segments)."""
+    probe = {**PLAYERS[name], "song_base": 0xC000}
     defines = [a for d in probe["defines"] for a in ("-D", d)]
     run(prefix, ["ca65", "-I", str(ENGINE_DIR), "--bin-include-dir", str(ENGINE_DIR), *defines, "-D", "NES_SONG_BASE=$C000",
-                 str(NES_DIR / "nes_player.s"), "-o", str(t / "vrc7_probe.o")], t)
-    run(prefix, ["ld65", "-C", str(NES_DIR / "nes_player.cfg"), "-o", str(t / "vrc7_probe.bin"), str(t / "vrc7_probe.o")], t)
-    end = PLAYER_BASE + len((t / "vrc7_probe.bin").read_bytes())
-    info = {**PLAYERS["vrc7"], "song_base": (end + 0xFF) & ~0xFF}
-    player, syms, segs = assemble_player(prefix, t, "vrc7", info)
+                 str(NES_DIR / "nes_player.s"), "-o", str(t / f"{name}_probe.o")], t)
+    run(prefix, ["ld65", "-C", str(NES_DIR / "nes_player.cfg"), "-o", str(t / f"{name}_probe.bin"), str(t / f"{name}_probe.o")], t)
+    end = PLAYER_BASE + len((t / f"{name}_probe.bin").read_bytes())
+    info = {**PLAYERS[name], "song_base": (end + 0xFF) & ~0xFF}
+    player, syms, segs = assemble_player(prefix, t, name, info)
     return info, player, syms, segs
 
 
@@ -798,7 +944,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--famistudio", type=Path,
                     help="FamiStudio 4.5.3 Linux release dir: re-export the test songs and compare (a missing export, "
-                         "e.g. vrc7_test_ca65.s on first use, is written)")
+                         "e.g. vrc7_test_ca65.s or n163_test_ca65.s on first use, is written)")
     args = ap.parse_args()
 
     for path, want in PINNED.items():
@@ -808,7 +954,8 @@ def main() -> None:
     if args.famistudio:
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             for txt, ca65, dmc in ((TEST_SONG_TXT, TEST_SONG_CA65, None), (DPCM_SONG_TXT, DPCM_SONG_CA65, DPCM_SONG_DMC),
-                                   (VRC6_SONG_TXT, VRC6_SONG_CA65, None), (VRC7_SONG_TXT, VRC7_SONG_CA65, None)):
+                                   (VRC6_SONG_TXT, VRC6_SONG_CA65, None), (VRC7_SONG_TXT, VRC7_SONG_CA65, None),
+                                   (N163_SONG_TXT, N163_SONG_CA65, None)):
                 fresh = Path(tmp) / ca65.name
                 famistudio_export(args.famistudio.resolve(), txt, fresh)
                 if not ca65.exists():
@@ -820,9 +967,10 @@ def main() -> None:
                 if dmc and fresh.with_suffix(".dmc").read_bytes() != dmc.read_bytes():
                     sys.exit(f"FamiStudio's samples of {txt.name} differ from {dmc.relative_to(ROOT)}")
                 print(f"FamiStudio re-export of {txt.name}: identical")
-    if not VRC7_SONG_CA65.exists():
-        sys.exit(f"{VRC7_SONG_CA65.relative_to(ROOT)} is missing: run with --famistudio \"$(tools/audio/fetch_famistudio.sh)\" "
-                 "once to export it")
+    for ca65 in (VRC7_SONG_CA65, N163_SONG_CA65):
+        if not ca65.exists():
+            sys.exit(f"{ca65.relative_to(ROOT)} is missing: run with --famistudio \"$(tools/audio/fetch_famistudio.sh)\" "
+                     "once to export it")
 
     prefix = tool_prefix()
     version = run(prefix, ["ca65", "--version"], ROOT).strip()
@@ -833,13 +981,16 @@ def main() -> None:
         t = Path(tmp)
         player, syms, segs = assemble_player(prefix, t, "2a03", PLAYERS["2a03"])
         vplayer, vsyms, vsegs = assemble_player(prefix, t, "vrc6", PLAYERS["vrc6"])
-        vrc7_info, fplayer, fsyms, fsegs = assemble_vrc7(prefix, t)
+        vrc7_info, fplayer, fsyms, fsegs = assemble_measured(prefix, t, "vrc7")
         vrc7_base = vrc7_info["song_base"]
+        n163_builds = {n: assemble_measured(prefix, t, f"n163-{n}") for n in N163_COUNTS}  # n: (info, player, syms, segs)
+        n163_base = n163_builds[N163_TEST_COUNT][0]["song_base"]
         song = link_song(prefix, t, "ft_test", TEST_SONG_CA65.read_text(), SONG_BASE)
         dpcm_song = link_song(prefix, t, "dpcm_test", DPCM_SONG_CA65.read_text(), SONG_BASE,
                               f"FAMISTUDIO_DPCM_PTR = ${DPCM_PTR:02X}\n")
         vrc6_song = link_song(prefix, t, "vrc6_test", VRC6_SONG_CA65.read_text(), VRC6_SONG_BASE)
         vrc7_song = link_song(prefix, t, "vrc7_test", VRC7_SONG_CA65.read_text(), vrc7_base)
+        n163_song = link_song(prefix, t, "n163_test", N163_SONG_CA65.read_text(), n163_base)
     zp, bss = segs["ZEROPAGE"], segs["BSS"]
     vzp, vbss = vsegs["ZEROPAGE"], vsegs["BSS"]
     num_envelopes, num_pitch = PLAYERS["2a03"]["envelopes"], PLAYERS["2a03"]["pitch_envelopes"]
@@ -978,6 +1129,72 @@ def main() -> None:
     if len(entry) != 1:
         sys.exit("VRC7 edit target row not found")
     fedited = build_thor_image(fthor, forders, floop, edits=[(2, 5, entry[0], 0x29, 0x2C)], env_edits=fenv_edit)
+
+    # N163 test song: the same checks with the 8-channel N163 player (13 channel streams, the expansion instrument table
+    # with wave positions, sizes, wave-index envelopes and wave tables, song base n163_base).
+    n163_info, nplayer = n163_builds[N163_TEST_COUNT][:2]
+    n163 = {**n163_info, "player_id": int.from_bytes(bytes.fromhex(sha256(nplayer))[:4], "little")}
+    nchannels = n163["channels"]
+    n163_text = N163_SONG_CA65.read_text()
+    n163_txt = N163_SONG_TXT.read_text()
+    parsed, n163_labels = parse_famistudio_ca65(n163_text, n163_base, N163_SONG_CA65.name)
+    if parsed != n163_song:
+        sys.exit("parser output differs from the ld65 link of n163_test_ca65.s")
+    if len(n163_song) > REGION_END - n163_base or "FAMISTUDIO_EXP_N163 = 1" not in n163_text \
+            or f"FAMISTUDIO_EXP_N163_CHN_CNT = {N163_TEST_COUNT}" not in n163_text \
+            or "FAMISTUDIO_USE_FAMITRACKER_TEMPO" not in n163_text or "@instruments_exp" not in n163_labels:
+        sys.exit(f"N163 test song: a FamiTracker-tempo {N163_TEST_COUNT}-channel N163 export with expansion instruments "
+                 "that fits the region expected")
+    nthor, nrows, norders, nloop = thor_song_from_export(n163_song, n163_labels, n163_txt, n163)
+    # The instruments by name (FamiStudio may sort them), and each N163 instrument's wave position and size (samples)
+    # and distinct waves as n163_test.txt sets them: NMorph's fourth wave repeats its second; the twins share one wave.
+    nexp_names = {n: int(i, 16) for i, n in re.findall(r"^\t\.word @env\d+, @env\d+, @env\d+ ; ([0-9a-f]{2}) : (\w+)$", n163_text, re.M)}
+    nnames = {n: int(i, 16) for i, n in re.findall(r"^\t\.word @env\d+,@env\d+,@env\d+,@env\d+ ; ([0-9a-f]{2}) : (\w+)$", n163_text, re.M)}
+    want = {"NSine16": (0, 16, 1), "NSaw32": (16, 32, 1), "NMorph": (48, 16, 3), "NPulse8": (64, 8, 1),
+            "NTwinA": (80, 16, 1), "NTwinB": (80, 16, 1), "NBass32": (96, 32, 2)}
+    if set(nexp_names) != set(want) or set(nnames) != {"Lead", "Bass", "Hat"}:
+        sys.exit(f"N163 test song: unexpected instruments {nnames} {nexp_names}")
+    n163_seen = {n: (nthor["exp_instruments"][j][3][2], nthor["exp_instruments"][j][3][3], len(nthor["n163_tables"][j]))
+                 for n, j in nexp_names.items()}
+    if n163_seen != want:
+        sys.exit(f"N163 test song: unexpected wave positions, sizes and wave counts {n163_seen}")
+    if nthor["n163_tables"][nexp_names["NTwinA"]] != nthor["n163_tables"][nexp_names["NTwinB"]]:
+        sys.exit("N163 test song: NTwinA and NTwinB do not share their wave")
+    # FamiStudio's encoding of a release: byte 0 = the release value's index, preceded by the `$00 loop` of the sustain.
+    nmorph_waves = nthor["envelopes"][N163_WAVE_ENVELOPES + nexp_names["NMorph"]][1]
+    if not nmorph_waves[0] or nmorph_waves[nmorph_waves[0] - 2] != 0:
+        sys.exit(f"N163 test song: NMorph's wave-index envelope {nmorph_waves.hex()} lacks its loop and release")
+    nops = [op for o in nthor["orders"] for c in range(5, nchannels) for b, _, _ in o[c] for op in entry_opcodes(b, n163["opcodes"])]
+    nreleases, nresets = nops.count(0x5A), nops.count(0x5B)
+    if not nreleases or not nresets or 0x4F in nops or 0x53 in nops:
+        sys.exit("N163 test song: N163 release ($5A) and phase reset ($5B) rows expected, no $4F/$53 on N163 channels")
+    nspeeds = row_speeds(n163_txt, nrows, norders)
+    nbase = build_thor_image(nthor, norders, nloop)
+    nmoved = build_thor_image(nthor, norders, nloop, "moved")
+    # Edits: order 2's N163 1 note at row 8 (E4, $29) becomes G4 ($2C); the NSine16 volume envelope's first sustain value
+    # (12) becomes 8 (its directory entry: EXP_ENVELOPES + 4 × NSine16's expansion index); one byte of NSaw32's wave
+    # (samples 10 and 11: 5, 5) is inverted.
+    nedit_order, nedit_channel, nedit_row, nedit_note = 2, 5, 8, (0x29, 0x2C)
+    nvol_env, nvol_offset, nvol_edit = EXP_ENVELOPES + 4 * nexp_names["NSine16"], 3, (0xCC, 0xC8)
+    nsine_vol = nthor["envelopes"][nvol_env][1]
+    if nsine_vol[nvol_offset:nvol_offset + 2] != b"\xcc\xcc":
+        sys.exit("unexpected NSine16 volume envelope")
+    nenv_edit = {nvol_env: (nsine_vol, nsine_vol[:nvol_offset] + bytes([nvol_edit[1]]) + nsine_vol[nvol_offset + 1:])}
+    nwave_instrument, nwave_index, nwave_offset = nexp_names["NSaw32"], 0, 5
+    nwave = nthor["n163_tables"][nwave_instrument][nwave_index]
+    nwave_edit = (nthor["n163_waves"][nwave][nwave_offset], nthor["n163_waves"][nwave][nwave_offset] ^ 0xFF)
+    if nwave_edit[0] != 0x55 or sum(t.count(nwave) for t in nthor["n163_tables"].values()) != 1:
+        sys.exit("unexpected NSaw32 wave")
+    starts, at = [], 0
+    for b, n, _ in nthor["orders"][nedit_order][nedit_channel]:
+        starts.append(at)
+        at += n
+    entry = [i for i, s in enumerate(starts)
+             if s == nedit_row and nthor["orders"][nedit_order][nedit_channel][i][0].endswith(bytes([nedit_note[0]]))]
+    if len(entry) != 1:
+        sys.exit("N163 edit target row not found")
+    nedited = build_thor_image(nthor, norders, nloop, edits=[(nedit_order, nedit_channel, entry[0], *nedit_note)],
+                               env_edits=nenv_edit, wave_edits={nwave: (nwave_offset, nwave_edit[1])})
 
     sym_lines = "\n".join(f"#define NES_{s.upper()} 0x{syms[s]:04X}" for s in SYMBOLS)
     OUT_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
@@ -1484,6 +1701,186 @@ static const uint8_t nes_vrc7_speed[VRC7_TEST_ORDERS][VRC7_TEST_ROWS] = {{
 {c_array("nes_vrc7_edited", fedited)}
 #endif /* NES_VRC7_SONG_H_ */
 """)
+
+    n163_objects, n163_report = [], []
+    for n in N163_COUNTS:
+        info, nplay, nsyms, nsegs = n163_builds[n]
+        p = f"NES_N163_{n}"
+        nsha = sha256(nplay)
+        nid = int.from_bytes(bytes.fromhex(nsha)[:4], "little")
+        nzp, nbss = nsegs["ZEROPAGE"], nsegs["BSS"]
+        nregion_size = REGION_END - info["song_base"]
+        nimage_size = HEADER_SIZE + DIRECTORY_SIZE + nregion_size
+        nsym_lines = "\n".join(f"#define {p}_{s.upper()} 0x{nsyms[s]:04X}" for s in SYMBOLS + N163_SYMBOLS)
+        OUT_N163_PLAYER[n].write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// FamiStudio sound engine {FAMISTUDIO_TAG} (github.com/BleuBleu/FamiStudio commit {FAMISTUDIO_COMMIT}),
+// famistudio_ca65.s sha256 {PINNED[ENGINE_DIR / 'famistudio_ca65.s']}, unmodified, configured (FamiTracker tempo)
+// and wrapped by tools/audio/nes/nes_player.s like nes_player_image.h, assembled with FAMISTUDIO_EXP_N163 = 1 and
+// FAMISTUDIO_EXP_N163_CHN_CNT = {n} (Namco 163: {n} wavetable channel{'s' if n > 1 else ''} after the 2A03's five,
+// address port $F800, data port $4800); N163 note tables NoteTables/famistudio_n163_note_table_{n}ch_lsb/msb.bin (MIT, FamiStudio);
+// assembled with {CC65_VERSION}.
+// Engine licence: "Copying and distribution of this file, with or without modification, are permitted in any
+// medium without royalty provided the copyright notice and this notice are preserved" (c) 2019-2026 Mathieu Gauthier.
+// image sha256 {nsha}
+#ifndef {p}_PLAYER_IMAGE_H_
+#define {p}_PLAYER_IMAGE_H_
+#include <stdint.h>
+
+#define {p}_PLAYER_BASE 0x{PLAYER_BASE:04X}
+#define {p}_PLAYER_SIZE 0x{len(nplay):04X}
+#define {p}_PLAYER_ID 0x{nid:08X}u /* first 4 bytes of the image sha256, little-endian */
+#define {p}_PLAYER_INIT 0x{ENTRY['nes_player_init']:04X} /* A = song index */
+#define {p}_PLAYER_PLAY 0x{ENTRY['nes_player_play']:04X} /* one 60 Hz engine frame */
+#define {p}_PLAYER_IDLE 0x{ENTRY['nes_player_idle']:04X} /* return address of host-called routines */
+#define {p}_PLAYER_TRAP 0x{ENTRY['nes_player_trap']:04X} /* BRK/IRQ/NMI vector target: a fault */
+#define {p}_SONG_BASE 0x{info['song_base']:04X} /* song data (FamiStudio format) from here upward: the page after the player */
+#define {p}_ZP_SIZE 0x{nzp[1]:04X}
+#define {p}_RAM_BASE 0x{nbss[0]:04X}
+#define {p}_RAM_SIZE 0x{nbss[1]:04X}
+#define {p}_NUM_ENVELOPES {info['envelopes']} /* three per N163 channel: volume, arpeggio, wave index */
+#define {p}_NUM_PITCH_ENVELOPES {info['pitch_envelopes']}
+#define {p}_CHANNELS {info['channels']} /* 2A03 pulse 1, pulse 2, triangle, noise, DPCM, N163 1{f'-{n}' if n > 1 else ''} */
+#define {p}_N163_CHANNELS {n}
+#define {p}_WAVE_RAM {n163_wave_ram(n)} /* N163 sound RAM samples for waves (the rest holds the channel registers) */
+#define {p}_EXP_INSTRUMENT_SIZE {EXP_INSTRUMENT_SIZE} /* the song header's instruments_exp entries */
+
+/* Image layout: nes_player_image.h's (header, envelope directory, limits, samples from NES_SAMPLE_BASE, region end
+ * NES_REGION_END) with the region = CPU memory {p}_SONG_BASE..NES_REGION_END. */
+#define {p}_IMAGE_REGION_SIZE {nregion_size}
+#define {p}_IMAGE_SIZE {nimage_size}
+
+{nsym_lines}
+
+static const uint8_t nes_n163_{n}_player_code[{p}_PLAYER_SIZE] = {{
+{c_bytes(nplay)}
+}};
+
+#endif /* {p}_PLAYER_IMAGE_H_ */
+""")
+        n163_objects.append(f"""/**
+ * The NES + Namco 163 preview player with {n} N163 channel{'s' if n > 1 else ''}: the [NesPlayerImage] player assembled with
+ * `FAMISTUDIO_EXP_N163 = 1` and `FAMISTUDIO_EXP_N163_CHN_CNT = {n}`. Images use [NesPlayerImage]'s layout with this
+ * player's [PLAYER_ID], [SONG_BASE] and [CHANNELS] channel streams in the song header, which also holds the expansion
+ * instrument pointer. The same bytes play in the app (native `app/src/main/cpp/generated/nes_n163_{n}_player_image.h`).
+ * Image sha256 `{nsha}`.
+ */
+object NesN163PlayerImage{n} {{
+    /** Load, init (A = song index) and play addresses; the player starts at [LOAD]. */
+    const val LOAD = 0x{PLAYER_BASE:04X}
+    const val INIT = 0x{ENTRY['nes_player_init']:04X}
+    const val PLAY = 0x{ENTRY['nes_player_play']:04X}
+
+    /**
+     * Region: song data from [SONG_BASE] upward and the samples share CPU memory [SONG_BASE] until [REGION_END]
+     * (exclusive; vectors follow), [REGION_SIZE] bytes, as for [NesPlayerImage] but from the first page after this
+     * larger player.
+     */
+    const val SONG_BASE = 0x{info['song_base']:04X}
+    const val REGION_END = 0x{REGION_END:04X}
+    const val REGION_SIZE = {nregion_size}
+
+    /** Header bytes 4..7 (little-endian): an image only plays on the player build it was lowered for. */
+    const val PLAYER_ID = 0x{nid:08X}.toInt()
+
+    /** Bytes of a lowered image: header + envelope directory + region (address a at region offset a − [SONG_BASE]). */
+    const val IMAGE_SIZE = {nimage_size}
+
+    /**
+     * Channel streams in the song header, in engine order: 2A03 pulse 1, pulse 2, triangle, noise, DPCM, then N163
+     * 1{f'-{n}' if n > 1 else ''}.
+     */
+    const val CHANNELS = {info['channels']}
+
+    /** N163 wavetable channels: engine channels 5 until [CHANNELS] − 1. */
+    const val N163_CHANNELS = {n}
+
+    /** The player image ({len(nplay)} bytes at [LOAD]); a fresh copy per call. */
+    val BYTES: ByteArray get() = ByteArray(HEX.length / 2) {{ HEX.substring(2 * it, 2 * it + 2).toInt(16).toByte() }}
+
+    private const val HEX =
+{kotlin_hex(nplay)}
+}}
+""")
+        n163_report.append(f"N163 player ({n} channel{'s' if n > 1 else ''}): {len(nplay)} bytes at ${PLAYER_BASE:04X} "
+                           f"(song base ${info['song_base']:04X}), sha256 {nsha}, id 0x{nid:08X}; engine RAM "
+                           f"zp ${nzp[0]:02X}+{nzp[1]}, bss ${nbss[0]:04X}+{nbss[1]}")
+    OUT_N163_KOTLIN.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+package org.thortracker.backend
+
+// The NES + Namco 163 preview players, one per N163 channel count: FamiStudio sound engine {FAMISTUDIO_TAG} (FamiTracker
+// tempo, the same NSF-style entry table) assembled by `tools/audio/prepare_nes_player.py` (`docs/AUDIO_ENGINE.md`,
+// "N163"); each forms an `.nsf` (expansion byte Namco 163) with the song region.
+// Engine licence: all-permissive, notice in NOTICE.txt.
+
+""" + "\n".join(n163_objects))
+
+    ninstrument_defines = "\n".join(
+        [f"#define N163_TEST_INSTRUMENT_{n.upper()} {i}" for n, i in sorted(nnames.items(), key=lambda kv: kv[1])]
+        + [f"#define N163_TEST_INSTRUMENT_{n.upper()} {j}" for n, j in sorted(nexp_names.items(), key=lambda kv: kv[1])])
+    nwave_defines = "\n".join(
+        f"#define N163_TEST_WAVE_POS_{n.upper()} {n163_seen[n][0]}\n#define N163_TEST_WAVE_SIZE_{n.upper()} {n163_seen[n][1]}\n"
+        f"#define N163_TEST_WAVE_COUNT_{n.upper()} {n163_seen[n][2]}\n"
+        f"#define N163_TEST_WAVE_ENVELOPE_{n.upper()} {N163_WAVE_ENVELOPES + j}"
+        for n, j in sorted(nexp_names.items(), key=lambda kv: kv[1]))
+    nspeed_rows = ",\n".join("    {" + ", ".join(str(s) for s in line) + "}" for line in nspeeds)
+    OUT_N163_SONG.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// N163 test song tools/audio/nes/n163_test.txt (sha256 {sha256(N163_SONG_TXT.read_bytes())}, FamiTracker tempo,
+// {N163_TEST_COUNT} N163 channels), as exported by FamiStudio {FAMISTUDIO_TAG} itself (tools/audio/nes/n163_test_ca65.s,
+// sha256 {sha256(N163_SONG_CA65.read_bytes())}), for the {N163_TEST_COUNT}-channel N163 build.
+//   nes_n163_raw:    that export linked at NES_N163_{N163_TEST_COUNT}_SONG_BASE (song region bytes; raw layout, {nchannels} channel streams).
+//   nes_n163_thor:   the same rows rearranged into the Thor Tracker layout for that player (both instrument tables
+//                    {len(nthor['instruments'])} entries; expansion instrument j's envelopes at 128 + 4 j + kind, its
+//                    wave-index envelope at {N163_WAVE_ENVELOPES} + j (kind {KIND_WAVE}), the effect envelopes from {N163_EFFECT_ENVELOPES}; wave tables
+//                    and packed waves after the envelopes); every row's bytes are FamiStudio's.
+//   nes_n163_moved:  nes_n163_thor with every block, wave tables and waves included, at another address (same
+//                    directory indices).
+//   nes_n163_edited: nes_n163_thor with the N163_TEST_EDIT_* edits: order 2 N163 1 row 8 E4 -> G4, the NSine16 volume
+//                    envelope's first sustain value 12 -> 8, one byte of NSaw32's wave inverted.
+#ifndef NES_N163_SONG_H_
+#define NES_N163_SONG_H_
+#include <stdint.h>
+
+#define N163_TEST_ROWS {nrows}
+#define N163_TEST_ORDERS {norders}
+#define N163_TEST_LOOP {nloop}
+#define N163_TEST_INSTRUMENTS {len(nthor['instruments'])}
+#define N163_TEST_TEMPO_NTSC {u16(n163_song, 7 + 2 * nchannels + 2)}
+#define N163_TEST_CHANNELS {N163_TEST_COUNT} /* N163 channels: engine channels 5..{4 + N163_TEST_COUNT} */
+/* Instrument indices: 2A03 instruments in the 2A03 table, N163 instruments in the expansion table. */
+{ninstrument_defines}
+/* Each N163 instrument's wave position and size (samples), distinct waves (wave table entries) and wave-index envelope
+ * (directory index in nes_n163_thor). */
+{nwave_defines}
+
+/* nes_n163_edited: stream note byte NOTE_OLD -> NOTE_NEW at ORDER/CHANNEL (engine channel)/ROW; byte VOLUME_OFFSET of
+ * directory envelope VOLUME_ENVELOPE VOLUME_OLD -> VOLUME_NEW; byte WAVE_OFFSET (N163 RAM byte position / 2 + offset,
+ * low nibble = even sample) of wave WAVE_INDEX in expansion instrument WAVE_INSTRUMENT's wave table WAVE_OLD -> WAVE_NEW. */
+#define N163_TEST_EDIT_ORDER {nedit_order}
+#define N163_TEST_EDIT_CHANNEL {nedit_channel}
+#define N163_TEST_EDIT_ROW {nedit_row}
+#define N163_TEST_EDIT_NOTE_OLD 0x{nedit_note[0]:02X}
+#define N163_TEST_EDIT_NOTE_NEW 0x{nedit_note[1]:02X}
+#define N163_TEST_EDIT_VOLUME_ENVELOPE {nvol_env}
+#define N163_TEST_EDIT_VOLUME_OFFSET {nvol_offset}
+#define N163_TEST_EDIT_VOLUME_OLD 0x{nvol_edit[0]:02X}
+#define N163_TEST_EDIT_VOLUME_NEW 0x{nvol_edit[1]:02X}
+#define N163_TEST_EDIT_WAVE_INSTRUMENT {nwave_instrument}
+#define N163_TEST_EDIT_WAVE_INDEX {nwave_index}
+#define N163_TEST_EDIT_WAVE_OFFSET {nwave_offset}
+#define N163_TEST_EDIT_WAVE_OLD 0x{nwave_edit[0]:02X}
+#define N163_TEST_EDIT_WAVE_NEW 0x{nwave_edit[1]:02X}
+
+/* Speed in effect at each row of the first pass, read from n163_test.txt (not from the export). */
+static const uint8_t nes_n163_speed[N163_TEST_ORDERS][N163_TEST_ROWS] = {{
+{nspeed_rows}
+}};
+
+{c_array("nes_n163_raw", n163_song)}
+{c_array("nes_n163_thor", nbase)}
+{c_array("nes_n163_moved", nmoved)}
+{c_array("nes_n163_edited", nedited)}
+#endif /* NES_N163_SONG_H_ */
+""")
     print(f"player: {len(player)} bytes at ${PLAYER_BASE:04X}, sha256 {player_sha}, id 0x{player_id:08X}")
     print(f"engine RAM: zp ${zp[0]:02X}+{zp[1]}, bss ${bss[0]:04X}+{bss[1]} (ends ${bss[0] + bss[1]:04X})")
     print(f"test song: {len(song)} bytes raw; Thor layout region {len(base) - HEADER_SIZE - DIRECTORY_SIZE} bytes, "
@@ -1497,9 +1894,14 @@ static const uint8_t nes_vrc7_speed[VRC7_TEST_ORDERS][VRC7_TEST_ROWS] = {{
           f"id 0x{fplayer_id:08X}; engine RAM zp ${fzp[0]:02X}+{fzp[1]}, bss ${fbss[0]:04X}+{fbss[1]}")
     print(f"VRC7 test song: {len(vrc7_song)} bytes raw, {len(fthor['instruments'])} instruments per table, "
           f"{len(fthor['envelopes'])} envelopes, {releases} VRC7 release rows")
+    print("\n".join(n163_report))
+    print(f"N163 test song: {len(n163_song)} bytes raw, {len(nthor['instruments'])} instruments per table, "
+          f"{len(nthor['envelopes'])} envelopes, {len(nthor['n163_waves'])} waves, {nreleases} N163 release and "
+          f"{nresets} phase reset rows")
     print("wrote " + ", ".join(str(p.relative_to(ROOT)) for p in
                                (OUT_PLAYER, OUT_KOTLIN, OUT_SONG, OUT_DPCM, OUT_VRC6_PLAYER, OUT_VRC6_KOTLIN, OUT_VRC6_SONG,
-                                OUT_VRC7_PLAYER, OUT_VRC7_KOTLIN, OUT_VRC7_SONG)))
+                                OUT_VRC7_PLAYER, OUT_VRC7_KOTLIN, OUT_VRC7_SONG, *OUT_N163_PLAYER.values(), OUT_N163_KOTLIN,
+                                OUT_N163_SONG)))
 
 
 if __name__ == "__main__":

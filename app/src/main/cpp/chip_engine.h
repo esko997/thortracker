@@ -6,7 +6,9 @@
  *   "nes-famistudio"  FamiStudio sound engine 4.5.3 (FamiTracker tempo) on a 6502 + 2A03
  *                     (nes/nes_chip.c over nes/nes_machine.c and nes/nes_image.c)
  *   "nes-famistudio-vrc6"  the same engine built with Konami VRC6 support on a 6502 + 2A03 + VRC6
- *                     (nes/nes_chip.c, nes/nes_vrc6.c; nes/nes_player.h describes both builds)
+ *                     (nes/nes_chip.c, nes/nes_vrc6.c; nes/nes_player.h describes every build)
+ *   "nes-famistudio-n163-1".."nes-famistudio-n163-8"  the same engine built with Namco 163 support for 1..8
+ *                     N163 channels on a 6502 + 2A03 + N163 (nes/nes_chip.c, nes/nes_n163.c)
  *   "c64-sid"         GoatTracker 2.77 playroutine on a 6510 + reSID 1.0 (PAL C64)
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)
