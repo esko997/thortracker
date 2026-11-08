@@ -1,8 +1,11 @@
 // SDL3 audio output for one sound system's chip machines (chip_engine.h) on desktop Linux / Steam Deck.
 // One SDL audio stream pulls frames on SDL's audio thread; each request runs whole driver ticks.
-// Control calls (main thread) lock the stream, so the callback never sees a half-applied change.
-// One song machine plus one audition machine, mixed; no triple buffering as on Android. As on Android, an
-// audition borrows its channel: the song machine's channel is muted while the audition sounds.
+// Control calls (main thread) lock the stream only to swap pointers or apply a live edit, so the callback
+// never sees a half-applied change and never waits for a seek: start() and audition() (the costly calls:
+// a seek replays the song silently) run on spare machines outside the lock, which are then swapped in at a
+// tick boundary. Machines are created in da_open (reSID's first one builds its tables), never in the
+// callback. As on Android, an audition borrows its channel: the song machine's channel is muted while the
+// audition sounds.
 #include "deck_audio.h"
 #include <SDL3/SDL.h>
 #include <stdlib.h>
@@ -15,6 +18,8 @@ static const ChipEngineOps* ops;
 static SDL_AudioStream* stream;
 static ChipMachine* song_machine;
 static ChipMachine* audition_machine;
+static ChipMachine* song_spare;      /* seeks run here outside the lock, then swap with song_machine */
+static ChipMachine* audition_spare;  /* likewise for auditions */
 static ChipImage* image;   /* the image the machines play */
 static ChipImage* spare;   /* loaded and validated outside the lock, then swapped with image */
 static int has_image;
@@ -79,7 +84,9 @@ int da_open(const char* system_id) {
     spare = calloc(1, ops->image_storage);
     song_machine = ops->create(RATE);
     audition_machine = ops->create(RATE);
-    if (!image || !spare || !song_machine || !audition_machine) return -3;
+    song_spare = ops->create(RATE);
+    audition_spare = ops->create(RATE);
+    if (!image || !spare || !song_machine || !audition_machine || !song_spare || !audition_spare) return -3;
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, RATE };
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
     if (!stream) return -4;
@@ -100,14 +107,24 @@ int da_set_image(const unsigned char* bytes, int size) {
     return 0;
 }
 
+static void swap(ChipMachine** a, ChipMachine** b) {
+    ChipMachine* t = *a;
+    *a = *b;
+    *b = t;
+}
+
 int da_play(int order, int row, int max_ticks) {
     if (!has_image) return -1;
     int seek = 0;
+    int r = ops->start(song_spare, image, order, row, max_ticks, &seek);
     SDL_LockAudioStream(stream);
-    int r = ops->start(song_machine, image, order, row, max_ticks, &seek);
+    if (r == CHIP_OK) {
+        swap(&song_machine, &song_spare);
+        pos_order = order;
+        pos_row = row;
+    }
     playing = r == CHIP_OK;
     borrowed_channel = -1;   /* start resets the machine: nothing is muted */
-    if (playing) { pos_order = order; pos_row = row; }
     SDL_UnlockAudioStream(stream);
     return r;
 }
@@ -120,8 +137,9 @@ void da_stop(void) {
 
 int da_audition(int channel, int note, int instrument, int fine, int ticks) {
     if (!has_image) return -1;
+    int r = ops->audition(audition_spare, image, channel, note, instrument, fine);
     SDL_LockAudioStream(stream);
-    int r = ops->audition(audition_machine, image, channel, note, instrument, fine);
+    if (r == CHIP_OK) swap(&audition_machine, &audition_spare);
     auditioning = r == CHIP_OK;
     audition_ticks_left = ticks;
     audition_channel = channel;
@@ -146,7 +164,9 @@ void da_close(void) {
     stream = NULL;
     if (song_machine) ops->destroy(song_machine);
     if (audition_machine) ops->destroy(audition_machine);
-    song_machine = audition_machine = NULL;
+    if (song_spare) ops->destroy(song_spare);
+    if (audition_spare) ops->destroy(audition_spare);
+    song_machine = audition_machine = song_spare = audition_spare = NULL;
     free(image);
     free(spare);
     image = spare = NULL;

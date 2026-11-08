@@ -17,6 +17,9 @@
 #define CHN(sym, c) m->ram[SID_MT_##sym + 7 * (c)]
 #define GT_NOTE 0x60
 #define GT_LASTNOTE 0xBC
+#define GT_REST 0xBD
+#define GT_KEYOFF 0xBE
+#define GT_KEYON 0xBF
 
 _Static_assert(SM_MAX_SAMPLE_RATE * (uint64_t)SID_PAL_FRAME_CYCLES / SM_CPU_HZ + 2 <= SM_MAX_TICK_FRAMES,
                "a tick fits the host buffer");
@@ -181,6 +184,11 @@ void sm_destroy(SidMachine* m) {
 
 static int loaded(const SidImage* image) { return image && image->info.loaded == SM_LOADED; }
 
+/* CPU cycles per player call: a PAL frame, or gt2reloc's CIA period in multispeed. */
+static uint32_t tick_cycles(int multiplier) {
+    return multiplier == 1 ? SID_PAL_FRAME_CYCLES : SID_CIA_PAL_LATCH / (uint32_t)multiplier + 1u;
+}
+
 /* The image header's values into the player's parameter operands. */
 static void patch_parameters(SidMachine* m, const SidImageInfo* info) {
     m->ram[SID_PATCH_FIRSTNOHRINSTR] = info->firstnohr;
@@ -232,7 +240,7 @@ static int reset(SidMachine* m, const SidImage* image) {
     m->info = *info;
     memcpy(m->slots, image->bytes + SM_SLOT_MAP, sizeof m->slots);
     m->play_addr = SID_PLAYER_PLAY;
-    m->tick_cycles = info->multiplier == 1 ? SID_PAL_FRAME_CYCLES : SID_CIA_PAL_LATCH / info->multiplier + 1u;
+    m->tick_cycles = tick_cycles(info->multiplier);
     if (call(m, SID_PLAYER_INIT, 0, INIT_BUDGET) != SM_OK) return SM_ERR_FAULT;
     flush_writes(m);
     return SM_OK;
@@ -374,29 +382,197 @@ int sm_start(SidMachine* m, const SidImage* image, int order, int row, int max_t
     return r < 0 ? r : r ? SM_OK : SM_ERR_IMAGE;
 }
 
-/* ---- live edits (spike: in-place) --------------------------------------------------------- */
+/* ---- live edits (relocating) ---------------------------------------------------------------- */
+
+/* end[r] = the first row >= r of a table whose left byte is the jump $FF (rows 1..255; 255 if none). */
+static void jump_rows(const uint8_t* region, uint16_t left, uint8_t end[256]) {
+    end[255] = 255;
+    for (int r = 254; r >= 1; --r) end[r] = region[left - SID_REGION_BASE + r - 1] == 0xFF ? (uint8_t)r : end[r + 1];
+    end[0] = 0;
+}
+
+typedef struct TableMap {
+    uint16_t col, left; /* instrument start-row column, the table's left column */
+    uint8_t oend[256], nend[256];
+} TableMap;
+
+/* A table pointer of the old image (row 1..255, 0 = stopped) in the new one: if it lies in an
+ * instrument's program (its start row .. the program's jump row; the channel's own instrument `prefer`
+ * first, else the innermost), it keeps its offset in that instrument slot's program in the new image,
+ * clamped to the program's last row before its jump (0 if the instrument no longer has one). Other
+ * pointers (programs reached only by commands) are kept. Identity when programs did not move. */
+static int map_pointer(const SidMachine* m, const SidImage* image, const TableMap* t, int ptr, int prefer) {
+    if (!ptr) return 0;
+    const uint8_t* oreg = m->ram + SID_REGION_BASE;
+    const uint8_t* nreg = sm_region(image);
+    int owner = 0, start = 0;
+    for (int n = 1; n <= m->info.instruments; ++n) {
+        const int s = oreg[t->col - SID_REGION_BASE + n - 1];
+        if (!s || s > ptr || ptr > t->oend[s]) continue;
+        if (n == prefer) {
+            owner = n;
+            start = s;
+            break;
+        }
+        if (s > start) {
+            owner = n;
+            start = s;
+        }
+    }
+    if (!owner) return ptr;
+    int slot = 1;
+    while (slot < 64 && m->slots[slot] != owner) ++slot;
+    if (slot == 64) return ptr;
+    const int nn = image->bytes[SM_SLOT_MAP + slot];
+    if (!nn) return ptr;
+    const int ns = nreg[t->col - SID_REGION_BASE + nn - 1];
+    if (!ns) return 0;
+    const int last = t->nend[ns] > ns ? t->nend[ns] - 1 : ns;
+    const int np = ns + (ptr - start);
+    return np > last ? last : np;
+}
+
+/* Whether channel c has fetched the row after the one playing: the player fetches when its counter
+ * equals the gate timer (counting down to tick 0), so from that tick until the next tick 0. */
+static int fetched_next(const SidMachine* m, int c) {
+    const uint8_t counter = CHN(CHNCOUNTER, c);
+    return counter != 0 && counter <= CHN(CHNGATETIMER, c);
+}
+
+/* Channel c's sequencer state in the new data at the playhead (order o, row r = the row playing, -1:
+ * none yet in o): what straight play of the new image leaves there. */
+static void place_channel(SidMachine* m, const SidImage* image, int c, int o, int r, int fetched) {
+    const SidImageInfo* ni = &image->info;
+    int fo = o, fr = r; /* the last row fetched (fr -1: none) */
+    if (fetched) next_row(ni, &fo, &fr);
+    int loaded = fo; /* order whose pattern is in mt_chnpattnum */
+    SmFetch f = {0, 0, 0, -1, -1, GT_REST};
+    if (fr >= 0) sm_fetch_state(sm_region(image), ni, c, fo, fr, &f);
+    if (!fetched && fr >= 0 && fr == ni->rows[fo] - 1) { /* its last row started: the sequencer advanced */
+        int no = fo, nr = fr;
+        next_row(ni, &no, &nr);
+        loaded = no;
+        f.pattptr = f.packedrest = 0;
+    }
+    CHN(CHNPATTNUM, c) = ni->pattern[c][loaded];
+    CHN(CHNSONGPTR, c) = (uint8_t)(loaded + 1);
+    CHN(CHNPATTPTR, c) = f.pattptr;
+    CHN(CHNPACKEDREST, c) = f.packedrest;
+    if (f.instrument) CHN(CHNINSTR, c) = f.instrument;
+    /* its instrument was deleted: the player's default, as after init */
+    if (CHN(CHNINSTR, c) == 0 || CHN(CHNINSTR, c) > ni->instruments) CHN(CHNINSTR, c) = 1;
+    if (f.fx >= 0) {
+        CHN(CHNNEWFX, c) = (uint8_t)f.fx;
+        if (f.fx) CHN(CHNNEWPARAM, c) = (uint8_t)f.param;
+    }
+    if (fetched) { /* the fetched row's note waits for its tick 0 */
+        CHN(CHNNEWNOTE, c) = (uint8_t)(f.note >= GT_NOTE && f.note <= GT_LASTNOTE ? f.note : 0);
+        if (f.note == GT_KEYOFF) CHN(CHNGATE, c) = 0xFE;
+        if (f.note == GT_KEYON) CHN(CHNGATE, c) = 0xFF;
+    }
+}
+
+static void funk_pair(const uint8_t* region, int funk, uint8_t pair[2]) {
+    pair[0] = funk ? region[SID_MT_SPEEDLEFTTBL - SID_REGION_BASE + funk - 1] : 0;
+    pair[1] = funk ? region[SID_MT_SPEEDRIGHTTBL - SID_REGION_BASE + funk - 1] : 0;
+}
 
 void sm_apply_image(SidMachine* m, const SidImage* image) {
     if (m->faulted || m->audition || m->raw || !loaded(image)) return;
     const SidImageInfo* ni = &image->info;
+    const uint8_t* oreg = m->ram + SID_REGION_BASE;
+    const uint8_t* nreg = sm_region(image);
     const uint8_t* slots = image->bytes + SM_SLOT_MAP;
-    for (int c = 0; c < SM_CHANNELS; ++c) { /* the playing instrument keeps its slot */
+
+    /* From the old data before it is replaced: table pointers, straight play's tempo at the playhead. */
+    static const uint16_t tables[3][2] = {{SID_MT_INSWAVEPTR, SID_MT_WAVETBL},
+                                          {SID_MT_INSPULSEPTR, SID_MT_PULSETIMETBL},
+                                          {SID_MT_INSFILTPTR, SID_MT_FILTTIMETBL}};
+    int wave[SM_CHANNELS], pulse[SM_CHANNELS], filt = m->ram[SID_MT_FILTSTEP + 1];
+    for (int c = 0; c < SM_CHANNELS; ++c) {
+        wave[c] = CHN(CHNWAVEPTR, c);
+        pulse[c] = CHN(CHNPULSEPTR, c);
+    }
+    int moved = memcmp(oreg + (SID_MT_INSWAVEPTR - SID_REGION_BASE), nreg + (SID_MT_INSWAVEPTR - SID_REGION_BASE),
+                       SID_MT_INSVIBPARAM - SID_MT_INSWAVEPTR) != 0 ||
+                memcmp(m->slots, slots, sizeof m->slots) != 0;
+    for (int t = 0; t < 3 && !moved; ++t) {
+        moved = memcmp(oreg + (tables[t][1] - SID_REGION_BASE), nreg + (tables[t][1] - SID_REGION_BASE), 255) != 0;
+    }
+    if (moved) {
+        TableMap map;
+        for (int t = 0; t < 3; ++t) {
+            map.col = tables[t][0];
+            map.left = tables[t][1];
+            jump_rows(oreg, map.left, map.oend);
+            jump_rows(nreg, map.left, map.nend);
+            if (t == 2) {
+                filt = map_pointer(m, image, &map, filt, 0);
+            } else {
+                for (int c = 0; c < SM_CHANNELS; ++c) {
+                    int* p = t == 0 ? &wave[c] : &pulse[c];
+                    *p = map_pointer(m, image, &map, *p, CHN(CHNINSTR, c));
+                }
+            }
+        }
+    }
+    int old_tempo = 0, old_funk = 0, new_tempo, new_funk;
+    uint8_t old_pair[2], new_pair[2];
+    if (!m->preroll) sm_tempo_at(oreg, &m->info, m->order, m->row, &old_tempo, &old_funk);
+    funk_pair(oreg, old_funk, old_pair);
+    for (int c = 0; c < SM_CHANNELS; ++c) { /* the playing instrument keeps its slot (deleted: number 1) */
         const uint8_t n = CHN(CHNINSTR, c);
         for (int s = 1; s < 64; ++s) {
-            if (m->slots[s] == n && slots[s]) {
-                CHN(CHNINSTR, c) = slots[s];
+            if (m->slots[s] == n) {
+                CHN(CHNINSTR, c) = slots[s] ? slots[s] : 1;
                 break;
             }
         }
     }
-    memcpy(m->ram + SID_REGION_BASE, sm_region(image), SM_REGION_SIZE);
+
+    memcpy(m->ram + SID_REGION_BASE, nreg, SM_REGION_SIZE);
     patch_parameters(m, ni);
     memcpy(m->slots, slots, sizeof m->slots);
+    if (ni->model != m->info.model) sid_resid_set_model(m->sid, ni->model);
+    m->tick_cycles = tick_cycles(ni->multiplier);
+    for (int c = 0; c < SM_CHANNELS; ++c) {
+        CHN(CHNWAVEPTR, c) = (uint8_t)wave[c];
+        CHN(CHNPULSEPTR, c) = (uint8_t)pulse[c];
+    }
+    m->ram[SID_MT_FILTSTEP + 1] = (uint8_t)filt;
+
+    if (m->preroll) { /* no pattern loaded yet: the orderlists are read from the next tick 0 */
+        for (int c = 0; c < SM_CHANNELS; ++c) {
+            if (CHN(CHNSONGPTR, c) >= ni->orders) CHN(CHNSONGPTR, c) = 0;
+        }
+        if (m->order >= ni->orders) m->order = 0;
+        m->info = *ni;
+        return;
+    }
+    /* Position: kept; clamped to the last row of the last (or the current) order if gone. */
+    int clamped = 0;
     if (m->order >= ni->orders) {
         m->order = ni->orders - 1;
         m->row = ni->rows[m->order] - 1;
+        clamped = 1;
     } else if (m->row >= ni->rows[m->order]) {
         m->row = ni->rows[m->order] - 1;
+        clamped = 1;
+    }
+    for (int c = 0; c < SM_CHANNELS; ++c) place_channel(m, image, c, m->order, m->row, fetched_next(m, c));
+    /* Tempo: straight play's at the playhead if the edit changed it (or the playhead was clamped);
+     * otherwise the player keeps its own (e.g. one inherited through the loop). */
+    sm_tempo_at(nreg, ni, m->order, m->row, &new_tempo, &new_funk);
+    funk_pair(nreg, new_funk, new_pair);
+    if (clamped || new_tempo != old_tempo || new_funk != old_funk || memcmp(old_pair, new_pair, 2)) {
+        for (int c = 0; c < SM_CHANNELS; ++c) {
+            if (new_tempo >= 2) {
+                CHN(CHNTEMPO, c) = (uint8_t)new_tempo;
+            } else if (CHN(CHNTEMPO, c) >= 2) {
+                CHN(CHNTEMPO, c) = 0; /* funktempo, from its first value */
+            }
+        }
+        if (new_tempo < 2 && new_funk) memcpy(m->ram + SID_MT_FUNKTEMPOTBL, new_pair, 2);
     }
     m->info = *ni;
 }
@@ -444,6 +620,10 @@ int sm_audition(SidMachine* m, const SidImage* image, int channel, int note, int
 
 int sm_release(SidMachine* m) {
     if (!m->audition || m->released || m->faulted || !m->aud_ticks) return 0;
+    if (sid_resid_envelope(m->sid, m->aud_channel) == 0) { /* silent already (decayed to sustain 0) */
+        m->ended = 1;
+        return 0;
+    }
     CHN(CHNGATE, m->aud_channel) = 0xFE;
     m->released = 1;
     return 1;

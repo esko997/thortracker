@@ -14,6 +14,7 @@ import org.thortracker.model.TunedPitch
 import org.thortracker.model.TuningMap
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.SoundSystem
+import org.thortracker.system.SongSetting
 import org.thortracker.system.SystemView
 import kotlin.random.Random
 import kotlin.math.roundToLong
@@ -186,7 +187,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         state.field = state.field.coerceIn(0, FIELDS - 1)
         state.instrument = state.instrument.coerceIn(1, maxSlots())
         state.octave = state.octave.coerceIn(minOctave(), maxOctave())
-        state.songItem = state.songItem.coerceIn(0, ViewState.SONG_HEADER_ITEMS + s.orders.size - 1)
+        state.songItem = state.songItem.coerceIn(0, ViewState.songHeaderItems(s) + s.orders.size - 1)
         state.markOrder = state.markOrder.coerceIn(0, s.orders.size - 1)
         if (state.mark && state.markOrder != state.order) state.mark = false
         // Restored workspaces may carry any values; keep every view-local cursor addressable.
@@ -363,7 +364,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 startAudition(state.channel, note, ins)
             }
             ViewKind.SONG -> {
-                val order = (state.songItem - ViewState.SONG_HEADER_ITEMS).coerceIn(0, song.orders.size - 1)
+                val order = songOrder.coerceIn(0, song.orders.size - 1)
                 session.select(session.selection.copy(order = order, row = 0, context = ViewKind.PATTERN))
                 session.transport(true)
             }
@@ -687,7 +688,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         when (state.field) {
             0 -> when {
                 c.note >= 0 -> write(c.copy(note = Cell.EMPTY, instrument = 0))
-                c.note == Cell.CUT -> write(c.copy(note = Cell.EMPTY))
+                c.note == Cell.CUT && system.keyOn != null -> {
+                    val on = system.keyOn ?: Cell.EMPTY
+                    write(c.copy(note = on))
+                    session.note("${system.noteName(on)}: key on, the gate opens again without restarting the note (${k(Action.CLEAR)} again clears it)")
+                }
+                c.note == Cell.CUT || (c.note == system.keyOn) -> write(c.copy(note = Cell.EMPTY))
                 c.hasEffect && system.offEffect != null -> session.note("Clear this row's effect first: OFF uses the effect slot (as ${system.offEffect})")
                 else -> { write(Cell(note = Cell.CUT)); session.note(system.help.offEntered) }
             }
@@ -838,7 +844,14 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     // ---- song / orders -----------------------------------------------------------------------------
 
-    val songOrder: Int get() = state.songItem - ViewState.SONG_HEADER_ITEMS
+    /** Song view rows before the order list: the shared ones and the system's settings. */
+    private val songHeader: Int get() = ViewState.songHeaderItems(song)
+
+    val songOrder: Int get() = state.songItem - songHeader
+
+    /** The system setting at the Song view cursor, or null. */
+    private fun songSetting(): SongSetting? = system.songSettings.getOrNull(state.songItem - ViewState.SONG_HEADER_ITEMS)
+        ?.takeIf { state.songItem >= ViewState.SONG_HEADER_ITEMS }
 
     private fun publishOrder() {
         val o = songOrder
@@ -854,17 +867,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             editHeld -> { editUsed = true; songAdjust(dx, dy) }
             clearHeld -> {
                 clearUsed = true
-                state.songItem = (item - dy * 8 + dx * 8).coerceIn(0, ViewState.SONG_HEADER_ITEMS + song.orders.size - 1)
+                state.songItem = (item - dy * 8 + dx * 8).coerceIn(0, songHeader + song.orders.size - 1)
                 publishOrder()
             }
             dy != 0 -> {
-                state.songItem = (item - dy).coerceIn(0, ViewState.SONG_HEADER_ITEMS + song.orders.size - 1)
+                state.songItem = (item - dy).coerceIn(0, songHeader + song.orders.size - 1)
                 state.textPos = 0
-                if (state.songItem >= ViewState.SONG_HEADER_ITEMS) state.songField = state.songField.coerceIn(0, ORDER_FIELDS.size - 1)
+                if (state.songItem >= songHeader) state.songField = state.songField.coerceIn(0, ORDER_FIELDS.size - 1)
                 publishOrder()
             }
             item <= 1 -> state.textPos = (state.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
-            item >= ViewState.SONG_HEADER_ITEMS -> state.songField = (state.songField + dx).coerceIn(0, ORDER_FIELDS.size - 1)
+            item >= songHeader -> state.songField = (state.songField + dx).coerceIn(0, ORDER_FIELDS.size - 1)
         }
     }
 
@@ -884,9 +897,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 )
                 if (session.setNewPatternScale(next)) session.note("New patterns start in ${next.label}")
             }
-            else -> if (state.songField == 0) {
-                session.setOrderPattern(songOrder, s.orders[songOrder] + dx + 8 * dy)
-                publishOrder()
+            else -> {
+                val setting = songSetting()
+                if (setting != null) session.apply(setting.undoLabel) { setting.adjust(it, dx, dy) }
+                else if (state.songField == 0 && songOrder >= 0) {
+                    session.setOrderPattern(songOrder, s.orders[songOrder] + dx + 8 * dy)
+                    publishOrder()
+                }
             }
         }
     }
@@ -918,7 +935,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             2 -> session.setTicksPerRow(6)
             3 -> session.setLoopOrder(0)
             ViewState.SONG_NEW_SCALE_ITEM -> if (session.setNewPatternScale(Scale.CHROMATIC)) session.note("New patterns start chromatic")
-            else -> { session.deleteOrder(songOrder); normalise(); publishOrder() }
+            else -> {
+                val setting = songSetting()
+                if (setting != null) session.apply(setting.undoLabel) { setting.reset(it) }
+                else { session.deleteOrder(songOrder); normalise(); publishOrder() }
+            }
         }
     }
 
@@ -926,7 +947,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val o = songOrder
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                state.songItem = (state.songItem + if (a == Action.NEXT_CHANNEL) 8 else -8).coerceIn(0, ViewState.SONG_HEADER_ITEMS + song.orders.size - 1)
+                state.songItem = (state.songItem + if (a == Action.NEXT_CHANNEL) 8 else -8).coerceIn(0, songHeader + song.orders.size - 1)
                 publishOrder()
             }
             Action.COPY -> if (o >= 0) session.copyPattern(song.orders[o]) else return false
@@ -1331,7 +1352,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     val sketchPhrase: Phrase get() = state.sketchPhrase ?: sketchGenerate().also { state.sketchPhrase = it }
 
     /** One pattern row at the song tempo: ticks per row at the system's tick rate. */
-    fun sketchStepMillis(): Long = (song.ticksPerRow * 1000.0 / system.tickHz).roundToLong()
+    fun sketchStepMillis(): Long = (song.ticksPerRow * 1000.0 / system.ticksPerSecond(song)).roundToLong()
 
     /** The chord whose tones generated phrases land on at strong rows: the selected triad while Chord tones is on. */
     fun sketchPhraseChord(): TonalGuide.Chord? =
@@ -1615,6 +1636,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             item == 3 -> { h += Hint(editLr(), "Loop target order"); h += Hint(k(Action.CLEAR), "Loop to start") }
             item == ViewState.SONG_NEW_SCALE_ITEM -> {
                 h += Hint(editLr(), "Scale"); h += Hint(editUd(), "Root"); h += Hint(k(Action.CLEAR), "Chromatic")
+            }
+            songSetting() != null -> {
+                h += Hint(editLr(), songSetting()?.hint ?: ""); h += Hint(k(Action.CLEAR), "Default")
             }
             else -> {
                 h += Hint(k(Action.EDIT), ORDER_FIELD_HINTS[state.songField])

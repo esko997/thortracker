@@ -35,7 +35,8 @@ A new chip implements both sides. In Kotlin, `PlaybackEngine`:
 | `auditionProblem(channel, note, instrument, fine)` | why an audition cannot sound (absolute note, system fine pitch), or null; the host reports it as its error |
 | `note(note)`, `fine(note, fine)` | `audition`'s note and fine arguments for an absolute note and the system's fine value (Game Boy: note − 36, `40y` detune unchanged) |
 
-The host's held-audition cap on the Deck is about a minute of the system's `tickHz` ticks.
+The host's held-audition cap on the Deck is about a minute of the song's ticks (`SoundSystem.ticksPerSecond`, which
+counts multispeed).
 
 Natively, it adds one ops table to the registry in `chip_engine.c` (and its sources to `CMakeLists.txt`,
 `deck/build.gradle.kts` and the host test script) and implements:
@@ -682,9 +683,10 @@ text asks for, derived from the text alone. Two runs produce identical files.
 
 ## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
 
-Design step 6, native spike (branch `sid-spike`): `chip_engine_ops("c64-sid")` plays GoatTracker songs
-lowered into the image layout below, proven in the host test. No Kotlin system, lowering or UI yet; what
-step 2 needs is listed at the end and in `docs/BACKENDS.md`.
+Design step 6: `chip_engine_ops("c64-sid")` plays GoatTracker songs lowered into the image layout below,
+proven in the host test. The native side of SID step 2 is done (relocating live edits, off-audio-thread
+costs, audition, export numbers for Kotlin in `SidPlayerImage.kt`); the Kotlin system, lowering and UI
+are described in `docs/BACKENDS.md`.
 
 ### What runs
 
@@ -722,8 +724,10 @@ step 2 needs is listed at the end and in `docs/BACKENDS.md`.
   (48 kHz): 593 µs per tick for the 8580 and 735 µs for the 6581 (34× / 27× realtime, 3.0 / 3.7 % of a
   core); `SAMPLE_INTERPOLATE` saves only 18 % (483 / 614 µs) because reSID's per-cycle chip emulation, not
   the FIR, dominates, so the band-limited method is kept. Device numbers come from the bench (below).
-  Creating the first SID machine in a process builds reSID's filter tables (71 ms on the dev PC); later
-  machines take 0.6 ms (their FIR table). A machine is 252 KB plus reSID's (~90 KB: FIR table, ring).
+  Creating the first SID machine in a process builds reSID's filter tables (72 ms on the dev PC; 120-200 ms
+  measured on the Konkr); later machines take 0.6 ms (their FIR table). Hosts create machines only when an
+  engine opens, on the control thread, never in the audio callback (below, "Hosts"). A machine is 252 KB
+  plus reSID's (~90 KB: FIR table, ring).
 - **Power-on**: reSID's `reset()` is the chip's RES pin (oscillator phases kept); `sid_resid_reset` also
   restores the power-up oscillator value `$555555`, the 8580 write pipeline and the resampler, so every
   start renders bit-identical samples (checked). Not changed in reSID's sources.
@@ -858,15 +862,44 @@ straight play.
   is compared by loudness, not samples; `sid_resid_clock` keeps the resampler's phase on straight play's
   sample grid.
 
-### Live edits (spike: in place)
+### Live edits (`apply_image`, relocating, realtime-safe, 4 µs mean measured)
 
-`apply_image` copies the region into the running machine at a tick boundary, rewrites the five
-parameters, moves each channel's current instrument number to the new number of its slot (slot map) and
-clamps the position to the new song. The player's sequencer state (orderlist index, pattern number,
-byte offset in the packed pattern, packed-rest count) and table pointers are kept as they are, so the
-result is right when the playing patterns and orderlists did not move or change before the playhead
-(the host test applies the same image every 7 ticks for 300 ticks: writes identical). What step 2 needs
-is below.
+At a tick boundary (`sm_apply_image`; no allocation), any valid image may replace the playing one — data
+may move freely, patterns and instruments may be renumbered:
+
+1. **Position**: the current order/row is kept; if it no longer exists it is clamped to the last row of
+   the last (or the current) order, so the next row is the restart order / the next order.
+2. **Sequencer**, per channel, re-derived from the new data at the playhead (not from the old pointers):
+   whether the channel has already fetched the next row (its counter has passed its gate timer:
+   `mt_chncounter` ≠ 0 and ≤ `mt_chngatetimer`) decides the last row it has fetched; from that row
+   (`sm_fetch_state`) come `mt_chnpattnum`, `mt_chnsongptr` (the order's entry + 1; the sequencer advances
+   at tick 0 of a pattern's last row, so after that row has started the next order's pattern is loaded,
+   fresh), `mt_chnpattptr` and `mt_chnpackedrest` (inside a packed rest: its byte + rows counted), the
+   persisting instrument and command of the pattern so far (`mt_chninstr` — otherwise the playing
+   instrument's new number by slot —, `mt_chnnewfx`/`mt_chnnewparam`) and, for a fetched row not yet
+   started, its note (`mt_chnnewnote`) and key off/on (`mt_chngate`). Edited cells are heard from the next
+   row the channel fetches, or from the next row if the edit hit a row fetched but not yet started (its
+   hard restart has happened; the new note replaces the old one).
+3. **Table programs**: a wave/pulse/filter pointer that lies in an instrument's program in the old image
+   (its start row up to the program's `$FF` jump row; the channel's own instrument first, else the
+   innermost) moves with that instrument slot's program in the new image, keeping its offset (clamped
+   to the program's last row before its jump; 0 if the instrument has no program any more). Pointers
+   into rows only commands reach (`8xx`/`9xx`/`Axx`, wavetable commands `F8`-`FA`) are kept: the lowering
+   keeps program rows stable (it moves a program only when it no longer fits), so this is the identity
+   in the common case and skipped when the instrument columns, slot map and table left columns are
+   unchanged. Speedtable rows need no mapping (`mt_chnparam` reloads at every row start).
+4. **Tempo**: straight play's global tempo / funktempo pair at the playhead (`sm_tempo_at`: the order's
+   start tempo, then the `F`/`E` commands of the rows started; tick-0 commands persist and re-run every
+   row) is set if the edit changed it (an earlier `Fxx`/`Exx`, the default tempo, the funktempo
+   speedtable row) or the playhead was clamped; otherwise the player keeps its own (e.g. one inherited
+   through the loop). Funktempo keeps its phase.
+5. **Header**: the five parameters are rewritten; chip model (`set_chip_model`, voices keep running; the
+   filter integrators restart) and speed multiplier (tick length) follow the new header.
+
+Before the player has loaded its first patterns (only inside `start`), the data is copied and the
+orderlist positions clamped. The host test applies a fully re-laid-out image (`sid_gt_moved`) before
+every one of 1500 ticks and gets py65's reference writes (dev PC: 4 µs mean per apply; worst 9-20 µs in
+bench runs, one 59 µs outlier in a host-test run on a loaded desktop).
 
 ### Audition
 
@@ -876,19 +909,21 @@ image, its song table and pattern table entries 0/1 are pointed at scratch data 
 auditioned channel plays a 64-row pattern `instrument, $40, note, $C1` (one note, 63 packed rests) and
 then loops a 64-row rest pattern; the other channels loop the rest pattern. The start-up ticks (reset,
 pattern load, the note's fetch and hard restart) run silently, so the first tick is the note's first, as
-when a song row plays it, through the image's own instruments and tables. `note` is the absolute note =
-GoatTracker note 0..92 (C-0..G#7, the pattern range); `fine` must be 0. `release()`: 0 before any tick
-(cut); otherwise the player's key-off state (`mt_chngate = $FE`, exactly what a key-off row sets) from
-the next tick, returning 1; `tick` returns 0 once the voice's envelope counter is 0 (Tone, release 0: 1
-tick; Lead, release 9 from sustain A: 35 ticks).
+when a song row plays it, through the image's own instruments and tables; the note is held (gate on)
+until released. `note` is the absolute note = GoatTracker note 0..92 (C-0..G#7, the pattern range); `fine`
+must be 0 (tunings live in the song's frequency table). `release()`: 0 before any tick (cut); 0 as well
+when the voice is already silent (envelope counter 0, e.g. a sustain-0 note that has
+decayed: the machine ends); otherwise the player's key-off state (`mt_chngate = $FE`, exactly what a key-off
+row sets) from the next tick, returning 1; `tick` returns 0 once the voice's envelope counter is 0 (Tone,
+release 0: 1 tick; Lead, release 9 from sustain A: 35 ticks).
 
 ### Ops behaviour
 
 | Op | Behaviour |
 |---|---|
-| `load_image` | copy, then `sm_load_image`; `image_storage` = `sizeof(SidImage)` (48768: bytes + info) |
+| `load_image` | copy, then `sm_load_image`; `image_storage` = `sizeof(SidImage)` (50288: bytes + info) |
 | `start(order, row)` | above; `seek_mode` from start or order |
-| `apply_image` | above (in place); ignored on a faulted or auditioning machine |
+| `apply_image` | above (relocating); ignored on a faulted or auditioning machine |
 | `audition`, `release` | above |
 | `mute(channel 0-2)` | reSID's voice mask: the voice leaves the filter and the mix, keeps running (its sync and ring modulation still act; unmuting resumes mid-note); `start`/`audition` clear mutes |
 | `position` | above |
@@ -911,9 +946,12 @@ below `$1800`, writes `tools/audio/sid/gt_test.sng` from `gt_test_song.py`, pack
 `gt2reloc gt_test.sng gt_test.sid -I0 -J1` (gt2reloc's `-I` case falls through into `-J`, so `-I0` alone
 would also switch full buffering on; it keeps file names in 60-byte buffers, so it runs from the song's
 directory), lowers the song, proves the lowering is the packer's data, records py65's reference
-(below) and writes `generated/sid_player_image.h` and `app/src/test/cpp/sid_gt_song.h`. Committed
-`gt_test.sng`/`gt_test.sid` must be reproduced byte for byte. Needs py65 (`python3 -m venv /tmp/sidref &&
-/tmp/sidref/bin/pip install numpy py65`).
+(below), builds the live-edit fixtures (`sid_gt_moved`: the same song laid out anew by `gt_song.lower(...,
+relayout=True)` with every instrument program moved 100 rows by `move_programs` — py65 must record the
+reference writes for it too —; `sid_gt_edited`, `sid_gt_tempo`, `sid_gt_short`) and writes
+`generated/sid_player_image.h`, `core/.../backend/SidPlayerImage.kt` and `app/src/test/cpp/sid_gt_song.h`.
+Committed `gt_test.sng`/`gt_test.sid` must be reproduced byte for byte. Needs py65 (`python3 -m venv
+/tmp/sidref && /tmp/sidref/bin/pip install numpy py65`).
 
 ### Verification
 
@@ -932,7 +970,7 @@ directory), lowers the song, proves the lowering is the packer's data, records p
   also runs the Thor image on the player image (parameters patched) and gets the same writes. Both are in
   the fixture.
 - `tools/audio/run_native_host_test.sh [dir]` builds the engines (C with `$CC`, reSID with `$CXX`, linked by
-  `$CXX`) and runs `app/src/test/cpp/sid_machine_test.c` — 2026-11-07: **130 checks, 0 failures** (Game Boy
+  `$CXX`) and runs `app/src/test/cpp/sid_machine_test.c` — 2026-11-08: **151 checks, 0 failures** (Game Boy
   145, NES 336 unchanged): player image and frequency table (A-4 440.09 Hz, ≤ 1.51 cents from 12-TET);
   derived orders/rows/start tempos; 22 single-byte corruptions each rejected with its reason; the Thor
   image on this machine **writes the same SID registers as py65's reference in all 1500 frames** and its
@@ -940,12 +978,20 @@ directory), lowers the song, proves the lowering is the packer's data, records p
   on this machine also equals py65 in all frames; six seek targets land exactly (ticks = the reference row
   start) with writes in step for 200 ticks; the order fallback lands and stays in row step; loudness after
   seeks (above); audition of A-4 on the Tone instrument **440.07 Hz measured** (register 440.09 Hz),
-  sustained 2 s, other voices silent, release tails, argument limits; the held A-4 in the song with
-  voices 2-3 muted 440.00 Hz; all voices muted < 0.002 after 100 ms; muting leaves writes unchanged; BRK,
-  JAM and runaway faults; x2 multispeed ticks of 9828 cycles; same-image live apply in step; the ops
-  table as the hosts drive it; 30 s on each model non-silent, no samples at full scale, bit-identical on
-  a second start. Evidence: `sid_gt_8580.wav`, `sid_gt_6581.wav` (30 s), `sid_tone_8580.wav`,
-  `sid_trace.txt` (the machine's writes per tick), `sid_gt.sid`.
+  sustained 2 s, other voices silent, release tails, a decayed (sustain 0) note's release cuts, argument
+  limits; the held A-4 in the song with voices 2-3 muted 440.00 Hz; all voices muted < 0.002 after 100 ms;
+  muting leaves writes unchanged; BRK, JAM and runaway faults; x2 multispeed ticks of 9828 cycles;
+  same-image live apply in step; **live edits**: the re-laid-out image and the original applied
+  alternately before every one of 1500 ticks from power-on **write py65's reference** with its 287 row
+  starts (576 channel-ticks inside moved wave programs), and stay in step with straight play for 600
+  ticks after seeks 0/5, 1/17, 2/3 and the order fallback 3/6; the note edit applied at each of the 13
+  ticks before its row starts (also between its fetch and start) and during order 1 equals straight play
+  of the edited song in all 1500 ticks; a tempo edit behind the playhead gives rows of 9 ticks and its
+  undo 6; a funktempo speedtable edit is taken (6/4 → 5/3) in funktempo; the song cut to two orders under
+  order 3 clamps and then plays order 1 in order; 6581 applied live writes the same registers, x2 applied
+  live halves the tick; the ops table as the hosts drive it; 30 s on each model non-silent, no samples at
+  full scale, bit-identical on a second start. Evidence: `sid_gt_8580.wav`, `sid_gt_6581.wav` (30 s),
+  `sid_tone_8580.wav`, `sid_trace.txt` (the machine's writes per tick), `sid_gt.sid`.
 - `tools/audio/sid_reference_check.py <dir>` (developer evidence: numpy, py65; sidplayfp 2.6, e.g. in the
   `ubuntu` distrobox) — 2026-11-07, PASS: py65 running `sid_gt.sid` equals `sid_trace.txt` in 1500/1500
   frames; against **sidplayfp's reSID** (its own C64 environment, aligned by envelope): 8580 envelope
@@ -954,24 +1000,43 @@ directory), lowers the song, proves the lowering is the packer's data, records p
   only) 0.842 / 0.936 / 96 % and 0.968 / 0.850 / 95 %.
 - **Bench**: `tools/audio/build_sid_bench.sh [dir]` builds `tools/audio/sid_bench.c` for the host and with
   the NDK as static-libc++ arm64 executables (`-O2` as the app, and `-O3`): `adb push` and run
-  `sid_bench-arm64 [seconds] [rate]`; it prints cost per tick, realtime factor and share of a core for
-  both models and sampling methods, and seek costs.
-- Not done: listening on hardware, device measurements (Thor), a comparison with a real C64 capture.
+  `sid_bench-arm64 [seconds] [rate]`; it prints machine creation (first / later), tick cost (mean, p99,
+  p99.9, worst) for both models and sampling methods, the relocating `apply_image`, audition setup and seek
+  costs. Built 2026-11-08 into `/tmp/sid_bench2/` (`sid_bench-host`, `sid_bench-arm64`, `sid_bench-arm64-O3`).
+- Not done: listening on hardware, device measurements of step 2 (the arm64 bench is built, not run),
+  a comparison with a real C64 capture.
 
-### What step 2 needs (native side)
+### Hosts: threads and costs
 
-- **Relocating live edits** (as the NES does): per channel, derive the sequencer position from player
-  state in the old image — the orderlist entry being read (`mt_chnsongptr` − 1) and the rows already
-  fetched from its pattern (parse the old pattern up to `mt_chnpattptr` and `mt_chnpackedrest`; at
-  offset 0 the pattern is either fresh or fully fetched with the orderlist advance pending: the advance
-  happens at tick 0 of the pattern's last row, so whether that row has started decides) — then set
-  `mt_chnsongptr`, `mt_chnpattnum`, `mt_chnpattptr` and `mt_chnpackedrest` to the same place in the new
-  image. Table programs (wave/pulse/filter pointers, `mt_filtstep`) index rows: the lowering should keep
-  each instrument's table rows stable (or the machine maps them like NES envelopes).
-- `Fxx`/funktempo edits before the playhead: re-derive the tempo as the NES re-derives its speed.
-- Audition with fine pitch is not possible per note; tunings go into the song's frequency table.
-- Kotlin: `SidSystem.engine` (id `"c64-sid"`, `imageSize` 47200, `seekTicks`, `note(n)` = n,
-  `fine` → 0) and a generated `SidPlayerImage.kt` (player bytes and layout numbers) for `.sid`/`.prg`
-  export: a PSID v2 like gt2reloc's (load `$1000`, init `$1000`, play `$1003`; for multispeed the 10-byte
-  CIA speed code at `$0FF6` and init there; flags PAL + the model) = header + player with the parameters
-  written + the region up to the data end.
+What runs where (both hosts drive the machine through `chip_engine.h`), dev PC numbers (`sid_bench-host`,
+48 kHz, 2026-11-08) and the Konkr-class estimate (× 4; measured there before: seek × 3.3, creation 120-200
+ms):
+
+| Work | Thread | Dev PC | ≈ Konkr |
+|---|---|---|---|
+| `tick` (8580 / 6581, resample) | audio callback | 590-610 / 730-755 µs mean, p99.9 0.7-1.1 ms | 2.4 / 3.0 ms mean, ~4.5 ms p99.9 |
+| `apply_image` (relocating) | audio callback, tick boundary | 4 µs mean, worst 9-20 µs (one 59 µs outlier) | ≤ 0.25 ms |
+| machine creation | control (engine open) | 72 ms first (reSID tables), 0.6 ms later | 120-200 ms first |
+| `audition` setup | control, spare machine | 0.35 ms | ~1.4 ms |
+| `start` (seek, 12000 ticks ≈ 4 min) | control, spare machine | ~6 ms + 6.9 µs per tick ≈ 88 ms | ~280 ms |
+
+- **Android** (`audio_engine.cpp`): `Engine::create` makes all six machines (three song, three audition
+  slots) on ChipAudio's control thread when a song of the system first needs the engine; `play` and
+  `audition` run `start`/`audition` on the back machine of a triple buffer and publish it; the callback
+  swaps at its next start and keeps playing the previous machine meanwhile, so a seek delays the new
+  position by its cost but never stalls audio. The callback only ticks, mutes and applies images.
+- **Deck** (`deck_audio.c`): `da_open` creates four machines (song and audition, each with a spare) on
+  the main thread; `da_play`/`da_audition` run `start`/`audition` on the spare outside the SDL stream lock
+  and swap pointers under it (a tick boundary: the callback runs whole ticks under the lock); live edits
+  apply under the lock. Seeks no longer hold the lock.
+- The audio-thread stall per tick (worst tick + worst apply) is ~1.0-1.4 ms on the dev PC (≈ 4-5.6 ms
+  Konkr-class at the single worst tick of 30 s on a loaded desktop; the p99.9 estimate is ~4.5 ms; one
+  20 ms tick is rendered per ~5 callbacks).
+- **Kotlin**: `SidSystem.engine` (id `"c64-sid"`, `imageSize` 47200, `seekTicks` 12000, `note(n)` = n,
+  `fine` → 0). Exports use the generated `SidPlayerImage.kt` (player bytes, the `PATCH_` operand
+  addresses, layout labels, header offsets, GoatTracker's frequency table, PSID constants): `.sid` = a
+  PSID v2 as gt2reloc writes it (`PSID_HEADER_SIZE` header: load 0, init `$1000`, play `$1003`, 1 song,
+  start 1, speed word 0; flags PAL + model; for multispeed the 10-byte CIA speed code with `$4CC7` / N at
+  `$0FF6`, load/init there and speed word all ones), then the load address and data; `.prg` = `$1000`
+  little-endian + data; data = player with the five header parameters written, zeros to `$1800`, the
+  region up to the header's data end.

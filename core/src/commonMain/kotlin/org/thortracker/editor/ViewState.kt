@@ -42,6 +42,9 @@ data class ViewState(
     /** Sample instrument pages (NES DPCM): the key (absolute note) whose mapping is edited and the sample list cursor. */
     var dpcmKey: Int = DEFAULT_DPCM_KEY,
     var dpcmSample: Int = 0,
+    /** Program editors (SID): the column of the program row under the cursor, and the table the raw table page shows. */
+    var programField: Int = 0,
+    var rawTable: Int = 0,
     var waveRow: Int = 1,
     var waveCol: Int = 0,
     var waveLevel: Int = 8,
@@ -97,6 +100,9 @@ data class ViewState(
     companion object {
         /** Song view rows before the order list: title, artist, ticks per row, loop order, scale for new patterns. */
         const val SONG_HEADER_ITEMS = 5
+
+        /** Song view rows before [song]'s order list: the shared ones, then its system's [org.thortracker.system.SoundSystem.songSettings]. */
+        fun songHeaderItems(song: org.thortracker.model.Song): Int = SONG_HEADER_ITEMS + song.system.songSettings.size
         /** Song view row of the scale new patterns start with. */
         const val SONG_NEW_SCALE_ITEM = 4
         /** C-3 (absolute 36): the first key a sample page edits, where starter kits begin. */

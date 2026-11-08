@@ -62,4 +62,11 @@ class WorkspaceCodecTest {
         assertEquals(listOf(0, 0, 0, org.thortracker.editor.ViewState.DEFAULT_DPCM_KEY, 0),
             WorkspaceCodec.decode(v086)[0].let { listOf(it.envelope, it.envStep, it.listenChannel, it.dpcmKey, it.dpcmSample) })
     }
+
+    @Test fun sidProgramCursorPersists() {
+        val state = org.thortracker.editor.ViewState(kind = ViewKind.INSTRUMENT, envelope = 5, envStep = 40, programField = 6, rawTable = 3)
+        val back = WorkspaceCodec.decode(WorkspaceCodec.encode(listOf(state, org.thortracker.editor.ViewState())))[0]
+        assertEquals(listOf(5, 40, 6, 3), listOf(back.envelope, back.envStep, back.programField, back.rawTable))
+        assertEquals(listOf(0, 0), WorkspaceCodec.decode(v086)[0].let { listOf(it.programField, it.rawTable) })
+    }
 }

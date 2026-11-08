@@ -208,52 +208,102 @@ muted in the song) stay in the hosts and work for every chip.
   audition and release through the player; audio matches sidplayfp's reSID by loudness envelope (0.985 on the
   8580). The Deck links reSID through Kotlin/Native's clang++ and libstdc++.
 
-### What SID step 2 needs (data model and lowering)
+### Model, lowering and exports (step 2)
 
-A `SidSystem` (`system/sid`, id `"c64-sid"`) whose `SidSound` is GoatTracker's instrument model, lowered by a
-Kotlin port of `tools/audio/sid/gt_song.py` (`lower()`; byte-identical to GoatTracker's packer for the test
-song):
+- **System** (`system/sid`): `SidSystem`, id `"c64-sid"`, three voices (`ChannelKind.VOICE`, all tonal), one bank of
+  63 instruments shared by all voices (slot n = GoatTracker instrument n). Notes C-0..G#7 (absolute 0..92 =
+  GoatTracker's note; A-4 = 57 = 440.09 Hz; FamiTracker-style names); OFF is key off, note −3
+  (`SidRules.KEY_ON`, "ON") is key on. PAL only: 50.12 ticks per second times the song's multispeed.
+- **Chip data** (`SidSound`): the 63 `SidInstrument`s, the chip model (`SidChip`, 8580 for new songs), multispeed
+  1-16 (tempos and gate timers count the faster ticks, as in GoatTracker) and the hard-restart envelope (default
+  `$0F00`). An instrument is GoatTracker's: ADSR nibbles, `SidRestart` (hard restart / gate off only `$80` /
+  legato `$40`), gate timer 1-63, first-frame wave, `SidVibrato` (delay 0 = off, speed, depth, note-independent)
+  and three **programs** (`SidProgram`: wave, pulse and filter) of `SidRow`s. Rows are GoatTracker's table bytes as
+  its editor shows them, except that a jump's target is a row of the same program (1-based, 0 = stop) and a wave
+  program command's parameter is the pattern effect's (below). A program whose last row is not a jump stops there
+  (the lowering adds `$FF 00`). GoatTracker's four song-wide tables are not stored; they are built from the
+  programs and effects.
+- **Program placement** (`SidTables.placement`/`place`): identical programs of a table share rows; each program
+  remembers the row it was placed at (`SidProgram.at`, saved). After every instrument edit the editor calls
+  `SidTables.place(before, after)`: programs that did not change keep their rows, the edited one stays where it is
+  if it still fits and otherwise takes the first gap that holds it; only when gaps are too fragmented is
+  everything packed again from row 1 in slot order. The lowering places the stored rows the same way, so a song
+  lowers identically every time and the native engine can follow a playing program to its new rows by slot
+  (`docs/AUDIO_ENGINE.md`, SID "Live edits"). The **speedtable** (`SidSpeeds`) holds each distinct value once, in a
+  fixed walk: instrument vibratos by slot, then wave program commands, then every pattern (played or not) by
+  voice and row; the player re-reads a voice's speed row at each row start.
+- **Effects** (`SidRules`, one column, GoatTracker's numbers 1-F; parameters are values, not table rows):
+  `1xx`/`2xx` portamento up/down and `3xx` toneportamento at speed 4·xx (`300` = tie), `4xy` vibrato speed x,
+  depth y·`$10` (`400` off) — GoatTracker 1's parameters, which GoatTracker 2 documents as these speedtable
+  values — `5xx`/`6xx` AD/SR, `7xx` waveform, `8xx`/`9xx`/`Axx` start instrument xx's wave/pulse/filter program
+  (`x00` stops it), `Bxy` filter resonance x and voices y (`B00` off), `Cxx` cutoff, `D0x` master volume, `Exy`
+  funktempo x/y ticks (2-F each), `Fxx` tempo 03-7F (`F00`/`F01` resume the funktempo). Wave programs may run
+  commands 1-7 and 9-D (GoatTracker forbids 0, 8 and E there). Channel tempos (`F83-FFF`) are not offered.
+- **Tunings** (`SidTuning`): the player has no fine pitch (`FinePitch.max` 0, `retunesTable`), so a song's tuning
+  retunes its 96-entry frequency table: note n plays the tuning degree nearest to it on the 12-note grid, exactly
+  (GoatTracker's register value for n scaled by the degree's deviation); `TuningMap` then reports every such
+  degree as reachable with no error. Without a tuning (and with 12-equal) the table is GoatTracker's own.
+- **Lowering** (`backend/GtSong`, `backend/SidLowering`): `GtSong.of(song)` is the song in GoatTracker's own terms
+  (programs at their placed rows with absolute jumps, program commands as start rows, speed effects as speed
+  rows, one GoatTracker pattern per distinct voice pattern of each order, at most 208); an order's voice that starts
+  with a note but no instrument gets the instrument straight play reaches it with, so the loop, a seek or a pattern
+  loop (`SidSystem.patternLoop`) play it the same. `SidLowering` is a port of `gt_song.lower`: GoatTracker 2.77's
+  packer without optimizations (instrument order hard-restart / gate-off / legato, table conversions, `packpattern`)
+  at the fixed addresses of the image layout. One deviation from gt2reloc: in multispeed, gt2reloc counts one extra
+  gate-off instrument, so its first legato instrument plays without legato; the engine's operands are ours, so
+  legato stays exact.
+- **Validation** (`SidValidator`, mirrors `sm_load_image`): instrument and program ranges, program rows (jump targets,
+  wave commands GoatTracker allows, first wave row a waveform), table rows (each table's programs within 255 rows,
+  at most 255 speeds), effect parameters, program commands naming instruments without that program, tempo 3-127,
+  gate timers below the shortest row (start tempo, `Fxx`, `Exy`), 208 voice patterns and the song data region
+  (`$2500-$CFFF`, 43776 bytes). A 64-row pattern packs into at most 256 bytes (instrument, command, parameter and
+  note on every row is exactly GoatTracker's limit), so Thor patterns always fit. Warnings: a voice's first note
+  without instrument (the player's instrument 1 sounds), PSID text fields, silent instruments.
+- **Project files:** backend `"c64-sid"`, SID data version 1 (README, "Project format").
+- **Exports** (`backend/SidExport`): `.sid` (PSID v2 as gt2reloc writes it: player at `$1000` with the song's five
+  parameters, the image region up to its data end, PAL, the chip model; multispeed songs load and init at `$0FF6`
+  behind gt2reloc's CIA speed code); `.prg` (`10 SYS2061`, start code that inits the player and hooks it into the
+  KERNAL's CIA 1 timer interrupt at `$4CC7` / multispeed cycles, then returns to BASIC; then the same block); and
+  GoatTracker's `.sng` (`GtSong.sng`; GoatTracker reads a start tempo other than its default from instrument 63 as
+  a tempo holder, so such songs must leave slot 63 unplayed; chip model, multispeed, hard-restart envelope and a
+  tuning's frequency table are packer options there, not part of the file).
+- **Golden tests** (`SidGoldenTest`, `tools/audio/sid_golden.py`): the spike's `gt_test.sng` read by `GtSong.read` and
+  lowered is byte-identical to the image proven to be GoatTracker's packing, and our `.sid` of it writes the SID
+  registers py65 recorded from gt2reloc's `.sid` in all 1500 frames; three Thor songs (the demo, an effects song with
+  every command and program feature, a ×2 multispeed song with its own hard-restart envelope) are exported as
+  `.sng`, packed by GoatTracker's gt2reloc (which loads them), and our `.sid` and gt2reloc's write identical SID
+  registers in all of 3000 frames (through each song's loop); every `.prg` run from `SYS2061` on a 6502
+  (`SidTracer`) programs the CIA and writes what the `.sid` writes. `SidModelTest` covers placement, speeds, tunings
+  and validation messages; `SidProjectCodecTest` round trips.
+- **Demo:** "Raster Run" (`SidDemoSong`, A minor, 8580): a sawtooth bass under a resonant lowpass sweep, a PWM lead
+  with delayed note-independent vibrato and a toneportamento, pulse arpeggios from wave programs, and wave-program
+  drums (noise-click pulse kick, GoatTracker's snare, noise hats). `exportSamples` writes it as
+  `raster-run.{thor,sid,prg,sng,sidimg}`; `tools/audio/render_sid_image.sh` renders an image through the native
+  engine.
 
-- **Channels:** three voices, all tonal, one shared filter. Notes C-0..G#7 (absolute 0..92: GoatTracker's
-  note = Thor Tracker's absolute note; its pattern range ends at G#7, the wavetable reaches B-7). Tunings go
-  into the song's 96-entry frequency table (GoatTracker's base-pitch and Scala tunings work that way); there is
-  no per-note fine pitch, so `fine` realises nothing and a tuning's "N of M degrees within 5¢" is exact.
-- **Instruments** (63 slots, shared by all voices, like the NES): attack/decay, sustain/release, wavetable,
-  pulsetable and filtertable start rows, vibrato (speedtable row + delay), hard restart / gate timer (ticks
-  before the note: fetch, gate off and hard restart; flags: no hard restart, legato = no gate off) and the
-  first-frame waveform (usually `$09` test + gate; `$00` keep, `$FE`/`$FF` gate off/on). The lowering orders
-  them hard-restart / no-HR / legato and writes the slot map.
-- **Tables** (song-wide, 255 rows each; GoatTracker's editor shows them as a table view): wavetable (waveform
-  incl. combined waves, sync/ring/test/gate bits, delays, relative/absolute notes for arpeggios and drums,
-  embedded commands, jumps), pulsetable (set width, modulate for n ticks at a signed speed, jumps),
-  filtertable (passband + resonance + voice routing, cutoff, modulation, jumps), speedtable (vibrato
-  speed/depth, portamento speed, funktempo pairs; `$80` = note-independent). Proposed editor: per-instrument
-  "programs" that the lowering allocates rows for, keeping each instrument's rows stable across edits (live
-  edits then follow the playing program; see AUDIO_ENGINE "What step 2 needs (native side)"), with the raw
-  table view available.
-- **The global filter:** one cutoff, resonance, routing and passband for the chip. Instruments take it over
-  through their filtertable row (GoatTracker's model: the last instrument started with a filter program owns
-  it); pattern commands `A` (filter program), `B` (resonance/routing; `B00` off), `C` (cutoff). The editor
-  should show which channel last took the filter.
-- **Hard restart:** per instrument (gate timer, flags) plus the song's hard-restart ADSR (default `$0F00`;
-  GoatTracker's alternative player for `$Fxxx` values is not in the engine).
-- **Tempo:** ticks per row 2..128 as `DEFAULTTEMPO` = ticks − 1 and `F03-F7F` (all channels); funktempo
-  (`Exx` and `F00/F01`) alternates two tempos; channel tempos (`F83-FFF`) break the shared row clock and
-  should not be offered. Multispeed 1-16 per song (ticks per frame); GoatTracker's advice applies:
-  multiply tempos and gate timers.
-- **Effects** (one column, GoatTracker numbers 1-F): `1xx`/`2xx` portamento up/down and `3xx` toneportamento
-  (speedtable rows; `300` = tie note), `4xx` vibrato, `5xx`/`6xx` attack-decay / sustain-release, `7xx`
-  waveform, `8xx`/`9xx`/`Axx` wave/pulse/filter program, `Bxx` filter control, `Cxx` cutoff, `Dxx` master
-  volume (0-F), `Exx` funktempo, `Fxx` tempo; rows have key off / key on. One-shot commands 5-F let a running
-  1-4 effect continue; command 0 returns to instrument vibrato. No jumps or pattern breaks: orders arrange
-  the song (like the NES). Effects with speedtable parameters need the lowering to allocate speedtable rows
-  (Thor Tracker's effect parameter → a row holding it).
-- **Orders:** one pattern per channel per order (the Thor shape), ≤ 254 orders, ≤ 208 distinct
-  channel-patterns, ≤ 128 rows; packed pattern ≤ 256 bytes (64 rows with instrument, command and note on every
-  row would not fit: validation must say so); song data ≤ 43776 bytes after the fixed tables.
-- **Export:** `.sid` (PSID v2, as gt2reloc writes it) and `.prg`; GoatTracker `.sng` export/import is a
-  natural addition (`tools/audio/sid/gt_song.py` reads and writes it).
-- **Validation** (mirrors `sm_load_image`), Help prose, New → C64 SID, a demo song.
+### Editor (step 2)
+
+- **Instrument view** (`SidInstrumentView`, `SidInstrumentPainter`): controller-only like the NES envelope editor, six
+  pages: *Envelope* (ADSR with the drawn curve and times, and *Preset*: `SidPresets`, eight starting sounds — saw lead,
+  PWM pad, filter bass, noise snare, wave-arpeggio kick, hi-hat, triangle bass, arpeggio chord; a filter preset routes
+  the Listen voice), *Wave*, *Pulse* and *Filter* programs, *Vibrato·HR* (restart mode, gate timer, first-frame
+  waveform, vibrato drawn) and *Tables*. A program is edited as rows of columns (`SidPrograms`): the first column is
+  the step's kind (wave: waveform, silent, wait, hold, command, jump; pulse: width, sweep, jump; filter: filter,
+  cutoff, sweep, jump), the others its values (shape, gate/sync/ring/test, relative/absolute/kept pitch; passband,
+  resonance, voices…); rows added, duplicated or deleted keep jump targets. Pulse and filter pages draw the width or
+  cutoff the program plays over 100 ticks. Every edit goes through `setSidInstrument`, which re-places the tables
+  (`SidTables.place(before, after)`), so unchanged programs keep their rows. Holding Edit on a sound setting
+  auditions the sound and each change re-auditions it from the new image.
+- **Raw tables**: the Tables page lists the 255 rows of each table as the player reads them (jumps as table rows; the
+  stop rows the lowering adds), each with the owning slot and program row; read-only, Edit opens the owning program.
+- **Shared state** (`SoundSystem.sharedState`, `SidFilterOwner`): the voice that last started a filter program (an
+  instrument with one on a note, or `Axx`; `B00` turns the filter off), in straight play up to the playhead or the
+  cursor; the Pattern view tags its lane header *FILTER* and the inspector names it.
+- **Song settings** (`SoundSystem.songSettings`, `SidSongSettings`): the Song view lists chip model, multispeed and
+  the hard-restart attack/decay and sustain/release after its shared rows (`ViewState.songHeaderItems`); other
+  systems have none, so their Song view is unchanged. `SoundSystem.ticksPerSecond(song)` (the SID: × multispeed) feeds
+  the Song view's BPM, Sketch's step and the Deck's audition cap.
+- **Key on** (`SoundSystem.keyOn`): Clear on an OFF enters GoatTracker's key on, shown as `ON`.
 
 ## Steps
 
@@ -276,7 +326,9 @@ song):
    `m6502.h` + reSID 1.0 (see "SID backend"); native host test 130 checks; register writes identical to py65
    running GoatTracker's own packing in every frame; image layout and lowering contract in
    `docs/AUDIO_ENGINE.md`.
-7. **SID backend.** Model, lowering, editor (instruments, tables), New → system, Help, validation, export.
+7. **SID backend.** Model, lowering (byte-identical to GoatTracker's packer; golden traces), validation, project
+   files, `.sid`/`.prg`/`.sng` export and the demo (see "Model, lowering and exports"); editor (instruments,
+   programs, tables), New → system, Help.
 8. **FM**: OPL3 first, YM2612 second (see below).
 
 ## Effect columns

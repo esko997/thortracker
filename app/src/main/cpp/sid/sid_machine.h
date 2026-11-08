@@ -71,10 +71,13 @@ void sm_destroy(SidMachine* m);
  * first. SM_ERR_IMAGE for a target outside the song or not reached. */
 int sm_start(SidMachine* m, const SidImage* image, int order, int row, int max_ticks, int* seek_mode);
 
-/* Live edit at a tick boundary (spike): the region is copied and the parameters rewritten; player
- * state is kept, and the playing channels' instrument numbers follow the image's slot map. Correct
- * when the playing orderlists and patterns did not move (docs/AUDIO_ENGINE.md: what step 2 needs).
- * Ignored while faulted or auditioning. */
+/* Live edit at a tick boundary: the song continues at the same (order, row) in the new image's data,
+ * which may be laid out anew (realtime-safe, no allocation). Per channel the sequencer state (orderlist
+ * entry, pattern, byte offset, packed rest, persisting instrument and command, a fetched note) is what
+ * straight play of the new data has there; table pointers inside an instrument's moved program follow
+ * it (same offset, by slot); straight play's tempo/funktempo at the playhead is set if the edit changed
+ * it; chip model and speed multiplier follow the header. A position that no longer exists is clamped
+ * to the last row of the last (or the current) order. Ignored while faulted or auditioning. */
 void sm_apply_image(SidMachine* m, const SidImage* image);
 
 /* Resets the machine to sound one held note through the player: channel 0..2, GoatTracker note 0..92
@@ -83,8 +86,8 @@ void sm_apply_image(SidMachine* m, const SidImage* image);
 int sm_audition(SidMachine* m, const SidImage* image, int channel, int note, int instrument, int fine);
 
 /* Key-off of an audition: the player's key-off state (mt_chngate = $FE, as a key-off row sets it) from
- * the next tick; returns 1 (sm_tick returns 0 once the voice's envelope has reached 0), or 0 when no
- * tick has run (cut: the host drops the machine). */
+ * the next tick; returns 1 (sm_tick returns 0 once the voice's envelope has reached 0), or 0 when the
+ * voice is silent already or no tick has run (cut: the host drops the machine). */
 int sm_release(SidMachine* m);
 
 /* Leaves voice `channel` (0..2) out of the mix (it keeps running, so unmuting resumes mid-note). */

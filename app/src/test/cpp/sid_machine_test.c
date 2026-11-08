@@ -38,7 +38,7 @@ static int checks = 0;
 #define TONE_NOTE 57 /* A-4 */
 
 static float g_out[SM_MAX_TICK_FRAMES * 2];
-static SidImage g_image, g_6581, g_x2, g_bad;
+static SidImage g_image, g_6581, g_x2, g_bad, g_moved, g_edited, g_tempo, g_short;
 
 static double now_us(void) {
     struct timespec t;
@@ -497,6 +497,14 @@ static void test_audition(const char* dir) {
     printf("  release tails: Tone %d ticks, Lead %d ticks\n", n, ended);
     EXPECT(sm_audition(m, &g_image, 0, TONE_NOTE, tone, 0) == SM_OK, "audition again");
     EXPECT(sm_release(m) == 0, "release before any tick cuts");
+    /* An instrument that has decayed to silence (sustain 0): release cuts (0) instead of a tail. */
+    static SidImage decay;
+    memcpy(&decay, &g_image, sizeof decay);
+    decay.bytes[SID_IMAGE_HEADER_SIZE + SID_MT_INSSR - SID_REGION_BASE + tone - 1] = 0x00;
+    EXPECT(sm_load_image(&decay) == 0, "decay variant");
+    EXPECT(sm_audition(m, &decay, 0, TONE_NOTE, tone, 0) == SM_OK, "audition sustain 0");
+    for (int t = 0; t < 10; ++t) sm_tick(m, g_out);
+    EXPECT(sm_envelope(m, 0) == 0 && sm_release(m) == 0 && sm_tick(m, g_out) == 0, "decayed note: release cuts");
     EXPECT(sm_audition(m, &g_image, 3, 57, tone, 0) == SM_ERR_IMAGE, "channel 3");
     EXPECT(sm_audition(m, &g_image, 0, 93, tone, 0) == SM_ERR_IMAGE, "note 93 (above G#7)");
     EXPECT(sm_audition(m, &g_image, 0, 57, 0, 0) == SM_ERR_IMAGE, "instrument 0");
@@ -591,6 +599,188 @@ static void test_faults_and_speed(void) {
     sm_destroy(m);
 }
 
+#define CHN_PEEK(m, sym, c) sm_peek((m), (uint16_t)(SID_MT_##sym + 7 * (c)))
+
+/* Ticks m and u once (silently) and tells whether they wrote the same SID registers. */
+static int tick_same(SidMachine* m, SidMachine* u) {
+    uint8_t x[512], y[512];
+    sm_tick_silent(m);
+    sm_tick_silent(u);
+    const int nx = sm_log(m, x, 256), ny = sm_log(u, y, 256);
+    return nx == ny && !memcmp(x, y, (size_t)nx * 2);
+}
+
+/* Index of the row start (order, row) in the first pass of straight play. */
+static int row_index(int order, int row) {
+    int k = row;
+    for (int o = 0; o < order; ++o) k += sid_gt_rows[o];
+    return k;
+}
+
+/* Live edits relocate: a re-laid-out image before every tick plays like straight play; edits ahead are
+ * heard as straight play of the edited song; tempo edits behind the playhead, a shortened song, chip
+ * model and speed changes. */
+static void test_live_edits(void) {
+    printf("live edits (relocating apply_image)\n");
+    SidMachine* m = sm_create(RATE);
+    SidMachine* u = sm_create(RATE);
+    /* 1. From power-on, the moved layout and the original alternately before every tick: the reference. */
+    EXPECT(sm_power_on(m, &g_image) == SM_OK, "power on");
+    sm_set_logging(m, 1);
+    int bad = -1, starts = 0, start_bad = -1, mapped = 0;
+    double worst_us = 0, sum_us = 0;
+    for (int f = 0; f < SID_GT_REF_FRAMES; ++f) {
+        const SidImage* next = f & 1 ? &g_image : &g_moved;
+        const double t0 = now_us();
+        sm_apply_image(m, next);
+        const double us = now_us() - t0;
+        sum_us += us;
+        if (us > worst_us) worst_us = us;
+        if (next == &g_moved) {
+            for (int c = 0; c < SM_CHANNELS; ++c) mapped += CHN_PEEK(m, CHNWAVEPTR, c) > SID_GT_PROGRAM_SHIFT;
+        }
+        if (sm_tick_silent(m) != SM_OK) {
+            EXPECT(0, "fault at tick %d", f);
+            break;
+        }
+        if (!same_as_ref(m, f, NULL) && bad < 0) bad = f;
+        int o, r, t;
+        sm_position(m, &o, &r, &t);
+        if (t == 1) {
+            if ((starts >= SID_GT_REF_STARTS || sid_gt_ref_starts[starts] != f) && start_bad < 0) start_bad = f;
+            ++starts;
+        }
+    }
+    EXPECT(bad < 0, "re-laid out before every tick: writes differ from the reference first at frame %d", bad);
+    EXPECT(starts == SID_GT_REF_STARTS && start_bad < 0, "row starts %d, first off at frame %d", starts, start_bad);
+    EXPECT(mapped > 300, "moved wave pointers in use: %d", mapped);
+    printf("  moved/original layout before each of %d ticks: writes = reference, %d row starts on its frames; "
+           "%d channel-ticks in moved wave programs; apply %.1f us mean, %.1f us worst\n",
+           SID_GT_REF_FRAMES, starts, mapped, sum_us / SID_GT_REF_FRAMES, worst_us);
+    /* ...and after seeks (from the start, and the order fallback) against the unmoved machine. */
+    const int seeks[][3] = {{0, 5, 12000}, {1, 17, 12000}, {2, 3, 12000}, {3, 6, 40}};
+    for (size_t k = 0; k < sizeof seeks / sizeof seeks[0]; ++k) {
+        int mode, mode_u;
+        sm_start(m, &g_image, seeks[k][0], seeks[k][1], seeks[k][2], &mode);
+        sm_start(u, &g_image, seeks[k][0], seeks[k][1], seeks[k][2], &mode_u);
+        sm_set_logging(m, 1);
+        sm_set_logging(u, 1);
+        int same = 1;
+        for (int t = 0; t < 600; ++t) {
+            sm_apply_image(m, t & 1 ? &g_image : &g_moved);
+            same &= tick_same(m, u);
+        }
+        EXPECT(same && mode == mode_u, "after seek %d/%d (mode %d) the relocating machine left straight play", seeks[k][0],
+               seeks[k][1], mode);
+    }
+    printf("  after seeks 0/5, 1/17, 2/3 and the order fallback 3/6: in step for 600 ticks each\n");
+
+    /* 2. A note edit ahead of the playhead, applied at ticks up to its row's start (incl. between its
+     *    fetch and start): from then on the writes are straight play's of the edited song. */
+    const int edit_start = sid_gt_ref_starts[row_index(SID_GT_EDIT_ORDER, SID_GT_EDIT_ROW)];
+    int edit_bad = -1, edit_differs = 0;
+    for (int at = edit_start - 12; at <= edit_start + 1; ++at) {
+        const int when = at == edit_start + 1 ? 300 : at; /* also once well before, during order 1 */
+        sm_power_on(m, &g_image);
+        sm_power_on(u, &g_edited);
+        sm_set_logging(m, 1);
+        sm_set_logging(u, 1);
+        int same = 1;
+        for (int t = 0; t < SID_GT_REF_FRAMES; ++t) {
+            if (t == when) sm_apply_image(m, &g_edited);
+            same &= tick_same(m, u);
+        }
+        if (!same && edit_bad < 0) edit_bad = when;
+    }
+    /* the edit is audible: the original differs from the edited song */
+    sm_power_on(m, &g_image);
+    sm_power_on(u, &g_edited);
+    sm_set_logging(m, 1);
+    sm_set_logging(u, 1);
+    for (int t = 0; t < edit_start + 10; ++t) edit_differs |= !tick_same(m, u);
+    EXPECT(edit_bad < 0 && edit_differs, "note edit applied at tick %d is not straight play of the edit", edit_bad);
+    printf("  note edit (order %d row %d) applied at each of the 13 ticks before its row starts and during order 1: "
+           "writes = straight play of the edited song\n", SID_GT_EDIT_ORDER, SID_GT_EDIT_ROW);
+
+    /* 3. Tempo edit behind the playhead (order 0 row 0 F06 -> F09) at 0/5: rows of 9 ticks from there;
+     *    undone at 0/8: 6 again. A funktempo speedtable edit while funktempo plays: the new pair. */
+    int mode;
+    sm_start(m, &g_image, 0, 5, 12000, &mode);
+    sm_apply_image(m, &g_tempo);
+    int tempo_ok = 1;
+    for (int c = 0; c < SM_CHANNELS; ++c) tempo_ok &= CHN_PEEK(m, CHNTEMPO, c) == SID_GT_TEMPO_EDIT;
+    int lengths[6] = {0}, n = 0, since = 0;
+    for (int t = 0; t < 200 && n < 6; ++t) {
+        sm_tick_silent(m);
+        int o, r, k;
+        sm_position(m, &o, &r, &k);
+        if (k == 1 && t) {
+            lengths[n++] = since;
+            since = 0;
+            if (o == 0 && r == 8) sm_apply_image(m, &g_image); /* undo once row 8 has started */
+        }
+        ++since;
+    }
+    EXPECT(tempo_ok && lengths[0] == SID_GT_TEMPO_EDIT + 1 && lengths[1] == SID_GT_TEMPO_EDIT + 1 &&
+               lengths[3] == 6 && lengths[4] == 6,
+           "tempo edit: chntempo ok %d, row lengths %d %d %d %d %d", tempo_ok, lengths[0], lengths[1], lengths[2],
+           lengths[3], lengths[4]);
+    static SidImage funk;
+    memcpy(&funk, &g_image, sizeof funk);
+    uint8_t* left = funk.bytes + SID_IMAGE_HEADER_SIZE + SID_MT_SPEEDLEFTTBL - SID_REGION_BASE;
+    uint8_t* right = funk.bytes + SID_IMAGE_HEADER_SIZE + SID_MT_SPEEDRIGHTTBL - SID_REGION_BASE;
+    const int fi = g_image.info.funk[2];
+    left[fi - 1] = 5;
+    right[fi - 1] = 3;
+    EXPECT(sm_load_image(&funk) == 0, "funk variant");
+    sm_start(m, &g_image, 1, 4, 12000, &mode);
+    const int in_funk = CHN_PEEK(m, CHNTEMPO, 0) < 2;
+    sm_apply_image(m, &funk);
+    EXPECT(in_funk && sm_peek(m, SID_MT_FUNKTEMPOTBL) == 5 && sm_peek(m, SID_MT_FUNKTEMPOTBL + 1) == 3 &&
+               CHN_PEEK(m, CHNTEMPO, 0) < 2,
+           "funktempo pair edit: %d/%d", sm_peek(m, SID_MT_FUNKTEMPOTBL), sm_peek(m, SID_MT_FUNKTEMPOTBL + 1));
+    printf("  tempo edit behind the playhead: rows of %d, %d ticks, undone: %d, %d; funktempo pair edit 6/4 -> 5/3 taken\n",
+           lengths[0], lengths[1], lengths[3], lengths[4]);
+
+    /* 4. The song shortened under the playhead (order 3 -> orders 0-1): clamped to the last row of order 1,
+     *    then plays order 1 (the restart) in step with straight play of the short song there. */
+    sm_start(m, &g_image, 3, 5, 12000, &mode);
+    sm_apply_image(m, &g_short);
+    int o, r, k;
+    sm_position(m, &o, &r, &k);
+    const int clamped = o == 1 && r == 0 && k == 0; /* clamped to its last row: the restart row is next */
+    int short_ok = 1, rows = 0;
+    for (int t = 0; t < 600; ++t) {
+        short_ok &= sm_tick_silent(m) == SM_OK;
+        sm_position(m, &o, &r, &k);
+        if (k == 1) {
+            short_ok &= o == 1 && r == rows % sid_gt_rows[1];
+            ++rows;
+        }
+    }
+    EXPECT(clamped && short_ok && rows > 50, "shortened song: clamped %d, %d rows in order 1, ok %d", clamped, rows, short_ok);
+    printf("  song cut to orders 0-1 under order 3: clamped to 1/%d, then %d rows of order 1 in order\n", sid_gt_rows[1] - 1,
+           rows);
+
+    /* 5. Chip model and speed from the header, live: 6581 writes the same registers; x2 halves the tick. */
+    sm_start(m, &g_image, 1, 0, 12000, &mode);
+    sm_start(u, &g_image, 1, 0, 12000, &mode);
+    sm_set_logging(m, 1);
+    sm_set_logging(u, 1);
+    sm_apply_image(m, &g_6581);
+    int same = 1;
+    for (int t = 0; t < 100; ++t) same &= tick_same(m, u);
+    const int frames = sm_tick(m, g_out);
+    double rms, peak;
+    stats(g_out, frames, &rms, &peak);
+    sm_apply_image(m, &g_x2);
+    EXPECT(same && rms > 0.01 && sm_tick_cycles(m) == 0x4CC7 / 2 + 1, "model/speed live: same %d rms %.3f cycles %u", same,
+           rms, sm_tick_cycles(m));
+    printf("  6581 applied live: writes unchanged, rms %.3f; x2 applied live: %u cycles per tick\n", rms, sm_tick_cycles(m));
+    sm_destroy(u);
+    sm_destroy(m);
+}
+
 static void test_ops(void) {
     printf("ops table\n");
     const ChipEngineOps* ops = chip_engine_ops("c64-sid");
@@ -641,6 +831,10 @@ int main(int argc, char** argv) {
     g_x2.bytes[14] = 2;
     g_x2.bytes[15] = 11;
     EXPECT(sm_load_image(&g_x2) == 0, "x2 variant");
+    EXPECT(load(&g_moved, sid_gt_moved, SID_GT_MOVED_USED) == 0, "moved fixture: %s", g_moved.info.problem);
+    EXPECT(load(&g_edited, sid_gt_edited, SID_GT_EDITED_USED) == 0, "edited fixture: %s", g_edited.info.problem);
+    EXPECT(load(&g_tempo, sid_gt_tempo, SID_GT_TEMPO_USED) == 0, "tempo fixture: %s", g_tempo.info.problem);
+    EXPECT(load(&g_short, sid_gt_short, SID_GT_SHORT_USED) == 0, "short fixture: %s", g_short.info.problem);
     test_player_image();
     test_images();
     test_reference(dir);
@@ -648,6 +842,7 @@ int main(int argc, char** argv) {
     test_audition(dir);
     test_mute();
     test_faults_and_speed();
+    test_live_edits();
     test_ops();
     test_audio(dir);
     printf("SID: %d checks, %d failures\n", checks, failures);

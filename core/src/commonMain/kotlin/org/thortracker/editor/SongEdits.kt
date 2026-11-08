@@ -37,11 +37,12 @@ internal fun Song.withPattern(index: Int, pattern: Pattern): Song =
 
 /**
  * A cell normalised to what [system] can represent: notes within its range, sound numbers within its largest bank, a
- * cut or empty note carrying no instrument; effect within the system's codes and parameter within a byte.
+ * cut, key on or empty note carrying no instrument; effect within the system's codes and parameter within a byte.
  */
 fun normaliseCell(cell: Cell, system: SoundSystem): Cell {
     val note = when {
         cell.note == Cell.CUT -> Cell.CUT
+        cell.note == system.keyOn -> cell.note
         cell.note < 0 -> Cell.EMPTY
         else -> cell.note.coerceIn(system.noteRange)
     }

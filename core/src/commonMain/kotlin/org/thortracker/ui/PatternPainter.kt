@@ -109,6 +109,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             auditionLit = auditioning
             if (auditioning) auditionChannel = st.channel else auditionEnd = motion.start()
         }
+        // The chip's shared state (SID: which voice owns the filter) where the song is heard: the playhead, else the cursor.
+        val shared = if (playing) s.system.sharedState(s, v.playback.order, v.playback.row) else s.system.sharedState(s, st.order, st.row)
         for (ch in 0 until channels) {
             val x = gridLeft + ch * laneW
             val col = Palette.channel(ch)
@@ -120,7 +122,14 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val penName = s.system.instrumentName(s, s.system.channels[ch].bank, pen) ?: ""
             ink.label(c, names[ch], x + cw * 0.6f, laneTop, laneHeaderH, col, true)
             val nw = ink.labelWidth(names[ch], ink.unit, true)
-            ink.label(c, ink.fit("${hex2(pen)} $penName", laneW - nw - cw * 2f, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
+            val tag = shared?.tags?.getOrNull(ch)
+            val tagW = if (tag == null) 0f else ink.labelWidth(tag, ink.unit * 0.7f, true) + cw * 1.2f
+            if (tag != null) {
+                val tr = Rect(x + laneW - tagW, laneTop + laneHeaderH * 0.2f, x + laneW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
+                ink.round(c, tr, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 60))
+                ink.label(c, tag, tr.centerX(), tr.top, tr.height(), Palette.PLAYHEAD, true, ink.unit * 0.7f, Align.CENTER)
+            }
+            ink.label(c, ink.fit("${hex2(pen)} $penName", laneW - nw - cw * 2f - tagW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
         }
 
         // rows background + ruler
@@ -318,11 +327,12 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val noteText = when {
             cell.note >= 0 -> song.system.noteName(cell.note)
             cell.note == Cell.CUT -> "OFF"
+            cell.note == song.system.keyOn -> song.system.noteName(cell.note)
             else -> "···"
         }
         val noteColor = when {
             cell.note >= 0 -> col
-            cell.note == Cell.CUT -> Palette.WRITE
+            cell.note == Cell.CUT || cell.note == song.system.keyOn -> Palette.WRITE
             else -> Palette.FAINT
         }
         ink.mono(c, noteText, x, y, rowH, noteColor, cell.note >= 0)
@@ -421,6 +431,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             }
             cell.note >= 0 -> "Note ${song.system.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
             cell.note == Cell.CUT -> system.help.offInspector
+            cell.note == system.keyOn -> "${system.noteName(cell.note)}: key on, the gate opens again (no new attack)"
             else -> "No note: the previous note keeps sounding"
         }
         ink.label(c, ink.fit(noteLine, w), x, y, line, Palette.TEXT)
@@ -490,6 +501,14 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         s.system.cellProblem(s, ch, cell)?.let { problem ->
             for (part in wrap(problem, w, ink.unit * 0.85f)) {
                 ink.label(c, part, x, y, line * 0.85f, Palette.ERROR, size = ink.unit * 0.85f)
+                y += line * 0.85f
+            }
+        }
+        val playing = v.playback.playing
+        val shared = if (playing) system.sharedState(s, v.playback.order, v.playback.row) else system.sharedState(s, st.order, st.row)
+        shared?.lines?.forEach { text ->
+            for (part in wrap(text, w, ink.unit * 0.85f)) {
+                ink.label(c, part, x, y, line * 0.85f, Palette.PLAYHEAD, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
         }

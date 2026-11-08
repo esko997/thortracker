@@ -1,4 +1,19 @@
-# Thor Tracker verification — 2026-11-07
+# Thor Tracker verification — 2026-11-08
+
+## 0.11.0 Commodore 64 SID songs
+
+Thor Tracker now writes music for a third chip: the C64's SID, played by GoatTracker 2.77's own playroutine on an emulated 6510 with reSID 1.0, on the Thor and the Steam Deck.
+
+- **New blank song** and **Load demo** offer **C64 SID (GoatTracker)**. The SID demo is **Raster Run**.
+- Three voices and one filter shared by the chip. The Pattern header tags the voice whose sound currently owns the filter; the inspector names it.
+- 63 sounds shared by all voices. The instrument view has six pages (L1/R1): **Envelope** (attack/decay/sustain/release with a drawn curve, plus presets: saw lead, PWM pad, filter bass, noise snare, wave-arpeggio kick, hi-hat, triangle bass, arpeggio chord), **Wave**, **Pulse** and **Filter** programs edited row by row, **Vibrato·HR** (hard restart, gate timer, first-frame waveform, vibrato) and **Tables** (the song-wide tables as the player reads them).
+- Song settings: chip model (MOS 8580 for new songs, or 6581), multispeed 1-16, the hard-restart envelope.
+- Effects use GoatTracker's numbers: `1xx`/`2xx` portamento, `3xx` tone portamento, `4xy` vibrato, `5xx`/`6xx` envelope, `7xx` waveform, `8xx`/`9xx`/`Axx` wave/pulse/filter program, `Bxx` filter control, `Cxx` cutoff, `Dxx` volume, `Exy` funktempo, `Fxx` tempo. Rows can hold key off or key on.
+- Microtonal tunings retune the song's frequency table, so every tuned degree is exact.
+- Export `.sid` (PSID, plays in SID players), `.prg` (runs on a C64) and GoatTracker `.sng` (opens in GoatTracker 2.77).
+- Live edits follow the playhead even when data moves; seeking and the first chip setup happen off the audio thread.
+
+Verified: 351 unit tests; native engine checks: Game Boy 145, NES 336, SID 151; our SID lowering is byte-identical to GoatTracker's own packer on its test song, and on three golden songs our `.sid` writes the same SID registers every frame as GoatTracker's packed `.sid` (run in an independent 6502 emulator); `.prg` writes the same as `.sid`; re-laying out a song before every tick changes no register write. Game Boy factory `.uge` byte-identical, all 32 Game Boy view renders pixel-identical, 18 Android tests on the emulator. On a Retroid Pocket Nova the SID demo plays with its filter tag and the instrument pages work. Audio-thread cost per 50 Hz tick (8580): Nova 0.46 ms, DMG 0.93 ms, Konkr 1.78 ms (worst stall incl. a live edit 2.5 ms).
 
 ## 0.10.0 NES DPCM samples
 
