@@ -35,7 +35,8 @@ static int nes_start(ChipMachine* m, const ChipImage* image, int order, int row,
 static void nes_apply_image(ChipMachine* m, const ChipImage* image) { nm_apply_image(MACHINE(m), IMAGE(image)); }
 
 /* Hosts pass the cell's instrument slot (1-based, as for the Game Boy); the lowering puts slot s at
- * instrument table index s - 1. Slot 0 (no instrument) has no sound. */
+ * instrument table index s - 1. Slot 0 (no instrument) has no sound. On the DPCM channel `note` is the
+ * mapping's DPCM list entry and the slot only has to be a real one. */
 static int nes_audition(ChipMachine* m, const ChipImage* image, int channel, int note, int instrument, int fine) {
     if (instrument < 1) return CHIP_ERR_IMAGE;
     return nm_audition(MACHINE(m), IMAGE(image), channel, note, instrument - 1, fine);

@@ -390,12 +390,12 @@ static void follow_sample(NesMachine* m, const NesImage* image) {
         return;
     }
     const uint8_t* old = m->prg + (start - 0x8000);
-    const uint8_t* fresh = nm_region(image) - NES_SONG_BASE; /* indexed by CPU address */
-    if (!memcmp(old, fresh + start, len)) return;
+    const uint8_t* fresh = nm_region(image); /* CPU address a at fresh[a - NES_SONG_BASE] */
+    if (!memcmp(old, fresh + (start - NES_SONG_BASE), len)) return;
     const NesImageInfo* ni = &image->info;
     for (uint32_t k = 0; k < ni->mappings; ++k) {
-        const uint8_t* e = fresh + ni->dpcm_list + 4u * k;
-        if (16u * e[1] + 1u == len && !memcmp(old, fresh + NES_SAMPLE_BASE + 64u * e[0], len)) {
+        const uint8_t* e = fresh + (ni->dpcm_list - NES_SONG_BASE) + 4u * k;
+        if (16u * e[1] + 1u == len && !memcmp(old, fresh + (NES_SAMPLE_BASE - NES_SONG_BASE) + 64u * e[0], len)) {
             nes_apu_dmc_move(a, e[0]);
             return;
         }
