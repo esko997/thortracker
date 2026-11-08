@@ -22,7 +22,7 @@ class TruePitchTest {
     private fun gbHz(note: Int) = HugeRules.pitchHz(note, 0)
 
     /** NES (NTSC) pulse: CPU 1789773 Hz / (16 * (period + 1)). */
-    private fun nesHz(note: Int) = 1789773.0 / (16.0 * (FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note)] + 1))
+    private fun nesHz(note: Int) = 1789773.0 / (16.0 * (FamiStudioLowering.NOTE_TABLE[note - NesRules.NOTE_OFFSET] + 1))
 
     @Test fun a4IsFiftySevenAnd440HzOnBothSystems() {
         assertTrue(57 in GbSystem.noteRange && 57 in NesSystem.noteRange)

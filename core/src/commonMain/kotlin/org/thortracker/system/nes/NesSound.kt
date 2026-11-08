@@ -8,6 +8,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
+import org.thortracker.system.ChannelKind
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemSound
 
@@ -20,11 +21,17 @@ import org.thortracker.system.SystemSound
 enum class NesExpansion(
     /** The chip whose instruments the expansion's channels play. */
     val chip: NesChip,
-    /** Channels after the 2A03's five, in FamiStudio's engine order. */
-    val extraChannels: Int,
+    /** The channels after the 2A03's five, in FamiStudio's engine order: their names and kinds. */
+    val channelNames: List<String>,
+    val channelKinds: List<ChannelKind>,
 ) {
-    @SerialName("none") NONE(NesChip.APU, 0),
-    @SerialName("vrc6") VRC6(NesChip.VRC6, 3);
+    @SerialName("none") NONE(NesChip.APU, emptyList(), emptyList()),
+    @SerialName("vrc6") VRC6(NesChip.VRC6, listOf("VRC6 Pulse 1", "VRC6 Pulse 2", "VRC6 Saw"),
+        listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.SAW)),
+    @SerialName("vrc7") VRC7(NesChip.VRC7, List(6) { "VRC7 FM ${it + 1}" }, List(6) { ChannelKind.VOICE });
+
+    /** Channels after the 2A03's five. */
+    val extraChannels: Int get() = channelNames.size
 
     /** All channels of a song with this expansion. */
     val channels: Int get() = NesRules.APU_CHANNELS + extraChannels
@@ -33,6 +40,7 @@ enum class NesExpansion(
     val system: NesFamiStudioSystem get() = when (this) {
         NONE -> NesSystem
         VRC6 -> NesVrc6System
+        VRC7 -> NesVrc7System
     }
 
     /** The chips whose instruments a song with this expansion may hold. */
@@ -41,12 +49,144 @@ enum class NesExpansion(
 
 /**
  * Which chip's channels an [NesInstrument] plays (FamiStudio's instrument expansion): the 2A03's, or an expansion's.
- * Instruments do not cross chips, as in FamiStudio: the same envelope means different things (the VRC6's 8 duty steps).
+ * Instruments do not cross chips, as in FamiStudio: the same envelope means different things (the VRC6's 8 duty steps,
+ * the VRC7's FM patch). [duty] is the duty envelope's range; VRC7 sounds have no duty envelope (it stays empty).
  */
 @Serializable
 enum class NesChip(val label: String, val duty: IntRange) {
     @SerialName("2a03") APU("2A03", 0..3),
     @SerialName("vrc6") VRC6("VRC6", 0..7),
+    @SerialName("vrc7") VRC7("VRC7", 0..0),
+}
+
+/**
+ * A VRC7 sound's FM patch (FamiStudio's `Vrc7Patch` and `Vrc7PatchRegs`). The VRC7 (a YM2413 derivative: six
+ * 2-operator FM channels) holds 15 patches in ROM ([preset] 1-15, [Vrc7Presets]) and one custom patch in its registers
+ * `$00-$07` ([preset] 0: [regs]), shared by every channel that plays preset 0, so two different custom sounds cannot
+ * sound at once. [regs] is kept for presets too (a copy of the preset's ROM data, as FamiStudio keeps it), so switching
+ * a preset to Custom starts from that sound. The release/stop sustain overrides are the song's ([Vrc7Sustain]).
+ */
+@Serializable
+data class Vrc7Patch(
+    val preset: Int = Vrc7Presets.BELL,
+    val regs: List<Int> = Vrc7Presets.data(Vrc7Presets.BELL),
+) {
+    /** The custom patch's registers as the engine loads them; for presets the ROM's (what plays). */
+    val sounding: List<Int> get() = if (preset == Vrc7Presets.CUSTOM) regs else Vrc7Presets.data(preset)
+
+    /** This patch on [preset]: a preset copies its ROM data into [regs]; Custom keeps them (starts from the last sound). */
+    fun withPreset(preset: Int): Vrc7Patch = when (preset) {
+        Vrc7Presets.CUSTOM -> copy(preset = preset)
+        in Vrc7Presets.PRESETS -> copy(preset = preset, regs = Vrc7Presets.data(preset))
+        else -> this
+    }
+
+    companion object {
+        val DEFAULT = Vrc7Patch()
+        const val REGS = 8
+    }
+}
+
+/**
+ * How the VRC7's FM notes fade when they end (FamiStudio's `Vrc7OverrideRelease` / `Vrc7OverrideStop`, instrument
+ * settings there). FamiStudio's sound engine keeps one copy of them (`famistudio_chn_vrc7_sustain`, taken from the
+ * last VRC7 instrument loaded on any FM channel), so a song has one setting that every VRC7 sound exports with.
+ * [release]: notes keep the chip's sustain bit, so OFF (key off) fades at the sustain rate (5) instead of the patch's
+ * release rate (sustained patches: RR; percussive ones: 7). [stop]: a stop or cut keys off with the sustain bit set,
+ * so the note fades at rate 5 instead of the patch's release.
+ */
+@Serializable
+data class Vrc7Sustain(val release: Boolean = false, val stop: Boolean = false) {
+    /** Byte 6 of FamiStudio's VRC7 instrument (`OutputInstruments`): `$20` release override, `$80` stop override. */
+    val engine: Int get() = (if (release) 0x20 else 0) or (if (stop) 0x80 else 0)
+}
+
+/**
+ * The VRC7's 15 ROM patches (FamiStudio 4.5.3's `Vrc7InstrumentPatch`, the VRC7 dump by Nuke.YKT that emu2413's
+ * `OPLL_VRC7_TONE` set also holds) as 8 register bytes each, and their names.
+ */
+object Vrc7Presets {
+    const val CUSTOM = 0
+    const val BELL = 1
+    val PRESETS = 1..15
+
+    val NAMES = listOf("Custom", "Bell", "Guitar", "Piano", "Flute", "Clarinet", "Rattling bell", "Trumpet", "Reed organ",
+        "Soft bell", "Xylophone", "Vibraphone", "Brass", "Bass guitar", "Synthesizer", "Chorus")
+
+    private val DATA = listOf(
+        intArrayOf(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+        intArrayOf(0x03, 0x21, 0x05, 0x06, 0xe8, 0x81, 0x42, 0x27),
+        intArrayOf(0x13, 0x41, 0x14, 0x0d, 0xd8, 0xf6, 0x23, 0x12),
+        intArrayOf(0x11, 0x11, 0x08, 0x08, 0xfa, 0xb2, 0x20, 0x12),
+        intArrayOf(0x31, 0x61, 0x0c, 0x07, 0xa8, 0x64, 0x61, 0x27),
+        intArrayOf(0x32, 0x21, 0x1e, 0x06, 0xe1, 0x76, 0x01, 0x28),
+        intArrayOf(0x02, 0x01, 0x06, 0x00, 0xa3, 0xe2, 0xf4, 0xf4),
+        intArrayOf(0x21, 0x61, 0x1d, 0x07, 0x82, 0x81, 0x11, 0x07),
+        intArrayOf(0x23, 0x21, 0x22, 0x17, 0xa2, 0x72, 0x01, 0x17),
+        intArrayOf(0x35, 0x11, 0x25, 0x00, 0x40, 0x73, 0x72, 0x01),
+        intArrayOf(0xb5, 0x01, 0x0f, 0x0f, 0xa8, 0xa5, 0x51, 0x02),
+        intArrayOf(0x17, 0xc1, 0x24, 0x07, 0xf8, 0xf8, 0x22, 0x12),
+        intArrayOf(0x71, 0x23, 0x11, 0x06, 0x65, 0x74, 0x18, 0x16),
+        intArrayOf(0x01, 0x02, 0xd3, 0x05, 0xc9, 0x95, 0x03, 0x02),
+        intArrayOf(0x61, 0x63, 0x0c, 0x00, 0x94, 0xc0, 0x33, 0xf6),
+        intArrayOf(0x21, 0x72, 0x0d, 0x00, 0xc1, 0xd5, 0x56, 0x06),
+    ).map { it.toList() }
+
+    /** Patch [preset]'s 8 register bytes (Custom: zeros). */
+    fun data(preset: Int): List<Int> = DATA[preset]
+}
+
+/**
+ * One field of the VRC7's (YM2413's) 8 patch registers, per operator where it has one (0 = modulator, 1 = carrier):
+ * `$00/$01` AM, VIB, EG (sustained), KSR, MULT; `$02` modulator KSL and TL (modulation level); `$03` carrier KSL, the
+ * carrier (DC) and modulator (DM) half-sine bits and FB (feedback); `$04/$05` AR, DR; `$06/$07` SL, RR. [max] is the
+ * field's largest value; [modulatorOnly] fields have no carrier column.
+ */
+enum class Vrc7Param(val label: String, val max: Int, val modulatorOnly: Boolean = false) {
+    MULT("Multiplier", 15),
+    WAVE("Half-sine", 1),
+    LEVEL("Mod. level", 63, modulatorOnly = true),
+    FEEDBACK("Feedback", 7, modulatorOnly = true),
+    AR("Attack", 15),
+    DR("Decay", 15),
+    SL("Sustain level", 15),
+    RR("Release", 15),
+    EG("Sustained", 1),
+    KSL("Key scale level", 3),
+    KSR("Key scale rate", 1),
+    AM("Tremolo", 1),
+    VIB("Vibrato", 1);
+
+    /** (register, shift, width) of this field for operator [op]. */
+    private fun at(op: Int): Triple<Int, Int, Int> = when (this) {
+        MULT -> Triple(op, 0, 4)
+        KSR -> Triple(op, 4, 1)
+        EG -> Triple(op, 5, 1)
+        VIB -> Triple(op, 6, 1)
+        AM -> Triple(op, 7, 1)
+        KSL -> Triple(2 + op, 6, 2)
+        LEVEL -> Triple(2, 0, 6)
+        WAVE -> Triple(3, if (op == 0) 3 else 4, 1)
+        FEEDBACK -> Triple(3, 0, 3)
+        AR -> Triple(4 + op, 4, 4)
+        DR -> Triple(4 + op, 0, 4)
+        SL -> Triple(6 + op, 4, 4)
+        RR -> Triple(6 + op, 0, 4)
+    }
+
+    /** The field's value for operator [op] in the 8 patch registers [regs]. */
+    fun get(regs: List<Int>, op: Int): Int {
+        val (reg, shift, width) = at(if (modulatorOnly) 0 else op)
+        return (regs[reg] shr shift) and ((1 shl width) - 1)
+    }
+
+    /** [regs] with the field of operator [op] set to [value] (clamped to 0..[max]). */
+    fun set(regs: List<Int>, op: Int, value: Int): List<Int> {
+        val (reg, shift, width) = at(if (modulatorOnly) 0 else op)
+        val mask = ((1 shl width) - 1) shl shift
+        val v = (value.coerceIn(0, max) shl shift) and mask
+        return regs.mapIndexed { i, r -> if (i == reg) (r and mask.inv()) or v else r }
+    }
 }
 
 /**
@@ -89,8 +229,9 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
  * On the DPCM channel only [dpcm] matters: which sample each note plays (FamiStudio 4.5.3 "DPCM instrument" mappings,
  * keyed by absolute note); a DPCM note the instrument does not map is an error.
  * [chip] says which channels play it ([NesChip.APU]: the 2A03's; [NesChip.VRC6]: the VRC6 pulses, duty 0-7 = 1/16 to
- * 8/16, and the saw, whose volume [sawVolume] scales). Both are left out of project files at their defaults, so 2A03
- * instruments are stored as before.
+ * 8/16, and the saw, whose volume [sawVolume] scales; [NesChip.VRC7]: the six FM channels, which play the FM patch [fm]
+ * shaped by the volume, arpeggio and pitch envelopes, no duty). These are left out of project files at their defaults,
+ * so 2A03 instruments are stored as before.
  */
 @Serializable
 data class NesInstrument(
@@ -103,6 +244,7 @@ data class NesInstrument(
     val dpcm: Map<Int, DpcmMapping> = emptyMap(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val chip: NesChip = NesChip.APU,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val sawVolume: Vrc6SawVolume = Vrc6SawVolume.HALF,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val fm: Vrc7Patch = Vrc7Patch.DEFAULT,
 ) {
     companion object {
         /** A new slot: flat full volume, nothing else. */
@@ -147,7 +289,8 @@ data class DpcmMapping(val sample: Int, val pitch: Int = 15, val loop: Boolean =
 /**
  * An NES song's chip data: one bank of exactly [NesSystem.SLOTS] instruments shared by all channels (slot n =
  * index n-1), the song's DPCM [samples] (at most [NesSystem.MAX_SAMPLES], referenced by instruments' DPCM
- * mappings) and its [expansion] chip (left out of project files when none, so 2A03 songs are stored as before).
+ * mappings), its [expansion] chip and, with the VRC7, how its FM notes fade ([vrc7Sustain]); the last two are left
+ * out of project files at their defaults, so 2A03 songs are stored as before.
  * Stored in project files as the song's `sound` object.
  */
 @Serializable
@@ -155,6 +298,7 @@ data class NesSound(
     val instruments: List<NesInstrument>,
     val samples: List<DpcmSample> = emptyList(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val expansion: NesExpansion = NesExpansion.NONE,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
 ) : SystemSound {
     override val system: SoundSystem get() = expansion.system
 

@@ -104,7 +104,7 @@ class HugeImageLayoutTest {
         assertArrayEquals(expected, image)
         assertEquals(0, engine.note(song, 0, 24, 1))   // C-3
         assertEquals(71, engine.note(song, 0, 95, 1))  // B-8
-        assertEquals(7, engine.fine(60, 7))
+        assertEquals(7, engine.fine(0, 60, 7))
         assertNull(engine.auditionProblem(song, 3, 36, 15, 15))
         assertEquals("Choose an instrument (01-0F) to audition", engine.auditionProblem(song, 0, 60, 0, 0))
         assertEquals("Cannot audition note B-2 on channel 0", engine.auditionProblem(song, 0, 23, 1, 0)) // below C-3

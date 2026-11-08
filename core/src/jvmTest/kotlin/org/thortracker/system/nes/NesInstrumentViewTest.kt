@@ -106,6 +106,55 @@ class NesInstrumentViewTest {
         assertFalse(session.setNesChip(1, NesChip.VRC6))
     }
 
+    /**
+     * On a VRC7 song a VRC7 sound's fourth page is its FM patch: editing a field of a built-in patch makes it the custom
+     * patch, starting from that patch's registers; the sustain rows set the song's one setting; back to 2A03 (or pasted
+     * into a song without the VRC7) the patch is dropped.
+     */
+    @Test
+    fun vrc7SoundsEditTheirFmPatch() {
+        val vrc7 = EditorSession(NesVrc7System.blank())
+        val v = ViewController(vrc7, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, vrc7.song).indexOf(row) }
+        val ins = { vrc7.song.nes.instruments[0] }
+        goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.VRC7, ins().chip)
+        assertEquals(NesRules.VRC7_FM1, v.state.listenChannel) // Listen follows to an FM channel
+        assertEquals(NesEnvelopeKind.entries.size, NesInstrumentView.pages(vrc7.song, v.state)) // no DPCM page
+        v.state.envelope = NesInstrumentView.FM_PAGE
+        assertTrue(NesInstrumentView.fmPage(vrc7.song, v.state))
+        // Bell → Guitar: a built-in patch holds its ROM registers.
+        goTo(Row.PATCH)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(2, ins().fm.preset)
+        assertEquals(Vrc7Presets.data(2), ins().fm.regs)
+        // The carrier's attack one lower: now Custom, every other register still Guitar's.
+        goTo(Row.FM_AR)
+        v.tap(Action.RIGHT)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(Vrc7Presets.CUSTOM, ins().fm.preset)
+        assertEquals(Vrc7Param.AR.get(Vrc7Presets.data(2), 1) - 1, Vrc7Param.AR.get(ins().fm.regs, 1))
+        assertEquals(Vrc7Param.AR.get(Vrc7Presets.data(2), 0), Vrc7Param.AR.get(ins().fm.regs, 0))
+        assertEquals(Vrc7Presets.data(2).filterIndexed { i, _ -> i != 5 }, ins().fm.regs.filterIndexed { i, _ -> i != 5 })
+        // Release sustain is the song's setting, not the sound's.
+        goTo(Row.SUSTAIN_RELEASE)
+        v.tap(Action.EDIT)
+        assertEquals(Vrc7Sustain(release = true), vrc7.song.nes.vrc7Sustain)
+        v.tap(Action.CLEAR)
+        assertEquals(Vrc7Sustain(), vrc7.song.nes.vrc7Sustain)
+        // A VRC7 sound pasted into a 2A03 song becomes a 2A03 sound without its patch.
+        val pasted = nesInstrumentFor(session.song, ins())
+        assertEquals(NesChip.APU, pasted.chip)
+        assertEquals(Vrc7Patch.DEFAULT, pasted.fm)
+        // Back to 2A03.
+        v.state.envelope = NesEnvelopeKind.VOLUME.ordinal
+        goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertEquals(Vrc7Patch.DEFAULT, ins().fm)
+    }
+
     @Test
     fun stepsAreDrawnAndEditedWithTheController() {
         val v = view { instrument = 1 }

@@ -244,7 +244,7 @@ class YmModelTest {
         for (c in 0 until 4) full = full.withEffect(c, YmRules.FX_VOLUME, 0x30)
         assertNull(fine.write(full, 57, 8))
         assertNull(fine.of(Cell(57, 1, YmRules.FX_FINE, 0x70)))
-        assertEquals(16, YmSystem.engine.fine(57, 16))
+        assertEquals(16, YmSystem.engine.fine(0, 57, 16))
         assertEquals(57, YmSystem.engine.note(YmSystem.blank(), 0, 57, 1))
     }
 

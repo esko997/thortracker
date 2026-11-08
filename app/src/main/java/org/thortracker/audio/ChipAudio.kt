@@ -96,7 +96,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             return@post
         }
         val h = readyHandle() ?: return@post
-        val result = nativeAudition(h, channel, engine.note(song, channel, note, instrument), instrument, engine.fine(note, detune))
+        val result = nativeAudition(h, channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune))
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
             // A held note keeps the stream: a pending idle check must not stop it before the
