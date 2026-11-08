@@ -6,7 +6,7 @@
 //   nes_dpcm_thor:   the same rows, DPCM list and samples (where the .dmc has them) in the Thor Tracker layout;
 //                    every row's bytes are FamiStudio's. Arrays: header + directory + song data, then *_samples.
 //   nes_dpcm_moved:  every block and every sample at another address (same directory and mapping indices).
-//   nes_dpcm_edited: nes_dpcm_thor with byte 100 of the Kick sample inverted.
+//   nes_dpcm_edited: nes_dpcm_thor with byte NES_DPCM_EDITED_BYTE of the Kick sample inverted.
 #ifndef NES_DPCM_SONG_H_
 #define NES_DPCM_SONG_H_
 #include <stdint.h>
@@ -15,6 +15,7 @@
 #define NES_DPCM_ORDERS 4
 #define NES_DPCM_LOOP 1
 #define NES_DPCM_MAPPINGS 8
+#define NES_DPCM_EDITED_BYTE 100
 /* Mapping (stream note byte, 1-based list index) of each sample/pitch in the export. */
 #define NES_DPCM_MAP_HAT_15 1
 #define NES_DPCM_MAP_KICK_12 2
