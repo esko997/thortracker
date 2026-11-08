@@ -308,7 +308,7 @@ static NesImage g_raw, g_thor, g_moved, g_edited, g_short;
 static int load_fixture(NesImage* image, const uint8_t* bytes, size_t size, const char* name) {
     memset(image, 0, sizeof *image);
     memcpy(image->bytes, bytes, size);
-    int r = nm_load_image(image);
+    int r = nm_load_image(image, &nes_player_2a03);
     EXPECT(r == 0, "%s loads (%s at %u)", name, image->info.problem ? image->info.problem : "-", image->info.problem_at);
     return r;
 }
@@ -424,12 +424,12 @@ static void test_images(void) {
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
         bad = g_thor;
         bad.bytes[cases[i].at] = cases[i].value;
-        int r = nm_load_image(&bad);
+        int r = nm_load_image(&bad, &nes_player_2a03);
         EXPECT(r != 0, "rejected: %s", cases[i].what);
         if (r) printf("  rejected %-40s -> %s (byte %u)\n", cases[i].what, bad.info.problem, bad.info.problem_at);
     }
     bad = g_thor;
-    EXPECT(nm_load_image(&bad) == 0, "the unmodified copy still loads");
+    EXPECT(nm_load_image(&bad, &nes_player_2a03) == 0, "the unmodified copy still loads");
 }
 
 typedef struct {
@@ -668,7 +668,7 @@ static void test_playback(NesMachine* m, const char* dir) {
         EXPECT(best_len >= 8, "channel %d holds a note (%d frames)", ch, best_len);
         if (best_len < 8) continue;
         nm_start(m, &g_thor, 0, 0, 0, &mode);
-        for (int c = 0; c < NM_CHANNELS; ++c) nm_mute_channel(m, c, c != ch);
+        for (int c = 0; c < nes_player_2a03.channels; ++c) nm_mute_channel(m, c, c != ch);
         static float mono[NM_MAX_TICK_FRAMES * 600];
         int got = 0;
         for (int f = 0; f < best + best_len; ++f) {
@@ -692,7 +692,7 @@ static void test_playback(NesMachine* m, const char* dir) {
     const int step = 256 * 125 / 150; /* FamiStudio's integer formula for tempo 125 */
     hdr[2] = (uint8_t)step;
     hdr[3] = (uint8_t)(step >> 8);
-    EXPECT(nm_load_image(&slow) == 0 && slow.info.tempo_ntsc == step, "tempo 125 image (step %d)", step);
+    EXPECT(nm_load_image(&slow, &nes_player_2a03) == 0 && slow.info.tempo_ntsc == step, "tempo 125 image (step %d)", step);
     nm_start(m, &slow, 0, 0, 0, &mode);
     int acc = 6 << 8, speed = 6, rows = 0, mismatched = 0, model_frames = 0;
     for (int f = 0; rows < FIRST_PASS_ROWS + 4; ++f) {
@@ -826,7 +826,7 @@ static void test_live_apply(NesMachine* m) {
     for (uint32_t i = 0; i + 2 < fast.info.size; ++i) {
         if (fr[i] == 0x46 && fr[i + 1] == 0x04 && fr[i + 2] == 0x53) fr[i + 1] = 5, ++edits;
     }
-    EXPECT(edits == 1 && nm_load_image(&fast) == 0 && fast.info.speed[3] == 5, "speed edit image (order 3 starts at 5)");
+    EXPECT(edits == 1 && nm_load_image(&fast, &nes_player_2a03) == 0 && fast.info.speed[3] == 5, "speed edit image (order 3 starts at 5)");
     const struct {
         int order, row, before, after;
     } speed_cases[] = {{2, 10, 4, 5}, {3, 4, 8, 8}, {2, 6, 7, 7}, {1, 3, 7, 7}};
@@ -971,7 +971,7 @@ static void test_mute(NesMachine* m) {
     double e_all = 0, e_muted = 0, e_back = 0;
     for (int f = 0; f < 900; ++f) {
         if (f == 300 || f == 600) {
-            for (int c = 0; c < NM_CHANNELS; ++c) nm_mute_channel(m, c, f == 300);
+            for (int c = 0; c < nes_player_2a03.channels; ++c) nm_mute_channel(m, c, f == 300);
         }
         int n = nm_tick(m, g_out);
         double e = 0;
@@ -1017,7 +1017,7 @@ static void test_faults(NesMachine* m) {
     uint8_t* song = bad.bytes + NM_REGION_OFFSET;
     int ch0 = (song[5] | song[6] << 8) - NES_SONG_BASE;
     song[ch0] = 0x55;
-    EXPECT(nm_load_image(&bad) == 0, "the raw image passes header validation");
+    EXPECT(nm_load_image(&bad, &nes_player_2a03) == 0, "the raw image passes header validation");
     const ChipEngineOps* ops = chip_engine_ops("nes-famistudio");
     ChipMachine* cm = ops->create(RATE);
     EXPECT(ops->start(cm, (const ChipImage*)&bad, 0, 0, 0, &mode) == CHIP_OK, "starts");
@@ -1296,7 +1296,7 @@ static int load_split(NesImage* image, const uint8_t* head, size_t head_size, ui
     memset(image, 0, sizeof *image);
     memcpy(image->bytes, head, head_size);
     memcpy(image->bytes + NM_REGION_OFFSET + (sample_start - NES_SONG_BASE), samples, sample_size);
-    int r = nm_load_image(image);
+    int r = nm_load_image(image, &nes_player_2a03);
     EXPECT(r == 0, "%s loads (%s at %u)", name, image->info.problem ? image->info.problem : "-", image->info.problem_at);
     return r;
 }
@@ -1384,12 +1384,12 @@ static void test_dpcm_images(void) {
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
         bad = g_dthor;
         bad.bytes[cases[i].at] = cases[i].value;
-        int r = nm_load_image(&bad);
+        int r = nm_load_image(&bad, &nes_player_2a03);
         EXPECT(r != 0, "rejected: %s", cases[i].what);
         if (r) printf("    %s: %s\n", cases[i].what, bad.info.problem);
     }
     bad = g_dthor;
-    EXPECT(nm_load_image(&bad) == 0, "the unmodified copy still loads");
+    EXPECT(nm_load_image(&bad, &nes_player_2a03) == 0, "the unmodified copy still loads");
 }
 
 static void write_dpcm_evidence(NesMachine* m, const char* dir, const Trace* thor) {
@@ -1611,7 +1611,7 @@ static void test_dpcm_seek(NesMachine* m) {
                o, r, landed.level, landed.remaining, f0, diff);
     }
     /* What is heard: the DMC alone after a seek into order 2 equals straight play from that frame. */
-    NesMachine* straight = nm_create(RATE);
+    NesMachine* straight = nm_create(RATE, &nes_player_2a03);
     const int f0 = dpcm_row_frame(2, 5);
     nm_start(m, &g_dthor, 2, 5, 12000, &mode);
     nm_start(straight, &g_dthor, 0, 0, 0, &mode);
@@ -1838,7 +1838,7 @@ static void test_shared_region(NesMachine* m) {
     const NesImageInfo* b = &g_big.info;
     const uint8_t* s = nm_region(&g_big);
     const uint16_t ch0 = nm_rd16(s + 5), pat0 = nm_rd16(s + (ch0 + 2 - NES_SONG_BASE));
-    EXPECT(b->size == NM_REGION_SIZE && b->size > 24570 && !b->samples && !b->sample_start && pat0 >= 0xC000,
+    EXPECT(b->size == nes_player_2a03.region_size && b->size > 24570 && !b->samples && !b->sample_start && pat0 >= 0xC000,
            "sample-less image with %u bytes of song data (0.9.0's limit: 24570), patterns at $%04X", b->size, pat0);
     const int frames = song_frames(FIRST_PASS_ROWS + 2 * LOOP_ROWS);
     Trace ref, t;
@@ -1894,26 +1894,26 @@ static void test_shared_region(NesMachine* m) {
     bad = g_dboundary;
     bad.bytes[10] = (uint8_t)(x->size + 1);
     bad.bytes[11] = (uint8_t)((x->size + 1) >> 8);
-    EXPECT(nm_load_image(&bad) != 0, "one more byte of song data overlaps the samples: rejected (%s)", bad.info.problem);
+    EXPECT(nm_load_image(&bad, &nes_player_2a03) != 0, "one more byte of song data overlaps the samples: rejected (%s)", bad.info.problem);
     bad = g_dboundary;
     bad.bytes[NES_IMAGE_HEADER_SAMPLE_START] = (uint8_t)(x->sample_start - 64);
     bad.bytes[NES_IMAGE_HEADER_SAMPLE_START + 1] = (uint8_t)((x->sample_start - 64) >> 8);
-    EXPECT(nm_load_image(&bad) != 0, "a sample block starting 64 bytes into the song data: rejected (%s)", bad.info.problem);
+    EXPECT(nm_load_image(&bad, &nes_player_2a03) != 0, "a sample block starting 64 bytes into the song data: rejected (%s)", bad.info.problem);
     trace_free(&ref);
     trace_free(&t);
 }
 
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
-    nm_build_raw_image(&g_raw, nes_ft_raw, NES_FT_RAW_SIZE, NULL, 0, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
-    EXPECT(nm_load_image(&g_raw) == 0, "raw FamiStudio export loads (%s)", g_raw.info.problem ? g_raw.info.problem : "-");
+    nm_build_raw_image(&g_raw, &nes_player_2a03, nes_ft_raw, NES_FT_RAW_SIZE, NULL, 0, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
+    EXPECT(nm_load_image(&g_raw, &nes_player_2a03) == 0, "raw FamiStudio export loads (%s)", g_raw.info.problem ? g_raw.info.problem : "-");
     load_fixture(&g_thor, nes_ft_thor, NES_FT_THOR_SIZE, "Thor layout");
     load_fixture(&g_moved, nes_ft_moved, NES_FT_MOVED_SIZE, "moved");
     load_fixture(&g_edited, nes_ft_edited, NES_FT_EDITED_SIZE, "edited");
     load_fixture(&g_short, nes_ft_short, NES_FT_SHORT_SIZE, "short");
-    nm_build_raw_image(&g_draw, nes_dpcm_raw, NES_DPCM_RAW_SIZE, nes_dpcm_dmc, NES_DPCM_DMC_SIZE, 0, NES_DPCM_ROWS, NES_DPCM_ORDERS,
+    nm_build_raw_image(&g_draw, &nes_player_2a03, nes_dpcm_raw, NES_DPCM_RAW_SIZE, nes_dpcm_dmc, NES_DPCM_DMC_SIZE, 0, NES_DPCM_ROWS, NES_DPCM_ORDERS,
                        NES_DPCM_LOOP);
-    EXPECT(nm_load_image(&g_draw) == 0, "raw DPCM export + .dmc loads (%s)", g_draw.info.problem ? g_draw.info.problem : "-");
+    EXPECT(nm_load_image(&g_draw, &nes_player_2a03) == 0, "raw DPCM export + .dmc loads (%s)", g_draw.info.problem ? g_draw.info.problem : "-");
     load_split(&g_dthor, nes_dpcm_thor, NES_DPCM_THOR_SIZE, NES_DPCM_THOR_SAMPLE_START, nes_dpcm_thor_samples,
                NES_DPCM_THOR_SAMPLES_SIZE, "DPCM Thor layout");
     load_split(&g_dmoved, nes_dpcm_moved, NES_DPCM_MOVED_SIZE, NES_DPCM_MOVED_SAMPLE_START, nes_dpcm_moved_samples,
@@ -1923,7 +1923,7 @@ int main(int argc, char** argv) {
     load_split(&g_dboundary, nes_dpcm_boundary, NES_DPCM_BOUNDARY_SIZE, NES_DPCM_BOUNDARY_SAMPLE_START, nes_dpcm_boundary_samples,
                NES_DPCM_BOUNDARY_SAMPLES_SIZE, "DPCM samples at the top, song data up to them");
     load_fixture(&g_big, nes_ft_big, NES_FT_BIG_SIZE, "song data filling the whole region");
-    NesMachine* m = nm_create(RATE);
+    NesMachine* m = nm_create(RATE, &nes_player_2a03);
     if (!m) {
         printf("nm_create failed\n");
         return 2;

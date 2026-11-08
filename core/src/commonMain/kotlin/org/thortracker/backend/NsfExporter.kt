@@ -3,41 +3,43 @@ package org.thortracker.backend
 import org.thortracker.model.Song
 
 /**
- * `.nsf` export (NSF 1, NTSC, no bank switching, no expansion chips): the same player, song data and samples the
- * preview engine runs — the player at [NesPlayerImage.LOAD] with its NSF entry table (init = load, play = load + 3),
- * zeros up to [NesPlayerImage.SONG_BASE], the lowered FamiStudio data, and when the song plays DPCM samples, zeros up
- * to the sample block's start (the top of `$C000-$FFF9`, where the image puts it) and the samples (without bank
- * switching the whole image is loaded at once). Plays in NSF players and on hardware through cartridges that load NSFs.
+ * `.nsf` export (NSF 1, NTSC, no bank switching): the same player, song data and samples the preview engine runs —
+ * the song's player build ([NesPlayer]) at its load address with its NSF entry table (init = load, play = load + 3),
+ * zeros up to its song base, the lowered FamiStudio data, and when the song plays DPCM samples, zeros up to the sample
+ * block's start (the top of `$C000-$FFF9`, where the image puts it) and the samples (without bank switching the whole
+ * image is loaded at once). Header byte `$7B` names the expansion chip the player drives (bit 0: VRC6), so NSF players
+ * emulate it. Plays in NSF players and on hardware through cartridges that load NSFs (with the chip, for VRC6).
  */
 object NsfExporter {
     /** NTSC play rate in microseconds (NSF convention for 60.1 Hz). */
     private const val NTSC_SPEED = 16639
 
     /** @throws IllegalArgumentException when the song cannot be lowered. */
-    fun export(song: Song): ByteArray = FamiStudioLowering.lower(song).let { export(it.data, it.samples, it.sampleStart, song.title, song.artist) }
+    fun export(song: Song): ByteArray = FamiStudioLowering.lower(song).let { export(it.player, it.data, it.samples, it.sampleStart, song.title, song.artist) }
 
-    internal fun export(data: ByteArray, samples: ByteArray, sampleStart: Int, title: String, artist: String): ByteArray {
-        val player = NesPlayerImage.BYTES
-        val end = if (samples.isEmpty()) NesPlayerImage.SONG_BASE + data.size else sampleStart + samples.size
-        val body = ByteArray(end - NesPlayerImage.LOAD)
-        player.copyInto(body)
-        data.copyInto(body, NesPlayerImage.SONG_BASE - NesPlayerImage.LOAD)
-        if (samples.isNotEmpty()) samples.copyInto(body, sampleStart - NesPlayerImage.LOAD)
+    internal fun export(player: NesPlayer, data: ByteArray, samples: ByteArray, sampleStart: Int, title: String, artist: String): ByteArray {
+        val code = player.bytes
+        val end = if (samples.isEmpty()) player.songBase + data.size else sampleStart + samples.size
+        val body = ByteArray(end - player.load)
+        code.copyInto(body)
+        data.copyInto(body, player.songBase - player.load)
+        if (samples.isNotEmpty()) samples.copyInto(body, sampleStart - player.load)
         val header = ByteArray(128)
         "NESM".forEachIndexed { i, c -> header[i] = c.code.toByte() }
         header[4] = 0x1a
         header[5] = 1 // version
         header[6] = 1 // songs
         header[7] = 1 // first song
-        put16(header, 8, NesPlayerImage.LOAD)
-        put16(header, 10, NesPlayerImage.INIT)
-        put16(header, 12, NesPlayerImage.PLAY)
+        put16(header, 8, player.load)
+        put16(header, 10, player.init)
+        put16(header, 12, player.play)
         text(header, 0x0e, title.ifBlank { "Untitled" })
         text(header, 0x2e, artist)
         text(header, 0x4e, "Thor Tracker")
         put16(header, 0x6e, NTSC_SPEED)
-        // 0x70-0x77 bank switching: none. 0x78 PAL speed, 0x7a NTSC, 0x7b no expansion chips.
+        // 0x70-0x77 bank switching: none. 0x78 PAL speed, 0x7a NTSC, 0x7b expansion chips.
         put16(header, 0x78, 19997)
+        header[0x7b] = player.nsfChips.toByte()
         return header + body
     }
 

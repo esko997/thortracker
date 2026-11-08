@@ -1,25 +1,27 @@
 package org.thortracker.backend
 
 /**
- * Test-only NES "player": a 6502 (documented opcodes, no decimal mode — the 2A03 has none) running the embedded
- * FamiStudio player like an NSF host — init once, then play each frame — and recording the APU register writes of
- * every frame. Two song datas that write the same registers in the same order with the same values on every frame
- * sound identical on any APU; that is the golden comparison between FamiStudio's own export and our lowering.
+ * Test-only NES "player": a 6502 (documented opcodes, no decimal mode — the 2A03 has none) running an embedded
+ * FamiStudio player build ([player]) like an NSF host — init once, then play each frame — and recording the sound
+ * register writes of every frame: the APU's `$4000-$4017` and, on an expansion build, the chip's (VRC6 `$9000-$9003`,
+ * `$A000-$A002`, `$B000-$B002`). Two song datas that write the same registers in the same order with the same values
+ * on every frame sound identical on any chip; that is the golden comparison between FamiStudio's own export and our
+ * lowering.
  */
-class NesTracer(songData: ByteArray) : Cpu6502() {
+class NesTracer(songData: ByteArray, private val player: NesPlayer = NesPlayer.APU) : Cpu6502() {
     private val frameWrites = ArrayList<Int>()
 
     init {
-        NesPlayerImage.BYTES.forEachIndexed { i, b -> mem[NesPlayerImage.LOAD + i] = b.toInt() and 0xff }
-        songData.forEachIndexed { i, b -> mem[NesPlayerImage.SONG_BASE + i] = b.toInt() and 0xff }
-        call(NesPlayerImage.INIT, a = 0, x = 0)
+        player.bytes.forEachIndexed { i, b -> mem[player.load + i] = b.toInt() and 0xff }
+        songData.forEachIndexed { i, b -> mem[player.songBase + i] = b.toInt() and 0xff }
+        call(player.init, a = 0, x = 0)
         frameWrites.clear()
     }
 
-    /** One frame (the play routine): APU writes as `reg shl 8 or value`, in order. */
+    /** One frame (the play routine): register writes as `address shl 8 or value`, in order. */
     fun frame(): IntArray {
         frameWrites.clear()
-        call(NesPlayerImage.PLAY, a, x)
+        call(player.play, a, x)
         return frameWrites.toIntArray()
     }
 
@@ -30,8 +32,16 @@ class NesTracer(songData: ByteArray) : Cpu6502() {
 
     override fun write(addr: Int, v: Int) {
         val ad = addr and 0xffff
-        if (ad in 0x4000..0x4017) frameWrites += (ad - 0x4000) shl 8 or (v and 0xff)
+        if (ad in 0x4000..0x4017 || player.nsfChips and VRC6 != 0 && ad in VRC6_REGISTERS) frameWrites += ad shl 8 or (v and 0xff)
         else if (ad < 0x0800) mem[ad] = v and 0xff
         // ROM and unmapped space ignore writes.
+    }
+
+    companion object {
+        private const val VRC6 = 0x01
+        private val VRC6_REGISTERS = setOf(0x9000, 0x9001, 0x9002, 0x9003, 0xA000, 0xA001, 0xA002, 0xB000, 0xB001, 0xB002)
+
+        /** A frame's writes as text: `4000=3f 9002=81 …`. */
+        fun text(t: IntArray) = t.joinToString(" ") { "%04x=%02x".format(it shr 8, it and 0xff) }
     }
 }

@@ -35,7 +35,7 @@ class NesInstrumentViewTest {
     }
 
     private fun ViewController.goTo(row: Row) {
-        state.instField = NesInstrumentView.rows(state).indexOf(row)
+        state.instField = NesInstrumentView.rows(state, session.song).indexOf(row)
     }
 
     private val sound get() = session.song.nes.instruments[0]
@@ -56,11 +56,54 @@ class NesInstrumentViewTest {
     @Test
     fun rowsFollowTheEnvelope() {
         val st = ViewState()
-        assertTrue(Row.RELEASE in NesInstrumentView.rows(st))
-        assertFalse(Row.MODE in NesInstrumentView.rows(st))
+        assertTrue(Row.RELEASE in NesInstrumentView.rows(st, session.song))
+        assertFalse(Row.MODE in NesInstrumentView.rows(st, session.song))
         st.envelope = NesEnvelopeKind.PITCH.ordinal
-        assertFalse(Row.RELEASE in NesInstrumentView.rows(st))
-        assertTrue(Row.MODE in NesInstrumentView.rows(st))
+        assertFalse(Row.RELEASE in NesInstrumentView.rows(st, session.song))
+        assertTrue(Row.MODE in NesInstrumentView.rows(st, session.song))
+        assertFalse(Row.CHIP in NesInstrumentView.rows(st, session.song)) // 2A03-only songs keep their rows
+    }
+
+    /** On a VRC6 song a sound picks its chip; VRC6 sounds get eight duties and a saw volume, and no DPCM page. */
+    @Test
+    fun vrc6SoundsChooseTheirChip() {
+        val vrc6 = EditorSession(NesVrc6System.blank())
+        val v = ViewController(vrc6, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, vrc6.song).indexOf(row) }
+        val ins = { vrc6.song.nes.instruments[0] }
+        assertTrue(Row.CHIP in NesInstrumentView.rows(v.state, vrc6.song))
+        assertFalse(Row.SAW in NesInstrumentView.rows(v.state, vrc6.song))
+        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(vrc6.song, v.state))
+        goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.VRC6, ins().chip)
+        assertEquals(NesRules.VRC6_PULSE1, v.state.listenChannel) // Listen follows to a VRC6 channel
+        assertTrue(Row.SAW in NesInstrumentView.rows(v.state, vrc6.song))
+        assertEquals(NesEnvelopeKind.entries.size, NesInstrumentView.pages(vrc6.song, v.state)) // no DPCM page
+        goTo(Row.SAW)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(Vrc6SawVolume.QUARTER, ins().sawVolume)
+        v.tap(Action.CLEAR)
+        assertEquals(Vrc6SawVolume.HALF, ins().sawVolume)
+        // Duty runs to 7 on a VRC6 sound.
+        v.state.envelope = NesEnvelopeKind.DUTY.ordinal
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(10) { Action.UP })
+        assertEquals(listOf(7), ins().duty.values)
+        // Back to 2A03: duties clamp to 0-3, the saw volume resets, Listen returns to a 2A03 channel.
+        v.state.envelope = NesEnvelopeKind.VOLUME.ordinal
+        goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertEquals(listOf(3), ins().duty.values)
+        // A copied VRC6 sound pasted into a 2A03 song becomes a 2A03 sound.
+        val vrc6Sound = NesInstrument("V", chip = NesChip.VRC6, duty = NesEnvelope(listOf(6)), sawVolume = Vrc6SawVolume.FULL)
+        val pasted = nesInstrumentFor(session.song, vrc6Sound)
+        assertEquals(NesChip.APU, pasted.chip)
+        assertEquals(listOf(3), pasted.duty.values)
+        assertEquals(Vrc6SawVolume.HALF, pasted.sawVolume)
+        // 2A03 songs refuse the VRC6 chip.
+        assertFalse(session.setNesChip(1, NesChip.VRC6))
     }
 
     @Test

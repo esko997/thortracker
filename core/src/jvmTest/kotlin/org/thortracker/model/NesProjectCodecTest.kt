@@ -14,6 +14,7 @@ import org.thortracker.backend.NesGoldenSongs
 import org.thortracker.system.SoundSystems
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -26,7 +27,8 @@ import kotlinx.serialization.json.JsonArray
 class NesProjectCodecTest {
     @Test
     fun nesSongsRoundTripExactly() {
-        val songs = listOf(NesSystem.blank(), NesSystem.demo()) + NesGoldenSongs.ALL.values.map { it() }
+        val songs = listOf(NesSystem.blank(), NesSystem.demo(), NesVrc6System.blank(), NesVrc6System.demo()) +
+            NesGoldenSongs.ALL.values.map { it() }
         for (song in songs) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
     }
 
@@ -42,6 +44,29 @@ class NesProjectCodecTest {
         val lead = instruments[0].jsonObject
         assertEquals(setOf("name", "volume", "arpeggio", "pitch", "pitchRelative", "duty", "dpcm"), lead.keys)
         assertEquals(setOf("values", "loop", "release"), lead["volume"]!!.jsonObject.keys)
+    }
+
+    /** The VRC6 variant is its own backend; its sound names the expansion and its VRC6 sounds their chip. */
+    @Test
+    fun vrc6SongsNameTheirVariant() {
+        val demo = NesVrc6System.demo()
+        assertEquals(NesVrc6System, demo.system)
+        val root = Json.parseToJsonElement(ProjectCodec.encode(demo)).jsonObject
+        assertEquals("nes-famistudio-vrc6", root["backend"]!!.jsonPrimitive.content)
+        assertEquals("2", root["backendVersion"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("vrc6", sound["expansion"]!!.jsonPrimitive.content)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(instruments.any { it["chip"]?.jsonPrimitive?.content == "vrc6" && it["sawVolume"]?.jsonPrimitive?.content == "full" })
+        // 2A03 songs are stored exactly as before: no expansion, chip or saw volume keys.
+        val plain = Json.parseToJsonElement(ProjectCodec.encode(NesSystem.demo())).jsonObject["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertTrue(plain.keys.toString(), "expansion" !in plain.keys)
+        assertTrue(plain["instruments"]!!.jsonArray.none { "chip" in it.jsonObject.keys || "sawVolume" in it.jsonObject.keys })
+        // A file whose backend and sound disagree is rejected.
+        val mixed = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio")) +
+            ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
+        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mixed.toString()) }
+        assertTrue(e.message!!, e.message!!.contains("NES + VRC6"))
     }
 
     @Test

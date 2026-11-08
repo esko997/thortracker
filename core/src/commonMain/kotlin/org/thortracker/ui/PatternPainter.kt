@@ -82,12 +82,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         gridLeft = area.left + rulerW
         multi = ctl.multiColumn()
         laneCount = channels
+        val minLane = cw * 10f + cw * 1.2f
+        variableLanes = multi || channels * minLane > area.width() - rulerW
         val wantInspector: Boolean
         val inspectorW: Float
-        if (!multi) {
-            val laneInner = cw * 10f
-            val lanePad = cw * 1.2f
-            val minLane = laneInner + lanePad
+        if (!variableLanes) {
             wantInspector = area.width() - rulerW - channels * minLane > ink.unit * 15f
             laneW = if (wantInspector) minOf(cw * 15f, (area.width() - rulerW - ink.unit * 15f) / channels)
             else (area.width() - rulerW) / channels
@@ -146,7 +145,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             }
             ink.label(c, ink.fit("${hex2(pen)} $penName", laneW - nw - cw * 2f - tagW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
         }
-        if (multi) drawLaneScroll(c, area, laneHeaderH)
+        if (variableLanes) drawLaneScroll(c, area, laneHeaderH)
 
         // rows background + ruler
         for (r in first..last) {
@@ -258,25 +257,27 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
     // ---- lanes ---------------------------------------------------------------------------------------
 
-    /** Several effect columns (the OPL3): lanes differ in width and scroll sideways to keep the cursor's in view. */
+    /** Whether the sound system supports editing several effect columns. */
     private var multi = false
+    /** Variable-width/scrollable layout also serves single-effect systems whose lanes cannot fit legibly. */
+    private var variableLanes = false
     private var laneCount = 0
     private val laneXs = FloatArray(MAX_LANES)
     private val laneWs = FloatArray(MAX_LANES)
     private var firstLane = 0
     private var lastLane = 0
-    /** First lane shown while the lanes do not all fit (several-column systems only). */
+    /** First lane shown while the lanes do not all fit. */
     private var laneScroll = 0
     private val scrollLeft = Rect()
     private val scrollRight = Rect()
 
-    private fun laneLeft(ch: Int): Float = if (multi) laneXs[ch] else gridLeft + ch * laneW
+    private fun laneLeft(ch: Int): Float = if (variableLanes) laneXs[ch] else gridLeft + ch * laneW
 
-    private fun laneWidth(ch: Int): Float = if (multi) laneWs[ch] else laneW
+    private fun laneWidth(ch: Int): Float = if (variableLanes) laneWs[ch] else laneW
 
-    private fun laneRight(ch: Int): Float = if (multi) laneXs[ch] + laneWs[ch] else gridLeft + (ch + 1) * laneW
+    private fun laneRight(ch: Int): Float = if (variableLanes) laneXs[ch] + laneWs[ch] else gridLeft + (ch + 1) * laneW
 
-    private fun gridRight(): Float = if (multi) laneRight(lastLane) else gridLeft + laneW * laneCount
+    private fun gridRight(): Float = if (variableLanes) laneRight(lastLane) else gridLeft + laneW * laneCount
 
     /**
      * Lays out lanes of `note sound` plus 4 characters per shown effect column. The text keeps its size on every
@@ -903,8 +904,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         touchTarget = when {
             insp != null && insp.contains(x, y) -> if (y >= orderListTop) 3 else 0
             y < headerBottom -> 0
-            multi && scrollLeft.contains(x, y) -> 4
-            multi && scrollRight.contains(x, y) -> 5
+            variableLanes && scrollLeft.contains(x, y) -> 4
+            variableLanes && scrollRight.contains(x, y) -> 5
             y < gridTop -> 2
             x >= gridLeft && x < gridRight() -> 1
             x < gridLeft && y >= gridTop -> 1
@@ -934,7 +935,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 if (y < gridTop || row >= s.rowCount(s.patternAt(st.order))) return
                 st.row = row
                 if (x >= gridLeft) {
-                    if (!multi) {
+                    if (!variableLanes) {
                         val ch = ((x - gridLeft) / laneW).toInt().coerceIn(0, s.channelCount() - 1)
                         val local = (x - gridLeft - ch * laneW - cw * 0.7f) / cw
                         st.channel = ch
@@ -956,7 +957,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 ctl.publishPattern()
             }
             2 -> {
-                val ch = if (multi) laneAt(x) ?: -1 else ((x - gridLeft) / laneW).toInt()
+                val ch = if (variableLanes) laneAt(x) ?: -1 else ((x - gridLeft) / laneW).toInt()
                 if (ch in 0 until s.channelCount()) { st.channel = ch; ctl.publishPattern() }
             }
             4, 5 -> {

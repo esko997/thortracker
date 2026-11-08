@@ -5,7 +5,10 @@ import org.thortracker.model.Song
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.Vrc6SawVolume
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -15,9 +18,10 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * The image contract of the native `"nes-famistudio"` engine (docs/AUDIO_ENGINE.md, NES image layout), checked on
- * every golden song: header, envelope directory, instrument table, channel streams of `$41` per order plus `$42`,
- * flat pattern streams with one terminator per row, and the engine-facing numbers of [NesSystem.engine].
+ * The image contract of the native `"nes-famistudio"` engines (docs/AUDIO_ENGINE.md, NES image layout), checked on
+ * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`): header,
+ * envelope directory, instrument table, channel streams of `$41` per order plus `$42`, flat pattern streams with one
+ * terminator per row, and the engine-facing numbers of [NesSystem.engine] and [NesVrc6System.engine].
  */
 class NesLoweringTest {
     private fun u16(b: ByteArray, at: Int) = (b[at].toInt() and 0xff) or ((b[at + 1].toInt() and 0xff) shl 8)
@@ -27,25 +31,29 @@ class NesLoweringTest {
     fun imagesFollowTheEngineContract() {
         for ((name, build) in NesGoldenSongs.ALL) {
             val song = build()
-            val image = ByteArray(NesSystem.engine.imageSize)
-            NesSystem.engine.lower(song, image)
+            val engine = song.system.engine
+            assertEquals(song.nes.expansion.player.engineId, engine.id, name)
+            val image = ByteArray(engine.imageSize)
+            engine.lower(song, image)
             check(name, song, image)
         }
     }
 
     private fun check(name: String, song: Song, image: ByteArray) {
-        val base = NesPlayerImage.SONG_BASE
+        val player = song.nes.expansion.player
+        assertEquals(player.imageSize, image.size, "$name: image size")
+        val base = player.songBase
         val region = NesPlayerImage.HEADER_SIZE + NesPlayerImage.DIRECTORY_SIZE
         assertEquals("TTNS", image.copyOfRange(0, 4).decodeToString())
-        assertEquals(NesPlayerImage.PLAYER_ID, u16(image, 4) or (u16(image, 6) shl 16))
+        assertEquals(player.playerId, u16(image, 4) or (u16(image, 6) shl 16))
         assertEquals(base, u16(image, 8))
         val size = u16(image, 10)
         val sampleSize = u16(image, NesPlayerImage.HEADER_SAMPLE_SIZE)
         val sampleStart = u16(image, NesPlayerImage.HEADER_SAMPLE_START)
         assertEquals(sampleSize == 0, sampleStart == 0, "$name: sample size and start")
-        val songEnd = if (sampleSize == 0) NesPlayerImage.REGION_END else sampleStart
+        val songEnd = if (sampleSize == 0) player.regionEnd else sampleStart
         if (sampleSize > 0) {
-            assertTrue(sampleStart >= NesPlayerImage.SAMPLE_BASE && sampleStart % 64 == 0 && sampleStart + sampleSize <= NesPlayerImage.REGION_END, "$name: sample block")
+            assertTrue(sampleStart >= NesPlayerImage.SAMPLE_BASE && sampleStart % 64 == 0 && sampleStart + sampleSize <= player.regionEnd, "$name: sample block")
         }
         assertTrue(base + size <= songEnd, "$name: song data runs into the samples")
         val samplesAt = region + songEnd - base
@@ -81,16 +89,18 @@ class NesLoweringTest {
         // FamiStudio header.
         assertEquals(1, u8(data, 0))
         val instruments = at(u16(data, 1))
-        val streams = IntArray(5) { at(u16(data, 5 + 2 * it)) }
-        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, 15))
-        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, 17))
+        val channels = player.channels
+        assertEquals(song.nes.expansion.channels, channels, "$name: a stream per channel")
+        val streams = IntArray(channels) { at(u16(data, 5 + 2 * it)) }
+        assertEquals(FamiStudioLowering.TEMPO_PAL, u16(data, 5 + 2 * channels))
+        assertEquals(FamiStudioLowering.TEMPO_NTSC, u16(data, 7 + 2 * channels))
         for (slot in 0 until NesSystem.SLOTS) for (kind in 0 until 4) {
             val addr = u16(data, instruments + slot * 8 + kind * 2)
             assertEquals(slot * 4 + kind to kind, dir[addr]!!.let { it.first to it.third }, "$name: instrument $slot envelope $kind")
         }
         val arranged = NesSystem.arranged(song)
         val orders = arranged.orders.size
-        for (c in 0 until 5) {
+        for (c in 0 until channels) {
             val s = streams[c]
             for (o in 0 until orders) {
                 assertEquals(0x41, u8(data, s + 4 * o), "$name: channel $c order $o")
@@ -136,7 +146,11 @@ class NesLoweringTest {
                     0x47 -> { p++; delays++; assertTrue(delays == 1, "one note delay per row") }
                     0x48 -> p++
                     0x4e -> { assertTrue(channel != NesRules.NOISE); p++ }
-                    0x4f -> { assertTrue(channel != NesRules.TRIANGLE); assertTrue(u8(data, p++) in 0..3) }
+                    0x4f -> {
+                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW)
+                        assertTrue(u8(data, p++) in 0..NesRules.dutyMax(channel))
+                    }
+                    0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -188,6 +202,48 @@ class NesLoweringTest {
         assertTrue(e.auditionProblem(song, 2, 20, 1, 0)!!.contains("A-1"))
         assertEquals(null, e.auditionProblem(song, 3, 12, 1, 0))
         assertTrue(e.auditionProblem(song, NesRules.DPCM, 48, 1, 0)!!.contains("maps no DPCM sample to C-4"))
+    }
+
+    /** The VRC6 variant: its own engine, image size and song base; sounds of the wrong chip are refused before the engine. */
+    @Test
+    fun vrc6EngineNumbers() {
+        val e = NesVrc6System.engine
+        val base = NesVrc6System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("Saw", chip = NesChip.VRC6, sawVolume = Vrc6SawVolume.FULL)
+        val song = base.copy(sound = base.nes.copy(instruments = bank))
+        assertEquals("nes-famistudio-vrc6", e.id)
+        assertEquals(NesVrc6PlayerImage.IMAGE_SIZE, e.imageSize)
+        assertEquals(NesVrc6PlayerImage.SONG_BASE, NesPlayer.VRC6.songBase)
+        assertEquals(8, NesVrc6System.channels.size)
+        assertEquals(5, NesSystem.channels.size)
+        assertEquals(46, e.note(song, NesRules.VRC6_SAW, 57, 2))
+        assertEquals(null, e.auditionProblem(song, NesRules.VRC6_SAW, 57, 2, 0))
+        assertEquals(null, e.auditionProblem(song, NesRules.VRC6_PULSE1, 13, 2, 0)) // the VRC6 reaches below A-1
+        assertTrue(e.auditionProblem(song, NesRules.VRC6_PULSE1, 57, 1, 0)!!.contains("2A03 sound"))
+        assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("VRC6 sound"))
+        val image = ByteArray(e.imageSize)
+        e.lower(song, image)
+        check("vrc6 blank", song, image)
+        assertFailsWith<IllegalArgumentException> { NesSystem.engine.lower(song, ByteArray(NesSystem.engine.imageSize)) }
+    }
+
+    /** The saw's master volume: `$55` before an instrument of another volume, and with each order's first instrument. */
+    @Test
+    fun sawMasterVolumeIsSentWithInstruments() {
+        val song = NesGoldenSongs.vrc6Effects()
+        val lowered = FamiStudioLowering.lower(song)
+        val data = lowered.data
+        val base = NesPlayer.VRC6.songBase
+        val saw = u16(data, 5 + 2 * NesRules.VRC6_SAW) - base
+        val firstOrder = u16(data, saw + 2) - base
+        // Order 0's saw row 0 is Saw full (slot 3): `$55 $01` right before its instrument byte `$84` (after any speed or
+        // state opcodes the order starts with).
+        val head = (0 until 16).map { u8(data, firstOrder + it) }
+        assertTrue(head.windowed(3).contains(listOf(0x55, 0x01, 0x80 or (2 shl 1))), head.toString())
+        val volumes = ArrayList<Int>()
+        for (i in 0 until data.size - 2) if (u8(data, i) == 0x55 && u8(data, i + 2) >= 0x80 && u8(data, i + 2) and 1 == 0) volumes += u8(data, i + 1)
+        assertTrue(volumes.containsAll(listOf(0x00, 0x01, 0xff)), volumes.toString())
     }
 
     @Test

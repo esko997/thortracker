@@ -9,8 +9,8 @@ import org.thortracker.model.Song
 /** NES document edits: the one instrument bank and its envelopes, as undoable [EditorSession] commands. */
 
 /**
- * The four envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges) and the value a new step
- * starts from. Only volume has a release point (FamiStudio's rule).
+ * The four envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges; duty depends on the
+ * sound's [NesChip]) and the value a new step starts from. Only volume has a release point (FamiStudio's rule).
  */
 enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback: Int) {
     VOLUME("Volume", NesEnvelope.VOLUME, 15),
@@ -19,6 +19,9 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
     DUTY("Duty", NesEnvelope.DUTY, 0);
 
     val canRelease: Boolean get() = this == VOLUME
+
+    /** The values this envelope holds on a [chip] sound: the VRC6 has eight duties. */
+    fun range(chip: NesChip): IntRange = if (this == DUTY) chip.duty else range
 
     fun of(i: NesInstrument): NesEnvelope = when (this) {
         VOLUME -> i.volume
@@ -35,10 +38,11 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
     }
 
     /**
-     * [e] made legal for this envelope: values clamped, loop < length, and a release only on volume and only after a
-     * loop (loop < release < length; FamiStudio drops a release without a loop).
+     * [e] made legal for this envelope of a [chip] sound: values clamped, loop < length, and a release only on volume
+     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop).
      */
-    fun fixed(e: NesEnvelope): NesEnvelope {
+    fun fixed(e: NesEnvelope, chip: NesChip = NesChip.APU): NesEnvelope {
+        val range = range(chip)
         val values = if (e.values.all { it in range }) e.values else e.values.map { it.coerceIn(range) }
         val last = values.size - 1
         var release = if (canRelease && e.release in 1..last) e.release else -1
@@ -53,14 +57,14 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
 /** Envelope step edits, kept legal by [NesEnvelopeKind.fixed]. A step index of `size` appends. */
 object NesEnvelopes {
     /** [e] with step [step] set to [value]; [step] == size appends (up to [NesEnvelope.MAX_LENGTH]). */
-    fun withValue(kind: NesEnvelopeKind, e: NesEnvelope, step: Int, value: Int): NesEnvelope {
-        val v = value.coerceIn(kind.range)
+    fun withValue(kind: NesEnvelopeKind, e: NesEnvelope, step: Int, value: Int, chip: NesChip = NesChip.APU): NesEnvelope {
+        val v = value.coerceIn(kind.range(chip))
         val values = when {
             step in e.values.indices -> e.values.replaced(step, v)
             step == e.values.size && step < NesEnvelope.MAX_LENGTH -> e.values + v
             else -> return e
         }
-        return kind.fixed(e.copy(values = values))
+        return kind.fixed(e.copy(values = values), chip)
     }
 
     /** The value step [step] holds, or what an appended step starts from (the last value, else the default). */
@@ -68,25 +72,25 @@ object NesEnvelopes {
         e.values.getOrNull(step) ?: e.values.lastOrNull() ?: kind.fallback
 
     /** [e] without step [step]; the loop and release points keep marking the same steps where they can. */
-    fun removed(kind: NesEnvelopeKind, e: NesEnvelope, step: Int): NesEnvelope {
+    fun removed(kind: NesEnvelopeKind, e: NesEnvelope, step: Int, chip: NesChip = NesChip.APU): NesEnvelope {
         if (step !in e.values.indices) return e
         fun shift(point: Int) = if (point > step) point - 1 else point
         val values = e.values.toMutableList().also { it.removeAt(step) }
-        return kind.fixed(NesEnvelope(values, shift(e.loop).coerceAtMost(values.size - 1), shift(e.release).coerceAtMost(values.size - 1)))
+        return kind.fixed(NesEnvelope(values, shift(e.loop).coerceAtMost(values.size - 1), shift(e.release).coerceAtMost(values.size - 1)), chip)
     }
 
     /** [e] cut or extended (repeating its last value) to [length] steps; a loop past the end moves to the last step. */
-    fun withLength(kind: NesEnvelopeKind, e: NesEnvelope, length: Int): NesEnvelope {
+    fun withLength(kind: NesEnvelopeKind, e: NesEnvelope, length: Int, chip: NesChip = NesChip.APU): NesEnvelope {
         val n = length.coerceIn(0, NesEnvelope.MAX_LENGTH)
         if (n == e.values.size) return e
         val values = if (n < e.values.size) e.values.take(n) else e.values + List(n - e.values.size) { valueAt(kind, e, e.values.size) }
-        return kind.fixed(NesEnvelope(values, e.loop.coerceAtMost(n - 1), e.release))
+        return kind.fixed(NesEnvelope(values, e.loop.coerceAtMost(n - 1), e.release), chip)
     }
 
     /** [e] looping from [loop] (-1: holds its last value); kept before the release point. */
-    fun withLoop(kind: NesEnvelopeKind, e: NesEnvelope, loop: Int): NesEnvelope {
+    fun withLoop(kind: NesEnvelopeKind, e: NesEnvelope, loop: Int, chip: NesChip = NesChip.APU): NesEnvelope {
         val top = if (e.release >= 0) e.release - 1 else e.values.size - 1
-        return kind.fixed(e.copy(loop = loop.coerceIn(-1, top)))
+        return kind.fixed(e.copy(loop = loop.coerceIn(-1, top)), chip)
     }
 
     /**
@@ -111,6 +115,31 @@ fun Song.nesInstrument(slot: Int): NesInstrument? = nes.instruments.getOrNull(sl
 /** A new instrument for [slot], as a blank song has it. */
 fun defaultNesInstrument(slot: Int) = NesInstrument(name = "Sound ${hex2(slot)}")
 
+/**
+ * Sound [slot] made a [chip] sound: duty values clamped to that chip's, the saw volume back to its default when it
+ * leaves the VRC6. Refused (with a note) when the chip is not the song's or the sound still maps DPCM samples, which
+ * only 2A03 sounds play.
+ */
+fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
+    val ins = song.nesInstrument(slot) ?: return false
+    if (ins.chip == chip) return false
+    if (chip !in song.nes.expansion.chips) { note("This song has no ${chip.label} chip"); return false }
+    if (chip != NesChip.APU && ins.dpcm.isNotEmpty()) {
+        note("Sound ${hex2(slot)} maps DPCM samples, which only 2A03 sounds play; clear its keys first")
+        return false
+    }
+    return setNesInstrument(slot, ins.copy(
+        chip = chip,
+        duty = NesEnvelopeKind.DUTY.fixed(ins.duty, chip),
+        sawVolume = if (chip == NesChip.VRC6) ins.sawVolume else Vrc6SawVolume.HALF,
+    ), "Make sound ${chip.label}")
+}
+
+/** [instrument] as [song] can hold it: a sound of a chip the song lacks becomes a 2A03 sound (pasted across songs). */
+fun nesInstrumentFor(song: Song, instrument: NesInstrument): NesInstrument =
+    if (instrument.chip in song.nes.expansion.chips) instrument
+    else instrument.copy(chip = NesChip.APU, duty = NesEnvelopeKind.DUTY.fixed(instrument.duty, NesChip.APU), sawVolume = Vrc6SawVolume.HALF)
+
 /** A copied NES instrument, or one of its envelopes. */
 sealed interface NesClip : Clip {
     data class Sound(val instrument: NesInstrument) : NesClip
@@ -127,9 +156,9 @@ fun EditorSession.editNesInstrument(slot: Int, label: String, f: (NesInstrument)
     return setNesInstrument(slot, f(cur), label)
 }
 
-/** Edits envelope [kind] of sound [slot]; the result is made legal ([NesEnvelopeKind.fixed]). */
+/** Edits envelope [kind] of sound [slot]; the result is made legal for the sound's chip ([NesEnvelopeKind.fixed]). */
 fun EditorSession.editNesEnvelope(slot: Int, kind: NesEnvelopeKind, label: String, f: (NesEnvelope) -> NesEnvelope): Boolean =
-    editNesInstrument(slot, label) { kind.set(it, kind.fixed(f(kind.of(it)))) }
+    editNesInstrument(slot, label) { kind.set(it, kind.fixed(f(kind.of(it)), it.chip)) }
 
 fun EditorSession.copyNesInstrument(slot: Int) {
     val i = song.nesInstrument(slot) ?: return
@@ -150,13 +179,13 @@ fun EditorSession.copyNesEnvelope(slot: Int, kind: NesEnvelopeKind) {
 fun EditorSession.pasteNes(slot: Int, kind: NesEnvelopeKind): Boolean {
     when (val clip = clipboard) {
         is NesClip.Sound -> {
-            val ok = setNesInstrument(slot, clip.instrument, "Paste sound")
+            val ok = setNesInstrument(slot, nesInstrumentFor(song, clip.instrument), "Paste sound")
             note("Pasted into sound ${hex2(slot)}")
             return ok
         }
         is NesClip.Envelope -> {
             val ok = editNesInstrument(slot, "Paste ${kind.label.lowercase()} envelope") {
-                val with = kind.set(it, kind.fixed(clip.envelope))
+                val with = kind.set(it, kind.fixed(clip.envelope, it.chip))
                 if (kind == NesEnvelopeKind.PITCH && clip.kind == NesEnvelopeKind.PITCH) with.copy(pitchRelative = clip.relative) else with
             }
             note("Pasted the ${clip.kind.label.lowercase()} envelope into ${kind.label.lowercase()}")

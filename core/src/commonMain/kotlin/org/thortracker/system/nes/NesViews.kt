@@ -16,23 +16,22 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The NES instrument editor: the one shared bank, the selected sound's name, the channel Listen plays on, its four
- * envelopes edited step by step with the controller, and a fifth page, DPCM: the sound's note → sample mappings and
- * the song's samples ([NesDpcmPage]). State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]),
- * [ViewState.envelope] (the page: a [NesEnvelopeKind] ordinal or [DPCM_PAGE]), [ViewState.envStep] (0..size; size is
- * the append position), [ViewState.listenChannel], and on the DPCM page [ViewState.dpcmKey] and
- * [ViewState.dpcmSample].
+ * The NES instrument editor: the one shared bank, the selected sound's name, on songs with an expansion chip its chip
+ * (and on VRC6 sounds the saw volume), the channel Listen plays on, its four envelopes edited step by step with the
+ * controller, and on 2A03 sounds a fifth page, DPCM: the sound's note → sample mappings and the song's samples
+ * ([NesDpcmPage]). State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope]
+ * (the page: a [NesEnvelopeKind] ordinal or [DPCM_PAGE]), [ViewState.envStep] (0..size; size is the append position),
+ * [ViewState.listenChannel], and on the DPCM page [ViewState.dpcmKey] and [ViewState.dpcmSample].
  */
 object NesInstrumentView : SystemView() {
     enum class Row {
-        SLOT, NAME, LISTEN, ENVELOPE, LENGTH, LOOP, RELEASE, MODE, STEPS,
+        SLOT, NAME, CHIP, SAW, LISTEN, ENVELOPE, LENGTH, LOOP, RELEASE, MODE, STEPS,
         // DPCM page: the mapping of one key, then the song's samples
         KEY, SAMPLE, PITCH, SAMPLE_LOOP, LEVEL, SAMPLES, SAMPLE_NAME, SAMPLE_LEVEL, ADD,
     }
 
-    /** The page after the four envelopes: DPCM mappings and samples. */
+    /** The page after the four envelopes: DPCM mappings and samples (2A03 sounds only). */
     val DPCM_PAGE = NesEnvelopeKind.entries.size
-    private val PAGES = DPCM_PAGE + 1
 
     private val ENVELOPE_ROWS = listOf(Row.SLOT, Row.NAME, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.MODE, Row.STEPS)
     private val ROWS = NesEnvelopeKind.entries.associateWith { kind ->
@@ -51,9 +50,25 @@ object NesInstrumentView : SystemView() {
     /** The envelope shown; on the DPCM page the last one (callers check [dpcmPage] first). */
     fun kind(state: ViewState): NesEnvelopeKind = NesEnvelopeKind.entries[state.envelope.coerceIn(0, NesEnvelopeKind.entries.size - 1)]
 
-    fun rows(state: ViewState): List<Row> = if (dpcmPage(state)) DPCM_ROWS else ROWS.getValue(kind(state))
+    /** The chip of the shown sound (2A03 when there is none). */
+    fun chip(song: Song, state: ViewState): NesChip = sound(song, state)?.chip ?: NesChip.APU
 
-    fun row(state: ViewState): Row = rows(state).let { it[state.instField.coerceIn(0, it.size - 1)] }
+    /** Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples). */
+    fun pages(song: Song, state: ViewState): Int = if (chip(song, state) == NesChip.APU) DPCM_PAGE + 1 else DPCM_PAGE
+
+    /**
+     * The rows of the shown page. Songs with an expansion chip add Chip after Name, and VRC6 sounds the saw volume;
+     * 2A03-only songs keep the rows they always had.
+     */
+    fun rows(state: ViewState, song: Song): List<Row> {
+        if (dpcmPage(state)) return DPCM_ROWS
+        val base = ROWS.getValue(kind(state))
+        if (song.nes.expansion == NesExpansion.NONE) return base
+        val extra = if (chip(song, state) == NesChip.VRC6) listOf(Row.CHIP, Row.SAW) else listOf(Row.CHIP)
+        return base.take(2) + extra + base.drop(2)
+    }
+
+    fun row(state: ViewState, song: Song): Row = rows(state, song).let { it[state.instField.coerceIn(0, it.size - 1)] }
 
     fun sound(song: Song, state: ViewState): NesInstrument? = song.nesInstrument(state.instrument)
 
@@ -62,9 +77,16 @@ object NesInstrumentView : SystemView() {
     /** The furthest step the cursor reaches: the append position after the last step, while there is room. */
     fun lastStep(e: NesEnvelope): Int = minOf(e.values.size, NesEnvelope.MAX_LENGTH - 1)
 
-    /** Why [channel] ignores (or treats specially) envelope [kind], or null when it plays it as written. */
-    fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind): String? = when {
+    /** Why [channel] ignores (or treats specially) envelope [kind] of a [chip] sound, or null when it plays it as written. */
+    fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind, chip: NesChip = NesChip.APU, saw: Vrc6SawVolume = Vrc6SawVolume.HALF,
+                    channelChip: NesChip = chip): String? = when {
+        channelChip != chip -> "${chip.label} sounds play on the ${chip.label} channels only"
         channel == ChannelKind.SAMPLE -> "DPCM plays samples: envelopes do not apply"
+        channel == ChannelKind.SAW -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "Saw: volume ${sawText(saw)}"
+            NesEnvelopeKind.DUTY -> "The saw has no duty"
+            else -> null
+        }
         kind == NesEnvelopeKind.VOLUME -> if (channel == ChannelKind.TRIANGLE) "Triangle has no volume: 0 silences it, any other value plays full" else null
         kind == NesEnvelopeKind.DUTY -> when (channel) {
             ChannelKind.TRIANGLE -> "Triangle ignores duty"
@@ -75,31 +97,49 @@ object NesInstrumentView : SystemView() {
         else -> if (channel == ChannelKind.NOISE) "On Noise, pitch moves the noise rate" else null
     }
 
-    /** One line per envelope: what each channel does with it. */
-    fun envelopeSummary(kind: NesEnvelopeKind): String = when (kind) {
-        NesEnvelopeKind.VOLUME -> "Pulse and Noise: level 0-15 per frame. Triangle: no volume, 0 silences it"
-        NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame. Noise: steps the noise rate"
-        NesEnvelopeKind.PITCH -> "Period offset per frame (relative: added up each frame). Noise: moves the rate"
-        NesEnvelopeKind.DUTY -> "Pulse: 12.5, 25, 50, 75%. Noise: 0 long, 1 short noise. Triangle: ignored"
+    /** "× 2 = accumulator rate 0-30": how [saw] turns volume 0-15 into the saw's rate (above 42 the saw distorts). */
+    fun sawText(saw: Vrc6SawVolume): String {
+        val top = 15 shl saw.shift
+        return "× ${1 shl saw.shift} = rate 0-$top" + if (top > 42) " (distorts above ${42 shr saw.shift})" else ""
     }
 
-    /** A step value as the editor writes it: duty as a percentage (or noise mode), offsets signed. */
-    fun valueText(kind: NesEnvelopeKind, value: Int, channel: ChannelKind?): String = when (kind) {
+    /** One line per envelope: what each channel does with it. */
+    fun envelopeSummary(kind: NesEnvelopeKind, chip: NesChip = NesChip.APU): String = when (chip) {
+        NesChip.APU -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "Pulse and Noise: level 0-15 per frame. Triangle: no volume, 0 silences it"
+            NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame. Noise: steps the noise rate"
+            NesEnvelopeKind.PITCH -> "Period offset per frame (relative: added up each frame). Noise: moves the rate"
+            NesEnvelopeKind.DUTY -> "Pulse: 12.5, 25, 50, 75%. Noise: 0 long, 1 short noise. Triangle: ignored"
+        }
+        NesChip.VRC6 -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "VRC6 pulses: level 0-15 per frame. Saw: 0-15 times the saw volume (its accumulator rate)"
+            NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame"
+            NesEnvelopeKind.PITCH -> "Period offset per frame (relative: added up each frame)"
+            NesEnvelopeKind.DUTY -> "VRC6 pulses: 0-7 = 1/16 to 8/16 (6.25-50%). Saw: ignored"
+        }
+    }
+
+    /** A step value as the editor writes it: duty as a fraction or percentage (or noise mode), offsets signed. */
+    fun valueText(kind: NesEnvelopeKind, value: Int, channel: ChannelKind?, chip: NesChip = NesChip.APU): String = when (kind) {
         NesEnvelopeKind.VOLUME -> value.toString()
         NesEnvelopeKind.ARPEGGIO, NesEnvelopeKind.PITCH -> if (value > 0) "+$value" else value.toString()
-        NesEnvelopeKind.DUTY -> if (channel == ChannelKind.NOISE) (if (value and 1 == 0) "long" else "short")
-            else when (value) { 0 -> "12.5%"; 1 -> "25%"; 2 -> "50%"; else -> "75%" }
+        NesEnvelopeKind.DUTY -> when {
+            chip == NesChip.VRC6 -> NesRules.dutyText(chip, value.coerceIn(chip.duty))
+            channel == ChannelKind.NOISE -> if (value and 1 == 0) "long" else "short"
+            else -> when (value) { 0 -> "12.5%"; 1 -> "25%"; 2 -> "50%"; else -> "75%" }
+        }
     }
 
     override val gestureLabel = "Edit sound"
 
     override fun normalise(v: ViewController) {
         val st = v.state
+        val song = v.session.song
         st.instrument = st.instrument.coerceIn(1, NesSystem.SLOTS)
-        st.envelope = st.envelope.coerceIn(0, PAGES - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
-        st.listenChannel = st.listenChannel.coerceIn(0, v.session.song.system.channels.size - 1)
-        val e = envelope(v.session.song, st)
+        st.envelope = st.envelope.coerceIn(0, pages(song, st) - 1)
+        st.instField = st.instField.coerceIn(0, rows(st, song).size - 1)
+        st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
+        val e = envelope(song, st)
         st.envStep = st.envStep.coerceIn(0, if (e == null) 0 else lastStep(e))
         NesDpcmPage.normalise(v)
     }
@@ -131,26 +171,38 @@ object NesInstrumentView : SystemView() {
     /** Shows page [index] (wrapping), keeping the cursor on the same kind of row where the new page has it. */
     fun showEnvelope(v: ViewController, index: Int) {
         val st = v.state
-        val row = row(st)
+        val song = v.session.song
+        val row = row(st, song)
         val wasDpcm = dpcmPage(st)
-        st.envelope = index.mod(PAGES)
-        val rows = rows(st)
+        st.envelope = index.mod(pages(song, st))
+        val rows = rows(st, song)
         st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: rows.indexOf(if (dpcmPage(st)) Row.KEY else Row.LOOP)
-        envelope(v.session.song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
+        envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
         // Arriving on DPCM from an envelope page: start on the sound's first mapped key if the shown one has none.
         if (dpcmPage(st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
     }
 
-    /** Moves to another slot; Listen moves to the channel that slot plays on most, so a bass sounds on Triangle. */
+    /**
+     * Moves to another slot; Listen moves to the channel that slot plays on most, so a bass sounds on Triangle, or
+     * when it plays nowhere yet, to the first channel of its chip.
+     */
     internal fun moveSlot(v: ViewController, delta: Int) {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, NesSystem.SLOTS)
         if (slot == st.instrument) return
         st.instrument = slot
-        mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
-        if (dpcmPage(st)) NesDpcmPage.showFirstMapping(v)
+        val song = v.session.song
+        st.listenChannel = mostUsedChannel(song, slot) ?: listenFor(song, chip(song, st), st.listenChannel)
+        if (dpcmPage(st)) {
+            if (chip(song, st) == NesChip.APU) NesDpcmPage.showFirstMapping(v) else showEnvelope(v, 0)
+        }
         publish(v)
     }
+
+    /** [current] if it plays [chip] sounds, else the song's first channel that does. */
+    private fun listenFor(song: Song, chip: NesChip, current: Int): Int =
+        if (NesRules.chip(current) == chip) current
+        else song.system.channels.indices.firstOrNull { NesRules.chip(it) == chip } ?: current
 
     /** The channel whose arranged rows use sound [slot] most, or null when none does. */
     fun mostUsedChannel(song: Song, slot: Int): Int? {
@@ -163,18 +215,39 @@ object NesInstrumentView : SystemView() {
         return if (counts[best] > 0) best else null
     }
 
+    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6); Listen follows to a channel of that chip. */
+    private fun stepChip(v: ViewController, delta: Int) {
+        val st = v.state
+        val session = v.session
+        val chips = session.song.nes.expansion.chips
+        val next = chips[(chips.indexOf(chip(session.song, st)) + delta).mod(chips.size)]
+        if (session.setNesChip(st.instrument, next)) {
+            st.listenChannel = listenFor(session.song, next, st.listenChannel)
+            st.instField = rows(st, session.song).indexOf(Row.CHIP)
+        }
+    }
+
+    /** Steps the VRC6 saw volume Full / Half / Quarter. */
+    private fun stepSaw(v: ViewController, delta: Int) {
+        val volumes = Vrc6SawVolume.entries
+        v.session.editNesInstrument(v.state.instrument, "Set saw volume") {
+            it.copy(sawVolume = volumes[(volumes.indexOf(it.sawVolume) + delta).coerceIn(0, volumes.size - 1)])
+        }
+    }
+
     override fun direction(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
-        val rows = rows(st)
-        val row = row(st)
+        val song = v.session.song
+        val rows = rows(st, song)
+        val row = row(st, song)
         if (dpcmPage(st) && !v.editHeld && dy == 0 && NesDpcmPage.direction(v, row, dx)) return
-        val e = envelope(v.session.song, st)
+        val e = envelope(song, st)
         when {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e))
             dy != 0 -> { st.instField = (st.instField - dy).coerceIn(0, rows.size - 1); st.textPos = 0 }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
-            row == Row.LISTEN -> st.listenChannel = (st.listenChannel + dx).mod(v.session.song.system.channels.size)
+            row == Row.LISTEN -> st.listenChannel = (st.listenChannel + dx).mod(song.system.channels.size)
             row == Row.ENVELOPE -> showEnvelope(v, st.envelope + dx)
             row == Row.STEPS -> if (e != null) st.envStep = (st.envStep + dx).coerceIn(0, lastStep(e))
             else -> moveSlot(v, dx)
@@ -187,18 +260,21 @@ object NesInstrumentView : SystemView() {
         val kind = kind(st)
         val slot = st.instrument
         val name = kind.label.lowercase()
-        when (val row = row(st)) {
+        val chip = chip(session.song, st)
+        when (val row = row(st, session.song)) {
             Row.SLOT -> moveSlot(v, dx - COARSE * dy)
             Row.NAME -> session.editNesInstrument(slot, "Rename sound") {
                 it.copy(name = NameEdit.edit(it.name, st.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
             }
+            Row.CHIP -> stepChip(v, dx + dy)
+            Row.SAW -> stepSaw(v, dx - dy)
             Row.LISTEN -> st.listenChannel = (st.listenChannel + dx + dy).mod(session.song.system.channels.size)
             Row.ENVELOPE -> showEnvelope(v, st.envelope + dx + dy)
             Row.LENGTH -> session.editNesEnvelope(slot, kind, "Set $name length") {
-                NesEnvelopes.withLength(kind, it, it.values.size + dx + COARSE * dy)
+                NesEnvelopes.withLength(kind, it, it.values.size + dx + COARSE * dy, chip)
             }
             Row.LOOP -> session.editNesEnvelope(slot, kind, "Set $name loop") {
-                NesEnvelopes.withLoop(kind, it, it.loop + dx + COARSE * dy)
+                NesEnvelopes.withLoop(kind, it, it.loop + dx + COARSE * dy, chip)
             }
             Row.RELEASE -> session.editNesEnvelope(slot, kind, "Set $name release") {
                 NesEnvelopes.withRelease(kind, it, it.release + dx + COARSE * dy)
@@ -209,7 +285,7 @@ object NesInstrumentView : SystemView() {
                 if (dy != 0) {
                     // Up raises the value; at the append position the new step starts from the last value.
                     session.editNesEnvelope(slot, kind, "Set $name") {
-                        NesEnvelopes.withValue(kind, it, st.envStep, NesEnvelopes.valueAt(kind, it, st.envStep) + dy)
+                        NesEnvelopes.withValue(kind, it, st.envStep, NesEnvelopes.valueAt(kind, it, st.envStep) + dy, chip)
                     }
                 }
                 if (dx != 0) {
@@ -218,7 +294,7 @@ object NesInstrumentView : SystemView() {
                     val next = (st.envStep + dx).coerceIn(0, NesEnvelope.MAX_LENGTH - 1)
                     if (next == st.envStep) return
                     st.envStep = next
-                    session.editNesEnvelope(slot, kind, "Draw $name") { NesEnvelopes.withValue(kind, it, next, value) }
+                    session.editNesEnvelope(slot, kind, "Draw $name") { NesEnvelopes.withValue(kind, it, next, value, chip) }
                     envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
                 }
             }
@@ -231,19 +307,21 @@ object NesInstrumentView : SystemView() {
         val st = v.state
         val session = v.session
         val kind = kind(st)
-        when (val row = row(st)) {
+        val chip = chip(session.song, st)
+        when (val row = row(st, session.song)) {
             Row.SLOT -> { publish(v); session.note("Sound ${EditorSession.hex2(st.instrument)} selected for entry") }
             Row.MODE -> session.editNesInstrument(st.instrument, "Set pitch mode") { it.copy(pitchRelative = !it.pitchRelative) }
+            Row.CHIP -> stepChip(v, 1)
             Row.STEPS -> {
                 val e = envelope(session.song, st) ?: return
                 if (st.envStep == e.values.size) {
                     session.editNesEnvelope(st.instrument, kind, "Add ${kind.label.lowercase()} step") {
-                        NesEnvelopes.withValue(kind, it, st.envStep, NesEnvelopes.valueAt(kind, it, st.envStep))
+                        NesEnvelopes.withValue(kind, it, st.envStep, NesEnvelopes.valueAt(kind, it, st.envStep), chip)
                     }
                     envelope(session.song, st)?.let { st.envStep = lastStep(it) }
                 }
             }
-            Row.NAME, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE -> Unit
+            Row.NAME, Row.SAW, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE -> Unit
             else -> NesDpcmPage.editTap(v, row)
         }
     }
@@ -255,16 +333,19 @@ object NesInstrumentView : SystemView() {
         val slot = st.instrument
         val name = kind.label.lowercase()
         val blank = kind.of(defaultNesInstrument(slot))
-        when (val row = row(st)) {
+        val chip = chip(session.song, st)
+        when (val row = row(st, session.song)) {
             Row.SLOT -> session.setNesInstrument(slot, defaultNesInstrument(slot), "Reset sound")
             Row.NAME -> session.editNesInstrument(slot, "Rename sound") { it.copy(name = ViewController.deleteChar(it.name, st.textPos)) }
+            Row.CHIP -> session.setNesChip(slot, NesChip.APU)
+            Row.SAW -> session.editNesInstrument(slot, "Set saw volume") { it.copy(sawVolume = Vrc6SawVolume.HALF) }
             Row.LISTEN, Row.ENVELOPE -> Unit
             Row.LENGTH -> session.editNesEnvelope(slot, kind, "Reset $name envelope") { blank }
             Row.LOOP -> session.editNesEnvelope(slot, kind, "Clear $name loop") { it.copy(loop = -1) }
             Row.RELEASE -> session.editNesEnvelope(slot, kind, "Clear $name release") { it.copy(release = -1) }
             Row.MODE -> session.editNesInstrument(slot, "Set pitch mode") { it.copy(pitchRelative = false) }
             Row.STEPS -> {
-                session.editNesEnvelope(slot, kind, "Delete $name step") { NesEnvelopes.removed(kind, it, st.envStep) }
+                session.editNesEnvelope(slot, kind, "Delete $name step") { NesEnvelopes.removed(kind, it, st.envStep, chip) }
                 envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
             }
             else -> NesDpcmPage.clear(v, row)
@@ -279,14 +360,14 @@ object NesInstrumentView : SystemView() {
 
     /** Rows about the whole sound copy, cut and paste the sound; envelope rows the shown envelope. */
     private fun envelopeRow(state: ViewState, row: Row) =
-        !dpcmPage(state) && row != Row.SLOT && row != Row.NAME && row != Row.LISTEN
+        !dpcmPage(state) && row != Row.SLOT && row != Row.NAME && row != Row.CHIP && row != Row.SAW && row != Row.LISTEN
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
         val session = v.session
         val kind = kind(st)
         val slot = st.instrument
-        val onEnvelope = envelopeRow(st, row(st))
+        val onEnvelope = envelopeRow(st, row(st, session.song))
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> showEnvelope(v, st.envelope + if (a == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> if (onEnvelope) session.copyNesEnvelope(slot, kind) else session.copyNesInstrument(slot)
@@ -314,10 +395,12 @@ object NesInstrumentView : SystemView() {
         val st = v.state
         val kind = kind(st)
         val name = kind.label.lowercase()
-        val row = row(st)
+        val row = row(st, v.session.song)
         when (row) {
             Row.SLOT -> { h += Hint(v.lr(), "Sound slot"); h += Hint(v.editUd(), "$COARSE slots"); h += Hint(v.k(Action.CLEAR), "Reset sound") }
             Row.NAME -> { h += Hint(v.lr(), "Letter position"); h += Hint(v.editLr(), "Change letter"); h += Hint(v.k(Action.CLEAR), "Delete letter") }
+            Row.CHIP -> { h += Hint(v.editLr(), "2A03 / ${v.session.song.nes.expansion.chip.label} sound"); h += Hint(v.k(Action.CLEAR), "2A03") }
+            Row.SAW -> { h += Hint(v.editLr(), "Saw volume"); h += Hint(v.k(Action.CLEAR), "Half") }
             Row.LISTEN -> h += Hint(v.lr(), "Channel Listen plays on")
             Row.ENVELOPE -> h += Hint(v.lr(), "Page")
             Row.LENGTH -> { h += Hint(v.editLr(), "Steps ±1 (${v.ud()} ±$COARSE)"); h += Hint(v.k(Action.CLEAR), "Empty $name envelope") }
@@ -332,7 +415,7 @@ object NesInstrumentView : SystemView() {
             }
             else -> NesDpcmPage.hints(v, row, h)
         }
-        if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE) h += Hint(v.lr(), "Sound slot")
+        if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE || row == Row.CHIP || row == Row.SAW) h += Hint(v.lr(), "Sound slot")
         h += Hint(v.channels(), "Page")
         if (dpcmPage(st)) {
             h += Hint(v.k(Action.AUDITION), "Listen to ${NesSystem.noteName(st.dpcmKey)}")
@@ -344,8 +427,11 @@ object NesInstrumentView : SystemView() {
         h += Hint(v.copyPaste(), if (envelopeRow(st, row)) "Copy/paste envelope" else "Copy/paste sound")
     }
 
-    /** Help rows for this view (heading, then key → meaning), named with the current [keys]. */
-    fun helpSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> {
+    /**
+     * Help rows for this view (heading, then key → meaning), named with the current [keys]; [expansion] adds its chip's
+     * rows (the VRC6's Chip and Saw rows and envelope meanings).
+     */
+    fun helpSections(keys: Keymap, expansion: NesExpansion = NesExpansion.NONE): List<Pair<String, List<Pair<String, String>>>> {
         val edit = keys.label(Action.EDIT)
         val clear = keys.label(Action.CLEAR)
         val lr = keys.pair(Action.LEFT, Action.RIGHT)
@@ -370,6 +456,13 @@ object NesInstrumentView : SystemView() {
                     "Without one, OFF stops the note. Setting a release on an envelope without a loop loops it from step 0",
             ),
             "DPCM samples" to NesDpcmPage.helpRows(keys),
+        ) + if (expansion != NesExpansion.VRC6) emptyList() else listOf(
+            "VRC6 sounds" to listOf(
+                "Chip" to "On songs with the VRC6: whether the sound plays on the 2A03's channels or on VRC6 Pulse 1/2 and the Saw " +
+                    "($edit+$lr there). VRC6 sounds have eight duties and no DPCM page",
+                "Saw volume" to "VRC6 sounds: how the saw turns volume 0-15 into its accumulator rate: Quarter ×1, Half ×2 " +
+                    "(FamiStudio's default), Full ×4 (rates above 42 overflow and distort, so Full distorts above volume 10)",
+            ) + NesEnvelopeKind.entries.map { it.label to envelopeSummary(it, NesChip.VRC6) },
         )
     }
 

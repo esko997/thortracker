@@ -29,10 +29,10 @@ internal class EnvelopePlot(private val ink: Ink) {
     /**
      * Draws [env] of [kind] in [r] under [title], cursor at [step]; [valueText] names a value on the scale, [muted]
      * greys bars the listening channel ignores, [focused] when the cursor is on the steps ([cursor] its colour,
-     * [editing] while Edit is held).
+     * [editing] while Edit is held); [range] is the value scale (the sound's: VRC6 duties go to 7).
      */
     fun draw(c: Surface, r: Rect, title: String, kind: NesEnvelopeKind, env: NesEnvelope, step: Int, valueText: (Int) -> String,
-             muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean) {
+             muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean, range: IntRange = kind.range) {
         val values = env.values
         ink.round(c, r, ink.dp(4f), Palette.LANE)
         ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, if (focused) Palette.DIM else Palette.FAINT, size = ink.unit * 0.8f)
@@ -42,10 +42,10 @@ internal class EnvelopePlot(private val ink: Ink) {
         if (inner.height() <= 0f) return
 
         // value scale: offsets span the largest written magnitude, at least an octave / 12 period units
-        if (kind.range.first < 0) {
-            val span = minOf(kind.range.last + 1, maxOf(12, values.maxOfOrNull { abs(it) } ?: 0))
+        if (range.first < 0) {
+            val span = minOf(range.last + 1, maxOf(12, values.maxOfOrNull { abs(it) } ?: 0))
             lo = -span; hi = span
-        } else { lo = kind.range.first; hi = kind.range.last }
+        } else { lo = range.first; hi = range.last }
         fun yOf(value: Int) = inner.bottom - inner.height() * (value - lo).toFloat() / (hi - lo)
 
         // columns: at least 24, wide enough to read; scroll to keep the cursor in view

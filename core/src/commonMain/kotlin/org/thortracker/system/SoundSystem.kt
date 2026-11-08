@@ -9,6 +9,7 @@ import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
 
@@ -16,8 +17,8 @@ import org.thortracker.system.ym2612.YmSystem
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
  * recorded samples (the NES DPCM channel): its notes pick samples, not pitches.
  */
-/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels). */
-enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE }
+/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels), [SAW] a sawtooth (the VRC6's). */
+enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE, SAW }
 
 /**
  * One channel of a [SoundSystem]. [bank] indexes [SoundSystem.banks]: the instruments its cells' sound numbers name.
@@ -222,6 +223,11 @@ interface SoundSystem {
     /** Display name, e.g. "Game Boy (hUGEDriver)". */
     val name: String
 
+    /**
+     * Systems sharing a console are variants of one family ("NES": the 2A03 alone and with each expansion chip);
+     * New and Load demo list a family as one entry with its variants under it. Null: a system of its own.
+     */
+    val family: String? get() = null
     val channels: List<ChannelSpec>
     val banks: List<BankSpec>
 
@@ -381,7 +387,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem, Opl3System, YmSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, NesVrc6System, SidSystem, Opl3System, YmSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem
