@@ -95,9 +95,9 @@ internal object YmDemoSong {
         }
         fx(ARP_CH, 0, 0, FX_VOLUME, 0x0B)
         // A snare roll into theme A, getting louder.
-        for ((i, row) in listOf(56, 58, 60, 61, 62, 63).withIndex()) {
+        for ((row, volume) in listOf(56 to 0x58, 58 to 0x60, 60 to 0x68, 61 to 0x70, 62 to 0x78, 63 to 0x7F)) {
             note(SNARE_CH, row, SNARE_NOTE, SNARE)
-            fx(SNARE_CH, row, 0, FX_VOLUME, 0x58 + 8 * i)
+            fx(SNARE_CH, row, 0, FX_VOLUME, volume)
         }
     }.build()
 

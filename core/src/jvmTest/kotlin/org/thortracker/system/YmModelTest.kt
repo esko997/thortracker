@@ -68,6 +68,14 @@ class YmModelTest {
         val pal = YmSystem.blank().let { it.copy(sound = it.ym.copy(pal = true)) }
         assertEquals(49.70, YmSystem.ticksPerSecond(pal), 0.005)
         assertEquals(listOf("vgm", "xgm", "xgc"), YmSystem.exports.map { it.extension })
+        // Two banks over one numbering: FM channels pick from FM voices, PSG and Noise from PSG sounds.
+        assertEquals(listOf(0, 0, 0, 0, 0, 0, 1, 1, 1, 1), YmSystem.channels.map { it.bank })
+        val song = YmSystem.blank()
+        assertEquals(slot("Slap bass"), YmSystem.defaultInstrument(song, 0))
+        assertEquals(slot("PSG lead"), YmSystem.defaultInstrument(song, 1))
+        assertEquals("PSG lead", YmSystem.instrumentName(song, 1, slot("PSG lead")))
+        assertEquals("PSG lead", YmSystem.instrumentName(song, 0, slot("PSG lead")))
+        assertNull(YmSystem.instrumentName(song, 2, 1))
     }
 
     // ---- project files -------------------------------------------------------------------------------------
@@ -132,7 +140,8 @@ class YmModelTest {
             }
             for (i in YmCurated.SSG_PRESETS.indices) {
                 val s = YmCurated.withSsg(ins, i)
-                assertEquals(i, YmCurated.controls(s).ssg)
+                // Presets that differ only on modulators read alike on additive voices: the reading writes the same.
+                assertEquals(s.operators, YmCurated.withSsg(ins, YmCurated.controls(s).ssg).operators)
                 assertTrue(YmCurated.controls(s).ssgExact)
                 assertNull(s.problem())
             }
