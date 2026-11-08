@@ -180,7 +180,7 @@ class NesLoweringTest {
                         assertTrue(u8(data, p++) in 0..NesRules.dutyMax(expansion, channel))
                     }
                     0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
-                    0x5e -> { assertTrue(s5b, "5B envelope period off the 5B squares"); p += 2 } // effects on Square 1, re-sends on any
+                    0x5e -> { assertTrue(s5b && channel == NesRules.S5B_SQUARE1, "5B envelope period off 5B Square 1"); p += 2 }
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -344,16 +344,18 @@ class NesLoweringTest {
     }
 
     /**
-     * An order-start re-send of a manual-period 5B sound FamiStudio's export does not load must leave the shared period
-     * as FamiStudio's stream holds it: `$5E` with another square's period, or with an earlier `Jyy` before a legato note,
-     * goes first; where the song's first pass and its loop pass hold different periods, the order does not re-send.
+     * A 5B square does not re-send a manual-period sound it already holds at an order start (its load would set the
+     * shared period, which FamiStudio's export leaves at another square's or an `Ixx`/`Jyy`'s value): the order is
+     * FamiStudio's stream, with or without a delay, legato or a loop. Other held sounds are re-sent, instrument changes
+     * are kept.
      */
     @Test
-    fun s5bOrderStartResendKeepsFamiStudiosPeriod() {
+    fun s5bHeldManualPeriodSoundIsNotResent() {
         val base = NesS5bSystem.blank()
         val bank = base.nes.instruments.toMutableList()
         bank[0] = NesInstrument("Tremolo", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
         bank[1] = NesInstrument("Saw", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = false, period = 2000))
+        bank[2] = NesInstrument("Buzz", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = true, octave = 4))
         val sq1 = NesRules.S5B_SQUARE1
         val songBase = NesPlayer.S5B.songBase
         fun pattern(vararg cells: Triple<Int, Int, Cell>) = base.patterns[0].copy(length = 16, tracks = base.patterns[0].tracks.mapIndexed { ch, t ->
@@ -367,25 +369,30 @@ class NesLoweringTest {
             return (0 until n).map { u8(data, at + it) }
         }
         val d4 = 50 + NesRules.S5B_OCTAVE - NesRules.NOTE_OFFSET - 12 // D-4's one-byte note on a 5B square
-        // Square 2's saw holds 2000 when Square 1's sound comes back: $5E 2000, then the sound.
+        // Square 2's saw holds 2000 when Square 1's sound comes back: just the note.
         val shared = listOf(
             pattern(Triple(sq1, 0, Cell(48, 1)), Triple(sq1 + 1, 8, Cell(40, 2))),
             pattern(Triple(sq1, 0, Cell(50, 1))),
         )
-        assertEquals(listOf(0x5e, 0xd0, 0x07, 0x80, d4), firstBytes(listOf(0, 1), 1, shared, 1, 5))
-        // J55 before a legato note: $5E $0055, then the sound.
+        assertEquals(listOf(d4), firstBytes(listOf(0, 1), 1, shared, 1, 1))
+        // J55 before a legato note: no attack, no load.
         val legato = listOf(
             pattern(Triple(sq1, 0, Cell(48, 1)), Triple(sq1, 15, Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_LO, 0x55))),
             pattern(Triple(sq1, 0, Cell(50, 0))),
         )
-        assertEquals(listOf(0x43, 0x5e, 0x55, 0x00, 0x80, d4), firstBytes(listOf(0, 1), 1, legato, 1, 6))
-        // Order 1 holds 900 on the first pass, 2000 when the loop returns to it from order 2: no re-send.
-        val loop = listOf(
+        assertEquals(listOf(0x43, d4), firstBytes(listOf(0, 1), 1, legato, 1, 2))
+        // Delayed past the row, on a loop order returned to from another period: the delay, then the note.
+        val delayed = listOf(
             pattern(Triple(sq1, 0, Cell(48, 1))),
-            pattern(Triple(sq1, 0, Cell(50, 1))),
+            pattern(Triple(sq1, 0, Cell(50, 1, NesRules.FX_NOTE_DELAY, 0x08))),
             pattern(Triple(sq1 + 1, 0, Cell(40, 2))),
         )
-        assertEquals(listOf(d4), firstBytes(listOf(0, 1, 2), 1, loop, 1, 1))
+        assertEquals(listOf(0x47, 0x07, d4), firstBytes(listOf(0, 1, 2), 1, delayed, 1, 3))
+        // An auto-period sound is re-sent; a change to the manual sound is FamiStudio's own load.
+        val auto = listOf(pattern(Triple(sq1, 0, Cell(48, 3))), pattern(Triple(sq1, 0, Cell(50, 3))))
+        assertEquals(listOf(0x84, d4), firstBytes(listOf(0, 1), 1, auto, 1, 2))
+        val change = listOf(pattern(Triple(sq1, 0, Cell(48, 3))), pattern(Triple(sq1, 0, Cell(50, 1))))
+        assertEquals(listOf(0x80, d4), firstBytes(listOf(0, 1), 1, change, 1, 2))
     }
 
     @Test

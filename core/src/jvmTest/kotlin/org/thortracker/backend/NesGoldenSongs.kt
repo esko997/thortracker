@@ -309,10 +309,10 @@ object NesGoldenSongs {
      * Squares 3 and 2 on a note row (the note keeps it), volume and volume slides, vibrato, slides, arpeggio, fine pitch,
      * delays, cuts, OFF release and stop, legato between identical sounds, the 5B's lowest and highest notes (C-1, B-7:
      * FamiStudio's notes 13 and 96), the speed set on a 5B square, and 2A03 channels alongside. Orders C-E (the loop
-     * from C) hold the order-start re-sends of manual-period sounds FamiStudio's export does not load: order D's first
-     * note while Square 2's manual sound holds the period (`$5E` with Square 2's period first), order E's legato note
-     * after a `J55` (`$5E $0055` first; Square 2's next attack there reloads its saw, FamiStudio's override rule), and order
-     * C's first note, whose period is Square 1's own 900 on the first pass but E's 2000 on the loop pass (no re-send).
+     * from C) start with manual-period sounds the square already holds, which the lowering does not re-send (a load would
+     * set the shared period FamiStudio's export leaves): order D's first note, delayed past its row, while Square 2's
+     * manual sound holds the period; order E's delayed legato note after a `J55` (Square 2's next attack there reloads
+     * its saw, FamiStudio's override rule); order C's first note, whose period is 900 on the first pass and 2000 looping.
      */
     fun s5bEffects(): Song {
         val base = NesS5bSystem.blank()
@@ -388,14 +388,16 @@ object NesGoldenSongs {
         b.note(sq3, 8, "D-5", 3)
         b.note(0, 0, "A-4", 10)
         val c = P("5B C", length = 16, channels = 8)
-        c.note(sq1, 0, "D-4", 8) // same sound: no load in FamiStudio's export; 900 first pass, 2000 looping: no re-send
+        c.note(sq1, 0, "D-4", 8) // held sound: no load (FamiStudio's export has none); 900 first pass, 2000 looping
         c.note(sq2, 8, "E-3", 13) // the manual saw: period 2000
+        c.note(sq3, 4, "D-5", 3) // a held sound without a manual period: re-sent, as on every channel
         c.note(0, 0, "D-4", 10)
         val d = P("5B D", length = 16, channels = 8)
-        d.note(sq1, 0, "E-4", 8) // same sound: FamiStudio keeps Square 2's 2000; the re-send sends $5E 2000 first
+        d.note(sq1, 0, "E-4", 8, NesRules.FX_NOTE_DELAY, 0x05) // held: Square 2's 2000 stays; delayed past the 4-frame row
         d.fx(sq1, 12, NesRules.FX_ENV_PERIOD_LO, 0x55) // period $0055, Square 1's override pending
+        d.note(sq3, 0, "D-5", 3, NesRules.FX_NOTE_DELAY, 0x03) // held, re-sent, delayed
         val e = P("5B E", length = 16, channels = 8)
-        e.note(sq1, 0, "G-4", 0) // legato: no reload in FamiStudio's export; the re-send sends $5E $0055 first
+        e.note(sq1, 0, "G-4", 0, NesRules.FX_NOTE_DELAY, 0x02) // delayed legato: no reload, $0055 stays
         e.note(sq2, 8, "A-2", 13) // same sound, but the J55 is pending on Square 2 too: FamiStudio reloads it (2000)
         e.note(0, 0, "G-4", 10)
         return base.copy(

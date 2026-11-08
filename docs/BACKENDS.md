@@ -249,11 +249,11 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   envelope period's high / low byte (FamiStudio `EnvelopePeriod`), combined when both are on one row (on any squares;
   alone the other byte is 0; two different values of one byte in a row are an error), lowered as `$5E lo hi` on Square
   1 as FamiStudio's exporter moves them; the next note with attack on a square that played since reloads its sound
-  (FamiStudio's override rule). Each order's first note re-sends its sound (seek, loop, live edits); where that would
-  load a manual period FamiStudio's export does not (another square's manual sound holds the period, or an `Ixx`/`Jyy`
-  came before a legato first note), the lowering first sends `$5E` with the period FamiStudio's stream holds at the
-  end of that frame, simulated over the song's first pass and its loop pass; where the two passes differ there, that
-  order does not re-send the sound, so playback and NSF stay FamiStudio's (`s5b_effects` covers all three). Lowering: the 16-byte
+  (FamiStudio's override rule). Each order's first note re-sends its sound (seek, loop, live edits), except a manual-
+  period sound the square already holds: its load would set the shared period, which FamiStudio's export leaves at
+  another square's or an `Ixx`/`Jyy`'s value there, so those orders are FamiStudio's stream for any delay, legato or
+  loop (`s5b_effects` orders C-E); the seek fallback that starts such an order on its own plays that square without
+  its sound until its next instrument. Lowering: the 16-byte
   `instruments_exp` entries (vol, arp, pitch, mixer, noise words, shape, octave or `$80`, period, 0, 0) for every slot;
   mixer/noise envelopes at directory `256 + 2 slot (+1)`, kinds 4/5, mixer values as FamiStudio's processed bits
   (`ProcessMixerEnvelope`); effect envelopes from 384 (`NesPlayer.effectEnvelopes`). Editor: pages volume, arpeggio,

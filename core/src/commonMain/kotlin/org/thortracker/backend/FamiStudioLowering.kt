@@ -31,10 +31,10 @@ import kotlin.math.sign
  * arithmetic. Two deliberate additions make an order self-contained for seeking, looping and live edits without
  * changing what plays: each order re-sends its first note's instrument and, when a set volume (not a slide) is in
  * force, the channel volume. (On a VRC7 channel a re-sent custom patch rewrites the chip's patch registers with the
- * values they hold. On a 5B square a re-sent sound with a manual envelope period would set the shared period to its
- * own; where FamiStudio's export holds another there (another square's manual sound, or an `Ixx`/`Jyy` before a legato
- * note), a `$5E` with that period goes first; where the song's first pass and its loop passes hold different periods
- * there, the order does not re-send the sound.) FamiStudio's own byte layout (instrument sorting and merging, CRC-ordered envelopes, its
+ * values they hold.) A 5B square does not re-send a sound with a manual envelope period it already holds: its load
+ * would set the shared period, which FamiStudio's export may hold at another value there (another square's manual
+ * sound, an `Ixx`/`Jyy` before a legato note), so such orders are exactly FamiStudio's stream, and the seek fallback
+ * that starts an order on its own plays that square without its sound until its next instrument. FamiStudio's own byte layout (instrument sorting and merging, CRC-ordered envelopes, its
  * search-based stream compression) is not reproduced; the golden test therefore compares register traces of both
  * through the same player.
  */
@@ -100,9 +100,6 @@ internal object FamiStudioLowering {
 
     /** A 5B expansion instrument's octave byte for "manual period" (FamiStudio's special code). */
     private const val S5B_MANUAL_PERIOD = 0x80
-
-    /** In a 5B re-send plan: no period fits both passes through the loop, so the order does not re-send the sound. */
-    private const val KEEP_PERIOD = -1
 
     /** FamiTracker tempo 150: one row per `speed` frames (FamiStudio's integer formula for NTSC and PAL). */
     const val TEMPO = 150
@@ -395,84 +392,7 @@ internal object FamiStudioLowering {
             }
         }
 
-        fun channel(c: Int): List<Chunk> =
-            channel(c, if (NesRules.isS5b(fs.expansion, c)) s5bResends[c - NesRules.S5B_SQUARE1] else emptyMap(), null)
-
-        /**
-         * Per 5B square, the rows whose order-start re-send of a manual-period sound (one FamiStudio's export does not load
-         * there: Thor Tracker's addition) needs the shared period set first: row → the period FamiStudio's stream holds
-         * at the end of that frame, sent with `$5E` before the instrument (the `$5E` also keeps the load from setting the
-         * period), so the re-send leaves the period as FamiStudio's export has it. [KEEP_PERIOD] where the song's first
-         * pass and its loop passes hold different periods there: no value fits both, so that order does not re-send the
-         * sound and plays exactly as FamiStudio's export; the order started on its own (the seek fallback) then plays
-         * that square's notes without its sound until the square's next instrument.
-         */
-        private val s5bResends: List<Map<Int, Int>> by lazy { s5bResendPlan() }
-
-        private fun s5bResendPlan(): List<Map<Int, Int>> {
-            val first = NesRules.S5B_SQUARE1
-            fun frame(ch: Int, row: Int) = (fs.notes[ch][row]?.noteDelay ?: -1).coerceAtLeast(0)
-            // Period events as the engine meets them in a frame: squares in order, a square's `$5E` before its load.
-            // Kinds: 0 `$5E` (moved to Square 1), 1 FamiStudio's load of a manual-period sound (sets the period
-            // unless a `$5E` came earlier in the frame), 2 Thor Tracker's re-send of one (value: the sound's period).
-            val events = ArrayList<IntArray>() // row, frame, square, kind, value
-            for (row in 0 until fs.totalRows) {
-                val period = fs.notes[first][row]?.envelopePeriod ?: -1
-                if (period >= 0) events += intArrayOf(row, frame(first, row), 0, 0, period)
-            }
-            for (i in 0 until NesExpansion.S5B.extraChannels) {
-                channel(first + i, emptyMap()) { row, slot, forced ->
-                    val env = fs.instruments[slot - 1].s5b
-                    if (!env.autoPitch) events += intArrayOf(row, frame(first + i, row), i, if (forced) 2 else 1, env.period)
-                }
-            }
-            events.sortWith(compareBy<IntArray>({ it[0] }, { it[1] }, { it[2] }, { it[3] }))
-            // The period at the end of each re-send's frame (key row * 3 + square) through rows from [from] with the
-            // period [start]; returns the map and the period at the end.
-            fun pass(from: Int, start: Int): Pair<Map<Int, Int>, Int> {
-                val atResend = HashMap<Int, Int>()
-                var period = start
-                var k = events.indexOfFirst { it[0] >= from }.let { if (it < 0) events.size else it }
-                while (k < events.size) {
-                    val row = events[k][0]
-                    val frameNo = events[k][1]
-                    var override = false
-                    val resends = ArrayList<Int>()
-                    while (k < events.size && events[k][0] == row && events[k][1] == frameNo) {
-                        val e = events[k++]
-                        when (e[3]) {
-                            0 -> { period = e[4]; override = true }
-                            1 -> if (!override) period = e[4]
-                            else -> resends += row * 3 + e[2]
-                        }
-                    }
-                    for (key in resends) atResend[key] = period
-                }
-                return atResend to period
-            }
-            // famistudio_music_play clears the period; every loop pass starts from where the song's end left it (the
-            // same each time: the loop's own events set it alike, or none and it stays).
-            val (firstPass, end) = pass(0, 0)
-            val loopPass = pass(fs.orderStart[fs.loopOrder], end).first
-            val plan = List(NesExpansion.S5B.extraChannels) { HashMap<Int, Int>() }
-            for (e in events) if (e[3] == 2) {
-                val key = e[0] * 3 + e[2]
-                val value = firstPass.getValue(key)
-                plan[e[2]][e[0]] = when {
-                    loopPass[key]?.let { it != value } == true -> KEEP_PERIOD
-                    value == e[4] -> continue // the re-send sets what FamiStudio's export holds anyway
-                    else -> value
-                }
-            }
-            return plan
-        }
-
-        /**
-         * Channel [c]'s order streams; [resends]: 5B `$5E` periods before order-start re-sends (see [s5bResends]);
-         * [record] sees each instrument load: row, slot, and whether it is Thor Tracker's re-send (FamiStudio's export
-         * would not load there).
-         */
-        private fun channel(c: Int, resends: Map<Int, Int>, record: ((Int, Int, Boolean) -> Unit)?): List<Chunk> {
+        fun channel(c: Int): List<Chunk> {
             val isSpeedChannel = c == speedChannel
             val isSaw = NesRules.isVrc6Saw(fs.expansion, c)
             val isVrc7 = NesRules.isVrc7(fs.expansion, c)
@@ -600,27 +520,23 @@ internal object FamiStudioLowering {
                                     instrument = 0
                                 }
                             }
-                            if (note.instrument != instrument || !instrumentSent) {
-                                val resend = if (note.instrument == instrument) resends[at] else null
-                                if (resend == KEEP_PERIOD) {
-                                    instrumentSent = true
-                                } else {
-                                    record?.invoke(at, note.instrument, note.instrument == instrument)
-                                    if (resend != null) {
-                                        b.byte(OP_S5B_ENV_PERIOD); b.word(resend)
-                                    }
-                                    // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
-                                    // also sends it with its first instrument, so the order is self-contained.
-                                    val volume = fs.instruments[note.instrument - 1].sawVolume
-                                    if (isSaw && (volume != sawVolume || !instrumentSent)) {
-                                        b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
-                                        sawVolume = volume
-                                    }
-                                    b.byte(0x80 or ((note.instrument - 1) shl 1))
-                                    instrument = note.instrument
-                                    instrumentSent = true
+                            // Each order re-sends its first instrument (self-contained orders), except a 5B sound with a
+                            // manual envelope period the square already holds: loading it would set the shared period
+                            // FamiStudio's export leaves alone there (another square's manual sound or an `Ixx`/`Jyy` may
+                            // hold it), so that order plays exactly the stream FamiStudio exports.
+                            val held = note.instrument == instrument
+                            if (!held || (!instrumentSent && !(isS5b && hasManualPeriod(note.instrument)))) {
+                                // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
+                                // also sends it with its first instrument, so the order is self-contained.
+                                val volume = fs.instruments[note.instrument - 1].sawVolume
+                                if (isSaw && (volume != sawVolume || !instrumentSent)) {
+                                    b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
+                                    sawVolume = volume
                                 }
+                                b.byte(0x80 or ((note.instrument - 1) shl 1))
+                                instrument = note.instrument
                             }
+                            instrumentSent = true
                         }
                         var emittedSlide = false
                         if (note.isMusical && note.slideTarget != 0) {
@@ -659,6 +575,9 @@ internal object FamiStudioLowering {
             }
             return chunks
         }
+
+        /** A 5B sound whose hardware envelope takes the manual period (octave byte `$80`). */
+        private fun hasManualPeriod(slot: Int): Boolean = !fs.instruments[slot - 1].s5b.autoPitch
 
         /** FamiStudio's `Square1HasEnvelopePeriodEffect`: 5B Square 1 sets the envelope period on [row]. */
         private fun square1SetsEnvPeriod(row: Int): Boolean = (fs.notes[NesRules.S5B_SQUARE1][row]?.envelopePeriod ?: -1) >= 0
