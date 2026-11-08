@@ -9,25 +9,37 @@ import org.thortracker.model.Song
 /** NES document edits: the one instrument bank and its envelopes, as undoable [EditorSession] commands. */
 
 /**
- * The four envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges; duty depends on the
- * sound's [NesChip]) and the value a new step starts from. Only volume has a release point (FamiStudio's rule).
+ * The envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges; duty depends on the sound's
+ * [NesChip]) and the value a new step starts from: the four every sound has (volume, arpeggio, pitch, duty), then the
+ * 5B's [MIXER] and [NOISE], which only 5B sounds hold ([belongsTo]). Only volume has a release point (FamiStudio's rule).
  */
 enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback: Int) {
     VOLUME("Volume", NesEnvelope.VOLUME, 15),
     ARPEGGIO("Arpeggio", NesEnvelope.ARPEGGIO, 0),
     PITCH("Pitch", NesEnvelope.PITCH, 0),
-    DUTY("Duty", NesEnvelope.DUTY, 0);
+    DUTY("Duty", NesEnvelope.DUTY, 0),
+    MIXER("Mixer", NesEnvelope.MIXER, 2),
+    NOISE("Noise", NesEnvelope.NOISE, 0);
 
     val canRelease: Boolean get() = this == VOLUME
 
     /** The values this envelope holds on a [chip] sound: the VRC6 has eight duties. */
     fun range(chip: NesChip): IntRange = if (this == DUTY) chip.duty else range
 
+    /** Whether a [chip] sound has this envelope: duty only where the chip has duties, mixer and noise only on the 5B. */
+    fun belongsTo(chip: NesChip): Boolean = when (this) {
+        DUTY -> chip.hasDuty
+        MIXER, NOISE -> chip == NesChip.S5B
+        else -> true
+    }
+
     fun of(i: NesInstrument): NesEnvelope = when (this) {
         VOLUME -> i.volume
         ARPEGGIO -> i.arpeggio
         PITCH -> i.pitch
         DUTY -> i.duty
+        MIXER -> i.mixer
+        NOISE -> i.noise
     }
 
     fun set(i: NesInstrument, e: NesEnvelope): NesInstrument = when (this) {
@@ -35,17 +47,18 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
         ARPEGGIO -> i.copy(arpeggio = e)
         PITCH -> i.copy(pitch = e)
         DUTY -> i.copy(duty = e)
+        MIXER -> i.copy(mixer = e)
+        NOISE -> i.copy(noise = e)
     }
 
     /**
      * [e] made legal for this envelope of a [chip] sound: values clamped, loop < length, and a release only on volume
-     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop). A VRC7, N163 or FDS
-     * sound's duty envelope is always empty (their channels have no duty).
+     * and only after a loop (loop < release < length; FamiStudio drops a release without a loop). An envelope the
+     * chip's sounds do not have ([belongsTo]: a VRC7, N163, FDS or 5B sound's duty, a mixer or noise envelope off the 5B)
+     * is always empty.
      */
     fun fixed(e: NesEnvelope, chip: NesChip = NesChip.APU): NesEnvelope {
-        if (this == DUTY && (chip == NesChip.VRC7 || chip == NesChip.N163 || chip == NesChip.FDS)) {
-            return if (e.values.isEmpty() && e.loop < 0 && e.release < 0) e else NesEnvelope()
-        }
+        if (!belongsTo(chip)) return if (e.values.isEmpty() && e.loop < 0 && e.release < 0) e else NesEnvelope()
         val range = range(chip)
         val values = if (e.values.all { it in range }) e.values else e.values.map { it.coerceIn(range) }
         val last = values.size - 1
@@ -120,9 +133,10 @@ fun Song.nesInstrument(slot: Int): NesInstrument? = nes.instruments.getOrNull(sl
 fun defaultNesInstrument(slot: Int) = NesInstrument(name = "Sound ${hex2(slot)}")
 
 /**
- * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7, N163 and FDS sounds have none), the saw
- * volume, the FM patch, the N163 waves and the FDS waves and modulation back to their defaults when it leaves the VRC6 /
- * VRC7 / N163 / FDS. Refused (with a note) when the chip is not the song's or the sound still maps DPCM samples, which
+ * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7, N163, FDS and 5B sounds have none), the saw
+ * volume, the FM patch, the N163 waves, the FDS waves and modulation and the 5B's mixer, noise and hardware envelope back
+ * to their defaults when it leaves that chip. Refused (with a note) when the chip is not the song's or the sound still
+ * maps DPCM samples, which only 2A03 sounds play.
  * only 2A03 sounds play.
  */
 fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
@@ -137,10 +151,10 @@ fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
 }
 
 /**
- * This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7, the N163 and the FDS), other chips'
- * settings reset. A sound becoming an N163 sound starts from FamiStudio's default wave (a 16-sample sine at RAM 0, legal
- * with any channel count); one becoming an FDS sound from FamiStudio's default FDS instrument (one sine wave, 100% master
- * volume, no modulation).
+ * This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7, the N163, the FDS and the 5B), other
+ * chips' settings reset. A sound becoming an N163 sound starts from FamiStudio's default wave (a 16-sample sine at RAM 0,
+ * legal with any channel count); one becoming an FDS sound from FamiStudio's default FDS instrument (one sine wave, 100%
+ * master volume, no modulation).
  */
 fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
     chip = chip,
@@ -149,6 +163,9 @@ fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
     fm = if (chip == NesChip.VRC7) fm else Vrc7Patch.DEFAULT,
     wave = if (chip == NesChip.N163) wave else N163Wave.DEFAULT,
     fds = if (chip == NesChip.FDS) fds else FdsSound.DEFAULT,
+    mixer = NesEnvelopeKind.MIXER.fixed(mixer, chip),
+    noise = NesEnvelopeKind.NOISE.fixed(noise, chip),
+    s5b = if (chip == NesChip.S5B) s5b else S5bEnvelope.DEFAULT,
 )
 
 /**
@@ -320,15 +337,10 @@ object FdsEdits {
      */
     const val CENTRE = 32
 
-    /** The highest mod speed FamiStudio 4.5.3's engine reads as itself ([FdsSound.engineSpeed]): $F7F. */
-    val LAST_SPEED = (FdsSound.MOD_SPEED.last and 0xF00) or 0x7F
-
     /**
      * [f] made legal: 1..[FdsSound.MAX_WAVES] waves of exactly [FdsSound.WAVE_SIZE] samples 0..63 (others resampled),
      * one repeat (1..15) per wave, the volume envelope's loop and release rules on the sequence, [FdsSound.MOD_SIZE]
-     * modulation targets −64..63, and every number in its range. Mod speeds FamiStudio's engine misreads
-     * ([FdsSound.engineSpeed]) are kept (the song check rejects them; the editor's steps pass over them). Returns [f]
-     * itself when it already is.
+     * modulation targets −64..63, and every number in its range. Returns [f] itself when it already is.
      */
     fun fixed(f: FdsSound): FdsSound {
         val count = f.waves.size.coerceIn(1, FdsSound.MAX_WAVES)
@@ -430,18 +442,6 @@ object FdsEdits {
     /** [f]'s modulation table made from [preset] (one of [FdsPresets.MOD_PRESETS]). */
     fun withModPreset(f: FdsSound, preset: WavePreset): FdsSound = fixed(f.copy(modulation = FdsPresets.modulation(preset)))
 
-    /**
-     * [speed] stepped by [delta] within 0..4095, passing over the speeds FamiStudio 4.5.3's engine misreads as auto-mod
-     * (low byte $80-$FF, [FdsSound.engineSpeed]) in the direction of the step: up from $x7F goes to $(x+1)00, down from
-     * $x00 to $(x-1)7F; nothing above [LAST_SPEED].
-     */
-    fun stepSpeed(speed: Int, delta: Int): Int {
-        if (delta == 0) return speed
-        var s = (speed + delta).coerceIn(FdsSound.MOD_SPEED)
-        if (!FdsSound.engineSpeed(s)) s = if (delta > 0) (s or 0xFF) + 1 else (s and 0xF00) or 0x7F
-        return s.coerceAtMost(LAST_SPEED)
-    }
-
     /** The sequence as a volume-style envelope: one repeat per wave, the loop and the release. */
     private fun sequence(f: FdsSound) =
         NesEnvelope(List(f.waves.size) { f.repeat.getOrNull(it) ?: FdsSound.REPEAT.first }, f.loop, f.release)
@@ -462,6 +462,21 @@ fun EditorSession.editNesFds(slot: Int, label: String, f: (FdsSound) -> FdsSound
 /** Edits the FM patch of VRC7 sound [slot]. */
 fun EditorSession.editNesFm(slot: Int, label: String, f: (Vrc7Patch) -> Vrc7Patch): Boolean =
     editNesInstrument(slot, label) { if (it.chip == NesChip.VRC7) it.copy(fm = f(it.fm)) else it }
+
+/** Edits the hardware envelope settings of 5B sound [slot], kept in range (octave -8..8, period 0..65535). */
+fun EditorSession.editNesS5b(slot: Int, label: String, f: (S5bEnvelope) -> S5bEnvelope): Boolean =
+    editNesInstrument(slot, label) {
+        if (it.chip != NesChip.S5B) it
+        else f(it.s5b).let { e -> it.copy(s5b = e.copy(octave = e.octave.coerceIn(S5bEnvelope.OCTAVES), period = e.period.coerceIn(S5bEnvelope.PERIODS))) }
+    }
+
+/** Edits the VRC7 song's release/stop sustain overrides, which every VRC7 sound plays with ([Vrc7Sustain]). */
+fun EditorSession.editVrc7Sustain(label: String, f: (Vrc7Sustain) -> Vrc7Sustain): Boolean {
+    if (song.nes.expansion != NesExpansion.VRC7) return false
+    val next = f(song.nes.vrc7Sustain)
+    if (next == song.nes.vrc7Sustain) return false
+    return apply(label) { s -> s.copy(sound = s.nes.copy(vrc7Sustain = next)) }
+}
 
 /** A copied NES instrument, one of its envelopes, or one N163 or FDS wave's samples. */
 sealed interface NesClip : Clip {

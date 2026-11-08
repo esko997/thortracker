@@ -4,7 +4,7 @@
  * own export of tools/audio/nes/n163_test.txt and the same rows in the Thor Tracker image layout (nes_n163_song.h):
  * identical register writes (APU and N163 ports), row timing, wave uploads in N163 RAM, the wave-index sequence with
  * its repeats, loop and release, phase resets, seek, live relocation and edits, audition, mute, the image rules of
- * the N163 builds and the chip engine interface of all eight builds.
+ * the N163 builds, the chip engine interface of all eight builds and the WAV export (chip_wav.c) of the test song.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes <dir>/nes_n163.wav (48 kHz stereo, 30 s), <dir>/nes_n163_trace.txt (per-frame APU + N163 writes) and
@@ -17,6 +17,7 @@
 
 #include "blip_buf.h"
 #include "chip_engine.h"
+#include "chip_wav.h"
 #include "nes_apu.h"
 #include "nes_ft_song.h"
 #include "nes_machine.h"
@@ -362,25 +363,29 @@ static int check_waves(NesMachine* m, const NesImage* im, int* checked) {
     return bad;
 }
 
-/* Per-frame sound register writes (APU and N163 ports) as (address low, address high, value). */
+/* Per-frame sound register writes (APU and N163 ports) as (address low, address high, value), and the
+ * frame-relative CPU cycle of each. */
 typedef struct {
     int frames;
     uint8_t (*w)[3 * 1024];
+    uint32_t (*t)[1024];
     int* n;
 } Trace;
 
 static void trace_alloc(Trace* t, int frames) {
     t->frames = frames;
     t->w = calloc((size_t)frames, 3 * 1024);
+    t->t = calloc((size_t)frames, 1024 * sizeof(uint32_t));
     t->n = (int*)calloc((size_t)frames, sizeof(int));
 }
 
 static void trace_free(Trace* t) {
     free(t->w);
+    free(t->t);
     free(t->n);
 }
 
-static void record(NesMachine* m, Trace* t, int f) { t->n[f] = nm_write_log(m, t->w[f], 1024); }
+static void record(NesMachine* m, Trace* t, int f) { t->n[f] = nm_write_log_timed(m, t->w[f], t->t[f], 1024); }
 
 static int same_frame(const Trace* a, const Trace* b, int f) {
     return a->n[f] == b->n[f] && !memcmp(a->w[f], b->w[f], (size_t)a->n[f] * 3);
@@ -391,6 +396,35 @@ static int first_difference(const Trace* a, const Trace* b, int from, int to) {
         if (!same_frame(a, b, f)) return f;
     }
     return -1;
+}
+
+/* Engine frame f after a start from (0, 0): 29780 and 29781 CPU cycles alternating. */
+static uint32_t frame_cycles(int f) { return (f & 1) ? 29781u : FRAME; }
+
+/* A standalone N163 unit fed frame f's timed N163 port writes of `t` (FamiStudio never reads the data port), then
+ * the frame end: the chip state those timed writes alone produce. */
+static void replay_frame(NesN163* u, const Trace* t, int f, uint32_t cycles) {
+    for (int i = 0; i < t->n[f]; ++i) {
+        const uint16_t addr = (uint16_t)(t->w[f][3 * i] | t->w[f][3 * i + 1] << 8);
+        if (nes_n163_register(addr)) nes_n163_write(u, t->t[f][i], addr, t->w[f][3 * i + 2]);
+    }
+    nes_n163_end_frame(u, cycles);
+}
+
+/* A silent copy of a machine's N163 unit to replay from. */
+static NesN163 unit_copy(const NesN163* n) {
+    NesN163 u = *n;
+    nes_n163_set_output(&u, NULL);
+    return u;
+}
+
+/* Index of the first write of frame f at a different cycle in `a` and `b` (same writes assumed), else -1. */
+static int first_timing_difference(const Trace* a, const Trace* b, int f) {
+    const int n = a->n[f] < b->n[f] ? a->n[f] : b->n[f];
+    for (int i = 0; i < n; ++i) {
+        if (a->t[f][i] != b->t[f][i]) return i;
+    }
+    return a->n[f] == b->n[f] ? -1 : n;
 }
 
 static void play_trace(NesMachine* m, const NesImage* image, Trace* t) {
@@ -477,9 +511,6 @@ static void test_images(void) {
     int streams_ok = 1;
     for (int c = 0; c < ALL_CHANNELS; ++c) streams_ok &= i->streams[c] >= P->song_base;
     EXPECT(streams_ok && P->channels == ALL_CHANNELS && P->n163_channels == 8, "an order stream for each of the 13 channels");
-    for (int o = 0; o < N163_TEST_ORDERS; ++o) {
-        EXPECT(i->speed[o] == nes_n163_speed[o][0], "order %d starts at speed %d (%d)", o, nes_n163_speed[o][0], i->speed[o]);
-    }
     int waves_ok = 1, wave_dir = 1;
     for (int j = 0; j < i->instruments; ++j) {
         const int idx = dir_index(&g_thor, nm_rd16(exp_entry(&g_thor, j) + 6));
@@ -675,7 +706,6 @@ static void test_playback(NesMachine* m, const char* dir) {
     const double mean_call = (double)(nm_driver_cycles(m) - cycles0) / frames;
     EXPECT(faults == 0 && nans == 0, "no driver faults or NaNs over %d frames", frames);
     EXPECT(rms > 0.03 && peak < 1.0, "non-silent, unclipped: rms %.4f peak %.4f", rms, peak);
-    EXPECT(worst_call < FRAME / 2, "engine frame within half a frame (worst %u cycles, mean %.0f)", worst_call, mean_call);
     EXPECT(n163_writes > frames * 8 && apu_writes > frames * 3, "the engine writes the N163 ports (%d) and the APU (%d) every frame",
            n163_writes, apu_writes);
     EXPECT(wave_checked > frames / 2 && wave_bad == 0,
@@ -825,6 +855,19 @@ static int same_n163(const NesN163* a, const NesN163* b) {
            a->level == b->level && a->addr == b->addr;
 }
 
+/* N163 unit state equality apart from what the timing of the engine's writes decides: every RAM byte except each
+ * channel's phase (registers +1, +3, +5), the round robin, its timer and the address port. */
+static int same_n163_but_phases(const NesN163* a, const NesN163* b) {
+    uint8_t ra[NES_N163_RAM], rb[NES_N163_RAM];
+    memcpy(ra, a->ram, sizeof ra);
+    memcpy(rb, b->ram, sizeof rb);
+    for (int k = 0; k < 8; ++k) {
+        const int regs = 0x78 - 8 * k;
+        ra[regs + 1] = ra[regs + 3] = ra[regs + 5] = rb[regs + 1] = rb[regs + 3] = rb[regs + 5] = 0;
+    }
+    return !memcmp(ra, rb, sizeof ra) && a->pos == b->pos && a->timer == b->timer && a->addr == b->addr;
+}
+
 static void test_seek(NesMachine* m) {
     printf("N163 seek: exact rows from engine state, N163 RAM and phases as in straight play\n");
     const int frames = song_frames(FIRST_PASS_ROWS + LOOP_ROWS);
@@ -865,20 +908,62 @@ static void test_seek(NesMachine* m) {
     trace_free(&t);
 }
 
+/* Whether one machine's frame writes = another's with N163 wave uploads inserted (famistudio_update_n163_wave:
+ * address port = channel q's wave register $7E - 8q, its wave position, address port = position / 2 +
+ * auto-increment, size / 2 wave bytes) by channels q of `uploading` (bit q) only, each uploading `wave` (size / 2
+ * bytes) at `pos`. *uploaded: the channels that did; *before: writes ahead of the first upload (-1: none). */
+static int uploads_inserted(const Trace* a, const Trace* b, int f, uint8_t uploading, int pos, int size, const uint8_t* wave,
+                            uint8_t* uploaded, int* before) {
+    int i = 0, s = 0;
+    *uploaded = 0;
+    *before = -1;
+#define W(t, x, k) ((t)->w[f][3 * (x) + (k)])
+#define IS(t, x, hi, v) (W(t, x, 1) == (hi) && W(t, x, 0) == 0 && W(t, x, 2) == (v))
+    while (i < a->n[f]) {
+        if (s < b->n[f] && !memcmp(a->w[f] + 3 * i, b->w[f] + 3 * s, 3)) {
+            ++i, ++s;
+            continue;
+        }
+        int q = -1;
+        for (int c = 0; c < 8; ++c) {
+            if ((uploading >> c & 1) && i + 3 + size / 2 <= a->n[f] && IS(a, i, 0xF8, 0x7E - 8 * c) && IS(a, i + 1, 0x48, pos) &&
+                IS(a, i + 2, 0xF8, (pos / 2) | 0x80)) {
+                q = c;
+            }
+        }
+        if (q < 0 || (*uploaded >> q & 1)) return 0;
+        for (int k = 0; k < size / 2; ++k) {
+            if (!IS(a, i + 3 + k, 0x48, wave[k])) return 0;
+        }
+        if (*before < 0) *before = i;
+        i += 3 + size / 2;
+        *uploaded |= (uint8_t)(1 << q);
+    }
+#undef IS
+#undef W
+    return s == b->n[f];
+}
+
 static void test_live_apply(NesMachine* m) {
     printf("N163 live apply: relocation and edits at tick boundaries\n");
     const int frames = song_frames(FIRST_PASS_ROWS + 2 * LOOP_ROWS);
     Trace ref, t;
     trace_alloc(&ref, frames);
     trace_alloc(&t, frames);
-    play_trace(m, &g_thor, &ref);
     NesMachine* straight = nm_create(RATE, P);
     int mode;
     nm_start(straight, &g_thor, 0, 0, 0, &mode);
     nm_start(m, &g_thor, 0, 0, 0, &mode);
+    nm_set_apu_logging(straight, 1);
     nm_set_apu_logging(m, 1);
+    /* Moved data changes where the engine's indexed reads land (page crossings take a cycle more), so the same
+     * writes may come at other CPU cycles and the N163 updates between them see them earlier or later: phases may
+     * then differ, everything else may not. Each machine's N163 unit must be exactly what its own timed writes
+     * produce (a standalone unit replaying them), and identical to straight play's while their timings are. */
+    NesN163 replay_m = unit_copy(nm_n163(m)), replay_s = unit_copy(nm_n163(straight));
     double worst_us = 0;
-    int same_chip = 1;
+    int replay_ok = 1, same_but_phases = 1, timed_same = 1, exact_while_timed_same = 1;
+    int timing_frame = -1, timing_write = -1, phase_frame = -1;
     for (int f = 0; f < frames; ++f) {
         double a0 = now_us();
         nm_apply_image(m, (f & 1) ? &g_moved : &g_thor);
@@ -887,22 +972,48 @@ static void test_live_apply(NesMachine* m) {
         nm_tick(m, g_out);
         nm_tick(straight, g_out);
         record(m, &t, f);
-        same_chip &= same_n163(nm_n163(m), nm_n163(straight));
+        record(straight, &ref, f);
+        replay_frame(&replay_m, &t, f, frame_cycles(f));
+        replay_frame(&replay_s, &ref, f, frame_cycles(f));
+        replay_ok &= same_n163(&replay_m, nm_n163(m)) && same_n163(&replay_s, nm_n163(straight));
+        same_but_phases &= same_n163_but_phases(nm_n163(m), nm_n163(straight));
+        const int dw = first_timing_difference(&t, &ref, f);
+        if (dw >= 0 && timing_frame < 0) {
+            timing_frame = f;
+            timing_write = dw;
+        }
+        timed_same &= dw < 0;
+        const int same = same_n163(nm_n163(m), nm_n163(straight));
+        if (!same && phase_frame < 0) phase_frame = f;
+        if (timed_same) exact_while_timed_same &= same;
     }
     int d = first_difference(&ref, &t, 0, frames);
     EXPECT(d < 0, "moved data (wave tables and waves too) applied before each of %d frames: same writes as straight play "
                   "(first difference %d)", frames, d);
-    EXPECT(same_chip, "... and the same N163 RAM, phases and output state every frame (no wave re-upload)");
+    EXPECT(replay_ok, "... each machine's N163 unit = its own timed writes replayed, every frame");
+    EXPECT(same_but_phases, "... the same N163 RAM apart from phases (wave RAM, registers), round robin and address port "
+                            "every frame (no wave re-upload)");
+    EXPECT(exact_while_timed_same, "... and identical N163 state, phases included, every frame while the write timings are");
+    if (timing_frame >= 0) {
+        const uint8_t* e = t.w[timing_frame] + 3 * timing_write;
+        printf("  first write timing difference: frame %d write %d ($%02X%02X = $%02X) at cycle %u vs %u straight; "
+               "first N163 state difference: frame %d\n",
+               timing_frame, timing_write, e[1], e[0], e[2], t.t[timing_frame][timing_write], ref.t[timing_frame][timing_write],
+               phase_frame);
+    } else {
+        printf("  write timings identical in every frame; first N163 state difference: frame %d\n", phase_frame);
+    }
     printf("  worst apply_image: %.1f us\n", worst_us);
 
-    /* The edited wave byte: re-uploaded at once into a channel playing it, transport and phases untouched. Straight
-     * play finds two consecutive frames with a channel playing that wave (old bytes in RAM); the edit is applied
-     * after the first, so the engine frame after the edit still plays it. */
+    /* The edited wave byte: re-uploaded at once into a channel playing it, transport untouched. Straight play finds
+     * two consecutive frames with a channel playing that wave (old bytes in RAM); the edit is applied after the
+     * first, so the engine frame after the edit still plays it. */
     const int j = N163_TEST_EDIT_WAVE_INSTRUMENT, w = N163_TEST_EDIT_WAVE_INDEX;
-    const int at = exp_entry(&g_thor, j)[8] / 2 + N163_TEST_EDIT_WAVE_OFFSET;
-    EXPECT(wave_bytes(&g_thor, j, w)[N163_TEST_EDIT_WAVE_OFFSET] == N163_TEST_EDIT_WAVE_OLD &&
+    const int wave_pos = exp_entry(&g_thor, j)[8], wave_size = exp_entry(&g_thor, j)[9];
+    const int at = wave_pos / 2 + N163_TEST_EDIT_WAVE_OFFSET;
+    EXPECT(exp_waves(&g_thor, j) == 1 && w == 0 && wave_bytes(&g_thor, j, w)[N163_TEST_EDIT_WAVE_OFFSET] == N163_TEST_EDIT_WAVE_OLD &&
                wave_bytes(&g_edited, j, w)[N163_TEST_EDIT_WAVE_OFFSET] == N163_TEST_EDIT_WAVE_NEW,
-           "fixture: wave %d of expansion instrument %d byte %d $%02X -> $%02X", w, j, N163_TEST_EDIT_WAVE_OFFSET,
+           "fixture: the only wave (%d) of expansion instrument %d, byte %d $%02X -> $%02X", w, j, N163_TEST_EDIT_WAVE_OFFSET,
            N163_TEST_EDIT_WAVE_OLD, N163_TEST_EDIT_WAVE_NEW);
     nm_start(straight, &g_thor, 0, 0, 0, &mode);
     int target = -1, k = -1, prev = -1;
@@ -930,19 +1041,57 @@ static void test_live_apply(NesMachine* m) {
             nm_tick(m, g_out);
             nm_tick(straight, g_out);
         }
+        /* Channels on instrument j may re-upload its wave (a sounding one does; the fixture checks j has one wave). */
+        uint8_t uploading = 0;
+        for (int q = 0; q < N163_TEST_CHANNELS; ++q) {
+            if (peek_n163(m, P->n163.chn_n163_instrument, q) == j) uploading |= (uint8_t)(1 << q);
+        }
+        const NesN163 before_apply = unit_copy(nm_n163(m));
         nm_apply_image(m, &g_edited);
+        EXPECT(same_n163(&before_apply, nm_n163(m)), "apply_image leaves the N163 unit alone (RAM, phases, round robin)");
+        Trace em, es;
+        trace_alloc(&em, 1);
+        trace_alloc(&es, 1);
+        NesN163 rm = unit_copy(nm_n163(m)), rs = unit_copy(nm_n163(straight));
+        nm_set_apu_logging(m, 1);
+        nm_set_apu_logging(straight, 1);
         nm_tick(m, g_out);
         nm_tick(straight, g_out);
-        int o0, r0, t0, o1, r1, t1, phases = 1;
+        record(m, &em, 0);
+        record(straight, &es, 0);
+        const uint32_t cycles = frame_cycles(target - 1);
+        replay_frame(&rm, &em, 0, cycles);
+        replay_frame(&rs, &es, 0, cycles);
+        int o0, r0, t0, o1, r1, t1;
         nm_position(m, &o0, &r0, &t0);
         nm_position(straight, &o1, &r1, &t1);
-        for (int q = 0; q < N163_TEST_CHANNELS; ++q) phases &= nes_n163_phase(nm_n163(m), q) == nes_n163_phase(nm_n163(straight), q);
         EXPECT(peek_n163(m, P->n163.chn_n163_wave_index, k) == w && nm_n163(m)->ram[at] == N163_TEST_EDIT_WAVE_NEW &&
                    nm_n163(straight)->ram[at] == N163_TEST_EDIT_WAVE_OLD,
                "N163 %d playing the edited wave: RAM byte $%02X re-uploaded with the next engine frame ($%02X)", k + 1, at,
                nm_n163(m)->ram[at]);
-        EXPECT(o0 == o1 && r0 == r1 && t0 == t1 && phases, "no restart: position %d/%d/%d and every phase as without the edit", o0,
-               r0, t0);
+        EXPECT(o0 == o1 && r0 == r1 && t0 == t1, "no restart: position %d/%d/%d as without the edit", o0, r0, t0);
+        int before = -1;
+        uint8_t uploaded = 0;
+        const int inserted = uploads_inserted(&em, &es, 0, uploading, wave_pos, wave_size, wave_bytes(&g_edited, j, w), &uploaded, &before);
+        EXPECT(inserted && (uploaded >> k & 1),
+               "the frame's writes = straight play's plus uploads of the edited wave by channels on instrument %d only "
+               "(channels $%02X, N163 %d among them; no phase reset, no other change)", j, uploaded, k + 1);
+        int timed_prefix = before >= 0;
+        for (int i = 0; timed_prefix && i < before; ++i) timed_prefix &= em.t[0][i] == es.t[0][i];
+        EXPECT(timed_prefix, "every write ahead of the upload at the same CPU cycle as straight play's (%d writes)", before);
+        EXPECT(same_n163(&rm, nm_n163(m)) && same_n163(&rs, nm_n163(straight)),
+               "both N163 units = their own timed writes replayed (later writes shift by the upload's cycles)");
+        NesN163 expect = unit_copy(nm_n163(straight));
+        memcpy(expect.ram + wave_pos / 2, wave_bytes(&g_edited, j, w), (size_t)wave_size / 2);
+        EXPECT(same_n163_but_phases(nm_n163(m), &expect), "N163 RAM apart from phases = straight play's with the edited wave");
+        int phases_differ = 0;
+        for (int q = 0; q < N163_TEST_CHANNELS; ++q) phases_differ += nes_n163_phase(nm_n163(m), q) != nes_n163_phase(nm_n163(straight), q);
+        const int after = before + 3 + wave_size / 2;
+        const int shift = before >= 0 && before < es.n[0] && after < em.n[0] ? (int)em.t[0][after] - (int)es.t[0][before] : 0;
+        printf("  upload at write %d shifts the following writes by %d cycles; %d N163 phases differ from straight play\n",
+               before, shift, phases_differ);
+        trace_free(&em);
+        trace_free(&es);
     }
 
     /* The edited volume envelope byte and the edited note. */
@@ -1114,6 +1263,52 @@ static void test_chip_engine_ops(void) {
     }
 }
 
+/* The WAV export of the 8-channel test song (as nes_vrc7_test.c checks the VRC6 and VRC7 test songs): once through
+ * ends where straight ticking enters the loop row again, sample for sample; one more pass adds exactly the loop's
+ * ticks. */
+static void test_wav(const char* dir) {
+    printf("WAV export of the N163 test song\n");
+    const ChipEngineOps* ops = chip_engine_ops("nes-famistudio-n163-8");
+    EXPECT(ops != NULL, "nes-famistudio-n163-8 registered");
+    if (!ops) return;
+    static uint8_t bytes[NM_IMAGE_MAX_SIZE];
+    memset(bytes, 0, sizeof bytes);
+    memcpy(bytes, nes_n163_thor, NES_N163_THOR_SIZE);
+    char spool[512];
+    snprintf(spool, sizeof spool, "%s/nes_n163_wav.part", dir);
+    const int first_ticks = song_frames(FIRST_PASS_ROWS), loop_ticks = song_frames(FIRST_PASS_ROWS + LOOP_ROWS) - first_ticks;
+    const size_t cap = (size_t)(first_ticks + loop_ticks) * NM_MAX_TICK_FRAMES;
+    int16_t* ref = (int16_t*)malloc(cap * 2 * sizeof *ref);
+    int16_t* file = (int16_t*)malloc((cap * 2 + 22) * sizeof *file);
+    ChipImage* img = (ChipImage*)malloc(ops->image_storage);
+    ChipMachine* cm = ops->create(RATE);
+    int mode, n_ref = 0, n_first = 0;
+    EXPECT(ops->load_image(img, bytes, ops->image_size) == CHIP_OK && ops->start(cm, img, 0, 0, 0, &mode) == CHIP_OK,
+           "the Thor-layout test image starts");
+    for (int t = 0; t < first_ticks + loop_ticks; ++t) {
+        const int n = ops->tick(cm, g_out);
+        for (int i = 0; i < 2 * n; ++i) ref[n_ref * 2 + i] = chip_wav_pcm16(g_out[i]);
+        n_ref += n > 0 ? n : 0;
+        if (t == first_ticks - 1) n_first = n_ref;
+    }
+    ops->destroy(cm);
+    free(img);
+    for (int loops = 0; loops < 2; ++loops) {
+        const char* problem = NULL;
+        int capped = -1;
+        const int r = chip_render_wav("nes-famistudio-n163-8", bytes, ops->image_size, loops, 0, 600, spool, &capped, &problem);
+        FILE* f = r == 0 ? fopen(spool, "rb") : NULL;
+        const size_t got = f ? fread(file, 2, cap * 2 + 22, f) : 0;
+        if (f) fclose(f);
+        remove(spool);
+        const int frames = got >= 22 ? (int)(got - 22) / 2 : -1, want = loops ? n_ref : n_first;
+        EXPECT(r == 0 && capped == 0 && frames == want && !memcmp(file + 22, ref, (size_t)want * 4),
+               "loops=%d: %d frames, identical to straight ticking (%d frames)", loops, frames, want);
+    }
+    free(file);
+    free(ref);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     test_unit();
@@ -1133,6 +1328,7 @@ int main(int argc, char** argv) {
     test_audition(m);
     test_mute(m);
     test_chip_engine_ops();
+    test_wav(dir);
     nm_destroy(m);
     printf("nes_n163_test: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

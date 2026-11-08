@@ -34,7 +34,7 @@ extern "C" {
 /* Mixer weight of one DAC step: the 2A03 mixer's level of one pulse at volume 15, divided by 15. */
 #define NES_VRC6_STEP (95.88 / (8128.0 / 15.0 + 100.0) / 15.0)
 
-enum { NES_VRC6_PULSE1 = 0, NES_VRC6_PULSE2, NES_VRC6_SAW, NES_VRC6_CHANNELS };
+enum { NES_VRC6_PULSE1 = 0, NES_VRC6_PULSE2, NES_VRC6_SAW, NES_VRC6_VOICES };
 
 typedef struct NesVrc6Pulse {
     uint8_t ctrl;    /* $9000/$A000: M (bit 7), duty D (bits 4-6), volume V (bits 0-3) */

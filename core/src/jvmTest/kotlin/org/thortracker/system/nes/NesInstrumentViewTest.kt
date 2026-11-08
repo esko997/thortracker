@@ -75,13 +75,13 @@ class NesInstrumentViewTest {
         val ins = { vrc6.song.nes.instruments[0] }
         assertTrue(Row.CHIP in NesInstrumentView.rows(v.state, vrc6.song))
         assertFalse(Row.SAW in NesInstrumentView.rows(v.state, vrc6.song))
-        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(vrc6.song, v.state))
+        assertEquals(NesInstrumentView.DPCM_PAGE + 1, NesInstrumentView.pages(vrc6.song, v.state))
         goTo(Row.CHIP)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(NesChip.VRC6, ins().chip)
         assertEquals(NesRules.VRC6_PULSE1, v.state.listenChannel) // Listen follows to a VRC6 channel
         assertTrue(Row.SAW in NesInstrumentView.rows(v.state, vrc6.song))
-        assertEquals(NesEnvelopeKind.entries.size, NesInstrumentView.pages(vrc6.song, v.state)) // no DPCM page
+        assertEquals(NesInstrumentView.DPCM_PAGE, NesInstrumentView.pages(vrc6.song, v.state)) // no DPCM page
         goTo(Row.SAW)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(Vrc6SawVolume.QUARTER, ins().sawVolume)
@@ -106,6 +106,111 @@ class NesInstrumentViewTest {
         assertEquals(Vrc6SawVolume.HALF, pasted.sawVolume)
         // 2A03 songs refuse the VRC6 chip.
         assertFalse(session.setNesChip(1, NesChip.VRC6))
+    }
+
+    /**
+     * A 5B sound: no duty and no DPCM page; its pages are volume, arpeggio, pitch, mixer, noise and the hardware envelope,
+     * whose rows set the shape, the period mode, the octave (clamped to -8..8) and the period (×2 per coarse step, at
+     * most 65535). Leaving the 5B drops its mixer, noise and envelope.
+     */
+    @Test
+    fun s5bSoundsEditMixerNoiseAndTheHardwareEnvelope() {
+        val s5b = EditorSession(NesS5bSystem.blank())
+        val v = ViewController(s5b, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, s5b.song).indexOf(row) }
+        val ins = { s5b.song.nes.instruments[0] }
+        goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.S5B, ins().chip)
+        assertEquals(NesRules.S5B_SQUARE1, v.state.listenChannel)
+        assertEquals(NesInstrumentView.S5B_ENV_PAGE + 1, NesInstrumentView.pages(s5b.song, v.state))
+        // Page 3 is the mixer: values 0-3, drawn up from the tone default.
+        v.state.envelope = 3
+        assertEquals(NesEnvelopeKind.MIXER, NesInstrumentView.kind(s5b.song, v.state))
+        assertFalse(NesInstrumentView.dpcmPage(s5b.song, v.state))
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(5) { Action.UP })
+        assertEquals(listOf(3), ins().mixer.values)
+        v.hold(Action.EDIT, *Array(5) { Action.DOWN })
+        assertEquals(listOf(0), ins().mixer.values)
+        // Page 4 is the noise period, 0-31 (not the DPCM page on a 5B sound).
+        v.state.envelope = 4
+        assertEquals(NesEnvelopeKind.NOISE, NesInstrumentView.kind(s5b.song, v.state))
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(40) { Action.UP })
+        assertEquals(listOf(31), ins().noise.values)
+        // Page 5: the hardware envelope.
+        v.state.envelope = NesInstrumentView.S5B_ENV_PAGE
+        assertTrue(NesInstrumentView.s5bEnvPage(s5b.song, v.state))
+        assertNull(NesInstrumentView.envelope(s5b.song, v.state))
+        goTo(Row.ENV_SHAPE)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(S5bShape.SAW_DOWN, ins().s5b.shape)
+        goTo(Row.ENV_OCTAVE)
+        v.hold(Action.EDIT, *Array(5) { Action.UP })
+        assertEquals(S5bEnvelope.OCTAVES.last, ins().s5b.octave)
+        goTo(Row.ENV_AUTO)
+        v.tap(Action.EDIT)
+        assertFalse(ins().s5b.autoPitch)
+        goTo(Row.ENV_PERIOD)
+        v.hold(Action.EDIT, *Array(8) { Action.UP })
+        assertEquals(S5bEnvelope.PERIODS.last, ins().s5b.period)
+        v.tap(Action.CLEAR)
+        assertEquals(S5bEnvelope.DEFAULT.period, ins().s5b.period)
+        // Back to 2A03: the 5B's envelopes and settings go.
+        goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertTrue(ins().mixer.values.isEmpty() && ins().noise.values.isEmpty())
+        assertEquals(S5bEnvelope.DEFAULT, ins().s5b)
+    }
+
+    /**
+     * On a VRC7 song a VRC7 sound's fourth page is its FM patch: editing a field of a built-in patch makes it the custom
+     * patch, starting from that patch's registers; the sustain rows set the song's one setting; back to 2A03 (or pasted
+     * into a song without the VRC7) the patch is dropped.
+     */
+    @Test
+    fun vrc7SoundsEditTheirFmPatch() {
+        val vrc7 = EditorSession(NesVrc7System.blank())
+        val v = ViewController(vrc7, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, vrc7.song).indexOf(row) }
+        val ins = { vrc7.song.nes.instruments[0] }
+        goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.VRC7, ins().chip)
+        assertEquals(NesRules.VRC7_FM1, v.state.listenChannel) // Listen follows to an FM channel
+        v.state.envelope = NesInstrumentView.FM_PAGE
+        assertTrue(NesInstrumentView.fmPage(vrc7.song, v.state))
+        // Bell → Guitar: a built-in patch holds its ROM registers.
+        goTo(Row.PATCH)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(2, ins().fm.preset)
+        assertEquals(Vrc7Presets.data(2), ins().fm.regs)
+        // The carrier's attack one lower: now Custom, every other register still Guitar's.
+        goTo(Row.FM_AR)
+        v.tap(Action.RIGHT)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(Vrc7Presets.CUSTOM, ins().fm.preset)
+        assertEquals(Vrc7Param.AR.get(Vrc7Presets.data(2), 1) - 1, Vrc7Param.AR.get(ins().fm.regs, 1))
+        assertEquals(Vrc7Param.AR.get(Vrc7Presets.data(2), 0), Vrc7Param.AR.get(ins().fm.regs, 0))
+        assertEquals(Vrc7Presets.data(2).filterIndexed { i, _ -> i != 5 }, ins().fm.regs.filterIndexed { i, _ -> i != 5 })
+        // Release sustain is the song's setting, not the sound's.
+        goTo(Row.SUSTAIN_RELEASE)
+        v.tap(Action.EDIT)
+        assertEquals(Vrc7Sustain(release = true), vrc7.song.nes.vrc7Sustain)
+        v.tap(Action.CLEAR)
+        assertEquals(Vrc7Sustain(), vrc7.song.nes.vrc7Sustain)
+        // A VRC7 sound pasted into a 2A03 song becomes a 2A03 sound without its patch.
+        val pasted = nesInstrumentFor(session.song, ins())
+        assertEquals(NesChip.APU, pasted.chip)
+        assertEquals(Vrc7Patch.DEFAULT, pasted.fm)
+        // Back to 2A03.
+        v.state.envelope = NesEnvelopeKind.VOLUME.ordinal
+        goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertEquals(Vrc7Patch.DEFAULT, ins().fm)
     }
 
     @Test
@@ -143,9 +248,9 @@ class NesInstrumentViewTest {
         v.tap(Action.NEXT_CHANNEL) // the DPCM page
         assertTrue(NesInstrumentView.dpcmPage(session.song, v.state))
         v.tap(Action.NEXT_CHANNEL) // to volume (wraps)
-        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
+        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(session.song, v.state))
         v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL) // DPCM, duty, pitch
-        assertEquals(NesEnvelopeKind.PITCH, NesInstrumentView.kind(v.state))
+        assertEquals(NesEnvelopeKind.PITCH, NesInstrumentView.kind(session.song, v.state))
         v.goTo(Row.STEPS)
         v.hold(Action.EDIT, *Array(80) { Action.DOWN })
         assertEquals(listOf(-64), session.song.nes.instruments[1].pitch.values)
@@ -400,7 +505,6 @@ class NesInstrumentViewTest {
         }
         st.envelope = NesInstrumentView.DPCM_PAGE
         assertEquals(NesInstrumentView.DPCM_ROWS, NesInstrumentView.rows(st, song))
-        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(song, st))
         assertFalse(NesInstrumentView.helpSections(Keymap.DEFAULT).any { it.first == "N163 sounds" || it.first == "FDS sounds" })
         // The VRC7's FM page keeps its rows.
         val vrc7 = EditorSession(NesVrc7System.blank())
@@ -423,14 +527,12 @@ class NesInstrumentViewTest {
         assertEquals(listOf(2), ins().duty.values)
         assertTrue(Row.CHIP in rows())
         assertFalse(Row.SAW in rows())
-        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
         v.goTo(Row.CHIP)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(NesChip.N163, ins().chip)
         assertEquals("N163 sounds have no duty", emptyList<Int>(), ins().duty.values)
         assertEquals(N163Wave.DEFAULT, ins().wave)
         assertEquals("Listen follows to an N163 channel", NesRules.N163_FIRST, v.state.listenChannel)
-        assertEquals(NesEnvelopeKind.entries.size, NesInstrumentView.pages(s.song, v.state)) // no DPCM page
         assertTrue("the duty page is now the Waves page", NesInstrumentView.wavePage(s.song, v.state))
         assertEquals(NesInstrumentView.WAVE_ROWS, rows())
         assertEquals(Row.CHIP, NesInstrumentView.row(v.state, s.song))
@@ -441,7 +543,7 @@ class NesInstrumentViewTest {
         assertEquals(1, auditions.last().third)
         // The pages wrap: volume, arpeggio, pitch, Waves.
         v.tap(Action.NEXT_CHANNEL)
-        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
+        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(s.song, v.state))
         assertEquals(listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.STEPS), rows())
         assertEquals(Row.CHIP, NesInstrumentView.row(v.state, s.song))
         v.tap(Action.PREV_CHANNEL)
@@ -460,7 +562,8 @@ class NesInstrumentViewTest {
         v.tap(Action.CLEAR)
         assertEquals(NesChip.APU, ins().chip)
         assertEquals(N163Wave.DEFAULT, ins().wave)
-        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        v.tap(Action.NEXT_CHANNEL) // from the duty page (the Waves page's place) to the DPCM page again
+        assertTrue(NesInstrumentView.dpcmPage(s.song, v.state))
         // Help describes the Waves page with the variant's RAM.
         val help = NesInstrumentView.helpSections(Keymap.DEFAULT, NesExpansion.N163_4).single { it.first == "N163 sounds" }.second.toMap()
         assertTrue(help.getValue("Position").contains("0-191"))
@@ -727,14 +830,14 @@ class NesInstrumentViewTest {
         v.hold(Action.EDIT, Action.UP, Action.UP)
         assertEquals(listOf(2), ins().duty.values)
         assertTrue(Row.CHIP in rows())
-        assertEquals("2A03 sounds keep DPCM", NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        assertEquals("2A03 sounds keep DPCM", NesInstrumentView.DPCM_PAGE + 1, NesInstrumentView.pages(s.song, v.state))
         v.goTo(Row.CHIP)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(NesChip.FDS, ins().chip)
         assertEquals("FDS sounds have no duty", emptyList<Int>(), ins().duty.values)
         assertEquals(FdsSound.DEFAULT, ins().fds)
         assertEquals("Listen follows to the FDS channel", NesRules.FDS, v.state.listenChannel)
-        assertEquals("volume, arpeggio, pitch, Waves, Modulation", NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        assertEquals("volume, arpeggio, pitch, Waves, Modulation", NesInstrumentView.MOD_PAGE + 1, NesInstrumentView.pages(s.song, v.state))
         assertTrue("the duty page is now the Waves page", NesInstrumentView.fdsWavePage(s.song, v.state))
         assertFalse(NesInstrumentView.wavePage(s.song, v.state))
         assertEquals(NesInstrumentView.FDS_WAVE_ROWS, rows())
@@ -753,7 +856,7 @@ class NesInstrumentViewTest {
         assertEquals(Row.CHIP, NesInstrumentView.row(v.state, s.song))
         // The pages wrap: volume, arpeggio, pitch, Waves, Modulation.
         v.tap(Action.NEXT_CHANNEL)
-        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
+        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(s.song, v.state))
         assertEquals(listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.STEPS), rows())
         v.tap(Action.PREV_CHANNEL)
         assertTrue(NesInstrumentView.modPage(s.song, v.state))
@@ -773,7 +876,7 @@ class NesInstrumentViewTest {
         v.tap(Action.CLEAR)
         assertEquals(NesChip.APU, ins().chip)
         assertEquals(FdsSound.DEFAULT, ins().fds)
-        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        assertEquals(NesInstrumentView.DPCM_PAGE + 1, NesInstrumentView.pages(s.song, v.state))
         // A copied FDS sound pasted into a 2A03 song becomes a 2A03 sound without FDS settings.
         val plain = nesInstrumentFor(session.song, NesInstrument("F", chip = NesChip.FDS, fds = FdsSound(modDepth = 9)))
         assertEquals(NesChip.APU, plain.chip)
@@ -1041,25 +1144,17 @@ class NesInstrumentViewTest {
     }
 
     @Test
-    fun modSpeedStepsPassOverTheSpeedsTheEngineMisreads() {
-        // Fine and coarse steps skip low bytes $80-$FF in the direction of the step.
-        assertEquals(0x100, FdsEdits.stepSpeed(0x7F, 1))
-        assertEquals(0x7F, FdsEdits.stepSpeed(0x100, -1))
-        assertEquals(0x100, FdsEdits.stepSpeed(0x70, 16))
-        assertEquals(0x7F, FdsEdits.stepSpeed(0x105, -16))
-        assertEquals(FdsEdits.LAST_SPEED, FdsEdits.stepSpeed(0xF7F, 1))
-        assertEquals(FdsEdits.LAST_SPEED, FdsEdits.stepSpeed(0xF70, 16))
-        assertEquals(0, FdsEdits.stepSpeed(0, -1))
-        assertEquals(0xF7F, FdsEdits.LAST_SPEED)
+    fun modSpeedStepsReachEveryManualSpeed() {
         val v = fds(NesInstrumentView.MOD_PAGE)
         v.goTo(Row.MOD_SPEED)
-        v.hold(Action.EDIT, *Array(8) { Action.UP }) // 16 … 112, then 128 = $80 → $100
-        assertEquals(0x100, v.fds.modSpeed)
+        v.hold(Action.EDIT, *Array(8) { Action.UP }) // 16 … 128: a low byte of $80 is a speed like any other
+        assertEquals(0x80, v.fds.modSpeed)
         v.hold(Action.EDIT, Action.LEFT)
         assertEquals(0x7F, v.fds.modSpeed)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(0x81, v.fds.modSpeed)
         v.hold(Action.EDIT, *Array(300) { Action.UP })
-        assertEquals(FdsEdits.LAST_SPEED, v.fds.modSpeed)
-        assertTrue(FdsSound.engineSpeed(v.fds.modSpeed))
+        assertEquals(FdsSound.MOD_SPEED.last, v.fds.modSpeed)
         v.tap(Action.CLEAR)
         assertEquals(0, v.fds.modSpeed)
         assertEquals("Set mod speed", v.session.undoLabel)
@@ -1067,7 +1162,7 @@ class NesInstrumentViewTest {
         assertEquals(1789773.0 * 12 / 4194304.0, NesInstrumentView.modRateHz(12), 1e-9)
         assertEquals("12: the table runs at 5.12 Hz", NesInstrumentView.modSpeedText(FdsSound(modSpeed = 12)))
         assertEquals("0: the table stands still", NesInstrumentView.modSpeedText(FdsSound()))
-        assertTrue(NesInstrumentView.modSpeedText(FdsSound(modSpeed = 0x80)).contains("rejects"))
+        assertTrue(NesInstrumentView.modSpeedText(FdsSound(modSpeed = 0x80)).startsWith("128: the table runs at"))
     }
 
     @Test

@@ -194,23 +194,27 @@ muted in the song) stay in the hosts and work for every chip.
 ## NES expansion chips
 
 FamiStudio's engine also drives the Famicom cartridge sound chips; roadmap step 3 adds them one at a time,
-VRC6 first. Decisions (made on the user's behalf; see Open questions):
+VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions):
 
 - **One system per expansion, one family.** FamiStudio assembles its engine for one expansion (its project picks
   one in practice for NSF/ROM export), and a Thor Tracker system has fixed channels, so each expansion is its own
-  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels) and `NesVrc6System`
-  (`"nes-famistudio-vrc6"`, 8 channels). Both are `NesFamiStudioSystem`s sharing every rule, view, lowering and
-  export; they differ only in `NesExpansion` (`NONE`, `VRC6`). `SoundSystem.family` (`"NES"`) groups them: **New
-  blank song** and **Load demo** list "NES…" once, which opens the variants ("NES (FamiStudio)", "NES + VRC6
-  (FamiStudio)"). The plain NES is unchanged: same id, channels, files, lowering bytes, image and `.nsf`.
-- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"`, left out when none) names the chip; the
-  song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is rejected.
-  Channels keep FamiStudio's engine order: the 2A03's five, then the expansion's (`NesRules.CHANNEL_NAMES` lists them
-  all; a song has the first `expansion.channels`). The one bank of 64 sounds stays shared; each sound has a `chip`
-  (`NesChip.APU` = 2A03, `VRC6`; FamiStudio's instrument expansion; omitted in files for 2A03), because the same
-  envelope means different things on each chip (VRC6 duties 0-7). A channel plays only its chip's sounds
-  (validation, audition); only 2A03 sounds map DPCM samples. NES data version stays 2: VRC6 songs are new files,
-  2A03 files are byte-identical.
+  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels), `NesVrc6System`
+  (`"nes-famistudio-vrc6"`, 8 channels) and `NesVrc7System` (`"nes-famistudio-vrc7"`, 11 channels). All are
+  `NesFamiStudioSystem`s sharing every rule, view, lowering and export; they differ only in `NesExpansion` (`NONE`,
+  `VRC6`, `VRC7`). `SoundSystem.family` (`"NES"`) groups them: **New blank song** and **Load demo** list "NES…" once,
+  which opens the variants ("NES (FamiStudio)", "NES + VRC6 (FamiStudio)", "NES + VRC7 (FamiStudio)"). The plain NES
+  is unchanged: same id, channels, files, lowering bytes, image and `.nsf`. Each variant's engine refuses another
+  variant's song (its image would be laid out for another player build).
+- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"` / `"vrc7"`, left out when none) names the chip;
+  the song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is
+  rejected. Channels keep FamiStudio's engine order: the 2A03's five (`NesRules.APU_NAMES`), then the expansion's
+  (`NesExpansion.channelNames` / `channelKinds`; `NesRules.channelName` and `NesRules.kind` take the expansion). The
+  one bank of 64 sounds stays shared; each sound has a `chip` (`NesChip.APU` = 2A03, `VRC6`, `VRC7`; FamiStudio's
+  instrument expansion; omitted in files for 2A03), because the same envelope means different things on each chip
+  (VRC6 duties 0-7, no duty on the VRC7). A channel plays only its chip's sounds (validation, audition); only 2A03
+  sounds map DPCM samples. A sound pasted into a song without its chip becomes a 2A03 sound (`forChip`: duty clamped,
+  saw volume and FM patch reset). NES data version stays 2: expansion songs are new files, 2A03 files are
+  byte-identical.
 - **VRC6** (two pulses with eight duties and 12-bit periods, a sawtooth): channels VRC6 Pulse 1 (5), VRC6 Pulse 2 (6),
   VRC6 Saw (7, `ChannelKind.SAW`). VRC6 sounds have duty 0-7 (1/16 to 8/16) and the saw's master volume
   (`Vrc6SawVolume` Full / Half / Quarter = volume × 4 / × 2 / × 1 into the 6-bit accumulator rate; Full distorts
@@ -232,6 +236,89 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   cartridge with a VRC6). FamiStudio text with `Expansions="VRC6"`, `Expansion="VRC6"` and `Vrc6SawMasterVolume` on
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
+- **VRC7** (a YM2413 derivative: six 2-operator FM channels, 15 patches in ROM and one programmable patch): channels
+  VRC7 FM 1-6 (5-10, `ChannelKind.VOICE`), reaching every note C-1..B-7. A VRC7 sound (`NesChip.VRC7`) has volume,
+  arpeggio and pitch envelopes (no duty) and its patch (`Vrc7Patch`: FamiStudio's `Vrc7Patch` 0-15, 0 = custom, and
+  `Vrc7PatchRegs`, the 8 registers `$00-$07`; a built-in patch holds its ROM values, as FamiStudio's setter copies
+  them, so switching to Custom starts from that sound; `Vrc7Presets` = FamiStudio's table = emu2413's VRC7 ROM set).
+  Sounding pitch is channel-aware: `NesRules.engineNote` adds 12 on VRC7, so absolute 57 (A-4) is engine note 58
+  (about 440 Hz), not the 2A03's engine note 46 (which would sound 220 Hz on VRC7). Pattern lowering, text export,
+  audition and Pxx use this same mapping; notes and slide targets above B-7 are rejected on FM channels.
+  Volume is the chip's 4-bit level (the engine writes `patch << 4 | 15 − volume` to `$30+`, so 0 is −45 dB, not
+  silent); pitch envelopes, Pxx and slides work on the FM frequency number (FamiStudio's pitch shift 3: × 8,
+  + raises). Effects: everything but `Vxx` (no duty) and `Zxx`. `Pxx` keeps one meaning on every channel: the cell's
+  detune is the pitch the same Pxx gives a 2A03 pulse on that note, converted to the nearest FM step
+  (`NesRules.vrc7FinePitch`; FamiStudio's own fine pitch is raw FM steps), so tunings work on FM within the chip's
+  step size. OFF on a sounding FM note is FamiStudio's release (`CanRelease` is always true on VRC7 channels): opcode
+  `$56` keys off (the patch's release, or the sustain rate 5) and the volume envelope continues from its release
+  point; OFF on a released note, or `Sxx`, is a stop (key off without the release override). Two shared settings
+  are the chip's, not a sound's:
+  - **One custom patch.** The chip has one set of custom registers for all six channels; loading a custom sound writes
+    them. The lowering follows FamiStudio's exporter (`OtherVrc7ChannelUsesCustomPatch`: a channel whose custom sound
+    another FM channel's different custom sound may have replaced sends its instrument again with its next note),
+    never re-sends a custom sound per order (Thor Tracker's per-order re-send is skipped for it: it would rewrite the
+    registers under another channel), with **two intentional export corrections**: loop entries reload a custom patch
+    another channel may have replaced (including delayed final writers), and mid-song restoration keeps a no-attack
+    note's held envelope instead of forcing a new attack. FamiStudio's editor preserves both behaviors; its 4.5.3
+    exporter misses loop restoration and retriggers that mid-song legato case. The independent `vrc7_patch_restore`
+    golden demonstrates both differences (`AUDIO_ENGINE.md`). A custom sound starting while another FM channel holds a note of
+    a different custom sound (different registers) changes that note's timbre on the chip itself: the song check warns
+    where. VRC7 sounds identical but for their names are musically equivalent, so a copied custom sound shares the
+    patch without reloading it. Runtime bank identities remain distinct: a held note follows edits to its actual
+    slot, not an identical original or copy.
+  - **Sustain overrides** (`NesSound.vrc7Sustain`: `release`, `stop`; FamiStudio's `Vrc7OverrideRelease` /
+    `Vrc7OverrideStop`). FamiStudio stores them per instrument, but its engine keeps one copy
+    (`famistudio_chn_vrc7_sustain`, the last VRC7 instrument loaded on any channel), so per-sound values would apply
+    to the wrong notes. Thor Tracker makes them one song setting, written into every VRC7 instrument of the exports, so
+    FamiStudio's player, its exporter and our engine agree.
+  Editor: the Chip row offers 2A03 / VRC7; a VRC7 sound's fourth page (Duty's place) is **FM patch**: Patch (Custom or
+  the 15 built-ins), Release and Stop sustain (the song's setting, shown on every VRC7 sound), then each register
+  field per operator (`Vrc7Param`: multiplier, half-sine, modulation level, feedback, AR, DR, SL, RR, sustained, KSL,
+  KSR, tremolo, vibrato; ←/→ picks modulator or carrier). Editing a built-in patch's field makes it Custom from that
+  patch's registers. Demo: "Lantern Point" (`NesVrc7DemoSong`): a custom-patch lead with vibrato and key-off releases,
+  built-in Bass guitar, Brass pads, Piano arpeggio chords and Bell sparkles, a 2A03 echo, triangle, noise drums and
+  the DPCM starter kit. `exportSamples` writes `lantern-point.{thor,nsf,txt,nesimg}`.
+  Engine: the `FAMISTUDIO_EXP_VRC7 = 1` player build (`NesVrc7PlayerImage`, `nes_vrc7_player_image.h`, song base the
+  first page after it) with FamiStudio's VRC7 note tables, its header gaining the expansion instrument pointer (16-byte
+  instruments after the 2A03 table, one per slot), on emu2413 1.6.4 in VRC7 mode. Contract: `docs/AUDIO_ENGINE.md`,
+  "VRC7". Exports: `.nsf` with header byte `$7B` = 2; FamiStudio text with `Expansions="VRC7"`, `Expansion="VRC7"`,
+  `Vrc7Patch`, `Vrc7Reg0-7` (custom only) and both overrides, and the `VRC7FM1-6` channels; `.wav`. Golden songs
+  `vrc7_demo` and `vrc7_effects` (VRC7 register writes, `$9010`/`$9030`, compared every frame).
+- **Sunsoft 5B** (`NesS5bSystem`, `"nes-famistudio-s5b"`, "NES + Sunsoft 5B (FamiStudio)"; a YM2149F): channels 5B Square
+  1-3 (5-7, `ChannelKind.PULSE`, no duty). Notes are true pitch, as everywhere (A-4 = 57 = 440 Hz): FamiStudio's engine
+  plays the 5B from the pulses' note table + 1, where the 5B (CPU / 32 period; NESdev, FamiStudio's emu2149 with its
+  clock divider) sounds an octave below a pulse, so a 5B square plays FamiStudio's note + 12 (`NesRules.S5B_OCTAVE`;
+  FamiStudio's text shows those notes an octave above Thor Tracker's, sounding the same) and reaches C-1..B-7; `Pxx`
+  converts to the 5B's periods for the same pitch (`NesRules.s5bFinePitch`). 5B sounds (`NesChip.S5B`) have volume, arpeggio and pitch envelopes, a
+  **mixer** envelope (`NesInstrument.mixer`: 0 tone+noise, 1 noise, 2 tone, 3 off; empty = tone, FamiStudio's
+  default), a **noise** envelope (0-31) and a hardware envelope (`S5bEnvelope`: shape off or `$08-$0F`, auto period
+  with octave -8..8 or a manual period 0-65535). Shared hardware, as FamiStudio's engine 4.5.3 drives it: the highest
+  square sounding an envelope sound sets the envelope's shape and period every frame, any attack restarts it, its
+  level replaces the volume envelope and `Cxx`; the highest sounding square sets the noise period (Square 1 only with
+  noise in its mixer, Squares 2-3 always: the engine's mask table is meant for shifted mixer values; FamiStudio's
+  editor preview differs, the exported engine and this app play this). `NesS5b` warns where squares fight over them and
+  feeds the Pattern view's shared state (lane tags ENV / NOISE, inspector lines). Effects: `Ixx` / `Jyy` = the
+  envelope period's high / low byte (FamiStudio `EnvelopePeriod`), combined when both are on one row (on any squares;
+  alone the other byte is 0; two different values of one byte in a row are an error), lowered as `$5E lo hi` on Square
+  1 as FamiStudio's exporter moves them; the next note with attack on a square that played since reloads its sound
+  (FamiStudio's override rule). Each order's first note re-sends its sound (seek, loop, live edits), except a manual-
+  period sound the square already holds: its load would set the shared period, which FamiStudio's export leaves at
+  another square's or an `Ixx`/`Jyy`'s value there, so those orders are FamiStudio's stream for any delay, legato or
+  loop (`s5b_effects` orders C-E). The seek fallback restores the held instruments through the real driver's
+  instrument loader, so these squares no longer start silent. It remains an approximate seek: channel-order
+  loads need not recover an earlier shared-period effect or the original generator phases.
+  Identical, renamed manual-period instruments use a 5B-only `$5F` load extension: keep the global period, as
+  FamiStudio's merged export does, but retain the actual slot for live edits. The Pattern inspector follows
+  the same equivalence and override rules rather than assuming every instrument number rewrites the period.
+  Lowering: the 16-byte
+  `instruments_exp` entries (vol, arp, pitch, mixer, noise words, shape, octave or `$80`, period, 0, 0) for every slot;
+  mixer/noise envelopes at directory `256 + 2 slot (+1)`, kinds 5/6, mixer values as FamiStudio's processed bits
+  (`ProcessMixerEnvelope`); effect envelopes from 384 (`NesPlayer.effectEnvelopes`). Editor: pages volume, arpeggio,
+  pitch, mixer, noise and **5B envelope** (shape drawing, auto/manual, octave in musical terms, period as rate/ramp time).
+  Exports: `.nsf` with `$7B` bit 5; FamiStudio text `Expansions="S5B"`, `S5BEnvelopeShape/AutoPitch/AutoPitchOctave/
+  Pitch`, `MixerSettings`/`NoiseFreq` envelopes, `S5BSquare1-3`, `EnvelopePeriod`. Demo "Copper Kite"
+  (`NesS5bDemoSong`); golden songs `s5b_demo`, `s5b_effects`. Native: `nes/nes_s5b.c` (NESdev + emu2149 behaviour;
+  mix level per FamiStudio's 5B/VRC6 ratio; the 5B amplifier's nonlinearity is not modelled), see AUDIO_ENGINE.md.
 
 **N163** (Namco 163: up to eight 4-bit wavetable channels; sources: FamiStudio 4.5.3 `famistudio_ca65.s`,
 `Instrument.cs`, `Envelope.cs`, `FamitoneMusicFile.cs`, `FamistudioTextFile.cs`, `ChannelStateN163.cs`, `NesApu.cs`
@@ -273,7 +360,7 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
 - **Exports**: `.nsf` with header `$7B` bit 4 ($10); FamiStudio text with `Expansions="N163" NumN163Channels`,
   `Expansion="N163" N163WavePreset="Custom" N163WaveSize N163WavePos N163WaveCount`, `N163Wave` and `Repeat` envelopes,
   `PhaseReset="1"` and channels `N163Wave1..n`. Golden songs `n163_demo` (8 channels), `n163_demo_1` and `n163_effects`
-  (4 channels); FamiStudio's export of our text and our lowering must write the same `$4800`/`$F800` sequence.
+  (4 channels); FamiStudio's export of our text and our lowering must write the same APU and `$4800`/`$F800` sequence.
 - **Editor and demo**: the Instrument view's Wave page (draw samples, size, position, waves, repeats, loop and release,
   presets, the song's RAM map); demo "Wavetable Garden" (`NesN163DemoSong.build(n)`), whose parts grow with the count.
 
@@ -299,18 +386,20 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
   modulation targets −64..63 encoded with FamiStudio's greedy `BuildFdsModulationTable` (entry 0 resets; `FdsSound.modTable`),
   mod speed 0-4095, depth 0-63, delay 0-255 frames, and auto-mod (the engine sets the mod speed every frame to the
   frequency × numerator / denominator, 1-32 each, written reduced). Presets are FamiStudio's (`FdsPresets`).
-- **Engine behaviours kept and checked**: with auto-mod compiled in, the engine reads bit 7 of an instrument's mod speed
-  low byte as the auto-mod flag, so manual speeds with a low byte `$80-$FF` are refused (`$57` is not affected); auto-mod
-  multiplies the frequency by the numerator in 16 bits (`famistudio_mul`), so the validator warns for notes the song plays
-  where frequency × numerator ≥ 65536; a mod delay d keeps modulation reset d − 1 frames. It also warns about silent
-  (constant) waves, modulation at depth 0, a depth with a flat table or speed 0, and I/J while an auto-mod sound plays.
+- **Driver behavior**: a scoped patch disambiguates manual speeds whose low byte is `$80-$FF` from auto modulation,
+  preserving the complete manual range 0-4095. Such manual words use a high-byte tag (`hi | $80`); other manual
+  words and automatic fractions keep their original bytes. FamiStudio text retains the exact speed; its editor
+  preview is correct, but its own 4.5.3 assembly/NSF exporter has the ambiguity. Auto-mod multiplies the frequency
+  by the numerator in 16 bits (`famistudio_mul`), so the validator warns when the product reaches 65536. A mod
+  delay d keeps modulation reset d − 1 frames. Warnings also cover constant waves, zero depth, a flat mod table
+  or zero speed, and I/J while an auto-mod sound plays.
 - **Effects**: all of FamiStudio's for the FDS channel — arpeggio, vibrato, volume and slides, speed, delay, cut, fine
   pitch (`Pxx` converted to the nearest FDS frequency step at the engine note for the pitch the same Pxx gives a pulse,
   `NesRules.fdsFinePitch`), glides (FDS table, one fraction bit), `X00` (FamiStudio's generic phase reset `$53`) and
   FamiTracker's FDS letters: `Hxx` mod depth 00-3F (`FdsModDepth`, `$58`), `Ixx` the mod speed's high digit 00-0F and
   `Jxx` its low byte (`FdsModSpeed`, `$57` with the whole 12-bit word: the other half is the speed the channel has at that
   row along the played order — the sound's own after an attack that loads it, else the last I/J). These effect codes
-  are looked up per expansion (`NesRules.effect(expansion, code)`): H, I and J mean nothing on other variants. FamiStudio's
+  are looked up per expansion (`NesRules.effect(expansion, code)`); S5B has its own I/J meanings. FamiStudio's
   re-bind rule is kept: an attacked note without H (or I/J) after one with it sends its instrument again, restoring the
   sound's depth and speed. OFF releases (`$59`: volume and wave-index envelopes) when the volume envelope or the wave
   sequence has a release point, else stops; legato across sounds needs identical envelopes, waves and mod table included
@@ -329,13 +418,13 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
 - **Editor and demo**: on FDS songs the Instrument view's Chip row offers 2A03 / FDS; FDS sounds have a **Waves** page
   (draw 64 samples 0-63, 1-16 waves with duplicate/delete, repeat, loop, release, FamiStudio's presets incl. the PWM
   sweeps, master volume) and a **Modulation** page (the 32 targets drawn as bars with the counter the chip reaches drawn
-  over them, mod presets, speed stepping ±1/±16 over the values the engine reads correctly with its rate in Hz, depth,
+  over them, mod presets, speed stepping ±1/±16 through 0-4095 with its rate in Hz, depth,
   delay, auto-mod on/off with numerator/denominator and the first note whose 16-bit product overflows); edits through
   `FdsEdits`, waves copy/paste between N163 and FDS sounds rescaled. Demo "Side B" (`NesFdsDemoSong`): an FM bass
   (auto-mod, an H sweep), a vibrato lead (mod delay, J and I speed sweeps, OFF), a PWM morph pad with a release, an FM
   bell (auto-mod 7/2, X00), the 2A03 and the DPCM kit alongside; once through 25.6 s, loop 19.2 s.
 
-**Adding the next expansion** (S5B, MMC5, EPSM) follows the same path:
+**Adding the next expansion** (MMC5, EPSM) follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
    base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
    FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
@@ -343,14 +432,15 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
    `NesPlayer` entry in `nes_players.c` (`NES_EXPANSION_<CHIP>`, channels, duty range, symbols), its opcode and
    duty rules in `nm_walk_entry`, an ops table in `nes_chip.c` registered in `chip_engine.c`, a host test.
    `NM_MAX_*` grow to the largest build.
-3. Kotlin: a `NesExpansion` entry (chip, extra channels), a `NesChip` (label, duty range, its instrument fields), a
-   `NesPlayer` entry, channel names/kinds appended to `NesRules`, its effects/opcodes in `FamiStudioLowering`, its
-   text attributes in `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the
-   "NES" family shows it under New/Load demo), Instrument view rows for chip-specific fields, help, golden songs.
+3. Kotlin: a `NesExpansion` entry (chip, channel names and kinds), a `NesChip` (label, duty range, its instrument
+   fields), a `NesPlayer` entry, its effects/opcodes in `NesRules` and `FamiStudioLowering`, its text attributes in
+   `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the "NES" family shows it
+   under New/Load demo), Instrument view rows or pages for chip-specific fields, help, golden songs.
 4. Docs: a section here and in `docs/AUDIO_ENGINE.md`.
-Chips with instruments unlike envelopes (VRC7 patches, N163 waves, FDS waves and modulation) need their own
-instrument fields and editor pages; songs combining several expansions would need FamiStudio's multi-expansion
-engine build and a system per combination, so they are left out unless asked.
+Chips with instruments unlike envelopes need their own instrument fields and editor pages (the VRC7's patch page; N163
+waves, FDS waves and modulation next); chip state the engine keeps once (the VRC7's sustain overrides) is a song
+setting. Songs combining several expansions would need FamiStudio's multi-expansion engine build and a system per
+combination, so they are left out unless asked.
 
 ## SID backend (C64)
 
@@ -965,11 +1055,26 @@ Decisions:
 - FDS (decided on the user's behalf): true pitch with FamiStudio's note table shifted 24 notes on the FDS channel (a
   one-cycle wave sounds as named: A-4 = 440 Hz on every chip); the FamiStudio text keeps FamiStudio's note numbers, which
   FamiStudio names two octaves higher. Review.
-- FDS engine build: auto-mod is compiled in (FamiStudio's NSF kernel does the same), so instrument mod speeds whose low
-  byte is `$80-$FF` are refused (FamiStudio 4.5.3 reads that bit as its auto-mod flag; its own NSF exports of such
-  instruments play wrongly). The alternative build without auto-mod would allow every speed but lose auto-mod. Review.
+- FDS engine build: auto-mod remains enabled. A tagged manual-speed encoding and scoped loader correction support
+  all 0-4095 values instead of dropping the ambiguous low-byte range. FamiStudio text preserves the exact value;
+  its editor preview works, but upstream 4.5.3 assembly/NSF exports can reintroduce the bug. Review interoperability.
 - FDS `Ixx`/`Jxx` in one effect column: each sets half of the 12-bit speed, the other half taken from the channel's
   speed at that row along the played order (FamiTracker's letters; FamiStudio's own FamiTracker import zeroes the other
   half instead). Review with use.
 - FDS output: FamiStudio's measured DAC curve, a 1-pole 2 kHz low-pass and 2.4 × a full 2A03 pulse (NESdev); no hardware or
   reference-emulator comparison yet. Listening may ask for a different balance or filter.
+- VRC7 sustain overrides (decided on the user's behalf): one song setting (`NesSound.vrc7Sustain`) instead of
+  FamiStudio's per-instrument checkboxes, because FamiStudio's engine applies the last loaded VRC7 instrument's to all
+  six channels; the exports write it into every VRC7 instrument. Review.
+- VRC7 custom patches stay per sound (FamiStudio's model, several custom sounds may take turns) rather than one song
+  patch; holding notes of two different custom sounds at once is a warning, not an error, since the chip itself plays
+  it (both sound like the one loaded last). Two deliberate corrections to FamiStudio's exporter preserve the editor's
+  musical behavior: restoring the shared patch at loop entries, and restoring it mid-song without retriggering an
+  explicitly no-attack note. The adversarial upstream-export golden covers both; FamiStudio 4.5.3 re-exports of our
+  text can reintroduce them. Review.
+- VRC7 `Pxx` means the pulse's detune converted to FM steps (one meaning on every channel, tunings work) rather than
+  FamiStudio's raw FM steps; the FamiStudio text carries the converted steps. Pitch envelopes stay raw (FamiStudio's
+  meaning: frequency steps × 8, + raises). Review.
+- VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
+  +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
+  listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.

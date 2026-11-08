@@ -1,5 +1,94 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.17.0 NES + Namco 163
+
+- **New blank song / Load demo → NES… → NES + N163…** offers all eight fixed channel counts. **Wavetable Garden** grows from six total lanes to thirteen; channel count changes the chip's update rate and the RAM available for waves.
+- N163 instruments have volume/arpeggio/pitch envelopes and sequences of 4-bit waves, with size, RAM position, repeats, loop and release. The editor shows the shared RAM map and warns about overlapping sounds. Wave sizes other than the driver's 16-sample tuning are explained rather than silently retuned.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV use the corresponding pinned FamiStudio 4.5.3 driver. The native chip preserves time-multiplexed DAC behavior, including the high-frequency whine at large channel counts.
+- Fixed VRC7 live edits of identical instrument copies: musical equivalence no longer aliases their runtime bank identities. Editing an unused original does not alter its held copy; held copies follow their own patch edits without restarting volume envelopes.
+- Fixed Mega Drive mute/unmute continuity: YM2612 feedback continues to evolve while muted instead of freezing inside the output calculation.
+- Fixed selected NES instrument labels being fitted with the regular font and then overflowing when drawn bold. Fitting now uses the actual face, including wave settings, tabs and sample details.
+
+Verified: 438 JVM core tests, 13 Linux core tests and six Android-host unit tests; native checks passed
+(Game Boy 145, NES 336, VRC6 105, VRC7 115, N163 225, SID 151, OPL3 282, Mega Drive 501, WAV 738).
+Independent FamiStudio exports cover N163 counts 1, 2, 4 and 8, comparing every frame's APU and N163 port writes.
+All eight counts have demo and shortest-song WAV checks. The previous player outputs and 31 existing golden files
+remain unchanged. The VRC7 held-copy regression failed on three wrong-patch assertions before the fix; the
+Mega Drive feedback regression differed on 1,531 post-unmute samples before its fix and now matches exactly.
+Unmuted NTSC/PAL Mega Drive reference WAVs remain byte-identical.
+
+The final production-signed candidate passed all 18 existing Android instrumentation tests on Nova. A separate
+temporary capture test produced 32 Game Boy views, all pixel-identical to the same-device 0.14.1 baseline;
+the harness source and test package were removed. The factory `.uge` is byte-identical. Reserved-handheld
+smoke tracks reported zero AudioFlinger underruns on Nova, DMG and Konkr.
+Nova exercised thirteen-channel scrolling, wave audition and live sample editing; its edited NSF and FamiStudio
+text exports through the document picker are byte-identical to desktop exports. Its edited no-fade WAV is
+non-silent 48 kHz, 16-bit stereo PCM, 1,226,779 frames. DMG exercised the one-channel variant and wave presets.
+Konkr exercised the eight-channel variant, shared-RAM overlap warnings and their clearing, and the corrected
+selected-label bounds at 960×720. External `/ThorTunez` songs were untouched.
+
+The actual desktop frontend played the eight-channel demo and exported the shortest valid one-row, one-tick
+N163 song without a fade: 798 non-silent frames. One- and eight-channel NSFs also produced PCM in independent
+libgme; this checks format/playback, not mix-level accuracy. These checks are not human listening or a comparison
+with a physical Namco 163 cartridge.
+
+Official 0.17.0 was published from `8ce6157` after the build, Deck, signing and AppImage attachment jobs passed.
+Both published checksums and the production signing certificate were verified. Nova, DMG and Konkr received
+versionCode 30 and cold-launched successfully; their actual app surfaces were inspected. The Thor received only
+the verified APK in `Downloads/Thor Tracker`, without waking, installing or launching. The Deck's verified
+AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` symlink, without launching there.
+The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
+with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
+AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
+
+## 0.16.0 NES + Konami VRC7
+
+- **New blank song / Load demo → NES… → NES + VRC7** adds six two-operator FM channels to the NES's five channels. The demo is **Lantern Point**.
+- The shared instrument bank offers the VRC7's 15 built-in patches and editable custom patches. The editor exposes both operators, feedback, modulation level, envelopes, key scaling, tremolo and vibrato. All six FM channels share one physical custom patch; the song check warns about conflicting held custom sounds.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV export use the pinned FamiStudio 4.5.3 VRC7 driver and emu2413 in VRC7 mode.
+- FM notes use true pitch: A-4 is approximately 440 Hz, with a C-1–B-7 range. The FamiStudio FM note index is one octave higher than its 2A03 index for the same pitch; text export and audition use that conversion too.
+- Corrected two FamiStudio 4.5.3 export behaviors: restoring the shared custom patch at loop boundaries (including delayed final writers), and restoring it mid-song without retriggering an explicitly no-attack note's held envelope. These follow the editor's musical behavior. An independently exported adversarial golden demonstrates both differences; FamiStudio 4.5.3 can reintroduce them when re-exporting our text. Thor Tracker's own NSF, WAV and playback use the corrections.
+- Shared emu2413 table initialization is serialized when playback and background WAV rendering create instances concurrently; ticking/rendering never takes that lock.
+
+Verified: 417 JVM core tests, 13 Linux core tests and six Android-host unit tests; native checks passed (Game Boy 145, NES 336, VRC6 105, VRC7 111, SID 151, OPL3 282, Mega Drive 500, WAV 290). The ordinary VRC7 parity goldens compare real 6502 register traces against independent FamiStudio exports, ignoring only writes of unchanged custom-patch bytes. The separate `vrc7_patch_restore` fixture explicitly checks the two intentional export divergences rather than claiming trace equality: upstream retriggers the mid-song note and restarts its volume at 15 while ours holds 6; upstream keeps the other patch on repeated loops while ours restores the lead. All 28 pre-existing golden files remain byte-identical. Additional real-driver regressions cover true pitch and delayed final writers. Existing Game Boy factory `.uge` bytes are unchanged.
+
+The production-signed candidate passed the 18 existing Android instrumentation tests plus a temporary render capture on Nova. All 32 Game Boy views are pixel-identical to the same-device 0.14.1 baseline. The automated audio suite recorded one xrun, no driver faults and a 0.508 ms maximum callback; sustained VRC7 playback smoke tracks reported zero underruns on Nova, DMG and Konkr.
+
+Reserved-handheld checks exercised eleven-channel scrolling, custom/preset FM editors and audition controls. Nova's NSF and FamiStudio-text exports through Android's document picker are byte-identical to desktop exports; its no-fade WAV is non-silent 48 kHz, 16-bit stereo PCM, 1,226,779 frames. Temporary test APKs, captures and exports were removed; `/ThorTunez` was untouched.
+
+The actual desktop frontend played Lantern Point and exported the shortest valid one-row, one-tick FM song without a fade: 798 non-silent frames. The exported NSF also opened as eleven voices and produced PCM in independent libgme; this is a format/playback check, not mix-level validation. These checks are not human listening or comparison with a physical VRC7 cartridge.
+
+The published 0.16.0 APK and AppImage passed their checksum manifests; the APK has production certificate
+`d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`, version code 29. The official AppImage played
+Lantern Point (peak 0.19839096). The official APK was installed and cold-launch checked on Nova, DMG and Konkr;
+the Thor received only the APK in Downloads, and the Deck's stable `thor-tracker` symlink was updated without
+launching or changing Steam settings.
+
+## 0.15.0 NES + Konami VRC6
+
+- **New blank song / Load demo → NES… → NES + VRC6** adds two eight-duty pulse channels and a sawtooth to the NES's five channels. The demo is **Saw Sunrise**.
+- The shared 64-slot bank distinguishes 2A03 and VRC6 sounds. VRC6 instruments expose their eight pulse duties and Full/Half/Quarter saw gain, with the chip's accumulator distortion at high Full-gain levels.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV export use the VRC6 build of the pinned FamiStudio 4.5.3 driver.
+- Fixed live envelope edits selecting an identical envelope from a different instrument instead of the edited slot.
+- Fixed single-effect Pattern lanes overflowing into their neighbours on narrow screens: readable minimum widths use the existing horizontal scrolling and touch hit testing. Four-channel Game Boy layouts remain unchanged.
+
+Verified: 410 JVM core tests, 13 Linux core tests and six Android-host unit tests; native checks passed (Game Boy 145, NES 336, VRC6 105, SID 151, OPL3 282, Mega Drive 500, WAV 249). Two VRC6 golden songs compare every frame's register writes against FamiStudio's independent export, including repeat passes; the 14 pre-existing NES golden files remain byte-identical. A generated VRC6 NSF also played through libgme as eight voices with non-silent PCM.
+
+The 18 existing Android instrumentation tests passed against the production-signed candidate on Nova. A temporary capture harness rendered 32 Game Boy views: all are pixel-identical to a 0.14.1 baseline captured on the same Nova, including after the narrow-lane fix. The Game Boy factory `.uge` remains byte-identical. One xrun, no driver faults and a 0.638 ms maximum callback were recorded during the final automated audio suite; sustained VRC6 playback smoke tracks reported zero underruns on Nova, DMG and Konkr.
+
+Reserved-handheld checks exercised family selection, eight-channel playback, saw/pulse editors and X audition. Nova's NSF and FamiStudio-text exports through Android's document picker are byte-identical to desktop sample exports; its WAV is non-silent 48 kHz, 16-bit stereo PCM (1,466,779 frames). On Konkr's 960×720 display, the reproduced lane overlap is gone, L1/R1 reaches the final saw channel by scrolling, and touching a scrolled effect parameter selects that field. Temporary test APKs/captures/exports were removed; `/ThorTunez` was untouched.
+
+The actual desktop frontend played the demo and exported the shortest valid one-row, one-tick VRC6 song without a fade: 798 non-silent frames, rather than running to the safety cap. These are automated signal and UI checks, not human listening or a test on a physical VRC6 cartridge.
+## 0.14.1 Right-stick Pattern shortcuts
+
+- With the Pattern grid focused, flick the **right stick Up twice** to reach the first row, or **Down twice** to reach the last row. Return to neutral between flicks; each flick and the gap can be up to 300 ms.
+- Single flicks and a held stick do not jump. Menus, the toolbar, the Pattern panel and other views block the gesture. Changing focus or controllers cancels a pending flick. Left-stick and D-pad navigation are unchanged.
+- Available on Android and Steam Deck; the L2/R2 bindings are unchanged.
+
+Verified: 404 JVM core tests, 13 Linux core tests and six Android-host unit tests passed; Android and Deck builds succeeded. Six actual Deck frontend scenarios covered both jumps, single/held input, modal exclusion and view-change cancellation. The packaged release AppImage also passed both jumps and modal exclusion.
+
+On Nova, a temporary Android `uinput` gamepad exercised EventHub/InputReader through the activity: Down jumped to row `3F`, Up to `00`; single/held input, menus, Song, toolbar and Pattern panel did not jump; left-stick and D-pad single-row movement remained intact. The same signed 0.14.1 candidate passed both jumps on DMG (Mega Drive) and Konkr (OPL3). Temporary virtual devices/helpers were removed and handhelds returned to Home/sleep; external songs were untouched. Physical-stick ergonomics and threshold tuning still need human playtesting.
+
 ## 0.14.0 WAV export and opt-in diagnostics
 
 - **Export .wav** renders Game Boy, NES, C64 SID, OPL3 and Mega Drive songs through the same native engines used for playback, as 48 kHz, 16-bit stereo PCM. Choose extra loop passes and either no fade or a five-second fade. Rendering stops at ten minutes if the requested loop point has not been reached and reports that cap.

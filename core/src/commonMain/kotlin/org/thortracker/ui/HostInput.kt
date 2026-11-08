@@ -6,6 +6,7 @@ import org.thortracker.input.Binding
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
 import org.thortracker.input.Keys
+import org.thortracker.input.StickFlicks
 
 /**
  * Host-level controller routing over physical key codes and the user's [keymap]. Decides, per press, which
@@ -20,6 +21,9 @@ import org.thortracker.input.Keys
  * popup first). Popups and the toolbar receive the canonical key a press stands for ([Keymap.canonical]), so
  * their navigation follows rebinding; [Control.overPopups] chords still run over popups. Bindings resolve in
  * the focused [ViewKind], so a chord can act differently per view ([Control.views]).
+ *
+ * The right stick's vertical axis ([rightStick]) is not a key: a quick double flick up or down jumps the focused
+ * Pattern view to the first or last row of its pattern.
  */
 class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     enum class Target { NONE, POPUP, TOOLBAR }
@@ -46,17 +50,50 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
 
     private val owners = HashMap<Int, Owner>()
     private val held = LinkedHashSet<Int>()
+    /** One flick detector per controller, so two devices (or a phantom duplicate) never mix their samples. */
+    private val sticks = HashMap<Int, StickFlicks>()
+    private var stickPane = -1
+    private var stickView: ViewKind? = null
 
-    /** Forgets every held key, e.g. on pause, when matching key-ups may never arrive. */
+    /** Forgets every held key and pending stick flick, e.g. on pause, when matching key-ups may never arrive. */
     fun reset() {
         owners.clear()
         held.clear()
+        resetStick()
+    }
+
+    /**
+     * Forgets pending right-stick flicks (a stick held now must return to neutral before it counts). Hosts call
+     * this when a popup opens or closes, the window loses focus or a controller changes, so a flick from before
+     * cannot complete a jump after.
+     */
+    fun resetStick() = sticks.values.forEach { it.reset() }
+
+    /** A controller [device] went away or was reconfigured: drop its stick state. */
+    fun forgetStick(device: Int) { sticks.remove(device) }
+
+    /**
+     * One sample of [device]'s right-stick vertical axis ([y] -1 up .. 1 down) at monotonic [millis]. Returns -1
+     * to jump to the first row of the pattern, 1 to its last row, 0 otherwise: only a quick double flick the
+     * same way with neutral between ([StickFlicks]), while [pane] shows a [patternFocused] Pattern view
+     * (controller focus, no panel) and neither a popup nor the toolbar has the controller. Anything else, a
+     * change of focused pane or view, or a button press ([route]) in between forgets the first flick.
+     */
+    fun rightStick(device: Int, y: Float, millis: Long, pane: Int, view: ViewKind, patternFocused: Boolean,
+                   popupOpen: Boolean, toolbarFocused: Boolean): Int {
+        if (pane != stickPane || view != stickView) { stickPane = pane; stickView = view; resetStick() }
+        val flicks = sticks.getOrPut(device) { StickFlicks() }
+        val jump = flicks.sample(y, millis)
+        if (!patternFocused || view != ViewKind.PATTERN || popupOpen || toolbarFocused) { resetStick(); return 0 }
+        return jump
     }
 
     /** Modifiers currently held, in press order; the focused view shows their chords. */
     val heldModifiers: Set<Int> get() = held
 
     fun route(code: Int, down: Boolean, repeat: Int, popupOpen: Boolean, toolbarFocused: Boolean, view: ViewKind): Route {
+        // A button may open a menu, the toolbar or another view, so it ends any stick double flick; D-pad moves don't.
+        if (down && repeat == 0 && code !in DIRECTIONS) resetStick()
         if (code in Keymap.MODIFIERS) {
             if (down) held += code else held -= code
             return Route.Deliver(Target.NONE)
@@ -122,6 +159,8 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     }
 
     companion object {
+        private val DIRECTIONS = setOf(Keys.DPAD_UP, Keys.DPAD_DOWN, Keys.DPAD_LEFT, Keys.DPAD_RIGHT)
+
         /** Gamepad buttons and the D-pad: consumed even when unbound, so they never trigger system fallbacks. */
         fun isController(code: Int): Boolean =
             code in Keys.DPAD_UP..Keys.DPAD_CENTER ||

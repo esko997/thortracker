@@ -3,7 +3,7 @@
  * is modelled on the machine's master clock: a data write keeps it set for 32 x 6 chip clocks (ymfm's figure for
  * the OPN2), i.e. 1344 master clocks. Muted channels are left out of the output sum exactly as the chip leaves out
  * a channel whose $B4 output bits are clear (the DAC's offset remains); the chip itself keeps running.
- * Allocation only in ymo_create. */
+ * Allocation during create/reset only; hosts call these on their control threads. */
 #ifndef THORTRACKER_YM_YMFM_H_
 #define THORTRACKER_YM_YMFM_H_
 

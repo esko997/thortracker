@@ -19,6 +19,7 @@ set(OPL3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opl3)
 set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
+set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -50,7 +51,7 @@ set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The chip machines behind chip_engine.h. huge_machine.c includes binjgb's emulator.c; the NES and
 # SID machines share chips' m6502.h (header-only, implemented once in cpu6502.c); the YM2612 machine's Z80 is
-# chips' z80.h (implemented once in cpuz80.c).
+# chips' z80.h (implemented once in cpuz80.c); the NES VRC7 build's FM chip is emu2413 (C, MIT).
 add_library(chip_engines STATIC
     chip_engine.c
     chip_wav.c
@@ -63,8 +64,12 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_image.c
     ${NES_DIR}/nes_apu.c
     ${NES_DIR}/nes_vrc6.c
+    ${NES_DIR}/nes_vrc7.c
     ${NES_DIR}/nes_n163.c
     ${NES_DIR}/nes_fds.c
+    ${NES_DIR}/nes_s5b.c
+    ${EMU2413_DIR}/emu2413.c
+    chip_opll.c
     ${NES_DIR}/nes_players.c
     ${BLIP_DIR}/blip_buf.c
     ${SID_DIR}/sid_chip.c

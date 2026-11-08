@@ -1,5 +1,6 @@
 ; Thor Tracker NES preview player: the FamiStudio sound engine 4.5 (third_party/famistudio-4.5.3,
-; unmodified) behind a fixed NSF-style entry table. Assembled once by tools/audio/prepare_nes_player.py
+; unmodified; the FDS and Sunsoft 5B builds assemble a patched temporary copy, below) behind a fixed NSF-style
+; entry table. Assembled once by tools/audio/prepare_nes_player.py
 ; into app/src/main/cpp/generated/nes_player_image.h; nothing is assembled at app build or run time.
 ;
 ; CPU memory map (NTSC 2A03, no mapper):
@@ -27,7 +28,10 @@
 ; base (measured: the page after the player). The Famicom Disk System build (nes_fds_player_image.h)
 ; adds -D FAMISTUDIO_EXP_FDS=1 -D FAMISTUDIO_USE_FDS_AUTOMOD=1 (auto-modulation compiled in, as in
 ; FamiStudio's own NSF kernel nsf.s): the FDS wavetable channel as channel 5, registers $4040-$408A,
-; its own song base (measured likewise).
+; its own song base (measured likewise); its engine is a copy with prepare_nes_player.py FDS_ENGINE_PATCH
+; (a manual mod speed whose low byte has bit 7 set, stored as low, high | $80). The Sunsoft 5B build
+; (nes_s5b_player_image.h) adds -D FAMISTUDIO_EXP_S5B=1 (5B squares 1-3 as channels 5-7) and assembles a
+; copy with S5B_ENGINE_PATCH (Thor Tracker's `$5F i` opcode).
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

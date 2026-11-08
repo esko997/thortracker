@@ -29,6 +29,7 @@
 #include "ym_machine.h"
 #include "ym_test_song.h"
 #include "ym_vgm.h"
+#include "ym_ymfm.h"
 #include "z80.h"
 
 static int failures = 0;
@@ -1045,6 +1046,33 @@ static void test_audition(const char* dir) {
     ymm_destroy(m);
 }
 
+/* Muting removes audio, not the feedback history needed by the next audible sample. */
+static void test_muted_feedback(void) {
+    YmOpn2* continuous = ymo_create();
+    YmOpn2* muted = ymo_create();
+    const uint8_t registers[][2] = {
+        {0x30, 1}, {0x40, 0}, {0x50, 0x1f}, {0x60, 0}, {0x70, 0}, {0x80, 0x0f},
+        {0xb0, 0x3f}, {0xb4, 0xc0}, {0xa4, 0x22}, {0xa0, 0x69}, {0x28, 0x10},
+    };
+    for (unsigned r = 0; r < sizeof registers / sizeof registers[0]; ++r) {
+        ymo_write(continuous, 0, 0, registers[r][0]);
+        ymo_write(continuous, 0, 1, registers[r][1]);
+        ymo_write(muted, 0, 0, registers[r][0]);
+        ymo_write(muted, 0, 1, registers[r][1]);
+    }
+    int bad = 0;
+    for (int sample = 0; sample < 4096; ++sample) {
+        int32_t left, right, muted_left, muted_right;
+        const unsigned mask = sample >= 512 && sample < 2560 ? 1u : 0u;
+        ymo_generate(continuous, 0, &left, &right);
+        ymo_generate(muted, mask, &muted_left, &muted_right);
+        if (!mask && (left != muted_left || right != muted_right)) ++bad;
+    }
+    EXPECT(bad == 0, "unmute preserves exact FM feedback history (%d audible samples differ)", bad);
+    ymo_destroy(continuous);
+    ymo_destroy(muted);
+}
+
 static void test_mute(void) {
     printf("mute\n");
     YmMachine* m = ymm_create(RATE);
@@ -1378,6 +1406,7 @@ int main(int argc, char** argv) {
     test_live_edits();
     test_audition(dir);
     test_mute();
+    test_muted_feedback();
     test_pal();
     test_exports(dir);
     test_export_entry();

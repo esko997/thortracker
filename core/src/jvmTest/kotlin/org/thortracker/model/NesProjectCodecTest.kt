@@ -14,7 +14,9 @@ import org.thortracker.backend.NesGoldenSongs
 import org.thortracker.system.SoundSystems
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -27,7 +29,7 @@ import kotlinx.serialization.json.JsonArray
 class NesProjectCodecTest {
     @Test
     fun nesSongsRoundTripExactly() {
-        val songs = listOf(NesSystem.blank(), NesSystem.demo(), NesVrc6System.blank(), NesVrc6System.demo()) +
+        val songs = listOf(NesSystem.blank(), NesSystem.demo(), NesVrc6System.blank(), NesVrc6System.demo(), NesVrc7System.blank(), NesVrc7System.demo()) +
             NesGoldenSongs.ALL.values.map { it() }
         for (song in songs) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
     }
@@ -69,6 +71,26 @@ class NesProjectCodecTest {
         assertTrue(e.message!!, e.message!!.contains("NES + VRC6"))
     }
 
+    /** The VRC7 variant: its sound names the expansion and the song's sustain overrides (only when set), its sounds the patch. */
+    @Test
+    fun vrc7SongsNameTheirVariantAndPatches() {
+        val song = NesGoldenSongs.vrc7Effects()
+        val root = Json.parseToJsonElement(ProjectCodec.encode(song)).jsonObject
+        assertEquals("nes-famistudio-vrc7", root["backend"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("vrc7", sound["expansion"]!!.jsonPrimitive.content)
+        assertEquals(setOf("release", "stop"), sound["vrc7Sustain"]!!.jsonObject.keys)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        val custom = instruments[0]
+        assertEquals("vrc7", custom["chip"]!!.jsonPrimitive.content)
+        assertEquals("0", custom["fm"]!!.jsonObject["preset"]!!.jsonPrimitive.content)
+        assertEquals(8, custom["fm"]!!.jsonObject["regs"]!!.jsonArray.size)
+        // 2A03 sounds of a VRC7 song keep the 2A03 keys only; the default sustain is left out.
+        assertTrue(instruments[6].keys.toString(), "fm" !in instruments[6].keys && "chip" !in instruments[6].keys)
+        val demo = Json.parseToJsonElement(ProjectCodec.encode(NesVrc7System.demo())).jsonObject["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertTrue(demo.keys.toString(), "vrc7Sustain" !in demo.keys)
+    }
+
     /**
      * Each N163 channel count is its own backend; its sound names the expansion with the count, its N163 sounds their chip
      * and waves, and a file whose count disagrees with its backend is rejected (the channels and RAM differ).
@@ -105,7 +127,7 @@ class NesProjectCodecTest {
             bank[2] = NesInstrument("Odd", chip = org.thortracker.system.nes.NesChip.FDS, fds = org.thortracker.system.nes.FdsSound(
                 waves = listOf(List(64) { it }, List(64) { 63 - it }), repeat = listOf(3, 15), loop = 0, release = 1,
                 masterVolume = org.thortracker.system.nes.FdsMasterVolume.TWO_FIFTHS, modulation = List(32) { it * 4 - 64 },
-                modSpeed = 4095 and 0xF7F, modDepth = 63, modDelay = 255, autoMod = true, autoModNumer = 32, autoModDenom = 31))
+                modSpeed = 4095, modDepth = 63, modDelay = 255, autoMod = true, autoModNumer = 32, autoModDenom = 31))
             s.copy(sound = s.nes.copy(instruments = bank))
         }
         assertEquals(odd, ProjectCodec.decode(ProjectCodec.encode(odd)))
@@ -120,6 +142,31 @@ class NesProjectCodecTest {
             ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
         val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mixed.toString()) }
         assertTrue(e.message!!, e.message!!.contains("NES + FDS"))
+     * The 5B variant: its sound names the expansion, its 5B sounds their chip, mixer, noise and hardware envelope (each
+     * only when set); 2A03 sounds of a 5B song keep the 2A03 keys only; a file naming another backend is rejected.
+     */
+    @Test
+    fun s5bSongsNameTheirVariantAndEnvelopes() {
+        for (song in listOf(NesS5bSystem.blank(), NesS5bSystem.demo())) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+        val song = NesGoldenSongs.s5bEffects()
+        val root = Json.parseToJsonElement(ProjectCodec.encode(song)).jsonObject
+        assertEquals("nes-famistudio-s5b", root["backend"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("s5b", sound["expansion"]!!.jsonPrimitive.content)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        val snare = instruments[2]
+        assertEquals("s5b", snare["chip"]!!.jsonPrimitive.content)
+        assertTrue(snare.keys.toString(), "mixer" in snare.keys && "noise" in snare.keys && "s5b" !in snare.keys)
+        val manual = instruments[7]["s5b"]!!.jsonObject
+        assertEquals("triangle", manual["shape"]!!.jsonPrimitive.content)
+        assertEquals("false", manual["autoPitch"]!!.jsonPrimitive.content)
+        assertEquals("900", manual["period"]!!.jsonPrimitive.content)
+        val lead2a03 = instruments[9]
+        assertTrue(lead2a03.keys.toString(), listOf("chip", "mixer", "noise", "s5b").none { it in lead2a03.keys })
+        val other = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio")) +
+            ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
+        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
+        assertTrue(e.message!!, e.message!!.contains("NES + Sunsoft 5B"))
     }
 
     @Test

@@ -58,6 +58,7 @@ object NesValidator {
         }
         val bank = song.nes.instruments
         if (bank.size != NesSystem.SLOTS) out += "The song has ${bank.size} instruments; NES songs have exactly ${NesSystem.SLOTS}"
+        if (expansion != NesExpansion.VRC7 && song.nes.vrc7Sustain != Vrc7Sustain()) out += "Only VRC7 songs have the FM sustain settings"
         bank.forEachIndexed { i, ins ->
             val where = "Instrument ${NesRules.hex2(i + 1)}"
             if (ins.chip !in expansion.chips) out += "$where is a ${ins.chip.label} sound; this song has no ${ins.chip.label} chip"
@@ -71,6 +72,9 @@ object NesValidator {
                 if (ins.fm.preset !in 0..Vrc7Presets.PRESETS.last) out += "$where: VRC7 patch ${ins.fm.preset} is outside 0-15 (0 = custom)"
                 if (ins.fm.regs.size != Vrc7Patch.REGS) out += "$where: the VRC7 custom patch has ${ins.fm.regs.size} registers; it has ${Vrc7Patch.REGS}"
                 ins.fm.regs.firstOrNull { it !in 0..255 }?.let { out += "$where: VRC7 patch register value $it is outside 0-255" }
+                if (ins.fm.preset in Vrc7Presets.PRESETS && ins.fm.regs != Vrc7Presets.data(ins.fm.preset)) {
+                    out += "$where: built-in VRC7 patch ${ins.fm.preset} keeps its ROM registers (as FamiStudio does); only Custom (0) has its own"
+                }
             }
             if (ins.chip == NesChip.N163) {
                 if (ins.duty.values.isNotEmpty()) out += "$where: N163 sounds have no duty envelope; clear it"
@@ -80,10 +84,20 @@ object NesValidator {
                 if (ins.duty.values.isNotEmpty()) out += "$where: FDS sounds have no duty envelope; clear it"
                 fdsShape(out, where, ins.fds)
             }
+            if (ins.chip == NesChip.S5B) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: 5B sounds have no duty envelope; clear it"
+                if (ins.s5b.octave !in S5bEnvelope.OCTAVES) out += "$where: 5B envelope octave ${ins.s5b.octave} is outside -8..8"
+                if (ins.s5b.period !in S5bEnvelope.PERIODS) out += "$where: 5B envelope period ${ins.s5b.period} is outside 0-65535"
+            } else {
+                if (ins.mixer.values.isNotEmpty() || ins.noise.values.isNotEmpty()) out += "$where: only 5B sounds have mixer and noise envelopes"
+                if (ins.s5b != S5bEnvelope.DEFAULT) out += "$where: only 5B sounds have a hardware envelope"
+            }
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
             envelopeShape(out, where, "duty", ins.duty, ins.chip.duty)
+            envelopeShape(out, where, "mixer", ins.mixer, NesEnvelope.MIXER)
+            envelopeShape(out, where, "noise", ins.noise, NesEnvelope.NOISE)
             for ((note, m) in ins.dpcm) {
                 val at = "$where, DPCM ${if (note in NesSystem.noteRange) NesSystem.noteName(note) else "note $note"}"
                 when {
@@ -182,16 +196,21 @@ object NesValidator {
             envelopeRules(out, where, "arpeggio", ins.arpeggio, releases = false)
             envelopeRules(out, where, "pitch", ins.pitch, releases = false)
             envelopeRules(out, where, "duty", ins.duty, releases = false)
+            envelopeRules(out, where, "mixer", ins.mixer, releases = false)
+            envelopeRules(out, where, "noise", ins.noise, releases = false)
             for ((name, size) in listOf(
                 "volume" to FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME).size,
                 "arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO).size,
                 "pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative).size,
                 "duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY).size,
+                "mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER).size,
+                "noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE).size,
             )) if (size > 255) out += "$where: the $name envelope takes $size bytes once encoded; FamiStudio's limit is 255. Shorten it or repeat fewer changes"
             if (ins.chip == NesChip.N163) n163Rules(out, where, ins.wave, song.nes.expansion.n163Channels)
             if (ins.chip == NesChip.FDS) fdsRules(out, where, ins.fds)
         }
         val played = song.orders.toSet()
+        val squares = if (song.nes.expansion == NesExpansion.S5B) NesRules.S5B_SQUARE1 until song.nes.expansion.channels else IntRange.EMPTY
         document.patterns.forEachIndexed { p, pattern ->
             if (p !in played) return@forEachIndexed
             val label = Songs.patternLabel(song, p).cap()
@@ -199,6 +218,9 @@ object NesValidator {
                 for (row in 0 until pattern.length) {
                     NesRules.cellProblem(song, ch, track[row])?.let { out += "$label, ${NesRules.channelName(song.nes.expansion, ch)} row $row: $it" }
                 }
+            }
+            if (!squares.isEmpty()) for (row in 0 until pattern.length) {
+                NesRules.envPeriodConflict(squares.map { pattern.tracks[it][row] })?.let { out += "$label, row $row: $it" }
             }
         }
         if (out.isEmpty()) dpcmErrors(song, out)
@@ -299,6 +321,7 @@ object NesValidator {
         if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
         if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.FDS) fdsWarnings(song).forEach { out += it }
+        if (song.nes.expansion == NesExpansion.S5B) NesS5b.warnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
         }
@@ -331,17 +354,17 @@ object NesValidator {
     }
 
     /**
-     * The VRC7's shared state, as FamiStudio's engine drives it: the chip has one custom patch, so a custom sound
-     * starting while another FM channel still sounds a different custom sound changes that one's patch too; and the
-     * engine keeps one release/stop sustain setting (`famistudio_chn_vrc7_sustain`), the last VRC7 sound loaded's, for
-     * all six channels. [song] is the arrangement of a structurally valid song.
+     * The VRC7's one custom patch: a custom sound starting while another FM channel still holds a note of a different
+     * custom sound changes that note's patch too (the chip has one set of custom registers; built-in patches have no
+     * such limit). A released or stopped note no longer counts (its key-off tail may still change). [song] is the
+     * arrangement of a structurally valid song.
      */
     private fun vrc7Warnings(song: Song): List<String> {
         val out = ArrayList<String>()
         val fs = FsSong.of(song)
         val fm = NesRules.VRC7_FM1 until fs.channels
         fun custom(slot: Int) = slot != 0 && fs.instruments[slot - 1].let { it.chip == NesChip.VRC7 && it.fm.preset == Vrc7Presets.CUSTOM }
-        val sounding = IntArray(fs.channels) // custom slot each FM channel is sounding (0: none)
+        val holding = IntArray(fs.channels) // custom slot each FM channel holds a note of (0: none)
         val reported = HashSet<Pair<Int, Int>>()
         for (row in 0 until fs.totalRows) {
             for (ch in fm) {
@@ -350,28 +373,23 @@ object NesValidator {
                     n.isMusical -> {
                         if (custom(n.instrument)) {
                             for (other in fm) {
-                                val playing = sounding[other]
-                                if (other == ch || playing == 0 || playing == n.instrument || !reported.add(playing to n.instrument)) continue
+                                val held = holding[other]
+                                // Sounds with the same registers (a copied sound) load the same patch: no change heard.
+                                if (other == ch || held == 0 || fs.instruments[held - 1].fm.regs == fs.instruments[n.instrument - 1].fm.regs ||
+                                    !reported.add(held to n.instrument)) continue
                                 val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
                                 out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row " +
                                     "${row - fs.orderStart[o]}: custom sound ${NesRules.hex2(n.instrument)} loads the VRC7's one custom patch while " +
-                                    "${NesRules.channelName(song.nes.expansion, other)} still sounds custom sound ${NesRules.hex2(playing)}, which then " +
-                                    "plays the new patch; make one of them a built-in patch or keep them apart"
+                                    "${NesRules.channelName(song.nes.expansion, other)} still holds custom sound ${NesRules.hex2(held)}, which then " +
+                                    "plays the new patch; make one of them a built-in patch or end that note first"
                             }
                         }
-                        sounding[ch] = if (custom(n.instrument)) n.instrument else 0
+                        holding[ch] = if (custom(n.instrument)) n.instrument else 0
                     }
-                    n.value == FsNote.STOP -> sounding[ch] = 0
+                    n.value == FsNote.STOP || n.value == FsNote.RELEASE -> holding[ch] = 0
                 }
-                if (n.cutDelay >= 0) sounding[ch] = 0
+                if (n.cutDelay >= 0) holding[ch] = 0
             }
-        }
-        val used = fm.flatMap { ch -> fs.notes[ch].mapNotNull { n -> n?.takeIf { it.isMusical && it.instrument != 0 }?.instrument } }.toSortedSet()
-        val settings = used.groupBy { fs.instruments[it - 1].fm.let { p -> p.sustainRelease to p.sustainStop } }
-        if (settings.size > 1) {
-            val names = settings.values.joinToString(" and ") { slots -> slots.joinToString(", ") { NesRules.hex2(it) } }
-            out += "VRC7 sounds $names differ in Release/Stop sustain; FamiStudio's engine applies the setting of the last VRC7 " +
-                "sound loaded to all six FM channels, so give them the same setting"
         }
         return out
     }
@@ -396,7 +414,8 @@ object NesValidator {
 
     /**
      * What FamiStudio's engine and text import require of an FDS sound: the wave sequence's loop and release rules (as an
-     * N163 sound's: `Envelope` loop/release setters), its encoded size, and a manual mod speed the engine reads as one.
+     * N163 sound's: `Envelope` loop/release setters) and its encoded size. Every manual mod speed 0..4095 plays as itself
+     * (the lowering tags those whose low byte is $80-$FF for Thor Tracker's FDS player).
      */
     private fun fdsRules(out: Report, where: String, f: FdsSound) {
         if (f.release >= 0 && f.loop < 0) {
@@ -407,15 +426,6 @@ object NesValidator {
         }
         val size = FamiStudioEnvelopes.waveIndex(f).size
         if (size > 255) out += "$where: the FDS wave sequence takes $size bytes once encoded; FamiStudio's limit is 255. Use fewer waves or repeats"
-        if (!f.autoMod && !FdsSound.engineSpeed(f.modSpeed)) {
-            // famistudio_set_fds_instrument (FAMISTUDIO_USE_FDS_AUTOMOD): `lda (ptr),y; bpl @check_mod_speed` on byte 13.
-            val lower = (f.modSpeed and 0xF00) or 0x7F
-            val higher = (f.modSpeed and 0xF00) + 0x100
-            out += "$where: mod speed ${f.modSpeed} (\$${org.thortracker.model.NumberText.hex(f.modSpeed, 3)}) has bit 7 of its low byte " +
-                "set, which FamiStudio 4.5.3's engine built with auto-mod (as FamiStudio's own .nsf and this player) reads as the " +
-                "auto-mod flag, so the sound would play as auto-mod. Use $lower${if (higher <= FdsSound.MOD_SPEED.last) " or $higher" else ""}, " +
-                "or set this speed with Ixx/Jxx (the effects are not affected)"
-        }
     }
 
     /**

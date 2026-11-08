@@ -89,7 +89,10 @@ class NesFdsTest {
         assertTrue(NesFdsSystem.effectsFor(0).none { it.code in fdsCodes })
         assertTrue(NesSystem.effects.none { it.code in fdsCodes })
         assertNull(NesRules.effect(NesExpansion.NONE, NesRules.FX_FDS_MOD_DEPTH))
-        assertNull(NesRules.effect(NesExpansion.n163(4), NesRules.FX_FDS_MOD_SPEED_HI))
+        // I and J are expansion-specific: the FDS's mod speed in FDS songs, the 5B's envelope period elsewhere.
+        assertTrue(NesRules.effect(NesExpansion.n163(4), NesRules.FX_FDS_MOD_SPEED_HI) != NesRules.effect(NesExpansion.FDS, NesRules.FX_FDS_MOD_SPEED_HI))
+        assertTrue(NesRules.effect(NesExpansion.S5B, NesRules.FX_FDS_MOD_SPEED_LO)!!.name.startsWith("5B"))
+        assertTrue(NesFdsSystem.effectsFor(fdsChannel).filter { it.code == NesRules.FX_FDS_MOD_SPEED_LO }.single().name.startsWith("Mod speed"))
         assertNotNull(NesRules.effect(NesExpansion.FDS, NesRules.FX_FDS_MOD_SPEED_LO))
         // The N163's list is unchanged: its X is its own.
         assertTrue(NesN163System.of(4).effects.none { it.code == NesRules.FX_FDS_MOD_DEPTH })
@@ -134,16 +137,17 @@ class NesFdsTest {
     /** Pxx means one pitch on every channel: on the FDS the nearest frequency step at the engine note, up for an upward Pxx. */
     @Test
     fun finePitchConvertsToTheNearestFdsStep() {
+        val engine = NesRules.engineNote(NesExpansion.FDS, fdsChannel, n("A-4"))
         val pulse = n("A-4") - NesRules.NOTE_OFFSET
-        val up = NesRules.fdsFinePitch(pulse, 4)
-        val down = NesRules.fdsFinePitch(pulse, -4)
+        val up = NesRules.fdsFinePitch(engine, 4)
+        val down = NesRules.fdsFinePitch(engine, -4)
         assertTrue(up > 0 && down < 0, "$up $down")
         val p = FamiStudioLowering.NOTE_TABLE[pulse] + 1.0
         val want = p / (p - 4)
-        val f = NesRules.fdsFrequency(pulse + NesRules.FDS_TRANSPOSE).toDouble()
+        val f = NesRules.fdsFrequency(engine).toDouble()
         val stepCents = 1200 * kotlin.math.log2((f + 1) / f)
         assertTrue(kotlin.math.abs(1200 * kotlin.math.log2((f + up) / f / want)) <= stepCents / 2 + 1e-9)
-        assertEquals(0, NesRules.fdsFinePitch(pulse, 0))
+        assertEquals(0, NesRules.fdsFinePitch(engine, 0))
         // The cell's Pxx and the audition agree.
         val s = song(listOf(fds())) { t -> t[fdsChannel][0] = Cell(n("A-4"), 1, NesRules.FX_FINE_PITCH, 0x84) }
         assertEquals(up, FsSong.of(s).notes[fdsChannel][0]!!.finePitch)
@@ -321,10 +325,8 @@ class NesFdsTest {
     fun validationExplainsTheFds() {
         fun errors(sound: FdsSound) = NesFdsSystem.errors(song(listOf(fds(sound = sound))) { t -> t[fdsChannel][0] = Cell(n("C-4"), 1) })
         fun structural(sound: FdsSound) = NesFdsSystem.structuralErrors(song(listOf(fds(sound = sound))) { _ -> })
-        // Bit 7 of a manual speed's low byte is the engine's auto-mod flag.
-        assertTrue(errors(FdsSound(modSpeed = 0x080)).single().contains("auto-mod flag"))
-        assertTrue(errors(FdsSound(modSpeed = 0x180)).single().contains("Use 383 or 512"))
-        assertEquals(emptyList(), errors(FdsSound(modSpeed = 0x180, autoMod = true, modDepth = 1, modulation = FdsPresets.modulation(WavePreset.SINE))))
+        // Every manual speed 0-4095 is legal, low bytes $80-$FF included (the player takes them as manual speeds).
+        for (speed in listOf(0x080, 0x0FF, 0x180, 0xFFF)) assertEquals(emptyList(), errors(FdsSound(modSpeed = speed)))
         val two = listOf(FdsPresets.SINE, FdsPresets.SINE)
         assertTrue(errors(FdsSound(waves = two, repeat = listOf(1, 1), release = 1)).any { it.contains("needs a wave loop") })
         assertTrue(errors(FdsSound(waves = two, repeat = listOf(1, 1), loop = 1, release = 1)).any { it.contains("must come before") })

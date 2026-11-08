@@ -16,10 +16,11 @@ static int fail(NesImage* image, const char* why, uint32_t at) {
 
 /* ---- envelopes ---------------------------------------------------------------------------- */
 
-/* Marks instruction starts of a well-formed envelope in `starts` (bitmap of 256); returns NULL or why
- * it is malformed. Instructions: value (>= $80), hold count ($01-$7F), loop ($00 index). The envelope
- * ends with its final loop; loops go to a value or hold of the same envelope. Duty values 0..duty_max; wave
- * indexes 0..63 ($C0..$FF). */
+/* Marks instruction starts of a well-formed envelope in `starts` (bitmap of 256); returns NULL or why it is
+ * malformed. Instructions: value (>= $80), hold count ($01-$7F), loop ($00 index). The envelope ends with its
+ * final loop; loops go to a value or hold of the same envelope. Duty values 0..duty_max; wave indexes 0..63
+ * ($C0..$FF); 5B mixer values are FamiStudio's processed bits (tone off in bit 0, noise off in bit 3: $C0, $C1, $C8,
+ * $C9), noise periods 0..31. */
 static const char* envelope_shape(const uint8_t* e, int len, int kind, int duty_max, uint8_t* starts) {
     memset(starts, 0, 32);
     const int start = nm_envelope_start(kind);
@@ -34,6 +35,10 @@ static const char* envelope_shape(const uint8_t* e, int len, int kind, int duty_
             if (kind == NM_KIND_DUTY && (b < 0xC0 || b > 0xC0 + duty_max)) {
                 return duty_max == 3 ? "duty envelope value outside 0..3" : "duty envelope value outside 0..7";
             }
+            if (kind == NM_KIND_MIXER && b != 0xC0 && b != 0xC1 && b != 0xC8 && b != 0xC9) {
+                return "mixer envelope value not $C0, $C1, $C8 or $C9";
+            }
+            if (kind == NM_KIND_NOISE && (b < 0xC0 || b > 0xDF)) return "noise envelope value outside 0..31";
             ++p;
         } else if (b) {
             ++p;
@@ -85,12 +90,15 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
     const uint32_t limit = base + info->size;
     const int thor = info->layout == NM_LAYOUT_THOR;
     const int tonal = nes_player_tonal(player, channel), pitched = nes_player_pitched(player, channel);
-    const int vrc6 = nes_player_vrc6_channel(player, channel), n163 = nes_player_n163_channel(player, channel);
+    const int vrc6 = nes_player_vrc6_channel(player, channel), fm = nes_player_vrc7_channel(player, channel);
+    const int n163 = nes_player_n163_channel(player, channel), s5b = nes_player_s5b_channel(player, channel);
     const int fds = nes_player_fds_channel(player, channel);
     uint32_t a = addr;
     int delays = 0;
     out->delay_end = 0;
     out->speed = -1;
+    out->instrument = -1;
+    out->note = 0;
 #define NEED(n) \
     if (a < base || a + (n) > limit) return "stream runs past the data"
 #define BYTE(k) s[a + (k) - base]
@@ -105,6 +113,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             }
             if (!tonal) return "instrument on the DPCM channel";
             if (thor && ((b & 0x7F) >> 1) >= info->instruments) return "instrument beyond the table";
+            out->instrument = (b & 0x7F) >> 1;
             a += 1;
             continue;
         }
@@ -115,6 +124,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
                 if (b && thor && b > info->mappings) return "DPCM note without a DPCM list entry";
                 out->rows = 1;
                 out->end = (uint16_t)(a + 1);
+                out->note = b != 0;
                 return NULL;
             }
             if (b == 0x40) {
@@ -124,6 +134,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
                 }
                 out->rows = 1;
                 out->end = (uint16_t)(a + 2);
+                out->note = 1;
                 return NULL;
             }
             if (b == 0x52) { /* DMC delta counter: $80|v now, else at the next sample start */
@@ -135,6 +146,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         } else if (b < 0x40 || b == 0x45) { /* note / stop / release */
             out->rows = 1;
             out->end = (uint16_t)(a + 1);
+            out->note = b != 0 && b != 0x45;
             return NULL;
         }
         if (b >= 0x70) { /* volume track */
@@ -148,16 +160,19 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             if (BYTE(1) > 96) return "note beyond 96";
             out->rows = 1;
             out->end = (uint16_t)(a + 2);
+            out->note = 1;
             return NULL;
         case 0x50: /* slide: step, from, to */
             NEED(4);
             if (channel != 3 && (BYTE(2) < 1 || BYTE(2) > 96 || BYTE(3) < 1 || BYTE(3) > 96)) return "slide note outside 1..96";
             out->rows = 1;
             out->end = (uint16_t)(a + 4);
+            out->note = 1;
             return NULL;
         case 0x43: case 0x4C: case 0x4D: size = 0; break;
         case 0x4A: if (!pitched) return "vibrato opcode on a channel without pitch envelope"; size = 0; break;
-        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses, the VRC6 channels and the FDS channel */
+        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses, the VRC6 channels and the FDS channel (VRC7,
+                    * 5B: none) */
             if (n163) return "phase reset on an N163 channel is $5B";
             if (channel > 1 && !vrc6 && !fds) {
                 return player->expansion == NES_EXPANSION_VRC6  ? "phase reset only on the pulses and the VRC6 channels"
@@ -197,6 +212,12 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             out->rows = 1;
             out->end = (uint16_t)(a + 1);
             return NULL;
+        case 0x56: /* VRC7 release: key-off, then the volume envelope's release (famistudio_chn_vrc7_trigger bit 7) */
+            if (player->expansion != NES_EXPANSION_VRC7) return "opcode not allowed in a row";
+            if (!fm) return "VRC7 release off the FM channels";
+            out->rows = 1;
+            out->end = (uint16_t)(a + 1);
+            return NULL;
         case 0x46:
             NEED(2);
             if (BYTE(1) < 1 || BYTE(1) > 127) return "speed outside 1..127";
@@ -215,8 +236,10 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x4F:
             NEED(2);
             if (channel == 2) return "duty effect on the triangle";
+            if (fm) return "duty effect on a VRC7 channel"; /* famistudio_channel_to_dutycycle has 5 entries */
             if (n163) return "duty effect on an N163 channel"; /* famistudio_channel_to_dutycycle: 2A03 only */
             if (fds) return "duty effect on the FDS channel";
+            if (s5b) return "duty effect on a 5B channel"; /* FamiStudio: duty only on the 2A03 pulses and noise */
             if (channel == VRC6_SAW && vrc6) return "duty effect on the VRC6 saw";
             if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : "duty outside 0..3";
             size = 1;
@@ -225,6 +248,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x54:
             NEED(2);
             if (thor && BYTE(1) >= info->instruments) return "instrument beyond the table";
+            out->instrument = BYTE(1);
             size = 1;
             break;
         case 0x55: /* VRC6 saw master volume: 1 - Vrc6SawMasterVolume (Full $01, Half $00, Quarter $FF) */
@@ -244,6 +268,19 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
                 if (dir[4 * idx + 3] != (b == 0x49 ? NM_KIND_PITCH : NM_KIND_ARPEGGIO)) return "envelope operand of the wrong kind";
             }
             size = 2;
+            break;
+        case 0x5E: /* 5B manual envelope period (lo, hi) for every 5B channel with a manual-period envelope */
+            if (player->expansion != NES_EXPANSION_S5B) return "opcode not allowed in a row";
+            if (!s5b) return "5B envelope period off the 5B channels";
+            size = 2;
+            break;
+        case 0x5F: /* Thor Tracker's 5B extension: instrument i (zero-based), the shared manual envelope period kept */
+            if (player->expansion != NES_EXPANSION_S5B) return "opcode not allowed in a row";
+            if (!s5b) return "5B period-keeping instrument off the 5B channels";
+            NEED(2);
+            if (BYTE(1) >= (thor ? info->instruments : NES_IMAGE_MAX_INSTRUMENTS)) return "instrument beyond the table";
+            out->instrument = BYTE(1);
+            size = 1;
             break;
         default: return "opcode not allowed in a row";
         }
@@ -334,9 +371,9 @@ static int n163_instrument(NesImage* image, const NmView* view, uint32_t at) {
 /* FDS expansion instrument entry at region offset `at` (its four envelope words already checked; FamiStudio
  * FamitoneMusicFile.cs writes byte 8 = mod depth << 2 | master volume, any value valid): a wave table entry for every
  * index its wave-index envelope produces, each to 64 samples 0..63 inside the data; the mod table (word 11): 32 entries
- * 0..7 inside the data; bytes 13-14: a manual mod speed word up to $0FFF (the auto-mod engine reads bit 7 of byte 13 as
- * the auto-mod flag, so its low byte stays below $80) or auto-mod $80 | numerator, denominator (1..32 each); byte 15:
- * the mod delay, any value. */
+ * 0..7 inside the data; bytes 13-14 (nm_fds_manual_speed): a manual mod speed word up to $0FFF with its low byte below
+ * $80, Thor Tracker's tagged low, high | $80 for one whose low byte is $80-$FF (high $80-$8F), or auto-mod
+ * $80 | numerator, denominator (1..32 each); byte 15: the mod delay, any value. */
 static int fds_instrument(NesImage* image, const NmView* view, uint32_t at) {
     const NesImageInfo* info = &image->info;
     const uint32_t base = info->player->song_base, end = base + info->size;
@@ -359,12 +396,14 @@ static int fds_instrument(NesImage* image, const NmView* view, uint32_t at) {
     for (uint32_t k = 0; k < 32; ++k) {
         if (s[mod - base + k] > 7) return fail(image, "FDS mod table entry above 7", NM_REGION_OFFSET + (mod - base) + k);
     }
-    if (e[13] & 0x80) {
+    if (!(e[13] & 0x80)) {
+        if (e[14] > 0x0F) return fail(image, "FDS mod speed above $0FFF", NM_REGION_OFFSET + at + 14);
+    } else if (e[14] & 0x80) {
+        if (e[14] & 0x70) return fail(image, "FDS tagged mod speed above $0FFF", NM_REGION_OFFSET + at + 14);
+    } else {
         const int numer = e[13] & 0x7F, denom = e[14];
         if (numer < 1 || numer > 32) return fail(image, "FDS auto-mod numerator outside 1..32", NM_REGION_OFFSET + at + 13);
         if (denom < 1 || denom > 32) return fail(image, "FDS auto-mod denominator outside 1..32", NM_REGION_OFFSET + at + 14);
-    } else if (e[14] > 0x0F) {
-        return fail(image, "FDS mod speed above $0FFF", NM_REGION_OFFSET + at + 14);
     }
     return 0;
 }
@@ -382,7 +421,7 @@ static int load_raw(NesImage* image) {
     for (int i = 0; i < NES_IMAGE_DIRECTORY_SIZE; ++i) {
         if (h[NES_IMAGE_HEADER_SIZE + i]) return fail(image, "raw image with an envelope directory", NES_IMAGE_HEADER_SIZE + (uint32_t)i);
     }
-    /* FamiStudio header: count, instruments, [expansion instruments (N163),] samples-4, then a channel pointer
+    /* FamiStudio header: count, instruments, [expansion instruments (VRC7, N163, FDS, 5B),] samples-4, then a channel pointer
      * per engine channel + 4 tempo bytes per song. With 5 channels the engine indexes songs with an 8-bit
      * offset, so at most 17; with more it steps the pointer itself (the count byte's limit). */
     const uint32_t head = (uint32_t)nes_player_head(player);
@@ -448,9 +487,14 @@ static int load_thor(NesImage* image) {
             if (d[2] || d[3]) return fail(image, "unused directory entry not zero", at);
             continue;
         }
-        const int wave_kind = player->expansion == NES_EXPANSION_N163 || player->expansion == NES_EXPANSION_FDS;
-        if (wave_kind ? d[3] > NM_KIND_WAVE : d[3] > NM_KIND_PITCH) {
-            return fail(image, wave_kind ? "envelope kind outside 0..4" : "envelope kind outside 0..3", at + 3);
+        const int wave_kinds = player->expansion == NES_EXPANSION_N163 || player->expansion == NES_EXPANSION_FDS;
+        const int s5b_kinds = player->expansion == NES_EXPANSION_S5B;
+        if (!(d[3] <= NM_KIND_PITCH || (wave_kinds && d[3] == NM_KIND_WAVE) ||
+              (s5b_kinds && (d[3] == NM_KIND_MIXER || d[3] == NM_KIND_NOISE)))) {
+            return fail(image, wave_kinds  ? "envelope kind outside 0..4"
+                               : s5b_kinds ? "envelope kind not 0..3, 5 or 6"
+                                           : "envelope kind outside 0..3",
+                        at + 3);
         }
         if (d[2] < 2) return fail(image, "envelope shorter than 2 bytes", at + 2);
         if (addr < prev_end || addr + (uint32_t)d[2] > base + size) return fail(image, "envelope overlaps, is out of order or outside the data", at);
@@ -473,16 +517,26 @@ static int load_thor(NesImage* image) {
             if (dir[4 * idx + 3] != k) return fail(image, "instrument envelope of the wrong kind", NM_REGION_OFFSET + at);
         }
     }
-    /* N163 and FDS: FamiStudio's expansion instruments, as many as the 2A03 table (instrument byte i addresses entry i
-     * on the expansion channels): volume, arpeggio, pitch and wave-index envelopes, then the chip's own bytes
-     * (n163_instrument, fds_instrument). */
+    /* VRC7, N163, FDS, 5B: FamiStudio's expansion instruments, as many as the 2A03 table (instrument byte i addresses
+     * entry i on the expansion channels). VRC7: volume, arpeggio and pitch envelopes, the release ($20) / stop ($80)
+     * override byte, the patch number << 4 (0: the custom patch) and the custom patch's 8 registers (any value). N163:
+     * volume, arpeggio, pitch and wave-index envelopes, then the wave (n163_instrument). FDS: volume, arpeggio, pitch and
+     * wave-index envelopes, then the waves, mod table and mod parameters (fds_instrument). 5B
+     * (famistudio_set_s5b_instrument): volume, arpeggio, pitch, mixer and noise envelopes, the hardware envelope shape
+     * (0 = none, else $08-$0F), the auto-period octave (-8..8) or $80 (manual), the manual period (any value), two zero
+     * bytes. */
     if (player->exp_instruments) {
         const uint16_t exp = nm_rd16(s + 3);
         if (exp < base || exp + (uint32_t)NM_EXP_INSTRUMENT_SIZE * info->instruments > base + size) {
             return fail(image, "expansion instrument table outside the data", NM_REGION_OFFSET + 3);
         }
-        static const uint8_t kinds[4] = {NM_KIND_VOLUME, NM_KIND_ARPEGGIO, NM_KIND_PITCH, NM_KIND_WAVE};
-        const int words = player->expansion == NES_EXPANSION_N163 || player->expansion == NES_EXPANSION_FDS ? 4 : 3;
+        static const uint8_t vrc7_kinds[3] = {NM_KIND_VOLUME, NM_KIND_ARPEGGIO, NM_KIND_PITCH};
+        static const uint8_t wave_kinds[4] = {NM_KIND_VOLUME, NM_KIND_ARPEGGIO, NM_KIND_PITCH, NM_KIND_WAVE};
+        static const uint8_t s5b_kinds[5] = {NM_KIND_VOLUME, NM_KIND_ARPEGGIO, NM_KIND_PITCH, NM_KIND_MIXER, NM_KIND_NOISE};
+        const int n163 = player->expansion == NES_EXPANSION_N163, s5b = player->expansion == NES_EXPANSION_S5B;
+        const int fds = player->expansion == NES_EXPANSION_FDS;
+        const uint8_t* kinds = n163 || fds ? wave_kinds : s5b ? s5b_kinds : vrc7_kinds;
+        const int words = n163 || fds ? 4 : s5b ? 5 : 3;
         const NmView view = nm_view(image);
         for (int i = 0; i < info->instruments; ++i) {
             const uint32_t at = exp - base + (uint32_t)NM_EXP_INSTRUMENT_SIZE * (uint32_t)i;
@@ -491,8 +545,22 @@ static int load_thor(NesImage* image) {
                 if (idx < 0) return fail(image, "expansion instrument envelope is not a directory entry", NM_REGION_OFFSET + at + 2u * (uint32_t)k);
                 if (dir[4 * idx + 3] != kinds[k]) return fail(image, "expansion instrument envelope of the wrong kind", NM_REGION_OFFSET + at + 2u * (uint32_t)k);
             }
-            if (player->expansion == NES_EXPANSION_N163 && n163_instrument(image, &view, at)) return -1;
-            if (player->expansion == NES_EXPANSION_FDS && fds_instrument(image, &view, at)) return -1;
+            if (n163) {
+                if (n163_instrument(image, &view, at)) return -1;
+            } else if (fds) {
+                if (fds_instrument(image, &view, at)) return -1;
+            } else if (s5b) {
+                const uint8_t shape = s[at + 10];
+                const int octave = (int8_t)s[at + 11];
+                if (shape && (shape < 0x08 || shape > 0x0F)) return fail(image, "5B envelope shape not 0 or $08-$0F", NM_REGION_OFFSET + at + 10);
+                if (s[at + 11] != 0x80 && (octave < -8 || octave > 8)) {
+                    return fail(image, "5B auto-period octave outside -8..8 and not $80", NM_REGION_OFFSET + at + 11);
+                }
+                if (s[at + 14] || s[at + 15]) return fail(image, "5B expansion instrument bytes 14-15 not zero", NM_REGION_OFFSET + at + 14);
+            } else {
+                if (s[at + 6] & ~0xA0) return fail(image, "VRC7 override byte not a combination of $20 and $80", NM_REGION_OFFSET + at + 6);
+                if (s[at + 7] & 0x0F) return fail(image, "VRC7 patch byte not patch << 4", NM_REGION_OFFSET + at + 7);
+            }
         }
         info->exp_instruments = exp;
     }

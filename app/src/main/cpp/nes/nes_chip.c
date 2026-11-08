@@ -1,6 +1,7 @@
-/* "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-n163-1".."-8" and "nes-famistudio-fds": the FamiStudio
- * sound engine (FamiTracker tempo), the 2A03 build, the Konami VRC6 build, the eight Namco 163 builds (1..8 N163
- * channels) and the Famicom Disk System build, on the NES machine (nes_machine.h) behind the chip engine interface.
+/* "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds"
+ * and "nes-famistudio-s5b": the FamiStudio sound engine (FamiTracker tempo), the 2A03 build, the Konami VRC6 build,
+ * the Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels), the Famicom Disk System build and the
+ * Sunsoft 5B build, on the NES machine (nes_machine.h) behind the chip engine interface.
  * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
  * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
@@ -20,6 +21,8 @@ _Static_assert(NM_MAX_TICK_FRAMES <= CHIP_MAX_TICK_FRAMES && NM_MAX_SAMPLE_RATE 
 
 static ChipMachine* nes_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_2a03); }
 static ChipMachine* vrc6_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_vrc6); }
+static ChipMachine* vrc7_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_vrc7); }
+static ChipMachine* s5b_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_s5b); }
 
 static void nes_destroy(ChipMachine* m) { nm_destroy(MACHINE(m)); }
 
@@ -38,6 +41,14 @@ static int nes_load_image(ChipImage* storage, const uint8_t* bytes, size_t size)
 
 static int vrc6_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
     return load_for(&nes_player_vrc6, storage, bytes, size);
+}
+
+static int vrc7_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_vrc7, storage, bytes, size);
+}
+
+static int s5b_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_s5b, storage, bytes, size);
 }
 
 static int nes_start(ChipMachine* m, const ChipImage* image, int order, int row, int max_ticks, int* seek_mode) {
@@ -88,6 +99,42 @@ const ChipEngineOps nes_vrc6_chip_ops = {
     .create = vrc6_create,
     .destroy = nes_destroy,
     .load_image = vrc6_load_image,
+    .start = nes_start,
+    .apply_image = nes_apply_image,
+    .audition = nes_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};
+
+/* Channels 0-4 as "nes-famistudio", then VRC7 FM 1-6 (5..10). On an FM channel the instrument slot addresses the
+ * image's expansion instrument table (the same index as the 2A03 table). */
+const ChipEngineOps nes_vrc7_chip_ops = {
+    .system_id = "nes-famistudio-vrc7",
+    .image_size = NES_VRC7_IMAGE_SIZE,
+    .image_storage = sizeof(NesImage),
+    .create = vrc7_create,
+    .destroy = nes_destroy,
+    .load_image = vrc7_load_image,
+    .start = nes_start,
+    .apply_image = nes_apply_image,
+    .audition = nes_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};
+
+/* Channels 0-4 as "nes-famistudio", then 5B square 1 (5), 2 (6) and 3 (7). On a 5B square the instrument slot
+ * addresses the image's expansion instrument table (the same index as the 2A03 table). */
+const ChipEngineOps nes_s5b_chip_ops = {
+    .system_id = "nes-famistudio-s5b",
+    .image_size = NES_S5B_IMAGE_SIZE,
+    .image_storage = sizeof(NesImage),
+    .create = s5b_create,
+    .destroy = nes_destroy,
+    .load_image = s5b_load_image,
     .start = nes_start,
     .apply_image = nes_apply_image,
     .audition = nes_audition,

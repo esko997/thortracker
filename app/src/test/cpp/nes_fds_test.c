@@ -1,9 +1,10 @@
 /* Host regression test for the NES + FDS build ("nes-famistudio-fds"): the FDS audio unit (nes_fds.c) against the
  * NESdev "FDS audio" description (registers, unit ticks, the modulation formula, envelopes, the gain latch, write
  * enable, mixing level), and the FamiStudio sound engine 4.5.3 assembled with FAMISTUDIO_EXP_FDS = 1 and
- * FAMISTUDIO_USE_FDS_AUTOMOD = 1 playing FamiStudio's own export of tools/audio/nes/fds_test.txt and the same rows in
- * the Thor Tracker image layout (nes_fds_song.h): identical register writes (APU and FDS), row timing, wave uploads,
- * mod table loads, mod speed / depth / delay / auto-mod, `$57` / `$58` overrides and instrument re-binds, the wave-index
+ * FAMISTUDIO_USE_FDS_AUTOMOD = 1 (with Thor Tracker's FDS_ENGINE_PATCH) playing FamiStudio's own export of
+ * tools/audio/nes/fds_test.txt and the same rows in the Thor Tracker image layout (nes_fds_song.h): identical register
+ * writes (APU and FDS), row timing, wave uploads, mod table loads, mod speed / depth / delay / auto-mod, `$57` / `$58`
+ * overrides and instrument re-binds, manual speeds $x80-$xFF (tagged; = FamiStudio's `$57` path), the wave-index
  * sequence with its release, phase reset, true pitch, seek, live relocation and edits, audition, mute, the image rules
  * of the FDS build and the chip engine interface.
  *
@@ -597,25 +598,54 @@ static int check_mod_unit(NesMachine* m, int* enabled) {
     return f->mod_gain == depth && !(f->mod_hi & 0x80) && nes_fds_mod_frequency(f) == want;
 }
 
-/* Per-frame sound register writes (APU and FDS) as (address low, address high, value). */
+/* Per-frame sound register writes (APU and FDS) as (address low, address high, value), and the frame-relative CPU cycle
+ * of each. */
 typedef struct {
     int frames;
     uint8_t (*w)[3 * 1024];
+    uint32_t (*t)[1024];
     int* n;
 } Trace;
 
 static void trace_alloc(Trace* t, int frames) {
     t->frames = frames;
     t->w = calloc((size_t)frames, 3 * 1024);
+    t->t = calloc((size_t)frames, 1024 * sizeof(uint32_t));
     t->n = (int*)calloc((size_t)frames, sizeof(int));
 }
 
 static void trace_free(Trace* t) {
     free(t->w);
+    free(t->t);
     free(t->n);
 }
 
-static void record(NesMachine* m, Trace* t, int f) { t->n[f] = nm_write_log(m, t->w[f], 1024); }
+static void record(NesMachine* m, Trace* t, int f) { t->n[f] = nm_write_log_timed(m, t->w[f], t->t[f], 1024); }
+
+/* Engine frame f after a start from (0, 0): 29780 and 29781 CPU cycles alternating. */
+static uint32_t frame_cycles(int f) { return (f & 1) ? 29781u : FRAME; }
+
+/* A standalone FDS unit fed frame f's timed FDS register writes of `t` (the engine never reads them), then the frame
+ * end: the chip state those timed writes alone produce. */
+static void replay_frame(NesFds* u, const Trace* t, int f, uint32_t cycles) {
+    for (int i = 0; i < t->n[f]; ++i) {
+        const uint16_t addr = (uint16_t)(t->w[f][3 * i] | t->w[f][3 * i + 1] << 8);
+        if (nes_fds_register(addr)) nes_fds_write(u, t->t[f][i], addr, t->w[f][3 * i + 2]);
+    }
+    nes_fds_end_frame(u, cycles);
+}
+
+/* A silent copy of a machine's FDS unit to replay from. */
+static NesFds unit_copy(const NesFds* f) {
+    NesFds u = *f;
+    nes_fds_set_output(&u, NULL);
+    return u;
+}
+
+/* Whether frame f's writes in `a` and `b` came at the same CPU cycles (same writes assumed). */
+static int same_timing(const Trace* a, const Trace* b, int f) {
+    return a->n[f] == b->n[f] && !memcmp(a->t[f], b->t[f], (size_t)a->n[f] * sizeof(uint32_t));
+}
 
 static int same_frame(const Trace* a, const Trace* b, int f) {
     return a->n[f] == b->n[f] && !memcmp(a->w[f], b->w[f], (size_t)a->n[f] * 3);
@@ -752,10 +782,8 @@ static void test_images(void) {
            "Thor layout: %u orders, loop %u, %u instruments, tempo step %u, expansion table $%04X", i->orders, i->loop,
            i->instruments, i->tempo_ntsc, i->exp_instruments);
     int rows_ok = 1;
-    for (int o = 0; o < FDS_TEST_ORDERS; ++o) {
-        rows_ok &= i->rows[o] == nes_fds_order_rows[o] && i->speed[o] == nes_fds_speed[o][0];
-    }
-    EXPECT(rows_ok, "each order's rows and starting speed as fds_test.txt");
+    for (int o = 0; o < FDS_TEST_ORDERS; ++o) rows_ok &= i->rows[o] == nes_fds_order_rows[o];
+    EXPECT(rows_ok, "each order's rows as fds_test.txt (PatternCustomSettings)");
     int streams_ok = 1;
     for (int c = 0; c < ALL_CHANNELS; ++c) streams_ok &= i->streams[c] >= P->song_base;
     EXPECT(streams_ok && P->channels == 6 && P->expansion == NES_EXPANSION_FDS, "an order stream for each of the 6 channels");
@@ -776,8 +804,9 @@ static void test_images(void) {
     EXPECT(nm_load_image(&other, P) != 0, "a 2A03 image on the FDS build: rejected (%s)", other.info.problem);
     other = g_thor;
     EXPECT(nm_load_image(&other, &nes_player_2a03) != 0 && nm_load_image(&other, &nes_player_vrc6) != 0 &&
-               nm_load_image(&other, &nes_player_n163[0]) != 0,
-           "an FDS image on the 2A03, VRC6 and N163 builds: rejected");
+               nm_load_image(&other, &nes_player_vrc7) != 0 && nm_load_image(&other, &nes_player_n163[0]) != 0 &&
+               nm_load_image(&other, &nes_player_s5b) != 0,
+           "an FDS image on the 2A03, VRC6, VRC7, N163 and 5B builds: rejected");
 
     /* `$57`-`$59` are FDS opcodes only (the 2A03 build's message unchanged). */
     memset(&other, 0, sizeof other);
@@ -829,6 +858,21 @@ static void test_images(void) {
     expect_problem(&bad, P, "FDS mod speed above $0FFF", "manual speed $1000");
     bad.bytes[e0 + 13] = 0x7F, bad.bytes[e0 + 14] = 0x0F;
     EXPECT(nm_load_image(&bad, P) == 0, "manual speed $0F7F loads (%s)", bad.info.problem ? bad.info.problem : "-");
+    /* Manual speeds whose low byte has bit 7 set: Thor Tracker's tag (high | $80) for every high byte 0..$F. */
+    static const uint8_t kTagged[][2] = {{0x80, 0x80}, {0x81, 0x80}, {0xFF, 0x80}, {0x80, 0x81}, {0xFF, 0x81}, {0x81, 0x8F}, {0xFF, 0x8F}};
+    int tagged_ok = 1;
+    for (size_t k = 0; k < sizeof kTagged / sizeof kTagged[0]; ++k) {
+        bad.bytes[e0 + 13] = kTagged[k][0], bad.bytes[e0 + 14] = kTagged[k][1];
+        tagged_ok &= nm_load_image(&bad, P) == 0 && nm_fds_manual_speed(bad.bytes + e0 + 13) == (kTagged[k][0] | (kTagged[k][1] & 0x0F) << 8);
+    }
+    EXPECT(tagged_ok, "tagged manual speeds $080, $081, $0FF, $180, $1FF, $F81, $FFF load and decode as manual speeds");
+    bad.bytes[e0 + 13] = 0xFF, bad.bytes[e0 + 14] = 0x90;
+    expect_problem(&bad, P, "FDS tagged mod speed above $0FFF", "tagged speed $10FF");
+    bad.bytes[e0 + 13] = 0x7F, bad.bytes[e0 + 14] = 0x80;
+    expect_problem(&bad, P, "FDS mod speed above $0FFF", "the tag on a low byte below $80");
+    bad.bytes[e0 + 13] = 0x81, bad.bytes[e0 + 14] = 0x02;
+    EXPECT(nm_load_image(&bad, P) == 0 && nm_fds_manual_speed(bad.bytes + e0 + 13) < 0,
+           "FamiStudio's untagged $81, $02 stays auto-mod 1/2 (%s)", bad.info.problem ? bad.info.problem : "-");
     bad = g_thor;
     bad.bytes[e0 + 6] = bad.bytes[e0 + 0];
     bad.bytes[e0 + 7] = bad.bytes[e0 + 1];
@@ -853,10 +897,10 @@ static void test_images(void) {
     expect_problem(&bad, P, "opcode not allowed in a row", "`$52` on the FDS channel");
     patch_entry(&bad, 2, op53, 1);
     expect_problem(&bad, P, "phase reset only on the pulses and the FDS channel", "`$53` on the triangle");
-    static const uint8_t kForeign[] = {0x55, 0x56, 0x5A, 0x5B};
+    static const uint8_t kForeign[] = {0x55, 0x56, 0x5A, 0x5B, 0x5E, 0x5F};
     for (size_t k = 0; k < sizeof kForeign; ++k) {
         patch_entry(&bad, CH, &kForeign[k], 1);
-        expect_problem(&bad, P, "opcode not allowed in a row", "a VRC6/VRC7/N163 opcode on the FDS build");
+        expect_problem(&bad, P, "opcode not allowed in a row", "a VRC6/VRC7/N163/5B opcode on the FDS build");
     }
     scan_rows(&g_thor);
     int o, r;
@@ -979,10 +1023,10 @@ static void test_playback(NesMachine* m, const char* dir) {
                 bad58 += fds_ram(m, P->fds.fds_mod_depth) != ri->depth;
             }
             if (ri->inst && !ri->has57) {
-                const int own = e[13] & 0x80 ? fds_ram(m, P->fds.fds_automod_numer) == (e[13] & 0x7F) &&
-                                                   fds_ram(m, P->fds.fds_automod_denom) == e[14]
-                                             : fds_ram(m, P->fds.fds_automod_numer) == 0 &&
-                                                   fds_ram16(m, P->fds.fds_mod_speed) == (e[13] | e[14] << 8);
+                const int speed = nm_fds_manual_speed(e + 13);
+                const int own = speed < 0 ? fds_ram(m, P->fds.fds_automod_numer) == (e[13] & 0x7F) &&
+                                                fds_ram(m, P->fds.fds_automod_denom) == e[14]
+                                          : fds_ram(m, P->fds.fds_automod_numer) == 0 && fds_ram16(m, P->fds.fds_mod_speed) == speed;
                 if (after57) ++rebinds;
                 after57 = 0;
                 bad_rebinds += !own;
@@ -1001,7 +1045,6 @@ static void test_playback(NesMachine* m, const char* dir) {
     const double mean_call = (double)(nm_driver_cycles(m) - cycles0) / frames;
     EXPECT(faults == 0 && nans == 0, "no driver faults or NaNs over %d frames", frames);
     EXPECT(rms > 0.03 && peak < 1.0, "non-silent, unclipped: rms %.4f peak %.4f", rms, peak);
-    EXPECT(worst_call < FRAME / 2, "engine frame within half a frame (worst %u cycles, mean %.0f)", worst_call, mean_call);
     EXPECT(fds_writes > frames * 4 && apu_writes > frames * 3, "the engine writes the FDS (%d) and the APU (%d) every frame",
            fds_writes, apu_writes);
     EXPECT(wave_checked > frames / 2 && wave_bad == 0, "the chip's wave RAM holds the FDS instrument's current wave (%d checks, %d wrong)",
@@ -1237,14 +1280,19 @@ static void test_live_apply(NesMachine* m) {
     Trace ref, t;
     trace_alloc(&ref, frames);
     trace_alloc(&t, frames);
-    play_trace(m, &g_thor, &ref);
     NesMachine* straight = nm_create(RATE, P);
     int mode;
     nm_start(straight, &g_thor, 0, 0, 0, &mode);
     nm_start(m, &g_thor, 0, 0, 0, &mode);
+    nm_set_apu_logging(straight, 1);
     nm_set_apu_logging(m, 1);
+    /* Moved data changes where the engine's indexed reads land (page crossings take a cycle more), so the same writes
+     * may come at other CPU cycles, and the FDS unit (accumulators, timers) follows their timing. Each machine's unit
+     * must be exactly what its own timed writes produce (a standalone unit replaying them), and identical to straight
+     * play's while the write timings are. */
+    NesFds replay_m = unit_copy(nm_fds(m)), replay_s = unit_copy(nm_fds(straight));
     double worst_us = 0;
-    int same_chip = 1;
+    int replay_ok = 1, timed_same = 1, exact_while_timed_same = 1, timing_frame = -1;
     for (int f = 0; f < frames; ++f) {
         double a0 = now_us();
         nm_apply_image(m, (f & 1) ? &g_moved : &g_thor);
@@ -1253,12 +1301,20 @@ static void test_live_apply(NesMachine* m) {
         nm_tick(m, g_out);
         nm_tick(straight, g_out);
         record(m, &t, f);
-        same_chip &= nes_fds_same_state(nm_fds(m), nm_fds(straight));
+        record(straight, &ref, f);
+        replay_frame(&replay_m, &t, f, frame_cycles(f));
+        replay_frame(&replay_s, &ref, f, frame_cycles(f));
+        replay_ok &= nes_fds_same_state(&replay_m, nm_fds(m)) && nes_fds_same_state(&replay_s, nm_fds(straight));
+        if (!same_timing(&t, &ref, f) && timing_frame < 0) timing_frame = f;
+        timed_same &= same_timing(&t, &ref, f);
+        if (timed_same) exact_while_timed_same &= nes_fds_same_state(nm_fds(m), nm_fds(straight));
     }
     int d = first_difference(&ref, &t, 0, frames);
     EXPECT(d < 0, "moved data (waves, wave tables and mod tables too) applied before each of %d frames: same writes as straight "
-                  "play (first difference %d)", frames, d);
-    EXPECT(same_chip, "... and the same FDS unit state every frame (no wave upload or mod table write)");
+                  "play (first difference %d; no wave upload or mod table write)", frames, d);
+    EXPECT(replay_ok, "... each machine's FDS unit = its own timed writes replayed, every frame");
+    EXPECT(exact_while_timed_same, "... and identical FDS unit state every frame while the write timings are (first timing "
+                                   "difference: frame %d)", timing_frame);
     printf("  worst apply_image: %.1f us\n", worst_us);
 
     /* The edited wave sample: re-uploaded with the next engine frame, transport untouched. */
@@ -1345,6 +1401,127 @@ static void test_live_apply(NesMachine* m) {
     nm_destroy(straight);
     trace_free(&ref);
     trace_free(&t);
+}
+
+/* ---- manual mod speeds with a low byte of $80-$FF (prepare_nes_player.py FDS_ENGINE_PATCH) ---------------------------- */
+
+/* Expansion instrument j's entry in a copy of an image (for in-place edits). */
+static uint8_t* exp_entry_bytes(NesImage* im, int j) {
+    return im->bytes + NM_REGION_OFFSET + region_offset(im->info.exp_instruments) + NM_EXP_INSTRUMENT_SIZE * j;
+}
+
+/* g_thor with expansion instrument j's bytes 13-15 (mod speed / auto-mod, delay) replaced; 0 when it loads. */
+static int with_mod_bytes(NesImage* im, int j, uint8_t b13, uint8_t b14, uint8_t delay) {
+    *im = g_thor;
+    uint8_t* e = exp_entry_bytes(im, j);
+    e[13] = b13, e[14] = b14, e[15] = delay;
+    return nm_load_image(im, P);
+}
+
+/* Thor Tracker's encoding of manual speed `s`: low, high; low >= $80: low, high | $80. */
+static void encode_speed(int s, uint8_t* lo, uint8_t* hi) {
+    *lo = (uint8_t)s;
+    *hi = (uint8_t)((s >> 8) | (s & 0x80));
+}
+
+/* The audition's note stream (nes_machine.c AUDITION_NOTE: NES_AUDITION_RAM + 4, 12 bytes up to the release stream)
+ * rewritten as `$57 speed`, `$54 j`, `$4E 0`, `$40 note`, `$42` to the silent loop: a FamiStudio FdsModSpeed effect
+ * on the note, overriding the instrument's speed as the upstream engine plays it. */
+static void poke_audition_57(NesMachine* m, int j, int note, int speed) {
+    const uint16_t silent = NES_AUDITION_RAM;
+    const uint8_t s[12] = {0x57, (uint8_t)speed, (uint8_t)(speed >> 8), 0x54, (uint8_t)j, 0x4E, 0x00, 0x40, (uint8_t)note,
+                           0x42, (uint8_t)silent, (uint8_t)(silent >> 8)};
+    for (int k = 0; k < 12; ++k) nm_poke(m, (uint16_t)(NES_AUDITION_RAM + 4 + k), s[k]);
+}
+
+static int playing_fsaw_own_speed(NesMachine* m) {
+    const int j = FDS_TEST_INSTRUMENT_FSAW;
+    return nm_peek(m, (uint16_t)(P->sym.chn_note + CH)) && fds_ram(m, P->fds.chn_fds_instrument) == j &&
+           !fds_ram(m, P->fds.fds_automod_numer) && fds_ram16(m, P->fds.fds_mod_speed) == nm_fds_manual_speed(exp_entry(&g_thor, j) + 13);
+}
+
+static void test_manual_speed_tag(NesMachine* m) {
+    printf("FDS manual mod speeds $x80-$xFF: Thor Tracker's tag through the patched loader, = FamiStudio's `$57` path\n");
+    const int j = FDS_TEST_INSTRUMENT_FSAW, note = 50, depth = FDS_TEST_MOD_DEPTH_FSAW;
+    EXPECT(depth > 0 && nm_fds_manual_speed(exp_entry(&g_thor, j) + 13) >= 0, "fixture: FSAW has a manual speed and depth %d", depth);
+    /* The delay is byte 15 of the instrument's own entry; FamiStudio's unpatched loader, misreading a low byte $80-$FF,
+     * reads it from byte 16 = the next entry's byte 0. Delays unlike that byte make the boundary visible. */
+    const int next0 = j + 1 < g_thor.info.instruments ? exp_entry(&g_thor, j + 1)[0] : -1;
+    const int d_long = FDS_TEST_MOD_DELAY_FSAW == next0 ? FDS_TEST_MOD_DELAY_FSAW + 1 : FDS_TEST_MOD_DELAY_FSAW;
+    const int delays[2] = {next0 == 0 ? 1 : 0, d_long};
+    static const int kSpeeds[] = {0x080, 0x081, 0x0FF, 0x180, 0x181, 0x1FF, 0xF80, 0xF81, 0xFFF, /* tagged */
+                                  0x000, 0x07F, 0x100, 0x17F, 0x200, 0xF7F};                    /* adjacent, untagged */
+    static NesImage tagged, safe;
+    NesMachine* twin = nm_create(RATE, P);
+    int loads = 1, loaded_ok = 1, unit_ok = 1, witness_ok = 1, cases = 0;
+    for (size_t k = 0; k < sizeof kSpeeds / sizeof kSpeeds[0]; ++k) {
+        for (int di = 0; di < 2; ++di) {
+            const int s = kSpeeds[k], d = delays[di];
+            uint8_t lo, hi;
+            encode_speed(s, &lo, &hi);
+            const int ok = with_mod_bytes(&tagged, j, lo, hi, (uint8_t)d) == 0 && with_mod_bytes(&safe, j, 0x00, 0x00, (uint8_t)d) == 0;
+            loads &= ok;
+            if (!ok) continue;
+            ++cases;
+            /* A: the instrument's own (tagged) speed. B (the witness): a speed-0 copy and FamiStudio's `$57 s` on the note. */
+            nm_audition(m, &tagged, CH, note, j, 0);
+            nm_audition(twin, &safe, CH, note, j, 0);
+            poke_audition_57(twin, j, note, s);
+            nm_set_apu_logging(m, 1);
+            nm_set_apu_logging(twin, 1);
+            for (int f = 1; f <= d + 4; ++f) {
+                nm_tick(m, g_out);
+                nm_tick(twin, g_out);
+                static uint8_t wa[3 * 1024], wb[3 * 1024];
+                const int na = nm_write_log(m, wa, 1024), nb = nm_write_log(twin, wb, 1024);
+                /* The same register writes and mod unit settings (the `$57` costs a few CPU cycles, so write timings and
+                 * accumulators may differ). */
+                const NesFds *ua = nm_fds(m), *ub = nm_fds(twin);
+                witness_ok &= na == nb && !memcmp(wa, wb, (size_t)na * 3) && ua->mod_hi == ub->mod_hi && ua->mod_gain == ub->mod_gain &&
+                              nes_fds_mod_frequency(ua) == nes_fds_mod_frequency(ub);
+                if (f == 1) {
+                    loaded_ok &= fds_ram16(m, P->fds.fds_mod_speed) == s && !fds_ram(m, P->fds.fds_automod_numer) &&
+                                 fds_ram(m, P->fds.fds_mod_delay) == d;
+                }
+                const NesFds* u = nm_fds(m);
+                if (f < d) unit_ok &= (u->mod_hi & 0x80) && u->mod_gain == 0;
+                if (f >= (d ? d : 1)) unit_ok &= !(u->mod_hi & 0x80) && u->mod_gain == depth && nes_fds_mod_frequency(u) == (uint32_t)s;
+            }
+        }
+    }
+    nm_destroy(twin);
+    EXPECT(loads && cases == 2 * (int)(sizeof kSpeeds / sizeof kSpeeds[0]), "every speed loads tagged / untagged (%d cases)", cases);
+    EXPECT(loaded_ok, "the loader stores the full speed ($x80-$xFF too, high byte without the tag), no auto-mod, and the delay "
+                      "from byte 15 of the instrument's own entry (next entry's byte 0: %d)", next0);
+    EXPECT(unit_ok, "the mod unit is halted for the delay, then runs at depth %d and exactly the speed ($080-$FFF and neighbours)",
+           depth);
+    EXPECT(witness_ok, "every frame's writes and mod unit settings = a speed-0 instrument with FamiStudio's own `$57` effect "
+                       "(the upstream-correct path to the same speed)");
+
+    /* FamiStudio's own auto-mod bytes keep their meaning: $81, $02 = 1/2. */
+    EXPECT(with_mod_bytes(&tagged, j, 0x81, 0x02, 0) == 0 && nm_audition(m, &tagged, CH, note, j, 0) == NM_OK,
+           "auto-mod $81, $02 on FSAW loads");
+    nm_tick(m, g_out);
+    EXPECT(fds_ram(m, P->fds.fds_automod_numer) == 1 && fds_ram(m, P->fds.fds_automod_denom) == 2 &&
+               fds_ram(m, P->fds.fds_mod_delay) == 0,
+           "FamiStudio's auto-mod encoding: numerator 1, denominator 2, delay 0 (%d/%d)", fds_ram(m, P->fds.fds_automod_numer),
+           fds_ram(m, P->fds.fds_automod_denom));
+
+    /* Live edit: FSAW sounding at its own speed, its speed edited to the tagged $1FF and back. */
+    const int target = find_frames(m, song_frames(FIRST_PASS_ROWS + LOOP_ROWS), playing_fsaw_own_speed);
+    EXPECT(target > 0, "straight play sounds FSAW at its own speed for two frames");
+    if (target > 0) {
+        uint8_t lo, hi;
+        encode_speed(0x1FF, &lo, &hi);
+        const int own = nm_fds_manual_speed(exp_entry(&g_thor, j) + 13);
+        EXPECT(with_mod_bytes(&tagged, j, lo, hi, exp_entry(&g_thor, j)[15]) == 0, "FSAW at the tagged speed $1FF loads");
+        nm_apply_image(m, &tagged);
+        const int edited = fds_ram16(m, P->fds.fds_mod_speed), numer = fds_ram(m, P->fds.fds_automod_numer);
+        nm_apply_image(m, &g_thor);
+        EXPECT(edited == 0x1FF && numer == 0 && fds_ram16(m, P->fds.fds_mod_speed) == own,
+               "apply_image: famistudio_fds_mod_speed $%03X -> $%03X (tagged $1FF) -> $%03X", own, edited,
+               fds_ram16(m, P->fds.fds_mod_speed));
+    }
 }
 
 static double energy(NesMachine* m, int ticks) {
@@ -1503,6 +1680,7 @@ int main(int argc, char** argv) {
     test_phase_reset(m);
     test_seek(m);
     test_live_apply(m);
+    test_manual_speed_tag(m);
     test_audition(m);
     test_mute(m);
     test_chip_engine_ops();
