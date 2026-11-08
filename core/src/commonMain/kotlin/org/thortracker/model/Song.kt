@@ -20,17 +20,75 @@ import org.thortracker.system.SystemSound
  * [instrument]: 0 = no sound number (legato), 1.. = slot in the bank of the channel
  * ([org.thortracker.system.ChannelSpec.bank]).
  * [effect]/[param]: the system's raw effect number (0-35, written 0-9 then A-Z) and parameter byte; 0/0 ("000") is no effect.
- * Serialized compactly as `[note, instrument, effect, param]`.
+ * This is effect column 0, the only one on systems with one column (Game Boy, NES, SID).
+ * [more]: effect columns 1.. on systems that declare more ([org.thortracker.system.SoundSystem.effectColumns], the OPL3:
+ * up to 4 in all); always canonical: at most [MAX_EFFECT_COLUMNS] − 1 entries, the last one not blank (trailing blank
+ * columns are dropped, so a cell that uses only column 0 equals and saves exactly as before). Use [withEffect].
+ * Serialized compactly as `[note, instrument, effect, param]`, followed by `effect, param` per entry of [more].
  */
 @Serializable(with = CellSerializer::class)
-data class Cell(val note: Int = EMPTY, val instrument: Int = 0, val effect: Int = 0, val param: Int = 0) {
-    val isBlank: Boolean get() = note == EMPTY && instrument == 0 && effect == 0 && param == 0
+data class Cell(
+    val note: Int = EMPTY,
+    val instrument: Int = 0,
+    val effect: Int = 0,
+    val param: Int = 0,
+    val more: List<Fx> = emptyList(),
+) {
+    init {
+        if (more.isNotEmpty()) {
+            require(more.size < MAX_EFFECT_COLUMNS) { "A cell has at most $MAX_EFFECT_COLUMNS effect columns" }
+            require(!more.last().isBlank) { "A cell's last extra effect column must not be blank" }
+        }
+    }
+
+    val isBlank: Boolean get() = note == EMPTY && instrument == 0 && effect == 0 && param == 0 && more.isEmpty()
+
+    /** Effect column 0 holds an effect (on one-column systems: the cell has an effect). */
     val hasEffect: Boolean get() = effect != 0 || param != 0
+
+    /** Any effect column holds an effect. */
+    val hasAnyEffect: Boolean get() = hasEffect || more.isNotEmpty()
+
+    /** The highest effect column holding an effect, or -1 when none does. */
+    val lastEffectColumn: Int get() = if (more.isNotEmpty()) more.size else if (hasEffect) 0 else -1
+
+    /** Effect code of column [column] (0 = [effect]); 0 beyond the used columns. */
+    fun effectCode(column: Int): Int = if (column == 0) effect else more.getOrNull(column - 1)?.effect ?: 0
+
+    /** Parameter of column [column] (0 = [param]); 0 beyond the used columns. */
+    fun effectParam(column: Int): Int = if (column == 0) param else more.getOrNull(column - 1)?.param ?: 0
+
+    /** This cell with column [column] (0 until [MAX_EFFECT_COLUMNS]) set to [code]/[param]; 0/0 clears it. Canonical. */
+    fun withEffect(column: Int, code: Int, param: Int): Cell {
+        require(column in 0 until MAX_EFFECT_COLUMNS) { "Effect column $column is out of range" }
+        if (column == 0) return if (code == effect && param == this.param) this else copy(effect = code, param = param)
+        if (effectCode(column) == code && effectParam(column) == param) return this
+        val list = more.toMutableList()
+        while (list.size < column) list += Fx.BLANK
+        list[column - 1] = Fx(code, param)
+        while (list.isNotEmpty() && list.last().isBlank) list.removeAt(list.lastIndex)
+        return copy(more = list)
+    }
+
+    /** This cell with every effect column cleared. */
+    fun withoutEffects(): Cell = if (!hasAnyEffect) this else copy(effect = 0, param = 0, more = emptyList())
 
     companion object {
         const val EMPTY = -1
         const val CUT = -2
+
+        /** Most effect columns any system may declare. */
+        const val MAX_EFFECT_COLUMNS = 4
         val BLANK = Cell()
+    }
+}
+
+/** One effect column of a [Cell] beyond the first: the system's effect [effect] (0-35) and [param]; 0/0 = blank. */
+data class Fx(val effect: Int, val param: Int) {
+    val isBlank: Boolean get() = effect == 0 && param == 0
+
+    companion object {
+        val BLANK = Fx(0, 0)
     }
 }
 
@@ -82,19 +140,32 @@ data class Song(
     val system: SoundSystem get() = sound.system
 }
 
-/** Strict compact cell encoding: exactly four integers. Range checks belong to the song's system ([org.thortracker.system.SoundSystem.structuralErrors]). */
+/**
+ * Strict compact cell encoding: four integers, then two per extra effect column ([Cell.more]), canonical (no trailing
+ * blank column). A one-column cell is exactly `[note, instrument, effect, param]` as before. Range checks (including how
+ * many columns a channel may use) belong to the song's system ([org.thortracker.system.SoundSystem.structuralErrors]).
+ */
 object CellSerializer : KSerializer<Cell> {
     private val delegate = IntArraySerializer()
 
     @OptIn(ExperimentalSerializationApi::class)
     override val descriptor: SerialDescriptor = SerialDescriptor("org.thortracker.model.Cell", delegate.descriptor)
 
-    override fun serialize(encoder: Encoder, value: Cell) =
-        encoder.encodeSerializableValue(delegate, intArrayOf(value.note, value.instrument, value.effect, value.param))
+    override fun serialize(encoder: Encoder, value: Cell) {
+        val out = IntArray(4 + 2 * value.more.size)
+        out[0] = value.note; out[1] = value.instrument; out[2] = value.effect; out[3] = value.param
+        value.more.forEachIndexed { i, fx -> out[4 + 2 * i] = fx.effect; out[5 + 2 * i] = fx.param }
+        encoder.encodeSerializableValue(delegate, out)
+    }
 
     override fun deserialize(decoder: Decoder): Cell {
         val values = decoder.decodeSerializableValue(delegate)
-        if (values.size != 4) throw SerializationException("A cell must be [note, instrument, effect, param], got ${values.size} values")
-        return Cell(values[0], values[1], values[2], values[3])
+        if (values.size < 4 || values.size % 2 != 0 || values.size > 2 + 2 * Cell.MAX_EFFECT_COLUMNS) {
+            throw SerializationException("A cell must be [note, instrument, effect, param] plus effect, param per further " +
+                "effect column (at most ${Cell.MAX_EFFECT_COLUMNS} columns), got ${values.size} values")
+        }
+        val more = List((values.size - 4) / 2) { Fx(values[4 + 2 * it], values[5 + 2 * it]) }
+        if (more.isNotEmpty() && more.last().isBlank) throw SerializationException("A cell's last effect column must not be blank (000)")
+        return Cell(values[0], values[1], values[2], values[3], more)
     }
 }

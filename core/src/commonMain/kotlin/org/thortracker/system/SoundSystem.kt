@@ -7,6 +7,7 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.sid.SidSystem
 
@@ -14,7 +15,7 @@ import org.thortracker.system.sid.SidSystem
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
  * recorded samples (the NES DPCM channel): its notes pick samples, not pitches.
  */
-/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices). */
+/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels). */
 enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE }
 
 /**
@@ -282,8 +283,20 @@ interface SoundSystem {
     /** Effects usable on [channel]; "no effect" is not an entry (the editor offers it separately). */
     fun effectsFor(channel: Int): List<EffectSpec>
 
+    /**
+     * How many effect columns cells on [channel] may use (1..[Cell.MAX_EFFECT_COLUMNS]); column 0 is [Cell.effect], the
+     * others [Cell.more]. The Game Boy, NES and SID store one effect per row; the OPL3 up to four.
+     */
+    fun effectColumns(channel: Int): Int = 1
+
     /** Contextual, human-readable meaning of a raw effect on [channel]. */
     fun describeEffect(song: Song, channel: Int, effect: Int, param: Int): String
+
+    /**
+     * A longer reading of effect [column] of the cell at ([pattern], [channel], [row]) for the editor (the OPL3's chord
+     * effects: the notes they sound), or null for [describeEffect]'s.
+     */
+    fun effectDetail(song: Song, pattern: Int, channel: Int, row: Int, column: Int): String? = null
 
     /** Why [cell] on [channel] cannot be exported or previewed (out-of-range values included), or null. */
     fun cellProblem(song: Song, channel: Int, cell: Cell): String?
@@ -355,7 +368,7 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem)
+    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, SidSystem, Opl3System)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

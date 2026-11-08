@@ -141,6 +141,7 @@ object SidRules {
         cell.instrument !in 0..SidSystem.SLOTS -> "instrument ${cell.instrument} is outside 0-${SidSystem.SLOTS}"
         cell.effect !in 0..EffectSpec.MAX_CODE -> "effect ${cell.effect} is outside 0-Z"
         cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
+        cell.more.isNotEmpty() -> "${cell.more.size + 1} effect columns; the SID plays one per row"
         cell.hasEffect && cell.effect != 0 && effect(cell.effect) == null -> "effect ${effectChar(cell.effect)} does not exist on the SID"
         else -> null
     }
