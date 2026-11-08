@@ -7,6 +7,7 @@ import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.Vrc7Presets
 

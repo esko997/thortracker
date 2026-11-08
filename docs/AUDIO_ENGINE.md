@@ -883,6 +883,9 @@ byte-identical).
   2A03 mixer scale, from rainwarrior's VRC7 level survey (+11.3 dB, +10.88 dB on Lagrange Point) and that test
   patch's RMS on emu2413; the VRC7 build's output gain is 2.0 / (1 + six FM channels' full swing) (the 2A03 and VRC6
   builds keep 2.0).
+  Instance creation goes through `chip_opll_new`: a shared mutex protects emu2413's lazy global table initialization
+  when playback and background WAV rendering create chips concurrently. Chip stepping is per-instance and never
+  takes that mutex; the vendored emulator is unchanged.
 - **Machine**: seek runs the chip without output, so FM envelopes and phases advance as in straight play; the order
   fallback leaves an FM channel whose order starts with a custom sound without an instrument until its next
   instrument byte (custom sounds are not re-sent per order). Mute leaves a channel out of the mix (the chip keeps running). Live edits: the machine tracks which

@@ -7,13 +7,14 @@
 #include <string.h>
 
 #include "nes_apu.h"
+#include "../chip_opll.h"
 
 #define AMP_PER_UNIT (NES_VRC7_STEP * NES_APU_AMP_SCALE)
 #define EG_MAX 123 /* emu2413: to_linear outputs 0 for eg_out above (1 << EG_BITS) - 1 - 4 */
 
 int nes_vrc7_init(NesVrc7* v) {
     memset(v, 0, sizeof *v);
-    v->opll = OPLL_new(NES_VRC7_OPLL_CLOCK, NES_VRC7_OPLL_RATE);
+    v->opll = chip_opll_new(NES_VRC7_OPLL_CLOCK, NES_VRC7_OPLL_RATE);
     if (!v->opll) return -1;
     OPLL_setChipType(v->opll, 1);
     OPLL_resetPatch(v->opll, OPLL_VRC7_TONE);

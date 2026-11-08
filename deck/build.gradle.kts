@@ -32,6 +32,7 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("nes/nes_vrc6.c").asFile,
         engineSrc.file("nes/nes_vrc7.c").asFile,
         engineSrc.file("third_party/emu2413/emu2413.c").asFile,
+        engineSrc.file("chip_opll.c").asFile,
         engineSrc.file("nes/nes_players.c").asFile,
         engineSrc.file("third_party/blip_buf/blip_buf.c").asFile,
         engineSrc.file("sid/sid_chip.c").asFile,

@@ -279,7 +279,9 @@ class NesLoweringTest {
         for (fine in listOf(-40, -5, 5, 40)) {
             val pulseCents = 1200 * kotlin.math.log2(period / (period - fine))
             val fmCents = 1200 * kotlin.math.log2((freq + 8 * e.fine(fm, 57, fine)) / freq)
-            val halfStep = 1200 * kotlin.math.log2((freq + 4) / freq)
+            // A half register step spans more cents after bending down than at the unshifted note.
+            val targetFreq = freq * period / (period - fine)
+            val halfStep = 1200 * kotlin.math.log2(targetFreq / (targetFreq - 4))
             assertTrue(kotlin.math.abs(fmCents - pulseCents) <= halfStep, "Pxx $fine: FM $fmCents cents, pulse $pulseCents")
         }
         val image = ByteArray(e.imageSize)

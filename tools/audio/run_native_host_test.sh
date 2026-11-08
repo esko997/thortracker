@@ -37,7 +37,7 @@ c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
   "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c"
-  "$cpp/third_party/emu2413/emu2413.c" "$cpp/nes/nes_players.c"
+  "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c" "$cpp/nes/nes_players.c"
   "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c"
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c"
@@ -62,7 +62,7 @@ done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test sid_machine_test opl3_machine_test ym_machine_test \
   wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
-  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
+  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
 status=0
 "$build/huge_machine_test" "$out" || status=1

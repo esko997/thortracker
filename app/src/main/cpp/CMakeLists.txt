@@ -66,6 +66,7 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_vrc6.c
     ${NES_DIR}/nes_vrc7.c
     ${EMU2413_DIR}/emu2413.c
+    chip_opll.c
     ${NES_DIR}/nes_players.c
     ${BLIP_DIR}/blip_buf.c
     ${SID_DIR}/sid_chip.c
