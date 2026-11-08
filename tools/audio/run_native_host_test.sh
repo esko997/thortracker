@@ -13,6 +13,8 @@
 # ym_image.bin (the image).
 # Master System (Banjo; needs app/src/main/cpp/generated/banjo_driver_image.h from tools/audio/prepare_sms.py):
 # <dir>/sms_psg.wav, sms_gg.wav, sms_fm.wav, sms_drums.wav (the test songs) and sms_fm.vgm (the VGM export).
+# WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
+# `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # The engines are C except reSID and ymfm (C++17): C sources build with $CC, reSID, ymfm and their C wrappers with
 # $CXX, and the tests link with $CXX (libstdc++), as the app (CMake) and the Deck (deck/build.gradle.kts) do.
 set -euo pipefail
@@ -29,7 +31,7 @@ includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid"
   -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm"
   -I "$root/app/src/test/cpp")
 c_engines=(
-  "$cpp/chip_engine.c" "$cpp/cpu6502.c"
+  "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
   "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c"
@@ -54,7 +56,7 @@ for src in "${cxx_engines[@]}"; do
   "$CXX" -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-for t in huge_machine_test nes_machine_test sid_machine_test opl3_machine_test ym_machine_test sms_machine_test; do
+for t in huge_machine_test nes_machine_test sid_machine_test opl3_machine_test ym_machine_test sms_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
 done
@@ -65,4 +67,5 @@ status=0
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
 "$build/sms_machine_test" "$out" || status=1
+"$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 exit $status

@@ -75,6 +75,9 @@ int ymm_mute(YmMachine* m, int channel, int muted);
 /* The position of the player tick the driver executes next: the tick after the last one it finished (behind heavy
  * frames the driver lags, and the position waits with it). */
 void ymm_position(const YmMachine* m, int* order, int* row, int* tick);
+/* Row starts (player ticks at tick 0) up to the tick ymm_position reports: it changes exactly when the heard position
+ * moves into a new row instance, also one a jump sends back to itself (chip_engine.h, row_serial). */
+uint32_t ymm_row_serial(const YmMachine* m);
 /* One tick: float stereo frames into out (<= YMM_MAX_TICK_FRAMES); 0 once a released audition ended; YMM_ERR_FAULT
  * if the driver stopped. */
 int ymm_tick(YmMachine* m, float* out);

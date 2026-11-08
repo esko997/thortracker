@@ -195,6 +195,15 @@ class PaneView(
 
     fun release(action: Action): Boolean = input { controller.release(action) }
 
+    /** True while the controller drives this pane's Pattern grid (no pattern panel open): where stick jumps apply. */
+    val patternFocused: Boolean get() = controllerFocused && state.kind == ViewKind.PATTERN && !state.scalePanel
+
+    /** The right-stick double flick: the Pattern cursor to its pattern's first or last row ([ViewController.jumpPatternEdge]). */
+    fun jumpPatternEdge(bottom: Boolean): Boolean = input {
+        touchScrolled = false
+        controller.jumpPatternEdge(bottom)
+    }
+
     /** Runs view-originated input so the selection it publishes is not followed back onto this pane. */
     internal fun <T> input(block: () -> T): T {
         val before = session.selectionVersion

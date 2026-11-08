@@ -1,10 +1,11 @@
 // JNI bridge for org.thortracker.audio.ChipAudio. Every call except nativePosition, nativeStats, nativeOpl3Vgm,
-// nativeYmExport and nativeSmsVgm must come from ChipAudio's single control thread.
+// nativeYmExport, nativeSmsVgm and nativeWav* must come from ChipAudio's single control thread.
 #include <jni.h>
 
 #include <string>
 
 #include "audio_engine.h"
+#include "chip_wav.h"
 #include "opl3/opl3_export.h"
 #include "ym/ym_export.h"
 #include "sms/sms_export.h"
@@ -164,6 +165,57 @@ JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeSmsVgm(J
     if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(file));
     sms_export_free(file);
     return out;
+}
+
+// WAV export jobs (chip_wav.h; any thread but the audio thread, one thread per job at a time). Kotlin:
+// `nativeWavOpen(system: String, image: ByteArray, loops: Int, fadeMs: Int, maxSeconds: Int, spool: String): Long`
+// returns the job, rendering into the file at `spool` (an app-private path), or throws IllegalArgumentException with
+// chip_wav_open's problem.
+JNIEXPORT jlong JNICALL Java_org_thortracker_audio_ChipAudio_nativeWavOpen(JNIEnv* env, jclass, jstring system,
+                                                                          jbyteArray image, jint loops, jint fade_ms,
+                                                                          jint max_seconds, jstring spool) {
+    const char* id = env->GetStringUTFChars(system, nullptr);
+    if (!id) return 0;  // OutOfMemoryError pending
+    const char* path = env->GetStringUTFChars(spool, nullptr);
+    if (!path) {
+        env->ReleaseStringUTFChars(system, id);
+        return 0;
+    }
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) {
+        env->ReleaseStringUTFChars(spool, path);
+        env->ReleaseStringUTFChars(system, id);
+        return 0;
+    }
+    const char* problem = nullptr;
+    ChipWav* w = chip_wav_open(id, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                               loops, static_cast<uint32_t>(fade_ms < 0 ? 0 : fade_ms),
+                               static_cast<uint32_t>(max_seconds < 0 ? 0 : max_seconds), path, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    env->ReleaseStringUTFChars(spool, path);
+    env->ReleaseStringUTFChars(system, id);
+    if (!w) env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "WAV export failed");
+    return reinterpret_cast<jlong>(w);
+}
+
+// chip_wav_run: 1 more to do, 0 complete, < 0 failed.
+JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeWavRun(JNIEnv*, jclass, jlong h, jint ticks) {
+    return chip_wav_run(reinterpret_cast<ChipWav*>(h), ticks);
+}
+
+// chip_wav_status into out (CHIP_WAV_* order).
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeWavStatus(JNIEnv* env, jclass, jlong h, jlongArray out) {
+    int64_t values[CHIP_WAV_FIELDS] = {};
+    chip_wav_status(reinterpret_cast<ChipWav*>(h), values, CHIP_WAV_FIELDS);
+    jlong tmp[CHIP_WAV_FIELDS];
+    for (int i = 0; i < CHIP_WAV_FIELDS; ++i) tmp[i] = static_cast<jlong>(values[i]);
+    const jsize length = env->GetArrayLength(out);
+    env->SetLongArrayRegion(out, 0, length < CHIP_WAV_FIELDS ? length : CHIP_WAV_FIELDS, tmp);
+}
+
+// chip_wav_close: frees the job and removes its spool file unless the file is complete.
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeWavClose(JNIEnv*, jclass, jlong h) {
+    chip_wav_close(reinterpret_cast<ChipWav*>(h));
 }
 
 }  // extern "C"

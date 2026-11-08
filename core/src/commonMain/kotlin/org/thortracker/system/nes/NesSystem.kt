@@ -194,6 +194,7 @@ object NesSystem : SoundSystem {
      */
     private object Engine : PlaybackEngine {
         override val id = "nes-famistudio"
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU, blip_buf 1.1.0"
         override val imageSize = NesImageLayout.SIZE
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */

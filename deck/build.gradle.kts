@@ -20,6 +20,7 @@ val konanDeps = File(System.getProperty("user.home"), ".konan/dependencies")
 val buildEngine by tasks.registering(Exec::class) {
     val sources = listOf(
         engineSrc.file("chip_engine.c").asFile,
+        engineSrc.file("chip_wav.c").asFile,
         engineSrc.file("cpu6502.c").asFile,
         engineSrc.file("huge_chip.c").asFile,
         engineSrc.file("huge_machine.c").asFile,
@@ -64,7 +65,7 @@ val buildEngine by tasks.registering(Exec::class) {
             "third_party/nuked-opl3", "third_party/ymfm")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
-    inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
+    inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
         "nes/nes_apu.h", "generated/nes_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
@@ -113,7 +114,7 @@ kotlin {
             }
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
-                includeDirs(layout.projectDirectory.dir("native"), engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("sms"))
+                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("sms"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

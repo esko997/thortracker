@@ -1,5 +1,27 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.14.1 Right-stick Pattern shortcuts
+
+- With the Pattern grid focused, flick the **right stick Up twice** to reach the first row, or **Down twice** to reach the last row. Return to neutral between flicks; each flick and the gap can be up to 300 ms.
+- Single flicks and a held stick do not jump. Menus, the toolbar, the Pattern panel and other views block the gesture. Changing focus or controllers cancels a pending flick. Left-stick and D-pad navigation are unchanged.
+- Available on Android and Steam Deck; the L2/R2 bindings are unchanged.
+
+Verified: 404 JVM core tests, 13 Linux core tests and six Android-host unit tests passed; Android and Deck builds succeeded. Six actual Deck frontend scenarios covered both jumps, single/held input, modal exclusion and view-change cancellation. The packaged release AppImage also passed both jumps and modal exclusion.
+
+On Nova, a temporary Android `uinput` gamepad exercised EventHub/InputReader through the activity: Down jumped to row `3F`, Up to `00`; single/held input, menus, Song, toolbar and Pattern panel did not jump; left-stick and D-pad single-row movement remained intact. The same signed 0.14.1 candidate passed both jumps on DMG (Mega Drive) and Konkr (OPL3). Temporary virtual devices/helpers were removed and handhelds returned to Home/sleep; external songs were untouched. Physical-stick ergonomics and threshold tuning still need human playtesting.
+
+## 0.14.0 WAV export and opt-in diagnostics
+
+- **Export .wav** renders Game Boy, NES, C64 SID, OPL3 and Mega Drive songs through the same native engines used for playback, as 48 kHz, 16-bit stereo PCM. Choose extra loop passes and either no fade or a five-second fade. Rendering stops at ten minutes if the requested loop point has not been reached and reports that cap.
+- Android renders to a private temporary file before opening the document picker; cancelling the picker keeps the completed export available to save. Cancel, hide/reopen progress and discard are supported. Desktop exports into the chosen folder without loading the whole WAV into memory. A failed save leaves no partial destination.
+- **Help → About** shows version/build and chip/driver versions. **Report a bug** opens GitHub; **Copy diagnostics** puts an opt-in report on Android's clipboard, or saves `~/ThorTracker/diagnostics.txt` on desktop. No automatic upload or telemetry.
+- Fixed the long view-shortcut list overlapping its explanation in Help → Controls.
+- Workstation builds now serialize Gradle, default to two workers, run Kotlin in a single-use process, and cap Android native compilation to two compiler jobs per ABI.
+
+Verified: native checks passed (Game Boy 145, NES 336, SID 151, OPL3 282, Mega Drive 500, WAV 208); all five demos rendered and the shortest valid one-row loops completed with zero and two extra passes. Android's 18 existing instrumentation tests passed. The Game Boy factory `.uge` is byte-identical; 26 non-Help renders at two screen sizes are pixel-identical to 0.13.0; the six Help renders differ for the new About tab and corrected shortcut layout. On Nova, a SID WAV saved through Android's picker is valid 48 kHz stereo PCM (1,710,896 frames); picker cancellation, export cancellation/restart, hide/reopen, discard, clipboard diagnostics and the GitHub link were exercised. Desktop SID export produced the same frame count; a deliberately unwritable destination reported failure and left no temporary output. The cancel/restart spool-ownership race was reproduced with the native renderer and fixed by giving each Android export its own file.
+
+Release candidate checks: 392 JVM core tests, 13 Linux core tests and six Android-host unit tests passed. The production-signed APK also exported Mega Drive on DMG (one extra loop plus fade, 3,008,364 frames) and OPL3 on Konkr (no fade, 1,792,000 frames); both saved files were verified as non-silent 48 kHz stereo PCM and removed after the smoke. About shows 0.14.0/build 26 on Nova, DMG and Konkr. The packaged AppImage exported the SID demo with the same frame count as Android; its compressor used two workers.
+
 ## 0.13.0 Sega Mega Drive songs
 
 A fifth sound chip pair: the Mega Drive's **YM2612** FM chip and **SN76489** PSG, played through SGDK's real **XGM** sound driver on an emulated Z80, so exports drop straight into Mega Drive homebrew made with SGDK.
