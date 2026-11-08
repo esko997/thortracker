@@ -495,6 +495,8 @@ class Player:
                     if self.row >= self.img.rows[self.order]:
                         self.row = 0
                         self.order = self.order + 1 if self.order + 1 < self.img.orders else self.img.loop
+                if (self.order, self.row) == (self.img.loop, 0):
+                    self.speed = self.start_speed[self.order]  # every pass of the loop starts alike
         self.batch = self.key_offs + self.out
         self.split = len(self.key_offs)
         return self.batch

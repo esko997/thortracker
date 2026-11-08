@@ -127,6 +127,20 @@ static void restore(Opl3Machine* m) {
 
 static int at(const O3Player* p, int order, int row) { return p->order == order && p->row == row && p->tick == 0; }
 
+/* Puts the player at the song start (or at the order's row 0 with its start speed: from_order) and runs it alone
+ * for `ticks` ticks, or until the next tick starts (order, row) when ticks < 0 (at most `bound` ticks, never
+ * leaving the order from_order). Returns the ticks run, or -1 if (order, row) was not reached. */
+static int run_player(O3Player* p, const Opl3Image* image, int from_order, int order, int row, int ticks, int bound) {
+    if (from_order) o3p_place(p, image, order);
+    else o3p_reset(p, image);
+    int n = 0;
+    for (; ticks < 0 ? !at(p, order, row) && n < bound && (!from_order || p->order == order) : n < ticks; ++n)
+        o3p_tick(p, image);
+    return ticks >= 0 || at(p, order, row) ? n : -1;
+}
+
+static int run_tick(Opl3Machine* m);
+
 int o3m_start(Opl3Machine* m, const Opl3Image* image, int order, int row, int max_ticks, int* seek_mode) {
     if (seek_mode) *seek_mode = O3M_SEEK_FROM_START;
     if (image->info.loaded != O3_LOADED || order < 0 || order >= image->info.orders || row < 0 ||
@@ -136,30 +150,37 @@ int o3m_start(Opl3Machine* m, const Opl3Image* image, int order, int row, int ma
     m->loaded = 1;
     chip_reset(m);
     O3Player* p = &m->player;
-    o3p_reset(p, &m->image);
-    int ticks = 0;
-    while (!at(p, order, row) && ticks < max_ticks) {
-        o3p_tick(p, &m->image);
-        ++ticks;
-    }
-    if (!at(p, order, row)) {
-        if (seek_mode) *seek_mode = O3M_SEEK_FROM_ORDER;
-        o3p_place(p, &m->image, order);
+    int from_order = 0;
+    int ticks = run_player(p, &m->image, 0, order, row, -1, max_ticks);
+    if (ticks < 0) {
         /* Replaying the order's earlier rows takes < 256 rows x 255 ticks (~0.2 us each), so it has its own
          * bound instead of max_ticks. A row behind a Dxx/Bxx of the same order is unreachable. */
-        for (int guard = 0; !at(p, order, row) && p->order == order && guard < 256 * 256; ++guard) o3p_tick(p, &m->image);
-        if (!at(p, order, row)) {
+        from_order = 1;
+        if (seek_mode) *seek_mode = O3M_SEEK_FROM_ORDER;
+        ticks = run_player(p, &m->image, 1, order, row, -1, 256 * 256);
+        if (ticks < 0) {
             m->loaded = 0;
             return O3M_ERR_IMAGE;
         }
-        ticks = 1;
     }
-    if (ticks == 0) {
+    if (ticks == 0 && !from_order) {
         send_writes(m); /* plain start at 0/0: the init writes as straight play sends them */
-    } else {
-        restore(m);
-        p->writes = 0;
+        return O3M_OK;
     }
+    /* The chip is clocked through the last O3M_PREROLL_TICKS ticks before the target (the player's own writes,
+     * output discarded), so held notes and release tails arrive with their envelopes under way. Earlier ticks run
+     * the player alone, then the chip receives its register state. */
+    const int preroll = O3M_PREROLL_TICKS * m->image.info.multispeed;
+    const int silent = ticks > preroll ? ticks - preroll : 0;
+    run_player(p, &m->image, from_order, order, row, silent, 0);
+    if (silent) restore(m);
+    else send_writes(m); /* from the song start (or the placement): the chip's state is straight play's */
+    for (int t = silent; t < ticks; ++t) {
+        run_tick(m);
+        for (int k = 0; k < 2; ++k) blip_read_samples(m->blip[k], m->pcm, (int)O3M_MAX_TICK_FRAMES, 0);
+    }
+    p->writes = p->offs = 0;
+    m->ticks = 0;
     return O3M_OK;
 }
 
@@ -222,16 +243,8 @@ void o3m_position(const Opl3Machine* m, int* order, int* row, int* tick) {
     *tick = m->player.tick;
 }
 
-int o3m_tick(Opl3Machine* m, float* out) {
-    if (!m->loaded) return 0;
-    if (m->released) {
-        const int limit = O3M_RELEASE_SECONDS * 60 * m->image.info.multispeed;
-        if (audition_silent(m) || m->release_ticks >= limit) {
-            m->loaded = 0;
-            return 0;
-        }
-        ++m->release_ticks;
-    }
+/* One player tick and its chip samples into the resampler (frames then wait in the blip buffers). */
+static int run_tick(Opl3Machine* m) {
     o3p_tick(&m->player, &m->image);
     const uint32_t period = 60u * O3M_NATIVE_DIVIDER * (uint32_t)m->image.info.multispeed;
     m->native_acc += O3M_CLOCK;
@@ -246,12 +259,23 @@ int o3m_tick(Opl3Machine* m, float* out) {
     }
     send_range(m, offs, m->player.writes);
     generate(m, offs ? 1 : 0, n);
-    int frames = 0;
-    for (int k = 0; k < 2; ++k) {
-        blip_end_frame(m->blip[k], (unsigned)n);
-        const int avail = blip_samples_avail(m->blip[k]);
-        frames = blip_read_samples(m->blip[k], m->pcm + k, avail < (int)O3M_MAX_TICK_FRAMES ? avail : (int)O3M_MAX_TICK_FRAMES, 1);
+    for (int k = 0; k < 2; ++k) blip_end_frame(m->blip[k], (unsigned)n);
+    return n;
+}
+
+int o3m_tick(Opl3Machine* m, float* out) {
+    if (!m->loaded) return 0;
+    if (m->released) {
+        const int limit = O3M_RELEASE_SECONDS * 60 * m->image.info.multispeed;
+        if (audition_silent(m) || m->release_ticks >= limit) {
+            m->loaded = 0;
+            return 0;
+        }
+        ++m->release_ticks;
     }
+    run_tick(m);
+    int frames = 0;
+    for (int k = 0; k < 2; ++k) frames = blip_read_samples(m->blip[k], m->pcm + k, (int)O3M_MAX_TICK_FRAMES, 1);
     for (int i = 0; i < 2 * frames; ++i) out[i] = m->pcm[i] * (1.0f / 32768.0f);
     ++m->ticks;
     return frames;

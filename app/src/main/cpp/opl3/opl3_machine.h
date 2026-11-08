@@ -20,6 +20,7 @@ extern "C" {
 #define O3M_CLOCK 14318180u
 #define O3M_NATIVE_DIVIDER 288u
 #define O3M_RELEASE_SECONDS 10 /* a released audition ends after this long even if an operator never decays */
+#define O3M_PREROLL_TICKS 60   /* x multispeed: a seek clocks the chip through the last second before its target */
 
 enum { O3M_OK = 0, O3M_ERR_IMAGE = -1, O3M_ERR_FAULT = -2 };
 enum { O3M_SEEK_FROM_START = 0, O3M_SEEK_FROM_ORDER = 1 };
@@ -29,10 +30,12 @@ typedef struct Opl3Machine Opl3Machine;
 Opl3Machine* o3m_create(uint32_t sample_rate);
 void o3m_destroy(Opl3Machine* m);
 
-/* Chip reset, then the player is fast-forwarded alone (no chip clocking) from the song start until the next
- * tick starts (order, row) - at most max_ticks ticks - and the chip receives the player's final register
- * state (O3M_SEEK_FROM_START). Beyond the budget: the player is placed at the order start with the speed
- * straight play starts it with and replays the order's earlier rows (O3M_SEEK_FROM_ORDER). */
+/* Chip reset, then the player is fast-forwarded from the song start until the next tick starts (order, row) - at
+ * most max_ticks ticks (O3M_SEEK_FROM_START). Beyond the budget: the player is placed at the order start with the
+ * speed straight play starts it with and replays the order's earlier rows (O3M_SEEK_FROM_ORDER). Either way the
+ * player runs alone (no chip clocking) until O3M_PREROLL_TICKS x multispeed ticks before the target, the chip
+ * receives its register state, and the rest runs with the chip clocked (output discarded): from <= 1 s before
+ * the target the chip state is straight play's exactly. */
 int o3m_start(Opl3Machine* m, const Opl3Image* image, int order, int row, int max_ticks, int* seek_mode);
 /* Live edit at a tick boundary (realtime-safe): the song continues at the same (order, row) in the new data. */
 void o3m_apply_image(Opl3Machine* m, const Opl3Image* image);

@@ -1,7 +1,10 @@
 /* VGM 1.71 export (opl3_vgm.h). */
 #include "opl3_vgm.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+#include "opl3_export.h"
 
 #define VGM_HEADER 0x100
 
@@ -111,6 +114,7 @@ size_t o3_vgm_render(const Opl3Image* image, uint32_t max_ticks, O3Player* playe
     const int looped = t < max_ticks;
     put(&o, 0x66);
     info->ticks = t;
+    info->size = o.n;
     if (o.overflow) return 0;
     memset(out, 0, VGM_HEADER);
     memcpy(out, "Vgm ", 4);
@@ -129,3 +133,103 @@ size_t o3_vgm_render(const Opl3Image* image, uint32_t max_ticks, O3Player* playe
     info->samples = samples;
     return o.n;
 }
+
+/* ---- host entry point (opl3_export.h): the file plus a GD3 tag -------------------------------------------- */
+
+#define GD3_SYSTEM "OPL3 (Thor Tracker)"
+#define GD3_CONVERTER "Thor Tracker"
+
+/* UTF-8 -> UTF-16LE with a terminating 0; malformed bytes become U+FFFD. Returns bytes written (or needed when
+ * out is NULL). */
+static size_t utf16(const char* s, uint8_t* out) {
+    size_t n = 0;
+    const uint8_t* p = (const uint8_t*)(s ? s : "");
+    while (1) {
+        uint32_t c = *p++;
+        if (c >= 0x80) {
+            const int extra = c >= 0xF8 ? -1 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC2 ? 1 : -1;
+            if (extra < 0) {
+                c = 0xFFFD;
+            } else {
+                c &= 0x3F >> extra;
+                for (int i = 0; i < extra; ++i) {
+                    if ((*p & 0xC0) != 0x80) {
+                        c = 0xFFFD;
+                        break;
+                    }
+                    c = c << 6 | (*p++ & 0x3F);
+                }
+                if (c > 0x10FFFF || (c >= 0xD800 && c < 0xE000)) c = 0xFFFD;
+            }
+        }
+        uint16_t units[2];
+        int count = 1;
+        if (c > 0xFFFF) {
+            units[0] = (uint16_t)(0xD800 | (c - 0x10000) >> 10);
+            units[1] = (uint16_t)(0xDC00 | (c & 0x3FF));
+            count = 2;
+        } else {
+            units[0] = (uint16_t)c;
+        }
+        for (int i = 0; i < count; ++i, n += 2)
+            if (out) {
+                out[n] = (uint8_t)units[i];
+                out[n + 1] = (uint8_t)(units[i] >> 8);
+            }
+        if (!c) return n;
+    }
+}
+
+/* GD3 1.00: track, track (JP), game, game (JP), system, system (JP), author, author (JP), date, converter, notes. */
+static size_t gd3(const char* title, const char* author, const char* date, uint8_t* out) {
+    const char* fields[11] = {title, "", "", "", GD3_SYSTEM, "", author, "", date, GD3_CONVERTER, ""};
+    size_t n = 12;
+    for (int i = 0; i < 11; ++i) n += utf16(fields[i], out ? out + n : NULL);
+    if (out) {
+        memcpy(out, "Gd3 ", 4);
+        put32(out + 4, 0x100);
+        put32(out + 8, (uint32_t)(n - 12));
+    }
+    return n;
+}
+
+uint8_t* o3_export_vgm(const uint8_t* image, size_t image_size, uint32_t max_ticks, const char* title,
+                       const char* author, const char* date, size_t* size, const char** problem) {
+    *size = 0;
+    *problem = NULL;
+    if (image_size != O3_IMAGE_SIZE) {
+        *problem = "image size";
+        return NULL;
+    }
+    Opl3Image* img = (Opl3Image*)malloc(sizeof *img);
+    O3Player* player = (O3Player*)malloc(sizeof *player);
+    uint8_t* vgm = NULL;
+    if (!img || !player) {
+        *problem = "out of memory";
+        goto done;
+    }
+    memcpy(img->bytes, image, O3_IMAGE_SIZE);
+    if (o3_load_image(img)) {
+        *problem = img->info.problem;
+        goto done;
+    }
+    O3VgmInfo info;
+    o3_vgm_render(img, max_ticks, player, NULL, 0, &info); /* measure: the player is deterministic */
+    const size_t body = info.size, tag = gd3(title, author, date, NULL);
+    vgm = (uint8_t*)malloc(body + tag);
+    if (!vgm) {
+        *problem = "out of memory";
+        goto done;
+    }
+    o3_vgm_render(img, max_ticks, player, vgm, body, &info);
+    gd3(title, author, date, vgm + body);
+    put32(vgm + 0x04, (uint32_t)(body + tag - 4));
+    put32(vgm + 0x14, (uint32_t)(body - 0x14));
+    *size = body + tag;
+done:
+    free(img);
+    free(player);
+    return vgm;
+}
+
+void o3_export_free(uint8_t* vgm) { free(vgm); }

@@ -24,6 +24,7 @@
 
 #include "chip_engine.h"
 #include "generated/opl3_tables.h"
+#include "opl3_export.h"
 #include "opl3_machine.h"
 #include "opl3_test_song.h"
 #include "opl3_vgm.h"
@@ -359,6 +360,69 @@ static void test_audio(const char* dir) {
     EXPECT(hash[0] == hash[1], "bit-identical on a second start");
 }
 
+/* Every pass of the loop plays like the first: the test song enters the loop order (1) first from order 0 at
+ * speed 6 and later by B01 from order 3 at speed 5, without an Fxx there; the player re-derives the speed. (The
+ * registers are not pass-identical: which pool voice takes a chord note follows the allocation history.) */
+static void test_loop(void) {
+    printf("loop passes\n");
+    enum { MAX_PASS = 1024 };
+    static int pos[4][MAX_PASS];
+    int len[4] = {0};
+    Opl3Machine* m = o3m_create(RATE);
+    int mode, o, r, t, pass = -1;
+    o3m_start(m, &g_song, 0, 0, SEEK_BUDGET, &mode);
+    for (int k = 0; k < 4 * MAX_PASS && pass < 4; ++k) {
+        o3m_position(m, &o, &r, &t);
+        if (o == g_song.info.loop && r == 0 && t == 0) ++pass;
+        o3m_tick(m, g_out);
+        if (pass < 0 || pass >= 4 || len[pass] >= MAX_PASS) continue;
+        pos[pass][len[pass]++] = o << 16 | r << 8 | t;
+    }
+    EXPECT(pass == 4 && len[0] == len[1] && len[1] == len[2] && len[0] < MAX_PASS, "passes of %d, %d, %d ticks", len[0], len[1], len[2]);
+    EXPECT(!memcmp(pos[0], pos[1], sizeof(int) * (size_t)len[0]) && !memcmp(pos[1], pos[2], sizeof(int) * (size_t)len[0]),
+           "every pass steps through the same (order, row, tick) positions");
+    EXPECT((uint32_t)len[0] * 735 == OPL3_REF_VGM_LOOP_SAMPLES, "= the VGM loop (%u samples)", OPL3_REF_VGM_LOOP_SAMPLES);
+    printf("  %d ticks per pass; speed at the loop point %d (order 3 ends at 5)\n", len[0], g_song.info.start_speed[1]);
+    o3m_destroy(m);
+}
+
+static double cpu_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return t.tv_sec * 1e6 + t.tv_nsec / 1e3;
+}
+
+/* Tick cost must be flat (device benches once showed rare ticks at 10x the mean): after 1 s of warm-up, 30 s of the
+ * test song with no tick above 3x the mean. Thread CPU time, so preemption by other processes does not count. */
+static void test_outliers(void) {
+    printf("tick cost outliers\n");
+    const int ticks = SECONDS * 60;
+    double* cpu = (double*)malloc(sizeof(double) * (size_t)ticks);
+    double* wall = (double*)malloc(sizeof(double) * (size_t)ticks);
+    Opl3Machine* m = o3m_create(RATE);
+    int mode;
+    o3m_start(m, &g_song, 0, 0, SEEK_BUDGET, &mode);
+    for (int k = 0; k < 60; ++k) o3m_tick(m, g_out);
+    double sum = 0, worst = 0, worst_wall = 0;
+    int worst_at = 0;
+    for (int k = 0; k < ticks; ++k) {
+        const double w0 = now_us(), c0 = cpu_us();
+        o3m_tick(m, g_out);
+        cpu[k] = cpu_us() - c0;
+        wall[k] = now_us() - w0;
+        sum += cpu[k];
+        if (cpu[k] > worst) worst = cpu[k], worst_at = k;
+        if (wall[k] > worst_wall) worst_wall = wall[k];
+    }
+    const double mean = sum / ticks;
+    EXPECT(worst < 3 * mean, "no tick above 3x the mean: worst %.1f us (tick %d) vs mean %.1f us", worst, worst_at, mean);
+    printf("  thread CPU per tick: mean %.1f us, worst %.1f us (%.2fx, tick %d); wall worst %.1f us\n", mean, worst,
+           worst / mean, worst_at, worst_wall);
+    o3m_destroy(m);
+    free(cpu);
+    free(wall);
+}
+
 static void test_seek(void) {
     printf("seek\n");
     static const int targets[][2] = {{0, 5}, {0, 15}, {1, 0}, {1, 17}, {2, 3}, {2, 12}, {3, 2}, {3, 20}};
@@ -382,19 +446,36 @@ static void test_seek(void) {
         EXPECT(bad == 0, "seek %d/%d: %d ticks of writes = straight play (%d differ)", o, r, n, bad);
         printf("  %d/%d: %d ticks fast-forwarded in %.0f us\n", o, r, k - 1, us);
     }
-    /* Loudness after a seek: envelopes restart (documented), sustained levels match straight play. */
-    {
-        const int k = ref_row_start(&REF_SONG, 1, 17);
+    /* Sound after a seek against straight play from the same tick, 1 s: inside the pre-roll window (<= 60 ticks from
+     * the start) bit-identical; beyond it the chip ran the last second, so held notes and release tails are under
+     * way: the 20 ms loudness envelope over the first 0.5 s stays close (rms deviation relative to the loudness). */
+    static const int compare[][2] = {{0, 5}, {1, 0}, {1, 17}, {2, 12}, {3, 20}};
+    for (size_t i = 0; i < sizeof compare / sizeof compare[0]; ++i) {
+        const int o = compare[i][0], r = compare[i][1], k = ref_row_start(&REF_SONG, o, r);
         Opl3Machine* a = o3m_create(RATE);
         int mode;
         o3m_start(a, &g_song, 0, 0, SEEK_BUDGET, &mode);
         for (int j = 1; j < k; ++j) o3m_tick(a, g_out);
         float *x, *y;
-        const int fx = render(a, 90, &x);
-        o3m_start(m, &g_song, 1, 17, SEEK_BUDGET, &mode);
-        const int fy = render(m, 90, &y);
+        const int fx = render(a, 60, &x);
+        o3m_start(m, &g_song, o, r, SEEK_BUDGET, &mode);
+        const int fy = render(m, 60, &y);
+        const int win = RATE / 50, wins = RATE / 2 / win;
+        double dev = 0, level = 0;
+        for (int w = 0; w < wins; ++w) {
+            const double rx = rms(x + 2 * w * win, win), ry = rms(y + 2 * w * win, win);
+            dev += (ry - rx) * (ry - rx);
+            level += rx * rx;
+        }
+        const double env = sqrt(dev / level);
+        const int identical = fx == fy && !memcmp(x, y, sizeof(float) * 2 * (size_t)fx);
+        if (k - 1 <= O3M_PREROLL_TICKS)
+            EXPECT(identical, "seek %d/%d (%d ticks, inside the pre-roll): sound = straight play", o, r, k - 1);
+        else
+            EXPECT(env < 0.08, "seek %d/%d (%d ticks): loudness envelope within %.3f of straight play", o, r, k - 1, env);
         const double rx = rms(x + 2 * RATE / 2, fx - RATE / 2), ry = rms(y + 2 * RATE / 2, fy - RATE / 2);
-        EXPECT(ry > 0.6 * rx && ry < 1.6 * rx, "loudness 0.5-1.5 s after the seek %.4f vs straight %.4f", ry, rx);
+        EXPECT(ry > 0.8 * rx && ry < 1.25 * rx, "seek %d/%d: loudness 0.5-1 s after %.4f vs straight %.4f", o, r, ry, rx);
+        printf("  %d/%d vs straight play: %s, envelope deviation %.3f\n", o, r, identical ? "identical" : "differs", env);
         free(x);
         free(y);
         o3m_destroy(a);
@@ -667,6 +748,71 @@ static void test_vgm(const char* dir) {
     free(buf);
 }
 
+/* The hosts' entry point (opl3_export.h): the reference VGM plus a GD3 tag. */
+static void test_export(void) {
+    printf("VGM export entry point\n");
+    size_t size = 0;
+    const char* problem = NULL;
+    const char* title = "Thor \xC3\x96pening \xF0\x9F\x8E\xB9"; /* "Thor Öpening 🎹": 2-byte and 4-byte UTF-8 */
+    uint8_t* vgm = o3_export_vgm(g_song.bytes, sizeof g_song.bytes, 36000, title, "Esko", "2026/11/08", &size, &problem);
+    EXPECT(vgm && !problem, "renders (%s)", problem ? problem : "ok");
+    if (!vgm) return;
+    const uint32_t gd3_at = 0x14 + (vgm[0x14] | vgm[0x15] << 8 | vgm[0x16] << 16 | (uint32_t)vgm[0x17] << 24);
+    const uint32_t eof = 4 + (vgm[4] | vgm[5] << 8 | vgm[6] << 16 | (uint32_t)vgm[7] << 24);
+    EXPECT(gd3_at == OPL3_REF_VGM_SIZE && eof == size, "GD3 after the reference data (at %u), EOF offset = size %zu", gd3_at, size);
+    uint8_t* body = (uint8_t*)malloc(OPL3_REF_VGM_SIZE);
+    memcpy(body, vgm, OPL3_REF_VGM_SIZE);
+    const uint32_t ref_eof = OPL3_REF_VGM_SIZE - 4;
+    memcpy(body + 4, &ref_eof, 4);
+    memset(body + 0x14, 0, 4);
+    EXPECT(fnv(0xCBF29CE484222325ull, body, OPL3_REF_VGM_SIZE) == OPL3_REF_VGM_FNV,
+           "the data = the reference player's VGM (header 0x04/0x14 aside)");
+    free(body);
+    const uint8_t* g = vgm + gd3_at;
+    const uint32_t len = g[8] | g[9] << 8 | g[10] << 16 | (uint32_t)g[11] << 24;
+    EXPECT(!memcmp(g, "Gd3 ", 4) && g[4] == 0 && g[5] == 1 && gd3_at + 12 + len == size, "GD3 1.00 header, length %u", len);
+    /* the 11 strings, decoded back to UTF-8 (BMP + surrogate pairs) */
+    char fields[11][64];
+    const uint8_t* s = g + 12;
+    for (int f = 0; f < 11; ++f) {
+        int n = 0;
+        for (;;) {
+            uint32_t c = s[0] | s[1] << 8;
+            s += 2;
+            if (!c) break;
+            if (c >= 0xD800 && c < 0xDC00) {
+                c = 0x10000 + ((c - 0xD800) << 10) + ((s[0] | s[1] << 8) - 0xDC00);
+                s += 2;
+            }
+            if (n > 58) continue;
+            if (c < 0x80) fields[f][n++] = (char)c;
+            else if (c < 0x800) fields[f][n++] = (char)(0xC0 | c >> 6), fields[f][n++] = (char)(0x80 | (c & 0x3F));
+            else if (c < 0x10000)
+                fields[f][n++] = (char)(0xE0 | c >> 12), fields[f][n++] = (char)(0x80 | (c >> 6 & 0x3F)),
+                fields[f][n++] = (char)(0x80 | (c & 0x3F));
+            else
+                fields[f][n++] = (char)(0xF0 | c >> 18), fields[f][n++] = (char)(0x80 | (c >> 12 & 0x3F)),
+                fields[f][n++] = (char)(0x80 | (c >> 6 & 0x3F)), fields[f][n++] = (char)(0x80 | (c & 0x3F));
+        }
+        fields[f][n] = 0;
+    }
+    EXPECT(s == vgm + size, "11 strings fill the tag");
+    EXPECT(!strcmp(fields[0], title) && !strcmp(fields[4], "OPL3 (Thor Tracker)") && !strcmp(fields[6], "Esko") &&
+               !strcmp(fields[8], "2026/11/08") && !strcmp(fields[9], "Thor Tracker") && !fields[2][0] && !fields[10][0],
+           "GD3 fields: '%s', '%s', '%s', '%s', '%s'", fields[0], fields[4], fields[6], fields[8], fields[9]);
+    o3_export_free(vgm);
+    /* rejected images report the loader's reason */
+    memcpy(g_bad.bytes, g_song.bytes, sizeof g_bad.bytes);
+    g_bad.bytes[O3_H_MULTISPEED] = 9;
+    vgm = o3_export_vgm(g_bad.bytes, sizeof g_bad.bytes, 36000, NULL, NULL, NULL, &size, &problem);
+    EXPECT(!vgm && size == 0 && problem && strstr(problem, "multispeed"), "bad image: NULL, '%s'", problem ? problem : "");
+    vgm = o3_export_vgm(g_song.bytes, 100, 36000, NULL, NULL, NULL, &size, &problem);
+    EXPECT(!vgm && problem && !strcmp(problem, "image size"), "short image: '%s'", problem ? problem : "");
+    vgm = o3_export_vgm(g_song.bytes, sizeof g_song.bytes, 100, NULL, NULL, NULL, &size, &problem);
+    EXPECT(vgm && (vgm[0x1C] | vgm[0x20]) == 0 && size > 0x100, "tick limit before the loop closes: no loop, empty tags");
+    o3_export_free(vgm);
+}
+
 static void test_ops(void) {
     printf("ops table\n");
     const ChipEngineOps* ops = chip_engine_ops("opl3-fm");
@@ -735,12 +881,15 @@ int main(int argc, char** argv) {
     test_images();
     test_reference(dir);
     test_audio(dir);
+    test_outliers();
+    test_loop();
     test_seek();
     test_live_edits();
     test_audition(dir);
     test_mute();
     test_multispeed();
     test_vgm(dir);
+    test_export();
     test_ops();
     test_costs();
     printf("OPL3: %d checks, %d failures\n", checks, failures);
