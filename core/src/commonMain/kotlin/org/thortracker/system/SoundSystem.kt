@@ -174,6 +174,30 @@ interface SystemSound {
 data class NoteSample(val name: String, val detail: String)
 
 /**
+ * A song-wide chip setting the Song view lists after its shared rows (the SID's chip model, multispeed and hard
+ * restart). Edit+←→ steps it by [adjust]'s `fine`, Edit+↑↓ by its `coarse`; Clear [reset]s it.
+ */
+class SongSetting(
+    val label: String,
+    /** What Edit+←→ changes, for hints ("Chip model"). */
+    val hint: String,
+    /** The undo label of a change. */
+    val undoLabel: String,
+    /** The setting's value as the Song view shows it, with a short explanation. */
+    val value: (Song) -> String,
+    /** [Song] stepped by `fine` (←→) and `coarse` (↑↓); the same instance when nothing changes. */
+    val adjust: (Song, Int, Int) -> Song,
+    /** [Song] with the setting at its default. */
+    val reset: (Song) -> Song,
+)
+
+/**
+ * The chip's shared state at a song position as straight play reaches it (the SID's one filter: which voice took it
+ * last). [tags]: a short label per channel for the Pattern lane headers (null: none); [lines]: for the inspector.
+ */
+data class SharedState(val tags: List<String?>, val lines: List<String>)
+
+/**
  * A sound chip with the driver that plays it: everything about a song that is not shared. Shared code (editor, views,
  * menus, validation entry points, tuning) asks the song's system instead of naming a chip. See docs/BACKENDS.md.
  */
@@ -214,6 +238,15 @@ interface SoundSystem {
 
     /** Driver ticks per second (row duration = ticks per row / [tickHz]). */
     val tickHz: Double
+
+    /** Driver ticks per second of [song] (the SID's multispeed multiplies [tickHz]). */
+    fun ticksPerSecond(song: Song): Double = tickHz
+
+    /**
+     * A negative note value that re-opens the gate of the sounding note without restarting it (GoatTracker's key on,
+     * shown as [noteName]), or null when the system has none. The Pattern view's Clear on an OFF enters it.
+     */
+    val keyOn: Int? get() = null
 
     /** Most orders the driver plays. */
     val maxOrders: Int
@@ -306,6 +339,12 @@ interface SoundSystem {
      * counting its own row; null when it sounds until the next note or OFF. The Pattern view's sustain rails use it.
      */
     fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? = null
+
+    /** Song-wide chip settings the Song view lists after its shared rows; none on most systems. */
+    val songSettings: List<SongSetting> get() = emptyList()
+
+    /** Shared chip state at ([order], [row]) of [song] as straight play reaches it, or null when the chip has none. */
+    fun sharedState(song: Song, order: Int, row: Int): SharedState? = null
 }
 
 /** The systems this build knows, by id. */

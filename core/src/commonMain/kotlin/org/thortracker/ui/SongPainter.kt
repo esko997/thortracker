@@ -39,7 +39,8 @@ internal class SongPainter(v: PaneView) : Painter(v) {
                 "   parked, so the song loops to order ${hex2(played.firstOrNull { it > s.loopOrder } ?: played.firstOrNull() ?: 0)}"
             } else "",
             "New patterns" to "${s.newPatternScale.label}   scale guide for New (Clone and Repeat keep their own)",
-        )
+        ) + s.system.songSettings.map { it.label to it.value(s) }
+        val header = ViewState.songHeaderItems(s)
         var y = top + ink.unit * 0.3f
         settingsTop = y
         for ((i, pair) in settings.withIndex()) {
@@ -72,7 +73,7 @@ internal class SongPainter(v: PaneView) : Painter(v) {
         listTop = y + ink.unit * 0.2f
         listBottom = barTop
         val visible = maxOf(1, ((listBottom - listTop) / rowH).toInt())
-        val cur = st.songItem - ViewState.SONG_HEADER_ITEMS
+        val cur = st.songItem - header
         val playOrder = if (v.playback.playing) v.playback.order else -1
         val target = if (cur >= 0) cur else first
         if (!v.touchScrolled) {
@@ -130,7 +131,7 @@ internal class SongPainter(v: PaneView) : Painter(v) {
         chips.clear()
         ink.rect(c, r, Palette.LANE)
         ink.line(c, r.left, r.top, r.right, r.top, Palette.RULE, ink.dp(1f))
-        val cur = st.songItem - ViewState.SONG_HEADER_ITEMS
+        val cur = st.songItem - ViewState.songHeaderItems(song)
         val size = ink.unit * 0.9f
         var x = r.left + ink.unit * 0.7f
         if (cur < 0) {
@@ -154,8 +155,8 @@ internal class SongPainter(v: PaneView) : Painter(v) {
         }
     }
 
-    /** At the song system's tick rate, with four rows per beat. */
-    private fun bpm(ticks: Int): Int = (song.system.tickHz * 60.0 / (ticks * 4)).roundToLong().toInt()
+    /** At the song's tick rate, with four rows per beat. */
+    private fun bpm(ticks: Int): Int = (song.system.ticksPerSecond(song) * 60.0 / (ticks * 4)).roundToLong().toInt()
 
     // ---- touch ---------------------------------------------------------------------------------------
 
@@ -172,15 +173,15 @@ internal class SongPainter(v: PaneView) : Painter(v) {
         downChip = chips.firstOrNull { it.first.contains(x, y) }?.second ?: -1
         downItem = when {
             downChip >= 0 -> -1
-            y >= listTop && y < listBottom -> ViewState.SONG_HEADER_ITEMS + first + ((y - listTop) / rowH).toInt()
-            y >= settingsTop && y < settingsTop + rowH * ViewState.SONG_HEADER_ITEMS -> ((y - settingsTop) / rowH).toInt()
+            y >= listTop && y < listBottom -> ViewState.songHeaderItems(song) + first + ((y - listTop) / rowH).toInt()
+            y >= settingsTop && y < settingsTop + rowH * ViewState.songHeaderItems(song) -> ((y - settingsTop) / rowH).toInt()
             else -> -1
         }
         return downChip >= 0 || downItem >= 0
     }
 
     override fun move(x: Float, y: Float) {
-        if (downItem < ViewState.SONG_HEADER_ITEMS) return
+        if (downItem < ViewState.songHeaderItems(song)) return
         val dy = y - touchStartY
         if (!dragging && kotlin.math.abs(dy) > rowH * 0.6f) dragging = true
         if (dragging) { v.touchScrolled = true; first = touchStartFirst - (dy / rowH).toInt() }
@@ -192,11 +193,11 @@ internal class SongPainter(v: PaneView) : Painter(v) {
             ctl.press(org.thortracker.editor.Action.EDIT)
             ctl.release(org.thortracker.editor.Action.EDIT)
         } else if (!dragging && downItem >= 0) {
-            val max = ViewState.SONG_HEADER_ITEMS + song.orders.size - 1
+            val max = ViewState.songHeaderItems(song) + song.orders.size - 1
             if (downItem <= max) {
                 st.songItem = downItem
                 v.touchScrolled = false
-                if (downItem >= ViewState.SONG_HEADER_ITEMS) {
+                if (downItem >= ViewState.songHeaderItems(song)) {
                     st.songField = 0
                     ctl.press(org.thortracker.editor.Action.EDIT)
                     ctl.release(org.thortracker.editor.Action.EDIT)

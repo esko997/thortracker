@@ -98,6 +98,8 @@ object WorkspaceCodec {
                 listenChannel = int("listenChannel", 0).coerceAtLeast(0),
                 dpcmKey = int("dpcmKey", ViewState.DEFAULT_DPCM_KEY).coerceAtLeast(0),
                 dpcmSample = int("dpcmSample", 0).coerceAtLeast(0),
+                programField = int("programField", 0).coerceAtLeast(0),
+                rawTable = int("rawTable", 0).coerceAtLeast(0),
             )
         }
         return defaults
@@ -124,6 +126,7 @@ object WorkspaceCodec {
             put("keepRhythm", s.sketchKeepRhythm); put("keepPitches", s.sketchKeepPitches)
             put("envelope", s.envelope); put("envStep", s.envStep); put("listenChannel", s.listenChannel)
             put("dpcmKey", s.dpcmKey); put("dpcmSample", s.dpcmSample)
+            put("programField", s.programField); put("rawTable", s.rawTable)
             s.sketchPhrase?.let { p -> put("phrasePitches", buildJsonArray { p.steps.forEach { add(JsonPrimitive(it ?: -1)) } }) }
         })
     }.toString()

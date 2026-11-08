@@ -18,6 +18,8 @@ import org.thortracker.system.ExportFormat
 import org.thortracker.system.FinePitch
 import org.thortracker.system.PlaybackEngine
 import org.thortracker.system.SoundSystem
+import org.thortracker.system.SharedState
+import org.thortracker.system.SongSetting
 import org.thortracker.system.SystemHelp
 import org.thortracker.system.SystemView
 
@@ -54,6 +56,11 @@ object SidSystem : SoundSystem {
     /** One player call per PAL frame (985248 Hz / 19656 cycles) at multispeed 1. */
     override val tickHz = 985248.0 / 19656.0
     override val maxOrders = 254
+
+    override fun ticksPerSecond(song: Song): Double = tickHz * song.sid.multispeed
+
+    /** GoatTracker's key on (`+++`): Clear on an OFF enters it. */
+    override val keyOn: Int get() = SidRules.KEY_ON
 
     override fun blank(): Song = Song(
         title = "Untitled",
@@ -114,7 +121,13 @@ object SidSystem : SoundSystem {
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
 
-    override fun view(kind: ViewKind): SystemView? = null
+    override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) SidInstrumentView else null
+
+    /** Chip model, multispeed and the hard-restart envelope, after the Song view's shared rows. */
+    override val songSettings: List<SongSetting> get() = SidSongSettings.ALL
+
+    /** The one filter: which voice took it last ([SidFilterOwner]). */
+    override fun sharedState(song: Song, order: Int, row: Int): SharedState = SidFilterOwner.state(song, order, row)
 
     /** "ADSR 0 9 A 9 · Saw+gate · pulse · filter · vibrato" */
     fun summary(ins: SidInstrument): String {
@@ -180,7 +193,7 @@ object SidSystem : SoundSystem {
         override val untonalNote = "Every voice is tonal; drums are wave programs with absolute notes."
         override val sketchChannels = "Voice 1, 2 or 3"
 
-        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = emptyList()
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = SidInstrumentView.helpSections(keys)
 
         override fun limits(song: Song): List<Pair<String, String>> = SidValidator.limits(song)
     }
