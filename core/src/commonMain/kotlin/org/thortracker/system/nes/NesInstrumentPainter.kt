@@ -23,7 +23,10 @@ import org.thortracker.ui.Surface
  * sound's mapped keys and the song's samples with the selected one's waveform; on a VRC7 sound's FM page the patch,
  * the sustain overrides and the patch's fields for the modulator and the carrier; on an N163 sound's Waves page the
  * preset, size (and what it does to the pitch), RAM position, the shown wave, its repeat, the loop and release, the
- * song's N163 RAM map, the sequence of waves and the shown wave's samples.
+ * song's N163 RAM map, the sequence of waves and the shown wave's samples; on an FDS sound's Waves page the preset,
+ * master volume, the sequence settings, what the note names mean for FDS waves, the sequence and the shown wave's
+ * samples; on its Modulation page the table preset, speed (and the table's rate), depth, delay, auto-mod and its
+ * ratio, and the table's 32 targets with the counter the chip actually reaches.
  */
 internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private companion object {
@@ -87,20 +90,26 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
         val rw = area.right - pad - rx
-        val dpcm = NesInstrumentView.dpcmPage(st)
+        val dpcm = NesInstrumentView.dpcmPage(s, st)
         val fm = NesInstrumentView.fmPage(s, st)
         val wavePage = NesInstrumentView.wavePage(s, st)
-        // The Waves page has more settings: its rows are a little lower so the RAM map and the samples fit.
-        val rowH = ink.unit * (if (wavePage) 1.3f else 1.5f)
+        val fdsWaves = NesInstrumentView.fdsWavePage(s, st)
+        val modPage = NesInstrumentView.modPage(s, st)
+        // The Waves and Modulation pages have more settings: their rows are a little lower so the plots fit.
+        val rowH = ink.unit * (if (wavePage || fdsWaves || modPage) 1.3f else 1.5f)
         val vx = rx + ink.unit * 6.5f
         var y = top + ink.unit * 0.3f
         val mapping = if (dpcm) ins.dpcm[st.dpcmKey] else null
         val n163 = s.nes.expansion.n163Channels
         val wave = ins.wave
-        val shown = NesInstrumentView.waveIndex(st, wave)
-        if (!wavePage) { waveRect = Rect(); thumbs.clear() }
+        val fds = ins.fds
+        val seq = NesInstrumentView.waveSequence(s, st)
+        val shown = seq?.let { NesInstrumentView.waveIndex(st, it) } ?: 0
+        if (!wavePage && !fdsWaves) { waveRect = Rect(); thumbs.clear() }
+        if (!modPage) modRect = Rect()
         for (r in NesInstrumentView.rows(st, s)) {
-            if (r == Row.SLOT || r == Row.STEPS || r == Row.WAVE_SAMPLES || r in BOX_ROWS || r in NesInstrumentView.FM_PARAMS) continue
+            if (r == Row.SLOT || r == Row.STEPS || r == Row.WAVE_SAMPLES || r == Row.MOD_TABLE || r in BOX_ROWS ||
+                r in NesInstrumentView.FM_PARAMS) continue
             val sel = r == row
             val h = if (r == Row.ENVELOPE) ink.unit * 1.9f else rowH
             if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
@@ -121,6 +130,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     NesChip.VRC6 -> "VRC6: VRC6 Pulse 1/2 and Saw"
                     NesChip.VRC7 -> "VRC7: FM 1-6"
                     NesChip.N163 -> "N163: " + if (n163 <= 1) "N163 1" else "N163 1-$n163"
+                    NesChip.FDS -> "FDS: the FDS channel"
                 }, rx, vx, y, h, sel, false)
                 Row.PATCH -> setting(c, "Patch", when (ins.fm.preset) {
                     Vrc7Presets.CUSTOM -> "Custom: the chip's one programmable patch (shared by all FM channels)"
@@ -138,8 +148,8 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     ink.label(c, name, vx, y, h, col, true)
                     val note = when {
                         fm -> null
-                        // On the Waves page only a channel of another chip has something to say.
-                        wavePage -> listen?.takeIf { NesRules.chip(s.nes.expansion, st.listenChannel) != ins.chip }?.let {
+                        // On the Waves and Modulation pages only a channel of another chip has something to say.
+                        wavePage || fdsWaves || modPage -> listen?.takeIf { NesRules.chip(s.nes.expansion, st.listenChannel) != ins.chip }?.let {
                             NesInstrumentView.channelNote(kind, it.kind, ins.chip, ins.sawVolume, NesRules.chip(s.nes.expansion, st.listenChannel))
                         }
                         else -> listen?.let {
@@ -185,23 +195,50 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     mapping.dmcInitial < 0 -> "the sample's own (${(s.nes.samples.getOrNull(mapping.sample)?.dmcInitial ?: DpcmSample.DEFAULT_DMC_INITIAL) * 2})"
                     else -> "${mapping.dmcInitial * 2} at note start"
                 }, rx, vx, y, h, sel, mapping == null || mapping.dmcInitial < 0)
-                Row.WAVE_PRESET -> setting(c, "Preset", N163Presets.presetOf(wave.waves, wave.size)?.let {
-                    "${it.label}: FamiStudio's preset on ${if (wave.waves.size == 1) "the wave" else "all ${wave.waves.size} waves"}"
-                } ?: "Custom: drawn waves", rx, vx, y, h, sel, false)
+                Row.WAVE_PRESET -> {
+                    val preset = if (ins.chip == NesChip.FDS) FdsPresets.presetOf(fds.waves) else N163Presets.presetOf(wave.waves, wave.size)
+                    val count = seq?.waves?.size ?: 1
+                    setting(c, "Preset", preset?.let {
+                        "${it.label}: FamiStudio's preset on ${if (count == 1) "the wave" else "all $count waves"}"
+                    } ?: "Custom: drawn waves", rx, vx, y, h, sel, false)
+                }
                 Row.WAVE_SIZE -> setting(c, "Size", ink.fit(NesInstrumentView.sizeText(wave.size), rx + rw - vx), rx, vx, y, h, sel, false)
                 Row.WAVE_POSITION -> setting(c, "Position", ink.fit(NesInstrumentView.ramText(wave, maxOf(1, n163)), rx + rw - vx), rx, vx, y, h, sel, false)
-                Row.WAVE_INDEX -> setting(c, "Wave", "${shown + 1} of ${wave.waves.size}" +
-                    if (N163Waves.full(wave)) "   (the most of ${wave.size} samples)" else "", rx, vx, y, h, sel, false)
-                Row.WAVE_REPEAT -> wave.repeat.getOrElse(shown) { 1 }.let { n ->
+                Row.FDS_MASTER -> setting(c, "Master vol", "${fds.masterVolume.label} of the channel's output", rx, vx, y, h, sel,
+                    fds.masterVolume == FdsMasterVolume.FULL)
+                Row.WAVE_INDEX -> if (seq != null) {
+                    val most = when {
+                        !seq.full -> ""
+                        ins.chip == NesChip.FDS -> "   (the most FamiStudio keeps)"
+                        else -> "   (the most of ${seq.size} samples)"
+                    }
+                    setting(c, "Wave", "${shown + 1} of ${seq.waves.size}$most", rx, vx, y, h, sel, false)
+                }
+                Row.WAVE_REPEAT -> (seq?.repeat?.getOrNull(shown) ?: 1).let { n ->
                     setting(c, "Repeat", "wave ${shown + 1} plays $n frame${if (n == 1) "" else "s"} (${frames(n)})", rx, vx, y, h, sel, n == 1)
                 }
-                Row.WAVE_LOOP -> setting(c, "Loop", if (wave.loop < 0) "off: the last wave holds" else "back to wave ${wave.loop + 1}",
-                    rx, vx, y, h, sel, wave.loop < 0)
-                Row.WAVE_RELEASE -> setting(c, "Release", when {
-                    wave.release >= 0 -> "at wave ${wave.release + 1}: after OFF the waves from here play out"
-                    wave.loop < 0 -> "none (a release needs a loop)"
-                    else -> "none: after OFF the waves go on as before"
-                }, rx, vx, y, h, sel, wave.release < 0)
+                Row.WAVE_LOOP -> (seq?.loop ?: -1).let { loop ->
+                    setting(c, "Loop", if (loop < 0) "off: the last wave holds" else "back to wave ${loop + 1}", rx, vx, y, h, sel, loop < 0)
+                }
+                Row.WAVE_RELEASE -> (seq?.release ?: -1).let { release ->
+                    setting(c, "Release", when {
+                        release >= 0 -> "at wave ${release + 1}: after OFF the waves from here play out"
+                        (seq?.loop ?: -1) < 0 -> "none (a release needs a loop)"
+                        else -> "none: after OFF the waves go on as before"
+                    }, rx, vx, y, h, sel, release < 0)
+                }
+                Row.MOD_PRESET -> setting(c, "Preset", FdsPresets.modPresetOf(fds.modulation)?.let { "${it.label}: FamiStudio's table preset" }
+                    ?: "Custom: drawn table", rx, vx, y, h, sel, false)
+                Row.MOD_SPEED -> setting(c, "Speed", ink.fit(NesInstrumentView.modSpeedText(fds), rx + rw - vx), rx, vx, y, h, sel,
+                    fds.autoMod || fds.modSpeed == 0)
+                Row.MOD_DEPTH -> setting(c, "Depth", NesInstrumentView.modDepthText(fds.modDepth), rx, vx, y, h, sel, fds.modDepth == 0)
+                Row.MOD_DELAY -> setting(c, "Delay", ink.fit(NesInstrumentView.modDelayText(fds.modDelay), rx + rw - vx), rx, vx, y, h, sel,
+                    fds.modDelay == 0)
+                Row.MOD_AUTO -> setting(c, "Auto-mod", if (fds.autoMod) "on: the speed follows each note × ${NesInstrumentView.ratioText(fds)}"
+                    else "off: the speed above", rx, vx, y, h, sel, !fds.autoMod)
+                Row.MOD_NUMER -> setting(c, "Multiply", ink.fit(if (fds.autoMod) NesInstrumentView.autoModText(fds) else "× ${fds.autoModNumer} (auto-mod off)",
+                    rx + rw - vx), rx, vx, y, h, sel, !fds.autoMod)
+                Row.MOD_DENOM -> setting(c, "Divide", "÷ ${fds.autoModDenom}" + if (fds.autoMod) "" else " (auto-mod off)", rx, vx, y, h, sel, !fds.autoMod)
                 else -> Unit
             }
             if (sel) ink.outline(c, Rect(rx - ink.unit * 0.4f, y + 1, rx + rw + ink.unit * 0.4f, y + h - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
@@ -221,6 +258,18 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         if (wavePage) {
             plot.hide()
             drawWaves(c, Rect(rx, y + ink.unit * 0.2f, rx + rw, area.bottom - ink.unit * 0.4f), ins, row, col)
+            return
+        }
+        if (fdsWaves && seq != null) {
+            plot.hide()
+            val small = ink.unit * 0.8f
+            ink.label(c, ink.fit(NesInstrumentView.FDS_TUNING, rw, small), rx, y, rowH * 0.85f, Palette.PLAYHEAD, size = small)
+            drawSequence(c, Rect(rx, y + rowH * 0.85f + ink.unit * 0.2f, rx + rw, area.bottom - ink.unit * 0.4f), seq, row, col)
+            return
+        }
+        if (modPage) {
+            plot.hide()
+            drawMod(c, Rect(rx, y + ink.unit * 0.3f, rx + rw, area.bottom - ink.unit * 0.4f), fds, row, col)
             return
         }
         val small = ink.unit * 0.8f
@@ -248,7 +297,10 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         else -> Palette.DIM
     }
 
-    /** Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys on 2A03 sounds. */
+    /**
+     * Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys on
+     * 2A03 sounds; a VRC7 sound's FM patch, an N163 sound's Waves, an FDS sound's Waves and Modulation.
+     */
     private fun drawTabs(c: Surface, ins: NesInstrument, r: Rect, listen: org.thortracker.system.ChannelKind?, col: Int) {
         tabs.clear()
         val n = NesInstrumentView.pages(song, st)
@@ -257,7 +309,10 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             val k = NesEnvelopeKind.entries.getOrNull(page)
             val t = Rect(r.left + page * w, r.top, r.left + (page + 1) * w, r.bottom)
             val on = page == st.envelope
-            val ignored = listen != null && k != null && ignores(k, listen)
+            val fmTab = k == NesEnvelopeKind.DUTY && ins.chip == NesChip.VRC7
+            val waveTab = k == NesEnvelopeKind.DUTY && (ins.chip == NesChip.N163 || ins.chip == NesChip.FDS)
+            val modTab = page == NesInstrumentView.MOD_PAGE && ins.chip == NesChip.FDS
+            val ignored = listen != null && k != null && !(waveTab && ins.chip == NesChip.FDS) && ignores(k, listen)
             val color = when {
                 on -> col
                 ignored -> Palette.FAINT
@@ -265,16 +320,15 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             }
             if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
             ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
-            val fmTab = k == NesEnvelopeKind.DUTY && ins.chip == NesChip.VRC7
-            val waveTab = k == NesEnvelopeKind.DUTY && ins.chip == NesChip.N163
             val size = when {
-                fmTab -> 0
-                waveTab -> ins.wave.waves.size
+                fmTab || modTab -> 0
+                waveTab -> if (ins.chip == NesChip.FDS) ins.fds.waves.size else ins.wave.waves.size
                 else -> k?.of(ins)?.values?.size ?: ins.dpcm.size
             }
             val name = when {
                 fmTab -> "FM patch"
                 waveTab -> "Waves"
+                modTab -> "Modulation"
                 else -> k?.label ?: "DPCM"
             }
             val label = if (size == 0) name else "$name ($size)"
@@ -529,7 +583,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         return if (n == 0) "not used in the arrangement yet" else "used on $n row${if (n == 1) "" else "s"}"
     }
 
-    // ---- Waves page (N163 sounds): the RAM map, the sequence of waves and the shown wave's samples ----------------
+    // ---- Waves pages (N163 and FDS sounds): the N163's RAM map, the sequence of waves and the shown wave's samples ----
 
     /** Where the shown wave's samples were drawn (empty when they were not) and one sample's width. */
     private var waveRect = Rect()
@@ -540,10 +594,9 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private var thumbScroll = 0
 
     /**
-     * The RAM map (the N163's 256 samples: this sound's range on top, every other N163 sound's range in lanes below,
-     * overlaps with this one in the error colour, the channel registers greyed), a line on the overlaps, the sequence of
-     * waves (each as a small plot with its number and repeat, the loop region marked above and the release as a line)
-     * and the shown wave's samples as bars around the centre level 8, with the sample cursor.
+     * The N163 Waves page: the RAM map (the N163's 256 samples: this sound's range on top, every other N163 sound's range
+     * in lanes below, overlaps with this one in the error colour, the channel registers greyed), a line on the overlaps,
+     * then the sequence and the shown wave ([drawSequence]).
      */
     private fun drawWaves(c: Surface, r: Rect, ins: NesInstrument, row: Row, col: Int) {
         val s = song
@@ -552,8 +605,6 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val tiny = ink.unit * 0.65f
         val channels = maxOf(1, s.nes.expansion.n163Channels)
         val ram = NesRules.n163WaveRam(channels)
-        val shown = NesInstrumentView.waveIndex(st, w)
-        val sample = NesInstrumentView.sampleIndex(st, w)
         var y = r.top
 
         // RAM map
@@ -596,6 +647,22 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         }
         ink.label(c, ink.fit(overlapText, r.width(), small), r.left, y, lineH, if (conflicts.isNotEmpty()) Palette.ERROR else Palette.FAINT, size = small)
         y += lineH
+        val seq = NesInstrumentView.waveSequence(s, st) ?: return
+        drawSequence(c, Rect(r.left, y, r.right, r.bottom), seq, row, col)
+    }
+
+    /**
+     * An N163 or FDS sound's sequence of waves (each as a small plot with its number and repeat, the loop region marked
+     * above and the release as a line) and the shown wave's samples as bars around the centre level (8 of 0-15 on the
+     * N163, 32 of 0-63 on the FDS), with the sample cursor.
+     */
+    private fun drawSequence(c: Surface, r: Rect, w: NesInstrumentView.WaveSequence, row: Row, col: Int) {
+        val small = ink.unit * 0.8f
+        val tiny = ink.unit * 0.65f
+        val shown = NesInstrumentView.waveIndex(st, w)
+        val sample = NesInstrumentView.sampleIndex(st, w)
+        val levels = w.top + 1
+        var y = r.top
 
         // the sequence of waves
         val count = w.waves.size
@@ -614,7 +681,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             val on = i == shown
             if (w.loop in 0..i && i < loopEnd) ink.rect(c, bx, seq.top, bx + boxW, seq.top + markH, Palette.LISTEN)
             ink.rect(c, box, if (on) Palette.CURSOR_FILL else Palette.BG)
-            miniWave(c, box, w.waves[i], if (on) col else Palette.alpha(col, 140))
+            miniWave(c, box, w.waves[i], levels, if (on) col else Palette.alpha(col, 140))
             if (i == w.release) ink.line(c, bx, seq.top, bx, seq.bottom, Palette.WRITE, ink.dp(2f))
             ink.mono(c, (i + 1).toString(), box.left + ink.dp(2f), box.top, tiny * 1.3f, if (on) Palette.TEXT else Palette.FAINT, size = tiny)
             ink.label(c, "×${w.repeat.getOrElse(i) { 1 }}", box.right - ink.dp(2f), box.bottom - tiny * 1.3f, tiny * 1.3f, Palette.FAINT,
@@ -641,20 +708,20 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         if (inner.height() <= 0f || inner.width() <= 0f) { waveRect = Rect(); return }
         waveRect = inner
         waveCellW = inner.width() / w.size
-        val cellH = inner.height() / 16f
-        for (level in listOf(15, 8, 0)) {
+        val cellH = inner.height() / levels
+        for (level in listOf(w.top, w.centre, 0)) {
             val yl = inner.bottom - (level + 0.5f) * cellH
             ink.mono(c, level.toString(), inner.left - ink.unit * 0.3f, yl - tiny, tiny * 2, Palette.FAINT, size = tiny, align = Align.RIGHT)
         }
-        val centre = inner.bottom - 8 * cellH
+        val centre = inner.bottom - w.centre * cellH
         ink.line(c, inner.left, centre, inner.right, centre, Palette.BAR, ink.dp(1f))
         val gap = if (waveCellW >= ink.dp(4f)) maxOf(1f, waveCellW * 0.12f) else 0f
         val barColor = Palette.alpha(col, 170)
         for (j in 0 until w.size) {
             val v = samples[j]
             val x = inner.left + j * waveCellW
-            val top = if (v >= N163Waves.CENTRE) inner.bottom - (v + 1) * cellH else centre
-            val bottom = if (v >= N163Waves.CENTRE) centre else inner.bottom - v * cellH
+            val top = if (v >= w.centre) inner.bottom - (v + 1) * cellH else centre
+            val bottom = if (v >= w.centre) centre else inner.bottom - v * cellH
             val on = j == sample && focused
             ink.rect(c, x + gap, top, maxOf(x + gap + 1f, x + waveCellW - gap), bottom, if (on) (if (ctl.editHeld) Palette.WRITE else col) else barColor)
         }
@@ -670,8 +737,8 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         }
     }
 
-    /** One wave as a small dot plot of its levels in [box]. */
-    private fun miniWave(c: Surface, box: Rect, samples: List<Int>, color: Int) {
+    /** One wave of [levels] levels (16 on the N163, 64 on the FDS) as a small dot plot in [box]. */
+    private fun miniWave(c: Surface, box: Rect, samples: List<Int>, levels: Int, color: Int) {
         val inner = Rect(box.left + ink.dp(2f), box.top + ink.dp(2f), box.right - ink.dp(2f), box.bottom - ink.dp(2f))
         if (inner.width() <= 0f || inner.height() <= 0f || samples.isEmpty()) return
         val columns = maxOf(1, minOf(samples.size, (inner.width() / ink.dp(1.5f)).toInt()))
@@ -679,25 +746,105 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val dot = maxOf(ink.dp(1.5f), inner.height() / 16f)
         for (k in 0 until columns) {
             val v = samples[k * samples.size / columns]
-            val yv = inner.bottom - inner.height() * (v + 1) / 16f
+            val yv = inner.bottom - inner.height() * (v + 1) / levels
             ink.rect(c, inner.left + k * cw, yv, inner.left + (k + 1) * cw, minOf(inner.bottom, yv + dot), color)
         }
     }
 
-    // ---- touch: slots, tabs, drawing on the steps and on the waves --------------------------------------------
+    // ---- Modulation page (FDS sounds): the table's targets and the counter the chip reaches -------------------------
+
+    /** Where the modulation table was drawn (empty when it was not) and one entry's width. */
+    private var modRect = Rect()
+    private var modCellW = 0f
+
+    /**
+     * The FDS modulation table: FamiStudio's 32 targets as bars around 0 (on the −64..63 scale of the chip's counter),
+     * the counter the chip reaches after each entry ([FdsSound.modCurve] of the 3-bit [FdsSound.modTable], what
+     * FamiStudio's greedy encoding makes of the targets) as a line over them, the entry cursor and a legend. The bars are
+     * dimmed at depth 0 (modulation off).
+     */
+    private fun drawMod(c: Surface, r: Rect, f: FdsSound, row: Row, col: Int) {
+        val small = ink.unit * 0.8f
+        val tiny = ink.unit * 0.65f
+        if (r.height() < ink.unit * 4f) { modRect = Rect(); return }
+        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        val focused = row == Row.MOD_TABLE
+        val at = NesInstrumentView.modIndex(st)
+        ink.label(c, ink.fit(NesInstrumentView.modEntryText(f, at), r.width() - ink.unit, small), r.left + ink.unit * 0.5f, r.top,
+            ink.unit * 1.3f, if (focused) Palette.DIM else Palette.FAINT, size = small)
+        val labelH = ink.unit
+        val legendH = ink.unit * 1.1f
+        val inner = Rect(r.left + ink.unit * 2.2f, r.top + ink.unit * 1.4f, r.right - ink.unit * 0.5f,
+            r.bottom - ink.unit * 0.2f - labelH - legendH)
+        if (inner.height() <= 0f || inner.width() <= 0f) { modRect = Rect(); return }
+        modRect = inner
+        val size = FdsSound.MOD_SIZE
+        modCellW = inner.width() / size
+        val lo = FdsSound.MOD_TARGET.first
+        val hi = FdsSound.MOD_TARGET.last
+        fun yOf(value: Int) = inner.bottom - inner.height() * (value - lo) / (hi - lo).toFloat()
+        for (value in listOf(hi, 0, lo)) {
+            val yv = yOf(value)
+            ink.line(c, inner.left, yv, inner.right, yv, if (value == 0) Palette.BAR else Palette.RULE, ink.dp(1f))
+            ink.mono(c, value.toString(), inner.left - ink.unit * 0.3f, yv - tiny, tiny * 2, Palette.FAINT, size = tiny, align = Align.RIGHT)
+        }
+        val zero = yOf(0)
+        val gap = maxOf(1f, modCellW * 0.12f)
+        val barColor = Palette.alpha(col, if (f.modDepth == 0) 90 else 170)
+        val targets = f.modulation
+        for (i in 0 until size) {
+            val x = inner.left + i * modCellW
+            val yv = yOf(targets[i])
+            val top = minOf(zero, yv)
+            val bottom = maxOf(maxOf(zero, yv), top + ink.dp(1f))
+            val on = i == at && focused
+            ink.rect(c, x + gap, top, x + modCellW - gap, bottom, if (on) (if (ctl.editHeld) Palette.WRITE else col) else barColor)
+        }
+        // What the chip plays: the counter after each entry, joined.
+        val curve = f.modCurve
+        val dot = ink.dp(2f)
+        var px = 0f
+        var py = 0f
+        for (i in 0 until size) {
+            val cx = inner.left + (i + 0.5f) * modCellW
+            val cy = yOf(curve[i])
+            if (i > 0) ink.line(c, px, py, cx, cy, Palette.LISTEN, ink.dp(1.5f))
+            ink.rect(c, cx - dot, cy - dot, cx + dot, cy + dot, Palette.LISTEN)
+            px = cx
+            py = cy
+        }
+        val cx = inner.left + at * modCellW
+        ink.outline(c, Rect(cx, inner.top, cx + modCellW, inner.bottom), if (focused) cursorColor() else Palette.FAINT,
+            ink.dp(if (focused) 2f else 1f), ink.dp(2f))
+        val every = if (modCellW >= ink.unit * 1.4f) 1 else if (modCellW >= ink.unit * 0.7f) 2 else 4
+        for (i in 0 until size) {
+            if (i % every != 0 && i != at) continue
+            ink.mono(c, i.toString(), inner.left + (i + 0.5f) * modCellW, inner.bottom + ink.dp(2f), labelH,
+                if (i == at) Palette.TEXT else Palette.FAINT, size = tiny, align = Align.CENTER)
+        }
+        val legend = "Bars: FamiStudio's targets · line: what the chip plays (steps of 0, ±2, ±4, ±8 or a reset)" +
+            if (f.modDepth == 0) " · depth 0: off" else ""
+        ink.label(c, ink.fit(legend, r.width() - ink.unit, tiny), r.left + ink.unit * 0.5f, inner.bottom + labelH, legendH, Palette.FAINT, size = tiny)
+    }
+
+    // ---- touch: slots, tabs, drawing on the steps, the waves and the modulation table ----------------------------------
+
+    /** What a touch stroke draws on. */
+    private enum class Stroke { ENVELOPE, WAVE, MOD }
 
     private var drawing: GestureToken? = null
     private var drawSlot = 0
     private var drawKind = NesEnvelopeKind.VOLUME
+    private var stroke = Stroke.ENVELOPE
 
-    /** True while a touch draws on an N163 wave ([drawWave] of [drawSlot]) rather than on an envelope. */
-    private var drawingWave = false
+    /** The wave of [drawSlot] a [Stroke.WAVE] stroke draws on. */
     private var drawWave = 0
 
     override fun down(x: Float, y: Float): Boolean {
-        if (NesInstrumentView.dpcmPage(st)) dpcmDown(x, y)?.let { return it }
+        if (NesInstrumentView.dpcmPage(song, st)) dpcmDown(x, y)?.let { return it }
         fmDown(x, y)?.let { return it }
         waveDown(x, y)?.let { return it }
+        modDown(x, y)?.let { return it }
         tabs.firstOrNull { it.first.contains(x, y) }?.let { (_, k) ->
             NesInstrumentView.showEnvelope(ctl, k)
             return true
@@ -712,7 +859,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             st.instField = NesInstrumentView.rows(st, song).indexOf(Row.STEPS)
             drawSlot = st.instrument
             drawKind = NesInstrumentView.kind(st)
-            drawingWave = false
+            stroke = Stroke.ENVELOPE
             drawing = session.beginGesture("Draw ${drawKind.label.lowercase()}")
             drawAt(x, y)
             return true
@@ -732,7 +879,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** Waves page taps: a wave box shows that wave; on the samples a touch draws (one undo step per stroke). Null: not on them. */
     private fun waveDown(x: Float, y: Float): Boolean? {
-        if (!NesInstrumentView.wavePage(song, st)) return null
+        if (!NesInstrumentView.wavePage(song, st) && !NesInstrumentView.fdsWavePage(song, st)) return null
         val rows = NesInstrumentView.rows(st, song)
         thumbs.firstOrNull { it.first.contains(x, y) }?.let { (_, i) ->
             st.wave = i
@@ -740,11 +887,11 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             return true
         }
         if (!waveRect.contains(x, y) || waveCellW <= 0f) return null
-        val w = NesInstrumentView.n163Wave(song, st) ?: return null
+        val w = NesInstrumentView.waveSequence(song, st) ?: return null
         st.instField = rows.indexOf(Row.WAVE_SAMPLES)
         drawSlot = st.instrument
         drawWave = NesInstrumentView.waveIndex(st, w)
-        drawingWave = true
+        stroke = Stroke.WAVE
         drawing = session.beginGesture("Draw wave")
         drawWaveAt(x, y)
         return true
@@ -752,18 +899,51 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** Sets the sample under [x] to the level at [y]. */
     private fun drawWaveAt(x: Float, y: Float) {
-        val w = song.nesInstrument(drawSlot)?.takeIf { it.chip == NesChip.N163 }?.wave ?: return
-        val j = ((x - waveRect.left) / waveCellW).toInt().coerceIn(0, w.size - 1)
-        val level = ((waveRect.bottom - y) / (waveRect.height() / 16f)).toInt().coerceIn(N163Wave.SAMPLE)
+        val ins = song.nesInstrument(drawSlot) ?: return
+        val (size, levels) = when (ins.chip) {
+            NesChip.N163 -> ins.wave.size to N163Wave.SAMPLE.last + 1
+            NesChip.FDS -> FdsSound.WAVE_SIZE to FdsSound.SAMPLE.last + 1
+            else -> return
+        }
+        val j = ((x - waveRect.left) / waveCellW).toInt().coerceIn(0, size - 1)
+        val level = ((waveRect.bottom - y) / (waveRect.height() / levels)).toInt().coerceIn(0, levels - 1)
         st.waveCol = j
-        val ram = N163Waves.ram(song)
-        session.editNesWave(drawSlot, "Draw wave") { N163Waves.withSample(it, drawWave, j, level, ram) }
+        if (ins.chip == NesChip.FDS) {
+            session.editNesFds(drawSlot, "Draw wave") { FdsEdits.withSample(it, drawWave, j, level) }
+        } else {
+            val ram = N163Waves.ram(song)
+            session.editNesWave(drawSlot, "Draw wave") { N163Waves.withSample(it, drawWave, j, level, ram) }
+        }
+    }
+
+    /** Modulation page touches on the table draw its targets (one undo step per stroke). Null: not on it. */
+    private fun modDown(x: Float, y: Float): Boolean? {
+        if (!NesInstrumentView.modPage(song, st) || !modRect.contains(x, y) || modCellW <= 0f) return null
+        st.instField = NesInstrumentView.rows(st, song).indexOf(Row.MOD_TABLE)
+        drawSlot = st.instrument
+        stroke = Stroke.MOD
+        drawing = session.beginGesture("Draw mod table")
+        drawModAt(x, y)
+        return true
+    }
+
+    /** Sets the table entry under [x] to the target at [y]. */
+    private fun drawModAt(x: Float, y: Float) {
+        val i = ((x - modRect.left) / modCellW).toInt().coerceIn(0, FdsSound.MOD_SIZE - 1)
+        val t = ((modRect.bottom - y) / modRect.height()).coerceIn(0f, 1f)
+        val value = (FdsSound.MOD_TARGET.first + t * (FdsSound.MOD_TARGET.last - FdsSound.MOD_TARGET.first)).roundToInt()
+        st.programField = i
+        session.editNesFds(drawSlot, "Draw mod table") { FdsEdits.withTarget(it, i, value) }
     }
 
     override fun move(x: Float, y: Float) {
         val g = drawing ?: return
-        if (!session.isGestureOpen(g)) { drawing = null; drawingWave = false; return }
-        if (drawingWave) drawWaveAt(x, y) else drawAt(x, y)
+        if (!session.isGestureOpen(g)) { drawing = null; return }
+        when (stroke) {
+            Stroke.ENVELOPE -> drawAt(x, y)
+            Stroke.WAVE -> drawWaveAt(x, y)
+            Stroke.MOD -> drawModAt(x, y)
+        }
     }
 
     override fun up(x: Float, y: Float) = finish()
@@ -772,7 +952,6 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private fun finish() {
         drawing?.let { session.endGesture(it) }
         drawing = null
-        drawingWave = false
     }
 
     /** DPCM page taps: a mapped key shows it, a sample selects it, Add opens the add menu. Null: not on them. */

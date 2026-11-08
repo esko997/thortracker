@@ -1,6 +1,8 @@
 package org.thortracker.backend
 
+import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import kotlin.math.PI
@@ -11,11 +13,11 @@ import kotlin.math.sin
  * FamiStudio 4.5.3's envelope encoding, ported from its exporter (`FamitoneMusicFile.ProcessEnvelope`,
  * `CleanupEnvelopes`, `Envelope.Optimize`, `Envelope.CreateVibratoEnvelope`, `Instrument.BuildWaveformsAndWaveIndexEnvelope`)
  * so the bytes the engine reads are the ones FamiStudio itself would export. Envelope bytes: a value is byte − 192
- * (`$80-$FF`), `$01-$7F` holds the previous value that many frames, `$00 n` jumps to index n. Volume and N163 wave-index
+ * (`$80-$FF`), `$01-$7F` holds the previous value that many frames, `$00 n` jumps to index n. Volume and wave-index
  * envelopes start with their release index, pitch envelopes with the relative flag (`$80`).
  */
 internal object FamiStudioEnvelopes {
-    /** Directory kinds (the ordinal is the image's kind byte): [WAVE] is an N163 sound's wave-index envelope. */
+    /** Directory kinds (the ordinal is the image's kind byte): [WAVE] is an N163 or FDS sound's wave-index envelope. */
     enum class Kind { VOLUME, ARPEGGIO, DUTY, PITCH, WAVE }
 
     /** An envelope as FamiStudio holds it after import and the exporter's clean-up (see [effective]). */
@@ -77,22 +79,39 @@ internal object FamiStudioEnvelopes {
     }
 
     /**
-     * An N163 sound's waves as FamiStudio exports them (`BuildWaveformsAndWaveIndexEnvelope`): identical waves stored
-     * once, in order of first use; [index] = for each of the sound's waves the stored wave it plays.
+     * An N163 or FDS sound's waves as FamiStudio exports them (`Instrument.BuildWaveformsAndWaveIndexEnvelope`, the same
+     * code for both chips): identical waves stored once, in order of first use; [index] = for each of the sound's waves
+     * the stored wave it plays.
      */
-    class N163Waves(val index: IntArray, val stored: List<List<Int>>)
+    class Waves(val index: IntArray, val stored: List<List<Int>>)
 
-    fun n163Waves(w: N163Wave): N163Waves {
+    fun n163Waves(w: N163Wave): Waves = storedWaves(w.waves)
+
+    fun fdsWaves(f: FdsSound): Waves = storedWaves(f.waves)
+
+    private fun storedWaves(waves: List<List<Int>>): Waves {
         val stored = ArrayList<List<Int>>()
-        val index = IntArray(w.waves.size) { i ->
-            val at = stored.indexOf(w.waves[i])
-            if (at >= 0) at else { stored += w.waves[i]; stored.size - 1 }
+        val index = IntArray(waves.size) { i ->
+            val at = stored.indexOf(waves[i])
+            if (at >= 0) at else { stored += waves[i]; stored.size - 1 }
         }
-        return N163Waves(index, stored)
+        return Waves(index, stored)
     }
 
     /** One wave's bytes in N163 RAM (`Envelope.GetN163Waveform`): two samples per byte, the even one in the low nibble. */
     fun n163WaveBytes(wave: List<Int>): ByteArray = ByteArray(wave.size / 2) { ((wave[2 * it + 1] shl 4) or wave[2 * it]).toByte() }
+
+    /**
+     * One FDS wave's bytes (`Envelope.GetChunk`: the 64 samples 0..63 as they are; the engine writes them to `$4040-$407F`,
+     * `famistudio_update_fds_wave`).
+     */
+    fun fdsWaveBytes(wave: List<Int>): ByteArray = ByteArray(wave.size) { wave[it].toByte() }
+
+    /**
+     * An FDS sound's modulation table as FamiStudio exports it (`Envelope.BuildFdsModulationTable`, [FdsSound.modTable]):
+     * 32 bytes 0..7 the engine writes to `$4088` when it loads a sound with another table.
+     */
+    fun fdsModBytes(f: FdsSound): ByteArray = f.modTable.let { t -> ByteArray(t.size) { t[it].toByte() } }
 
     /**
      * The wave-index envelope FamiStudio exports for an N163 sound: `WaveformRepeat.CreateWaveIndexEnvelope` (wave i's
@@ -100,15 +119,19 @@ internal object FamiStudioEnvelopes {
      * `ProcessEnvelope(…, allowReleases = true)`: all-zero (one stored wave) is its default, a non-looping one drops
      * trailing repeats (`Envelope.Optimize`), the rest is encoded like a volume envelope (release index first).
      */
-    fun waveIndex(w: N163Wave): ByteArray {
-        val map = n163Waves(w).index
+    fun waveIndex(w: N163Wave): ByteArray = waveIndex(n163Waves(w).index, w.repeat, w.loop, w.release)
+
+    /** The wave-index envelope of an FDS sound: the same as an N163 sound's ([waveIndex]), from [FdsSound.repeat]. */
+    fun waveIndex(f: FdsSound): ByteArray = waveIndex(fdsWaves(f).index, f.repeat, f.loop, f.release)
+
+    private fun waveIndex(map: IntArray, repeats: List<Int>, waveLoop: Int, waveRelease: Int): ByteArray {
         val values = ArrayList<Int>()
         var loop = -1
         var release = -1
-        for (i in w.waves.indices) {
-            if (i == w.loop) loop = values.size
-            if (i == w.release) release = values.size
-            repeat(w.repeat[i]) { values += map[i] }
+        for (i in map.indices) {
+            if (i == waveLoop) loop = values.size
+            if (i == waveRelease) release = values.size
+            repeat(repeats[i]) { values += map[i] }
         }
         if (values.all { it == 0 }) return DEFAULT_PITCH_OR_RELEASE_ENV
         var kept: List<Int> = values
@@ -189,10 +212,17 @@ internal object FamiStudioEnvelopes {
         return ByteArray(ptr) { data[it].toByte() }
     }
 
-    /** FamiStudio's legato rule (`Channel.CanDisableAttack`, `Instrument.AllEnvelopesAreIdentical`). */
+    /**
+     * FamiStudio's legato rule (`Channel.CanDisableAttack`, `Instrument.AllEnvelopesAreIdentical`): on FDS sounds the
+     * envelopes also include the `FdsWaveform` (all waves, with the loop and release), `WaveformRepeat` and
+     * `FdsModulation` envelopes; the mod speed, depth, delay, auto-mod and master volume are not envelopes.
+     */
     fun allIdentical(a: NesInstrument, b: NesInstrument): Boolean =
         effective(a.volume, Kind.VOLUME) == effective(b.volume, Kind.VOLUME) &&
             effective(a.arpeggio, Kind.ARPEGGIO) == effective(b.arpeggio, Kind.ARPEGGIO) &&
             effective(a.pitch, Kind.PITCH, a.pitchRelative) == effective(b.pitch, Kind.PITCH, b.pitchRelative) &&
-            effective(a.duty, Kind.DUTY) == effective(b.duty, Kind.DUTY)
+            effective(a.duty, Kind.DUTY) == effective(b.duty, Kind.DUTY) &&
+            (a.chip != NesChip.FDS || b.chip != NesChip.FDS || a.fds.let { f ->
+                b.fds.let { g -> f.waves == g.waves && f.repeat == g.repeat && f.loop == g.loop && f.release == g.release && f.modulation == g.modulation }
+            })
 }

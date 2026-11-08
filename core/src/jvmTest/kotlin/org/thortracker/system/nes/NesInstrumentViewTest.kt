@@ -141,7 +141,7 @@ class NesInstrumentViewTest {
         v.hold(Action.EDIT, *Array(10) { Action.UP })
         assertEquals(listOf(3), session.song.nes.instruments[1].duty.values)
         v.tap(Action.NEXT_CHANNEL) // the DPCM page
-        assertTrue(NesInstrumentView.dpcmPage(v.state))
+        assertTrue(NesInstrumentView.dpcmPage(session.song, v.state))
         v.tap(Action.NEXT_CHANNEL) // to volume (wraps)
         assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
         v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL); v.tap(Action.PREV_CHANNEL) // DPCM, duty, pitch
@@ -401,7 +401,7 @@ class NesInstrumentViewTest {
         st.envelope = NesInstrumentView.DPCM_PAGE
         assertEquals(NesInstrumentView.DPCM_ROWS, NesInstrumentView.rows(st, song))
         assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(song, st))
-        assertFalse(NesInstrumentView.helpSections(Keymap.DEFAULT).any { it.first == "N163 sounds" })
+        assertFalse(NesInstrumentView.helpSections(Keymap.DEFAULT).any { it.first == "N163 sounds" || it.first == "FDS sounds" })
         // The VRC7's FM page keeps its rows.
         val vrc7 = EditorSession(NesVrc7System.blank())
         assertTrue(vrc7.setNesChip(1, NesChip.VRC7))
@@ -597,26 +597,26 @@ class NesInstrumentViewTest {
         v.goTo(Row.WAVE_PRESET)
         v.tap(Action.CLEAR)
         assertEquals(listOf(N163Presets.sine(16)), v.wave.waves)
-        assertEquals(N163Preset.SINE, N163Presets.presetOf(v.wave.waves, 16))
+        assertEquals(WavePreset.SINE, N163Presets.presetOf(v.wave.waves, 16))
         assertEquals("Set wave preset", v.session.undoLabel)
         v.hold(Action.EDIT, Action.RIGHT)
-        assertEquals(N163Presets.waves(N163Preset.TRIANGLE, 16, 1), v.wave.waves)
+        assertEquals(N163Presets.waves(WavePreset.TRIANGLE, 16, 1), v.wave.waves)
         // Three waves: the PWM presets change the width from wave to wave.
         v.goTo(Row.WAVE_INDEX)
         v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
         assertEquals(3, v.wave.waves.size)
         v.goTo(Row.WAVE_PRESET)
         v.hold(Action.EDIT, *Array(5) { Action.RIGHT }) // sawtooth, square 50%, square 25%, flat, PWM 1
-        assertEquals(N163Presets.waves(N163Preset.PWM, 16, 3), v.wave.waves)
+        assertEquals(N163Presets.waves(WavePreset.PWM, 16, 3), v.wave.waves)
         v.tap(Action.EDIT)
-        assertEquals(N163Presets.waves(N163Preset.PWM2, 16, 3), v.wave.waves)
+        assertEquals(N163Presets.waves(WavePreset.PWM2, 16, 3), v.wave.waves)
         // From drawn waves the first step goes to the first preset.
         v.goTo(Row.WAVE_SAMPLES)
         v.hold(Action.EDIT, Action.UP)
         assertNull(N163Presets.presetOf(v.wave.waves, 16))
         v.goTo(Row.WAVE_PRESET)
         v.hold(Action.EDIT, Action.RIGHT)
-        assertEquals(N163Presets.waves(N163Preset.SINE, 16, 3), v.wave.waves)
+        assertEquals(N163Presets.waves(WavePreset.SINE, 16, 3), v.wave.waves)
     }
 
     @Test
@@ -668,7 +668,7 @@ class NesInstrumentViewTest {
         v.hold(Action.EDIT, Action.UP)
         val drawn = v.wave.waves[0]
         v.tap(Action.COPY)
-        assertEquals(NesClip.Wave(drawn), s.clipboard)
+        assertEquals(NesClip.Wave(drawn, N163Wave.SAMPLE.last), s.clipboard)
         v.goTo(Row.WAVE_INDEX)
         v.hold(Action.EDIT, Action.RIGHT) // a second wave
         v.tap(Action.RIGHT) // shown
@@ -701,5 +701,458 @@ class NesInstrumentViewTest {
         val plain = nesInstrumentFor(session.song, copied)
         assertEquals(NesChip.APU, plain.chip)
         assertEquals(N163Wave.DEFAULT, plain.wave)
+    }
+
+    // ---- FDS --------------------------------------------------------------------------------------------------
+
+    /** An FDS song whose sound 1 is an FDS sound, shown on [page] (its Waves page unless asked). */
+    private fun fds(page: Int = NesInstrumentView.WAVE_PAGE): ViewController {
+        val s = EditorSession(NesFdsSystem.blank())
+        s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
+        assertTrue(s.setNesChip(1, NesChip.FDS))
+        return ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = page })
+    }
+
+    private val ViewController.fds: FdsSound get() = session.song.nes.instruments[state.instrument - 1].fds
+
+    /** On an FDS song a sound picks its chip; FDS sounds keep three envelopes, then Waves and Modulation pages. */
+    @Test
+    fun fdsSoundsChooseTheirChipAndGetTheWavesAndModulationPages() {
+        val s = EditorSession(NesFdsSystem.blank())
+        s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
+        val v = ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = NesEnvelopeKind.DUTY.ordinal })
+        val ins = { s.song.nes.instruments[0] }
+        val rows = { NesInstrumentView.rows(v.state, s.song) }
+        v.goTo(Row.STEPS)
+        v.hold(Action.EDIT, Action.UP, Action.UP)
+        assertEquals(listOf(2), ins().duty.values)
+        assertTrue(Row.CHIP in rows())
+        assertEquals("2A03 sounds keep DPCM", NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        v.goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.FDS, ins().chip)
+        assertEquals("FDS sounds have no duty", emptyList<Int>(), ins().duty.values)
+        assertEquals(FdsSound.DEFAULT, ins().fds)
+        assertEquals("Listen follows to the FDS channel", NesRules.FDS, v.state.listenChannel)
+        assertEquals("volume, arpeggio, pitch, Waves, Modulation", NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        assertTrue("the duty page is now the Waves page", NesInstrumentView.fdsWavePage(s.song, v.state))
+        assertFalse(NesInstrumentView.wavePage(s.song, v.state))
+        assertEquals(NesInstrumentView.FDS_WAVE_ROWS, rows())
+        assertFalse("no size or position on FDS waves", Row.WAVE_SIZE in rows() || Row.WAVE_POSITION in rows())
+        assertEquals(Row.CHIP, NesInstrumentView.row(v.state, s.song))
+        assertNull(NesInstrumentView.envelope(s.song, v.state))
+        // Listen plays the sound on the FDS channel.
+        v.tap(Action.AUDITION)
+        assertEquals(NesRules.FDS, auditions.last().first)
+        assertEquals(1, auditions.last().third)
+        // The fifth page is Modulation, not DPCM.
+        v.tap(Action.NEXT_CHANNEL)
+        assertTrue(NesInstrumentView.modPage(s.song, v.state))
+        assertFalse(NesInstrumentView.dpcmPage(s.song, v.state))
+        assertEquals(NesInstrumentView.MOD_ROWS, rows())
+        assertEquals(Row.CHIP, NesInstrumentView.row(v.state, s.song))
+        // The pages wrap: volume, arpeggio, pitch, Waves, Modulation.
+        v.tap(Action.NEXT_CHANNEL)
+        assertEquals(NesEnvelopeKind.VOLUME, NesInstrumentView.kind(v.state))
+        assertEquals(listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE, Row.STEPS), rows())
+        v.tap(Action.PREV_CHANNEL)
+        assertTrue(NesInstrumentView.modPage(s.song, v.state))
+        v.tap(Action.PREV_CHANNEL)
+        assertTrue(NesInstrumentView.fdsWavePage(s.song, v.state))
+        // What the FDS channel does with the envelopes; the N163's texts are unchanged.
+        assertEquals("FDS: volume 0-15 sets the gain 0-30 (× 2)", NesInstrumentView.channelNote(NesEnvelopeKind.VOLUME, ChannelKind.WAVE, NesChip.FDS))
+        assertEquals("+ raises the pitch (FDS frequency steps)", NesInstrumentView.channelNote(NesEnvelopeKind.PITCH, ChannelKind.WAVE, NesChip.FDS))
+        assertEquals("FDS sounds play on the FDS channel only",
+            NesInstrumentView.channelNote(NesEnvelopeKind.VOLUME, ChannelKind.PULSE, NesChip.FDS, channelChip = NesChip.APU))
+        assertEquals("N163: 4-bit linear volume", NesInstrumentView.channelNote(NesEnvelopeKind.VOLUME, ChannelKind.WAVE, NesChip.N163))
+        // Back to 2A03: the FDS settings reset, the DPCM page returns.
+        v.goTo(Row.FDS_MASTER)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(FdsMasterVolume.TWO_THIRDS, ins().fds.masterVolume)
+        v.goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertEquals(FdsSound.DEFAULT, ins().fds)
+        assertEquals(NesEnvelopeKind.entries.size + 1, NesInstrumentView.pages(s.song, v.state))
+        // A copied FDS sound pasted into a 2A03 song becomes a 2A03 sound without FDS settings.
+        val plain = nesInstrumentFor(session.song, NesInstrument("F", chip = NesChip.FDS, fds = FdsSound(modDepth = 9)))
+        assertEquals(NesChip.APU, plain.chip)
+        assertEquals(FdsSound.DEFAULT, plain.fds)
+    }
+
+    @Test
+    fun fdsHelpDescribesTheWavesAndModulationPages() {
+        val sections = NesInstrumentView.helpSections(Keymap.DEFAULT, NesExpansion.FDS).toMap()
+        val sounds = sections.getValue("FDS sounds").toMap()
+        val mod = sections.getValue("FDS modulation").toMap()
+        assertTrue(listOf("Chip", "Waves page", "Tuning", "Preset", "Master volume", "Wave", "Repeat", "Loop / release", "Samples").all { it in sounds })
+        assertTrue(sounds.getValue("Tuning").contains(NesInstrumentView.FDS_TUNING))
+        assertTrue(NesInstrumentView.FDS_TUNING.startsWith("One cycle per wave sounds as named"))
+        assertTrue(listOf("Modulation page", "Table", "Preset", "Speed", "Depth", "Delay", "Auto-mod").all { it in mod })
+        assertFalse("N163 help stays the N163's", "FDS sounds" in NesInstrumentView.helpSections(Keymap.DEFAULT, NesExpansion.N163_4).toMap())
+        assertFalse("FDS sounds" in NesInstrumentView.helpSections(Keymap.DEFAULT, NesExpansion.VRC7).toMap())
+    }
+
+    @Test
+    fun fdsWaveSamplesAreDrawnWithTheController() {
+        val v = fds()
+        val sine = FdsPresets.SINE
+        v.goTo(Row.WAVE_SAMPLES)
+        v.hold(Action.EDIT, Action.UP, Action.UP)
+        val raised = sine.toMutableList().also { it[0] = sine[0] + 2 }
+        assertEquals(listOf<List<Int>>(raised), v.fds.waves)
+        // Edit+→ carries the value along, one undo step per hold.
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT)
+        val drawn = raised.toMutableList().also { for (i in 1..3) it[i] = raised[0] }
+        assertEquals(listOf<List<Int>>(drawn), v.fds.waves)
+        assertEquals(3, v.state.waveCol)
+        assertNull("drawn waves are Custom", FdsPresets.presetOf(v.fds.waves))
+        v.session.undo()
+        assertEquals(listOf<List<Int>>(raised), v.fds.waves)
+        // Samples stay 0..63.
+        v.hold(Action.EDIT, *Array(70) { Action.UP })
+        assertEquals(63, v.fds.waves[0][3])
+        v.hold(Action.EDIT, *Array(70) { Action.DOWN })
+        assertEquals(0, v.fds.waves[0][3])
+        // Clear puts the sample back to the middle level, 32.
+        v.tap(Action.CLEAR)
+        assertEquals(FdsEdits.CENTRE, v.fds.waves[0][3])
+        assertEquals("Clear wave sample", v.session.undoLabel)
+        // Clear held: ←→ jump 8 samples and clear nothing; the wave has 64 samples.
+        v.hold(Action.CLEAR, Action.RIGHT)
+        assertEquals(11, v.state.waveCol)
+        v.hold(Action.CLEAR, *Array(10) { Action.RIGHT })
+        assertEquals(FdsSound.WAVE_SIZE - 1, v.state.waveCol)
+        assertEquals(FdsEdits.CENTRE, v.fds.waves[0][3])
+        v.tap(Action.LEFT)
+        assertEquals(62, v.state.waveCol)
+    }
+
+    @Test
+    fun fdsWavesAreAddedAndDeletedWithinFamiStudiosLimit() {
+        val v = fds()
+        v.goTo(Row.WAVE_INDEX)
+        v.tap(Action.EDIT)
+        assertEquals(2, v.fds.waves.size)
+        assertEquals("the copy is shown", 1, v.state.wave)
+        assertEquals("Duplicate wave", v.session.undoLabel)
+        v.hold(Action.EDIT, Action.UP) // eight more at the end
+        assertEquals(10, v.fds.waves.size)
+        assertEquals(10, v.fds.repeat.size)
+        // FamiStudio keeps at most 16 waves per FDS sound.
+        v.hold(Action.EDIT, Action.UP)
+        assertEquals(FdsSound.MAX_WAVES, v.fds.waves.size)
+        v.tap(Action.EDIT)
+        assertEquals(FdsSound.MAX_WAVES, v.fds.waves.size)
+        assertEquals("Sound 01 holds 16 waves, the most FamiStudio keeps for an FDS sound", v.session.message)
+        v.tap(Action.LEFT)
+        assertEquals(0, v.state.wave)
+        v.tap(Action.CLEAR)
+        assertEquals(FdsSound.MAX_WAVES - 1, v.fds.waves.size)
+        assertEquals("Delete wave", v.session.undoLabel)
+        // A sound keeps at least one wave.
+        repeat(20) { v.tap(Action.CLEAR) }
+        assertEquals(1, v.fds.waves.size)
+        assertEquals(0, v.state.wave)
+    }
+
+    @Test
+    fun fdsWaveRepeatLoopAndReleaseFollowTheVolumeEnvelopesRules() {
+        val v = fds()
+        v.goTo(Row.WAVE_INDEX)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT)
+        assertEquals(4, v.fds.waves.size)
+        v.goTo(Row.WAVE_RELEASE)
+        v.hold(Action.EDIT, Action.RIGHT) // a release needs a loop: it loops from wave 0 and releases at wave 1
+        assertEquals(0, v.fds.loop)
+        assertEquals(1, v.fds.release)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT)
+        assertEquals("release < count", 3, v.fds.release)
+        v.goTo(Row.WAVE_LOOP)
+        v.hold(Action.EDIT, *Array(5) { Action.RIGHT })
+        assertEquals("the loop stays before the release", 2, v.fds.loop)
+        // Deleting a wave before them moves both.
+        v.goTo(Row.WAVE_INDEX)
+        v.tap(Action.CLEAR)
+        assertEquals(3, v.fds.waves.size)
+        assertEquals(1, v.fds.loop)
+        assertEquals(2, v.fds.release)
+        // Fewer waves drop a release past the end.
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(2, v.fds.waves.size)
+        assertEquals(1, v.fds.loop)
+        assertEquals(-1, v.fds.release)
+        v.goTo(Row.WAVE_LOOP)
+        v.tap(Action.CLEAR)
+        assertEquals(-1, v.fds.loop)
+        assertEquals("Clear wave loop", v.session.undoLabel)
+        // No release without a loop; none on a single wave.
+        assertEquals(-1, FdsEdits.fixed(FdsSound(waves = List(3) { FdsPresets.SINE }, repeat = listOf(1, 1, 1), release = 2)).release)
+        assertEquals(-1, FdsEdits.withRelease(FdsSound.DEFAULT, 1).release)
+        // Repeats are 1-15 frames per wave.
+        v.goTo(Row.WAVE_REPEAT)
+        v.hold(Action.EDIT, *Array(5) { Action.UP })
+        assertEquals(listOf(15, 1), v.fds.repeat)
+        v.tap(Action.CLEAR)
+        assertEquals(listOf(1, 1), v.fds.repeat)
+    }
+
+    @Test
+    fun fdsPresetsApplyFamiStudiosWavesAndThePwmSweep() {
+        val v = fds()
+        v.goTo(Row.WAVE_SAMPLES)
+        v.hold(Action.EDIT, Action.DOWN)
+        assertNull(FdsPresets.presetOf(v.fds.waves))
+        v.goTo(Row.WAVE_PRESET)
+        v.tap(Action.CLEAR)
+        assertEquals(listOf(FdsPresets.SINE), v.fds.waves)
+        assertEquals("Set wave preset", v.session.undoLabel)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(FdsPresets.waves(WavePreset.TRIANGLE, 1), v.fds.waves)
+        // Three waves: the PWM presets change the width from wave to wave.
+        v.goTo(Row.WAVE_INDEX)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(3, v.fds.waves.size)
+        v.goTo(Row.WAVE_PRESET)
+        v.hold(Action.EDIT, *Array(5) { Action.RIGHT }) // sawtooth, square 50%, square 25%, flat, PWM 1
+        assertEquals(FdsPresets.waves(WavePreset.PWM, 3), v.fds.waves)
+        assertEquals("each wave its own width", 3, v.fds.waves.distinct().size)
+        v.tap(Action.EDIT)
+        assertEquals(FdsPresets.waves(WavePreset.PWM2, 3), v.fds.waves)
+        // From drawn waves the first step goes to the first preset.
+        v.goTo(Row.WAVE_SAMPLES)
+        v.hold(Action.EDIT, Action.UP)
+        assertNull(FdsPresets.presetOf(v.fds.waves))
+        v.goTo(Row.WAVE_PRESET)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(FdsPresets.waves(WavePreset.SINE, 3), v.fds.waves)
+    }
+
+    @Test
+    fun fdsMasterVolumeSteps() {
+        val v = fds()
+        v.goTo(Row.FDS_MASTER)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(FdsMasterVolume.TWO_THIRDS, v.fds.masterVolume)
+        v.hold(Action.EDIT, *Array(5) { Action.RIGHT })
+        assertEquals(FdsMasterVolume.TWO_FIFTHS, v.fds.masterVolume)
+        v.tap(Action.CLEAR)
+        assertEquals(FdsMasterVolume.FULL, v.fds.masterVolume)
+        assertEquals("Set master volume", v.session.undoLabel)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(FdsMasterVolume.FULL, v.fds.masterVolume)
+    }
+
+    @Test
+    fun fdsCopyPasteKeepsAndRescalesWaves() {
+        val v = fds()
+        val s = v.session
+        v.goTo(Row.WAVE_SAMPLES)
+        v.hold(Action.EDIT, Action.UP)
+        val drawn = v.fds.waves[0]
+        v.tap(Action.COPY)
+        assertEquals(NesClip.Wave(drawn, FdsSound.SAMPLE.last), s.clipboard)
+        v.goTo(Row.WAVE_INDEX)
+        v.hold(Action.EDIT, Action.RIGHT) // a second wave
+        v.tap(Action.RIGHT) // shown
+        assertEquals(1, v.state.wave)
+        v.goTo(Row.WAVE_PRESET)
+        v.tap(Action.CLEAR) // both waves sine
+        v.goTo(Row.WAVE_SAMPLES)
+        v.tap(Action.PASTE)
+        assertEquals(listOf(FdsPresets.SINE, drawn), v.fds.waves)
+        assertEquals("Paste wave", s.undoLabel)
+        // Waves crossing chips are rescaled to the other chip's levels (and resampled to its size).
+        assertEquals(listOf(0, 34, 63), NesClip.Wave(listOf(0, 8, 15), N163Wave.SAMPLE.last).levels(FdsSound.SAMPLE.last))
+        assertEquals(listOf(0, 8, 15), NesClip.Wave(listOf(0, 32, 63), FdsSound.SAMPLE.last).levels(N163Wave.SAMPLE.last))
+        val fromN163 = FdsEdits.withWave(FdsSound.DEFAULT, 0, NesClip.Wave(N163Presets.sine(16), N163Wave.SAMPLE.last).levels(FdsSound.SAMPLE.last))
+        assertEquals(FdsSound.WAVE_SIZE, fromN163.waves[0].size)
+        // The Waves and Modulation pages have no envelope to paste into.
+        v.state.envelope = NesEnvelopeKind.VOLUME.ordinal
+        v.goTo(Row.STEPS)
+        v.tap(Action.COPY)
+        assertTrue(s.clipboard is NesClip.Envelope)
+        v.state.envelope = NesInstrumentView.WAVE_PAGE
+        v.goTo(Row.WAVE_PRESET)
+        v.tap(Action.PASTE)
+        assertEquals("The Waves page has no envelope: paste envelopes on the volume, arpeggio or pitch page", s.message)
+        v.state.envelope = NesInstrumentView.MOD_PAGE
+        v.goTo(Row.MOD_DEPTH)
+        v.tap(Action.PASTE)
+        assertEquals("The Modulation page has no envelope: paste envelopes on the volume, arpeggio or pitch page", s.message)
+    }
+
+    @Test
+    fun theModulationTableIsDrawnBesideTheCurveTheChipPlays() {
+        val v = fds(NesInstrumentView.MOD_PAGE)
+        assertTrue(NesInstrumentView.modPage(v.session.song, v.state))
+        assertEquals(NesInstrumentView.MOD_ROWS, NesInstrumentView.rows(v.state, v.session.song))
+        assertEquals(FdsPresets.FLAT_MOD, v.fds.modulation)
+        v.goTo(Row.MOD_TABLE)
+        // Entry 0 always resets the counter, whatever its target.
+        v.hold(Action.EDIT, *Array(10) { Action.UP })
+        assertEquals(10, v.fds.modulation[0])
+        assertEquals(FdsSound.MOD_RESET, v.fds.modTable[0])
+        assertEquals("Entry 0 of 32: target 10, plays 0 (reset)", NesInstrumentView.modEntryText(v.fds, 0))
+        // ←→ move along the table; a target the chip reaches in one step plays as drawn.
+        v.tap(Action.RIGHT)
+        assertEquals(1, v.state.programField)
+        v.hold(Action.EDIT, *Array(8) { Action.UP })
+        assertEquals(8, v.fds.modulation[1])
+        assertEquals(8, v.fds.modCurve[1])
+        assertEquals("Entry 1 of 32: target 8, plays 8 (step +8)", NesInstrumentView.modEntryText(v.fds, 1))
+        // Edit+→ carries the target along.
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(3, v.state.programField)
+        assertEquals(listOf(10, 8, 8, 8), v.fds.modulation.take(4))
+        // A jump bigger than the chip's steps: FamiStudio's greedy encoding gets only part way, and the curve shows it.
+        v.hold(Action.EDIT, *Array(22) { Action.UP })
+        assertEquals(30, v.fds.modulation[3])
+        assertEquals(16, v.fds.modCurve[3])
+        assertEquals("Entry 3 of 32: target 30, plays 16 (step +8)", NesInstrumentView.modEntryText(v.fds, 3))
+        assertEquals(FdsSound.modTableCurve(FdsSound.encodeModulation(v.fds.modulation)), v.fds.modCurve)
+        // Targets stay −64..63.
+        v.hold(Action.EDIT, *Array(50) { Action.UP })
+        assertEquals(63, v.fds.modulation[3])
+        v.hold(Action.EDIT, *Array(200) { Action.DOWN })
+        assertEquals(-64, v.fds.modulation[3])
+        v.tap(Action.CLEAR)
+        assertEquals(0, v.fds.modulation[3])
+        assertEquals("Clear mod target", v.session.undoLabel)
+        // Clear held: ←→ jump 8 entries; the table has 32.
+        v.hold(Action.CLEAR, Action.RIGHT)
+        assertEquals(11, v.state.programField)
+        v.hold(Action.CLEAR, *Array(5) { Action.RIGHT })
+        assertEquals(FdsSound.MOD_SIZE - 1, v.state.programField)
+        // Table presets: FamiStudio's, without the PWM ones.
+        v.goTo(Row.MOD_PRESET)
+        assertNull(FdsPresets.modPresetOf(v.fds.modulation))
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(FdsPresets.modulation(WavePreset.SINE), v.fds.modulation)
+        v.hold(Action.EDIT, *Array(10) { Action.RIGHT })
+        assertEquals("Flat is the last table preset", FdsPresets.FLAT_MOD, v.fds.modulation)
+        v.tap(Action.EDIT)
+        assertEquals(FdsPresets.FLAT_MOD, v.fds.modulation)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(FdsPresets.modulation(WavePreset.SQUARE25), v.fds.modulation)
+        v.tap(Action.CLEAR)
+        assertEquals(FdsPresets.FLAT_MOD, v.fds.modulation)
+        assertEquals("Set mod preset", v.session.undoLabel)
+    }
+
+    @Test
+    fun modSpeedStepsPassOverTheSpeedsTheEngineMisreads() {
+        // Fine and coarse steps skip low bytes $80-$FF in the direction of the step.
+        assertEquals(0x100, FdsEdits.stepSpeed(0x7F, 1))
+        assertEquals(0x7F, FdsEdits.stepSpeed(0x100, -1))
+        assertEquals(0x100, FdsEdits.stepSpeed(0x70, 16))
+        assertEquals(0x7F, FdsEdits.stepSpeed(0x105, -16))
+        assertEquals(FdsEdits.LAST_SPEED, FdsEdits.stepSpeed(0xF7F, 1))
+        assertEquals(FdsEdits.LAST_SPEED, FdsEdits.stepSpeed(0xF70, 16))
+        assertEquals(0, FdsEdits.stepSpeed(0, -1))
+        assertEquals(0xF7F, FdsEdits.LAST_SPEED)
+        val v = fds(NesInstrumentView.MOD_PAGE)
+        v.goTo(Row.MOD_SPEED)
+        v.hold(Action.EDIT, *Array(8) { Action.UP }) // 16 … 112, then 128 = $80 → $100
+        assertEquals(0x100, v.fds.modSpeed)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(0x7F, v.fds.modSpeed)
+        v.hold(Action.EDIT, *Array(300) { Action.UP })
+        assertEquals(FdsEdits.LAST_SPEED, v.fds.modSpeed)
+        assertTrue(FdsSound.engineSpeed(v.fds.modSpeed))
+        v.tap(Action.CLEAR)
+        assertEquals(0, v.fds.modSpeed)
+        assertEquals("Set mod speed", v.session.undoLabel)
+        // The row shows the table's rate: CPU × speed / 2^22.
+        assertEquals(1789773.0 * 12 / 4194304.0, NesInstrumentView.modRateHz(12), 1e-9)
+        assertEquals("12: the table runs at 5.12 Hz", NesInstrumentView.modSpeedText(FdsSound(modSpeed = 12)))
+        assertEquals("0: the table stands still", NesInstrumentView.modSpeedText(FdsSound()))
+        assertTrue(NesInstrumentView.modSpeedText(FdsSound(modSpeed = 0x80)).contains("rejects"))
+    }
+
+    @Test
+    fun modDepthAndDelayStayInTheirRanges() {
+        val v = fds(NesInstrumentView.MOD_PAGE)
+        v.goTo(Row.MOD_DEPTH)
+        v.hold(Action.EDIT, *Array(10) { Action.UP })
+        assertEquals(63, v.fds.modDepth)
+        v.tap(Action.CLEAR)
+        assertEquals(0, v.fds.modDepth)
+        assertEquals("Set mod depth", v.session.undoLabel)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(1, v.fds.modDepth)
+        assertEquals("0: no modulation", NesInstrumentView.modDepthText(0))
+        v.goTo(Row.MOD_DELAY)
+        v.hold(Action.EDIT, *Array(40) { Action.UP })
+        assertEquals(255, v.fds.modDelay)
+        v.tap(Action.CLEAR)
+        assertEquals(0, v.fds.modDelay)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(0, v.fds.modDelay)
+        // FamiStudio's engine turns modulation on in frame d: delay d holds it off for d − 1 frames.
+        assertEquals("1: modulation from the note's first frame", NesInstrumentView.modDelayText(1))
+        assertEquals("3: modulation held off for the first 2 frames (33 ms)", NesInstrumentView.modDelayText(3))
+    }
+
+    @Test
+    fun autoModTogglesAndSetsItsRatio() {
+        val v = fds(NesInstrumentView.MOD_PAGE)
+        // The ratio rows are greyed while auto-mod is off.
+        v.goTo(Row.MOD_NUMER)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(1, v.fds.autoModNumer)
+        assertEquals("Turn Auto-mod on to set its ratio", v.session.message)
+        v.goTo(Row.MOD_AUTO)
+        v.tap(Action.EDIT)
+        assertTrue(v.fds.autoMod)
+        assertEquals("Set auto-mod", v.session.undoLabel)
+        // With auto-mod on, the notes set the speed: the speed row is greyed.
+        v.goTo(Row.MOD_SPEED)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(0, v.fds.modSpeed)
+        assertEquals("Auto-mod sets the mod speed from each note: turn Auto-mod off to set it", v.session.message)
+        assertTrue(NesInstrumentView.modSpeedText(v.fds).startsWith("auto: the note's frequency × 1"))
+        v.goTo(Row.MOD_NUMER)
+        v.hold(Action.EDIT, *Array(5) { Action.RIGHT })
+        assertEquals(6, v.fds.autoModNumer)
+        v.goTo(Row.MOD_DENOM)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT, Action.RIGHT)
+        assertEquals(4, v.fds.autoModDenom)
+        assertEquals(3 to 2, v.fds.autoModFraction)
+        assertEquals("3/2", NesInstrumentView.ratioText(v.fds))
+        assertEquals("× 3/2 (reduced from 6/4)", NesInstrumentView.autoModText(v.fds))
+        // 1..32 each.
+        v.hold(Action.EDIT, *Array(10) { Action.UP })
+        assertEquals(32, v.fds.autoModDenom)
+        v.tap(Action.CLEAR)
+        assertEquals(1, v.fds.autoModDenom)
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(1, v.fds.autoModDenom)
+        // Large numerators overflow the engine's 16-bit multiply on high notes: the row says from which note.
+        assertTrue(NesInstrumentView.autoModText(FdsSound(autoMod = true, autoModNumer = 32)).contains("overflows"))
+        assertEquals("× 1/1", NesInstrumentView.autoModText(FdsSound(autoMod = true)))
+        // Off again: Edit+←→ and Clear.
+        v.goTo(Row.MOD_AUTO)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertFalse(v.fds.autoMod)
+        v.tap(Action.EDIT)
+        assertTrue(v.fds.autoMod)
+        v.tap(Action.CLEAR)
+        assertFalse(v.fds.autoMod)
+    }
+
+    /** Moving between slots on the Modulation page keeps it for FDS sounds and leaves it for others. */
+    @Test
+    fun theModulationPageFollowsTheSlotsChip() {
+        val v = fds(NesInstrumentView.MOD_PAGE)
+        assertTrue(v.session.setNesChip(2, NesChip.FDS))
+        v.goTo(Row.MOD_PRESET)
+        v.tap(Action.RIGHT)
+        assertEquals(2, v.state.instrument)
+        assertTrue(NesInstrumentView.modPage(v.session.song, v.state))
+        v.tap(Action.RIGHT) // slot 3: a 2A03 sound
+        assertEquals(3, v.state.instrument)
+        assertEquals(0, v.state.envelope)
+        assertFalse(NesInstrumentView.dpcmPage(v.session.song, v.state))
     }
 }

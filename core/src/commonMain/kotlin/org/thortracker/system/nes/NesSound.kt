@@ -30,6 +30,9 @@ enum class NesExpansion(
         listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.SAW)),
     @SerialName("vrc7") VRC7(NesChip.VRC7, List(6) { "VRC7 FM ${it + 1}" }, List(6) { ChannelKind.VOICE }),
 
+    /** The Famicom Disk System's 2C33: one wavetable channel with a modulation unit. */
+    @SerialName("fds") FDS(NesChip.FDS, listOf("FDS"), listOf(ChannelKind.WAVE)),
+
     /**
      * The Namco 163 with 1..8 wavetable channels enabled (FamiStudio's `NumN163Channels`; the chip's own register):
      * more channels share the chip's update time (each is updated once every 15 × n CPU cycles, so the note table and
@@ -59,6 +62,7 @@ enum class NesExpansion(
         NONE -> NesSystem
         VRC6 -> NesVrc6System
         VRC7 -> NesVrc7System
+        FDS -> NesFdsSystem
         else -> NesN163System.of(n163Channels)
     }
 
@@ -80,8 +84,8 @@ private fun n163Kinds(n: Int): List<ChannelKind> = List(n) { ChannelKind.WAVE }
 /**
  * Which chip's channels an [NesInstrument] plays (FamiStudio's instrument expansion): the 2A03's, or an expansion's.
  * Instruments do not cross chips, as in FamiStudio: the same envelope means different things (the VRC6's 8 duty steps,
- * the VRC7's FM patch, the N163's waves). [duty] is the duty envelope's range; VRC7 and N163 sounds have no duty
- * envelope (it stays empty).
+ * the VRC7's FM patch, the N163's and the FDS's waves). [duty] is the duty envelope's range; VRC7, N163 and FDS sounds
+ * have no duty envelope (it stays empty).
  */
 @Serializable
 enum class NesChip(val label: String, val duty: IntRange) {
@@ -89,6 +93,7 @@ enum class NesChip(val label: String, val duty: IntRange) {
     @SerialName("vrc6") VRC6("VRC6", 0..7),
     @SerialName("vrc7") VRC7("VRC7", 0..0),
     @SerialName("n163") N163("N163", 0..0),
+    @SerialName("fds") FDS("FDS", 0..0),
 }
 
 /**
@@ -267,6 +272,139 @@ data class N163Wave(
 }
 
 /**
+ * The FDS's master volume (`$4089` bits 0-1, FamiStudio's `FdsMasterVolume`): the whole channel's output × 2 / (2 +
+ * [register]), NESdev "FDS audio". FamiStudio's engine writes it with each wave upload.
+ */
+@Serializable
+enum class FdsMasterVolume(val label: String, val register: Int) {
+    @SerialName("100") FULL("100%", 0),
+    @SerialName("66") TWO_THIRDS("66%", 1),
+    @SerialName("50") HALF("50%", 2),
+    @SerialName("40") TWO_FIFTHS("40%", 3),
+}
+
+/**
+ * An FDS sound (FamiStudio 4.5.3's FDS instrument: the `FdsWaveform`, `WaveformRepeat` and `FdsModulation` envelopes,
+ * `FdsMasterVolume`, `FdsModSpeed`, `FdsModDepth`, `FdsModDelay`, `FdsAutoMod`, `FdsAutoModNumer`, `FdsAutoModDenom`).
+ *
+ * The 2C33 plays a 64-step wave of 6-bit samples ([SAMPLE]) from its wave RAM (`$4040-$407F`). [waves] is a sequence of
+ * 1..[MAX_WAVES] waves of [WAVE_SIZE] samples: wave i plays for [repeat]\[i] frames (1..15), then the next; after the last
+ * the sequence goes back to [loop] (-1: the last wave holds); a released note (OFF) continues at [release] (needs a loop,
+ * loop < release), as an N163 sound's. FamiStudio's engine uploads a wave whenever the sequence moves to another one.
+ *
+ * The modulation unit bends the wave's frequency by a 7-bit counter × the mod depth: it steps through a 32-entry table
+ * at the mod speed ([modSpeed], 12-bit `$4086/$4087`; the table runs once per 2^22 / speed CPU cycles, so speed = the
+ * note's frequency value is FM at the note's pitch), each entry changing the counter by 0, ±1, ±2, ±4 or resetting it.
+ * [modulation] is FamiStudio's model of that table: 32 targets −64..63 for the counter, encoded into the chip's 3-bit
+ * steps with FamiStudio's greedy `BuildFdsModulationTable` ([modTable]; [modCurve] is what the chip then plays).
+ * [modDepth] (0..63, `$4084`) scales the bend; 0 turns modulation off. [modDelay] frames after a note's attack the
+ * modulation starts (the engine keeps it reset before). With [autoMod] the engine sets the mod speed every frame to the
+ * note's frequency × [autoModNumer] / [autoModDenom] (1..32 each; FamiStudio reduces the fraction): FM that follows the
+ * pitch; [modSpeed] is then unused.
+ */
+@Serializable
+data class FdsSound(
+    val waves: List<List<Int>> = listOf(FdsPresets.SINE),
+    val repeat: List<Int> = listOf(1),
+    val loop: Int = -1,
+    val release: Int = -1,
+    val masterVolume: FdsMasterVolume = FdsMasterVolume.FULL,
+    val modulation: List<Int> = FdsPresets.FLAT_MOD,
+    val modSpeed: Int = 0,
+    val modDepth: Int = 0,
+    val modDelay: Int = 0,
+    val autoMod: Boolean = false,
+    val autoModNumer: Int = 1,
+    val autoModDenom: Int = 1,
+) {
+    /** The 32 bytes FamiStudio's engine writes to `$4088`: [modulation] encoded by [encodeModulation]. */
+    val modTable: List<Int> get() = encodeModulation(modulation)
+
+    /** The mod counter after each table entry as the chip applies it (twice per entry), from 0: what [modTable] plays. */
+    val modCurve: List<Int> get() = modTableCurve(modTable)
+
+    /** [autoModNumer] / [autoModDenom] reduced, as FamiStudio's export writes them (`Utils.SimplifyFraction`). */
+    val autoModFraction: Pair<Int, Int> get() {
+        var a = autoModNumer
+        var b = autoModDenom
+        while (b != 0) { val t = a % b; a = b; b = t }
+        return autoModNumer / a to autoModDenom / a
+    }
+
+    companion object {
+        /** A new FDS sound: one sine wave at full master volume, no modulation, as FamiStudio's default instrument. */
+        val DEFAULT = FdsSound()
+        const val WAVE_SIZE = 64
+        val SAMPLE = 0..63
+        val REPEAT = 1..15
+
+        /** FamiStudio keeps at most 16 waves per FDS instrument (1024 samples). */
+        const val MAX_WAVES = 16
+        const val MOD_SIZE = 32
+
+        /** FamiStudio's targets for the mod counter (the chip's 7-bit signed counter). */
+        val MOD_TARGET = -64..63
+        val MOD_SPEED = 0..4095
+        val MOD_DEPTH = 0..63
+        val MOD_DELAY = 0..255
+        val AUTO_MOD = 1..32
+
+        /** The counter step of each 3-bit table value (4 resets the counter to 0), NESdev "FDS audio". */
+        val MOD_STEPS = listOf(0, 1, 2, 4, 0, -4, -2, -1)
+        const val MOD_RESET = 4
+
+        /**
+         * FamiStudio 4.5.3's `Envelope.BuildFdsModulationTable`: entry 0 resets the counter; then for each target, 0
+         * resets, anything else takes the step whose doubled value lands nearest (first of equals, staying in −64..63),
+         * from the counter the previous entries reached.
+         */
+        fun encodeModulation(targets: List<Int>): List<Int> {
+            val out = IntArray(targets.size)
+            var prev = 0
+            if (out.isNotEmpty()) out[0] = MOD_RESET
+            for (i in 1 until targets.size) {
+                val v = targets[i]
+                if (v == 0) {
+                    out[i] = MOD_RESET
+                    prev = 0
+                    continue
+                }
+                var best = Int.MAX_VALUE
+                for (j in MOD_STEPS.indices) {
+                    if (j == MOD_RESET) continue
+                    val next = prev + MOD_STEPS[j] * 2
+                    val diff = kotlin.math.abs(next - v)
+                    if (diff < best && next in MOD_TARGET) {
+                        best = diff
+                        out[i] = j
+                    }
+                }
+                prev += MOD_STEPS[out[i]] * 2
+            }
+            return out.toList()
+        }
+
+        /** The counter after each entry of [table] (each applied twice, the 7-bit counter wrapping), from 0. */
+        fun modTableCurve(table: List<Int>): List<Int> {
+            var c = 0
+            return table.map { v ->
+                c = if (v == MOD_RESET) 0 else wrap7(wrap7(c + MOD_STEPS[v]) + MOD_STEPS[v])
+                c
+            }
+        }
+
+        private fun wrap7(v: Int): Int = ((v + 64) and 0x7F) - 64
+
+        /**
+         * True when FamiStudio 4.5.3's engine reads [speed] as itself from an instrument: it tests bit 7 of the speed's
+         * low byte for its auto-mod flag (`famistudio_set_fds_instrument` with `FAMISTUDIO_USE_FDS_AUTOMOD`, as in
+         * FamiStudio's NSF builds and ours), so a manual speed whose low byte is `$80-$FF` would play as auto-mod.
+         */
+        fun engineSpeed(speed: Int): Boolean = speed in MOD_SPEED && speed and 0x80 == 0
+    }
+}
+
+/**
  * One FamiStudio instrument envelope: a value per engine frame (60.1 Hz). Playback runs through the values, then
  * jumps back to [loop] (a value index) or holds the last value when [loop] is -1. [release] (volume only) is where
  * a released note (OFF) continues: the loop then runs from [loop] to just before [release]. Empty = the envelope is
@@ -296,8 +434,9 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
  * [chip] says which channels play it ([NesChip.APU]: the 2A03's; [NesChip.VRC6]: the VRC6 pulses, duty 0-7 = 1/16 to
  * 8/16, and the saw, whose volume [sawVolume] scales; [NesChip.VRC7]: the six FM channels, which play the FM patch [fm]
  * shaped by the volume, arpeggio and pitch envelopes, no duty; [NesChip.N163]: the N163's channels, which play the
- * waves [wave] shaped by the volume, arpeggio and pitch envelopes, no duty). These are left out of project files at
- * their defaults, so 2A03 instruments are stored as before.
+ * waves [wave] shaped by the volume, arpeggio and pitch envelopes, no duty; [NesChip.FDS]: the FDS channel, which plays
+ * the waves and modulation [fds] shaped by the volume, arpeggio and pitch envelopes, no duty). These are left out of
+ * project files at their defaults, so 2A03 instruments are stored as before.
  */
 @Serializable
 data class NesInstrument(
@@ -312,6 +451,7 @@ data class NesInstrument(
     @EncodeDefault(EncodeDefault.Mode.NEVER) val sawVolume: Vrc6SawVolume = Vrc6SawVolume.HALF,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val fm: Vrc7Patch = Vrc7Patch.DEFAULT,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val wave: N163Wave = N163Wave.DEFAULT,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val fds: FdsSound = FdsSound.DEFAULT,
 ) {
     companion object {
         /** A new slot: flat full volume, nothing else. */

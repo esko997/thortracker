@@ -5,7 +5,6 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.system.nes.N163Preset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
@@ -15,6 +14,7 @@ import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.WavePreset
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -121,7 +121,7 @@ class NesN163Test {
      */
     @Test
     fun waveIndexEnvelopeIsFamiStudios() {
-        val a = N163Presets.wave(N163Preset.SQUARE50, 16, 0, 1)
+        val a = N163Presets.wave(WavePreset.SQUARE50, 16, 0, 1)
         val b = N163Presets.sine(16)
         val w = N163Wave(waves = listOf(a, b, a), repeat = listOf(2, 1, 1), loop = 1, release = 2)
         val stored = FamiStudioEnvelopes.n163Waves(w)
@@ -144,7 +144,7 @@ class NesN163Test {
     @Test
     fun streamsUseTheN163Opcodes() {
         val seq = NesInstrument("Seq", chip = NesChip.N163, volume = NesEnvelope(listOf(12)),
-            wave = N163Wave(waves = listOf(N163Presets.sine(16), N163Presets.wave(N163Preset.TRIANGLE, 16, 0, 1)), repeat = listOf(1, 1),
+            wave = N163Wave(waves = listOf(N163Presets.sine(16), N163Presets.wave(WavePreset.TRIANGLE, 16, 0, 1)), repeat = listOf(1, 1),
                 loop = 0, release = 1, position = 32))
         val s = song(2, listOf(seq, sine(48))) { t ->
             t[5][0] = Cell(n("C-4"), 1, NesRules.FX_PHASE_RESET, 0)
@@ -237,7 +237,7 @@ class NesN163Test {
         assertTrue(NesSystem.errors(high).any { it.contains("channel registers") && it.contains("0-127") }, NesSystem.errors(high).toString())
         assertEquals(emptyList(), NesSystem.errors(song(4, listOf(sine(120))) { t -> t[5][0] = Cell(n("C-4"), 1, 0, 0) }))
         // Two different sounds overlapping (0-15 and 8-23) on two channels at once.
-        val other = NesInstrument("Saw", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(N163Preset.SAWTOOTH, 16, 0, 1)), position = 8))
+        val other = NesInstrument("Saw", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(WavePreset.SAWTOOTH, 16, 0, 1)), position = 8))
         val clash = song(2, listOf(sine(0), other)) { t -> t[5][0] = Cell(n("C-4"), 1, 0, 0); t[6][2] = Cell(n("E-4"), 2, 0, 0) }
         assertEquals(emptyList(), NesSystem.errors(clash))
         val warning = NesSystem.warnings(clash).firstOrNull { it.contains("overwrites") }
@@ -281,7 +281,7 @@ class NesN163Test {
         assertEquals(emptyList(), errors(N163Wave(waves = two, repeat = listOf(1, 1), loop = 0, release = 1)))
         // 2A03 sounds carry no waves.
         val stray = song(4, listOf(NesInstrument("2A03", wave = N163Wave(position = 16)))) { _ -> }
-        assertTrue(NesSystem.structuralErrors(stray).any { it.contains("only N163 sounds have waves") })
+        assertTrue(NesN163System.of(4).structuralErrors(stray).any { it.contains("only N163 sounds have waves") })
     }
 
     /** FamiStudio's text names the channel count, the N163 instruments, both wave envelopes and the phase reset. */

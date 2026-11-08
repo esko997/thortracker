@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engines (2A03, VRC6, N163), the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engines (2A03, VRC6, N163, FDS), the SID engine, the OPL3 engine and the YM2612 engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -9,8 +9,10 @@ The NES system (`"nes-famistudio"`) follows the same principle: the FamiStudio s
 (FamiTracker tempo) runs on an emulated 6502 + 2A03 with all five channels, DPCM samples included;
 its image layout, seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
 The expansion variants run the same engine built with an expansion chip: Konami's VRC6
-(`"nes-famistudio-vrc6"`, [VRC6](#vrc6-the-same-engine-with-konamis-vrc6-nes-famistudio-vrc6)) and Namco's 163 with 1..8
-wavetable channels (`"nes-famistudio-n163-1"`..`"-8"`, [N163](#n163-the-same-engine-with-namcos-163-nes-famistudio-n163-1--8)).
+(`"nes-famistudio-vrc6"`, [VRC6](#vrc6-the-same-engine-with-konamis-vrc6-nes-famistudio-vrc6)), Namco's 163 with 1..8
+wavetable channels (`"nes-famistudio-n163-1"`..`"-8"`, [N163](#n163-the-same-engine-with-namcos-163-nes-famistudio-n163-1--8))
+and the Famicom Disk System's wavetable channel (`"nes-famistudio-fds"`,
+[FDS](#fds-the-same-engine-with-the-famicom-disk-systems-sound-nes-famistudio-fds)).
 
 The C64 SID system (`"c64-sid"`, design step 6, native spike) runs the GoatTracker 2.77 playroutine
 on an emulated 6510 + reSID 1.0 (MOS 6581 or 8580, PAL); its image layout, timing, seek, audition and
@@ -113,6 +115,8 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | FamiStudio sound engine 4.5.3 | `third_party/famistudio-4.5.3/` (`famistudio_ca65.s`, `NoteTables/famistudio_note_table_{lsb,msb}.bin`, `readme.txt`, `LICENSE`); assembled into `app/src/main/cpp/generated/nes_player_image.h`; the test song `tools/audio/nes/ft_test.txt` (ours) and its FamiStudio 4.5.3 export `ft_test_ca65.s` | github.com/BleuBleu/FamiStudio tag `4.5.3`, commit `c09dca64788606c09fcb5e70db28b9dd1f34be78` (the engine file is unchanged since tag 4.5.0 and still says 4.5.0 in its banner); `famistudio_ca65.s` sha256 `e126a8f3…71fe`, note tables `b917b0eb…ee41` / `b52e4924…69fb` | engine: all-permissive ("copyright notice and this notice are preserved"); note tables: FamiStudio's MIT licence. Both notices are in `NOTICE.txt` |
 | m6502.h (floooh/chips) | `app/src/main/cpp/third_party/chips/` (`m6502.h`, `LICENSE`); implemented once in `cpu6502.c` for the NES and SID machines | github.com/floooh/chips commit `9e88298ce56319953ac7a43213a1120359f7a3a6`, `m6502.h` sha256 `b3fc32a0…868d46e` | zlib — keep the notice; it is in `NOTICE.txt` |
 | blip_buf 1.1.0 | `app/src/main/cpp/third_party/blip_buf/` (`blip_buf.c/.h`, `license.txt`, `readme.txt`, `changes.txt`) | Shay Green's release archive `blip_buf-1.1.0.zip` (code.google.com archive of blip-buf, sha256 `37a9b4f0…2b398e4c`); `blip_buf.c` sha256 `66c4a3f3…0c7573`, unmodified | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
+| FDS DAC levels | 64 values in `app/src/main/cpp/nes/nes_fds.c` (the 2C33's 6-bit wave DAC) | FamiStudio commit `c09dca64…be78`, `ThirdParty/NesSndEmu/nes_apu/Nes_Fds.cpp` `dac_lookup` (plgDavid's measurements, cleaned up by Persune, NESdev Discord) | Nes_Snd_Emu: LGPL-2.1-or-later (GPL-3.0-compatible); credited in `NOTICE.txt` |
+| FamiStudio FDS note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_fds_note_table_{lsb,msb}.bin`, assembled into `generated/nes_fds_player_image.h` | the FamiStudio pin; sha256 `db5d9908…c6f8` / `84a7b0d6…cbf` | FamiStudio's MIT licence (in `NOTICE.txt`) |
 | cc65 `ca65`/`ld65` | offline only (`tools/audio/prepare_nes_player.py`) | Ubuntu 24.04 package `cc65 2.19-1` ("ca65 V2.18 - Ubuntu 2.19-1"), checked by the script | tools are not shipped |
 | GoatTracker 2.77 playroutine | `third_party/goattracker-2.77/player.s` (unmodified `src/player.s`, CRLF kept by `.gitattributes`); assembled into `app/src/main/cpp/generated/sid_player_image.h`; the test song `tools/audio/sid/gt_test_song.py` → `gt_test.sng` (ours) and GoatTracker's own packing `gt_test.sid` | SourceForge `GoatTracker 2/2.77/GoatTracker_2.77.zip` (Lasse Öörni, 2025-01-20), sha256 `96c2bd6a…4561ef` (the digest SourceForge lists); `player.s` sha256 `ee9ddbe9…5fad609a`, identical to the copy embedded in the release's packer (`goatdata.c`) | its own notice: "This playroutine source code does not fall under the GPL license! Use it, or song binaries created from it freely for any purpose, commercial or noncommercial." In `NOTICE.txt` |
 | reSID 1.0 | `app/src/main/cpp/third_party/resid-1.0/` (`sid`, `voice`, `wave`, `envelope`, `filter`, `dac`, `extfilt`, `pot` `.cc/.h`, `spline.h`, the eight generated `wave*.h` tables, `siddefs.h.in`, `COPYING`, `AUTHORS`, `README`, `NEWS`), unmodified; plus `siddefs.h` (ours: `siddefs.h.in` with configure's defaults) | github.com/daglem/reSID commit `02c456abfe23cc4f06d94424e40beab8c90fa31f` (2021-12-10: the reSID 1.0 lineage as maintained in VICE, with Leandro Nini's fixes; the last commit before the 2022 rework, whose compile-time `exp()` tables only build with g++) | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
@@ -954,6 +958,160 @@ one wave byte; `N163_TEST_EDIT_*`).
   port writes), `nes_n163.nsf` (8-channel player + FamiStudio's export, `$7B` = `$10`).
 - Not done: listening on hardware or an N163 cartridge, comparison with a reference N163 emulator's audio
   (NSFPlay, Mesen), Thor measurements.
+
+## FDS: the same engine with the Famicom Disk System's sound (`"nes-famistudio-fds"`)
+
+The Famicom Disk System's 2C33 sound unit (design in `docs/BACKENDS.md`, "NES expansion chips"): one wavetable channel
+(64 samples of 6 bits) with frequency modulation from a 32-entry table. One build, one engine. Everything in the NES
+section above holds; this section lists only what differs. The 2A03, VRC6 and N163 engines, their player bytes, image
+sizes and song bases are unchanged.
+
+### What runs
+
+- **Player** (`generated/nes_fds_player_image.h`, `NesFdsPlayerImage.kt`): `tools/audio/nes/nes_player.s` assembled with
+  `-D FAMISTUDIO_EXP_FDS=1 -D FAMISTUDIO_USE_FDS_AUTOMOD=1` (auto-mod as FamiStudio's own NSF kernel `nsf.s` enables it)
+  and the pinned FDS note tables (`NoteTables/famistudio_fds_note_table_lsb/msb.bin`), nothing else changed: the same
+  entry table. Engine channels 6 (the FDS channel = 5), envelope slots 14 (`3+3+2+3+3`: the FDS channel's volume,
+  arpeggio and **wave index** from slot 11), pitch envelope slots 4 (FDS: 3). Song base: the first page after the
+  player; image = 32-byte header + directory + region (`NES_FDS_IMAGE_SIZE`).
+- **FDS audio** (`nes/nes_fds.c`, written here from the NESdev wiki "FDS audio", raw wikitext, with Disch's
+  `FDS.txt` "Unit Activity" where the wiki is silent):
+  - registers `$4040-$407F` wave RAM (writes only while `$4089` bit 7 is set; reads `$40 |` the addressed sample while
+    writable, else the sample at the current position), `$4080` volume envelope / gain (bit 7: gain = bits 0-5,
+    envelope off; resets the envelope timer), `$4082/$4083` 12-bit frequency (`$4083` bit 7 halts the wave unit and
+    resets its accumulator, so the position is 0; bit 6 disables both envelopes and resets their timers), `$4084` mod
+    envelope / gain, `$4085` mod counter (7-bit signed; it does **not** reset the table position, NESdev), `$4086/$4087`
+    12-bit mod frequency (`$4087` bit 7 halts the mod unit, forces accumulator bits 0-12 to 0 keeping the table address
+    in bits 13-17, and allows `$4088`; bit 6 forces a step every tick), `$4088` mod table write at the address then
+    advance (32 writes end where they began), `$4089` write enable + master volume, `$408A` envelope speed (power-on
+    `$E8`, as the BIOS leaves it, with `$4080` = `$80`; `$4023` = `$83`, the sound registers enabled, is not modelled
+    further), reads `$4090-$4097` (gains, accumulators, `$4094` = bits 4-11 of the completed counter × gain, `$4095`
+    the next increment `0,1,2,4,C,C,E,F`, `$4096` the DAC sample, `$4097` the counter);
+  - a **unit tick every 16 CPU cycles**: the mod unit (accumulator bits 0-11 += mod frequency; on a carry out of bit 11
+    the counter takes the entry at bits 13-17 — 0, +1, +2, +4, reset, −4, −2, −1, wrapping in 7 bits — and the 6-bit
+    position advances, bit 12 being the "ghost" bit that applies each entry twice), then the wave unit (24-bit
+    accumulator += NESdev's modulated pitch `temp = counter × gain; if ((temp & $0F) && !(temp & $800)) temp += $20;
+    temp = ((temp + $400) >> 4) & $FF; pitch = (frequency × temp) & $FFFFF`, applied whether the mod unit runs or
+    not; position = bits 18-23). A 64-sample wave therefore sounds **CPU × frequency / 2^22** Hz unmodulated;
+  - envelopes (enabled by bit 7 = 0, `$408A` ≠ 0, `$4083` bits 6-7 clear): one step every 8 × (speed + 1) ×
+    (`$408A` + 1) cycles, up to 32 or down to 0 (FamiStudio never enables them; modelled anyway);
+  - output: the gain the DAC uses is latched from the volume gain only while the wave position is 0 (or when the
+    accumulator wraps past it, as FamiStudio's `Nes_Fds.cpp`), writing gain 0 mutes at once; `$4089` bit 7 holds the
+    DAC sample while the wave unit runs on; level = DAC(sample) × min(gain, 32) / 32 × 2 / (2 + master), DAC =
+    **FamiStudio's measured curve** (`Nes_Fds.cpp` `dac_lookup`, plgDavid's measurements cleaned up by Persune; Nes_Snd_Emu,
+    LGPL-2.1-or-later: the 64-entry table only) normalised to 1 at 63; volume applied linearly (the wiki: the 32-cycle
+    PWM "may be emulated simply as a linear volume control");
+  - not modelled (the wiki marks them unverified, or no song depends on them): the `$4023` audio reset, the "envelopes
+    4× faster" and "halts the mod table accumulator" remarks on `$4083` bit 7 (Disch and FamiStudio keep the mod unit
+    running), the delayed first mod step after clearing `$4087` bit 7, the multiplier's intermediate `$4094` values.
+  Event-driven like the other units: with output attached or not every tick and envelope step is computed exactly,
+  so a silent seek leaves every register, RAM, accumulator, timer and the latch as audible play.
+- **Mixing**: NESdev "Mixing": the FDS maximum is "roughly 2.4x the maximum volume of the APU square, and the
+  polarity is the same", through a filter "approximated as a 1-pole lowpass with a cutoff of ~2000Hz". Full output
+  (sample 63, gain ≥ 32, master 0) = 2.4 × the 2A03 mixer's pulse at volume 15 (`NES_FDS_FULL_LEVEL`), positive
+  polarity, into the 2A03's band-limited buffer through a 1-pole 2000 Hz low-pass stepped once per unit tick (sent
+  with `blip_add_delta_fast`: the filtered signal has no edges). The filter is output state: attaching the output
+  starts it at the current level.
+- **Machine** (`nm_create(rate, &nes_player_fds)`): on the FDS build the bus routes writes `$4040-$408A` and reads
+  `$4040-$407F`, `$4090-$4097` to the unit, timestamped like the APU. Only the FDS unit is reset, clocked and mixed.
+  `nm_write_log` includes the FDS writes; `nm_apu_log` gives only `$4000-$4017`. Mute 5 forces the FDS output to 0;
+  nothing else changes.
+- **Pitch**: FamiStudio's FDS table is frequency = f × 2^20 / CPU (f = FamiStudio's pitch of the note) while the chip
+  plays CPU × frequency / 2^22 per wave, so **engine note n sounds two octaves below the 2A03's n with a one-cycle wave**
+  (engine note 70: frequency 1031 = 439.9 Hz; engine note 46: 258 = 110 Hz; NESdev, Disch, FamiStudio's own Nes_Fds and its
+  register viewer `RegisterInterpreter.cs` agree). Thor Tracker keeps the table (FamiStudio parity, `.nsf`), so its
+  FDS channel plays **absolute note a as engine note a + 13** (absolute 57 = A-4 = 440 Hz; range C-1..G#6 = engine
+  25..93; above engine note 93 the 12-bit frequency overflows).
+
+### CPU memory map additions
+
+| Range | Use |
+|---|---|
+| `$4040-$407F` | FDS wave RAM (writes while `$4089` bit 7 is set; reads `$40` + sample) |
+| `$4080-$408A` | FDS sound registers (writes) |
+| `$4090-$4097` | FDS sound state (reads) |
+
+### Image layout additions (Thor layout, FDS build)
+
+- **Song header**: `u8 1`, `word instruments`, `word instruments_exp`, `word samples−4`, 6 channel stream words, PAL
+  tempo, NTSC tempo (7 bytes before the stream words, `nes_player_head`). The raw layout accepts the same header.
+- **Expansion instrument table**: one 16-byte entry per instrument (the same count as the 2A03 table; non-FDS slots
+  carry well-formed default FDS data), as FamiStudio's `FamitoneMusicFile.cs` writes it and
+  `famistudio_set_fds_instrument` / `famistudio_update_fds_wave` read it (`famistudio_ca65.s` 5235-5435): words volume
+  (kind 0), arpeggio (kind 1), pitch (kind 3), the **wave-index envelope** (kind 4, directory **256 + slot − 1**);
+  byte 8 = mod depth << 2 | master volume (any value); word 9 the wave table; word 11 the **mod table** (32 entries
+  0..7 inside the song data; may be shared); bytes 13-14 the manual mod speed word (≤ `$0FFF`, low byte < `$80`: with
+  auto-mod compiled in the engine reads bit 7 of byte 13 as the auto-mod flag) or auto-mod `$80 | numerator,
+  denominator` (1..32 each); byte 15 the mod delay (0..255).
+- **Wave table**: one pointer per distinct wave (FamiStudio's dedup order), each to 64 samples 0..63 inside the song
+  data; a table entry for every index the wave-index envelope produces (largest value + 1).
+- **Directory kind 4 = WAVE** is valid on N163 and FDS images ("envelope kind outside 0..4"); effect envelopes start at
+  **320** in FDS images.
+- **Opcodes on the FDS channel (5)**: `$57 lo hi` mod speed (≤ `$0FFF`), `$58 d` mod depth (≤ 63) — both set the
+  engine's value and its override flag, so an instrument loaded later in the same row keeps them; the values persist
+  until the next instrument load without override —, `$59` release (0 operands, ends the row: the wave-index and the
+  volume envelopes jump to their release points), `$53` phase reset (`famistudio_process_phase_resets` writes
+  `$4083` = prev_hi | `$80`, then prev_hi), `$4E f` fine pitch (frequency offset, + raises; pitch shift 0), vibrato,
+  arpeggio, volume, slides, instruments, delays, cut. Rejected: `$4F` and `$52` on the FDS channel, `$57`-`$59` off it
+  and on other builds, `$55`/`$56`/`$5A`/`$5B` on the FDS build.
+- **Engine behaviours kept** (FamiStudio's NSF plays the same): a manual speed with low byte ≥ `$80` would play as
+  auto-mod (rejected by the loader and Kotlin); auto-mod multiplies the 16-bit frequency by the numerator in 16 bits
+  (`famistudio_mul` wraps), then divides, and clamps the result to `$FFF`; mod delay d keeps modulation reset for d − 1
+  frames and enables it in frame d (`dec; bne`).
+
+### Live edits, audition, ops
+
+- **Live edit** (`nm_apply_image`, Thor to Thor): the FDS channel's wave-index envelope (slot kind WAVE) is remapped
+  like every envelope pointer and `famistudio_exp_instrument_lo/hi` follow the new table. For the channel's current
+  sound (`famistudio_chn_fds_instrument`), decided while the old bytes are in place:
+  - master volume, wave count or any wave's 64 samples changed (by content): `famistudio_fds_wave_index` = `$FF`, the
+    next engine frame uploads the wave (the engine uploads only on a wave index change);
+  - its mod table changed by content: the machine writes the new table to the chip at once as the engine does on
+    loading a sound (`$4087` = `$80`, `$4084` = `$80`, `$4085` = 0, 32 × `$4088`; the engine's next update re-enables
+    the unit) and `famistudio_fds_mod_envelope` takes the new pointer; moved but identical: only the pointer moves
+    (the engine compares pointers, so a later load sharing the table writes nothing, as in straight play);
+  - mod speed or auto-mod fraction, depth and delay: where the engine's value equals the old sound's own (no `$57` /
+    `$58` override in effect), the new sound's is taken, as a reload would.
+  Chip state is otherwise never touched.
+- **Audition** on the FDS channel: `$54 i`, `$4E f`, `$40 n` as on the other pitched channels (engine notes); the
+  release stream is `$59`. `release()` returns 1 if the volume envelope has a release point (the tail ends at its final
+  loop) or else the wave-index envelope has one (the tail ends at that envelope's final loop); otherwise 0 (cut).
+- **Ops** (`nes_chip.c`): `nes_fds_chip_ops`, id `"nes-famistudio-fds"`, `image_size` = `NES_FDS_IMAGE_SIZE`, the same
+  functions as `"nes-famistudio"` over a machine of the FDS build. `.nsf` export: the FDS player at `$8000`, the data at
+  its song base, header byte `$7B` = `$04` (FDS, `NsfFile.cs`).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the FDS player with the others, its header and `NesFdsPlayerImage.kt`,
+and from `tools/audio/nes/fds_test.txt` (exported by FamiStudio 4.5.3) the fixtures `app/src/test/cpp/nes_fds_song.h`:
+raw at the FDS song base, the Thor layout, every block (wave tables, waves and mod tables included) moved, and an edited
+copy (one note, one volume envelope byte, one wave sample, one mod table entry; `FDS_TEST_EDIT_*`), with the order
+lengths (`nes_fds_order_rows`) and each FDS instrument's waves, mod speed, depth, delay and auto-mod fraction.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_fds_test.c`: FDS unit checks from
+  NESdev (wave frequency CPU × freq / 2^22 by zero crossings and the 24-bit accumulator; true pitch: engine note 70 =
+  440 Hz and 46 = 110 Hz with a one-cycle wave, the player's note table = FamiStudio's; mod table ring writes, `$4088`
+  ignored while running, the ghost bit, every step value, 7-bit wrap both ways, mod frequency carries, `$4087` bit 7
+  keeping the address; the modulation formula's examples and every counter × gain against the wiki's code; halt and
+  reset; write-enable hold; the gain latch at position 0 and the immediate mute; master volume ratios; the 2.4 × pulse
+  level, gain clamp and DAC curve; envelope timing, clamps, `$408A`, `$4083` bit 6; every read; mute and a silent run
+  leaving the unit state identical); image rules (raw and Thor loads, refusals of the other builds' images and of
+  `$57`-`$59` there, kind 5, wave table / wave / mod table outside the data, a sample of 64, an entry of 8, auto-mod
+  fractions 0 and 33, manual speed `$1000`, a wrong-kind wave-index word, `$57`/`$58` ranges, `$57`/`$58`/`$59` off the
+  FDS channel, `$4F`/`$52`/`$55`/`$56`/`$5A`/`$5B` on it, `$53` on the triangle); playback of the test song (**the Thor
+  layout writes the same APU and FDS registers as FamiStudio's own export through the first pass and two loops**, row
+  starts, the instrument's current wave in the chip's wave RAM, its mod table in the chip's ring with
+  `famistudio_fds_mod_envelope` pointing at it, the mod unit every frame — halted on cut and delay, depth and manual or
+  auto-mod speed `min($FFF, freq × n / d)` — `$57`/`$58` rows and re-binds without them); the wave index following
+  FamiStudio's envelope walk and `$59`; delay d enabling in frame d; a `$53` row; seek (registers for 200 frames and
+  the full unit state equal to audible straight play); live relocation before every frame with identical writes and
+  unit state; the edited wave uploaded with the next frame; the edited mod table written as the engine loads one;
+  the edited note; audition (the note table frequency, fine `+10`, `$59` reaching the wave release, cut); mute; the ops
+  table. Evidence: `nes_fds.wav`, `nes_fds_trace.txt` (per-frame APU and FDS writes), `nes_fds.nsf` (`$7B` = `$04`).
+- Not done: listening on a Famicom with a RAM adapter, comparison with a reference FDS emulator's audio (NSFPlay,
+  Mesen), Thor measurements.
 
 ## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
 

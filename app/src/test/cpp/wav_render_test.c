@@ -48,6 +48,7 @@ typedef struct Demo {
 static const Demo kDemos[] = {
     {"thor-groove.gbimg", "gb-huge"},
     {"thor-quest.nesimg", "nes-famistudio"},
+    {"side-b.nesimg", "nes-famistudio-fds"},
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},

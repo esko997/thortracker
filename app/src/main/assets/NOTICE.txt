@@ -8,14 +8,18 @@ Game Boy playback uses hUGEDriver 6.1.3 (public domain) and binjgb at commit
 The binjgb audio output buffer is locally adapted to floating-point samples.
 
 NES playback uses the FamiStudio sound engine 4.5.3 (notice below; its NTSC note
-tables, for NES + VRC6 songs its VRC6 build's saw note tables and for NES + N163
-songs its N163 note tables for 1-8 channels, are part of FamiStudio, MIT, notice
-below), the m6502.h 6502 emulator from
+tables, for NES + VRC6 songs its VRC6 build's saw note tables, for NES + FDS songs
+its FDS note tables and for NES + N163 songs its N163 note tables for 1-8 channels,
+are part of FamiStudio, MIT, notice below), the m6502.h 6502 emulator from
 floooh/chips at commit 9e88298ce56319953ac7a43213a1120359f7a3a6 (zlib, notice below)
 and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public License 2.1 or later;
 source in app/src/main/cpp/third_party/blip_buf with its license.txt). The 2A03 APU,
-VRC6 audio and Namco 163 audio emulation are Thor Tracker's own code
-(GPL-3.0-or-later; the Namco 163 written from the NESdev wiki page "Namco 163 audio").
+VRC6 audio, Famicom Disk System audio and Namco 163 audio emulation are Thor Tracker's
+own code (GPL-3.0-or-later; the Namco 163 written from the NESdev wiki page "Namco 163
+audio", the FDS from the NESdev wiki page "FDS audio"). The FDS emulation's DAC levels
+are the 2C33 measurements by plgDavid (cleaned up by Persune) as tabulated in
+FamiStudio 4.5.3's ThirdParty/NesSndEmu/nes_apu/Nes_Fds.cpp (Nes_Snd_Emu, GNU Lesser
+General Public License 2.1 or later).
 
 Commodore 64 SID playback uses the GoatTracker 2.77 playroutine by Lasse Oorni
 (Cadaver), which is not under the GPL and may be used freely (notice below), the

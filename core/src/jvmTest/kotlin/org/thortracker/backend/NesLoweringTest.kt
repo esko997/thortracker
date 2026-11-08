@@ -2,7 +2,10 @@ package org.thortracker.backend
 
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
+import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.NesEnvelope
+import org.thortracker.system.nes.NesExpansion
+import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
@@ -19,9 +22,10 @@ import kotlin.test.assertTrue
 
 /**
  * The image contract of the native `"nes-famistudio"` engines (docs/AUDIO_ENGINE.md, NES image layout), checked on
- * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`): header,
- * envelope directory, instrument table, channel streams of `$41` per order plus `$42`, flat pattern streams with one
- * terminator per row, and the engine-facing numbers of [NesSystem.engine] and [NesVrc6System.engine].
+ * every golden song with the player build its expansion needs (the VRC6 songs on `"nes-famistudio-vrc6"`, the N163 and
+ * FDS songs on theirs): header, envelope directory, instrument tables (N163 and FDS: the expansion table), channel
+ * streams of `$41` per order plus `$42`, flat pattern streams with one terminator per row, and the engine-facing numbers
+ * of [NesSystem.engine], [NesVrc6System.engine] and [NesFdsSystem.engine].
  */
 class NesLoweringTest {
     private fun u16(b: ByteArray, at: Int) = (b[at].toInt() and 0xff) or ((b[at + 1].toInt() and 0xff) shl 8)
@@ -73,9 +77,10 @@ class NesLoweringTest {
         val envCount = u16(image, 16)
         val data = image.copyOfRange(region, region + size)
         fun at(addr: Int) = addr - base
-        // Directory: ascending, non-overlapping, inside the data, lengths 2..255, kinds 0..3 (N163 images also 4, the
-        // wave-index envelopes at 256 + slot); instruments at slot*4+kind.
+        // Directory: ascending, non-overlapping, inside the data, lengths 2..255, kinds 0..3 (N163 and FDS images also 4,
+        // the wave-index envelopes at 256 + slot); instruments at slot*4+kind.
         val n163 = song.nes.expansion.n163Channels > 0
+        val fds = song.nes.expansion == NesExpansion.FDS
         var last = 0
         val dir = HashMap<Int, Triple<Int, Int, Int>>()
         for (i in 0 until envCount) {
@@ -84,7 +89,7 @@ class NesLoweringTest {
             if (addr == 0) continue
             val len = u8(image, e + 2)
             val kind = u8(image, e + 3)
-            assertTrue(addr >= last && len in 2..255 && kind in 0..(if (n163) 4 else 3) && at(addr) + len <= size, "$name: directory entry $i")
+            assertTrue(addr >= last && len in 2..255 && kind in 0..(if (n163 || fds) 4 else 3) && at(addr) + len <= size, "$name: directory entry $i")
             last = addr + len
             dir[addr] = Triple(i, len, kind)
         }
@@ -104,6 +109,7 @@ class NesLoweringTest {
             assertEquals(slot * 4 + kind to kind, dir[addr]!!.let { it.first to it.third }, "$name: instrument $slot envelope $kind")
         }
         if (n163) checkN163(name, song, data, at(u16(data, 3)), dir, base)
+        if (fds) checkFds(name, song, data, at(u16(data, 3)), dir, base)
         val arranged = NesSystem.arranged(song)
         val orders = arranged.orders.size
         for (c in 0 until channels) {
@@ -112,7 +118,8 @@ class NesLoweringTest {
                 assertEquals(0x41, u8(data, s + 4 * o), "$name: channel $c order $o")
                 val n = u8(data, s + 4 * o + 1)
                 val rows = arranged.patterns[arranged.orders[o]].length
-                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base, NesRules.isN163(song.nes.expansion, c)),
+                assertEquals(rows, walk(data, at(u16(data, s + 4 * o + 2)), n, c, dir, base, NesRules.isN163(song.nes.expansion, c),
+                    NesRules.isFds(song.nes.expansion, c)),
                     "$name: channel $c order $o rows")
             }
             assertEquals(0x42, u8(data, s + 4 * orders))
@@ -133,7 +140,7 @@ class NesLoweringTest {
                 assertEquals(u16(data, instruments + slot * 8 + kind * 2), u16(data, e + 2 * w), "$name: slot $slot exp envelope $kind")
             }
             val wave = dir[u16(data, e + 6)]!!
-            assertEquals(FamiStudioLowering.N163_WAVE_ENVELOPES_START + slot to 4, wave.first to wave.third, "$name: slot $slot wave index")
+            assertEquals(FamiStudioLowering.WAVE_ENVELOPES_START + slot to 4, wave.first to wave.third, "$name: slot $slot wave index")
             val bytes = FamiStudioEnvelopes.waveIndex(ins.wave)
             assertContentEquals(bytes, data.copyOfRange(u16(data, e + 6) - base, u16(data, e + 6) - base + bytes.size), "$name: slot $slot wave index bytes")
             assertEquals(ins.wave.position, u8(data, e + 8), "$name: slot $slot wave position")
@@ -148,9 +155,47 @@ class NesLoweringTest {
         }
     }
 
+    /**
+     * The FDS expansion table (`FamitoneMusicFile.OutputInstruments`): every slot's volume, arpeggio and pitch envelopes
+     * (the 2A03 table's), its wave-index envelope (directory 256 + slot, kind 4, FamiStudio's bytes), (mod depth << 2) |
+     * master volume, a table of pointers to its stored waves (64 bytes 0..63 each), its modulation table (32 bytes 0..7,
+     * [FdsSound.modTable]), the manual mod speed (bit 7 of its low byte clear) or $80 | numerator and the denominator
+     * (reduced), and the mod delay.
+     */
+    private fun checkFds(name: String, song: Song, data: ByteArray, table: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int) {
+        val instruments = u16(data, 1) - base
+        for ((slot, ins) in song.nes.instruments.withIndex()) {
+            val e = table + FamiStudioLowering.EXP_INSTRUMENT_SIZE * slot
+            val f = ins.fds
+            for ((w, kind) in listOf(0 to 0, 1 to 1, 2 to 3)) {
+                assertEquals(u16(data, instruments + slot * 8 + kind * 2), u16(data, e + 2 * w), "$name: slot $slot exp envelope $kind")
+            }
+            val wave = dir[u16(data, e + 6)]!!
+            assertEquals(FamiStudioLowering.WAVE_ENVELOPES_START + slot to 4, wave.first to wave.third, "$name: slot $slot wave index")
+            val bytes = FamiStudioEnvelopes.waveIndex(f)
+            assertContentEquals(bytes, data.copyOfRange(u16(data, e + 6) - base, u16(data, e + 6) - base + bytes.size), "$name: slot $slot wave index bytes")
+            assertEquals((f.modDepth shl 2) or f.masterVolume.register, u8(data, e + 8), "$name: slot $slot depth and master volume")
+            val waves = u16(data, e + 9) - base
+            for ((i, w) in FamiStudioEnvelopes.fdsWaves(f).stored.withIndex()) {
+                val at = u16(data, waves + 2 * i) - base
+                assertEquals(w, data.copyOfRange(at, at + FdsSound.WAVE_SIZE).map { it.toInt() }, "$name: slot $slot wave $i")
+            }
+            val mod = u16(data, e + 11) - base
+            assertEquals(f.modTable, data.copyOfRange(mod, mod + FdsSound.MOD_SIZE).map { it.toInt() }, "$name: slot $slot mod table")
+            if (f.autoMod) {
+                assertEquals(0x80 or f.autoModFraction.first, u8(data, e + 13), "$name: slot $slot auto-mod numerator")
+                assertEquals(f.autoModFraction.second, u8(data, e + 14), "$name: slot $slot auto-mod denominator")
+            } else {
+                assertEquals(f.modSpeed, u16(data, e + 13), "$name: slot $slot mod speed")
+                assertTrue(u8(data, e + 13) and 0x80 == 0, "$name: slot $slot mod speed read as auto-mod")
+            }
+            assertEquals(f.modDelay, u8(data, e + 15), "$name: slot $slot mod delay")
+        }
+    }
+
     /** Walks [n] row terminators of a flat pattern stream; returns the rows they cover. Checks opcode limits. */
     private fun walk(data: ByteArray, start: Int, n: Int, channel: Int, dir: Map<Int, Triple<Int, Int, Int>>, base: Int,
-                     n163: Boolean = false): Int {
+                     n163: Boolean = false, fds: Boolean = false): Int {
         var p = start
         var rows = 0
         var terms = 0
@@ -178,6 +223,11 @@ class NesLoweringTest {
                     0x45 -> { rows++; terms++; delays = 0 }
                     0x5a -> { assertTrue(n163, "N163 release off the N163"); rows++; terms++; delays = 0 }
                     0x5b -> assertTrue(n163, "N163 phase reset off the N163")
+                    // The FDS: release, mod speed (≤ $FFF), mod depth (≤ $3F) and the generic phase reset.
+                    0x59 -> { assertTrue(fds, "FDS release off the FDS"); rows++; terms++; delays = 0 }
+                    0x57 -> { assertTrue(fds, "FDS mod speed off the FDS"); assertTrue(u16(data, p) <= 0xFFF); p += 2 }
+                    0x58 -> { assertTrue(fds, "FDS mod depth off the FDS"); assertTrue(u8(data, p++) <= 0x3F) }
+                    0x53 -> assertTrue(fds, "phase reset $53 off the FDS")
                     0x50 -> { p += 3; rows++; terms++; delays = 0 }
                     0x43, 0x4a, 0x4c, 0x4d -> Unit
                     0x46 -> assertTrue(u8(data, p++) in 1..127)
@@ -185,7 +235,7 @@ class NesLoweringTest {
                     0x48 -> p++
                     0x4e -> { assertTrue(channel != NesRules.NOISE); p++ }
                     0x4f -> {
-                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW)
+                        assertTrue(channel != NesRules.TRIANGLE && channel != NesRules.VRC6_SAW && !fds)
                         assertTrue(u8(data, p++) in 0..NesRules.dutyMax(
                             if (channel >= NesRules.APU_CHANNELS) org.thortracker.system.nes.NesExpansion.VRC6 else org.thortracker.system.nes.NesExpansion.NONE, channel))
                     }
@@ -264,6 +314,38 @@ class NesLoweringTest {
         val image = ByteArray(e.imageSize)
         e.lower(song, image)
         check("vrc6 blank", song, image)
+        assertFailsWith<IllegalArgumentException> { NesSystem.engine.lower(song, ByteArray(NesSystem.engine.imageSize)) }
+    }
+
+    /**
+     * The FDS variant: its own engine and image; notes are true pitch, FamiStudio's engine note 24 higher (A-4 = engine
+     * note 70 = frequency 1031: 1789773 × 1031 / 2^22 = 439.9 Hz with a one-cycle wave), up to G#6; FDS sounds only on
+     * the FDS channel.
+     */
+    @Test
+    fun fdsEngineNumbers() {
+        val e = NesFdsSystem.engine
+        val base = NesFdsSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("Sine", chip = NesChip.FDS)
+        val song = base.copy(sound = base.nes.copy(instruments = bank))
+        assertEquals("nes-famistudio-fds", e.id)
+        assertEquals(NesFdsPlayerImage.IMAGE_SIZE, e.imageSize)
+        assertEquals(NesFdsPlayerImage.SONG_BASE, NesPlayer.FDS.songBase)
+        assertEquals(6, NesFdsSystem.channels.size)
+        assertEquals(70, e.note(song, NesRules.FDS, 57, 2))
+        assertEquals(1031, FamiStudioLowering.NOTE_TABLE_FDS[70])
+        assertEquals(440.0, 1789773.0 * FamiStudioLowering.NOTE_TABLE_FDS[70] / 4194304.0, 0.2)
+        assertEquals(46, e.note(song, 0, 57, 1)) // the 2A03 keeps its notes
+        assertEquals(null, e.auditionProblem(song, NesRules.FDS, 12, 2, 0)) // C-1
+        assertEquals(null, e.auditionProblem(song, NesRules.FDS, 80, 2, 0)) // G#6
+        assertTrue(e.auditionProblem(song, NesRules.FDS, 81, 2, 0)!!.contains("12-bit"))
+        assertTrue(e.auditionProblem(song, NesRules.FDS, 57, 1, 0)!!.contains("2A03 sound"))
+        assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("FDS sound"))
+        assertEquals(NesRules.fdsFinePitch(57 - NesRules.NOTE_OFFSET, 5), e.fine(NesRules.FDS, 57, 5))
+        val image = ByteArray(e.imageSize)
+        e.lower(song, image)
+        check("fds blank", song, image)
         assertFailsWith<IllegalArgumentException> { NesSystem.engine.lower(song, ByteArray(NesSystem.engine.imageSize)) }
     }
 

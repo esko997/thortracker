@@ -69,6 +69,15 @@ class NesGoldenTest {
                         ours += "slot $slot wave $i" to FamiStudioEnvelopes.n163WaveBytes(w)
                     }
                 }
+                if (ins.chip == org.thortracker.system.nes.NesChip.FDS) {
+                    // FamiStudio stores an FDS sound's wave-index envelope, each distinct wave and its modulation table
+                    // among its envelopes (`FamitoneMusicFile.OutputInstruments`).
+                    ours += "slot $slot wave index" to FamiStudioEnvelopes.waveIndex(ins.fds)
+                    for ((i, w) in FamiStudioEnvelopes.fdsWaves(ins.fds).stored.withIndex()) {
+                        ours += "slot $slot wave $i" to FamiStudioEnvelopes.fdsWaveBytes(w)
+                    }
+                    ours += "slot $slot mod table" to FamiStudioEnvelopes.fdsModBytes(ins.fds)
+                }
             }
             for (ch in fs.notes) for (n in ch) {
                 if (n == null) continue
@@ -103,6 +112,7 @@ class NesGoldenTest {
             var dpcmStarts = 0
             var vrc6 = 0
             var n163 = 0
+            var fds = 0
             for (f in 0 until frames) {
                 val ta = a.frame()
                 val tb = b.frame()
@@ -113,6 +123,7 @@ class NesGoldenTest {
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 vrc6 += ta.count { (it shr 8) >= 0x9000 && (it shr 8) < 0xC000 }
                 n163 += ta.count { (it shr 8) == 0x4800 }
+                fds += ta.count { (it shr 8) in 0x4080..0x408A }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
@@ -126,6 +137,10 @@ class NesGoldenTest {
             if (lowered.player in NesPlayer.N163) {
                 // The trace covers the N163: frequencies, volumes and wave uploads through its data port, every frame.
                 assertTrue(n163 > frames, "$name: only $n163 N163 data writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.FDS) {
+                // The trace covers the FDS: volume, frequency and modulation registers every frame, wave and table uploads.
+                assertTrue(fds > frames, "$name: only $fds FDS register writes in $frames frames")
             }
         }
     }

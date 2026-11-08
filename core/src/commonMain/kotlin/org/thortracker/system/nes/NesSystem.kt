@@ -75,6 +75,21 @@ object NesVrc7System : NesFamiStudioSystem(NesExpansion.VRC7) {
 }
 
 /**
+ * The Famicom with the Famicom Disk System's sound (the 2C33 in the RAM adapter; FamiStudio's FDS expansion): the 2A03's
+ * five channels, then FDS, one channel playing 64-step waves of 6-bit samples ([FdsSound]) at a 6-bit volume, with a
+ * frequency modulation unit (a 32-entry table stepped at the mod speed, scaled by the mod depth, optionally following
+ * the pitch: auto-mod) and a master volume. The FamiStudio engine assembled with `FAMISTUDIO_EXP_FDS` and
+ * `FAMISTUDIO_USE_FDS_AUTOMOD` plays it (native `"nes-famistudio-fds"`); the FDS channel takes FDS instruments
+ * ([NesChip.FDS]).
+ */
+object NesFdsSystem : NesFamiStudioSystem(NesExpansion.FDS) {
+    override val id = "nes-famistudio-fds"
+    override val name = "NES + FDS (FamiStudio)"
+
+    override fun demo(): Song = NesFdsDemoSong.build()
+}
+
+/**
  * The NES with the Namco 163 cartridge chip (FamiStudio's N163 expansion) with [n163Channels] (1..8) wavetable channels
  * enabled: the 2A03's five channels, then N163 1..n, each playing 4-bit waves from the chip's 128 bytes of RAM
  * ([N163Wave]) at a 4-bit linear volume. The chip updates one channel every 15 CPU cycles in turn, so the count is fixed
@@ -127,6 +142,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         NesExpansion.NONE -> Help
         NesExpansion.VRC6 -> Vrc6Help
         NesExpansion.VRC7 -> Vrc7Help
+        NesExpansion.FDS -> FdsHelp
         else -> N163Help(expansion.n163Channels)
     }
 
@@ -171,7 +187,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     override fun effectsFor(channel: Int): List<EffectSpec> = NesRules.effectsFor(expansion, channel)
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) = NesRules.describeEffect(expansion, channel, effect, param)
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? =
-        NesRules.cellRangeProblem(cell) ?: NesRules.cellProblem(song, channel, cell)
+        NesRules.cellRangeProblem(expansion, cell) ?: NesRules.cellProblem(song, channel, cell)
 
     /** Plus: the song's expansion chip must be this variant's (a project's backend names its variant). */
     override fun structuralErrors(song: Song): List<String> {
@@ -207,9 +223,14 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     override fun instrumentSummary(song: Song, bank: Int, slot: Int): String? = instrument(song, bank, slot)?.let(::summary)
 
-    /** An N163 sound's first wave (0..15 as 0..1), for thumbnails; other chips have no waveform to show. */
-    override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? =
-        instrument(song, bank, slot)?.takeIf { it.chip == NesChip.N163 }?.wave?.waves?.firstOrNull()?.map { it / 15f }
+    /** An N163 sound's first wave (0..15 as 0..1) or an FDS sound's (0..63), for thumbnails; other chips have no waveform. */
+    override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? = instrument(song, bank, slot)?.let { ins ->
+        when (ins.chip) {
+            NesChip.N163 -> ins.wave.waves.firstOrNull()?.map { it / 15f }
+            NesChip.FDS -> ins.fds.waves.firstOrNull()?.map { it / 63f }
+            else -> null
+        }
+    }
 
     /** Instrument [slot] (1..[NesSystem.SLOTS]) of the one bank, or null. */
     fun instrument(song: Song, bank: Int, slot: Int): NesInstrument? = if (bank != 0) null else song.nes.instruments.getOrNull(slot - 1)
@@ -242,8 +263,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     }
 
     /**
-     * "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6/VRC7/N163 sounds: "VRC6 · …", saw volume,
-     * patch, waves).
+     * "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6/VRC7/N163/FDS sounds: "VRC6 · …", saw
+     * volume, patch, waves; FDS: "FDS · sine · mod 3F @ 040 · 66%").
      */
     fun summary(ins: NesInstrument): String {
         fun env(name: String, e: NesEnvelope, neutral: Int, text: (Int) -> String = Int::toString): String? {
@@ -255,10 +276,12 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         val vrc6 = ins.chip == NesChip.VRC6
         val vrc7 = ins.chip == NesChip.VRC7
         val n163 = ins.chip == NesChip.N163
+        val fds = ins.chip == NesChip.FDS
         val parts = listOfNotNull(
-            ins.chip.label.takeIf { vrc6 || vrc7 || n163 },
+            ins.chip.label.takeIf { vrc6 || vrc7 || n163 || fds },
             Vrc7Presets.NAMES[ins.fm.preset.coerceIn(Vrc7Presets.NAMES.indices)].lowercase().takeIf { vrc7 },
             n163Summary(ins.wave).takeIf { n163 },
+            fdsSummary(ins.fds).takeIf { fds },
             env("vol", ins.volume, 15),
             env("arp", ins.arpeggio, 0),
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
@@ -284,6 +307,22 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     }
 
     /**
+     * "sine · mod 3F @ 040 · 66%", "3 waves (loop, rel) · mod 20 @ ×2/1 · delay 12": an FDS sound's waves, its modulation
+     * (depth @ speed, or the auto-mod ratio; none at depth 0) with its delay, and a master volume below 100%.
+     */
+    private fun fdsSummary(f: FdsSound): String {
+        val preset = FdsPresets.presetOf(f.waves)?.label?.lowercase()
+        val what = if (f.waves.size == 1) preset ?: "wave" else "${f.waves.size} ${preset ?: "waves"}"
+        val marks = listOfNotNull("loop".takeIf { f.loop >= 0 }, "rel".takeIf { f.release >= 0 })
+        val waves = what + if (marks.isEmpty()) "" else " (${marks.joinToString()})"
+        val mod = if (f.modDepth == 0) null else {
+            val speed = if (f.autoMod) f.autoModFraction.let { (n, d) -> "×$n/$d" } else NumberText.hex(f.modSpeed, 3)
+            "mod ${NesRules.hex2(f.modDepth)} @ $speed" + if (f.modDelay > 0) " · delay ${f.modDelay}" else ""
+        }
+        return listOfNotNull(waves, mod, f.masterVolume.label.takeIf { f.masterVolume != FdsMasterVolume.FULL }).joinToString(" · ")
+    }
+
+    /**
      * FamiStudio 4.5.3 on a 6502 + 2A03 (+ the expansion chip) — native `"nes-famistudio"` or the expansion build's
      * engine (app/src/main/cpp/nes): the song lowered as for `.nsf` export ([FamiStudioLowering]) in the engine's image
      * ([NesImageLayout]), plus every DPCM mapping the song does not play that still fits, so the editor can audition it.
@@ -293,6 +332,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU" +
             when (expansion.chip) {
                 NesChip.N163 -> " + Namco 163 (${expansion.n163Channels} channel${if (expansion.n163Channels == 1) "" else "s"})"
+                NesChip.FDS -> " + Thor Tracker's FDS 2C33 (NESdev \"FDS audio\", FamiStudio's measured DAC)"
                 else -> ""
             } + ", blip_buf 1.1.0"
         override val imageSize = expansion.player.imageSize
@@ -308,8 +348,12 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
             note > NesRules.highestNote(expansion, channel) ->
-                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))} with " +
-                    "${expansion.n163Channels} N163 channels"
+                if (NesRules.isFds(expansion, channel)) {
+                    "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))} (the chip's 12-bit frequency)"
+                } else {
+                    "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))} with " +
+                        "${expansion.n163Channels} N163 channels"
+                }
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
@@ -321,21 +365,23 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1; on DPCM the sample list entry (1..63). */
+        /** FamiStudio's engine notes: 1 = C-1, the FDS's two octaves up (true pitch); on DPCM the sample list entry (1..63). */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.engineNote(expansion, channel, note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
 
         /**
          * The engine's fine pitch adds to the period on the 2A03 and VRC6, so raising the pitch is negative; on the
-         * VRC7's FM channels it adds (× 8) to the frequency number, on the N163's (× 2^shift) to its frequency, both
-         * converted as a cell's Pxx is ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]).
+         * VRC7's FM channels it adds (× 8) to the frequency number, on the N163's (× 2^shift) and the FDS's to its
+         * frequency, all converted as a cell's Pxx is ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch],
+         * [NesRules.fdsFinePitch]).
          */
         override fun fine(channel: Int, note: Int, fine: Int): Int = when {
             NesRules.isVrc7(expansion, channel) -> NesRules.vrc7FinePitch(NesRules.fsNote(note), fine)
             NesRules.isN163(expansion, channel) -> NesRules.n163FinePitch(NesRules.fsNote(note), fine, expansion.n163Channels)
+            NesRules.isFds(expansion, channel) -> NesRules.fdsFinePitch(NesRules.fsNote(note), fine)
             else -> -fine
         }
     }
@@ -474,6 +520,35 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
             "N163 RAM" to "${NesValidator.n163RamUsed(song)} of ${NesRules.n163WaveRam(n163Channels)} wave samples used by N163 sounds " +
                 "(${NesRules.N163_RAM_SAMPLES - NesRules.n163WaveRam(n163Channels)} hold the $n163Channels channels' registers)",
+        )
+    }
+
+    private object FdsHelp : NesHelp() {
+        private val top = NesSystem.noteName(NesRules.highestNote(NesExpansion.FDS, NesRules.FDS))
+
+        override val off = "Releases the note: an instrument whose volume envelope or (FDS) wave sequence has a release point " +
+            "plays its release tail, any other note (or one already released) stops at once. For a cut inside a row use Sxx"
+        override val offEntered = "OFF: release (sounds with a volume or wave release point play their tail; others stop at once)"
+        override val offInspector = "OFF: release the note (volume and wave release tails, else silent)"
+        override val effectsIntro = super.effectsIntro + listOf(
+            "FDS plays FDS sounds (Chip: FDS on the Instrument view): 64-step waves of 6-bit samples, a sequence of up to 16 waves " +
+                "(Waves page), a master volume, and a modulation unit that bends the pitch by a 32-step table at the mod speed, " +
+                "scaled by the mod depth, after the mod delay; auto-mod sets the speed from the note's pitch (FM).",
+            "Notes are true pitch for a wave holding one cycle: 2 cycles per wave sound an octave up, 4 two octaves up. The FDS " +
+                "plays C-1..$top (above that FamiStudio's FDS frequency passes the chip's 12 bits).",
+            "On FDS Hxx sets the mod depth (00-3F), Ixx the mod speed's high digit (00-0F) and Jxx its low byte, until the next " +
+                "note with an attack and without them; I/J have no effect while an auto-mod sound plays. X00 restarts the wave " +
+                "(phase reset), Pxx detunes by the pitch the same Pxx gives a pulse, to the nearest FDS frequency step; Vxx has no effect.",
+        )
+        override val tonalChannels = "Pulse, Triangle and FDS"
+        override val tonalChannelsShort = "Pulse/Tri/FDS"
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle or FDS; Noise and DPCM have no tonal chord reference"
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, NesExpansion.FDS)
+
+        override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
+            "FDS range" to "C-1..$top for one-cycle waves (FamiStudio's FDS frequency is 12-bit); 1-16 waves of 64 samples per sound",
         )
     }
 }

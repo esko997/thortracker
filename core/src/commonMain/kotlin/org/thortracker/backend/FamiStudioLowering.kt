@@ -18,19 +18,23 @@ import kotlin.math.sign
  * Lowers an NES song to FamiStudio sound engine 4.5.3 data (FamiTracker tempo) at its player's song base
  * ([NesPlayer.songBase]), in the layout the native `"nes-famistudio"` engines expect (docs/AUDIO_ENGINE.md, NES image
  * layout): the FamiStudio song header, an instrument table of all [NesSystem.SLOTS] slots (index = slot − 1; with the
- * VRC7 or the N163, FamiStudio's expansion instrument table of all slots too), every envelope as an entry of the envelope
- * directory (instrument envelopes at `slot × 4 + kind`; N163: each slot's wave-index envelope at 256 + slot − 1; effect
- * envelopes from 256, N163 from 320), the N163 waves and their per-slot tables, and one stream per channel (the 2A03's
- * five, then the expansion's) made only of `$41 n ptr` (play order o's pattern stream) per order and a `$42` loop to the
- * loop order. Identical pattern streams, N163 waves and wave tables are stored once.
+ * VRC7, the N163 or the FDS, FamiStudio's expansion instrument table of all slots too), every envelope as an entry of the
+ * envelope directory (instrument envelopes at `slot × 4 + kind`; N163 and FDS: each slot's wave-index envelope at 256 +
+ * slot − 1; effect envelopes from 256, N163 and FDS from 320), the N163 or FDS waves and their per-slot tables (FDS: and
+ * the modulation tables), and one stream per channel (the 2A03's five, then the expansion's) made only of `$41 n ptr`
+ * (play order o's pattern stream) per order and a `$42` loop to the loop order. Identical pattern streams, waves, wave
+ * tables and modulation tables are stored once.
  *
  * Each pattern stream is what FamiStudio's own exporter (`FamitoneMusicFile.GetSongData`, FamiStudio kernel, NTSC)
  * emits for those rows: the same opcode order, the same state it tracks (instrument, arpeggio, last volume, vibrato
- * override, the VRC7 custom patch another channel loads), the same slide and volume-slide step arithmetic. Two
- * deliberate additions make an order self-contained for seeking, looping and live edits without changing what plays:
- * each order re-sends its first note's instrument and, when a set volume (not a slide) is in force, the channel volume.
- * (On a VRC7 channel a re-sent custom patch rewrites the chip's patch registers with the values they hold; on an N163
- * channel a re-sent instrument reloads its envelopes but uploads no wave unless the note has an attack.)
+ * and FDS mod speed/depth overrides, the VRC7 custom patch another channel loads), the same slide and volume-slide step
+ * arithmetic. Two deliberate additions make an order self-contained for seeking, looping and live edits without changing
+ * what plays: each order re-sends its first note's instrument and, when a set volume (not a slide) is in force, the
+ * channel volume. (On a VRC7 channel a re-sent custom patch rewrites the chip's patch registers with the values they
+ * hold; on an N163 or FDS channel a re-sent instrument reloads its envelopes but uploads no wave unless the note has an
+ * attack; on the FDS a re-sent instrument also reloads the sound's mod speed and depth, so while an H/I/J value is in
+ * force the order sends it again first, `$57`/`$58` in the same row, which the engine then keeps:
+ * `famistudio_set_fds_instrument` skips the speed and depth a row overrides.)
  * FamiStudio's own byte layout (instrument sorting and merging, CRC-ordered envelopes, its search-based stream
  * compression) is not reproduced; the golden test therefore compares register traces of both through the same player.
  */
@@ -91,6 +95,28 @@ internal object FamiStudioLowering {
     /** FamiStudio's VRC7 slide shift (`Channel.GetShiftsForType`): slide deltas lose 3 bits, the engine shifts back. */
     private const val VRC7_SLIDE_SHIFT = 3
 
+    /**
+     * FamiStudio's FDS note tables (`NesApu.GetOrCreateNoteTableSet`: f × 65536 / (clock / 16) + 0.5, truncated; the NTSC
+     * one is `famistudio_fds_note_table_lsb/msb.bin`, vendored in third_party/famistudio-4.5.3/NoteTables): the chip's
+     * 12-bit frequency, larger is higher. Notes above 93 (A-8) exceed 12 bits ([NesRules.FDS_HIGHEST_FS_NOTE]). The PAL
+     * one only serves slide steps (FamiStudio's music export takes the larger of the NTSC and PAL steps). Slides keep one
+     * fraction bit as on the 2A03 (`Channel.GetShiftsForType`: slide shift −1, pitch shift 0).
+     */
+    val NOTE_TABLE_FDS = intArrayOf(
+        0, 19, 20, 22, 23, 24, 26, 27, 29, 30, 32, 34, 36, 38, 41, 43, 46, 48, 51, 54, 57, 61, 64, 68, 72, 77, 81, 86, 91,
+        97, 102, 108, 115, 122, 129, 137, 145, 153, 162, 172, 182, 193, 205, 217, 230, 243, 258, 273, 289, 307, 325, 344,
+        365, 386, 409, 434, 459, 487, 516, 546, 579, 613, 650, 688, 729, 772, 818, 867, 919, 973, 1031, 1092, 1157, 1226,
+        1299, 1376, 1458, 1545, 1637, 1734, 1837, 1947, 2062, 2185, 2315, 2452, 2598, 2753, 2916, 3090, 3274, 3468, 3675,
+        3893, 4125, 4370, 4630,
+    )
+    val NOTE_TABLE_FDS_PAL = intArrayOf(
+        0, 21, 22, 23, 25, 26, 28, 29, 31, 33, 35, 37, 39, 41, 44, 46, 49, 52, 55, 58, 62, 65, 69, 74, 78, 83, 87, 93, 98,
+        104, 110, 117, 124, 131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247, 262, 278, 294, 311, 330, 350, 370,
+        392, 416, 441, 467, 494, 524, 555, 588, 623, 660, 699, 741, 785, 832, 881, 933, 989, 1048, 1110, 1176, 1246, 1320,
+        1399, 1482, 1570, 1663, 1762, 1867, 1978, 2095, 2220, 2352, 2492, 2640, 2797, 2963, 3140, 3326, 3524, 3734, 3956,
+        4191, 4440, 4704, 4984,
+    )
+
     /** Bytes of one expansion instrument (FamiStudio's `instruments_exp` entries). */
     const val EXP_INSTRUMENT_SIZE = 16
 
@@ -102,9 +128,9 @@ internal object FamiStudioLowering {
     const val DPCM = 4
     const val EFFECT_ENVELOPES_START = 256
 
-    /** N163 images: slot s's wave-index envelope at directory index 256 + s − 1, effect envelopes from 320. */
-    const val N163_WAVE_ENVELOPES_START = 256
-    const val N163_EFFECT_ENVELOPES_START = N163_WAVE_ENVELOPES_START + 64
+    /** N163 and FDS images: slot s's wave-index envelope at directory index 256 + s − 1, effect envelopes from 320. */
+    const val WAVE_ENVELOPES_START = 256
+    const val WAVE_EFFECT_ENVELOPES_START = WAVE_ENVELOPES_START + 64
 
     private const val OP_EXTENDED_NOTE = 0x40
     private const val OP_SET_REFERENCE = 0x41
@@ -128,6 +154,10 @@ internal object FamiStudioLowering {
     private const val OP_VRC7_RELEASE_NOTE = 0x56
     private const val OP_N163_RELEASE_NOTE = 0x5a
     private const val OP_N163_PHASE_RESET = 0x5b
+    private const val OP_PHASE_RESET = 0x53
+    private const val OP_FDS_MOD_SPEED = 0x57
+    private const val OP_FDS_MOD_DEPTH = 0x58
+    private const val OP_FDS_RELEASE_NOTE = 0x59
     private const val OP_VOLUME_BITS = 0x70
     private const val SINGLE_BYTE_NOTE_MIN = 12
     private const val SINGLE_BYTE_NOTE_MAX = SINGLE_BYTE_NOTE_MIN + 0x3f
@@ -182,8 +212,10 @@ internal object FamiStudioLowering {
         val expInstrumentsAt = instrumentsAt + instrumentCount * 8
         var at = expInstrumentsAt + if (exp) instrumentCount * EXP_INSTRUMENT_SIZE else 0
         val n163 = fs.expansion.chip == NesChip.N163
-        // Envelopes: per slot in kind order (volume, arpeggio, duty, pitch), [N163: each slot's wave-index envelope,] then
-        // effect envelopes.
+        val fds = fs.expansion.chip == NesChip.FDS
+        val waves = n163 || fds
+        // Envelopes: per slot in kind order (volume, arpeggio, duty, pitch), [N163, FDS: each slot's wave-index envelope,]
+        // then effect envelopes.
         val envelopes = ArrayList<Envelope>()
         for ((slot, ins) in fs.instruments.withIndex()) {
             envelopes += Envelope(slot * 4 + Kind.VOLUME.ordinal, Kind.VOLUME, FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME))
@@ -191,11 +223,13 @@ internal object FamiStudioLowering {
             envelopes += Envelope(slot * 4 + Kind.DUTY.ordinal, Kind.DUTY, FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY))
             envelopes += Envelope(slot * 4 + Kind.PITCH.ordinal, Kind.PITCH, FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative))
         }
-        // Every slot has N163 data in an N163 image (2A03 sounds their default wave), so every expansion entry is whole.
-        val waveEnvelopes = if (!n163) emptyList() else fs.instruments.mapIndexed { slot, ins ->
-            Envelope(N163_WAVE_ENVELOPES_START + slot, Kind.WAVE, FamiStudioEnvelopes.waveIndex(ins.wave)).also { envelopes += it }
+        // Every slot has the chip's data in an N163 or FDS image (2A03 sounds their default waves), so every expansion
+        // entry is whole.
+        val waveEnvelopes = if (!waves) emptyList() else fs.instruments.mapIndexed { slot, ins ->
+            val bytes = if (fds) FamiStudioEnvelopes.waveIndex(ins.fds) else FamiStudioEnvelopes.waveIndex(ins.wave)
+            Envelope(WAVE_ENVELOPES_START + slot, Kind.WAVE, bytes).also { envelopes += it }
         }
-        var next = if (n163) N163_EFFECT_ENVELOPES_START else EFFECT_ENVELOPES_START
+        var next = if (waves) WAVE_EFFECT_ENVELOPES_START else EFFECT_ENVELOPES_START
         val noArpeggio = Envelope(next++, Kind.ARPEGGIO, FamiStudioEnvelopes.DEFAULT_ENV).also { envelopes += it }
         val vibratoOff = Envelope(next++, Kind.PITCH, FamiStudioEnvelopes.DEFAULT_PITCH_OR_RELEASE_ENV).also { envelopes += it }
         val arpeggios = LinkedHashMap<Int, Envelope>()
@@ -217,15 +251,21 @@ internal object FamiStudioLowering {
         // FamiStudio's DPCM sample list (`samples:`); the header points 4 bytes before it (entries count from 1).
         val samplesAt = at
         at += 4 * dpcm.entries.size
-        // N163 waves: each distinct wave's bytes once (`n163_instN_waves` entries point at them), then each slot's table
-        // of pointers to its stored waves (identical tables once).
+        // N163 and FDS waves: each distinct wave's bytes once (`n163_instN_waves` / `fds_instN_waves` entries point at
+        // them), then each slot's table of pointers to its stored waves (identical tables once); FDS: then each distinct
+        // modulation table (the expansion entries point at it; FamiStudio stores it among its envelopes, deduplicated).
         val waveBlobs = ArrayList<ByteArray>()
         val tableBlobs = ArrayList<ByteArray>()
+        val modBlobs = ArrayList<ByteArray>()
         val slotTables = IntArray(instrumentCount)
-        if (n163) {
-            val slotWaves = fs.instruments.map { ins -> FamiStudioEnvelopes.n163Waves(ins.wave).stored.map(FamiStudioEnvelopes::n163WaveBytes) }
+        val slotMods = IntArray(instrumentCount)
+        if (waves) {
+            val slotWaves = fs.instruments.map { ins ->
+                if (fds) FamiStudioEnvelopes.fdsWaves(ins.fds).stored.map(FamiStudioEnvelopes::fdsWaveBytes)
+                else FamiStudioEnvelopes.n163Waves(ins.wave).stored.map(FamiStudioEnvelopes::n163WaveBytes)
+            }
             val waveOffsets = HashMap<Bytes.Key, Int>()
-            for (waves in slotWaves) for (w in waves) {
+            for (stored in slotWaves) for (w in stored) {
                 val key = Bytes.Key(w)
                 if (key !in waveOffsets) {
                     waveOffsets[key] = at
@@ -234,12 +274,22 @@ internal object FamiStudioLowering {
                 }
             }
             val tables = HashMap<Bytes.Key, Int>()
-            for ((slot, waves) in slotWaves.withIndex()) {
+            for ((slot, stored) in slotWaves.withIndex()) {
                 val table = Bytes()
-                for (w in waves) table.word(base + waveOffsets.getValue(Bytes.Key(w)))
+                for (w in stored) table.word(base + waveOffsets.getValue(Bytes.Key(w)))
                 val bytes = table.toByteArray()
                 slotTables[slot] = tables.getOrPut(Bytes.Key(bytes)) {
                     tableBlobs += bytes
+                    at.also { at += bytes.size }
+                }
+            }
+        }
+        if (fds) {
+            val mods = HashMap<Bytes.Key, Int>()
+            for ((slot, ins) in fs.instruments.withIndex()) {
+                val bytes = FamiStudioEnvelopes.fdsModBytes(ins.fds)
+                slotMods[slot] = mods.getOrPut(Bytes.Key(bytes)) {
+                    modBlobs += bytes
                     at.also { at += bytes.size }
                 }
             }
@@ -303,20 +353,41 @@ internal object FamiStudioLowering {
             check(out.size == expInstrumentsAt)
             for ((slot, ins) in fs.instruments.withIndex()) {
                 for (kind in listOf(Kind.VOLUME, Kind.ARPEGGIO, Kind.PITCH)) out.word(bySlot.getValue(slot * 4 + kind.ordinal).address)
-                if (n163) {
-                    // `OutputInstruments` for an N163 instrument: the wave-index envelope, the wave position and size in
-                    // samples, the wave table, 4 zero bytes.
-                    out.word(waveEnvelopes[slot].address)
-                    out.byte(ins.wave.position)
-                    out.byte(ins.wave.size)
-                    out.word(base + slotTables[slot])
-                    repeat(4) { out.byte(0) }
-                } else {
-                    // A VRC7 instrument: the release/stop overrides ($20 / $80), the patch number << 4 and the custom
-                    // patch's 8 registers.
-                    out.byte((if (ins.fm.sustainRelease) 0x20 else 0) or (if (ins.fm.sustainStop) 0x80 else 0))
-                    out.byte(ins.fm.preset shl 4)
-                    for (r in ins.fm.regs) out.byte(r)
+                when {
+                    n163 -> {
+                        // `OutputInstruments` for an N163 instrument: the wave-index envelope, the wave position and size
+                        // in samples, the wave table, 4 zero bytes.
+                        out.word(waveEnvelopes[slot].address)
+                        out.byte(ins.wave.position)
+                        out.byte(ins.wave.size)
+                        out.word(base + slotTables[slot])
+                        repeat(4) { out.byte(0) }
+                    }
+                    fds -> {
+                        // `OutputInstruments` for an FDS instrument: the wave-index envelope, (mod depth << 2) | master
+                        // volume, the wave table, the modulation table, then the mod speed word or, with auto-mod, $80 |
+                        // numerator and the denominator (reduced: `Utils.SimplifyFraction`), and the mod delay.
+                        val f = ins.fds
+                        out.word(waveEnvelopes[slot].address)
+                        out.byte((f.modDepth shl 2) or f.masterVolume.register)
+                        out.word(base + slotTables[slot])
+                        out.word(base + slotMods[slot])
+                        if (f.autoMod) {
+                            val (numer, denom) = f.autoModFraction
+                            out.byte(0x80 or numer)
+                            out.byte(denom)
+                        } else {
+                            out.word(f.modSpeed)
+                        }
+                        out.byte(f.modDelay)
+                    }
+                    else -> {
+                        // A VRC7 instrument: the release/stop overrides ($20 / $80), the patch number << 4 and the
+                        // custom patch's 8 registers.
+                        out.byte((if (ins.fm.sustainRelease) 0x20 else 0) or (if (ins.fm.sustainStop) 0x80 else 0))
+                        out.byte(ins.fm.preset shl 4)
+                        for (r in ins.fm.regs) out.byte(r)
+                    }
                 }
             }
         }
@@ -325,6 +396,7 @@ internal object FamiStudioLowering {
         for (e in dpcm.entries) for (b in dpcm.entryBytes(e)) out.byte(b)
         for (w in waveBlobs) out.bytes(w)
         for (t in tableBlobs) out.bytes(t)
+        for (m in modBlobs) out.bytes(m)
         for (c in 0 until channels) {
             check(out.size == channelAt[c])
             for (o in 0 until fs.orders) {
@@ -417,10 +489,27 @@ internal object FamiStudioLowering {
         }
 
         fun channel(c: Int): List<Chunk> {
+            if (!NesRules.isFds(fs.expansion, c)) return channel(c, null).chunks
+            // The loop order is also entered from the song's end: the first pass finds the FDS mod overrides in force
+            // there, the second uses them (the end state does not depend on the loop order's re-send choice).
+            return channel(c, channel(c, null).end).chunks
+        }
+
+        /**
+         * FDS mod speed and depth overrides the engine holds (`$57`/`$58` values since the last instrument load; -1:
+         * the loaded sound's own).
+         */
+        private data class FdsHeld(val speed: Int, val depth: Int)
+
+        private class Pass(val chunks: List<Chunk>, val end: FdsHeld)
+
+        /** One pass over channel [c]; [loopEntry] = the FDS overrides in force when the song loops back, if known. */
+        private fun channel(c: Int, loopEntry: FdsHeld?): Pass {
             val isSpeedChannel = c == speedChannel
             val isSaw = NesRules.isVrc6Saw(fs.expansion, c)
             val isVrc7 = NesRules.isVrc7(fs.expansion, c)
             val isN163 = NesRules.isN163(fs.expansion, c)
+            val isFds = NesRules.isFds(fs.expansion, c)
             var currentSpeed = fs.speed
             var instrument = 0
             var arpeggio = -1
@@ -428,6 +517,12 @@ internal object FamiStudioLowering {
             var sawVolume = Vrc6SawVolume.HALF
             var lastVolume = 15
             var vibratoOverride = false
+            // FamiStudio's `OverrideFlags.FdsModSpeed/FdsModDepth`: set by an H/I/J row, cleared by the attack that re-binds.
+            var speedOverride = false
+            var depthOverride = false
+            // What the engine holds from the linear predecessor, and (in the loop order) from the song's end.
+            var held = FdsHeld(-1, -1)
+            var heldFromEnd: FdsHeld? = null
             // Volume the engine holds (null while a volume slide may still be moving), for re-sending per order.
             var heldVolume: Int? = 15
             var firstInLoop = 0
@@ -445,6 +540,7 @@ internal object FamiStudioLowering {
                 val b = Bytes()
                 var notes = 0
                 var instrumentSent = false
+                heldFromEnd = if (o == fs.loopOrder) loopEntry else null
                 if (o == fs.loopOrder) {
                     if (lastInLoop != firstInLoop) instrument = 0
                     lastVolume = -1
@@ -500,8 +596,9 @@ internal object FamiStudioLowering {
                             vibratoOverride = true
                         }
                     }
-                    // FamiStudio writes the phase reset after the vibrato and before the arpeggio (N163: its own opcode).
-                    if (note.phaseReset) b.byte(OP_N163_PHASE_RESET)
+                    // FamiStudio writes the phase reset after the vibrato and before the arpeggio (N163: its own opcode;
+                    // FDS: the generic one).
+                    if (note.phaseReset) b.byte(if (isN163) OP_N163_PHASE_RESET else OP_PHASE_RESET)
                     if (note.isMusical) {
                         if (note.arpeggio != arpeggio) {
                             b.byte(OP_OVERRIDE_ARP_ENV)
@@ -521,6 +618,20 @@ internal object FamiStudioLowering {
                     if (note.duty >= 0) {
                         b.byte(OP_DUTY); b.byte(note.duty)
                     }
+                    // FDS mod speed and depth (`FdsModSpeed`, `FdsModDepth`): the engine keeps them over the sound's
+                    // until it loads an instrument in a row without them.
+                    if (note.fdsModSpeed >= 0) {
+                        b.byte(OP_FDS_MOD_SPEED); b.word(note.fdsModSpeed)
+                        speedOverride = true
+                        held = held.copy(speed = note.fdsModSpeed)
+                        heldFromEnd = heldFromEnd?.copy(speed = note.fdsModSpeed)
+                    }
+                    if (note.fdsModDepth >= 0) {
+                        b.byte(OP_FDS_MOD_DEPTH); b.byte(note.fdsModDepth)
+                        depthOverride = true
+                        held = held.copy(depth = note.fdsModDepth)
+                        heldFromEnd = heldFromEnd?.copy(depth = note.fdsModDepth)
+                    }
                     if (note.cutDelay >= 0) {
                         b.byte(OP_DELAYED_CUT); b.byte(note.cutDelay)
                     }
@@ -528,21 +639,50 @@ internal object FamiStudioLowering {
                         if (note.isMusical && note.instrument != 0) {
                             val attack = note.attack || !canDisableAttack(c, instrument, note.instrument)
                             if (!attack) b.byte(OP_DISABLE_ATTACK)
-                            else if (!frameVibrato && vibratoOverride) {
-                                vibratoOverride = false
-                                instrument = 0
+                            else {
+                                // FamiStudio re-binds the instrument on an attack after an FDS mod speed or depth override
+                                // that this row does not repeat, and after vibrato, so the sound's own values return.
+                                if (note.fdsModSpeed < 0 && speedOverride) {
+                                    speedOverride = false
+                                    instrument = 0
+                                }
+                                if (note.fdsModDepth < 0 && depthOverride) {
+                                    depthOverride = false
+                                    instrument = 0
+                                }
+                                if (!frameVibrato && vibratoOverride) {
+                                    vibratoOverride = false
+                                    instrument = 0
+                                }
                             }
                             if (note.instrument != instrument || !instrumentSent) {
-                                // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
-                                // also sends it with its first instrument, so the order is self-contained.
-                                val volume = fs.instruments[note.instrument - 1].sawVolume
-                                if (isSaw && (volume != sawVolume || !instrumentSent)) {
-                                    b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
-                                    sawVolume = volume
+                                // Only this order's own re-send (FamiStudio sends nothing here): on the FDS a legato note
+                                // keeps the overrides in force, so they go first; in the loop order, entered both from
+                                // its predecessor and from the song's end, the re-send is left out when they differ.
+                                val resend = isFds && note.instrument == instrument && !attack
+                                val keep = resend && (held.speed >= 0 && note.fdsModSpeed < 0 || held.depth >= 0 && note.fdsModDepth < 0)
+                                if (resend && heldFromEnd != null && heldFromEnd != held) {
+                                    instrumentSent = true
+                                } else {
+                                    if (keep) {
+                                        if (held.speed >= 0 && note.fdsModSpeed < 0) { b.byte(OP_FDS_MOD_SPEED); b.word(held.speed) }
+                                        if (held.depth >= 0 && note.fdsModDepth < 0) { b.byte(OP_FDS_MOD_DEPTH); b.byte(held.depth) }
+                                    } else if (isFds) {
+                                        // The load restores the sound's speed and depth where this row sets none.
+                                        held = FdsHeld(if (note.fdsModSpeed >= 0) held.speed else -1, if (note.fdsModDepth >= 0) held.depth else -1)
+                                        heldFromEnd = heldFromEnd?.let { held }
+                                    }
+                                    // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
+                                    // also sends it with its first instrument, so the order is self-contained.
+                                    val volume = fs.instruments[note.instrument - 1].sawVolume
+                                    if (isSaw && (volume != sawVolume || !instrumentSent)) {
+                                        b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
+                                        sawVolume = volume
+                                    }
+                                    b.byte(0x80 or ((note.instrument - 1) shl 1))
+                                    instrument = note.instrument
+                                    instrumentSent = true
                                 }
-                                b.byte(0x80 or ((note.instrument - 1) shl 1))
-                                instrument = note.instrument
-                                instrumentSent = true
                             }
                         }
                         var emittedSlide = false
@@ -555,12 +695,13 @@ internal object FamiStudioLowering {
                         }
                         if (!emittedSlide) {
                             when {
-                                // VRC7 and N163 channels release with their own opcodes (VRC7: key off, then the volume
-                                // envelope's release; N163: the volume and the wave-index envelopes' releases).
+                                // VRC7, N163 and FDS channels release with their own opcodes (VRC7: key off, then the
+                                // volume envelope's release; N163, FDS: the volume and the wave-index envelopes' releases).
                                 note.value == FsNote.RELEASE -> b.byte(
                                     when {
                                         isVrc7 -> OP_VRC7_RELEASE_NOTE
                                         isN163 -> OP_N163_RELEASE_NOTE
+                                        isFds -> OP_FDS_RELEASE_NOTE
                                         else -> OP_RELEASE_NOTE
                                     }
                                 )
@@ -586,13 +727,16 @@ internal object FamiStudioLowering {
                 }
                 chunks += Chunk(b.toByteArray(), notes)
             }
-            return chunks
+            return Pass(chunks, held)
         }
 
         /** Address of instrument [slot]'s own arpeggio envelope (what a note without 0xy returns to). */
         private fun instrumentArpeggio(slot: Int): Int = instrumentArpeggios[slot - 1]
 
-        /** `Channel.CanDisableAttack`: on the N163's channels only the same instrument continues without an attack. */
+        /**
+         * `Channel.CanDisableAttack`: on the N163's channels only the same instrument continues without an attack; elsewhere
+         * (the FDS too) instruments whose envelopes are all identical ([FamiStudioEnvelopes.allIdentical]).
+         */
         private fun canDisableAttack(c: Int, i1: Int, i2: Int): Boolean = when {
             i1 == 0 || i2 == 0 -> false
             i1 == i2 -> true
@@ -658,6 +802,8 @@ internal object FamiStudioLowering {
             val table = when {
                 vrc7 -> NOTE_TABLE_VRC7
                 n163 -> (if (pal) N163NoteTables.PAL else N163NoteTables.NTSC)[fs.expansion.n163Channels - 1]
+                // The FDS: its own frequency table (FamiStudio's `NesApu.GetNoteTableForChannelType`), one fraction bit.
+                NesRules.isFds(fs.expansion, c) -> if (pal) NOTE_TABLE_FDS_PAL else NOTE_TABLE_FDS
                 NesRules.isVrc6Saw(fs.expansion, c) -> if (pal) NOTE_TABLE_SAW_PAL else NOTE_TABLE_SAW
                 pal -> NOTE_TABLE_PAL
                 else -> NOTE_TABLE

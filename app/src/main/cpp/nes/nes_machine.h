@@ -1,8 +1,8 @@
 /* One emulated NTSC NES (6502 core m6502.h with BCD disabled + the 2A03 APU in nes_apu.c, + the Konami
- * VRC6 audio in nes_vrc6.c for the VRC6 build, or the Namco 163 audio in nes_n163.c for the N163 builds) running
- * a pinned FamiStudio sound engine 4.5.3 player build in FamiTracker tempo (nes_player.h: nes_player_2a03,
- * nes_player_vrc6 or nes_player_n163[n - 1], fixed at nm_create). Only the build's own expansion unit is reset,
- * clocked and mixed.
+ * VRC6 audio in nes_vrc6.c for the VRC6 build, the Namco 163 audio in nes_n163.c for the N163 builds, or the
+ * Famicom Disk System audio in nes_fds.c for the FDS build) running a pinned FamiStudio sound engine 4.5.3 player
+ * build in FamiTracker tempo (nes_player.h: nes_player_2a03, nes_player_vrc6, nes_player_n163[n - 1] or
+ * nes_player_fds, fixed at nm_create). Only the build's own expansion unit is reset, clocked and mixed.
  *
  * CPU address space:
  *   $0000-$07FF  RAM (mirrored to $1FFF): engine zero page/variables, stack, audition streams at
@@ -16,6 +16,8 @@
  *   $4800-$4FFF  N163 builds: the N163 data port (writes and reads of its sound RAM, timestamped)
  *   $E000-$E7FF, $F800-$FFFF  N163 builds: the sound disable bit (bit 6) and the N163 address port (writes,
  *                timestamped); reads there return the ROM
+ *   $4040-$408A  FDS build: FDS sound register writes (timestamped); $4040-$407F and $4090-$4097 reads return
+ *                the FDS unit's wave RAM / state (nes_fds.h)
  *   $FFFA-$FFFF  vectors -> the player's trap entry (an interrupt or BRK is a driver fault)
  * Everything else reads 0 and ignores writes.
  *
@@ -61,8 +63,8 @@ enum {
     NM_SEEK_FROM_ORDER = 1, /* budget exceeded: streams placed at the order start, its earlier rows replayed */
 };
 
-/* A machine for one player build (nes_player_2a03 / nes_player_vrc6 / nes_player_n163[n - 1]); NULL for an
- * unsupported rate. */
+/* A machine for one player build (nes_player_2a03 / nes_player_vrc6 / nes_player_n163[n - 1] / nes_player_fds);
+ * NULL for an unsupported rate. */
 NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player);
 void nm_destroy(NesMachine* m);
 
@@ -82,7 +84,13 @@ int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_t
  * still an instruction start; instrument table, DPCM list, tempo and a changed order-start speed are
  * re-read. N163: the expansion instrument table is re-read too, and an N163 channel whose current
  * instrument's wave changed (position, size or wave bytes, by content) re-uploads it at the engine's next
- * update (its wave index is set to $FF); N163 RAM and phases are untouched. Otherwise the region is copied
+ * update (its wave index is set to $FF); N163 RAM and phases are untouched. FDS: the expansion instrument table is
+ * re-read too; for the FDS channel's current sound (famistudio_chn_fds_instrument), changed master volume, wave
+ * count or wave bytes (by content) re-upload at the next update (famistudio_fds_wave_index = $FF); a mod table whose
+ * bytes changed is written to the chip now as the engine does on loading a sound ($4087 = $80, $4084 = $80,
+ * $4085 = 0, 32 x $4088) and famistudio_fds_mod_envelope follows the new table (a moved but identical table only
+ * moves the pointer); the mod speed or auto-mod fraction, depth and delay take the new sound's values where the
+ * engine's equal the old sound's own (no `$57` / `$58` override in effect). Otherwise the region is copied
  * (correct only when no data moved). Either way a sample the DMC is playing continues if its bytes are
  * unchanged in place, continues at the same position of an identical sample of the new DPCM list if it
  * moved, and stops otherwise. Ignored while faulted or auditioning. */
@@ -90,21 +98,21 @@ void nm_apply_image(NesMachine* m, const NesImage* image);
 
 /* Resets the machine to sound one held note through the engine with a one-note stream in RAM, using
  * the image's instruments and DPCM list (Thor layout). Tonal channels (0..3; VRC6 build also 5..7, N163
- * builds 5..4+n): engine note 1..96 (absolute - 11), instrument table index, fine pitch -128..127 (period
- * offset, +lowers; N163: frequency offset, +raises; channels with a pitch envelope: 0..2 and the expansion
- * channels). Channel 4 (DPCM): `note` = DPCM list entry 1..mappings (the stream's note byte); instrument and
- * fine are ignored. */
+ * builds 5..4+n, FDS build 5): engine note 1..96 (absolute - 11), instrument table index, fine pitch -128..127
+ * (period offset, +lowers; N163 and FDS: frequency offset, +raises; channels with a pitch envelope: 0..2 and the
+ * expansion channels). Channel 4 (DPCM): `note` = DPCM list entry 1..mappings (the stream's note byte);
+ * instrument and fine are ignored. */
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine);
 
 /* Key-off of an audition: with a volume release point the engine releases the note (returns 1;
  * nm_tick returns 0 once the release tail has reached its final loop); otherwise, and always on the
- * DPCM channel, 0 (cut now: the host drops the machine). N163 channels release with `$5A` (the volume and
- * wave-index envelopes jump to their release points): with a volume release point the tail ends at the
- * volume envelope's final loop, else with a wave-index release point at that envelope's final loop. */
+ * DPCM channel, 0 (cut now: the host drops the machine). N163 channels release with `$5A`, the FDS channel with
+ * `$59` (the volume and wave-index envelopes jump to their release points): with a volume release point the tail
+ * ends at the volume envelope's final loop, else with a wave-index release point at that envelope's final loop. */
 int nm_release(NesMachine* m);
 
-/* Forces channel (0..4; VRC6 build 0..7, N163 builds 0..4+n) silent in the mixer (state keeps running, so
- * unmuting resumes mid-note). */
+/* Forces channel (0..4; VRC6 build 0..7, N163 builds 0..4+n, FDS build 0..5) silent in the mixer (state keeps
+ * running, so unmuting resumes mid-note). */
 int nm_mute_channel(NesMachine* m, int channel, int muted);
 
 /* Order/row/frame-in-row the next tick plays, from engine state (tick 0 = the next tick starts the
@@ -122,21 +130,22 @@ uint64_t nm_driver_cycles(const NesMachine* m);    /* CPU cycles inside player c
 uint32_t nm_last_call_cycles(const NesMachine* m); /* cycles of the last player call */
 uint32_t nm_frames(const NesMachine* m);           /* ticks since start (incl. seek) */
 void nm_set_apu_logging(NesMachine* m, int enabled);
-/* (address low byte, value) pairs of the APU ($40xx) writes since the last log call, at most `capacity`
+/* (address low byte, value) pairs of the APU ($4000-$4017) writes since the last log call, at most `capacity`
  * pairs. Both log calls drain the log. */
 int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity);
-/* (address low, address high, value) triples of every sound write (APU, VRC6 and N163 ports) since the last log
- * call, at most `capacity`. */
+/* (address low, address high, value) triples of every sound write (APU, VRC6, N163 ports and FDS registers, the
+ * latter including nm_apply_image's mod table writes) since the last log call, at most `capacity`. */
 int nm_write_log(NesMachine* m, uint8_t* triples, int capacity);
 uint8_t nm_peek(NesMachine* m, uint16_t addr);
 void nm_poke(NesMachine* m, uint16_t addr, uint8_t value); /* RAM/PRG, for fault tests */
 /* Calls a routine with A, returning NM_OK or NM_ERR_FAULT (test hook). */
 int nm_call(NesMachine* m, uint16_t addr, uint8_t a);
-/* The APU, the VRC6 and N163 units (tests read channel periods, levels, N163 RAM and phases; only the machine's
- * own build's unit is in use), and the machine's player. */
+/* The APU, the VRC6, N163 and FDS units (tests read channel periods, levels, N163 RAM and phases, FDS state; only
+ * the machine's own build's unit is in use), and the machine's player. */
 const struct NesApu* nm_apu(const NesMachine* m);
 const struct NesVrc6* nm_vrc6(const NesMachine* m);
 const struct NesN163* nm_n163(const NesMachine* m);
+const struct NesFds* nm_fds(const NesMachine* m);
 const NesPlayer* nm_player(const NesMachine* m);
 
 #ifdef __cplusplus

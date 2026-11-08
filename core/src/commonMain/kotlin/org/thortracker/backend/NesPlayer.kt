@@ -5,8 +5,8 @@ import org.thortracker.system.nes.NesRules
 
 /**
  * One build of the NES preview player (FamiStudio sound engine 4.5.3, FamiTracker tempo): the plain 2A03 build
- * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage], the eight
- * N163 builds [NesN163PlayerImage1]..[NesN163PlayerImage8]). Each has its own native engine ([engineId]), player bytes
+ * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage], [NesFdsPlayerImage],
+ * the eight N163 builds [NesN163PlayerImage1]..[NesN163PlayerImage8]). Each has its own native engine ([engineId]), player bytes
  * and song region (the region starts on the page after the player, so a larger player leaves less room); the image
  * layout numbers all share stay in [NesPlayerImage].
  */
@@ -25,11 +25,15 @@ class NesPlayer private constructor(
     val imageSize: Int,
     /** Channel streams in the song header: the 2A03's five plus the expansion's. */
     val channels: Int,
-    /** NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 4 = Namco 163). */
+    /**
+     * NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 2 = FDS, bit 4 = Namco
+     * 163; FamiStudio's `NsfFile`).
+     */
     val nsfChips: Int,
     /**
      * The song header holds FamiStudio's expansion instrument pointer (`instruments_exp`, after `instruments`) and the
-     * expansion's channels load their instruments from that table (FDS, N163, VRC7, EPSM and S5B builds: VRC7, N163 here).
+     * expansion's channels load their instruments from that table (FDS, N163, VRC7, EPSM and S5B builds: VRC7, N163 and
+     * FDS here).
      */
     val expInstruments: Boolean,
     private val code: () -> ByteArray,
@@ -57,6 +61,17 @@ class NesPlayer private constructor(
             NesVrc7PlayerImage.PLAYER_ID, NesVrc7PlayerImage.IMAGE_SIZE, NesVrc7PlayerImage.CHANNELS, nsfChips = 0x02,
             expInstruments = true,
         ) { NesVrc7PlayerImage.BYTES }
+
+        /**
+         * The FDS build (`FAMISTUDIO_EXP_FDS` with `FAMISTUDIO_USE_FDS_AUTOMOD`, as FamiStudio's own NSF kernel `nsf.s`):
+         * the 2A03's five channels and the FDS as channel 5.
+         */
+        val FDS = NesPlayer(
+            "nes-famistudio-fds", NesFdsPlayerImage.LOAD, NesFdsPlayerImage.INIT, NesFdsPlayerImage.PLAY,
+            NesFdsPlayerImage.SONG_BASE, NesFdsPlayerImage.REGION_END, NesFdsPlayerImage.REGION_SIZE,
+            NesFdsPlayerImage.PLAYER_ID, NesFdsPlayerImage.IMAGE_SIZE, NesFdsPlayerImage.CHANNELS, nsfChips = 0x04,
+            expInstruments = true,
+        ) { NesFdsPlayerImage.BYTES }
 
         /** The N163 builds, index n − 1 for n enabled channels (`FAMISTUDIO_EXP_N163_CHN_CNT` = n). */
         val N163: List<NesPlayer> = listOf(
@@ -101,5 +116,6 @@ val NesExpansion.player: NesPlayer
         NesExpansion.NONE -> NesPlayer.APU
         NesExpansion.VRC6 -> NesPlayer.VRC6
         NesExpansion.VRC7 -> NesPlayer.VRC7
+        NesExpansion.FDS -> NesPlayer.FDS
         else -> NesPlayer.N163[n163Channels - 1]
     }

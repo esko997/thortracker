@@ -91,9 +91,15 @@ object NesRules {
         return if (top < 0) NOTE_COUNT else top - 1
     }
 
-    /** The highest absolute note [channel] plays: below the N163's saturated note table, B-8 elsewhere. */
-    fun highestNote(expansion: NesExpansion, channel: Int): Int =
-        (if (isN163(expansion, channel)) n163HighestFsNote(expansion.n163Channels) else NOTE_COUNT) + NOTE_OFFSET
+    /**
+     * The highest absolute note [channel] plays: below the N163's saturated note table, G#6 on the FDS (its engine note
+     * [FDS_HIGHEST_FS_NOTE] minus [FDS_TRANSPOSE]), B-8 elsewhere.
+     */
+    fun highestNote(expansion: NesExpansion, channel: Int): Int = when {
+        isN163(expansion, channel) -> n163HighestFsNote(expansion.n163Channels)
+        isFds(expansion, channel) -> FDS_HIGHEST_FS_NOTE - FDS_TRANSPOSE
+        else -> NOTE_COUNT
+    } + NOTE_OFFSET
 
     /**
      * FamiStudio's fine pitch on an N163 channel for a Pxx of [fine] (xx − 80, positive = up) on FamiStudio note [fsNote]
@@ -109,6 +115,70 @@ object NesRules {
         val f = org.thortracker.backend.N163NoteTables.NTSC[channels - 1][n].toDouble()
         val step = (1 shl n163PitchShift(channels)).toDouble()
         return kotlin.math.round(f * (ratio - 1.0) / step).toInt().coerceIn(-127, 127)
+    }
+
+    /** The FDS channel of an FDS song (the 2C33's one wavetable channel follows the 2A03's five). */
+    const val FDS = 5
+
+    /**
+     * The highest FamiStudio engine note the FDS channel plays: 93 (FamiStudio's A-8). FamiStudio's FDS note table holds
+     * frequency = f × 2^20 / CPU (`NesApu.GetOrCreateNoteTableSet`: f × 65536 / (CPU / 16) + 0.5); from note 94 (4125)
+     * on it exceeds the chip's 12-bit frequency (`$4082`/`$4083`, NESdev "FDS audio": `$4083` takes only bits 8-11), so
+     * the engine's write would keep the low nibble and play a low note instead.
+     */
+    const val FDS_HIGHEST_FS_NOTE = 93
+
+    /**
+     * Semitones the FDS channel plays FamiStudio's note above the absolute note. The chip steps through its 64-sample
+     * wave once per 2^22 / (CPU × frequency) seconds (NESdev "FDS audio": wave_pitch = 64 × frequency unmodulated, one
+     * step per 2^18 of the accumulator, a step every 16 CPU cycles; FamiStudio's register viewer: CPU × frequency /
+     * 4194304 Hz), while FamiStudio's table is f × 2^20 / CPU: its note n sounds two octaves below the 2A03's note n with
+     * a one-cycle wave. Thor Tracker's notes are true pitch (A-4 = 440 Hz on every channel but the 2A03 triangle), so
+     * the FDS plays FamiStudio's note 24 higher: one cycle per wave sounds as named, 2 cycles an octave up, 4 two octaves
+     * up. A-4 (57) is engine note 70: frequency 1031, 439.9 Hz.
+     */
+    const val FDS_TRANSPOSE = 24
+
+    /** True for the FDS channel of an FDS song. */
+    fun isFds(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.FDS && ch == FDS
+
+    /**
+     * Semitones [channel] plays FamiStudio's note above the absolute note's 2A03 FamiStudio note ([fsNote]), so every
+     * channel sounds at true pitch: [FDS_TRANSPOSE] on the FDS, 0 elsewhere.
+     */
+    fun engineNoteShift(expansion: NesExpansion, channel: Int): Int = if (isFds(expansion, channel)) FDS_TRANSPOSE else 0
+
+    /** FamiStudio's engine note for absolute [note] on [channel]: [fsNote] plus [engineNoteShift]. */
+    fun engineNote(expansion: NesExpansion, channel: Int, note: Int): Int = fsNote(note) + engineNoteShift(expansion, channel)
+
+    /** FamiStudio engine note [fsNote]'s FDS frequency value (0..96, `famistudio_fds_note_table_lsb/msb.bin`). */
+    fun fdsFrequency(fsNote: Int): Int = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE_FDS[fsNote.coerceIn(0, NOTE_COUNT)]
+
+    /**
+     * True when auto-mod overflows on FamiStudio engine note [fsNote] with the reduced numerator [numer]: the engine
+     * multiplies the 16-bit frequency by the numerator in 16 bits (`famistudio_mul`), silently dropping everything from
+     * 65536 up, before dividing by the denominator, so the mod speed comes out far too low.
+     */
+    fun fdsAutoModOverflows(fsNote: Int, numer: Int): Boolean = fdsFrequency(fsNote).toLong() * numer >= 65536
+
+    /** The lowest absolute note whose auto-mod overflows with the reduced numerator [numer], or null up to G#6. */
+    fun fdsLowestOverflowingNote(numer: Int): Int? =
+        (1 + FDS_TRANSPOSE..FDS_HIGHEST_FS_NOTE).firstOrNull { fdsAutoModOverflows(it, numer) }?.let { it - FDS_TRANSPOSE + NOTE_OFFSET }
+
+    /**
+     * FamiStudio's fine pitch on the FDS channel for a Pxx of [fine] (xx − 80, positive = up) on the note whose 2A03
+     * FamiStudio note is [pulseFsNote] ([fsNote] of the absolute note): the engine adds it to the FDS frequency of the
+     * engine note ([FDS_TRANSPOSE] higher; `Channel.GetShiftsForType`: no pitch shift on the FDS; positive = up), so the
+     * step nearest the pitch [fine] period units give a pulse on that note, within −127..127 (as for the N163 and the
+     * VRC7).
+     */
+    fun fdsFinePitch(pulseFsNote: Int, fine: Int): Int {
+        if (fine == 0) return 0
+        val n = pulseFsNote.coerceIn(1, NOTE_COUNT)
+        val p = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[n] + 1.0
+        if (fine >= p) return 127
+        val ratio = p / (p - fine)
+        return kotlin.math.round(fdsFrequency(n + FDS_TRANSPOSE) * (ratio - 1.0)).toInt().coerceIn(-127, 127)
     }
 
     /** Channel [ch]'s name in a song with [expansion]. */
@@ -137,6 +207,14 @@ object NesRules {
     const val FX_VOLUME = 12 // C
     const val FX_SPEED = 15 // F
     const val FX_NOTE_DELAY = 16 // G
+
+    /**
+     * FDS only: FamiTracker's FDS letters (`FamitrackerBaseFile`: H = `FdsModDepth`, I = `FdsModSpeed` bits 8-11, J =
+     * bits 0-7), FamiStudio's `FdsModDepth` and `FdsModSpeed` note attributes (opcodes `$58`, `$57`).
+     */
+    const val FX_FDS_MOD_DEPTH = 17 // H
+    const val FX_FDS_MOD_SPEED_HI = 18 // I
+    const val FX_FDS_MOD_SPEED_LO = 19 // J
     const val FX_FINE_PITCH = 25 // P
     const val FX_SLIDE_UP = 26 // Q
     const val FX_SLIDE_DOWN = 27 // R
@@ -218,20 +296,74 @@ object NesRules {
             "raises it); the N163 plays the nearest of its frequency steps (coarse at low notes, coarser with more channels). " +
             "Tuned notes use it.", true)
 
+    /**
+     * Fine pitch on the FDS channel: the engine adds FamiStudio's fine pitch to the note's 12-bit frequency (no pitch
+     * shift), so a cell's Pxx is converted ([fdsFinePitch]) to the step nearest the detune the same Pxx gives a 2A03
+     * pulse on that note, as on the N163 (coarse low down: one step is a semitone or more below C-3).
+     */
+    private val FDS_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
+        "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
+            "raises it); the FDS plays the nearest of its frequency steps (coarse at low notes). Tuned notes use it.", true)
+
+    /**
+     * The FDS's own effects (FamiStudio's `Channel.SupportsEffect`: `FdsModDepth`, `FdsModSpeed` and `PhaseReset` on
+     * `FdsWave`), FDS channel only. The engine keeps an H/I/J value until the next attacked note without one: FamiStudio's
+     * exporter then sends the instrument again (`FamitoneMusicFile.GetSongData`, the `OverrideFlags.FdsModSpeed/Depth`
+     * re-bind), which reloads the sound's own depth and speed. With auto-mod the engine computes the speed from the
+     * pitch every frame (`famistudio_update_fds_channel_sound`), so Ixx/Jxx then change nothing.
+     */
+    private val FDS_EFFECTS = listOf(
+        EffectSpec(FX_FDS_MOD_DEPTH, "Mod depth", "xx: 00-3F",
+            "FDS only. Modulation depth from this row on (how far the mod table bends the pitch; H00 = no modulation), " +
+                "instead of the sound's. The next note with an attack and without Hxx returns to its sound's depth.", true),
+        EffectSpec(FX_FDS_MOD_SPEED_HI, "Mod speed high", "xx: 00-0F",
+            "FDS only. The 12-bit modulation speed's high digit from this row on (speed = xx × 256 + its low part, the " +
+                "sound's Mod speed or the last Jxx). The next note with an attack and without Ixx/Jxx returns to its sound's " +
+                "speed. No effect while an auto-mod sound plays.", true),
+        EffectSpec(FX_FDS_MOD_SPEED_LO, "Mod speed low", "xx: 00-FF",
+            "FDS only. The 12-bit modulation speed's low byte from this row on (speed = its high digit, the sound's Mod " +
+                "speed or the last Ixx, × 256 + xx). The next note with an attack and without Ixx/Jxx returns to its sound's " +
+                "speed. No effect while an auto-mod sound plays.", true),
+    )
+    private val FDS_EFFECT_CODES = FDS_EFFECTS.map { it.code }.toSet()
+
+    /** The phase reset on the FDS: FamiStudio's generic opcode `$53` (bit 7 of the frequency's high register). */
+    private val FDS_PHASE_RESET = EffectSpec(FX_PHASE_RESET, "Phase reset", "00",
+        "FDS only. Restart the channel's wave from its first sample on this row (FamiStudio's phase reset: the frequency " +
+            "register's reset bit is pulsed after the frame's update), with or without a note.", true)
+
+    /**
+     * The effects every other NES variant knows ([EFFECTS]; the phase reset is offered with the N163 only, see [effects]),
+     * and the FDS's: [EFFECTS] with the FDS's phase reset plus H, I and J, in code order. Effect codes mean different
+     * things on different expansions, so lookups take the song's expansion.
+     */
+    private val FDS_ALL = (EFFECTS.map { if (it.code == FX_PHASE_RESET) FDS_PHASE_RESET else it } + FDS_EFFECTS).sortedBy { it.code }
+
     private val BY_CODE = EFFECTS.associateBy { it.code }
+    private val FDS_BY_CODE = FDS_ALL.associateBy { it.code }
 
-    fun effect(code: Int): EffectSpec? = BY_CODE[code]
+    /** The effect [code] names in songs with [expansion], or null when it names none there. */
+    fun effect(expansion: NesExpansion, code: Int): EffectSpec? = (if (expansion == NesExpansion.FDS) FDS_BY_CODE else BY_CODE)[code]
 
-    /** The effects songs with [expansion] may use: the phase reset exists only with the N163 (its own opcode `$5B`). */
-    fun effects(expansion: NesExpansion): List<EffectSpec> =
-        if (expansion.chip == NesChip.N163) EFFECTS else EFFECTS_WITHOUT_PHASE_RESET
+    /**
+     * The effects songs with [expansion] may use: the phase reset exists only with the N163 (its own opcode `$5B`) and
+     * the FDS (`$53`), H, I and J only with the FDS.
+     */
+    fun effects(expansion: NesExpansion): List<EffectSpec> = when {
+        expansion.chip == NesChip.N163 -> EFFECTS
+        expansion == NesExpansion.FDS -> FDS_ALL
+        else -> EFFECTS_WITHOUT_PHASE_RESET
+    }
 
     private val EFFECTS_WITHOUT_PHASE_RESET = EFFECTS.filter { it.code != FX_PHASE_RESET }
 
     /** The chip whose instruments [channel] plays in a song with [expansion]. */
     fun chip(expansion: NesExpansion, channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else expansion.chip
 
-    /** True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw, the VRC7's FM and the N163's channels). */
+    /**
+     * True for the channels whose notes are pitches (pulses, triangle, the VRC6 saw, the VRC7's FM, the N163's channels
+     * and the FDS).
+     */
     fun pitched(expansion: NesExpansion, channel: Int): Boolean = kind(expansion, channel).let {
         it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW || it == ChannelKind.VOICE ||
             it == ChannelKind.WAVE
@@ -247,9 +379,10 @@ object NesRules {
 
     /**
      * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, duty on the VRC6
-     * saw and the VRC7's FM channels, duty on the N163's channels, everything but speed, delay, cut and the DMC level on
-     * DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, and the phase reset off the N163 (the only
-     * channels whose phase reset FamiStudio's text and this player share: opcode `$5B`).
+     * saw and the VRC7's FM channels, duty on the N163's channels and the FDS, everything but speed, delay, cut and the
+     * DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, the phase reset off the N163's
+     * channels and the FDS (the only channels whose phase reset FamiStudio's text and this player share: opcodes `$5B`,
+     * `$53`), and H, I and J off the FDS.
      */
     private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when (kind(expansion, channel)) {
         ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER, FX_PHASE_RESET)
@@ -258,15 +391,16 @@ object NesRules {
         ChannelKind.SAW, ChannelKind.VOICE -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
         ChannelKind.WAVE -> setOf(FX_DUTY, FX_DELTA_COUNTER)
         else -> setOf(FX_DELTA_COUNTER, FX_PHASE_RESET)
-    }
+    } + if (isFds(expansion, channel)) emptySet() else FDS_EFFECT_CODES
 
     fun effectsFor(expansion: NesExpansion, channel: Int): List<EffectSpec> = unusable(expansion, channel).let { no ->
         val chip = chip(expansion, channel)
-        EFFECTS.filter { it.code !in no }.map {
+        effects(expansion).filter { it.code !in no }.map {
             when {
                 it.code == FX_DUTY && chip == NesChip.VRC6 -> VRC6_DUTY
                 it.code == FX_FINE_PITCH && chip == NesChip.VRC7 -> VRC7_FINE
                 it.code == FX_FINE_PITCH && chip == NesChip.N163 -> N163_FINE
+                it.code == FX_FINE_PITCH && chip == NesChip.FDS -> FDS_FINE
                 else -> it
             }
         }
@@ -298,15 +432,15 @@ object NesRules {
         return kotlin.math.round(f * (ratio - 1.0) / 8.0).toInt().coerceIn(-127, 127)
     }
 
-    /** Range problem of a single cell independent of context, or null. */
-    fun cellRangeProblem(cell: Cell): String? = when {
+    /** Range problem of a single cell of a song with [expansion] independent of context, or null. */
+    fun cellRangeProblem(expansion: NesExpansion, cell: Cell): String? = when {
         cell.note != Cell.EMPTY && cell.note != Cell.CUT && cell.note !in NesSystem.noteRange ->
             "note ${cell.note} is outside C-1..B-8 (${NesSystem.noteRange.first}-${NesSystem.noteRange.last})"
         cell.instrument !in 0..NesSystem.SLOTS -> "instrument ${cell.instrument} is outside 0-${NesSystem.SLOTS}"
         cell.effect !in 0..35 -> "effect ${cell.effect} is outside 0-Z"
         cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
         cell.more.isNotEmpty() -> "${cell.more.size + 1} effect columns; the NES plays one per row"
-        cell.hasEffect && effect(cell.effect) == null -> "effect ${effectChar(cell.effect)} does not exist on the NES"
+        cell.hasEffect && effect(expansion, cell.effect) == null -> "effect ${effectChar(cell.effect)} does not exist on the NES"
         else -> null
     }
 
@@ -324,7 +458,7 @@ object NesRules {
             return "$channelName cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
         }
         if (cell.note >= 0 && cell.note > highestNote(expansion, channel)) {
-            return n163TopProblem(expansion, channelName, NesSystem.noteName(cell.note))
+            return topProblem(expansion, channel, channelName, NesSystem.noteName(cell.note))
         }
         if (cell.note >= 0 && cell.instrument != 0) {
             val ins = song.nes.instruments.getOrNull(cell.instrument - 1)
@@ -341,18 +475,27 @@ object NesRules {
         val p = cell.param
         val x = p shr 4
         val y = p and 0xF
-        val spec = effect(cell.effect) ?: return "effect ${effectChar(cell.effect)} does not exist on the NES"
+        val spec = effect(expansion, cell.effect) ?: return "effect ${effectChar(cell.effect)} does not exist on the NES"
         val fx = effectText(cell.effect, p)
         if (cell.effect in unusable(expansion, channel)) {
-            return if (cell.effect == FX_PHASE_RESET && kind(expansion, channel) != ChannelKind.SAMPLE) {
-                "phase reset ($fx) is for the N163's channels; $channelName has none here"
-            } else {
-                "${spec.name.lowercase()} ($fx) has no effect on $channelName"
+            return when {
+                cell.effect == FX_PHASE_RESET && kind(expansion, channel) != ChannelKind.SAMPLE ->
+                    if (expansion == NesExpansion.FDS) "phase reset ($fx) is for the FDS channel; $channelName has none here"
+                    else "phase reset ($fx) is for the N163's channels; $channelName has none here"
+                cell.effect in FDS_EFFECT_CODES -> "${spec.name.lowercase()} ($fx) is for the FDS channel; $channelName has no modulation"
+                else -> "${spec.name.lowercase()} ($fx) has no effect on $channelName"
             }
         }
         val noteName = if (cell.note >= 0) NesSystem.noteName(cell.note) else null
         return when (cell.effect) {
-            FX_ARPEGGIO -> if (cell.note < 0) "$fx needs a note on its row (FamiStudio arpeggios belong to a note)" else null
+            FX_ARPEGGIO -> when {
+                cell.note < 0 -> "$fx needs a note on its row (FamiStudio arpeggios belong to a note)"
+                // On the FDS the engine note plus the arpeggio must stay inside the 12-bit frequency (the table's top).
+                isFds(expansion, channel) && cell.note + maxOf(x, y) > highestNote(expansion, channel) ->
+                    "$fx from $noteName reaches ${NesSystem.noteName(cell.note + maxOf(x, y))}: " +
+                        topProblem(expansion, channel, channelName, NesSystem.noteName(cell.note + maxOf(x, y)))
+                else -> null
+            }
             FX_VIBRATO -> when {
                 p != 0 && (x == 0 || y == 0) -> "$fx has speed $x and depth $y; set both digits (4xy, x 1-C, y 1-F) or use 400 to stop"
                 x > VIBRATO_SPEED_MAX -> "$fx has speed ${NumberText.hex(x)}; FamiStudio speeds are 1-C"
@@ -379,7 +522,7 @@ object NesRules {
                             "$fx from $noteName would end below A-1, which $channelName cannot play"
                         target > highestNote(expansion, channel) ->
                             "$fx from $noteName would end above ${NesSystem.noteName(highestNote(expansion, channel))}: " +
-                                n163TopProblem(expansion, channelName, NesSystem.noteName(target))
+                                topProblem(expansion, channel, channelName, NesSystem.noteName(target))
                         else -> null
                     }
                 }
@@ -392,12 +535,28 @@ object NesRules {
             }
             FX_DELTA_COUNTER -> if (p > DELTA_COUNTER_MAX) "$fx: DMC levels are Z00-Z7F" else null
             FX_PHASE_RESET -> if (p != 0) "$fx: the phase reset takes no value; write X00" else null
+            FX_FDS_MOD_DEPTH -> if (p > FdsSound.MOD_DEPTH.last) "$fx: mod depths are H00-H3F" else null
+            FX_FDS_MOD_SPEED_HI, FX_FDS_MOD_SPEED_LO -> {
+                val ins = if (cell.note >= 0 && cell.instrument != 0) song.nes.instruments.getOrNull(cell.instrument - 1) else null
+                when {
+                    cell.effect == FX_FDS_MOD_SPEED_HI && p > FdsSound.MOD_SPEED.last shr 8 ->
+                        "$fx: the mod speed is 12-bit (000-FFF), so its high digit is I00-I0F"
+                    ins != null && ins.chip == NesChip.FDS && ins.fds.autoMod ->
+                        "$fx has no effect: I/J have no effect while an auto-mod sound plays, and sound ${hex2(cell.instrument)} " +
+                            "computes its mod speed from the pitch; remove it or turn the sound's Auto-mod off"
+                    else -> null
+                }
+            }
             else -> null
         }
     }
 
-    /** Why [note] is too high for N163 channel [channelName] with the song's channel count. */
-    private fun n163TopProblem(expansion: NesExpansion, channelName: String, note: String): String {
+    /** Why [note] is too high for [channel] ([channelName]): the N163's saturated note table, or the FDS's 12-bit frequency. */
+    private fun topProblem(expansion: NesExpansion, channel: Int, channelName: String, note: String): String {
+        if (isFds(expansion, channel)) {
+            return "$channelName cannot play $note: above ${NesSystem.noteName(highestNote(expansion, channel))} FamiStudio's FDS " +
+                "frequency passes the chip's 12 bits (the note would wrap to a low pitch); play it lower"
+        }
         val n = expansion.n163Channels
         val top = NesSystem.noteName(n163HighestFsNote(n) + NOTE_OFFSET)
         return "$channelName cannot play $note with $n N163 channels: FamiStudio's N163 note table tops out above $top " +
@@ -419,7 +578,7 @@ object NesRules {
     fun describeEffect(expansion: NesExpansion, channel: Int, effect: Int, param: Int): String {
         val x = param shr 4
         val y = param and 0xF
-        val spec = effect(effect) ?: return "Unknown effect"
+        val spec = effect(expansion, effect) ?: return "Unknown effect"
         if (effect in unusable(expansion, channel) && (effect != FX_ARPEGGIO || param != 0)) {
             return "${spec.name}: no effect on ${channelName(expansion, channel)}"
         }
@@ -433,7 +592,7 @@ object NesRules {
             FX_FINE_PITCH -> (param - FINE_CENTRE).let {
                 when {
                     it == 0 -> "Fine pitch: none"
-                    chip(expansion, channel) == NesChip.VRC7 || chip(expansion, channel) == NesChip.N163 ->
+                    chip(expansion, channel).let { c -> c == NesChip.VRC7 || c == NesChip.N163 || c == NesChip.FDS } ->
                         "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
                     else -> "Fine pitch ${if (it > 0) "+" else ""}$it units"
                 }
@@ -448,14 +607,18 @@ object NesRules {
             }
             FX_DELTA_COUNTER -> "DMC level $param"
             FX_PHASE_RESET -> "Restart the wave from its first sample"
+            FX_FDS_MOD_DEPTH -> if (param == 0) "Modulation off (mod depth 0)" else "Mod depth $param/63"
+            FX_FDS_MOD_SPEED_HI -> "Mod speed ${NumberText.hex(param and 0xF, 1)}xx: high digit, low byte as playing " +
+                "(no effect while an auto-mod sound plays)"
+            FX_FDS_MOD_SPEED_LO -> "Mod speed x${hex2(param)}: low byte, high digit as playing (no effect while an auto-mod sound plays)"
             else -> "Unknown effect"
         }
     }
 
-    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7 and N163 sounds have none. */
+    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7, N163 and FDS sounds have none. */
     fun dutyText(chip: NesChip, value: Int): String = when (chip) {
         NesChip.APU -> listOf("12.5%", "25%", "50%", "75%").getOrElse(value) { "?" }
         NesChip.VRC6 -> if (value in NesChip.VRC6.duty) "${value + 1}/16" else "?"
-        NesChip.VRC7, NesChip.N163 -> "none"
+        NesChip.VRC7, NesChip.N163, NesChip.FDS -> "none"
     }
 }

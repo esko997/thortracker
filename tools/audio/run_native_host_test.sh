@@ -8,6 +8,8 @@
 # byte $7B = $01).
 # N163: <dir>/nes_n163.wav, nes_n163_trace.txt (per-frame APU + N163 port writes) and nes_n163.nsf (the 8-channel N163
 # test song, expansion byte $7B = $10).
+# FDS: <dir>/nes_fds.wav, nes_fds_trace.txt (per-frame APU + FDS register writes) and nes_fds.nsf (the FDS test song,
+# expansion byte $7B = $04).
 # SID: <dir>/sid_gt_8580.wav, sid_gt_6581.wav, sid_tone_8580.wav, sid_trace.txt (per-tick SID writes) and
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
@@ -35,7 +37,8 @@ includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid"
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
-  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_n163.c" "$cpp/nes/nes_players.c"
+  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_n163.c" "$cpp/nes/nes_fds.c"
+  "$cpp/nes/nes_players.c"
   "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c"
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c"
@@ -57,7 +60,8 @@ for src in "${cxx_engines[@]}"; do
   "$CXX" -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-for t in huge_machine_test nes_machine_test nes_vrc6_test nes_n163_test sid_machine_test opl3_machine_test ym_machine_test wav_render_test; do
+for t in huge_machine_test nes_machine_test nes_vrc6_test nes_n163_test nes_fds_test sid_machine_test opl3_machine_test ym_machine_test \
+  wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
 done
@@ -66,6 +70,7 @@ status=0
 "$build/nes_machine_test" "$out" || status=1
 "$build/nes_vrc6_test" "$out" || status=1
 "$build/nes_n163_test" "$out" || status=1
+"$build/nes_fds_test" "$out" || status=1
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1

@@ -4,13 +4,17 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.FdsMasterVolume
+import org.thortracker.system.nes.FdsPresets
+import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
-import org.thortracker.system.nes.N163Preset
+import org.thortracker.system.nes.WavePreset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
@@ -27,7 +31,9 @@ import org.thortracker.system.nes.DpcmStarterKit
  * legato, identical and differing instruments, custom pattern lengths, speed changes on several channels, parked
  * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides; the N163
  * ones wave sequences (repeats, loop, release), wave sizes and positions, shared waves, the phase reset and 1, 4 and 8
- * channels (each count has its own note table, pitch shift and engine build).
+ * channels (each count has its own note table, pitch shift and engine build); the FDS ones wave sequences, manual and
+ * auto-mod modulation, mod delay, master volumes, H/I/J and FamiStudio's re-bind after them, the phase reset and the
+ * FDS's true-pitch range.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -40,6 +46,8 @@ object NesGoldenSongs {
         "n163_demo" to { NesN163System.of(8).demo() },
         "n163_demo_1" to { NesN163System.of(1).demo() },
         "n163_effects" to ::n163Effects,
+        "fds_demo" to NesFdsSystem::demo,
+        "fds_effects" to ::fdsEffects,
     )
 
     private fun n(name: String): Int {
@@ -317,20 +325,20 @@ object NesGoldenSongs {
         val base = system.blank()
         val bank = base.nes.instruments.toMutableList()
         val n163 = NesChip.N163
-        fun wave(preset: N163Preset, size: Int) = N163Presets.wave(preset, size, 0, 1)
+        fun wave(preset: WavePreset, size: Int) = N163Presets.wave(preset, size, 0, 1)
         bank[0] = NesInstrument("Sequence", volume = NesEnvelope(listOf(14, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), chip = n163,
-            wave = N163Wave(waves = N163Presets.waves(N163Preset.PWM2, 16, 3), repeat = listOf(2, 3, 1), loop = 1, release = 2, position = 0))
+            wave = N163Wave(waves = N163Presets.waves(WavePreset.PWM2, 16, 3), repeat = listOf(2, 3, 1), loop = 1, release = 2, position = 0))
         bank[1] = NesInstrument("Wave release", volume = NesEnvelope(listOf(11)), chip = n163,
-            wave = N163Wave(waves = listOf(wave(N163Preset.SQUARE50, 16), wave(N163Preset.SINE, 16)), repeat = listOf(1, 1),
+            wave = N163Wave(waves = listOf(wave(WavePreset.SQUARE50, 16), wave(WavePreset.SINE, 16)), repeat = listOf(1, 1),
                 loop = 0, release = 1, position = 16))
         bank[2] = NesInstrument("Big 32", volume = NesEnvelope(listOf(12, 11, 10), loop = 2), arpeggio = NesEnvelope(listOf(0, 12), loop = 0),
-            chip = n163, wave = N163Wave(size = 32, waves = listOf(wave(N163Preset.TRIANGLE, 32)), position = 32))
+            chip = n163, wave = N163Wave(size = 32, waves = listOf(wave(WavePreset.TRIANGLE, 32)), position = 32))
         bank[3] = NesInstrument("Tiny 8", volume = NesEnvelope(listOf(10, 8, 6, 4)), pitch = NesEnvelope(listOf(0, 2, 4, 2), loop = 0),
-            chip = n163, wave = N163Wave(size = 8, waves = listOf(wave(N163Preset.SAWTOOTH, 8)), position = 64))
+            chip = n163, wave = N163Wave(size = 8, waves = listOf(wave(WavePreset.SAWTOOTH, 8)), position = 64))
         bank[4] = NesInstrument("Shared A", volume = NesEnvelope(listOf(9)), chip = n163,
-            wave = N163Wave(waves = listOf(wave(N163Preset.SINE, 16)), position = 80))
+            wave = N163Wave(waves = listOf(wave(WavePreset.SINE, 16)), position = 80))
         bank[5] = NesInstrument("Shared B", volume = NesEnvelope(listOf(13, 11, 9), loop = 2), chip = n163,
-            wave = N163Wave(waves = listOf(wave(N163Preset.SINE, 16)), position = 80))
+            wave = N163Wave(waves = listOf(wave(WavePreset.SINE, 16)), position = 80))
         bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
         bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
         val w1 = NesRules.N163_FIRST
@@ -391,6 +399,95 @@ object NesGoldenSongs {
         b.note(0, 0, "A-4", 7)
         return base.copy(
             title = "N163 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * FDS: a wave sequence with repeats, a loop and a release (OFF: `$59`, the volume and wave-index envelopes release),
+     * a sound that releases through its waves only, a stop, legato, manual modulation with a mod delay (and the delay of
+     * 1, which enables modulation at once), auto-mod with a reduced ratio (6/4 = 3/2), all four master volumes, waves and
+     * mod tables shared between sounds, Hxx/Ixx/Jxx with and without notes and FamiStudio's re-bind on the next attack
+     * without them, an H override held into the next order's legato first note (the order's re-send repeats it), Jxx
+     * while an auto-mod sound plays (no effect), the phase reset with and without a note, slides both ways (FDS table),
+     * vibrato, fine pitch, volume and a volume slide, arpeggio, delays, a cut, the speed set on the FDS channel, the FDS's
+     * lowest and highest notes (C-1, G#6), and 2A03 channels alongside.
+     */
+    fun fdsEffects(): Song {
+        val base = NesFdsSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val fds = NesChip.FDS
+        val sine = FdsPresets.modulation(WavePreset.SINE)
+        val triangle = FdsPresets.modulation(WavePreset.TRIANGLE)
+        fun wave(preset: WavePreset) = FdsPresets.wave(preset, 0, 1)
+        bank[0] = NesInstrument("Sequence", volume = NesEnvelope(listOf(14, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), chip = fds,
+            fds = FdsSound(waves = FdsPresets.waves(WavePreset.PWM2, 3), repeat = listOf(2, 3, 1), loop = 1, release = 2,
+                modulation = sine, modSpeed = 0x020, modDepth = 0x08, modDelay = 10))
+        bank[1] = NesInstrument("Wave release", volume = NesEnvelope(listOf(11)), chip = fds,
+            fds = FdsSound(waves = listOf(wave(WavePreset.SQUARE50), FdsPresets.SINE), repeat = listOf(1, 1), loop = 0, release = 1,
+                masterVolume = FdsMasterVolume.TWO_THIRDS))
+        bank[2] = NesInstrument("Auto FM", volume = NesEnvelope(listOf(12, 11, 10), loop = 2), chip = fds,
+            fds = FdsSound(modulation = triangle, modDepth = 0x14, autoMod = true, autoModNumer = 3, autoModDenom = 2,
+                masterVolume = FdsMasterVolume.HALF))
+        bank[3] = NesInstrument("Auto FM 6/4", volume = NesEnvelope(listOf(12, 11, 10), loop = 2), chip = fds,
+            fds = FdsSound(modulation = triangle, modDepth = 0x24, autoMod = true, autoModNumer = 6, autoModDenom = 4,
+                masterVolume = FdsMasterVolume.TWO_FIFTHS))
+        bank[4] = NesInstrument("Manual high", volume = NesEnvelope(listOf(13, 12, 11), loop = 2), chip = fds,
+            fds = FdsSound(waves = listOf(wave(WavePreset.SAWTOOTH)), modulation = FdsPresets.modulation(WavePreset.SQUARE50),
+                modSpeed = 0x37F, modDepth = 0x3F, modDelay = 1))
+        bank[5] = NesInstrument("Shared table", volume = NesEnvelope(listOf(10, 9, 8, 7), loop = 3), chip = fds,
+            fds = FdsSound(modulation = sine, modSpeed = 0x100, modDepth = 0x02))
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val f = NesRules.FDS
+        val channels = NesFdsSystem.channels.size
+        val a = P("FDS A", channels = channels)
+        a.note(f, 0, "C-4", 1) // the mod delay: 10 frames without modulation
+        a.note(f, 4, "E-4", 0) // legato: the sequence continues
+        a.off(f, 8) // release: volume and waves jump to their release points ($59)
+        a.off(f, 12) // already released: stop
+        a.note(f, 16, "E-4", 1, NesRules.FX_SLIDE_UP, 0x07)
+        a.note(f, 20, "B-4", 1, NesRules.FX_SLIDE_DOWN, 0x05)
+        a.note(f, 24, "D-5", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(f, 28, NesRules.FX_VIBRATO, 0x00)
+        a.note(f, 30, "D-5", 1, NesRules.FX_FINE_PITCH, 0x8A)
+        a.fx(f, 32, NesRules.FX_PHASE_RESET, 0x00) // without a note
+        a.note(f, 33, "F-4", 2, NesRules.FX_PHASE_RESET, 0x00) // with a note: releases through its waves later
+        a.off(f, 35)
+        a.note(f, 36, "G-4", 5, NesRules.FX_FDS_MOD_DEPTH, 0x20) // the depth overridden on the attack
+        a.fx(f, 37, NesRules.FX_FDS_MOD_SPEED_HI, 0x02) // $27F: the sound's low byte kept
+        a.fx(f, 38, NesRules.FX_FDS_MOD_SPEED_LO, 0x10) // $210
+        a.note(f, 40, "A-4", 5) // an attack without H/I/J: FamiStudio re-binds the sound (its depth and speed again)
+        a.note(f, 42, "B-4", 0) // legato
+        a.note(f, 44, "C-5", 3) // auto-mod 3/2
+        a.note(f, 46, "C-5", 4) // auto-mod 6/4 = 3/2 written reduced, another depth and master volume
+        a.note(f, 48, "C-1", 2) // the FDS's lowest note
+        a.note(f, 50, "G#6", 2) // and its highest: FamiStudio's note 93
+        a.note(f, 52, "E-4", 6, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(f, 56, "E-4", 6, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(f, 58, "A-4", 3, NesRules.FX_VOLUME, 0x09)
+        a.fx(f, 60, NesRules.FX_SPEED, 0x05) // the speed set on the FDS channel
+        a.fx(f, 61, NesRules.FX_VOLUME_SLIDE, 0x3C)
+        a.fx(f, 62, NesRules.FX_FDS_MOD_DEPTH, 0x10) // held into the next order's legato first note
+        a.note(0, 0, "E-4", 7)
+        a.note(0, 32, "G-4", 7)
+        a.note(2, 0, "C-3", 7)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
+        val b = P("FDS B", length = 32, channels = channels)
+        b.note(f, 0, "A-4", 0) // legato under H10: the order's re-send sends $58 $10 again first
+        b.off(f, 4) // no release point anywhere: a stop
+        b.note(f, 8, "E-5", 1, NesRules.FX_ARPEGGIO, 0x47)
+        b.note(f, 12, "G-4", 5, NesRules.FX_FDS_MOD_SPEED_HI, 0x01) // $17F on the attack
+        b.note(f, 16, "G-4", 5) // re-bind: $37F again
+        b.note(f, 20, "B-4", 4)
+        b.fx(f, 24, NesRules.FX_FDS_MOD_SPEED_LO, 0x40) // no effect: auto-mod computes the speed
+        b.off(f, 28)
+        b.note(0, 0, "A-4", 7)
+        b.note(3, 0, "C-3", 8)
+        return base.copy(
+            title = "FDS effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
             sound = base.nes.copy(instruments = bank),
         )

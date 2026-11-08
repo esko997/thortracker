@@ -22,12 +22,16 @@ import org.thortracker.ui.Painter
  * ([NesDpcmPage]). VRC7 sounds have no duty: their fourth page is the FM patch ([FM_PAGE]): the built-in patch or the
  * custom patch's registers per operator, and the release/stop sustain. N163 sounds have no duty either: their fourth
  * page is the Waves page ([WAVE_PAGE]): the preset, wave size and RAM position, the sequence of waves with each wave's
- * repeat, its loop and release, and the shown wave's samples. State: [ViewState.instrument], [ViewState.instField] (a
- * [Row] of [rows]), [ViewState.envelope] (the page: a [NesEnvelopeKind] ordinal, [FM_PAGE], [WAVE_PAGE] or
- * [DPCM_PAGE]), [ViewState.envStep] (0..size; size is the append position), [ViewState.listenChannel], on the DPCM page
- * [ViewState.dpcmKey] and [ViewState.dpcmSample], on the FM page [ViewState.programField] (the operator column:
- * 0 modulator, 1 carrier), and on the Waves page [ViewState.wave] (the shown wave of the sequence) and
- * [ViewState.waveCol] (the sample under the cursor), as the Game Boy's Wave view uses them.
+ * repeat, its loop and release, and the shown wave's samples. FDS sounds have no duty: their fourth page is their Waves
+ * page (the preset, the master volume, the sequence of 64-sample waves with repeats, loop and release, and the shown
+ * wave's samples) and their fifth the Modulation page ([MOD_PAGE]): the mod table preset, speed, depth, delay, auto-mod
+ * and its ratio, and the table's 32 targets beside the curve the chip plays. State: [ViewState.instrument],
+ * [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope] (the page: a [NesEnvelopeKind] ordinal, [FM_PAGE],
+ * [WAVE_PAGE], [MOD_PAGE] or [DPCM_PAGE]), [ViewState.envStep] (0..size; size is the append position),
+ * [ViewState.listenChannel], on the DPCM page [ViewState.dpcmKey] and [ViewState.dpcmSample], on the FM page
+ * [ViewState.programField] (the operator column: 0 modulator, 1 carrier), on the Waves pages [ViewState.wave] (the shown
+ * wave of the sequence) and [ViewState.waveCol] (the sample under the cursor), as the Game Boy's Wave view uses them, and
+ * on the Modulation page [ViewState.programField] (the table entry under the cursor).
  */
 object NesInstrumentView : SystemView() {
     enum class Row {
@@ -37,9 +41,11 @@ object NesInstrumentView : SystemView() {
         // FM page (VRC7 sounds): the patch, the sustain overrides, then one row per patch register field
         PATCH, SUSTAIN_RELEASE, SUSTAIN_STOP,
         FM_MULT, FM_WAVE, FM_LEVEL, FM_FEEDBACK, FM_AR, FM_DR, FM_SL, FM_RR, FM_EG, FM_KSL, FM_KSR, FM_AM, FM_VIB,
-        // Waves page (N163 sounds): preset, size, RAM position, the shown wave, its repeat, the sequence's loop and
-        // release, then the shown wave's samples
-        WAVE_PRESET, WAVE_SIZE, WAVE_POSITION, WAVE_INDEX, WAVE_REPEAT, WAVE_LOOP, WAVE_RELEASE, WAVE_SAMPLES,
+        // Waves page (N163 and FDS sounds): preset, size and RAM position (N163), master volume (FDS), the shown wave,
+        // its repeat, the sequence's loop and release, then the shown wave's samples
+        WAVE_PRESET, WAVE_SIZE, WAVE_POSITION, FDS_MASTER, WAVE_INDEX, WAVE_REPEAT, WAVE_LOOP, WAVE_RELEASE, WAVE_SAMPLES,
+        // Modulation page (FDS sounds): the table preset, speed, depth, delay, auto-mod and its ratio, then the table
+        MOD_PRESET, MOD_SPEED, MOD_DEPTH, MOD_DELAY, MOD_AUTO, MOD_NUMER, MOD_DENOM, MOD_TABLE,
     }
 
     /** The page after the four envelopes: DPCM mappings and samples (2A03 sounds only). */
@@ -48,8 +54,11 @@ object NesInstrumentView : SystemView() {
     /** VRC7 sounds: the FM patch page, in the duty envelope's place (the FM channels have no duty). */
     val FM_PAGE = NesEnvelopeKind.DUTY.ordinal
 
-    /** N163 sounds: the Waves page, in the duty envelope's place (the N163's channels have no duty). */
+    /** N163 and FDS sounds: the Waves page, in the duty envelope's place (their channels have no duty). */
     val WAVE_PAGE = NesEnvelopeKind.DUTY.ordinal
+
+    /** FDS sounds: the Modulation page, after the Waves page (where 2A03 sounds have DPCM). */
+    val MOD_PAGE = NesEnvelopeKind.entries.size
 
     /** The patch register field each FM row edits. */
     val FM_PARAMS: Map<Row, Vrc7Param> = Vrc7Param.entries.associateBy { Row.valueOf("FM_${it.name}") }
@@ -71,8 +80,16 @@ object NesInstrumentView : SystemView() {
     val WAVE_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.WAVE_PRESET, Row.WAVE_SIZE, Row.WAVE_POSITION,
         Row.WAVE_INDEX, Row.WAVE_REPEAT, Row.WAVE_LOOP, Row.WAVE_RELEASE, Row.WAVE_SAMPLES)
 
-    /** The Waves page's own rows (the rest are the sound's). */
-    private val WAVE_SETTINGS = WAVE_ROWS.drop(5).toSet()
+    /** An FDS sound's Waves page: the N163's without size and position (FDS waves are 64 samples), with the master volume. */
+    val FDS_WAVE_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.WAVE_PRESET, Row.FDS_MASTER,
+        Row.WAVE_INDEX, Row.WAVE_REPEAT, Row.WAVE_LOOP, Row.WAVE_RELEASE, Row.WAVE_SAMPLES)
+
+    /** An FDS sound's Modulation page (FamiStudio's order of the FDS mod parameters, then the table). */
+    val MOD_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.MOD_PRESET, Row.MOD_SPEED, Row.MOD_DEPTH,
+        Row.MOD_DELAY, Row.MOD_AUTO, Row.MOD_NUMER, Row.MOD_DENOM, Row.MOD_TABLE)
+
+    /** The Waves and Modulation pages' own rows (the rest are the sound's). */
+    private val WAVE_SETTINGS = (WAVE_ROWS.drop(5) + FDS_WAVE_ROWS.drop(5) + MOD_ROWS.drop(5)).toSet()
 
     /** The rows of the Waves page that work on the shown wave itself: copy, cut and paste take that wave. */
     private val WAVE_SHAPE_ROWS = setOf(Row.WAVE_INDEX, Row.WAVE_SAMPLES)
@@ -80,7 +97,11 @@ object NesInstrumentView : SystemView() {
     /** Envelope rows jump by this much with the coarse ([Action.UP]/[Action.DOWN]) direction while editing. */
     private const val COARSE = 8
 
-    fun dpcmPage(state: ViewState): Boolean = state.envelope == DPCM_PAGE
+    /** The FDS mod speed's coarse step (↑↓ while editing; ←→ step by 1). */
+    private const val SPEED_COARSE = 16
+
+    /** Whether the DPCM page of a 2A03 sound is shown. */
+    fun dpcmPage(song: Song, state: ViewState): Boolean = state.envelope == DPCM_PAGE && chip(song, state) == NesChip.APU
 
     /** Whether the FM patch page of a VRC7 sound is shown. */
     fun fmPage(song: Song, state: ViewState): Boolean = state.envelope == FM_PAGE && chip(song, state) == NesChip.VRC7
@@ -88,7 +109,16 @@ object NesInstrumentView : SystemView() {
     /** Whether the Waves page of an N163 sound is shown. */
     fun wavePage(song: Song, state: ViewState): Boolean = state.envelope == WAVE_PAGE && chip(song, state) == NesChip.N163
 
-    /** The envelope shown; on the DPCM page the last one (callers check [dpcmPage], [fmPage] and [wavePage] first). */
+    /** Whether the Waves page of an FDS sound is shown. */
+    fun fdsWavePage(song: Song, state: ViewState): Boolean = state.envelope == WAVE_PAGE && chip(song, state) == NesChip.FDS
+
+    /** Whether the Modulation page of an FDS sound is shown. */
+    fun modPage(song: Song, state: ViewState): Boolean = state.envelope == MOD_PAGE && chip(song, state) == NesChip.FDS
+
+    /** Whether an FDS sound's own pages (Waves or Modulation) are shown. */
+    private fun fdsPage(song: Song, state: ViewState): Boolean = fdsWavePage(song, state) || modPage(song, state)
+
+    /** The envelope shown; on the DPCM and Modulation pages the last one (callers check the other pages first). */
     fun kind(state: ViewState): NesEnvelopeKind = NesEnvelopeKind.entries[state.envelope.coerceIn(0, NesEnvelopeKind.entries.size - 1)]
 
     /** The chip of the shown sound (2A03 when there is none). */
@@ -96,18 +126,25 @@ object NesInstrumentView : SystemView() {
 
     /**
      * Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples); a VRC7 sound's
-     * volume, arpeggio and pitch envelopes and its FM patch.
+     * volume, arpeggio and pitch envelopes and its FM patch; an N163 sound's three envelopes and its waves; an FDS
+     * sound's three envelopes, its waves and its modulation.
      */
-    fun pages(song: Song, state: ViewState): Int = if (chip(song, state) == NesChip.APU) DPCM_PAGE + 1 else DPCM_PAGE
+    fun pages(song: Song, state: ViewState): Int = when (chip(song, state)) {
+        NesChip.APU -> DPCM_PAGE + 1
+        NesChip.FDS -> MOD_PAGE + 1
+        else -> NesEnvelopeKind.entries.size
+    }
 
     /**
      * The rows of the shown page. Songs with an expansion chip add Chip after Name, and VRC6 sounds the saw volume;
      * 2A03-only songs keep the rows they always had.
      */
     fun rows(state: ViewState, song: Song): List<Row> {
-        if (dpcmPage(state)) return DPCM_ROWS
+        if (dpcmPage(song, state)) return DPCM_ROWS
         if (fmPage(song, state)) return FM_ROWS
         if (wavePage(song, state)) return WAVE_ROWS
+        if (fdsWavePage(song, state)) return FDS_WAVE_ROWS
+        if (modPage(song, state)) return MOD_ROWS
         val base = ROWS.getValue(kind(state))
         if (song.nes.expansion == NesExpansion.NONE) return base
         val extra = if (chip(song, state) == NesChip.VRC6) listOf(Row.CHIP, Row.SAW) else listOf(Row.CHIP)
@@ -118,18 +155,45 @@ object NesInstrumentView : SystemView() {
 
     fun sound(song: Song, state: ViewState): NesInstrument? = song.nesInstrument(state.instrument)
 
-    /** The shown envelope; null on the FM and Waves pages (no envelope there). */
+    /** The shown envelope; null on the FM, Waves and Modulation pages (no envelope there). */
     fun envelope(song: Song, state: ViewState): NesEnvelope? =
-        if (fmPage(song, state) || wavePage(song, state)) null else sound(song, state)?.let { kind(state).of(it) }
+        if (fmPage(song, state) || wavePage(song, state) || fdsPage(song, state)) null else sound(song, state)?.let { kind(state).of(it) }
 
     /** The shown sound's waves when it is an N163 sound, else null. */
     fun n163Wave(song: Song, state: ViewState): N163Wave? = sound(song, state)?.takeIf { it.chip == NesChip.N163 }?.wave
 
+    /** The shown sound's waves and modulation when it is an FDS sound, else null. */
+    fun fdsSound(song: Song, state: ViewState): FdsSound? = sound(song, state)?.takeIf { it.chip == NesChip.FDS }?.fds
+
+    /**
+     * An N163 or FDS sound's sequence of waves as the shared Waves rows read it: [waves] of [size] samples 0..[top],
+     * each wave's [repeat], the [loop] and [release], whether it holds the most waves FamiStudio keeps ([full]) and the
+     * level a cleared sample takes ([centre]).
+     */
+    class WaveSequence(val waves: List<List<Int>>, val repeat: List<Int>, val loop: Int, val release: Int, val size: Int,
+                       val top: Int, val full: Boolean, val centre: Int)
+
+    /** The shown sound's sequence of waves when it is an N163 or FDS sound, else null. */
+    fun waveSequence(song: Song, state: ViewState): WaveSequence? = sound(song, state)?.let { ins ->
+        when (ins.chip) {
+            NesChip.N163 -> ins.wave.let {
+                WaveSequence(it.waves, it.repeat, it.loop, it.release, it.size, N163Wave.SAMPLE.last, N163Waves.full(it), N163Waves.CENTRE)
+            }
+            NesChip.FDS -> ins.fds.let {
+                WaveSequence(it.waves, it.repeat, it.loop, it.release, FdsSound.WAVE_SIZE, FdsSound.SAMPLE.last, FdsEdits.full(it), FdsEdits.CENTRE)
+            }
+            else -> null
+        }
+    }
+
     /** The shown wave of the sequence, kept inside it. */
-    fun waveIndex(state: ViewState, w: N163Wave): Int = state.wave.coerceIn(0, w.waves.size - 1)
+    fun waveIndex(state: ViewState, s: WaveSequence): Int = state.wave.coerceIn(0, s.waves.size - 1)
 
     /** The sample under the cursor, kept inside the wave. */
-    fun sampleIndex(state: ViewState, w: N163Wave): Int = state.waveCol.coerceIn(0, w.size - 1)
+    fun sampleIndex(state: ViewState, s: WaveSequence): Int = state.waveCol.coerceIn(0, s.size - 1)
+
+    /** The modulation table entry under the cursor (0..31). */
+    fun modIndex(state: ViewState): Int = state.programField.coerceIn(0, FdsSound.MOD_SIZE - 1)
 
     /**
      * What a wave of [size] samples does to the pitch (FamiStudio's N163 note tables are for 16 samples): "16 samples:
@@ -172,6 +236,75 @@ object NesInstrumentView : SystemView() {
         }.map { it.index + 1 }
     }
 
+    /** The NTSC CPU clock the FDS's units count (FamiStudio's `NesApu.FreqNtsc`, NesApu.cs line 248). */
+    private const val CPU_HZ = 1789773.0
+
+    /**
+     * What FDS note names mean. Notes are true pitch: the chip plays a 64-step wave at CPU × frequency / 2^22 (NESdev
+     * "FDS audio", Disch's FDS.txt, FamiStudio's own Nes_Fds and RegisterInterpreter.cs 144-146) while FamiStudio's FDS
+     * note table is frequency = f × 2^20 / CPU (NesApu.cs 435-449), so the FDS channel plays FamiStudio's note two octaves
+     * above the written one ([NesRules.FDS_TRANSPOSE]) and a wave holding one cycle sounds as named.
+     */
+    const val FDS_TUNING = "One cycle per wave sounds as named; 2 cycles an octave up, 4 cycles two octaves up"
+
+    /**
+     * How often the modulation table runs through its 32 entries at mod [speed]: CPU × speed / 2^22 Hz. The mod unit
+     * adds the speed to its accumulator every 16 CPU cycles and steps the table on each carry out of bit 11, 64 steps
+     * (each entry twice) per pass (NESdev "FDS audio", `$4086/$4087`); FamiStudio's register view shows the same
+     * (RegisterInterpreter.cs 144-156).
+     */
+    fun modRateHz(speed: Int): Double = CPU_HZ * speed / 4194304.0
+
+    /** A frequency for the editor: two decimals below 10 Hz, one below 100, whole hertz above. */
+    fun hzText(hz: Double): String = org.thortracker.model.NumberText.fixed(hz, if (hz < 10.0) 2 else if (hz < 100.0) 1 else 0) + " Hz"
+
+    /** An auto-mod ratio as FamiStudio exports it (reduced): "3/2", or "1" for 1/1. */
+    fun ratioText(f: FdsSound): String = f.autoModFraction.let { (n, d) -> if (d == 1) "$n" else "$n/$d" }
+
+    /**
+     * The mod speed row: with auto-mod the ratio it follows the note by; a speed FamiStudio's engine would misread as
+     * auto-mod ([FdsSound.engineSpeed]); 0 (the table stands still); else the table's rate ([modRateHz]).
+     */
+    fun modSpeedText(f: FdsSound): String = when {
+        f.autoMod -> "auto: the note's frequency × ${ratioText(f)} (the table runs at ${ratioText(f)} × the pitch heard)"
+        !FdsSound.engineSpeed(f.modSpeed) ->
+            "${f.modSpeed}: FamiStudio's engine reads a low byte of \$80-\$FF as auto-mod: the check rejects it"
+        f.modSpeed == 0 -> "0: the table stands still"
+        else -> "${f.modSpeed}: the table runs at ${hzText(modRateHz(f.modSpeed))}"
+    }
+
+    /** The mod depth row: 0 turns modulation off (FamiStudio's engine then writes no speed), else the depth of 63. */
+    fun modDepthText(depth: Int): String = if (depth == 0) "0: no modulation" else "$depth of 63"
+
+    /**
+     * The mod delay row. FamiStudio 4.5.3's engine keeps the modulation reset while its delay counter counts down and
+     * turns it on in the frame the counter reaches 0 (famistudio_ca65.s `@check_mod_delay`: `dec; bne`), so delay d holds
+     * it off for the note's first d − 1 frames and 0 and 1 both start it at once.
+     */
+    fun modDelayText(delay: Int): String = when {
+        delay <= 1 -> "$delay: modulation from the note's first frame"
+        else -> "$delay: modulation held off for the first ${delay - 1} frame${if (delay == 2) "" else "s"} " +
+            "(${((delay - 1) * 1000.0 / 60.0).toInt()} ms)"
+    }
+
+    /**
+     * The auto-mod numerator row: the ratio, and from which note FamiStudio's engine overflows its 16-bit multiply
+     * (frequency × numerator ≥ 65536, `famistudio_mul`), wrapping the speed.
+     */
+    fun autoModText(f: FdsSound): String {
+        val (n, d) = f.autoModFraction
+        val reduced = if (n != f.autoModNumer) " (reduced from ${f.autoModNumer}/${f.autoModDenom})" else ""
+        val overflow = NesRules.fdsLowestOverflowingNote(n)?.let { "; from ${NesSystem.noteName(it)} up the engine's multiply overflows" } ?: ""
+        return "× $n/$d$reduced$overflow"
+    }
+
+    /** One modulation table entry: its FamiStudio target, what the chip reaches there, and the 3-bit step it took. */
+    fun modEntryText(f: FdsSound, index: Int): String {
+        val code = f.modTable[index]
+        val step = if (code == FdsSound.MOD_RESET) "reset" else FdsSound.MOD_STEPS[code].let { s -> "step ${if (s > 0) "+" else ""}${2 * s}" }
+        return "Entry $index of ${FdsSound.MOD_SIZE}: target ${f.modulation[index]}, plays ${f.modCurve[index]} ($step)"
+    }
+
     /** The operator column of the FM page: 0 modulator, 1 carrier (modulator-only fields always the modulator). */
     fun fmOperator(state: ViewState, param: Vrc7Param): Int = if (param.modulatorOnly) 0 else state.programField.coerceIn(0, 1)
 
@@ -194,7 +327,7 @@ object NesInstrumentView : SystemView() {
      */
     fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind, chip: NesChip = NesChip.APU, saw: Vrc6SawVolume = Vrc6SawVolume.HALF,
                     channelChip: NesChip = chip, n163Channels: Int = 1): String? = when {
-        channelChip != chip -> "${chip.label} sounds play on the ${chip.label} channels only"
+        channelChip != chip -> "${chip.label} sounds play on the ${chip.label} channel${if (chip == NesChip.FDS) "" else "s"} only"
         channel == ChannelKind.SAMPLE -> "DPCM plays samples: envelopes do not apply"
         channel == ChannelKind.SAW -> when (kind) {
             NesEnvelopeKind.VOLUME -> "Saw: volume ${sawText(saw)}"
@@ -205,6 +338,12 @@ object NesInstrumentView : SystemView() {
             NesEnvelopeKind.VOLUME -> "FM: the carrier's 4-bit level, 3 dB per step"
             NesEnvelopeKind.PITCH -> "FM: + raises the pitch (frequency steps × 8)"
             NesEnvelopeKind.DUTY -> "The FM channels have no duty"
+            else -> null
+        }
+        channel == ChannelKind.WAVE && channelChip == NesChip.FDS -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "FDS: volume 0-15 sets the gain 0-30 (× 2)"
+            NesEnvelopeKind.PITCH -> "+ raises the pitch (FDS frequency steps)"
+            NesEnvelopeKind.DUTY -> "The FDS channel has no duty"
             else -> null
         }
         channel == ChannelKind.WAVE -> when (kind) {
@@ -255,6 +394,12 @@ object NesInstrumentView : SystemView() {
             NesEnvelopeKind.PITCH -> "Frequency offset per frame in N163 steps (2^2 with 1 channel … 2^5 with 5-8): + raises the pitch"
             NesEnvelopeKind.DUTY -> "The N163 channels have no duty: this page is the waves"
         }
+        NesChip.FDS -> when (kind) {
+            NesEnvelopeKind.VOLUME -> "FDS channel: level 0-15 per frame, written × 2 as the chip's gain (0-30 of 32), times the master volume"
+            NesEnvelopeKind.ARPEGGIO -> "Semitones added to the note per frame"
+            NesEnvelopeKind.PITCH -> "Frequency offset per frame in FDS frequency steps: + raises the pitch"
+            NesEnvelopeKind.DUTY -> "The FDS channel has no duty: this page is the waves"
+        }
     }
 
     /** A step value as the editor writes it: duty as a fraction or percentage (or noise mode), offsets signed. */
@@ -279,10 +424,11 @@ object NesInstrumentView : SystemView() {
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         val e = envelope(song, st)
         st.envStep = st.envStep.coerceIn(0, if (e == null) 0 else lastStep(e))
-        n163Wave(song, st)?.let { w ->
-            st.wave = waveIndex(st, w)
-            st.waveCol = sampleIndex(st, w)
+        waveSequence(song, st)?.let { s ->
+            st.wave = waveIndex(st, s)
+            st.waveCol = sampleIndex(st, s)
         }
+        if (modPage(song, st)) st.programField = modIndex(st)
         NesDpcmPage.normalise(v)
     }
 
@@ -293,11 +439,12 @@ object NesInstrumentView : SystemView() {
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        val wasDpcm = dpcmPage(song, state)
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
         // The DPCM channel's sounds are their sample mappings: show that page, on the selected note's key.
         val onDpcm = selection.channel == NesRules.DPCM
-        if (onDpcm != dpcmPage(state)) state.envelope = if (onDpcm) DPCM_PAGE else 0
+        if (onDpcm != wasDpcm) state.envelope = if (onDpcm) DPCM_PAGE else 0
         if (onDpcm && selection.order in song.orders.indices) {
             val note = song.patterns[song.orders[selection.order]].tracks.getOrNull(selection.channel)?.getOrNull(selection.row)?.note ?: -1
             if (note >= 0) state.dpcmKey = note
@@ -315,40 +462,52 @@ object NesInstrumentView : SystemView() {
         val st = v.state
         val song = v.session.song
         val row = row(st, song)
-        val wasDpcm = dpcmPage(st)
+        val wasDpcm = dpcmPage(song, st)
         st.envelope = index.mod(pages(song, st))
         val rows = rows(st, song)
-        st.instField = rows.indexOf(row).takeIf { it >= 0 } ?: SAME_ROW[row]?.let { rows.indexOf(it) }?.takeIf { it >= 0 } ?: rows.indexOf(when {
-            dpcmPage(st) -> Row.KEY
-            fmPage(song, st) -> Row.PATCH
-            wavePage(song, st) -> Row.WAVE_PRESET
-            else -> Row.LOOP
-        })
+        st.instField = rows.indexOf(row).takeIf { it >= 0 }
+            ?: SAME_ROW[row]?.firstNotNullOfOrNull { same -> rows.indexOf(same).takeIf { it >= 0 } }
+            ?: rows.indexOf(when {
+                dpcmPage(song, st) -> Row.KEY
+                fmPage(song, st) -> Row.PATCH
+                wavePage(song, st) || fdsWavePage(song, st) -> Row.WAVE_PRESET
+                modPage(song, st) -> Row.MOD_PRESET
+                else -> Row.LOOP
+            })
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
         // Arriving on DPCM from an envelope page: start on the sound's first mapped key if the shown one has none.
-        if (dpcmPage(st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
+        if (dpcmPage(song, st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
     }
 
-    /** Rows of the Waves page and of the envelope pages that do the same thing: page changes keep the cursor on them. */
+    /**
+     * Rows of the Waves, Modulation and envelope pages that do the same thing: page changes keep the cursor on them (the
+     * first of the listed rows the new page has).
+     */
     private val SAME_ROW = mapOf(
-        Row.STEPS to Row.WAVE_SAMPLES, Row.WAVE_SAMPLES to Row.STEPS,
-        Row.LOOP to Row.WAVE_LOOP, Row.WAVE_LOOP to Row.LOOP,
-        Row.RELEASE to Row.WAVE_RELEASE, Row.WAVE_RELEASE to Row.RELEASE,
+        Row.STEPS to listOf(Row.WAVE_SAMPLES, Row.MOD_TABLE),
+        Row.WAVE_SAMPLES to listOf(Row.STEPS, Row.MOD_TABLE),
+        Row.MOD_TABLE to listOf(Row.WAVE_SAMPLES, Row.STEPS),
+        Row.LOOP to listOf(Row.WAVE_LOOP), Row.WAVE_LOOP to listOf(Row.LOOP),
+        Row.RELEASE to listOf(Row.WAVE_RELEASE), Row.WAVE_RELEASE to listOf(Row.RELEASE),
+        Row.WAVE_PRESET to listOf(Row.MOD_PRESET), Row.MOD_PRESET to listOf(Row.WAVE_PRESET),
     )
 
     /**
      * Moves to another slot; Listen moves to the channel that slot plays on most, so a bass sounds on Triangle, or
-     * when it plays nowhere yet, to the first channel of its chip.
+     * when it plays nowhere yet, to the first channel of its chip. On the fifth page (a 2A03 sound's DPCM, an FDS
+     * sound's Modulation) a slot of the same chip keeps it; another chip's slot goes to the first page.
      */
     internal fun moveSlot(v: ViewController, delta: Int) {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, NesSystem.SLOTS)
         if (slot == st.instrument) return
-        st.instrument = slot
         val song = v.session.song
+        val before = chip(song, st)
+        st.instrument = slot
         st.listenChannel = mostUsedChannel(song, slot) ?: listenFor(song, chip(song, st), st.listenChannel)
-        if (dpcmPage(st)) {
-            if (chip(song, st) == NesChip.APU) NesDpcmPage.showFirstMapping(v) else showEnvelope(v, 0)
+        if (st.envelope == DPCM_PAGE) {
+            val now = chip(song, st)
+            if (now != before) showEnvelope(v, 0) else if (now == NesChip.APU) NesDpcmPage.showFirstMapping(v)
         }
         publish(v)
     }
@@ -371,7 +530,7 @@ object NesInstrumentView : SystemView() {
         return if (counts[best] > 0) best else null
     }
 
-    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6 / VRC7 / N163); Listen follows to a channel of that chip. */
+    /** Makes the shown sound a sound of the song's next chip (2A03 ↔ VRC6 / VRC7 / N163 / FDS); Listen follows to a channel of that chip. */
     private fun stepChip(v: ViewController, delta: Int) {
         val st = v.state
         val session = v.session
@@ -391,18 +550,28 @@ object NesInstrumentView : SystemView() {
         }
     }
 
+    /** Steps the FDS master volume 100% / 66% / 50% / 40%. */
+    private fun stepMaster(v: ViewController, delta: Int) {
+        val volumes = FdsMasterVolume.entries
+        editFds(v, "Set master volume") {
+            it.copy(masterVolume = volumes[(volumes.indexOf(it.masterVolume) + delta).coerceIn(0, volumes.size - 1)])
+        }
+    }
+
     override fun direction(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
         val song = v.session.song
         val rows = rows(st, song)
         val row = row(st, song)
-        if (dpcmPage(st) && !v.editHeld && dy == 0 && NesDpcmPage.direction(v, row, dx)) return
+        if (dpcmPage(song, st) && !v.editHeld && dy == 0 && NesDpcmPage.direction(v, row, dx)) return
         val e = envelope(song, st)
         when {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e))
             // Clear held on the samples: ←→ jump along the wave, ↑↓ show the previous / next wave.
             row == Row.WAVE_SAMPLES && v.clearHeld -> { moveSample(v, COARSE * dx); stepWave(v, -dy) }
+            // Clear held on the modulation table: ←→ jump along it.
+            row == Row.MOD_TABLE && v.clearHeld -> moveModEntry(v, COARSE * dx)
             dy != 0 -> { st.instField = (st.instField - dy).coerceIn(0, rows.size - 1); st.textPos = 0 }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
             row == Row.LISTEN -> st.listenChannel = (st.listenChannel + dx).mod(song.system.channels.size)
@@ -410,6 +579,7 @@ object NesInstrumentView : SystemView() {
             row == Row.STEPS -> if (e != null) st.envStep = (st.envStep + dx).coerceIn(0, lastStep(e))
             row == Row.WAVE_INDEX -> stepWave(v, dx)
             row == Row.WAVE_SAMPLES -> moveSample(v, dx)
+            row == Row.MOD_TABLE -> moveModEntry(v, dx)
             // FM fields: left/right picks the operator (modulator / carrier).
             row in FM_PARAMS -> st.programField = (st.programField + dx).coerceIn(0, 1)
             else -> moveSlot(v, dx)
@@ -468,17 +638,34 @@ object NesInstrumentView : SystemView() {
                 val coarse = when { param.max >= 63 -> 8; param.max >= 15 -> 4; else -> 1 }
                 setFmParam(v, param) { it + dx + coarse * dy }
             }
-            Row.WAVE_PRESET -> stepPreset(v, dx - dy)
+            Row.WAVE_PRESET -> if (chip == NesChip.FDS) stepFdsPreset(v, dx - dy) else stepPreset(v, dx - dy)
             Row.WAVE_SIZE -> editWave(v, "Set wave size") { w, ram -> N163Waves.withSize(w, w.size + 4 * dx + 16 * dy, ram) }
             Row.WAVE_POSITION -> editWave(v, "Set wave position") { w, ram -> N163Waves.withPosition(w, w.position + 2 * dx + 16 * dy, ram) }
-            Row.WAVE_INDEX -> editWave(v, "Set wave count") { w, ram -> N163Waves.withCount(w, w.waves.size + dx + COARSE * dy, ram) }
-            Row.WAVE_REPEAT -> editWave(v, "Set wave repeat") { w, ram ->
-                val i = waveIndex(st, w)
-                N163Waves.withRepeat(w, i, w.repeat.getOrElse(i) { 1 } + dx + 4 * dy, ram)
+            Row.FDS_MASTER -> stepMaster(v, dx - dy)
+            Row.WAVE_INDEX -> editWaves(v, "Set wave count",
+                { w, ram -> N163Waves.withCount(w, w.waves.size + dx + COARSE * dy, ram) },
+                { FdsEdits.withCount(it, it.waves.size + dx + COARSE * dy) })
+            Row.WAVE_REPEAT -> {
+                val i = shownWave(v) ?: return
+                editWaves(v, "Set wave repeat",
+                    { w, ram -> N163Waves.withRepeat(w, i, w.repeat.getOrElse(i) { 1 } + dx + 4 * dy, ram) },
+                    { FdsEdits.withRepeat(it, i, it.repeat.getOrElse(i) { 1 } + dx + 4 * dy) })
             }
-            Row.WAVE_LOOP -> editWave(v, "Set wave loop") { w, ram -> N163Waves.withLoop(w, w.loop + dx + COARSE * dy, ram) }
-            Row.WAVE_RELEASE -> editWave(v, "Set wave release") { w, ram -> N163Waves.withRelease(w, w.release + dx + COARSE * dy, ram) }
+            Row.WAVE_LOOP -> editWaves(v, "Set wave loop",
+                { w, ram -> N163Waves.withLoop(w, w.loop + dx + COARSE * dy, ram) },
+                { FdsEdits.withLoop(it, it.loop + dx + COARSE * dy) })
+            Row.WAVE_RELEASE -> editWaves(v, "Set wave release",
+                { w, ram -> N163Waves.withRelease(w, w.release + dx + COARSE * dy, ram) },
+                { FdsEdits.withRelease(it, it.release + dx + COARSE * dy) })
             Row.WAVE_SAMPLES -> drawSample(v, dx, dy)
+            Row.MOD_PRESET -> stepModPreset(v, dx - dy)
+            Row.MOD_SPEED -> setModSpeed(v) { FdsEdits.stepSpeed(it, dx + SPEED_COARSE * dy) }
+            Row.MOD_DEPTH -> editFds(v, "Set mod depth") { it.copy(modDepth = it.modDepth + dx + COARSE * dy) }
+            Row.MOD_DELAY -> editFds(v, "Set mod delay") { it.copy(modDelay = it.modDelay + dx + COARSE * dy) }
+            Row.MOD_AUTO -> if (dx != 0 || dy != 0) toggleAutoMod(v)
+            Row.MOD_NUMER -> setRatio(v, numerator = true) { it + dx + 4 * dy }
+            Row.MOD_DENOM -> setRatio(v, numerator = false) { it + dx + 4 * dy }
+            Row.MOD_TABLE -> drawModEntry(v, dx, dy)
             else -> NesDpcmPage.adjust(v, row, dx, dy)
         }
     }
@@ -489,16 +676,27 @@ object NesInstrumentView : SystemView() {
         return v.session.editNesWave(v.state.instrument, label) { f(it, ram) }
     }
 
+    /** Edits the shown FDS sound's waves and modulation. */
+    private fun editFds(v: ViewController, label: String, f: (FdsSound) -> FdsSound): Boolean =
+        v.session.editNesFds(v.state.instrument, label, f)
+
+    /** Edits the shown sound's sequence of waves: an FDS sound's with [fds], an N163 sound's with [n163]. */
+    private fun editWaves(v: ViewController, label: String, n163: (N163Wave, Int) -> N163Wave, fds: (FdsSound) -> FdsSound): Boolean =
+        if (chip(v.session.song, v.state) == NesChip.FDS) editFds(v, label, fds) else editWave(v, label, n163)
+
+    /** The shown wave of the shown N163 or FDS sound, or null for other sounds. */
+    private fun shownWave(v: ViewController): Int? = waveSequence(v.session.song, v.state)?.let { waveIndex(v.state, it) }
+
     /** Shows the previous / next wave of the sequence. */
     private fun stepWave(v: ViewController, delta: Int) {
-        val w = n163Wave(v.session.song, v.state) ?: return
-        v.state.wave = (waveIndex(v.state, w) + delta).coerceIn(0, w.waves.size - 1)
+        val s = waveSequence(v.session.song, v.state) ?: return
+        v.state.wave = (waveIndex(v.state, s) + delta).coerceIn(0, s.waves.size - 1)
     }
 
     /** Moves the sample cursor along the wave. */
     private fun moveSample(v: ViewController, delta: Int) {
-        val w = n163Wave(v.session.song, v.state) ?: return
-        v.state.waveCol = (sampleIndex(v.state, w) + delta).coerceIn(0, w.size - 1)
+        val s = waveSequence(v.session.song, v.state) ?: return
+        v.state.waveCol = (sampleIndex(v.state, s) + delta).coerceIn(0, s.size - 1)
     }
 
     /**
@@ -507,68 +705,155 @@ object NesInstrumentView : SystemView() {
      */
     private fun drawSample(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
-        val w = n163Wave(v.session.song, st) ?: return
-        val wave = waveIndex(st, w)
-        val at = sampleIndex(st, w)
-        val value = w.waves[wave][at]
-        if (dy != 0) editWave(v, "Set wave sample") { cur, ram -> N163Waves.withSample(cur, wave, at, value + dy, ram) }
+        val s = waveSequence(v.session.song, st) ?: return
+        val wave = waveIndex(st, s)
+        val at = sampleIndex(st, s)
+        val value = s.waves[wave][at]
+        if (dy != 0) {
+            editWaves(v, "Set wave sample",
+                { cur, ram -> N163Waves.withSample(cur, wave, at, value + dy, ram) },
+                { FdsEdits.withSample(it, wave, at, value + dy) })
+        }
         if (dx != 0) {
-            val next = (at + dx).coerceIn(0, w.size - 1)
+            val next = (at + dx).coerceIn(0, s.size - 1)
             if (next == at) return
             st.waveCol = next
-            editWave(v, "Draw wave") { cur, ram -> N163Waves.withSample(cur, wave, next, value, ram) }
+            editWaves(v, "Draw wave",
+                { cur, ram -> N163Waves.withSample(cur, wave, next, value, ram) },
+                { FdsEdits.withSample(it, wave, next, value) })
         }
     }
 
     /**
-     * Steps the waves' preset through [N163Preset] and applies it to every wave; from drawn ("Custom") waves the first
-     * step goes to the first or last preset. Presets that would make the same waves are passed over.
+     * The preset [delta] steps from [current] among [presets]; from drawn values ([current] null) the first step goes to
+     * the first or last preset. Presets that would make the values already there ([same]) are passed over; null past
+     * either end.
      */
-    private fun stepPreset(v: ViewController, delta: Int) {
-        if (delta == 0) return
-        val w = n163Wave(v.session.song, v.state) ?: return
-        val presets = N163Preset.entries
+    private fun nextPreset(presets: List<WavePreset>, current: WavePreset?, delta: Int, same: (WavePreset) -> Boolean): WavePreset? {
+        if (delta == 0) return null
         val step = if (delta > 0) 1 else -1
-        var i = N163Presets.presetOf(w.waves, w.size)?.ordinal ?: if (step > 0) -1 else presets.size
+        var i = current?.let { presets.indexOf(it) } ?: if (step > 0) -1 else presets.size
         do {
             i += step
-            if (i !in presets.indices) return
-        } while (N163Presets.waves(presets[i], w.size, w.waves.size) == w.waves)
-        val preset = presets[i]
+            if (i !in presets.indices) return null
+        } while (same(presets[i]))
+        return presets[i]
+    }
+
+    /**
+     * Steps the N163 waves' preset through [WavePreset] and applies it to every wave; from drawn ("Custom") waves the
+     * first step goes to the first or last preset. Presets that would make the same waves are passed over.
+     */
+    private fun stepPreset(v: ViewController, delta: Int) {
+        val w = n163Wave(v.session.song, v.state) ?: return
+        val preset = nextPreset(WavePreset.entries, N163Presets.presetOf(w.waves, w.size), delta) {
+            N163Presets.waves(it, w.size, w.waves.size) == w.waves
+        } ?: return
         editWave(v, "Set wave preset") { cur, ram -> N163Waves.withPreset(cur, preset, ram) }
+    }
+
+    /** Steps the FDS waves' preset through [WavePreset] (the PWM presets sweep across the waves), as [stepPreset]. */
+    private fun stepFdsPreset(v: ViewController, delta: Int) {
+        val f = fdsSound(v.session.song, v.state) ?: return
+        val preset = nextPreset(WavePreset.entries, FdsPresets.presetOf(f.waves), delta) {
+            FdsPresets.waves(it, f.waves.size) == f.waves
+        } ?: return
+        editFds(v, "Set wave preset") { FdsEdits.withPreset(it, preset) }
+    }
+
+    /** Steps the FDS modulation table's preset through [FdsPresets.MOD_PRESETS] (FamiStudio's: no PWM), as [stepPreset]. */
+    private fun stepModPreset(v: ViewController, delta: Int) {
+        val f = fdsSound(v.session.song, v.state) ?: return
+        val preset = nextPreset(FdsPresets.MOD_PRESETS, FdsPresets.modPresetOf(f.modulation), delta) {
+            FdsPresets.modulation(it) == f.modulation
+        } ?: return
+        editFds(v, "Set mod preset") { FdsEdits.withModPreset(it, preset) }
+    }
+
+    /** A note why the shown sound holds no more waves: FamiStudio's limits (N163: by size; FDS: 16). */
+    private fun fullText(v: ViewController, s: WaveSequence): String {
+        val slot = EditorSession.hex2(v.state.instrument)
+        return if (chip(v.session.song, v.state) == NesChip.FDS) "Sound $slot holds ${s.waves.size} waves, the most FamiStudio keeps for an FDS sound"
+        else "Sound $slot holds ${s.waves.size} waves, the most of ${s.size} samples FamiStudio keeps"
     }
 
     /** Inserts a copy of the shown wave after it and shows the copy. */
     private fun duplicateWave(v: ViewController) {
         val st = v.state
-        val w = n163Wave(v.session.song, st) ?: return
-        if (N163Waves.full(w)) {
-            return v.session.note("Sound ${EditorSession.hex2(st.instrument)} holds ${w.waves.size} waves, the most of ${w.size} samples FamiStudio keeps")
-        }
-        val i = waveIndex(st, w)
-        if (editWave(v, "Duplicate wave") { cur, ram -> N163Waves.duplicated(cur, i, ram) }) st.wave = i + 1
+        val s = waveSequence(v.session.song, st) ?: return
+        if (s.full) return v.session.note(fullText(v, s))
+        val i = waveIndex(st, s)
+        if (editWaves(v, "Duplicate wave", { cur, ram -> N163Waves.duplicated(cur, i, ram) }, { FdsEdits.duplicated(it, i) })) st.wave = i + 1
     }
 
     /** Deletes the shown wave (a sound keeps at least one). */
     private fun deleteWave(v: ViewController) {
         val st = v.state
-        val w = n163Wave(v.session.song, st) ?: return
-        if (w.waves.size == 1) return v.session.note("Sound ${EditorSession.hex2(st.instrument)} keeps at least one wave")
-        val i = waveIndex(st, w)
-        if (editWave(v, "Delete wave") { cur, ram -> N163Waves.removed(cur, i, ram) }) st.wave = i.coerceAtMost(w.waves.size - 2)
+        val s = waveSequence(v.session.song, st) ?: return
+        if (s.waves.size == 1) return v.session.note("Sound ${EditorSession.hex2(st.instrument)} keeps at least one wave")
+        val i = waveIndex(st, s)
+        if (editWaves(v, "Delete wave", { cur, ram -> N163Waves.removed(cur, i, ram) }, { FdsEdits.removed(it, i) })) {
+            st.wave = i.coerceAtMost(s.waves.size - 2)
+        }
     }
 
-    /** Copies the shown wave, then deletes it; the only wave becomes silent instead. */
+    /** Copies the shown wave, then deletes it; the only wave becomes flat (silent) instead. */
     private fun cutWave(v: ViewController) {
         val st = v.state
-        val w = n163Wave(v.session.song, st) ?: return
-        val i = waveIndex(st, w)
+        val s = waveSequence(v.session.song, st) ?: return
+        val i = waveIndex(st, s)
         v.session.copyNesWave(st.instrument, i)
-        if (w.waves.size > 1) {
-            if (editWave(v, "Cut wave") { cur, ram -> N163Waves.removed(cur, i, ram) }) st.wave = i.coerceAtMost(w.waves.size - 2)
+        if (s.waves.size > 1) {
+            if (editWaves(v, "Cut wave", { cur, ram -> N163Waves.removed(cur, i, ram) }, { FdsEdits.removed(it, i) })) {
+                st.wave = i.coerceAtMost(s.waves.size - 2)
+            }
         } else {
-            editWave(v, "Cut wave") { cur, ram -> N163Waves.withWave(cur, i, List(cur.size) { N163Waves.CENTRE }, ram) }
+            editWaves(v, "Cut wave",
+                { cur, ram -> N163Waves.withWave(cur, i, List(cur.size) { N163Waves.CENTRE }, ram) },
+                { FdsEdits.withWave(it, i, List(FdsSound.WAVE_SIZE) { FdsEdits.CENTRE }) })
         }
+    }
+
+    /** Moves the modulation table cursor. */
+    private fun moveModEntry(v: ViewController, delta: Int) {
+        v.state.programField = (modIndex(v.state) + delta).coerceIn(0, FdsSound.MOD_SIZE - 1)
+    }
+
+    /**
+     * Edit held on the modulation table: ↑↓ raise / lower the target under the cursor; ←→ carry its value to the next
+     * entry (draws flat runs), as on the samples.
+     */
+    private fun drawModEntry(v: ViewController, dx: Int, dy: Int) {
+        val st = v.state
+        val f = fdsSound(v.session.song, st) ?: return
+        val at = modIndex(st)
+        val value = f.modulation[at]
+        if (dy != 0) editFds(v, "Set mod target") { FdsEdits.withTarget(it, at, value + dy) }
+        if (dx != 0) {
+            val next = (at + dx).coerceIn(0, FdsSound.MOD_SIZE - 1)
+            if (next == at) return
+            st.programField = next
+            editFds(v, "Draw mod table") { FdsEdits.withTarget(it, next, value) }
+        }
+    }
+
+    /** Sets the manual mod speed; with auto-mod on, the notes set it (FamiStudio greys the row), so nothing changes. */
+    private fun setModSpeed(v: ViewController, speed: (Int) -> Int) {
+        val f = fdsSound(v.session.song, v.state) ?: return
+        if (f.autoMod) return v.session.note("Auto-mod sets the mod speed from each note: turn Auto-mod off to set it")
+        editFds(v, "Set mod speed") { it.copy(modSpeed = speed(it.modSpeed)) }
+    }
+
+    /** Sets the auto-mod numerator or denominator (1-32); only with auto-mod on (FamiStudio greys them otherwise). */
+    private fun setRatio(v: ViewController, numerator: Boolean, value: (Int) -> Int) {
+        val f = fdsSound(v.session.song, v.state) ?: return
+        if (!f.autoMod) return v.session.note("Turn Auto-mod on to set its ratio")
+        if (numerator) editFds(v, "Set auto-mod numerator") { it.copy(autoModNumer = value(it.autoModNumer)) }
+        else editFds(v, "Set auto-mod denominator") { it.copy(autoModDenom = value(it.autoModDenom)) }
+    }
+
+    private fun toggleAutoMod(v: ViewController) {
+        editFds(v, "Set auto-mod") { it.copy(autoMod = !it.autoMod) }
     }
 
     /** Steps the VRC7 sound's patch: Custom, then the 15 built-in patches (a preset loads its ROM values). */
@@ -623,9 +908,12 @@ object NesInstrumentView : SystemView() {
                 }
             }
             Row.NAME, Row.SAW, Row.LISTEN, Row.ENVELOPE, Row.LENGTH, Row.LOOP, Row.RELEASE -> Unit
-            Row.WAVE_PRESET -> stepPreset(v, 1)
+            Row.WAVE_PRESET -> if (chip == NesChip.FDS) stepFdsPreset(v, 1) else stepPreset(v, 1)
             Row.WAVE_INDEX -> duplicateWave(v)
-            Row.WAVE_SIZE, Row.WAVE_POSITION, Row.WAVE_REPEAT, Row.WAVE_LOOP, Row.WAVE_RELEASE, Row.WAVE_SAMPLES -> Unit
+            Row.WAVE_SIZE, Row.WAVE_POSITION, Row.FDS_MASTER, Row.WAVE_REPEAT, Row.WAVE_LOOP, Row.WAVE_RELEASE, Row.WAVE_SAMPLES -> Unit
+            Row.MOD_PRESET -> stepModPreset(v, 1)
+            Row.MOD_AUTO -> toggleAutoMod(v)
+            Row.MOD_SPEED, Row.MOD_DEPTH, Row.MOD_DELAY, Row.MOD_NUMER, Row.MOD_DENOM, Row.MOD_TABLE -> Unit
             in FM_PARAMS -> FM_PARAMS.getValue(row).let { p -> if (p.max == 1) setFmParam(v, p) { 1 - it } }
             else -> NesDpcmPage.editTap(v, row)
         }
@@ -657,15 +945,36 @@ object NesInstrumentView : SystemView() {
             Row.SUSTAIN_RELEASE -> session.editNesFm(slot, "Set release sustain") { it.copy(sustainRelease = false) }
             Row.SUSTAIN_STOP -> session.editNesFm(slot, "Set stop sustain") { it.copy(sustainStop = false) }
             in FM_PARAMS -> setFmParam(v, FM_PARAMS.getValue(row)) { 0 }
-            Row.WAVE_PRESET -> editWave(v, "Set wave preset") { w, ram -> N163Waves.withPreset(w, N163Preset.SINE, ram) }
+            Row.WAVE_PRESET -> editWaves(v, "Set wave preset",
+                { w, ram -> N163Waves.withPreset(w, WavePreset.SINE, ram) }, { FdsEdits.withPreset(it, WavePreset.SINE) })
             Row.WAVE_SIZE -> editWave(v, "Set wave size") { w, ram -> N163Waves.withSize(w, N163Wave.DEFAULT.size, ram) }
             Row.WAVE_POSITION -> editWave(v, "Set wave position") { w, ram -> N163Waves.withPosition(w, 0, ram) }
+            Row.FDS_MASTER -> editFds(v, "Set master volume") { it.copy(masterVolume = FdsMasterVolume.FULL) }
             Row.WAVE_INDEX -> deleteWave(v)
-            Row.WAVE_REPEAT -> editWave(v, "Set wave repeat") { w, ram -> N163Waves.withRepeat(w, waveIndex(st, w), 1, ram) }
-            Row.WAVE_LOOP -> editWave(v, "Clear wave loop") { w, ram -> N163Waves.withLoop(w, -1, ram) }
-            Row.WAVE_RELEASE -> editWave(v, "Clear wave release") { w, ram -> N163Waves.withRelease(w, -1, ram) }
-            Row.WAVE_SAMPLES -> editWave(v, "Clear wave sample") { w, ram ->
-                N163Waves.withSample(w, waveIndex(st, w), sampleIndex(st, w), N163Waves.CENTRE, ram)
+            Row.WAVE_REPEAT -> {
+                val i = shownWave(v) ?: return
+                editWaves(v, "Set wave repeat", { w, ram -> N163Waves.withRepeat(w, i, 1, ram) }, { FdsEdits.withRepeat(it, i, 1) })
+            }
+            Row.WAVE_LOOP -> editWaves(v, "Clear wave loop", { w, ram -> N163Waves.withLoop(w, -1, ram) }, { FdsEdits.withLoop(it, -1) })
+            Row.WAVE_RELEASE -> editWaves(v, "Clear wave release", { w, ram -> N163Waves.withRelease(w, -1, ram) }, { FdsEdits.withRelease(it, -1) })
+            Row.WAVE_SAMPLES -> {
+                val s = waveSequence(session.song, st) ?: return
+                val wave = waveIndex(st, s)
+                val at = sampleIndex(st, s)
+                editWaves(v, "Clear wave sample",
+                    { w, ram -> N163Waves.withSample(w, wave, at, N163Waves.CENTRE, ram) },
+                    { FdsEdits.withSample(it, wave, at, FdsEdits.CENTRE) })
+            }
+            Row.MOD_PRESET -> editFds(v, "Set mod preset") { FdsEdits.withModPreset(it, WavePreset.FLAT) }
+            Row.MOD_SPEED -> setModSpeed(v) { 0 }
+            Row.MOD_DEPTH -> editFds(v, "Set mod depth") { it.copy(modDepth = 0) }
+            Row.MOD_DELAY -> editFds(v, "Set mod delay") { it.copy(modDelay = 0) }
+            Row.MOD_AUTO -> editFds(v, "Set auto-mod") { it.copy(autoMod = false) }
+            Row.MOD_NUMER -> setRatio(v, numerator = true) { 1 }
+            Row.MOD_DENOM -> setRatio(v, numerator = false) { 1 }
+            Row.MOD_TABLE -> {
+                val at = modIndex(st)
+                editFds(v, "Clear mod target") { FdsEdits.withTarget(it, at, 0) }
             }
             else -> NesDpcmPage.clear(v, row)
         }
@@ -673,17 +982,22 @@ object NesInstrumentView : SystemView() {
 
     override fun audition(v: ViewController) {
         // DPCM plays the shown key's mapping, whichever page is up.
-        if (dpcmPage(v.state) || v.state.listenChannel == NesRules.DPCM) NesDpcmPage.audition(v)
+        if (dpcmPage(v.session.song, v.state) || v.state.listenChannel == NesRules.DPCM) NesDpcmPage.audition(v)
         else v.startAudition(v.state.listenChannel, v.defaultNote(), v.state.instrument)
     }
 
-    /** Rows about the whole sound copy, cut and paste the sound; envelope rows the shown envelope. */
-    private fun envelopeRow(state: ViewState, row: Row) =
-        !dpcmPage(state) && row != Row.SLOT && row != Row.NAME && row != Row.CHIP && row != Row.SAW && row != Row.LISTEN &&
-            row != Row.PATCH && row != Row.SUSTAIN_RELEASE && row != Row.SUSTAIN_STOP && row !in FM_PARAMS && row !in WAVE_SETTINGS
+    /**
+     * Rows about the whole sound copy, cut and paste the sound; envelope rows the shown envelope. The DPCM page and an
+     * FDS sound's Waves and Modulation pages have no envelope.
+     */
+    private fun envelopeRow(song: Song, state: ViewState, row: Row) =
+        !dpcmPage(song, state) && !fdsPage(song, state) && row != Row.SLOT && row != Row.NAME && row != Row.CHIP &&
+            row != Row.SAW && row != Row.LISTEN && row != Row.PATCH && row != Row.SUSTAIN_RELEASE && row != Row.SUSTAIN_STOP &&
+            row !in FM_PARAMS && row !in WAVE_SETTINGS
 
     /** On the Waves page's Wave and Samples rows, copy, cut and paste take the shown wave. */
-    private fun waveRow(song: Song, state: ViewState, row: Row) = row in WAVE_SHAPE_ROWS && wavePage(song, state)
+    private fun waveRow(song: Song, state: ViewState, row: Row) =
+        row in WAVE_SHAPE_ROWS && (wavePage(song, state) || fdsWavePage(song, state))
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
@@ -691,19 +1005,22 @@ object NesInstrumentView : SystemView() {
         val kind = kind(st)
         val slot = st.instrument
         val row = row(st, session.song)
-        val onEnvelope = envelopeRow(st, row)
+        val onEnvelope = envelopeRow(session.song, st, row)
         val onWave = waveRow(session.song, st, row)
+        val envelopeClip = session.clipboard is NesClip.Envelope
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> showEnvelope(v, st.envelope + if (a == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> when {
-                onWave -> n163Wave(session.song, st)?.let { session.copyNesWave(slot, waveIndex(st, it)) }
+                onWave -> shownWave(v)?.let { session.copyNesWave(slot, it) }
                 onEnvelope -> session.copyNesEnvelope(slot, kind)
                 else -> session.copyNesInstrument(slot)
             }
             Action.PASTE -> when {
-                onWave -> n163Wave(session.song, st)?.let { session.pasteNesWave(slot, waveIndex(st, it), kind) }
-                wavePage(session.song, st) && session.clipboard is NesClip.Envelope ->
+                onWave -> shownWave(v)?.let { session.pasteNesWave(slot, it, kind) }
+                envelopeClip && (wavePage(session.song, st) || fdsWavePage(session.song, st)) ->
                     session.note("The Waves page has no envelope: paste envelopes on the volume, arpeggio or pitch page")
+                envelopeClip && modPage(session.song, st) ->
+                    session.note("The Modulation page has no envelope: paste envelopes on the volume, arpeggio or pitch page")
                 else -> session.pasteNes(slot, kind)
             }
             Action.CUT -> if (onWave) cutWave(v) else if (onEnvelope) {
@@ -758,6 +1075,7 @@ object NesInstrumentView : SystemView() {
             Row.WAVE_PRESET -> { h += Hint(v.editLr(), "Preset (all waves)"); h += Hint(v.k(Action.EDIT), "Next preset"); h += Hint(v.k(Action.CLEAR), "Sine") }
             Row.WAVE_SIZE -> { h += Hint(v.editLr(), "Size ±4 (${v.ud()} ±16)"); h += Hint(v.k(Action.CLEAR), "16 samples") }
             Row.WAVE_POSITION -> { h += Hint(v.editLr(), "RAM position ±2 (${v.ud()} ±16)"); h += Hint(v.k(Action.CLEAR), "0") }
+            Row.FDS_MASTER -> { h += Hint(v.editLr(), "Master volume"); h += Hint(v.k(Action.CLEAR), "100%") }
             Row.WAVE_INDEX -> {
                 h += Hint(v.lr(), "Previous / next wave")
                 h += Hint(v.editLr(), "Waves ±1 (${v.ud()} ±$COARSE)")
@@ -772,15 +1090,37 @@ object NesInstrumentView : SystemView() {
                 h += Hint(v.editUd(), "Value")
                 h += Hint(v.editLr(), "Draw value along")
                 h += Hint(v.keys.held(Action.CLEAR, v.ud()), "Previous / next wave")
-                h += Hint(v.k(Action.CLEAR), "Sample to 8")
+                h += Hint(v.k(Action.CLEAR), "Sample to ${waveSequence(v.session.song, st)?.centre ?: N163Waves.CENTRE}")
+            }
+            Row.MOD_PRESET -> { h += Hint(v.editLr(), "Table preset"); h += Hint(v.k(Action.EDIT), "Next preset"); h += Hint(v.k(Action.CLEAR), "Flat") }
+            Row.MOD_SPEED -> {
+                if (fdsSound(v.session.song, st)?.autoMod == true) h += Hint(v.editLr(), "Set by auto-mod")
+                else h += Hint(v.editLr(), "Speed ±1 (${v.ud()} ±$SPEED_COARSE)")
+                h += Hint(v.k(Action.CLEAR), "0")
+            }
+            Row.MOD_DEPTH -> { h += Hint(v.editLr(), "Depth ±1 (${v.ud()} ±$COARSE)"); h += Hint(v.k(Action.CLEAR), "0: off") }
+            Row.MOD_DELAY -> { h += Hint(v.editLr(), "Frames ±1 (${v.ud()} ±$COARSE)"); h += Hint(v.k(Action.CLEAR), "0") }
+            Row.MOD_AUTO -> { h += Hint(v.k(Action.EDIT), "On / off"); h += Hint(v.k(Action.CLEAR), "Off") }
+            Row.MOD_NUMER, Row.MOD_DENOM -> {
+                val part = if (row == Row.MOD_NUMER) "Numerator" else "Denominator"
+                if (fdsSound(v.session.song, st)?.autoMod == true) h += Hint(v.editLr(), "$part ±1 (${v.ud()} ±4)")
+                else h += Hint(v.editLr(), "Auto-mod is off")
+                h += Hint(v.k(Action.CLEAR), "1")
+            }
+            Row.MOD_TABLE -> {
+                h += Hint(v.lr(), "Entry")
+                h += Hint(v.editUd(), "Target")
+                h += Hint(v.editLr(), "Draw target along")
+                h += Hint(v.keys.held(Action.CLEAR, v.lr()), "Jump $COARSE entries")
+                h += Hint(v.k(Action.CLEAR), "Target to 0")
             }
             else -> NesDpcmPage.hints(v, row, h)
         }
         if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE || row == Row.CHIP || row == Row.SAW ||
             row == Row.PATCH || row == Row.SUSTAIN_RELEASE || row == Row.SUSTAIN_STOP ||
-            (row in WAVE_SETTINGS && row !in WAVE_SHAPE_ROWS)) h += Hint(v.lr(), "Sound slot")
+            (row in WAVE_SETTINGS && row !in WAVE_SHAPE_ROWS && row != Row.MOD_TABLE)) h += Hint(v.lr(), "Sound slot")
         h += Hint(v.channels(), "Page")
-        if (dpcmPage(st)) {
+        if (dpcmPage(v.session.song, st)) {
             h += Hint(v.k(Action.AUDITION), "Listen to ${NesSystem.noteName(st.dpcmKey)}")
             h += Hint(v.copyPaste(), "Copy/paste sound")
             return
@@ -789,15 +1129,15 @@ object NesInstrumentView : SystemView() {
         h += Hint(v.octaves(), "Listen at ${NesSystem.noteName(v.defaultNote())}")
         h += Hint(v.copyPaste(), when {
             waveRow(v.session.song, st, row) -> "Copy/paste wave"
-            envelopeRow(st, row) -> "Copy/paste envelope"
+            envelopeRow(v.session.song, st, row) -> "Copy/paste envelope"
             else -> "Copy/paste sound"
         })
     }
 
     /**
      * Help rows for this view (heading, then key → meaning), named with the current [keys]; [expansion] adds its chip's
-     * rows (the VRC6's Chip and Saw rows, the VRC7's FM patch page, the N163's Waves page for its channel count, and
-     * their envelope meanings).
+     * rows (the VRC6's Chip and Saw rows, the VRC7's FM patch page, the N163's Waves page for its channel count, the FDS's
+     * Waves and Modulation pages, and their envelope meanings).
      */
     fun helpSections(keys: Keymap, expansion: NesExpansion = NesExpansion.NONE): List<Pair<String, List<Pair<String, String>>>> {
         val edit = keys.label(Action.EDIT)
@@ -850,8 +1190,59 @@ object NesInstrumentView : SystemView() {
                 ) + Vrc7Param.entries.map { it.label to fmHelp(it) } +
                     NesEnvelopeKind.entries.dropLast(1).map { it.label to envelopeSummary(it, NesChip.VRC7) },
             )
+            NesExpansion.FDS -> fdsHelp(keys)
             else -> n163Help(keys, expansion.n163Channels)
         }
+    }
+
+    /** The FDS sections of Help: the Chip row, the Waves page and the Modulation page with their keys. */
+    private fun fdsHelp(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> {
+        val edit = keys.label(Action.EDIT)
+        val clear = keys.label(Action.CLEAR)
+        val lr = keys.pair(Action.LEFT, Action.RIGHT)
+        val ud = keys.pair(Action.UP, Action.DOWN)
+        return listOf(
+            "FDS sounds" to listOf(
+                "Chip" to "On songs with the FDS: whether the sound plays on the 2A03's channels or on the FDS channel ($edit+$lr there). " +
+                    "FDS sounds have volume, arpeggio and pitch envelopes, no duty and no DPCM page; their fourth page is Waves, " +
+                    "their fifth Modulation",
+                "Waves page" to "The sound's waves: 64 samples of 0-63 the channel plays over and over, one or a sequence of up to " +
+                    "${FdsSound.MAX_WAVES} (FamiStudio's limit), each for its repeat frames, then looping",
+                "Tuning" to "$FDS_TUNING. Notes are true pitch: the chip plays a 64-sample wave at CPU × frequency / 2^22, so " +
+                    "the FDS channel plays FamiStudio's note two octaves above the written one (FamiStudio's own FDS note table " +
+                    "is for 2^20); notes reach ${NesSystem.noteName(NesRules.highestNote(NesExpansion.FDS, NesRules.FDS))}",
+                "Preset" to "$edit+$lr: Sine, Triangle, Sawtooth, Square 50%/25%, Flat, PWM 1-4 (FamiStudio's), made for every wave " +
+                    "(the PWM presets change the width from wave to wave); $edit tap: the next one; $clear: Sine. Drawn waves show Custom",
+                "Master volume" to "The whole channel's output: 100%, 66%, 50% or 40% (the chip's \$4089; $edit+$lr; $clear: 100%)",
+                "Wave" to "$lr: the previous / next wave of the sequence; $edit tap: duplicate it; $clear: delete it; " +
+                    "$edit+$lr: waves ±1 at the end ($edit+$ud ±$COARSE)",
+                "Repeat" to "Frames the shown wave plays (1-15) before the next ($edit+$lr, $edit+$ud ±4; $clear: 1)",
+                "Loop / release" to "As on a volume envelope, in waves: after the last wave the sequence goes back to the loop wave " +
+                    "(none: the last wave holds); after OFF the waves from the release play out. A release needs a loop",
+                "Samples" to "$lr: the sample; $edit+$ud: raise / lower it; $edit+$lr: carry its value along; $clear: back to " +
+                    "${FdsEdits.CENTRE}; $clear hold+$lr: jump $COARSE samples, $clear hold+$ud: previous / next wave",
+                "Copy / paste" to "On Wave and Samples: the shown wave (an N163 wave is rescaled from 0-15 to 0-63 and resampled to 64); " +
+                    "elsewhere the sound",
+            ) + NesEnvelopeKind.entries.dropLast(1).map { it.label to envelopeSummary(it, NesChip.FDS) },
+            "FDS modulation" to listOf(
+                "Modulation page" to "The chip's frequency modulation: a 32-entry table the mod unit steps through at the mod speed, " +
+                    "moving a counter (−64..63) whose value × the depth bends the wave's pitch: vibrato at low speeds, FM at audio rates",
+                "Table" to "FamiStudio's 32 targets for the counter (bars, $lr the entry, $edit+$ud raise / lower, $edit+$lr carry " +
+                    "along, $clear: 0, $clear hold+$lr: jump $COARSE). The chip moves the counter only by 0, ±2, ±4 or ±8 per entry, " +
+                    "or resets it (a target of 0), so FamiStudio picks the nearest step from where the counter is: the line shows " +
+                    "what the chip plays",
+                "Preset" to "$edit+$lr: Sine, Triangle, Sawtooth, Square 50%/25%, Flat (FamiStudio's; no PWM); $edit tap: the next; $clear: Flat",
+                "Speed" to "0-4095 ($edit+$lr ±1, $edit+$ud ±$SPEED_COARSE; $clear: 0): the table runs at CPU × speed / 2^22 Hz " +
+                    "(speed 12 ≈ 5.1 Hz). FamiStudio's engine reads speeds whose low byte is \$80-\$FF as auto-mod, so the steps " +
+                    "pass over them (\$x7F → \$(x+1)00)",
+                "Depth" to "0-63 ($edit+$lr ±1, $edit+$ud ±$COARSE; $clear: 0): how far the counter bends the pitch; 0 turns modulation off",
+                "Delay" to "Frames after the note starts before modulation runs, 0-255. FamiStudio's engine turns it on in frame d, " +
+                    "so delay d holds it off for d − 1 frames (0 and 1 start at once)",
+                "Auto-mod" to "On: every frame the speed is the note's frequency × numerator / denominator (1-32 each, reduced), so the " +
+                    "modulation follows the pitch (FM at a fixed ratio); the speed row is then unused. $edit tap or $edit+$lr: on / off. " +
+                    "Large numerators overflow the engine's 16-bit multiply on high notes (the row and the check say from which note)",
+            ),
+        )
     }
 
     /** The N163 section of Help for songs with [channels] N163 channels: the Chip row, the Waves page and its keys. */

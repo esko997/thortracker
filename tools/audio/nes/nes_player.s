@@ -24,7 +24,10 @@
 ; (nes_vrc7_player_image.h) adds -D FAMISTUDIO_EXP_VRC7=1 the same way, and the Namco 163 builds
 ; (nes_n163_<n>_player_image.h, n = 1..8) add -D FAMISTUDIO_EXP_N163=1 -D FAMISTUDIO_EXP_N163_CHN_CNT=n:
 ; N163 channels 1..n as channels 5..4+n, address port $F800, data port $4800, each with its own song
-; base (measured: the page after the player).
+; base (measured: the page after the player). The Famicom Disk System build (nes_fds_player_image.h)
+; adds -D FAMISTUDIO_EXP_FDS=1 -D FAMISTUDIO_USE_FDS_AUTOMOD=1 (auto-modulation compiled in, as in
+; FamiStudio's own NSF kernel nsf.s): the FDS wavetable channel as channel 5, registers $4040-$408A,
+; its own song base (measured likewise).
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

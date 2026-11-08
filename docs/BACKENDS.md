@@ -277,7 +277,65 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
 - **Editor and demo**: the Instrument view's Wave page (draw samples, size, position, waves, repeats, loop and release,
   presets, the song's RAM map); demo "Wavetable Garden" (`NesN163DemoSong.build(n)`), whose parts grow with the count.
 
-**Adding the next expansion** (VRC7, N163, S5B, FDS, MMC5, EPSM) follows the same path:
+**FDS** (the Famicom Disk System's 2C33: one wavetable channel with a modulation unit; sources: FamiStudio 4.5.3
+`famistudio_ca65.s` (FDS update 2276-2402, attack 4595-4626, instrument load and wave upload 5235-5435, opcodes
+`$57`/`$58`/`$59`), `FamitoneMusicFile.cs` (`OutputInstruments`, `GetSongData`'s FDS override flags), `Instrument.cs`,
+`Envelope.cs` (`BuildFdsModulationTable`), `Channel.cs`, `FamistudioTextFile.cs`, `NesApu.cs`, `NsfFile.cs`,
+`RegisterInterpreter.cs` at tag 4.5.3 / commit c09dca6, the NESdev wiki "FDS audio" and Disch's FDS.txt). Decisions:
+
+- **One variant**, `NesFdsSystem`: id and engine `"nes-famistudio-fds"`, "NES + FDS (FamiStudio)", `NesExpansion.FDS`
+  (files: `"expansion":"fds"`), channel `FDS` (`ChannelKind.WAVE`, channel 5) after DPCM. The engine is `nes_player.s`
+  with `FAMISTUDIO_EXP_FDS` and `FAMISTUDIO_USE_FDS_AUTOMOD` (as FamiStudio's own NSF kernel).
+- **True pitch**: FamiStudio's FDS note table is f × 2^20 / CPU, while the chip plays its 64-step wave CPU × frequency /
+  2^22 times a second (NESdev; FamiStudio's register viewer agrees), so FamiStudio's note n sounds two octaves below the
+  2A03's note n with a one-cycle wave. Thor Tracker's notes are true pitch: the FDS channel plays FamiStudio's engine note
+  24 higher (`NesRules.FDS_TRANSPOSE`, `engineNoteShift`, `engineNote`; A-4 = engine note 70, frequency 1031, 439.9 Hz).
+  One cycle per wave sounds as named, 2 cycles an octave up, 4 two octaves up. The range is C-1..G#6: from engine note
+  94 (4125) on, FamiStudio's frequency passes the chip's 12 bits (`$4083` keeps bits 8-11), so higher notes, slides
+  and `0xy` targets are refused. The `.txt` export writes FamiStudio's own (engine) note numbers, so FamiStudio plays
+  the same bytes and names them two octaves higher.
+- **Sounds** (`NesChip.FDS`, `FdsSound`): volume, arpeggio and pitch envelopes (no duty), 1-16 waves of 64 samples
+  0-63 with a repeat of 1-15 frames each, a loop and a release wave (as the N163's), master volume (100/66/50/40%), 32
+  modulation targets −64..63 encoded with FamiStudio's greedy `BuildFdsModulationTable` (entry 0 resets; `FdsSound.modTable`),
+  mod speed 0-4095, depth 0-63, delay 0-255 frames, and auto-mod (the engine sets the mod speed every frame to the
+  frequency × numerator / denominator, 1-32 each, written reduced). Presets are FamiStudio's (`FdsPresets`).
+- **Engine behaviours kept and checked**: with auto-mod compiled in, the engine reads bit 7 of an instrument's mod speed
+  low byte as the auto-mod flag, so manual speeds with a low byte `$80-$FF` are refused (`$57` is not affected); auto-mod
+  multiplies the frequency by the numerator in 16 bits (`famistudio_mul`), so the validator warns for notes the song plays
+  where frequency × numerator ≥ 65536; a mod delay d keeps modulation reset d − 1 frames. It also warns about silent
+  (constant) waves, modulation at depth 0, a depth with a flat table or speed 0, and I/J while an auto-mod sound plays.
+- **Effects**: all of FamiStudio's for the FDS channel — arpeggio, vibrato, volume and slides, speed, delay, cut, fine
+  pitch (`Pxx` converted to the nearest FDS frequency step at the engine note for the pitch the same Pxx gives a pulse,
+  `NesRules.fdsFinePitch`), glides (FDS table, one fraction bit), `X00` (FamiStudio's generic phase reset `$53`) and
+  FamiTracker's FDS letters: `Hxx` mod depth 00-3F (`FdsModDepth`, `$58`), `Ixx` the mod speed's high digit 00-0F and
+  `Jxx` its low byte (`FdsModSpeed`, `$57` with the whole 12-bit word: the other half is the speed the channel has at that
+  row along the played order — the sound's own after an attack that loads it, else the last I/J). These effect codes
+  are looked up per expansion (`NesRules.effect(expansion, code)`): H, I and J mean nothing on other variants. FamiStudio's
+  re-bind rule is kept: an attacked note without H (or I/J) after one with it sends its instrument again, restoring the
+  sound's depth and speed. OFF releases (`$59`: volume and wave-index envelopes) when the volume envelope or the wave
+  sequence has a release point, else stops; legato across sounds needs identical envelopes, waves and mod table included
+  (`CanDisableAttack`).
+- **Lowering**: the expansion table (16 bytes per slot, every slot): volume, arpeggio, pitch envelopes, the wave-index
+  envelope (directory 256 + slot − 1, kind 4, the N163 code path), `(depth << 2) | master volume`, a wave table of
+  pointers to the slot's distinct 64-byte waves, the 32-byte mod table, the speed word or `$80 | numerator, denominator`,
+  the delay; waves, tables and mod tables stored once; effect envelopes from 320. An order's own instrument re-send on a
+  legato first note repeats the H/I/J values in force first (`$57`/`$58`), except in the loop order when they differ from
+  those at the song's end (then it is left out). Contract: `docs/AUDIO_ENGINE.md`, "FDS".
+- **Exports**: `.nsf` with header `$7B` bit 2 ($04); FamiStudio text with `Expansions="FDS"`, `Expansion="FDS"
+  FdsWaveCount FdsWavePreset FdsModPreset [FdsMasterVolume FdsModSpeed FdsModDepth FdsModDelay FdsAutoMod
+  FdsAutoModDenom FdsAutoModNumer]`, `FDSWave`, `FDSMod` and `Repeat` envelopes, channel `FDS` and note attributes
+  `FdsModSpeed`, `FdsModDepth`, `PhaseReset`. Golden songs `fds_demo` and `fds_effects`; FamiStudio's export of our text
+  and our lowering must write the same `$4040-$408A` sequence.
+- **Editor and demo**: on FDS songs the Instrument view's Chip row offers 2A03 / FDS; FDS sounds have a **Waves** page
+  (draw 64 samples 0-63, 1-16 waves with duplicate/delete, repeat, loop, release, FamiStudio's presets incl. the PWM
+  sweeps, master volume) and a **Modulation** page (the 32 targets drawn as bars with the counter the chip reaches drawn
+  over them, mod presets, speed stepping ±1/±16 over the values the engine reads correctly with its rate in Hz, depth,
+  delay, auto-mod on/off with numerator/denominator and the first note whose 16-bit product overflows); edits through
+  `FdsEdits`, waves copy/paste between N163 and FDS sounds rescaled. Demo "Side B" (`NesFdsDemoSong`): an FM bass
+  (auto-mod, an H sweep), a vibrato lead (mod delay, J and I speed sweeps, OFF), a PWM morph pad with a release, an FM
+  bell (auto-mod 7/2, X00), the 2A03 and the DPCM kit alongside; once through 25.6 s, loop 19.2 s.
+
+**Adding the next expansion** (S5B, MMC5, EPSM) follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
    base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
    FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
@@ -904,3 +962,14 @@ Decisions:
   Half (FamiStudio's default). Review.
 - VRC6 mixing level: one DAC step = the 2A03's full pulse ÷ 15 (NESdev's "roughly equal" full pulses); no
   hardware or reference-emulator comparison yet. Listening may ask for a different balance.
+- FDS (decided on the user's behalf): true pitch with FamiStudio's note table shifted 24 notes on the FDS channel (a
+  one-cycle wave sounds as named: A-4 = 440 Hz on every chip); the FamiStudio text keeps FamiStudio's note numbers, which
+  FamiStudio names two octaves higher. Review.
+- FDS engine build: auto-mod is compiled in (FamiStudio's NSF kernel does the same), so instrument mod speeds whose low
+  byte is `$80-$FF` are refused (FamiStudio 4.5.3 reads that bit as its auto-mod flag; its own NSF exports of such
+  instruments play wrongly). The alternative build without auto-mod would allow every speed but lose auto-mod. Review.
+- FDS `Ixx`/`Jxx` in one effect column: each sets half of the 12-bit speed, the other half taken from the channel's
+  speed at that row along the played order (FamiTracker's letters; FamiStudio's own FamiTracker import zeroes the other
+  half instead). Review with use.
+- FDS output: FamiStudio's measured DAC curve, a 1-pole 2 kHz low-pass and 2.4 × a full 2A03 pulse (NESdev); no hardware or
+  reference-emulator comparison yet. Listening may ask for a different balance or filter.

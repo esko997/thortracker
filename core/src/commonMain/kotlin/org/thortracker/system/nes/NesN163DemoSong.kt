@@ -78,17 +78,17 @@ internal object NesN163DemoSong {
         bank[LEAD - 1] = n163(
             "PWM lead", LEAD,
             // Three PWM widths looping while the note holds; OFF releases into a sine that holds as the volume fades.
-            N163Wave(waves = N163Presets.waves(N163Preset.PWM, 16, 3) + listOf(N163Presets.sine(16)), repeat = listOf(4, 4, 4, 1),
+            N163Wave(waves = N163Presets.waves(WavePreset.PWM, 16, 3) + listOf(N163Presets.sine(16)), repeat = listOf(4, 4, 4, 1),
                 loop = 0, release = 3),
             volume = NesEnvelope(listOf(13, 12, 11, 11, 10, 10, 8, 6, 4, 2, 0), loop = 3, release = 6),
         )
-        bank[CHORD - 1] = n163("Thin chord", CHORD, wave(N163Preset.SQUARE25), volume = NesEnvelope(listOf(10, 9, 8, 7, 6, 5, 5, 4)))
-        bank[PAD - 1] = n163("Sine pad", PAD, wave(N163Preset.SINE), volume = NesEnvelope(listOf(4, 6, 8, 9, 10, 10, 9), loop = 6))
-        bank[BELL - 1] = n163("Saw bell", BELL, wave(N163Preset.SAWTOOTH), volume = NesEnvelope(listOf(12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0)))
-        bank[COUNTER - 1] = n163("Triangle counter", COUNTER, wave(N163Preset.TRIANGLE), volume = NesEnvelope(listOf(9, 9, 8, 8, 7), loop = 4))
-        bank[HARMONY - 1] = n163("Square harmony", HARMONY, wave(N163Preset.SQUARE50), volume = NesEnvelope(listOf(7, 7, 6, 6, 5), loop = 4))
-        bank[ECHO - 1] = n163("Sine echo", ECHO, wave(N163Preset.SINE), volume = NesEnvelope(listOf(6, 5, 4, 3, 2, 1, 0)))
-        bank[SUB - 1] = n163("Sine sub", SUB, wave(N163Preset.SINE), volume = NesEnvelope(listOf(12, 12, 11, 10), loop = 3))
+        bank[CHORD - 1] = n163("Thin chord", CHORD, wave(WavePreset.SQUARE25), volume = NesEnvelope(listOf(10, 9, 8, 7, 6, 5, 5, 4)))
+        bank[PAD - 1] = n163("Sine pad", PAD, wave(WavePreset.SINE), volume = NesEnvelope(listOf(4, 6, 8, 9, 10, 10, 9), loop = 6))
+        bank[BELL - 1] = n163("Saw bell", BELL, wave(WavePreset.SAWTOOTH), volume = NesEnvelope(listOf(12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0)))
+        bank[COUNTER - 1] = n163("Triangle counter", COUNTER, wave(WavePreset.TRIANGLE), volume = NesEnvelope(listOf(9, 9, 8, 8, 7), loop = 4))
+        bank[HARMONY - 1] = n163("Square harmony", HARMONY, wave(WavePreset.SQUARE50), volume = NesEnvelope(listOf(7, 7, 6, 6, 5), loop = 4))
+        bank[ECHO - 1] = n163("Sine echo", ECHO, wave(WavePreset.SINE), volume = NesEnvelope(listOf(6, 5, 4, 3, 2, 1, 0)))
+        bank[SUB - 1] = n163("Sine sub", SUB, wave(WavePreset.SINE), volume = NesEnvelope(listOf(12, 12, 11, 10), loop = 3))
         val parts = Part.entries.take(channels)
         return base.copy(
             title = "Wavetable Garden",
@@ -108,7 +108,7 @@ internal object NesN163DemoSong {
     private fun n163(name: String, slot: Int, wave: N163Wave, volume: NesEnvelope) =
         NesInstrument(name = name, volume = volume, chip = NesChip.N163, wave = wave.copy(position = 16 * (slot - LEAD)))
 
-    private fun wave(preset: N163Preset) = N163Wave(waves = listOf(N163Presets.wave(preset, 16, 0, 1)))
+    private fun wave(preset: WavePreset) = N163Wave(waves = listOf(N163Presets.wave(preset, 16, 0, 1)))
 
     /** The N163 channel of [part], or -1 when the song has too few. */
     private fun List<Part>.channel(part: Part): Int = indexOf(part).let { if (it < 0) -1 else NesRules.N163_FIRST + it }

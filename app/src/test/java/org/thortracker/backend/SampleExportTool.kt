@@ -2,6 +2,7 @@ package org.thortracker.backend
 
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
@@ -40,6 +41,12 @@ object SampleExportTool {
         for (format in NesVrc7System.exports) File(directory, "lantern-point.${format.extension}").writeBytes(format.export(vrc7))
         File(directory, "lantern-point.nesimg").writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(vrc7, it) })
         println("Exported ${vrc7.title} to ${directory.absolutePath}")
+        // The NES + FDS demo (its image plays on "nes-famistudio-fds"; the native WAV export test renders side-b.nesimg).
+        val fds = NesFdsSystem.demo()
+        File(directory, "side-b.thor").writeText(ProjectCodec.encode(fds), Charsets.UTF_8)
+        for (format in NesFdsSystem.exports) File(directory, "side-b.${format.extension}").writeBytes(format.export(fds))
+        File(directory, "side-b.nesimg").writeBytes(ByteArray(NesFdsSystem.engine.imageSize).also { NesFdsSystem.engine.lower(fds, it) })
+        println("Exported ${fds.title} to ${directory.absolutePath}")
         // The NES + N163 demo for every channel count (wavetable-garden-<n>ch; each image plays on "nes-famistudio-n163-<n>").
         for (system in NesN163System.ALL) {
             val n163 = system.demo()

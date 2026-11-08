@@ -3,11 +3,14 @@ package org.thortracker.backend
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.nes.DpcmSample
+import org.thortracker.system.nes.FdsPresets
+import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSound
+import org.thortracker.system.nes.WavePreset
 
 /**
  * FamiStudio 4.5 text export (`FamistudioTextFile`): a FamiTracker-tempo project FamiStudio 4.5.3 opens (File →
@@ -19,7 +22,10 @@ import org.thortracker.system.nes.NesSound
  * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`; the N163 also
  * `NumN163Channels`), its instruments of that chip carry `Expansion="VRC6"` and the saw master volume
  * (`Expansion="VRC7"`: the patch, the custom patch's registers and the release/stop overrides; `Expansion="N163"`: the
- * wave size, position and count with the `N163Wave` and `Repeat` envelopes), and its channels follow the 2A03's.
+ * wave size, position and count with the `N163Wave` and `Repeat` envelopes; `Expansion="FDS"`: the wave count, the wave
+ * and modulation presets, master volume and modulation settings with the `FDSWave`, `FDSMod` and `Repeat` envelopes),
+ * and its channels follow the 2A03's. Notes are FamiStudio's engine notes ([NesRules.engineNote]: on the FDS two octaves
+ * above Thor Tracker's names, which are true pitch), so FamiStudio plays the same bytes.
  */
 object FamiStudioText {
     private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -31,6 +37,7 @@ object FamiStudioText {
         c < APU_TYPES.size -> APU_TYPES[c]
         expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
         expansion.chip == NesChip.N163 -> "N163Wave${c - APU_TYPES.size + 1}"
+        expansion == NesExpansion.FDS -> "FDS"
         else -> "VRC7FM${c - APU_TYPES.size + 1}"
     }
 
@@ -76,6 +83,18 @@ object FamiStudioText {
                 // `FamistudioTextFile`: preset, size, position, count (the waves themselves in the N163Wave envelope).
                 NesChip.N163 -> attr("Expansion", "N163") + attr("N163WavePreset", "Custom") + attr("N163WaveSize", ins.wave.size) +
                     attr("N163WavePos", ins.wave.position) + attr("N163WaveCount", ins.wave.waves.size)
+                // `FamistudioTextFile`: count, presets, then the settings that are not FamiStudio's defaults.
+                NesChip.FDS -> ins.fds.let { f ->
+                    attr("Expansion", "FDS") + attr("FdsWaveCount", f.waves.size) +
+                        attr("FdsWavePreset", presetName(FdsPresets.presetOf(f.waves))) +
+                        attr("FdsModPreset", presetName(FdsPresets.modPresetOf(f.modulation))) +
+                        (if (f.masterVolume.register != 0) attr("FdsMasterVolume", f.masterVolume.register) else "") +
+                        (if (f.modSpeed != 0) attr("FdsModSpeed", f.modSpeed) else "") +
+                        (if (f.modDepth != 0) attr("FdsModDepth", f.modDepth) else "") +
+                        (if (f.modDelay != 0) attr("FdsModDelay", f.modDelay) else "") +
+                        (if (f.autoMod) attr("FdsAutoMod", "True") + attr("FdsAutoModDenom", f.autoModDenom) +
+                            attr("FdsAutoModNumer", f.autoModNumer) else "")
+                }
             })
             for ((note, m) in ins.dpcm.entries.sortedBy { it.key }.map { it.key to it.value }) {
                 val sample = fs.samples.getOrNull(m.sample) ?: continue
@@ -91,6 +110,7 @@ object FamiStudioText {
             envelope(::line, "Pitch", ins.pitch, 0, ins.pitchRelative)
             envelope(::line, "DutyCycle", ins.duty, 0, false)
             if (ins.chip == NesChip.N163) n163Envelopes(::line, ins.wave)
+            if (ins.chip == NesChip.FDS) fdsEnvelopes(::line, ins.fds)
         }
         val arpeggios = HashSet<Int>()
         for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.arpeggio >= 0) arpeggios += n.arpeggio
@@ -201,6 +221,8 @@ object FamiStudioText {
                 if (n.vibrato >= 0) s.append(attr("VibratoSpeed", n.vibrato shr 4)).append(attr("VibratoDepth", n.vibrato and 0xF))
                 if (n.speed >= 0) s.append(attr("Speed", n.speed))
                 if (n.finePitch != FsNote.NO_FINE) s.append(attr("FinePitch", n.finePitch))
+                if (n.fdsModSpeed >= 0) s.append(attr("FdsModSpeed", n.fdsModSpeed))
+                if (n.fdsModDepth >= 0) s.append(attr("FdsModDepth", n.fdsModDepth))
                 if (n.duty >= 0) s.append(attr("DutyCycle", n.duty))
                 if (n.noteDelay >= 0) s.append(attr("NoteDelay", n.noteDelay))
                 if (n.cutDelay >= 0) s.append(attr("CutDelay", n.cutDelay))
@@ -257,6 +279,37 @@ object FamiStudioText {
         line(2, "Envelope" + attr("Type", "Repeat") + attr("Length", w.waves.size) +
             (if (w.loop >= 0) attr("Loop", w.loop) else "") + (if (w.release >= 0) attr("Release", w.release) else "") +
             attr("Values", w.repeat.joinToString(",")))
+    }
+
+    /**
+     * An FDS sound's waves and modulation as FamiStudio stores them: `FDSWave` holds every wave's 64 samples one after
+     * the other (loop and release in samples, at wave boundaries), `FDSMod` the 32 modulation targets, `Repeat` the frames
+     * each wave plays (loop and release in waves). All are written even when trivial, as for the N163.
+     */
+    private fun fdsEnvelopes(line: (Int, String) -> Unit, f: FdsSound) {
+        val size = FdsSound.WAVE_SIZE
+        line(2, "Envelope" + attr("Type", "FDSWave") + attr("Length", size * f.waves.size) +
+            (if (f.loop >= 0) attr("Loop", f.loop * size) else "") + (if (f.release >= 0) attr("Release", f.release * size) else "") +
+            attr("Values", f.waves.flatten().joinToString(",")))
+        line(2, "Envelope" + attr("Type", "FDSMod") + attr("Length", f.modulation.size) + attr("Values", f.modulation.joinToString(",")))
+        line(2, "Envelope" + attr("Type", "Repeat") + attr("Length", f.waves.size) +
+            (if (f.loop >= 0) attr("Loop", f.loop) else "") + (if (f.release >= 0) attr("Release", f.release) else "") +
+            attr("Values", f.repeat.joinToString(",")))
+    }
+
+    /** FamiStudio's `WavePresetType.InternalNames` for [preset]; "Custom" for drawn waves. */
+    private fun presetName(preset: WavePreset?): String = when (preset) {
+        null -> "Custom"
+        WavePreset.SINE -> "Sine"
+        WavePreset.TRIANGLE -> "Triangle"
+        WavePreset.SAWTOOTH -> "Sawtooth"
+        WavePreset.SQUARE50 -> "Square50%"
+        WavePreset.SQUARE25 -> "Square25%"
+        WavePreset.FLAT -> "Flat"
+        WavePreset.PWM -> "PWM"
+        WavePreset.PWM2 -> "PWM2"
+        WavePreset.PWM3 -> "PWM3"
+        WavePreset.PWM4 -> "PWM4"
     }
 
     private fun arpName(param: Int) = "Arp 0${NumberText.hex(param, 2)}"

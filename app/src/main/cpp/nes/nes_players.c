@@ -55,6 +55,20 @@ _Static_assert(NES_N163_8_CHANNELS == NM_MAX_CHANNELS && NES_N163_8_NUM_ENVELOPE
                    NES_N163_8_NUM_PITCH_ENVELOPES == NM_MAX_PITCH_ENVELOPES,
                "the 8-channel N163 build sizes the arrays");
 
+/* The FDS build: the shared layout, engine channels 6 (FDS = channel 5), envelope slots 14 (3+3+2+3+3: the FDS
+ * channel's volume, arpeggio and wave index from slot 11), pitch envelope slots 4 (FDS: 3). */
+_Static_assert(NES_FDS_PLAYER_BASE + NES_FDS_PLAYER_SIZE <= NES_FDS_SONG_BASE, "FDS player below its song region");
+_Static_assert(NES_FDS_SONG_BASE + NES_FDS_IMAGE_REGION_SIZE == NES_REGION_END, "FDS region ends at the vectors");
+_Static_assert(NES_FDS_IMAGE_SIZE == NES_IMAGE_HEADER_SIZE + NES_IMAGE_DIRECTORY_SIZE + NES_FDS_IMAGE_REGION_SIZE,
+               "FDS image = the shared header + directory + its region");
+_Static_assert(NES_FDS_IMAGE_SIZE <= NM_IMAGE_MAX_SIZE, "image storage holds the FDS images");
+_Static_assert(NES_FDS_RAM_BASE + NES_FDS_RAM_SIZE <= NES_AUDITION_RAM, "FDS engine RAM below the audition streams");
+_Static_assert(NES_FDS_CHANNELS == 6 && NES_FDS_CHANNELS <= NM_MAX_CHANNELS && NM_FDS == NES_FDS_CHANNELS - 1, "FDS channels");
+_Static_assert(NES_FDS_NUM_ENVELOPES == 14 && NES_FDS_NUM_ENVELOPES <= NM_MAX_ENVELOPES, "FDS envelope slots");
+_Static_assert(NES_FDS_NUM_PITCH_ENVELOPES == 4 && NES_FDS_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES, "FDS pitch envelope slots");
+_Static_assert(NES_FDS_EXP_INSTRUMENT_SIZE == NM_EXP_INSTRUMENT_SIZE, "FDS expansion instrument entries");
+_Static_assert(NES_FDS_PLAYER_INIT == NES_PLAYER_INIT && NES_FDS_PLAYER_PLAY == NES_PLAYER_PLAY, "one entry table");
+
 #define SYMBOLS(P)                                                                                             \
     {                                                                                                          \
         P##SONG_SPEED, P##TEMPO_STEP_LO, P##TEMPO_STEP_HI, P##TEMPO_ACC_LO, P##TEMPO_ACC_HI, P##INSTRUMENT_LO, \
@@ -126,4 +140,31 @@ const NesPlayer nes_player_vrc6 = {
 const NesPlayer nes_player_n163[NM_N163_BUILDS] = {
     N163_PLAYER(1), N163_PLAYER(2), N163_PLAYER(3), N163_PLAYER(4),
     N163_PLAYER(5), N163_PLAYER(6), N163_PLAYER(7), N163_PLAYER(8),
+};
+
+const NesPlayer nes_player_fds = {
+    .id = NES_FDS_PLAYER_ID,
+    .code = nes_fds_player_code,
+    .base = NES_FDS_PLAYER_BASE,
+    .size = NES_FDS_PLAYER_SIZE,
+    .init = NES_FDS_PLAYER_INIT,
+    .play = NES_FDS_PLAYER_PLAY,
+    .idle = NES_FDS_PLAYER_IDLE,
+    .trap = NES_FDS_PLAYER_TRAP,
+    .song_base = NES_FDS_SONG_BASE,
+    .region_size = NES_FDS_IMAGE_REGION_SIZE,
+    .image_size = NES_FDS_IMAGE_SIZE,
+    .ram_end = NES_FDS_RAM_BASE + NES_FDS_RAM_SIZE,
+    .channels = NES_FDS_CHANNELS,
+    .envelopes = NES_FDS_NUM_ENVELOPES,
+    .pitch_envelopes = NES_FDS_NUM_PITCH_ENVELOPES,
+    .duty_max = 3, /* duty only on the 2A03 pulses and noise */
+    .expansion = NES_EXPANSION_FDS,
+    .exp_instruments = 1,
+    .sym = SYMBOLS(NES_FDS_FAMISTUDIO_),
+    .fds = {NES_FDS_FAMISTUDIO_EXP_INSTRUMENT_LO, NES_FDS_FAMISTUDIO_EXP_INSTRUMENT_HI, NES_FDS_FAMISTUDIO_CHN_FDS_INSTRUMENT,
+            NES_FDS_FAMISTUDIO_FDS_MOD_ENVELOPE, NES_FDS_FAMISTUDIO_FDS_MOD_SPEED, NES_FDS_FAMISTUDIO_FDS_MOD_DEPTH,
+            NES_FDS_FAMISTUDIO_FDS_MOD_DELAY, NES_FDS_FAMISTUDIO_FDS_MOD_DELAY_COUNTER, NES_FDS_FAMISTUDIO_FDS_OVERRIDE_FLAGS,
+            NES_FDS_FAMISTUDIO_FDS_WAVE_INDEX, NES_FDS_FAMISTUDIO_FDS_AUTOMOD_NUMER, NES_FDS_FAMISTUDIO_FDS_AUTOMOD_DENOM,
+            NES_FDS_FAMISTUDIO_FDS_PREV_HI},
 };

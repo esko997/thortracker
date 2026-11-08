@@ -21,7 +21,8 @@ design notes for the chip work live in `docs/BACKENDS.md`.
    implemented on branch `nes-exp` as the "NES + VRC6" variant (`docs/BACKENDS.md`, "NES expansion chips", which also
    lists the steps for each further chip) — then VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
    EPSM (YM2608). N163: source on branch `nes-n163` as eight "NES + N163" variants (1-8 channels, grouped under
-   NES → NES + N163…), awaiting player generation, builds and device checks.
+   NES → NES + N163…), awaiting player generation, builds and device checks. FDS: source on branch `nes-fds` as the
+   "NES + FDS" variant (waves, modulation table, auto-mod, master volume; Hxx/Ixx/Jxx), awaiting the same.
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
 5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
