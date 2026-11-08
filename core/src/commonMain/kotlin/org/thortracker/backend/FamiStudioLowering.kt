@@ -30,12 +30,13 @@ import kotlin.math.sign
  * override, the VRC7 custom patch another channel loads), the same slide and volume-slide step arithmetic. Two
  * deliberate additions make an order self-contained for seeking, looping and live edits without changing what plays:
  * each order re-sends its first note's instrument (not a custom-patch VRC7 sound: loading it writes the chip's shared
- * patch registers) and, when a set volume (not a slide) is in force, the channel volume. (On an N163 channel a re-sent
- * instrument reloads its envelopes but uploads no wave unless the note has an attack.) One deliberate correction:
- * loop entries restore a custom VRC7 patch if the loop uses another custom sound. Row order cannot establish the
- * final shared patch when notes are delayed; the reload preserves legato and is harmless if the patch already matches.
- * FamiStudio's own byte layout (instrument sorting and merging, CRC-ordered envelopes, its search-based stream
- * compression) is not reproduced; the golden test therefore compares register traces of both through the same player.
+ * patch registers) and, when a set volume (not a slide) is in force, the channel volume. On an N163 channel a re-sent
+ * instrument reloads its envelopes but uploads no wave unless the note has an attack. Two deliberate corrections:
+ * loop entries restore a custom VRC7 patch if the loop uses another custom sound (delays can change the final writer);
+ * mid-song restoration keeps instrument identity, so a no-attack note does not retrigger its held envelopes.
+ * FamiStudio's editor preserves that legato, but its 4.5.3 exporter forces an attack after another custom patch.
+ * Its own byte layout (instrument sorting/merging, CRC-ordered envelopes and stream compression) is not reproduced.
+ * Golden tests compare both through the same player, with a separate upstream fixture for these two corrections.
  */
 internal object FamiStudioLowering {
     /** FamiStudio's NTSC note table (`famistudio_note_table_lsb/msb.bin`), index = FamiStudio note 0..96. */

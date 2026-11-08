@@ -257,11 +257,11 @@ VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions)
     them. The lowering follows FamiStudio's exporter (`OtherVrc7ChannelUsesCustomPatch`: a channel whose custom sound
     another FM channel's different custom sound may have replaced sends its instrument again with its next note),
     never re-sends a custom sound per order (Thor Tracker's per-order re-send is skipped for it: it would rewrite the
-    registers under another channel), and corrects FamiStudio's exporter at the loop: a channel reloads its first
-    custom patch if another custom patch occurs in the loop. This handles delayed notes that change the last writer;
-    patch restoration is separate from the channel's instrument/legato state. FamiStudio's own editor
-    (`ChannelStateVrc7.IntrumentLoadedNotify`) restores shared patches too; its 4.5.3 exporter misses the loop case
-    (real-driver comparison in `AUDIO_ENGINE.md`). A custom sound starting while another FM channel holds a note of
+    registers under another channel), with **two intentional export corrections**: loop entries reload a custom patch
+    another channel may have replaced (including delayed final writers), and mid-song restoration keeps a no-attack
+    note's held envelope instead of forcing a new attack. FamiStudio's editor preserves both behaviors; its 4.5.3
+    exporter misses loop restoration and retriggers that mid-song legato case. The independent `vrc7_patch_restore`
+    golden demonstrates both differences (`AUDIO_ENGINE.md`). A custom sound starting while another FM channel holds a note of
     a different custom sound (different registers) changes that note's timbre on the chip itself: the song check warns
     where. VRC7 sounds identical but for their names are one instrument on the FM channels, as FamiStudio's export
     merges them, so a copied custom sound shares the patch without reloading it.
@@ -961,9 +961,10 @@ Decisions:
   six channels; the exports write it into every VRC7 instrument. Review.
 - VRC7 custom patches stay per sound (FamiStudio's model, several custom sounds may take turns) rather than one song
   patch; holding notes of two different custom sounds at once is a warning, not an error, since the chip itself plays
-  it (both sound like the one loaded last). The lowering corrects FamiStudio's exporter in one place: the loop order
-  reloads a custom patch another channel replaced before the song's end (FamiStudio's player does; its NSF/asm export
-  would play the second pass with the wrong patch). Review.
+  it (both sound like the one loaded last). Two deliberate corrections to FamiStudio's exporter preserve the editor's
+  musical behavior: restoring the shared patch at loop entries, and restoring it mid-song without retriggering an
+  explicitly no-attack note. The adversarial upstream-export golden covers both; FamiStudio 4.5.3 re-exports of our
+  text can reintroduce them. Review.
 - VRC7 `Pxx` means the pulse's detune converted to FM steps (one meaning on every channel, tunings work) rather than
   FamiStudio's raw FM steps; the FamiStudio text carries the converted steps. Pitch envelopes stay raw (FamiStudio's
   meaning: frequency steps × 8, + raises). Review.
