@@ -11,6 +11,7 @@ import org.thortracker.editor.ViewState
 import org.thortracker.input.Keymap
 import org.thortracker.model.Song
 import org.thortracker.system.SystemView
+import org.thortracker.system.fm.FmControls
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
@@ -62,10 +63,9 @@ object Opl3InstrumentView : SystemView() {
     /** On/off register bits of the Expert grid: a tap switches them. */
     private val TOGGLES = setOf(Row.OP_AM, Row.OP_VIB, Row.OP_EGT, Row.OP_KSR)
 
-    /** Coarse steps (↑↓ while editing, Clear+direction on lists). */
-    private const val COARSE = 8
+    private const val COARSE = FmControls.COARSE
 
-    const val NAME_MAX = 16
+    const val NAME_MAX = FmControls.NAME_MAX
 
     fun page(state: ViewState): Page = Page.entries[state.envelope.coerceIn(0, Page.entries.size - 1)]
 
@@ -138,20 +138,9 @@ object Opl3InstrumentView : SystemView() {
         val slot = (st.instrument + delta).coerceIn(1, Opl3System.SLOTS)
         if (slot == st.instrument) return
         st.instrument = slot
-        mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
+        FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         if (page(st) == Page.EXPERT) st.envStep = st.envStep.coerceIn(0, (sound(v.session.song, st)?.operatorCount ?: 2) - 1)
         publish(v)
-    }
-
-    /** The channel whose arranged rows use sound [slot] most, or null when none does. */
-    fun mostUsedChannel(song: Song, slot: Int): Int? {
-        val counts = IntArray(song.system.channels.size)
-        for (pat in song.orders.toSet()) {
-            val tracks = song.patterns[pat].tracks
-            for (ch in counts.indices) for (cell in tracks[ch]) if (cell.instrument == slot) counts[ch]++
-        }
-        val best = counts.indices.maxBy { counts[it] }
-        return if (counts[best] > 0) best else null
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
@@ -240,7 +229,7 @@ object Opl3InstrumentView : SystemView() {
 
     /** A sweep with a new start or end; setting either on a sweep without speed gives it a moderate one so it is heard. */
     private fun sweepWith(s: Opl3Sweep, start: Int = s.start, end: Int = s.end): Opl3Sweep =
-        s.copy(start = start, end = end, speed = if (s.speed == 0 && start != end) 16 else s.speed)
+        s.copy(start = start, end = end, speed = FmControls.sweepSpeed(s.speed, start, end))
 
     /** One register field of operator [o] stepped: values clamp to the field's range, bits switch. */
     fun stepOperator(o: Opl3Operator, row: Row, dx: Int, dy: Int): Opl3Operator {
@@ -282,9 +271,7 @@ object Opl3InstrumentView : SystemView() {
         val presets = Opl3Presets.ALL.filter { category == null || it.category == category }
         if (presets.isEmpty()) return false
         val ins = sound(v.session.song, st)
-        val current = presets.indexOfFirst { it.instrument == ins }
-        val next = if (current < 0) (if (delta < 0) presets.size - 1 else 0) else (current + delta).mod(presets.size)
-        val preset = presets[next]
+        val preset = presets[FmControls.presetStep(presets.indexOfFirst { it.instrument == ins }, delta, presets.size)]
         val ok = v.session.setOpl3Instrument(st.instrument, preset.instrument, "Preset ${preset.name}")
         v.session.note("${preset.name}: ${Opl3Curated.summary(preset.instrument)}" +
             (preset.note?.let { " · voiced at ${Opl3System.noteName(it)}" } ?: ""))

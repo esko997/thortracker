@@ -1,6 +1,5 @@
 package org.thortracker.system.nes
 
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
@@ -33,11 +32,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private var slotH = 0f
     private var slotRect = Rect()
     private var slotScroll = 0
-    private var stepScroll = 0
-    private var graph = Rect()
-    private var cellW = 0f
-    private var lo = 0
-    private var hi = 15
+    private val plot = EnvelopePlot(ink)
 
     private var usageSong: Song? = null
     private val usage = HashMap<Int, Int>()
@@ -159,7 +154,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             y += h
         }
         if (dpcm) {
-            graph = Rect()
+            plot.hide()
             val boxTop = y + ink.unit * 0.4f
             if (area.bottom - boxTop > ink.unit * 6f) drawDpcm(c, Rect(rx, boxTop, rx + rw, area.bottom - ink.unit * 0.4f), ins, row, col)
             return
@@ -171,7 +166,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         // steps
         val plotTop = y + ink.unit * 0.3f
         if (area.bottom - plotTop > ink.unit * 4f) drawSteps(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), kind, env, listen?.kind, col, row == Row.STEPS)
-        else graph = Rect()
+        else plot.hide()
     }
 
     private fun setting(c: Surface, label: String, value: String, x: Float, vx: Float, y: Float, h: Float, sel: Boolean, off: Boolean) {
@@ -362,95 +357,10 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     private fun drawSteps(c: Surface, r: Rect, kind: NesEnvelopeKind, env: NesEnvelope, listen: org.thortracker.system.ChannelKind?, col: Int, focused: Boolean) {
-        val values = env.values
-        val step = st.envStep
-        val title = when {
-            step < values.size -> "${kind.label} step $step of ${values.size}: ${NesInstrumentView.valueText(kind, values[step], listen)}"
-            values.isEmpty() -> "${kind.label}: no steps; hold ${ctl.keys.label(org.thortracker.editor.Action.EDIT)} and press ${ctl.keys.label(org.thortracker.editor.Action.UP)} to add one"
-            else -> "${kind.label}: ${values.size} steps; ${ctl.keys.label(org.thortracker.editor.Action.EDIT)} adds step ${values.size}"
-        }
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, if (focused) Palette.DIM else Palette.FAINT, size = ink.unit * 0.8f)
-        val labelH = ink.unit * 1.1f
-        val inner = Rect(r.left + ink.unit * 2.2f, r.top + ink.unit * 1.5f, r.right - ink.unit * 0.5f, r.bottom - ink.unit * 0.3f - labelH)
-        graph = inner
-        if (inner.height() <= 0f) return
-
-        // value scale: offsets span the largest written magnitude, at least an octave / 12 period units
-        if (kind.range.first < 0) {
-            val span = minOf(kind.range.last + 1, maxOf(12, values.maxOfOrNull { abs(it) } ?: 0))
-            lo = -span; hi = span
-        } else { lo = kind.range.first; hi = kind.range.last }
-        fun yOf(value: Int) = inner.bottom - inner.height() * (value - lo).toFloat() / (hi - lo)
-
-        // columns: at least 24, wide enough to read; scroll to keep the cursor in view
-        val minCell = ink.unit * 1.15f
-        val columns = maxOf(24, values.size + 1)
-        cellW = maxOf(minCell, inner.width() / columns)
-        val fit = maxOf(1, (inner.width() / cellW).toInt())
-        stepScroll = stepScroll.coerceIn(maxOf(0, step - fit + 1), step)
-        stepScroll = stepScroll.coerceAtMost(maxOf(0, columns - fit))
-
-        // scale labels and zero / limit rules
-        val ls = ink.unit * 0.7f
-        for (value in listOf(hi, if (lo < 0) 0 else -1, lo)) {
-            if (value < lo) continue
-            val yv = yOf(value)
-            ink.line(c, inner.left, yv, inner.right, yv, if (value == 0 && lo < 0) Palette.BAR else Palette.RULE, ink.dp(1f))
-            ink.mono(c, NesInstrumentView.valueText(kind, value, listen).take(5), inner.left - ink.unit * 0.3f, yv - ls, ls * 2, Palette.FAINT, size = ls, align = Align.RIGHT)
-        }
-
-        // loop region (the part that repeats while held) and release point
-        val loopEnd = if (env.release >= 0) env.release else values.size
-        fun xOf(i: Int) = inner.left + (i - stepScroll) * cellW
-        if (env.loop >= 0) {
-            val x0 = maxOf(inner.left, xOf(env.loop))
-            val x1 = minOf(inner.right, xOf(loopEnd))
-            if (x1 > x0) {
-                ink.rect(c, x0, inner.top, x1, inner.bottom, Palette.alpha(Palette.LISTEN, 26))
-                ink.rect(c, x0, inner.top, x1, inner.top + ink.dp(3f), Palette.LISTEN)
-                ink.label(c, "loop", x0 + ink.dp(3f), inner.top + ink.dp(3f), ink.unit, Palette.LISTEN, size = ink.unit * 0.7f)
-            }
-        }
-        if (env.release >= 0) {
-            val x = xOf(env.release)
-            if (x >= inner.left && x <= inner.right) {
-                ink.line(c, x, inner.top, x, inner.bottom, Palette.WRITE, ink.dp(2f))
-                ink.label(c, "release", x + ink.dp(3f), inner.bottom - ink.unit, ink.unit, Palette.WRITE, size = ink.unit * 0.7f)
-            }
-        }
-
-        // bars
-        val base = if (lo < 0) yOf(0) else inner.bottom
-        val gap = maxOf(1f, cellW * 0.12f)
-        val muted = listen != null && ignores(kind, listen)
-        val barColor = if (muted) Palette.FAINT else Palette.alpha(col, 170)
-        val last = minOf(values.size, stepScroll + fit)
-        for (i in stepScroll until last) {
-            val x = xOf(i)
-            val yv = yOf(values[i])
-            val t = minOf(base, yv)
-            val b = maxOf(base, yv)
-            val on = i == step
-            ink.rect(c, x + gap, minOf(t, b - ink.dp(2f)), x + cellW - gap, b, if (on && focused) (if (ctl.editHeld) Palette.WRITE else col) else barColor)
-        }
-        // append position
-        if (values.size < NesEnvelope.MAX_LENGTH && values.size in stepScroll until stepScroll + fit) {
-            val x = xOf(values.size)
-            ink.outline(c, Rect(x + gap, inner.top + gap, x + cellW - gap, inner.bottom - gap), Palette.FAINT, ink.dp(1f), ink.dp(2f))
-            ink.mono(c, "+", x + cellW / 2, inner.top, inner.height(), Palette.FAINT, size = ink.unit * 0.8f, align = Align.CENTER)
-        }
-        // cursor
-        if (step in stepScroll until stepScroll + fit) {
-            val x = xOf(step)
-            ink.outline(c, Rect(x, inner.top, x + cellW, inner.bottom), if (focused) cursorColor() else Palette.FAINT, ink.dp(if (focused) 2f else 1f), ink.dp(2f))
-        }
-        // step numbers
-        val every = when { cellW >= ink.unit * 2f -> 1; cellW >= ink.unit * 1.4f -> 2; else -> 4 }
-        for (i in stepScroll until minOf(stepScroll + fit, values.size + 1)) {
-            if (i % every != 0 && i != step) continue
-            ink.mono(c, i.toString(), xOf(i) + cellW / 2, inner.bottom + ink.dp(2f), labelH, if (i == step) Palette.TEXT else Palette.FAINT, size = ink.unit * 0.65f, align = Align.CENTER)
-        }
+        val text = { value: Int -> NesInstrumentView.valueText(kind, value, listen) }
+        val title = EnvelopePlot.title(kind.label, env.values, st.envStep, text,
+            ctl.keys.label(org.thortracker.editor.Action.EDIT), ctl.keys.label(org.thortracker.editor.Action.UP))
+        plot.draw(c, r, title, kind, env, st.envStep, text, listen != null && ignores(kind, listen), col, focused, cursorColor(), ctl.editHeld)
     }
 
     private fun usage(slot: Int): Int {
@@ -492,7 +402,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             NesInstrumentView.publish(ctl)
             return true
         }
-        if (graph.contains(x, y) && cellW > 0f) {
+        if (plot.contains(x, y)) {
             st.instField = NesInstrumentView.rows(st).indexOf(Row.STEPS)
             drawSlot = st.instrument
             drawKind = NesInstrumentView.kind(st)
@@ -506,9 +416,8 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     /** Sets the step under [x] to the value at [y]; past the end it appends one step at a time. */
     private fun drawAt(x: Float, y: Float) {
         val e = song.nesInstrument(drawSlot)?.let { drawKind.of(it) } ?: return
-        val i = (stepScroll + ((x - graph.left) / cellW).toInt()).coerceIn(0, NesInstrumentView.lastStep(e))
-        val t = ((graph.bottom - y) / graph.height()).coerceIn(0f, 1f)
-        val value = (lo + t * (hi - lo)).roundToInt()
+        val i = plot.stepAt(x, NesInstrumentView.lastStep(e))
+        val value = plot.valueAt(y)
         st.envStep = i
         session.editNesEnvelope(drawSlot, drawKind, "Draw ${drawKind.label.lowercase()}") { NesEnvelopes.withValue(drawKind, it, i, value) }
     }
