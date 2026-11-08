@@ -1,5 +1,19 @@
 # Thor Tracker verification — 2026-11-08
 
+## 0.12.0 OPL3 FM songs
+
+A fourth sound chip: the Yamaha **OPL3** (YMF262), the Sound Blaster's FM chip, emulated by Nuked-OPL3 and played by Thor Tracker's own player (no console shipped an OPL3 sound driver, so this system is music-only and exports VGM).
+
+- **New blank song** and **Load demo** offer **OPL3 FM (YMF262)**. The OPL3 demo is **Glass Harbour**.
+- Nine channels, FM 1-9. FM 1-6 can play 4-operator sounds; the chip's other voices form a pool for chords.
+- **Up to four effect columns per channel** on OPL3 songs (the other chips keep one). The Pattern panel's new Columns row sets how many show per channel; effects in hidden columns still play and are marked. Lanes scroll sideways to keep the cursor's channel in view on narrow screens.
+- **Chords:** `Hxy` sounds the note plus +x and +y semitones together on spare voices; `Kxx` plays a shape from the song's chord table (Chords page). The status line shows the chord's notes while you edit.
+- **FM sounds built from curated choices:** the **Sound** page sets algorithm (2-op FM/additive, the four 4-op routings), ratios, waveforms, brightness, level, feedback, envelope, tone decay, key scaling and vibrato/tremolo, one ←/→ value each, with a drawn algorithm and envelope. **Expert** shows every operator register. **Drum** adds a pitch sweep (start, end, speed) for pitched FM drums. 17 presets (e-piano, brass, bell, organ, bass, pad, kick, snare, tom, hats…).
+- Parameter-lock effects (brightness, feedback, ratio, waveform) apply when the note starts.
+- **Export .vgm** (VGM 1.71 with title/author tags), playable in VGM players.
+
+Verified: 379 unit tests; native engine checks: Game Boy 145, NES 336, SID 151, OPL3 282 (our player's register writes equal an independent Python implementation of the same spec in every tick, VGM byte-identical; A-4 at 439.99 Hz; exact-row seeks; live re-layout before every tick changes nothing); OPL3 project lowering byte-identical to the reference builder for two golden songs; existing Game Boy, NES and SID project files encode byte-identically after the effect-column model change; Game Boy factory `.uge` byte-identical and all 32 Game Boy view renders pixel-identical; 18 Android tests on the emulator. On a Konkr Pocket Block (the slowest test device): the OPL3 demo plays with 0 audio underruns over 22 s, and the instrument pages work. Cost per 60 Hz tick: Konkr 1.3 ms warm (6 ms when the CPU clocks down between ticks, still within the 16.7 ms budget).
+
 ## 0.11.0 Commodore 64 SID songs
 
 Thor Tracker now writes music for a third chip: the C64's SID, played by GoatTracker 2.77's own playroutine on an emulated 6510 with reSID 1.0, on the Thor and the Steam Deck.

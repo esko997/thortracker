@@ -28,6 +28,7 @@ object Palette {
         0xFFE8C46A.toInt(),
         0xFF6AC4E8.toInt(),
         0xFFE87AC4.toInt(),
+        0xFFD8B48C.toInt(), // ninth lane (OPL3 channel 9): sand
     )
 
     fun channel(i: Int): Int = CHANNELS[i.mod(CHANNELS.size)]

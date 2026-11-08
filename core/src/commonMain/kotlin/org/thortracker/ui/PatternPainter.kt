@@ -79,18 +79,30 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         cw = ink.monoWidth("0")
         rowH = ink.unit * 1.2f // with the 12dp unit: about 24 rows on the Thor's top screen after the 1-row shell
         val rulerW = cw * 3.4f
-        val laneInner = cw * 10f
-        val lanePad = cw * 1.2f
-        val minLane = laneInner + lanePad
-        val wantInspector = area.width() - rulerW - channels * minLane > ink.unit * 15f
-        laneW = if (wantInspector) minOf(cw * 15f, (area.width() - rulerW - ink.unit * 15f) / channels)
-        else (area.width() - rulerW) / channels
-        val inspectorW = if (wantInspector) area.width() - rulerW - laneW * channels else 0f
         gridLeft = area.left + rulerW
+        multi = ctl.multiColumn()
+        laneCount = channels
+        val wantInspector: Boolean
+        val inspectorW: Float
+        if (!multi) {
+            val laneInner = cw * 10f
+            val lanePad = cw * 1.2f
+            val minLane = laneInner + lanePad
+            wantInspector = area.width() - rulerW - channels * minLane > ink.unit * 15f
+            laneW = if (wantInspector) minOf(cw * 15f, (area.width() - rulerW - ink.unit * 15f) / channels)
+            else (area.width() - rulerW) / channels
+            inspectorW = if (wantInspector) area.width() - rulerW - laneW * channels else 0f
+            firstLane = 0
+            lastLane = channels - 1
+        } else {
+            wantInspector = layoutLanes(area, rulerW, channels)
+            inspectorW = if (wantInspector) area.right - laneRight(lastLane) else 0f
+        }
         laneTop = headerBottom
         val laneHeaderH = ink.unit * 1.7f
         gridTop = laneTop + laneHeaderH
         visibleRows = maxOf(1, ((area.bottom - gridTop) / rowH).toInt())
+        val gridRight = gridRight()
 
         // scroll: keep playhead (following) or cursor in view
         val target = if (playHere && st.followPlayback && !ctl.holding) v.playback.row else st.row
@@ -111,8 +123,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
         // The chip's shared state (SID: which voice owns the filter) where the song is heard: the playhead, else the cursor.
         val shared = if (playing) s.system.sharedState(s, v.playback.order, v.playback.row) else s.system.sharedState(s, st.order, st.row)
-        for (ch in 0 until channels) {
-            val x = gridLeft + ch * laneW
+        for (ch in firstLane..lastLane) {
+            val x = laneLeft(ch)
+            val laneW = laneWidth(ch)
             val col = Palette.channel(ch)
             val heard = if (ch != auditionChannel) 0f else if (auditionLit) 1f else motion.fade(auditionEnd, 320)
             val lamp = maxOf(playLamp(ch), heard)
@@ -122,7 +135,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val penName = s.system.instrumentName(s, s.system.channels[ch].bank, pen) ?: ""
             ink.label(c, names[ch], x + cw * 0.6f, laneTop, laneHeaderH, col, true)
             val nw = ink.labelWidth(names[ch], ink.unit, true)
-            val tag = shared?.tags?.getOrNull(ch)
+            // Hidden effect columns that hold effects (they still play): "+n" in the lane header.
+            val hidden = if (multi) ctl.usedColumns(ch) - ctl.shownColumns(ch) else 0
+            val tag = shared?.tags?.getOrNull(ch) ?: if (hidden > 0) "+$hidden fx" else null
             val tagW = if (tag == null) 0f else ink.labelWidth(tag, ink.unit * 0.7f, true) + cw * 1.2f
             if (tag != null) {
                 val tr = Rect(x + laneW - tagW, laneTop + laneHeaderH * 0.2f, x + laneW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
@@ -131,6 +146,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             }
             ink.label(c, ink.fit("${hex2(pen)} $penName", laneW - nw - cw * 2f - tagW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
         }
+        if (multi) drawLaneScroll(c, area, laneHeaderH)
 
         // rows background + ruler
         for (r in first..last) {
@@ -140,23 +156,23 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 r % 4 == 0 -> Palette.BEAT
                 else -> Palette.BG
             }
-            ink.rect(c, area.left, y, gridLeft + laneW * channels, y + rowH, bg)
+            ink.rect(c, area.left, y, gridRight, y + rowH, bg)
             val rc = if (r % 4 == 0) Palette.TEXT else Palette.FAINT
             ink.mono(c, hex2(r), area.left + cw * 0.5f, y, rowH, rc, r % 16 == 0)
         }
-        for (ch in 0 until channels) {
-            val x = gridLeft + ch * laneW
+        for (ch in firstLane..lastLane) {
+            val x = laneLeft(ch)
             ink.line(c, x, laneTop, x, gridTop + (last - first + 1) * rowH, Palette.RULE, ink.dp(1f))
         }
 
         // playhead band
         if (playHere && v.playback.row in first..last) {
             val y = gridTop + (v.playback.row - first) * rowH
-            ink.rect(c, area.left, y, gridLeft + laneW * channels, y + rowH, Palette.alpha(Palette.PLAYHEAD, 54))
+            ink.rect(c, area.left, y, gridRight, y + rowH, Palette.alpha(Palette.PLAYHEAD, 54))
             ink.rect(c, area.left, y, area.left + ink.dp(4f), y + rowH, Palette.PLAYHEAD)
         } else if (samePatternPlaying && v.playback.row in first..last) {
             val y = gridTop + (v.playback.row - first) * rowH
-            ink.outline(c, Rect(area.left + 1, y + 1, gridLeft + laneW * channels - 1, y + rowH - 1), Palette.alpha(Palette.PLAYHEAD, 120), ink.dp(1f))
+            ink.outline(c, Rect(area.left + 1, y + 1, gridRight - 1, y + rowH - 1), Palette.alpha(Palette.PLAYHEAD, 120), ink.dp(1f))
         }
 
         // mark
@@ -164,8 +180,10 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val b = ctl.block()
             val r0 = maxOf(b.firstRow, first)
             val r1 = minOf(b.lastRow, last)
-            if (r0 <= r1) {
-                val rect = Rect(gridLeft + b.firstChannel * laneW, gridTop + (r0 - first) * rowH, gridLeft + (b.lastChannel + 1) * laneW, gridTop + (r1 - first + 1) * rowH)
+            val c0 = maxOf(b.firstChannel, firstLane)
+            val c1 = minOf(b.lastChannel, lastLane)
+            if (r0 <= r1 && c0 <= c1) {
+                val rect = Rect(laneLeft(c0), gridTop + (r0 - first) * rowH, laneRight(c1), gridTop + (r1 - first + 1) * rowH)
                 ink.rect(c, rect, Palette.alpha(Palette.LISTEN, 34))
                 ink.outline(c, rect, Palette.alpha(Palette.LISTEN, 160), ink.dp(1.5f))
             }
@@ -174,7 +192,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         // cursor row band
         if (st.row in first..last) {
             val y = gridTop + (st.row - first) * rowH
-            ink.rect(c, gridLeft, y, gridLeft + laneW * channels, y + rowH, Palette.alpha(Palette.TEXT, 14))
+            ink.rect(c, gridLeft, y, gridRight, y + rowH, Palette.alpha(Palette.TEXT, 14))
         }
 
         // edit afterglow: the cells the last change touched, behind their text
@@ -182,16 +200,17 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         if (glow > 0f) {
             val r0 = maxOf(flashRow0, first)
             val r1 = minOf(flashRow1, last)
-            if (r0 <= r1) for (ch in flashCh0..minOf(flashCh1, channels - 1)) {
-                val x = gridLeft + ch * laneW
-                ink.rect(c, x + 1, gridTop + (r0 - first) * rowH, x + laneW, gridTop + (r1 - first + 1) * rowH, Palette.alpha(Palette.channel(ch), (glow * 92).toInt()))
+            if (r0 <= r1) for (ch in maxOf(flashCh0, firstLane)..minOf(flashCh1, lastLane)) {
+                val x = laneLeft(ch)
+                ink.rect(c, x + 1, gridTop + (r0 - first) * rowH, x + laneWidth(ch), gridTop + (r1 - first + 1) * rowH, Palette.alpha(Palette.channel(ch), (glow * 92).toInt()))
             }
         }
 
         // cells + sustain rails; the cursor cell may show an explicitly chosen arpeggio 000
         val zeroHere = ctl.chosenArpeggio()
-        for (ch in 0 until channels) {
-            val x = gridLeft + ch * laneW + cw * 0.7f
+        val zeroColumn = ctl.cursorColumn()
+        for (ch in firstLane..lastLane) {
+            val x = laneLeft(ch) + cw * 0.7f
             val col = Palette.channel(ch)
             val track = p.tracks[ch]
             // Rows still sounding after the current one: a note sounds until the next note or OFF, unless the system
@@ -211,12 +230,12 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 }
                 if (bottom > top) ink.rect(c, x - cw * 0.45f, top, x - cw * 0.45f + ink.dp(2f), bottom, Palette.alpha(col, 120))
                 if (cell.note >= 0) session.fittedFrom(pattern, ch, r)?.let { from -> drawFitMark(c, ch, r - first, pitchOrder(cell) > pitchOrder(from)) }
-                drawCell(c, cell, x, y, col, ch, zeroHere && ch == st.channel && r == st.row)
+                drawCell(c, cell, x, y, col, ch, if (zeroHere && ch == st.channel && r == st.row) zeroColumn else -1)
             }
         }
 
         // cursor
-        if (st.row in first..last) {
+        if (st.row in first..last && st.channel in firstLane..lastLane) {
             val fr = fieldRect(st.channel, st.field, st.row - first)
             val outline = when {
                 ctl.editHeld -> Palette.WRITE
@@ -227,7 +246,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             ink.round(c, fr, ink.dp(3f), Palette.alpha(outline, 46))
             ink.outline(c, fr, outline, if (v.controllerFocused) ink.dp(2f) else ink.dp(1f), ink.dp(3f))
             val cell = p.tracks[st.channel][st.row]
-            drawCell(c, cell, gridLeft + st.channel * laneW + cw * 0.7f, gridTop + (st.row - first) * rowH, Palette.channel(st.channel), st.channel, zeroHere)
+            drawCell(c, cell, laneLeft(st.channel) + cw * 0.7f, gridTop + (st.row - first) * rowH, Palette.channel(st.channel), st.channel, if (zeroHere) zeroColumn else -1)
         }
 
         // inspector
@@ -235,6 +254,101 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
         // root/scale panel over the grid
         scalePanel = if (st.scalePanel) drawScalePanel(c, area) else null
+    }
+
+    // ---- lanes ---------------------------------------------------------------------------------------
+
+    /** Several effect columns (the OPL3): lanes differ in width and scroll sideways to keep the cursor's in view. */
+    private var multi = false
+    private var laneCount = 0
+    private val laneXs = FloatArray(MAX_LANES)
+    private val laneWs = FloatArray(MAX_LANES)
+    private var firstLane = 0
+    private var lastLane = 0
+    /** First lane shown while the lanes do not all fit (several-column systems only). */
+    private var laneScroll = 0
+    private val scrollLeft = Rect()
+    private val scrollRight = Rect()
+
+    private fun laneLeft(ch: Int): Float = if (multi) laneXs[ch] else gridLeft + ch * laneW
+
+    private fun laneWidth(ch: Int): Float = if (multi) laneWs[ch] else laneW
+
+    private fun laneRight(ch: Int): Float = if (multi) laneXs[ch] + laneWs[ch] else gridLeft + (ch + 1) * laneW
+
+    private fun gridRight(): Float = if (multi) laneRight(lastLane) else gridLeft + laneW * laneCount
+
+    /**
+     * Lays out lanes of `note sound` plus 4 characters per shown effect column. The text keeps its size on every
+     * screen (9 channels of 2-4 columns cannot shrink to fit a 1240-pixel display legibly): when the lanes do not all
+     * fit, they scroll by whole lanes to keep the cursor's channel in view, as FamiTracker and Furnace do, and narrowing
+     * a channel to fewer columns (Pattern panel → Columns) shows more of them. Returns whether the inspector shows: when
+     * it fits beside every lane, or beside scrolled lanes while [INSPECTOR_LANES] of them still show (wide displays:
+     * the Thor's top one, the Deck); otherwise the lanes take its room and the status line names effects as they are edited.
+     */
+    private fun layoutLanes(area: Rect, rulerW: Float, channels: Int): Boolean {
+        var total = 0f
+        for (ch in 0 until channels) {
+            laneWs[ch] = cw * (6f + 4f * ctl.shownColumns(ch) + 1.2f)
+            total += laneWs[ch]
+        }
+        val room = area.width() - rulerW
+        val inspectorMin = ink.unit * 15f
+        val inspector: Boolean
+        if (total <= room) {
+            inspector = total + inspectorMin <= room
+            // Without the inspector, spare width widens every lane as the one-column layout does.
+            if (!inspector) { val extra = (room - total) / channels; for (ch in 0 until channels) laneWs[ch] += extra }
+            laneScroll = 0
+            firstLane = 0
+            lastLane = channels - 1
+        } else {
+            fun span(from: Int, to: Int): Float { var w = 0f; for (ch in from..to) w += laneWs[ch]; return w }
+            fun place(avail: Float) {
+                laneScroll = laneScroll.coerceIn(0, channels - 1)
+                val cursor = st.channel.coerceIn(0, channels - 1)
+                if (cursor < laneScroll) laneScroll = cursor
+                while (laneScroll < cursor && span(laneScroll, cursor) > avail) laneScroll++
+                while (laneScroll > 0 && span(laneScroll - 1, channels - 1) <= avail) laneScroll--
+                firstLane = laneScroll
+                lastLane = firstLane
+                while (lastLane + 1 < channels && span(firstLane, lastLane + 1) <= avail) lastLane++
+            }
+            place(room - inspectorMin)
+            inspector = lastLane - firstLane + 1 >= INSPECTOR_LANES
+            if (!inspector) {
+                place(room)
+                // The width the next lane did not fit into widens the shown ones, so the grid ends at the edge.
+                val extra = (room - span(firstLane, lastLane)) / (lastLane - firstLane + 1)
+                for (ch in firstLane..lastLane) laneWs[ch] += extra
+            }
+        }
+        var x = gridLeft
+        for (ch in 0 until channels) {
+            laneXs[ch] = x
+            if (ch >= firstLane) x += laneWs[ch]
+        }
+        return inspector
+    }
+
+    /** "◀ 2" / "3 ▶" beside the lane headers when lanes are scrolled out of view (tap to move there). */
+    private fun drawLaneScroll(c: Surface, area: Rect, h: Float) {
+        scrollLeft.set(0f, 0f, 0f, 0f)
+        scrollRight.set(0f, 0f, 0f, 0f)
+        val size = ink.unit * 0.75f
+        if (firstLane > 0) {
+            scrollLeft.set(area.left, laneTop, gridLeft, laneTop + h)
+            ink.rect(c, scrollLeft, Palette.alpha(Palette.PLAYHEAD, 40))
+            ink.label(c, "◀$firstLane", scrollLeft.centerX(), laneTop, h, Palette.PLAYHEAD, true, size, Align.CENTER)
+        }
+        val more = laneCount - 1 - lastLane
+        if (more > 0) {
+            val right = laneRight(lastLane)
+            val w = ink.labelWidth("$more▶", size, true) + cw
+            scrollRight.set(right - w, laneTop + h * 0.1f, right - cw * 0.2f, laneTop + h * 0.9f)
+            ink.round(c, scrollRight, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 90))
+            ink.label(c, "$more▶", scrollRight.centerX(), scrollRight.top, scrollRight.height(), Palette.TEXT, true, size, Align.CENTER)
+        }
     }
 
     /** Rows still sounding after row [r] holding [cell], given [left] after the row before. */
@@ -294,10 +408,17 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         return 0f
     }
 
+    /** A cursor field's box: note, sound, then per effect column its type (1 character) and value (2), 4 characters apart. */
     private fun fieldRect(ch: Int, field: Int, visRow: Int): Rect {
-        val x = gridLeft + ch * laneW + cw * 0.7f
+        val x = laneLeft(ch) + cw * 0.7f
         val y = gridTop + visRow * rowH
-        val (start, len) = when (field) { 0 -> 0f to 3f; 1 -> 4f to 2f; 2 -> 7f to 1f; else -> 8f to 2f }
+        val column = ViewController.columnOf(field)
+        val (start, len) = when {
+            field == 0 -> 0f to 3f
+            field == 1 -> 4f to 2f
+            !ViewController.isValueField(field) -> 7f + 4 * column to 1f
+            else -> 8f + 4 * column to 2f
+        }
         return Rect(x + start * cw - cw * 0.2f, y + 1, x + (start + len) * cw + cw * 0.2f, y + rowH - 1)
     }
 
@@ -322,8 +443,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         return " · fitted from ${song.system.noteName(from.note)}$bend"
     }
 
-    /** [zero]: show this 000 as the explicitly chosen effect 0 (arpeggio) rather than as no effect. */
-    private fun drawCell(c: Surface, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Boolean = false) {
+    /** [zero]: the effect column whose 000 shows as the explicitly chosen effect 0 (arpeggio) rather than as no effect; -1 none. */
+    private fun drawCell(c: Surface, cell: Cell, x: Float, y: Float, col: Int, ch: Int, zero: Int = -1) {
         val noteText = when {
             cell.note >= 0 -> song.system.noteName(cell.note)
             cell.note == Cell.CUT -> "OFF"
@@ -337,12 +458,22 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
         ink.mono(c, noteText, x, y, rowH, noteColor, cell.note >= 0)
         ink.mono(c, if (cell.instrument > 0) hex2(cell.instrument) else "··", x + cw * 4, y, rowH, if (cell.instrument > 0) Palette.TEXT else Palette.FAINT)
-        val hasFx = cell.hasEffect
-        val shown = hasFx || zero
-        ink.mono(c, if (shown) EffectSpec.textOf(cell.effect) else "·", x + cw * 7, y, rowH, if (shown) Palette.PLAYHEAD else Palette.FAINT, hasFx)
-        ink.mono(c, if (shown) hex2(cell.param) else "··", x + cw * 8, y, rowH, if (shown) Palette.DIM else Palette.FAINT)
-        if ((cell.note != Cell.EMPTY || cell.instrument != 0 || hasFx) && hasProblem(ch, cell)) {
-            ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * 10.2f, y + rowH - ink.dp(1f), Palette.ERROR)
+        val columns = if (multi) ctl.shownColumns(ch) else 1
+        for (k in 0 until columns) {
+            val code = cell.effectCode(k)
+            val param = cell.effectParam(k)
+            val hasFx = code != 0 || param != 0
+            val shown = hasFx || zero == k
+            val fx = x + cw * (7 + 4 * k)
+            ink.mono(c, if (shown) EffectSpec.textOf(code) else "·", fx, y, rowH, if (shown) Palette.PLAYHEAD else Palette.FAINT, hasFx)
+            ink.mono(c, if (shown) hex2(param) else "··", x + cw * (8 + 4 * k), y, rowH, if (shown) Palette.DIM else Palette.FAINT)
+        }
+        // Effects in hidden columns still play: a dot after the last shown column says so.
+        if (multi && cell.lastEffectColumn >= columns) {
+            ink.rect(c, x + cw * (6 + 4 * columns) - ink.dp(2f), y + rowH * 0.4f, x + cw * (6 + 4 * columns) + ink.dp(1f), y + rowH * 0.6f, Palette.PLAYHEAD)
+        }
+        if ((cell.note != Cell.EMPTY || cell.instrument != 0 || cell.hasAnyEffect) && hasProblem(ch, cell)) {
+            ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * (if (columns == 1) 10.2f else 6.2f + 4 * columns), y + rowH - ink.dp(1f), Palette.ERROR)
         }
     }
 
@@ -469,7 +600,30 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             }
             y += line
         }
-        if (cell.hasEffect) {
+        val cursorEmpty = ctl.cursorColumn().let { cell.effectCode(it) == 0 && cell.effectParam(it) == 0 }
+        if (multi && cell.hasAnyEffect) {
+            // Every column holding an effect (hidden ones too); the cursor's column (else the first) with its full reading.
+            val focus = if (st.field >= 2 && !cursorEmpty) ctl.cursorColumn()
+                else (0..cell.lastEffectColumn).first { cell.effectCode(it) != 0 || cell.effectParam(it) != 0 }
+            for (k in 0..cell.lastEffectColumn) {
+                val code = cell.effectCode(k)
+                val param = cell.effectParam(k)
+                if (code == 0 && param == 0) continue
+                val info = system.effects.firstOrNull { it.code == code }
+                val on = k == focus
+                val hidden = if (k >= ctl.shownColumns(ch)) " (hidden column)" else ""
+                ink.label(c, ink.fit("${k + 1}: ${EffectSpec.charOf(code)}${hex2(param)} ${info?.name ?: ""}$hidden", w), x, y, line,
+                    if (on) Palette.PLAYHEAD else Palette.DIM, on)
+                y += line
+                if (!on) continue
+                for (part in wrap(ctl.effectReading(ch, st.row, k, code, param), w, ink.unit * 0.85f)) {
+                    ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
+                    y += line * 0.85f
+                }
+            }
+        }
+        if (multi && cell.hasAnyEffect && !(st.field >= 2 && cursorEmpty)) Unit
+        else if (!multi && cell.hasEffect) {
             val info = system.effects.firstOrNull { it.code == cell.effect }
             ink.label(c, ink.fit("${EffectSpec.charOf(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, Palette.PLAYHEAD, true)
             y += line
@@ -576,6 +730,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     private val scalePrev = Rect()
     private val scaleNext = Rect()
     private val scaleDone = Rect()
+    private val columnsRow = Rect()
+    private val columnsPrev = Rect()
+    private val columnsNext = Rect()
     private var panelNote: List<String> = emptyList()
     private var panelNoteWidth = -1f
     private var panelNoteTuned = false
@@ -607,7 +764,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val keyH = u * 2.6f
         val lineH = u * 2.1f
         val noteH = u * 1.1f
-        val h = pad + titleH + keyH + u * 0.4f + (lineH + u * 0.3f) * 3 + u * 0.2f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f
+        val h = pad + titleH + keyH + u * 0.4f + (lineH + u * 0.3f) * 3 + u * 0.2f + noteH * panelNote.size + u * 0.4f + lineH + pad * 0.6f +
+            (if (multi) lineH + u * 0.3f else 0f)
         val left = area.right - w - u * 0.5f
         val top = (headerBottom + u * 0.3f).coerceAtMost(maxOf(area.top, area.bottom - h))
         val panel = Rect(left, top, left + w, top + h)
@@ -685,6 +843,27 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             fitButton.width() - u, small), fitButton.centerX(), y, lineH, if (canFit) Palette.PLAYHEAD else Palette.DIM, canFit, small, Align.CENTER)
         y += lineH + u * 0.5f
 
+        // Columns (several-column systems): the effect columns shown on the cursor's channel, this display only.
+        columnsRow.set(0f, 0f, 0f, 0f)
+        if (multi) {
+            y -= u * 0.2f
+            columnsRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
+            focusRow(c, columnsRow, ViewController.SCALE_COLUMNS_FIELD)
+            ink.label(c, "Columns", x, y, lineH, Palette.DIM)
+            columnsPrev.set(stripL, y + lineH * 0.12f, stripL + bw, y + lineH * 0.88f)
+            columnsNext.set(panel.right - pad - bw, columnsPrev.top, panel.right - pad, columnsPrev.bottom)
+            ink.round(c, columnsPrev, ink.dp(4f), Palette.RULE)
+            ink.round(c, columnsNext, ink.dp(4f), Palette.RULE)
+            ink.label(c, "◀", columnsPrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+            ink.label(c, "▶", columnsNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+            val ch = st.channel
+            val auto = st.effectColumns.getOrElse(ch) { 0 } == 0
+            val text = "${song.system.channels[ch].name}: ${ctl.shownColumns(ch)} of ${song.system.effectColumns(ch)}${if (auto) " (auto)" else ""}"
+            ink.label(c, ink.fit(text, columnsNext.left - columnsPrev.right - u * 0.6f, bold = true), (columnsPrev.right + columnsNext.left) / 2f, y, lineH,
+                Palette.channel(ch), true, align = Align.CENTER)
+            y += lineH + u * 0.5f
+        }
+
         for (part in panelNote) {
             ink.label(c, part, x, y, noteH, Palette.DIM, size = small)
             y += noteH
@@ -724,13 +903,18 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         touchTarget = when {
             insp != null && insp.contains(x, y) -> if (y >= orderListTop) 3 else 0
             y < headerBottom -> 0
+            multi && scrollLeft.contains(x, y) -> 4
+            multi && scrollRight.contains(x, y) -> 5
             y < gridTop -> 2
-            x >= gridLeft && x < gridLeft + laneW * song.channelCount() -> 1
+            x >= gridLeft && x < gridRight() -> 1
             x < gridLeft && y >= gridTop -> 1
             else -> 0
         }
         return touchTarget != 0
     }
+
+    /** The shown lane under [x] (several-column layout), or null. */
+    private fun laneAt(x: Float): Int? = (firstLane..lastLane).firstOrNull { x >= laneLeft(it) && x < laneRight(it) }
 
     override fun move(x: Float, y: Float) {
         if (touchTarget != 1) return
@@ -750,17 +934,35 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 if (y < gridTop || row >= s.rowCount(s.patternAt(st.order))) return
                 st.row = row
                 if (x >= gridLeft) {
-                    val ch = ((x - gridLeft) / laneW).toInt().coerceIn(0, s.channelCount() - 1)
-                    val local = (x - gridLeft - ch * laneW - cw * 0.7f) / cw
-                    st.channel = ch
-                    st.field = when { local < 3.5f -> 0; local < 6.5f -> 1; local < 7.6f -> 2; else -> 3 }
+                    if (!multi) {
+                        val ch = ((x - gridLeft) / laneW).toInt().coerceIn(0, s.channelCount() - 1)
+                        val local = (x - gridLeft - ch * laneW - cw * 0.7f) / cw
+                        st.channel = ch
+                        st.field = when { local < 3.5f -> 0; local < 6.5f -> 1; local < 7.6f -> 2; else -> 3 }
+                    } else {
+                        val ch = laneAt(x) ?: return
+                        val local = (x - laneLeft(ch) - cw * 0.7f) / cw
+                        val k = ((local - 6.5f) / 4f).toInt().coerceIn(0, ctl.shownColumns(ch) - 1)
+                        st.channel = ch
+                        st.field = when {
+                            local < 3.5f -> 0
+                            local < 6.5f -> 1
+                            local - 6.5f - 4 * k < 1.1f -> 2 + 2 * k
+                            else -> 3 + 2 * k
+                        }
+                    }
                 }
                 v.touchScrolled = false
                 ctl.publishPattern()
             }
             2 -> {
-                val ch = ((x - gridLeft) / laneW).toInt()
+                val ch = if (multi) laneAt(x) ?: -1 else ((x - gridLeft) / laneW).toInt()
                 if (ch in 0 until s.channelCount()) { st.channel = ch; ctl.publishPattern() }
+            }
+            4, 5 -> {
+                st.channel = (if (touchTarget == 4) firstLane - 1 else lastLane + 1).coerceIn(0, s.channelCount() - 1)
+                ctl.normalise()
+                ctl.publishPattern()
             }
             3 -> {
                 val o = orderScroll + ((y - orderListTop) / orderRowH).toInt()
@@ -780,10 +982,13 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                     lengthNext.contains(x, y) -> ctl.stepLength(1)
                     scaleDone.contains(x, y) -> ctl.closeScalePanel()
                     fitButton.contains(x, y) -> ctl.fitPatternToScale()
+                    multi && columnsPrev.contains(x, y) -> ctl.stepShownColumns(-1)
+                    multi && columnsNext.contains(x, y) -> ctl.stepShownColumns(1)
                     rootRow.contains(x, y) -> st.scaleField = 0
                     scaleRow.contains(x, y) -> st.scaleField = 1
                     lengthRow.contains(x, y) -> st.scaleField = 2
                     fitRow.contains(x, y) -> st.scaleField = ViewController.SCALE_FIT_FIELD
+                    multi && columnsRow.contains(x, y) -> st.scaleField = ViewController.SCALE_COLUMNS_FIELD
                 }
             }
         }
@@ -794,6 +999,10 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
     private companion object {
         const val LAMP_ROWS = 4
+        /** Most channels a system has room for in the lane arrays (the OPL3 has 9). */
+        const val MAX_LANES = 16
+        /** Lanes that must still show beside the inspector when lanes scroll; fewer and the inspector gives way. */
+        const val INSPECTOR_LANES = 6
         /** Pitch classes on black piano keys, C = 0. */
         val BLACK_KEYS = booleanArrayOf(false, true, false, true, false, false, true, false, true, false, true, false)
     }

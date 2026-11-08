@@ -12,6 +12,7 @@ import kotlinx.serialization.json.put
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
+import org.thortracker.model.Cell
 import org.thortracker.model.Phrase
 import org.thortracker.model.PhraseMotion
 import org.thortracker.model.PhraseRhythm
@@ -35,6 +36,9 @@ object WorkspaceCodec {
     /** hUGE note 0 (C2 in scientific pitch): note 0 of the old `phrase` key. */
     const val LEGACY_NOTE_BASE = 24
 
+    /** Most channels any system has (the OPL3's 9), for the stored per-channel effect column counts. */
+    private const val MAX_CHANNELS = 16
+
     fun decode(text: String): MutableList<ViewState> {
         val defaults = mutableListOf(ViewState(kind = ViewKind.PATTERN), ViewState(kind = ViewKind.KEYBOARD))
         val array = try { Json.parseToJsonElement(text) as? JsonArray } catch (_: Exception) { null } ?: return defaults
@@ -53,7 +57,7 @@ object WorkspaceCodec {
                 order = int("order", 0).coerceAtLeast(0),
                 row = int("row", 0).coerceAtLeast(0),
                 channel = int("channel", 0).coerceAtLeast(0),
-                field = int("field", 0).coerceIn(0, 3),
+                field = int("field", 0).coerceIn(0, ViewController.MAX_FIELDS - 1),
                 instrument = int("instrument", 1).coerceAtLeast(1),
                 wave = int("wave", 0).coerceAtLeast(0),
                 scroll = int("scroll", 0).coerceAtLeast(0),
@@ -100,6 +104,8 @@ object WorkspaceCodec {
                 dpcmSample = int("dpcmSample", 0).coerceAtLeast(0),
                 programField = int("programField", 0).coerceAtLeast(0),
                 rawTable = int("rawTable", 0).coerceAtLeast(0),
+                effectColumns = (item["effectColumns"] as? JsonArray)?.take(MAX_CHANNELS)
+                    ?.map { (it as? JsonPrimitive)?.content?.toIntOrNull()?.coerceIn(0, Cell.MAX_EFFECT_COLUMNS) ?: 0 }.orEmpty(),
             )
         }
         return defaults
@@ -127,6 +133,7 @@ object WorkspaceCodec {
             put("envelope", s.envelope); put("envStep", s.envStep); put("listenChannel", s.listenChannel)
             put("dpcmKey", s.dpcmKey); put("dpcmSample", s.dpcmSample)
             put("programField", s.programField); put("rawTable", s.rawTable)
+            if (s.effectColumns.isNotEmpty()) put("effectColumns", buildJsonArray { s.effectColumns.forEach { add(JsonPrimitive(it)) } })
             s.sketchPhrase?.let { p -> put("phrasePitches", buildJsonArray { p.steps.forEach { add(JsonPrimitive(it ?: -1)) } }) }
         })
     }.toString()

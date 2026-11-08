@@ -20,6 +20,7 @@ import org.thortracker.input.Keys
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
 import org.thortracker.ui.HostInput
@@ -31,7 +32,7 @@ import sdl3.*
 /**
  * Thor Tracker on the Steam Deck: the shared core (editing, panes, transport, views, button routing, menus) in one
  * full-screen pane on SDL3, driven by the gamepad and heard through the song's C chip engine ([DeckAudio]).
- * Usage: thortracker [song.thor] [seconds=N] [script=...]
+ * Usage: thortracker [song.thor] [seconds=N] [script=...] [size=WxH[@density]]
  */
 fun main(args: Array<String>) {
     val songPath = args.firstOrNull { it.endsWith(".thor") }
@@ -40,9 +41,14 @@ fun main(args: Array<String>) {
     // for ms), one step per 150 ms,
     // through the same routing as the gamepad. With seconds=N the last frame is saved as deck-screenshot.bmp.
     val script = args.firstOrNull { it.startsWith("script=") }?.substringAfter('=')?.split(',')?.filter { it.isNotBlank() }.orEmpty()
+    // Test hook: size=WxH[@density] draws into a WxH window (no full screen) at that UI density, e.g. the Thor's displays
+    // (1920x1080@2.31, 1240x1080@2.31) under SDL_VIDEO_DRIVER=offscreen, whose full-screen mode is 1024 x 768.
+    val size = args.firstOrNull { it.startsWith("size=") }?.substringAfter('=')
+    val (width, height) = size?.substringBefore('@')?.split('x')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 } ?: listOf(1280, 800)
+    val density = size?.substringAfter('@', "")?.toFloatOrNull() ?: DENSITY
 
     check(SDL_Init(SDL_INIT_VIDEO or SDL_INIT_AUDIO or SDL_INIT_GAMEPAD)) { "SDL_Init: ${SDL_GetError()?.toKString()}" }
-    val window = SDL_CreateWindow("Thor Tracker", 1280, 800, SDL_WINDOW_FULLSCREEN or SDL_WINDOW_HIGH_PIXEL_DENSITY)
+    val window = SDL_CreateWindow("Thor Tracker", width, height, (if (size == null) SDL_WINDOW_FULLSCREEN else 0uL) or SDL_WINDOW_HIGH_PIXEL_DENSITY)
         ?: error("window: ${SDL_GetError()?.toKString()}")
     val renderer = SDL_CreateRenderer(window, null) ?: error("renderer: ${SDL_GetError()?.toKString()}")
     SDL_SetRenderVSync(renderer, 1)
@@ -50,7 +56,8 @@ fun main(args: Array<String>) {
     val appDir = executableDir()
     check(dd_init(renderer, "$appDir/fonts") == 0) { "fonts missing next to the executable" }
 
-    val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) })
+    Opl3Vgm.renderer = DeckOpl3Vgm
+    val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
     app.script = ArrayDeque(script)
     app.run(quitAfterMs)
     app.close()
@@ -60,14 +67,14 @@ fun main(args: Array<String>) {
     SDL_Quit()
 }
 
-private class DeckApp(private val window: CPointer<SDL_Window>, private val renderer: CPointer<SDL_Renderer>, appDir: String, opened: Song?) {
+private class DeckApp(private val window: CPointer<SDL_Window>, private val renderer: CPointer<SDL_Renderer>, appDir: String, opened: Song?, density: Float) {
     val session = EditorSession(Songs.demo())
     /** One pane, shown full screen (the Deck's single-screen layout); view chords switch what it shows. */
     val panes = Workspace(listOf(ViewState(kind = ViewKind.PATTERN)))
     val audio = DeckAudio()
     val transport = Transport(session).also { it.audio = audio }
     private val output = outputSize(renderer)
-    val pane = PaneView(session, panes.focused, DENSITY, SdlSurface(), clock = { SDL_GetTicks().toLong() }, invalidate = {})
+    val pane = PaneView(session, panes.focused, density, SdlSurface(), clock = { SDL_GetTicks().toLong() }, invalidate = {})
     private val popup = DrawnPopup(pane.ink)
     val popups = Popups({ if (it == 0) popup else null }, { listOf(0) })
     val input = HostInput()

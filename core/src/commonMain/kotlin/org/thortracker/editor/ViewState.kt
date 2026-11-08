@@ -79,6 +79,12 @@ data class ViewState(
     var sketchKeepRhythm: Boolean = false,
     var sketchKeepPitches: Boolean = false,
     /**
+     * Pattern view: effect columns shown per channel (index = channel) on systems that declare more than one
+     * ([org.thortracker.system.SoundSystem.effectColumns]); 0 or missing = automatic (the columns the song uses, at
+     * least one). Per pane, so a narrow display can show fewer. See [ViewController.shownColumns].
+     */
+    var effectColumns: List<Int> = emptyList(),
+    /**
      * Pattern view: the cell (see [ViewController.cellKey]) whose stored 000 the user explicitly picked as
      * effect 0 (arpeggio) and is still on; -1 = none. Display only: 000 stays "no effect" in the song. Not persisted.
      */

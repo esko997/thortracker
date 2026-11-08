@@ -172,6 +172,7 @@ object GbValidator {
         cell.instrument !in 0..HugeRules.INSTRUMENT_SLOTS -> "instrument ${cell.instrument} is outside 0-${HugeRules.INSTRUMENT_SLOTS}"
         cell.effect !in 0..15 -> "effect ${cell.effect} is outside 0-F"
         cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
+        cell.more.isNotEmpty() -> "${cell.more.size + 1} effect columns; the Game Boy plays one per row"
         else -> null
     }
 

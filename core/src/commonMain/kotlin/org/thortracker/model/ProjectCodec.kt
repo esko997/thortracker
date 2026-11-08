@@ -20,7 +20,8 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
 /**
  * Thor Tracker's own project format: UTF-8 JSON
  * `{"format":"thor-tracker-project","version":9,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
- * Cells are `[note, instrument, effect, param]` arrays. Decoding is strict: unknown keys, wrong types,
+ * Cells are `[note, instrument, effect, param]` arrays, followed by `effect, param` per further effect column on
+ * systems with several ([Cell.more], the OPL3). Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
  * export-level problems ([org.thortracker.system.SoundSystem.errors]) are allowed so work in progress round-trips.
  * `backend` names the song's sound system ([SoundSystems]); the song repeats it, and its chip data is the song's
@@ -41,7 +42,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  *
  * `backendVersion` is the version of the system's own song data ([org.thortracker.system.SoundSystem.backendVersion]),
  * upgraded by [org.thortracker.system.SoundSystem.upgradeBackend]: Game Boy 1; NES 2 adds the DPCM channel (a fifth
- * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings.
+ * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings; SID 1; OPL3 (`opl3-fm`) 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

@@ -21,6 +21,12 @@ source in app/src/main/cpp/third_party/resid-1.0 with its COPYING, AUTHORS and
 README, github.com/daglem/reSID at commit 02c456abfe23cc4f06d94424e40beab8c90fa31f).
 Thor Tracker adds a configured siddefs.h and a C interface (sid/sid_resid.cpp).
 
+OPL3 (YMF262) FM playback uses Thor Tracker's own player (GPL-3.0-or-later) on
+Nuked-OPL3 1.8 by Nuke.YKT (GNU Lesser General Public License 2.1 or later, notice
+below; source in app/src/main/cpp/third_party/nuked-opl3 with its LICENSE,
+github.com/nukeykt/Nuked-OPL3 at commit 765ec962e473aeb767e4cba74ffdc8f588ffbfe8),
+resampled with the same blip_buf.
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -127,6 +133,19 @@ Copyright (C) 2003-2009 Shay Green. This library is free software; you can
 redistribute it and/or modify it under the terms of the GNU Lesser General
 Public License as published by the Free Software Foundation; either version
 2.1 of the License, or (at your option) any later version.
+
+Nuked-OPL3 1.8
+https://github.com/nukeykt/Nuked-OPL3
+
+Copyright (C) 2013-2020 Nuke.YKT
+
+Nuked OPL3 is free software: you can redistribute it and/or modify it under the
+terms of the GNU Lesser General Public License as published by the Free Software
+Foundation, either version 2.1 of the License, or (at your option) any later
+version. Nuked OPL3 is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for
+more details (app/src/main/cpp/third_party/nuked-opl3/LICENSE).
 
 Android/Kotlin libraries are distributed under their respective Apache 2.0
 licenses; see https://www.apache.org/licenses/LICENSE-2.0 and upstream sources.

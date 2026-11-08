@@ -330,6 +330,13 @@ muted in the song) stay in the hosts and work for every chip.
    files, `.sid`/`.prg`/`.sng` export and the demo (see "Model, lowering and exports"); editor (instruments,
    programs, tables), New → system, Help.
 8. **FM**: OPL3 first, YM2612 second (see below).
+   **OPL3 spike** — done (branch `opl3-spike`). `chip_engine_ops("opl3-fm")`: our own player (C) on Nuked-OPL3 1.8,
+   image layout, player and effect specification, seek, live edits, audition, mute and VGM export in
+   `docs/AUDIO_ENGINE.md` ("OPL3"); native host test 257 checks with register writes identical to an independent
+   Python reference player in every tick and VGM bytes identical to its export; the VGM plays in libvgm.
+   **OPL3 backend**: model, curated instrument controls, presets, lowering (byte-identical to the reference builder),
+   validation, project files, VGM export through the native player and the demo — see "OPL3 model, lowering and
+   exports"; editor (instruments, effect columns), New → system and Help in the editor step.
 
 ## Effect columns
 
@@ -339,7 +346,16 @@ with the number shown adjustable per channel to save width on handheld screens. 
 0-9 then A-Z, declared per system, so chips with more than 16 effects fit without changing Game Boy songs. Each effect
 declares whether it applies when a note starts (like a parameter lock: no mid-note register clicks) or at once.
 
-## FM (planned)
+Model (done with the OPL3): `SoundSystem.effectColumns(channel)` (default 1; the OPL3 4). `Cell` keeps
+`effect`/`param` as column 0 and adds `more: List<Fx>` for columns 1-3, always canonical (no trailing blank column),
+so a cell that only uses column 0 is equal to, and saves exactly as, a cell from before (`[note, instrument, effect,
+param]`; further columns append `effect, param` pairs). `withEffect(column, code, param)`, `effectCode/effectParam`,
+`lastEffectColumn` and `hasAnyEffect` are the accessors; `hasEffect` still means column 0. The Game Boy, NES and SID
+reject extra columns (`cellRangeProblem`), and `OneColumnProjectBytesTest` pins their demo, blank and example
+project files to the SHA-256 the encoder wrote before effect columns existed. How many columns a pane shows is
+editor state (per pane, automatic from the highest used column), not song data.
+
+## FM
 
 Both OPL3 (YMF262) and YM2612 (OPN2), OPL3 first. Ideas from ALM Busy Circuits' Akemie's Castle / Akemie's Taiko and
 Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
@@ -359,9 +375,180 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
   the FM editor and player, and adds export for a Mega Drive sound driver so songs can go into games.
 - Cores: ymfm (BSD-3-Clause) covers both chips; the Nuked cores (LGPL-2.1) are also GPL-compatible.
 
+### OPL3 decisions (made for the spike on the user's behalf; the full contract is `docs/AUDIO_ENGINE.md`, "OPL3")
+
+- **Core: Nuked-OPL3 1.8** (die-accurate, plain C), not ymfm (3× cheaper, not cycle-exact): 460 µs per 60 Hz tick
+  on the dev PC, below the SID 8580's 593 µs; measured per tick on devices (engine, 2026-11-08): Nova 0.32 ms, DMG
+  0.62 ms, Konkr 1.29 ms mean (8 % of a core). ymfm stays the option for weaker devices and is a candidate core for
+  the YM2612.
+- **Music-only, our own player**: pure integer C (`opl3/opl3_player.c`), specified in the audio document and mirrored
+  by an independent Python reference (`tools/audio/opl3/opl3_ref.py`); export is VGM 1.71 (the player's register log).
+- **9 tracker channels**: the OPL2/AdLib count and screen-friendly; channels 1-6 own the six 4-op pairs (a 4-op
+  instrument switches the pair at key-on), channels 7-9 are 2-op only. The remaining voices are the **chord pool**:
+  voices 15-17 always, plus the six pair secondaries while their channel plays 2-op (9 spare voices in a 2-op song).
+- **Tick = 1/60 s** with integer multispeed 1..8 (ticks per row count fast ticks), speed per song plus `Fxx`.
+- **Parameter locks at key-on**: `Exx` feedback, `Ixx` brightness (modulator TL), `Mxy` ratio (operator MULT),
+  `Wxy` waveform apply to the note keyed on their row only (Elektron-style locks); volume and pan change at once.
+- **Chord**: `Hxy` (+x, +y) and `Kxx` (a numbered shape of up to 4 signed intervals, so inversions), per note like
+  the NES arpeggio, 2-op instruments only; pool voices are allocated deterministically (free voice released
+  longest ago, else steal the oldest allocated) and released with the root.
+- **Drums**: instruments carry a pitch sweep (start and end in semitones relative to the note, speed in 1/16
+  semitones per tick); no rhythm mode.
+- **Effects** (FamiTracker letters where meanings match): `0xy` arpeggio, `1xx`/`2xx` slides, `3xx` portamento,
+  `4xy` vibrato, `8xy` pan (OPL3 left/right), `Axy` volume slide, `Bxx` jump, `Cxx` volume, `Dxx` break, `Exx`
+  feedback, `Fxx` speed, `Gxx` note delay, `Hxy` chord, `Ixx` brightness, `Kxx` chord shape, `Mxy` ratio, `Pxx` fine
+  pitch, `Sxx` note off, `Wxy` waveform. **Up to 4 effect columns** per channel in the image and the player now;
+  the editor generalisation (see "Effect columns") is part of the OPL3 backend step.
+- **Retrigger**: a tick's key-offs reach the chip one sample before its other writes (the chip samples key-on once
+  per sample); in the VGM a one-sample wait separates them.
+- **VGM loop**: the loop point carries a dump of the register state so every pass starts from the same registers.
+- **Loop speed is the player's**: every arrival at the loop order's row 0 (the wrap, a `Bxx` back, the first pass)
+  starts it at the speed sequential straight play reaches it with (`O3Info.start_speed`), so later passes keep the
+  first pass's tempo without an `Fxx` there and the lowering emits none (no warning either). A `Bxx`/`Dxx` that
+  skipped an `Fxx` before the loop order's first arrival therefore sets that derived speed already on the first pass.
+- **Seek** (play from a row): the player is exact (it runs alone from the song start); the chip is clocked through
+  the last second before the target (`O3M_PREROLL_TICKS` 60 × multispeed), so held notes and release tails arrive
+  under way — sound identical to straight play when the target is within that second of the start, else the 20 ms
+  loudness envelope stays within ~3 % (host test). Cost ~31 ms on the dev PC (~75 ms estimated on the Konkr), on the
+  control thread's spare machine, as SID seeks (~88 ms).
+- **VGM export on the hosts**: the native player renders it (`o3_export_vgm`, `opl3/opl3_export.h`: Android JNI
+  `ChipAudio.nativeOpl3Vgm`, Deck cinterop `DeckOpl3Vgm`, both registered as `Opl3Vgm.renderer`), one player
+  implementation proven against the Python reference; the GD3 1.00 tag (track = song title, author, system
+  "OPL3 (Thor Tracker)", date = today unless given, converter "Thor Tracker") is written natively too.
+
+### OPL3 model, lowering and exports
+
+- **System** (`system/opl3`): `Opl3System`, id `"opl3-fm"`, nine channels `FM 1`-`FM 9` (`ChannelKind.VOICE`,
+  tonal), four effect columns each, notes C-0..B-7 (absolute 0..95 = the player's note; FamiTracker-style names,
+  A-4 = 57 = 440 Hz), one bank of 64 slots, 60 ticks per second × multispeed, at most 256 orders. OFF is key off
+  (the release plays, chord notes too). Song settings (Song view): multispeed 1-8, tremolo depth 1/4.8 dB, vibrato
+  depth 7/14 cents (register 0xBD). Constants come from `backend/Opl3PlayerImage` (generated from the C headers).
+- **Chip data** (`Opl3Sound`): 64 instrument slots, each `null` (empty: not in the image, a cell naming it is an
+  error "instrument 0D is empty") or an `Opl3Instrument`: `fourOp`, `algorithm` (2-op 0 FM/1 additive; 4-op 0-3),
+  operator 1 `feedback`, always four `Opl3Operator`s holding exactly the chip's register fields (`mult tl ar dr sl rr
+  wave ksl am vib sustain ksr`; a 2-op instrument keeps operators 3-4 for a later switch to 4-op, lowered as zeros),
+  and the drum `Opl3Sweep` (start/end −96..96 semitones from the note, speed in 1/16 semitone per tick, 0 = none);
+  the chord-shape table (`Opl3Chord`: name, 1-4 non-zero intervals −48..48; new songs get 16: maj, min, 7, maj7, m7,
+  sus2, sus4, dim, aug, add9, m9, 5+8 and four inversions); multispeed and the two LFO depths. Empty slots (rather
+  than 64 always-defined instruments) keep the image's instrument count meaningful and let the spike's image be
+  reproduced byte for byte.
+- **Curated controls** (`Opl3Curated`, one place for every list and macro): algorithm (6: 2-op FM, 2-op additive and
+  the four 4-op routings), ratio sets (22 two-operator `mod:car` sets such as 1:1, 2:1, 7:1, ½:1, 3:2; 22 four-operator
+  sets including the E-piano tine 14:1:1:1 and bell 3:7:1:2), waveform combinations (20 per operator count; sine
+  carriers under each modulator shape, then shaped carriers, leaving out combinations that sound alike or cancel),
+  brightness 0-63 (= 63 − the lowest modulator TL; moving it shifts every modulator's TL together, keeping their
+  differences), level 0-63 (the same for carriers), attack (all operators' AR), decay (carriers' DR), tone decay
+  (modulators' DR: how fast brightness fades), sustain 0-15 (0 = percussive: EGT off; else EGT on and SL = 15 −
+  value, all operators), release (all RR), feedback, key scaling Off/Soft/Strong (modulator KSL 1.5 or 3 dB/oct,
+  carriers 1.5 dB/oct and KSR for Strong; additive instruments scale their carriers) and LFO
+  None/Vibrato/Tremolo/Both (VIB on all operators, AM on carriers). **Rule**: the operator registers (the Expert
+  grid) are the instrument; each control is read from the fields it owns — a list control shows the entry the
+  registers match, or the nearest entry marked approximate (≈) after hand edits; a macro reads the first carrier (or
+  modulator) and is approximate when the operators it writes disagree — and stepping a control writes only its own
+  fields. Changing the algorithm moves operators between roles and then shifts carriers and modulators so level and
+  brightness read as before.
+- **Presets** (`Opl3Presets`, 17): E-piano (4-op two pairs), Brass, Bell (4-op 1+(2→3)+4), Organ (4-op 1+chain),
+  FM bass, Pad, Lead, Pluck, Marimba, Clav, Flute, Organ 2-op (additive), and pitched drums Kick (sweep +24 → 0),
+  Snare (+7 → −5), Tom (+7 → −2), Hi-hat and Open hat, each with the note it was voiced at. New songs have them in
+  slots 01-11, so every channel is musical at once; the rest are empty.
+- **Lowering** (`backend/Opl3Lowering`): the arrangement (`Opl3System.arranged`: parked orders removed; the loop
+  order and every `Bxx` in any column renumbered; `Bxx` = order xx) into the image layout of `docs/AUDIO_ENGINE.md`:
+  each order's rows = its pattern's length; each (order, channel) track encoded as the player reads it (empty-row
+  runs, mask, note/`0xFE`, slot, the non-blank effect columns in column order — a blank column before a used one is
+  left out), byte-identical tracks stored once in first-use order; every filled slot is written (instrument count =
+  the highest), so any instrument can be auditioned. Pattern loop playback aims every `Bxx` at the looped order.
+  Explicit `000` cannot be stored (it is the empty effect, as on the Game Boy), so `0xy` on a row without a note
+  cannot switch an arpeggio off mid-note; a note without `0xy` plays plain.
+- **Tunings** (`FinePitch` `Pxx`): a tuned note gets `P80+n` (n sixty-fourths of a semitone, 0-63) in the first free
+  effect column (or the column already holding `P`): every degree within 0.8 cents, plus the chip's F-number
+  rounding (≤ 2.6 cents from 12-TET).
+- **Validation** (`Opl3Validator`): structural (shapes, ranges, 64 slots, ≤ 64 chord shapes of 1-4 intervals,
+  multispeed 1-8, at most 4 effect columns, each instrument's fields) and what `o3_load_image` rejects, as messages
+  naming pattern, channel and row: an empty slot, a 4-op instrument on FM 7-9 ("channels FM 7-9 play 2-op
+  instruments only"), `Bxx` past the last order, `Cxx`/`Ixx` above 3F, `Exx` above 7, `F00`, `Kxx` beyond the table,
+  `Mxy` operator not 1-4, `Wxy` out of range, unknown effects, pattern data beyond the image's 56.9 KB. Warnings
+  (one straight pass in order): a first note of an order without instrument, locks and chords on rows without a note
+  (ignored by the player), chords on 4-op instruments (only the root sounds), `Gxx` at or beyond the speed (never
+  plays), and rows whose sounding chords need more spare voices than the pool has at that point (3 + one per FM 1-6
+  channel playing 2-op), since the player then steals the oldest chord notes. No loop-speed warning: the player owns
+  the loop's speed.
+- **Project files:** backend `"opl3-fm"`, OPL3 data version 1 (README, "Project format").
+- **Export:** `.vgm` (`Opl3Vgm.export`): the image is rendered by the native player through `Opl3Vgm.renderer`, which
+  each host registers (Android JNI, Deck cinterop); JVM unit tests have no renderer and check the seam with a stand-in
+  (the image and tags handed over), while the native host test proves the renderer's bytes against the Python
+  reference. A ten-minute tick cap ends songs that never return to their loop point.
+- **Golden tests** (`Opl3GoldenTest`, `tools/audio/opl3/opl3_golden.py`): the spike's test song and a features song
+  (notes C-0 and B-7, slot 64 behind empty slots, negative and extreme sweeps, chord digits with a zero and every shape
+  length incl. ±48 and inversions, four effect columns and blank columns before used ones, an instrument without a
+  note, orders of 64, 20 and 1 rows, multispeed 2, both LFO depths, `Bxx`/`Dxx` across a parked order) rebuilt from
+  Thor Tracker's model lower to exactly the bytes the reference builder writes (the spike's song without its one
+  explicit `000`). `Opl3ModelTest`: cells and columns, project round trips, curated controls read back what they
+  write, approximate readings, tunings, validation and warning messages, arrangement, the VGM seam, the demo.
+- **Demo:** "Glass Harbour" (`Opl3DemoSong`, C major/A minor, Fmaj7-G-Em7-Am, speed 7): a 2-op lead with vibrato,
+  brightness and waveform locks in up to four columns, a portamento glide and a rising slide with a volume fade; FM
+  bass; a 4-op E-piano arpeggio and a 4-op bell counter-melody panned left; a pad playing chord shapes (`K04` maj7,
+  `K0A` add9, `K05` m7, `K0B` m9) on spare voices, panned left; pluck stabs with `Hxy` chords panned right; swept FM
+  kick, snare, hats and a tom fill moving across the stereo field. Intro, theme A, theme B, theme A, fill; loops to
+  theme A. No errors or warnings; `exportSamples` writes `glass-harbour.{thor,o3img}` and
+  `tools/audio/render_opl3_image.sh` renders the image (and its VGM).
+
+### OPL3 editor
+
+- **Effect columns in the Pattern view** (shared code; active only where `effectColumns` > 1, so the Game Boy, NES and
+  SID views and their controls are unchanged): a channel's cursor fields are note, sound, then effect type and value
+  per shown column (`ViewController.fieldCount`, `columnOf`, `isValueField`); ←→ walk them and then the next channel.
+  Each column is picked, valued, re-entered (tap Edit repeats that column's last effect) and cleared on its own;
+  copy, cut, paste, duplicate, insert/delete row and selections move whole cells, all columns included
+  (`normaliseCell` keeps the columns the channel has). OFF on a row with effects keeps them (one-column systems
+  still replace the row). The shown count is per pane (`ViewState.effectColumns`, saved in the Android workspace):
+  automatic = the highest column the song uses on that channel (at least one), or set on the Pattern panel's
+  Columns row (←→ count, L1/R1 channel, Clear automatic). Effects in hidden columns still play: the row shows a
+  dot after its last column and the lane header "+n fx".
+- **Naming effects**: on several-column systems the status line names every effect as it is picked or changed, with
+  the system's longer reading (`SoundSystem.effectDetail`: the OPL3's `Hxy`/`Kxx` chord notes from the row's note,
+  why a chord stays silent — no note, a 4-op sound — and `0xy` arpeggio notes); the hint names the column's effect;
+  the inspector lists every column of the cell (hidden ones marked) with the cursor's in full.
+- **9 channels on handheld screens** (decision): the text keeps its 12 dp size; lanes are `note sound` plus 4
+  characters per shown column, and when they do not all fit they scroll sideways by whole lanes, following the
+  cursor's channel (FamiTracker/Furnace style), with "◀n" / "n▶" counts (tappable) beside the headers. Shrinking
+  text to fit 9 × 2-4 columns would be illegible on 6" and 3.9" displays; scrolling keeps every edit in view and
+  narrowing busy channels' columns shows more lanes. Measured: one column per channel shows all 9 lanes on the
+  Deck (1280×800) and the Thor's top display (1920×1080 at 369 dpi); with two columns everywhere the top display and
+  the Deck show 7, the bottom one (1240×1080) 4. The inspector stays beside scrolled lanes only while 6 lanes still show,
+  otherwise the lanes take its room (the status line names effects while editing). Deck test hook:
+  `size=WxH[@density]` renders at the Thor's sizes under the offscreen driver.
+- **Instrument view** (`Opl3InstrumentView`, `Opl3InstrumentPainter`), controller-only, four pages. *Sound*: the
+  curated controls of `Opl3Curated`, each one Edit+←→ value (preset, algorithm incl. 2-op/4-op, ratio set,
+  waveforms, brightness, level, feedback, attack, decay, sustain, release, tone decay, key scaling, vibrato/tremolo;
+  "≈" marks a reading of hand-edited registers) beside the drawn algorithm (operator boxes with ratio and waveform,
+  routing arrows, carriers into the output, the feedback loop) and envelope (carriers in dB with times; the
+  modulators' tone decay dimmer). *Expert*: mode, connection and feedback as stored, then every register field of
+  each operator as a grid (←→ or L1/R1 move between operators; AM/VIB/EGT/KSR switch on tap). *Drum*: drum presets
+  and the sweep's start, end and speed with the pitch curve over half a second. *Chords*: the song's `Kxx` table
+  with each shape's notes from the listening C; Edit adds shapes and intervals, Edit+←→ changes an interval (±12 on
+  ↑↓, never 0), Clear deletes one (a shape's last deletes the shape); shapes take their default-table name when
+  their intervals match one. Holding Edit on a sound row (or Listen) auditions on the Listen channel; 4-op sounds
+  listen on FM 1 when Listen is FM 7-9. Empty slots (null) get the Lead preset on their first edit; Clear on Slot
+  empties one. Every edit is one undo step (`setOpl3Instrument`, `editOpl3Chords`).
+- **Shared views**: New and Load demo list the OPL3 through `SoundSystems`; Song lists its settings, Keyboard and
+  Sketch play any of the 9 channels; channel 9 has its own lane colour. Help: effects page ("Up to 4 effects per
+  channel per row"), the Pattern rows for columns, hidden effects and lane scrolling, and the instrument pages.
+- Tests: `Opl3EditorTest` (columns, cursor walk, per-column edits, copy/paste, OFF, chord text, every instrument
+  page, empty slots, 4-op listening; one-column systems keep four fields).
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
   now.
 - NES instruments: one shared bank for all four channels (FamiStudio's way) rather than per-channel banks. Proposed:
   shared, with the editor greying out what a channel ignores.
+- OPL3 GD3 notes field: empty for now; the song's comment could go there if songs get one.
+- OPL3 rhythm mode as an option for drums later? Proposed: not unless asked (its pairs share pitches).
+- OPL3 empty instrument slots (decided on the user's behalf): a slot is empty until a preset or edit fills it, rather
+  than 64 always-defined instruments as on the NES/SID; new songs fill 01-11 with the presets. Review.
+- OPL3 `000` cannot be stored, so an arpeggio cannot be switched off on a row without a note (the next note without
+  `0xy` plays plain; the player and reference treat an explicit `000` as "arpeggio off"). Proposed: accept, as on the
+  Game Boy; a dedicated "arpeggio off" letter would be the alternative.
+- OPL3 curated lists (algorithms, 22 ratio sets, 20 waveform combinations per operator count, key scaling, LFO) and
+  the 17 presets are a first proposal; the user's own FM simplification ideas may replace them (they only read and
+  write operator registers, so songs are unaffected).
