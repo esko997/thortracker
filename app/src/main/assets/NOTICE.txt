@@ -41,6 +41,12 @@ Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
 commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
 xgmtool's conversion (MIT).
 
+The AY-3-8910 / YM2149 systems (ZX Spectrum 128, MSX, Atari ST, Amstrad CPC) use Thor
+Tracker's own player and AY/YM chip emulation (GPL-3.0-or-later), resampled
+with the same blip_buf. Its per-level DAC tables are the measured tables of
+ayumi by Peter Sovietov (MIT, notice below; github.com/true-grue/ayumi at
+commit 07c08b4874c359169e4a028edf73f046d8b763e2, vendored in third_party/ayumi).
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -123,6 +129,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+ayumi
+https://github.com/true-grue/ayumi
+
+The MIT License
+
+Copyright (c) Peter Sovietov, http://sovietov.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 GoatTracker 2 playroutine
 https://sourceforge.net/projects/goattracker2/ (GoatTracker 2.77, src/player.s)

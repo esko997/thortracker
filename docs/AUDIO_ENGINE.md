@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the AY/YM engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -23,6 +23,10 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The AY-3-8910 / YM2149 systems (`"ay-zx128"`, `"ay-msx"`, `"ay-atari-st"`, `"ay-cpc"`, roadmap step 7, source only)
+play Thor Tracker's own player on its own AY/YM core, one variant per stock computer (clock, chip type, frame rate,
+stock wiring), and export VGM. See [AY-3-8910 / YM2149](#ay-3-8910--ym2149-thor-trackers-own-player-for-the-zx-spectrum-128-msx-atari-st-and-amstrad-cpc).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -123,6 +127,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| ayumi | `third_party/ayumi/` (`ayumi.c`, `ayumi.h`, `LICENSE`, our `README.md`), unmodified; its measured `AY_dac_table`/`YM_dac_table` copied as data into `ay/ay_psg.c`; the file itself linked only by the native host test (independent comparison) | github.com/true-grue/ayumi commit `07c08b4874c359169e4a028edf73f046d8b763e2` (2021-11-24); `ayumi.c` sha256 `8824bc34…f19401d`, `ayumi.h` `506e3b75…f17099`, `LICENSE` `20bb6439…a66da` | MIT — notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -158,7 +163,8 @@ library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implemen
 `sid/sid_machine.c`, `sid/sid_image.c`; the OPL3 files `opl3/opl3_chip.c`, `opl3/opl3_machine.c`,
 `opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; `vgm_gd3.c` (the VGM exports'
 GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
-`ym/ym_xgm.c`, `ym/ym_vgm.c`, `ym/ym_psg.c`; always with `NDEBUG`), static C++17 libraries `resid` (reSID 1.0 and
+`ym/ym_xgm.c`, `ym/ym_vgm.c`, `ym/ym_psg.c`; the AY files `ay/ay_chip.c`, `ay/ay_machine.c`, `ay/ay_player.c`,
+`ay/ay_psg.c`, `ay/ay_image.c`, `ay/ay_vgm.c`; always with `NDEBUG`), static C++17 libraries `resid` (reSID 1.0 and
 `sid/sid_resid.cpp`, its C interface; `-O2 -w`) and `ymfm` (`ym/ym_ymfm.cpp`, which compiles ymfm's `ymfm_opn.cpp`
 itself, plus `ymfm_adpcm.cpp`, `ymfm_ssg.cpp`) that `chip_engines` links, and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with
 NDK `aaudio`, `log`, `m`, `dl` and the NDK's default static C++ runtime. No third-party Java/Gradle
@@ -2323,10 +2329,10 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
 
-## AY-3-8910 / YM2149: Thor Tracker's own player on the ZX Spectrum 128, MSX and Atari ST (`"ay-zx128"`, `"ay-msx"`, `"ay-atari-st"`)
+## AY-3-8910 / YM2149: Thor Tracker's own player for the ZX Spectrum 128, MSX, Atari ST and Amstrad CPC
 
 Roadmap step 7 ("More chips"), source only (branch `ay-systems`, unbuilt: the integrator runs every generation step,
-build and test listed under "Preparing" and "Verification"). Three system variants, one per stock computer, play
+build and test listed under "Preparing" and "Verification"). Four system variants, one per stock computer, play
 songs lowered into the image layout below through **our own player** (`ay/ay_player.c`, pure integer C without a
 chip, mirrored by the independent Python reference `tools/audio/ay/ay_ref.py`) on **our own AY-3-8910 / YM2149 core**
 (`ay/ay_psg.c`), and export VGM. No computer is emulated (no Z80 or 68000): none of these machines has one standard
@@ -2336,7 +2342,7 @@ numbers they share are generated into `backend/AyPlayerImage.kt` ("Preparing").
 
 ### Variants: chips, clocks, ticks and wiring (primary sources)
 
-Each variant is the stock computer: its chip, its clock, its frame interrupt as the player's tick, and its mono
+Each variant is the stock computer: its chip, its clock, its frame interrupt as the player's tick, and its stock
 output. Times are kept as exact integer ratios of the machine's master clock *M*: the chip clock is *M* / `ay_div`,
 one tick is `frame_div` master clocks, one chip **step** (the generators' clock, chip clock / 8) is 8 · `ay_div`
 master clocks.
@@ -2346,6 +2352,7 @@ master clocks.
 | 0 | `ay-zx128` | ZX Spectrum 128 (AY-3-8912) | GI AY-3-8912 (the 28-pin AY-3-8910: same sound, one I/O port) | 3546900 (Z80) | 2 | 1773450 Hz | 70908 (T-states per frame) | 50.0212 Hz | `11` | `0x01` / 1773450 |
 | 1 | `ay-msx` | MSX (AY-3-8910) | GI AY-3-8910 | 10738635 (VDP crystal; Z80 = *M*/3) | 6 | 1789772.5 Hz | 179208 (2 · 342 · 262: one NTSC TMS9918A frame) | 59.9227 Hz | `10` | `0x00` / 1789772 |
 | 2 | `ay-atari-st` | Atari ST (YM2149F) | Yamaha YM2149F | 32084988 (PAL ST master) | 16 | 2005311.75 Hz | 641024 (4 · 160256: 512 cycles · 313 lines of the 8 MHz CPU) | 50.0527 Hz | `11` | `0x10` / 2005312 |
+| 3 | `ay-cpc` | Amstrad CPC (AY-3-8912) | GI AY-3-8912 | 16000000 (Gate Array crystal; Z80 = *M*/4) | 16 | 1000000 Hz | 319488 (16 · 19968 µs: 312 lines of 64 µs, the CRTC's default frame) | 50.0801 Hz | `00` | `0x01` / 1000000 |
 
 Sources: World of Spectrum's 128K reference ("The main processor runs at 3.54690 MHz", "70908 T states per frame",
 the AY clocked at half the CPU clock) and the 128 ROM 0 disassembly (Matthew Wilson: the ROM writes register 7 as
@@ -2356,13 +2363,22 @@ I/O bits (both ports outputs: port A drives drive select, RS-232 handshake and t
 data) follow the ST's use of the ports [INFERENCE: not quoted from a primary source]; they never affect sound. The
 VGM clock field is an integer: the MSX's 1789772.5 Hz is written as 1789772 (the value MSX VGM rips use), the ST's
 as 2005312. MSX machines with the later MSX-ENGINE (a YM2149 inside) are not a separate variant: the MSX standard
-names the AY-3-8910. The MSX tick is the NTSC (Japanese) 60 Hz frame; PAL MSX machines are not modelled.
+names the AY-3-8910. The MSX tick is the NTSC (Japanese) 60 Hz frame; PAL MSX machines are not modelled. Amstrad CPC:
+MAME's `amstrad.cpp` (`AY8912(config, m_ay, 16_MHz_XTAL / 16)`), the CPC's Gate Array dividing its 16 MHz clock to
+4 MHz for the Z80 and 1 MHz for the CRTC and PSG, the CRTC's default 64 µs lines × 312 lines = 19968 µs frame (50.08
+Hz, the frame-flyback rate CPC music players are synchronised to); register 7 bit 6 = 0 (port A reads the keyboard
+through the PPI; bit 7 has no port on the 8912) as CPCWiki's PSG page states.
 
-**Wiring (all three)**: the stock machines mix the three channels into **one mono output** (the 128's TV/sound
-socket, the MSX's sound output, the ST's monitor/TV audio). No variant has per-channel panning or stereo; the engine
-outputs the mono mix on both host channels and the VGM declares the chip's default single mixed output. The three
-outputs are summed linearly; the real machines tie them together through resistors, which compresses loud chords
-slightly (MAME models it as a resistor network) — not modelled (see `docs/BACKENDS.md`, "Open questions").
+**Wiring**: the ZX Spectrum 128, the MSX and the Atari ST mix the three channels into **one mono output** (the 128's
+TV/sound socket, the MSX's sound output, the ST's monitor/TV audio): their engines output the mono mix on both host
+channels, with no per-channel panning. The **Amstrad CPC** has a stock **3.5 mm stereo socket** ("3.5mm socket for
+stereo sound output", CPC464 service manual, 1985; the socket's pinout: channel A left, B centre, C right): its
+engine outputs that socket, **left = A + B, right = B + C** (B through equal resistors to both sides [INFERENCE: the
+equal weight is not quoted from the schematic]); its internal speaker (mono) is not modelled. The VGM format has no
+field for a machine's channel wiring, so every variant's VGM declares the chip's default single mixed output (players
+choose their own panning). The channels are summed linearly; the real machines tie the outputs together through
+resistors, which compresses loud chords slightly (MAME models it as a resistor network) — not modelled (see
+`docs/BACKENDS.md`, "Open questions").
 
 ### Chip core (`ay/ay_psg.c`)
 
@@ -2397,10 +2413,11 @@ Per step (chip clock / 8; the state machine both models — AY and YM — share;
 - **Channel output**: (tone output | tone disable) & (noise output | noise disable) — a channel with both disabled
   outputs a constant level. Level: M set → the envelope level; else the fixed volume V: AY level V (16 steps), YM
   level 2V + 1 (V = 0 → 0). DAC: AY `AY_DAC[level]` (0..15), YM `YM_DAC[level]` (0..31), both 0..1 (level max = 1.0).
-- **Mix**: mono sum of the three channels' DAC values × `AY_AMP` (10922 per channel at 1.0: three full channels
-  reach 32766), the sum's changes sent to one blip_buf 1.1.0 buffer as band-limited deltas at their step (clock rate =
-  the step rate *M* / (8 · `ay_div`)), with blip_buf's high-pass (bass shift 9, ~15 Hz) removing the DC the unipolar
-  outputs carry; float = sample / 32768, written to both host channels.
+- **Mix**: the sum of the channels' DAC values × `AY_AMP` (10922 per channel at 1.0: three full channels reach
+  32766) — mono (all three) on the ZX, MSX and ST; on the CPC two sums, left (A, B) and right (B, C) — whose changes are
+  sent to blip_buf 1.1.0 buffers (one mono, or left and right on the CPC) as band-limited deltas at their step (clock
+  rate = the step rate *M* / (8 · `ay_div`)), with blip_buf's high-pass (bass shift 9, ~15 Hz) removing the DC the
+  unipolar outputs carry; float = sample / 32768 (mono: written to both host channels).
 - **Mute** (bit per channel): a muted channel is left out of the sum; every generator keeps running.
 - **Silent advance** (seeking, `out` = NULL): every counter, flip, the LFSR, the envelope step and hold state advance
   **arithmetically to exactly the state stepping would reach** (tone: the first flip after max(1, TP − counter)
@@ -2413,11 +2430,12 @@ order).
 
 ### Machine (`ay/ay_machine.c`)
 
-`AyMachine`: the image copy, the player, the chip, one blip buffer (mono), the tick remainder. A tick: the player
-runs once; its writes (in order) go to the chip at the tick's first step; the chip runs `steps` steps, `steps` from
-exact accumulation (`acc += frame_div; steps = acc / (8 · ay_div); acc %= 8 · ay_div`: ZX 4431/4432, MSX 3733/3734,
-ST 5008); blip_end_frame(steps); all available samples are read (at most 2048 frames at 96 kHz) and written as
-stereo frames (L = R). No allocation outside create; no key-off gap (the AY has no key bits).
+`AyMachine`: the image copy, the player, the chip, one blip buffer (mono; two on the CPC), the tick remainder. A tick:
+the player runs once; its writes (in order) go to the chip at the tick's first step; the chip runs `steps` steps,
+`steps` from exact accumulation (`acc += frame_div; steps = acc / (8 · ay_div); acc %= 8 · ay_div`: ZX 4431/4432,
+MSX 3733/3734, ST 5008, CPC 2496); blip_end_frame(steps); all available samples are read (at most 2048 frames at 96
+kHz) and written as stereo frames (L = R except on the CPC). No allocation outside create; no key-off gap (the AY
+has no key bits).
 
 ### Channels
 
@@ -2440,7 +2458,7 @@ layout that passes `ay_load_image` relocates). Constants: `ay/ay_image.h` (`AY_*
 |---|---|---|
 | 0 | 4 | `"TTAY"` |
 | 4 | 1 | layout: 1 |
-| 5 | 1 | variant: 0 ZX Spectrum 128, 1 MSX, 2 Atari ST (each engine accepts only its own) |
+| 5 | 1 | variant: 0 ZX Spectrum 128, 1 MSX, 2 Atari ST, 3 Amstrad CPC (each engine accepts only its own) |
 | 6 | 1 | speed (ticks per row) at the song start, 1..255 |
 | 7 | 1 | 0 |
 | 8 | 2 | order count, 1..256 |
@@ -2507,17 +2525,19 @@ Units: **pitch** in 1/64 semitone, 0 = C-0, at most 6143 (just below C-8); note 
 
 - **Tone period** TP(pitch) = clamp((`AY_DIV[f]` + (128 << *o*)) >> (8 + *o*), 1, 4095).
 - **Auto envelope period** EP(pitch, J, shape) = clamp((`AY_DIV[f]` + (1 << (*s* − 1))) >> *s*, 1, 65535), *s* = 8 +
-  *o* + 4 + *t* − J, *t* = 1 for the triangle shapes 10 and 14 (two ramps per cycle) else 0, J = the octave offset
+  *o* + 4 + *t* + J, *t* = 1 for the triangle shapes 10 and 14 (two ramps per cycle) else 0, J = the octave offset
   −8..7: the envelope's audible cycle sounds the note J octaves up (saw shapes 8 and 12: 256 · EP clocks per cycle;
-  triangles 512 · EP).
+  triangles 512 · EP), i.e. EP ≈ TP / 2^(4 + *t* + J).
 - **Synced tone** (instrument flag bit 2, auto mode, while the note uses the hardware envelope): TP = EP · 2^*k*,
-  *k* = 4 + *t* − J (*k* < 0: (EP + (1 << (−*k* − 1))) >> −*k*), clamped 1..4095: tone and envelope share one exact
-  period ratio (no beating; the pitch is the envelope period's, coarser up high).
+  *k* = 4 + *t* + J (*k* < 0, i.e. J ≤ −5 − *t*: (EP + (1 << (−*k* − 1))) >> −*k*), clamped 1..4095: tone and
+  envelope share one exact period ratio (no beating; the tone stays at the note, its pitch now the envelope period's,
+  coarser up high).
 
 A-4 = 57: ZX 1773450 / (16 · 252) = 439.84 Hz, MSX 1789772.5 / (16 · 254) = 440.40 Hz, ST 2005311.75 / (16 · 285) =
-439.76 Hz. Lowest notes with TP ≤ 4095 (the lowest reachable, the system's note range from it to B-7): ZX and MSX A-0,
-ST B-0. `generated/ay_tables.h` holds the three tables and the vibrato sine `AY_SINE[i] = floor(127 sin(2πi/64) +
-0.5)` (the OPL3's).
+439.76 Hz, CPC 1000000 / (16 · 142) = 440.14 Hz. Lowest notes with TP ≤ 4095 (the lowest reachable, the system's note
+range from it to B-7): ZX and MSX A-0, ST B-0, CPC C-0 (its 1 MHz clock reaches lower; its top octave is coarser:
+B-7 is TP 16). `generated/ay_tables.h` holds the four tables and the vibrato sine `AY_SINE[i] = floor(127
+sin(2πi/64) + 0.5)` (the OPL3's).
 
 ### Player
 
@@ -2669,7 +2689,7 @@ unchanged; unmuting resumes mid-note; a muted envelope owner still drives the en
 | `audition`, `release` | above |
 | `mute(channel 0-2)` | above |
 | `position` | the player's |
-| `tick` | one frame interrupt: 959-960 frames at 48 kHz (ZX), 801-802 (MSX), 958-959 (ST); ≤ 1920 at 96 kHz; 0 after a released audition ended |
+| `tick` | one frame interrupt of whole chip steps: 959-960 frames at 48 kHz (ZX), 800-802 (MSX), 958-959 (ST), 958-959 (CPC); 96 kHz 1918-1920 / 1601-1603 / 1917-1918 / 1916-1917; 0 after a released audition ended |
 
 **Kotlin** (`PlaybackEngine` of each variant): `id` the variant's, `imageSize` 65536, `seekTicks` 12000, `note(n)` =
 n, `fine` = the system's fine pitch in 1/64 semitone, `ticksPerSecond` = *M* / `frame_div`.
@@ -2680,20 +2700,20 @@ n, `fine` = the system's fine pitch in 1/64 semitone, `ticksPerSecond` = *M* / `
 chip; `tools/audio/ay/ay_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference.
 
 - Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz), 0x1C
-  = loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 50 (ZX, ST) or 60 (MSX), 0x34 = 0xCC
+  = loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 50 (ZX, ST, CPC) or 60 (MSX), 0x34 = 0xCC
   (data at 0x100), 0x74 = the chip clock and 0x78 = the chip type from the variants table, 0x79 = 0x01 (flags:
   legacy single mixed output), 0x7A-0x7B = 0.
 - Data: the player's reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the loop point
   and a dump of R0-R12 (all values, zeros included; **not R13**, whose write would restart the envelope); the tick's
   writes `0xA0 reg val`; the tick's wait in 44.1 kHz samples by exact accumulation (`acc += 44100 · frame_div; wait =
-  acc / M; acc %= M` in 64 bits: ZX 881/882, MSX 735/736, ST 881), as `0x62` (735), `0x63` (882), `0x70`-`0x7F` (1-16)
+  acc / M; acc %= M` in 64 bits: ZX 881/882, MSX 735/736, ST 881/882, CPC 880/881), as `0x62` (735), `0x63` (882), `0x70`-`0x7F` (1-16)
   or `0x61 nn nn`. The song ends at the second arrival at the loop point (or at the tick limit, then without a loop),
   then `0x66`. A loop that starts while a hardware-envelope note is held continues the envelope as the previous pass
   left it.
 - **Hosts' entry point** (`ay/ay_export.h`, self-contained for cinterop): `ay_export_vgm(variant, image, 65536,
   max_ticks, title, author, date, &size, &problem)` validates the image for that variant, renders the file above and
-  appends a GD3 1.00 tag (`vgm_gd3.c`; system "ZX Spectrum 128 (Thor Tracker)", "MSX (Thor Tracker)" or "Atari ST
-  (Thor Tracker)", converter "Thor Tracker", date today unless given); free with `ay_export_free`. Android: JNI
+  appends a GD3 1.00 tag (`vgm_gd3.c`; system "ZX Spectrum 128 (Thor Tracker)", "MSX (Thor Tracker)", "Atari ST
+  (Thor Tracker)" or "Amstrad CPC (Thor Tracker)", converter "Thor Tracker", date today unless given); free with `ay_export_free`. Android: JNI
   `ChipAudio.nativeAyVgm(variant, image, maxTicks, title, author, date)` (strings as UTF-8 byte arrays;
   `IllegalArgumentException(problem)`), registered as `AyVgm.renderer`; Deck: `ay_export.h` in `decknative.def`,
   `DeckAyVgm` registered by `main`. Ten minutes of ticks at the variant's rate end songs that never loop back.
@@ -2702,7 +2722,7 @@ chip; `tools/audio/ay/ay_ref.py IMAGE --vgm OUT` writes the same bytes from the 
 
 `prepare_ay.py` parses the C headers and writes `object AyPlayerImage` with: `ENGINE_IDS` (list by variant),
 `IMAGE_SIZE`, `MAGIC`, `LAYOUT`, header offsets `H_MAGIC H_LAYOUT H_VARIANT H_SPEED H_ORDERS H_LOOP H_INSTRUMENTS
-H_DATA_SIZE HEADER_SIZE`, variants `VARIANT_ZX128 VARIANT_MSX VARIANT_ATARI_ST`, `OFF_ROWS OFF_ORDERS OFF_INSTRUMENTS
+H_DATA_SIZE HEADER_SIZE`, variants `VARIANT_ZX128 VARIANT_MSX VARIANT_ATARI_ST VARIANT_CPC`, `OFF_ROWS OFF_ORDERS OFF_INSTRUMENTS
 INSTRUMENT_SIZE OFF_DATA DATA_CAPACITY`, instrument fields `I_FLAGS FLAG_DEFINED FLAG_PITCH_RELATIVE FLAG_AUTO_PERIOD
 FLAG_SYNC I_SHAPE I_OCTAVE I_PERIOD I_ENV_VOLUME I_ENV_ARPEGGIO I_ENV_PITCH I_ENV_MIXER I_ENV_NOISE I_SWEEP_START
 I_SWEEP_END I_SWEEP_SPEED SWEEP_LIMIT OCTAVE_MIN OCTAVE_MAX`, envelopes `ENV_HEADER ENV_MAX_LENGTH NO_ENVELOPE
@@ -2711,8 +2731,9 @@ MAX_ORDERS MAX_INSTRUMENTS MAX_EFFECTS TONE_PERIOD_MAX NOISE_PERIOD_MAX ENV_PERI
 `PITCH_UNITS_PER_SEMITONE PITCH_MAX`, effect codes `EFFECT_LETTERS FX_ARPEGGIO FX_SLIDE_UP FX_SLIDE_DOWN
 FX_PORTAMENTO FX_VIBRATO FX_VOLUME_SLIDE FX_JUMP FX_VOLUME FX_BREAK FX_ENV_SHAPE FX_SPEED FX_DELAY FX_ENV_HIGH
 FX_ENV_LOW FX_ENV_AUTO FX_FINE FX_CUT FX_MIXER FX_NOISE`, timing `MASTER_HZ AY_DIV FRAME_DIV` (IntArrays by variant),
-`IO_BITS` (by variant), `SEEK_TICKS`, `GD3_SYSTEMS` (by variant), `GD3_CONVERTER`, the tables `DIV_ZX128 DIV_MSX
-DIV_ATARI_ST` (768 entries each) and `LOADER_PROBLEMS` (every reason `ay_load_image` reports, in `ay_image.c` order).
+`IO_BITS` (by variant), `STEREO` (by variant: 1 = the CPC's A+B / B+C socket), `SEEK_TICKS`, `GD3_SYSTEMS` (by
+variant), `GD3_CONVERTER`, the tables `DIV_ZX128 DIV_MSX DIV_ATARI_ST DIV_CPC` (768 entries each) and `LOADER_PROBLEMS`
+(every reason `ay_load_image` reports, in `ay_image.c` order).
 
 ### Preparing the tables and fixtures
 
@@ -2734,7 +2755,8 @@ headers, the reference or the test songs.
   passes, live edits, audition (A-4 measured per variant, envelope buzzer pitch, release), mute, VGM bytes = the
   reference's, the export entry point and the ops tables; **independent comparison**: the engine's register writes
   replayed into the vendored ayumi (each channel soloed and mixed): loudness-envelope correlation and pitch per
-  window against the engine's render. `wav_render_test.c` renders the three demos and the shortest valid song (one
+  window against the engine's render (on the CPC each side against an ayumi panned to give exactly that side's
+  channels: left A and B, right B and C). `wav_render_test.c` renders the four demos and the shortest valid song (one
   order of one row, speed 1) per variant.
 - `tools/audio/ay_reference_check.py <dir> [--vgm2wav PATH]`: the reference reproduces the trace and the VGM; the VGM
   parsed from the format alone; optionally played by libvgm.

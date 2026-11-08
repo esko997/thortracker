@@ -28,7 +28,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
 6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
    (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
 7. **More chips** (unordered):
-   - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST, Amstrad CPC (the hardware envelope as a buzzer bass).
+   - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST and Amstrad CPC variants (the hardware envelope as a buzzer
+     bass, shared noise/envelope shown honestly, each machine's stock wiring: mono, the CPC's stereo socket): source
+     written on branch `ay-systems` (own player + own AY/YM core, VGM/WAV), not yet built, tested or released.
    - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
    - Konami SCC — MSX wavetable cartridge (five channels).
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.

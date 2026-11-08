@@ -8,7 +8,9 @@
  * irrelevant); one more loop pass adding about one loop length after an identical prefix; a fade-out adding exactly
  * its length after an identical prefix and ending near silence; the length limit stopping at the tick that reaches it
  * and reporting CHIP_WAV_CAPPED; closing a job before it completes removing its spool, a complete file staying; bad
- * arguments. Plus chip_wav_pcm16's rounding and clamping.
+ * arguments. Plus chip_wav_pcm16's rounding and clamping, and for each AY variant the shortest valid song (one order of
+ * one empty row at speed 1, built here): silent, its loop point reached after exactly one tick, each loop pass adding
+ * exactly one tick, and a fade of a silent song cut to the one second of silence kept after the last audible frame.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
@@ -53,6 +55,10 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"copper-lane-zx128.ayimg", "ay-zx128"},
+    {"copper-lane-msx.ayimg", "ay-msx"},
+    {"copper-lane-atari-st.ayimg", "ay-atari-st"},
+    {"copper-lane-cpc.ayimg", "ay-cpc"},
 };
 
 static char spool[512];
@@ -303,6 +309,82 @@ static void test_demo(const char* dir, const char* samples, const Demo* d) {
     free(image);
 }
 
+/* The shortest valid AY image (docs/AUDIO_ENGINE.md, "AY-3-8910 / YM2149: image layout"): "TTAY", layout 1, the
+ * variant, speed 1, one order of one row, loop order 0, no instruments, one data byte: every channel's pattern at
+ * offset 0 is the run byte 0x80 (one empty row). */
+static void shortest_ay_image(uint8_t* b, int variant) {
+    memset(b, 0, 65536);
+    memcpy(b, "TTAY", 4);
+    b[4] = 1;
+    b[5] = (uint8_t)variant;
+    b[6] = 1;  /* speed */
+    b[8] = 1;  /* order count */
+    b[14] = 1; /* data size */
+    b[64] = 1; /* rows of order 0 */
+    b[4096] = 0x80;
+}
+
+/* Frames of each of the first `n` ticks of a fresh machine started at (0, 0). */
+static void first_ticks(const ChipEngineOps* ops, const uint8_t* image, int n, int* frames) {
+    ChipImage* img = (ChipImage*)malloc(ops->image_storage);
+    ChipMachine* m = ops->create(RATE);
+    float buf[CHIP_MAX_TICK_FRAMES * 2];
+    int seek = 0;
+    const int ok = img && m && ops->load_image(img, image, ops->image_size) == CHIP_OK &&
+                   ops->start(m, img, 0, 0, 0, &seek) == CHIP_OK;
+    for (int i = 0; i < n; ++i) frames[i] = ok ? ops->tick(m, buf) : -1;
+    if (m) ops->destroy(m);
+    free(img);
+}
+
+/* A one-row loop at speed 1: the position before every tick is (0, 0, 0), so straight ticking re-enters the row
+ * after one tick: once through = one tick, each extra pass = one more tick. Nothing sounds (no note), so every sample
+ * is 0, and a fade keeps only chip_wav.c's one second (CHIP_WAV_RATE frames) of trailing silence after the last
+ * audible frame (none: frame 0). */
+static void test_shortest(int variant, const char* system) {
+    printf("shortest valid song (%s)\n", system);
+    static uint8_t image[65536];
+    shortest_ay_image(image, variant);
+    const ChipEngineOps* ops = chip_engine_ops(system);
+    EXPECT(ops && ops->image_size == sizeof image, "%s: engine for 65536-byte images", system);
+    if (!ops) return;
+    int tick[3];
+    first_ticks(ops, image, 3, tick);
+    EXPECT(tick[0] > 700 && tick[1] > 700 && tick[2] > 700, "%s: the image plays (%d, %d, %d frames per tick)", system,
+           tick[0], tick[1], tick[2]);
+    for (int loops = 0; loops <= 2; ++loops) {
+        size_t size = 0;
+        int capped = -1;
+        const char* problem = NULL;
+        uint8_t* file = render(system, image, sizeof image, loops, 0, MAX_SECONDS, &size, &capped, &problem);
+        EXPECT(file != NULL, "%s loops=%d: renders (%s)", system, loops, problem ? problem : "");
+        if (!file) continue;
+        const uint64_t frames = check_header("shortest", file, size);
+        uint64_t want = 0;
+        for (int i = 0; i <= loops; ++i) want += (uint64_t)tick[i];
+        EXPECT(frames == want, "%s loops=%d: %d tick(s) = %llu frames (got %llu)", system, loops, loops + 1,
+               (unsigned long long)want, (unsigned long long)frames);
+        EXPECT(capped == 0, "%s loops=%d: ends at the loop, not the limit", system, loops);
+        EXPECT(peak(file + CHIP_WAV_HEADER, 0, frames) == 0, "%s loops=%d: silent", system, loops);
+        free(file);
+    }
+    size_t size = 0;
+    uint8_t* again = stepped(system, image, sizeof image, 0, 0, 1, &size);
+    EXPECT(again && size == CHIP_WAV_HEADER + 4u * (size_t)tick[0], "%s: stepped one tick at a time: the same one tick", system);
+    free(again);
+    int capped = -1;
+    const char* problem = NULL;
+    uint8_t* faded = render(system, image, sizeof image, 0, FADE_MS, MAX_SECONDS, &size, &capped, &problem);
+    const uint64_t ff = faded ? check_header("shortest fade", faded, size) : 0;
+    EXPECT(faded && ff == RATE, "%s: fading a silent song keeps 1 s of silence (%llu frames)", system, (unsigned long long)ff);
+    EXPECT(faded && peak(faded + CHIP_WAV_HEADER, 0, ff) == 0, "%s: the faded file is silent", system);
+    free(faded);
+    uint8_t* limited = render(system, image, sizeof image, 0, 0, 2, &size, &capped, &problem);
+    EXPECT(limited && capped == 0 && size == CHIP_WAV_HEADER + 4u * (size_t)tick[0],
+           "%s: a 2 s limit does not cap a one-tick song", system);
+    free(limited);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
@@ -317,6 +399,10 @@ int main(int argc, char** argv) {
            "pcm16 rounds to nearest and clamps");
     EXPECT(CHIP_WAV_HEADER + 4ull * CHIP_WAV_MAX_FRAMES <= 0x7FFFFFFFull, "the largest file fits RIFF and a 32-bit off_t");
     for (size_t i = 0; i < sizeof kDemos / sizeof kDemos[0]; ++i) test_demo(dir, samples, &kDemos[i]);
+    test_shortest(0, "ay-zx128");
+    test_shortest(1, "ay-msx");
+    test_shortest(2, "ay-atari-st");
+    test_shortest(3, "ay-cpc");
     printf("WAV export: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

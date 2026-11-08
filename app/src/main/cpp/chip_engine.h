@@ -15,6 +15,10 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "ay-zx128", "ay-msx", "ay-atari-st", "ay-cpc"  Thor Tracker's own AY player on its own AY-3-8910 / YM2149 core,
+ *                     one engine per stock computer: ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910), Atari ST (YM2149F),
+ *                     Amstrad CPC (AY-3-8912, stereo socket) (ay/ay_chip.c over ay/ay_machine.c, ay_player.c,
+ *                     ay_psg.c, ay_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

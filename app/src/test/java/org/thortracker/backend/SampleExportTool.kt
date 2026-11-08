@@ -8,6 +8,7 @@ import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
+import org.thortracker.system.ay.AyVariant
 import java.io.File
 
 /** Host utility; sample generation is explicit, never a unit-test side effect. */
@@ -57,5 +58,14 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The AY demo on each computer: project and engine image (its VGM needs the native player:
+        // tools/audio/render_ay_image.sh copper-lane-zx128.ayimg out.wav --vgm copper-lane-zx128.vgm renders both).
+        for (variant in AyVariant.entries) {
+            val system = variant.system
+            val ay = system.demo()
+            File(directory, "copper-lane-${variant.fileKey}.thor").writeText(ProjectCodec.encode(ay), Charsets.UTF_8)
+            File(directory, "copper-lane-${variant.fileKey}.ayimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(ay, it) })
+            println("Exported ${ay.title} (${variant.label}) to ${directory.absolutePath}")
+        }
     }
 }

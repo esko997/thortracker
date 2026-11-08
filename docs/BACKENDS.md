@@ -864,7 +864,7 @@ Decisions:
   columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
   and song settings).
 
-## AY-3-8910 / YM2149 (ZX Spectrum 128, MSX, Atari ST)
+## AY-3-8910 / YM2149 (ZX Spectrum 128, MSX, Atari ST, Amstrad CPC)
 
 Roadmap step 7, source only (branch `ay-systems`; unbuilt — the integrator runs generation, builds and tests). The
 engine contract (clocks and their sources, chip core, image, player, shared noise/envelope arbitration, effects, seek,
@@ -872,13 +872,15 @@ VGM) is `docs/AUDIO_ENGINE.md`, "AY-3-8910 / YM2149".
 
 Decisions (made on the user's behalf; see "Open questions"):
 
-- **Three variants, one per stock computer**, grouped as the family "AY-3-8910 / YM2149" in New and Load demo, as the
+- **Four variants, one per stock computer**, grouped as the family "AY-3-8910 / YM2149" in New and Load demo, as the
   NES expansions are: `AyZx128System` (`"ay-zx128"`, "ZX Spectrum 128 (AY-3-8912)", 1773450 Hz, 50.02 Hz frames),
-  `AyMsxSystem` (`"ay-msx"`, "MSX (AY-3-8910)", 1789772.5 Hz, 59.92 Hz) and `AyAtariStSystem` (`"ay-atari-st"`,
-  "Atari ST (YM2149F)", 2005311.75 Hz, 50.05 Hz). The chip type decides the amplitude behaviour (AY: 16 levels and a
-  16-step envelope; YM: 32-level DAC and a 32-step envelope, fixed volumes at the odd levels); the clock decides the
-  period tables, so every note is true pitch on every machine. Amstrad CPC is not a variant (not requested). Each
-  machine's own mono mix: no panning, no stereo (ABC/ACB stereo is a later add-on, not stock).
+  `AyMsxSystem` (`"ay-msx"`, "MSX (AY-3-8910)", 1789772.5 Hz, 59.92 Hz), `AyAtariStSystem` (`"ay-atari-st"`,
+  "Atari ST (YM2149F)", 2005311.75 Hz, 50.05 Hz) and `AyCpcSystem` (`"ay-cpc"`, "Amstrad CPC (AY-3-8912)", 1000000 Hz,
+  50.08 Hz). The chip type decides the amplitude behaviour (AY: 16 levels and a 16-step envelope; YM: 32-level DAC and
+  a 32-step envelope, fixed volumes at the odd levels); the clock decides the period tables, so every note is true
+  pitch on every machine. Each machine's stock wiring: the ZX 128, MSX and ST mix to mono (no panning); the CPC's
+  stock stereo socket carries A left, C right and B on both sides, which its engine outputs (the internal speaker's
+  mono is not modelled). No stereo modifications (ABC/ACB boards) on the mono machines.
 - **Own player and own chip core**, as the OPL3: none of these machines has one standard music driver to put in the
   loop, and none of them is emulated (no Z80/68000). Our core (`ay/ay_psg.c`) is written from the GI and Yamaha
   manuals with MAME's `ay8910.cpp` and ayumi read for details, ayumi's measured DAC tables (MIT) and blip_buf output;
@@ -928,7 +930,7 @@ Decisions (made on the user's behalf; see "Open questions"):
   Bell (shape 9 decay at a manual period, tone on), Envelope tremolo (shape 14, manual slow period, tone on), Kick
   (tone + noise for two ticks, pitch sweep down), Snare (noise period envelope with a tone body), Closed hat / Open
   hat (noise 1-2, short/long volume), Tom (sweep), Noise sweep (riser: noise period envelope 31 → 1).
-- **Demo** (`AyDemoSong.build(variant)`): one original composition for all three variants ("Copper Lane"), tempo
+- **Demo** (`AyDemoSong.build(variant)`): one original composition for all four variants ("Copper Lane"), tempo
   set per variant's tick rate so it has the same BPM: buzzer bass that hands the envelope to a synced lead in the
   bridge (the shared envelope audible on purpose), arpeggio-envelope chords, noise drums sharing the noise generator
   with a riser, vibrato and portamento, volume slides; no errors or warnings except the intentional, documented
@@ -1013,3 +1015,22 @@ Decisions (made on the user's behalf; see "Open questions"):
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- AY variants (decided on the user's behalf): four stock machines — ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910,
+  NTSC 60 Hz frames), Atari ST (YM2149F, PAL 50 Hz VBL) and Amstrad CPC (AY-3-8912 at 1 MHz, 50.08 Hz frames, the
+  stereo socket) — each with its own clock, chip type and wiring. Not modelled: PAL MSX (50 Hz), MSX-ENGINE machines
+  whose YM2149 has the YM's 32-step envelope, the NTSC ST, the CPC's 300 Hz interrupt rate as a tick, the CPC's mono
+  internal speaker, ABC/ACB stereo modifications of the mono machines. The CPC socket's B weight (equal on both
+  sides) is an inference from its resistive mixing, not a measured value. Review.
+- AY output summing: the three channels add linearly; the real machines tie the outputs through resistors (MAME's
+  resistor model; Hatari uses a measured 3-D table for the ST), which compresses loud chords a little. Proposed: keep
+  linear until a listening comparison asks otherwise.
+- AY envelope period 0 is played as period 1 (ayumi, emu2149; MAME treats the AY's 0 as half of 1). The manuals are
+  silent. Review against hardware captures if one appears.
+- AY shared noise/envelope arbitration (decided on the user's behalf): the most recent key-on among the channels
+  using a resource owns it; an owner change re-writes R13 only when the shape differs, so a held buzzer bass is not
+  retriggered when a short note that borrowed the envelope ends (its envelope phase continues). Alternatives: a fixed
+  channel priority (FamiStudio's 5B: the highest channel) or per-song ownership. Review.
+- AY VGM loops do not dump R13 (a write restarts the envelope): a loop entered with a held hardware-envelope note
+  continues the envelope as the previous pass left it.
+- AY hardware envelope with volume: the chip cannot scale an envelope's level, so on such notes the volume envelope
+  and `Cxx` only gate it (any level above 0 plays the full envelope; 0 silences). Review.

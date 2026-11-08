@@ -8,7 +8,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 build="$root/build/host-audio/render-ym"
 mkdir -p "$build"
 cpp="$root/app/src/main/cpp"
-includes=(-I "$cpp" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/third_party/chips" -I "$cpp/third_party/binjgb/src"
+includes=(-I "$cpp" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/ay" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/third_party/chips" -I "$cpp/third_party/binjgb/src"
   -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm")
 objs=()
 for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
@@ -18,6 +18,7 @@ for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/hug
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c" "$cpp/opl3/opl3_vgm.c" \
   "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c" "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" \
   "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c" "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c" \
+  "$cpp/ay/ay_chip.c" "$cpp/ay/ay_machine.c" "$cpp/ay/ay_player.c" "$cpp/ay/ay_psg.c" "$cpp/ay/ay_image.c" "$cpp/ay/ay_vgm.c" \
   "$root/tools/audio/ym_render.c"; do
   o="$build/$(basename "${src%.*}").o"
   ${CC:-gcc} -std=gnu11 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
