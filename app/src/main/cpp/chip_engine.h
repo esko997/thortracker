@@ -15,6 +15,8 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "atari-pokey"     Thor Tracker's own player on the Atari 8-bit POKEY, an own cycle-exact model
+ *                     (pokey/pokey_engine.c over pokey/pokey_machine.c, pokey_player.c, pokey_chip.c, pokey_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

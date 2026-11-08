@@ -6,6 +6,8 @@ import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.pokey.PokeyDemoSong
+import org.thortracker.system.pokey.PokeySystem
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
@@ -57,5 +59,13 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The POKEY demo and the shortest valid POKEY song: project and engine images for the native renderers (VGM
+        // needs the native player).
+        val pokey = PokeySystem.demo()
+        File(directory, "scanline-cruise.thor").writeText(ProjectCodec.encode(pokey), Charsets.UTF_8)
+        File(directory, "scanline-cruise.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(pokey, it) })
+        val shortest = PokeyDemoSong.shortest()
+        File(directory, "pokey-shortest.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(shortest, it) })
+        println("Exported ${pokey.title} and ${shortest.title} to ${directory.absolutePath}")
     }
 }
