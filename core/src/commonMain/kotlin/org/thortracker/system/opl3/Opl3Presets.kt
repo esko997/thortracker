@@ -47,8 +47,8 @@ object Opl3Presets {
             op(1, 26, dr = 4, sl = 6, rr = 6, ksl = 2, sustain = false), op(1, 6, dr = 2, sl = 5, rr = 6, sustain = false)))),
         // 4-op 1+(2→3)+4: inharmonic ratios, long percussive decay.
         melodic(Opl3Instrument.fourOp("Bell", 3, 0, listOf(
-            op(3, 20, dr = 5, sl = 9, rr = 5, sustain = false), op(7, 28, dr = 4, sl = 8, rr = 5, sustain = false),
-            op(1, 8, dr = 3, sl = 10, rr = 5, sustain = false), op(2, 16, dr = 5, sl = 12, rr = 5, wave = 5, sustain = false)))),
+            op(3, 12, dr = 5, sl = 9, rr = 5, sustain = false), op(7, 28, dr = 4, sl = 8, rr = 5, sustain = false),
+            op(1, 4, dr = 3, sl = 10, rr = 5, sustain = false), op(2, 8, dr = 5, sl = 12, rr = 5, wave = 5, sustain = false)))),
         // 4-op 1+(2→3→4): a drawbar-ish sine plus a reedy chain, held.
         melodic(Opl3Instrument.fourOp("Organ", 2, 1, listOf(
             op(4, 16, ar = 14, rr = 8), op(3, 30, ar = 14, rr = 8), op(1, 28, ar = 14, rr = 8), op(1, 6, ar = 14, rr = 8)))),
@@ -60,9 +60,9 @@ object Opl3Presets {
         drum(Opl3Instrument.twoOp("Tom", 0, 2,
             op(1, 30, dr = 6, sl = 15, rr = 7), op(1, 0, dr = 4, sl = 10, rr = 6, sustain = false), Opl3Sweep(7, -2, 10)), 43),
         drum(Opl3Instrument.twoOp("Hi-hat", 0, 6,
-            op(12, 10, dr = 10, sl = 12, rr = 12, wave = 7), op(9, 6, dr = 10, sl = 12, rr = 12, sustain = false)), 84),
+            op(12, 10, dr = 9, sl = 12, rr = 11, wave = 7), op(9, 0, dr = 9, sl = 12, rr = 11, sustain = false)), 60),
         drum(Opl3Instrument.twoOp("Open hat", 0, 6,
-            op(12, 10, dr = 6, sl = 12, rr = 6, wave = 7), op(9, 6, dr = 6, sl = 12, rr = 6, sustain = false)), 84),
+            op(12, 10, dr = 6, sl = 12, rr = 6, wave = 7), op(9, 0, dr = 6, sl = 12, rr = 6, sustain = false)), 60),
     )
 
     /** The preset named [name], or null. */

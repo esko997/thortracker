@@ -83,7 +83,7 @@ internal object Opl3DemoSong {
             val r = bar * 16
             note(KICK_CH, r, n("C-3"), KICK)
             if (bar >= 2) note(KICK_CH, r + 8, n("C-3"), KICK)
-            for (row in listOf(4, 8, 12)) note(HAT_CH, r + row, n("C-7"), HAT)
+            for (row in listOf(4, 8, 12)) note(HAT_CH, r + row, HAT_NOTE, HAT)
         }
         // A rising tom run into theme A.
         for ((row, name) in listOf(56 to "G-3", 58 to "A-3", 60 to "C-4", 62 to "D-4")) note(SNARE_CH, row, n(name), TOM)
@@ -120,7 +120,6 @@ internal object Opl3DemoSong {
             note(BELL_CH, row, n(name), BELL)
         }
         fx(BELL_CH, 2, 0, FX_PAN, 0x10)
-        fx(BELL_CH, 2, 1, FX_VOLUME, 0x34)
         // E-piano: held chord tones on the bar instead of the arpeggio.
         for (bar in 0 until 4) note(EPIANO_CH, bar * 16, n(ARPEGGIO[bar][2]), EPIANO)
     }.build()
@@ -136,7 +135,7 @@ internal object Opl3DemoSong {
         fx(SNARE_CH, 32, 0, FX_PAN, 0x10)
         fx(SNARE_CH, 40, 0, FX_PAN, 0x01)
         fx(SNARE_CH, 48, 0, FX_PAN, 0x11)
-        note(HAT_CH, 60, n("C-7"), OPEN_HAT)
+        note(HAT_CH, 60, HAT_NOTE, OPEN_HAT)
         // The lead rises a sixth on a slide and fades.
         note(LEAD_CH, 32, n("E-5"), LEAD)
         fx(LEAD_CH, 32, 0, FX_VIBRATO, 0x45)
@@ -158,12 +157,18 @@ internal object Opl3DemoSong {
         ARPEGGIO[bar].forEachIndexed { i, name -> note(EPIANO_CH, r + listOf(0, 3, 6, 10)[i], n(name), EPIANO) }
     }
 
+    /** Hats sit at C-5: ×9 and ×12 operators put their metallic noise around 5-6 kHz. */
+    private val HAT_NOTE = n("C-5")
+
     /** One chord shape per bar on the pad (left), released before the next. */
     private fun PatternBuilder.pad(bar: Int) {
         val r = bar * 16
         note(PAD_CH, r, PAD_ROOTS[bar], PAD)
         fx(PAD_CH, r, 0, FX_SHAPE, PAD_SHAPES[bar])
-        if (bar == 0) fx(PAD_CH, r, 1, FX_PAN, 0x10)
+        if (bar == 0) {
+            fx(PAD_CH, r, 1, FX_PAN, 0x10)
+            fx(PAD_CH, r, 2, FX_VOLUME, 0x36) // four voices a chord: sits under the lead
+        }
         cut(PAD_CH, r + 15)
     }
 
@@ -186,10 +191,10 @@ internal object Opl3DemoSong {
         note(SNARE_CH, r + 4, n("D-4"), SNARE)
         note(SNARE_CH, r + 12, n("D-4"), SNARE)
         for (row in 0 until 16 step 2) {
-            if (row == 14) note(HAT_CH, r + row, n("C-7"), OPEN_HAT)
+            if (row == 14) note(HAT_CH, r + row, HAT_NOTE, OPEN_HAT)
             else {
-                note(HAT_CH, r + row, n("C-7"), HAT)
-                fx(HAT_CH, r + row, 0, FX_VOLUME, if (row % 4 == 0) 0x3A else 0x2C)
+                note(HAT_CH, r + row, HAT_NOTE, HAT)
+                fx(HAT_CH, r + row, 0, FX_VOLUME, if (row % 4 == 0) 0x3F else 0x36)
             }
         }
     }
