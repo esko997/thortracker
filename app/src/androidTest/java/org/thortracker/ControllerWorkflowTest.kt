@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
+import org.thortracker.editor.Workspace
 import org.thortracker.model.Songs
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.ui.TrackerView
@@ -126,6 +127,41 @@ class ControllerWorkflowTest {
         chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
         instrumentation.runOnMainSync { assertEquals(ViewKind.INSTRUMENT, tracker.state.kind) }
         assertEquals("View chords must not edit or release a held B/A", before, tracker.session.song)
+    }
+
+    /**
+     * L2+R2+A shows Song on the other display (the only one on a single screen) with the triggers pressed in either
+     * order, and never undoes (L2+A) or switches the focused view (R2+A). Letting a trigger go first leaks nothing.
+     */
+    @Test fun bothTriggersShowAViewOnTheOtherDisplay() {
+        down(KeyEvent.KEYCODE_BUTTON_A); tap(KeyEvent.KEYCODE_DPAD_RIGHT); up(KeyEvent.KEYCODE_BUTTON_A)
+        val changed = tracker.session.song
+        val panes = MainActivity::class.java.getDeclaredField("panes").apply { isAccessible = true }.get(activity) as Workspace
+        var target = 0
+        instrumentation.runOnMainSync {
+            val hosts = MainActivity::class.java.getDeclaredField("hosts").apply { isAccessible = true }.get(activity) as Map<*, *>
+            target = if (hosts.size > 1) 1 else 0
+        }
+        fun shown(): ViewKind { var k = ViewKind.PATTERN; instrumentation.runOnMainSync { k = panes.panes[target].kind }; return k }
+        val before = shown()
+        down(KeyEvent.KEYCODE_BUTTON_L2); down(KeyEvent.KEYCODE_BUTTON_R2)
+        instrumentation.runOnMainSync { assertTrue(tracker.hints.contains("L2+R2+A" to "Song on other")) }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        up(KeyEvent.KEYCODE_BUTTON_L2); up(KeyEvent.KEYCODE_BUTTON_R2)
+        assertEquals(ViewKind.SONG, shown())
+        instrumentation.runOnMainSync {
+            assertEquals(0, panes.focus)
+            if (target == 1) assertEquals(ViewKind.PATTERN, tracker.state.kind)
+        }
+        assertEquals("L2+R2+A must not undo", changed, tracker.session.song)
+        // Reverse order, and R2 let go before A: the same chord, back to the previous view.
+        down(KeyEvent.KEYCODE_BUTTON_R2); down(KeyEvent.KEYCODE_BUTTON_L2)
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        up(KeyEvent.KEYCODE_BUTTON_R2)
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        up(KeyEvent.KEYCODE_BUTTON_L2)
+        assertEquals(before, shown())
+        assertEquals("A's release must not edit", changed, tracker.session.song)
     }
 
     /** L2+Y loops the focused pattern view's order: playback stays on it past its end, and L2+Y again releases it. */
@@ -385,7 +421,7 @@ class ControllerWorkflowTest {
         val apply = MainActivity::class.java.getDeclaredMethod("applyKeymap", Keymap::class.java, String::class.java)
             .apply { isAccessible = true }
         fun keymap(): Keymap { var k = Keymap.DEFAULT; instrumentation.runOnMainSync { k = tracker.keymap }; return k }
-        val l3b = Binding(KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_THUMBL)
+        val l3b = Binding(KeyEvent.KEYCODE_BUTTON_B, setOf(KeyEvent.KEYCODE_BUTTON_THUMBL))
         val file = File(activity.cacheDir, "keymap-${System.nanoTime()}.json")
         val exportMonitor = Instrumentation.ActivityMonitor(IntentFilter(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*")

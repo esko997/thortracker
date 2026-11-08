@@ -223,6 +223,9 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
     /** The same layers as Android's MainActivity.routeKey: binding capture, popup, host controls, then the pane. */
     private fun route(code: Int, down: Boolean, repeat: Int) {
         popups.top?.capture?.let { capture ->
+            // The capture takes the key, but the trigger edges above read [HostInput.heldModifiers]: keep them true, so
+            // a trigger let go during the capture is released there too and never joins the chord.
+            input.trackModifier(code, down)
             if (repeat == 0) capture(code, down)
             return
         }
@@ -246,6 +249,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             Control.TOOLBAR -> menus.appMenu()
             Control.SWAP, Control.FOCUS -> {}
             else -> {
+                // One pane: other-display view chords show their view on it, like the R2 ones.
                 val shows = control.shows
                 val action = control.action
                 if (shows != null) {

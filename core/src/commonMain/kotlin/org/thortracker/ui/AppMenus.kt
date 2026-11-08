@@ -10,6 +10,7 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
 import org.thortracker.input.Binding
+import org.thortracker.input.BindingCapture
 import org.thortracker.input.Control
 import org.thortracker.input.ControlGroup
 import org.thortracker.input.Keymap
@@ -212,16 +213,16 @@ class AppMenus(
                 }, PopupItem.dismiss()), selected = 1), host.modalDisplay)
         }
         items += PopupItem.dismiss()
-        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3 " +
-            "and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
+        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3, " +
+            "or two of them such as L2+R2, and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
             items = items, selected = 1)
     }
 
     fun showControls() = popups.show(controlsSpec(), host.modalDisplay)
 
-    /** Waits for one button or one modifier+button chord for [control]; Back, Escape or Menu leaves it unchanged. */
+    /** Waits for one button or one chord of up to two modifiers for [control]; Back, Escape or Menu leaves it unchanged. */
     fun captureBinding(control: Control) {
-        val held = LinkedHashSet<Int>()
+        val capture = BindingCapture()
         var finished = false
         val default = Keymap.DEFAULT.binding(control)
         fun finish(binding: Binding?) {
@@ -233,7 +234,8 @@ class AppMenus(
         popups.show(PopupSpec(control.label,
             message = "Press the new button now. Current: ${keymap.label(control)}." +
                 (if (control.hold) " It is held with the D-pad, so it takes a single button."
-                else " For a chord, hold Select, L2, R2 or L3, then press the button.") + " Back or Menu cancels.",
+                else " For a chord, hold Select, L2, R2 or L3 (or two, such as L2+R2 in either order), then press the button.") +
+                " Back or Menu cancels.",
             items = listOfNotNull(
                 default?.let { PopupItem("Use default (${Keymap.label(it)})") { finish(it) } },
                 PopupItem.dismiss(),
@@ -243,10 +245,7 @@ class AppMenus(
                     finished -> Unit
                     // Back and Menu can never be bound, so either cancels (the Deck has no Back button).
                     code == Keys.BACK || code == Keys.ESCAPE || code == Keys.MENU || code == Keys.BUTTON_MODE -> if (down) finish(null)
-                    code in Keymap.MODIFIERS -> if (down) held += code else held -= code
-                    !down -> Unit
-                    held.size > 1 -> { finish(null); host.error("Hold one of Select, L2, R2 or L3 for a chord, not several") }
-                    else -> finish(Binding(code, held.firstOrNull()))
+                    else -> capture.key(code, down)?.let { finish(it) }
                 }
             }), host.modalDisplay)
     }

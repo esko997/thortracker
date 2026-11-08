@@ -15,12 +15,18 @@ import org.thortracker.input.StickFlicks
  * its UP, so a key whose DOWN was consumed (chord, popup choice, toolbar press) never leaks a repeat or
  * release into the editor, and an editor key held while a modal opens cannot keep editing underneath it.
  *
- * Modifiers ([Keymap.MODIFIERS]: Select, L2, R2, L3) do nothing alone. With one held, a press uses its chord
- * if one is bound, otherwise the key's own binding. With several held, a key bound in any of their chords is
- * ambiguous and does nothing. Menu and Back are fixed: they open the menu (Back leaves a focused toolbar or
+ * Modifiers ([Keymap.MODIFIERS]: Select, L2, R2, L3) do nothing alone. The modifiers held at a press form its
+ * layer, whatever order they went down in: a press runs the chord bound to exactly that layer (L2+R2+A while both
+ * triggers are held). Failing that, a chord of only some of them (L2+A or R2+A while both are held) belongs to a
+ * layer below and does nothing, so a third-layer press never slips into a single-trigger action; a key no held
+ * layer binds keeps its own binding. Menu and Back are fixed: they open the menu (Back leaves a focused toolbar or
  * popup first). Popups and the toolbar receive the canonical key a press stands for ([Keymap.canonical]), so
  * their navigation follows rebinding; [Control.overPopups] chords still run over popups. Bindings resolve in
  * the focused [ViewKind], so a chord can act differently per view ([Control.views]).
+ *
+ * Releases roll: a chord keeps the meaning of its DOWN however its modifiers and button are let go, and a key held
+ * since before a modifier went down keeps its own meaning until released. A press the system cancels ([cancel])
+ * is forgotten without acting.
  *
  * The right stick's vertical axis ([rightStick]) is not a key: a quick double flick up or down jumps the focused
  * Pattern view to the first or last row of its pattern.
@@ -63,6 +69,27 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     }
 
     /**
+     * Keeps [heldModifiers] true to the hardware for a key that does not go through [route], because a binding
+     * capture takes every key. Returns whether [code] is a modifier.
+     */
+    fun trackModifier(code: Int, down: Boolean): Boolean {
+        if (code !in Keymap.MODIFIERS) return false
+        if (down) held += code else held -= code
+        return true
+    }
+
+    /**
+     * The system cancelled [code]'s press (Android flags the key-up canceled when another window takes focus or
+     * the controller goes away). Forgets it without acting: a modifier stops being held and a press loses its
+     * owner. Returns true when the press was driving the editor: the host must then cancel the editor's holds
+     * rather than release them, since a release could count as a tap and write.
+     */
+    fun cancel(code: Int): Boolean {
+        if (trackModifier(code, false)) return false
+        return owners.remove(code) is Owner.Editor
+    }
+
+    /**
      * Forgets pending right-stick flicks (a stick held now must return to neutral before it counts). Hosts call
      * this when a popup opens or closes, the window loses focus or a controller changes, so a flick from before
      * cannot complete a jump after.
@@ -88,16 +115,13 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
         return jump
     }
 
-    /** Modifiers currently held, in press order; the focused view shows their chords. */
+    /** Modifiers currently held, in press order; the focused view shows the chords of exactly this layer. */
     val heldModifiers: Set<Int> get() = held
 
     fun route(code: Int, down: Boolean, repeat: Int, popupOpen: Boolean, toolbarFocused: Boolean, view: ViewKind): Route {
         // A button may open a menu, the toolbar or another view, so it ends any stick double flick; D-pad moves don't.
         if (down && repeat == 0 && code !in DIRECTIONS) resetStick()
-        if (code in Keymap.MODIFIERS) {
-            if (down) held += code else held -= code
-            return Route.Deliver(Target.NONE)
-        }
+        if (trackModifier(code, down)) return Route.Deliver(Target.NONE)
         if (!down || repeat > 0) return continued(code, down, popupOpen, toolbarFocused, view)
         when (code) {
             Keys.MENU, Keys.BUTTON_MODE ->
@@ -108,19 +132,21 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
                 else -> { owners[code] = Owner.Global; Route.Menu }
             }
         }
-        val chords = held.mapNotNull { keymap.control(Binding(code, it), view) }
-        if (chords.isNotEmpty() && held.size > 1) return deliver(code, Owner.Global)
-        val control = chords.firstOrNull() ?: keymap.control(Binding(code), view)
+        val layer = held.toSet()
+        val chord = if (layer.isEmpty()) null else keymap.control(Binding(code, layer), view)
+        // A chord of a layer below the held one (L2+A while L2+R2 are held) must not run, nor its bare key act.
+        if (chord == null && keymap.partialChord(code, layer, view) != null) return deliver(code, Owner.Global)
+        val control = chord ?: keymap.control(Binding(code), view)
             ?: if (code == Keys.SPACE) Control.PLAY_PATTERN else null
         if (popupOpen) {
-            if (control != null && control.overPopups && chords.isNotEmpty()) return run(code, control)
+            if (chord != null && chord.overPopups) return run(code, chord)
             // Any other chord (e.g. R2+A for a view) must not press the popup's highlighted item.
-            if (chords.isNotEmpty()) return deliver(code, Owner.Global)
+            if (chord != null) return deliver(code, Owner.Global)
             return deliver(code, Owner.Popup(keymap.canonical(code)))
         }
         if (control == null) return if (isController(code)) deliver(code, Owner.Global) else Route.Pass
         if (control.host) return run(code, control)
-        if (toolbarFocused) return deliver(code, Owner.Toolbar(if (chords.isEmpty()) keymap.canonical(code) else Keys.UNKNOWN))
+        if (toolbarFocused) return deliver(code, Owner.Toolbar(if (chord == null) keymap.canonical(code) else Keys.UNKNOWN))
         val action = control.action ?: return deliver(code, Owner.Global)
         owners[code] = Owner.Editor(action)
         return Route.Editor(action)
