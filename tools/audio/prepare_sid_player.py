@@ -6,6 +6,8 @@ outputs are committed, so app/Deck/CI builds need no 6502 assembler:
 
   app/src/main/cpp/generated/sid_player_image.h   player bytes at $1000, parameter patch addresses,
                                                   player variable addresses, image layout
+  core/src/commonMain/kotlin/org/thortracker/backend/SidPlayerImage.kt
+                                                  the same player bytes and layout/export numbers for Kotlin
   app/src/test/cpp/sid_gt_song.h                  host-test fixtures (below)
   tools/audio/sid/gt_test.sng                     the test song as a GoatTracker 2 song file
   tools/audio/sid/gt_test.sid                     GoatTracker's own packed PSID of it (gt2reloc)
@@ -35,14 +37,18 @@ Steps (all checked):
   7. py65 (an independent 6502 emulator) runs gt2reloc's PSID (init, then one play call per PAL frame)
      and records every SID register write per frame; it also runs the Thor image on the player image
      (parameters patched) and must record the same writes. Row starts come from the packed player's
-     own channel-1 counter. Both go into the fixture as the reference.
-  8. Write the outputs. Two runs produce identical files.
+     own channel-1 counter. Both go into the fixture as the reference. The relocation fixture (the same
+     song laid out anew: every instrument program moved, instruments and patterns renumbered, patterns
+     and orderlists elsewhere) must also write the same registers on py65.
+  8. Write the outputs (also the edit fixtures: a note edit, a tempo edit, a shortened song). Two runs
+     produce identical files.
 
 Requirements: python3 with py65 (`python3 -m venv /tmp/sidref && /tmp/sidref/bin/pip install py65`;
 run the script with that python); GoatTracker 2.77's gt2reloc and gtasm (`--goattracker DIR`, else
 tools/audio/fetch_goattracker.sh fetches and builds them).
 """
 import argparse
+import copy
 import hashlib
 import shutil
 import subprocess
@@ -63,11 +69,18 @@ TEST_SNG = SID_DIR / "gt_test.sng"
 TEST_SID = SID_DIR / "gt_test.sid"
 OUT_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "sid_player_image.h"
 OUT_SONG = ROOT / "app" / "src" / "test" / "cpp" / "sid_gt_song.h"
+OUT_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "SidPlayerImage.kt"
 FETCH = ROOT / "tools" / "audio" / "fetch_goattracker.sh"
 
 PAL_FRAME_CYCLES = 19656   # 63 cycles x 312 lines: the PSID VBI rate for PAL songs (50.1245 Hz)
 IDLE = 0x0FF0              # return address of host calls (the machine stops at its fetch)
 TRAP = 0x0FF3              # interrupt / BRK vector target: a fault
+SPEED_CODE = bytes([0xA2, 0x00, 0x8E, 0x04, 0xDC, 0xA2, 0x00, 0x8E, 0x05, 0xDC])  # greloc.c speedcode[]
+CIA_PAL_LATCH = 0x4CC7     # greloc.c: PAL CIA timer value, divided by the multiplier
+PSID_HEADER_SIZE = 0x7C
+EDIT_ORDER, EDIT_ROW = 3, 8  # sid_gt_edited: order 3, channel 1, row 8 F-4 -> G-4
+TEMPO_EDIT = 9               # sid_gt_tempo: order 0 row 0 F06 -> F09
+PROGRAM_SHIFT = 100          # sid_gt_moved: instrument programs moved down by this many rows
 AUDITION_RAM = 0x0E00      # $0E00-$0EFF: audition orderlists and patterns (spare machines only)
 REF_FRAMES = 1500          # 30 s of reference writes
 
@@ -248,6 +261,71 @@ def c_bytes(name: str, data: bytes, const_type="uint8_t") -> str:
     return out + "};\n"
 
 
+def kotlin_hex(data: bytes) -> str:
+    text = data.hex().upper()
+    return "\n".join(f'        "{text[i:i + 96]}" +' for i in range(0, len(text), 96)).rstrip(" +")
+
+
+def move_programs(song: gt_song.Song, shift: int) -> gt_song.Song:
+    """`song` with every instrument's wave, pulse and filter program (its start row up to its jump row)
+    moved `shift` rows down and every reference to those rows rewritten (instrument pointers, jump
+    targets, wavetable commands 8-A, pattern commands 8-A); the vacated rows get other content.
+    Programs reached only by commands stay. It plays the same."""
+    s = copy.deepcopy(song)
+    maps = []
+    for t, attr in enumerate(("wave", "pulse", "filt")):
+        rows = {}
+        for ins in s.instruments:
+            start = getattr(ins, attr)
+            if start:
+                end = start
+                while s.tables[t][end - 1][0] != 0xFF:
+                    end += 1
+                rows.update({r: r + shift for r in range(start, end + 1)})
+        maps.append(rows)
+    junk = [(0x81, 0x30), (0x8F, 0xF0), (0x00, 0xFF)]
+    for t in range(3):
+        old = s.tables[t]
+        new = list(old) + [(0, 0)] * (max(maps[t].values()) - len(old))
+        for r, (left, right) in enumerate(old, start=1):
+            if left == 0xFF and right:
+                right = maps[t].get(right, right)
+            elif t == gt_song.WTBL and gt_song.WAVECMD <= left <= gt_song.WAVELASTCMD and 8 <= left & 0x0F <= 10:
+                right = maps[(left & 0x0F) - 8].get(right, right)
+            if r in maps[t]:
+                new[maps[t][r] - 1] = (left, right)
+                new[r - 1] = junk[t]
+            else:
+                new[r - 1] = (left, right)
+        s.tables[t] = new
+    for ins in s.instruments:
+        ins.wave, ins.pulse, ins.filt = (maps[t].get(v, v) for t, v in enumerate((ins.wave, ins.pulse, ins.filt)))
+    for p in s.patterns:
+        for i, (note, ins, cmd, param) in enumerate(p):
+            if 8 <= cmd <= 10 and param:
+                p[i] = (note, ins, cmd, maps[cmd - 8].get(param, param))
+    return s
+
+
+def edited_songs(song: gt_song.Song):
+    """Edit fixtures: a note edit ahead (order EDIT_ORDER, channel 1, row EDIT_ROW: F-4 -> G-4), a tempo
+    edit at the song start (order 0 row 0 F06 -> F0<TEMPO_EDIT>), and the song cut to orders 0-1."""
+    edited = copy.deepcopy(song)
+    p = edited.patterns[edited.orderlists[0][EDIT_ORDER]]
+    note, ins, cmd, param = p[EDIT_ROW]
+    if note != 0x60 + 12 * 4 + 5:
+        fail("edit fixture: expected F-4 at the edited cell")
+    p[EDIT_ROW] = (note + 2, ins, cmd, param)
+    tempo = copy.deepcopy(song)
+    p = tempo.patterns[tempo.orderlists[0][0]]
+    if p[0][2:] != (0xF, 0x06):
+        fail("tempo fixture: expected F06 on order 0 row 0")
+    p[0] = p[0][:3] + (TEMPO_EDIT,)
+    short = copy.deepcopy(song)
+    short.orderlists = [ol[:2] for ol in short.orderlists]
+    return edited, tempo, short
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--goattracker", type=Path, help="directory with gt2reloc and gtasm (default: fetch_goattracker.sh)")
@@ -356,14 +434,31 @@ def main():
     if init_w:
         fail("init wrote SID registers")
     rows = [len(song.patterns[song.orderlists[0][o]]) for o in range(len(song.orderlists[0]))]
+    # The relocation fixture: same music, everything moved; py65 must hear no difference.
+    moved = gt_song.lower(move_programs(song, PROGRAM_SHIFT), player_id, relayout=True)
+    if (moved.firstnohr, moved.firstlegato, moved.tempo) != (low.firstnohr, low.firstlegato, low.tempo):
+        fail("the relocation fixture changed the player parameters")
+    if moved.image[32:96] == low.image[32:96] or moved.region == low.region:
+        fail("the relocation fixture did not move anything")
+    moved_init_w, moved_ref, moved_starts = py65_run(
+        [(base, bytes(thor_player)), (gt_song.REGION_BASE, bytes(moved.region))], base, base + 3, REF_FRAMES,
+        counter_addr=sym["mt_chncounter"])
+    if (moved_init_w, moved_ref, moved_starts) != (init_w, ref, ref_starts):
+        frame = next((f for f in range(REF_FRAMES) if moved_ref[f] != ref[f]), None)
+        fail(f"py65: the relocation fixture writes differently (first at frame {frame})")
+    variants = {"moved": moved}
+    for name, s in zip(("edited", "tempo", "short"), edited_songs(song)):
+        variants[name] = gt_song.lower(s, player_id)
 
     # ---- 8: outputs ----------------------------------------------------------------------------
     TEST_SNG.write_bytes(sng)
     TEST_SID.write_bytes(packed_sid)
     write_player_header(image, player_sha, sym, patch)
-    write_song_fixture(low, packed_sid, ref, ref_starts, rows, song)
+    write_song_fixture(low, packed_sid, ref, ref_starts, rows, song, variants)
+    write_kotlin(image, player_sha, patch)
     print(f"player ${base:04X}-${end - 1:04X} ({len(image)} bytes), id {player_id.hex()}, data end ${low.data_end:04X}, "
-          f"{sum(len(f) for f in ref)} reference writes in {REF_FRAMES} frames, {len(ref_starts)} row starts")
+          f"{sum(len(f) for f in ref)} reference writes in {REF_FRAMES} frames, {len(ref_starts)} row starts; "
+          f"relocation fixture data end ${moved.data_end:04X}, same writes on py65")
 
 
 def write_player_header(image: bytes, player_sha: str, sym: dict, patch: dict):
@@ -432,18 +527,28 @@ static const uint8_t sid_player_code[SID_PLAYER_SIZE] = {{
     OUT_PLAYER.write_text(h)
 
 
-def write_song_fixture(low, packed_sid: bytes, ref, ref_starts, rows, song):
-    used = gt_song.IMAGE_HEADER_SIZE + (low.data_end - gt_song.REGION_BASE)
+def write_song_fixture(low, packed_sid: bytes, ref, ref_starts, rows, song, variants: dict):
+    def used_bytes(lowered):
+        return gt_song.IMAGE_HEADER_SIZE + (lowered.data_end - gt_song.REGION_BASE)
+    used = used_bytes(low)
     writes = bytearray()
     index = [0]
     for f in ref:
         for reg, val in f:
             writes += bytes([reg, val])
         index.append(len(writes) // 2)
-    h = """// GENERATED by tools/audio/prepare_sid_player.py -- do not edit.
+    h = f"""// GENERATED by tools/audio/prepare_sid_player.py -- do not edit.
 // The SID host-test song (tools/audio/sid/gt_test_song.py -> gt_test.sng): GoatTracker 2.77's own packing
 // of it (gt2reloc -I0 -J1 -> gt_test.sid), the Thor-layout image of it (gt_song.lower, proven to be the
 // packer's data), and the reference: py65 running gt_test.sid (init, then one play call per frame).
+// Live-edit fixtures (Thor layout, images cut after their data end like sid_gt_image):
+//   sid_gt_moved:  the same song laid out anew (gt_song.lower relayout: instruments renumbered within their
+//                  hard-restart groups, pattern numbers reversed, patterns stored backwards before the
+//                  orderlists; every instrument's wave/pulse/filter program {PROGRAM_SHIFT} rows further down,
+//                  references rewritten, vacated rows refilled); py65 checked: same writes as the reference.
+//   sid_gt_edited: order {EDIT_ORDER}, channel 1, row {EDIT_ROW}: F-4 -> G-4.
+//   sid_gt_tempo:  order 0 row 0 F06 -> F{TEMPO_EDIT:02X} (stored minus one, as the packer does).
+//   sid_gt_short:  orders 0-1 only (restart 1).
 #ifndef SID_GT_SONG_H_
 #define SID_GT_SONG_H_
 #include <stdint.h>
@@ -456,7 +561,13 @@ def write_song_fixture(low, packed_sid: bytes, ref, ref_starts, rows, song):
     h += f"#define SID_GT_TONE_SLOT 6 /* \"Tone\": triangle, A/D 00, S/R F0 */\n"
     h += f"#define SID_GT_REF_FRAMES {len(ref)}\n"
     h += f"#define SID_GT_REF_STARTS {len(ref_starts)}\n"
+    h += f"#define SID_GT_EDIT_ORDER {EDIT_ORDER}\n#define SID_GT_EDIT_ROW {EDIT_ROW}\n"
+    h += f"#define SID_GT_TEMPO_EDIT {TEMPO_EDIT - 1} /* mt_chntempo after the edited F command */\n"
+    h += f"#define SID_GT_PROGRAM_SHIFT {PROGRAM_SHIFT}\n"
     h += c_bytes("sid_gt_image", low.image[:used])
+    for name, lowered in variants.items():
+        h += f"#define SID_GT_{name.upper()}_USED {used_bytes(lowered)}\n"
+        h += c_bytes(f"sid_gt_{name}", lowered.image[:used_bytes(lowered)])
     h += c_bytes("sid_gt_psid", packed_sid)
     h += f"static const uint32_t sid_gt_ref_index[SID_GT_REF_FRAMES + 1] = {{\n"
     for i in range(0, len(index), 16):
@@ -469,6 +580,118 @@ def write_song_fixture(low, packed_sid: bytes, ref, ref_starts, rows, song):
         h += "    " + ", ".join(map(str, ref_starts[i:i + 16])) + ",\n"
     h += "};\n\n#endif /* SID_GT_SONG_H_ */\n"
     OUT_SONG.write_text(h)
+
+
+def write_kotlin(image: bytes, player_sha: str, patch: dict):
+    L = gt_song.LABELS
+    pid = int.from_bytes(bytes.fromhex(player_sha)[:4], "little")
+    labels = "\n".join(f"    const val MT_{name[3:].upper()} = 0x{addr:04X}" for name, addr in L.items())
+    OUT_KOTLIN.write_text(f"""// GENERATED by tools/audio/prepare_sid_player.py -- do not edit.
+package org.thortracker.backend
+
+/**
+ * The C64 SID player: GoatTracker 2.77's playroutine (`third_party/goattracker-2.77/player.s`, unmodified)
+ * assembled once at [LOAD] by `tools/audio/prepare_sid_player.py` with the packer's "Disable optimization"
+ * configuration and the song data labels at fixed addresses, and the numbers of the native image layout
+ * (`docs/AUDIO_ENGINE.md`, SID "Image layout"). The same bytes play in the app (native
+ * `app/src/main/cpp/generated/sid_player_image.h`) and form `.sid`/`.prg` exports: [BYTES] with the five
+ * header parameters written at the `PATCH_` addresses, zeros up to [REGION_BASE], then the image region up to
+ * its data end. Image sha256 `{player_sha}`.
+ * Playroutine licence (player.s): "This playroutine source code does not fall under the GPL license! Use it,
+ * or song binaries created from it freely for any purpose, commercial or noncommercial." (Lasse Öörni)
+ */
+object SidPlayerImage {{
+    /** Load, init (A = subtune 0: `jmp mt_init`) and play (`jmp mt_play`, one tick) addresses. */
+    const val LOAD = 0x{gt_song.PLAYER_BASE:04X}
+    const val INIT = 0x{gt_song.PLAYER_BASE:04X}
+    const val PLAY = 0x{gt_song.PLAYER_BASE + 3:04X}
+
+    /** Header bytes 4..7 (little-endian): an image only plays on the player build it was lowered for. */
+    const val PLAYER_ID = 0x{pid:08X}.toInt()
+
+    /** Immediate operands of the song-dependent player constants (greloc.c defines): header bytes 16, 17, 18, 19, 15. */
+    const val PATCH_FIRSTNOHRINSTR = 0x{patch['FIRSTNOHRINSTR']:04X}
+    const val PATCH_FIRSTLEGATOINSTR = 0x{patch['FIRSTLEGATOINSTR']:04X}
+    const val PATCH_ADPARAM = 0x{patch['ADPARAM']:04X}
+    const val PATCH_SRPARAM = 0x{patch['SRPARAM']:04X}
+    const val PATCH_DEFAULTTEMPO = 0x{patch['DEFAULTTEMPO']:04X}
+
+    /**
+     * Bytes of a lowered image: [HEADER_SIZE] header bytes, then the region = C64 RAM [REGION_BASE] until
+     * [REGION_END] (exclusive; address a at image offset [HEADER_SIZE] + a − [REGION_BASE]): the fixed tables
+     * at the `MT_` labels, then orderlists and patterns from [HEAP_BASE] up to the data end.
+     */
+    const val IMAGE_SIZE = {gt_song.IMAGE_SIZE}
+    const val HEADER_SIZE = {gt_song.IMAGE_HEADER_SIZE}
+    const val REGION_BASE = 0x{gt_song.REGION_BASE:04X}
+    const val REGION_END = 0x{gt_song.REGION_END:04X}
+    const val HEAP_BASE = 0x{gt_song.HEAP_BASE:04X}
+
+    /** Header fields (offsets; u16 little-endian): "TTSD", player id, region base, data end, then bytes. */
+    const val MAGIC = "TTSD"
+    const val HEADER_PLAYER_ID = 4
+    const val HEADER_REGION_BASE = 8
+    const val HEADER_DATA_END = 10
+    const val HEADER_LAYOUT = 12
+    const val HEADER_MODEL = 13
+    const val HEADER_MULTIPLIER = 14
+    const val HEADER_TEMPO = 15
+    const val HEADER_FIRSTNOHR = 16
+    const val HEADER_FIRSTLEGATO = 17
+    const val HEADER_HR_AD = 18
+    const val HEADER_HR_SR = 19
+    const val HEADER_INSTRUMENTS = 20
+    /** 64 bytes: player instrument number of each instrument slot (slot 0: 0; 0 = no instrument). */
+    const val HEADER_SLOT_MAP = 32
+
+    /** Header byte [HEADER_LAYOUT]. */
+    const val LAYOUT_THOR = {gt_song.LAYOUT_THOR}
+    /** Header byte [HEADER_MODEL]. */
+    const val MODEL_6581 = 0
+    const val MODEL_8580 = 1
+
+    const val MAX_INSTRUMENTS = 63
+    const val MAX_PATTERNS = {gt_song.MAX_PATT}
+    const val MAX_ORDERS = {gt_song.MAX_SONGLEN}
+    const val MAX_ROWS = {gt_song.MAX_PATTROWS}
+    const val MAX_PATTERN_BYTES = 256
+    const val TABLE_ROWS = {gt_song.MAX_TABLELEN}
+
+    /** Player data labels (instrument n at column + n − 1; table row n at label + n − 1). */
+{labels}
+
+    /** PAL timing: CPU clock, cycles per frame (speed 1 tick), CIA timer value for multispeed (÷ multiplier). */
+    const val CPU_HZ = 985248
+    const val PAL_FRAME_CYCLES = {PAL_FRAME_CYCLES}
+    const val CIA_PAL_LATCH = 0x{CIA_PAL_LATCH:04X}
+
+    /**
+     * PSID v2 as gt2reloc writes it: [PSID_HEADER_SIZE]-byte header (big-endian words: version 2, data offset,
+     * load 0 = in the data, init, play, 1 song, start song 1, speed word 0 or all ones for multispeed, 32-byte
+     * name/author/released, flags = PAL | model), then the load address little-endian and the data. Multispeed
+     * songs load and init at [SPEED_CODE_ADDRESS]: [SPEED_CODE] with [CIA_PAL_LATCH] / multiplier at bytes 1
+     * (low) and 6 (high) programs the CIA timer, then falls into [INIT]. `.prg`: [LOAD] little-endian + data.
+     */
+    const val PSID_HEADER_SIZE = 0x{PSID_HEADER_SIZE:02X}
+    const val PSID_FLAGS_PAL = 0x04
+    const val PSID_FLAGS_6581 = 0x10
+    const val PSID_FLAGS_8580 = 0x20
+    const val SPEED_CODE_ADDRESS = 0x{gt_song.PLAYER_BASE - len(SPEED_CODE):04X}
+    val SPEED_CODE: ByteArray get() = hex("{SPEED_CODE.hex().upper()}")
+
+    /** GoatTracker's default frequency table (notes 0 = C-0 .. 95 = B-7; A-4 = 57 = $1D46, 440.09 Hz). */
+    val FREQ_LO: ByteArray get() = hex("{gt_song.FREQ_LO.hex().upper()}")
+    val FREQ_HI: ByteArray get() = hex("{gt_song.FREQ_HI.hex().upper()}")
+
+    /** The player image ({len(image)} bytes at [LOAD], parameters unwritten); a fresh copy per call. */
+    val BYTES: ByteArray get() = hex(HEX)
+
+    private fun hex(s: String) = ByteArray(s.length / 2) {{ s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }}
+
+    private const val HEX =
+{kotlin_hex(image)}
+}}
+""")
 
 
 if __name__ == "__main__":
