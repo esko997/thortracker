@@ -52,7 +52,7 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 - **Mixer view:** proposed channel faders for fixed volume levels, separate from per-row volume effects.
   Design remains open: distinguish chip-supported gain that survives native export from preview-only mixing.
   Do not promise independent gain on chips whose voices share an analogue mix or silently change exported sound.
-- **Right-stick pattern jump** (user request, implemented on branch `input-qol`, hardware check pending): two
+- **Right-stick pattern jump** — implemented in 0.14.1, verified in the Deck frontend and Android input path: two
   quick same-direction right-stick flicks, neutral between them, move the focused Pattern cursor to the pattern's
   first/last row. Shared detector `input/StickFlicks` (engage 0.6, neutral 0.3, flick ≤ 300 ms, gap ≤ 300 ms)
   behind `HostInput.rightStick`; Android reads Z/RZ or RX/RY per device, the Deck SDL's right Y. Fixed gesture, not
