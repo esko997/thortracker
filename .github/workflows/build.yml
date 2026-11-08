@@ -82,7 +82,16 @@ jobs:
         id: version
         shell: bash
         run: echo "version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+      # SDL3 rebuilds only when its build script (which pins the version) changes, so a GitHub download outage
+      # cannot block a release once the build is cached.
+      - name: Cached SDL3
+        id: sdl3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deck/deps
+          key: sdl3-${{ runner.os }}-${{ hashFiles('deck/tools/build-sdl3.sh') }}
       - name: SDL3 build dependencies
+        if: steps.sdl3.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends cmake ninja-build pkg-config \
@@ -90,6 +99,7 @@ jobs:
             libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev \
             libgles2-mesa-dev libdrm-dev libgbm-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev
       - name: Build SDL3 from source
+        if: steps.sdl3.outputs.cache-hit != 'true'
         run: deck/tools/build-sdl3.sh
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with: { distribution: temurin, java-version: '17' }
