@@ -1,4 +1,4 @@
-/* NTSC 2A03 APU (see nes_apu.h for scope). Event-driven: run() jumps from one timer or frame-
+/* NTSC 2A03 APU (see nes_apu.h for scope). Event-driven: run() jumps from one timer, DMC or frame-
  * counter event to the next instead of stepping every CPU cycle, and sends the mixer output to
  * the band-limited buffer whenever it changes. */
 #include "nes_apu.h"
@@ -14,6 +14,7 @@ static const uint8_t kTriangle[32] = {15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,
                                       0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15};
 /* Noise timer periods in CPU cycles (NTSC). */
 static const uint16_t kNoisePeriod[16] = {4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068};
+const uint16_t nes_dmc_rate[16] = {428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54};
 
 /* Frame counter steps in CPU cycles after the sequence (re)start. The last entry restarts it. */
 #define FC_Q 1
@@ -30,15 +31,22 @@ static const uint8_t kFcWhat5[6] = {FC_Q, FC_Q | FC_H, FC_Q, 0, FC_Q | FC_H, FC_
 void nes_apu_reset(NesApu* a) {
     blip_t* out = a->out;
     uint8_t mute = a->mute;
+    const uint8_t* prg = a->prg;
     memset(a, 0, sizeof *a);
     a->out = out;
     a->mute = mute;
+    a->prg = prg;
     a->noise.lfsr = 1;
     a->fc_reset_at = -1;
     a->pulse[0].timer = a->pulse[1].timer = 2;
     a->tri.timer = 1;
     a->noise.timer = kNoisePeriod[0];
+    a->dmc.timer = nes_dmc_rate[0];
+    a->dmc.bits = 8;
+    a->dmc.silence = 1;
 }
+
+void nes_apu_set_memory(NesApu* a, const uint8_t* prg) { a->prg = prg; }
 
 /* ---- channel outputs ---------------------------------------------------------------------- */
 
@@ -69,7 +77,7 @@ static float mix(const NesApu* a) {
     int p2 = (a->mute & (1 << NES_APU_PULSE2)) ? 0 : pulse_out(&a->pulse[1], 1);
     int t = (a->mute & (1 << NES_APU_TRIANGLE)) ? 0 : kTriangle[a->tri.seq];
     int n = (a->mute & (1 << NES_APU_NOISE)) ? 0 : noise_out(&a->noise);
-    int d = (a->mute & (1 << NES_APU_DMC)) ? 0 : a->dmc_level;
+    int d = (a->mute & (1 << NES_APU_DMC)) ? 0 : a->dmc.level;
     float out = 0.0f;
     if (p1 + p2) out += 95.88f / (8128.0f / (float)(p1 + p2) + 100.0f);
     float tnd = (float)t / 8227.0f + (float)n / 12241.0f + (float)d / 22638.0f;
@@ -170,6 +178,85 @@ static void fc_event(NesApu* a) {
         return;
     }
 }
+/* ---- DMC ---------------------------------------------------------------------------------- */
+
+static void dmc_restart(NesDmc* d) {
+    d->addr = (uint16_t)(0xC000 + 64u * d->start);
+    d->remaining = (uint16_t)(16u * d->length + 1u);
+}
+
+/* Memory reader: refills an empty sample buffer by DMA while bytes remain. */
+static void dmc_fetch(NesApu* a) {
+    NesDmc* d = &a->dmc;
+    if (d->buffer_full || !d->remaining) return;
+    d->buffer = a->prg ? a->prg[d->addr - 0x8000u] : 0;
+    d->buffer_full = 1;
+    ++d->fetches;
+    d->addr = d->addr == 0xFFFF ? 0x8000 : (uint16_t)(d->addr + 1);
+    if (--d->remaining == 0) {
+        if (d->ctrl & 0x40) {
+            dmc_restart(d);
+        } else if (d->ctrl & 0x80) {
+            d->irq = 1;
+        }
+    }
+}
+
+/* Nothing observable happens until $4015 starts a sample: silent, nothing buffered or to fetch. */
+static int dmc_idle(const NesDmc* d) { return d->silence && !d->buffer_full && !d->remaining; }
+
+/* Output unit, once per rate period: a level step from bit 0, then the next bit or output cycle. */
+static void dmc_clock(NesApu* a) {
+    NesDmc* d = &a->dmc;
+    if (!d->silence) {
+        if (d->shift & 1) {
+            if (d->level <= 125) d->level += 2;
+        } else if (d->level >= 2) {
+            d->level -= 2;
+        }
+    }
+    d->shift >>= 1;
+    if (--d->bits == 0) {
+        d->bits = 8;
+        if (d->buffer_full) {
+            d->silence = 0;
+            d->shift = d->buffer;
+            d->buffer_full = 0;
+            dmc_fetch(a);
+        } else {
+            d->silence = 1;
+        }
+    }
+}
+
+/* Advances the DMC timer by `cycles` (<= the timer unless idle, when its phase and bit counter
+ * advance arithmetically: the timer runs on hardware whether or not a sample plays). */
+static void dmc_advance(NesApu* a, uint32_t cycles) {
+    NesDmc* d = &a->dmc;
+    if (cycles < d->timer) {
+        d->timer -= cycles;
+        return;
+    }
+    const uint32_t period = nes_dmc_rate[d->ctrl & 15];
+    if (!dmc_idle(d)) {
+        dmc_clock(a);
+        d->timer = period;
+        return;
+    }
+    cycles -= d->timer;
+    const uint32_t clocks = 1 + cycles / period;
+    d->timer = period - cycles % period;
+    d->bits = (uint8_t)((d->bits - 1u + 8u - clocks % 8u) % 8u + 1u);
+    d->shift = 0;
+}
+
+void nes_apu_dmc_move(NesApu* a, uint8_t start) {
+    NesDmc* d = &a->dmc;
+    if (d->remaining) d->addr = (uint16_t)(d->addr + 64 * ((int)start - (int)d->start));
+    d->start = start;
+}
+
+void nes_apu_dmc_stop(NesApu* a) { a->dmc.remaining = 0; }
 
 /* ---- timers ------------------------------------------------------------------------------- */
 
@@ -223,11 +310,13 @@ void nes_apu_run(NesApu* a, uint32_t t) {
         uint32_t fc = fc_until_next(a);
         if (fc < step) step = fc;
         if (a->fc_reset_at >= 0 && (uint32_t)a->fc_reset_at - a->time < step) step = (uint32_t)a->fc_reset_at - a->time;
+        if (!dmc_idle(&a->dmc) && a->dmc.timer < step) step = a->dmc.timer;
         if (a->out) {
             uint32_t timers = timers_until_next(a);
             if (timers < step) step = timers;
             step_timers(a, step);
         }
+        dmc_advance(a, step);
         a->time += step;
         if (a->fc_reset_at >= 0 && (uint32_t)a->fc_reset_at == a->time) {
             a->fc_reset_at = -1;
@@ -297,11 +386,17 @@ void nes_apu_write(NesApu* a, uint32_t t, uint16_t addr, uint8_t v) {
         a->noise.env.start = 1;
         break;
     case 0x4010:
+        a->dmc.ctrl = v;
+        if (!(v & 0x80)) a->dmc.irq = 0;
+        break;
     case 0x4011:
+        a->dmc.level = v & 0x7F;
+        break;
     case 0x4012:
+        a->dmc.start = v;
+        break;
     case 0x4013:
-        a->dmc_regs[addr & 3] = v;
-        if (addr == 0x4011) a->dmc_level = v & 0x7F;
+        a->dmc.length = v;
         break;
     case 0x4015:
         a->enabled = v & 0x0F;
@@ -309,6 +404,13 @@ void nes_apu_write(NesApu* a, uint32_t t, uint16_t addr, uint8_t v) {
         if (!(v & 2)) a->pulse[1].length = 0;
         if (!(v & 4)) a->tri.length = 0;
         if (!(v & 8)) a->noise.length = 0;
+        a->dmc.irq = 0;
+        if (!(v & 0x10)) {
+            a->dmc.remaining = 0;
+        } else if (!a->dmc.remaining) {
+            dmc_restart(&a->dmc);
+            dmc_fetch(a);
+        }
         break;
     case 0x4017:
         a->irq_inhibit = (v & 0x40) != 0;
@@ -326,7 +428,8 @@ void nes_apu_write(NesApu* a, uint32_t t, uint16_t addr, uint8_t v) {
 uint8_t nes_apu_read_status(NesApu* a, uint32_t t) {
     nes_apu_run(a, t);
     uint8_t s = (uint8_t)((a->pulse[0].length ? 1 : 0) | (a->pulse[1].length ? 2 : 0) | (a->tri.length ? 4 : 0) |
-                          (a->noise.length ? 8 : 0) | (a->frame_irq ? 0x40 : 0));
+                          (a->noise.length ? 8 : 0) | (a->dmc.remaining ? 0x10 : 0) | (a->frame_irq ? 0x40 : 0) |
+                          (a->dmc.irq ? 0x80 : 0));
     a->frame_irq = 0;
     return s;
 }

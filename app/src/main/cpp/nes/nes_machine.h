@@ -7,7 +7,8 @@
  *                NES_AUDITION_RAM
  *   $4000-$4017  APU (writes timestamped to the CPU cycle), $4015 status
  *   $8000-...    player: NSF-style entry table + engine code and tables
- *   NES_SONG_BASE-$FFF9  song region: the image's FamiStudio music data
+ *   NES_SONG_BASE-NES_SONG_END  song region: the image's FamiStudio music data
+ *   NES_SAMPLE_BASE-$FFF9  sample region: the image's DPCM samples (the DMC reads them by DMA)
  *   $FFFA-$FFFF  vectors -> NES_PLAYER_TRAP (an interrupt or BRK is a driver fault)
  * Everything else reads 0 and ignores writes.
  *
@@ -59,26 +60,32 @@ void nm_destroy(NesMachine* m);
  * tick plays (order, row): silent fast-forward from the song start for at most max_ticks frames
  * (*seek_mode = NM_SEEK_FROM_START); if that is not enough (Thor layout only) the channel streams
  * are placed at the order's start with the speed that order starts with, and its earlier rows are
- * replayed silently, again within max_ticks (NM_SEEK_FROM_ORDER). NM_ERR_IMAGE for a target outside
- * the song or not reached. */
+ * replayed silently, again within max_ticks (NM_SEEK_FROM_ORDER). The DMC runs through the fast-
+ * forward, so a sample started before the target is heard from its position there. NM_ERR_IMAGE for
+ * a target outside the song or not reached. */
 int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_ticks, int* seek_mode);
 
 /* Live edit at a tick boundary (realtime-safe, bounded work). Thor layout to Thor layout: the
  * playing order/row is kept (clamped to the new song) and every channel's stream state is placed at
  * the same row of the new data (pending note delays and empty-run remainders kept); engine envelope
  * pointers move to the same directory entry (or an identical one), keeping their position when it is
- * still an instruction start; instrument table, tempo and a changed order-start speed are re-read.
- * Otherwise the song region is copied (correct only when no data moved). Ignored while faulted or
+ * still an instruction start; instrument table, DPCM list, tempo and a changed order-start speed are
+ * re-read. Otherwise the region is copied (correct only when no data moved). Either way a sample the
+ * DMC is playing continues if its bytes are unchanged in place, continues at the same position of an
+ * identical sample of the new DPCM list if it moved, and stops otherwise. Ignored while faulted or
  * auditioning. */
 void nm_apply_image(NesMachine* m, const NesImage* image);
 
-/* Resets the machine to sound one held note: `channel` 0..3, engine note 1..96 (absolute - 11),
- * instrument table index, fine pitch -128..127 (period offset, +lowers; pulses/triangle only),
- * through the engine with a one-note stream in RAM using the image's instruments (Thor layout). */
+/* Resets the machine to sound one held note through the engine with a one-note stream in RAM, using
+ * the image's instruments and DPCM list (Thor layout). Channels 0..3: engine note 1..96 (absolute -
+ * 11), instrument table index, fine pitch -128..127 (period offset, +lowers; pulses/triangle only).
+ * Channel 4 (DPCM): `note` = DPCM list entry 1..mappings (the stream's note byte); instrument and fine
+ * are ignored. */
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine);
 
 /* Key-off of an audition: with a volume release point the engine releases the note (returns 1;
- * nm_tick returns 0 once the release tail has reached its final loop); otherwise 0 (cut now). */
+ * nm_tick returns 0 once the release tail has reached its final loop); otherwise, and always on the
+ * DPCM channel, 0 (cut now: the host drops the machine). */
 int nm_release(NesMachine* m);
 
 /* Forces channel (0..4) silent in the APU mixer (state keeps running, so unmuting resumes

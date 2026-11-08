@@ -97,8 +97,31 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             a += 1;
             continue;
         }
-        if (!tonal) return "DPCM channel rows must be empty runs";
-        if (b < 0x40 || b == 0x45) { /* note / stop / release */
+        if (!tonal) {
+            /* FamiStudio's DPCM rows: [$46 s] [$47 d] [$48 c] [$52 v] [$43] then mapping k as note byte k
+             * (engine note k + 12; the engine plays list entry k), `$40 k+12`, `$00` stop or an empty run. */
+            if (b < 0x40) {
+                if (b && thor && b > info->mappings) return "DPCM note without a DPCM list entry";
+                out->rows = 1;
+                out->end = (uint16_t)(a + 1);
+                return NULL;
+            }
+            if (b == 0x40) {
+                NEED(2);
+                if (BYTE(1) < 13 || BYTE(1) > 12 + NES_IMAGE_MAX_DPCM_MAPPINGS || (thor && BYTE(1) - 12 > info->mappings)) {
+                    return "DPCM note without a DPCM list entry";
+                }
+                out->rows = 1;
+                out->end = (uint16_t)(a + 2);
+                return NULL;
+            }
+            if (b == 0x52) { /* DMC delta counter: $80|v now, else at the next sample start */
+                NEED(2);
+                a += 2;
+                continue;
+            }
+            if (b != 0x43 && b != 0x46 && b != 0x47 && b != 0x48) return "opcode not allowed on the DPCM channel";
+        } else if (b < 0x40 || b == 0x45) { /* note / stop / release */
             out->rows = 1;
             out->end = (uint16_t)(a + 1);
             return NULL;
@@ -202,7 +225,7 @@ static int load_raw(NesImage* image) {
     const uint8_t* h = image->bytes;
     const uint8_t* s = nm_region(image);
     for (int i = 14; i < NES_IMAGE_HEADER_SIZE; ++i) {
-        if (i >= 18 && i <= 20) continue;
+        if ((i >= 18 && i <= 20) || i == NES_IMAGE_HEADER_SAMPLE_SIZE || i == NES_IMAGE_HEADER_SAMPLE_SIZE + 1) continue;
         if (h[i]) return fail(image, "reserved header byte not zero", (uint32_t)i);
     }
     for (int i = 0; i < NES_IMAGE_DIRECTORY_SIZE; ++i) {
@@ -239,10 +262,13 @@ static int load_thor(NesImage* image) {
     const uint8_t* dir = h + NES_IMAGE_HEADER_SIZE;
     const uint8_t* s = nm_region(image);
     const uint32_t size = info->size;
-    if (h[12] != 0 || h[15]) return fail(image, "Thor layout: song index and byte 15 must be 0", 12);
+    if (h[12] != 0) return fail(image, "Thor layout: song index must be 0", 12);
     for (int i = 18; i < NES_IMAGE_HEADER_SIZE; ++i) {
+        if (i == NES_IMAGE_HEADER_SAMPLE_SIZE || i == NES_IMAGE_HEADER_SAMPLE_SIZE + 1) continue;
         if (h[i]) return fail(image, "reserved header byte not zero", (uint32_t)i);
     }
+    info->mappings = h[NES_IMAGE_HEADER_DPCM_COUNT];
+    if (info->mappings > NES_IMAGE_MAX_DPCM_MAPPINGS) return fail(image, "more than 63 DPCM list entries", NES_IMAGE_HEADER_DPCM_COUNT);
     info->instruments = h[14];
     info->envelopes = nm_rd16(h + 16);
     if (info->instruments < 1 || info->instruments > NES_IMAGE_MAX_INSTRUMENTS) return fail(image, "instrument count outside 1..64", 14);
@@ -283,6 +309,22 @@ static int load_thor(NesImage* image) {
         }
     }
     info->tempo_ntsc = nm_rd16(s + 17);
+    /* DPCM list: `mappings` FamiStudio entries {$4012, $4013, $4010, $4011} in the data (the header word
+     * points 4 bytes before entry 1), each sample inside the used sample bytes. */
+    if (info->mappings) {
+        const uint32_t list = (uint32_t)nm_rd16(s + 3) + 4u;
+        if (list < NES_SONG_BASE || list + 4u * info->mappings > NES_SONG_BASE + size) {
+            return fail(image, "DPCM list outside the data", NM_REGION_OFFSET + 3);
+        }
+        info->dpcm_list = (uint16_t)list;
+        for (uint32_t k = 0; k < info->mappings; ++k) {
+            const uint32_t at = list - NES_SONG_BASE + 4u * k;
+            const uint8_t* e = s + at;
+            if (e[2] & 0xB0) return fail(image, "DPCM entry with IRQ or unused $4010 bits", NM_REGION_OFFSET + at + 2);
+            if (e[3] > 127) return fail(image, "DPCM entry initial level above 127", NM_REGION_OFFSET + at + 3);
+            if (64u * e[0] + 16u * e[1] + 1u > info->samples) return fail(image, "DPCM sample outside the sample bytes", NM_REGION_OFFSET + at);
+        }
+    }
     /* Order streams: `$41 n pattern` per order, then `$42` to the loop order's entry. */
     int orders = -1, loop = -1;
     for (int c = 0; c < NM_CHANNELS; ++c) {
@@ -343,12 +385,17 @@ int nm_load_image(NesImage* image) {
     const uint8_t* h = image->bytes;
     if (rd32(h) != NM_MAGIC) return fail(image, "not a TTNS image", 0);
     if (rd32(h + 4) != NES_PLAYER_ID) return fail(image, "lowered for another player build", 4);
-    if (nm_rd16(h + 8) != NES_SONG_BASE) return fail(image, "song base is not $A000", 8);
+    if (nm_rd16(h + 8) != NES_SONG_BASE) return fail(image, "song base is not the player's NES_SONG_BASE", 8);
     info->size = nm_rd16(h + 10);
     if (info->size > NM_SONG_SIZE) return fail(image, "data larger than the song region", 10);
     const uint8_t* s = nm_region(image);
-    for (uint32_t i = info->size; i < NM_SONG_SIZE; ++i) {
+    for (uint32_t i = info->size; i < NES_SAMPLE_BASE - NES_SONG_BASE; ++i) {
         if (s[i]) return fail(image, "song region not zero after the data", NM_REGION_OFFSET + i);
+    }
+    info->samples = nm_rd16(h + NES_IMAGE_HEADER_SAMPLE_SIZE);
+    if (info->samples > NM_SAMPLE_SIZE) return fail(image, "samples larger than the sample region", NES_IMAGE_HEADER_SAMPLE_SIZE);
+    for (uint32_t i = info->samples; i < NM_SAMPLE_SIZE; ++i) {
+        if (h[NM_SAMPLE_OFFSET + i]) return fail(image, "sample region not zero after the samples", NM_SAMPLE_OFFSET + i);
     }
     info->layout = h[13];
     int r;
@@ -364,8 +411,8 @@ int nm_load_image(NesImage* image) {
     return 0;
 }
 
-void nm_build_raw_image(NesImage* image, const uint8_t* song, uint32_t size, int song_index, int rows_per_order,
-                        int order_count, int loop_order) {
+void nm_build_raw_image(NesImage* image, const uint8_t* song, uint32_t size, const uint8_t* samples, uint32_t sample_size,
+                        int song_index, int rows_per_order, int order_count, int loop_order) {
     uint8_t* h = image->bytes;
     memset(image, 0, sizeof *image);
     const uint32_t words[2] = {NM_MAGIC, NES_PLAYER_ID};
@@ -383,4 +430,8 @@ void nm_build_raw_image(NesImage* image, const uint8_t* song, uint32_t size, int
     h[19] = (uint8_t)order_count;
     h[20] = (uint8_t)loop_order;
     memcpy(h + NM_REGION_OFFSET, song, size);
+    if (sample_size > NM_SAMPLE_SIZE) sample_size = NM_SAMPLE_SIZE;
+    h[NES_IMAGE_HEADER_SAMPLE_SIZE] = (uint8_t)sample_size;
+    h[NES_IMAGE_HEADER_SAMPLE_SIZE + 1] = (uint8_t)(sample_size >> 8);
+    if (sample_size) memcpy(h + NM_SAMPLE_OFFSET, samples, sample_size);
 }
