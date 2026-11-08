@@ -12,12 +12,15 @@ val sdlInclude = deps.dir("SDL3-$sdlVersion/include")
 val engineSrc = rootProject.layout.projectDirectory.dir("app/src/main/cpp")
 val nativeOut = layout.buildDirectory.dir("native")
 
-// The C engine is compiled with Kotlin/Native's own clang and sysroot (glibc 2.19), so the binary runs on any
-// newer glibc (SteamOS) and the build needs no system compiler.
+// The C engines are compiled with Kotlin/Native's own clang and sysroot (glibc 2.19), so the binary runs on any
+// newer glibc (SteamOS) and the build needs no system compiler. reSID (the SID chip) is C++17: its sources and the C
+// interface over it (sid/sid_resid.cpp) build with the same toolchain's clang++ against the sysroot's GCC 8.3
+// libstdc++, which the executable links (-lstdc++); everything the hosts call stays C.
 val konanDeps = File(System.getProperty("user.home"), ".konan/dependencies")
 val buildEngine by tasks.registering(Exec::class) {
     val sources = listOf(
         engineSrc.file("chip_engine.c").asFile,
+        engineSrc.file("cpu6502.c").asFile,
         engineSrc.file("huge_chip.c").asFile,
         engineSrc.file("huge_machine.c").asFile,
         engineSrc.file("third_party/binjgb/src/common.c").asFile,
@@ -26,14 +29,23 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("nes/nes_image.c").asFile,
         engineSrc.file("nes/nes_apu.c").asFile,
         engineSrc.file("third_party/blip_buf/blip_buf.c").asFile,
+        engineSrc.file("sid/sid_chip.c").asFile,
+        engineSrc.file("sid/sid_machine.c").asFile,
+        engineSrc.file("sid/sid_image.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
+    val cxxSources = listOf("sid/sid_resid.cpp") +
+        listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
+    val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "third_party/chips", "third_party/blip_buf").map { engineSrc.dir(it).asFile } +
+        listOf("third_party/binjgb/src", "nes", "sid", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0")
+            .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
-    inputs.files(sources, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h", "nes/nes_apu.h",
-        "generated/nes_player_image.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
+    inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
+        "nes/nes_apu.h", "generated/nes_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
+        "generated/sid_player_image.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h"),
+        engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
@@ -42,12 +54,20 @@ val buildEngine by tasks.registering(Exec::class) {
         append("set -e\n")
         append("K='${konanDeps.absolutePath}'\n")
         append("CC=$(ls -d \"\$K\"/llvm-*/bin/clang | head -1)\n")
+        append("CXX=$(dirname \"\$CC\")/clang++\n")
         append("AR=$(dirname \"\$CC\")/llvm-ar\n")
         append("SR=$(ls -d \"\$K\"/x86_64-unknown-linux-gnu-gcc-*-glibc-*/x86_64-unknown-linux-gnu/sysroot | head -1)\n")
-        append("[ -x \"\$CC\" ] && [ -d \"\$SR\" ] || { echo 'Kotlin/Native toolchain not downloaded yet; build :core:compileKotlinLinuxX64 once' >&2; exit 1; }\n")
+        append("GT=$(dirname \"$(dirname \"\$SR\")\")\n")
+        append("[ -x \"\$CC\" ] && [ -x \"\$CXX\" ] && [ -d \"\$SR\" ] || { echo 'Kotlin/Native toolchain not downloaded yet; build :core:compileKotlinLinuxX64 once' >&2; exit 1; }\n")
+        val includes = includeDirs.joinToString(" ", postfix = " ") { "-I'$it'" }
         for (src in sources) {
             append("\"\$CC\" --target=x86_64-unknown-linux-gnu --sysroot=\"\$SR\" -std=gnu11 -O2 -fPIC -DNDEBUG=1 -w ")
-            append(includeDirs.joinToString(" ", postfix = " ") { "-I'$it'" })
+            append(includes)
+            append("-c '${src}' -o '${out}/${src.nameWithoutExtension}.o'\n")
+        }
+        for (src in cxxFiles) {
+            append("\"\$CXX\" --target=x86_64-unknown-linux-gnu --sysroot=\"\$SR\" --gcc-toolchain=\"\$GT\" -std=c++17 -O2 -fPIC -DNDEBUG=1 -w ")
+            append(includes)
             append("-c '${src}' -o '${out}/${src.nameWithoutExtension}.o'\n")
         }
         append("rm -f '${out}/libdeck_native.a'\n")
@@ -74,7 +94,8 @@ kotlin {
             entryPoint = "org.thortracker.deck.main"
             // Links against deps/lib/libSDL3.so. The AppImage bundles that library in lib/ beside the executable, found
             // through the rpath; without it the system's SDL3 is used (SteamOS ships one).
-            linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
+            // libstdc++: reSID (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
+            linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
         }
     }
     sourceSets {

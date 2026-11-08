@@ -8,7 +8,6 @@
 #include "blip_buf.h"
 #include "nes_apu.h"
 
-#define CHIPS_IMPL
 #include "m6502.h"
 
 #define INIT_BUDGET 200000u   /* famistudio_init + famistudio_music_play */
