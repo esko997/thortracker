@@ -188,7 +188,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             Row.PRESET, Row.DRUM_PRESET -> presetText(ins)
             Row.ALGORITHM -> YmCurated.ALGORITHMS[k.algorithm].let { "${it.number} ${it.name}   ${it.diagram}" }
             Row.RATIO -> approx(k.ratioExact) + YmCurated.RATIOS[k.ratio].name + if (k.ratioExact) "" else "   (now " +
-                ins.operators.joinToString(":") { YmCurated.multText(it.mul) + if (YmCurated.detuneSteps(it.dt) != 0) YmCurated.detuneText(it.dt) else "" } + ")"
+                ins.operators.joinToString(":") { YmCurated.multText(it.mul) + if (YmCurated.detuneSteps(it.dt) != 0) "(${YmCurated.detuneText(it.dt)})" else "" } + ")"
             Row.BRIGHTNESS -> if (k.brightness < 0) "—   additive: no modulators" else "${k.brightness}   ${bar(k.brightness, 127)}"
             Row.LEVEL -> "${k.level}   ${bar(k.level, 127)}"
             Row.FEEDBACK -> "${k.feedback}   ${if (k.feedback == 0) "pure" else bar(k.feedback, 7)}"
@@ -213,8 +213,8 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
             Row.RAW_ALGORITHM -> "${ins.algorithm}   ${YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].diagram}"
             Row.RAW_FEEDBACK -> "${ins.feedback}   operator 1"
-            Row.AMS -> "${ins.ams}   ${YmCurated.AMS_TEXT[ins.ams.coerceIn(0, 3)]} tremolo on AM operators"
-            Row.FMS -> "${ins.fms}   ${YmCurated.FMS_TEXT[ins.fms.coerceIn(0, 7)]} vibrato"
+            Row.AMS -> if (ins.ams == 0) "0   off" else "${ins.ams}   ${YmCurated.AMS_TEXT[ins.ams.coerceIn(0, 3)]} tremolo on AM operators"
+            Row.FMS -> if (ins.fms == 0) "0   off" else "${ins.fms}   ${YmCurated.FMS_TEXT[ins.fms.coerceIn(0, 7)]} vibrato"
             Row.SWEEP_START, Row.SWEEP_END, Row.SWEEP_SPEED -> sweepValue(ins.sweep, r)
             else -> ""
         }
@@ -292,7 +292,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private fun algorithm(c: Surface, r: Rect, ins: YmFmInstrument, col: Int, focus: Int) {
         val a = YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)]
         drawAlgorithm(c, r, "Algorithm ${a.number} ${a.name} ${a.diagram} · fb ${ins.feedback}", routing(ins), ins.feedback, col, focus,
-            { op -> ins.operators[op].let { "×${YmCurated.multText(it.mul)}" + if (YmCurated.detuneSteps(it.dt) != 0) YmCurated.detuneText(it.dt) else "" } }, { 0 })
+            { op -> ins.operators[op].let { "×${YmCurated.multText(it.mul)}" + if (YmCurated.detuneSteps(it.dt) != 0) "(${YmCurated.detuneText(it.dt)})" else "" } }, { 0 })
     }
 
     /** The first carrier's envelope in dB: attack, decay to SL, held while falling at D2R, release; SSG-EG when the carriers use it. */

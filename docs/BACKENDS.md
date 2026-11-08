@@ -700,6 +700,45 @@ Decisions:
   A, fill; loops to theme A; LFO rate 2. No errors or warnings; `exportSamples` writes `neon-causeway.{thor,ymimg}` and
   `tools/audio/render_ym_image.sh` renders the image and its exports.
 
+### YM2612 editor
+
+- **Shared FM editor** (`system/fm`): the OPL3 instrument painter's pieces moved into `FmInstrumentPainter` — the bank
+  column, page tabs, setting rows with the name cursor, the Expert register grid (one column per operator, carriers
+  marked ♪), the algorithm diagram (a routing of operator boxes on a grid: `FmRouting.chains` for the OPL3's chains,
+  explicit positions with elbow arrows between rows for the OPN2's eight algorithms), the envelope sketch in dB
+  (`FmEnvelopeSketch`: attack, decay, held level with an optional fall — the YM2612's sustain rate — release, the
+  modulators' tone decay, and SSG-EG shapes drawn from the attack's end to OFF) and the drum sweep's pitch curve — and
+  `FmControls` (most-used channel, the sweep's default speed, preset stepping). The OPL3 screens are drawn by the same
+  code as before: all 17 Deck renders of its Sound/Expert/Drum/Chords pages, Thor sizes, Pattern and Help were
+  pixel-identical before and after. The NES envelope step plot moved into `EnvelopePlot` (the NES and the Mega Drive's
+  PSG sounds draw and touch-draw with it; NES renders pixel-identical too).
+- **Instrument view** (`YmInstrumentView`, `YmInstrumentPainter`): head rows Slot, Name, Listen on, **Type** (FM voice /
+  PSG sound: Edit switches, giving the slot the other kind's starting sound with its name kept, one undo step), Page.
+  *FM voices*: *Sound* — the curated controls of `YmCurated` (preset, algorithm, ratios with detune, brightness,
+  level, feedback, attack, decay, sustain, sustain rate, release, tone decay, key scaling, vibrato/FMS,
+  tremolo/AMS, SSG-EG; "≈" for hand-edited readings; vibrato and tremolo dimmed while the song's LFO is off) beside the
+  drawn algorithm and the first carrier's envelope; *Expert* — algorithm, feedback, AMS, FMS as stored, then DT, MUL,
+  TL, KS, AR, AM, D1R, D2R, SL, RR and SSG-EG per operator (←→ or L1/R1 between operators; AM switches on tap; SSG-EG
+  steps off, 8-15); *Drum* — drum presets and the sweep. *PSG sounds*: *Volume*, *Arpeggio*, *Pitch* — the NES envelope
+  editor (length, loop, release on volume, relative/absolute pitch, steps drawn with Edit+↑↓/←→ or by touch, the
+  same `NesEnvelopes` edits) — and *Noise·Drum* (white/periodic, rate /512, /1024, /2048 or pitched, dimmed unless Listen
+  is Noise; the sweep). Presets list the slot's kind (FM voices and drums, or PSG and noise sounds); a noise preset
+  moves Listen to Noise. An empty slot shows the pages of the Listen channel's kind and Edit on Slot (or any setting)
+  makes that kind's starting sound (Lead or PSG lead). Listen plays FM voices on FM 1 when Listen is a PSG channel, PSG
+  sounds on PSG 1 when it is an FM channel. Every edit is one undo step (`YmEdits`: `setYmInstrument`, `editYmFm`,
+  `editYmPsg`, `editYmEnvelope`; copy/paste a sound, or one PSG envelope into another envelope page).
+- **Entry sounds per kind**: the editor's entry sound is per bank, so the system declares two banks over the one slot
+  numbering — FM voices (FM 1-6) and PSG sounds (PSG 1-3, Noise) — and `SoundSystem.defaultInstrument` gives each
+  bank's first entry sound (the first FM slot, the first PSG slot): notes entered on PSG lanes of a new song get a PSG
+  sound without choosing one. Choosing a slot in the instrument view selects it in its kind's bank.
+- **Shared views**: New and Load demo list the Mega Drive through `SoundSystems`; the Pattern view shows ten lanes
+  (FM 1-6, PSG 1-3, Noise, which has its own lane colour) with up to four effect columns each and sideways lane
+  scrolling (the OPL3's mechanism, unchanged); Song lists Region and LFO; Keyboard and Sketch play every channel,
+  Noise as a non-tonal channel (no scale or chord reference). Help: the effects page and the three instrument pages.
+- Tests: `YmEditorTest` (ten channels and columns, notes on FM and PSG lanes getting their kind's sound with two effect
+  columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
+  and song settings).
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -734,3 +773,8 @@ Decisions:
   simulation of the driver. Proposed: keep until device listening shows audible lag elsewhere.
 - YM2612 XGC export extension: `.xgc` (the audio document and xgmtool use `.bin`). Proposed: `.xgc`, which SGDK's
   `rescomp` accepts as a `BIN` resource under any name.
+- YM2612 editor (decided on the user's behalf): one Instrument view for both kinds, with a Type row that swaps a slot
+  between FM voice and PSG sound (the old sound is lost except through undo); an empty slot takes the Listen channel's
+  kind. Alternative: separate FM and PSG slot ranges. Review.
+- YM2612 envelope sketch times are approximations from the OPN2's rate tables at the NTSC clock (attack ≈ 7 % of the
+  same rate's full decay, key scaling ignored), like the OPL3's; listening may suggest adjustments.
