@@ -13,14 +13,13 @@ import org.thortracker.system.EffectSpec
  * ([org.thortracker.backend.FamiStudioLowering]) and the FamiStudio text export say the same thing.
  */
 object NesRules {
-    /** FamiStudio note byte n (1 = C0 in FamiStudio's names) is absolute note n + 11, so 1..96 = C-1..B-8. */
+    /** Base 2A03/VRC6 mapping; expansion channels add [engineNoteShift] to preserve sounding pitch. */
     const val NOTE_OFFSET = 11
     const val NOTE_COUNT = 96
 
     /**
      * The lowest note the 2A03's pulses and triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in
-     * its note table (the triangle sounds it an octave lower). The VRC6's 12-bit periods and the VRC7's frequency
-     * numbers reach every note.
+     * its note table (the triangle sounds it an octave lower). The VRC6 reaches C-1..B-8; VRC7 reaches C-1..B-7.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
@@ -41,6 +40,7 @@ object NesRules {
 
     /** The VRC7's first FM channel (FM 1..6 are channels 5..10). */
     const val VRC7_FM1 = 5
+    const val VRC7_OCTAVE = 12
 
     /** Channel [ch]'s name in a song with [expansion]. */
     fun channelName(expansion: NesExpansion, ch: Int): String =
@@ -129,7 +129,7 @@ object NesRules {
      * Fine pitch on the VRC7 FM channels: the engine adds FamiStudio's fine pitch × 8 to the FM frequency number, so a
      * cell's Pxx is converted ([vrc7FinePitch]) to the step nearest the detune the same Pxx gives a 2A03 pulse on that
      * note: one Pxx means one pitch on every channel, and tunings work on FM too (coarser low down: one VRC7 step is
-     * 0.3 cents at B-8 but 80 cents at C-1).
+     * 0.3 cents at B-7 but 40 cents at C-1).
      */
     private val VRC7_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
         "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
@@ -150,6 +150,9 @@ object NesRules {
     /** The lowest note [channel] plays: A-1 on the 2A03's pulses and triangle, every note elsewhere. */
     fun lowestNote(expansion: NesExpansion, channel: Int): Int =
         if (channel < APU_CHANNELS && pitched(expansion, channel)) LOWEST_TONAL else 1 + NOTE_OFFSET
+
+    fun highestNote(expansion: NesExpansion, channel: Int): Int =
+        NOTE_COUNT + NOTE_OFFSET - engineNoteShift(expansion, channel)
 
     /** The highest duty the duty effect (`Vxx`) takes on [channel]: the VRC6 pulses have eight. */
     fun dutyMax(expansion: NesExpansion, channel: Int): Int =
@@ -186,8 +189,12 @@ object NesRules {
 
     fun effectText(effect: Int, param: Int) = "${effectChar(effect)}${hex2(param)}"
 
-    /** FamiStudio's note byte for absolute [note]. */
-    fun fsNote(note: Int): Int = note - NOTE_OFFSET
+    /** The VRC7 table's note 46 sounds A-3, unlike the 2A03's A-4: compensate before entering the driver. */
+    fun engineNoteShift(expansion: NesExpansion, channel: Int): Int =
+        if (isVrc7(expansion, channel)) VRC7_OCTAVE else 0
+
+    fun engineNote(expansion: NesExpansion, channel: Int, note: Int): Int =
+        note - NOTE_OFFSET + engineNoteShift(expansion, channel)
 
     /**
      * FamiStudio's fine pitch on a VRC7 FM channel for a Pxx of [fine] (xx - 80, positive = up) on FamiStudio note
@@ -198,7 +205,8 @@ object NesRules {
     fun vrc7FinePitch(fsNote: Int, fine: Int): Int {
         if (fine == 0) return 0
         val n = fsNote.coerceIn(1, NOTE_COUNT)
-        val p = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[n] + 1.0
+        val pulseNote = (n - VRC7_OCTAVE).coerceIn(1, NOTE_COUNT)
+        val p = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[pulseNote] + 1.0
         if (fine >= p) return 127
         val ratio = p / (p - fine)
         val f = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE_VRC7[n].toDouble()
@@ -229,6 +237,9 @@ object NesRules {
         }
         if (cell.note >= 0 && pitched(expansion, channel) && cell.note < lowestNote(expansion, channel)) {
             return "$channelName cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
+        }
+        if (cell.note > highestNote(expansion, channel)) {
+            return "$channelName cannot play above ${NesSystem.noteName(highestNote(expansion, channel))}"
         }
         if (cell.note >= 0 && cell.instrument != 0) {
             val ins = song.nes.instruments.getOrNull(cell.instrument - 1)
@@ -275,6 +286,8 @@ object NesRules {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
                         pitched(expansion, channel) && target < lowestNote(expansion, channel) ->
                             "$fx from $noteName would end below A-1, which $channelName cannot play"
+                        target > highestNote(expansion, channel) ->
+                            "$fx from $noteName would end above ${NesSystem.noteName(highestNote(expansion, channel))}, which $channelName cannot play"
                         else -> null
                     }
                 }

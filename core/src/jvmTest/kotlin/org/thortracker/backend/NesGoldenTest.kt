@@ -22,6 +22,9 @@ import kotlin.test.fail
  * - every envelope we encode must be one FamiStudio encoded (byte-identical envelope data);
  * - FamiStudio's data and ours, each run by the same embedded player on a 6502, must write the same APU registers
  *   with the same values in the same order on every frame, through two passes of the song and its loop.
+ *   Rewriting an unchanged VRC7 custom-patch register is idempotent, unlike key-on/envelope registers: those
+ *   redundant patch writes are omitted on both sides. Loop restoration conservatively reloads custom patches
+ *   because delayed notes can change the final writer; the real-driver loop regressions cover that correction.
  *
  * Run with `THOR_UPDATE_NES_GOLDEN=1` to rewrite the `.txt` fixtures, then `python3 tools/audio/nes_golden.py`.
  */
@@ -95,9 +98,11 @@ class NesGoldenTest {
             var writes = 0
             var dpcmStarts = 0
             var expansionWrites = 0
+            val patchA = IntArray(8) { -1 }
+            val patchB = IntArray(8) { -1 }
             for (f in 0 until frames) {
-                val ta = a.frame()
-                val tb = b.frame()
+                val ta = withoutUnchangedPatchWrites(a.frame(), patchA)
+                val tb = withoutUnchangedPatchWrites(b.frame(), patchB)
                 if (!ta.contentEquals(tb)) {
                     fail("$name: frame $f differs: FamiStudio ${trace(ta)} vs ours ${trace(tb)}")
                 }
@@ -119,6 +124,29 @@ class NesGoldenTest {
     }
 
     private fun trace(t: IntArray) = NesTracer.text(t)
+
+    /** Only $00–$07 are idempotent patch data; retain every other write, including key-off/key-on sequences. */
+    private fun withoutUnchangedPatchWrites(trace: IntArray, patch: IntArray): IntArray {
+        val out = ArrayList<Int>(trace.size)
+        var i = 0
+        while (i < trace.size) {
+            val register = trace[i] and 0xff
+            if (trace[i] ushr 8 == 0x9010 && register < 8 &&
+                i + 1 < trace.size && trace[i + 1] ushr 8 == 0x9030
+            ) {
+                val value = trace[i + 1] and 0xff
+                if (patch[register] != value) {
+                    out += trace[i]
+                    out += trace[i + 1]
+                    patch[register] = value
+                }
+                i += 2
+            } else {
+                out += trace[i++]
+            }
+        }
+        return out.toIntArray()
+    }
 
     /** The `@envN:` byte rows of a FamiStudio ca65 export. */
     private fun famiStudioEnvelopes(asm: String): List<ByteArray> {

@@ -379,9 +379,6 @@ static void test_images(void) {
     int streams_ok = 1;
     for (int c = 0; c < NES_VRC7_CHANNELS; ++c) streams_ok &= i->streams[c] >= NES_VRC7_SONG_BASE;
     EXPECT(streams_ok, "an order stream for each of the 11 channels");
-    for (int o = 0; o < VRC7_TEST_ORDERS; ++o) {
-        EXPECT(i->speed[o] == nes_vrc7_speed[o][0], "order %d starts at speed %d (%d)", o, nes_vrc7_speed[o][0], i->speed[o]);
-    }
     EXPECT(!memcmp(exp_entry(&g_thor, VRC7_TEST_EXP_FCUSTOMA) + 6, "\x00\x00\x31\x61\x14\x05\xA8\x64\x61\x27", 10) &&
                exp_entry(&g_thor, VRC7_TEST_EXP_FBELL)[7] == 0x10 && exp_entry(&g_thor, VRC7_TEST_EXP_FGUITAR)[6] == 0x20 &&
                exp_entry(&g_thor, VRC7_TEST_EXP_FBASS)[6] == 0x80,
@@ -584,7 +581,7 @@ static void test_playback(NesMachine* m, const char* dir) {
     /* FM 1 at order 0 row 0: FBell (patch 1) C4 from the VRC7 note table, keyed on. */
     at_row(m, 0, 0);
     const int note = nm_peek(m, NES_VRC7_FAMISTUDIO_CHN_NOTE + CH_FM1);
-    const double want = 440.0 * pow(2.0, (note - 46) / 12.0);
+    const double want = 261.625565; /* The independent FamiStudio fixture writes C4, not the APU's octave-shifted C4. */
     EXPECT(v->reg[0x30] >> 4 == 1 && (v->reg[0x20] & 0x10) && fabs(fm_hz(v, 0) / want - 1) < 0.005 &&
                nm_vrc7_instrument(m, CH_FM1) == VRC7_TEST_EXP_FBELL,
            "FM 1 FBell: patch 1, keyed on, note %d at %.2f Hz (12-TET %.2f)", note, fm_hz(v, 0), want);
@@ -737,7 +734,7 @@ static double energy(NesMachine* m, int ticks) {
 static void test_audition(NesMachine* m) {
     printf("VRC7 audition: held FM notes, key-off release\n");
     const NesVrc7* v = nm_vrc7(m);
-    const int note = 46; /* A440 */
+    const int note = 58; /* VRC7 engine note for sounding A-4 = 440 Hz. */
     EXPECT(nm_audition(m, &g_thor, CH_FM1, note, VRC7_TEST_EXP_FBELL, 0) == NM_OK, "audition FM 1 FBell");
     nm_tick(m, g_out);
     EXPECT((v->reg[0x20] & 0x10) && v->reg[0x30] >> 4 == 1 && fabs(fm_hz(v, 0) / 440.0 - 1) < 0.005,

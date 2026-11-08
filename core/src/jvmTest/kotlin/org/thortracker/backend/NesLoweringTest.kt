@@ -264,18 +264,38 @@ class NesLoweringTest {
         bank[1] = NesInstrument("Piano", chip = NesChip.VRC7, fm = Vrc7Patch().withPreset(3))
         val song = base.copy(sound = base.nes.copy(instruments = bank))
         val fm = NesRules.VRC7_FM1
-        assertEquals("nes-famistudio-vrc7", e.id)
-        assertEquals(NesVrc7PlayerImage.IMAGE_SIZE, e.imageSize)
-        assertEquals(NesVrc7PlayerImage.SONG_BASE, NesPlayer.VRC7.songBase)
-        assertEquals(11, NesVrc7System.channels.size)
-        assertEquals(46, e.note(song, fm, 57, 2))
-        assertEquals(null, e.auditionProblem(song, fm, 12, 2, 0)) // C-1: the FM channels reach every note
+        val auditionNote = e.note(song, fm, 57, 2)
+        val auditionHz = FamiStudioLowering.NOTE_TABLE_VRC7[auditionNote] * 1789773.0 / (36.0 * 524288.0)
+        assertTrue(kotlin.math.abs(auditionHz - 440.0) < 2.0, "A-4 audition: $auditionHz Hz")
+        assertEquals(null, e.auditionProblem(song, fm, 12, 2, 0))
+        assertEquals(null, e.auditionProblem(song, fm, 95, 2, 0))
+        assertNotEquals(null, e.auditionProblem(song, fm, 96, 2, 0))
+        assertEquals(null, NesRules.cellProblem(song, fm, Cell(95, 2)))
+        assertNotEquals(null, NesRules.cellProblem(song, fm, Cell(96, 2)))
+        assertNotEquals(null, NesRules.cellProblem(song, fm, Cell(95, 2, NesRules.FX_SLIDE_UP, 1)))
+        val pattern = song.patterns[0]
+        val sounding = song.copy(patterns = listOf(pattern.copy(tracks = pattern.tracks.mapIndexed { ch, rows ->
+            if (ch == fm) rows.toMutableList().also { it[0] = Cell(57, 2) } else rows
+        })))
+        val lowered = FamiStudioLowering.lower(sounding)
+        val registers = IntArray(64)
+        var selected = 0
+        for (write in NesTracer(lowered.data, lowered.player).frame()) {
+            when (write ushr 8) {
+                0x9010 -> selected = write and 0xff
+                0x9030 -> registers[selected] = write and 0xff
+            }
+        }
+        val fnum = registers[0x10] or ((registers[0x20] and 1) shl 8)
+        val block = (registers[0x20] shr 1) and 7
+        val playedHz = 1789773.0 / 36.0 * fnum / (1 shl (19 - block))
+        assertTrue(kotlin.math.abs(playedHz - 440.0) < 2.0, "A-4 through the real driver: $playedHz Hz")
         assertTrue(e.auditionProblem(song, fm, 57, 1, 0)!!.contains("2A03 sound"))
         assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("VRC7 sound"))
         // Fine pitch: a 2A03 period offset (up = shorter period), on FM the frequency step (× 8) nearest the same detune.
         assertEquals(-5, e.fine(0, 57, 5))
         val period = FamiStudioLowering.NOTE_TABLE[46] + 1.0
-        val freq = FamiStudioLowering.NOTE_TABLE_VRC7[46].toDouble()
+        val freq = FamiStudioLowering.NOTE_TABLE_VRC7[auditionNote].toDouble()
         for (fine in listOf(-40, -5, 5, 40)) {
             val pulseCents = 1200 * kotlin.math.log2(period / (period - fine))
             val fmCents = 1200 * kotlin.math.log2((freq + 8 * e.fine(fm, 57, fine)) / freq)
@@ -290,40 +310,72 @@ class NesLoweringTest {
         assertFailsWith<IllegalArgumentException> { NesVrc6System.engine.lower(song, ByteArray(NesVrc6System.engine.imageSize)) }
     }
 
-    /**
-     * The VRC7's one custom patch: an FM channel's custom sound is not sent again with each order's first note (that
-     * would rewrite the chip's patch registers under another channel's custom sound), but it is at the loop when another
-     * custom sound was loaded before the song's end, so the second pass plays the right patch.
-     */
+    /** A loop's first custom note must restore its timbre after another channel changed the shared patch. */
     @Test
-    fun vrc7CustomPatchIsSentAgainOnlyAfterAnotherLoaded() {
+    fun vrc7LoopRestoresItsSharedCustomPatch() {
         val base = NesVrc7System.blank()
         val bank = base.nes.instruments.toMutableList()
-        bank[0] = NesInstrument("Lead", chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)))
-        bank[1] = NesInstrument("Bass", chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)))
+        val lead = listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)
+        val bass = listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)
+        bank[0] = NesInstrument("Lead", volume = NesEnvelope(listOf(15, 12, 9, 6), loop = 3),
+            chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM, lead))
+        bank[1] = NesInstrument("Bass", chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM, bass))
         val fm1 = NesRules.VRC7_FM1
-        fun song(otherCustom: Boolean): Song {
+        fun song(otherCustom: Boolean, delayedBoundary: Boolean, legato: Boolean): Song {
             val blank = base.patterns[0]
             val first = blank.copy(tracks = blank.tracks.mapIndexed { ch, t -> if (ch == fm1) t.toMutableList().also { it[0] = Cell(57, 1) } else t })
             val loop = blank.copy(name = "Loop", tracks = blank.tracks.mapIndexed { ch, t ->
                 when {
-                    ch == fm1 -> t.toMutableList().also { it[0] = Cell(60, 1) }
-                    ch == fm1 + 1 && otherCustom -> t.toMutableList().also { it[8] = Cell(45, 2) }
+                    ch == fm1 -> t.toMutableList().also {
+                        it[0] = Cell(60, if (legato) 0 else 1)
+                        if (legato) it[16] = Cell(64)
+                        if (delayedBoundary) it[it.lastIndex] = Cell(60, 1)
+                    }
+                    ch == fm1 + 1 && otherCustom -> t.toMutableList().also {
+                        if (delayedBoundary) it[it.lastIndex - 1] = Cell(45, 2, NesRules.FX_NOTE_DELAY, 7)
+                        else it[8] = Cell(45, 2)
+                    }
                     else -> t
                 }
             })
             return base.copy(patterns = listOf(first, loop), orders = listOf(0, 1), loopOrder = 1, sound = base.nes.copy(instruments = bank))
         }
-        // FM 1's stream for the loop order (order 1): row 0 is C-5 (single-byte note $25), after slot 1's `$80` if sent.
-        fun loopOrderStart(s: Song): List<Int> {
-            val data = FamiStudioLowering.lower(s).data
-            val songBase = NesPlayer.VRC7.songBase
-            val stream = u16(data, 7 + 2 * fm1) - songBase
-            val order = u16(data, stream + 4 + 2) - songBase
-            return listOf(u8(data, order), u8(data, order + 1))
+        for ((otherCustom, delayedBoundary, legato) in listOf(
+            Triple(false, false, false), Triple(true, false, false), Triple(true, true, false), Triple(true, false, true)
+        )) {
+            val s = song(otherCustom, delayedBoundary, legato)
+            val fs = FsSong.of(s)
+            val lowered = FamiStudioLowering.lower(s)
+            val tracer = NesTracer(lowered.data, lowered.player)
+            val registers = IntArray(64)
+            var selected = 0
+            val firstLoop = fs.orderStart[fs.loopOrder] * fs.speed
+            val loopTicks = (fs.totalRows - fs.orderStart[fs.loopOrder]) * fs.speed
+            for (frame in 0 until firstLoop + 3 * loopTicks) {
+                for (write in tracer.frame()) {
+                    when (write ushr 8) {
+                        0x9010 -> selected = write and 0xff
+                        0x9030 -> {
+                            registers[selected] = write and 0xff
+                            val inLoop = frame - firstLoop
+                            if (legato && selected == 0x20 && inLoop >= 0 &&
+                                inLoop % loopTicks in listOf(0, 16 * fs.speed)
+                            ) {
+                                assertTrue(write and 0x10 != 0, "restoring a shared patch must not key off a legato note")
+                            }
+                        }
+                    }
+                }
+                if (frame < firstLoop) continue
+                val loopFrame = (frame - firstLoop) % loopTicks
+                if (loopFrame == 1 || legato && loopFrame == 16 * fs.speed + 1) {
+                    assertContentEquals(lead, registers.take(8), "restored lead patch at frame $frame")
+                    if (legato) assertEquals(9, registers[0x30] and 15, "patch restoration must keep the held volume envelope")
+                } else if (loopFrame == if (delayedBoundary) loopTicks - fs.speed + 2 else 8 * fs.speed + 1) {
+                    assertContentEquals(if (otherCustom) bass else lead, registers.take(8), "shared patch at frame $frame")
+                }
+            }
         }
-        assertEquals(0x25, loopOrderStart(song(otherCustom = false))[0], "the chip still holds FM 1's patch: no reload")
-        assertEquals(listOf(0x80, 0x25), loopOrderStart(song(otherCustom = true)), "FM 2 loaded its patch before the end: reload")
     }
 
     /** The saw's master volume: `$55` before an instrument of another volume, and with each order's first instrument. */

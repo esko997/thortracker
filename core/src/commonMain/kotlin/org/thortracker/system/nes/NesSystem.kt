@@ -271,6 +271,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
             NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
+            note > NesRules.highestNote(expansion, channel) ->
+                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))}"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
@@ -282,9 +284,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1; on DPCM the sample list entry (1..63). */
+        /** Chip-specific engine note number; on DPCM the sample list entry (1..63). */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.engineNote(expansion, channel, note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
@@ -294,7 +296,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
          * VRC7's FM channels it adds (× 8) to the frequency number, converted as a cell's Pxx is ([NesRules.vrc7FinePitch]).
          */
         override fun fine(channel: Int, note: Int, fine: Int): Int =
-            if (NesRules.isVrc7(expansion, channel)) NesRules.vrc7FinePitch(NesRules.fsNote(note), fine) else -fine
+            if (NesRules.isVrc7(expansion, channel)) NesRules.vrc7FinePitch(NesRules.engineNote(expansion, channel, note), fine) else -fine
     }
 
     /**
@@ -302,7 +304,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
      * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic). The VRC7's
      * FM channels convert a Pxx to their nearest frequency step for the same pitch ([NesRules.vrc7FinePitch]): one step
-     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there.
+     * is 0.3 cents at B-7, 40 at C-1, so tuned FM notes are as exact as the chip allows there.
      */
     private object Fine : FinePitch {
         override val name = "Pxx"
@@ -331,7 +333,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             }
         }
 
-        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note).coerceIn(1, NesRules.NOTE_COUNT)]
+        private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[(note - NesRules.NOTE_OFFSET).coerceIn(1, NesRules.NOTE_COUNT)]
     }
 
     private open class NesHelp : SystemHelp {

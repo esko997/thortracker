@@ -863,13 +863,26 @@ byte-identical).
   until it is below `$200` to find the block. Writes go through `$9010` (select) and `$9030` (data); init writes
   `$E000` = 0 (audio on). One engine quirk is kept as it plays: a stop on a note whose `$20+c` value has no block or
   F-number bit 8 left after masking takes the stop-override path (sustain bit set).
+- **Sounding pitch**: VRC7 engine note 46 is approximately 220 Hz, while the same 2A03 note is approximately 440 Hz.
+  `NesRules.engineNote` therefore adds 12 on the FM channels: absolute 57 becomes engine note 58. This applies to
+  audition, lowered songs and FamiStudio text. The driver table limits FM to C-1..B-7; validation also rejects
+  slides above B-7. Pxx uses the pulse period at the unshifted sounding note and the FM frequency at the shifted
+  engine note, retaining one detune meaning across both chips. The released base NES mapping is unchanged.
 - **Lowering** (Kotlin, what differs from the 2A03's): OFF on a sounding FM note is `$56` (FamiStudio's `CanRelease`
   is always true there), else a stop. A custom-patch sound is never re-sent per order (the per-order instrument
   re-send of the other channels would rewrite `$00-$07` under another FM channel's custom sound); FamiStudio's
   `OtherVrc7ChannelUsesCustomPatch` makes a channel send its custom sound again after another FM channel had a note
-  of a different custom sound; at the loop order a channel whose custom patch another one replaced before the song's
-  end sends it again (Thor Tracker's correction; FamiStudio's player does, its exporter does not). Slides use the
-  VRC7 note table and FamiStudio's VRC7 slide shift (delta >> 3). A cell's Pxx is converted to the FM step nearest
+  of a different custom sound. At the loop, a channel reloads its first custom patch if another custom patch can
+  appear in the loop. This is deliberately conservative: Gxx can change which channel writes last. Patch restoration
+  keeps the channel's instrument identity so a legato note need not restart its envelopes.
+  FamiStudio 4.5.3's editor restores shared patches, but its exporter compares only each channel's own first/last
+  instrument: a two-order, two-custom-patch real-driver probe restored the lead at frame 385 in both exports, then
+  only Thor Tracker restored it at frames 769 and 1153. See upstream
+  [`FamitoneMusicFile.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/IO/FamitoneMusicFile.cs)
+  and [`ChannelStateVrc7.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelStateVrc7.cs).
+  Golden comparisons omit only idempotent writes of unchanged custom-patch bytes, retaining every key/envelope
+  write; separate real-driver regressions cover loop restoration, delayed final writers and held envelopes.
+  Slides use the VRC7 note table and FamiStudio's VRC7 slide shift (delta >> 3). A cell's Pxx is converted to the FM step nearest
   the pulse's detune (`NesRules.vrc7FinePitch`); audition fine pitch on FM uses the same conversion. FM channels play
   VRC7 sounds that differ only in their names as one instrument, the first slot of them, as FamiStudio's export
   merges identical instruments (`Project.MergeIdenticalInstruments`), so copies of a custom sound neither reload the

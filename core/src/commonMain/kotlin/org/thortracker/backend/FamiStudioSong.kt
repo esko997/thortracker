@@ -123,7 +123,6 @@ internal class FsSong(
             val channels = expansion.channels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
-                val vrc7 = NesRules.isVrc7(expansion, ch)
                 var current = 0 // instrument slot sounding on the channel
                 var sounding = false // a note is playing and has not been released or stopped
                 var fine = 0
@@ -133,8 +132,8 @@ internal class FsSong(
                     val pattern = song.patterns[song.orders[o]]
                     for (r in 0 until pattern.length) {
                         val cell = pattern.tracks[ch][r]
-                        if (cell.note >= 0) playing = NesRules.fsNote(cell.note)
-                        val n = convert(cell, ch, vrc7, current, sounding, instruments, fine, playing)
+                        if (cell.note >= 0) playing = NesRules.engineNote(expansion, ch, cell.note)
+                        val n = convert(cell, ch, expansion, current, sounding, instruments, fine, playing)
                         if (n != null) {
                             if (n.isMusical) {
                                 if (n.instrument != 0) current = n.instrument
@@ -159,14 +158,15 @@ internal class FsSong(
                 song.nes.expansion, song.nes.vrc7Sustain)
         }
 
-        private fun convert(cell: Cell, ch: Int, vrc7: Boolean, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,
+        private fun convert(cell: Cell, ch: Int, expansion: NesExpansion, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,
                             playing: Int): FsNote? {
             if (cell.isBlank) return null
+            val vrc7 = NesRules.isVrc7(expansion, ch)
             val n = FsNote()
             val p = cell.param
             when {
                 cell.note >= 0 -> {
-                    n.value = NesRules.fsNote(cell.note)
+                    n.value = NesRules.engineNote(expansion, ch, cell.note)
                     if (cell.instrument != 0) n.instrument = cell.instrument
                     else if (current != 0) {
                         n.instrument = current

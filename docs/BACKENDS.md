@@ -237,10 +237,13 @@ VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions)
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
 - **VRC7** (a YM2413 derivative: six 2-operator FM channels, 15 patches in ROM and one programmable patch): channels
-  VRC7 FM 1-6 (5-10, `ChannelKind.VOICE`), reaching every note C-1..B-8. A VRC7 sound (`NesChip.VRC7`) has volume,
+  VRC7 FM 1-6 (5-10, `ChannelKind.VOICE`), reaching every note C-1..B-7. A VRC7 sound (`NesChip.VRC7`) has volume,
   arpeggio and pitch envelopes (no duty) and its patch (`Vrc7Patch`: FamiStudio's `Vrc7Patch` 0-15, 0 = custom, and
   `Vrc7PatchRegs`, the 8 registers `$00-$07`; a built-in patch holds its ROM values, as FamiStudio's setter copies
   them, so switching to Custom starts from that sound; `Vrc7Presets` = FamiStudio's table = emu2413's VRC7 ROM set).
+  Sounding pitch is channel-aware: `NesRules.engineNote` adds 12 on VRC7, so absolute 57 (A-4) is engine note 58
+  (about 440 Hz), not the 2A03's engine note 46 (which would sound 220 Hz on VRC7). Pattern lowering, text export,
+  audition and Pxx use this same mapping; notes and slide targets above B-7 are rejected on FM channels.
   Volume is the chip's 4-bit level (the engine writes `patch << 4 | 15 − volume` to `$30+`, so 0 is −45 dB, not
   silent); pitch envelopes, Pxx and slides work on the FM frequency number (FamiStudio's pitch shift 3: × 8,
   + raises). Effects: everything but `Vxx` (no duty) and `Zxx`. `Pxx` keeps one meaning on every channel: the cell's
@@ -254,9 +257,11 @@ VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions)
     them. The lowering follows FamiStudio's exporter (`OtherVrc7ChannelUsesCustomPatch`: a channel whose custom sound
     another FM channel's different custom sound may have replaced sends its instrument again with its next note),
     never re-sends a custom sound per order (Thor Tracker's per-order re-send is skipped for it: it would rewrite the
-    registers under another channel), and corrects FamiStudio's exporter at the loop: an FM channel whose custom patch
-    another custom sound replaced before the song's end loads it again at the loop order, as FamiStudio's own player
-    (`ChannelStateVrc7.IntrumentLoadedNotify`) does. A custom sound starting while another FM channel holds a note of
+    registers under another channel), and corrects FamiStudio's exporter at the loop: a channel reloads its first
+    custom patch if another custom patch occurs in the loop. This handles delayed notes that change the last writer;
+    patch restoration is separate from the channel's instrument/legato state. FamiStudio's own editor
+    (`ChannelStateVrc7.IntrumentLoadedNotify`) restores shared patches too; its 4.5.3 exporter misses the loop case
+    (real-driver comparison in `AUDIO_ENGINE.md`). A custom sound starting while another FM channel holds a note of
     a different custom sound (different registers) changes that note's timbre on the chip itself: the song check warns
     where. VRC7 sounds identical but for their names are one instrument on the FM channels, as FamiStudio's export
     merges them, so a copied custom sound shares the patch without reloading it.
