@@ -134,6 +134,7 @@ object NesRules {
         cell.instrument !in 0..NesSystem.SLOTS -> "instrument ${cell.instrument} is outside 0-${NesSystem.SLOTS}"
         cell.effect !in 0..35 -> "effect ${cell.effect} is outside 0-Z"
         cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
+        cell.more.isNotEmpty() -> "${cell.more.size + 1} effect columns; the NES plays one per row"
         cell.hasEffect && effect(cell.effect) == null -> "effect ${effectChar(cell.effect)} does not exist on the NES"
         else -> null
     }
