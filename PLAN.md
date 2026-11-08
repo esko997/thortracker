@@ -8,6 +8,40 @@ A useful, controller-first Android GB/GBC music tracker for the AYN Thor. Compos
 
 The first backend is explicitly GB/hUGE. Backend extensibility means modular software, not a universal instrument model or lossless song conversion. A project belongs to one backend. GBA and Mega Drive are examples of possible future backends, not MVP targets.
 
+## Roadmap (2026-11-08, after 0.13.0)
+
+Five sound systems shipped (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive). Order below is the current intent;
+design notes for the chip work live in `docs/BACKENDS.md`.
+
+1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
+   demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
+2. **WAV export** for every system (each engine already renders audio natively).
+3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) first, then
+   VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5, EPSM (YM2608).
+4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
+   GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
+5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
+   (independent operator pitches), XGM2.
+6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
+   (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
+7. **More chips** (unordered):
+   - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST, Amstrad CPC (the hardware envelope as a buzzer bass).
+   - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
+   - Konami SCC — MSX wavetable cartridge (five channels).
+   - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
+   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, noise, two LFOs.
+   - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
+   - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
+   - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
+   - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
+   - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
+   - Virtual Boy VSU and WonderSwan — wavetable handhelds.
+   - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
+8. **Conversion between systems** — a lossy step with a report of what did not carry over.
+9. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
+   Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
+   existing release key, and Android developer verification (2027).
+
 ## Agreed MVP scope
 
 ### Song editing
@@ -131,7 +165,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - 0.11.0: C64 SID sound system (GoatTracker 2.77 playroutine + reSID), .sid/.prg/.sng export.
 - 0.12.0: OPL3 FM sound system (own player on Nuked-OPL3), up to 4 effect columns on OPL3, chord effect, curated FM editor, VGM export.
 - 0.13.0: Mega Drive sound system (YM2612 + PSG through SGDK's XGM Z80 driver), .vgm/.xgm/.xgc export.
-- Idea (user, 2026-11-06), not scheduled: a third chord layer with L2 and R2 held together, cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous (`HostInput`); it would need a modifier-set binding (`Binding.modifiers`), keymap file support and capture of two-modifier chords.
+- L2+R2 third chord layer: scheduled, see Roadmap.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
 - Visible arpeggio-0 selection without inventing a parameter; OFF label retains immediate-cut semantics.
