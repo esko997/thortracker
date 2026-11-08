@@ -78,7 +78,7 @@ typedef struct O3Player {
     O3Write off[O3_VOICES];
 } O3Player;
 
-/* Reset: shadow = chip reset state, then the init writes (0x105 = 1, 0xBD = header depth) are in write[].
+/* Reset: shadow = chip reset state, then the init writes (0x105 = 1, every C0 = 0x30, 0xBD = header depth) are in write[].
  * Position (0, 0, 0) with the header speed. */
 void o3p_reset(O3Player* p, const Opl3Image* image);
 /* One tick: write[] receives its writes (the previous batch is dropped). */

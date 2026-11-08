@@ -1216,8 +1216,12 @@ not emitted. A batch is the key-off phase — every write that turns a key-on bi
 in the order made — followed by every other write in the order made (`O3Player.offs` = length of the first part).
 
 **Reset** (start, audition): all state cleared; channels: instrument 0, volume 3F, pan both, no effects; pool
-stamps 0; speed = header speed; position (0, 0, tick 0); writes `0x105 = 1` (OPL3 mode), then 0xBD = header
-byte 7 (if not 0).
+stamps 0; speed = header speed; position (0, 0, tick 0); writes `0x105 = 1` (OPL3 mode), 0xC0-0xC8 of both banks
+= 0x30 (both outputs, feedback 0, FM), then 0xBD = header byte 7 (if not 0). Why the C0 writes: the YMF262 latches
+a voice's output enables only when its C0 is written, and they come out of reset **on** (Nuked models this), so a
+register value the player never wrote is not what the chip outputs. Without them a C0 that should be 0 (`800` pan
+with feedback 0 and FM, or the machine's mute of such a voice) would equal the reset shadow, never be written, and
+the voice would keep sounding — in the engine and in every VGM player.
 
 **Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
 
@@ -1419,9 +1423,9 @@ the test song.
   pool and steals, channels switch between 4-op and 2-op instruments, order 2 changes speed and breaks to order 3
   row 2; order 3 ends at speed 5 and jumps back to the loop order, which has no `Fxx` (the player's loop speed).
 - `tools/audio/run_native_host_test.sh [dir]` runs `app/src/test/cpp/opl3_machine_test.c` — 2026-11-08:
-  **280 checks, 0 failures** (Game Boy 145, NES 336, SID 151 unchanged): the pitch table (A-4 = 580/block 4 =
+  **282 checks, 0 failures** (Game Boy 145, NES 336, SID 151 unchanged): the pitch table (A-4 = 580/block 4 =
   439.991 Hz; all notes ≤ 2.59 cents); 42 single-byte corruptions each rejected with its reason; **the machine's
-  writes equal the Python reference player's in all 1500 ticks** (10026 writes, up to 178 in a tick; all 9 pool
+  writes equal the Python reference player's in all 1500 ticks** (10024 writes, up to 176 in a tick; all 9 pool
   voices keyed at once; 4-op pairs switching on and off; the kick sweeping) with identical positions; 30 s
   non-silent in every second, no clipping, bit-identical on a second start; **tick cost flat**: after 1 s of
   warm-up, no tick of 30 s above 3× the mean (thread CPU time, so other processes' preemption does not count;
@@ -1438,7 +1442,8 @@ the test song.
   order 3 clamps and continues in the loop order, x2 applied live halves the tick; audition: **A-4 measured
   439.991 Hz** on the sine instrument, held, one voice keyed, release ends after 52 ticks, `fine` +64 = A#4
   (466.16 Hz), a 4-op instrument sets its pair, the kick sweeps 523.25 → 130.81 Hz, a cut before any tick,
-  argument limits; mute leaves the writes equal to the reference and silences; multispeed x2 = 120 ticks per second;
+  argument limits; mute leaves the writes equal to the reference and silences, also when applied between `start`
+  and the first tick and right after a seek's register restore; multispeed x2 = 120 ticks per second;
   **VGM bytes equal the reference player's**; the hosts' entry point `o3_export_vgm`: the reference bytes plus a
   GD3 tag (header 0x04/0x14 aside), every field decoded back (2- and 4-byte UTF-8 title, surrogate pair), a
   default date of today, rejected images with the loader's reason, a tick limit without loop; the ops table as the

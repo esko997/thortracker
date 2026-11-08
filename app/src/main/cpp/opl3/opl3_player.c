@@ -451,6 +451,9 @@ void o3p_reset(O3Player* p, const Opl3Image* image) {
     p->cursor_order = p->cursor_row = -1;
     p->speed = image->info.speed;
     wr(p, 0x105, 0x01);
+    /* The chip latches a voice's output enables only when its C0 is written, and they reset on: write C0 = both
+     * outputs on every voice, so the register (and the diffing shadow) agrees with what the chip outputs. */
+    for (int v = 0; v < O3_VOICES; ++v) wr(p, chreg(0xC0, v), 0x30);
     wr(p, 0xBD, image->bytes[O3_H_DEPTH]);
     end_batch(p);
 }
