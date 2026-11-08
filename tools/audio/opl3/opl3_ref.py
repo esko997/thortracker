@@ -210,6 +210,8 @@ class Player:
         self.next_pos = None
         self.audition = False
         self.write(0x105, 1)
+        for v in range(18):  # output enables latch on C0 writes and reset on: make register and latch agree
+            self.write(voice_reg(0xC0, v), 0x30)
         self.write(0xBD, self.img.depth)
         self.batch = self.key_offs + self.out
         self.split = len(self.key_offs)

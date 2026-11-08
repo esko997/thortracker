@@ -70,7 +70,9 @@ static void generate(Opl3Machine* m, int from, int to) {
 
 static void chip_reset(Opl3Machine* m) {
     OPL3_Reset(&m->chip, (O3M_CLOCK + O3M_NATIVE_DIVIDER / 2) / O3M_NATIVE_DIVIDER);
-    memset(m->chip_c0, 0, sizeof m->chip_c0);
+    /* Unknown: Nuked's reset leaves the output enables on whatever C0 says (they latch on C0 writes), so the next
+     * sync writes every C0 (0xFF is no value the player writes: bits 6-7 stay 0). */
+    memset(m->chip_c0, 0xFF, sizeof m->chip_c0);
     for (int i = 0; i < 2; ++i) {
         blip_clear(m->blip[i]);
         m->last[i] = 0;

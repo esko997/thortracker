@@ -695,6 +695,19 @@ static void test_mute(void) {
     frames = render(m, 30, &buf);
     EXPECT(rms(buf, frames) > 0.01, "unmuted: resumes mid-note (rms %.4f)", rms(buf, frames));
     free(buf);
+    /* Muted between start and the first tick (a host re-applying mutes on Play): the kick's C0 without output bits
+     * is 0, which the chip only honours once written. */
+    o3m_start(m, &g_song, 0, 0, SEEK_BUDGET, &mode);
+    for (int c = 0; c < 9; ++c) o3m_mute(m, c, 1);
+    frames = render(m, 60, &buf);
+    EXPECT(rms(buf, frames) < 0.0005, "muted before the first tick: rms %.6f", rms(buf, frames));
+    free(buf);
+    o3m_start(m, &g_song, 1, 17, SEEK_BUDGET, &mode); /* after a seek's register restore */
+    for (int c = 0; c < 9; ++c) o3m_mute(m, c, 1);
+    frames = render(m, 60, &buf);
+    EXPECT(rms(buf + 2 * (RATE / 10), frames - RATE / 10) < 0.0005, "muted right after a seek: rms %.6f after 100 ms",
+           rms(buf + 2 * (RATE / 10), frames - RATE / 10));
+    free(buf);
     EXPECT(o3m_mute(m, 9, 1) == O3M_ERR_IMAGE, "channel 9 rejected");
     o3m_destroy(m);
 }
