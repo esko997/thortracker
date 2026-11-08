@@ -36,8 +36,11 @@ verified; record the results here then, replacing this section.
    Expected from the specification (not yet observed): A-4 at 439.88 Hz (key code `$48`, fraction 5), every note
    D#0..D-8 within 4.4 cents; the engine's per-tick writes equal `opm_ref.py`'s for 1500 ticks; the VGM byte-equal to
    the reference's (7168 bytes, 455 ticks, loop 263865 samples, as `opm_ref.py` computed in memory for the fixture
-   song). Thresholds the native test sets without having run (vibrato spread, noise roughness, CSM rate within 1 %,
-   seek envelopes within 0.15, audition release 3-400 ticks, tick cost ≤ 3× the mean) may need tuning once measured.
+   song). Seeks are fully clocked: the test requires the sound after every seek to be bit-identical to straight play
+   (no tolerance), and the order fallback to be deterministic. Thresholds the native test sets without having run
+   (vibrato spread, noise roughness, CSM rate within 1 %, unmuted vs never-muted output within 1e-3 after 100 ms,
+   audition release 3-400 ticks, tick cost ≤ 3× the mean) may need tuning once measured. Measure the seek cost on the
+   reserved handhelds (one chip tick per tick sought; `OMM_SEEK_TICKS` = 3600) and tune that one constant.
    Also the release-standard checks: Game Boy views pixel-identical to the baseline, every existing golden and sample
    export unchanged, the four other `render_*_image.sh` scripts still link (they now compile the OPM sources because
    `chip_engine.c` lists its ops).

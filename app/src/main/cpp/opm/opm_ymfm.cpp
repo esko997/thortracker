@@ -46,19 +46,29 @@ public:
     }
 };
 
-// ym2151 with a muting output sum: ym2151::generate with muted channels left out of the engine's sum (before the
-// YM3012 DAC's floating-point round trip). Everything else is ymfm's.
+// ym2151 with a muting output sum: ym2151::generate with muted channels left out of the sum (before the YM3012 DAC's
+// floating-point round trip). Every channel is still computed, one at a time: ymfm advances operator 1's feedback
+// history only when a channel's output is computed (fm_channel::output_*op sets m_feedback_in), so leaving a muted
+// channel out of fm_engine::output's mask would freeze its feedback and make unmuting differ from never muting. The
+// per-channel parts add up to ymfm's own sum (each channel is clipped on its own before it is added). Everything else
+// is ymfm's.
 class Chip : public ymfm::ym2151 {
 public:
     explicit Chip(Interface& intf) : ymfm::ym2151(intf) {}
 
     void generate_masked(unsigned mute, int32_t* left, int32_t* right) {
-        output_data temp;
+        output_data sum, part;
+        sum.clear();
         m_fm.clock(fm_engine::ALL_CHANNELS);
-        m_fm.output(temp.clear(), 0, 32767, fm_engine::ALL_CHANNELS & ~uint32_t(mute));
-        temp.roundtrip_fp();
-        *left = temp.data[0];
-        *right = temp.data[1];
+        for (uint32_t chan = 0; chan < fm_engine::CHANNELS; ++chan) {
+            m_fm.output(part.clear(), 0, 32767, 1u << chan);
+            if (mute >> chan & 1) continue;
+            sum.data[0] += part.data[0];
+            sum.data[1] += part.data[1];
+        }
+        sum.roundtrip_fp();
+        *left = sum.data[0];
+        *right = sum.data[1];
     }
 
     int envelope(int ch, int op) const {

@@ -8,10 +8,12 @@
  * constructed images); register writes, key-off phases and positions identical to the independent Python reference
  * player (tools/audio/opm/opm_ref.py) in each of 1500 ticks, and its reset batch; deterministic, non-silent output;
  * loop passes stepping through the same positions (= the VGM loop); seeks landing on exact rows with the reference's
- * writes afterwards, and the order fallback; live edits (a re-laid image alternating with the original before every
+ * writes afterwards and sound bit-identical to straight play (fully clocked), the order fallback (deterministic); live
+ * edits (a re-laid image alternating with the original before every
  * tick, a note edit, a tempo edit ahead of and behind the playhead, a cut song, multispeed x2, a header LFO/CSM edit
  * taking effect in the next tick's shared writes); audition (pitch, fine pitch, release until silent, the noise slot
- * only on FM 8, CSM forced off, argument limits); mute (silence, unchanged writes); the LFO's pitch modulation (present
+ * only on FM 8, CSM forced off, argument limits); mute (silence, unchanged writes, unmuting = never muted); the LFO's
+ * pitch modulation (present
  * with PMS > 0, absent with PMS 0); the noise generator on FM 8 (broadband against a sine); CSM retriggering at
  * 62500 / (1024 - NA) Hz; VGM bytes identical to the reference's; the hosts' VGM entry point and its GD3 tag; the
  * "ym2151-opm" ops table as the hosts drive it; costs.
@@ -49,7 +51,7 @@ static int checks = 0;
 #define SECONDS 30
 #define A4 57
 #define A4_HZ 439.88 /* key code $48 + fraction 5 at 4 MHz (docs/AUDIO_ENGINE.md, "OPM: Chip and clock") */
-#define SEEK_BUDGET 12000
+#define SEEK_BUDGET OMM_SEEK_TICKS
 
 /* Slots of the measurement image (build_tone). */
 #define T_SINE 1
@@ -692,9 +694,8 @@ static void test_seek(void) {
             ++n_compare;
         }
     }
-    /* Sound after a seek against straight play from the same tick, 1 s: inside the pre-roll window (<= 60 ticks from
-     * the start) bit-identical; beyond it the chip ran the last second (envelopes under way; the LFO, noise and CSM
-     * timer phases restart there), so the 20 ms loudness envelope over the first 0.5 s stays close. */
+    /* Sound after a seek against straight play from the same tick, 1 s. Seeks are fully clocked (every tick of the way
+     * runs the chip and the resampler as in play), so the sound must be bit-identical at every target. */
     for (int i = 0; i < n_compare; ++i) {
         const int o = compare_targets[i][0], r = compare_targets[i][1], k = ref_row_start(&REF_SONG, o, r);
         OpmMachine* a = omm_create(RATE);
@@ -705,20 +706,13 @@ static void test_seek(void) {
         const int fx = render(a, 60, &x);
         omm_start(m, &g_song, o, r, SEEK_BUDGET, &mode);
         const int fy = render(m, 60, &y);
-        const int win = RATE / 50, wins = RATE / 2 / win;
-        double dev = 0, level = 0;
-        for (int w = 0; w < wins; ++w) {
-            const double rx = rms(x + 2 * w * win, win), ry = rms(y + 2 * w * win, win);
-            dev += (ry - rx) * (ry - rx);
-            level += rx * rx;
-        }
-        const double env = level > 0 ? sqrt(dev / level) : 0;
-        const int identical = fx == fy && !memcmp(x, y, sizeof(float) * 2 * (size_t)fx);
-        if (k <= OMM_PREROLL_TICKS)
-            EXPECT(identical, "seek %d/%d (%d ticks, inside the pre-roll): sound = straight play", o, r, k);
-        else
-            EXPECT(env < 0.15, "seek %d/%d (%d ticks): loudness envelope within %.3f of straight play", o, r, k, env);
-        printf("  %d/%d vs straight play: %s, envelope deviation %.3f\n", o, r, identical ? "identical" : "differs", env);
+        int first = -1;
+        for (int s = 0; s < 2 * (fx < fy ? fx : fy) && first < 0; ++s)
+            if (x[s] != y[s]) first = s / 2;
+        const int identical = fx == fy && first < 0;
+        EXPECT(identical, "seek %d/%d (%d ticks): sound = straight play (frames %d/%d, first difference at frame %d)", o, r,
+               k, fx, fy, first);
+        printf("  %d/%d vs straight play: %s\n", o, r, identical ? "identical" : "differs");
         free(x);
         free(y);
         omm_destroy(a);
@@ -743,6 +737,20 @@ static void test_seek(void) {
     EXPECT(omm_start(m, &g_song, 1, 17, 10, &mode) == OMM_OK && mode == OMM_SEEK_FROM_ORDER, "small budget: fallback");
     omm_position(m, &o, &r, &t);
     EXPECT(o == 1 && r == 17 && t == 0, "budget fallback lands on 1/17");
+    /* The fallback is clocked the same way from its placement: deterministic, sample for sample. */
+    {
+        float *x, *y;
+        const int fx = render(m, 60, &x);
+        OpmMachine* b = omm_create(RATE);
+        int mode_b = -1;
+        omm_start(b, &g_song, 1, 17, 10, &mode_b);
+        const int fy = render(b, 60, &y);
+        EXPECT(mode_b == OMM_SEEK_FROM_ORDER && fx == fy && !memcmp(x, y, sizeof(float) * 2 * (size_t)fx),
+               "order fallback: the same sound on a second machine");
+        free(x);
+        free(y);
+        omm_destroy(b);
+    }
     EXPECT(omm_start(m, &g_song, 4, 0, SEEK_BUDGET, &mode) == OMM_ERR_IMAGE, "order past the song rejected");
     EXPECT(omm_start(m, &g_song, 0, 16, SEEK_BUDGET, &mode) == OMM_ERR_IMAGE, "row past the order rejected");
     omm_destroy(m);
@@ -1086,12 +1094,41 @@ static void test_mute(void) {
     frames = render(m, 30, &buf);
     EXPECT(rms(buf, frames) > 0.005, "unmuted: resumes mid-note (rms %.4f)", rms(buf, frames));
     free(buf);
+    /* Muted channels keep computing (feedback included): after unmuting, the chip sounds as if never muted. Only the
+     * resampler's high-pass history differs (it heard silence), which settles within 100 ms to under 1e-3. */
+    {
+        OpmMachine* a = omm_create(RATE);
+        OpmMachine* b = omm_create(RATE);
+        int ma, mb;
+        omm_start(a, &g_song, 1, 0, SEEK_BUDGET, &ma);
+        omm_start(b, &g_song, 1, 0, SEEK_BUDGET, &mb);
+        for (int k = 0; k < 30; ++k) omm_tick(a, g_out), omm_tick(b, g_out);
+        for (int c = 0; c < OM_CHANNELS; ++c) omm_mute(a, c, 1);
+        for (int k = 0; k < 30; ++k) omm_tick(a, g_out), omm_tick(b, g_out);
+        for (int c = 0; c < OM_CHANNELS; ++c) omm_mute(a, c, 0);
+        int env_bad = 0;
+        for (int c = 0; c < OM_CHANNELS; ++c)
+            for (int op = 0; op < 4; ++op) env_bad += omm_envelope(a, c, op) != omm_envelope(b, c, op);
+        float *x, *y;
+        const int fx = render(a, 30, &x), fy = render(b, 30, &y);
+        double worst = 0;
+        for (int s = 2 * (RATE / 10); s < 2 * (fx < fy ? fx : fy); ++s) {
+            const double d = fabs((double)x[s] - y[s]);
+            if (d > worst) worst = d;
+        }
+        EXPECT(env_bad == 0 && fx == fy && worst < 1e-3,
+               "unmuted = never muted: %d envelopes differ, largest difference %.6f after 100 ms", env_bad, worst);
+        free(x);
+        free(y);
+        omm_destroy(a);
+        omm_destroy(b);
+    }
     omm_start(m, &g_song, 0, 0, SEEK_BUDGET, &mode);
     for (int c = 0; c < OM_CHANNELS; ++c) omm_mute(m, c, 1);
     frames = render(m, 60, &buf);
     EXPECT(rms(buf, frames) < 0.0005, "muted before the first tick: rms %.6f", rms(buf, frames));
     free(buf);
-    omm_start(m, &g_song, 1, 17, SEEK_BUDGET, &mode); /* after a seek's register restore */
+    omm_start(m, &g_song, 1, 17, SEEK_BUDGET, &mode); /* right after a fully clocked seek */
     for (int c = 0; c < OM_CHANNELS; ++c) omm_mute(m, c, 1);
     frames = render(m, 60, &buf);
     EXPECT(rms(buf + 2 * (RATE / 10), frames - RATE / 10) < 0.0005, "muted right after a seek: rms %.6f after 100 ms",

@@ -2437,12 +2437,17 @@ the engine are generated into `backend/OpmPlayerImage.kt` (below, "Preparing").
   **62500 / (1024 − NA) Hz**, 61.0 Hz (NA 0) to 62.5 kHz (NA 1023).
 - **Output**: ymfm's 16-bit sum (14-bit channels, then the YM3012 DAC's 10.3 floating-point round trip) per channel
   pair, resampled band-limited with blip_buf 1.1.0 from 62500 Hz to the host rate (its ~15 Hz high-pass), float =
-  sample / 32768. Muted channels are left out of ymfm's output sum (`fm_engine::output` channel mask) before the DAC
-  round trip; registers and the player are untouched.
+  sample / 32768. Muted channels are left out of the sum before the DAC round trip, but every channel is still computed
+  (one `fm_engine::output` call per channel: ymfm advances a channel's feedback history only while computing its
+  output); registers and the player are untouched.
 - **Chip reset**: `start` and `audition` rebuild the chip in place (`omc_reset`: ymfm's `reset()` leaves the envelope,
   LFO and noise counters running, and a reused machine must sound like a fresh one), as the YM2612's machine does;
-  ymfm allocates its channel and operator objects then. Both run off the audio thread (`chip_engine.h`); `tick`,
-  `apply_image`, `mute` and `release` never allocate.
+  ymfm allocates its channel and operator objects then. Both run off the audio thread on machines the callback is not
+  using: Android `Engine::play`/`Engine::audition` (`audio_engine.cpp`) on the back machine slots, called through JNI
+  from `ChipAudio`'s single "thor-audio-control" executor thread; the Deck's `da_play`/`da_audition`
+  (`deck/native/deck_audio.c`, main thread) on spare machines outside the stream lock, swapped in afterwards; the WAV
+  export's own machine (`chip_wav_open`). The audio callbacks (`Engine::render`, `feed`) call only `tick`,
+  `apply_image`, `mute`, `position` and (Android) `release`, none of which allocates.
 - **Not used**: the CT1/CT2 output pins (`$1B` bits 6-7; on the X68000 they select the ADPCM clock and the floppy
   drive's ready signal — not sound), timer B, IRQs, the test register `$01` (its undocumented bit 1 holds the LFO in
   reset; not exposed), the OKI MSM6258 ADPCM of the X68000 (a separate chip, not the OPM).
@@ -2650,14 +2655,20 @@ Volume, pan, `H` and the shared registers change sounding notes at once. Drums a
 ### Position, seek and live edits
 
 - `position()` is the player's (order, row, tick).
-- `start(order, row, max_ticks)`: as the OPL3's (`OMM_PREROLL_TICKS` = 60 × multispeed, `CHIP_SEEK_FROM_START`
-  within `max_ticks`, else the order fallback `CHIP_SEEK_FROM_ORDER`, its own bound 256 × 256 ticks, a row behind a
-  `Dxx` of the same order unreachable = `CHIP_ERR_IMAGE`). The restore onto the reset chip after the player-only part
-  writes: `$0F`, `$10`, `$11`, `$18`, `$19` (AMD), `$19` (`$80` \| PMD), `$1B`, `$14`, then `$20`-`$27` (always),
-  `$28`-`$3F`, every operator register `$40`-`$FF` (non-zero values, as everything except `$20`-`$27`), then `$08` =
-  `$78` \| *c* for every keyed channel. Within the pre-roll the chip state equals straight play's when the target is
-  ≤ 1 s from the start; beyond, envelopes, the LFO phase, the noise generator and the CSM timer's phase restart 1 s
-  before the target (the same approximation as the OPL3's).
+- `start(order, row, max_ticks)`: **fully clocked**. The player alone first counts the ticks straight play needs from
+  the song start until the next tick starts (order, row) (≤ `max_ticks`; no chip). Then the chip is
+  rebuilt, the player reset, the reset batch written and every one of those ticks runs exactly as in play — the
+  player's writes with the key-off phase, every native chip sample, the resampler's frames read and discarded — so
+  registers, envelopes, operator phases and feedback, the LFO, the noise generator, the timers (CSM) and blip_buf's
+  history at the target are straight play's: the sound from the target is **bit-identical** to straight play's from
+  that tick (`CHIP_SEEK_FROM_START`). There is no register restore and no pre-roll window. Beyond `max_ticks` (Bxx
+  loops, rows behind a jump, far targets): the player is placed at the order's row 0 with the speed straight play
+  starts that order with and the order's earlier rows replay with the chip clocked the same way (`CHIP_SEEK_FROM_ORDER`,
+  its own bound 256 × 256 ticks; the state of play started at that order: instruments, volumes and shared values set
+  in earlier orders are not there, as on every system); a row behind a `Dxx` of the same order is unreachable
+  (`CHIP_ERR_IMAGE`). Cost: one straight-play tick of chip time per tick sought (not yet measured; ymfm's YM2612 costs
+  235 µs per 60 Hz tick on the dev PC), so `OMM_SEEK_TICKS` = Kotlin's `seekTicks` = **3600** (one minute at
+  multispeed 1) rather than the OPL3's 12000; tune it from the bench.
 - `apply_image` (live edit at a tick boundary, realtime-safe): the OPL3's rules 1-4 (clamping, speed, a started row's
   jump and delays re-read, sounding notes keep their registers), and (5) multispeed follows the header from the next
   tick; (6) each shared header field (LFO rate, waveform, AMD, PMD, CSM, timer A) whose value differs between the old
@@ -2676,8 +2687,9 @@ after 10 s.
 
 ### Mute and ops behaviour
 
-`mute(channel 0-7)` leaves the channel out of the output sum (ymfm keeps computing it, so feedback and envelopes run as
-unmuted); the player's writes and the VGM are unchanged. `start`/`audition` clear mutes.
+`mute(channel 0-7)` leaves the channel out of the output sum while ymfm still computes it (envelopes, phases and
+feedback run as unmuted, so unmuting is indistinguishable from never muting); the player's writes and the VGM are
+unchanged. `start`/`audition` clear mutes.
 
 | Op | Behaviour |
 |---|---|
@@ -2685,7 +2697,7 @@ unmuted); the player's writes and the VGM are unchanged. `start`/`audition` clea
 | `start`, `apply_image`, `audition`, `release`, `mute`, `position` | above |
 | `tick` | one tick: 800 frames at 48 kHz (multispeed N: 800 / N), ≤ 1601 at 96 kHz; 0 after a released audition ended |
 
-**Kotlin** (`PlaybackEngine` for `"ym2151-opm"`): `imageSize` 65536, `seekTicks` 12000, `note(n)` = n, `fine` = the
+**Kotlin** (`PlaybackEngine` for `"ym2151-opm"`): `imageSize` 65536, `seekTicks` 3600 (`OMM_SEEK_TICKS`), `note(n)` = n, `fine` = the
 system's fine pitch in 1/64 semitones, `ticksPerSecond` = 60 × multispeed.
 
 ### VGM export
@@ -2729,7 +2741,8 @@ generated table header: the vibrato sine is written out in both implementations.
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opm_machine_test.c`: key code mapping
   for every note, A-4 measured on a sine instrument at 439.88 Hz (± 0.5 Hz), every loader reason by single-byte
   corruption, the machine's writes against the Python reference for 1500 ticks with positions, loop passes against the
-  VGM loop, seeks landing with straight play's writes, live edits (re-laid image, note and tempo edits, cut song, x2,
+  VGM loop, seeks landing with straight play's writes and **bit-identical sound** (every target, compared over 1 s; the
+  order fallback deterministic), mute then unmute equal to never muting, live edits (re-laid image, note and tempo edits, cut song, x2,
   header LFO edit), audition (pitch, `fine`, release, noise only on FM 8, CSM off), mute (silence, writes unchanged),
   LFO pitch modulation measured (PMD/PMS vibrato depth), noise on FM 8 (spectral flatness), CSM (retrigger rate =
   62500 / (1024 − NA) Hz measured from envelope restarts), the VGM bytes against the reference and the export entry

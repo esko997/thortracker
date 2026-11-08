@@ -175,7 +175,10 @@ object OpmSystem : SoundSystem {
         override val driver = "Thor Tracker's OPM player on ymfm 81aec25c (YM2151 at 4 MHz, X68000), blip_buf 1.1.0"
         override val imageSize = OpmPlayerImage.IMAGE_SIZE
 
-        /** At 60 ticks per second, ~3.3 minutes of song. */
+        /**
+         * One minute of song at 60 ticks per second. Every tick of a seek clocks the chip as straight play does, so the
+         * sound from the target is straight play's; further targets fall back to their order's start.
+         */
         override val seekTicks = OpmPlayerImage.SEEK_TICKS
 
         override fun lower(song: Song, out: ByteArray) = OpmLowering.lower(song, out)

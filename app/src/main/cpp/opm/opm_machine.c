@@ -88,37 +88,17 @@ void omm_destroy(OpmMachine* m) {
     free(m);
 }
 
-/* The player's register state onto a freshly reset chip: the shared registers, the channels' output/connection
- * ($20-$27, always: the chip's reset value differs between chips), the rest of the channel and operator registers,
- * then the key-ons of keyed channels. Everything except $20-$27 only where non-zero (the reset chip holds 0). */
-static void restore(OpmMachine* m) {
-    const OmPlayer* p = &m->player;
-    const uint8_t* s = p->shadow;
-    static const int shared[] = {0x0F, 0x10, 0x11, 0x18, 0x19};
-    for (int i = 0; i < 5; ++i)
-        if (s[shared[i]]) omc_write(m->chip, (uint8_t)shared[i], s[shared[i]]);
-    if (s[OMP_SHADOW_PMD]) omc_write(m->chip, 0x19, (uint8_t)(0x80 | s[OMP_SHADOW_PMD]));
-    if (s[0x1B]) omc_write(m->chip, 0x1B, s[0x1B]);
-    if (s[0x14]) omc_write(m->chip, 0x14, s[0x14]);
-    for (int r = 0x20; r < 0x28; ++r) omc_write(m->chip, (uint8_t)r, s[r]);
-    for (int r = 0x28; r < 0x100; ++r)
-        if (s[r]) omc_write(m->chip, (uint8_t)r, s[r]);
-    for (int c = 0; c < OM_CHANNELS; ++c)
-        if (p->ch[c].keyed) omc_write(m->chip, 0x08, (uint8_t)(OMP_KEY_ALL | c));
-}
-
 static int at(const OmPlayer* p, int order, int row) { return p->order == order && p->row == row && p->tick == 0; }
 
 /* Puts the player at the song start (or at the order's row 0 with its start speed: from_order) and runs it alone
- * for `ticks` ticks, or until the next tick starts (order, row) when ticks < 0 (at most `bound` ticks, never
- * leaving the order from_order). Returns the ticks run, or -1 if (order, row) was not reached. */
-static int run_player(OmPlayer* p, const OpmImage* image, int from_order, int order, int row, int ticks, int bound) {
+ * until the next tick starts (order, row): at most `bound` ticks, never leaving the order from_order. Returns the
+ * ticks run, or -1 if (order, row) was not reached. */
+static int count_ticks(OmPlayer* p, const OpmImage* image, int from_order, int order, int row, int bound) {
     if (from_order) omp_place(p, image, order);
     else omp_reset(p, image);
     int n = 0;
-    for (; ticks < 0 ? !at(p, order, row) && n < bound && (!from_order || p->order == order) : n < ticks; ++n)
-        omp_tick(p, image);
-    return ticks >= 0 || at(p, order, row) ? n : -1;
+    for (; !at(p, order, row) && n < bound && (!from_order || p->order == order); ++n) omp_tick(p, image);
+    return at(p, order, row) ? n : -1;
 }
 
 static int run_tick(OpmMachine* m);
@@ -130,38 +110,33 @@ int omm_start(OpmMachine* m, const OpmImage* image, int order, int row, int max_
         return OMM_ERR_IMAGE;
     memcpy(&m->image, image, sizeof m->image);
     m->loaded = 1;
-    chip_reset(m);
     OmPlayer* p = &m->player;
     int from_order = 0;
-    int ticks = run_player(p, &m->image, 0, order, row, -1, max_ticks);
+    /* The player alone (no chip) finds the tick count, so a target beyond the budget costs no chip time before the
+     * fallback. */
+    int ticks = count_ticks(p, &m->image, 0, order, row, max_ticks);
     if (ticks < 0) {
         /* Replaying the order's earlier rows takes < 256 rows x 255 ticks, so it has its own bound instead of
          * max_ticks. A row behind a Dxx/Bxx of the same order is unreachable. */
         from_order = 1;
         if (seek_mode) *seek_mode = OMM_SEEK_FROM_ORDER;
-        ticks = run_player(p, &m->image, 1, order, row, -1, 256 * 256);
+        ticks = count_ticks(p, &m->image, 1, order, row, 256 * 256);
         if (ticks < 0) {
             m->loaded = 0;
             return OMM_ERR_IMAGE;
         }
     }
-    if (ticks == 0 && !from_order) {
-        send_writes(m); /* plain start at 0/0: the init writes as straight play sends them */
-        return OMM_OK;
-    }
-    /* The chip is clocked through the last OMM_PREROLL_TICKS x multispeed ticks before the target (the player's own
-     * writes, output discarded), so held notes and release tails arrive with their envelopes under way. Earlier
-     * ticks run the player alone, then the chip receives its register state. */
-    const int preroll = OMM_PREROLL_TICKS * m->image.info.multispeed;
-    const int silent = ticks > preroll ? ticks - preroll : 0;
-    run_player(p, &m->image, from_order, order, row, silent, 0);
-    if (silent) restore(m);
-    else send_writes(m); /* from the song start (or the placement): the chip's state is straight play's */
-    for (int t = silent; t < ticks; ++t) {
+    /* Fully clocked: the same reset, writes, chip samples and resampler frames as straight play from the start (or
+     * from the placement), output discarded, so the state at the target is straight play's in every respect. */
+    chip_reset(m);
+    if (from_order) omp_place(p, &m->image, order);
+    else omp_reset(p, &m->image);
+    send_writes(m);
+    for (int t = 0; t < ticks; ++t) {
         run_tick(m);
         for (int k = 0; k < 2; ++k) blip_read_samples(m->blip[k], m->pcm, (int)OMM_MAX_TICK_FRAMES, 0);
     }
-    p->writes = p->offs = 0;
+    if (ticks) p->writes = p->offs = 0; /* a plain start at 0/0 keeps its reset batch visible, as straight play sends it */
     m->ticks = 0;
     return OMM_OK;
 }

@@ -2,7 +2,9 @@
  * X68000's 4 MHz clock, native rate 4000000 / 64 = 62500 Hz, resampled band-limited to the host rate with blip_buf.
  * One tick = 1/60 s / multispeed; all of a tick's register writes reach the chip before its samples (the key-off
  * phase one native sample before the rest). Behaviour (seek, live edits, audition, mute) is specified in
- * docs/AUDIO_ENGINE.md, "OPM". No allocation after omm_create. One thread at a time. */
+ * docs/AUDIO_ENGINE.md, "OPM". Allocation only in omm_create and in the chip rebuild of omm_start/omm_audition
+ * (control thread, spare machines: chip_engine.h); tick, apply_image, release and mute never allocate. One thread at a
+ * time. */
 #ifndef THORTRACKER_OPM_MACHINE_H_
 #define THORTRACKER_OPM_MACHINE_H_
 
@@ -20,7 +22,7 @@ extern "C" {
 #define OMM_CLOCK 4000000u        /* X68000: 16 MHz crystal / 4 (MAME x68k.cpp: YM2151(config, m_ym2151, 16_MHz_XTAL / 4)) */
 #define OMM_NATIVE_DIVIDER 64u    /* 32 operator slots x prescale 2 */
 #define OMM_RELEASE_SECONDS 10    /* a released audition ends after this long even if an operator never decays */
-#define OMM_PREROLL_TICKS 60      /* x multispeed: a seek clocks the chip through the last second before its target */
+#define OMM_SEEK_TICKS 3600       /* the suggested start() budget (PlaybackEngine.seekTicks): one minute at 60 Hz, every tick clocked */
 
 enum { OMM_OK = 0, OMM_ERR_IMAGE = -1, OMM_ERR_FAULT = -2 };
 enum { OMM_SEEK_FROM_START = 0, OMM_SEEK_FROM_ORDER = 1 };
@@ -30,11 +32,12 @@ typedef struct OpmMachine OpmMachine;
 OpmMachine* omm_create(uint32_t sample_rate);
 void omm_destroy(OpmMachine* m);
 
-/* Chip reset, then the player is fast-forwarded from the song start until the next tick starts (order, row) - at
- * most max_ticks ticks (OMM_SEEK_FROM_START). Beyond the budget: the player is placed at the order start with the
- * speed straight play starts it with and replays the order's earlier rows (OMM_SEEK_FROM_ORDER). Either way the
- * player runs alone (no chip clocking) until OMM_PREROLL_TICKS x multispeed ticks before the target, the chip
- * receives its register state, and the rest runs with the chip clocked (output discarded). */
+/* Chip and player reset, then the song plays from its start, the chip clocked and resampled exactly as straight play
+ * (output discarded), until the next tick starts (order, row) - at most max_ticks ticks (OMM_SEEK_FROM_START): every
+ * register, envelope, phase, LFO, noise, timer and resampler state then equals straight play's, so the sound from the
+ * target is bit-identical. The tick count is found first with the player alone (no chip). Beyond the budget: the
+ * player is placed at the order start with the speed straight play starts it with and the order's earlier rows are
+ * replayed, chip clocked the same way (OMM_SEEK_FROM_ORDER: the state of play from that order's start). */
 int omm_start(OpmMachine* m, const OpmImage* image, int order, int row, int max_ticks, int* seek_mode);
 /* Live edit at a tick boundary (realtime-safe): the song continues at the same (order, row) in the new data. */
 void omm_apply_image(OpmMachine* m, const OpmImage* image);
