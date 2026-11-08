@@ -233,9 +233,11 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
 - **Sunsoft 5B** (`NesS5bSystem`, `"nes-famistudio-s5b"`, "NES + Sunsoft 5B (FamiStudio)"; a YM2149F): channels 5B Square
-  1-3 (5-7, `ChannelKind.PULSE`, no duty). FamiStudio plays the 5B from the pulses' note table + 1, and the 5B divides
-  by 32 where the pulses divide by 16, so a 5B note sounds an octave below a pulse on the same note (like the
-  triangle); 12-bit periods reach C-1..B-8. 5B sounds (`NesChip.S5B`) have volume, arpeggio and pitch envelopes, a
+  1-3 (5-7, `ChannelKind.PULSE`, no duty). Notes are true pitch, as everywhere (A-4 = 57 = 440 Hz): FamiStudio's engine
+  plays the 5B from the pulses' note table + 1, where the 5B (CPU / 32 period; NESdev, FamiStudio's emu2149 with its
+  clock divider) sounds an octave below a pulse, so a 5B square plays FamiStudio's note + 12 (`NesRules.S5B_OCTAVE`;
+  FamiStudio's text shows those notes an octave above Thor Tracker's, sounding the same) and reaches C-1..B-7; `Pxx`
+  converts to the 5B's periods for the same pitch (`NesRules.s5bFinePitch`). 5B sounds (`NesChip.S5B`) have volume, arpeggio and pitch envelopes, a
   **mixer** envelope (`NesInstrument.mixer`: 0 tone+noise, 1 noise, 2 tone, 3 off; empty = tone, FamiStudio's
   default), a **noise** envelope (0-31) and a hardware envelope (`S5bEnvelope`: shape off or `$08-$0F`, auto period
   with octave -8..8 or a manual period 0-65535). Shared hardware, as FamiStudio's engine 4.5.3 drives it: the highest
@@ -247,9 +249,11 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   envelope period's high / low byte (FamiStudio `EnvelopePeriod`), combined when both are on one row (on any squares;
   alone the other byte is 0; two different values of one byte in a row are an error), lowered as `$5E lo hi` on Square
   1 as FamiStudio's exporter moves them; the next note with attack on a square that played since reloads its sound
-  (FamiStudio's override rule). Deliberate difference: each order's first note re-sends its sound, so a manual period
-  is reloaded there too; FamiStudio's own export differs only when another square loaded a different manual period or
-  an `Ixx`/`Jyy` preceded a legato first note (the check warns about overlapping envelope sounds). Lowering: the 16-byte
+  (FamiStudio's override rule). Each order's first note re-sends its sound (seek, loop, live edits); where that would
+  load a manual period FamiStudio's export does not (another square's manual sound holds the period, or an `Ixx`/`Jyy`
+  came before a legato first note), the lowering first sends `$5E` with the period FamiStudio's stream holds at the
+  end of that frame, simulated over the song's first pass and its loop pass; where the two passes differ there, that
+  order does not re-send the sound, so playback and NSF stay FamiStudio's (`s5b_effects` covers all three). Lowering: the 16-byte
   `instruments_exp` entries (vol, arp, pitch, mixer, noise words, shape, octave or `$80`, period, 0, 0) for every slot;
   mixer/noise envelopes at directory `256 + 2 slot (+1)`, kinds 4/5, mixer values as FamiStudio's processed bits
   (`ProcessMixerEnvelope`); effect envelopes from 384 (`NesPlayer.effectEnvelopes`). Editor: pages volume, arpeggio,

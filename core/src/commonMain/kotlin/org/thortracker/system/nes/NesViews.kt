@@ -703,8 +703,8 @@ object NesInstrumentView : SystemView() {
                 "5B sounds" to listOf(
                     "Chip" to "On songs with the 5B: whether the sound plays on the 2A03's channels or on 5B Square 1-3 ($edit+$lr there). " +
                         "5B sounds have volume, arpeggio, pitch, mixer and noise envelopes and a hardware envelope page; no duty, no DPCM page",
-                    "Pitch" to "A 5B square sounds an octave below a 2A03 pulse on the same note (FamiStudio plays it from the pulses' " +
-                        "note table; the 5B divides by 32 where the pulses divide by 16), and reaches every note C-1..B-8",
+                    "Pitch" to "5B notes sound at their true pitch, like the pulses', from C-1 to B-7 (the 5B divides by 32 where the " +
+                        "pulses divide by 16, so the export plays FamiStudio's note an octave up; FamiStudio shows it an octave higher)",
                     "Mixer" to "Per frame: tone+noise (the square switched by the noise: pitched noise), noise, tone, or off (the channel " +
                         "holds its level). Noisy drums: a short mixer run of noise, then tone, with a falling volume",
                     "Noise" to "The noise period per frame, 0-31 (higher is lower). The three squares share one noise generator: the " +

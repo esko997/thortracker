@@ -180,7 +180,7 @@ class NesLoweringTest {
                         assertTrue(u8(data, p++) in 0..NesRules.dutyMax(expansion, channel))
                     }
                     0x55 -> { assertEquals(NesRules.VRC6_SAW, channel, "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
-                    0x5e -> { assertTrue(s5b && channel == NesRules.S5B_SQUARE1, "5B envelope period off 5B Square 1"); p += 2 }
+                    0x5e -> { assertTrue(s5b, "5B envelope period off the 5B squares"); p += 2 } // effects on Square 1, re-sends on any
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -289,9 +289,11 @@ class NesLoweringTest {
         assertEquals(NesS5bPlayerImage.SONG_BASE, NesPlayer.S5B.songBase)
         assertEquals(0x20, NesPlayer.S5B.nsfChips)
         assertEquals(8, NesS5bSystem.channels.size)
-        assertEquals(46, e.note(song, NesRules.S5B_SQUARE1, 57, 2))
-        assertEquals(-5, e.fine(NesRules.S5B_SQUARE1, 57, 5)) // periods, as on the pulses
-        assertEquals(null, e.auditionProblem(song, NesRules.S5B_SQUARE1, 12, 2, 0)) // C-1: 12-bit periods reach it
+        // True pitch: A-4 is FamiStudio's A-5 there (period 126 + 1: CPU / 32 / 127 = 440.4 Hz, as the pulses' A-4).
+        assertEquals(58, e.note(song, NesRules.S5B_SQUARE1, 57, 2))
+        assertEquals(-4, e.fine(NesRules.S5B_SQUARE1, 57, 8)) // 8 pulse units on A-4 (period 254) = 4 on the 5B's 127
+        assertEquals(null, e.auditionProblem(song, NesRules.S5B_SQUARE1, 12, 2, 0)) // C-1
+        assertTrue(e.auditionProblem(song, NesRules.S5B_SQUARE1, 96, 2, 0)!!.contains("B-7")) // C-8: FamiStudio note 97
         assertTrue(e.auditionProblem(song, NesRules.S5B_SQUARE1, 57, 1, 0)!!.contains("2A03 sound"))
         assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("5B sound"))
         val image = ByteArray(e.imageSize)
@@ -330,7 +332,7 @@ class NesLoweringTest {
         val order0 = u16(data, u16(data, 7 + 2 * sq1) - songBase + 2) - songBase
         // Row 0 instrument + C-4; row 1 empty; row 2 $5E $34 $12 (two rows); row 4 the sound again + E-4; row 5 empty;
         // row 6 $5E $01 $00 and G-4 without the sound.
-        val expected = listOf(0x80, 37 - 12, 0x81, 0x5e, 0x34, 0x12, 0x83, 0x80, 41 - 12, 0x81, 0x5e, 0x01, 0x00, 44 - 12)
+        val expected = listOf(0x80, 49 - 12, 0x81, 0x5e, 0x34, 0x12, 0x83, 0x80, 53 - 12, 0x81, 0x5e, 0x01, 0x00, 56 - 12)
         assertEquals(expected, (expected.indices).map { u8(data, order0 + it) })
         // Squares 2 and 3 carry no period opcode; the text export puts the combined period on Square 1's notes.
         val text = FamiStudioText.text(song)
@@ -339,6 +341,51 @@ class NesLoweringTest {
         // Two different high bytes on one row are an error.
         val clash = tracks.map { it.toMutableList() }.also { it[sq1][2] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_HI, 0x13) }
         assertTrue(NesS5bSystem.errors(song.copy(patterns = listOf(base.patterns[0].copy(tracks = clash)))).any { "I12 and I13" in it || "I13 and I12" in it })
+    }
+
+    /**
+     * An order-start re-send of a manual-period 5B sound FamiStudio's export does not load must leave the shared period
+     * as FamiStudio's stream holds it: `$5E` with another square's period, or with an earlier `Jyy` before a legato note,
+     * goes first; where the song's first pass and its loop pass hold different periods, the order does not re-send.
+     */
+    @Test
+    fun s5bOrderStartResendKeepsFamiStudiosPeriod() {
+        val base = NesS5bSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Tremolo", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
+        bank[1] = NesInstrument("Saw", chip = NesChip.S5B, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = false, period = 2000))
+        val sq1 = NesRules.S5B_SQUARE1
+        val songBase = NesPlayer.S5B.songBase
+        fun pattern(vararg cells: Triple<Int, Int, Cell>) = base.patterns[0].copy(length = 16, tracks = base.patterns[0].tracks.mapIndexed { ch, t ->
+            t.toMutableList().also { track -> for ((c, row, cell) in cells) if (c == ch) track[row] = cell }
+        })
+        fun firstBytes(orders: List<Int>, loop: Int, patterns: List<org.thortracker.model.Pattern>, order: Int, n: Int): List<Int> {
+            val song = base.copy(patterns = patterns, orders = orders, loopOrder = loop, sound = base.nes.copy(instruments = bank))
+            assertEquals(emptyList(), NesS5bSystem.errors(song))
+            val data = FamiStudioLowering.lower(song).data
+            val at = u16(data, u16(data, 7 + 2 * sq1) - songBase + 4 * order + 2) - songBase
+            return (0 until n).map { u8(data, at + it) }
+        }
+        val d4 = 50 + NesRules.S5B_OCTAVE - NesRules.NOTE_OFFSET - 12 // D-4's one-byte note on a 5B square
+        // Square 2's saw holds 2000 when Square 1's sound comes back: $5E 2000, then the sound.
+        val shared = listOf(
+            pattern(Triple(sq1, 0, Cell(48, 1)), Triple(sq1 + 1, 8, Cell(40, 2))),
+            pattern(Triple(sq1, 0, Cell(50, 1))),
+        )
+        assertEquals(listOf(0x5e, 0xd0, 0x07, 0x80, d4), firstBytes(listOf(0, 1), 1, shared, 1, 5))
+        // J55 before a legato note: $5E $0055, then the sound.
+        val legato = listOf(
+            pattern(Triple(sq1, 0, Cell(48, 1)), Triple(sq1, 15, Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_LO, 0x55))),
+            pattern(Triple(sq1, 0, Cell(50, 0))),
+        )
+        assertEquals(listOf(0x43, 0x5e, 0x55, 0x00, 0x80, d4), firstBytes(listOf(0, 1), 1, legato, 1, 6))
+        // Order 1 holds 900 on the first pass, 2000 when the loop returns to it from order 2: no re-send.
+        val loop = listOf(
+            pattern(Triple(sq1, 0, Cell(48, 1))),
+            pattern(Triple(sq1, 0, Cell(50, 1))),
+            pattern(Triple(sq1 + 1, 0, Cell(40, 2))),
+        )
+        assertEquals(listOf(d4), firstBytes(listOf(0, 1, 2), 1, loop, 1, 1))
     }
 
     @Test

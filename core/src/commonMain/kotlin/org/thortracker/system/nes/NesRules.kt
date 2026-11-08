@@ -151,6 +151,11 @@ object NesRules {
         "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
             "raises it); the VRC7 plays the nearest of its frequency steps (fine low down, coarse below C-2). Tuned notes use it.", true)
 
+    /** Fine pitch on the 5B squares: converted per note ([s5bFinePitch]) so one Pxx is one pitch on every channel. */
+    private val S5B_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
+        "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
+            "raises it); the 5B's shorter periods take about half as many steps. Tuned notes use it.", true)
+
     private val BY_CODE = EFFECTS.associateBy { it.code }
 
     fun effect(code: Int): EffectSpec? = BY_CODE[code]
@@ -166,6 +171,35 @@ object NesRules {
     /** The lowest note [channel] plays: A-1 on the 2A03's pulses and triangle, every note elsewhere. */
     fun lowestNote(expansion: NesExpansion, channel: Int): Int =
         if (channel < APU_CHANNELS && pitched(expansion, channel)) LOWEST_TONAL else 1 + NOTE_OFFSET
+
+    /** The highest note [channel] plays: B-8, but B-7 on the 5B squares (they take FamiStudio's note 12 higher). */
+    fun highestNote(expansion: NesExpansion, channel: Int): Int =
+        NOTE_COUNT + NOTE_OFFSET - if (isS5b(expansion, channel)) S5B_OCTAVE else 0
+
+    /**
+     * The 5B's tone divides the CPU clock by 32 × period where the 2A03 pulses divide by 16 × (period + 1), and
+     * FamiStudio's engine plays the 5B from the pulses' note table (period + 1), so a FamiStudio note sounds an octave
+     * lower on a 5B square than on a pulse. Thor Tracker's notes are true pitch (A-4 = 440 Hz on every channel but the
+     * 2A03 triangle, as FamiStudio names it), so a 5B square plays FamiStudio's note this many semitones higher.
+     */
+    const val S5B_OCTAVE = 12
+
+    /** FamiStudio's note byte for absolute [note] on [channel] (the 5B squares an octave up: [S5B_OCTAVE]). */
+    fun fsNote(expansion: NesExpansion, channel: Int, note: Int): Int =
+        fsNote(note) + if (isS5b(expansion, channel)) S5B_OCTAVE else 0
+
+    /**
+     * A Pxx of [fine] (xx - 80, positive = up) on a 5B square playing absolute-pitch FamiStudio note [fsNote] (the pulse's
+     * note; the square plays [S5B_OCTAVE] higher in FamiStudio's table): the period units, positive = up, that bend the
+     * 5B's period (FamiStudio note + 12, + 1) by the ratio [fine] units give a pulse on [fsNote] (period p + 1). The 5B's
+     * periods are about half the pulse's, so one unit there is about two on a pulse.
+     */
+    fun s5bFinePitch(fsNote: Int, fine: Int): Int {
+        if (fine == 0) return 0
+        val pulse = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[fsNote.coerceIn(1, NOTE_COUNT)] + 1.0
+        val square = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[(fsNote + S5B_OCTAVE).coerceIn(1, NOTE_COUNT)] + 1.0
+        return kotlin.math.round(square * fine / pulse).toInt().coerceIn(-127, 127)
+    }
 
     /** The highest duty the duty effect (`Vxx`) takes on [channel]: the VRC6 pulses have eight. */
     fun dutyMax(expansion: NesExpansion, channel: Int): Int =
@@ -196,6 +230,7 @@ object NesRules {
             when {
                 it.code == FX_DUTY && chip == NesChip.VRC6 -> VRC6_DUTY
                 it.code == FX_FINE_PITCH && chip == NesChip.VRC7 -> VRC7_FINE
+                it.code == FX_FINE_PITCH && chip == NesChip.S5B -> S5B_FINE
                 else -> it
             }
         }
@@ -252,6 +287,9 @@ object NesRules {
         if (cell.note >= 0 && pitched(expansion, channel) && cell.note < lowestNote(expansion, channel)) {
             return "$channelName cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
         }
+        if (cell.note >= 0 && cell.note > highestNote(expansion, channel)) {
+            return "$channelName cannot play above ${NesSystem.noteName(highestNote(expansion, channel))} (FamiStudio's highest note sounds B-7 there)"
+        }
         if (cell.note >= 0 && cell.instrument != 0) {
             val ins = song.nes.instruments.getOrNull(cell.instrument - 1)
             val chip = chip(expansion, channel)
@@ -297,6 +335,7 @@ object NesRules {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
                         pitched(expansion, channel) && target < lowestNote(expansion, channel) ->
                             "$fx from $noteName would end below A-1, which $channelName cannot play"
+                        target > highestNote(expansion, channel) -> "$fx from $noteName would end above ${NesSystem.noteName(highestNote(expansion, channel))}"
                         else -> null
                     }
                 }
@@ -341,7 +380,8 @@ object NesRules {
             FX_FINE_PITCH -> (param - FINE_CENTRE).let {
                 when {
                     it == 0 -> "Fine pitch: none"
-                    chip(expansion, channel) == NesChip.VRC7 -> "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
+                    chip(expansion, channel) == NesChip.VRC7 || chip(expansion, channel) == NesChip.S5B ->
+                        "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
                     else -> "Fine pitch ${if (it > 0) "+" else ""}$it units"
                 }
             }

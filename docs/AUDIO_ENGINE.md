@@ -876,10 +876,12 @@ bases and fixtures are unchanged (`prepare_nes_player.py` checks its outputs for
 - **Opcodes**: `$5E lo hi` (5B squares only; not a terminator) sets the shared manual envelope period
   (`famistudio_s5b_env_period`) and `famistudio_s5b_env_override` for the frame, so an instrument loaded later
   in that frame keeps the effect's period. FamiStudio's export moves every envelope period effect to 5B Square
-  1; the walker accepts it on any square and rejects it elsewhere and in other builds. `$4F` (duty) and `$53`
-  (phase reset) are invalid on the squares; `$55` stays VRC6-only.
+  1; Thor Tracker's lowering also puts one before an order-start re-send of a manual-period sound, on that
+  square, with the period FamiStudio's stream holds there; the walker accepts it on any square and rejects it
+  elsewhere and in other builds. `$4F` (duty) and `$53` (phase reset) are invalid on the squares; `$55` stays VRC6-only.
 - **Per frame** (`famistudio_update_s5b_channel_sound`, squares in order 0..2): tone period = note table + pitch
-  envelope, fine pitch and slide **+ 1** (`$00-$05`); volume = envelope × volume track, with bit 4 (E) when the
+  envelope, fine pitch and slide **+ 1** (`$00-$05`; the 5B divides by 32 × period, so a note sounds an octave
+  below a pulse's: Kotlin sends the 5B squares FamiStudio's note + 12, true pitch); volume = envelope × volume track, with bit 4 (E) when the
   instrument has a shape (`$08-$0A`). The last square with a shape and a note sets the hardware envelope: its
   octave `$80` takes the manual period, else its tone period shifted by the octave (left for negative octaves,
   right for positive ones with the last shift rounding an odd value up); `$0B/$0C` are written then, and `$0D` =

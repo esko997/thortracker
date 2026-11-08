@@ -10,7 +10,7 @@ import org.thortracker.system.nes.NesDemoSong.n
  * - intro: 5B Square 1 holds chords with a slow manual-period triangle envelope (a hardware tremolo), sped up by `J80`,
  *   slowed by `I02` and set to `$012C` by `I01` on Square 1 with `J2C` on Square 2 in one row (on the note rows, so the
  *   notes keep the effect's period); 5B noise hats on Square 3;
- * - theme: a 5B tone lead (written an octave up: the 5B sounds an octave below a pulse on the same note) echoed by
+ * - theme: a 5B tone lead echoed by
  *   2A03 Pulse 1, a buzz bass on Square 2 (a saw envelope whose period follows the note, octave 4: in unison with the
  *   tone), 5B noise snare and hats on Square 3 with the 2A03 kick and the DPCM kit;
  * - bridge: arpeggio chords on the lead, the buzz bass turned triangle (octave 5), a falling tone+noise tom fill.
@@ -40,11 +40,12 @@ internal object NesS5bDemoSong {
     private const val SQ3 = NesRules.S5B_SQUARE1 + 2
     private const val CHANNELS = 8
 
-    /** Em C D Bm: pad chord tones (sounding an octave lower), the buzz bass roots, the triangle's roots. */
-    private val PAD_NOTES = intArrayOf(n("E-5"), n("C-5"), n("D-5"), n("B-4"))
-    private val BUZZ_ROOTS = intArrayOf(n("E-3"), n("C-3"), n("D-3"), n("B-2"))
+    /** Em C D Bm: pad chord tones, the buzz bass roots, the triangle's roots (it sounds an octave lower). */
+    private val PAD_NOTES = intArrayOf(n("E-4"), n("C-4"), n("D-4"), n("B-3"))
+    private val BUZZ_ROOTS = intArrayOf(n("E-2"), n("C-2"), n("D-2"), n("B-1"))
     private val TRI_ROOTS = intArrayOf(n("E-3"), n("C-3"), n("D-3"), n("B-2"))
     private val BRIDGE_ROOTS = intArrayOf(n("A-2"), n("B-2"), n("C-3"), n("D-3"))
+    private val BRIDGE_BUZZ_ROOTS = intArrayOf(n("A-1"), n("B-1"), n("C-2"), n("D-2"))
 
     fun build(): Song {
         val base = NesS5bSystem.blank()
@@ -119,7 +120,7 @@ internal object NesS5bDemoSong {
             // 5B Square 1: one pad chord tone a bar, its tremolo the hardware envelope.
             note(SQ1, r, PAD_NOTES[bar], PAD)
             if (bar >= 2) triangleBass(bar, TRI_ROOTS)
-            for (row in listOf(2, 6, 10, 14)) note(SQ3, r + row, "A-5", HAT_5B)
+            for (row in listOf(2, 6, 10, 14)) note(SQ3, r + row, "A-4", HAT_5B)
         }
         // The envelope period on the pad's note rows (so the new notes keep it): fast, slow, then $012C from two squares.
         fx(SQ1, 16, NesRules.FX_ENV_PERIOD_LO, 0x80)
@@ -133,23 +134,22 @@ internal object NesS5bDemoSong {
     }.build()
 
     private fun theme() = PatternBuilder("Theme", CHANNELS).apply {
-        // Written an octave up: the 5B square sounds it at the 2A03 pulses' pitch of the note an octave lower.
         val melody = listOf(
-            0 to "B-5", 4 to "E-6", 6 to "F#6", 8 to "G-6", 12 to "F#6", 14 to "E-6",
-            16 to "E-6", 20 to "G-6", 24 to "C-6", 28 to "E-6",
-            32 to "F#6", 36 to "A-6", 40 to "F#6", 44 to "D-6",
-            48 to "D#6", 52 to "F#6", 56 to "B-5",
+            0 to "B-4", 4 to "E-5", 6 to "F#5", 8 to "G-5", 12 to "F#5", 14 to "E-5",
+            16 to "E-5", 20 to "G-5", 24 to "C-5", 28 to "E-5",
+            32 to "F#5", 36 to "A-5", 40 to "F#5", 44 to "D-5",
+            48 to "D#5", 52 to "F#5", 56 to "B-4",
         )
         for ((row, name) in melody) note(SQ1, row, name, LEAD)
         fx(SQ1, 8, NesRules.FX_VIBRATO, 0x63)
         fx(SQ1, 12, NesRules.FX_VIBRATO, 0x00)
-        fx(SQ1, 24, NesRules.FX_SLIDE_UP, 0x04) // C-6 rising to E-6
+        fx(SQ1, 24, NesRules.FX_SLIDE_UP, 0x04) // C-5 rising to E-5
         fx(SQ1, 56, NesRules.FX_VIBRATO, 0x74)
         cut(SQ1, 62) // releases the lead into its tail
         fx(SQ1, 63, NesRules.FX_VIBRATO, 0x00)
-        // 2A03 Pulse 1: the lead an octave down in the writing (the same sounding pitch), quiet and three rows late.
+        // 2A03 Pulse 1: the lead in unison, quiet and three rows late.
         for ((row, name) in melody) if (row + 3 < 64) {
-            note(PULSE1, row + 3, n(name) - 12, ECHO)
+            note(PULSE1, row + 3, name, ECHO)
             fx(PULSE1, row + 3, NesRules.FX_VOLUME, 0x08)
         }
         for (bar in 0 until 4) {
@@ -160,20 +160,20 @@ internal object NesS5bDemoSong {
 
     private fun bridge() = PatternBuilder("Bridge", CHANNELS).apply {
         // The lead plays arpeggio chords on the beats: A minor, B minor, C major, D major.
-        val chords = listOf("A-5" to 0x37, "B-5" to 0x37, "C-6" to 0x47, "D-6" to 0x47)
+        val chords = listOf("A-4" to 0x37, "B-4" to 0x37, "C-5" to 0x47, "D-5" to 0x47)
         for (bar in 0 until 4) {
             val r = bar * 16
             for (beat in listOf(0, 4, 8, 12)) {
                 note(SQ1, r + beat, chords[bar].first, LEAD)
                 fx(SQ1, r + beat, NesRules.FX_ARPEGGIO, chords[bar].second)
             }
-            buzzBass(bar, BRIDGE_ROOTS, BUZZ_TRI)
+            buzzBass(bar, BRIDGE_BUZZ_ROOTS, BUZZ_TRI)
             triangleBass(bar, BRIDGE_ROOTS)
             if (bar < 3) drums(bar)
         }
         fx(SQ1, 60, NesRules.FX_SLIDE_DOWN, 0x05)
         // Bar 4: a falling tone+noise tom fill on Square 3 (the note pitches the square that gates the noise).
-        for ((row, name) in listOf(48 to "E-5", 51 to "C-5", 54 to "A-4", 57 to "F-4", 60 to "D-4")) note(SQ3, row, name, TOM_5B)
+        for ((row, name) in listOf(48 to "E-4", 51 to "C-4", 54 to "A-3", 57 to "F-3", 60 to "D-3")) note(SQ3, row, name, TOM_5B)
         note(NOISE, 48, KICK_NOTE, KICK)
         note(DPCM, 48, KIT_KICK, DRUM_KIT)
     }.build()
@@ -201,8 +201,8 @@ internal object NesS5bDemoSong {
         val r = bar * 16
         for (row in listOf(0, 8)) note(NOISE, r + row, KICK_NOTE, KICK)
         for ((row, note) in listOf(0 to KIT_KICK, 4 to KIT_SNARE, 8 to KIT_KICK, 12 to KIT_SNARE)) note(DPCM, r + row, note, DRUM_KIT)
-        for (row in listOf(4, 12)) note(SQ3, r + row, "D-5", SNARE_5B)
-        for (row in listOf(2, 6, 10, 14)) note(SQ3, r + row, "A-5", HAT_5B)
+        for (row in listOf(4, 12)) note(SQ3, r + row, "D-4", SNARE_5B)
+        for (row in listOf(2, 6, 10, 14)) note(SQ3, r + row, "A-4", HAT_5B)
     }
 
     /** Noise rates (note mod 16) and starter kit keys, as in the 2A03 demo. */

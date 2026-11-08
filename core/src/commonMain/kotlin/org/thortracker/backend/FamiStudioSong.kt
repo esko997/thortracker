@@ -130,6 +130,7 @@ internal class FsSong(
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
                 val vrc7 = NesRules.isVrc7(expansion, ch)
+                val s5b = NesRules.isS5b(expansion, ch)
                 var current = 0 // instrument slot sounding on the channel
                 var sounding = false // a note is playing and has not been released or stopped
                 var fine = 0
@@ -140,7 +141,7 @@ internal class FsSong(
                     for (r in 0 until pattern.length) {
                         val cell = pattern.tracks[ch][r]
                         if (cell.note >= 0) playing = NesRules.fsNote(cell.note)
-                        val n = convert(cell, ch, vrc7, current, sounding, instruments, fine, playing)
+                        val n = convert(cell, ch, vrc7, s5b, current, sounding, instruments, fine, playing)
                         if (n != null) {
                             if (n.isMusical) {
                                 if (n.instrument != 0) current = n.instrument
@@ -181,14 +182,15 @@ internal class FsSong(
                 song.nes.expansion)
         }
 
-        private fun convert(cell: Cell, ch: Int, vrc7: Boolean, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,
-                            playing: Int): FsNote? {
+        private fun convert(cell: Cell, ch: Int, vrc7: Boolean, s5b: Boolean, current: Int, sounding: Boolean, bank: List<NesInstrument>,
+                            fine: Int, playing: Int): FsNote? {
             if (cell.isBlank) return null
             val n = FsNote()
             val p = cell.param
             when {
                 cell.note >= 0 -> {
-                    n.value = NesRules.fsNote(cell.note)
+                    // The 5B squares play FamiStudio's note an octave up, so the note sounds at its true pitch.
+                    n.value = NesRules.fsNote(cell.note) + if (s5b) NesRules.S5B_OCTAVE else 0
                     if (cell.instrument != 0) n.instrument = cell.instrument
                     else if (current != 0) {
                         n.instrument = current
@@ -214,8 +216,11 @@ internal class FsSong(
                 NesRules.FX_VOLUME -> n.volume = p
                 NesRules.FX_SPEED -> n.speed = p
                 NesRules.FX_NOTE_DELAY -> n.noteDelay = p
-                NesRules.FX_FINE_PITCH -> n.finePitch =
-                    if (vrc7) NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE) else NesRules.FINE_CENTRE - p
+                NesRules.FX_FINE_PITCH -> n.finePitch = when {
+                    vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
+                    s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
+                    else -> NesRules.FINE_CENTRE - p
+                }
                 NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
                 NesRules.FX_SLIDE_DOWN -> n.slideTarget = n.value - p
                 NesRules.FX_NOTE_CUT -> n.cutDelay = p

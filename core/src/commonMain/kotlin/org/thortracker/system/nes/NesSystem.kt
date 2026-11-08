@@ -285,6 +285,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
             channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
+            note > NesRules.highestNote(expansion, channel) ->
+                "${channels[channel].name} cannot play above ${noteName(NesRules.highestNote(expansion, channel))}"
             NesRules.pitched(expansion, channel) && note < NesRules.lowestNote(expansion, channel) ->
                 "${channels[channel].name} cannot play below A-1"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
@@ -298,19 +300,23 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             else -> null
         }
 
-        /** FamiStudio's note numbers: 1 = C-1; on DPCM the sample list entry (1..63). */
+        /** FamiStudio's note numbers: 1 = C-1 (the 5B squares' an octave up, so they sound true pitch); on DPCM the sample list entry (1..63). */
         override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(note)
+            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.fsNote(expansion, channel, note)
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
 
         /**
-         * The engine's fine pitch adds to the period on the 2A03 and VRC6, so raising the pitch is negative; on the
-         * VRC7's FM channels it adds (× 8) to the frequency number, converted as a cell's Pxx is ([NesRules.vrc7FinePitch]).
+         * The engine's fine pitch adds to the period on the 2A03, VRC6 and 5B, so raising the pitch is negative (on the 5B
+         * converted to its own periods, [NesRules.s5bFinePitch]); on the VRC7's FM channels it adds (× 8) to the frequency
+         * number, converted as a cell's Pxx is ([NesRules.vrc7FinePitch]).
          */
-        override fun fine(channel: Int, note: Int, fine: Int): Int =
-            if (NesRules.isVrc7(expansion, channel)) NesRules.vrc7FinePitch(NesRules.fsNote(note), fine) else -fine
+        override fun fine(channel: Int, note: Int, fine: Int): Int = when {
+            NesRules.isVrc7(expansion, channel) -> NesRules.vrc7FinePitch(NesRules.fsNote(note), fine)
+            NesRules.isS5b(expansion, channel) -> -NesRules.s5bFinePitch(NesRules.fsNote(note), fine)
+            else -> -fine
+        }
     }
 
     /**
@@ -318,8 +324,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
      * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic). The VRC7's
      * FM channels convert a Pxx to their nearest frequency step for the same pitch ([NesRules.vrc7FinePitch]): one step
-     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there. The 5B squares play the
-     * pulse table's period + 1 (an octave lower), so the pulse arithmetic holds for them unchanged.
+     * is 0.3 cents at B-8, 80 at C-1, so tuned FM notes are as exact as the chip allows there. The 5B squares convert a
+     * Pxx to their own (about half as long) periods for the same pitch ([NesRules.s5bFinePitch]).
      */
     private object Fine : FinePitch {
         override val name = "Pxx"
@@ -420,9 +426,9 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     private object S5bHelp : NesHelp() {
         override val effectsIntro = super.effectsIntro + listOf(
-            "5B Square 1-3 play 5B sounds (Chip: 5B on the Instrument view): square tones that sound an octave below a 2A03 " +
-                "pulse on the same note (as the triangle does: FamiStudio plays the 5B from the pulses' note table), with a mixer " +
-                "envelope (tone, noise, both, neither), a noise envelope and an optional hardware envelope. No Vxx (no duty).",
+            "5B Square 1-3 play 5B sounds (Chip: 5B on the Instrument view): square tones at true pitch, C-1..B-7 (FamiStudio " +
+                "plays the 5B from the pulses' note table, where it sounds an octave low, so they take FamiStudio's note an octave " +
+                "up), with a mixer envelope (tone, noise, both, neither), a noise envelope and an optional hardware envelope. No Vxx.",
             "The three squares share one noise generator and one envelope generator: the highest square sounding a noise or " +
                 "envelope sound sets them for all (the lane headers tag who does: ENV, NOISE; the check warns when two sounds fight).",
             "Ixx / Jyy (5B squares): the shared envelope period's high / low byte, together on one row (on two squares) for xxyy, " +

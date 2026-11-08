@@ -304,11 +304,15 @@ object NesGoldenSongs {
 
     /**
      * 5B: mixer envelopes over all four settings with loops, noise envelopes, the hardware envelope with saw, triangle
-     * and one-shot shapes at positive, zero and negative auto octaves and a manual period, `Jyy` alone on Square 2 (moved to
+     * and one-shot shapes at positive, zero and negative auto octaves and manual periods, `Jyy` alone on Square 2 (moved to
      * Square 1) and the reload of the manual period at Square 1's next note with attack, `Ixx` and `Jyy` combined from
      * Squares 3 and 2 on a note row (the note keeps it), volume and volume slides, vibrato, slides, arpeggio, fine pitch,
-     * delays, cuts, OFF release and stop, legato between identical sounds, the 5B's lowest and highest notes, the speed
-     * set on a 5B square, and 2A03 channels alongside. One sound has a manual period and only Square 1 plays it.
+     * delays, cuts, OFF release and stop, legato between identical sounds, the 5B's lowest and highest notes (C-1, B-7:
+     * FamiStudio's notes 13 and 96), the speed set on a 5B square, and 2A03 channels alongside. Orders C-E (the loop
+     * from C) hold the order-start re-sends of manual-period sounds FamiStudio's export does not load: order D's first
+     * note while Square 2's manual sound holds the period (`$5E` with Square 2's period first), order E's legato note
+     * after a `J55` (`$5E $0055` first; Square 2's next attack there reloads its saw, FamiStudio's override rule), and order
+     * C's first note, whose period is Square 1's own 900 on the first pass but E's 2000 on the loop pass (no re-send).
      */
     fun s5bEffects(): Song {
         val base = NesS5bSystem.blank()
@@ -329,6 +333,7 @@ object NesGoldenSongs {
         bank[9] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
         bank[10] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
         bank[11] = NesInstrument("Tone twin", volume = NesEnvelope(listOf(13, 12, 11, 10), loop = 3), chip = s5b)
+        bank[12] = NesInstrument("Manual saw", chip = s5b, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = false, period = 2000))
         val sq1 = NesRules.S5B_SQUARE1
         val sq2 = sq1 + 1
         val sq3 = sq1 + 2
@@ -349,8 +354,8 @@ object NesGoldenSongs {
         a.note(sq1, 48, "A-4", 2, NesRules.FX_ARPEGGIO, 0x47)
         a.off(sq1, 52) // release
         a.off(sq1, 54) // already released: stop
-        a.note(sq1, 56, "C-1", 1) // the 5B's lowest note (12-bit period)
-        a.note(sq1, 60, "B-8", 1, NesRules.FX_NOTE_CUT, 0x03) // its highest
+        a.note(sq1, 56, "C-1", 1) // the lowest note
+        a.note(sq1, 60, "B-7", 1, NesRules.FX_NOTE_CUT, 0x03) // the 5B's highest (FamiStudio's B-8 an octave down)
         // Square 2: the mixer walk with volume and a volume slide, then auto-period envelopes.
         a.note(sq2, 0, "G-3", 4, NesRules.FX_VOLUME, 0x09)
         a.note(sq2, 12, "B-3", 4, NesRules.FX_VOLUME_SLIDE, 0xF3)
@@ -376,14 +381,26 @@ object NesGoldenSongs {
         b.note(sq1, 0, "E-5", 1)
         b.note(sq1, 16, "C-5", 1)
         b.off(sq1, 24)
+        b.note(sq1, 28, "C-4", 8) // FamiStudio loads the manual sound: period 900 into order C
         b.note(sq2, 0, "A-2", 5)
         b.note(sq2, 16, "D-3", 4)
         b.note(sq3, 0, "D-5", 3)
         b.note(sq3, 8, "D-5", 3)
         b.note(0, 0, "A-4", 10)
+        val c = P("5B C", length = 16, channels = 8)
+        c.note(sq1, 0, "D-4", 8) // same sound: no load in FamiStudio's export; 900 first pass, 2000 looping: no re-send
+        c.note(sq2, 8, "E-3", 13) // the manual saw: period 2000
+        c.note(0, 0, "D-4", 10)
+        val d = P("5B D", length = 16, channels = 8)
+        d.note(sq1, 0, "E-4", 8) // same sound: FamiStudio keeps Square 2's 2000; the re-send sends $5E 2000 first
+        d.fx(sq1, 12, NesRules.FX_ENV_PERIOD_LO, 0x55) // period $0055, Square 1's override pending
+        val e = P("5B E", length = 16, channels = 8)
+        e.note(sq1, 0, "G-4", 0) // legato: no reload in FamiStudio's export; the re-send sends $5E $0055 first
+        e.note(sq2, 8, "A-2", 13) // same sound, but the J55 is pending on Square 2 too: FamiStudio reloads it (2000)
+        e.note(0, 0, "G-4", 10)
         return base.copy(
-            title = "5B effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
-            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            title = "5B effects", artist = "Golden", ticksPerRow = 4, loopOrder = 2,
+            patterns = listOf(a.build(), b.build(), c.build(), d.build(), e.build()), orders = listOf(0, 1, 2, 3, 4),
             sound = base.nes.copy(instruments = bank),
         )
     }
