@@ -152,7 +152,9 @@ internal class FsSong(
                     if (fine != 0 && !(cell.effect == NesRules.FX_FINE_PITCH && cell.hasEffect)) n.finePitch = 0
                 }
                 cell.note == Cell.CUT -> {
-                    val releases = sounding && current != 0 && bank[current - 1].let { it.volume.release >= 0 && it.volume.loop >= 0 }
+                    // DPCM has no release: OFF stops the sample.
+                    val releases = ch != NesRules.DPCM && sounding && current != 0 &&
+                        bank[current - 1].let { it.volume.release >= 0 && it.volume.loop >= 0 }
                     n.value = if (releases) FsNote.RELEASE else FsNote.STOP
                 }
             }

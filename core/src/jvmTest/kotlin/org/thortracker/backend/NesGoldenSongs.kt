@@ -31,7 +31,7 @@ object NesGoldenSongs {
     }
 
     private class P(val name: String, val length: Int = Songs.ROWS) {
-        val tracks = List(4) { Array(Songs.ROWS) { Cell.BLANK } }
+        val tracks = List(NesSystem.channels.size) { Array(Songs.ROWS) { Cell.BLANK } }
         fun note(ch: Int, row: Int, note: String, ins: Int = 0, fx: Int = 0, param: Int = 0) {
             tracks[ch][row] = Cell(n(note), ins, fx, param)
         }
