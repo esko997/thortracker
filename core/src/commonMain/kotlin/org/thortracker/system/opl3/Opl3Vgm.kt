@@ -1,5 +1,6 @@
 package org.thortracker.system.opl3
 
+import org.thortracker.backend.Opl3PlayerImage
 import org.thortracker.backend.Opl3Lowering
 import org.thortracker.model.Song
 
@@ -12,7 +13,7 @@ data class Opl3VgmTags(val title: String, val author: String, val date: String =
 /**
  * Renders a VGM 1.71 file from an OPL3 image with the native player (`o3_vgm_render` plus the GD3 tag, in
  * `opl3/opl3_vgm.c`): one player implementation for playback and export, proven against the Python reference by the
- * native host test. [image] is [Opl3Lowering.IMAGE_SIZE] bytes from [Opl3System.engine]; rendering stops at the second
+ * native host test. [image] is [Opl3PlayerImage.IMAGE_SIZE] bytes from [Opl3System.engine]; rendering stops at the second
  * arrival at the loop point or after [maxTicks] ticks (then without a loop).
  * @throws IllegalArgumentException with the loader's problem when the image is rejected.
  */
@@ -39,7 +40,7 @@ object Opl3Vgm {
      */
     fun export(song: Song): ByteArray {
         val r = renderer ?: throw IllegalStateException("VGM export needs the native OPL3 player, which this build does not include")
-        val image = ByteArray(Opl3Lowering.IMAGE_SIZE)
+        val image = ByteArray(Opl3PlayerImage.IMAGE_SIZE)
         Opl3Lowering.lower(song, image)
         return r.render(image, maxTicks(song), Opl3VgmTags(song.title, song.artist))
     }

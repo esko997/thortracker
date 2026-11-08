@@ -1,5 +1,7 @@
 package org.thortracker.system.opl3
 
+import org.thortracker.backend.Opl3PlayerImage
+import org.thortracker.backend.Opl3PlayerImage.CHANNELS
 import org.thortracker.backend.Opl3Lowering
 import org.thortracker.model.Cell
 import org.thortracker.model.NumberText
@@ -82,8 +84,8 @@ object Opl3Validator {
         }
         if (out.isEmpty()) {
             val size = Opl3Lowering.dataSize(song)
-            if (size > Opl3Lowering.DATA_CAPACITY) {
-                out += "The song's pattern data needs ${kb(size)}; the OPL3 image holds ${kb(Opl3Lowering.DATA_CAPACITY)}. " +
+            if (size > Opl3PlayerImage.DATA_CAPACITY) {
+                out += "The song's pattern data needs ${kb(size)}; the OPL3 image holds ${kb(Opl3PlayerImage.DATA_CAPACITY)}. " +
                     "Reuse patterns or shorten the song"
             }
         }
@@ -132,7 +134,7 @@ object Opl3Validator {
         val out = ArrayList<String>()
         for (p in song.orders.toSet()) {
             val pattern = song.patterns[p]
-            for (ch in 0 until Opl3Lowering.CHANNELS) {
+            for (ch in 0 until CHANNELS) {
                 val track = pattern.tracks[ch]
                 val first = (0 until pattern.length).firstOrNull { track[it].note >= 0 || track[it].instrument != 0 } ?: continue
                 val cell = track[first]
@@ -152,21 +154,21 @@ object Opl3Validator {
      */
     private fun straightPlay(song: Song, out: Report) {
         val sound = song.opl3
-        val instrument = IntArray(Opl3Lowering.CHANNELS)
-        val keyed = BooleanArray(Opl3Lowering.CHANNELS)
-        val fourOp = BooleanArray(Opl3Lowering.CHANNELS)
-        val chordVoices = IntArray(Opl3Lowering.CHANNELS)
+        val instrument = IntArray(CHANNELS)
+        val keyed = BooleanArray(CHANNELS)
+        val fourOp = BooleanArray(CHANNELS)
+        val chordVoices = IntArray(CHANNELS)
         var speed = song.ticksPerRow
         var warnedPool = 0
         song.orders.forEachIndexed { o, p ->
             val pattern = song.patterns[p]
             val label = Songs.patternLabel(song, p).cap()
             for (row in 0 until pattern.length) {
-                for (ch in 0 until Opl3Lowering.CHANNELS) {
+                for (ch in 0 until CHANNELS) {
                     val c = pattern.tracks[ch][row]
                     for (col in 0..c.more.size) if (c.effectCode(col) == Opl3Rules.FX_SPEED && c.effectParam(col) > 0) speed = c.effectParam(col)
                 }
-                for (ch in 0 until Opl3Lowering.CHANNELS) {
+                for (ch in 0 until CHANNELS) {
                     val c = pattern.tracks[ch][row]
                     val where = "$label, ${Opl3Rules.CHANNEL_NAMES[ch]} row $row"
                     if (c.instrument != 0) instrument[ch] = c.instrument
@@ -199,8 +201,8 @@ object Opl3Validator {
                         if (c.note == Cell.CUT) { keyed[ch] = false; chordVoices[ch] = 0 }
                     }
                 }
-                val pool = 3 + (0 until Opl3Rules.FOUR_OP_CHANNELS).count { !fourOp[it] }
-                val need = (0 until Opl3Lowering.CHANNELS).sumOf { if (keyed[it]) chordVoices[it] else 0 }
+                val pool = Opl3PlayerImage.POOL - Opl3PlayerImage.FOUR_OP_CHANNELS + (0 until Opl3PlayerImage.FOUR_OP_CHANNELS).count { !fourOp[it] }
+                val need = (0 until CHANNELS).sumOf { if (keyed[it]) chordVoices[it] else 0 }
                 if (need > pool && warnedPool < 3) {
                     warnedPool++
                     out += "Order ${hex2(o)} row $row: chords need $need spare voices but ${pool} are free (4-op instruments use up to six); " +
@@ -217,7 +219,7 @@ object Opl3Validator {
         val sound = song.opl3
         add("Instruments" to "${used.size} used, ${sound.instruments.count { it != null }} of ${Opl3System.SLOTS} filled")
         add("Chord shapes" to "${sound.chords.size} of ${Opl3System.MAX_CHORDS}")
-        add("Pattern data" to "${kb(Opl3Lowering.dataSize(song))} of ${kb(Opl3Lowering.DATA_CAPACITY)}")
+        add("Pattern data" to "${kb(Opl3Lowering.dataSize(song))} of ${kb(Opl3PlayerImage.DATA_CAPACITY)}")
     }
 
     private fun kb(bytes: Int) = NumberText.fixed(bytes / 1024.0, 1) + " KB"

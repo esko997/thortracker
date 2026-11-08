@@ -400,6 +400,9 @@ static void row_start(O3Player* p, const Opl3Image* image) {
     }
 }
 
+/* Next row. Every arrival at the loop order's row 0 (the wrap after the last order, a jump, the first pass)
+ * starts it at the speed sequential straight play reaches it with, so every pass of the loop plays alike and
+ * the lowering needs no Fxx there (a row-0 Fxx still applies on top, at the row start). */
 static void advance(O3Player* p, const Opl3Image* image) {
     if (p->jump) {
         p->order = p->jump_order;
@@ -409,6 +412,7 @@ static void advance(O3Player* p, const Opl3Image* image) {
         p->row = 0;
         if (++p->order >= image->info.orders) p->order = image->info.loop;
     }
+    if (p->order == image->info.loop && p->row == 0) p->speed = image->info.start_speed[p->order];
 }
 
 void o3p_tick(O3Player* p, const Opl3Image* image) {

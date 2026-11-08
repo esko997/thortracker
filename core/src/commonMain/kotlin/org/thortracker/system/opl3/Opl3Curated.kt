@@ -199,26 +199,27 @@ object Opl3Curated {
 
     /**
      * Algorithm [index] of [ALGORITHMS]. Owns the mode and algorithm; operator levels follow the new roles: an
-     * operator that stays a carrier or stays a modulator keeps its level, a new carrier takes the old level (lowest
-     * carrier TL) and a new modulator the old brightness (lowest modulator TL, or 63 − 40 when there was none), so the
-     * sound keeps its loudness and brightness. Feedback and every other field are kept.
+     * operator that keeps its role keeps its level, a new carrier takes the old level (lowest carrier TL) and a new
+     * modulator the old brightness (lowest modulator TL, or [DEFAULT_BRIGHTNESS] when there was none); then carriers
+     * and modulators are shifted together so level and brightness read as before. The sound keeps its loudness and
+     * brightness; feedback and every other field are kept.
      */
     fun withAlgorithm(ins: Opl3Instrument, index: Int): Opl3Instrument {
         val a = ALGORITHMS[index.coerceIn(ALGORITHMS.indices)]
         if (a.fourOp == ins.fourOp && a.algorithm == ins.algorithm) return ins
         val c = controls(ins)
-        val carrierTl = 63 - c.level
-        val modulatorTl = if (c.brightness < 0) 63 - DEFAULT_BRIGHTNESS else 63 - c.brightness
+        val brightness = if (c.brightness < 0) DEFAULT_BRIGHTNESS else c.brightness
         val next = ins.copy(fourOp = a.fourOp, algorithm = a.algorithm)
-        return next.mapOperators { i, op ->
+        val roles = next.mapOperators { i, op ->
             val was = i < ins.operatorCount && ins.isCarrier(i)
             val now = next.isCarrier(i)
             when {
                 i < ins.operatorCount && was == now -> op
-                now -> op.copy(tl = carrierTl)
-                else -> op.copy(tl = modulatorTl)
+                now -> op.copy(tl = 63 - c.level)
+                else -> op.copy(tl = 63 - brightness)
             }
         }
+        return withBrightness(withLevel(roles, c.level), brightness)
     }
 
     /** Brightness of a new modulator when the instrument had none (algorithm changes from additive). */
@@ -284,13 +285,15 @@ object Opl3Curated {
     /**
      * Key scaling [index] of [KEY_SCALES] (the chip's KSL codes: 1 = 3 dB/oct, 2 = 1.5 dB/oct): Off = no KSL or KSR;
      * Soft = modulators KSL 2 (higher notes slightly less bright); Strong = modulators KSL 1, carriers KSL 2 (higher
-     * notes also quieter, like acoustic instruments) and KSR on (faster envelopes up high). Owns every played
+     * notes also quieter, like acoustic instruments) and KSR on (faster envelopes up high). An instrument without
+     * modulators (additive) scales its carriers instead: Soft KSL 2, Strong KSL 1 and KSR. Owns every played
      * operator's KSL and KSR.
      */
     fun withKeyScale(ins: Opl3Instrument, index: Int): Opl3Instrument {
         val k = index.coerceIn(KEY_SCALES.indices)
+        val additive = (0 until ins.operatorCount).all { ins.isCarrier(it) }
         return ins.mapOperators { i, op ->
-            val carrier = ins.isCarrier(i)
+            val carrier = ins.isCarrier(i) && !additive
             when (k) {
                 0 -> op.copy(ksl = 0, ksr = false)
                 1 -> op.copy(ksl = if (carrier) 0 else 2, ksr = false)

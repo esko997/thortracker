@@ -20,6 +20,7 @@ import org.thortracker.input.Keys
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
+import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
 import org.thortracker.ui.HostInput
@@ -55,6 +56,7 @@ fun main(args: Array<String>) {
     val appDir = executableDir()
     check(dd_init(renderer, "$appDir/fonts") == 0) { "fonts missing next to the executable" }
 
+    Opl3Vgm.renderer = DeckOpl3Vgm
     val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
     app.script = ArrayDeque(script)
     app.run(quitAfterMs)

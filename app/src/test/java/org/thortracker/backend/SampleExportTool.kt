@@ -3,6 +3,7 @@ package org.thortracker.backend
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
 import java.io.File
 
@@ -27,5 +28,11 @@ object SampleExportTool {
         for (format in SidSystem.exports) File(directory, "raster-run.${format.extension}").writeBytes(format.export(sid))
         File(directory, "raster-run.sidimg").writeBytes(ByteArray(SidSystem.engine.imageSize).also { SidSystem.engine.lower(sid, it) })
         println("Exported ${sid.title} to ${directory.absolutePath}")
+        // The OPL3 demo: project and engine image (its VGM needs the native player: tools/audio/render_opl3_image.sh
+        // glass-harbour.o3img out.wav --vgm glass-harbour.vgm renders both).
+        val opl3 = Opl3System.demo()
+        File(directory, "glass-harbour.thor").writeText(ProjectCodec.encode(opl3), Charsets.UTF_8)
+        File(directory, "glass-harbour.o3img").writeBytes(ByteArray(Opl3System.engine.imageSize).also { Opl3System.engine.lower(opl3, it) })
+        println("Exported ${opl3.title} to ${directory.absolutePath}")
     }
 }
