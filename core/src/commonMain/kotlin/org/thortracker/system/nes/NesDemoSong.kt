@@ -181,7 +181,7 @@ internal object NesDemoSong {
     }
 
     private class PatternBuilder(private val title: String) {
-        private val tracks = List(4) { Array(Songs.ROWS) { Cell.BLANK } }
+        private val tracks = List(NesRules.CHANNEL_NAMES.size) { Array(Songs.ROWS) { Cell.BLANK } }
 
         fun note(channel: Int, row: Int, name: String, instrument: Int) = note(channel, row, n(name), instrument)
 

@@ -97,6 +97,10 @@ object GbSystem : SoundSystem {
         return JsonObject(out)
     }
 
+    /** Game Boy song data has had one shape since project version 8. */
+    override val backendVersion = 1
+    override fun upgradeBackend(song: JsonObject, backendVersion: Int): JsonObject = song
+
     private fun upgradePattern(pattern: JsonElement, delta: Int): JsonElement {
         if (pattern !is JsonObject) return pattern
         val tracks = pattern["tracks"] as? JsonArray ?: return pattern

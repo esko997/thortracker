@@ -9,13 +9,16 @@ import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.nes.NesSystem
 
-/** What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. */
-enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE }
+/**
+ * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
+ * recorded samples (the NES DPCM channel): its notes pick samples, not pitches.
+ */
+enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE }
 
 /**
  * One channel of a [SoundSystem]. [bank] indexes [SoundSystem.banks]: the instruments its cells' sound numbers name.
  * [tonal]: its note numbers are musical pitches, so scales, tunings, Sketch and Fit apply; false for a noise channel,
- * whose note numbers select noise rates.
+ * whose note numbers select noise rates, and a sample channel, whose notes select samples.
  */
 data class ChannelSpec(val name: String, val kind: ChannelKind, val bank: Int, val tonal: Boolean)
 
@@ -218,6 +221,15 @@ interface SoundSystem {
      * @throws IllegalArgumentException when this system has no such files.
      */
     fun upgradeProject(song: JsonObject, version: Int): JsonObject
+
+    /** The version of this system's song data that saves write (the project file's `backendVersion`). */
+    val backendVersion: Int
+
+    /**
+     * Rewrites a song object (already in the current project format) whose system data is [backendVersion] (older
+     * than [SoundSystem.backendVersion]) into the current shape.
+     */
+    fun upgradeBackend(song: JsonObject, backendVersion: Int): JsonObject
     fun demo(): Song
 
     /** Effects usable on [channel]; "no effect" is not an entry (the editor offers it separately). */

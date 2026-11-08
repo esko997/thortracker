@@ -29,7 +29,7 @@ class NesProjectCodecTest {
     fun envelopeNamesTheNesBackendAndNestsTheBank() {
         val root = Json.parseToJsonElement(ProjectCodec.encode(NesSystem.demo())).jsonObject
         assertEquals("nes-famistudio", root["backend"]!!.jsonPrimitive.content)
-        assertEquals(ProjectCodec.BACKEND_VERSION.toString(), root["backendVersion"]!!.jsonPrimitive.content)
+        assertEquals("2", root["backendVersion"]!!.jsonPrimitive.content)
         val song = root["song"]!!.jsonObject
         assertEquals("nes-famistudio", song["backend"]!!.jsonPrimitive.content)
         val instruments = song["sound"]!!.jsonObject["instruments"]!!.jsonArray

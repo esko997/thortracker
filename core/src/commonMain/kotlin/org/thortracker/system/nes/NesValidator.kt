@@ -7,7 +7,6 @@ import org.thortracker.backend.FsSong
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.TuningMap
-import org.thortracker.system.ChannelKind
 
 /**
  * NES/FamiStudio checks, layered like the Game Boy's:
@@ -196,7 +195,7 @@ object NesValidator {
         val out = ArrayList<String>()
         song.patterns.forEachIndexed { p, pattern ->
             pattern.tracks.forEachIndexed { ch, track ->
-                if (NesRules.kind(ch) == ChannelKind.NOISE) return@forEachIndexed
+                if (!NesRules.pitched(ch)) return@forEachIndexed
                 for (row in 0 until pattern.length) {
                     val cell = track[row]
                     if (cell.note < 0) continue

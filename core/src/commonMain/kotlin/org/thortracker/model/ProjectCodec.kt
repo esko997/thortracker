@@ -37,12 +37,15 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * naming. 9 makes every note (and the tuning root) scientific pitch: 0 = C0 (16.35 Hz), 57 = A4 = 440 Hz, so the same
  * number is the same pitch on every system. Older files are upgraded by their system
  * ([org.thortracker.system.SoundSystem.upgradeProject]; versions 1-7 are Game Boy songs). Every save writes the
- * current version. `backendVersion` stays 1.
+ * current version.
+ *
+ * `backendVersion` is the version of the system's own song data ([org.thortracker.system.SoundSystem.backendVersion]),
+ * upgraded by [org.thortracker.system.SoundSystem.upgradeBackend]: Game Boy 1; NES 2 adds the DPCM channel (a fifth
+ * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
     const val VERSION = 9
-    const val BACKEND_VERSION = 1
 
     private val json = Json {
         encodeDefaults = true
@@ -89,7 +92,7 @@ object ProjectCodec {
         val sound = json.encodeToJsonElement(system.soundSerializer as KSerializer<SystemSound>, song.sound)
         val file = SongFile(song.title, song.artist, song.comment, system.id, song.ticksPerRow, song.loopOrder, song.patterns,
             song.orders, sound, song.tuning, song.newPatternScale, song.parkedOrders)
-        return json.encodeToString(Envelope.serializer(), Envelope(FORMAT, VERSION, system.id, BACKEND_VERSION, file))
+        return json.encodeToString(Envelope.serializer(), Envelope(FORMAT, VERSION, system.id, system.backendVersion, file))
     }
 
     /** @throws ProjectFormatException for anything that is not a readable, structurally valid project. */
@@ -112,8 +115,8 @@ object ProjectCodec {
         )
         val backendVersion = (root["backendVersion"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
             ?: throw ProjectFormatException("Backend data version is missing or not a number")
-        if (backendVersion !in 1..BACKEND_VERSION) {
-            throw ProjectFormatException("${system.name} data version $backendVersion is not supported; this version reads 1-$BACKEND_VERSION")
+        if (backendVersion !in 1..system.backendVersion) {
+            throw ProjectFormatException("${system.name} data version $backendVersion is not supported; this version reads 1-${system.backendVersion}")
         }
         if (version < SCALE_VERSION && hasPatternKey(root, "scale")) {
             throw ProjectFormatException("Project version $version cannot contain pattern scales (added in version $SCALE_VERSION)")
@@ -134,9 +137,11 @@ object ProjectCodec {
         if (version < PARKED_VERSION && parked is JsonArray && parked.isNotEmpty()) {
             throw ProjectFormatException("Project version $version cannot contain parked orders (added in version $PARKED_VERSION)")
         }
-        val upgraded = (root["song"] as? JsonObject)?.takeIf { version < PITCH_VERSION }?.let { song ->
+        val upgraded = (root["song"] as? JsonObject)?.takeIf { version < PITCH_VERSION || backendVersion < system.backendVersion }?.let { song ->
             try {
-                JsonObject(root + ("song" to system.upgradeProject(song, version)))
+                val current = if (version < PITCH_VERSION) system.upgradeProject(song, version) else song
+                val data = if (backendVersion < system.backendVersion) system.upgradeBackend(current, backendVersion) else current
+                JsonObject(root + ("song" to data))
             } catch (e: IllegalArgumentException) {
                 throw ProjectFormatException("Project data is invalid: ${e.message}", e)
             }
