@@ -4,16 +4,16 @@
  * generated/nes_player_image.h (owned by tools/audio/prepare_nes_player.py).
  *
  * An image is NES_IMAGE_HEADER_SIZE header bytes, the envelope directory (NES_IMAGE_MAX_ENVELOPES
- * entries of 4 bytes) and the region: CPU memory NES_SONG_BASE..NES_SAMPLE_END, song data from
- * NES_SONG_BASE (at most NM_SONG_SIZE bytes, below NES_SAMPLE_BASE) and DPCM sample bytes from
- * NES_SAMPLE_BASE (at most NM_SAMPLE_SIZE). Header, little-endian:
+ * entries of 4 bytes) and the region: CPU memory NES_SONG_BASE..NES_REGION_END, shared by the song
+ * data (from NES_SONG_BASE upward) and one block of DPCM samples (64-aligned, at or above
+ * NES_SAMPLE_BASE; the song data ends at or below it). Header, little-endian:
  *   0 "TTNS"   4 u32 player id   8 u16 song base   10 u16 data size   12 u8 song index
  *   13 u8 layout: NM_LAYOUT_THOR (Thor Tracker lowering) or NM_LAYOUT_RAW (any FamiTracker-tempo
  *      FamiStudio export; play, seek from the start and byte-identical live edits only)
  *   14 u8 instrument count (Thor)   15 u8 DPCM list entries (Thor)
  *   16 u16 envelope count (Thor: highest used index + 1)
  *   18 u8 rows per order, 19 u8 order count, 20 u8 loop order or 0xFF (raw only; position/seek)
- *   22 u16 sample bytes used from NES_SAMPLE_BASE (both layouts)
+ *   22 u16 sample block bytes, 24 u16 sample block address (both 0: no samples; both layouts)
  *   other bytes zero.
  * Pure functions; no allocation. */
 #ifndef THORTRACKER_NES_IMAGE_H_
@@ -27,18 +27,15 @@
 extern "C" {
 #endif
 
-#define NM_SONG_SIZE (NES_SONG_END - NES_SONG_BASE)
-#define NM_SAMPLE_SIZE (NES_SAMPLE_END - NES_SAMPLE_BASE)
+#define NM_REGION_SIZE (NES_REGION_END - NES_SONG_BASE)
 #define NM_REGION_OFFSET (NES_IMAGE_HEADER_SIZE + NES_IMAGE_DIRECTORY_SIZE)
-#define NM_SAMPLE_OFFSET (NM_REGION_OFFSET + NES_SAMPLE_BASE - NES_SONG_BASE) /* image offset of NES_SAMPLE_BASE */
 #define NM_MAGIC 0x534E5454u /* "TTNS" little-endian */
 #define NM_CHANNELS 5        /* pulse 1, pulse 2, triangle, noise, DPCM (FamiStudio order) */
 #define NM_DPCM 4            /* the DPCM channel */
 #define NM_LOADED 0x4C4F4144u
 
 _Static_assert(NM_REGION_OFFSET + NES_IMAGE_REGION_SIZE == NES_IMAGE_SIZE, "image = header + directory + region");
-_Static_assert(NES_SONG_END <= NES_SAMPLE_BASE && NES_SAMPLE_BASE - NES_SONG_BASE + NM_SAMPLE_SIZE == NES_IMAGE_REGION_SIZE,
-               "the region is the song data then the samples, as in CPU memory");
+_Static_assert(NM_REGION_SIZE == NES_IMAGE_REGION_SIZE, "the region is CPU memory NES_SONG_BASE..NES_REGION_END");
 _Static_assert(NES_SAMPLE_BASE == 0xC000, "$4012 addresses samples from $C000");
 
 enum { NM_LAYOUT_RAW = 0, NM_LAYOUT_THOR = 1 };
@@ -50,7 +47,7 @@ typedef struct NesImageInfo {
     uint8_t layout, orders, loop, instruments; /* loop 0xFF: the song ends (raw only) */
     uint8_t mappings;                      /* Thor: DPCM list entries (stream notes 1..mappings) */
     uint16_t size, envelopes, tempo_ntsc;
-    uint16_t samples;                      /* sample bytes used from NES_SAMPLE_BASE */
+    uint16_t samples, sample_start;        /* the sample block: bytes and address (0, 0: none) */
     uint16_t dpcm_list;                    /* Thor: address of DPCM list entry 1 (the header word + 4) */
     uint16_t streams[NM_CHANNELS];         /* Thor: order-stream address of each channel */
     uint8_t rows[NES_IMAGE_MAX_ORDERS];    /* rows of each order (raw: the header's constant, or 0) */
@@ -68,7 +65,8 @@ typedef struct NesImage {
 
 /* Validates image->bytes and fills image->info. Returns 0, or -1 with info.problem set. */
 int nm_load_image(NesImage* image);
-/* Raw-layout image around song-region bytes and sample bytes (tests and tools); then call nm_load_image. */
+/* Raw-layout image around song bytes and sample bytes (tests and tools; samples at NES_SAMPLE_BASE, as
+ * FamiStudio's .dmc with FAMISTUDIO_DPCM_PTR 0); then call nm_load_image. */
 void nm_build_raw_image(NesImage* image, const uint8_t* song, uint32_t size, const uint8_t* samples, uint32_t sample_size,
                         int song_index, int rows_per_order, int order_count, int loop_order);
 

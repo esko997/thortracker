@@ -7,8 +7,8 @@
  *                NES_AUDITION_RAM
  *   $4000-$4017  APU (writes timestamped to the CPU cycle), $4015 status
  *   $8000-...    player: NSF-style entry table + engine code and tables
- *   NES_SONG_BASE-NES_SONG_END  song region: the image's FamiStudio music data
- *   NES_SAMPLE_BASE-$FFF9  sample region: the image's DPCM samples (the DMC reads them by DMA)
+ *   NES_SONG_BASE-NES_REGION_END  the image's region: FamiStudio music data from NES_SONG_BASE up and
+ *                its DPCM sample block (64-aligned, >= $C000) above it; the DMC reads samples by DMA
  *   $FFFA-$FFFF  vectors -> NES_PLAYER_TRAP (an interrupt or BRK is a driver fault)
  * Everything else reads 0 and ignores writes.
  *

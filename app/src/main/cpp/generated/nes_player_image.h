@@ -16,10 +16,9 @@
 #define NES_PLAYER_PLAY 0x8003 /* one 60 Hz engine frame */
 #define NES_PLAYER_IDLE 0x8006 /* return address of host-called routines */
 #define NES_PLAYER_TRAP 0x8009 /* BRK/IRQ/NMI vector target: a fault */
-#define NES_SONG_BASE 0x8C00 /* song data (FamiStudio format) from here ... */
-#define NES_SONG_END 0xC000 /* ... up to here (exclusive) */
-#define NES_SAMPLE_BASE 0xC000 /* DPCM samples ($4012 = (address - $C000) / 64) from here ... */
-#define NES_SAMPLE_END 0xFFFA /* ... up to the vectors (exclusive) */
+#define NES_SONG_BASE 0x8C00 /* song data (FamiStudio format) from here upward */
+#define NES_REGION_END 0xFFFA /* song data and samples share NES_SONG_BASE..here (exclusive; vectors follow) */
+#define NES_SAMPLE_BASE 0xC000 /* lowest sample address ($4012 = (address - $C000) / 64) */
 #define NES_ZP_SIZE 0x0008
 #define NES_RAM_BASE 0x0200
 #define NES_RAM_SIZE 0x00AC
@@ -28,10 +27,11 @@
 #define NES_NUM_PITCH_ENVELOPES 3
 
 /* Image layout (docs/AUDIO_ENGINE.md, "Image layout"): header, envelope directory, region = CPU memory
- * NES_SONG_BASE..NES_SAMPLE_END (song data from NES_SONG_BASE, samples from NES_SAMPLE_BASE). */
+ * NES_SONG_BASE..NES_REGION_END: song data from NES_SONG_BASE, the sample block at its start (header). */
 #define NES_IMAGE_HEADER_SIZE 32
 #define NES_IMAGE_HEADER_DPCM_COUNT 15 /* u8: DPCM list entries (Thor layout) */
-#define NES_IMAGE_HEADER_SAMPLE_SIZE 22 /* u16: sample bytes used from NES_SAMPLE_BASE */
+#define NES_IMAGE_HEADER_SAMPLE_SIZE 22 /* u16: bytes of the sample block (0: none) */
+#define NES_IMAGE_HEADER_SAMPLE_START 24 /* u16: its address (0: none; 64-aligned, >= NES_SAMPLE_BASE) */
 #define NES_IMAGE_MAX_ENVELOPES 512
 #define NES_IMAGE_DIRECTORY_SIZE 2048
 #define NES_IMAGE_MAX_INSTRUMENTS 64

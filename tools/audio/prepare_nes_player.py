@@ -73,10 +73,9 @@ DPCM_SONG_DMC = NES_DIR / "dpcm_test_ca65.dmc"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 
 PLAYER_BASE = 0x8000
-SONG_BASE = 0x8C00  # the page after the player (checked): FamiStudio data, below the samples
-SONG_END = 0xC000
-SAMPLE_BASE = 0xC000  # DPCM samples ($4012 addresses $C000 + 64 n), up to the vectors
-SAMPLE_END = 0xFFFA
+SONG_BASE = 0x8C00  # the page after the player (checked): song data grows upward from here
+REGION_END = 0xFFFA  # song data and samples share SONG_BASE..REGION_END; the vectors follow
+SAMPLE_BASE = 0xC000  # lowest sample address ($4012 addresses $C000 + 64 n); samples sit at the top of the region
 SAMPLE_ALIGN = 64
 MAX_SAMPLE_BYTES = 16 * 255 + 1
 MAX_DPCM_MAPPINGS = 63  # FamiStudio without FAMISTUDIO_USE_DPCM_EXTENDED_RANGE
@@ -84,14 +83,15 @@ DPCM_PTR = (SAMPLE_BASE & 0x3FFF) >> 6  # FamiStudio's FAMISTUDIO_DPCM_PTR for s
 AUDITION_RAM = 0x07C0  # one-note audition streams written by the native machine; engine RAM must end below
 ENTRY = {"nes_player_init": 0x8000, "nes_player_play": 0x8003, "nes_player_idle": 0x8006, "nes_player_trap": 0x8009}
 
-# Image layout (docs/AUDIO_ENGINE.md): header, envelope directory, region = CPU memory SONG_BASE..SAMPLE_END
-# (song data from SONG_BASE, sample bytes from SAMPLE_BASE).
+# Image layout (docs/AUDIO_ENGINE.md): header, envelope directory, region = CPU memory SONG_BASE..REGION_END
+# (song data from SONG_BASE up; samples in one block from a 64-aligned start >= SAMPLE_BASE; song end <= start).
 HEADER_SIZE = 32
 HEADER_DPCM_COUNT = 15  # u8: entries in the FamiStudio DPCM list (Thor layout)
-HEADER_SAMPLE_SIZE = 22  # u16: sample bytes used from SAMPLE_BASE
+HEADER_SAMPLE_SIZE = 22  # u16: bytes of the sample block (0: none)
+HEADER_SAMPLE_START = 24  # u16: address of the sample block (0: none)
 MAX_ENVELOPES = 512
 DIRECTORY_SIZE = 4 * MAX_ENVELOPES
-REGION_SIZE = SAMPLE_END - SONG_BASE
+REGION_SIZE = REGION_END - SONG_BASE
 IMAGE_SIZE = HEADER_SIZE + DIRECTORY_SIZE + REGION_SIZE
 MAX_INSTRUMENTS = 64
 MAX_ORDERS = 255
@@ -329,15 +329,17 @@ def split_orders(entries, rows_per_order: int, orders: int, channel: int):
 # ---- Thor Tracker layout builder ------------------------------------------------------------------
 
 def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plain", edits=(), env_edits=None,
-                     sample_edits=None) -> bytes:
+                     sample_edits=None, samples_top: bool = False, song_end: int = 0) -> bytes:
     """Lays `song` (instruments, envelopes, per-order channel entries, DPCM list and samples) out as a Thor
     Tracker image. arrangement "plain": table, DPCM list, envelopes, order streams, patterns, samples exactly
-    where FamiStudio's .dmc has them; "moved": patterns (reversed), envelopes, order streams (shuffled), DPCM
-    list, table, with gaps, and the samples in reverse order 64 bytes apart, so every address differs.
-    Directory indices and mapping indices are identical in both (envelopes stay ascending by index, as the
-    layout requires). edits: [(order, channel, entry index, old byte, new byte)] patched into that row's
-    bytes; env_edits: {directory index: (old bytes, new bytes)}; sample_edits: {$4012 offset of a sample in
-    the .dmc: (byte index, new byte)}."""
+    where FamiStudio's .dmc has them ($C000); "moved": patterns (reversed), envelopes, order streams (shuffled),
+    DPCM list, table, with gaps, and the samples in reverse order packed at the top of the region, so every
+    address differs. samples_top packs the samples at the top with a plain arrangement; song_end (an address)
+    puts a zero gap before the patterns so the song data ends exactly there (0: no gap; "sample start": at
+    the sample block). Directory indices and mapping indices are identical in all (envelopes stay ascending by
+    index, as the layout requires). edits: [(order, channel, entry index, old byte, new byte)] patched into
+    that row's bytes; env_edits: {directory index: (old bytes, new bytes)}; sample_edits: {$4012 offset of a
+    sample in the .dmc: (byte index, new byte)}."""
     envs = song["envelopes"]  # directory index -> (kind, bytes)
     instruments = song["instruments"]  # [(vol, arp, duty, pitch) directory indices]
     orders = song["orders"][:order_count]
@@ -358,6 +360,24 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
                 unique.append(key)
     sizes = {f"pat{i}": sum(len(b) for b, _ in key) for i, key in enumerate(unique)}
     dpcm = song["dpcm"]  # FamiStudio list entries (4 bytes each, $4012 offsets as in song["dmc"])
+    # Samples: each list entry's (offset, length) range of the .dmc; ranges of different mappings coincide.
+    dmc = bytearray(song["dmc"])
+    for off, (i, b) in (sample_edits or {}).items():
+        dmc[64 * off + i] = b
+    ranges = sorted({(dpcm[k], 16 * dpcm[k + 1] + 1) for k in range(0, len(dpcm), 4)})
+    if not dpcm:
+        samples, start, where = bytearray(), 0, {}
+    elif arrangement == "plain" and not samples_top:
+        samples, start, where = dmc, SAMPLE_BASE, {off: off for off, _ in ranges}
+    else:  # one block at the top: each sample from a 64-byte boundary, the block's start as high as it fits
+        samples, rel = bytearray(), {}
+        for off, length in reversed(ranges):
+            rel[off] = (len(samples) + 63) // 64 * 64
+            samples[len(samples):] = bytes(rel[off] - len(samples)) + dmc[64 * off:64 * off + length]
+        start = (REGION_END - len(samples)) // 64 * 64
+        where = {off: (start - SAMPLE_BASE + r) // 64 for off, r in rel.items()}
+    if song_end == "sample start":
+        song_end = start
     stream_size = 4 * len(orders) + 3
     names = (["header", "table", "dpcm"] + [f"env{i}" for i in sorted(envs)] + [f"ch{c}" for c in range(5)]
              + [f"pat{i}" for i in range(len(unique))])
@@ -370,6 +390,14 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
     for i, name in enumerate(names):
         addr[name] = pc
         pc += size_of[name] + (3 + i % 5 if arrangement == "moved" and name != "header" else 0)
+    if song_end:  # the patterns move up so the data ends at song_end
+        gap = song_end - pc
+        if gap < 0:
+            sys.exit("song data does not fit below song_end")
+        first = names.index(next(n for n in names if n.startswith("pat")))
+        for name in names[first:]:
+            addr[name] += gap
+        pc = song_end
     region = bytearray(pc - SONG_BASE)
 
     def put(at, data):
@@ -411,25 +439,13 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
         if bytes(region[at:at + len(old)]) != old or len(new) != len(old):
             sys.exit("envelope edit target mismatch")
         region[at:at + len(new)] = new
-    # Samples: each list entry's (offset, length) range of the .dmc; ranges of different mappings coincide.
-    dmc = bytearray(song["dmc"])
-    for off, (i, b) in (sample_edits or {}).items():
-        dmc[64 * off + i] = b
-    ranges = sorted({(dpcm[k], 16 * dpcm[k + 1] + 1) for k in range(0, len(dpcm), 4)})
-    if arrangement == "plain":
-        samples, where = dmc, {off: off for off, _ in ranges}
-    else:
-        samples, where, at = bytearray(), {}, 1
-        for off, length in reversed(ranges):
-            where[off] = at
-            samples[len(samples):] = bytes(64 * at - len(samples)) + dmc[64 * off:64 * off + length]
-            at = (len(samples) + 63) // 64 + 1
     dpcm_moved = bytearray(dpcm)
     for k in range(0, len(dpcm), 4):
         dpcm_moved[k] = where[dpcm[k]]
     put(addr["dpcm"], dpcm_moved)
     if samples:
-        region[len(region):] = bytes(SAMPLE_BASE - SONG_BASE - len(region)) + samples
+        region[len(region):] = bytes(start - SONG_BASE - len(region)) + samples
+    region[len(region):] = bytes(REGION_SIZE - len(region))
 
     header = bytearray(HEADER_SIZE)
     header[0:4] = b"TTNS"
@@ -442,11 +458,12 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
     header[16:18] = word(max(envs) + 1)
     header[HEADER_DPCM_COUNT] = len(dpcm) // 4
     header[HEADER_SAMPLE_SIZE:HEADER_SAMPLE_SIZE + 2] = word(len(samples))
+    header[HEADER_SAMPLE_START:HEADER_SAMPLE_START + 2] = word(start)
     directory = bytearray(DIRECTORY_SIZE)
     for i, (kind, data) in envs.items():
         directory[4 * i:4 * i + 4] = word(addr[f"env{i}"]) + bytes((len(data), kind))
-    if pc > SONG_END or SAMPLE_BASE + len(samples) > SAMPLE_END:
-        sys.exit("layout fixture does not fit the song or sample region")
+    if pc > (start or REGION_END) or start + len(samples) > REGION_END or (samples and start < SAMPLE_BASE):
+        sys.exit("layout fixture does not fit the region")
     return bytes(header + directory + region)
 
 
@@ -677,7 +694,7 @@ def main() -> None:
     parsed, song_labels = parse_famistudio_ca65(ca65_text, SONG_BASE)
     if parsed != song:
         sys.exit("parser output differs from the ld65 link of ft_test_ca65.s")
-    if len(song) > SONG_END - SONG_BASE or song[0] != 1:
+    if len(song) > REGION_SIZE or song[0] != 1:
         sys.exit("test song: one song that fits the region expected")
     if "FAMISTUDIO_USE_FAMITRACKER_TEMPO" not in ca65_text:
         sys.exit("test song export is not FamiTracker tempo")
@@ -700,6 +717,9 @@ def main() -> None:
         sys.exit("edit target row not found")
     edited = build_thor_image(thor, orders, loop, edits=[(2, 0, entry[0], 0x30, 0x33)], env_edits=env_edit)
     short = build_thor_image(thor, 2, 1)
+    # Big: the patterns at the top, so the song data fills the whole region ($8C00-$FFF9, no samples): more than
+    # 0.9.0's 24570-byte song region, with its patterns read from above $C000.
+    big = build_thor_image(thor, orders, loop, song_end=REGION_END)
 
     # DPCM test song: the same checks, plus its samples (.dmc at SAMPLE_BASE) and the DMC writes the text asks for.
     dpcm_text = DPCM_SONG_CA65.read_text()
@@ -708,7 +728,7 @@ def main() -> None:
     parsed, dpcm_labels = parse_famistudio_ca65(dpcm_text, SONG_BASE, DPCM_SONG_CA65.name)
     if parsed != dpcm_song:
         sys.exit("parser output differs from the ld65 link of dpcm_test_ca65.s")
-    if SAMPLE_BASE + len(dmc) > SAMPLE_END or "FAMISTUDIO_USE_DELTA_COUNTER" not in dpcm_text:
+    if SAMPLE_BASE + len(dmc) > REGION_END or "FAMISTUDIO_USE_DELTA_COUNTER" not in dpcm_text:
         sys.exit("DPCM test song: samples that fit and the delta counter expected")
     dthor, drows, dorders, dloop = thor_song_from_export(dpcm_song, dpcm_labels, dpcm_txt, player_id, dmc)
     dspeeds = row_speeds(dpcm_txt, drows, dorders)
@@ -722,6 +742,8 @@ def main() -> None:
     # Edit: one byte in the middle of the Kick (the sample at .dmc offset 0), inverted.
     edited_byte = 100
     dedited = build_thor_image(dthor, dorders, dloop, sample_edits={0: (edited_byte, dmc[edited_byte] ^ 0xFF)})
+    # Boundary: samples packed at the top, song data (patterns moved up) ending exactly at the sample block.
+    dboundary = build_thor_image(dthor, dorders, dloop, samples_top=True, song_end="sample start")
 
     sym_lines = "\n".join(f"#define NES_{s.upper()} 0x{syms[s]:04X}" for s in SYMBOLS)
     OUT_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
@@ -742,10 +764,9 @@ def main() -> None:
 #define NES_PLAYER_PLAY 0x{ENTRY['nes_player_play']:04X} /* one 60 Hz engine frame */
 #define NES_PLAYER_IDLE 0x{ENTRY['nes_player_idle']:04X} /* return address of host-called routines */
 #define NES_PLAYER_TRAP 0x{ENTRY['nes_player_trap']:04X} /* BRK/IRQ/NMI vector target: a fault */
-#define NES_SONG_BASE 0x{SONG_BASE:04X} /* song data (FamiStudio format) from here ... */
-#define NES_SONG_END 0x{SONG_END:04X} /* ... up to here (exclusive) */
-#define NES_SAMPLE_BASE 0x{SAMPLE_BASE:04X} /* DPCM samples ($4012 = (address - $C000) / 64) from here ... */
-#define NES_SAMPLE_END 0x{SAMPLE_END:04X} /* ... up to the vectors (exclusive) */
+#define NES_SONG_BASE 0x{SONG_BASE:04X} /* song data (FamiStudio format) from here upward */
+#define NES_REGION_END 0x{REGION_END:04X} /* song data and samples share NES_SONG_BASE..here (exclusive; vectors follow) */
+#define NES_SAMPLE_BASE 0x{SAMPLE_BASE:04X} /* lowest sample address ($4012 = (address - $C000) / 64) */
 #define NES_ZP_SIZE 0x{zp[1]:04X}
 #define NES_RAM_BASE 0x{bss[0]:04X}
 #define NES_RAM_SIZE 0x{bss[1]:04X}
@@ -754,10 +775,11 @@ def main() -> None:
 #define NES_NUM_PITCH_ENVELOPES {num_pitch}
 
 /* Image layout (docs/AUDIO_ENGINE.md, "Image layout"): header, envelope directory, region = CPU memory
- * NES_SONG_BASE..NES_SAMPLE_END (song data from NES_SONG_BASE, samples from NES_SAMPLE_BASE). */
+ * NES_SONG_BASE..NES_REGION_END: song data from NES_SONG_BASE, the sample block at its start (header). */
 #define NES_IMAGE_HEADER_SIZE {HEADER_SIZE}
 #define NES_IMAGE_HEADER_DPCM_COUNT {HEADER_DPCM_COUNT} /* u8: DPCM list entries (Thor layout) */
-#define NES_IMAGE_HEADER_SAMPLE_SIZE {HEADER_SAMPLE_SIZE} /* u16: sample bytes used from NES_SAMPLE_BASE */
+#define NES_IMAGE_HEADER_SAMPLE_SIZE {HEADER_SAMPLE_SIZE} /* u16: bytes of the sample block (0: none) */
+#define NES_IMAGE_HEADER_SAMPLE_START {HEADER_SAMPLE_START} /* u16: its address (0: none; 64-aligned, >= NES_SAMPLE_BASE) */
 #define NES_IMAGE_MAX_ENVELOPES {MAX_ENVELOPES}
 #define NES_IMAGE_DIRECTORY_SIZE {DIRECTORY_SIZE}
 #define NES_IMAGE_MAX_INSTRUMENTS {MAX_INSTRUMENTS}
@@ -795,17 +817,21 @@ object NesPlayerImage {{
     const val INIT = 0x{ENTRY['nes_player_init']:04X}
     const val PLAY = 0x{ENTRY['nes_player_play']:04X}
 
-    /** Song region: FamiStudio data placed at [SONG_BASE], at most up to [SONG_END] (exclusive; the samples follow). */
+    /**
+     * Region: song data from [SONG_BASE] upward and the samples share CPU memory [SONG_BASE] until [REGION_END]
+     * (exclusive; vectors follow), [REGION_SIZE] bytes. A song without samples may use all of it; otherwise the
+     * song data must end at or below the sample block's start.
+     */
     const val SONG_BASE = 0x{SONG_BASE:04X}
-    const val SONG_END = 0x{SONG_END:04X}
+    const val REGION_END = 0x{REGION_END:04X}
+    const val REGION_SIZE = {REGION_SIZE}
 
     /**
-     * Sample region: DPCM samples from [SAMPLE_BASE] up to [SAMPLE_END] (exclusive; vectors follow), each starting on a
-     * [SAMPLE_ALIGN] boundary (`$4012` = (address − [SAMPLE_BASE]) / 64) and [MAX_SAMPLE_BYTES] long at most
-     * (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
+     * Samples: one block from a [SAMPLE_ALIGN]-aligned start at or above [SAMPLE_BASE] (the lowest address `$4012`
+     * reaches: `$4012` = (address − [SAMPLE_BASE]) / 64), each sample starting on a [SAMPLE_ALIGN] boundary and
+     * [MAX_SAMPLE_BYTES] long at most (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
      */
     const val SAMPLE_BASE = 0x{SAMPLE_BASE:04X}
-    const val SAMPLE_END = 0x{SAMPLE_END:04X}
     const val SAMPLE_ALIGN = {SAMPLE_ALIGN}
     const val MAX_SAMPLE_BYTES = {MAX_SAMPLE_BYTES}
 
@@ -820,8 +846,11 @@ object NesPlayerImage {{
     /** Header byte: entries in the DPCM list. */
     const val HEADER_DPCM_COUNT = {HEADER_DPCM_COUNT}
 
-    /** Header u16 (little-endian): sample bytes used from [SAMPLE_BASE] (zero after). */
+    /** Header u16 (little-endian): bytes of the sample block (0: no samples). */
     const val HEADER_SAMPLE_SIZE = {HEADER_SAMPLE_SIZE}
+
+    /** Header u16 (little-endian): address of the sample block (0: no samples). */
+    const val HEADER_SAMPLE_START = {HEADER_SAMPLE_START}
 
     const val MAX_ENVELOPES = {MAX_ENVELOPES}
     const val DIRECTORY_SIZE = {DIRECTORY_SIZE}
@@ -830,8 +859,8 @@ object NesPlayerImage {{
     const val MAX_ROWS = {MAX_ROWS}
 
     /**
-     * Bytes of a lowered image: header + envelope directory + region, the CPU memory [SONG_BASE] until [SAMPLE_END]
-     * (song data at region offset 0, samples at [SAMPLE_BASE] − [SONG_BASE]).
+     * Bytes of a lowered image: header + envelope directory + region, the CPU memory [SONG_BASE] until [REGION_END]
+     * (address a at region offset a − [SONG_BASE]).
      */
     const val IMAGE_SIZE = {IMAGE_SIZE}
 
@@ -852,7 +881,9 @@ object NesPlayerImage {{
 }}
 """)
 
-    def c_array(name, data):
+    def c_array(name, data, trim=True):
+        if trim:  # images: the loader zero-fills the rest
+            data = data[:max(len(data.rstrip(b"\0")), 1)]
         return f"#define {name.upper()}_SIZE {len(data)}\nstatic const uint8_t {name}[{name.upper()}_SIZE] = {{\n{c_bytes(data)}\n}};\n"
 
     names = re.findall(r"^\t\.word @env\d+,@env\d+,@env\d+,@env\d+ ; ([0-9a-f]{2}) : (\w+)$", ca65_text, re.M)
@@ -869,6 +900,7 @@ object NesPlayerImage {{
 //   nes_ft_moved:  nes_ft_thor with every block at another address (same directory indices).
 //   nes_ft_edited: nes_ft_thor with order 2 pulse 1 row 8 B4 -> D5 and the Lead volume sustain 12,12 -> 8,8.
 //   nes_ft_short:  nes_ft_thor cut to orders 0-1 (loop 1).
+//   nes_ft_big:    nes_ft_thor with its patterns moved to the top: song data fills the whole region (no samples).
 #ifndef NES_FT_SONG_H_
 #define NES_FT_SONG_H_
 #include <stdint.h>
@@ -890,15 +922,18 @@ static const uint8_t nes_ft_speed[NES_FT_ORDERS][NES_FT_ROWS] = {{
 {c_array("nes_ft_moved", moved)}
 {c_array("nes_ft_edited", edited)}
 {c_array("nes_ft_short", short)}
+{c_array("nes_ft_big", big)}
 #endif /* NES_FT_SONG_H_ */
 """)
 
     region_at = HEADER_SIZE + DIRECTORY_SIZE
 
     def c_split(name, image):
-        """An image as two arrays: header + directory + song data, and the sample bytes (at NES_SAMPLE_BASE)."""
-        size = u16(image, 10)
-        return c_array(name, image[:region_at + size]) + c_array(f"{name}_samples", image[region_at + SAMPLE_BASE - SONG_BASE:])
+        """An image as header + directory + song data, and its sample block (NAME_SAMPLE_START)."""
+        size, start, count = u16(image, 10), u16(image, HEADER_SAMPLE_START), u16(image, HEADER_SAMPLE_SIZE)
+        at = region_at + start - SONG_BASE
+        return (f"#define {name.upper()}_SAMPLE_START 0x{start:04X}\n" + c_array(name, image[:region_at + size])
+                + c_array(f"{name}_samples", image[at:at + count], trim=False))
 
     dpcm_list = dthor["dpcm"]
     sample_names = re.findall(r"^\t\.byte \$[0-9a-f]{2}\+\.lobyte\(FAMISTUDIO_DPCM_PTR\),[^;]*; ([0-9a-f]{2}) (\w+) \(Pitch:(\d+)\)$",
@@ -915,8 +950,10 @@ static const uint8_t nes_ft_speed[NES_FT_ORDERS][NES_FT_ROWS] = {{
 //   nes_dpcm_raw / nes_dpcm_dmc: that export linked at NES_SONG_BASE and its samples for NES_SAMPLE_BASE (raw layout).
 //   nes_dpcm_thor:   the same rows, DPCM list and samples (where the .dmc has them) in the Thor Tracker layout;
 //                    every row's bytes are FamiStudio's. Arrays: header + directory + song data, then *_samples.
-//   nes_dpcm_moved:  every block and every sample at another address (same directory and mapping indices).
+//   nes_dpcm_moved:  every block and every sample at another address, the samples packed at the top (same
+//                    directory and mapping indices).
 //   nes_dpcm_edited: nes_dpcm_thor with byte NES_DPCM_EDITED_BYTE of the Kick sample inverted.
+//   nes_dpcm_boundary: samples packed at the top, the patterns moved up so the song data ends exactly at them.
 #ifndef NES_DPCM_SONG_H_
 #define NES_DPCM_SONG_H_
 #include <stdint.h>
@@ -943,10 +980,11 @@ static const int16_t nes_dpcm_events[NES_DPCM_EVENTS][8] = {{
 }};
 
 {c_array("nes_dpcm_raw", dpcm_song)}
-{c_array("nes_dpcm_dmc", dmc)}
+{c_array("nes_dpcm_dmc", dmc, trim=False)}
 {c_split("nes_dpcm_thor", dbase)}
 {c_split("nes_dpcm_moved", dmoved)}
 {c_split("nes_dpcm_edited", dedited)}
+{c_split("nes_dpcm_boundary", dboundary)}
 #endif /* NES_DPCM_SONG_H_ */
 """)
     print(f"player: {len(player)} bytes at ${PLAYER_BASE:04X}, sha256 {player_sha}, id 0x{player_id:08X}")

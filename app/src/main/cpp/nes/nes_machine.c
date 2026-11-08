@@ -385,7 +385,7 @@ static void follow_sample(NesMachine* m, const NesImage* image) {
     NesApu* a = &m->apu;
     if (!a->dmc.remaining) return;
     const uint32_t start = NES_SAMPLE_BASE + 64u * a->dmc.start, len = 16u * a->dmc.length + 1u;
-    if (start + len > NES_SAMPLE_END) { /* off-contract raw data running into the vectors */
+    if (start + len > NES_REGION_END) { /* off-contract raw data running into the vectors */
         nes_apu_dmc_stop(a);
         return;
     }

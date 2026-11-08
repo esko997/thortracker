@@ -15,17 +15,21 @@ object NesPlayerImage {
     const val INIT = 0x8000
     const val PLAY = 0x8003
 
-    /** Song region: FamiStudio data placed at [SONG_BASE], at most up to [SONG_END] (exclusive; the samples follow). */
+    /**
+     * Region: song data from [SONG_BASE] upward and the samples share CPU memory [SONG_BASE] until [REGION_END]
+     * (exclusive; vectors follow), [REGION_SIZE] bytes. A song without samples may use all of it; otherwise the
+     * song data must end at or below the sample block's start.
+     */
     const val SONG_BASE = 0x8C00
-    const val SONG_END = 0xC000
+    const val REGION_END = 0xFFFA
+    const val REGION_SIZE = 29690
 
     /**
-     * Sample region: DPCM samples from [SAMPLE_BASE] up to [SAMPLE_END] (exclusive; vectors follow), each starting on a
-     * [SAMPLE_ALIGN] boundary (`$4012` = (address − [SAMPLE_BASE]) / 64) and [MAX_SAMPLE_BYTES] long at most
-     * (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
+     * Samples: one block from a [SAMPLE_ALIGN]-aligned start at or above [SAMPLE_BASE] (the lowest address `$4012`
+     * reaches: `$4012` = (address − [SAMPLE_BASE]) / 64), each sample starting on a [SAMPLE_ALIGN] boundary and
+     * [MAX_SAMPLE_BYTES] long at most (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
      */
     const val SAMPLE_BASE = 0xC000
-    const val SAMPLE_END = 0xFFFA
     const val SAMPLE_ALIGN = 64
     const val MAX_SAMPLE_BYTES = 4081
 
@@ -40,8 +44,11 @@ object NesPlayerImage {
     /** Header byte: entries in the DPCM list. */
     const val HEADER_DPCM_COUNT = 15
 
-    /** Header u16 (little-endian): sample bytes used from [SAMPLE_BASE] (zero after). */
+    /** Header u16 (little-endian): bytes of the sample block (0: no samples). */
     const val HEADER_SAMPLE_SIZE = 22
+
+    /** Header u16 (little-endian): address of the sample block (0: no samples). */
+    const val HEADER_SAMPLE_START = 24
 
     const val MAX_ENVELOPES = 512
     const val DIRECTORY_SIZE = 2048
@@ -50,8 +57,8 @@ object NesPlayerImage {
     const val MAX_ROWS = 255
 
     /**
-     * Bytes of a lowered image: header + envelope directory + region, the CPU memory [SONG_BASE] until [SAMPLE_END]
-     * (song data at region offset 0, samples at [SAMPLE_BASE] − [SONG_BASE]).
+     * Bytes of a lowered image: header + envelope directory + region, the CPU memory [SONG_BASE] until [REGION_END]
+     * (address a at region offset a − [SONG_BASE]).
      */
     const val IMAGE_SIZE = 31770
 
