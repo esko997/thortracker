@@ -72,6 +72,12 @@ interface FinePitch {
     /** Largest fine value. */
     val max: Int
 
+    /**
+     * True when the system has no fine pitch ([max] 0) and realises a song's tuning in its note table instead: each note
+     * plays the tuning degree nearest to it exactly ([org.thortracker.model.TuningMap.cents]).
+     */
+    val retunesTable: Boolean get() = false
+
     /** Fine values playable on [note] (within the system's note range). */
     fun range(note: Int): IntRange
 

@@ -2,6 +2,10 @@ package org.thortracker.system.sid
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
+import org.thortracker.backend.GtSong
+import org.thortracker.backend.SidExport
+import org.thortracker.backend.SidLowering
+import org.thortracker.backend.SidPlayerImage
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
 import org.thortracker.input.Keymap
@@ -46,7 +50,11 @@ object SidSystem : SoundSystem {
 
     override val effects: List<EffectSpec> get() = SidRules.EFFECTS
     override val views = ViewKind.entries.toSet() - ViewKind.WAVE
-    override val exports: List<ExportFormat> = emptyList()
+    override val exports = listOf(
+        ExportFormat("sid") { SidExport.psid(it) },
+        ExportFormat("prg") { SidExport.prg(it) },
+        ExportFormat("sng") { SidExport.sng(it) },
+    )
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help
 
@@ -79,7 +87,7 @@ object SidSystem : SoundSystem {
 
     override fun upgradeBackend(song: JsonObject, backendVersion: Int): JsonObject = song
 
-    override fun demo(): Song = blank()
+    override fun demo(): Song = SidDemoSong.build()
 
     override fun effectsFor(channel: Int): List<EffectSpec> = SidRules.EFFECTS
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) =
@@ -101,8 +109,27 @@ object SidSystem : SoundSystem {
         return song.copy(orders = played.map { song.orders[it] }, loopOrder = loop, parkedOrders = emptyList())
     }
 
-    override fun patternLoop(song: Song, order: Int): Song =
-        song.copy(orders = listOf(song.orders[order.coerceIn(0, song.orders.size - 1)]), loopOrder = 0, parkedOrders = emptyList())
+    /**
+     * The order at [order] alone, looping. A voice whose pattern starts with a note but no instrument gets the
+     * instrument straight play reaches it with (as [GtSong.of] does for every order), in a copy of the pattern.
+     */
+    override fun patternLoop(song: Song, order: Int): Song {
+        val o = order.coerceIn(0, song.orders.size - 1)
+        val p = song.orders[o]
+        val pattern = song.patterns[p]
+        val entering = IntArray(channels.size)
+        for (before in 0 until o) {
+            val prior = song.patterns[song.orders[before]]
+            for (c in channels.indices) for (r in 0 until prior.length) prior.tracks[c][r].instrument.let { if (it != 0) entering[c] = it }
+        }
+        val tracks = pattern.tracks.mapIndexed { c, track ->
+            val first = (0 until pattern.length).firstOrNull { track[it].instrument != 0 || track[it].note >= 0 }
+            if (first == null || entering[c] == 0 || track[first].instrument != 0) track
+            else track.toMutableList().also { it[first] = it[first].copy(instrument = entering[c]) }
+        }
+        val patterns = if (tracks == pattern.tracks) song.patterns else song.patterns.toMutableList().also { it[p] = pattern.copy(tracks = tracks) }
+        return song.copy(patterns = patterns, orders = listOf(p), loopOrder = 0, parkedOrders = emptyList())
+    }
 
     /** GoatTracker's packed songs have no jumps: the loop order is the only one. */
     override fun jumpTarget(cell: Cell): Int? = null
@@ -147,12 +174,14 @@ object SidSystem : SoundSystem {
 
     private object Engine : PlaybackEngine {
         override val id = "c64-sid"
-        override val imageSize = 47200
+        override val imageSize = SidPlayerImage.IMAGE_SIZE
 
         /** At 50.1 ticks per second, ~4 minutes of song (multispeed songs: proportionally less). */
         override val seekTicks = 12000
 
-        override fun lower(song: Song, out: ByteArray) = throw IllegalArgumentException("SID playback is not built yet")
+        override fun lower(song: Song, out: ByteArray) {
+            SidLowering.lower(GtSong.of(song), out)
+        }
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
             instrument !in 1..SLOTS -> "Choose an instrument (01-${NumberText.hex(SLOTS, 2)}) to audition"
@@ -171,6 +200,7 @@ object SidSystem : SoundSystem {
     private object Fine : FinePitch {
         override val name = "frequency table"
         override val max = 0
+        override val retunesTable = true
         override fun range(note: Int): IntRange = 0..0
         override fun cents(note: Int, fine: Int): Double = 0.0
         override fun of(cell: Cell): Int = 0
