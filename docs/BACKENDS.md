@@ -337,6 +337,14 @@ muted in the song) stay in the hosts and work for every chip.
    **OPL3 backend**: model, curated instrument controls, presets, lowering (byte-identical to the reference builder),
    validation, project files, VGM export through the native player and the demo — see "OPL3 model, lowering and
    exports"; editor (instruments, effect columns), New → system and Help in the editor step.
+   **YM2612 spike** — done (branch `ym2612-spike`). `chip_engine_ops("ym2612-fm")`: our own player (C) streamed as XGC
+   frames through SGDK's XGM Z80 driver (MIT, the driver games ship) on `z80.h` with ymfm and our SN76489; image,
+   player, effects, XGM/XGC encoding, seek, live edits, audition, mute and VGM/XGM/XGC export in
+   `docs/AUDIO_ENGINE.md` ("YM2612"); native host test 460 checks: register writes identical to an independent
+   Python reference in every tick, the driver's chip writes equal to the stream, the stream and the XGM/XGC exports
+   byte-identical to SGDK xgmtool's conversion of the VGM; the VGM plays in libvgm (Nuked-OPN2 and Genesis Plus GX).
+   **YM2612 backend** (next): model, FM editor reuse from the OPL3 (OPN2 operator set), PSG instruments, lowering,
+   validation (heavy rows), project files, exports and the demo.
 
 ## Effect columns
 
@@ -536,6 +544,89 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
 - Tests: `Opl3EditorTest` (columns, cursor walk, per-column edits, copy/paste, OFF, chord text, every instrument
   page, empty slots, 4-op listening; one-column systems keep four fields).
 
+### YM2612 (Mega Drive): driver investigation and decisions (2026-11-08, branch `ym2612-spike`)
+
+Decision rule (the integrator's, on the user's behalf): if SGDK's XGM driver can run in the loop, build that; else
+fall back to the OPL3 approach (own player, chips driven directly, VGM export). **Result: XGM in the loop is
+feasible and is what `"ym2612-fm"` does.** The full contract is `docs/AUDIO_ENGINE.md`, "YM2612".
+
+Evidence (SGDK `github.com/Stephane-D/SGDK` commit `9a78a441`, 2026-10-20; spike tools in `/tmp/ym_bench/`):
+
+- **Licence**: the whole SGDK repository is MIT (`license.txt`: "MIT License - Copyright (c) 2025 Stephane
+  Dallongeville"); neither the driver source `src/snd/drv_xgm.s80` (and its includes `inc/snd/z80_def.i80`,
+  `z80_mac.i80`, `z80_fct.i80`) nor `tools/xgmtool` carry other terms. Games link the assembled driver from
+  `lib/libmd.a`. SGDK's assembler `tools/sjasm` (SjASM 0.39j, Konamiman 2021 after Sjoerd Mastijn) is zlib.
+- **Provenance**: `drv_xgm.s80` assembled with SGDK's own sjasm (built from `tools/sjasm/src` on Linux) is
+  byte-identical to the `drv_xgm` symbol in SGDK's prebuilt `lib/libmd.a` (5888 bytes, sha256 `557fe542…cf31e`).
+- **What the driver needs from the 68000**: nothing at play time but a few writes into Z80 RAM, all in
+  `src/snd/xgm.c`: load the driver, the sample id table (`$1C00`), the music address (`PARAMS+$00`), the play
+  command (`COMMAND` bit 6), and per vertical interrupt `PENDING_FRM` += 1 (`PARAMS+$0F`, after `MODIFYING_F` at
+  `+$0E` reads 0: `setNextXFrame`). The Z80 does everything else (prefetches a frame of music data through the
+  bank window `$8000`, executes it, mixes PCM in cycle-counted 254-cycle slots). So the engine emulates the Z80
+  (floooh `z80.h`, cycle-stepped, the `m6502.h` pin), the YM2612, the PSG and the 68000's pokes; no 68000 emulation.
+- **Format**: XGM is a register stream, not a tracker format. `xgmtool` (1.76) turns a VGM into XGM (per frame:
+  YM registers diffed against a state and re-emitted in a canonical order, A4/A0 pairs together, key writes kept
+  between the register writes before and after them, PSG diffed; `VGM_cleanCommands`, `XGM_extractMusic`) and XGM
+  into the compiled **XGC** the driver reads (frames prefixed by their size, PSG split into envelope/tone
+  commands, at most 6 key writes per command, D1L/RR "state" commands for pause, frames above 250 bytes split with
+  a frame-skip command, 3 empty frames in front for PCM alignment, `$2B` writes removed). SGDK's `rescomp`
+  accepts a `.vgm` or `.xgm` resource and runs `xgmtool` to get the XGC. So Thor Tracker still needs **its own
+  player** (rows and effects to register writes, as for the OPL3); its per-tick writes are the VGM, and the XGM/XGC
+  come from them by xgmtool's algorithm (ported to C, `ym/ym_xgm.c`; the host test proves it byte-equal to xgmtool).
+- **Spike** (`/tmp/ym_bench/bench/xgm_feas.cpp`): the driver on `z80.h` with SGDK's 68000 pokes boots in 20415
+  Z80 cycles and plays XGCs that xgmtool made from SGDK's sample VGMs (`sonic1`, `midnight`, `toy_story`): about
+  15000 YM writes per second (mostly the DAC byte it rewrites every PCM slot). Z80 + driver alone cost 317 µs per
+  60 Hz frame on the dev PC (59659 Z80 cycles).
+- **Driver behaviour that matters for a tracker**: (1) it prefetches frame *n*+1 right after executing frame *n*, so
+  the engine produces frames one tick ahead (a live edit is heard one tick later, ≤ 20 ms); (2) it waits for the
+  YM2612's busy flag between writes (32 internal cycles ≈ 90 Z80 cycles, 1.3 YM samples), so a key-off and key-on
+  of one channel in one frame do retrigger; (3) its `initDAC` enables the DAC, but its PCM mixer rewrites `$2B`
+  from a saved value (0, as xgmtool strips `$2B`) whenever no PCM has played for 4 frames, so **FM 6 is a normal FM
+  channel** in songs without PCM; (4) XGM v1 advances one frame per vertical interrupt (60 Hz NTSC, 50 Hz PAL):
+  no multispeed.
+- **Cores** (`/tmp/ym_bench/bench/core_bench.cpp`: the driver's writes for 20 s of `midnight`/`toy_story`
+  captured with Z80-cycle timing and replayed into each core, dev PC): **Nuked-OPN2 1.0.9** (`335747d7`,
+  LGPL-2.1-or-later, die-accurate, clocked per internal cycle) 886-902 µs per 60 Hz tick; **ymfm** (`81aec25c`,
+  BSD-3-Clause, per sample) 165-204 µs. Against Nuked: sample correlation 0.66 / 0.91, 20 ms loudness-envelope
+  correlation 0.994 / 1.000 (output scale ×7.0); both model the YM2612's 9-bit DAC discontinuity. Interleaved
+  with the cycle-stepped Z80 Nuked cost 1.64 ms per tick. With the OPL3's measured device ratios (Konkr ≈ 2.6× the
+  dev PC for Nuked, 3.3× for ymfm) the Nuked machine would need ~3.5-4 ms per 16.7 ms tick on the Konkr, twice the
+  SID 8580 (the heaviest system so far, 1.8 ms); ymfm ~1.6 ms. **Chosen: ymfm** (not affordable on the weakest
+  device with the Z80 in the loop). The busy flag the driver polls is modelled through ymfm's interface (32 × 6
+  YM clocks after each data write, ymfm's own figure) on the Z80's clock.
+- **PSG**: our own SN76489 (`ym/ym_psg.c`, the Sega VDP variant: 16-bit LFSR, white-noise taps 0x0009, 2 dB
+  steps), written from the SMS Power documentation; no third-party core.
+- **Not chosen**: XGM2 (SGDK 2.x, also MIT, Z80) — XGM v1 is what `rescomp`'s `XGM` resource and xgmtool ship
+  and its format is a plain register stream; XGM2 is a later option. Echo (zlib) and MDSDRV (zlib) sequence on the
+  68000 (would need a 68000 emulator in the engine). GEMS is proprietary.
+
+Decisions:
+
+- **Engine** (`"ym2612-fm"`): our player (`ym/ym_player.c`, specified in `docs/AUDIO_ENGINE.md`, mirrored by an
+  independent Python reference) → per-tick writes → XGC frames (`ym/ym_xgm.c`, xgmtool's algorithm) streamed into
+  the emulated cartridge → SGDK's XGM Z80 driver on `z80.h` → ymfm YM2612 + our SN76489, resampled with blip_buf.
+  What the engine plays is what `XGM_startPlay` plays in a game.
+- **Exports**: VGM 1.71 (the player's writes, YM2612 + SN76489) and XGM 1.01 (`.xgm`, the `rescomp` resource;
+  `XGM song "song.xgm"` in a game's `.res`), plus the compiled XGC (`.bin`, what `XGM_startPlay` takes directly).
+- **Channels**: FM 1-6, PSG 1-3, Noise (10 tracker channels). Channel 3 special mode and the DAC/PCM (which the
+  driver supports on FM 6, up to 4 mixed channels) are left out of this release. No chord effect (6 voices, none
+  spare): chords are notes across channels.
+- **Region**: NTSC (60 Hz, YM2612 7670453 Hz, PSG 3579545 Hz) by default, PAL (50 Hz, 7600489 / 3546895 Hz) per
+  song; pitch tables per region so A-4 = 440 Hz on both. A PAL song in a game needs `XGM_setMusicTempo(50)` on a
+  PAL console (SGDK's tempo is NTSC-based by default).
+- **Instruments**: one bank of 64 slots, each empty, an FM instrument (the chip's operator registers: DT/MUL, TL,
+  RS/AR, AM/D1R, D2R, D1L/RR, SSG-EG per operator; algorithm, feedback, AMS/FMS; drum sweep) or a PSG instrument
+  (a software envelope: attack, decay, sustain, release in ticks per step; noise mode; drum sweep). FM slots play on
+  FM channels, PSG slots on PSG and Noise. Drums are pitched instruments with the sweep, as on the OPL3.
+- **Effects** (FamiTracker/OPL3 letters where meanings match, up to 4 columns): `0xy` `1xx` `2xx` `3xx` `4xy` `8xy`
+  (FM pan) `Axy` `Bxx` `Cxx` (FM 00-7F, PSG 00-0F) `Dxx` `Exx` (feedback lock) `Fxx` `Gxx` `Ixx` (brightness lock,
+  00-7F) `Lxx` (LFO: 00 off, 08-0F on at rate 0-7) `Mxy` (ratio lock) `Nxy` (noise mode lock) `Pxx` `Sxx`.
+- **Noise**: fixed rates (clock/512, /1024, /2048) or PSG 3's period ("pitched": the note sets it, periodic noise
+  sounds at the note); while pitched noise sounds it owns PSG 3, which is silent.
+
+Not done in the spike (Kotlin side, next): the system, model, lowering, validation, editor, presets, demo; listening
+on hardware.
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -549,6 +640,17 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
 - OPL3 `000` cannot be stored, so an arpeggio cannot be switched off on a row without a note (the next note without
   `0xy` plays plain; the player and reference treat an explicit `000` as "arpeggio off"). Proposed: accept, as on the
   Game Boy; a dedicated "arpeggio off" letter would be the alternative.
+- YM2612 channel 3 special mode and the DAC/PCM (SGDK's XGM driver mixes up to 4 PCM channels on FM 6): left out
+  of this release. PCM drums would need sample banks in the image and the XGM's PCM table. Proposed: a later step.
+- YM2612 driver: XGM v1 (`drv_xgm`) chosen; XGM2 (SGDK 2.00's newer driver and format) is not ported. Proposed:
+  revisit if games standardise on XGM2.
+- YM2612 heavy frames: XGM executes ~70-100 YM writes per frame; heavier frames (song start, the loop frame's full
+  dump, many simultaneous instrument changes) lag up to 3 ticks, faithfully. A lighter loop frame (only the registers
+  that differ) would shorten the loop lag but breaks byte equality with xgmtool. Proposed: keep xgmtool's frame and
+  warn about heavy rows in the validator.
+- YM2612 core: ymfm (BSD-3, ~2.4× cheaper per tick); Nuked-OPN2 (LGPL-2.1+, die-accurate) remains an option if
+  listening finds ymfm lacking. The Z80's bus wait states while accessing the 68000's ROM window are not modelled
+  (the driver reads the stream slightly faster than on hardware).
 - OPL3 curated lists (algorithms, 22 ratio sets, 20 waveform combinations per operator count, key scaling, LFO) and
   the 17 presets are a first proposal; the user's own FM simplification ideas may replace them (they only read and
   write operator registers, so songs are unaffected).

@@ -9,6 +9,8 @@
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
+ *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
+ *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:
