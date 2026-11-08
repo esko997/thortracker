@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in Thor Tracker does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! In the app, **Menu → Help → About** (the last Help page) shows the version; press **A** there and choose **Copy diagnostics** (Android: copied to the clipboard; Steam Deck: written to `~/ThorTracker/diagnostics.txt`) and paste it below. Thor Tracker never sends anything by itself.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From Help → About, e.g. "0.13.0 (build 25)".
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - AYN Thor
+        - Other Android handheld or phone
+        - Steam Deck
+        - Other Linux PC
+    validations:
+      required: true
+  - type: input
+    id: device-detail
+    attributes:
+      label: Device model and system version
+      description: e.g. "Retroid Pocket 5, Android 13" or "SteamOS 3.6". Not needed when the diagnostics are pasted.
+  - type: dropdown
+    id: system
+    attributes:
+      label: Sound system of the song
+      options:
+        - Game Boy (hUGEDriver)
+        - NES (FamiStudio)
+        - C64 SID (GoatTracker)
+        - OPL3 FM
+        - Mega Drive (YM2612 + PSG)
+        - Not song-related
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, button by button where it matters.
+      placeholder: |
+        1. Open the demo song
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste the text from Help → About → Copy diagnostics.
+      render: text
+  - type: textarea
+    id: files
+    attributes:
+      label: Song, screenshots or recordings
+      description: Optional. Attach the `.thor` project (zip it first), a screenshot or a `.wav` export if they show the problem.

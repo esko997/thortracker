@@ -325,6 +325,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.SONG -> if (tap) songActivate()
             ViewKind.KEYBOARD -> if (state.kbRow == 1) keyHeld = false else if (tap) stripActivate()
             ViewKind.SKETCH -> if (tap) sketchTap()
+            ViewKind.HELP -> if (tap && state.helpPage == ABOUT_PAGE) session.requestMenu { it.about() }
             else -> Unit
         }
     }
@@ -1694,6 +1695,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             ViewKind.HELP -> {
                 h += Hint(ud(), "Scroll")
                 h += Hint(lr(), "Page: ${HELP_PAGES[state.helpPage]}")
+                if (state.helpPage == ABOUT_PAGE) h += Hint(k(Action.EDIT), "Report a bug / copy diagnostics")
             }
             else -> Unit
         }
@@ -1885,6 +1887,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         fun circlePosition(root: Int): Int = (root * 7).mod(12)
 
         private fun nextSeed(seed: Long): Long = seed * 6364136223846793005L + 1442695040888963407L
-        val HELP_PAGES = listOf("Controls", "Effects", "Song check")
+        val HELP_PAGES = listOf("Controls", "Effects", "Song check", "About")
+
+        /** The Help page whose Edit tap opens Report a bug / Copy diagnostics. */
+        const val ABOUT_PAGE = 3
     }
 }

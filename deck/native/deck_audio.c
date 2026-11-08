@@ -32,9 +32,20 @@ static float song_buf[CHIP_MAX_TICK_FRAMES * 2];
 static float audition_buf[CHIP_MAX_TICK_FRAMES * 2];
 static volatile int pos_order, pos_row;
 static volatile float peak;   /* loudest rendered sample since the last da_peak (diagnostics) */
+/* da_stats (diagnostics): device buffer, callbacks, late ones while sounding, the slowest, driver faults. */
+static int device_frames;
+static volatile long long callbacks, late_callbacks, worst_callback_ns, faults;
+static Uint64 last_callback_ns;
 
 static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int total) {
     (void)user; (void)total;
+    const Uint64 started = SDL_GetTicksNS();
+    ++callbacks;
+    /* A callback more than two device buffers after the previous one while sounding probably let the device run dry. */
+    if ((playing || auditioning) && last_callback_ns && device_frames > 0 &&
+        started - last_callback_ns > 2 * (Uint64)device_frames * SDL_NS_PER_SECOND / RATE)
+        ++late_callbacks;
+    last_callback_ns = started;
     while (additional > 0) {
         if (!playing && !auditioning) {
             static const float silence[512 * 2];
@@ -57,7 +68,7 @@ static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int tot
             pos_order = order;
             pos_row = row;
             frames = ops->tick(song_machine, song_buf);
-            if (frames <= 0) { playing = 0; frames = 0; }
+            if (frames <= 0) { if (frames < 0) ++faults; playing = 0; frames = 0; }
         }
         if (auditioning) {
             int n = ops->tick(audition_machine, audition_buf);
@@ -75,6 +86,8 @@ static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int tot
         SDL_PutAudioStreamData(s, song_buf, bytes);
         additional -= bytes;
     }
+    const long long took = (long long)(SDL_GetTicksNS() - started);
+    if (took > worst_callback_ns) worst_callback_ns = took;
 }
 
 int da_open(const char* system_id) {
@@ -90,6 +103,8 @@ int da_open(const char* system_id) {
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, RATE };
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
     if (!stream) return -4;
+    SDL_AudioSpec device;
+    if (!SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(stream), &device, &device_frames)) device_frames = 0;
     SDL_ResumeAudioStreamDevice(stream);
     return 0;
 }
@@ -156,6 +171,12 @@ void da_release_audition(void) {
 
 int da_playing(void) { return playing; }
 float da_peak(void) { float p = peak; peak = 0; return p; }
+
+void da_stats(long long* out, int count) {
+    const long long v[DA_STATS] = {RATE, device_frames, callbacks, late_callbacks, worst_callback_ns, faults};
+    for (int i = 0; i < count && i < DA_STATS; ++i) out[i] = v[i];
+}
+
 int da_order(void) { return pos_order; }
 int da_row(void) { return pos_row; }
 

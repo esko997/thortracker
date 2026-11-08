@@ -47,6 +47,8 @@ static void ym_position(const ChipMachine* m, int* order, int* row, int* tick) {
     ymm_position((const YmMachine*)m, order, row, tick);
 }
 
+static uint32_t ym_row_serial(const ChipMachine* m) { return ymm_row_serial((const YmMachine*)m); }
+
 static int ym_tick(ChipMachine* m, float* out) { return ymm_tick(MACHINE(m), out); }
 
 const ChipEngineOps ym_chip_ops = {
@@ -63,4 +65,5 @@ const ChipEngineOps ym_chip_ops = {
     .mute = ym_mute,
     .position = ym_position,
     .tick = ym_tick,
+    .row_serial = ym_row_serial,
 };

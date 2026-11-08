@@ -49,6 +49,7 @@ set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # chips' z80.h (implemented once in cpuz80.c).
 add_library(chip_engines STATIC
     chip_engine.c
+    chip_wav.c
     cpu6502.c
     huge_chip.c
     huge_machine.c
