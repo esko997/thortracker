@@ -30,6 +30,8 @@ import org.thortracker.system.SongSetting
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemHelp
 import org.thortracker.system.SystemView
+import org.thortracker.system.fm.RhythmRomMenu
+import org.thortracker.system.fm.Ym2608RhythmRom
 import kotlin.math.log2
 
 /**
@@ -69,7 +71,7 @@ object NesVrc6System : NesFamiStudioSystem(NesExpansion.VRC6) {
  * generator: mixer and noise envelopes, a hardware envelope with auto or manual period, `Ixx`/`Jyy`), FM 1-6 (4-operator
  * OPN voices, [EpsmPatch], sharing the chip's one LFO: the song's [NesSound.epsmLfo]) and the rhythm unit's six fixed
  * drums (Kick, Snare, Cymbal, Hi-hat, Tom, Rim: a note triggers the drum at the sound's volume and pan; the YM2608 rhythm
- * ROM the user imports plays them, [EpsmRhythmRom]). The FamiStudio engine assembled with `FAMISTUDIO_EXP_EPSM` plays it
+ * ROM the user imports plays them, [Ym2608RhythmRom]). The FamiStudio engine assembled with `FAMISTUDIO_EXP_EPSM` plays it
  * on ymfm's YMF288 (native `"nes-famistudio-epsm"`); every EPSM channel takes EPSM sounds ([NesChip.EPSM]).
  */
 object NesEpsmSystem : NesFamiStudioSystem(NesExpansion.EPSM) {
@@ -77,6 +79,9 @@ object NesEpsmSystem : NesFamiStudioSystem(NesExpansion.EPSM) {
     override val name = "NES + EPSM (FamiStudio)"
 
     override fun demo(): Song = NesEpsmDemoSong.build()
+
+    /** The rhythm drums play the YM2608 rhythm ROM the user imports (the main menu offers the import). */
+    override val rhythmRom: Boolean get() = true
 }
 
 /**
@@ -281,10 +286,10 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
         /**
          * @throws IllegalArgumentException as [FamiStudioLowering.lower], and on the EPSM when the played orders hold a
-         * rhythm note but no rhythm ROM is installed ([EpsmRhythmRom.MISSING]): the drums cannot sound without it.
+         * rhythm note but no rhythm ROM is installed ([Ym2608RhythmRom.MISSING]): the drums cannot sound without it.
          */
         override fun lower(song: Song, out: ByteArray) {
-            require(expansion != NesExpansion.EPSM || EpsmRhythmRom.installed || !NesRules.playsRhythm(song)) { EpsmRhythmRom.MISSING }
+            require(expansion != NesExpansion.EPSM || Ym2608RhythmRom.installed || !NesRules.playsRhythm(song)) { Ym2608RhythmRom.MISSING }
             NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
         }
 
@@ -303,7 +308,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             song.nes.instruments[instrument - 1].chip != NesRules.chip(expansion, channel) ->
                 "Sound ${NesRules.hex2(instrument)} is a ${song.nes.instruments[instrument - 1].chip.label} sound; " +
                     "${channels[channel].name} plays ${NesRules.chip(expansion, channel).label} sounds"
-            NesRules.isEpsmRhythm(expansion, channel) && !EpsmRhythmRom.installed -> EpsmRhythmRom.MISSING
+            NesRules.isEpsmRhythm(expansion, channel) && !Ym2608RhythmRom.installed -> Ym2608RhythmRom.MISSING
             else -> null
         }
 
@@ -434,7 +439,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             "FM: 4-operator patches; the chip's one LFO is the song's (Song view: LFO), the patches set its depths (AMS, PMS).",
             "Drums (Kick, Snare, Cymbal, Hi-hat, Tom, Rim) have a fixed pitch: any note triggers the drum at the sound's first " +
                 "volume value (times Cxx) and its patch's L/R pan; only Axx, Cxx, Fxx, Gxx and Sxx apply. They need the YM2608 " +
-                "rhythm ROM, which you import once (\"EPSM rhythm ROM…\"); FM, SSG and the exports work without it.",
+                "rhythm ROM, which you import once (\"${RhythmRomMenu.LABEL}\"); FM, SSG and the exports work without it.",
         )
         override val tonalChannels = "Pulse, Triangle, SSG and FM"
         override val tonalChannelsShort = "Pulse/Tri/SSG/FM"
@@ -446,7 +451,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             NesInstrumentView.helpSections(keys, NesExpansion.EPSM)
 
         override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
-            "Rhythm ROM" to if (EpsmRhythmRom.installed) "installed (YM2608 drums)" else "not imported: the drums need it; FM and SSG play",
+            "Rhythm ROM" to if (Ym2608RhythmRom.installed) "installed (YM2608 drums)" else "not imported: the drums need it; FM and SSG play",
         )
     }
 

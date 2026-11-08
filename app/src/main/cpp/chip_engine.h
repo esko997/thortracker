@@ -9,13 +9,17 @@
  *                     (nes/nes_chip.c, nes/nes_vrc6.c; nes/nes_player.h describes every build)
  *   "nes-famistudio-epsm"  the same engine built with EPSM support on a 6502 + 2A03 + YMF288 (ymfm), true stereo;
  *                     its rhythm drums play the user-installed rhythm ROM (nes/nes_chip.c, nes/nes_epsm_unit.c,
- *                     nes/nes_epsm_ymfm.cpp; nes/nes_epsm.h: nes_epsm_install_rhythm_rom)
+ *                     nes/nes_epsm_ymfm.cpp; ym2608_rhythm_rom.h: ym2608_rhythm_rom_install)
  *   "c64-sid"         GoatTracker 2.77 playroutine on a 6510 + reSID 1.0 (PAL C64)
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "ym2203-opn"      Thor Tracker's own OPN player on a YM2203 (ymfm): FM 1-3, SSG 1-3
+ *   "ym2608-opna"     the same player on a YM2608 (ymfm): FM 1-6, SSG 1-3, the six rhythm drums (the user-installed
+ *                     rhythm ROM, ym2608_rhythm_rom.h) and ADPCM-B from the image's sample memory
+ *                     (both: opn/opn_chip.c over opn/opn_machine.c, opn_player.c, opn_image.c, opn_ymfm.cpp)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

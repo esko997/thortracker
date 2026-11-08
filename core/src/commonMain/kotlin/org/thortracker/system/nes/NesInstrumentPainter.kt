@@ -9,6 +9,7 @@ import org.thortracker.system.fm.FmEnvelopeSketch
 import org.thortracker.system.fm.FmInstrumentPainter
 import org.thortracker.system.fm.FmRouting
 import org.thortracker.system.fm.OpnTiming
+import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.NesInstrumentView.Row
 import org.thortracker.system.ym2612.YmCurated
 import org.thortracker.ui.Align
@@ -430,8 +431,8 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             y += lineH
         }
         val notes = listOf(
-            (if (EpsmRhythmRom.installed) "ROM installed (SHA-256 verified)" else "ROM missing: drums are refused until it is imported") to
-                (if (EpsmRhythmRom.installed) col else Palette.ERROR),
+            (if (Ym2608RhythmRom.installed) "ROM installed (SHA-256 verified)" else "ROM missing: drums are refused until it is imported") to
+                (if (Ym2608RhythmRom.installed) col else Palette.ERROR),
             "A note triggers its channel's drum; pitch, arpeggio and the FM patch do not change it." to Palette.FAINT,
         )
         var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f

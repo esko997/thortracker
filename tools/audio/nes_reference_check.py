@@ -30,13 +30,13 @@ nes_dpcm.nsf (samples at $C000), nes_dpcm_trace.txt, nes_dpcm.wav and nes_dpcm_d
      (nes_epsm_rhythm.wav, see below): with FamiStudio's wav-export of the rhythm channels 14-19 alone and of the full mix.
 
 Private rhythm verification (the YM2608 rhythm ROM is never committed, copied into the repository or evidence, or
-shipped): the host test reads the user's own ROM from a path given in THOR_EPSM_RHYTHM_ROM (8192 bytes, SHA-256
+shipped): the host test reads the user's own ROM from a path given in THOR_RHYTHM_ROM (8192 bytes, SHA-256
 53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8; the test refuses anything else) and then also writes
 nes_epsm_rhythm.wav. Keep the ROM and that evidence outside the repository, e.g.:
-  THOR_EPSM_RHYTHM_ROM=$HOME/private/ym2608_adpcm_rom.bin tools/audio/run_native_host_test.sh /tmp/thor-evidence
+  THOR_RHYTHM_ROM=$HOME/private/ym2608_adpcm_rom.bin tools/audio/run_native_host_test.sh /tmp/thor-evidence
   tools/audio/nes_reference_check.py /tmp/thor-evidence
 This script never reads the ROM; FamiStudio's wav-export plays rhythm with its own built-in copy (NesSndEmu
-fmopn_2608rom.h). Without THOR_EPSM_RHYTHM_ROM the EPSM rhythm audio is reported as not compared.
+fmopn_2608rom.h). Without THOR_RHYTHM_ROM the EPSM rhythm audio is reported as not compared.
 
 Requirements: python3 with numpy and py65 (`python3 -m venv /tmp/nesref && /tmp/nesref/bin/pip install
 numpy py65`), libgme.so.0 (Fedora: game-music-emu, Ubuntu: libgme0).
@@ -382,7 +382,7 @@ def check_epsm(d: Path, app: Path) -> bool:
                     read_wav(files["all"], SECONDS))
         ok &= r["envelope_r"] > 0.85 and r["spectrum_r"] > 0.8
     else:
-        print("EPSM rhythm audio: not compared (no nes_epsm_rhythm.wav: run the host test with THOR_EPSM_RHYTHM_ROM)")
+        print("EPSM rhythm audio: not compared (no nes_epsm_rhythm.wav: run the host test with THOR_RHYTHM_ROM)")
     return ok
 
 

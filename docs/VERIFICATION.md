@@ -1,5 +1,57 @@
 # Thor Tracker verification — 2026-11-08
 
+## Unreleased: PC-88/98 OPN (YM2203) and OPNA (YM2608) — source slice, NOT verified
+
+Branch `opna-systems` (base `c96697e`, the unverified NES + EPSM slice below) adds two systems, **PC-88/98 OPN
+(YM2203)** (`"ym2203-opn"`, demo **Night Express**) and **PC-88/98 OPNA (YM2608)** (`"ym2608-opna"`, demo **Paper
+Lanterns**: FM, SSG, ADPCM-B samples, no rhythm notes): Thor Tracker's own player on ymfm at the PC-88/98 clocks,
+VGM export, ADPCM-B sample import/generation/editing, FM 3 special and CSM modes; and replaces the EPSM-only rhythm-ROM
+support by one shared YM2608 rhythm ROM (`ym2608_rhythm_rom.{h,c}`, `system/fm/Ym2608RhythmRom`, `RhythmRomMenu`,
+"YM2608 rhythm ROM…", `THOR_RHYTHM_ROM`) for the EPSM and the YM2608. Written source-only: **nothing has been built,
+tested, run on a device or listened to**, no generator exists or was needed (`OpnPlayerImage.kt` mirrors
+`opn_image.h` by hand), and no version was bumped. The EPSM section's generation steps below still apply first.
+
+1. Builds and the full Kotlin run (also checks every renamed rhythm-ROM consumer):
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   ```
+
+   New tests: `OpnModelTest`, `OpnLoweringTest`, `OpnAdpcmTest`, `OpnEditorTest`, `Ym2608RhythmRomTest` (moved from
+   `EpsmRhythmRomTest`, incl. "the repository holds no rhythm ROM"); updated `NesInstrumentViewTest`,
+   `NesLoweringTest`. `exportSamples` writes `night-express.thor/.opnimg`, `paper-lanterns.thor/.opnaimg`,
+   `opn-shortest.opnimg`, `opna-shortest.opnaimg`.
+2. Native host test and the independent check (both chips: loader, measured pitch, FM 3 special/CSM, SSG shared
+   resources, rhythm without the ROM, ADPCM-B, seeks sample-identical to straight play, live edits, mute continuity,
+   VGM; the WAV test renders the two demos and the two shortest songs):
+
+   ```sh
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   python3 tools/audio/opn_reference_check.py /tmp/thor-evidence
+   tools/audio/render_opn_image.sh app/build/samples/paper-lanterns.opnaimg /tmp/opna.wav 60 --vgm /tmp/opna.vgm
+   tools/audio/render_opn_image.sh app/build/samples/night-express.opnimg /tmp/opn.wav 60 --vgm /tmp/opn.vgm
+   ```
+
+   Also play `/tmp/opn.vgm` and `/tmp/opna.vgm` in an independent VGM player (e.g. libvgm's `vgm2wav` or VGMPlay) and
+   compare with the WAVs; the YM2608 file carries its ADPCM-B data block. Record whether that player emulates CSM.
+3. EPSM regression after the ROM cutover: `nes_epsm_test` and the private rhythm run of the EPSM section with
+   `THOR_RHYTHM_ROM`, plus a private OPNA rhythm check (the YM2608 rhythm ROM checks of `opn_machine_test` and a
+   rhythm song through `render_opn_image.sh … $HOME/private/ym2608_adpcm_rom.bin`). The ROM never enters the
+   repository, evidence committed anywhere, the APK, AppImage or `app/build/samples/` (the EPSM section's `sha256sum`
+   checks, also over every exported VGM).
+4. Costs, measured not assumed: the per-tick cost the host test prints, then on the Konkr (the CPU limit) the demo
+   playback (no underruns at 6 FM + ADPCM-B + SSG) and a seek deep into a song (seeks replay every tick through the
+   whole chip).
+5. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → PC-88/98… →
+   OPN and OPNA; demo playback (OPNA stereo); every Instrument page (FM Sound/Expert/Ch3/Drum, SSG pages and Hw env,
+   Rhythm with the ROM row, ADPCM Sample page: Add sample… importing a `.wav` and generating a starter, Tools…);
+   audition on each part (a drum refused with the import message while no ROM is installed); Song view tick rate, FM 3
+   mode, CSM rate, LFO, rhythm level; an existing EPSM ROM import still loads at start and the main-menu row reads
+   "YM2608 rhythm ROM…  installed" for both EPSM and OPNA songs; VGM and WAV exports through the document picker.
+6. Listening (not done by anyone yet): the demos' balance, FM 3 special-mode chords, CSM, the SSG buzz bass's octave
+   (hardware envelope auto period), ADPCM-B sample quality.
+
 ## Unreleased: NES + EPSM — source slice, NOT verified
 
 Branch `nes-epsm` adds the **NES + EPSM** variant (`"nes-famistudio-epsm"`: FamiStudio 4.5.3 built with
@@ -51,13 +103,14 @@ verified; record the results here then, replacing this section.
    `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`; the tools refuse anything else):
 
    ```sh
-   THOR_EPSM_RHYTHM_ROM=$HOME/private/ym2608_adpcm_rom.bin tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   THOR_RHYTHM_ROM=$HOME/private/ym2608_adpcm_rom.bin tools/audio/run_native_host_test.sh /tmp/thor-evidence
    /tmp/nesref/bin/python3 tools/audio/nes_reference_check.py /tmp/thor-evidence   # compares nes_epsm_rhythm.wav
    tools/audio/render_nes_image.sh some-rhythm-song.nesimg /tmp/rhythm.wav 20 $HOME/private/ym2608_adpcm_rom.bin
    ```
 
-   Without the variable the host test prints "rhythm ROM checks skipped (THOR_EPSM_RHYTHM_ROM unset)" and the
-   reference check reports the rhythm audio as not compared: that is a skipped check, not a pass.
+   Without the variable the host test reports the rhythm ROM checks as skipped and the reference check reports the
+   rhythm audio as not compared: that is a skipped check, not a pass. (Branch `opna-systems` renamed the variable from
+   `THOR_EPSM_RHYTHM_ROM` to `THOR_RHYTHM_ROM`, shared with the YM2608.)
 5. Prove the ROM is in nothing distributed (expect no output from each):
 
    ```sh
@@ -68,8 +121,9 @@ verified; record the results here then, replacing this section.
    and the same `find` over an extracted AppImage (`--appimage-extract`) and over `app/build/samples/`.
 6. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → NES… → NES +
    EPSM; demo playback (stereo, no underruns), SSG/FM/Rhythm pages, X audition on SSG, FM and a drum (refused with
-   the import message while no ROM is installed), the main-menu row reading "EPSM rhythm ROM…  missing". For the
-   import, push the ROM to a temporary device path, import it through **EPSM rhythm ROM…**, check the row reads
+   the import message while no ROM is installed), the main-menu row reading "YM2608 rhythm ROM…  missing" (branch
+   `opna-systems`; "EPSM rhythm ROM…" before it). For the
+   import, push the ROM to a temporary device path, import it through **YM2608 rhythm ROM…**, check the row reads
    "installed" and a rhythm song plays after an app restart, then delete the pushed copy (the app keeps its private
    copy in `files/firmware/`). NSF, FamiStudio text (and its refusal of a manual SSG envelope period other than
    4000) and WAV exports through the document picker.

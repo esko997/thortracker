@@ -42,7 +42,8 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  *
  * `backendVersion` is the version of the system's own song data ([org.thortracker.system.SoundSystem.backendVersion]),
  * upgraded by [org.thortracker.system.SoundSystem.upgradeBackend]: Game Boy 1; NES 2 adds the DPCM channel (a fifth
- * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings; SID 1; OPL3 (`opl3-fm`) 1; Mega Drive (`ym2612-fm`) 1.
+ * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings; SID 1; OPL3 (`opl3-fm`) 1; Mega Drive (`ym2612-fm`) 1;
+ * PC-88/98 OPN (`ym2203-opn`) and OPNA (`ym2608-opna`) 1 (OPNA ADPCM-B sample data is one Base64 string per sample).
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

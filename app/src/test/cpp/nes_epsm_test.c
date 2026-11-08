@@ -8,8 +8,8 @@
  * instrument edits, audition on SSG, FM and rhythm, mute, the image rules of the EPSM build and the chip engine
  * interface.
  *
- * The YM2608 rhythm ROM is not part of Thor Tracker. With THOR_EPSM_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin
- * (8192 bytes, SHA-256 checked here) the rhythm checks with sound run too; without it they are skipped with a notice.
+ * The YM2608 rhythm ROM is not part of Thor Tracker. With THOR_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192
+ * bytes, SHA-256 checked here) the rhythm checks with sound run too; without it they are skipped with a notice.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes <dir>/nes_epsm.wav (48 kHz stereo, 30 s; with the ROM the drums included), <dir>/nes_epsm_tonal.wav (the
@@ -31,6 +31,7 @@
 #include "nes_ft_song.h"
 #include "nes_machine.h"
 #include "nes_vrc6_song.h"
+#include "ym2608_rhythm_rom.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -346,12 +347,12 @@ static void test_unit(void) {
 /* No ROM installed (this runs before any install): a rhythm key-on is silent, says so, and still runs to its end. */
 static void test_rhythm_without_rom(void) {
     printf("EPSM rhythm without the ROM: silent, flagged\n");
-    EXPECT(!nes_epsm_rhythm_rom_installed(), "no rhythm ROM installed yet");
-    static uint8_t junk[NES_EPSM_RHYTHM_ROM_SIZE + 1];
-    EXPECT(nes_epsm_install_rhythm_rom(NULL, NES_EPSM_RHYTHM_ROM_SIZE) == -1, "NULL refused");
-    EXPECT(nes_epsm_install_rhythm_rom(junk, NES_EPSM_RHYTHM_ROM_SIZE - 1) == -1 && nes_epsm_install_rhythm_rom(junk, sizeof junk) == -1,
+    EXPECT(!ym2608_rhythm_rom_installed() && ym2608_rhythm_rom() == NULL, "no rhythm ROM installed yet");
+    static uint8_t junk[YM2608_RHYTHM_ROM_SIZE + 1];
+    EXPECT(ym2608_rhythm_rom_install(NULL, YM2608_RHYTHM_ROM_SIZE) == -1, "NULL refused");
+    EXPECT(ym2608_rhythm_rom_install(junk, YM2608_RHYTHM_ROM_SIZE - 1) == -1 && ym2608_rhythm_rom_install(junk, sizeof junk) == -1,
            "8191 and 8193 bytes refused");
-    EXPECT(!nes_epsm_rhythm_rom_installed(), "still none installed");
+    EXPECT(!ym2608_rhythm_rom_installed(), "still none installed");
     NesEpsmChip* c = nes_epsm_chip_create();
     nes_epsm_chip_write(c, 0, 0x11), nes_epsm_chip_write(c, 1, 0x3F); /* rhythm total level: full */
     nes_epsm_chip_write(c, 0, 0x18), nes_epsm_chip_write(c, 1, 0xDF); /* bass drum: both sides, level 31 */
@@ -372,15 +373,15 @@ static void test_rhythm_without_rom(void) {
     nes_epsm_chip_destroy(c);
 }
 
-/* The user's ROM from THOR_EPSM_RHYTHM_ROM (never part of the repository): install rules, then drums with sound. */
+/* The user's ROM from THOR_RHYTHM_ROM (never part of the repository): install rules, then drums with sound. */
 static void test_rhythm_with_rom(void) {
-    const char* path = getenv("THOR_EPSM_RHYTHM_ROM");
+    const char* path = getenv("THOR_RHYTHM_ROM");
     if (!path || !path[0]) {
-        printf("EPSM rhythm ROM checks skipped (THOR_EPSM_RHYTHM_ROM unset; the ROM is not part of Thor Tracker)\n");
+        printf("EPSM rhythm ROM checks skipped (THOR_RHYTHM_ROM unset; the ROM is not part of Thor Tracker)\n");
         return;
     }
-    printf("EPSM rhythm with the ROM from THOR_EPSM_RHYTHM_ROM\n");
-    static uint8_t rom[NES_EPSM_RHYTHM_ROM_SIZE + 1];
+    printf("EPSM rhythm with the ROM from THOR_RHYTHM_ROM\n");
+    static uint8_t rom[YM2608_RHYTHM_ROM_SIZE + 1];
     FILE* f = fopen(path, "rb");
     EXPECT(f != NULL, "%s opens", path);
     if (!f) return;
@@ -388,14 +389,16 @@ static void test_rhythm_with_rom(void) {
     fclose(f);
     char hex[65];
     sha256_hex(rom, size, hex);
-    EXPECT(size == NES_EPSM_RHYTHM_ROM_SIZE && !strcmp(hex, ROM_SHA256), "the YM2608 rhythm ROM: %zu bytes, SHA-256 %s", size, hex);
-    if (size != NES_EPSM_RHYTHM_ROM_SIZE || strcmp(hex, ROM_SHA256)) return;
-    EXPECT(nes_epsm_install_rhythm_rom(rom, size) == 0 && nes_epsm_rhythm_rom_installed(), "installed");
-    EXPECT(nes_epsm_install_rhythm_rom(rom, size) == 0, "the same bytes again: no-op");
-    static uint8_t other[NES_EPSM_RHYTHM_ROM_SIZE];
+    EXPECT(size == YM2608_RHYTHM_ROM_SIZE && !strcmp(hex, ROM_SHA256), "the YM2608 rhythm ROM: %zu bytes, SHA-256 %s", size, hex);
+    if (size != YM2608_RHYTHM_ROM_SIZE || strcmp(hex, ROM_SHA256)) return;
+    EXPECT(ym2608_rhythm_rom_install(rom, size) == 0 && ym2608_rhythm_rom_installed(), "installed");
+    EXPECT(ym2608_rhythm_rom() != NULL && !memcmp(ym2608_rhythm_rom(), rom, YM2608_RHYTHM_ROM_SIZE), "the installed bytes are the ROM");
+    EXPECT(ym2608_rhythm_rom_install(rom, size) == 0, "the same bytes again: no-op");
+    static uint8_t other[YM2608_RHYTHM_ROM_SIZE];
     memcpy(other, rom, sizeof other);
     other[100] ^= 0x55;
-    EXPECT(nes_epsm_install_rhythm_rom(other, sizeof other) == -1 && nes_epsm_rhythm_rom_installed(),
+    EXPECT(ym2608_rhythm_rom_install(other, sizeof other) == -1 && ym2608_rhythm_rom_installed() &&
+               !memcmp(ym2608_rhythm_rom(), rom, YM2608_RHYTHM_ROM_SIZE),
            "other bytes after an install refused; the installed ROM stays");
     g_rom = 1;
     static const uint8_t pans[3] = {0xDF, 0x9F, 0x5F}; /* both, left, right */

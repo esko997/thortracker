@@ -7,6 +7,10 @@ import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.opn.OpnChip
+import org.thortracker.system.opn.OpnDemoSong
+import org.thortracker.system.opn.OpnSystem
+import org.thortracker.system.opn.OpnaSystem
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
@@ -63,5 +67,22 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The PC-88/98 OPN (YM2203) and OPNA (YM2608) demos: projects and engine images (their VGMs need the native
+        // player: tools/audio/render_opn_image.sh renders them). Neither demo has rhythm notes, so neither needs the
+        // rhythm ROM. Then each chip's shortest valid song (one one-row order at speed 1, one held FM 1 note), whose
+        // images the native WAV export test renders through loops.
+        val opn = OpnSystem.demo()
+        File(directory, "night-express.thor").writeText(ProjectCodec.encode(opn), Charsets.UTF_8)
+        File(directory, "night-express.opnimg").writeBytes(ByteArray(OpnSystem.engine.imageSize).also { OpnSystem.engine.lower(opn, it) })
+        val opna = OpnaSystem.demo()
+        File(directory, "paper-lanterns.thor").writeText(ProjectCodec.encode(opna), Charsets.UTF_8)
+        File(directory, "paper-lanterns.opnaimg").writeBytes(ByteArray(OpnaSystem.engine.imageSize).also { OpnaSystem.engine.lower(opna, it) })
+        for ((chip, name) in listOf(OpnChip.YM2203 to "opn-shortest.opnimg", OpnChip.YM2608 to "opna-shortest.opnaimg")) {
+            val shortest = OpnDemoSong.shortest(chip)
+            val system = shortest.system
+            check(system.errors(shortest).isEmpty()) { "the shortest ${chip.label} song is invalid: ${system.errors(shortest)}" }
+            File(directory, name).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+        }
+        println("Exported ${opn.title}, ${opna.title} and the shortest OPN and OPNA songs to ${directory.absolutePath}")
     }
 }

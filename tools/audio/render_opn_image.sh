@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Renders a lowered YM2203 / YM2608 image through the native OPN machine (host gcc/g++, the same sources as the hosts).
+# Usage: tools/audio/render_opn_image.sh image.opnimg|image.opnaimg out.wav [seconds] [rhythm-rom.bin] [rom=path]
+#          [mute=1,7,16] [--vgm out.vgm] [title=..] [author=..] [date=..]
+# The YM2608 rhythm ROM (the user's own copy, never in the repository) comes from the 4th argument, rom=, or
+# THOR_RHYTHM_ROM; without it rhythm drums are silent and the tool says so.
+set -euo pipefail
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+build="$root/build/host-audio/render-opn"
+mkdir -p "$build"
+cpp="$root/app/src/main/cpp"
+includes=(-I "$cpp" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/opn" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/third_party/chips"
+  -I "$cpp/third_party/binjgb/src" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3"
+  -I "$cpp/third_party/ymfm")
+objs=()
+for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
+  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_epsm_unit.c" \
+  "$cpp/nes/nes_players.c" "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c" \
+  "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c" \
+  "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c" "$cpp/opl3/opl3_vgm.c" \
+  "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c" "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" \
+  "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c" "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c" \
+  "$cpp/ym2608_rhythm_rom.c" "$cpp/opn/opn_image.c" "$cpp/opn/opn_player.c" "$cpp/opn/opn_chip.c" "$cpp/opn/opn_machine.c" \
+  "$cpp/opn/opn_vgm.c" "$root/tools/audio/opn_render.c"; do
+  o="$build/$(basename "${src%.*}").o"
+  ${CC:-gcc} -std=gnu11 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
+  objs+=("$o")
+done
+for src in "$cpp/sid/sid_resid.cpp" "$cpp"/third_party/resid-1.0/{sid,voice,wave,envelope,filter,dac,extfilt,pot}.cc \
+  "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/opn/opn_ymfm.cpp" "$cpp/third_party/ymfm/ymfm_adpcm.cpp" \
+  "$cpp/third_party/ymfm/ymfm_ssg.cpp"; do
+  o="$build/$(basename "${src%.*}").o"
+  ${CXX:-g++} -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
+  objs+=("$o")
+done
+${CXX:-g++} "${objs[@]}" -lm -lpthread -o "$build/opn_render"
+exec "$build/opn_render" "$@"

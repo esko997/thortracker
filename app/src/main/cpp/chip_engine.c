@@ -10,9 +10,11 @@ extern const ChipEngineOps nes_epsm_chip_ops;
 extern const ChipEngineOps sid_chip_ops;
 extern const ChipEngineOps opl3_chip_ops;
 extern const ChipEngineOps ym_chip_ops;
+extern const ChipEngineOps opn_chip_ops;
+extern const ChipEngineOps opna_chip_ops;
 
 static const ChipEngineOps* const systems[] = {&huge_chip_ops, &nes_chip_ops, &nes_vrc6_chip_ops, &nes_epsm_chip_ops, &sid_chip_ops,
-                                               &opl3_chip_ops, &ym_chip_ops};
+                                               &opl3_chip_ops, &ym_chip_ops, &opn_chip_ops, &opna_chip_ops};
 
 const ChipEngineOps* chip_engine_ops(const char* system_id) {
     if (!system_id) return NULL;

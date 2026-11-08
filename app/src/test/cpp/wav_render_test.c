@@ -10,10 +10,11 @@
  * and reporting CHIP_WAV_CAPPED; closing a job before it completes removing its spool, a complete file staying; bad
  * arguments. Plus chip_wav_pcm16's rounding and clamping.
  *
- * The shortest songs (epsm-shortest.nesimg: one order of one row at speed 1, a held note on EPSM FM 1, looping to
- * order 0) run the same render paths at the other extreme: once through is a single engine tick (under 1 s), and
- * it must still render a valid non-silent file equal to straight ticking, deterministically for any step size, with
- * loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
+ * The shortest songs (epsm-shortest.nesimg, opn-shortest.opnimg and opna-shortest.opnaimg: one order of one row at
+ * speed 1, a held note on FM 1 of the EPSM / YM2203 / YM2608, looping to order 0) run the same render paths at the
+ * other extreme: once through is a single engine tick (under 1 s), and it must still render a valid non-silent file
+ * equal to straight ticking, deterministically for any step size, with loops=1 adding about one loop and a fade adding
+ * exactly its length; a wrong image size is refused.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
@@ -58,11 +59,15 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"night-express.opnimg", "ym2203-opn"},
+    {"paper-lanterns.opnaimg", "ym2608-opna"},
 };
 
 /* The shortest valid songs (written by exportSamples beside the demos). */
 static const Demo kShortest[] = {
     {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
+    {"opn-shortest.opnimg", "ym2203-opn"},
+    {"opna-shortest.opnaimg", "ym2608-opna"},
 };
 
 static char spool[512];

@@ -11,6 +11,8 @@ import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
+import org.thortracker.system.opn.OpnVgm
+import org.thortracker.system.opn.OpnVgmRenderer
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.system.ym2612.YmExportRenderer
 
@@ -280,10 +282,13 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
         init {
             System.loadLibrary("thortracker_audio")
-            // VGM export of OPL3 songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of every system through
-            // the native players (core has no native code).
+            // VGM export of OPL3 and PC-88/98 OPN/OPNA songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of
+            // every system through the native players (core has no native code).
             Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
                 nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            OpnVgm.renderer = OpnVgmRenderer { image, maxTicks, tags ->
+                nativeOpnVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
@@ -328,6 +333,11 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /**
+         * `opn_export_vgm` (`opn/opn_export.h`) for a YM2203 or YM2608 image (the chip is the header's); UTF-8 tags;
+         * throws IllegalArgumentException(loader problem) for a rejected image.
+         */
+        @JvmStatic private external fun nativeOpnVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** `chip_wav.h`: a job rendering into [spool]; throws IllegalArgumentException(problem) when it cannot start. */
@@ -337,9 +347,10 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeWavClose(handle: Long)
 
         /**
-         * Installs the YMF288 rhythm ROM (`nes_epsm_install_rhythm_rom`): process-wide firmware every EPSM engine plays
-         * its six rhythm drums from. 0 = installed (identical bytes again: no change), -1 = not 8192 bytes. Callers
-         * validate the bytes first ([org.thortracker.system.nes.EpsmRhythmRom.problem]); never called concurrently.
+         * Installs the YM2608 rhythm ROM (`ym2608_rhythm_rom_install`, `ym2608_rhythm_rom.h`): process-wide firmware
+         * every chip with rhythm drums plays them from (the NES EPSM's YMF288 and the YM2608). 0 = installed (identical
+         * bytes again: no change), -1 = not 8192 bytes or other bytes than the installed ROM. Callers validate the
+         * bytes first ([org.thortracker.system.fm.Ym2608RhythmRom.problem]); never called concurrently.
          */
         @JvmStatic external fun nativeInstallRhythmRom(rom: ByteArray): Int
     }

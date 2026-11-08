@@ -1,15 +1,15 @@
-// The EPSM's YMF288 over ymfm, and the rhythm ROM firmware (nes_epsm.h).
+// The EPSM's YMF288 over ymfm (nes_epsm.h). Its rhythm drums read the one installed YM2608 rhythm ROM
+// (ym2608_rhythm_rom.h).
 //
 // ymfm's OPN family is compiled once, in ym/ym_ymfm.cpp, which also explicitly instantiates the OPNA register and FM
 // engine templates (opn_registers_base<true>, fm_engine_base<opna_registers>) this file calls; here only ymfm's headers
 // are included and those templates are declared extern, so the program holds one copy of each.
 #include "nes_epsm.h"
 
-#include <atomic>
-#include <cstring>
 #include <new>
 #include <vector>
 
+#include "ym2608_rhythm_rom.h"
 #include "ymfm_opn.h"
 
 extern template class ymfm::opn_registers_base<true>;
@@ -17,17 +17,12 @@ extern template class ymfm::fm_engine_base<ymfm::opna_registers>;
 
 namespace {
 
-uint8_t g_rom[NES_EPSM_RHYTHM_ROM_SIZE];
-std::atomic<int> g_rom_ready{0};
-
-const uint8_t* installed_rom() { return g_rom_ready.load(std::memory_order_acquire) ? g_rom : nullptr; }
-
 // The rhythm ROM as the ADPCM-A engine's external memory (byte addresses 0..$1FFF).
 class EpsmInterface : public ymfm::ymfm_interface {
 public:
     const uint8_t* rom = nullptr;  // set at a rhythm key-on that finds the ROM installed
     uint8_t ymfm_external_read(ymfm::access_class type, uint32_t address) override {
-        if (type != ymfm::ACCESS_ADPCM_A || !rom || address >= NES_EPSM_RHYTHM_ROM_SIZE) return 0;
+        if (type != ymfm::ACCESS_ADPCM_A || !rom || address >= YM2608_RHYTHM_ROM_SIZE) return 0;
         return rom[address];
     }
 };
@@ -61,7 +56,7 @@ public:
             if (value & 0x80) {
                 playing &= ~drums;
             } else if (drums) {
-                const uint8_t* rom = installed_rom();
+                const uint8_t* rom = ym2608_rhythm_rom();
                 if (rom) {
                     m_rom_intf.rom = rom;
                     silent &= ~drums;
@@ -152,16 +147,6 @@ struct NesEpsmChip {
 };
 
 extern "C" {
-
-int nes_epsm_install_rhythm_rom(const uint8_t* rom, size_t size) {
-    if (!rom || size != NES_EPSM_RHYTHM_ROM_SIZE) return -1;
-    if (g_rom_ready.load(std::memory_order_acquire)) return std::memcmp(g_rom, rom, NES_EPSM_RHYTHM_ROM_SIZE) ? -1 : 0;
-    std::memcpy(g_rom, rom, NES_EPSM_RHYTHM_ROM_SIZE);
-    g_rom_ready.store(1, std::memory_order_release);
-    return 0;
-}
-
-int nes_epsm_rhythm_rom_installed(void) { return g_rom_ready.load(std::memory_order_acquire) ? 1 : 0; }
 
 NesEpsmChip* nes_epsm_chip_create(void) {
     NesEpsmChip* c = new (std::nothrow) NesEpsmChip();

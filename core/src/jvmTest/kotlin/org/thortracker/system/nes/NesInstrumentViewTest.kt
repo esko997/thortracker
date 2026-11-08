@@ -13,6 +13,8 @@ import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
 import org.thortracker.system.ChannelKind
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.fm.RhythmRomMenu
+import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.NesInstrumentView.Row
 
 /** The NES instrument editor driven only through controller actions, and its envelope edits. */
@@ -337,7 +339,7 @@ class NesInstrumentViewTest {
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
-                override fun installEpsmRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
+                override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
             })
         }
         val v = dpcmView()
@@ -500,7 +502,7 @@ class NesInstrumentViewTest {
             title == "EPSM rhythm" && rows.any { it.second.contains("fixed drum") }
         })
         // The ROM row says whether the ROM is installed, and Edit there opens the ROM picker.
-        if (!EpsmRhythmRom.installed) {
+        if (!Ym2608RhythmRom.installed) {
             assertTrue(NesEpsmPage.value(epsm.song, ins(), Row.RHYTHM_ROM).startsWith("missing"))
             assertTrue(NesEpsmPage.dim(epsm.song, ins(), Row.RHYTHM_ROM))
         }
@@ -513,12 +515,12 @@ class NesInstrumentViewTest {
                 }
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
-                override fun installEpsmRhythmRom(bytes: ByteArray): String? = throw AssertionError("nothing was picked")
+                override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("nothing was picked")
             })
         }
         goTo(Row.RHYTHM_ROM)
         v.tap(Action.EDIT)
-        assertEquals(listOf(EpsmRhythmRom.EXTENSIONS to 64 * 1024), picks)
+        assertEquals(listOf(Ym2608RhythmRom.EXTENSIONS to 64 * 1024), picks)
 
         // Back to 2A03: the EPSM's patch, mixer, noise and hardware envelope go, and so do its pages.
         goTo(Row.CHIP)
@@ -545,7 +547,7 @@ class NesInstrumentViewTest {
     /**
      * The rhythm ROM import checks the file before the host sees it: a wrong size or a wrong SHA-256 is an error naming
      * the file and the host keeps nothing. The accepted path needs the user's own ROM (never in the repository): set
-     * THOR_EPSM_RHYTHM_ROM to its path to run it.
+     * THOR_RHYTHM_ROM to its path to run it.
      */
     @Test
     fun theRhythmRomImportChecksSizeAndHashBeforeInstalling() {
@@ -557,25 +559,25 @@ class NesInstrumentViewTest {
             override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
             override fun status(message: String) { statuses += message }
             override fun error(message: String) { errors += message }
-            override fun installEpsmRhythmRom(bytes: ByteArray): String? { installed += bytes; return null }
+            override fun installRhythmRom(bytes: ByteArray): String? { installed += bytes; return null }
         }
-        EpsmRomMenu.import(menu, "short.bin", ByteArray(100))
+        RhythmRomMenu.import(menu, "short.bin", ByteArray(100))
         assertTrue(installed.isEmpty())
-        assertTrue(errors.last(), errors.last().startsWith("short.bin was not installed: ") && errors.last().contains("${EpsmRhythmRom.SIZE}"))
-        EpsmRomMenu.import(menu, "zeros.rom", ByteArray(EpsmRhythmRom.SIZE))
+        assertTrue(errors.last(), errors.last().startsWith("short.bin was not installed: ") && errors.last().contains("${Ym2608RhythmRom.SIZE}"))
+        RhythmRomMenu.import(menu, "zeros.rom", ByteArray(Ym2608RhythmRom.SIZE))
         assertTrue(installed.isEmpty())
         assertTrue(errors.last(), errors.last().startsWith("zeros.rom was not installed: ") && errors.last().contains("SHA-256"))
         assertTrue(statuses.isEmpty())
-        val path = System.getenv("THOR_EPSM_RHYTHM_ROM") ?: return
+        val path = System.getenv("THOR_RHYTHM_ROM") ?: return
         val rom = java.io.File(path).readBytes()
-        EpsmRomMenu.import(menu, "ym2608_adpcm_rom.bin", rom)
+        RhythmRomMenu.import(menu, "ym2608_adpcm_rom.bin", rom)
         assertTrue(installed.single() === rom)
-        assertTrue(statuses.single().startsWith("EPSM rhythm ROM installed from ym2608_adpcm_rom.bin"))
+        assertTrue(statuses.single().startsWith("YM2608 rhythm ROM installed from ym2608_adpcm_rom.bin"))
         // A host that cannot keep it reports why.
         val failing = object : org.thortracker.editor.MenuContext by menu {
-            override fun installEpsmRhythmRom(bytes: ByteArray): String? = "the disk is full"
+            override fun installRhythmRom(bytes: ByteArray): String? = "the disk is full"
         }
-        EpsmRomMenu.import(failing, "ym2608_adpcm_rom.bin", rom)
+        RhythmRomMenu.import(failing, "ym2608_adpcm_rom.bin", rom)
         assertEquals("ym2608_adpcm_rom.bin was not installed: the disk is full", errors.last())
     }
 }

@@ -8,11 +8,11 @@
 # byte $7B = $01).
 # EPSM: <dir>/nes_epsm.wav (all channels), nes_epsm_tonal.wav (rhythm drums muted), nes_epsm_trace.txt (per-frame APU +
 # $401C-$401F writes) and nes_epsm.nsf (the EPSM test song, expansion byte $7B = $80). The YM2608 rhythm ROM is not
-# part of Thor Tracker: set THOR_EPSM_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192 bytes, SHA-256 checked) for
-# the private rhythm checks, which then also write nes_epsm_rhythm.wav (rhythm drums only) and put the drums into
-# nes_epsm.wav; without it those checks are skipped with a notice. Keep the ROM outside the repository and give a ROM run
-# an evidence directory outside it too (e.g. tools/audio/run_native_host_test.sh /tmp/thor-evidence), so no drum render
-# sits in the worktree.
+# part of Thor Tracker: set THOR_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192 bytes, SHA-256 checked) for the
+# private rhythm checks (EPSM and OPNA), which then also write nes_epsm_rhythm.wav (rhythm drums only), put the drums
+# into nes_epsm.wav and write opna_rhythm.wav; without it those checks are skipped with a notice. Keep the ROM outside
+# the repository and give a ROM run an evidence directory outside it too (e.g. tools/audio/run_native_host_test.sh
+# /tmp/thor-evidence), so no drum render sits in the worktree.
 # SID: <dir>/sid_gt_8580.wav, sid_gt_6581.wav, sid_tone_8580.wav, sid_trace.txt (per-tick SID writes) and
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
@@ -20,6 +20,11 @@
 # YM2612: <dir>/ym_song.wav, ym_song_pal.wav, ym_tone_fm.wav, ym_tone_psg.wav, ym_trace.txt (per-tick player
 # writes, = the Python reference player's), ym_song.vgm, ym_song.xgm and ym_song.bin (the XGC; = xgmtool's) and
 # ym_image.bin (the image).
+# OPN / OPNA (opn_machine_test, images built in C): one <tone>.wav (the engine's render, 48 kHz stereo) and <tone>.vgm
+# (the same image's VGM) per measured tone - opn_fm_a4, opn_fm_c2, opn_fm_c6, opn_ssg_a4, opn_ssg_b0, opn_fm3_special
+# and the opna_ ones plus opna_adpcm_root / opna_adpcm_up12 -, opn_csm.wav / opna_csm.wav, opn_song.wav / .vgm / .bin
+# and opna_song.wav / .vgm / .bin (the test songs and their images) and opn_evidence.txt (what each file holds). Then
+# check them independently (Python 3 stdlib only): python3 tools/audio/opn_reference_check.py <dir>
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # The engines are C except reSID and ymfm (C++17): C sources build with $CC, reSID, ymfm and their C wrappers with
@@ -34,9 +39,9 @@ CC="${CC:-gcc}"
 CXX="${CXX:-g++}"
 warn=(-Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare
   -Wno-missing-field-initializers -Wno-enum-compare)
-includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/third_party/chips"
-  -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm"
-  -I "$root/app/src/test/cpp")
+includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/opn"
+  -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3"
+  -I "$cpp/third_party/ymfm" -I "$root/app/src/test/cpp")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -48,8 +53,10 @@ c_engines=(
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/ym2608_rhythm_rom.c" "$cpp/opn/opn_image.c" "$cpp/opn/opn_player.c" "$cpp/opn/opn_vgm.c" "$cpp/opn/opn_chip.c"
+  "$cpp/opn/opn_machine.c"
 )
-cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp")
+cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/opn/opn_ymfm.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
 for f in sid voice wave envelope filter dac extfilt pot; do cxx_engines+=("$cpp/third_party/resid-1.0/$f.cc"); done
 objs=()
@@ -64,9 +71,9 @@ for src in "${cxx_engines[@]}"; do
   objs+=("$o")
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_epsm_test sid_machine_test opl3_machine_test ym_machine_test \
-  wav_render_test; do
+  opn_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
-  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
+  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -lpthread -o "$build/$t"
 done
 status=0
 "$build/huge_machine_test" "$out" || status=1
@@ -76,5 +83,7 @@ status=0
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/opn_machine_test" "$out" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+echo "OPN / OPNA independent reference check of the evidence: python3 tools/audio/opn_reference_check.py $out"
 exit $status
