@@ -17,8 +17,8 @@
  *  - Then, with fade_ms > 0, a fade-out: the song keeps playing (it is looping, nothing is released or keyed off)
  *    while its volume falls linearly to silence over fade_ms. If the faded song is silent before the end, the file
  *    stops one second after its last audible frame (a song that ends by looping an empty pattern). With fade_ms = 0
- *    the file ends exactly at the loop point and loops seamlessly. No note release tail is rendered: the drivers
- *    have no "stop the song with release" operation, and a cut at the loop point is what a looping player hears.
+ *    the file ends at the loop boundary. The intro, chip phase and envelopes can prevent seamless file looping.
+ *    No song-wide release tail is requested: the engine interface has no "stop the song with release" operation.
  *  - The limit: a song part that reaches max_seconds (0: no limit but CHIP_WAV_MAX_FRAMES) ends there, then fades
  *    as above; the status reports it (CHIP_WAV_CAPPED) so the host can say the file is not the complete song (or not
  *    all the loop passes asked for). */

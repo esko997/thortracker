@@ -6,6 +6,10 @@ set(CMAKE_C_EXTENSIONS ON)       # binjgb uses GNU C (anonymous structs, __built
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Gradle's worker limit does not constrain Ninja's per-ABI compiler fan-out.
+set_property(GLOBAL APPEND PROPERTY JOB_POOLS thor_compile=2)
+set(CMAKE_JOB_POOL_COMPILE thor_compile)
+
 set(BINJGB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/binjgb/src)
 set(NES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nes)
 set(SID_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sid)

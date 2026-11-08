@@ -15,7 +15,8 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
-2. **WAV export** for every system (each engine already renders audio natively).
+2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
+   Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
 3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) first, then
    VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5, EPSM (YM2608).
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
@@ -51,6 +52,9 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 - **Mixer view:** proposed channel faders for fixed volume levels, separate from per-row volume effects.
   Design remains open: distinguish chip-supported gain that survives native export from preview-only mixing.
   Do not promise independent gain on chips whose voices share an analogue mix or silently change exported sound.
+- **Pattern right-stick shortcuts (requested):** with Pattern focused, two quick Up flicks jump to its first row;
+  two quick Down flicks jump to its last row. Preserve single-flick behavior. Require a return to neutral between
+  flicks; holding the stick must not trigger a jump. Scope the gesture to the focused Pattern view on both hosts.
 - **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
   compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
   Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware

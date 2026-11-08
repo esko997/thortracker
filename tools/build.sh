@@ -4,7 +4,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ "$#" -eq 0 ]; then set -- :core:jvmTest testDebugUnitTest assembleDebug; fi
 # Worktree builds share a lock, but persistent Gradle/Kotlin daemons otherwise accumulate between runs.
 # Keep Kotlin in the single-use Gradle process; callers may override these defaults explicitly.
-set -- --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process "$@"
+set -- --no-daemon -Pkotlin.compiler.execution.strategy=in-process "$@"
 if command -v java >/dev/null 2>&1; then
   export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
   exec flock /tmp/sortie-gradle.lock "$root/gradlew" -p "$root" --console=plain "$@"

@@ -7,14 +7,14 @@ import org.thortracker.ui.PopupSpec
 
 /**
  * How long a WAV export runs (`chip_wav.h`): the song once through to its loop point, [loops] more passes of the loop,
- * then a [fadeSeconds] fade-out of the song playing on (0: the file ends exactly at the loop point and loops
- * seamlessly). The song part stops at [maxSeconds] if it gets that far; the export then says so ([WavExport.capped]).
+ * then a [fadeSeconds] fade-out of the song playing on (0: end at the loop boundary without a fade).
+ * The song part stops at [maxSeconds] if it gets that far; the export then says so ([WavExport.capped]).
  */
 data class WavOptions(val loops: Int = 0, val fadeSeconds: Int = DEFAULT_FADE_SECONDS, val maxSeconds: Int = MAX_SECONDS) {
     /** The menu row: "Once through, then fade out". */
     val label: String
         get() = when {
-            fadeSeconds == 0 && loops == 0 -> "Once through, no fade (loops seamlessly)"
+            fadeSeconds == 0 && loops == 0 -> "Once through, no fade"
             fadeSeconds == 0 -> "Once + $loops loop${if (loops == 1) "" else "s"}, no fade"
             loops == 0 -> "Once through, then fade out"
             else -> "Once + $loops loop${if (loops == 1) "" else "s"}, then fade out"
@@ -140,7 +140,7 @@ class WavExport(song: Song, val options: WavOptions, val spool: String, renderer
         if (!capped) return length
         val limit = clock(options.maxSeconds.toDouble())
         return if (last.looped) "$length; it stopped at the $limit limit before all the loop passes"
-        else "$length; the song never comes back to a row it played, so the file is its first $limit"
+        else "$length; no loop point was reached within $limit, so the export stopped at that limit"
     }
 
     override fun close() = job.close()

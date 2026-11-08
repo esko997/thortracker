@@ -30,22 +30,29 @@ object Files {
     fun readText(path: String): String? = readBytes(path)?.decodeToString()
 
     /** Writes via a temporary file and rename, so a crash never leaves a half-written file at [path]. */
-    fun write(path: String, bytes: ByteArray): Boolean = write(path) { sink -> if (bytes.isNotEmpty()) sink(bytes, bytes.size) }
+    fun write(path: String, bytes: ByteArray): Boolean = write(path) { sink ->
+        if (bytes.isNotEmpty()) sink(bytes, bytes.size)
+        true
+    }
 
-    /** As [write], with the content streamed: [fill] passes (bytes, count) pieces to its sink. */
-    fun write(path: String, fill: ((ByteArray, Int) -> Unit) -> Unit): Boolean {
+    /** Commits only if [fill] reports a complete source and every write succeeds. */
+    private fun write(path: String, fill: ((ByteArray, Int) -> Unit) -> Boolean): Boolean {
         val tmp = "$path.tmp"
         val f = fopen(tmp, "wb") ?: return false
-        var ok = true
+        var ok = false
+        var written = true
         try {
-            fill { bytes, count ->
-                if (ok && count > 0) ok = bytes.usePinned { fwrite(it.addressOf(0), 1u, count.convert(), f).toInt() == count }
+            val complete = fill { bytes, count ->
+                if (written && count > 0) written = bytes.usePinned { fwrite(it.addressOf(0), 1u, count.convert(), f).toInt() == count }
             }
+            ok = complete && written
         } finally {
             if (fclose(f) != 0) ok = false
+            if (!ok) remove(tmp)
         }
-        if (!ok) remove(tmp)
-        return ok && rename(tmp, path) == 0
+        if (ok && rename(tmp, path) == 0) return true
+        remove(tmp)
+        return false
     }
 
     /**
@@ -64,12 +71,12 @@ object Files {
                     if (n > 0) sink(buffer, n)
                     if (n < buffer.size) { read = ferror(f) == 0; break }
                 }
+                read
             }
         } finally {
             fclose(f)
         }
         remove(from)
-        if (written && !read) remove(to)   // a short copy: never leave it under the chosen name
         return written && read
     }
 

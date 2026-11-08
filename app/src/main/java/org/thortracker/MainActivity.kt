@@ -289,8 +289,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         displays = getSystemService(DisplayManager::class.java)
         displays.registerDisplayListener(this, main)
-        // A render the process did not live to finish or save (the spool is otherwise removed when an export ends).
-        File(cacheDir, WAV_SPOOL).delete()
+        // Once per process: a previous activity's cancelled worker may still own a spool while it exits.
+        if (!wavSpoolsCleaned) {
+            cacheDir.listFiles { _, name -> name.startsWith(WAV_SPOOL_PREFIX) && name.endsWith(".part") }
+                ?.forEach { it.delete() }
+            wavSpoolsCleaned = true
+        }
         buildPrimary()
         projectStore.restore { recovered, warning ->
             if (isDestroyed) return@restore
@@ -938,7 +942,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
     /** Renders [song] to WAV on a worker thread with a progress popup that can cancel; [wavRendered] takes over. */
     private fun startWavExport(song: Song, options: WavOptions) {
         if (showWavExport()) return
-        val run = WavRun(song.title, File(cacheDir, WAV_SPOOL))
+        val spool = runCatching { File.createTempFile(WAV_SPOOL_PREFIX, ".part", cacheDir) }
+            .getOrElse { return showError("WAV export failed: ${it.message}") }
+        val run = WavRun(song.title, spool)
         wavRun = run
         Thread({
             val result = runCatching {
@@ -963,6 +969,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                     }
                 }
             }
+            if (result.isFailure) run.spool.delete()
             main.post { wavRendered(run, result) }
         }, "wav-render").start()
     }
@@ -1201,8 +1208,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         private const val EXPORT_WAV = 17
         /** How often the WAV export's progress popup refreshes. */
         private const val PROGRESS_MILLIS = 150L
-        /** The WAV export's spool in the app's cache: one export at a time, removed when it ends. */
-        private const val WAV_SPOOL = "wav-export.wav.part"
+        /** Each worker owns a distinct file, including while cancellation is still winding down. */
+        private const val WAV_SPOOL_PREFIX = "wav-export-"
+        private var wavSpoolsCleaned = false // Activity lifecycle callbacks run on the main thread.
         private const val COPY_BUFFER = 64 * 1024
         private const val TUNING_ASSETS = "tunings"
                 private const val MAX_KEYMAP_BYTES = 64 * 1024
