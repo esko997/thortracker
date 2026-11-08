@@ -8,6 +8,9 @@ behaviour are whatever the driver code does on the emulated CPU and APU.
 The NES system (`"nes-famistudio"`) follows the same principle: the FamiStudio sound engine 4.5.3
 (FamiTracker tempo) runs on an emulated 6502 + 2A03 with all five channels, DPCM samples included;
 its image layout, seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
+The NES + VRC6 and NES + Sunsoft 5B variants run the same engine assembled with that expansion
+([VRC6](#vrc6-the-same-engine-with-konamis-vrc6-nes-famistudio-vrc6),
+[Sunsoft 5B](#sunsoft-5b-the-same-engine-with-sunsofts-5b-nes-famistudio-s5b)).
 
 The C64 SID system (`"c64-sid"`, design step 6, native spike) runs the GoatTracker 2.77 playroutine
 on an emulated 6510 + reSID 1.0 (MOS 6581 or 8580, PAL); its image layout, timing, seek, audition and
@@ -532,12 +535,13 @@ At a tick boundary, Thor layout to Thor layout:
    consumed" — or "0..row−1, positioned after the row's `$47 d`" when the channel has a delayed note
    pending. Edited cells are heard from the next row processed.
 3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots) is found in the
-   old directory and moved to: the same index if its bytes are unchanged; else an entry of the same
-   kind with identical bytes (effect envelopes renumbered by the lowering); else the same index
-   edited — keeping the read position if it is still an instruction start, else restarting that
-   envelope; else the engine's silent dummy envelope. So a sustained note follows an edit of its
-   own instrument's envelope (GB: the next note does) unless an identical copy of the old envelope
-   remains elsewhere.
+   old directory and moved to: the same index if its bytes are unchanged; else, for an effect envelope
+   (directory index ≥ the build's `effect_envelopes`: 256, the 5B build 384), an entry of the same kind
+   with identical bytes (effect envelopes are renumbered by the lowering); else the same index edited —
+   keeping the read position if it is still an instruction start, else restarting that envelope; else
+   the engine's silent dummy envelope. Instrument envelopes (below that index) always stay their
+   slot's. So a sustained note follows an edit of its own instrument's envelope (GB: the next note
+   does), even when another instrument holds identical bytes.
 4. Instrument table pointer, DPCM list pointer and tempo step are re-read; the speed is set to
    straight play's speed at the playhead if the edit changed it (song speed, an earlier Fxx in this
    order) or the playhead was clamped; otherwise the engine keeps its speed (e.g. one inherited
@@ -822,6 +826,127 @@ VPulse sustain edited.
   the `.nsf`/text exports, files and the editor.
 - Not done: listening on hardware or a VRC6 cartridge, comparison with a reference VRC6 emulator's audio
   (libgme/NSFPlay), Thor measurements.
+
+## Sunsoft 5B: the same engine with Sunsoft's 5B (`"nes-famistudio-s5b"`)
+
+A further NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips"). Everything in the NES
+section holds; this section lists what differs. The 2A03 and VRC6 builds' player bytes, image sizes, song
+bases and fixtures are unchanged (`prepare_nes_player.py` checks its outputs for them stay byte-identical).
+
+### What runs
+
+- **Player** (`generated/nes_s5b_player_image.h`, `NesS5bPlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_S5B=1`, nothing else changed: the same entry table and configuration plus
+  FamiStudio's 5B code (its squares use the 2A03 note table). 8 channels, **23 envelope slots** (a 5B square has
+  four: volume, arpeggio, **mixer** at offset 2, **noise** at offset 3; `famistudio_channel_env` = 0, 3, 6, 8, —,
+  11, 15, 19), 6 pitch envelope slots (the squares' are 3-5). Song base: the first page after the player
+  (measured by the script, `NES_S5B_SONG_BASE` / `NesS5bPlayerImage.SONG_BASE`); the region up to `$FFF9` is
+  shared with the DPCM samples as on the 2A03 build; image = 32-byte header + directory + region
+  (`NES_S5B_IMAGE_SIZE`).
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5 5B Square 1, 6 5B Square 2, 7 5B Square 3**.
+- **Song header** (FamiStudio's for expansions with their own instruments): count, instruments,
+  **instruments_exp**, samples − 4, eight channel streams, PAL tempo, NTSC tempo (`nes_player_head` = 7 bytes
+  before the stream words). The Thor layout keeps one order stream per channel (`$41 n ptr` per order, `$42`).
+- **Instruments**: the 2A03 table (count × 8 bytes, as before; every slot has one) and the expansion table at
+  header word 3, one **16-byte entry per slot** (`FAMISTUDIO_USE_INSTRUMENT_EXTENDED_RANGE`: a 5B square's
+  instrument byte `$80 | i << 1` / `$54 i` indexes entry i × 16; FamitoneMusicFile.cs `instruments_exp`,
+  `famistudio_set_s5b_instrument`):
+
+  | Offset | Size | Field |
+  |---|---|---|
+  | 0 | 2 | volume envelope (directory entry of kind 0) |
+  | 2 | 2 | arpeggio envelope (kind 1) |
+  | 4 | 2 | pitch envelope (kind 3) |
+  | 6 | 2 | **mixer** envelope (kind 4) |
+  | 8 | 2 | **noise** envelope (kind 5) |
+  | 10 | 1 | hardware envelope shape: 0 = none, else `$08-$0F` (FamiStudio's S5BEnvelopeShape 1..8 + 7) |
+  | 11 | 1 | auto-period octave, signed −8..8, or `$80` = manual period |
+  | 12 | 2 | manual envelope period (u16, any value; used with `$80`) |
+  | 14 | 2 | 0 |
+
+  `nm_load_image` checks the five words are directory entries of those kinds, the shape, the octave and the
+  zero bytes, and that the table lies inside the song data (raw layout: that the pointer does).
+- **Directory kinds 4 (mixer) and 5 (noise)**, legal only in 5B images (other builds: "envelope kind outside
+  0..3"). Neither has a header byte (instructions from index 0, like arpeggio and duty). Mixer values are
+  FamiStudio's processed bits, tone off in bit 0 and noise off in bit 3: `$C0` (tone + noise), `$C1` (noise),
+  `$C8` (tone), `$C9` (neither: a constant level at the volume); noise values 0..31 (`$C0-$DF`). Hold counts and
+  loops as every envelope. Thor Tracker's directory indices: slot × 4 + kind for volume, arpeggio, duty and
+  pitch (unchanged), mixer 256 + 2 × slot, noise 256 + 2 × slot + 1, effect envelopes (`0xy` arpeggios,
+  vibratos) from **384** (`NesPlayer.effect_envelopes`; the other builds 256).
+- **Opcodes**: `$5E lo hi` (5B squares only; not a terminator) sets the shared manual envelope period
+  (`famistudio_s5b_env_period`) and `famistudio_s5b_env_override` for the frame, so an instrument loaded later
+  in that frame keeps the effect's period. FamiStudio's export moves every envelope period effect to 5B Square
+  1; the walker accepts it on any square and rejects it elsewhere and in other builds. `$4F` (duty) and `$53`
+  (phase reset) are invalid on the squares; `$55` stays VRC6-only.
+- **Per frame** (`famistudio_update_s5b_channel_sound`, squares in order 0..2): tone period = note table + pitch
+  envelope, fine pitch and slide **+ 1** (`$00-$05`); volume = envelope × volume track, with bit 4 (E) when the
+  instrument has a shape (`$08-$0A`). The last square with a shape and a note sets the hardware envelope: its
+  octave `$80` takes the manual period, else its tone period shifted by the octave (left for negative octaves,
+  right for positive ones with the last shift rounding an odd value up); `$0B/$0C` are written then, and `$0D` =
+  shape after any square's note attack (bit 7 of `famistudio_s5b_chn_env_shape`). `$07` = the three mixer
+  envelope values shifted by square (bits 0-2 tone off, 3-5 noise off), `$06` = a noise envelope value (the
+  engine's noise mask only tests Square 1's mixer correctly: Squares 2 and 3 always store theirs; kept as it
+  plays). Writes go through `$C000` (select) and `$E000` (data); init writes `$07` = `$38`.
+- **5B audio** (`nes/nes_s5b.c`, written here from the NESdev wiki "Sunsoft 5B audio"; emu2149, FamiStudio's 5B
+  core, MIT, read as a reference for the noise and envelope details, no code taken): `$C000-$DFFF` select (bits
+  4-7 set: data writes ignored until a clean select), `$E000-$FFFF` data; reads there return the ROM. One /16
+  prescaler clocks every generator: tone up-counters (period 0 = 1; a reach flips the square and resets; a
+  shortened period flips at the next clock), f = CPU / (32 P); noise: the same counter on 5 bits toggling a /2
+  prescaler whose rising edge steps a 17-bit LFSR (bit 0 ^ bit 3 into bit 16, seed 1, output = !bit 0); envelope:
+  16-bit period (0 = 1), 32 levels per ramp, `$0D` restarts it at once, NESdev's shape table (`$00-$07` as `$09`
+  / `$0F`; at a ramp's end: no continue → 0 held; hold → attack ^ alternate ? 31 : 0 held; alternate → turn
+  around, the edge level repeated; else the ramp restarts). Mixer: on = (tone off | square) & (noise off |
+  noise); level = the envelope's (E) or 2 V + 1; DAC logarithmic 1.5 dB per step, 31 full, levels 0 and 1 silent;
+  the three channels mixed linearly. **Mix level**: a channel at full = the 2A03 pulse at 15 (95.88 /
+  (8128 / 15 + 100)) × 1.56563, FamiStudio 4.5.3's balance (Nes_Sunsoft's 0.793774 × 4080 / 12240 over
+  Nes_Vrc6's square 0.169; NESdev: a full VRC6 pulse ≈ a full 2A03 pulse); the 5B build's output gain is 2.0 /
+  (1 + 3 × that level) (the 2A03 and VRC6 builds keep 2.0). The 5B's amplifier nonlinearity and filtering are
+  not modelled. With output the unit runs clock by clock (deltas at their CPU cycle); without (seek) every
+  counter, the LFSR and the envelope advance arithmetically to the same state.
+- **Machine**: only the build's expansion unit is reset, clocked and mixed. Seek runs the 5B silently, so tone
+  phases, the LFSR and the envelope are those of straight play. Mute 5-7 leaves a square out of the mix (it keeps
+  running). `nm_write_log` gives the `$C000`/`$E000` writes with the APU's. Live edits: the machine sees on the
+  bus which expansion entry each square loaded last (the engine's store to `famistudio_s5b_chn_env_shape` right
+  after its read of entry + 10) and which entry the manual period came from (the store to
+  `famistudio_s5b_env_period` after reading entry + 12; a `$5E` makes it none); `apply_image` rewrites each
+  square's shape nibble (keeping bit 7, a pending reset: the new shape is written to `$0D` at the next attack)
+  and octave from its entry, the manual period from its entry, and a square whose entry turned manual after the
+  period's last store loads its period as the engine's own load would; the expansion table pointer moves with the
+  table. An identical image changes nothing (the host test applies a moved image before every frame). Audition
+  takes the squares (fine pitch on them), release is the generic `$45` (a volume release point).
+- **Ops** (`nes_chip.c`): `nes_s5b_chip_ops`, id `"nes-famistudio-s5b"`, `image_size` `NES_S5B_IMAGE_SIZE`, the
+  same functions as `"nes-famistudio"` over a machine of the 5B build. `.nsf` export: the 5B player, header byte
+  `$7B` = `$20` (Sunsoft 5B).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the 5B player with the others and writes
+`nes_s5b_player_image.h`, `NesS5bPlayerImage.kt` and the fixtures `app/src/test/cpp/nes_s5b_song.h` from
+`tools/audio/nes/s5b_test.txt` as exported by FamiStudio 4.5.3 (`s5b_test_ca65.s`; `--famistudio DIR` writes it
+when missing): raw at the 5B song base, the Thor layout (both instrument tables padded to one count), every block
+moved, and an edited copy (one note, the SLead volume sustain, SEnvManual's manual period, SEnvAuto's shape).
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_s5b_test.c`: 5B unit checks
+  (the select latch and register widths; tone flips per period incl. 0, 4095 and the immediate flip on a
+  shortened period; the LFSR's first steps, sequence and maximal 131071 period through the /2 prescaler; all 16
+  shapes' 200-step level sequences and holds at two periods, period 0, a 16-bit period, the `$0D` restart; E bit
+  and 2 V + 1 volumes; the mixer's AND and DC; the DAC's steps; the mix level; mute; random register writes giving
+  identical state silent and audible; a synthesized 220 Hz tone); image rules (raw and Thor loads, the expansion
+  entries, the builds refusing each other's images, mixer/noise kinds and values, shape, octave, zero bytes,
+  table pointers, `$5E` only on the squares, no duty or phase reset there); playback (**the Thor layout writes
+  the same APU and 5B registers as FamiStudio's own export through the first pass and two loops**, row starts,
+  `$07` = the mixer envelopes every frame, `$0B/$0C` = the auto or manual period in every frame with an envelope,
+  the note-table period + 1 and its pitch, the `$5E` keeping its period against a same-frame instrument load);
+  seek to six targets (the unit's state equal to straight audible play) and the order fallback; live relocation
+  before every frame with identical writes, the SLead sustain and note edits, SEnvManual's period and SEnvAuto's
+  shape followed at once, and edits (also an octave change and an entry turned manual) giving the envelope state
+  of a fresh start on the edited data at seven rows; audition (period + 1, fine pitch, release tail, the hardware
+  envelope running); mute; the ops table. Evidence: `nes_s5b.wav`, `nes_s5b_trace.txt`, `nes_s5b.nsf`.
+  `wav_render_test.c` renders the demo `copper-kite.nesimg`.
+- Not done: listening on a 5B cartridge, the 5B amplifier's nonlinearity, comparison with a reference emulator's
+  audio (NSFPlay, FamiStudio), Thor measurements.
 
 ## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
 

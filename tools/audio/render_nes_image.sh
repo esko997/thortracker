@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Renders a lowered NES image through the native engine of its player build: "nes-famistudio" or, for an image
-# lowered for the VRC6 build, "nes-famistudio-vrc6" (host gcc/g++, the same sources as the hosts; chip_engine.c
-# registers every engine, so all of them are linked).
+# lowered for the VRC6 or 5B build, "nes-famistudio-vrc6" / "nes-famistudio-s5b" (host gcc/g++, the same sources
+# as the hosts; chip_engine.c registers every engine, so all of them are linked).
 # Usage: tools/audio/render_nes_image.sh image.nesimg out.wav [seconds]
-# Images: `tools/build.sh exportSamples` writes app/build/samples/thor-quest.nesimg (the NES demo song) and
-# saw-sunrise.nesimg (the NES + VRC6 demo song).
+# Images: `tools/build.sh exportSamples` writes app/build/samples/thor-quest.nesimg (the NES demo song),
+# saw-sunrise.nesimg (the NES + VRC6 demo song) and copper-kite.nesimg (the NES + Sunsoft 5B demo song).
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 build="$root/build/host-audio/render-nes"
@@ -14,7 +14,8 @@ includes=(-I "$cpp" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/nes" -I "$cpp/sid" -I "
   -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm")
 objs=()
 for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
-  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_players.c" \
+  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_s5b.c" \
+  "$cpp/nes/nes_players.c" \
   "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c" \
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c" \
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c" "$cpp/opl3/opl3_vgm.c" \

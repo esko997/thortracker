@@ -4,17 +4,22 @@
  *   nes_player_2a03  generated/nes_player_image.h       the 2A03 alone ("nes-famistudio"): 5 channels
  *   nes_player_vrc6  generated/nes_vrc6_player_image.h FAMISTUDIO_EXP_VRC6 = 1 ("nes-famistudio-vrc6"): the
  *                    2A03's 5 channels, then VRC6 pulse 1, pulse 2 and saw (engine channels 5, 6, 7)
+ *   nes_player_s5b   generated/nes_s5b_player_image.h  FAMISTUDIO_EXP_S5B = 1 ("nes-famistudio-s5b"): the
+ *                    2A03's 5 channels, then Sunsoft 5B square 1, 2 and 3 (engine channels 5, 6, 7)
  *
- * Both are tools/audio/nes/nes_player.s assembled by tools/audio/prepare_nes_player.py: the same entry table
+ * All are tools/audio/nes/nes_player.s assembled by tools/audio/prepare_nes_player.py: the same entry table
  * and image layout (header, envelope directory, samples from NES_SAMPLE_BASE, region up to NES_REGION_END);
  * they differ in player bytes and id, song base (the page after the player), channel streams in the song
- * header, engine envelope slots and RAM addresses, and the VRC6 opcode/duty rules. */
+ * header, engine envelope slots and RAM addresses, the VRC6 opcode/duty rules, and with the 5B the song header's
+ * expansion instrument pointer (FamiStudio's `instruments_exp`: 16-byte entries), the mixer and noise envelope
+ * kinds and the `$5E` envelope period opcode. */
 #ifndef THORTRACKER_NES_PLAYER_H_
 #define THORTRACKER_NES_PLAYER_H_
 
 #include <stdint.h>
 
 #include "generated/nes_player_image.h"
+#include "generated/nes_s5b_player_image.h"
 #include "generated/nes_vrc6_player_image.h"
 
 #ifdef __cplusplus
@@ -22,12 +27,15 @@ extern "C" {
 #endif
 
 #define NM_MAX_CHANNELS 8         /* array sizes: the largest build's engine channels */
-#define NM_MAX_ENVELOPES 20       /* ... engine envelope slots (volume, arpeggio, duty per tonal channel) */
+#define NM_MAX_ENVELOPES 23       /* ... engine envelope slots (volume, arpeggio, duty / 5B mixer, noise per channel) */
 #define NM_MAX_PITCH_ENVELOPES 6  /* ... engine pitch envelope slots */
-#define NM_DPCM 4                 /* the DPCM channel (both builds) */
+#define NM_DPCM 4                 /* the DPCM channel (every build) */
 #define NM_IMAGE_MAX_SIZE NES_IMAGE_SIZE /* the largest image (the 2A03 build's: its song base is lowest) */
+#define NM_FIRST_EXP 5            /* the first expansion channel */
+#define NM_EXP_INSTRUMENT_SIZE 16 /* FamiStudio's expansion instruments (5B): volume, arpeggio, pitch, mixer, noise
+                                     words, envelope shape, auto-period octave, manual period word, 2 zero bytes */
 
-enum { NES_EXPANSION_NONE = 0, NES_EXPANSION_VRC6 = 1 };
+enum { NES_EXPANSION_NONE = 0, NES_EXPANSION_VRC6 = 1, NES_EXPANSION_S5B = 3 }; /* 2: VRC7 */
 
 /* Engine addresses the machine uses (RAM variables and ROM tables of that build). */
 typedef struct NesPlayerSymbols {
@@ -40,6 +48,16 @@ typedef struct NesPlayerSymbols {
     uint16_t dummy_envelope, dummy_pitch_envelope, channel_env;
 } NesPlayerSymbols;
 
+/* 5B build only (all 0 otherwise): the expansion instrument table pointer, the shared manual envelope period (from
+ * the last instrument with a manual period, or a `$5E`), the "`$5E` this frame" flag, and per 5B channel the
+ * envelope shape (bit 7: reset at the next update, after a note attack; low nibble 0 or $8-$F) and auto-period
+ * octave ($80: manual). */
+typedef struct NesS5bSymbols {
+    uint16_t exp_instrument_lo, exp_instrument_hi;
+    uint16_t env_period_lo, env_period_hi, env_override;
+    uint16_t chn_env_shape, chn_env_octave;
+} NesS5bSymbols;
+
 typedef struct NesPlayer {
     uint32_t id;                    /* image header bytes 4..7 */
     const uint8_t* code;            /* the player bytes at base */
@@ -49,21 +67,32 @@ typedef struct NesPlayer {
     uint16_t region_size;
     uint32_t image_size;            /* header + directory + region */
     uint16_t ram_end;               /* engine RAM ends here (below NES_AUDITION_RAM) */
+    uint16_t effect_envelopes;      /* first directory index of effect envelopes (0xy arpeggios, vibratos): 256, the
+                                       5B build 384 (its mixer and noise envelopes take 256..383); indices below it
+                                       belong to an instrument slot and keep it through live edits */
     uint8_t channels;               /* channel streams in the song header: 5 or 8 */
     uint8_t envelopes, pitch_envelopes; /* engine envelope / pitch envelope slots */
     uint8_t duty_max;               /* largest duty value an envelope or `$4F` may hold: 3, or 7 with VRC6 pulses */
     uint8_t expansion;              /* NES_EXPANSION_* */
+    uint8_t exp_instruments;        /* 1: the song header holds the expansion instrument pointer (5B) */
     NesPlayerSymbols sym;
+    NesS5bSymbols s5b;
 } NesPlayer;
 
 extern const NesPlayer nes_player_2a03;
 extern const NesPlayer nes_player_vrc6;
+extern const NesPlayer nes_player_s5b;
+
+/* Bytes of the FamiStudio song header before the channel pointers: song count, instrument pointer, [expansion
+ * instrument pointer,] DPCM list pointer - 4. */
+static inline int nes_player_head(const NesPlayer* p) { return p->exp_instruments ? 7 : 5; }
 
 /* Channel roles of an engine channel index of `p`: carries notes and instruments (not DPCM), has a pitch
- * envelope (fine pitch, vibrato), is a VRC6 channel (5..7). */
+ * envelope (fine pitch, vibrato), is a VRC6 channel (5..7), is a 5B square (5..7). */
 static inline int nes_player_tonal(const NesPlayer* p, int c) { return c >= 0 && c < p->channels && c != NM_DPCM; }
-static inline int nes_player_pitched(const NesPlayer* p, int c) { return (c >= 0 && c <= 2) || (c >= 5 && c < p->channels); }
+static inline int nes_player_pitched(const NesPlayer* p, int c) { return (c >= 0 && c <= 2) || (c >= NM_FIRST_EXP && c < p->channels); }
 static inline int nes_player_vrc6_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_VRC6 && c >= 5 && c < 8; }
+static inline int nes_player_s5b_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_S5B && c >= 5 && c < 8; }
 
 #ifdef __cplusplus
 }

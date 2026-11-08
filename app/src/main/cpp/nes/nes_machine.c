@@ -1,4 +1,4 @@
-/* NES machine: m6502 + nes_apu (+ nes_vrc6) running a FamiStudio player build (see nes_machine.h). */
+/* NES machine: m6502 + nes_apu (+ nes_vrc6 or nes_s5b) running a FamiStudio player build (see nes_machine.h). */
 #include "nes_machine.h"
 
 #include <math.h>
@@ -7,6 +7,7 @@
 
 #include "blip_buf.h"
 #include "nes_apu.h"
+#include "nes_s5b.h"
 #include "nes_vrc6.h"
 
 #include "m6502.h"
@@ -14,6 +15,9 @@
 #define INIT_BUDGET 200000u   /* famistudio_init + famistudio_music_play */
 #define LOG_CAPACITY 4096     /* register writes buffered between nm_apu_log / nm_write_log calls */
 #define OUTPUT_GAIN 2.0f      /* mixer level 1.0 (all channels at full) ~ peak 2.0 before DC removal */
+/* The 5B build, by the same rule: its full-scale mixer level is the 2A03's 1.0 plus three 5B channels at full
+ * (NES_S5B_LEVEL each, nes_s5b.h), mapped to the same 2.0. */
+#define OUTPUT_GAIN_S5B ((float)(2.0 / (1.0 + NES_S5B_VOICES * NES_S5B_LEVEL)))
 #define HIGHPASS_HZ 37.0f     /* Famicom-style output stage */
 #define LOWPASS_HZ 14000.0f
 
@@ -38,7 +42,9 @@ struct NesMachine {
     m6502_t cpu;
     const NesPlayer* player;
     NesApu apu;
-    NesVrc6 vrc6;         /* written only with the VRC6 build */
+    NesVrc6 vrc6;         /* used only by the VRC6 build */
+    NesS5b s5b;           /* used only by the 5B build */
+    float gain;           /* OUTPUT_GAIN, or OUTPUT_GAIN_S5B for the 5B build */
     blip_t* blip;
     uint32_t sample_rate;
     uint32_t time;        /* CPU cycle within the current frame */
@@ -48,6 +54,14 @@ struct NesMachine {
     int order, row;       /* row most recently started (-1: none yet in `order`) */
     uint32_t row_ticks;   /* frames run in that row */
     int audition, released, ended, aud_channel, rel_slot, rel_end;
+    /* 5B build, seen on the bus: the expansion instrument each 5B square loaded last (famistudio_set_s5b_instrument
+     * stores its shape byte, just read from entry + 10) and the one whose manual period the engine holds (stored
+     * after reading entry + 12; a `$5E` makes it none); -1: none. The serials order those loads and the period's
+     * last store (a square's 0: its load came after a `$5E` in the same frame, so it could not set the period). */
+    uint16_t last_song_read; /* address of the CPU's last read in the song region */
+    int8_t s5b_instrument[NES_S5B_VOICES];
+    int8_t s5b_period_instrument;
+    uint32_t s5b_serial, s5b_load_serial[NES_S5B_VOICES], s5b_period_serial;
     uint64_t driver_cycles;
     uint32_t last_call;
     float hp_a, lp_a, hp_in, hp_out, lp_out;
@@ -71,7 +85,10 @@ struct NesMachine {
 
 static uint8_t bus_read(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];
-    if (addr >= 0x8000) return m->prg[addr - 0x8000]; /* VRC6 registers are write-only: reads see the ROM */
+    if (addr >= 0x8000) { /* VRC6/5B registers are write-only: reads see the ROM */
+        if (addr >= m->player->song_base) m->last_song_read = addr;
+        return m->prg[addr - 0x8000];
+    }
     if (addr == 0x4015) return nes_apu_read_status(&m->apu, m->time);
     return 0;
 }
@@ -85,15 +102,50 @@ static void log_write(NesMachine* m, uint16_t addr, uint8_t v) {
     }
 }
 
+/* The 5B expansion instrument entry the CPU's last song-region read was byte `offset` of, if that byte holds
+ * `value` (what the engine just stored); else -1. */
+static int s5b_entry_read(const NesMachine* m, int offset, uint8_t value) {
+    const NesS5bSymbols* sym = &m->player->s5b;
+    const uint16_t table = (uint16_t)(m->ram[sym->exp_instrument_lo] | m->ram[sym->exp_instrument_hi] << 8);
+    const int32_t off = (int32_t)m->last_song_read - offset - table;
+    if (off < 0 || off % NM_EXP_INSTRUMENT_SIZE || off / NM_EXP_INSTRUMENT_SIZE >= NES_IMAGE_MAX_INSTRUMENTS) return -1;
+    if (m->last_song_read < m->player->song_base || m->prg[m->last_song_read - 0x8000] != value) return -1;
+    return off / NM_EXP_INSTRUMENT_SIZE;
+}
+
+/* famistudio_set_s5b_instrument stores 5B square k's shape byte right after reading it from its expansion entry
+ * + 10 (`lda (ptr),y` / `sta famistudio_s5b_chn_env_shape - 5,x`), and, for a manual-period instrument (octave
+ * $80, no `$5E` this frame: famistudio_s5b_env_override 0), the period low byte right after reading entry + 12.
+ * Other stores there (the note attack's ORA $80, the update's AND $0F, init's clears; `$5E`'s period from the
+ * stream) resolve to no entry: the shape owner is kept, the period owner becomes none. */
+static void s5b_ram_stored(NesMachine* m, uint16_t addr, uint8_t v) {
+    const NesS5bSymbols* sym = &m->player->s5b;
+    const unsigned k = (unsigned)(addr - sym->chn_env_shape);
+    if (k < NES_S5B_VOICES) {
+        const int j = s5b_entry_read(m, 10, v);
+        if (j >= 0) {
+            m->s5b_instrument[k] = (int8_t)j;
+            m->s5b_load_serial[k] = m->ram[sym->env_override] ? 0 : ++m->s5b_serial;
+        }
+    } else if (addr == sym->env_period_lo) {
+        m->s5b_period_instrument = (int8_t)s5b_entry_read(m, 12, v);
+        m->s5b_period_serial = ++m->s5b_serial;
+    }
+}
+
 static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     if (addr < 0x2000) {
         m->ram[addr & 0x7FF] = v;
+        if (m->player->expansion == NES_EXPANSION_S5B) s5b_ram_stored(m, (uint16_t)(addr & 0x7FF), v);
     } else if (addr >= 0x4000 && addr <= 0x4017 && addr != 0x4014 && addr != 0x4016) {
         log_write(m, addr, v);
         nes_apu_write(&m->apu, m->time, addr, v);
     } else if (m->player->expansion == NES_EXPANSION_VRC6 && nes_vrc6_register(addr)) {
         log_write(m, addr, v);
         nes_vrc6_write(&m->vrc6, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_S5B && nes_s5b_register(addr)) {
+        log_write(m, addr, v);
+        nes_s5b_write(&m->s5b, m->time, addr, v);
     }
 }
 
@@ -144,15 +196,17 @@ fault:
     return NM_ERR_FAULT;
 }
 
-/* Both sound units: attach/detach the output, end a frame. */
+/* The sound units of the machine's build: attach/detach the output, end a frame. */
 static void set_output(NesMachine* m, blip_t* out) {
     nes_apu_set_output(&m->apu, out);
-    nes_vrc6_set_output(&m->vrc6, out);
+    if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_set_output(&m->vrc6, out);
+    if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_set_output(&m->s5b, out);
 }
 
 static void end_frame(NesMachine* m, uint32_t cycles) {
     nes_apu_end_frame(&m->apu, cycles);
-    nes_vrc6_end_frame(&m->vrc6, cycles);
+    if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_end_frame(&m->vrc6, cycles);
+    if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_end_frame(&m->s5b, cycles);
 }
 
 /* ---- lifecycle ---------------------------------------------------------------------------- */
@@ -169,15 +223,22 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
     blip_set_rates(m->blip, (double)NM_CPU_HZ, (double)sample_rate);
     m->sample_rate = sample_rate;
     m->player = player;
+    m->gain = player->expansion == NES_EXPANSION_S5B ? OUTPUT_GAIN_S5B : OUTPUT_GAIN;
     for (size_t i = 0; i < sizeof kOfficialOpcodes; ++i) m->official[kOfficialOpcodes[i] >> 3] |= (uint8_t)(1 << (kOfficialOpcodes[i] & 7));
-    /* famistudio_channel_env: first envelope slot of each channel (volume, arpeggio, duty follow; $FF: none). */
+    /* famistudio_channel_env: first envelope slot of each channel (volume, arpeggio, duty follow; $FF: none). A 5B
+     * square's slots are volume, arpeggio, mixer, noise (FAMISTUDIO_ENV_MIXER_IDX_OFF 2, _NOISE_IDX_OFF 3). */
     for (int c = 0; c < player->channels; ++c) m->channel_env[c] = player->code[player->sym.channel_env - player->base + c];
     for (int s = 0; s < player->envelopes; ++s) {
-        int base = 0;
+        int base = 0, owner = 0;
         for (int c = 0; c < player->channels; ++c) {
-            if (m->channel_env[c] != 0xFF && m->channel_env[c] <= s && m->channel_env[c] >= base) base = m->channel_env[c];
+            if (m->channel_env[c] != 0xFF && m->channel_env[c] <= s && m->channel_env[c] >= base) {
+                base = m->channel_env[c];
+                owner = c;
+            }
         }
-        m->slot_kind[s] = (uint8_t)(s - base);
+        int kind = s - base;
+        if (nes_player_s5b_channel(player, owner) && kind >= 2) kind = kind == 2 ? NM_KIND_MIXER : NM_KIND_NOISE;
+        m->slot_kind[s] = (uint8_t)kind;
     }
     const float dt = 1.0f / (float)sample_rate;
     const float hp_rc = 1.0f / (2.0f * 3.14159265f * HIGHPASS_HZ);
@@ -220,8 +281,19 @@ static int reset(NesMachine* m, const NesImage* image) {
     set_output(m, NULL);
     nes_apu_reset(&m->apu);
     nes_apu_set_mute(&m->apu, 0);
-    nes_vrc6_reset(&m->vrc6);
-    nes_vrc6_set_mute(&m->vrc6, 0);
+    if (p->expansion == NES_EXPANSION_VRC6) {
+        nes_vrc6_reset(&m->vrc6);
+        nes_vrc6_set_mute(&m->vrc6, 0);
+    }
+    if (p->expansion == NES_EXPANSION_S5B) {
+        nes_s5b_reset(&m->s5b);
+        nes_s5b_set_mute(&m->s5b, 0);
+    }
+    m->last_song_read = 0;
+    memset(m->s5b_instrument, -1, sizeof m->s5b_instrument);
+    m->s5b_period_instrument = -1;
+    m->s5b_serial = m->s5b_period_serial = 0;
+    memset(m->s5b_load_serial, 0, sizeof m->s5b_load_serial);
     blip_clear(m->blip);
     m->hp_in = m->hp_out = m->lp_out = 0.0f;
     m->time = 0;
@@ -371,9 +443,9 @@ static StreamState stream_state(const NmView* v, int c, int order, int consumed,
 }
 
 /* New address for an engine envelope pointer (and its read position) when `image` replaces the
- * playing one: the same directory entry if unchanged; else an entry of the same kind with the
- * same bytes; else the same entry edited (position kept if still an instruction start, else the
- * envelope restarts); else the engine's silent dummy. Pointers outside the directory are kept. */
+ * playing one: the same directory entry if unchanged; else (effect envelopes only) an entry of the same
+ * kind with the same bytes; else the same entry edited (position kept if still an instruction start, else
+ * the envelope restarts); else the engine's silent dummy. Pointers outside the directory are kept. */
 static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int kind, uint16_t addr, uint8_t* ptr,
                                uint8_t* repeat) {
     const uint8_t* odir = m->meta + NES_IMAGE_HEADER_SIZE;
@@ -388,8 +460,13 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
 #define SAME(i) (ndir[4 * (i) + 3] == kind && ndir[4 * (i) + 2] == len && !memcmp(NEW_BYTES(i), old, (size_t)len))
     const int same_index = idx < ni->envelopes && nm_rd16(ndir + 4 * idx) && ndir[4 * idx + 3] == kind;
     if (same_index && SAME(idx)) return nm_rd16(ndir + 4 * idx);
-    for (int u = 0; u < ni->used_count; ++u) {
-        if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
+    /* Instrument envelopes keep their directory index (an instrument slot's, below player->effect_envelopes: 256,
+     * the 5B build 384 with its mixer and noise envelopes): an edited one stays its own slot's even when another
+     * slot holds identical bytes. Only effect envelopes (renumbered by the lowering) are followed by content. */
+    if (!(same_index && idx < m->player->effect_envelopes)) {
+        for (int u = 0; u < ni->used_count; ++u) {
+            if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
+        }
     }
     if (same_index) {
         if (!nm_envelope_instruction_at(NEW_BYTES(idx), ndir[4 * idx + 2], kind, *ptr)) {
@@ -431,6 +508,49 @@ static void follow_sample(NesMachine* m, const NesImage* image) {
         }
     }
     nes_apu_dmc_stop(a);
+}
+
+/* 5B, Thor layout to Thor layout: the squares' hardware envelope settings follow their edited instruments now,
+ * rather than at each square's next instrument load (the engine loads one only when the instrument changes).
+ * Expansion entries keep their index (slot - 1). For every 5B square, from the entry it loaded last:
+ * famistudio_s5b_chn_env_shape's low nibble (bit 7, a pending envelope reset after a note attack, is kept; the
+ * envelope register $0D is written at the next attack) and famistudio_s5b_chn_env_octave. The shared manual
+ * period famistudio_s5b_env_period is re-read from the entry it came from. A square whose entry turned manual
+ * (octave $80) and that loaded it after the period's last store (and not behind a `$5E` of the same frame) sets
+ * the period from it, the latest such load winning, as the engine's own load of it would have. A period a `$5E`
+ * set stays otherwise. Not reconstructed: an owner entry turned auto (the engine's period would be an earlier
+ * store's; the owner's new bytes are used). An identical image changes nothing. The table pointer moves with
+ * the table. */
+static void s5b_follow_instruments(NesMachine* m, const NesImage* image) {
+    const NesPlayer* p = m->player;
+    const NesS5bSymbols* sym = &p->s5b;
+    const NesImageInfo* ni = &image->info;
+    const uint8_t* table = nm_region(image) + (ni->exp_instruments - p->song_base);
+#define ENTRY(j) (table + NM_EXP_INSTRUMENT_SIZE * (j))
+    int period = m->s5b_period_instrument < ni->instruments ? m->s5b_period_instrument : -1;
+    uint32_t latest = m->s5b_period_serial;
+    for (int k = 0; k < NES_S5B_VOICES; ++k) {
+        const int j = m->s5b_instrument[k];
+        if (j < 0 || j >= ni->instruments) continue;
+        const uint8_t* e = ENTRY(j);
+        uint8_t* shape = &m->ram[sym->chn_env_shape + k];
+        uint8_t* octave = &m->ram[sym->chn_env_octave + k];
+        *shape = (uint8_t)((*shape & 0x80) | (e[10] & 0x0F));
+        if (*octave != 0x80 && e[11] == 0x80 && m->s5b_load_serial[k] > latest) { /* turned manual */
+            period = j;
+            latest = m->s5b_load_serial[k];
+        }
+        *octave = e[11];
+    }
+    if (latest != m->s5b_period_serial) m->s5b_period_serial = ++m->s5b_serial; /* a turned-manual load set it */
+    if (period >= 0) {
+        m->ram[sym->env_period_lo] = ENTRY(period)[12];
+        m->ram[sym->env_period_hi] = ENTRY(period)[13];
+        m->s5b_period_instrument = (int8_t)period;
+    }
+#undef ENTRY
+    m->ram[sym->exp_instrument_lo] = (uint8_t)ni->exp_instruments;
+    m->ram[sym->exp_instrument_hi] = (uint8_t)(ni->exp_instruments >> 8);
 }
 
 void nm_apply_image(NesMachine* m, const NesImage* image) {
@@ -496,10 +616,12 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
         RAMX(pitch_env_addr_hi, s) = (uint8_t)(pitch[s] >> 8);
     }
     const uint8_t* s = nm_region(image);
+    const int head = nes_player_head(p);
     RAM(instrument_lo) = s[1];
     RAM(instrument_hi) = s[2];
-    RAM(dpcm_list_lo) = s[3];
-    RAM(dpcm_list_hi) = s[4];
+    RAM(dpcm_list_lo) = s[head - 2];
+    RAM(dpcm_list_hi) = s[head - 1];
+    if (p->expansion == NES_EXPANSION_S5B) s5b_follow_instruments(m, image);
     RAM(tempo_step_lo) = (uint8_t)ni->tempo_ntsc;
     RAM(tempo_step_hi) = (uint8_t)(ni->tempo_ntsc >> 8);
     if (set_speed && !(RAM(song_speed) & 0x80)) RAM(song_speed) = (uint8_t)speed_new;
@@ -585,11 +707,16 @@ int nm_mute_channel(NesMachine* m, int channel, int muted) {
         uint8_t mask = m->apu.mute;
         mask = muted ? (uint8_t)(mask | (1 << channel)) : (uint8_t)(mask & ~(1 << channel));
         nes_apu_set_mute(&m->apu, mask);
-    } else { /* VRC6 pulse 1, pulse 2, saw */
+    } else if (m->player->expansion == NES_EXPANSION_VRC6) { /* VRC6 pulse 1, pulse 2, saw */
         const int bit = 1 << (channel - NES_APU_CHANNELS);
         uint8_t mask = m->vrc6.mute;
         mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
         nes_vrc6_set_mute(&m->vrc6, mask);
+    } else { /* 5B square 1-3 */
+        const int bit = 1 << (channel - NES_APU_CHANNELS);
+        uint8_t mask = m->s5b.mute;
+        mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
+        nes_s5b_set_mute(&m->s5b, mask);
     }
     return NM_OK;
 }
@@ -630,7 +757,7 @@ int nm_tick(NesMachine* m, float* out) {
         m->hp_out = m->hp_a * (m->hp_out + x - m->hp_in);
         m->hp_in = x;
         m->lp_out += m->lp_a * (m->hp_out - m->lp_out);
-        const float y = m->lp_out * OUTPUT_GAIN;
+        const float y = m->lp_out * m->gain;
         out[2 * i] = y;
         out[2 * i + 1] = y;
     }
@@ -691,4 +818,11 @@ int nm_call(NesMachine* m, uint16_t addr, uint8_t a) {
 
 const NesApu* nm_apu(const NesMachine* m) { return &m->apu; }
 const NesVrc6* nm_vrc6(const NesMachine* m) { return &m->vrc6; }
+const NesS5b* nm_s5b(const NesMachine* m) { return &m->s5b; }
+int nm_s5b_instrument(const NesMachine* m, int channel) {
+    return nes_player_s5b_channel(m->player, channel) ? m->s5b_instrument[channel - NM_FIRST_EXP] : -1;
+}
+int nm_s5b_period_instrument(const NesMachine* m) {
+    return m->player->expansion == NES_EXPANSION_S5B ? m->s5b_period_instrument : -1;
+}
 const NesPlayer* nm_player(const NesMachine* m) { return m->player; }
