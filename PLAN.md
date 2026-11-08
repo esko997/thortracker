@@ -38,7 +38,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
-   - Virtual Boy VSU and WonderSwan — wavetable handhelds.
+   - Virtual Boy VSU and WonderSwan — wavetable handhelds. VSU: written source-only on branch `vsu-system`
+     (`vb-vsu`: own player on a Mednafen-derived core with the Sacred Tech Scroll's amendments, VGM + WAV export);
+     awaiting the integrator's build, host test and reference checks (docs/AUDIO_ENGINE.md "Virtual Boy VSU").
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
 9. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid

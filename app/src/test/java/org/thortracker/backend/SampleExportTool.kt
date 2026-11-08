@@ -7,6 +7,8 @@ import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.vsu.VsuDemoSong
+import org.thortracker.system.vsu.VsuSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
 
@@ -57,5 +59,14 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The Virtual Boy demo and the shortest valid VSU song: project and engine images for the native renderers
+        // (wav_render_test.c; VGM needs the native player: tools/audio/render_vsu_image.sh crimson-stereoscope.vbimg
+        // out.wav --vgm crimson-stereoscope.vgm).
+        val vsu = VsuSystem.demo()
+        File(directory, "crimson-stereoscope.thor").writeText(ProjectCodec.encode(vsu), Charsets.UTF_8)
+        File(directory, "crimson-stereoscope.vbimg").writeBytes(ByteArray(VsuSystem.engine.imageSize).also { VsuSystem.engine.lower(vsu, it) })
+        val vsuShortest = VsuDemoSong.shortest()
+        File(directory, "vsu-shortest.vbimg").writeBytes(ByteArray(VsuSystem.engine.imageSize).also { VsuSystem.engine.lower(vsuShortest, it) })
+        println("Exported ${vsu.title} and ${vsuShortest.title} to ${directory.absolutePath}")
     }
 }

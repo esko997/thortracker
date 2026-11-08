@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine, the YM2612 engine and the VSU engine
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -23,6 +23,10 @@ effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trac
 The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
 through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
 it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+
+The Virtual Boy system (`"vb-vsu"`, written source-only, not yet built) plays songs with Thor Tracker's own player on
+a VSU core ported from Mednafen and amended to the Sacred Tech Scroll's hardware findings, mirrored by an independent
+Python reference; it exports VGM and WAV. See [Virtual Boy VSU](#virtual-boy-vsu-thor-trackers-own-player-on-the-vsu-vb-vsu).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -123,6 +127,9 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| Mednafen VSU (ported) | `app/src/main/cpp/vsu/vsu_chip.c` (a C port of `src/vb/vsu.cpp` with the amendments listed in the file and in "Virtual Boy VSU"); not vendored | mednafen-1.32.1.tar.xz (mednafen.github.io/releases), sha256 `de7eb94ab66212ae7758376524368a8ab208234b33796625ca630547dbc83832` | GPL-2.0-or-later (GPL-3.0-compatible), © 2010-2016 Mednafen Team — notice in `NOTICE.txt` |
+| Virtual Boy Sacred Tech Scroll (Guy Perfect) | documentation only (the VSU behaviour the core and `tools/audio/vsu/vsu_ref.py` follow) | perfectkiosk.net/stsvb.html revision 2024-10-20 (web.archive.org copy sha256 `fc35994c6510182ccd82bcd69fe71f6af338b61d596a86758233a88703b16000`) | nothing shipped |
+| VGM 1.71 specification | documentation only | vgmrips/vgmplay-legacy `VGMPlay/vgmspec171.txt` sha256 `29c1e9f87253daf86ffd4373ce2db8850f976947f76c460951514d84c84a2d32` | nothing shipped |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -2322,3 +2329,331 @@ the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 m
 
 Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
 replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+
+## Virtual Boy VSU: Thor Tracker's own player on the VSU (`"vb-vsu"`)
+
+Written source-only (branch `vsu-system`); **nothing in this section has been built or run yet** — every number marked
+"expected" is arithmetic, not measurement, until the integrator runs the checks under "Verification". The Virtual Boy
+has no standard music driver to embed, so the system plays through **our own player** (`vsu/vsu_player.c`, pure
+integer C without a chip), whose behaviour is this section; `tools/audio/vsu/vsu_ref.py` implements the same
+specification and the chip separately in Python, and the host test requires identical register writes per tick and
+identical 41.7 kHz digital output. Songs export as VGM (VGM 1.71 supports the VSU) and WAV. **No Virtual Boy
+executable (ROM) is exported**: that would need a V810 driver this system does not have. Kotlin side: `core`
+`system/vsu`, `backend/VsuLowering.kt`, and the hand-kept mirror of the engine numbers `backend/VsuPlayerImage.kt`.
+
+### Sources and the core
+
+- **Hardware**: Guy Perfect, *Virtual Boy Sacred Tech Scroll*, VSU chapter (perfectkiosk.net/stsvb.html, revision of
+  2024-10-20; archived copy sha256 `fc35994c…3b16000`), written from hardware tests with the VSU Workshop program
+  (Planet Virtual Boy forum, "Mastering the VSU", 2016). Nintendo's development manual names the registers.
+- **Core** (`vsu/vsu_chip.c`, C11): a C port of Mednafen 1.32.1's `src/vb/vsu.cpp` (GPL-2.0-or-later, © 2010-2016
+  Mednafen Team; mednafen-1.32.1.tar.xz sha256 `de7eb94a…dbc83832`), structured as its per-channel clock dividers,
+  amended where the Tech Scroll documents measured behaviour that Mednafen does not model. libvgm's `emu/cores/vsu.c`
+  (`c5c03a2c`, Mednafen-derived, amended by Floogle in 2025 from hardware findings) was read as a second opinion. The
+  amendments (each a deliberate choice, listed in `vsu_chip.c`'s header):
+  1. Wave RAM writes are ignored while any channel is active; modulation RAM writes while channel 5 is active.
+  2. The envelope's repeat reloads the last written `Value` after one frame at the limit (Mednafen wraps 0 ↔ 15).
+  3. `S5INT` does not reset the current frequency (Mednafen copies the written frequency); writing `SxFQL`/`SxFQH`
+     sets both the written and the current value.
+  4. The noise shift register resets to **0** (Mednafen: 1) on `S6INT` and `S6EV1` writes.
+  5. Sweep overflow: with the sweep function selected (S5EV1 bit 4 = 0) the next value cur ± (cur >> shift) is
+     computed when a frame starts (the `S5INT` write and every frame end, right after the frame's value is applied)
+     and at every 0.96 ms effects tick; above 2047 channel 5 stops at once, **also when sweeping is disabled**
+     (Tech Scroll's hardware bug; libvgm checks per effects tick). A running sweep therefore never plays the last value
+     it applies before the overflow (Tech Scroll: 510 → 1020 → 2040 stops at 2040 because 4080 overflows).
+  6. Modulation: at each frame end the current frequency = (last written frequency + signed table value) & 0x7FF;
+     after the 32nd value it wraps when repeat is set, else stays at the last value (Mednafen continues reading).
+  7. A sweep/modulation interval written mid-frame takes effect at once if it is longer than the effects ticks the
+     frame has already run; otherwise that frame ends at its old interval. With interval 0 no frame runs.
+  8. Output is the digital mixer exactly: per channel amplitude = (stereo level × envelope) >> 3, + 1 when the
+     product is not 0; channel value = 6-bit sample × amplitude (0 for an inactive channel or a wave index > 4);
+     the six values are summed and the sum >> 4 is the 10-bit output (≤ 685), sampled every 120 clocks (41666.7 Hz),
+     followed by the analog RC high-pass (100 Ω, 220 µF: 7.234 Hz) discretised at that rate.
+  Not modelled (documented uncertainties): the "5-10 ms of zero samples" the Tech Scroll's editor notes after enabling
+  a channel with the envelope on; whether `SxRAM` writes restart the sample position (the 2016 forum post says so, the
+  2024 Tech Scroll lists only `SxINT`; we follow the Tech Scroll); libvgm's "modulation lock" on S5FQ writes during
+  modulation (no primary source found); the power-on state (the Tech Scroll believes all zeroes; we reset to zero).
+  Details the Tech Scroll leaves open, fixed here: the envelope frame counts while the envelope is disabled and the
+  sweep/modulation frame while modification is disabled (non-zero interval); channel 6 has no `SxRAM`; word indices
+  0xC0-0xFF (bytes 0x300-0x3FF) are unmapped, not a modulation mirror; `SxRAM` keeps 4 bits and `SxINT` bits 7 and
+  5-0. The machine samples at clock 120 *k* after that clock's events; a tick's writes at its first clock come after
+  the sample on that clock.
+- **Clocks** (5 MHz VSU clock, `VSU_CLOCK` 5000000): wave channels step one of 32 samples every 2048 − F clocks;
+  noise steps its shift register every 10 · (2048 − F) clocks (500 kHz base); the effects clock is 4800 clocks
+  (0.96 ms), the length unit 4 effects ticks (3.84 ms), the envelope unit 4 length units (15.36 ms), the
+  sweep/modulation unit 1 or 8 effects ticks (S5SWP bit 7). Every channel's dividers restart at its `SxINT` write;
+  an inactive channel's counters do not run. The core is chunk-invariant: running *a* then *b* clocks equals running
+  *a* + *b* (the host test checks it), which is what makes fully clocked seeking exact.
+
+### What runs
+
+- **Tick** = one Virtual Boy display frame, 20 ms (the VIP's 50.0 Hz): exactly 100000 VSU clocks. The player runs
+  once and its writes reach the chip at the tick's first clock in order; then the chip runs the tick, sampled at
+  every multiple of 120 clocks of the machine's clock count (833 or 834 samples per tick). `tickHz` = 50.
+- **Output**: each 10-bit sample (left, right) goes through the RC high-pass (double state, α = RC / (RC + 120 /
+  5000000), RC = 0.022; its output is flushed to 0 below 1e-20 at a tick's end, against denormals in long silences)
+  and into blip_buf 1.1.0 (as the NES, clocked at the 5 MHz VSU clock, each step placed at its sample's clock) as
+  integer steps of round(y · 64), resampled to the host rate; float output = blip sample / (64 · 384), so six
+  full-level channels peak near ±0.9 (expected). blip_buf adds its own fixed ~15 Hz DC removal on top of the RC
+  filter (as on every system using it).
+- **Muting** leaves a channel out of the mixer sum only; the chip, its phases, envelopes and noise run unchanged.
+- **Size** (expected): `VsuImage` = 65536 bytes + `VbInfo`; a machine ≈ 100 KB (image copy, chip < 1 KB, player,
+  two blip buffers). Nothing is allocated after `create`.
+
+### Channels and register addressing
+
+Six lanes, the VSU's six channels, in order: **Wave 1-4** (channels 1-4: PCM waves), **Wave 5** (channel 5: PCM wave
+plus sweep/modulation) and **Noise** (channel 6). Registers are addressed as **word indices** — byte address
+(within the VSU's 0x01000000 window) >> 2, the same numbers VGM's `0xC7 mm ll dd` uses: wave *w* (0-4) sample *i* =
+0x20 *w* + *i* (0x00-0x9F), modulation value *i* = 0xA0 + *i*, channel *c* (0-5) register *r* = 0x100 + 0x10 *c* +
+*r* with *r* = 0 INT, 1 LRV, 2 FQL, 3 FQH, 4 EV0, 5 EV1, 6 RAM, 7 SWP (channel 5 only), and SSTOP = 0x160.
+
+**Shared resources stay shared**: the five 32-sample waves and the 32-value modulation table are one song-wide set
+(`VsuSound.waves`, `VsuSound.modulation`), loaded into wave and modulation RAM by the reset batch while every channel
+is off — the only time the hardware accepts the writes. Any lane may play any wave; two lanes can play the same wave.
+Only channel 5 has sweep/modulation, only channel 6 noise. There is no chord allocation: each lane is its channel.
+
+### Pitch
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, at most 6143; a note *n* is pitch 64 *n*. Period table `VSU_PERIOD_Q[f]`
+(768 u32 in `vsu/vsu_player.c`) = round(65536 · 156250 / 440 · 2^((3648 − f) / 768)) — octave 0 of 156250 / *f*(pitch)
+in 1/65536 units (156250 = 5 MHz / 32 samples; 3648 = A-4's pitch). For pitch *p* = 768 *o* + *f*:
+
+- wave period W = (Q[f] + (1 << (15 + o))) >> (16 + o); F = 2048 − W;
+- noise period N = (Q[f] + 5 · (1 << (16 + o))) / (10 << (16 + o)) (integer division); F = 2048 − N. A noise note
+  thus clocks the shift register at 32 × its named frequency, the rate a wave channel at that note steps its samples.
+
+Ranges: wave lanes **D#2..B7** (notes 27..95; pitch clamped to 1728..6143: D-2 would need F < 0); the noise lane
+**C-0..B-7** (0..95; pitch 0..6143). A-4 = F 1693 = 440.141 Hz (+0.55 cents); the period resolution costs up to
+−19.7 cents at B-7 (every wave note's error is shown by the editor's pitch readout; `tools/audio/vsu/vsu_ref.py`
+recomputes the table with 60-digit decimals). Noise rates quantise strongly above about A-5 (several notes share F
+near 2047): the noise lane is untonal, its notes select rates.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian, every pattern reference an offset into the data region. Constants:
+`vsu/vsu_image.h` (`VB_*`), mirrored by hand in `backend/VsuPlayerImage.kt`. `vb_load_image` rejects anything
+off-contract with a reason and the byte (`VbInfo.problem`, `problem_offset`); the Kotlin validator mirrors every
+reason with a user-facing message.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTVB"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 6 | 2 | order count, 1..256 |
+| 8 | 2 | loop order (< count) |
+| 10 | 1 | instrument count I = highest slot present, 0..64 |
+| 11 | 1 | 0 |
+| 12 | 2 | data size D: bytes of pattern data used, ≤ 60928 |
+| 14 | 50 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 3072 | pattern of (order *o*, lane *c*) = u16 offset into the data region at 320 + 2 (6 *o* + *c*); entries ≥ count 0 |
+| 3392 | 1024 | instrument slot *n* (1..64) at 3392 + 16 (*n* − 1) |
+| 4416 | 160 | wave *w* (0..4) sample *i* at 4416 + 32 *w* + *i*: 0..63 |
+| 4576 | 32 | modulation table: s8 values |
+| 4608 | 60928 | data region: patterns, `[0, D)` |
+
+**Instrument** (16 bytes; an all-zero record = no instrument; records above I must be zero):
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 defined (1); bit 0 envelope on (EVx1 Enb); bit 1 envelope repeat (Rep); bit 2 envelope grows (EV0 Dir); bit 3 auto length (INT Auto); bits 4-6 0 |
+| 1 | envelope start level 0..15 (EV0 Value) |
+| 2 | envelope interval 0..7 ((n + 1) × 15.36 ms per step) |
+| 3 | length 0..31 ((n + 1) × 3.84 ms; used when bit 3 is set) |
+| 4 | wave 0..4 (wave 1..5; ignored on the noise lane) |
+| 5 | noise tap 0..7 (S6EV1 bits 4-6; ignored on wave lanes) |
+| 6 | frequency modification (Wave 5 only, ignored elsewhere): bit 0 on (S5EV1 bit 6), bit 1 modulation instead of sweep (bit 4), bit 2 modulation repeats (bit 5); bits 3-7 0 |
+| 7 | S5SWP (Wave 5 only): bit 7 slow clock (7.68 ms), bits 4-6 interval 0..7 (0 = off), bit 3 sweep up, bits 0-2 shift |
+| 8 | software pitch sweep start, s8 semitones relative to the note, −96..96 |
+| 9 | software pitch sweep end, s8 semitones, −96..96 |
+| 10 | software pitch sweep speed, 1/16 semitone per tick toward the end; 0 = none (start/end must be 0) |
+| 11 | 5 bytes 0 |
+
+**Patterns**: decoded from the offset for exactly rows(*o*) rows (a run longer than the order's remaining rows is cut
+there); every row read lies inside `[0, D)`. Row encoding:
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x0B), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-3: effect count 0..2; bits 4-6 zero, m ≠ 0 |
+| note | absolute note (wave lanes 27..95, noise lane 0..95), or `0xFE` = OFF |
+| instrument | slot 1..I, defined |
+| effects | per column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+Load-time checks: effect codes the lane declares (table below), `Bxx` < order count, `Cxx` ≤ 0F, `F00` rejected,
+`Lxx` ≤ 20, `Mxx` only on Wave 5, `Nxx` ≤ 07 and only on Noise, `Wxx` 01..05 and only on wave lanes. Waves: every
+sample ≤ 63. `vb_load_image` derives (`VbInfo`) order count, loop, speed, instrument count, rows per order and the
+speed each order starts with in sequential straight play (header speed, then the last `Fxx` of each order: rows, then
+lanes, then columns; jumps ignored).
+
+**What the lowering writes** from a `Cell` (up to 2 effect columns): `EMPTY` → no note byte, `CUT` → `0xFE`, a note →
+itself; instrument 0 → no byte; blank columns omitted; empty rows packed into runs; byte-identical patterns may be
+shared. Instruments, waves and the modulation table are copied field for field from `VsuSound`.
+
+### Player
+
+**Writes** go through a shadow of every register (word indices 0x000-0x160, reset state 0): a write equal to the
+shadow is not emitted, except the **always** writes below (they have side effects on the chip). One batch per tick,
+in the order made. `VBP_MAX_WRITES` = 256 per tick (worst case expected below 80 after the reset batch; the reset batch
+is at most 1 + 160 + 32).
+
+**Reset** (start, audition): all player state cleared; lanes: instrument 0, stereo 0xFF (left 15, right 15), no
+effects; speed = header speed; position (0, 0, tick 0). Reset batch: SSTOP = 1 (always), then wave RAM 0x00-0x9F and
+modulation RAM 0xA0-0xBF from the image (diffed: zeros equal the chip's reset state).
+
+**Tick**: (1) at tick 0 of a row read every lane's row; over lanes 0..5 and their columns in order `Fxx` sets the speed
+(last wins, this row included), `Bxx`/`Dxx` record the next position exactly as the OPL3 player; then per lane its cut
+is cleared and, with `Gxx` (xx > 0, the last `G` of the row), its row is delayed to tick xx, else it runs now. Other
+ticks: delayed rows due now run, lanes in order. (2) Lanes whose cut tick (`Sxx`) is this tick are keyed off. (3)
+Every lane that has keyed a note since reset is updated. (4) Advance exactly as the OPL3 player, including the **loop
+speed** rule (entering row 0 of the loop order sets the speed straight play starts it with).
+
+**Running a row**: a note (not OFF) clears the arpeggio and fine pitch; an instrument byte sets the lane's instrument;
+the effect columns run in order (a lock effect only records its value: the last `C`, `L`, `M`, `N`, `W` of the row
+wins); then OFF keys off, a note with portamento active (`3xx`, xx > 0) on a keyed lane only sets the glide target,
+any other note keys on (using the row's locks). **On every row that does not key on** — no note, OFF, a glide note,
+or a note whose instrument slot is undefined — the row's `C`, `M`, `N` and `W` locks are written at once, before an
+OFF's key-off, in the order C, N, W, M: `C` → EV0 = x << 4 | the lane's instrument's grows << 3 | interval (0s with
+no instrument; **always**), `N` → EV1 with the new tap (diffed), `W` → RAM (diffed), `M` → SWP (diffed); `L` does
+nothing. Locks never persist past their row.
+
+**Key-on** (lane *c*, note *n*): nothing if the lane's instrument is not defined. Pitch state: base = target = 64 *n*,
+slide 0, arpeggio step 0, vibrato phase 0, software sweep offset 64 · start (speed ≠ 0), end 64 · end, step 4 · speed.
+Writes, in order (register *r* of channel *c*):
+
+1. LRV = the lane's stereo (diffed);
+2. FQL = F & 0xFF, FQH = F >> 8 (**always**: they also set the current frequency the sweep/modulation runs from),
+   F from the clamped key-on pitch (base + fine + sweep offset);
+3. EV0 = level << 4 | grows << 3 | interval (**always**: it reloads the envelope level), level = the row's `Cxx`
+   lock or the instrument's start level;
+4. EV1 = repeat << 1 | on (diffed), plus on Wave 5: freqmod on << 6 | repeat << 5 | modulation << 4, on Noise: tap
+   << 4 (the row's `Nxx` lock or the instrument's tap);
+5. RAM = wave (wave lanes; diffed; the row's `Wxx` lock − 1 or the instrument's wave);
+6. SWP (Wave 5; diffed) = the row's `Mxx` lock or the instrument's byte 7;
+7. INT = 0x80 | (auto: 0x20 | length) (**always**: it starts the note and restarts the channel's positions,
+   dividers and noise register), length = the row's `Lxx` lock (L00: no auto, L01-L20: auto with length xx − 1) or
+   the instrument's.
+
+The lane is then keyed. **Key-off** (OFF, `Sxx`): if keyed, INT = 0 (**always**), not keyed (pitch updates continue
+harmlessly; the stopped channel ignores them). The hardware also stops channels itself (auto length, sweep
+overflow); the player does not track that, and the next key-on restarts the channel either way.
+
+**Update** (per tick, after the rows): pitch = clamp(base + 64 · arpeggio + fine + slide + vibrato + sweep, lane
+range), arpeggio = 0, x, y for step 0, 1, 2 of `0xy`, vibrato = floor(SINE[phase] · depth / 16) (arithmetic shift;
+SINE = OPL3's `O3_SINE`, copied); F from pitch; FQL then FQH (diffed per byte; on Wave 5, when either byte differs
+from the shadow, **both** are written, so a hardware-swept current value is never combined with half a new one).
+Then the effects advance exactly as the OPL3 player's (arpeggio step mod 3, slides clamped to ±6144, portamento
+without overshoot, vibrato phase mod 64, sweep toward the end). On Wave 5 a hardware sweep or modulation runs between
+these writes; any software pitch change rewrites both frequency registers (the written and the current value), as a
+driver's would. `8xy` writes LRV at once (diffed) on a lane that has keyed a note since reset (else at its next
+key-on); an `Nxx` written at once keeps EV1's envelope bits: EV1 = (shadow EV1 & 0x0F) | tap << 4.
+
+### Effects (what Kotlin's effect specs declare for `"vb-vsu"`)
+
+Two effect columns on every lane. "Lock" = applies to the note keyed on this row; on a row without a note it is
+written at once to the sounding channel without restarting it (`L` without a note does nothing). "Now" = from this
+row on, persisting.
+
+| Effect | Lanes | Parameter | Meaning |
+|---|---|---|---|
+| `0xy` arpeggio | all | x, y semitones | as the OPL3's |
+| `1xx` / `2xx` slide | all | 1/64 semitone per tick | now, as the OPL3's |
+| `3xx` portamento | all | 1/64 semitone per tick | now, as the OPL3's |
+| `4xy` vibrato | all | x speed, y depth | now, as the OPL3's |
+| `8xy` stereo | all | x left 0-F, y right 0-F | now: the lane's stereo levels (LRV; start FF); `800` silences |
+| `Bxx` jump, `Dxx` break, `Fxx` speed, `Gxx` delay | all | | as the OPL3's |
+| `Cxx` level | all | 00-0F | lock: envelope level (EV0 Value, keeping the instrument's direction and interval) |
+| `Lxx` length | all | 00-20 | lock: `L00` plays until OFF, `L01`-`L20` stop after xx × 3.84 ms (hardware auto length) |
+| `Mxx` sweep/mod | Wave 5 | S5SWP byte | lock: clock (bit 7), interval (bits 4-6, 0 = off), sweep up (bit 3), shift (bits 0-2); the instrument's function stays |
+| `Nxx` noise tap | Noise | 00-07 | lock: shift-register tap (sequence 32767, 1953, 254, 217, 73, 63, 42, 28); writing it restarts the register |
+| `Pxx` fine pitch | all | 80 = none | as the OPL3's (xx − 80 in 1/64 semitones until the next note) |
+| `Sxx` note off | all | tick | key off (channel stop) at tick xx of this row |
+| `Wxx` wave | wave lanes | 01-05 | lock: which wave the channel plays (RAM) |
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the player runs alone from the song start to find the tick count *n* reaching
+  (order, row) (≤ `max_ticks`, `CHIP_SEEK_FROM_START`); beyond the budget it is placed at the order's row 0 with the
+  speed straight play starts that order with and replays the order's earlier rows (`CHIP_SEEK_FROM_ORDER`; a row
+  behind a `Dxx` of the same order is unreachable: `CHIP_ERR_IMAGE`). Then the machine is reset exactly as a fresh one
+  and **every one of the *n* ticks runs with the chip fully clocked** (player writes, all 100000 clocks of each tick):
+  no register snapshot, no guessed pre-roll. The output path (sampling, RC filter, blip_buf) runs, discarded, for the
+  last min(*n*, 50) ticks (1 s, 45 RC time constants) and is skipped before that; so the chip state after a seek from
+  the start is straight play's exactly and the output equals straight play's to float rounding (expected; checked
+  with a tolerance). **Bound**: `seekTicks` 12000 (4 minutes); expected cost a few µs per unsampled tick (an
+  event-driven 100000-clock step: ~21 effects ticks per channel, at most 10000 noise steps).
+- `apply_image`: the OPL3's rules (1)-(3) (clamping, speed, re-read jumps and delays); (4) sounding notes keep what
+  they were keyed with, the next key-on reads the edited instrument by slot (slot identity is kept: two identical
+  instruments stay two slots); (5) **waves and the modulation table**: when they differ from the loaded ones the
+  machine pokes the new values straight into the chip's wave/modulation RAM (`vsu_poke_wave`, `vsu_poke_mod`: an
+  editor-only path, like an emulator debugger; real hardware ignores wave writes while sound plays), so edits are
+  heard at once; the player's shadow takes the new values without emitting writes. Exports and seeks load waves only
+  in the reset batch.
+
+### Audition
+
+`audition(channel 0..5, note, slot 1..64, fine −128..127)`: reset (with the reset batch), then the player keys the note
+on that lane with the slot's instrument and `fine` added like `Pxx`; ticks only update pitch (no rows), so the
+hardware envelope, length, sweep/modulation and the software sweep play as in a song. A note outside the lane's range,
+an undefined slot or other bad arguments are `CHIP_ERR_IMAGE`. `release()`: the VSU has no release phase; the player
+keys the lane off at once (INT = 0 written to the chip between ticks) and returns 0. While a song plays, the host
+mutes the lane with `mute`.
+
+### Mute and ops behaviour
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `vb_load_image`; `image_storage` = `sizeof(VsuImage)` |
+| `start(order, row)` | above; `seek_mode` from start or order |
+| `apply_image` | above; ignored while auditioning |
+| `audition`, `release` | above |
+| `mute(channel 0-5)` | the mixer leaves the channel out; chip and player unchanged (the VGM too); unmuting resumes mid-note; `start`/`audition` clear mutes |
+| `position` | the player's |
+| `tick` | one tick: 960 frames at 48 kHz (expected), ≤ 1921 at 96 kHz; 0 after a released audition; never `CHIP_ERR_FAULT` |
+
+### VGM export
+
+`vb_vgm_render` (`vsu/vsu_vgm.c`) runs the player and the chip headless and logs the writes as VGM 1.71 for one VSU:
+header `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 total samples (44.1 kHz), 0x1C loop offset − 0x1C, 0x20 loop
+samples (both 0 without a loop), 0x24 = 50, 0x34 = 0xCC (data at 0x100), **0xC4 = VSU clock 5000000**, others 0.
+Writes are `0xC7 mm ll dd` (register = word index, MSB first). Each tick is exactly 882 samples (`0x63`). The data
+starts with the reset batch. **Loop without synthetic writes**: at every arrival at (loop order, row 0, tick 0) the
+renderer captures the *loop state* — the complete player state (every field except the tick counter, the write
+batch, the decode cursors and the previous row's scratch — its decoded row, pending delay, cut tick and recorded jump,
+all of which the row start at tick 0 overwrites) and the chip's held state (every register value including wave and modulation RAM, and per channel its active
+flag, envelope level and step counter, length counter, current frequency, and channel 5's modulation position and
+frame counters) — and compares it **field by field** with the previous arrival's. The loop point is placed at the
+first arrival *k* whose state equals arrival *k* + 1's, and the file ends at arrival *k* + 1: the VGM then contains
+only the player's real writes, and a player looping it starts every pass from the same held state. Free-running
+phases (wave position, frequency countdown, noise register, effects dividers) are not part of the comparison: they
+are not observable as state a write stream can restore, and they differ by at most one period. If no two consecutive
+arrivals match within `max_ticks`, the file ends at the limit without a loop. Hosts' entry point `vsu/vsu_export.h`
+(self-contained for cinterop): `vb_export_vgm(image, 65536, max_ticks, title, author, date, &size, &problem)` validates
+(`problem` = the loader's reason, "image size", "out of memory"), renders (measured first, then into one allocation)
+and appends a GD3 1.00 tag as the OPL3's (system "Virtual Boy VSU (Thor Tracker)"); `vb_export_free` frees it.
+Kotlin `VsuVgm.renderer` is registered by `ChipAudio` (JNI `nativeVsuVgm(image, maxTicks, title, author, date)`) and
+the Deck (`DeckVsuVgm`).
+
+### Native build and sources
+
+`vsu/vsu_engine.c` (the ops table `vsu_chip_ops`, registered in `chip_engine.c`), `vsu_machine.c`, `vsu_player.c`,
+`vsu_chip.c`, `vsu_image.c` and `vsu_vgm.c` are C11 in the `chip_engines` library (`CMakeLists.txt`, `VSU_DIR`), the
+Deck's native build (`deck/build.gradle.kts`; `vsu_export.h` in `decknative.def`), the host test script and every
+render script that links `chip_engine.c`. They use blip_buf and `vgm_gd3.c`; no generated files (the period table and
+the sine are literals; `tools/audio/vsu/vsu_ref.py --check-tables` recomputes both).
+
+### Verification (authored, not run)
+
+`tools/audio/run_native_host_test.sh [dir]` builds `app/src/test/cpp/vsu_machine_test.c` (test song built in C,
+`vsu_test_song.h`) and writes `vsu_song.bin`, `vsu_trace.txt` (per tick: position and writes), `vsu_out.txt` (the 10-bit
+digital output of the first 300 ticks), `vsu_chip_cases.txt` (chip scenarios), `vsu_song.vgm`, `vsu_song.wav` and
+`vsu_tone.wav`. `wav_render_test.c` renders the Kotlin-generated demo and shortest images (`SampleExportTool`:
+`crimson-stereoscope.vbimg`, `vsu-shortest.vbimg`). `tools/audio/vsu_reference_check.py <dir> [--vgm2wav PATH]`
+compares the Python reference's writes and digital output with the traces, decodes the VGM from the format alone, and
+optionally plays it through libvgm's vgm2wav (independent decoder; its VSU core is Mednafen-derived, so differences in
+the amended behaviours above are expected and listed by the script). `tools/audio/render_vsu_image.sh image out.wav
+[seconds] [mute=0] [--vgm out.vgm]` renders an image through the ops table. Thresholds in those files are first
+guesses until the integrator runs them. Not done: any comparison with a real Virtual Boy.

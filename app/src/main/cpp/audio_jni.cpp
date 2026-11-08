@@ -1,5 +1,5 @@
 // JNI bridge for org.thortracker.audio.ChipAudio. Every call except nativePosition, nativeStats, nativeOpl3Vgm,
-// nativeYmExport and nativeWav* must come from ChipAudio's single control thread.
+// nativeYmExport, nativeVsuVgm and nativeWav* must come from ChipAudio's single control thread.
 #include <jni.h>
 
 #include <string>
@@ -7,6 +7,7 @@
 #include "audio_engine.h"
 #include "chip_wav.h"
 #include "opl3/opl3_export.h"
+#include "vsu/vsu_export.h"
 #include "ym/ym_export.h"
 
 using thortracker::Engine;
@@ -110,6 +111,30 @@ JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeOpl3Vgm(
     jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
     if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
     o3_export_free(vgm);
+    return out;
+}
+
+// The Virtual Boy VSU VGM export (any thread; allocates, renders the whole song: not the audio thread). Kotlin:
+// `@JvmStatic private external fun nativeVsuVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray,
+// date: ByteArray): ByteArray`. Returns the file, or throws IllegalArgumentException with the loader's reason.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeVsuVgm(JNIEnv* env, jclass, jbyteArray image,
+                                                                              jint max_ticks, jbyteArray title,
+                                                                              jbyteArray author, jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* vgm = vb_export_vgm(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                                 static_cast<int>(max_ticks), t.c_str(), a.c_str(), d.c_str(), &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!vgm) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "VGM export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
+    vb_export_free(vgm);
     return out;
 }
 

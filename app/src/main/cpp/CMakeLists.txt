@@ -20,6 +20,7 @@ set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
+set(VSU_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vsu)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -87,9 +88,15 @@ add_library(chip_engines STATIC
     ${YM_DIR}/ym_xgm.c
     ${YM_DIR}/ym_vgm.c
     ${YM_DIR}/ym_psg.c
+    ${VSU_DIR}/vsu_engine.c
+    ${VSU_DIR}/vsu_machine.c
+    ${VSU_DIR}/vsu_player.c
+    ${VSU_DIR}/vsu_chip.c
+    ${VSU_DIR}/vsu_image.c
+    ${VSU_DIR}/vsu_vgm.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${VSU_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)
