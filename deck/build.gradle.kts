@@ -28,6 +28,8 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("nes/nes_machine.c").asFile,
         engineSrc.file("nes/nes_image.c").asFile,
         engineSrc.file("nes/nes_apu.c").asFile,
+        engineSrc.file("nes/nes_vrc6.c").asFile,
+        engineSrc.file("nes/nes_players.c").asFile,
         engineSrc.file("third_party/blip_buf/blip_buf.c").asFile,
         engineSrc.file("sid/sid_chip.c").asFile,
         engineSrc.file("sid/sid_machine.c").asFile,
@@ -60,7 +62,8 @@ val buildEngine by tasks.registering(Exec::class) {
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
-        "nes/nes_apu.h", "generated/nes_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
+        "nes/nes_apu.h", "nes/nes_vrc6.h", "nes/nes_player.h", "generated/nes_player_image.h",
+        "generated/nes_vrc6_player_image.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",

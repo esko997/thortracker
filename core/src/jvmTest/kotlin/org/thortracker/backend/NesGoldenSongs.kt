@@ -7,8 +7,11 @@ import org.thortracker.model.Songs
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.Vrc6SawVolume
 import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -18,7 +21,7 @@ import org.thortracker.system.nes.DpcmStarterKit
  * Songs whose FamiStudio text export FamiStudio 4.5.3 itself turned into engine data (tools/audio/nes_golden.py):
  * the fixtures in src/jvmTest/resources/nes-golden. Between them they use every NES effect, OFF as release and stop,
  * legato, identical and differing instruments, custom pattern lengths, speed changes on several channels, parked
- * orders and envelope edge cases.
+ * orders and envelope edge cases; the VRC6 ones its pulses' eight duties, the saw's master volumes and slides.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -26,6 +29,8 @@ object NesGoldenSongs {
         "effects" to ::effects,
         "envelopes" to ::envelopes,
         "dpcm" to ::dpcm,
+        "vrc6_demo" to NesVrc6System::demo,
+        "vrc6_effects" to ::vrc6Effects,
     )
 
     private fun n(name: String): Int {
@@ -34,8 +39,8 @@ object NesGoldenSongs {
         return name.substring(2).toInt() * 12 + index
     }
 
-    private class P(val name: String, val length: Int = Songs.ROWS) {
-        val tracks = List(NesSystem.channels.size) { Array(Songs.ROWS) { Cell.BLANK } }
+    private class P(val name: String, val length: Int = Songs.ROWS, channels: Int = NesSystem.channels.size) {
+        val tracks = List(channels) { Array(Songs.ROWS) { Cell.BLANK } }
         fun note(ch: Int, row: Int, note: String, ins: Int = 0, fx: Int = 0, param: Int = 0) {
             tracks[ch][row] = Cell(n(note), ins, fx, param)
         }
@@ -210,5 +215,84 @@ object NesGoldenSongs {
         b.note(0, 0, "A-3", 3)
         return base.copy(title = "DPCM", ticksPerRow = 6, loopOrder = 1, patterns = listOf(a.build(), b.build()),
             orders = listOf(0, 1, 1), sound = NesSound(bank, samples))
+    }
+
+    /**
+     * VRC6: all eight duties (envelope and Vxx), the three saw master volumes switching between instruments (and across
+     * the loop), volume and volume slides on the saw, slides on a VRC6 pulse and the saw, vibrato, fine pitch, delays,
+     * cuts, OFF release and stop, legato, the lowest notes the VRC6 reaches, the speed set on the saw, and 2A03
+     * channels alongside.
+     */
+    fun vrc6Effects(): Song {
+        val base = NesVrc6System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val vrc6 = NesChip.VRC6
+        bank[0] = NesInstrument("Duty walk", volume = NesEnvelope(listOf(13, 12, 11, 10), loop = 3), duty = NesEnvelope(listOf(0, 1, 2, 3, 4, 5, 6, 7), loop = 0), chip = vrc6)
+        bank[1] = NesInstrument("Release pulse", volume = NesEnvelope(listOf(15, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), duty = NesEnvelope(listOf(5)), chip = vrc6)
+        bank[2] = NesInstrument("Saw full", volume = NesEnvelope(listOf(10, 9, 8), loop = 2), chip = vrc6, sawVolume = Vrc6SawVolume.FULL)
+        bank[3] = NesInstrument("Saw half", volume = NesEnvelope(listOf(15, 13, 11), loop = 2), chip = vrc6)
+        bank[4] = NesInstrument("Saw quarter", volume = NesEnvelope(listOf(15)), arpeggio = NesEnvelope(listOf(0, 12), loop = 0), chip = vrc6,
+            sawVolume = Vrc6SawVolume.QUARTER)
+        bank[5] = NesInstrument("Saw full twin", volume = NesEnvelope(listOf(10, 9, 8), loop = 2), chip = vrc6, sawVolume = Vrc6SawVolume.FULL)
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        bank[7] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val p1 = NesRules.VRC6_PULSE1
+        val p2 = NesRules.VRC6_PULSE2
+        val saw = NesRules.VRC6_SAW
+        val a = P("VRC6 A", channels = 8)
+        // VRC6 Pulse 1: the duty envelope, Vxx over all eight duties, slides, vibrato, fine pitch, the lowest note.
+        a.note(p1, 0, "C-4", 1)
+        a.note(p1, 4, "E-4", 0) // legato
+        a.note(p1, 8, "G-4", 2, NesRules.FX_DUTY, 0x00)
+        for (d in 1..7) a.fx(p1, 8 + d, NesRules.FX_DUTY, d)
+        a.note(p1, 16, "A-4", 2, NesRules.FX_SLIDE_UP, 0x05)
+        a.note(p1, 20, "D-5", 2, NesRules.FX_SLIDE_DOWN, 0x07)
+        a.note(p1, 24, "C-5", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(p1, 28, NesRules.FX_VIBRATO, 0x00)
+        a.note(p1, 30, "C-5", 1, NesRules.FX_FINE_PITCH, 0x8C)
+        a.off(p1, 34) // release
+        a.off(p1, 36) // already released: stop
+        a.note(p1, 40, "C-1", 1) // below the 2A03's A-1: the VRC6's 12-bit period reaches it
+        a.note(p1, 44, "F-4", 2, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(p1, 48, "F-4", 2, NesRules.FX_NOTE_CUT, 0x03)
+        // VRC6 Pulse 2: volume and a volume slide, arpeggio, duty 7 square.
+        a.note(p2, 0, "G-3", 2, NesRules.FX_VOLUME, 0x09)
+        a.note(p2, 8, "B-3", 2, NesRules.FX_VOLUME_SLIDE, 0xF3)
+        a.fx(p2, 16, NesRules.FX_VOLUME, 0x0C)
+        a.note(p2, 20, "D-4", 2, NesRules.FX_ARPEGGIO, 0x47)
+        a.note(p2, 32, "D-4", 1, NesRules.FX_DUTY, 0x07)
+        a.off(p2, 56)
+        // Saw: the three master volumes (each instrument change sends $55), twins, volume, slides, speed.
+        a.note(saw, 0, "C-3", 3)
+        a.note(saw, 4, "C-3", 4) // Half
+        a.note(saw, 8, "E-3", 5, NesRules.FX_VOLUME, 0x0A) // Quarter, with its octave arpeggio
+        a.note(saw, 12, "G-3", 6) // Full again: identical to instrument 3
+        a.note(saw, 16, "G-3", 3, NesRules.FX_SLIDE_DOWN, 0x0C)
+        a.fx(saw, 20, NesRules.FX_SPEED, 0x05)
+        a.note(saw, 24, "A-2", 4, NesRules.FX_VOLUME_SLIDE, 0x4F)
+        a.note(saw, 32, "C-1", 4) // the saw's lowest
+        a.note(saw, 36, "C-6", 4, NesRules.FX_VIBRATO, 0x38)
+        a.note(saw, 40, "D-5", 0, NesRules.FX_VIBRATO, 0x00) // legato, vibrato off
+        a.fx(saw, 44, NesRules.FX_SPEED, 0x06)
+        a.note(saw, 48, "F-3", 5, NesRules.FX_FINE_PITCH, 0x74)
+        a.off(saw, 56)
+        // 2A03 alongside.
+        a.note(0, 0, "E-4", 7)
+        a.note(0, 32, "G-4", 7, NesRules.FX_DUTY, 0x03)
+        a.note(2, 0, "C-3", 7)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
+        val b = P("VRC6 B", length = 32, channels = 8)
+        b.note(saw, 0, "A-3", 5) // the loop enters with Quarter after the song left the saw at Full
+        b.note(saw, 16, "A-3", 3)
+        b.note(p1, 0, "E-5", 0)
+        b.note(p2, 0, "C-5", 1)
+        b.off(p2, 24)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "VRC6 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank),
+        )
     }
 }

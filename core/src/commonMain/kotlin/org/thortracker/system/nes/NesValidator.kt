@@ -28,7 +28,8 @@ object NesValidator {
             out += "The song is for ${song.system.name}, not the NES"
             return out.list()
         }
-        val channels = NesRules.CHANNEL_NAMES.size
+        val expansion = song.nes.expansion
+        val channels = expansion.channels
         if (song.ticksPerRow !in 1..255) out += "Speed ${song.ticksPerRow} is out of range; ticks per row must be 1-255"
         if (song.patterns.isEmpty()) out += "The song has no patterns; add one"
         song.patterns.forEachIndexed { p, pattern ->
@@ -36,7 +37,7 @@ object NesValidator {
             if (pattern.scale.root !in 0..11) out += "$label has scale root ${pattern.scale.root}; roots are 0-11 (C-B)"
             if (pattern.length !in 1..Songs.ROWS) out += "$label is ${pattern.length} rows long; lengths are 1-${Songs.ROWS}"
             if (pattern.tracks.size != channels) {
-                out += "$label has ${pattern.tracks.size} channels; NES patterns have $channels"
+                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.chip.label}"} patterns have $channels"
                 return@forEachIndexed
             }
             pattern.tracks.forEachIndexed { ch, track ->
@@ -58,10 +59,13 @@ object NesValidator {
         if (bank.size != NesSystem.SLOTS) out += "The song has ${bank.size} instruments; NES songs have exactly ${NesSystem.SLOTS}"
         bank.forEachIndexed { i, ins ->
             val where = "Instrument ${NesRules.hex2(i + 1)}"
+            if (ins.chip !in expansion.chips) out += "$where is a ${ins.chip.label} sound; this song has no ${ins.chip.label} chip"
+            if (ins.chip != NesChip.VRC6 && ins.sawVolume != Vrc6SawVolume.HALF) out += "$where: only VRC6 sounds have a saw volume"
+            if (ins.chip != NesChip.APU && ins.dpcm.isNotEmpty()) out += "$where: only 2A03 sounds map DPCM samples"
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
-            envelopeShape(out, where, "duty", ins.duty, NesEnvelope.DUTY)
+            envelopeShape(out, where, "duty", ins.duty, ins.chip.duty)
             for ((note, m) in ins.dpcm) {
                 val at = "$where, DPCM ${if (note in NesSystem.noteRange) NesSystem.noteName(note) else "note $note"}"
                 when {
@@ -237,7 +241,7 @@ object NesValidator {
     /** A note without instrument before any instrument has played on its channel: the engine has no sound loaded. */
     private fun firstNotesWithoutInstrument(song: Song): List<String> {
         val out = ArrayList<String>()
-        for (ch in NesRules.CHANNEL_NAMES.indices) {
+        for (ch in 0 until song.nes.expansion.channels) {
             if (ch == NesRules.DPCM) continue // an error there: a DPCM note needs an instrument's sample mapping
             loop@ for (p in song.orders) {
                 val pattern = song.patterns[p]

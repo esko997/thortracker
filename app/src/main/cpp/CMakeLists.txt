@@ -57,6 +57,8 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_machine.c
     ${NES_DIR}/nes_image.c
     ${NES_DIR}/nes_apu.c
+    ${NES_DIR}/nes_vrc6.c
+    ${NES_DIR}/nes_players.c
     ${BLIP_DIR}/blip_buf.c
     ${SID_DIR}/sid_chip.c
     ${SID_DIR}/sid_machine.c

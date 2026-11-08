@@ -16,10 +16,11 @@ import org.thortracker.ui.IdentityCache
 import org.thortracker.ui.Surface
 
 /**
- * NES instrument editor. Left: the 64 slots of the shared bank with how often each is used. Right: name, the channel
- * Listen plays on, page tabs, and on an envelope page the shown envelope's length / loop / release / pitch mode, what
- * each channel does with it, and its steps as bars with the loop region and release point; on the DPCM page the shown
- * key's mapping, the sound's mapped keys and the song's samples with the selected one's waveform.
+ * NES instrument editor. Left: the 64 slots of the shared bank with how often each is used. Right: name, on songs
+ * with an expansion chip the sound's chip (and a VRC6 sound's saw volume), the channel Listen plays on, page tabs,
+ * and on an envelope page the shown envelope's length / loop / release / pitch mode, what each channel does with it,
+ * and its steps as bars with the loop region and release point; on the DPCM page the shown key's mapping, the
+ * sound's mapped keys and the song's samples with the selected one's waveform.
  */
 internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private companion object {
@@ -47,7 +48,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val col = Palette.channel(st.listenChannel)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "Instrument bank$locked  ${usageText(st.instrument)}")
-        val row = NesInstrumentView.row(st)
+        val row = NesInstrumentView.row(st, s)
 
         // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
@@ -88,7 +89,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         var y = top + ink.unit * 0.3f
         val dpcm = NesInstrumentView.dpcmPage(st)
         val mapping = if (dpcm) ins.dpcm[st.dpcmKey] else null
-        for (r in NesInstrumentView.rows(st)) {
+        for (r in NesInstrumentView.rows(st, s)) {
             if (r == Row.SLOT || r == Row.STEPS || r in BOX_ROWS) continue
             val sel = r == row
             val h = if (r == Row.ENVELOPE) ink.unit * 1.9f else rowH
@@ -105,11 +106,17 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                         ink.outline(c, Rect(cx - 1, y + 2, cx + w + 1, y + h - 2), cursorColor(), ink.dp(2f), ink.dp(2f))
                     }
                 }
+                Row.CHIP -> setting(c, "Chip", when (ins.chip) {
+                    NesChip.APU -> "2A03: Pulse 1/2, Triangle, Noise, DPCM"
+                    NesChip.VRC6 -> "VRC6: VRC6 Pulse 1/2 and Saw"
+                }, rx, vx, y, h, sel, false)
+                Row.SAW -> setting(c, "Saw volume", "${ins.sawVolume.label}: ${NesInstrumentView.sawText(ins.sawVolume)}", rx, vx, y, h, sel,
+                    ins.sawVolume == Vrc6SawVolume.HALF)
                 Row.LISTEN -> {
                     ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
                     val name = listen?.name ?: ""
                     ink.label(c, name, vx, y, h, col, true)
-                    val note = listen?.let { NesInstrumentView.channelNote(kind, it.kind) }
+                    val note = listen?.let { NesInstrumentView.channelNote(kind, it.kind, ins.chip, ins.sawVolume, NesRules.chip(st.listenChannel)) }
                     if (note != null) {
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
                         ink.label(c, ink.fit(note, rx + rw - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
@@ -160,12 +167,12 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             return
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind, ins.chip), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
         y += rowH * 0.85f
 
         // steps
         val plotTop = y + ink.unit * 0.3f
-        if (area.bottom - plotTop > ink.unit * 4f) drawSteps(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), kind, env, listen?.kind, col, row == Row.STEPS)
+        if (area.bottom - plotTop > ink.unit * 4f) drawSteps(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), kind, env, listen?.kind, col, row == Row.STEPS, ins.chip)
         else plot.hide()
     }
 
@@ -184,10 +191,10 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         else -> Palette.DIM
     }
 
-    /** Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys. */
+    /** Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys on 2A03 sounds. */
     private fun drawTabs(c: Surface, ins: NesInstrument, r: Rect, listen: org.thortracker.system.ChannelKind?, col: Int) {
         tabs.clear()
-        val n = NesInstrumentView.DPCM_PAGE + 1
+        val n = NesInstrumentView.pages(song, st)
         val w = r.width() / n
         for (page in 0 until n) {
             val k = NesEnvelopeKind.entries.getOrNull(page)
@@ -209,10 +216,14 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         }
     }
 
-    /** True when [channel] plays nothing of envelope [kind]: the triangle's volume and duty, every envelope on DPCM. */
+    /**
+     * True when [channel] plays nothing of envelope [kind]: the triangle's volume and duty, the VRC6 saw's duty, every
+     * envelope on DPCM.
+     */
     private fun ignores(kind: NesEnvelopeKind, channel: org.thortracker.system.ChannelKind) =
         channel == org.thortracker.system.ChannelKind.SAMPLE ||
-            channel == org.thortracker.system.ChannelKind.TRIANGLE && (kind == NesEnvelopeKind.DUTY || kind == NesEnvelopeKind.VOLUME)
+            channel == org.thortracker.system.ChannelKind.TRIANGLE && (kind == NesEnvelopeKind.DUTY || kind == NesEnvelopeKind.VOLUME) ||
+            channel == org.thortracker.system.ChannelKind.SAW && kind == NesEnvelopeKind.DUTY
 
     // ---- DPCM page: mapped keys and the song's samples ------------------------------------------------
 
@@ -356,11 +367,13 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         boxRow(addRect.top, Row.ADD, "Add", "starter kit or .wav / .dmc file…", false)
     }
 
-    private fun drawSteps(c: Surface, r: Rect, kind: NesEnvelopeKind, env: NesEnvelope, listen: org.thortracker.system.ChannelKind?, col: Int, focused: Boolean) {
-        val text = { value: Int -> NesInstrumentView.valueText(kind, value, listen) }
+    private fun drawSteps(c: Surface, r: Rect, kind: NesEnvelopeKind, env: NesEnvelope, listen: org.thortracker.system.ChannelKind?, col: Int, focused: Boolean,
+                          chip: NesChip) {
+        val text = { value: Int -> NesInstrumentView.valueText(kind, value, listen, chip) }
         val title = EnvelopePlot.title(kind.label, env.values, st.envStep, text,
             ctl.keys.label(org.thortracker.editor.Action.EDIT), ctl.keys.label(org.thortracker.editor.Action.UP))
-        plot.draw(c, r, title, kind, env, st.envStep, text, listen != null && ignores(kind, listen), col, focused, cursorColor(), ctl.editHeld)
+        plot.draw(c, r, title, kind, env, st.envStep, text, listen != null && ignores(kind, listen), col, focused, cursorColor(), ctl.editHeld,
+            kind.range(chip))
     }
 
     private fun usage(slot: Int): Int {
@@ -403,7 +416,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             return true
         }
         if (plot.contains(x, y)) {
-            st.instField = NesInstrumentView.rows(st).indexOf(Row.STEPS)
+            st.instField = NesInstrumentView.rows(st, song).indexOf(Row.STEPS)
             drawSlot = st.instrument
             drawKind = NesInstrumentView.kind(st)
             drawing = session.beginGesture("Draw ${drawKind.label.lowercase()}")
@@ -415,11 +428,12 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** Sets the step under [x] to the value at [y]; past the end it appends one step at a time. */
     private fun drawAt(x: Float, y: Float) {
-        val e = song.nesInstrument(drawSlot)?.let { drawKind.of(it) } ?: return
+        val ins = song.nesInstrument(drawSlot) ?: return
+        val e = drawKind.of(ins)
         val i = plot.stepAt(x, NesInstrumentView.lastStep(e))
         val value = plot.valueAt(y)
         st.envStep = i
-        session.editNesEnvelope(drawSlot, drawKind, "Draw ${drawKind.label.lowercase()}") { NesEnvelopes.withValue(drawKind, it, i, value) }
+        session.editNesEnvelope(drawSlot, drawKind, "Draw ${drawKind.label.lowercase()}") { NesEnvelopes.withValue(drawKind, it, i, value, ins.chip) }
     }
 
     override fun move(x: Float, y: Float) {
@@ -438,7 +452,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** DPCM page taps: a mapped key shows it, a sample selects it, Add opens the add menu. Null: not on them. */
     private fun dpcmDown(x: Float, y: Float): Boolean? {
-        val rows = NesInstrumentView.rows(st)
+        val rows = NesInstrumentView.rows(st, song)
         when {
             keyRect.contains(x, y) && keyRowH > 0f -> {
                 val key = keyList.getOrNull(keyScroll + ((y - keyRect.top) / keyRowH).toInt()) ?: return true

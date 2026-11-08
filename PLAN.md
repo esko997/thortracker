@@ -16,8 +16,10 @@ design notes for the chip work live in `docs/BACKENDS.md`.
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** for every system (each engine already renders audio natively).
-3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) first, then
-   VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5, EPSM (YM2608).
+3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth) first —
+   implemented on branch `nes-exp` as the "NES + VRC6" variant (`docs/BACKENDS.md`, "NES expansion chips", which also
+   lists the steps for each further chip) — then VRC7 (2-op FM), N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
+   EPSM (YM2608).
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
 5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode

@@ -118,7 +118,7 @@ assembled at app runtime or per Play.
 src/main/cpp/CMakeLists.txt`, ABIs `arm64-v8a`, `x86_64`. The CMake project builds a static C11
 library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implementation), `huge_chip.c`,
 `huge_machine.c`, which `#include`s binjgb's `emulator.c`, plus `common.c`; the NES files `nes/nes_chip.c`,
-`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
+`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c`, `nes/nes_vrc6.c`, `nes/nes_players.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
 `sid/sid_machine.c`, `sid/sid_image.c`; the OPL3 files `opl3/opl3_chip.c`, `opl3/opl3_machine.c`,
 `opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; `vgm_gd3.c` (the VGM exports'
 GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
@@ -698,6 +698,98 @@ text asks for, derived from the text alone. Two runs produce identical files.
     the two references agree with each other less (0.89 / 0.79 / 36%).
 - Not done: listening on hardware, blargg's APU test ROMs (they need a PPU and IRQs), a comparison
   with a real NES capture, Thor measurements.
+
+## VRC6: the same engine with Konami's VRC6 (`"nes-famistudio-vrc6"`)
+
+The first NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips"). Everything in the
+NES section above holds for this engine; this section lists only what differs. The 2A03 engine, its
+player bytes, image size and song base are unchanged (`prepare_nes_player.py` checks its four outputs
+stay byte-identical).
+
+### What runs
+
+- **Player** (`generated/nes_vrc6_player_image.h`, `NesVrc6PlayerImage.kt`; 3430 bytes at `$8000`, id
+  `$6CCBFF6E`, image sha256 `6effcb6c…eab`): `tools/audio/nes/nes_player.s` assembled a second time with
+  `-D FAMISTUDIO_EXP_VRC6=1`, nothing else changed: the same entry table (`$8000` init, `$8003` play,
+  `$8006` idle, `$8009` trap), the same configuration plus FamiStudio's VRC6 code and its saw note
+  tables (`NoteTables/famistudio_saw_note_table_lsb/msb.bin`, pinned). Engine RAM `$0200-$0326`, 20
+  envelope slots and 6 pitch envelope slots (2A03: 11 and 3); the audition streams stay at `$07C0`.
+- **Song base `$8E00`**: the first page after the larger player, so the region is `$8E00-$FFF9`,
+  **29178 bytes** (the 2A03 build: 29690), shared with the DPCM samples exactly as there (samples at the
+  top, 64-aligned, never below `$C000`). Image = 32-byte header + directory + region = **31258 bytes**
+  (`NES_VRC6_IMAGE_SIZE`); the header layout is the same, with this player's id and song base.
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5 VRC6 Pulse 1, 6 VRC6 Pulse 2, 7 VRC6 Saw**.
+  The FamiStudio song header has a stream word per channel: count, instrument table, samples − 4,
+  **eight** channel streams, PAL tempo, NTSC tempo (offsets 21 and 23). Thor layout as before: one
+  order stream (`$41 n ptr` per order, `$42`) per channel, eight of them.
+- **Opcodes**: `$55 v` (VRC6 saw only) sets `famistudio_vrc6_saw_volume`: `$01` Full (volume × 4),
+  `$00` Half (× 2, the power-on value), `$FF` Quarter (× 1) — FamiStudio writes `1 − Vrc6SawMasterVolume`,
+  which its ca65 export prints as `$ffffffff` for Quarter (the binary export and our lowering write
+  `$FF`). The saw's 6-bit accumulator rate is the volume (envelope × volume track, `famistudio_volume_table`)
+  shifted by it; rates above 42 overflow and distort. `$4F d` (duty effect) takes 0-7 on the VRC6 pulses
+  (`famistudio_vrc6_duty_lookup`: duty d = d + 1 of 16 steps) and is invalid on the saw; `$53` (phase
+  reset) is valid on the 2A03 pulses and all three VRC6 channels. Duty envelope values are 0-7 on VRC6
+  instruments. The VRC6 pulses use the 2A03 note table (their 12-bit periods reach every note down to C-1),
+  the saw `famistudio_saw_note_table` (CPU / (14 f) − 1). Pitch shift 0: slides have the 2A03's one
+  fraction bit.
+- **VRC6 audio** (`nes/nes_vrc6.c`, written here from the NESdev wiki "VRC6 audio"): registers
+  `$9000-$9003`, `$A000-$A002`, `$B000-$B002` (writes timestamped to the CPU cycle like the APU's; reads
+  there return the ROM, as the registers are write-only). Pulses: 12-bit divider, a 16-step duty generator
+  counting down, output volume V while step ≤ duty D (or always with the mode bit), clearing E silences and
+  resets to step 15. Saw: the rate is added to an 8-bit accumulator on clocks 2, 4 … 12 and the 14th clock
+  resets it; output = accumulator >> 3; clearing E forces it to 0. `$9003`: H halts every oscillator, B
+  shifts the periods right by 4, A by 8 (overriding B). Mix: a linear DAC of pulse + pulse + saw (0-61), one
+  step = the 2A03 mixer's full pulse ÷ 15 (NESdev: a full VRC6 pulse ≈ a full 2A03 pulse), added to the
+  2A03's band-limited buffer with positive polarity. Event-driven with output, arithmetic without (seek).
+- **Machine** (`nes_machine.c`): one machine is created for one build (`nm_create(rate, &nes_player_vrc6)`;
+  `nes/nes_player.h` describes both builds from their generated headers: bytes, entries, song base, region
+  and image size, channel count, envelope slots, duty range, engine RAM symbols). Images are loaded for a
+  build (`nm_load_image(image, player)`); a machine refuses images loaded for the other one. Seek, live
+  relocation, audition and mute work on all eight channels exactly as on five. Audition takes channels
+  0-3 and 5-7 (fine pitch on 0-2 and 5-7). Mute 5-7 silences the VRC6 channels in the mix.
+  `nm_write_log` gives every sound write (APU and VRC6) as (address low, high, value); `nm_apu_log` still
+  gives only the APU's.
+- **Validation** (`nes_image.c`, per build): stream and song pointers against this build's song base and
+  region, eight streams, the duty range 0-7 in envelopes and `$4F` on the VRC6 pulses, `$55` only on the
+  saw with `$00`/`$01`/`$FF` (on the 2A03 build `$55` is "not allowed in a row"). Raw FamiStudio exports
+  with eight channels load too (song stride 2 × 8 + 4).
+- **Ops** (`nes_chip.c`): `nes_vrc6_chip_ops`, id `"nes-famistudio-vrc6"`, `image_size` 31258, the same
+  functions as `"nes-famistudio"` over a machine of the VRC6 build. `.nsf` export: the VRC6 player at
+  `$8000`, the data at `$8E00`, header byte `$7B` = `$01` (VRC6), so NSF players emulate the chip.
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds both players in one run. For the VRC6 build it also
+writes the fixtures `app/src/test/cpp/nes_vrc6_song.h` from `tools/audio/nes/vrc6_test.txt` (FamiStudio
+text with `Expansions="VRC6"`: 2A03 lead, bass and hat beside VPulse/VSweep/VThin on the VRC6 pulses with
+all eight duties, duty envelopes and effects, the three saw master volumes switching between instruments,
+vibrato, slides on a VRC6 pulse and the saw, fine pitch, volume track and slide, note delay, cut, phase
+reset, release notes, no-attack, Fxx 6/7/4/5, loop to order 1) as exported by FamiStudio 4.5.3
+(`vrc6_test_ca65.s`, committed): raw at `$8E00`, the Thor layout, every block moved, and one note plus the
+VPulse sustain edited.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_vrc6_test.c`: VRC6 unit
+  checks (each duty's high steps, mode bit, 12-bit period timing, disable/reset, the saw's accumulator
+  sequence at rate 42 and the wrap above 42, `$9003` H/B/A, mixer level vs the 2A03 pulse, mute); image
+  rules (raw and Thor loads, eight streams, order-start speeds, the builds refusing each other's images,
+  duty 8 and saw volume `$02` rejected, song base and region size); playback (**the Thor layout writes the
+  same APU and VRC6 registers as FamiStudio's own export through the first pass and two loops**, row starts
+  on the text's frames, duty 7 and the note-table period on VRC6 Pulse 1, saw rates 2×/4×/1× for
+  Half/Full/Quarter, VThin's duty envelope 1-3-5, the saw period from the saw table, the saw table vs
+  12-TET, pitch of a held VRC6 pulse and saw note by zero crossings); seek to six targets in step with
+  straight play for 200 frames and the order fallback holding the order's saw volume; live relocation
+  before every frame with identical writes, the VPulse sustain edit heard, the edited note at 2/8;
+  audition on VRC6 Pulse 1/2 and the saw (periods, fine pitch, release tail, cut, limits); mute of 5-7 in
+  the mix; the ops table. Evidence: `nes_vrc6.wav`, `nes_vrc6_trace.txt` (per-frame APU and VRC6 writes),
+  `nes_vrc6.nsf` (player + FamiStudio's export, `$7B` = `$01`).
+- Kotlin: `NesGoldenTest` runs the golden songs `vrc6_demo` and `vrc6_effects` (FamiStudio's export of our
+  text vs our lowering, register traces with the VRC6 writes compared every frame); `NesLoweringTest`
+  checks the VRC6 image contract; `NesExportTest`, `NesProjectCodecTest` and `NesInstrumentViewTest` cover
+  the `.nsf`/text exports, files and the editor.
+- Not done: listening on hardware or a VRC6 cartridge, comparison with a reference VRC6 emulator's audio
+  (libgme/NSFPlay), Thor measurements.
 
 ## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
 

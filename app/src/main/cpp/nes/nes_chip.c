@@ -1,7 +1,7 @@
-/* "nes-famistudio": the FamiStudio sound engine (FamiTracker tempo) on the NES machine
- * (nes_machine.h) behind the chip engine interface. Images are validated and indexed by
- * nm_load_image (nes_image.h); see docs/AUDIO_ENGINE.md for the layout the Kotlin lowering
- * produces and the ops' behaviour. */
+/* "nes-famistudio" and "nes-famistudio-vrc6": the FamiStudio sound engine (FamiTracker tempo), the 2A03
+ * build and the Konami VRC6 build, on the NES machine (nes_machine.h) behind the chip engine interface.
+ * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
+ * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
 
 #include "chip_engine.h"
@@ -17,15 +17,26 @@ _Static_assert(NM_MAX_TICK_FRAMES <= CHIP_MAX_TICK_FRAMES && NM_MAX_SAMPLE_RATE 
 #define MACHINE(m) ((NesMachine*)(m))
 #define IMAGE(i) ((const NesImage*)(i))
 
-static ChipMachine* nes_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate); }
+static ChipMachine* nes_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_2a03); }
+static ChipMachine* vrc6_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_vrc6); }
 
 static void nes_destroy(ChipMachine* m) { nm_destroy(MACHINE(m)); }
 
-static int nes_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+/* Copies a lowered image of exactly the player's image size (storage beyond it zeroed) and validates it. */
+static int load_for(const NesPlayer* player, ChipImage* storage, const uint8_t* bytes, size_t size) {
     NesImage* image = (NesImage*)storage;
-    if (size != sizeof image->bytes) return CHIP_ERR_IMAGE;
+    if (size != player->image_size) return CHIP_ERR_IMAGE;
     memcpy(image->bytes, bytes, size);
-    return nm_load_image(image) ? CHIP_ERR_IMAGE : CHIP_OK;
+    memset(image->bytes + size, 0, sizeof image->bytes - size);
+    return nm_load_image(image, player) ? CHIP_ERR_IMAGE : CHIP_OK;
+}
+
+static int nes_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_2a03, storage, bytes, size);
+}
+
+static int vrc6_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_vrc6, storage, bytes, size);
 }
 
 static int nes_start(ChipMachine* m, const ChipImage* image, int order, int row, int max_ticks, int* seek_mode) {
@@ -54,11 +65,28 @@ static int nes_tick(ChipMachine* m, float* out) { return nm_tick(MACHINE(m), out
 
 const ChipEngineOps nes_chip_ops = {
     .system_id = "nes-famistudio",
-    .image_size = sizeof(((NesImage*)0)->bytes),
+    .image_size = NES_IMAGE_SIZE,
     .image_storage = sizeof(NesImage),
     .create = nes_create,
     .destroy = nes_destroy,
     .load_image = nes_load_image,
+    .start = nes_start,
+    .apply_image = nes_apply_image,
+    .audition = nes_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};
+
+/* Channels 0-4 as "nes-famistudio", then VRC6 pulse 1 (5), pulse 2 (6) and saw (7). */
+const ChipEngineOps nes_vrc6_chip_ops = {
+    .system_id = "nes-famistudio-vrc6",
+    .image_size = NES_VRC6_IMAGE_SIZE,
+    .image_storage = sizeof(NesImage),
+    .create = vrc6_create,
+    .destroy = nes_destroy,
+    .load_image = vrc6_load_image,
     .start = nes_start,
     .apply_image = nes_apply_image,
     .audition = nes_audition,

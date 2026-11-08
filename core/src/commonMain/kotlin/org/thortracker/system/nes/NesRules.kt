@@ -18,18 +18,29 @@ object NesRules {
     const val NOTE_COUNT = 96
 
     /**
-     * The lowest note the pulses and the triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in its
-     * note table (the triangle sounds it an octave lower).
+     * The lowest note the 2A03's pulses and triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in
+     * its note table (the triangle sounds it an octave lower). The VRC6's 12-bit periods reach every note.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
-    val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM")
-    val CHANNEL_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE, ChannelKind.SAMPLE)
+    /**
+     * Every NES channel in FamiStudio's engine order: the 2A03's five, then the expansion's ([NesExpansion]); a song
+     * has the first [NesExpansion.channels]. Indices are the same in every variant.
+     */
+    val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM", "VRC6 Pulse 1", "VRC6 Pulse 2", "VRC6 Saw")
+    val CHANNEL_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE, ChannelKind.SAMPLE,
+        ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.SAW)
     const val TRIANGLE = 2
     const val NOISE = 3
 
     /** The delta modulation channel: notes start the sample their instrument maps to them. */
     const val DPCM = 4
+
+    /** The 2A03's channels; expansion channels follow. */
+    const val APU_CHANNELS = 5
+    const val VRC6_PULSE1 = 5
+    const val VRC6_PULSE2 = 6
+    const val VRC6_SAW = 7
 
     /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
     const val MAX_ORDERS = 255
@@ -95,27 +106,45 @@ object NesRules {
                 "instead of its initial value; without a note, at once. A high level makes Triangle and Noise quieter.", true),
     )
 
+    /** The duty effect on the VRC6 pulses: eight duties (FamiStudio's `Channel.SupportsEffect`; not on the saw). */
+    private val VRC6_DUTY = EffectSpec(FX_DUTY, "Duty", "xx: 00-07 (1/16-8/16)",
+        "VRC6 pulse duty from this row on: 00 = 1/16 (6.25%) up to 07 = 8/16 (50%) (an instrument duty envelope takes over " +
+            "at its next step). Not on the saw.", true)
+
     private val BY_CODE = EFFECTS.associateBy { it.code }
 
     fun effect(code: Int): EffectSpec? = BY_CODE[code]
 
     fun kind(channel: Int): ChannelKind = CHANNEL_KINDS[channel]
 
-    /** True for the channels whose notes are note-table pitches (pulses and triangle). */
-    fun pitched(channel: Int): Boolean = kind(channel).let { it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE }
+    /** The chip whose instruments [channel] plays. */
+    fun chip(channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else NesChip.VRC6
+
+    /** True for the channels whose notes are note-table pitches (pulses, triangle and the VRC6 saw). */
+    fun pitched(channel: Int): Boolean = kind(channel).let { it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE || it == ChannelKind.SAW }
+
+    /** The lowest note [channel] plays: A-1 on the 2A03's pulses and triangle, every note elsewhere. */
+    fun lowestNote(channel: Int): Int = if (channel < APU_CHANNELS && pitched(channel)) LOWEST_TONAL else 1 + NOTE_OFFSET
+
+    /** The highest duty the duty effect (`Vxx`) takes on [channel]: the VRC6 pulses have eight. */
+    fun dutyMax(channel: Int): Int = if (chip(channel) == NesChip.VRC6) NesChip.VRC6.duty.last else 3
 
     /**
-     * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, everything but
-     * speed, delay, cut and the DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), and the DMC level elsewhere.
+     * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, duty on the VRC6
+     * saw, everything but speed, delay, cut and the DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), and the
+     * DMC level elsewhere.
      */
     private fun unusable(channel: Int): Set<Int> = when (kind(channel)) {
         ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER)
         ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER)
         ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
+        ChannelKind.SAW -> setOf(FX_DUTY, FX_DELTA_COUNTER)
         else -> setOf(FX_DELTA_COUNTER)
     }
 
-    fun effectsFor(channel: Int): List<EffectSpec> = unusable(channel).let { no -> EFFECTS.filter { it.code !in no } }
+    fun effectsFor(channel: Int): List<EffectSpec> = unusable(channel).let { no ->
+        EFFECTS.filter { it.code !in no }.map { if (it.code == FX_DUTY && chip(channel) == NesChip.VRC6) VRC6_DUTY else it }
+    }
 
     fun hex2(value: Int) = NumberText.hex(value, 2)
 
@@ -147,8 +176,15 @@ object NesRules {
         if (cell.note == Cell.EMPTY && cell.instrument != 0) {
             return "instrument ${hex2(cell.instrument)} without a note does nothing; add a note or clear the instrument"
         }
-        if (cell.note >= 0 && pitched(channel) && cell.note < LOWEST_TONAL) {
+        if (cell.note >= 0 && pitched(channel) && cell.note < lowestNote(channel)) {
             return "${CHANNEL_NAMES[channel]} cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
+        }
+        if (cell.note >= 0 && cell.instrument != 0) {
+            val ins = song.nes.instruments.getOrNull(cell.instrument - 1)
+            if (ins != null && ins.chip != chip(channel)) {
+                return "instrument ${hex2(cell.instrument)} is a ${ins.chip.label} sound and ${CHANNEL_NAMES[channel]} plays " +
+                    "${chip(channel).label} sounds; use a ${chip(channel).label} sound or change the sound's chip"
+            }
         }
         if (cell.note >= 0 && channel == DPCM && cell.instrument != 0) {
             dpcmMappingProblem(song, cell.instrument, cell.note)?.let { return it }
@@ -185,7 +221,7 @@ object NesRules {
                     val target = cell.note + if (cell.effect == FX_SLIDE_UP) p else -p
                     when {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
-                        pitched(channel) && target < LOWEST_TONAL -> "$fx from $noteName would end below A-1, which ${CHANNEL_NAMES[channel]} cannot play"
+                        pitched(channel) && target < lowestNote(channel) -> "$fx from $noteName would end below A-1, which ${CHANNEL_NAMES[channel]} cannot play"
                         else -> null
                     }
                 }
@@ -193,7 +229,7 @@ object NesRules {
             FX_NOTE_CUT -> if (p > DELAY_MAX) "$fx: cuts are S00-S1F frames" else null
             FX_DUTY -> when {
                 kind(channel) == ChannelKind.NOISE && p > 1 -> "$fx: Noise modes are V00 (hiss) and V01 (metallic)"
-                p > 3 -> "$fx: duties are V00-V03"
+                p > dutyMax(channel) -> "$fx: duties are V00-V0${dutyMax(channel)}"
                 else -> null
             }
             FX_DELTA_COUNTER -> if (p > DELTA_COUNTER_MAX) "$fx: DMC levels are Z00-Z7F" else null
@@ -229,10 +265,19 @@ object NesRules {
             FX_SLIDE_UP -> "Glide up $param semitones by the next note"
             FX_SLIDE_DOWN -> "Glide down $param semitones by the next note"
             FX_NOTE_CUT -> if (param == 0) "Cut immediately" else "Cut after $param frames"
-            FX_DUTY -> if (kind(channel) == ChannelKind.NOISE) (if (param == 1) "Noise metallic" else "Noise hiss")
-                else "Duty ${listOf("12.5%", "25%", "50%", "75%").getOrElse(param) { "?" }}"
+            FX_DUTY -> when {
+                kind(channel) == ChannelKind.NOISE -> if (param == 1) "Noise metallic" else "Noise hiss"
+                chip(channel) == NesChip.VRC6 -> "Duty ${dutyText(NesChip.VRC6, param)}"
+                else -> "Duty ${dutyText(NesChip.APU, param)}"
+            }
             FX_DELTA_COUNTER -> "DMC level $param"
             else -> "Unknown effect"
         }
+    }
+
+    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16". */
+    fun dutyText(chip: NesChip, value: Int): String = when (chip) {
+        NesChip.APU -> listOf("12.5%", "25%", "50%", "75%").getOrElse(value) { "?" }
+        NesChip.VRC6 -> if (value in NesChip.VRC6.duty) "${value + 1}/16" else "?"
     }
 }

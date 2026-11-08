@@ -191,6 +191,65 @@ muted in the song) stay in the hosts and work for every chip.
   DPCM under the noise drums, with tom fills. `exportSamples` writes it as `thor-quest.{thor,nsf,txt,nesimg}`;
   `tools/audio/render_nes_image.sh` renders an image through the native engine.
 
+## NES expansion chips
+
+FamiStudio's engine also drives the Famicom cartridge sound chips; roadmap step 3 adds them one at a time,
+VRC6 first. Decisions (made on the user's behalf; see Open questions):
+
+- **One system per expansion, one family.** FamiStudio assembles its engine for one expansion (its project picks
+  one in practice for NSF/ROM export), and a Thor Tracker system has fixed channels, so each expansion is its own
+  `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels) and `NesVrc6System`
+  (`"nes-famistudio-vrc6"`, 8 channels). Both are `NesFamiStudioSystem`s sharing every rule, view, lowering and
+  export; they differ only in `NesExpansion` (`NONE`, `VRC6`). `SoundSystem.family` (`"NES"`) groups them: **New
+  blank song** and **Load demo** list "NES…" once, which opens the variants ("NES (FamiStudio)", "NES + VRC6
+  (FamiStudio)"). The plain NES is unchanged: same id, channels, files, lowering bytes, image and `.nsf`.
+- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"`, left out when none) names the chip; the
+  song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is rejected.
+  Channels keep FamiStudio's engine order: the 2A03's five, then the expansion's (`NesRules.CHANNEL_NAMES` lists them
+  all; a song has the first `expansion.channels`). The one bank of 64 sounds stays shared; each sound has a `chip`
+  (`NesChip.APU` = 2A03, `VRC6`; FamiStudio's instrument expansion; omitted in files for 2A03), because the same
+  envelope means different things on each chip (VRC6 duties 0-7). A channel plays only its chip's sounds
+  (validation, audition); only 2A03 sounds map DPCM samples. NES data version stays 2: VRC6 songs are new files,
+  2A03 files are byte-identical.
+- **VRC6** (two pulses with eight duties and 12-bit periods, a sawtooth): channels VRC6 Pulse 1 (5), VRC6 Pulse 2 (6),
+  VRC6 Saw (7, `ChannelKind.SAW`). VRC6 sounds have duty 0-7 (1/16 to 8/16) and the saw's master volume
+  (`Vrc6SawVolume` Full / Half / Quarter = volume × 4 / × 2 / × 1 into the 6-bit accumulator rate; Full distorts
+  above volume 10, as on the chip). `Vxx` takes 00-07 on the VRC6 pulses and does not exist on the saw; every other
+  effect works as on the 2A03 pulses. The VRC6 pulses and saw reach every note C-1..B-8. The lowering sends the
+  saw's master volume (`$55`) before an instrument of another volume, and with each order's first instrument so an
+  order stays self-contained for seek and live edits; slides on the saw use FamiStudio's saw note table. Editor:
+  on songs with an expansion the Instrument view shows a **Chip** row (2A03 / VRC6; switching clamps duties, Listen
+  follows to a channel of that chip) and VRC6 sounds a **Saw volume** row; VRC6 sounds have no DPCM page; duty
+  steps go to 7 and read 1/16-8/16. Demo: "Saw Sunrise" (`NesVrc6DemoSong`): saw lead (Full) and saw bass (Half),
+  a VRC6 duty sweep and 1/16 chords, the 2A03 echo, bass, noise drums and the DPCM starter kit. `exportSamples`
+  writes `saw-sunrise.{thor,nsf,txt,nesimg}`.
+- **Engine.** A second player build of the same pinned engine (`FAMISTUDIO_EXP_VRC6 = 1`, `NesVrc6PlayerImage`,
+  `nes_vrc6_player_image.h`) with its own song base (`$8E00`, the page after the larger player: 29178 bytes shared
+  with the samples) and image size; the VRC6 audio unit `nes/nes_vrc6.c`; `NesPlayer` (Kotlin) / `NesPlayer`
+  (`nes_player.h`, C) describe each build so the layout builder, validation, machine, `.nsf` export and tracer take
+  the build as a parameter. Contract: `docs/AUDIO_ENGINE.md`, "VRC6".
+- **Exports.** `.nsf` with the VRC6 player and header byte `$7B` = 1 (NSF players emulate the chip; hardware needs a
+  cartridge with a VRC6). FamiStudio text with `Expansions="VRC6"`, `Expansion="VRC6"` and `Vrc6SawMasterVolume` on
+  VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
+  `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
+
+**Adding the next expansion** (VRC7, N163, S5B, FDS, MMC5, EPSM) follows the same path:
+1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
+   base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
+   FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
+2. Native: the chip's audio unit (`nes/nes_<chip>.c`, from NESdev), its registers in `bus_write`, a
+   `NesPlayer` entry in `nes_players.c` (`NES_EXPANSION_<CHIP>`, channels, duty range, symbols), its opcode and
+   duty rules in `nm_walk_entry`, an ops table in `nes_chip.c` registered in `chip_engine.c`, a host test.
+   `NM_MAX_*` grow to the largest build.
+3. Kotlin: a `NesExpansion` entry (chip, extra channels), a `NesChip` (label, duty range, its instrument fields), a
+   `NesPlayer` entry, channel names/kinds appended to `NesRules`, its effects/opcodes in `FamiStudioLowering`, its
+   text attributes in `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the
+   "NES" family shows it under New/Load demo), Instrument view rows for chip-specific fields, help, golden songs.
+4. Docs: a section here and in `docs/AUDIO_ENGINE.md`.
+Chips with instruments unlike envelopes (VRC7 patches, N163 waves, FDS waves and modulation) need their own
+instrument fields and editor pages; songs combining several expansions would need FamiStudio's multi-expansion
+engine build and a system per combination, so they are left out unless asked.
+
 ## SID backend (C64)
 
 - **Driver:** the GoatTracker 2.77 playroutine (Lasse Öörni; "does not fall under the GPL … use it, or song
@@ -792,3 +851,12 @@ Decisions:
   kind. Alternative: separate FM and PSG slot ranges. Review.
 - YM2612 envelope sketch times are approximations from the OPN2's rate tables at the NTSC clock (attack ≈ 7 % of the
   same rate's full decay, key scaling ignored), like the OPL3's; listening may suggest adjustments.
+- NES expansions (decided on the user's behalf): one system variant per expansion chip ("NES + VRC6") grouped under
+  "NES…" in New and Load demo, rather than one NES system whose song settings switch the chip (that would change a
+  song's channel count in place). Converting a plain NES song to NES + VRC6 is not offered yet (it would add three
+  empty tracks; the conversion step of the roadmap could do it). Review.
+- VRC6 sounds share the one 64-slot bank with a Chip row per sound, rather than a separate VRC6 bank; a VRC6 sound on
+  a 2A03 channel (or the reverse) is an error, as FamiStudio does not allow it. The saw's master volume defaults to
+  Half (FamiStudio's default). Review.
+- VRC6 mixing level: one DAC step = the 2A03's full pulse ÷ 15 (NESdev's "roughly equal" full pulses); no
+  hardware or reference-emulator comparison yet. Listening may ask for a different balance.

@@ -193,14 +193,15 @@ internal object NesDemoSong {
     private val TOM_LOW = n("G-3")
     private val TOM_HIGH = n("A-3")
 
-    private fun n(name: String): Int {
+    internal fun n(name: String): Int {
         val index = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-").indexOf(name.substring(0, 2))
         require(index >= 0) { "bad note $name" }
         return name.substring(2).toInt() * 12 + index
     }
 
-    private class PatternBuilder(val title: String) {
-        private val tracks = List(NesRules.CHANNEL_NAMES.size) { Array(Songs.ROWS) { Cell.BLANK } }
+    /** A demo pattern of [channels] tracks (the 2A03's five; an expansion's demo adds its own). */
+    internal class PatternBuilder(val title: String, channels: Int = NesRules.APU_CHANNELS) {
+        private val tracks = List(channels) { Array(Songs.ROWS) { Cell.BLANK } }
 
         fun note(channel: Int, row: Int, name: String, instrument: Int) = note(channel, row, n(name), instrument)
 

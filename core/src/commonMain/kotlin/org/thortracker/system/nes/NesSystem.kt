@@ -6,10 +6,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.backend.FamiStudioText
-import org.thortracker.backend.NesDpcm
 import org.thortracker.backend.FsSong
 import org.thortracker.backend.NesImageLayout
 import org.thortracker.backend.NsfExporter
+import org.thortracker.backend.player
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
 import org.thortracker.input.Keymap
@@ -19,7 +19,6 @@ import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.BankSpec
-import org.thortracker.system.ChannelKind
 import org.thortracker.system.ChannelSpec
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.ExportFormat
@@ -36,19 +35,43 @@ import kotlin.math.log2
  * Pulse 2, Triangle, Noise and DPCM, one bank of [SLOTS] envelope instruments shared by all five channels (on DPCM an
  * instrument is its note → sample mappings) and the song's DPCM samples.
  * Lowering ([FamiStudioLowering]) and both exports (`.nsf`, FamiStudio text) read the same [FsSong].
- * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md.
+ * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels.
  */
-object NesSystem : SoundSystem {
+object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
     override val id = "nes-famistudio"
     override val name = "NES (FamiStudio)"
 
     /** FamiStudio's instrument limit without the extended range. */
     const val SLOTS = 64
 
-    override val channels = NesRules.CHANNEL_NAMES.indices.map { ch ->
+    override fun demo(): Song = NesDemoSong.build()
+}
+
+/**
+ * The NES with the Konami VRC6 cartridge chip (FamiStudio's VRC6 expansion): the 2A03's five channels, then VRC6
+ * Pulse 1 and 2 (eight duties, 4-bit volume, 12-bit periods) and the VRC6 Saw (a 6-bit accumulator rate: the volume
+ * shifted by the instrument's saw master volume). The FamiStudio engine assembled with `FAMISTUDIO_EXP_VRC6` plays
+ * it (native `"nes-famistudio-vrc6"`); VRC6 channels take VRC6 instruments ([NesChip.VRC6]) from the same bank.
+ */
+object NesVrc6System : NesFamiStudioSystem(NesExpansion.VRC6) {
+    override val id = "nes-famistudio-vrc6"
+    override val name = "NES + VRC6 (FamiStudio)"
+
+    override fun demo(): Song = NesVrc6DemoSong.build()
+}
+
+/**
+ * What every NES variant shares: the FamiStudio sound engine on the 2A03 plus at most one [expansion] chip (one
+ * system per expansion: FamiStudio builds its engine for one, and a system's channels are fixed). Everything is
+ * driven by the song's own [NesSound.expansion], so shared NES code may call [NesSystem] for any NES song.
+ */
+abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpansion) : SoundSystem {
+    override val family = "NES"
+
+    override val channels = (0 until expansion.channels).map { ch ->
         ChannelSpec(NesRules.CHANNEL_NAMES[ch], NesRules.CHANNEL_KINDS[ch], 0, tonal = NesRules.pitched(ch))
     }
-    override val banks = listOf(BankSpec("Instruments", SLOTS))
+    override val banks = listOf(BankSpec("Instruments", NesSystem.SLOTS))
     override val noteRange = (1 + NesRules.NOTE_OFFSET)..(NesRules.NOTE_COUNT + NesRules.NOTE_OFFSET)
 
     /** FamiTracker/FamiStudio names are scientific pitch: A-4 = 440 Hz. */
@@ -60,7 +83,7 @@ object NesSystem : SoundSystem {
         ExportFormat("txt") { FamiStudioText.export(it) },
     )
     override val fine: FinePitch = Fine
-    override val help: SystemHelp = Help
+    override val help: SystemHelp = if (expansion == NesExpansion.NONE) Help else Vrc6Help
 
     /** OFF is a note event of its own (release or stop); it needs no effect slot. */
     override val offEffect: String? = null
@@ -73,7 +96,7 @@ object NesSystem : SoundSystem {
         title = "Untitled",
         patterns = listOf(Pattern.blank(channels.size, Songs.ROWS, "Pattern 00")),
         orders = listOf(0),
-        sound = NesSound.blank(),
+        sound = NesSound.blank(expansion),
     )
 
     override val soundSerializer: KSerializer<NesSound> = NesSound.serializer()
@@ -83,7 +106,7 @@ object NesSystem : SoundSystem {
         if (version >= 8) song
         else throw IllegalArgumentException("$name songs need project version 8 or later; version $version files are Game Boy songs")
 
-    /** 2: the DPCM channel, samples and DPCM mappings. */
+    /** 2: the DPCM channel, samples and DPCM mappings. Every variant shares the NES data version. */
     override val backendVersion = 2
 
     /** NES data version 1 had four channels: every pattern gains an empty DPCM track as long as its others. */
@@ -100,14 +123,17 @@ object NesSystem : SoundSystem {
         })))
     }
 
-    override fun demo(): Song = NesDemoSong.build()
-
     override fun effectsFor(channel: Int): List<EffectSpec> = NesRules.effectsFor(channel)
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) = NesRules.describeEffect(channel, effect, param)
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? =
         NesRules.cellRangeProblem(cell) ?: NesRules.cellProblem(song, channel, cell)
 
-    override fun structuralErrors(song: Song) = NesValidator.structuralErrors(song)
+    /** Plus: the song's expansion chip must be this variant's (a project's backend names its variant). */
+    override fun structuralErrors(song: Song): List<String> {
+        val sound = song.sound as? NesSound ?: return NesValidator.structuralErrors(song)
+        if (sound.expansion != expansion) return listOf("The song is for ${sound.expansion.system.name}, not $name")
+        return NesValidator.structuralErrors(song)
+    }
     override fun errors(song: Song) = NesValidator.errors(song)
     override fun warnings(song: Song) = NesValidator.warnings(song)
 
@@ -130,7 +156,7 @@ object NesSystem : SoundSystem {
     override fun jumpTarget(cell: Cell): Int? = null
     override fun withJumpTarget(cell: Cell, order: Int): Cell = cell
 
-    override val engine: PlaybackEngine = Engine
+    override val engine: PlaybackEngine = Engine()
 
     override fun instrumentName(song: Song, bank: Int, slot: Int): String? = instrument(song, bank, slot)?.name
 
@@ -138,7 +164,7 @@ object NesSystem : SoundSystem {
 
     override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? = null
 
-    /** Instrument [slot] (1..[SLOTS]) of the one bank, or null. */
+    /** Instrument [slot] (1..[NesSystem.SLOTS]) of the one bank, or null. */
     fun instrument(song: Song, bank: Int, slot: Int): NesInstrument? = if (bank != 0) null else song.nes.instruments.getOrNull(slot - 1)
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
@@ -168,7 +194,7 @@ object NesSystem : SoundSystem {
         return NoteSample(sample.name, dpcmDetail(m))
     }
 
-    /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use. */
+    /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use (VRC6 sounds: "VRC6 · …", saw volume). */
     fun summary(ins: NesInstrument): String {
         fun env(name: String, e: NesEnvelope, neutral: Int, text: (Int) -> String = Int::toString): String? {
             if (e.values.isEmpty() || e.values.all { it == neutral }) return null
@@ -176,25 +202,31 @@ object NesSystem : SoundSystem {
             val marks = listOfNotNull("loop".takeIf { e.loop >= 0 }, "rel".takeIf { e.release >= 0 })
             return "$name $shown" + if (marks.isEmpty()) "" else " (${marks.joinToString()})"
         }
-        val duties = listOf("12.5%", "25%", "50%", "75%")
+        val vrc6 = ins.chip == NesChip.VRC6
         val parts = listOfNotNull(
+            "VRC6".takeIf { vrc6 },
             env("vol", ins.volume, 15),
             env("arp", ins.arpeggio, 0),
             env(if (ins.pitchRelative) "pitch+" else "pitch", ins.pitch, 0),
-            env("duty", ins.duty, 0) { duties.getOrElse(it) { "?" } },
+            env("duty", ins.duty, 0) { NesRules.dutyText(ins.chip, it) },
+            "saw ${ins.sawVolume.label.lowercase()}".takeIf { vrc6 && ins.sawVolume != Vrc6SawVolume.HALF },
             ins.dpcm.size.takeIf { it > 0 }?.let { "DPCM $it note${if (it == 1) "" else "s"}" },
         )
-        return if (parts.isEmpty()) "Full volume, no envelopes" else parts.joinToString(" · ")
+        return when {
+            parts.isEmpty() -> "Full volume, no envelopes"
+            parts.size == 1 && vrc6 -> "VRC6 · full volume, no envelopes"
+            else -> parts.joinToString(" · ")
+        }
     }
 
     /**
-     * FamiStudio 4.5.3 on a 6502 + 2A03 (native `"nes-famistudio"`, app/src/main/cpp/nes): the song lowered as for
-     * `.nsf` export ([FamiStudioLowering]) in the engine's image ([NesImageLayout]), plus every DPCM mapping the song does
-     * not play that still fits, so the editor can audition it.
+     * FamiStudio 4.5.3 on a 6502 + 2A03 (+ the expansion chip) — native `"nes-famistudio"` or the expansion build's
+     * engine (app/src/main/cpp/nes): the song lowered as for `.nsf` export ([FamiStudioLowering]) in the engine's image
+     * ([NesImageLayout]), plus every DPCM mapping the song does not play that still fits, so the editor can audition it.
      */
-    private object Engine : PlaybackEngine {
-        override val id = "nes-famistudio"
-        override val imageSize = NesImageLayout.SIZE
+    private inner class Engine : PlaybackEngine {
+        override val id = expansion.player.engineId
+        override val imageSize = expansion.player.imageSize
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
@@ -202,15 +234,18 @@ object NesSystem : SoundSystem {
         override fun lower(song: Song, out: ByteArray) = NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
-            instrument !in 1..SLOTS -> "Choose an instrument (01-${NumberText.hex(SLOTS, 2)}) to audition"
+            instrument !in 1..NesSystem.SLOTS -> "Choose an instrument (01-${NumberText.hex(NesSystem.SLOTS, 2)}) to audition"
             channel !in channels.indices || note !in noteRange -> "Cannot audition note ${noteName(note)} on channel $channel"
-            NesRules.pitched(channel) && note < NesRules.LOWEST_TONAL ->
+            NesRules.pitched(channel) && note < NesRules.lowestNote(channel) ->
                 "${channels[channel].name} cannot play below A-1"
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
                     "Sample memory or the sample list is full: ${noteName(note)} of instrument ${NesRules.hex2(instrument)} cannot be auditioned"
                 } else null
+            song.nes.instruments[instrument - 1].chip != NesRules.chip(channel) ->
+                "Sound ${NesRules.hex2(instrument)} is a ${song.nes.instruments[instrument - 1].chip.label} sound; " +
+                    "${channels[channel].name} plays ${NesRules.chip(channel).label} sounds"
             else -> null
         }
 
@@ -227,7 +262,8 @@ object NesSystem : SoundSystem {
 
     /**
      * Tuned pitches are a note-table note plus `Pxx` (xx = 80 + fine): the engine subtracts fine from the timer period
-     * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1).
+     * for the note's duration. Pulse and triangle pitch is proportional to 1 / (period + 1). The VRC6 saw's periods are
+     * 8/7 of the pulse table's, so the same fine moves it 7/8 as far (tunings use the pulse table's arithmetic).
      */
     private object Fine : FinePitch {
         override val name = "Pxx"
@@ -259,7 +295,7 @@ object NesSystem : SoundSystem {
         private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[NesRules.fsNote(note).coerceIn(1, NesRules.NOTE_COUNT)]
     }
 
-    private object Help : SystemHelp {
+    private open class NesHelp : SystemHelp {
         override val off = "Releases the note: an instrument whose volume envelope has a release point plays its release " +
             "tail, any other note (or one already released) stops at once. For a cut inside a row use Sxx"
         override val offEntered = "OFF: release (instruments with a volume release point fade out; others stop at once)"
@@ -280,14 +316,29 @@ object NesSystem : SoundSystem {
         override fun limits(song: Song): List<Pair<String, String>> = buildList {
             val used = HashSet<Int>()
             for (p in song.orders.toSet()) for (track in song.patterns[p].tracks) for (cell in track) if (cell.instrument > 0) used += cell.instrument
-            add("Instruments" to "${used.size} of $SLOTS used")
+            add("Instruments" to "${used.size} of ${NesSystem.SLOTS} used")
             add("Samples" to "${song.nes.samples.size} taking ${NesSampleMenu.stored(song)} of ${Dpcm.MEMORY} bytes of sample memory (\$C000-\$FFF9); " +
                 "the export places the ${Dpcm.memoryUsed(song)} bytes notes play")
             if (NesValidator.errors(song).isEmpty()) {
                 val lowered = FamiStudioLowering.lower(FsSong.of(song))
-                // Song data and DPCM samples share $8C00-$FFF9.
-                add("Song data" to "${lowered.data.size} + samples ${lowered.samples.size} of ${Dpcm.REGION} bytes")
+                // Song data and DPCM samples share the region after the player ($8C00-$FFF9 on the plain 2A03 build).
+                add("Song data" to "${lowered.data.size} + samples ${lowered.samples.size} of ${song.nes.expansion.player.regionSize} bytes")
             }
         }
+    }
+
+    private object Help : NesHelp()
+
+    private object Vrc6Help : NesHelp() {
+        override val effectsIntro = super.effectsIntro + listOf(
+            "VRC6 Pulse 1/2 and the VRC6 Saw play VRC6 sounds (Chip: VRC6 on the Instrument view); the other channels play 2A03 sounds. " +
+                "Vxx on the VRC6 pulses takes eight duties, 00 = 1/16 to 07 = 8/16; the saw has no duty.",
+        )
+        override val tonalChannels = "Pulse, Triangle, VRC6 Pulse and VRC6 Saw"
+        override val tonalChannelsShort = "Pulse/Tri/VRC6"
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle, VRC6 Pulse 1/2 or VRC6 Saw; Noise and DPCM have no tonal chord reference"
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, NesExpansion.VRC6)
     }
 }

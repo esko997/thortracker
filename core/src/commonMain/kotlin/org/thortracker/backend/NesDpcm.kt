@@ -11,9 +11,9 @@ import org.thortracker.system.nes.NesRules
  * boundary (identical data stored once); one 4-byte list entry per distinct mapping (`$4012` address, `$4013`
  * (length − 1) ÷ 16, `$4010` rate | loop × 64, `$4011` initial level). A DPCM note plays list entry k as note byte k.
  *
- * Song data and samples share `$8C00-$FFF9` (docs/AUDIO_ENGINE.md): the song grows up from
- * [NesPlayerImage.SONG_BASE], the sample block sits as high as it can ([Layout.start], 64-aligned, at least
- * [NesPlayerImage.SAMPLE_BASE], the lowest address the DMC reads), and the song must end at or below it.
+ * Song data and samples share the region after the player (`$8C00-$FFF9` on the 2A03 build; docs/AUDIO_ENGINE.md):
+ * the song grows up from [NesPlayer.songBase], the sample block sits as high as it can ([Layout.start], 64-aligned, at
+ * least [NesPlayerImage.SAMPLE_BASE], the lowest address the DMC reads), and the song must end at or below it.
  */
 internal object NesDpcm {
     /** Most list entries the player addresses without FamiStudio's extended DPCM range. */
@@ -110,7 +110,7 @@ internal object NesDpcm {
                 val block = out.size + cost(sample)
                 val listBytes = 4 * (entries.size - played + 1)
                 val start = startFor(block)
-                if (entries.size >= MAX_ENTRIES || block > Dpcm.MEMORY || NesPlayerImage.SONG_BASE + songBytes + listBytes > start) continue
+                if (entries.size >= MAX_ENTRIES || block > Dpcm.MEMORY || fs.player.songBase + songBytes + listBytes > start) continue
                 place(sample)
                 add(entryOf(key.first, key.second), key)
             }

@@ -90,10 +90,11 @@ class NesGoldenTest {
             val maxSpeed = (fs.notes.flatMap { it.toList() }.mapNotNull { it?.speed?.takeIf { s -> s > 0 } } + fs.speed).max()
             val loopRows = fs.totalRows - fs.orderStart[fs.loopOrder]
             val frames = (fs.totalRows + 2 * loopRows) * maxSpeed + 120
-            val a = NesTracer(theirs)
-            val b = NesTracer(ours)
+            val a = NesTracer(theirs, lowered.player)
+            val b = NesTracer(ours, lowered.player)
             var writes = 0
             var dpcmStarts = 0
+            var vrc6 = 0
             for (f in 0 until frames) {
                 val ta = a.frame()
                 val tb = b.frame()
@@ -101,17 +102,22 @@ class NesGoldenTest {
                     fail("$name: frame $f differs: FamiStudio ${trace(ta)} vs ours ${trace(tb)}")
                 }
                 writes += ta.size
-                dpcmStarts += ta.count { it == (0x15 shl 8 or 0x1f) }
+                dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
+                vrc6 += ta.count { (it shr 8) >= 0x9000 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
                 // The trace covers DPCM: sample starts write $4012/$4013/$4010 and start the DMC through $4015.
                 assertTrue(dpcmStarts > 0, "$name: no DPCM sample started")
             }
+            if (lowered.player == NesPlayer.VRC6) {
+                // The trace covers the VRC6: its pulses and saw are written (and compared) every frame they sound.
+                assertTrue(vrc6 > frames, "$name: only $vrc6 VRC6 register writes in $frames frames")
+            }
         }
     }
 
-    private fun trace(t: IntArray) = t.joinToString(" ") { "%04x=%02x".format(0x4000 + (it shr 8), it and 0xff) }
+    private fun trace(t: IntArray) = NesTracer.text(t)
 
     /** The `@envN:` byte rows of a FamiStudio ca65 export. */
     private fun famiStudioEnvelopes(asm: String): List<ByteArray> {

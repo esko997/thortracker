@@ -1,10 +1,65 @@
+@file:OptIn(ExperimentalSerializationApi::class)
+
 package org.thortracker.system.nes
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemSound
+
+/**
+ * The sound chip an NES song adds to the 2A03 (FamiStudio's project expansion): one per song and per [NesSystem]
+ * variant, because FamiStudio builds its engine for one expansion and each variant's channels are fixed. See
+ * docs/BACKENDS.md, "NES expansion chips".
+ */
+@Serializable
+enum class NesExpansion(
+    /** The chip whose instruments the expansion's channels play. */
+    val chip: NesChip,
+    /** Channels after the 2A03's five, in FamiStudio's engine order. */
+    val extraChannels: Int,
+) {
+    @SerialName("none") NONE(NesChip.APU, 0),
+    @SerialName("vrc6") VRC6(NesChip.VRC6, 3);
+
+    /** All channels of a song with this expansion. */
+    val channels: Int get() = NesRules.APU_CHANNELS + extraChannels
+
+    /** The system songs with this expansion belong to. */
+    val system: NesFamiStudioSystem get() = when (this) {
+        NONE -> NesSystem
+        VRC6 -> NesVrc6System
+    }
+
+    /** The chips whose instruments a song with this expansion may hold. */
+    val chips: List<NesChip> get() = if (chip == NesChip.APU) listOf(NesChip.APU) else listOf(NesChip.APU, chip)
+}
+
+/**
+ * Which chip's channels an [NesInstrument] plays (FamiStudio's instrument expansion): the 2A03's, or an expansion's.
+ * Instruments do not cross chips, as in FamiStudio: the same envelope means different things (the VRC6's 8 duty steps).
+ */
+@Serializable
+enum class NesChip(val label: String, val duty: IntRange) {
+    @SerialName("2a03") APU("2A03", 0..3),
+    @SerialName("vrc6") VRC6("VRC6", 0..7),
+}
+
+/**
+ * The VRC6 saw's master volume (FamiStudio's `Vrc6SawMasterVolume`): the volume envelope's 0-15, times the volume
+ * track, is shifted into the saw's 6-bit accumulator rate by [shift]. Rates above 42 overflow the accumulator and
+ * distort, so [FULL] distorts above volume 10. The engine's opcode `$55` takes [engine].
+ */
+@Serializable
+enum class Vrc6SawVolume(val label: String, val shift: Int, val engine: Int) {
+    @SerialName("full") FULL("Full", 2, 0x01),
+    @SerialName("half") HALF("Half", 1, 0x00),
+    @SerialName("quarter") QUARTER("Quarter", 0, 0xFF),
+}
 
 /**
  * One FamiStudio instrument envelope: a value per engine frame (60.1 Hz). Playback runs through the values, then
@@ -22,17 +77,20 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
         val ARPEGGIO = -64..63
         val PITCH = -64..63
 
-        /** 12.5%, 25%, 50%, 75% on the pulses; on Noise 0 = long (hiss), 1 = short (metallic) LFSR. */
+        /** 2A03: 12.5%, 25%, 50%, 75% on the pulses; on Noise 0 = long (hiss), 1 = short (metallic) LFSR. VRC6: [NesChip.duty]. */
         val DUTY = 0..3
     }
 }
 
 /**
- * A FamiStudio 2A03 instrument: four envelopes. [arpeggio] offsets the note in semitones, [pitch] in note-table
+ * A FamiStudio instrument: four envelopes. [arpeggio] offsets the note in semitones, [pitch] in note-table
  * period units (absolute per frame, or accumulated each frame when [pitchRelative]), [duty] sets the pulse duty or
  * the noise mode. The triangle ignores [duty] and plays any [volume] above 0 at full level.
  * On the DPCM channel only [dpcm] matters: which sample each note plays (FamiStudio 4.5.3 "DPCM instrument" mappings,
  * keyed by absolute note); a DPCM note the instrument does not map is an error.
+ * [chip] says which channels play it ([NesChip.APU]: the 2A03's; [NesChip.VRC6]: the VRC6 pulses, duty 0-7 = 1/16 to
+ * 8/16, and the saw, whose volume [sawVolume] scales). Both are left out of project files at their defaults, so 2A03
+ * instruments are stored as before.
  */
 @Serializable
 data class NesInstrument(
@@ -43,6 +101,8 @@ data class NesInstrument(
     val pitchRelative: Boolean = false,
     val duty: NesEnvelope = NesEnvelope(),
     val dpcm: Map<Int, DpcmMapping> = emptyMap(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val chip: NesChip = NesChip.APU,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val sawVolume: Vrc6SawVolume = Vrc6SawVolume.HALF,
 ) {
     companion object {
         /** A new slot: flat full volume, nothing else. */
@@ -85,16 +145,22 @@ data class DpcmMapping(val sample: Int, val pitch: Int = 15, val loop: Boolean =
 }
 
 /**
- * An NES song's chip data: one bank of exactly [NesSystem.SLOTS] instruments shared by all five channels (slot n =
- * index n-1) and the song's DPCM [samples] (at most [NesSystem.MAX_SAMPLES], referenced by instruments' DPCM
- * mappings). Stored in project files as the song's `sound` object.
+ * An NES song's chip data: one bank of exactly [NesSystem.SLOTS] instruments shared by all channels (slot n =
+ * index n-1), the song's DPCM [samples] (at most [NesSystem.MAX_SAMPLES], referenced by instruments' DPCM
+ * mappings) and its [expansion] chip (left out of project files when none, so 2A03 songs are stored as before).
+ * Stored in project files as the song's `sound` object.
  */
 @Serializable
-data class NesSound(val instruments: List<NesInstrument>, val samples: List<DpcmSample> = emptyList()) : SystemSound {
-    override val system: SoundSystem get() = NesSystem
+data class NesSound(
+    val instruments: List<NesInstrument>,
+    val samples: List<DpcmSample> = emptyList(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val expansion: NesExpansion = NesExpansion.NONE,
+) : SystemSound {
+    override val system: SoundSystem get() = expansion.system
 
     companion object {
-        fun blank(): NesSound = NesSound(List(NesSystem.SLOTS) { i -> NesInstrument(name = "Sound ${NumberText.hex(i + 1, 2)}") })
+        fun blank(expansion: NesExpansion = NesExpansion.NONE): NesSound =
+            NesSound(List(NesSystem.SLOTS) { i -> NesInstrument(name = "Sound ${NumberText.hex(i + 1, 2)}") }, expansion = expansion)
     }
 }
 

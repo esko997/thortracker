@@ -6,18 +6,19 @@ import org.thortracker.model.Song
 import org.thortracker.system.nes.Dpcm
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.Vrc6SawVolume
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.sign
 
 /**
- * Lowers an NES song to FamiStudio sound engine 4.5.3 data (FamiTracker tempo) at [NesPlayerImage.SONG_BASE], in the
- * layout the native `"nes-famistudio"` engine expects (docs/AUDIO_ENGINE.md, NES image layout): the FamiStudio song
- * header, an instrument table of all [NesSystem.SLOTS] slots (index = slot − 1), every envelope as an entry of the
- * envelope directory (instrument envelopes at `slot × 4 + kind`, effect envelopes from 256), and one stream per
- * channel made only of `$41 n ptr` (play order o's pattern stream) per order and a `$42` loop to the loop order.
- * Identical pattern streams are stored once.
+ * Lowers an NES song to FamiStudio sound engine 4.5.3 data (FamiTracker tempo) at its player's song base
+ * ([NesPlayer.songBase]), in the layout the native `"nes-famistudio"` engines expect (docs/AUDIO_ENGINE.md, NES image
+ * layout): the FamiStudio song header, an instrument table of all [NesSystem.SLOTS] slots (index = slot − 1), every
+ * envelope as an entry of the envelope directory (instrument envelopes at `slot × 4 + kind`, effect envelopes from
+ * 256), and one stream per channel (the 2A03's five, then the expansion's) made only of `$41 n ptr` (play order o's
+ * pattern stream) per order and a `$42` loop to the loop order. Identical pattern streams are stored once.
  *
  * Each pattern stream is what FamiStudio's own exporter (`FamitoneMusicFile.GetSongData`, FamiStudio kernel, NTSC)
  * emits for those rows: the same opcode order, the same state it tracks (instrument, arpeggio, last volume, vibrato
@@ -49,12 +50,28 @@ internal object FamiStudioLowering {
         14, 13, 12,
     )
 
+    /**
+     * FamiStudio's VRC6 saw note tables (`NesApu.GetOrCreateNoteTableSet`: clock × 16 / (14 f) − 0.5, truncated; the
+     * NTSC one is `famistudio_saw_note_table_lsb/msb.bin`). The VRC6 pulses use [NOTE_TABLE] / [NOTE_TABLE_PAL].
+     */
+    val NOTE_TABLE_SAW = intArrayOf(
+        0, 3908, 3689, 3482, 3286, 3102, 2928, 2763, 2608, 2462, 2323, 2193, 2070, 1954, 1844, 1740, 1643, 1550, 1463, 1381,
+        1304, 1230, 1161, 1096, 1034, 976, 921, 870, 821, 775, 731, 690, 651, 615, 580, 547, 517, 488, 460, 434, 410, 387, 365,
+        345, 325, 307, 290, 273, 258, 243, 230, 217, 204, 193, 182, 172, 162, 153, 144, 136, 128, 121, 114, 108, 102, 96, 91,
+        85, 81, 76, 72, 68, 64, 60, 57, 53, 50, 47, 45, 42, 40, 37, 35, 33, 31, 30, 28, 26, 25, 23, 22, 21, 19, 18, 17, 16, 15,
+    )
+    val NOTE_TABLE_SAW_PAL = intArrayOf(
+        0, 3630, 3427, 3234, 3053, 2881, 2719, 2567, 2423, 2287, 2158, 2037, 1923, 1815, 1713, 1617, 1526, 1440, 1359, 1283,
+        1211, 1143, 1079, 1018, 961, 907, 856, 808, 762, 720, 679, 641, 605, 571, 539, 509, 480, 453, 427, 403, 381, 359, 339,
+        320, 302, 285, 269, 254, 239, 226, 213, 201, 190, 179, 169, 159, 150, 142, 134, 126, 119, 112, 106, 100, 94, 89, 84, 79,
+        75, 70, 66, 63, 59, 56, 53, 50, 47, 44, 42, 39, 37, 35, 33, 31, 29, 27, 26, 24, 23, 22, 20, 19, 18, 17, 16, 15, 14,
+    )
+
     /** FamiTracker tempo 150: one row per `speed` frames (FamiStudio's integer formula for NTSC and PAL). */
     const val TEMPO = 150
     const val TEMPO_PAL = 256 * TEMPO / 125
     const val TEMPO_NTSC = 256 * TEMPO / 150
 
-    const val CHANNELS = 5 // pulse 1, pulse 2, triangle, noise, DPCM
     const val DPCM = 4
     const val EFFECT_ENVELOPES_START = 256
 
@@ -76,6 +93,7 @@ internal object FamiStudioLowering {
     private const val OP_SLIDE = 0x50
     private const val OP_VOLUME_SLIDE = 0x51
     private const val OP_DELTA_COUNTER = 0x52
+    private const val OP_VRC6_SAW_VOLUME = 0x55
     private const val OP_VOLUME_BITS = 0x70
     private const val SINGLE_BYTE_NOTE_MIN = 12
     private const val SINGLE_BYTE_NOTE_MAX = SINGLE_BYTE_NOTE_MIN + 0x3f
@@ -87,10 +105,10 @@ internal object FamiStudioLowering {
     }
 
     /**
-     * The lowered song: FamiStudio data for [NesPlayerImage.SONG_BASE], its envelope directory, and the DPCM layout
-     * ([NesDpcm]): the sample block for [NesDpcm.Layout.start] and the sample list.
+     * The lowered song: FamiStudio data for [NesPlayer.songBase] of its [player], its envelope directory, and the DPCM
+     * layout ([NesDpcm]): the sample block for [NesDpcm.Layout.start] and the sample list.
      */
-    class Lowered(val data: ByteArray, val envelopes: List<Envelope>, val instrumentCount: Int, val dpcm: NesDpcm.Layout) {
+    class Lowered(val data: ByteArray, val envelopes: List<Envelope>, val instrumentCount: Int, val dpcm: NesDpcm.Layout, val player: NesPlayer) {
         val samples: ByteArray get() = dpcm.bytes
         val sampleStart: Int get() = dpcm.start
         val mappingCount: Int get() = dpcm.entries.size
@@ -116,10 +134,12 @@ internal object FamiStudioLowering {
     }
 
     private fun lower(fs: FsSong, dpcm: NesDpcm.Layout): Lowered {
-        val base = NesPlayerImage.SONG_BASE
+        val player = fs.player
+        val base = player.songBase
+        val channels = fs.channels
         val out = Bytes()
-        // Header: song count, instruments, samples - 4, five channel streams, tempo words.
-        val headerSize = 1 + 2 + 2 + CHANNELS * 2 + 4
+        // Header: song count, instruments, samples - 4, a stream per channel, tempo words.
+        val headerSize = 1 + 2 + 2 + channels * 2 + 4
         val instrumentsAt = headerSize
         val instrumentCount = NesSystem.SLOTS
         var at = instrumentsAt + instrumentCount * 8
@@ -158,21 +178,21 @@ internal object FamiStudioLowering {
         val streams = Streams(fs, noArpeggio, vibratoOff, arpeggios, vibratos, instrumentArpeggios, dpcm)
         val patterns = LinkedHashMap<Bytes.Key, Int>() // pattern stream bytes → offset
         val patternOrder = ArrayList<ByteArray>()
-        val channelRefs = Array(CHANNELS) { arrayOfNulls<ByteArray>(fs.orders) }
-        val channelCounts = Array(CHANNELS) { IntArray(fs.orders) }
-        for (c in 0 until CHANNELS) {
+        val channelRefs = Array(channels) { arrayOfNulls<ByteArray>(fs.orders) }
+        val channelCounts = Array(channels) { IntArray(fs.orders) }
+        for (c in 0 until channels) {
             val chunks = if (c == DPCM) streams.dpcm() else streams.channel(c)
             for (o in 0 until fs.orders) {
                 channelRefs[c][o] = chunks[o].bytes
                 channelCounts[c][o] = chunks[o].notes
             }
         }
-        val channelAt = IntArray(CHANNELS)
-        for (c in 0 until CHANNELS) {
+        val channelAt = IntArray(channels)
+        for (c in 0 until channels) {
             channelAt[c] = at
             at += fs.orders * 4 + 3
         }
-        for (c in 0 until CHANNELS) for (o in 0 until fs.orders) {
+        for (c in 0 until channels) for (o in 0 until fs.orders) {
             val bytes = channelRefs[c][o]!!
             val key = Bytes.Key(bytes)
             if (key !in patterns) {
@@ -186,13 +206,13 @@ internal object FamiStudioLowering {
             "The DPCM samples the song plays need $sampleBytes bytes in 64-byte slots; at most ${Dpcm.MEMORY} fit " +
                 "(\$C000-\$FFF9). Use fewer or shorter samples"
         }
-        val room = (if (sampleBytes == 0) NesPlayerImage.REGION_END else dpcm.start) - base
+        val room = (if (sampleBytes == 0) player.regionEnd else dpcm.start) - base
         require(at <= room) {
             if (sampleBytes == 0) {
                 "The song needs ${kb(at)} of NES song data; the player has room for ${kb(room)} " +
                     "(\$${NumberText.hex(base, 4)}-\$FFF9). Reuse patterns or shorten the song"
             } else {
-                "Song data ${kb(at)} + DPCM samples ${kb(sampleBytes)} exceed the NES's ${kb(NesPlayerImage.REGION_SIZE)} " +
+                "Song data ${kb(at)} + DPCM samples ${kb(sampleBytes)} exceed the NES's ${kb(player.regionSize)} " +
                     "(\$${NumberText.hex(base, 4)}-\$FFF9, samples from \$${NumberText.hex(dpcm.start, 4)}). " +
                     "Reuse patterns, shorten the song or use fewer or shorter samples"
             }
@@ -200,7 +220,7 @@ internal object FamiStudioLowering {
         out.byte(1)
         out.word(base + instrumentsAt)
         out.word(base + samplesAt - 4)
-        for (c in 0 until CHANNELS) out.word(base + channelAt[c])
+        for (c in 0 until channels) out.word(base + channelAt[c])
         out.word(TEMPO_PAL)
         out.word(TEMPO_NTSC)
         check(out.size == instrumentsAt)
@@ -210,7 +230,7 @@ internal object FamiStudioLowering {
         for (e in envelopes) out.bytes(e.bytes)
         check(out.size == samplesAt)
         for (e in dpcm.entries) for (b in dpcm.entryBytes(e)) out.byte(b)
-        for (c in 0 until CHANNELS) {
+        for (c in 0 until channels) {
             check(out.size == channelAt[c])
             for (o in 0 until fs.orders) {
                 out.byte(OP_SET_REFERENCE)
@@ -222,7 +242,7 @@ internal object FamiStudioLowering {
         }
         for (bytes in patternOrder) out.bytes(bytes)
         check(out.size == at)
-        return Lowered(out.toByteArray(), envelopes.sortedBy { it.index }, instrumentCount, dpcm)
+        return Lowered(out.toByteArray(), envelopes.sortedBy { it.index }, instrumentCount, dpcm, player)
     }
 
     /** "20.1 KB (20582 bytes)": sizes in budget messages. */
@@ -244,7 +264,7 @@ internal object FamiStudioLowering {
         val speedChannel: Int = run {
             var best = 0
             var bestCount = 0
-            for (c in 0 until NesSystem.channels.size) {
+            for (c in 0 until fs.channels) {
                 val count = FamiStudioText.distinctPatternOrders(fs, c).sumOf { o ->
                     (fs.orderStart[o] until fs.orderStart[o + 1]).count { (fs.notes[c][it]?.speed ?: -1) >= 0 }
                 }
@@ -303,9 +323,12 @@ internal object FamiStudioLowering {
 
         fun channel(c: Int): List<Chunk> {
             val isSpeedChannel = c == speedChannel
+            val isSaw = c == NesRules.VRC6_SAW
             var currentSpeed = fs.speed
             var instrument = 0
             var arpeggio = -1
+            // The VRC6 saw's master volume the engine holds (famistudio_music_play starts at Half), sent with instruments.
+            var sawVolume = Vrc6SawVolume.HALF
             var lastVolume = 15
             var vibratoOverride = false
             // Volume the engine holds (null while a volume slide may still be moving), for re-sending per order.
@@ -410,6 +433,13 @@ internal object FamiStudioLowering {
                                 instrument = 0
                             }
                             if (note.instrument != instrument || !instrumentSent) {
+                                // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
+                                // also sends it with its first instrument, so the order is self-contained.
+                                val volume = fs.instruments[note.instrument - 1].sawVolume
+                                if (isSaw && (volume != sawVolume || !instrumentSent)) {
+                                    b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
+                                    sawVolume = volume
+                                }
                                 b.byte(0x80 or ((note.instrument - 1) shl 1))
                                 instrument = note.instrument
                                 instrumentSent = true
@@ -494,7 +524,11 @@ internal object FamiStudioLowering {
         }
 
         private fun slideStep(c: Int, row: Int, note: FsNote, speed: Int, pal: Boolean): Int? {
-            val table = if (pal) NOTE_TABLE_PAL else NOTE_TABLE
+            val table = when {
+                c == NesRules.VRC6_SAW -> if (pal) NOTE_TABLE_SAW_PAL else NOTE_TABLE_SAW
+                pal -> NOTE_TABLE_PAL
+                else -> NOTE_TABLE
+            }
             var delta = if (c == NesRules.NOISE) note.value - note.slideTarget else table[note.value] - table[note.slideTarget]
             if (delta == 0) return null
             delta = delta shl if (c == NesRules.NOISE) 4 else 1

@@ -5,7 +5,9 @@ import org.thortracker.model.Song
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -116,6 +118,73 @@ class NesExportTest {
         assertEquals(emptyList(), NesSystem.errors(NesSystem.demo()))
         assertEquals(emptyList(), NesSystem.warnings(NesSystem.demo()))
         for ((name, build) in NesGoldenSongs.ALL) assertEquals(emptyList(), NesSystem.errors(build()), name)
+    }
+
+    /** NES + VRC6: the `.nsf` carries the VRC6 player and names the chip; the text names the expansion. */
+    @Test
+    fun vrc6ExportsNameTheChip() {
+        val song = NesVrc6System.demo()
+        assertEquals(emptyList(), NesVrc6System.errors(song))
+        assertEquals(emptyList(), NesVrc6System.warnings(song))
+        val nsf = NesVrc6System.exports.first { it.extension == "nsf" }.export(song)
+        assertEquals(NesVrc6PlayerImage.LOAD, u16(nsf, 8))
+        assertEquals(NesVrc6PlayerImage.INIT, u16(nsf, 10))
+        assertEquals(NesVrc6PlayerImage.PLAY, u16(nsf, 12))
+        assertEquals(1, nsf[0x7b].toInt()) // expansion chips: VRC6
+        val body = nsf.copyOfRange(128, nsf.size)
+        assertContentEquals(NesVrc6PlayerImage.BYTES, body.copyOfRange(0, NesVrc6PlayerImage.BYTES.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val songAt = NesVrc6PlayerImage.SONG_BASE - NesVrc6PlayerImage.LOAD
+        assertContentEquals(lowered.data, body.copyOfRange(songAt, songAt + lowered.data.size))
+        assertContentEquals(lowered.samples, body.copyOfRange(lowered.sampleStart - NesVrc6PlayerImage.LOAD, body.size))
+        // The NSF's song plays like the lowered data, VRC6 writes included.
+        val a = NesTracer(lowered.data, NesPlayer.VRC6)
+        val b = NesTracer(body.copyOfRange(songAt, lowered.sampleStart - NesVrc6PlayerImage.LOAD), NesPlayer.VRC6)
+        var vrc6 = 0
+        repeat(600) {
+            val f = a.frame()
+            assertContentEquals(f, b.frame())
+            vrc6 += f.count { (it shr 8) >= 0x9000 }
+        }
+        assertTrue(vrc6 > 600, "the demo writes the VRC6 ($vrc6 writes in 600 frames)")
+        val text = FamiStudioText.text(song)
+        val lines = text.lines()
+        assertTrue(lines[0].endsWith("Expansions=\"VRC6\""), lines[0])
+        assertTrue(lines.any { it.trim().startsWith("Instrument Name=\"07 Saw lead (Full)\" Expansion=\"VRC6\" Vrc6SawMasterVolume=\"Full\"") })
+        assertTrue(lines.any { it.trim() == "Instrument Name=\"01 Echo 25%\"" })
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM", "VRC6Square1", "VRC6Square2", "VRC6Saw"),
+            lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+        // 2A03 songs name no expansion.
+        assertFalse(FamiStudioText.text(NesSystem.demo()).lines()[0].contains("Expansions"))
+    }
+
+    @Test
+    fun vrc6ValidationKeepsSoundsOnTheirChip() {
+        val base = NesVrc6System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("Saw", chip = NesChip.VRC6, duty = NesEnvelope(listOf(7)))
+        val blank = base.copy(sound = base.nes.copy(instruments = bank))
+        fun errors(ch: Int, cell: Cell) = NesVrc6System.errors(withCell(blank, ch, 0, cell)).joinToString()
+        assertEquals("", errors(NesRules.VRC6_PULSE1, Cell(57, 2)))
+        assertEquals("", errors(NesRules.VRC6_SAW, Cell(12, 2))) // the VRC6 reaches C-1
+        assertTrue(errors(NesRules.VRC6_PULSE1, Cell(57, 1)).contains("2A03 sound"))
+        assertTrue(errors(0, Cell(57, 2)).contains("VRC6 sound"))
+        assertEquals("", errors(NesRules.VRC6_PULSE2, Cell(57, 2, NesRules.FX_DUTY, 0x07)))
+        assertTrue(errors(NesRules.VRC6_PULSE2, Cell(57, 2, NesRules.FX_DUTY, 0x08)).contains("V00-V07"))
+        assertTrue(errors(NesRules.VRC6_SAW, Cell(57, 2, NesRules.FX_DUTY, 0x01)).contains("VRC6 Saw"))
+        assertTrue(errors(0, Cell(57, 1, NesRules.FX_DUTY, 0x07)).contains("V00-V03"))
+        // Structure: a VRC6 sound in a 2A03 song, a 2A03 duty of 7, DPCM keys on a VRC6 sound.
+        val plain = NesSystem.blank()
+        val plainBank = plain.nes.instruments.toMutableList()
+        plainBank[0] = NesInstrument("Stray", chip = NesChip.VRC6)
+        plainBank[1] = NesInstrument("Wide", duty = NesEnvelope(listOf(7)))
+        val e = NesSystem.structuralErrors(plain.copy(sound = plain.nes.copy(instruments = plainBank))).joinToString()
+        assertTrue(e.contains("this song has no VRC6 chip"), e)
+        assertTrue(e.contains("duty value 7 is outside 0..3"), e)
+        val keyed = bank.toMutableList().also { it[1] = it[1].copy(dpcm = mapOf(48 to org.thortracker.system.nes.DpcmMapping(0))) }
+        assertTrue(NesVrc6System.structuralErrors(base.copy(sound = base.nes.copy(instruments = keyed))).joinToString().contains("only 2A03 sounds map DPCM"))
+        // Each variant's songs only: a VRC6 song is not a plain NES song.
+        assertTrue(NesSystem.structuralErrors(blank).single().contains("NES + VRC6"))
     }
 
     @Test

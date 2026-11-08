@@ -3,6 +3,7 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.nes.DpcmSample
+import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
@@ -78,10 +79,16 @@ internal class FsSong(
     val notes: Array<Array<FsNote?>>,
     val instruments: List<NesInstrument>,
     val samples: List<DpcmSample>,
+    /** The song's expansion chip: its channels follow the 2A03's five in [notes]. */
+    val expansion: NesExpansion = NesExpansion.NONE,
 ) {
     val orderStart = IntArray(lengths.size + 1).also { for (i in lengths.indices) it[i + 1] = it[i] + lengths[i] }
     val totalRows get() = orderStart[lengths.size]
     val orders get() = lengths.size
+    val channels get() = notes.size
+
+    /** The player build that plays the song. */
+    val player: NesPlayer get() = expansion.player
 
     fun note(ch: Int, row: Int): FsNote? = if (row in 0 until totalRows) notes[ch][row] else null
 
@@ -107,7 +114,7 @@ internal class FsSong(
             val instruments = song.nes.instruments
             val lengths = IntArray(song.orders.size) { song.patterns[song.orders[it]].length }
             val total = lengths.sum()
-            val channels = NesSystem.channels.size
+            val channels = song.nes.expansion.channels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
                 var current = 0 // instrument slot sounding on the channel
@@ -139,7 +146,8 @@ internal class FsSong(
                 notes[0][0] = (notes[0][0] ?: FsNote()).also { it.speed = song.ticksPerRow }
             }
             return FsSong(song.title, song.artist, song.ticksPerRow, song.loopOrder, lengths,
-                IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples)
+                IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples,
+                song.nes.expansion)
         }
 
         private fun convert(cell: Cell, ch: Int, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int): FsNote? {

@@ -321,12 +321,31 @@ class AppMenus(
         ))
     }
 
-    /** Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows one. */
+    /**
+     * Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows
+     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants.
+     */
     private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
         val systems = SoundSystems.ALL
         val current = session.song.system
         if (systems.size == 1) return chosen(current)
-        menu(title, systems.map { it.name to { chosen(it) } }, selected = systems.indexOf(current).coerceAtLeast(0))
+        val entries = ArrayList<Pair<String, () -> Unit>>()
+        var selected = 0
+        val families = HashSet<String>()
+        for (system in systems) {
+            val family = system.family
+            if (family == null) {
+                if (system == current) selected = entries.size
+                entries += system.name to { chosen(system) }
+            } else if (families.add(family)) {
+                val variants = systems.filter { it.family == family }
+                if (current in variants) selected = entries.size
+                entries += "$family…" to {
+                    menu("$title $family", variants.map { it.name to { chosen(it) } }, selected = variants.indexOf(current).coerceAtLeast(0))
+                }
+            }
+        }
+        menu(title, entries, selected)
     }
 
     private fun export(format: ExportFormat) {
