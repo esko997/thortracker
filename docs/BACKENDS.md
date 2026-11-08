@@ -367,8 +367,9 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
 ### OPL3 decisions (made for the spike on the user's behalf; the full contract is `docs/AUDIO_ENGINE.md`, "OPL3")
 
 - **Core: Nuked-OPL3 1.8** (die-accurate, plain C), not ymfm (3× cheaper, not cycle-exact): 460 µs per 60 Hz tick
-  on the dev PC, below the SID 8580's 593 µs (~1.6-2.1 ms estimated on a Konkr-class device). ymfm stays the option
-  for weaker devices and is a candidate core for the YM2612.
+  on the dev PC, below the SID 8580's 593 µs; measured per tick on devices (engine, 2026-11-08): Nova 0.32 ms, DMG
+  0.62 ms, Konkr 1.29 ms mean (8 % of a core). ymfm stays the option for weaker devices and is a candidate core for
+  the YM2612.
 - **Music-only, our own player**: pure integer C (`opl3/opl3_player.c`), specified in the audio document and mirrored
   by an independent Python reference (`tools/audio/opl3/opl3_ref.py`); export is VGM 1.71 (the player's register log).
 - **9 tracker channels**: the OPL2/AdLib count and screen-friendly; channels 1-6 own the six 4-op pairs (a 4-op
@@ -389,8 +390,20 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
   the editor generalisation (see "Effect columns") is part of the OPL3 backend step.
 - **Retrigger**: a tick's key-offs reach the chip one sample before its other writes (the chip samples key-on once
   per sample); in the VGM a one-sample wait separates them.
-- **VGM loop**: the loop point carries a dump of the register state so every pass starts from the same registers;
-  songs that change speed should set `Fxx` on the loop order's first row (lowering warning).
+- **VGM loop**: the loop point carries a dump of the register state so every pass starts from the same registers.
+- **Loop speed is the player's**: every arrival at the loop order's row 0 (the wrap, a `Bxx` back, the first pass)
+  starts it at the speed sequential straight play reaches it with (`O3Info.start_speed`), so later passes keep the
+  first pass's tempo without an `Fxx` there and the lowering emits none (no warning either). A `Bxx`/`Dxx` that
+  skipped an `Fxx` before the loop order's first arrival therefore sets that derived speed already on the first pass.
+- **Seek** (play from a row): the player is exact (it runs alone from the song start); the chip is clocked through
+  the last second before the target (`O3M_PREROLL_TICKS` 60 × multispeed), so held notes and release tails arrive
+  under way — sound identical to straight play when the target is within that second of the start, else the 20 ms
+  loudness envelope stays within ~3 % (host test). Cost ~31 ms on the dev PC (~75 ms estimated on the Konkr), on the
+  control thread's spare machine, as SID seeks (~88 ms).
+- **VGM export on the hosts**: the native player renders it (`o3_export_vgm`, `opl3/opl3_export.h`: Android JNI
+  `ChipAudio.nativeOpl3Vgm`, Deck cinterop `DeckOpl3Vgm`, both registered as `Opl3Vgm.renderer`), one player
+  implementation proven against the Python reference; the GD3 1.00 tag (track = song title, author, system
+  "OPL3 (Thor Tracker)", date = today unless given, converter "Thor Tracker") is written natively too.
 
 What the Kotlin side needs: `OplSystem` (id `"opl3-fm"`, 9 channels, 4 effect columns, effect specs from the table
 in the audio document, one bank of 64 instruments with 2-op/4-op operator data and the drum sweep, up to 64 chord
@@ -404,8 +417,5 @@ export.
   now.
 - NES instruments: one shared bank for all four channels (FamiStudio's way) rather than per-channel banks. Proposed:
   shared, with the editor greying out what a channel ignores.
-- OPL3 VGM export from Kotlin: call the engine's `o3_vgm_render` through JNI/cinterop (one player implementation,
-  proven against the Python reference) or port the player to Kotlin (`core`, testable in jvmTest, a third
-  implementation to keep in step). Proposed: native.
-- OPL3 GD3 tags (title, author, "Thor Tracker") in the VGM: proposed yes, from the song's name and comment.
+- OPL3 GD3 notes field: empty for now; the song's comment could go there if songs get one.
 - OPL3 rhythm mode as an option for drums later? Proposed: not unless asked (its pairs share pitches).

@@ -9,6 +9,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
+import org.thortracker.system.opl3.Opl3Vgm
+import org.thortracker.system.opl3.Opl3VgmRenderer
 
 /**
  * Song preview through the native chip engine (`libthortracker_audio.so`, `chip_engine.h`), output
@@ -276,6 +278,10 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
         init {
             System.loadLibrary("thortracker_audio")
+            // VGM export of OPL3 songs through the native player (core has no native code).
+            Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
+                nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
         }
 
         @JvmStatic private external fun nativeCreate(systemId: String): Long
@@ -289,5 +295,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeSuspendIfIdle(handle: Long): Boolean
         @JvmStatic private external fun nativePosition(handle: Long): Long
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
+        /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
+        @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
     }
 }

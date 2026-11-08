@@ -1056,8 +1056,9 @@ image layout below, proven in the host test against an independent reference imp
 music-only: no console ships it with a sound driver, so the system plays through **our own player**
 (`opl3/opl3_player.c`, pure integer C without a chip), whose behaviour is the specification in this section;
 `tools/audio/opl3/opl3_ref.py` implements the same specification separately in Python and the host test
-requires identical register writes in every tick. Songs export as VGM (the player's register log). The Kotlin
-system, lowering and UI are not written yet; this section is their contract.
+requires identical register writes in every tick. Songs export as VGM (the player's register log). This section
+is the contract of the Kotlin system and lowering (`core` `system/opl3`, `backend/Opl3Lowering.kt`); the numbers
+they share with the engine are generated into `backend/Opl3PlayerImage.kt` (below, "Preparing").
 
 ### Core: Nuked-OPL3 1.8 (chosen) and ymfm
 
@@ -1074,12 +1075,10 @@ twelve 2-op voices, notes re-keyed every 15 ticks; `/tmp/opl3_bench/opl3_core_be
 
 **Nuked-OPL3 is the core**: it is the more accurate one, it is plain C (the engine needs no C++ runtime, unlike
 reSID), and its cost is below the SID 8580's on the same machine (593 µs dev PC; ~1.8 ms per tick measured on
-the Konkr): scaled by that ratio an OPL3 tick costs ~1.6 ms on a Konkr-class device (the ×4 dev-PC rule of
-thumb gives ~2.1 ms), about 10 % of a 16.7 ms tick. ymfm would cost a third of that if a device ever needs it;
-it is also the candidate for the YM2612 later (its OPN2 shares the framework; Nuked-OPN2 is the accurate
-alternative there). Device numbers: push `/tmp/opl3_bench/opl3_bench-arm64` (the engine) and
-`/tmp/opl3_bench/opl3_core_bench-arm64` (the two cores), static executables, and run them with `30` /
-`10` (seconds) as arguments; neither has been run on a device yet.
+the Konkr). Measured on the devices (2026-11-08, Nuked alone per 60 Hz tick): Nova 308 µs, DMG 717 µs, Konkr
+1216 µs mean (7 % of a 16.7 ms tick); ymfm 132 / 314 / 516 µs. ymfm would cost less than half if a device ever
+needs it; it is also the candidate for the YM2612 later (its OPN2 shares the framework; Nuked-OPN2 is the accurate
+alternative there). Engine costs on the devices: "Hosts: threads and costs".
 
 ### What runs
 
@@ -1195,9 +1194,7 @@ lowering may share byte-identical patterns between orders and channels (the refe
 Load-time parameter checks: `Bxx` < order count, `Cxx` ≤ 3F, `Exx` ≤ 7, `F00` rejected, `Ixx` ≤ 3F, `Kxx` ≤ S,
 `Mxy` x 1..4, `Wxy` x 0..4 and y ≤ 7; other effects take any parameter.
 
-**Should** (not checked): `Fxx` on the loop order's first row when the speed changes anywhere (otherwise the
-second pass plays at the speed the song ended with: different from the first pass and from the VGM's loop);
-an instrument on the first note of every order (an order is also entered by the loop, the seek fallback and a
+**Should** (not checked): an instrument on the first note of every order (an order is also entered by the loop, the seek fallback and a
 live edit that clamps); FM locks and chords only on rows with a note (otherwise ignored: warn).
 
 `o3_load_image` derives (`O3Info`) order count, loop, multispeed, speed, rows per order and the speed each
@@ -1235,7 +1232,11 @@ byte 7 (if not 0).
 4. Each channel 0..8 that has keyed any note since reset is updated (below).
 5. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the
    target order's last row), else row + 1, after the last row of an order the next order, after the last order
-   the loop order.
+   the loop order. **Loop speed**: whenever the next row is row 0 of the loop order (the wrap, a jump, the first
+   pass) the speed becomes the speed sequential straight play starts that order with (`O3Info.start_speed`; an
+   `Fxx` on that row still applies at its row start), so every pass of the loop runs at the first pass's tempo
+   without an `Fxx` there — the player owns this, the lowering emits nothing for it. (A `Bxx`/`Dxx` that skipped
+   an `Fxx` before the loop order's first arrival makes that derived speed apply on the first pass too.)
 
 **Running a row** of a channel: if the row has a note 0..95, the arpeggio and fine pitch are cleared and the
 row's chord is empty; an instrument byte sets the channel's instrument; the effect columns run in order
@@ -1301,19 +1302,25 @@ instruments with the sweep, the note giving the pitch (no rhythm mode).
 ### Position, seek and live edits
 
 - `position()` is the player's (order, row, tick) — exact through `Fxx`, `Gxx`, jumps and multispeed.
-- `start(order, row, max_ticks)`: the chip is reset and the **player runs alone** from the song start (no chip
-  clocking: 0.19 µs per tick on the dev PC) until the next tick starts (order, row) (`CHIP_SEEK_FROM_START`),
-  then the chip receives the player's register state: 0x105, 0x104, 0x08, 0xBD, every operator register
-  (0x20-0x35, 0x40-0x55, 0x60-0x75, 0x80-0x95, 0xE0-0xF5 of both banks), 0xC0-0xC8 (through the mute routing),
-  0xA0-0xA8, then 0xB0-0xB8 (key-ons last), non-zero values only. The player state is exact — its writes after a
-  seek equal straight play's — while the chip's own state is not reconstructed: notes held at the target restart
-  their envelopes from the attack, and release tails of notes keyed off before it are silent. Measured loudness
-  0.5-1.5 s after a seek is within 0.6-1.6× of straight play (checked). Beyond `max_ticks` (Bxx loops, unreachable
-  rows), the player is placed at the order's row 0 with the speed straight play starts that order with and replays
-  its earlier rows (`CHIP_SEEK_FROM_ORDER`; this replay has its own bound, < 256 rows × 255 ticks); a row behind a
-  `Dxx` of the same order cannot be reached (`CHIP_ERR_IMAGE`). Instruments, volumes and slides from earlier
-  orders are lost there, as on the other systems. Suggested `seekTicks`: 12000 (2.3 ms on the dev PC); much
-  larger budgets are affordable.
+- `start(order, row, max_ticks)`: the chip is reset and the **player runs** from the song start until the next
+  tick starts (order, row) (`CHIP_SEEK_FROM_START`), first alone (no chip clocking: 0.2 µs per tick on the dev
+  PC) to find the tick count *n*, then again: alone until *n* − P ticks, where **P = `O3M_PREROLL_TICKS` 60 ×
+  multispeed (1 s)**, the chip then receives the player's register state (0x105, 0x104, 0x08, 0xBD, every operator
+  register 0x20-0x35, 0x40-0x55, 0x60-0x75, 0x80-0x95, 0xE0-0xF5 of both banks, 0xC0-0xC8 through the mute routing,
+  0xA0-0xA8, then 0xB0-0xB8: key-ons last; non-zero values only), and the last P ticks run as in play with the chip
+  clocked and the output discarded (the resampler's history included). The player state is exact — its writes
+  after a seek equal straight play's. The chip's: **identical to straight play when *n* ≤ P** (the whole way is
+  clocked from the song start; the host test compares the sound bit for bit); beyond, notes keyed more than 1 s
+  before the target restart their envelope 1 s before it (attack and the first second of decay are done when it
+  plays; a note still decaying after that is a little louder than in straight play), release tails of notes keyed
+  off within that second sound, older ones were silent anyway or are lost, and the LFO and operator phases differ.
+  Measured on the test song: the 20 ms loudness envelope over the first 0.5 s within 2.6 % (rms deviation relative
+  to the level; 24.5 % before the pre-roll) and loudness 0.5-1 s after within 0.8-1.25× (checked). Beyond `max_ticks`
+  (Bxx loops, unreachable rows), the player is placed at the order's row 0 with the speed straight play starts that
+  order with and replays its earlier rows (`CHIP_SEEK_FROM_ORDER`, the same pre-roll; this replay has its own bound,
+  < 256 rows × 255 ticks); a row behind a `Dxx` of the same order cannot be reached (`CHIP_ERR_IMAGE`).
+  Instruments, volumes and slides from earlier orders are lost there, as on the other systems. Cost: ~31 ms on the
+  dev PC (60 clocked ticks) plus 0.2 µs per player tick; suggested `seekTicks`: 12000 (2.4 ms more).
 - `apply_image` (live edit at a tick boundary, realtime-safe, 2.7 µs mean / 15 µs worst measured: a 64 KB copy
   plus a few row decodes): the player keeps no pointers into an image — rows are read by (order, row) at each
   row start, instruments and chord shapes are copied at key-on — so data may move freely. Rules: (1) a position
@@ -1365,8 +1372,8 @@ unmuting resumes mid-note. `start`/`audition` clear mutes.
 
 - Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz),
   0x1C = loop offset − 0x1C and 0x20 = loop samples (both 0 without a loop), 0x24 = 60 (recording rate),
-  0x34 = 0xCC (data at 0x100), 0x5C = 14318180 (YMF262 clock). No GD3 tag (the Kotlin export may append one and
-  set 0x14).
+  0x34 = 0xCC (data at 0x100), 0x5C = 14318180 (YMF262 clock). `o3_vgm_render` writes no GD3 tag; the hosts'
+  entry point below appends one and sets 0x14.
 - Data: the reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the loop point and a
   dump of the whole register state (0x105, 0x104, 0x08, 0xBD, every operator register of both banks, then
   0xC0-0xC8, 0xA0-0xA8, 0xB0-0xB8 for voices 0..17, all values including zeros), so each pass of the loop starts
@@ -1375,19 +1382,33 @@ unmuting resumes mid-note. `start`/`audition` clear mutes.
   accumulation: 735 = `0x62` at N = 1; `0x70`-`0x7F` for 1-16, `0x61 nn nn` otherwise). Writes are `0x5E reg val`
   (bank 0) and `0x5F reg val` (bank 1). The song ends at the second arrival at the loop point (or at the tick
   limit, then without a loop), then `0x66`.
-- For the Kotlin export: the hosts already link this code; exposing `o3_vgm_render` through JNI (Android) and
-  cinterop (Deck) keeps one player implementation, checked against the Python reference by the host test. A
-  pure Kotlin port would be a third implementation and would need the same golden trace (open question in
-  `docs/BACKENDS.md`).
+- **Hosts' entry point** (`opl3/opl3_export.h`, self-contained for cinterop): `o3_export_vgm(image, 65536,
+  max_ticks, title, author, date, &size, &problem)` validates the image (`problem` = the loader's reason, or
+  "image size", "out of memory"), renders the file above (measured first, then rendered into one allocation) and
+  appends a **GD3 1.00** tag: track = title, track (JP), game, game (JP) empty, system "OPL3 (Thor Tracker)",
+  system (JP) empty, author, author (JP) empty, date (`"yyyy/mm/dd"`; empty = today, local time), converter
+  "Thor Tracker", notes empty — UTF-8 in, UTF-16LE in the file (malformed UTF-8 becomes U+FFFD); 0x14 = tag
+  offset − 0x14 and 0x04 cover it. Free the file with `o3_export_free`. Control thread only (it allocates and
+  renders the whole song: 150 µs for the test song on the dev PC).
+- **Kotlin** (`core` `system/opl3/Opl3Vgm.kt`): `Opl3Vgm.export(song)` lowers the song and calls
+  `Opl3Vgm.renderer.render(image, maxTicks, Opl3VgmTags(title, author, date))`, which each host registers at
+  startup: Android `ChipAudio`'s companion (JNI `ChipAudio.nativeOpl3Vgm(image, maxTicks, title, author, date)`,
+  strings as UTF-8 byte arrays because JNI's own UTF strings are modified UTF-8; a rejected image throws
+  `IllegalArgumentException(problem)`), the Deck's `main` (`DeckOpl3Vgm` over cinterop `decknative`). One player
+  implementation for playback and export, checked against the Python reference.
 
 ### Preparing the tables and fixtures
 
 `python3 tools/audio/prepare_opl3.py` (pure Python 3) writes `app/src/main/cpp/generated/opl3_tables.h` (from
-`opl3_ref.py`'s table functions) and `app/src/test/cpp/opl3_test_song.h` (the test images: the song, the same
+`opl3_ref.py`'s table functions), `core/src/commonMain/kotlin/org/thortracker/backend/Opl3PlayerImage.kt` (the
+image layout, limits, effect codes, pitch table, seek and GD3 constants parsed from `opl3_image.h`,
+`opl3_player.h`, `opl3_machine.h` and `opl3_vgm.c`, and `LOADER_PROBLEMS`: every reason `o3_load_image` reports,
+which the Kotlin validator mirrors with user-facing messages) and `app/src/test/cpp/opl3_test_song.h` (the test images: the song, the same
 song laid out anew (`relayout=True`: patterns reversed behind a 37-byte gap), a note edit, a tempo edit, the song
 cut to two orders and an x2 multispeed variant; the reference player's per-tick writes, key-off phase lengths and
 positions for 1500 ticks of three of them; the reference VGM's size, FNV-1a hash and loop; byte offsets for the
-corruption checks). Rerun it after changing the player specification, the reference player or the test song.
+corruption checks). Rerun it after changing the player specification, the engine headers, the reference player or
+the test song.
 
 ### Verification
 
@@ -1396,15 +1417,21 @@ corruption checks). Rerun it after changing the player specification, the refere
   semitones per tick, a snare sweeping +7 → −5, a hi-hat), four chord shapes (one with an inversion), every effect,
   multiple effect columns, OFF cells, delays and cuts, empty runs, patterns used twice; order 1 drains the chord
   pool and steals, channels switch between 4-op and 2-op instruments, order 2 changes speed and breaks to order 3
-  row 2.
+  row 2; order 3 ends at speed 5 and jumps back to the loop order, which has no `Fxx` (the player's loop speed).
 - `tools/audio/run_native_host_test.sh [dir]` runs `app/src/test/cpp/opl3_machine_test.c` — 2026-11-08:
-  **257 checks, 0 failures** (Game Boy 145, NES 336, SID 151 unchanged): the pitch table (A-4 = 580/block 4 =
+  **280 checks, 0 failures** (Game Boy 145, NES 336, SID 151 unchanged): the pitch table (A-4 = 580/block 4 =
   439.991 Hz; all notes ≤ 2.59 cents); 42 single-byte corruptions each rejected with its reason; **the machine's
   writes equal the Python reference player's in all 1500 ticks** (10026 writes, up to 178 in a tick; all 9 pool
   voices keyed at once; 4-op pairs switching on and off; the kick sweeping) with identical positions; 30 s
-  non-silent in every second, no clipping, bit-identical on a second start; eight seeks (up to 435 ticks, ≤ 130
-  µs) landing on their row with 200 ticks of writes equal to straight play, loudness after a seek, the order
-  fallback for rows only reached through `D02` and for a small budget, targets outside the song rejected; live
+  non-silent in every second, no clipping, bit-identical on a second start; **tick cost flat**: after 1 s of
+  warm-up, no tick of 30 s above 3× the mean (thread CPU time, so other processes' preemption does not count;
+  1.4× measured); **loop passes**: three passes of the loop (entered from order 0 at speed 6 and by `B01` from
+  order 3 at speed 5) step through identical (order, row, tick) positions, 359 ticks = the VGM's loop (the
+  registers are not pass-identical: which pool voice takes a chord note follows the allocation history); eight
+  seeks (up to 435 ticks, ~31 ms) landing on their row with 200 ticks of writes equal to straight play; sound after
+  a seek vs straight play: 0/5 (30 ticks) bit-identical, 1/0, 1/17, 2/12, 3/20 envelope within 0.026 (limit 0.08)
+  and loudness within 0.8-1.25×; the order fallback for rows only reached through `D02` and for a small budget,
+  targets outside the song rejected; live
   edits: the same image and the re-laid-out image alternating before every one of 1500 ticks write the reference,
   a note edit applied at five ticks from the song start to the tick before its row equals straight play of the edited song, a tempo edit ahead
   of the playhead equals the edited song and behind it gives rows of 9 then (undone) 6 ticks, the song cut under
@@ -1412,7 +1439,10 @@ corruption checks). Rerun it after changing the player specification, the refere
   439.991 Hz** on the sine instrument, held, one voice keyed, release ends after 52 ticks, `fine` +64 = A#4
   (466.16 Hz), a 4-op instrument sets its pair, the kick sweeps 523.25 → 130.81 Hz, a cut before any tick,
   argument limits; mute leaves the writes equal to the reference and silences; multispeed x2 = 120 ticks per second;
-  **VGM bytes equal the reference player's**; the ops table as the hosts drive it. Evidence in the directory:
+  **VGM bytes equal the reference player's**; the hosts' entry point `o3_export_vgm`: the reference bytes plus a
+  GD3 tag (header 0x04/0x14 aside), every field decoded back (2- and 4-byte UTF-8 title, surrogate pair), a
+  default date of today, rejected images with the loader's reason, a tick limit without loop; the ops table as the
+  hosts drive it. Evidence in the directory:
   `opl3_song.wav` (30 s), `opl3_tone.wav` (A-4 + release), `opl3_trace.txt` (per tick: position, key-off phase,
   `|`, the rest), `opl3_song.vgm`, `opl3_song.bin` (the image).
 - `tools/audio/opl3_reference_check.py <dir> [--vgm2wav PATH]` (developer evidence; the audio part needs numpy)
@@ -1428,23 +1458,46 @@ corruption checks). Rerun it after changing the player specification, the refere
   through libvgm's Nuked vs through the vendored Nuked without write buffering) gives envelope correlations
   0.96-0.998. These comparisons found two real defects that are now fixed and specified: the missing key-off gap
   (retriggered notes did not re-attack) and the loop body assuming the first pass's register state (now the
-  dump), plus a test-song speed change across the loop (now `F06` on the loop order's first row, and a "Should").
+  dump), plus a test-song speed change across the loop (first `F06` on the loop order's first row, now the
+  player's loop speed).
+- `tools/audio/render_opl3_image.sh image out.wav [seconds] [mute=19] [--vgm out.vgm] [title=..] [author=..]
+  [date=..]` renders a lowered image (e.g. the host test's `opl3_song.bin`) through the ops table as the hosts do,
+  and its VGM through `o3_export_vgm`.
 - **Bench**: `tools/audio/build_opl3_bench.sh [dir]` builds `tools/audio/opl3_bench.c` for the host and with the
   NDK as static arm64 executables (`-O2` as the app, and `-O3`); `adb push` and run `opl3_bench-arm64 [seconds]
-  [rate]`. Built 2026-11-08 into `/tmp/opl3_bench/` (with the core comparison bench); not run on a device.
-- Not done: listening on hardware, device measurements, a comparison with a real YMF262.
+  [rate] [paced_seconds]`. Sections: the first 60 ticks of the process (cold), then after 2 s of warm-up the tick
+  back to back with the chip alone interleaved on the same writes (wall and thread CPU time, the overhead tick −
+  chip, the slowest ticks by index, the count above 3× the mean), paced one tick per 1/60 s like an audio callback,
+  the player alone, `apply_image`, and the control-thread costs. Built 2026-11-08 into `/tmp/opl3_bench2/`.
+- Not done: listening on hardware, a comparison with a real YMF262.
 
 ### Hosts: threads and costs
 
-Dev PC (`opl3_bench-host`, 48 kHz, 30 s of the test song, 2026-11-08) and a Konkr-class estimate (×4):
+Dev PC (`opl3_bench-host`, 48 kHz, 30 s of the test song, 2026-11-08) and the devices (the first bench, built
+from the spike, 2026-11-08):
 
-| Work | Thread | Dev PC | ≈ Konkr |
+| Work | Thread | Dev PC | Nova / DMG / Konkr |
 |---|---|---|---|
-| `tick` (player + chip + resample) | audio callback | 515 µs mean, p99 686 µs, p99.9 771 µs (chip 496 µs, player 0.3 µs) | ~2.1 ms mean (~1.6 ms scaled from the SID's measured 1.8 ms) |
-| `apply_image` (relocating) | audio callback, tick boundary | 2.8 µs mean, worst 7-15 µs | ≤ 0.06 ms |
-| machine creation | control | 0.03 ms | ~0.1 ms |
-| `audition` setup | control, spare machine | 1.7 µs | ~0.01 ms |
-| `start` (seek; 12000 ticks fast-forward) | control, spare machine | 0.13 ms to order 3 row 20; 2.3 ms for 12000 ticks | ~10 ms |
+| `tick` (player + chip + resample) | audio callback | 528 µs mean (thread CPU worst 1.4× the mean after warm-up); chip alone 504 µs, player 0.3 µs; paced at 60 Hz 824 µs mean (the CPU clocks down between ticks) | 316 / 620 / 1293 µs mean, p99 511 / 734 / 1370 µs; chip alone 274 / 562 / 1224 µs |
+| `apply_image` (relocating) | audio callback, tick boundary | 2.8 µs mean, worst 7-15 µs | 1.7 / 3.5 / 8.4 µs mean, worst 8 / 66 / 32 µs |
+| machine creation | control | 0.03 ms | 0.16 / 0.09 / 0.10 ms |
+| `audition` setup | control, spare machine | 1.6 µs | 1.6 / 3.1 / 7.5 µs |
+| `start` (seek) | control, spare machine | ~31 ms (1 s pre-roll; 14 ms within the first 0.5 s), + 2.4 ms for 12000 player ticks | ~17 / 37 / 75 ms pre-roll (60 × the chip) + 1.9 / 3.7 / 9.0 ms for 12000 ticks |
+
+**Tick outliers** (2026-11-08): the first device bench showed rare slow ticks, Nova p99.9 3.5 ms / worst 3.9 ms
+(12× the mean), DMG 2.6 ms, Konkr 3.6 ms, while the chip alone stayed flat (Nova p99.9 0.34 ms). They were not the
+engine: they appear only in the section a process measures first (the tick was first in the engine bench; in the
+separate core bench Nuked, measured first, showed the same on the Nova — worst 3× its mean — and ymfm and blip_buf
+measured after it did not), only 2-3 of 1800 ticks (p99.9 of 1800 ticks is the second-slowest), and p99 (18th
+slowest) is 1.06-1.6× the mean: the start of a fresh process on a cold CPU (frequency ramp and migration from a
+little core), measured as engine time because the chip-alone section ran after 30 s of warm-up. The engine's tick
+has no data-dependent slow path: no allocation, fixed blip_buf frame sizes (end_frame of the tick's 828/829 native
+samples, read of all available frames, ≤ 1601), the key-off split costs one extra native sample, integer chip and
+resampler (no denormals); on the dev PC its thread CPU time is ≤ 1.43× the mean in every tick after warm-up (host
+test: ≤ 3×). The bench now measures the cold start separately, warms up, interleaves the chip alone per tick so both
+see the same CPU state, reports thread CPU time and the slowest ticks by index, and adds a paced (callback-like) run.
+In the app the first callbacks after a play start may still meet a cold CPU; that is the host's (AAudio performance
+mode) concern and the same for every system.
 
 The hosts treat the machine like the SID's (`Engine::create` on the control thread, seeks and auditions on spare
 machines, the callback only ticks, mutes and applies images); nothing in `audio_engine.cpp` or `deck_audio.c` is
