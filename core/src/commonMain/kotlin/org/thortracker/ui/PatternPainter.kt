@@ -283,7 +283,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
      * screen (9 channels of 2-4 columns cannot shrink to fit a 1240-pixel display legibly): when the lanes do not all
      * fit, they scroll by whole lanes to keep the cursor's channel in view, as FamiTracker and Furnace do, and narrowing
      * a channel to fewer columns (Pattern panel → Columns) shows more of them. Returns whether the inspector shows: when
-     * it fits beside every lane, or on wide screens (60 text units: the Thor's top display, the Deck) beside scrolled lanes.
+     * it fits beside every lane, or beside scrolled lanes while [INSPECTOR_LANES] of them still show (wide displays:
+     * the Thor's top one, the Deck); otherwise the lanes take its room and the status line names effects as they are edited.
      */
     private fun layoutLanes(area: Rect, rulerW: Float, channels: Int): Boolean {
         var total = 0f
@@ -302,17 +303,25 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             firstLane = 0
             lastLane = channels - 1
         } else {
-            inspector = area.width() >= ink.unit * 60f
-            val avail = room - (if (inspector) inspectorMin else 0f)
             fun span(from: Int, to: Int): Float { var w = 0f; for (ch in from..to) w += laneWs[ch]; return w }
-            laneScroll = laneScroll.coerceIn(0, channels - 1)
-            val cursor = st.channel.coerceIn(0, channels - 1)
-            if (cursor < laneScroll) laneScroll = cursor
-            while (laneScroll < cursor && span(laneScroll, cursor) > avail) laneScroll++
-            while (laneScroll > 0 && span(laneScroll - 1, channels - 1) <= avail) laneScroll--
-            firstLane = laneScroll
-            lastLane = firstLane
-            while (lastLane + 1 < channels && span(firstLane, lastLane + 1) <= avail) lastLane++
+            fun place(avail: Float) {
+                laneScroll = laneScroll.coerceIn(0, channels - 1)
+                val cursor = st.channel.coerceIn(0, channels - 1)
+                if (cursor < laneScroll) laneScroll = cursor
+                while (laneScroll < cursor && span(laneScroll, cursor) > avail) laneScroll++
+                while (laneScroll > 0 && span(laneScroll - 1, channels - 1) <= avail) laneScroll--
+                firstLane = laneScroll
+                lastLane = firstLane
+                while (lastLane + 1 < channels && span(firstLane, lastLane + 1) <= avail) lastLane++
+            }
+            place(room - inspectorMin)
+            inspector = lastLane - firstLane + 1 >= INSPECTOR_LANES
+            if (!inspector) {
+                place(room)
+                // The width the next lane did not fit into widens the shown ones, so the grid ends at the edge.
+                val extra = (room - span(firstLane, lastLane)) / (lastLane - firstLane + 1)
+                for (ch in firstLane..lastLane) laneWs[ch] += extra
+            }
         }
         var x = gridLeft
         for (ch in 0 until channels) {
@@ -992,6 +1001,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         const val LAMP_ROWS = 4
         /** Most channels a system has room for in the lane arrays (the OPL3 has 9). */
         const val MAX_LANES = 16
+        /** Lanes that must still show beside the inspector when lanes scroll; fewer and the inspector gives way. */
+        const val INSPECTOR_LANES = 6
         /** Pitch classes on black piano keys, C = 0. */
         val BLACK_KEYS = booleanArrayOf(false, true, false, true, false, false, true, false, true, false, true, false)
     }

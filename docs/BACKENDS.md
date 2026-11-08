@@ -490,6 +490,50 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
   theme A. No errors or warnings; `exportSamples` writes `glass-harbour.{thor,o3img}` and
   `tools/audio/render_opl3_image.sh` renders the image (and its VGM).
 
+### OPL3 editor
+
+- **Effect columns in the Pattern view** (shared code; active only where `effectColumns` > 1, so the Game Boy, NES and
+  SID views and their controls are unchanged): a channel's cursor fields are note, sound, then effect type and value
+  per shown column (`ViewController.fieldCount`, `columnOf`, `isValueField`); ←→ walk them and then the next channel.
+  Each column is picked, valued, re-entered (tap Edit repeats that column's last effect) and cleared on its own;
+  copy, cut, paste, duplicate, insert/delete row and selections move whole cells, all columns included
+  (`normaliseCell` keeps the columns the channel has). OFF on a row with effects keeps them (one-column systems
+  still replace the row). The shown count is per pane (`ViewState.effectColumns`, saved in the Android workspace):
+  automatic = the highest column the song uses on that channel (at least one), or set on the Pattern panel's
+  Columns row (←→ count, L1/R1 channel, Clear automatic). Effects in hidden columns still play: the row shows a
+  dot after its last column and the lane header "+n fx".
+- **Naming effects**: on several-column systems the status line names every effect as it is picked or changed, with
+  the system's longer reading (`SoundSystem.effectDetail`: the OPL3's `Hxy`/`Kxx` chord notes from the row's note,
+  why a chord stays silent — no note, a 4-op sound — and `0xy` arpeggio notes); the hint names the column's effect;
+  the inspector lists every column of the cell (hidden ones marked) with the cursor's in full.
+- **9 channels on handheld screens** (decision): the text keeps its 12 dp size; lanes are `note sound` plus 4
+  characters per shown column, and when they do not all fit they scroll sideways by whole lanes, following the
+  cursor's channel (FamiTracker/Furnace style), with "◀n" / "n▶" counts (tappable) beside the headers. Shrinking
+  text to fit 9 × 2-4 columns would be illegible on 6" and 3.9" displays; scrolling keeps every edit in view and
+  narrowing busy channels' columns shows more lanes. Measured: one column per channel shows all 9 lanes on the
+  Deck (1280×800) and the Thor's top display (1920×1080 at 369 dpi); with two columns everywhere the top display and
+  the Deck show 7, the bottom one (1240×1080) 4. The inspector stays beside scrolled lanes only while 6 lanes still show,
+  otherwise the lanes take its room (the status line names effects while editing). Deck test hook:
+  `size=WxH[@density]` renders at the Thor's sizes under the offscreen driver.
+- **Instrument view** (`Opl3InstrumentView`, `Opl3InstrumentPainter`), controller-only, four pages. *Sound*: the
+  curated controls of `Opl3Curated`, each one Edit+←→ value (preset, algorithm incl. 2-op/4-op, ratio set,
+  waveforms, brightness, level, feedback, attack, decay, sustain, release, tone decay, key scaling, vibrato/tremolo;
+  "≈" marks a reading of hand-edited registers) beside the drawn algorithm (operator boxes with ratio and waveform,
+  routing arrows, carriers into the output, the feedback loop) and envelope (carriers in dB with times; the
+  modulators' tone decay dimmer). *Expert*: mode, connection and feedback as stored, then every register field of
+  each operator as a grid (←→ or L1/R1 move between operators; AM/VIB/EGT/KSR switch on tap). *Drum*: drum presets
+  and the sweep's start, end and speed with the pitch curve over half a second. *Chords*: the song's `Kxx` table
+  with each shape's notes from the listening C; Edit adds shapes and intervals, Edit+←→ changes an interval (±12 on
+  ↑↓, never 0), Clear deletes one (a shape's last deletes the shape); shapes take their default-table name when
+  their intervals match one. Holding Edit on a sound row (or Listen) auditions on the Listen channel; 4-op sounds
+  listen on FM 1 when Listen is FM 7-9. Empty slots (null) get the Lead preset on their first edit; Clear on Slot
+  empties one. Every edit is one undo step (`setOpl3Instrument`, `editOpl3Chords`).
+- **Shared views**: New and Load demo list the OPL3 through `SoundSystems`; Song lists its settings, Keyboard and
+  Sketch play any of the 9 channels; channel 9 has its own lane colour. Help: effects page ("Up to 4 effects per
+  channel per row"), the Pattern rows for columns, hidden effects and lane scrolling, and the instrument pages.
+- Tests: `Opl3EditorTest` (columns, cursor walk, per-column edits, copy/paste, OFF, chord text, every instrument
+  page, empty slots, 4-op listening; one-column systems keep four fields).
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for

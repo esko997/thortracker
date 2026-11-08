@@ -231,7 +231,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         val out = ArrayList<Line>()
         val columns = maxColumns()
         out += Line.Text(if (columns <= 1) "One effect per channel per row. Values are hexadecimal. 000 is no effect."
-            else "Up to $columns effects per channel per row, one per effect column, run in column order. Values are hexadecimal. 000 is no effect.")
+            else "Up to $columns effects per channel per row, one per effect column. Values are hexadecimal. 000 is no effect.")
         out += Line.Text("Effects marked unavailable cannot be exported or previewed and are refused.")
         val system = song.system
         for (text in system.help.effectsIntro) out += Line.Text(text)
