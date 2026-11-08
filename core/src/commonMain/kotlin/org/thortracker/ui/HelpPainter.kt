@@ -7,6 +7,7 @@ import org.thortracker.input.Control
 import org.thortracker.input.Keymap
 import org.thortracker.editor.ViewKind
 import org.thortracker.model.Songs
+import org.thortracker.system.ChannelKind
 
 /** Reference pages: controls, the backend's effect list, and the live export check of the song. */
 internal class HelpPainter(v: PaneView) : Painter(v) {
@@ -188,6 +189,10 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(clear, "Write mode: place OFF and advance"),
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
             Line.Row("Dark keys", "Above ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
+        ) + (if (system.channels.none { it.kind == ChannelKind.SAMPLE }) emptyList() else listOf(
+            Line.Row("Sample keys", "On ${system.channels.filter { it.kind == ChannelKind.SAMPLE }.joinToString { it.name }} each key shows the sample the sound maps to it; " +
+                "unnamed keys play nothing. In the pattern, ${k.held(Action.EDIT, lr)} on such a note steps through the mapped keys"),
+        )) + listOf(
             Line.Heading("Sketch"),
             Line.Text("Tonal playground. Root/scale experiments stay local to this display; chords, notes and the circle only sound. Only the phrase's Insert writes notes (one undo step)."),
             Line.Row("$ud / $lr", "Settings, chords, notes or phrase / choose within the row"),

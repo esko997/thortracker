@@ -155,6 +155,14 @@ class DeckShell(
             .fold(loaded) { error("Tuning not loaded: ${it.message}") }
     }.show(documents)
 
+    override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) =
+        FileBrowser(popups, title, extensions) { path ->
+            val file = path.substringAfterLast('/')
+            val extension = extensions.firstOrNull { file.endsWith(it, ignoreCase = true) } ?: return@FileBrowser error("Choose a ${extensions.joinToString(" or ")} file")
+            val bytes = Files.readBytes(path, max = maxBytes.toLong()) ?: return@FileBrowser error("$file could not be read or is larger than ${maxBytes / 1024} KiB")
+            loaded(file.dropLast(extension.length), extension, bytes)
+        }.show(documents)
+
     override fun extraMenuItems(): List<Pair<String, () -> Unit>> = listOf("Quit" to quit)
 
     private companion object {

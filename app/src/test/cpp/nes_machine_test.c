@@ -1,12 +1,14 @@
 /* Host regression test for the NES machine: the FamiStudio sound engine 4.5.3 player (FamiTracker
- * tempo) on m6502 + nes_apu, playing FamiStudio's own export of the test song ft_test.txt and the
- * same rows in the Thor Tracker image layout (nes_ft_song.h): row timing, delays/cuts/releases,
- * seek, live relocation, audition; plus APU unit checks against the NESdev-documented behaviour.
+ * tempo) on m6502 + nes_apu, playing FamiStudio's own export of the test songs ft_test.txt and
+ * dpcm_test.txt and the same rows in the Thor Tracker image layout (nes_ft_song.h, nes_dpcm_song.h):
+ * row timing, delays/cuts/releases, DPCM samples, seek, live relocation, audition; plus APU unit
+ * checks (DMC included) against the NESdev-documented behaviour.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes <dir>/nes_ft.wav and nes_ft_tonal.wav (48 kHz stereo, 30 s), <dir>/nes_trace.txt
  * (per-frame APU register writes) and <dir>/nes_ft.nsf (the player + FamiStudio's export as an NSF,
- * for reference players; see tools/audio/nes_reference_check.py). */
+ * for reference players; see tools/audio/nes_reference_check.py); for the DPCM song nes_dpcm.wav,
+ * nes_dpcm_trace.txt and nes_dpcm.nsf. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +19,7 @@
 #include "chip_engine.h"
 #include "nes_apu.h"
 #include "nes_ft_song.h"
+#include "nes_dpcm_song.h"
 #include "nes_machine.h"
 
 static int failures = 0;
@@ -953,7 +956,7 @@ static void test_audition(NesMachine* m) {
     nm_tick(m, g_out);
     EXPECT((nm_apu(m)->noise.mode_period & 0x8F) == (0x80 | ((32 & 15) ^ 15)), "noise Hat: period index 15, short mode ($%02X)",
            nm_apu(m)->noise.mode_period);
-    EXPECT(nm_audition(m, &g_thor, 4, 40, 0, 0) == NM_ERR_IMAGE, "no DPCM audition");
+    EXPECT(nm_audition(m, &g_thor, 4, 1, 1, 0) == NM_ERR_IMAGE, "no DPCM audition without a DPCM list");
     EXPECT(nm_audition(m, &g_thor, 0, 0, 0, 0) == NM_ERR_IMAGE && nm_audition(m, &g_thor, 0, 97, 0, 0) == NM_ERR_IMAGE,
            "notes outside 1..96 rejected");
     EXPECT(nm_audition(m, &g_thor, 0, 40, NES_FT_INSTRUMENTS, 0) == NM_ERR_IMAGE, "instrument past the table rejected");
@@ -1082,14 +1085,844 @@ static void test_chip_engine_ops(void) {
     free(edited);
 }
 
+/* ---- DPCM: the DMC and FamiStudio's DPCM channel ------------------------------------------- */
+
+/* NESdev "APU DMC" NTSC rate table, CPU cycles per output bit (written here independently of nes_apu.c). */
+static const int kNesdevDmcRates[16] = {428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54};
+
+/* The level a DMC output unit reaches playing `n` bytes (LSB first) from `level`: +2 for a 1 bit while the
+ * level is at most 125, -2 for a 0 bit while it is at least 2 (NESdev; independent of nes_apu.c). */
+static int dmc_model(int level, const uint8_t* bytes, int n) {
+    for (int i = 0; i < n; ++i) {
+        for (int b = 0; b < 8; ++b) {
+            if (bytes[i] >> b & 1) {
+                if (level <= 125) level += 2;
+            } else if (level >= 2) {
+                level -= 2;
+            }
+        }
+    }
+    return level;
+}
+
+static uint8_t g_prg[0x8000]; /* cartridge space $8000-$FFFF for the DMC unit checks */
+
+/* An APU reading g_prg with the DMC started at cycle 0: $4010 ctrl, $4011 level, $4012 start, $4013 length. */
+static void dmc_rig(NesApu* a, uint8_t ctrl, uint8_t level, uint8_t start, uint8_t length) {
+    memset(a, 0, sizeof *a);
+    nes_apu_set_memory(a, g_prg);
+    nes_apu_reset(a);
+    nes_apu_write(a, 0, 0x4010, ctrl);
+    nes_apu_write(a, 0, 0x4011, level);
+    nes_apu_write(a, 0, 0x4012, start);
+    nes_apu_write(a, 0, 0x4013, length);
+    nes_apu_write(a, 0, 0x4015, 0x10);
+}
+
+/* The levels after each change, stepping one CPU cycle at a time from cycle 1 (and when they happened). */
+static int dmc_levels(NesApu* a, int* out, uint32_t* times, int count, uint32_t limit) {
+    int n = 0, prev = a->dmc.level;
+    for (uint32_t t = 1; n < count && t < limit; ++t) {
+        nes_apu_run(a, t);
+        if (a->dmc.level != prev) {
+            prev = a->dmc.level;
+            times[n] = t;
+            out[n++] = prev;
+        }
+    }
+    return n;
+}
+
+static int dmc_equal(const NesDmc* a, const NesDmc* b) {
+    return a->ctrl == b->ctrl && a->level == b->level && a->start == b->start && a->length == b->length && a->addr == b->addr &&
+           a->remaining == b->remaining && a->buffer == b->buffer && a->buffer_full == b->buffer_full && a->shift == b->shift &&
+           a->bits == b->bits && a->silence == b->silence && a->irq == b->irq && a->timer == b->timer && a->fetches == b->fetches;
+}
+
+static void test_apu_dmc(void) {
+    printf("APU DMC: rate table, delta steps, clamping, length, wrap, loop, IRQ, $4015\n");
+    static NesApu a, b;
+    int levels[64];
+    uint32_t times[64];
+    memset(g_prg, 0, sizeof g_prg);
+    memset(g_prg + 0x4000, 0xFF, 64); /* $C000: 1-bits */
+    int rates_ok = 1;
+    for (int r = 0; r < 16; ++r) {
+        dmc_rig(&a, (uint8_t)r, 0, 0, 3);
+        int n = dmc_levels(&a, levels, times, 20, 200000);
+        int ok = n == 20 && levels[0] == 2 && levels[19] == 40;
+        for (int i = 1; i < n; ++i) ok &= times[i] - times[i - 1] == (uint32_t)kNesdevDmcRates[r];
+        if (!ok) printf("  rate %d: %d changes, first interval %u\n", r, n, n > 1 ? times[1] - times[0] : 0);
+        rates_ok &= ok;
+    }
+    EXPECT(rates_ok, "1-bits raise the level by 2 once per NESdev rate period, all 16 NTSC rates (428..54 cycles)");
+
+    g_prg[0x4000] = 0x0F;
+    g_prg[0x4001] = 0xAA;
+    memset(g_prg + 0x4002, 0x00, 62);
+    dmc_rig(&a, 0x0F, 64, 0, 1);
+    static const int want[24] = {66, 68, 70, 72, 70, 68, 66, 64, 62, 64, 62, 64, 62, 64, 62, 64, 62, 60, 58, 56, 54, 52, 50, 48};
+    int n = dmc_levels(&a, levels, times, 24, 100000), pattern_ok = n == 24;
+    for (int i = 0; i < n && pattern_ok; ++i) pattern_ok = levels[i] == want[i];
+    EXPECT(pattern_ok, "bytes $0F $AA $00 from level 64, LSB first: 66 68 70 72 70 68 66 64 | 62 64 62 64 62 64 62 64 | 62 60 .. 48 "
+                       "(%d levels, last %d)", n, n ? levels[n - 1] : -1);
+    EXPECT(times[1] - times[0] == 54 && times[23] - times[0] == 23 * 54, "at rate $F every 54 CPU cycles (33.14 kHz)");
+
+    memset(g_prg + 0x4000, 0xFF, 64);
+    int high[2];
+    for (int i = 0; i < 2; ++i) {
+        dmc_rig(&a, 0x0F, (uint8_t)(124 + i), 0, 1);
+        nes_apu_run(&a, 40000);
+        high[i] = a.dmc.level;
+    }
+    memset(g_prg + 0x4000, 0x00, 64);
+    dmc_rig(&a, 0x0F, 3, 0, 1);
+    nes_apu_run(&a, 40000);
+    EXPECT(high[0] == 126 && high[1] == 127 && a.dmc.level == 1,
+           "clamped: 1-bits stop at 126 from 124 and at 127 from 125, 0-bits stop at 1 from 3 (%d %d %d)", high[0], high[1],
+           a.dmc.level);
+
+    dmc_rig(&a, 0x0F, 64, 0, 1);
+    const uint8_t s0 = nes_apu_read_status(&a, 1);
+    nes_apu_run(&a, 60000);
+    const uint8_t s1 = nes_apu_read_status(&a, 60000);
+    EXPECT((s0 & 0x10) && !(s1 & 0x10) && a.dmc.fetches == 17 && a.dmc.addr == 0xC011,
+           "$4013 = 1: 17 bytes $C000-$C010 by DMA, $4015 bit 4 while bytes remain (%02X -> %02X, %u fetches, next $%04X)", s0, s1,
+           a.dmc.fetches, a.dmc.addr);
+    dmc_rig(&a, 0x0F, 64, 0xFF, 4);
+    nes_apu_run(&a, 200000);
+    EXPECT(a.dmc.fetches == 65 && a.dmc.addr == 0x8001, "$4012 = $FF, $4013 = 4: 65 bytes from $FFC0 wrap to $8000 (%u, next $%04X)",
+           a.dmc.fetches, a.dmc.addr);
+
+    dmc_rig(&a, 0x4F, 64, 0, 1);
+    nes_apu_run(&a, 300000);
+    EXPECT((nes_apu_read_status(&a, 300000) & 0x10) && a.dmc.fetches > 17 * 30 && a.dmc.addr >= 0xC000 && a.dmc.addr <= 0xC011 &&
+               !a.dmc.irq,
+           "loop: the 17 bytes restart at $C000 without end or IRQ (%u fetches)", a.dmc.fetches);
+
+    dmc_rig(&a, 0x8F, 64, 0, 1);
+    nes_apu_run(&a, 60000);
+    const uint8_t i1 = nes_apu_read_status(&a, 60000), i2 = nes_apu_read_status(&a, 60001);
+    nes_apu_write(&a, 60002, 0x4010, 0x0F);
+    const uint8_t i3 = nes_apu_read_status(&a, 60003);
+    dmc_rig(&a, 0x8F, 64, 0, 1);
+    nes_apu_run(&a, 60000);
+    nes_apu_write(&a, 60001, 0x4015, 0x00);
+    const uint8_t i4 = nes_apu_read_status(&a, 60002);
+    EXPECT((i1 & 0x80) && (i2 & 0x80) && !(i3 & 0x80) && !(i4 & 0x80),
+           "IRQ flag at the end of a non-looping sample with $4010 bit 7; reads keep it, $4010/$4015 writes clear it");
+
+    memset(g_prg + 0x4000, 0xFF, 64);
+    dmc_rig(&a, 0x0F, 0, 0, 2);
+    const uint32_t stop_at = 428 + 7 * 54 + 2 * 8 * 54 + 20; /* the silent output cycle, then 2 bytes: level 32 */
+    nes_apu_run(&a, stop_at);
+    const uint32_t fetched = a.dmc.fetches;
+    const int at_stop = a.dmc.level;
+    nes_apu_write(&a, stop_at, 0x4015, 0x00);
+    const uint8_t s2 = nes_apu_read_status(&a, stop_at + 1);
+    nes_apu_run(&a, stop_at + 30000);
+    const int played_out = a.dmc.level;
+    nes_apu_run(&a, stop_at + 60000);
+    EXPECT(!(s2 & 0x10) && a.dmc.fetches == fetched && played_out > at_stop && played_out <= at_stop + 32 && a.dmc.level == played_out,
+           "$4015 bit 4 clear mid-sample: no more fetches, the bits already fetched play out (%d -> %d), then the level holds",
+           at_stop, played_out);
+    dmc_rig(&a, 0x0F, 0, 0, 2);
+    nes_apu_run(&a, 5000);
+    nes_apu_write(&a, 5000, 0x4011, 100);
+    const int direct = a.dmc.level;
+    nes_apu_run(&a, 5000 + 5 * 54);
+    EXPECT(direct == 100 && a.dmc.level > 100 && a.dmc.level <= 110, "$4011 during playback sets the level, the deltas continue from it (%d)",
+           a.dmc.level);
+
+    /* The DMC runs the same with and without synthesis (seeking keeps sample positions and levels). */
+    blip_t* blip = blip_new(RATE / 10);
+    blip_set_rates(blip, CPU_HZ, RATE);
+    dmc_rig(&a, 0x4D, 30, 0, 2);
+    dmc_rig(&b, 0x4D, 30, 0, 2);
+    nes_apu_set_output(&a, blip);
+    int same = 1;
+    short buf[4096];
+    for (int f = 0; f < 20; ++f) {
+        const uint32_t cycles = (f & 1) ? 29781 : 29780;
+        if (f == 7) {
+            nes_apu_write(&a, 1234, 0x4010, 0x02);
+            nes_apu_write(&b, 1234, 0x4010, 0x02);
+        }
+        nes_apu_end_frame(&a, cycles);
+        nes_apu_end_frame(&b, cycles);
+        blip_end_frame(blip, cycles);
+        blip_read_samples(blip, buf, blip_samples_avail(blip), 0);
+        same &= dmc_equal(&a.dmc, &b.dmc);
+    }
+    EXPECT(same && a.dmc.fetches > 100, "with and without output the DMC state is identical every frame (%u fetches)", a.dmc.fetches);
+    blip_delete(blip);
+}
+
+static NesImage g_draw, g_dthor, g_dmoved, g_dedited, g_dboundary, g_big;
+
+#define D_FIRST_PASS_ROWS (NES_DPCM_ORDERS * NES_DPCM_ROWS)
+#define D_LOOP_ROWS ((NES_DPCM_ORDERS - NES_DPCM_LOOP) * NES_DPCM_ROWS)
+
+/* Straight play of dpcm_test, as song_row for ft_test. */
+static void dpcm_song_row(int k, int* order, int* row, int* frames) {
+    if (k >= D_FIRST_PASS_ROWS) k = NES_DPCM_LOOP * NES_DPCM_ROWS + (k - D_FIRST_PASS_ROWS) % D_LOOP_ROWS;
+    *order = k / NES_DPCM_ROWS;
+    *row = k % NES_DPCM_ROWS;
+    *frames = nes_dpcm_speed[*order][*row];
+}
+
+static int dpcm_frames(int rows) {
+    int total = 0, o, r, f;
+    for (int k = 0; k < rows; ++k) {
+        dpcm_song_row(k, &o, &r, &f);
+        total += f;
+    }
+    return total;
+}
+
+static int dpcm_row_frame(int order, int row) { return dpcm_frames(order * NES_DPCM_ROWS + row); }
+
+/* The text's DMC event at (order, row) of a kind, or NULL. */
+static const int16_t* dpcm_event(int order, int row, int kind) {
+    for (int i = 0; i < NES_DPCM_EVENTS; ++i) {
+        const int16_t* e = nes_dpcm_events[i];
+        if (e[0] == order && e[1] == row && e[3] == kind) return e;
+    }
+    return NULL;
+}
+
+static int load_split(NesImage* image, const uint8_t* head, size_t head_size, uint16_t sample_start, const uint8_t* samples,
+                      size_t sample_size, const char* name) {
+    memset(image, 0, sizeof *image);
+    memcpy(image->bytes, head, head_size);
+    memcpy(image->bytes + NM_REGION_OFFSET + (sample_start - NES_SONG_BASE), samples, sample_size);
+    int r = nm_load_image(image);
+    EXPECT(r == 0, "%s loads (%s at %u)", name, image->info.problem ? image->info.problem : "-", image->info.problem_at);
+    return r;
+}
+
+/* Whether frame f of `t` has the `n` (register, value) pairs as consecutive writes. */
+static int has_writes(const Trace* t, int f, const uint8_t* pairs, int n) {
+    for (int i = 0; i + n <= t->n[f]; ++i) {
+        if (!memcmp(t->w[f] + 2 * i, pairs, (size_t)n * 2)) return 1;
+    }
+    return 0;
+}
+
+static int count_writes(const Trace* t, int from, int to, uint8_t reg, int value) {
+    int count = 0;
+    for (int f = from; f < to; ++f) {
+        for (int i = 0; i < t->n[f]; ++i) count += t->w[f][2 * i] == reg && (value < 0 || t->w[f][2 * i + 1] == value);
+    }
+    return count;
+}
+
+static int is_dmc_reg(uint8_t reg) { return (reg >= 0x10 && reg <= 0x13) || reg == 0x15; }
+
+/* The DMC register writes ($4010-$4013, $4015) of frame fa of a and fb of b are the same. */
+static int same_dmc_writes(const Trace* a, int fa, const Trace* b, int fb) {
+    uint8_t x[512], y[512];
+    int nx = 0, ny = 0;
+    for (int i = 0; i < a->n[fa]; ++i) {
+        if (is_dmc_reg(a->w[fa][2 * i])) memcpy(x + 2 * nx++, a->w[fa] + 2 * i, 2);
+    }
+    for (int i = 0; i < b->n[fb]; ++i) {
+        if (is_dmc_reg(b->w[fb][2 * i])) memcpy(y + 2 * ny++, b->w[fb] + 2 * i, 2);
+    }
+    return nx == ny && !memcmp(x, y, (size_t)nx * 2);
+}
+
+static const uint8_t* dpcm_list(const NesImage* image) { return nm_region(image) + (image->info.dpcm_list - NES_SONG_BASE); }
+
+static void test_dpcm_images(void) {
+    printf("DPCM images: list, samples and DPCM channel validation\n");
+    const NesImageInfo* t = &g_dthor.info;
+    EXPECT(t->mappings == NES_DPCM_MAPPINGS && t->samples == NES_DPCM_DMC_SIZE && g_dmoved.info.mappings == NES_DPCM_MAPPINGS &&
+               g_dmoved.info.samples == NES_DPCM_MOVED_SAMPLES_SIZE && g_draw.info.samples == NES_DPCM_DMC_SIZE,
+           "%d mappings, %u sample bytes (moved %u, raw %u)", t->mappings, t->samples, g_dmoved.info.samples, g_draw.info.samples);
+    EXPECT(t->orders == NES_DPCM_ORDERS && t->loop == NES_DPCM_LOOP && t->rows[2] == NES_DPCM_ROWS, "orders %d loop %d", t->orders,
+           t->loop);
+    const uint8_t* l = dpcm_list(&g_dthor);
+    const uint8_t* lm = dpcm_list(&g_dmoved);
+    int moved = 0;
+    for (int k = 0; k < NES_DPCM_MAPPINGS; ++k) moved += l[4 * k] != lm[4 * k] && !memcmp(l + 4 * k + 1, lm + 4 * k + 1, 3);
+    EXPECT(moved == NES_DPCM_MAPPINGS, "moved variant: every mapping's sample at another address, same length/rate/level");
+    static NesImage bad;
+    const uint8_t* s = nm_region(&g_dthor);
+    const uint32_t list = NM_REGION_OFFSET + t->dpcm_list - NES_SONG_BASE;
+    const uint16_t ch0 = nm_rd16(s + 5), ch4 = nm_rd16(s + 13);
+    const uint32_t p0 = NM_REGION_OFFSET + nm_rd16(s + (ch0 + 2 - NES_SONG_BASE)) - NES_SONG_BASE;
+    const uint32_t p4 = NM_REGION_OFFSET + nm_rd16(s + (ch4 + 2 - NES_SONG_BASE)) - NES_SONG_BASE;
+    const uint32_t lng = list + 4 * (NES_DPCM_MAP_LONG_15 - 1);
+    struct {
+        uint32_t at;
+        uint8_t value;
+        const char* what;
+    } cases[] = {
+        {NES_IMAGE_HEADER_DPCM_COUNT, 64, "64 DPCM list entries"},
+        {NES_IMAGE_HEADER_DPCM_COUNT, 0, "DPCM notes without a DPCM list"},
+        {NES_IMAGE_HEADER_DPCM_COUNT, NES_DPCM_MAPPINGS - 1, "a DPCM note past the list (mapping 8 used)"},
+        {list + 2, 0x8F, "an entry enabling the DMC IRQ"},
+        {list + 2, 0x1F, "an entry with an unused $4010 bit"},
+        {list + 3, 128, "initial level 128"},
+        {lng + 1, 0x50, "the Long sample running past the sample bytes"},
+        {list, 0x1E, "a sample starting past the sample bytes"},
+        {NES_IMAGE_HEADER_SAMPLE_SIZE, (uint8_t)(NES_DPCM_DMC_SIZE - 1), "sample bytes after the sample block"},
+        {NES_IMAGE_HEADER_SAMPLE_SIZE + 1, 0x40, "a sample block past the vectors"},
+        {NES_IMAGE_HEADER_SAMPLE_START, 0x01, "a sample block not 64-aligned"},
+        {NES_IMAGE_HEADER_SAMPLE_START + 1, 0xBF, "a sample block below $C000"},
+        {NES_IMAGE_HEADER_SAMPLE_START + 1, 0x00, "a sample block size without a start"},
+        {NES_IMAGE_HEADER_SAMPLE_START, 0x40, "a sample block start above the samples ($C040)"},
+        {NM_REGION_OFFSET + 4, 0xC0, "the DPCM list outside the data"},
+        {p4, 0x45, "a release on the DPCM channel"},
+        {p4, 0x80, "an instrument on the DPCM channel"},
+        {p4, 0x4E, "fine pitch on the DPCM channel"},
+        {p4, 0x70, "a volume on the DPCM channel"},
+        {p4, 0x40, "an extended DPCM note past the list"},
+        {p0, 0x52, "the delta counter on pulse 1"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        bad = g_dthor;
+        bad.bytes[cases[i].at] = cases[i].value;
+        int r = nm_load_image(&bad);
+        EXPECT(r != 0, "rejected: %s", cases[i].what);
+        if (r) printf("    %s: %s\n", cases[i].what, bad.info.problem);
+    }
+    bad = g_dthor;
+    EXPECT(nm_load_image(&bad) == 0, "the unmodified copy still loads");
+}
+
+static void write_dpcm_evidence(NesMachine* m, const char* dir, const Trace* thor) {
+    char path[512];
+    static float wav[NM_MAX_TICK_FRAMES * 2 * 60 * 30];
+    int mode;
+    for (int dmc_only = 0; dmc_only < 2; ++dmc_only) {
+        int frames = 0;
+        nm_start(m, &g_dthor, 0, 0, 0, &mode);
+        for (int c = 0; c < 4 && dmc_only; ++c) nm_mute_channel(m, c, 1);
+        for (int f = 0; f < 60 * 30; ++f) {
+            int n = nm_tick(m, wav + 2 * frames);
+            frames += n > 0 ? n : 0;
+        }
+        snprintf(path, sizeof path, "%s/%s", dir, dmc_only ? "nes_dpcm_dmc.wav" : "nes_dpcm.wav");
+        write_wav(path, wav, frames);
+        printf("  wrote %s (%.1f s)\n", path, frames / (double)RATE);
+    }
+    snprintf(path, sizeof path, "%s/nes_dpcm_trace.txt", dir);
+    FILE* ft = fopen(path, "w");
+    if (ft) {
+        fprintf(ft, "# frame: APU writes as reg=value (hex), FamiStudio 4.5.3 player (FamiTracker tempo), dpcm_test\n");
+        for (int f = 0; f < thor->frames; ++f) {
+            fprintf(ft, "%d:", f);
+            for (int i = 0; i < thor->n[f]; ++i) fprintf(ft, " 40%02X=%02X", thor->w[f][2 * i], thor->w[f][2 * i + 1]);
+            fprintf(ft, "\n");
+        }
+        fclose(ft);
+    }
+    snprintf(path, sizeof path, "%s/nes_dpcm.nsf", dir);
+    FILE* fn = fopen(path, "wb");
+    if (fn) {
+        uint8_t h[128];
+        memset(h, 0, sizeof h);
+        memcpy(h, "NESM\x1A", 5);
+        h[5] = 1, h[6] = 1, h[7] = 1;
+        h[8] = 0x00, h[9] = 0x80;
+        h[10] = (uint8_t)NES_PLAYER_INIT, h[11] = (uint8_t)(NES_PLAYER_INIT >> 8);
+        h[12] = (uint8_t)NES_PLAYER_PLAY, h[13] = (uint8_t)(NES_PLAYER_PLAY >> 8);
+        strcpy((char*)h + 0x0E, "Thor Tracker DPCM test");
+        strcpy((char*)h + 0x2E, "Thor Tracker");
+        strcpy((char*)h + 0x4E, "FamiStudio 4.5.3 engine");
+        h[0x6E] = 0xFF, h[0x6F] = 0x40;
+        h[0x78] = 0x20, h[0x79] = 0x4E;
+        fwrite(h, 1, sizeof h, fn);
+        static uint8_t body[NES_SAMPLE_BASE - 0x8000 + NES_DPCM_DMC_SIZE];
+        memset(body, 0, sizeof body);
+        memcpy(body, nes_player_code, NES_PLAYER_SIZE);
+        memcpy(body + (NES_SONG_BASE - 0x8000), nes_dpcm_raw, NES_DPCM_RAW_SIZE);
+        memcpy(body + (NES_SAMPLE_BASE - 0x8000), nes_dpcm_dmc, NES_DPCM_DMC_SIZE);
+        fwrite(body, 1, sizeof body, fn);
+        fclose(fn);
+    }
+}
+
+static void test_dpcm_playback(NesMachine* m, const char* dir) {
+    const int pass_rows = D_FIRST_PASS_ROWS + 2 * D_LOOP_ROWS;
+    const int frames = dpcm_frames(pass_rows), first = dpcm_frames(D_FIRST_PASS_ROWS);
+    printf("FamiStudio's export of dpcm_test.txt with its .dmc samples: %d rows (first pass + 2 loops), %d frames\n", pass_rows,
+           frames);
+    Trace raw, thor;
+    trace_alloc(&raw, frames);
+    trace_alloc(&thor, frames);
+    play_trace(m, &g_draw, &raw);
+    static NesDmc dmc[8192];
+    static int pos[8192][3];
+    int mode, faults = 0;
+    double sum2 = 0, peak = 0, t0 = now_us();
+    nm_start(m, &g_dthor, 0, 0, 0, &mode);
+    nm_set_apu_logging(m, 1);
+    for (int f = 0; f < frames; ++f) {
+        nm_position(m, &pos[f][0], &pos[f][1], &pos[f][2]);
+        int n = nm_tick(m, g_out);
+        if (n <= 0) {
+            ++faults;
+            break;
+        }
+        record(m, &thor, f);
+        dmc[f] = nm_apu(m)->dmc;
+        for (int i = 0; i < 2 * n; ++i) {
+            double v = fabs(g_out[i]);
+            if (v > peak) peak = v;
+            sum2 += g_out[i] * g_out[i];
+        }
+    }
+    const double rms = sqrt(sum2 / (2.0 * frames * 798.7)), per_tick = (now_us() - t0) / frames;
+    printf("  rms %.4f, peak %.4f, %.1f us per tick (%.0fx realtime)\n", rms, peak, per_tick, 16639.0 / per_tick);
+    EXPECT(faults == 0 && rms > 0.03 && peak < 1.0, "plays without faults, non-silent, unclipped (rms %.4f peak %.4f)", rms, peak);
+    int d = first_difference(&raw, &thor, 0, frames);
+    int dmc_writes = 0;
+    for (int reg = 0x10; reg <= 0x15; ++reg) dmc_writes += reg == 0x14 ? 0 : count_writes(&thor, 0, frames, (uint8_t)reg, -1);
+    EXPECT(d < 0 && dmc_writes > 150,
+           "Thor layout + samples writes the same APU registers as FamiStudio's export + .dmc, all %d frames, %d of them "
+           "$4010-$4013/$4015 (first difference %d)",
+           frames, dmc_writes, d);
+
+    int k = 0, bad_rows = 0, row_start = 0;
+    for (int f = 0; f < frames; ++f) {
+        if (pos[f][2] != 0) continue;
+        int o, r, len;
+        dpcm_song_row(k++, &o, &r, &len);
+        if (pos[f][0] != o || pos[f][1] != r || f != row_start) ++bad_rows;
+        row_start += len;
+    }
+    EXPECT(bad_rows == 0 && k == pass_rows, "%d row starts at the frames speed (Fxx 6/5/3/7) gives (%d wrong)", k, bad_rows);
+
+    /* The DMC writes the text asks for, at their rows and frames (delay, cut, stop, delta counter, no attack). */
+    int starts = 0, bad = 0;
+    for (int i = 0; i < NES_DPCM_EVENTS; ++i) {
+        const int16_t* e = nes_dpcm_events[i];
+        const int f = dpcm_row_frame(e[0], e[1]) + e[2];
+        uint8_t w[12];
+        int n = 0;
+        if (e[3] == 1) {
+            const uint8_t play[] = {0x15, 0x0F, 0x12, (uint8_t)e[5], 0x13, (uint8_t)e[6], 0x10, (uint8_t)e[4]};
+            memcpy(w, play, sizeof play);
+            n = sizeof play;
+            if (e[7] >= 0) w[n++] = 0x11, w[n++] = (uint8_t)e[7];
+            w[n++] = 0x15, w[n++] = 0x1F;
+            ++starts;
+        } else if (e[3] == 2) {
+            w[n++] = 0x15, w[n++] = 0x0F;
+        } else {
+            w[n++] = 0x11, w[n++] = (uint8_t)e[7];
+        }
+        if (!has_writes(&thor, f, w, n / 2) && bad++ < 3) printf("  event %d (%d/%d +%d kind %d) missing at frame %d\n", i, e[0], e[1], e[2], e[3], f);
+    }
+    EXPECT(bad == 0, "all %d DMC events of dpcm_test.txt at their rows and frames, register for register", NES_DPCM_EVENTS);
+    EXPECT(count_writes(&thor, 0, first, 0x15, 0x1F) == starts, "%d sample starts in the first pass and no others", starts);
+
+    /* Samples play bit for bit: after a whole sample the level equals the bit model from the start level. */
+    const int16_t* kick = dpcm_event(0, 10, 1);
+    const int16_t* lng = dpcm_event(3, 0, 1);
+    const int kick_end = dpcm_row_frame(0, 12) - 1, long_end = dpcm_row_frame(3, 8) - 1;
+    const int want_kick = dmc_model(kick[7], nes_dpcm_dmc + 64 * kick[5], 16 * kick[6] + 1);
+    const int want_long = dmc_model(lng[7], nes_dpcm_dmc + 64 * lng[5], 16 * lng[6] + 1);
+    EXPECT(dmc[kick_end].remaining == 0 && dmc[kick_end].level == want_kick,
+           "Kick at rate $C (order 0 row 10): after its %d bytes the level is %d, the bit model gives %d", 16 * kick[6] + 1,
+           dmc[kick_end].level, want_kick);
+    EXPECT(dmc[long_end].remaining == 0 && dmc[long_end].level == want_long,
+           "Long at rate $F from level 0 (order 3 row 0): after its %d bytes the level is %d, the bit model gives %d",
+           16 * lng[6] + 1, dmc[long_end].level, want_long);
+    const int f_long = dpcm_row_frame(3, 0);
+    int long_frames = 0;
+    while (f_long + long_frames < frames && dmc[f_long + long_frames].remaining) ++long_frames;
+    EXPECT(long_frames >= 14 && long_frames <= 15, "its 1025 bytes are fetched in %d frames (1025 x 8 x 54 cycles = 14.9 frames)",
+           long_frames);
+
+    /* Looped samples run until the Stop (order 1 rows 0-3; order 3 rows 8-14). */
+    const int loops[2][3] = {{1, 0, 4}, {3, 8, 15}};
+    for (int i = 0; i < 2; ++i) {
+        const int l0 = dpcm_row_frame(loops[i][0], loops[i][1]), l1 = dpcm_row_frame(loops[i][0], loops[i][2]);
+        int looping = 1;
+        for (int f = l0; f < l1; ++f) looping &= dmc[f].remaining > 0 && (dmc[f].ctrl & 0x40);
+        const uint32_t fetched = dmc[l1 - 1].fetches - dmc[l0 - 1].fetches;
+        EXPECT(looping && fetched > 3 * 33 && dmc[l1].remaining == 0,
+               "looped 33-byte sample at order %d rows %d-%d: %u bytes fetched (%.1f passes), stopped at row %d", loops[i][0],
+               loops[i][1], loops[i][2] - 1, fetched, fetched / 33.0, loops[i][2]);
+    }
+
+    /* The DMC alone (others muted) is audible, and the render is deterministic. */
+    uint64_t h[2];
+    double e_dmc = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        nm_start(m, &g_dthor, 0, 0, 0, &mode);
+        for (int c = 0; c < 4; ++c) nm_mute_channel(m, c, 1);
+        h[pass] = 0xCBF29CE484222325ull;
+        for (int f = 0; f < first; ++f) {
+            int n = nm_tick(m, g_out);
+            h[pass] = fnv(h[pass], g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+            if (!pass) {
+                for (int i = 0; i < 2 * n; ++i) e_dmc += g_out[i] * g_out[i];
+            }
+        }
+    }
+    EXPECT(h[0] == h[1] && e_dmc > 10.0, "DMC alone: audible (energy %.1f over the first pass), deterministic", e_dmc);
+    write_dpcm_evidence(m, dir, &thor);
+    trace_free(&raw);
+    trace_free(&thor);
+}
+
+static void test_dpcm_seek(NesMachine* m) {
+    printf("DPCM seek: the DMC carries over a seek\n");
+    const int frames = dpcm_frames(D_FIRST_PASS_ROWS + D_LOOP_ROWS);
+    Trace ref, t;
+    trace_alloc(&ref, frames);
+    trace_alloc(&t, frames);
+    static NesDmc ref_dmc[8192];
+    int mode;
+    nm_start(m, &g_dthor, 0, 0, 0, &mode);
+    nm_set_apu_logging(m, 1);
+    for (int f = 0; f < frames; ++f) {
+        nm_tick_silent(m);
+        record(m, &ref, f);
+        ref_dmc[f] = nm_apu(m)->dmc;
+    }
+    /* In the sample-heavy order 2 (a note every row), mid-loop (order 1 row 2), mid-Long (order 3 row 4). */
+    const int targets[][2] = {{2, 5}, {2, 9}, {2, 13}, {1, 2}, {3, 4}};
+    for (size_t i = 0; i < sizeof targets / sizeof targets[0]; ++i) {
+        const int o = targets[i][0], r = targets[i][1], f0 = dpcm_row_frame(o, r);
+        const double s0 = now_us();
+        const int res = nm_start(m, &g_dthor, o, r, 12000, &mode);
+        printf("  seek to %d/%d (%d frames): %.3f ms\n", o, r, f0, (now_us() - s0) / 1000.0);
+        const NesDmc landed = nm_apu(m)->dmc;
+        const int same_state = res == NM_OK && mode == NM_SEEK_FROM_START && nm_frames(m) == (uint32_t)f0 && dmc_equal(&landed, &ref_dmc[f0 - 1]);
+        nm_set_apu_logging(m, 1);
+        int diff = -1;
+        for (int k = 0; k < 200 && f0 + k < frames; ++k) {
+            nm_tick_silent(m);
+            record(m, &t, f0 + k);
+            if (!same_frame(&ref, &t, f0 + k) || !dmc_equal(&nm_apu(m)->dmc, &ref_dmc[f0 + k])) {
+                diff = k;
+                break;
+            }
+        }
+        EXPECT(same_state && diff < 0,
+               "seek to %d/%d: DMC (level %d, %u bytes left) = straight play's at frame %d; writes and DMC in step for 200 frames "
+               "(first difference %d)",
+               o, r, landed.level, landed.remaining, f0, diff);
+    }
+    /* What is heard: the DMC alone after a seek into order 2 equals straight play from that frame. */
+    NesMachine* straight = nm_create(RATE);
+    const int f0 = dpcm_row_frame(2, 5);
+    nm_start(m, &g_dthor, 2, 5, 12000, &mode);
+    nm_start(straight, &g_dthor, 0, 0, 0, &mode);
+    for (int f = 0; f < f0; ++f) nm_tick_silent(straight);
+    uint64_t h1 = 0xCBF29CE484222325ull, h2 = h1;
+    for (int c = 0; c < 4; ++c) {
+        nm_mute_channel(m, c, 1);
+        nm_mute_channel(straight, c, 1);
+    }
+    for (int f = 0; f < 120; ++f) {
+        int n = nm_tick(m, g_out);
+        h1 = fnv(h1, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+        n = nm_tick(straight, g_out);
+        h2 = fnv(h2, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+    }
+    EXPECT(h1 == h2, "DMC heard after the seek to 2/5 = straight play's (120 frames, same samples)");
+    nm_destroy(straight);
+    /* Order fallback: the streams start at order 2; its DMC writes run in step with straight play. */
+    EXPECT(nm_start(m, &g_dthor, 2, 5, 40, &mode) == NM_OK && mode == NM_SEEK_FROM_ORDER, "budget 40: seek from order 2's start");
+    nm_set_apu_logging(m, 1);
+    int in_step = 1;
+    for (int k = 0; k < 120; ++k) {
+        nm_tick_silent(m);
+        record(m, &t, f0 + k);
+        in_step &= same_dmc_writes(&ref, f0 + k, &t, f0 + k);
+    }
+    EXPECT(in_step, "after the fallback the DMC writes run in step with straight play (120 frames)");
+    trace_free(&ref);
+    trace_free(&t);
+}
+
+static void test_dpcm_apply(NesMachine* m) {
+    printf("DPCM live edits: samples moved, edited, unchanged\n");
+    const int frames = dpcm_frames(D_FIRST_PASS_ROWS + D_LOOP_ROWS);
+    Trace ref, t;
+    trace_alloc(&ref, frames);
+    trace_alloc(&t, frames);
+    play_trace(m, &g_dthor, &ref);
+    uint8_t to_plain[256];
+    const uint8_t* l = dpcm_list(&g_dthor);
+    const uint8_t* lm = dpcm_list(&g_dmoved);
+    for (int k = 0; k < NES_DPCM_MAPPINGS; ++k) to_plain[lm[4 * k]] = l[4 * k];
+    /* Every block and every sample moved, applied before every frame (alternating images). */
+    int mode, relocated = 0, diff = -1;
+    double worst_us = 0;
+    nm_start(m, &g_dthor, 0, 0, 0, &mode);
+    nm_set_apu_logging(m, 1);
+    for (int f = 0; f < frames; ++f) {
+        const NesDmc before = nm_apu(m)->dmc;
+        const double a0 = now_us();
+        nm_apply_image(m, (f & 1) ? &g_dmoved : &g_dthor);
+        if (now_us() - a0 > worst_us) worst_us = now_us() - a0;
+        relocated += before.remaining && nm_apu(m)->dmc.start != before.start && nm_apu(m)->dmc.addr != before.addr;
+        nm_tick_silent(m);
+        record(m, &t, f);
+        for (int i = 0; i < t.n[f]; ++i) {
+            if ((f & 1) && t.w[f][2 * i] == 0x12) t.w[f][2 * i + 1] = to_plain[t.w[f][2 * i + 1]];
+        }
+        if (diff < 0 && !same_frame(&ref, &t, f)) diff = f;
+    }
+    EXPECT(diff < 0 && relocated > 100,
+           "moved samples applied before every frame: the same writes ($4012 = the moved address of the same sample) for %d frames, "
+           "%d playing samples relocated (first difference %d)",
+           frames, relocated, diff);
+    printf("  worst apply_image: %.1f us\n", worst_us);
+    uint64_t h[2];
+    for (int pass = 0; pass < 2; ++pass) {
+        nm_start(m, &g_dthor, 0, 0, 0, &mode);
+        for (int c = 0; c < 4; ++c) nm_mute_channel(m, c, 1);
+        h[pass] = 0xCBF29CE484222325ull;
+        for (int f = 0; f < frames; ++f) {
+            if (pass) nm_apply_image(m, (f & 1) ? &g_dmoved : &g_dthor);
+            int n = nm_tick(m, g_out);
+            h[pass] = fnv(h[pass], g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+        }
+    }
+    EXPECT(h[0] == h[1], "the DMC sounds identical with the samples moving under it every frame");
+
+    /* An edited sample stops while it plays; an unchanged one continues. */
+    nm_start(m, &g_dthor, 0, 0, 0, &mode);
+    nm_tick_silent(m);
+    nm_tick_silent(m);
+    const NesDmc kick = nm_apu(m)->dmc;
+    nm_apply_image(m, &g_dedited);
+    const NesDmc stopped = nm_apu(m)->dmc;
+    nm_tick_silent(m);
+    EXPECT(kick.remaining > 0 && kick.start == 0 && stopped.remaining == 0 && nm_apu(m)->dmc.fetches == stopped.fetches,
+           "the playing Kick stops when its bytes change (%u bytes were left)", kick.remaining);
+    nm_start(m, &g_dthor, 0, 4, 12000, &mode);
+    nm_tick_silent(m);
+    const NesDmc snare = nm_apu(m)->dmc;
+    nm_apply_image(m, &g_dedited);
+    const NesDmc kept = nm_apu(m)->dmc;
+    nm_tick_silent(m);
+    EXPECT(snare.remaining > 0 && snare.start != 0 && dmc_equal(&kept, &snare) && nm_apu(m)->dmc.fetches > kept.fetches,
+           "the playing Snare continues: its bytes did not change");
+    const int16_t* e = dpcm_event(0, 8, 1);
+    const int n = 16 * e[6] + 1;
+    const int want_edit = dmc_model(e[7], nes_dpcm_edited_samples + 64 * e[5], n);
+    const int want_old = dmc_model(e[7], nes_dpcm_dmc + 64 * e[5], n);
+    nm_start(m, &g_dthor, 0, 7, 12000, &mode);
+    nm_apply_image(m, &g_dedited);
+    while (nm_frames(m) < (uint32_t)dpcm_row_frame(0, 10)) nm_tick_silent(m);
+    EXPECT(want_edit != want_old && nm_apu(m)->dmc.level == want_edit,
+           "the next Kick plays the edited bytes (level %d; model %d, unedited %d)", nm_apu(m)->dmc.level, want_edit, want_old);
+
+    /* The same image mid-sample: nothing changes. */
+    uint64_t h1 = 0xCBF29CE484222325ull, h2 = h1;
+    for (int pass = 0; pass < 2; ++pass) {
+        nm_start(m, &g_dthor, 0, 0, 0, &mode);
+        for (int f = 0; f < 300; ++f) {
+            if (pass && (f == 2 || f == 100)) nm_apply_image(m, &g_dthor);
+            int k = nm_tick(m, g_out);
+            if (pass) h2 = fnv(h2, g_out, sizeof(float) * 2 * (size_t)(k > 0 ? k : 0));
+            else h1 = fnv(h1, g_out, sizeof(float) * 2 * (size_t)(k > 0 ? k : 0));
+        }
+    }
+    EXPECT(h1 == h2, "applying the same image mid-sample changes nothing heard");
+    trace_free(&ref);
+    trace_free(&t);
+}
+
+static void test_dpcm_audition(NesMachine* m) {
+    printf("DPCM audition: a mapping's sample through the engine; release = stop\n");
+    EXPECT(nm_audition(m, &g_dthor, 4, NES_DPCM_MAP_KICK_15, 0, 0) == NM_OK, "audition DPCM mapping Kick (rate $F)");
+    nm_set_apu_logging(m, 1);
+    const int n = nm_tick(m, g_out);
+    Trace t;
+    trace_alloc(&t, 1);
+    record(m, &t, 0);
+    const uint8_t* e = dpcm_list(&g_dthor) + 4 * (NES_DPCM_MAP_KICK_15 - 1);
+    const uint8_t want[] = {0x15, 0x0F, 0x12, e[0], 0x13, e[1], 0x10, e[2], 0x11, e[3], 0x15, 0x1F};
+    const NesApu* a = nm_apu(m);
+    EXPECT(n > 0 && has_writes(&t, 0, want, 6) && a->dmc.remaining > 0,
+           "the first tick starts the Kick: $4012=%02X $4013=%02X $4010=%02X $4011=%02X, $4015=$1F", e[0], e[1], e[2], e[3]);
+    FrameState st;
+    capture_state(a, &st);
+    EXPECT(!st.vol[0] && !st.vol[1] && !st.vol[3] && count_writes(&t, 0, 1, 0x15, 0x1F) == 1, "only the DMC sounds");
+    EXPECT(energy(m, 4) > 0.05, "audible");
+    EXPECT(nm_release(m) == 0, "release on DPCM: 0 (stop now; the host drops the machine)");
+    nm_audition(m, &g_dthor, 4, NES_DPCM_MAP_LOOP_13, 0, 0);
+    for (int i = 0; i < 120; ++i) nm_tick(m, g_out);
+    EXPECT(nm_apu(m)->dmc.remaining > 0 && nm_apu(m)->dmc.fetches > 120 * 29780 / (8 * 84) * 9 / 10,
+           "a looped mapping sustains for 2 s (%u bytes fetched)", nm_apu(m)->dmc.fetches);
+    EXPECT(nm_audition(m, &g_dthor, 4, 0, 0, 0) == NM_ERR_IMAGE && nm_audition(m, &g_dthor, 4, NES_DPCM_MAPPINGS + 1, 0, 0) == NM_ERR_IMAGE,
+           "list entries outside 1..%d rejected", NES_DPCM_MAPPINGS);
+    EXPECT(nm_audition(m, &g_draw, 4, 1, 0, 0) == NM_ERR_IMAGE, "raw layout cannot audition");
+    trace_free(&t);
+}
+
+static void test_dpcm_mute(NesMachine* m) {
+    printf("DPCM mute: channel 4 silent in the mixer, the sample keeps running\n");
+    int mode;
+    nm_start(m, &g_dthor, 2, 0, 12000, &mode);
+    for (int c = 0; c < 4; ++c) nm_mute_channel(m, c, 1);
+    const double e_on = energy(m, 30);
+    nm_mute_channel(m, 4, 1);
+    energy(m, 6); /* the output stage settles from the step to level 0 */
+    const uint32_t fetched = nm_apu(m)->dmc.fetches;
+    const double e_off = energy(m, 24);
+    const uint32_t during = nm_apu(m)->dmc.fetches - fetched;
+    nm_mute_channel(m, 4, 0);
+    const double e_back = energy(m, 30);
+    EXPECT(e_on > 0.05 && e_off < e_on * 0.01 && e_back > 0.05 && during > 100,
+           "DMC energy %.3f, muted %.5f, unmuted %.3f; %u bytes fetched while muted", e_on, e_off, e_back, during);
+}
+
+static void test_dpcm_chip_ops(void) {
+    printf("chip engine interface: DPCM image, audition borrowing channel 4\n");
+    const ChipEngineOps* ops = chip_engine_ops("nes-famistudio");
+    ChipImage* img = (ChipImage*)malloc(ops->image_storage);
+    EXPECT(ops->load_image(img, g_dthor.bytes, ops->image_size) == CHIP_OK, "DPCM image loads through the ops");
+    ChipMachine* cm = ops->create(RATE);
+    ChipMachine* au = ops->create(RATE);
+    int mode, order, row, tick;
+    EXPECT(ops->start(cm, img, 2, 0, 12000, &mode) == CHIP_OK, "start at order 2");
+    EXPECT(ops->audition(au, img, 4, NES_DPCM_MAP_SNARE_15, 1, 0) == CHIP_OK, "audition DPCM mapping Snare with slot 1");
+    EXPECT(ops->audition(au, img, 4, NES_DPCM_MAP_SNARE_15, 0, 0) == CHIP_ERR_IMAGE, "slot 0 still rejected");
+    ops->audition(au, img, 4, NES_DPCM_MAP_SNARE_15, 1, 0);
+    EXPECT(ops->mute(cm, 4, 1) == CHIP_OK, "song's DPCM muted while auditioning");
+    int n1 = ops->tick(cm, g_out), n2 = ops->tick(au, g_out);
+    EXPECT(n1 > 0 && n2 > 0 && nm_apu((const NesMachine*)au)->dmc.remaining > 0, "both tick, the sample plays");
+    EXPECT(ops->release(au) == 0, "release = stop");
+    EXPECT(ops->mute(cm, 4, 0) == CHIP_OK, "unmute");
+    ops->position(cm, &order, &row, &tick);
+    EXPECT(order == 2 && row == 0 && tick == 1, "song position kept (%d/%d/%d)", order, row, tick);
+    ops->destroy(cm);
+    ops->destroy(au);
+    free(img);
+}
+
+/* $4012 values of frame f written while `image` was applied, mapped to g_dthor's addresses of the same mappings. */
+static void map_sample_starts(Trace* t, int f, const NesImage* image) {
+    const uint8_t* from = dpcm_list(image);
+    const uint8_t* to = dpcm_list(&g_dthor);
+    for (int i = 0; i < t->n[f]; ++i) {
+        if (t->w[f][2 * i] != 0x12) continue;
+        for (int k = 0; k < NES_DPCM_MAPPINGS; ++k) {
+            if (from[4 * k] == t->w[f][2 * i + 1]) {
+                t->w[f][2 * i + 1] = to[4 * k];
+                break;
+            }
+        }
+    }
+}
+
+/* DMC-only render (other channels muted), applying `alternate` before every odd frame if given. */
+static uint64_t dmc_hash(NesMachine* m, const NesImage* image, const NesImage* alternate, int frames) {
+    int mode;
+    nm_start(m, image, 0, 0, 0, &mode);
+    for (int c = 0; c < 4; ++c) nm_mute_channel(m, c, 1);
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (int f = 0; f < frames; ++f) {
+        if (alternate) nm_apply_image(m, (f & 1) ? alternate : image);
+        int n = nm_tick(m, g_out);
+        h = fnv(h, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+    }
+    return h;
+}
+
+static void test_shared_region(NesMachine* m) {
+    printf("one region for song data and samples: a big sample-less song, a song ending at its samples\n");
+    /* ft_test with its patterns at the top: the song data fills $8C00-$FFF9. */
+    const NesImageInfo* b = &g_big.info;
+    const uint8_t* s = nm_region(&g_big);
+    const uint16_t ch0 = nm_rd16(s + 5), pat0 = nm_rd16(s + (ch0 + 2 - NES_SONG_BASE));
+    EXPECT(b->size == NM_REGION_SIZE && b->size > 24570 && !b->samples && !b->sample_start && pat0 >= 0xC000,
+           "sample-less image with %u bytes of song data (0.9.0's limit: 24570), patterns at $%04X", b->size, pat0);
+    const int frames = song_frames(FIRST_PASS_ROWS + 2 * LOOP_ROWS);
+    Trace ref, t;
+    trace_alloc(&ref, frames);
+    trace_alloc(&t, frames);
+    play_trace(m, &g_thor, &ref);
+    play_trace(m, &g_big, &t);
+    int d = first_difference(&ref, &t, 0, frames);
+    EXPECT(d < 0, "it plays: the same APU writes as the compact layout for %d frames (first difference %d)", frames, d);
+    int mode;
+    nm_start(m, &g_thor, 0, 0, 0, &mode);
+    nm_set_apu_logging(m, 1);
+    for (int f = 0; f < frames; ++f) {
+        nm_apply_image(m, (f & 1) ? &g_big : &g_thor);
+        nm_tick_silent(m);
+        record(m, &t, f);
+    }
+    d = first_difference(&ref, &t, 0, frames);
+    EXPECT(d < 0, "live apply between the compact and the full-region layout before every frame: same writes (first difference %d)", d);
+    const int f0 = row_frame(2, 8);
+    EXPECT(nm_start(m, &g_big, 2, 8, 12000, &mode) == NM_OK && nm_frames(m) == (uint32_t)f0, "seek to 2/8 in it");
+    nm_set_apu_logging(m, 1);
+    int in_step = 1;
+    for (int k = 0; k < 200; ++k) {
+        nm_tick_silent(m);
+        record(m, &t, f0 + k);
+        in_step &= same_frame(&ref, &t, f0 + k);
+    }
+    EXPECT(in_step, "  ... in step with straight play for 200 frames");
+    trace_free(&ref);
+    trace_free(&t);
+
+    /* dpcm_test with its samples packed at the top and the song data ending exactly where they start. */
+    const NesImageInfo* x = &g_dboundary.info;
+    EXPECT(x->sample_start == NES_DPCM_BOUNDARY_SAMPLE_START && NES_SONG_BASE + x->size == x->sample_start &&
+               x->samples == NES_DPCM_BOUNDARY_SAMPLES_SIZE && x->sample_start + x->samples <= NES_REGION_END && x->size > 13312,
+           "samples at $%04X-$%04X, %u bytes of song data ending exactly at them", x->sample_start, x->sample_start + x->samples - 1,
+           x->size);
+    const int dframes = dpcm_frames(D_FIRST_PASS_ROWS + 2 * D_LOOP_ROWS);
+    trace_alloc(&ref, dframes);
+    trace_alloc(&t, dframes);
+    play_trace(m, &g_dthor, &ref);
+    play_trace(m, &g_dboundary, &t);
+    for (int f = 0; f < dframes; ++f) map_sample_starts(&t, f, &g_dboundary);
+    d = first_difference(&ref, &t, 0, dframes);
+    EXPECT(d < 0, "it plays: the same APU writes as the $C000 layout ($4012 = the same samples) for %d frames (first difference %d)",
+           dframes, d);
+    const uint64_t h_plain = dmc_hash(m, &g_dthor, NULL, dframes);
+    EXPECT(dmc_hash(m, &g_dboundary, NULL, dframes) == h_plain, "the DMC sounds sample-identical");
+    EXPECT(dmc_hash(m, &g_dthor, &g_dboundary, dframes) == h_plain,
+           "live apply between the two before every frame (samples move $C000 <-> $%04X): the DMC sounds identical", x->sample_start);
+    static NesImage bad;
+    bad = g_dboundary;
+    bad.bytes[10] = (uint8_t)(x->size + 1);
+    bad.bytes[11] = (uint8_t)((x->size + 1) >> 8);
+    EXPECT(nm_load_image(&bad) != 0, "one more byte of song data overlaps the samples: rejected (%s)", bad.info.problem);
+    bad = g_dboundary;
+    bad.bytes[NES_IMAGE_HEADER_SAMPLE_START] = (uint8_t)(x->sample_start - 64);
+    bad.bytes[NES_IMAGE_HEADER_SAMPLE_START + 1] = (uint8_t)((x->sample_start - 64) >> 8);
+    EXPECT(nm_load_image(&bad) != 0, "a sample block starting 64 bytes into the song data: rejected (%s)", bad.info.problem);
+    trace_free(&ref);
+    trace_free(&t);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
-    nm_build_raw_image(&g_raw, nes_ft_raw, NES_FT_RAW_SIZE, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
+    nm_build_raw_image(&g_raw, nes_ft_raw, NES_FT_RAW_SIZE, NULL, 0, 0, NES_FT_ROWS, NES_FT_ORDERS, NES_FT_LOOP);
     EXPECT(nm_load_image(&g_raw) == 0, "raw FamiStudio export loads (%s)", g_raw.info.problem ? g_raw.info.problem : "-");
     load_fixture(&g_thor, nes_ft_thor, NES_FT_THOR_SIZE, "Thor layout");
     load_fixture(&g_moved, nes_ft_moved, NES_FT_MOVED_SIZE, "moved");
     load_fixture(&g_edited, nes_ft_edited, NES_FT_EDITED_SIZE, "edited");
     load_fixture(&g_short, nes_ft_short, NES_FT_SHORT_SIZE, "short");
+    nm_build_raw_image(&g_draw, nes_dpcm_raw, NES_DPCM_RAW_SIZE, nes_dpcm_dmc, NES_DPCM_DMC_SIZE, 0, NES_DPCM_ROWS, NES_DPCM_ORDERS,
+                       NES_DPCM_LOOP);
+    EXPECT(nm_load_image(&g_draw) == 0, "raw DPCM export + .dmc loads (%s)", g_draw.info.problem ? g_draw.info.problem : "-");
+    load_split(&g_dthor, nes_dpcm_thor, NES_DPCM_THOR_SIZE, NES_DPCM_THOR_SAMPLE_START, nes_dpcm_thor_samples,
+               NES_DPCM_THOR_SAMPLES_SIZE, "DPCM Thor layout");
+    load_split(&g_dmoved, nes_dpcm_moved, NES_DPCM_MOVED_SIZE, NES_DPCM_MOVED_SAMPLE_START, nes_dpcm_moved_samples,
+               NES_DPCM_MOVED_SAMPLES_SIZE, "DPCM moved");
+    load_split(&g_dedited, nes_dpcm_edited, NES_DPCM_EDITED_SIZE, NES_DPCM_EDITED_SAMPLE_START, nes_dpcm_edited_samples,
+               NES_DPCM_EDITED_SAMPLES_SIZE, "DPCM edited");
+    load_split(&g_dboundary, nes_dpcm_boundary, NES_DPCM_BOUNDARY_SIZE, NES_DPCM_BOUNDARY_SAMPLE_START, nes_dpcm_boundary_samples,
+               NES_DPCM_BOUNDARY_SAMPLES_SIZE, "DPCM samples at the top, song data up to them");
+    load_fixture(&g_big, nes_ft_big, NES_FT_BIG_SIZE, "song data filling the whole region");
     NesMachine* m = nm_create(RATE);
     if (!m) {
         printf("nm_create failed\n");
@@ -1097,6 +1930,7 @@ int main(int argc, char** argv) {
     }
     test_apu_pitch();
     test_apu_counters();
+    test_apu_dmc();
     test_player_image(m);
     test_images();
     test_playback(m, dir);
@@ -1106,6 +1940,14 @@ int main(int argc, char** argv) {
     test_mute(m);
     test_faults(m);
     test_chip_engine_ops();
+    test_dpcm_images();
+    test_dpcm_playback(m, dir);
+    test_dpcm_seek(m);
+    test_dpcm_apply(m);
+    test_dpcm_audition(m);
+    test_dpcm_mute(m);
+    test_dpcm_chip_ops();
+    test_shared_region(m);
     nm_destroy(m);
     printf("NES: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

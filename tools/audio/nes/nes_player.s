@@ -5,7 +5,8 @@
 ; CPU memory map (NTSC 2A03, no mapper):
 ;   $0000-$00FF  engine zero page            $0200-$07FF  engine RAM (BSS)
 ;   $0100-$01FF  stack                       $4000-$4017  APU
-;   $8000-...    this player (code + tables) NES_SONG_BASE-$FFF9  song data (FamiStudio export format)
+;   $8000-...    this player (code + tables) NES_SONG_BASE-$BFFF  song data (FamiStudio export format)
+;   $C000-$FFF9  DPCM samples (FAMISTUDIO_DPCM_OFF; the song's DPCM list holds their $4012/$4013 values)
 ;   $FFFA-$FFFF  vectors, written by the native machine (not part of the song image)
 ;
 ; Entry points (fixed addresses, NSF conventions so the same bytes form an .nsf):

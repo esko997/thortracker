@@ -424,10 +424,16 @@ class ViewController(val session: EditorSession, var state: ViewState) {
      */
     private fun entryNote(channel: Int): Int {
         val scale = noteScale(channel)
+        // A sample channel starts on the pen sound's first mapped note until a note was entered there.
+        if (lastNote[channel] == null) system.mappedNotes(song, channel, pen(bankOf(channel)))?.firstOrNull()?.let { return it }
         if (scale.isChromatic) return lastNote[channel] ?: defaultNote()
         val note = lastNote[channel] ?: (defaultNote() + scale.root).coerceIn(system.noteRange)
         return scale.snap(note, system.noteRange) ?: note
     }
+
+    /** On a sample channel: the mapped note after (dx > 0) or before [from], or null at either end. */
+    private fun mappedStep(mapped: List<Int>, from: Int, dx: Int): Int? =
+        if (dx > 0) mapped.firstOrNull { it > from } else mapped.lastOrNull { it < from }
 
     /** The song tuning when [channel] is tonal; noise channels and 12-note songs return null. */
     fun tuningFor(channel: Int): TuningMap? =
@@ -546,12 +552,14 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     write(c.copy(note = note, instrument = pen(bank)))
                     editInserted = true
                     startAudition(ch, note, pen(bank))
+                    if (system.cellProblem(song, ch, cell) == null) sampleNote(ch, note, pen(bank))
                 }
             } else {
                 lastNote[ch] = c.note
                 if (c.instrument > 0) { setPen(bank, c.instrument); state.instrument = c.instrument }
                 val detune = if (tuningFor(ch) != null) system.fine.of(c) ?: 0 else 0
                 startAudition(ch, c.note, if (c.instrument > 0) c.instrument else pen(bank), detune)
+                sampleNote(ch, c.note, if (c.instrument > 0) c.instrument else pen(bank))
             }
             1 -> when {
                 c.note < 0 -> session.note("Sounds start with a note: enter a note on this row first")
@@ -584,6 +592,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         problemNote()
     }
 
+    /** "C-3: Kick · rate F": what a note on a sample channel plays, for narrow screens without the inspector. */
+    private fun sampleNote(channel: Int, note: Int, instrument: Int) {
+        val sample = system.noteSample(song, channel, note, instrument) ?: return
+        session.note("${system.noteName(note)}: ${sample.name} · ${sample.detail}")
+    }
+
     private fun problemNote() {
         val problem = system.cellProblem(song, state.channel, cell)
         if (problem != null) session.note(problem)
@@ -601,8 +615,15 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 // otherwise take the first scale note past the octave target; no edit when none is in range.
                 // Setting a scale never touches notes; only edited notes move onto it.
                 val scale = noteScale(ch)
+                val ins = if (c.note < 0 || c.instrument == 0) pen(bank) else c.instrument
+                // A sample channel's ←→ visit only the notes its sound maps; ↑↓ still move an octave.
+                val mapped = system.mappedNotes(song, ch, ins)?.takeIf { it.isNotEmpty() && dx != 0 }
                 val note = when {
                     c.note < 0 -> entryNote(ch)
+                    mapped != null -> mappedStep(mapped, c.note, dx) ?: run {
+                        session.note("No ${if (dx > 0) "higher" else "lower"} note with a sample in sound ${EditorSession.hex2(ins)}")
+                        return
+                    }
                     scale.isChromatic -> (c.note + dx + 12 * dy).coerceIn(system.noteRange)
                     dy != 0 -> scale.octave(c.note, dy, system.noteRange) ?: run {
                         session.note("No ${scale.label} note an octave ${if (dy > 0) "above" else "below"} ${system.noteName(c.note)} within ${rangeText()}")
@@ -613,10 +634,10 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                         return
                     }
                 }
-                val ins = if (c.note < 0 || c.instrument == 0) pen(bank) else c.instrument
                 write(c.copy(note = note, instrument = ins))
                 lastNote[ch] = note
                 startAudition(ch, note, ins)
+                if (system.cellProblem(song, ch, cell) == null) sampleNote(ch, note, ins)
             }
             1 -> {
                 if (c.note < 0) { session.note("Sounds start with a note: enter a note on this row first"); return }
@@ -1030,6 +1051,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val note = keyNote(state.kbKey)
         keyHeld = true
         playKey(note)
+        sampleNote(state.channel, note, keyboardSound())
         if (state.entryMode) writeFromKeyboard(note)
     }
 
@@ -1547,6 +1569,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 0 -> {
                     val scale = noteScale(ch)
                     h += Hint(editLr(), when {
+                        system.mappedNotes(song, ch, if (c.instrument > 0) c.instrument else pen(bankOf(ch))) != null -> "Mapped sample"
                         !tonal(ch) -> "${system.channels[ch].name} pitch (no scale)"
                         tuningFor(ch) != null -> "${tuningFor(ch)!!.tuning.name} degree"
                         scale.isChromatic -> "Semitone"

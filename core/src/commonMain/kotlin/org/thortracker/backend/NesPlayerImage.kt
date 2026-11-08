@@ -6,7 +6,7 @@ package org.thortracker.backend
  * table, assembled once by `tools/audio/prepare_nes_player.py`, and the numbers of the native image layout
  * (`docs/AUDIO_ENGINE.md`, "Image layout"). The same bytes play in the app (native
  * `app/src/main/cpp/generated/nes_player_image.h`) and form an `.nsf` with the song region.
- * Image sha256 `0eb6b54733b4175bf5be436dda1f55d512effa9a98470ec47a70434132f865d1`.
+ * Image sha256 `e350a2a9a323119f5450da403744d461a0401e4867f898430ace87d96d2edfbe`.
  * Engine licence: all-permissive, notice in NOTICE.txt.
  */
 object NesPlayerImage {
@@ -15,22 +15,52 @@ object NesPlayerImage {
     const val INIT = 0x8000
     const val PLAY = 0x8003
 
-    /** Song region: FamiStudio data placed at [SONG_BASE], at most up to [SONG_END] (exclusive; vectors follow). */
-    const val SONG_BASE = 0xA000
-    const val SONG_END = 0xFFFA
+    /**
+     * Region: song data from [SONG_BASE] upward and the samples share CPU memory [SONG_BASE] until [REGION_END]
+     * (exclusive; vectors follow), [REGION_SIZE] bytes. A song without samples may use all of it; otherwise the
+     * song data must end at or below the sample block's start.
+     */
+    const val SONG_BASE = 0x8C00
+    const val REGION_END = 0xFFFA
+    const val REGION_SIZE = 29690
+
+    /**
+     * Samples: one block from a [SAMPLE_ALIGN]-aligned start at or above [SAMPLE_BASE] (the lowest address `$4012`
+     * reaches: `$4012` = (address − [SAMPLE_BASE]) / 64), each sample starting on a [SAMPLE_ALIGN] boundary and
+     * [MAX_SAMPLE_BYTES] long at most (`$4013` = (bytes − 1) / 16; the hardware plays 16 n + 1 bytes).
+     */
+    const val SAMPLE_BASE = 0xC000
+    const val SAMPLE_ALIGN = 64
+    const val MAX_SAMPLE_BYTES = 4081
+
+    /** Entries of the FamiStudio DPCM list (without FamiStudio's extended DPCM range): stream note bytes 1..63. */
+    const val MAX_DPCM_MAPPINGS = 63
 
     /** Header bytes 4..7 (little-endian): an image only plays on the player build it was lowered for. */
-    const val PLAYER_ID = 0x47B5B60E.toInt()
+    const val PLAYER_ID = 0xA9A250E3.toInt()
 
     const val HEADER_SIZE = 32
+
+    /** Header byte: entries in the DPCM list. */
+    const val HEADER_DPCM_COUNT = 15
+
+    /** Header u16 (little-endian): bytes of the sample block (0: no samples). */
+    const val HEADER_SAMPLE_SIZE = 22
+
+    /** Header u16 (little-endian): address of the sample block (0: no samples). */
+    const val HEADER_SAMPLE_START = 24
+
     const val MAX_ENVELOPES = 512
     const val DIRECTORY_SIZE = 2048
     const val MAX_INSTRUMENTS = 64
     const val MAX_ORDERS = 255
     const val MAX_ROWS = 255
 
-    /** Bytes of a lowered image: header + envelope directory + song region. */
-    const val IMAGE_SIZE = 26650
+    /**
+     * Bytes of a lowered image: header + envelope directory + region, the CPU memory [SONG_BASE] until [REGION_END]
+     * (address a at region offset a − [SONG_BASE]).
+     */
+    const val IMAGE_SIZE = 31770
 
     /** Header byte 13. */
     const val LAYOUT_THOR = 1
@@ -45,7 +75,7 @@ object NesPlayerImage {
     val BYTES: ByteArray get() = ByteArray(HEX.length / 2) { HEX.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
     private const val HEX =
-        "4C0C804C3C824C06804C098048A200A0A0A901201A80684CFE808EA2028CA30286048405A9618DA102207280A001B104" +
+        "4C0C804C3C824C06804C098048A200A08CA901201A80684CFE808EA2028CA30286048405A9618DA102207280A001B104" +
         "8DA402C8B1048DA502C8B1048DA602C8B1048DA702A9808DA9028DAA02A90F8D1540A9808D0840A9008D0F40A9308D00" +
         "408D04408D0C40A9088D01408D05404C7280A9008DAB028DA802A2009D67029D62029D76029D7B029D8802A9FF9D8D02" +
         "9D9202A900E8E005D0E2A2009D9902E8E003D0F8A2009D4C02E8E004D0F8A2009D80029D8402E8E004D0F5A200A91D9D" +

@@ -5,6 +5,7 @@ import kotlin.math.roundToInt
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
 import org.thortracker.editor.channelCount
+import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.nes.NesInstrumentView.Row
 import org.thortracker.ui.Align
@@ -12,14 +13,21 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 import org.thortracker.ui.Palette
 import org.thortracker.ui.Rect
+import org.thortracker.ui.IdentityCache
 import org.thortracker.ui.Surface
 
 /**
  * NES instrument editor. Left: the 64 slots of the shared bank with how often each is used. Right: name, the channel
- * Listen plays on, envelope tabs, the shown envelope's length / loop / release / pitch mode, what each channel does
- * with it, and its steps as bars with the loop region and release point.
+ * Listen plays on, page tabs, and on an envelope page the shown envelope's length / loop / release / pitch mode, what
+ * each channel does with it, and its steps as bars with the loop region and release point; on the DPCM page the shown
+ * key's mapping, the sound's mapped keys and the song's samples with the selected one's waveform.
  */
 internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
+    private companion object {
+        /** DPCM page rows drawn inside the sample box rather than as setting rows. */
+        val BOX_ROWS = setOf(Row.SAMPLES, Row.SAMPLE_NAME, Row.SAMPLE_LEVEL, Row.ADD)
+    }
+
     private val tabs = ArrayList<Pair<Rect, Int>>()
     private var slotTop = 0f
     private var slotH = 0f
@@ -83,8 +91,10 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val rowH = ink.unit * 1.5f
         val vx = rx + ink.unit * 6.5f
         var y = top + ink.unit * 0.3f
+        val dpcm = NesInstrumentView.dpcmPage(st)
+        val mapping = if (dpcm) ins.dpcm[st.dpcmKey] else null
         for (r in NesInstrumentView.rows(st)) {
-            if (r == Row.SLOT || r == Row.STEPS) continue
+            if (r == Row.SLOT || r == Row.STEPS || r in BOX_ROWS) continue
             val sel = r == row
             val h = if (r == Row.ENVELOPE) ink.unit * 1.9f else rowH
             if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
@@ -123,10 +133,36 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     else -> "none: OFF stops the note"
                 }, rx, vx, y, h, sel, env.release < 0)
                 Row.MODE -> setting(c, "Mode", if (ins.pitchRelative) "relative: offsets add up every frame" else "absolute: offset from the note", rx, vx, y, h, sel, false)
+                Row.KEY -> setting(c, "Key", NesSystem.noteName(st.dpcmKey) + when {
+                    ins.dpcm.isEmpty() -> "   no keys mapped yet"
+                    mapping == null -> "   not mapped (${ins.dpcm.size} key${if (ins.dpcm.size == 1) "" else "s"} are)"
+                    else -> "   key ${ins.dpcm.keys.count { it <= st.dpcmKey }} of ${ins.dpcm.size} mapped"
+                }, rx, vx, y, h, sel, mapping == null)
+                Row.SAMPLE -> setting(c, "Sample", when {
+                    mapping == null -> "none"
+                    else -> s.nes.samples.getOrNull(mapping.sample)?.let { "${it.name}  (${it.data.size} bytes)" } ?: "missing sample ${mapping.sample + 1}"
+                }, rx, vx, y, h, sel, mapping == null)
+                Row.PITCH -> setting(c, "Pitch", mapping?.let { "${it.pitch.toString(16).uppercase()}  ${NesSampleMenu.rateText(it.pitch)}" } ?: "—", rx, vx, y, h, sel, mapping == null)
+                Row.SAMPLE_LOOP -> setting(c, "Loop", when {
+                    mapping == null -> "—"
+                    mapping.loop -> "on: repeats until the next note or OFF"
+                    else -> "off: plays once"
+                }, rx, vx, y, h, sel, mapping?.loop != true)
+                Row.LEVEL -> setting(c, "Level", when {
+                    mapping == null -> "—"
+                    mapping.dmcInitial < 0 -> "the sample's own (${(s.nes.samples.getOrNull(mapping.sample)?.dmcInitial ?: DpcmSample.DEFAULT_DMC_INITIAL) * 2})"
+                    else -> "${mapping.dmcInitial * 2} at note start"
+                }, rx, vx, y, h, sel, mapping == null || mapping.dmcInitial < 0)
                 else -> Unit
             }
             if (sel) ink.outline(c, Rect(rx - ink.unit * 0.4f, y + 1, rx + rw + ink.unit * 0.4f, y + h - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
             y += h
+        }
+        if (dpcm) {
+            graph = Rect()
+            val boxTop = y + ink.unit * 0.4f
+            if (area.bottom - boxTop > ink.unit * 6f) drawDpcm(c, Rect(rx, boxTop, rx + rw, area.bottom - ink.unit * 0.4f), ins, row, col)
+            return
         }
         val small = ink.unit * 0.8f
         ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
@@ -153,15 +189,16 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         else -> Palette.DIM
     }
 
-    /** Envelope tabs: each with its length; an envelope the listening channel ignores is greyed. */
+    /** Page tabs: each envelope with its length (greyed when the listening channel ignores it), then DPCM with its keys. */
     private fun drawTabs(c: Surface, ins: NesInstrument, r: Rect, listen: org.thortracker.system.ChannelKind?, col: Int) {
         tabs.clear()
-        val n = NesEnvelopeKind.entries.size
+        val n = NesInstrumentView.DPCM_PAGE + 1
         val w = r.width() / n
-        for (k in NesEnvelopeKind.entries) {
-            val t = Rect(r.left + k.ordinal * w, r.top, r.left + (k.ordinal + 1) * w, r.bottom)
-            val on = k.ordinal == st.envelope
-            val ignored = listen != null && ignores(k, listen)
+        for (page in 0 until n) {
+            val k = NesEnvelopeKind.entries.getOrNull(page)
+            val t = Rect(r.left + page * w, r.top, r.left + (page + 1) * w, r.bottom)
+            val on = page == st.envelope
+            val ignored = listen != null && k != null && ignores(k, listen)
             val color = when {
                 on -> col
                 ignored -> Palette.FAINT
@@ -169,16 +206,160 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             }
             if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
             ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
-            val size = k.of(ins).values.size
-            val label = if (size == 0) k.label else "${k.label} ($size)"
+            val size = k?.of(ins)?.values?.size ?: ins.dpcm.size
+            val name = k?.label ?: "DPCM"
+            val label = if (size == 0) name else "$name ($size)"
             ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
-            tabs += t to k.ordinal
+            tabs += t to page
         }
     }
 
-    /** True when [channel] plays nothing of envelope [kind]. */
+    /** True when [channel] plays nothing of envelope [kind]: the triangle's volume and duty, every envelope on DPCM. */
     private fun ignores(kind: NesEnvelopeKind, channel: org.thortracker.system.ChannelKind) =
-        channel == org.thortracker.system.ChannelKind.TRIANGLE && (kind == NesEnvelopeKind.DUTY || kind == NesEnvelopeKind.VOLUME)
+        channel == org.thortracker.system.ChannelKind.SAMPLE ||
+            channel == org.thortracker.system.ChannelKind.TRIANGLE && (kind == NesEnvelopeKind.DUTY || kind == NesEnvelopeKind.VOLUME)
+
+    // ---- DPCM page: mapped keys and the song's samples ------------------------------------------------
+
+    private var keyRect = Rect()
+    private var keyRowH = 0f
+    private var keyScroll = 0
+    private var keyList: List<Int> = emptyList()
+    private var sampleRect = Rect()
+    private var sampleRowH = 0f
+    private var sampleScroll = 0
+    private var addRect = Rect()
+
+    /** Decoded level curves of drawn samples, by identity (samples are immutable). */
+    private val curves = IdentityCache<DpcmSample, IntArray>(64)
+
+    private fun curve(sample: DpcmSample): IntArray = curves.getOrPut(sample) { Dpcm.decode(sample.data, sample.dmcInitial) }
+
+    /**
+     * Left: every key the sound maps (key, sample, pitch, loop), the shown key marked. Right: the song's samples with
+     * their sizes and the memory they share, the selected sample's waveform (its DMC output level), its name and
+     * initial level, and the Add row.
+     */
+    private fun drawDpcm(c: Surface, r: Rect, ins: NesInstrument, row: Row, col: Int) {
+        val s = song
+        val samples = s.nes.samples
+        val gap = ink.unit * 0.6f
+        val small = ink.unit * 0.8f
+        val titleH = ink.unit * 1.4f
+        val left = Rect(r.left, r.top, r.left + (r.width() - gap) * 0.42f, r.bottom)
+        val right = Rect(left.right + gap, r.top, r.right, r.bottom)
+
+        // mapped keys
+        ink.round(c, left, ink.dp(4f), Palette.LANE)
+        ink.label(c, ink.fit("Keys of sound ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, Palette.DIM, size = small)
+        keyList = ins.dpcm.keys.sorted()
+        keyRowH = ink.unit * 1.25f
+        keyRect = Rect(left.left, left.top + titleH, left.right, left.bottom - ink.unit * 0.3f)
+        val keyRows = maxOf(1, (keyRect.height() / keyRowH).toInt())
+        val shown = keyList.indexOf(st.dpcmKey)
+        if (shown >= 0) keyScroll = keyScroll.coerceIn(maxOf(0, shown - keyRows + 1), shown)
+        keyScroll = keyScroll.coerceIn(0, maxOf(0, keyList.size - keyRows))
+        if (keyList.isEmpty()) {
+            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, Palette.FAINT, size = small)
+        }
+        val keyFocus = row == Row.KEY || row == Row.SAMPLE || row == Row.PITCH || row == Row.SAMPLE_LOOP || row == Row.LEVEL
+        for (i in keyScroll until minOf(keyList.size, keyScroll + keyRows)) {
+            val key = keyList[i]
+            val m = ins.dpcm.getValue(key)
+            val y = keyRect.top + (i - keyScroll) * keyRowH
+            val on = key == st.dpcmKey
+            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 140))
+            if (on) ink.rect(c, left.left, y, left.left + ink.dp(3f), y + keyRowH, col)
+            ink.mono(c, NesSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else Palette.DIM, on, small)
+            val tail = m.pitch.toString(16).uppercase() + if (m.loop) " ↻" else ""
+            val tailW = ink.labelWidth(tail, small) + ink.unit * 0.5f
+            val name = samples.getOrNull(m.sample)?.name ?: "missing"
+            ink.label(c, ink.fit(name, left.width() - ink.unit * 3.6f - tailW, small), left.left + ink.unit * 3.2f, y, keyRowH,
+                if (m.sample in samples.indices) (if (on) Palette.TEXT else Palette.DIM) else Palette.ERROR, size = small)
+            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+        }
+
+        // samples
+        ink.round(c, right, ink.dp(4f), Palette.LANE)
+        val used = NesSampleMenu.stored(s)
+        val over = used > Dpcm.MEMORY
+        ink.label(c, ink.fit("Samples · ${NesSampleMenu.kb(used)} of ${NesSampleMenu.kb(Dpcm.MEMORY)}", right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH,
+            if (over) Palette.ERROR else Palette.DIM, size = small)
+        val barL = right.left + right.width() * 0.64f
+        val barR = right.right - ink.unit * 0.5f
+        val barY = right.top + titleH * 0.42f
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / Dpcm.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+
+        val lineH = ink.unit * 1.35f
+        addRect = Rect(right.left, right.bottom - lineH - ink.unit * 0.2f, right.right, right.bottom - ink.unit * 0.2f)
+        val levelY = addRect.top - lineH
+        val nameY = levelY - lineH
+        val waveH = minOf(ink.unit * 3.2f, (nameY - right.top - titleH) * 0.45f)
+        val waveRect = Rect(right.left + ink.unit * 0.5f, nameY - waveH - ink.unit * 0.2f, right.right - ink.unit * 0.5f, nameY - ink.unit * 0.2f)
+        sampleRowH = ink.unit * 1.2f
+        sampleRect = Rect(right.left, right.top + titleH, right.right, waveRect.top - ink.unit * 0.2f)
+        val sampleRows = maxOf(1, (sampleRect.height() / sampleRowH).toInt())
+        sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - sampleRows + 1), st.dpcmSample.coerceAtLeast(0))
+        sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - sampleRows))
+        val keyed = ins.dpcm[st.dpcmKey]?.sample ?: -1
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        for (i in sampleScroll until minOf(samples.size, sampleScroll + sampleRows)) {
+            val sample = samples[i]
+            val y = sampleRect.top + (i - sampleScroll) * sampleRowH
+            val on = i == st.dpcmSample
+            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, Palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else Palette.FAINT, i == keyed, small)
+            val size = "${sample.data.size} B"
+            ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, right.width() - ink.unit * 2.6f - ink.labelWidth(size, small) - ink.unit), right.left + ink.unit * 2.2f, y, sampleRowH,
+                if (on) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+            if (on && row == Row.SAMPLES) ink.outline(c, Rect(right.left + 2, y + 1, right.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+
+        // the selected sample: waveform, name, initial level
+        val sample = samples.getOrNull(st.dpcmSample)
+        ink.rect(c, waveRect, Palette.BG)
+        if (sample != null && waveRect.width() > 4f && waveRect.height() > 4f) {
+            val levels = curve(sample)
+            val columns = maxOf(1, waveRect.width().toInt() / 2)
+            val per = levels.size.toFloat() / columns
+            val cw = waveRect.width() / columns
+            val mid = waveRect.top + waveRect.height() / 2
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            for (k in 0 until columns) {
+                val a = (k * per).toInt().coerceIn(0, levels.size - 1)
+                val b = ((k + 1) * per).toInt().coerceIn(a + 1, levels.size)
+                var lo = 127
+                var hi = 0
+                for (i in a until b) { val l = levels[i]; if (l < lo) lo = l; if (l > hi) hi = l }
+                val y0 = waveRect.bottom - waveRect.height() * hi / 127f
+                val y1 = waveRect.bottom - waveRect.height() * lo / 127f
+                ink.rect(c, waveRect.left + k * cw, y0, waveRect.left + k * cw + maxOf(1f, cw - 0.5f), maxOf(y1, y0 + ink.dp(1f)), Palette.alpha(col, 200))
+            }
+            val secs = NumberText.fixed(sample.data.size * 8.0 / Dpcm.RATES_HZ[ins.dpcm[st.dpcmKey]?.pitch ?: DpcmMapping.PITCH.last], 2)
+            ink.label(c, "$secs s", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+        }
+        val vx = right.left + ink.unit * 4.4f
+        fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
+            val sel = row == which
+            val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
+            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
+            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small), vx, y, lineH,
+                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+            if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+        boxRow(nameY, Row.SAMPLE_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)
+        if (row == Row.SAMPLE_NAME && sample != null) {
+            val before = sample.name.take(st.textPos).padEnd(st.textPos, ' ')
+            val cx = vx + ink.labelWidth(before, small, true)
+            val w = maxOf(ink.labelWidth(sample.name.getOrNull(st.textPos)?.toString() ?: " ", small, true), small * 0.5f)
+            ink.outline(c, Rect(cx - 1, nameY + 3, cx + w + 1, nameY + lineH - 3), cursorColor(), ink.dp(2f), ink.dp(2f))
+        }
+        boxRow(levelY, Row.SAMPLE_LEVEL, "Level", sample?.let { "${it.dmcInitial * 2} at start (\$4011)" } ?: "—", sample == null)
+        boxRow(addRect.top, Row.ADD, "Add", "starter kit or .wav / .dmc file…", false)
+    }
 
     private fun drawSteps(c: Surface, r: Rect, kind: NesEnvelopeKind, env: NesEnvelope, listen: org.thortracker.system.ChannelKind?, col: Int, focused: Boolean) {
         val values = env.values
@@ -300,6 +481,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private var drawKind = NesEnvelopeKind.VOLUME
 
     override fun down(x: Float, y: Float): Boolean {
+        if (NesInstrumentView.dpcmPage(st)) dpcmDown(x, y)?.let { return it }
         tabs.firstOrNull { it.first.contains(x, y) }?.let { (_, k) ->
             NesInstrumentView.showEnvelope(ctl, k)
             return true
@@ -343,5 +525,30 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private fun finish() {
         drawing?.let { session.endGesture(it) }
         drawing = null
+    }
+
+    /** DPCM page taps: a mapped key shows it, a sample selects it, Add opens the add menu. Null: not on them. */
+    private fun dpcmDown(x: Float, y: Float): Boolean? {
+        val rows = NesInstrumentView.rows(st)
+        when {
+            keyRect.contains(x, y) && keyRowH > 0f -> {
+                val key = keyList.getOrNull(keyScroll + ((y - keyRect.top) / keyRowH).toInt()) ?: return true
+                st.dpcmKey = key
+                st.instField = rows.indexOf(Row.KEY)
+                song.dpcmMapping(st.instrument, key)?.let { st.dpcmSample = it.sample }
+            }
+            sampleRect.contains(x, y) && sampleRowH > 0f -> {
+                val i = sampleScroll + ((y - sampleRect.top) / sampleRowH).toInt()
+                if (i !in song.nes.samples.indices) return true
+                st.dpcmSample = i
+                st.instField = rows.indexOf(Row.SAMPLES)
+            }
+            addRect.contains(x, y) -> {
+                st.instField = rows.indexOf(Row.ADD)
+                NesSampleMenu.open(session, st.instrument, st.dpcmKey)
+            }
+            else -> return null
+        }
+        return true
     }
 }

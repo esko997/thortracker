@@ -19,6 +19,7 @@
 
 _Static_assert(NM_MAX_SAMPLE_RATE * 29781ull / NM_CPU_HZ + 1 <= NM_MAX_TICK_FRAMES, "tick fits the host buffer");
 _Static_assert(NES_PLAYER_BASE + NES_PLAYER_SIZE <= NES_SONG_BASE, "player below the song region");
+_Static_assert(NES_SONG_BASE + NES_IMAGE_REGION_SIZE == 0xFFFA, "the region ends at the vectors");
 
 /* Documented 6502 opcodes except BRK (FamiStudio's invalid-data trap). Anything else fetched by
  * the CPU is a fault. */
@@ -166,6 +167,7 @@ NesMachine* nm_create(uint32_t sample_rate) {
     memset(&desc, 0, sizeof desc);
     desc.bcd_disabled = true; /* the 2A03 has no decimal mode */
     m6502_init(&m->cpu, &desc);
+    nes_apu_set_memory(&m->apu, m->prg); /* DMC sample fetches read the cartridge space */
     m->faulted = 1; /* until a song is started */
     return m;
 }
@@ -183,7 +185,7 @@ static int reset(NesMachine* m, const NesImage* image) {
     memset(m->ram, 0, sizeof m->ram);
     memset(m->prg, 0, sizeof m->prg);
     memcpy(m->prg + (NES_PLAYER_BASE - 0x8000), nes_player_code, NES_PLAYER_SIZE);
-    memcpy(m->prg + (NES_SONG_BASE - 0x8000), nm_region(image), NM_SONG_SIZE);
+    memcpy(m->prg + (NES_SONG_BASE - 0x8000), nm_region(image), NES_IMAGE_REGION_SIZE);
     for (int v = 0xFFFA; v < 0x10000; v += 2) {
         m->prg[v - 0x8000] = (uint8_t)NES_PLAYER_TRAP;
         m->prg[v - 0x8000 + 1] = (uint8_t)(NES_PLAYER_TRAP >> 8);
@@ -374,11 +376,39 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
     return kind == NM_KIND_PITCH ? NES_FAMISTUDIO_DUMMY_PITCH_ENVELOPE : NES_FAMISTUDIO_DUMMY_ENVELOPE;
 }
 
+/* The sample the DMC is playing when `image` replaces the memory it reads (decided while the old bytes are
+ * still in place): it keeps playing if its bytes are unchanged where they are; else it continues at the same
+ * position of an identical sample of the new DPCM list (the samples moved); else it stops as a $4015 write
+ * does (the bits already fetched play out; the level holds). The latched $4010 rate and loop stay until the
+ * engine starts the next sample. */
+static void follow_sample(NesMachine* m, const NesImage* image) {
+    NesApu* a = &m->apu;
+    if (!a->dmc.remaining) return;
+    const uint32_t start = NES_SAMPLE_BASE + 64u * a->dmc.start, len = 16u * a->dmc.length + 1u;
+    if (start + len > NES_REGION_END) { /* off-contract raw data running into the vectors */
+        nes_apu_dmc_stop(a);
+        return;
+    }
+    const uint8_t* old = m->prg + (start - 0x8000);
+    const uint8_t* fresh = nm_region(image); /* CPU address a at fresh[a - NES_SONG_BASE] */
+    if (!memcmp(old, fresh + (start - NES_SONG_BASE), len)) return;
+    const NesImageInfo* ni = &image->info;
+    for (uint32_t k = 0; k < ni->mappings; ++k) {
+        const uint8_t* e = fresh + (ni->dpcm_list - NES_SONG_BASE) + 4u * k;
+        if (16u * e[1] + 1u == len && !memcmp(old, fresh + (NES_SAMPLE_BASE - NES_SONG_BASE) + 64u * e[0], len)) {
+            nes_apu_dmc_move(a, e[0]);
+            return;
+        }
+    }
+    nes_apu_dmc_stop(a);
+}
+
 void nm_apply_image(NesMachine* m, const NesImage* image) {
     if (m->faulted || m->audition || !loaded(image)) return;
     const NesImageInfo* ni = &image->info;
+    follow_sample(m, image);
     if (m->info.layout != NM_LAYOUT_THOR || ni->layout != NM_LAYOUT_THOR) {
-        memcpy(m->prg + (NES_SONG_BASE - 0x8000), nm_region(image), NM_SONG_SIZE);
+        memcpy(m->prg + (NES_SONG_BASE - 0x8000), nm_region(image), NES_IMAGE_REGION_SIZE);
         m->info = *ni;
         memcpy(m->meta, image->bytes, NM_REGION_OFFSET);
         return;
@@ -416,7 +446,7 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
      * got another way (a loop, an Fxx later edited away) is otherwise kept. */
     const int speed_new = nm_speed_at(&nv, o, r);
     const int set_speed = clamped || nm_speed_at(&ov, m->order, m->row) != speed_new;
-    memcpy(m->prg + (NES_SONG_BASE - 0x8000), nm_region(image), NM_SONG_SIZE);
+    memcpy(m->prg + (NES_SONG_BASE - 0x8000), nm_region(image), NES_IMAGE_REGION_SIZE);
     for (int c = 0; c < NM_CHANNELS; ++c) {
         RAMX(CHN_PTR_LO, c) = (uint8_t)st[c].ptr;
         RAMX(CHN_PTR_HI, c) = (uint8_t)(st[c].ptr >> 8);
@@ -451,7 +481,7 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
 /* ---- audition ----------------------------------------------------------------------------- */
 
 #define AUDITION_SILENT NES_AUDITION_RAM          /* $FF (64 empty rows), $42 back */
-#define AUDITION_NOTE (NES_AUDITION_RAM + 4)      /* [$54 i] [$4E f] $40 n, $42 to the silent loop */
+#define AUDITION_NOTE (NES_AUDITION_RAM + 4)      /* [$54 i] [$4E f] $40 n, $42 to the silent loop; DPCM: k, $42 */
 #define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45, $42 to the silent loop */
 _Static_assert(AUDITION_RELEASE + 4 <= 0x800, "audition streams fit RAM");
 _Static_assert(NES_RAM_BASE + NES_RAM_SIZE <= NES_AUDITION_RAM, "engine RAM below the audition streams");
@@ -459,8 +489,10 @@ _Static_assert(NES_RAM_BASE + NES_RAM_SIZE <= NES_AUDITION_RAM, "engine RAM belo
 static void put_stream(NesMachine* m, uint16_t at, const uint8_t* bytes, int n) { memcpy(m->ram + at, bytes, (size_t)n); }
 
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine) {
-    if (!loaded(image) || image->info.layout != NM_LAYOUT_THOR || channel < 0 || channel > 3 || note < 1 || note > 96 ||
-        instrument < 0 || instrument >= image->info.instruments || fine < -128 || fine > 127) {
+    if (!loaded(image) || image->info.layout != NM_LAYOUT_THOR || channel < 0 || channel > NM_DPCM) return NM_ERR_IMAGE;
+    if (channel == NM_DPCM ? note < 1 || note > image->info.mappings
+                           : note < 1 || note > 96 || instrument < 0 || instrument >= image->info.instruments || fine < -128 ||
+                                 fine > 127) {
         return NM_ERR_IMAGE;
     }
     if (reset(m, image) != NM_OK) return NM_ERR_FAULT;
@@ -468,14 +500,18 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
     const uint8_t silent[] = {0xFF, 0x42, lo, hi};
     uint8_t held[12];
     int n = 0;
-    held[n++] = 0x54;
-    held[n++] = (uint8_t)instrument;
-    if (channel <= 2) { /* the noise channel has no pitch envelope (and no fine pitch) */
-        held[n++] = 0x4E;
-        held[n++] = (uint8_t)(int8_t)fine;
+    if (channel == NM_DPCM) { /* mapping k of the DPCM list: the engine starts its sample */
+        held[n++] = (uint8_t)note;
+    } else {
+        held[n++] = 0x54;
+        held[n++] = (uint8_t)instrument;
+        if (channel <= 2) { /* the noise channel has no pitch envelope (and no fine pitch) */
+            held[n++] = 0x4E;
+            held[n++] = (uint8_t)(int8_t)fine;
+        }
+        held[n++] = 0x40;
+        held[n++] = (uint8_t)note;
     }
-    held[n++] = 0x40;
-    held[n++] = (uint8_t)note;
     held[n++] = 0x42;
     held[n++] = lo;
     held[n++] = hi;
@@ -494,7 +530,7 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
 }
 
 int nm_release(NesMachine* m) {
-    if (!m->audition || m->released || m->faulted || !m->frames) return 0;
+    if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM) return 0; /* DPCM: stop */
     const int slot = m->channel_env[m->aud_channel];
     const uint16_t addr = (uint16_t)(RAMX(ENV_ADDR_LO, slot) | RAMX(ENV_ADDR_HI, slot) << 8);
     const int idx = nm_find_envelope(&m->info, m->meta + NES_IMAGE_HEADER_SIZE, addr);

@@ -77,7 +77,8 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
             x += w
         }
 
-        // keys
+        // keys; on a sample channel each mapped key names its sample
+        val mapped = s.system.mappedNotes(s, ch, st.instrument)
         val keysTop = top + pad * 2 + stripH
         keys.set(area.left + pad, keysTop, area.right - pad, area.bottom - pad)
         val ww = keys.width() / whiteKeys.size
@@ -109,6 +110,7 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
                 val labelColor = if (!playable) Palette.FAINT else if (k == sounding) Palette.BG else 0xFF3A4450.toInt()
                 val label = if (playable) song.system.noteName(ctl.keyNote(k)) else "—"
                 ink.label(c, label, r.centerX(), r.bottom - ink.unit * 1.8f, ink.unit * 1.4f, labelColor, k % 12 == 0, ink.unit * 0.8f, Align.CENTER)
+                if (playable && mapped != null) sampleLabel(c, r, r.bottom - ink.unit * 3.1f, ch, ctl.keyNote(k), labelColor)
                 wi++
             }
         }
@@ -120,6 +122,7 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
                 else -> 0xFF262C35.toInt()
             }
             ink.round(c, r, ink.dp(3f), fill)
+            if (mapped != null && ctl.keyPlayable(k)) sampleLabel(c, r, r.top + ink.unit * 0.4f, ch, ctl.keyNote(k), if (k == sounding) Palette.BG else Palette.TEXT)
         }
         // controller key cursor
         if (st.kbRow == 1) {
@@ -136,6 +139,13 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
         ctl.auditionHeld -> Palette.LISTEN
         v.controllerFocused -> Palette.PLAYHEAD
         else -> Palette.DIM
+    }
+
+    /** A mapped key's sample name at [y] on the key (unmapped keys of a sample channel stay bare). */
+    private fun sampleLabel(c: Surface, r: Rect, y: Float, ch: Int, note: Int, color: Int) {
+        val sample = song.system.noteSample(song, ch, note, st.instrument) ?: return
+        val size = ink.unit * 0.7f
+        ink.label(c, ink.fit(sample.name, r.width() - ink.dp(4f), size), r.centerX(), y, ink.unit * 1.2f, color, size = size, align = Align.CENTER)
     }
 
     private fun isBlack(k: Int) = when (k % 12) { 1, 3, 6, 8, 10 -> true; else -> false }

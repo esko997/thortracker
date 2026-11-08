@@ -39,6 +39,9 @@ data class ViewState(
     var envelope: Int = 0,
     var envStep: Int = 0,
     var listenChannel: Int = 0,
+    /** Sample instrument pages (NES DPCM): the key (absolute note) whose mapping is edited and the sample list cursor. */
+    var dpcmKey: Int = DEFAULT_DPCM_KEY,
+    var dpcmSample: Int = 0,
     var waveRow: Int = 1,
     var waveCol: Int = 0,
     var waveLevel: Int = 8,
@@ -96,6 +99,8 @@ data class ViewState(
         const val SONG_HEADER_ITEMS = 5
         /** Song view row of the scale new patterns start with. */
         const val SONG_NEW_SCALE_ITEM = 4
+        /** C-3 (absolute 36): the first key a sample page edits, where starter kits begin. */
+        const val DEFAULT_DPCM_KEY = 36
     }
 }
 

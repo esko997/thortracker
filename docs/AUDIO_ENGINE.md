@@ -6,8 +6,8 @@ Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio 
 behaviour are whatever the driver code does on the emulated CPU and APU.
 
 The NES system (`"nes-famistudio"`) follows the same principle: the FamiStudio sound engine 4.5.3
-(FamiTracker tempo) runs on an emulated 6502 + 2A03, compiled into both hosts; its image layout,
-seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
+(FamiTracker tempo) runs on an emulated 6502 + 2A03 with all five channels, DPCM samples included;
+its image layout, seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -259,14 +259,16 @@ song onto an edited image in realtime and auditions notes with a release phase. 
   `$8000 nes_player_init` (A = song index → `famistudio_init(NTSC, NES_SONG_BASE)` +
   `famistudio_music_play`), `$8003 nes_player_play` (`famistudio_update`), `$8006
   nes_player_idle` (return address of host calls), `$8009 nes_player_trap` (interrupt/BRK vector
-  target = fault). Configuration: NTSC, smooth vibrato, DPCM support compiled in at
+  target = fault). Configuration: NTSC, smooth vibrato, DPCM support with samples at
   `FAMISTUDIO_DPCM_OFF = $C000`, **FamiTracker tempo** with delayed notes and cuts
   (`FAMISTUDIO_USE_FAMITRACKER_TEMPO`, `..._DELAYED_NOTES_OR_CUTS`), and every 2A03 feature
   FamiStudio's own FamiTracker-tempo NSF kernel enables (volume track and slides, pitch track, slide
   notes incl. noise, vibrato, arpeggio, duty-cycle effect, DMC delta counter, release notes, phase
-  reset, extended instrument range) except the DPCM bank-switching/extended-range encodings; no SFX.
-  So any 2A03-only FamiTracker-tempo FamiStudio export without DPCM bank switching plays. The
-  same bytes are in Kotlin as `core/.../backend/NesPlayerImage.kt` (generated) for the `.nsf` export.
+  reset, extended instrument range) except the DPCM bank-switching/extended-range encodings (so at
+  most 63 DPCM mappings, and samples only at `$C000-$FFF9`); no SFX. So any 2A03-only
+  FamiTracker-tempo FamiStudio export without DPCM bank switching or extended DPCM range plays (its
+  `.dmc` where its `FAMISTUDIO_DPCM_PTR` says). The same bytes are in Kotlin as `core/.../backend/NesPlayerImage.kt` (generated)
+  for the `.nsf` export.
 - **Tempo**: one tick = one NTSC frame (60.0988 Hz). The engine starts a row on a frame when
   `famistudio_tempo_acc_hi >= famistudio_song_speed`, subtracts the speed, runs the row, and adds
   the song's tempo step to the accumulator every frame. Step (NTSC) = `256 * tempo / 150` (FamiStudio's
@@ -287,17 +289,26 @@ song onto an edited image in realtime and auditions notes with a release phase. 
   Emulated: pulse duty sequencers, envelopes, sweeps (pulse 1 ones' complement, target-period
   muting even with sweep off), length counters with halt and the `$4015` enables/status, the
   triangle linear counter, the noise LFSR in both modes, the frame counter (4/5-step, `$4017`
-  3-4 cycle delay, immediate 5-step clock, IRQ flag), the DMC output level (`$4011`), and the
-  nonlinear mixer (exact NESdev formulas, so the idle triangle's held step and the DMC level
-  change the other channels' loudness as on hardware). Not emulated: DPCM sample playback and DMC
-  IRQ (samples are silent), IRQs to the CPU, same-cycle length/halt quirks, the APU-cycle phase
-  of pulse/noise timers (counted in CPU cycles), triangle periods below 2 (frozen, avoiding
-  ultrasonic pops). Silent channels' timers are not stepped (their phase is reset by the write that
-  makes them audible); timers run event to event, not cycle by cycle.
+  3-4 cycle delay, immediate 5-step clock, IRQ flag), the **DMC** (NTSC rate table 428..54 CPU
+  cycles per bit, `$4011` direct load, `$4012`/`$4013` sample address `$C000 + 64 a` and length
+  `16 l + 1`, the memory reader fetching sample bytes from CPU memory by DMA with the `$FFFF → $8000`
+  wrap, the one-byte sample buffer, the 8-bit output shift unit with its silence flag and level steps
+  of ±2 clamped to 0..127, loop, `$4015` bit 4 start/stop/status, the DMC IRQ flag and its clearing
+  by `$4010`/`$4015` writes), and the nonlinear mixer (exact NESdev formulas, so the idle
+  triangle's held step and the DMC level change the other channels' loudness as on hardware). Not
+  emulated: IRQs to the CPU (the frame and DMC IRQs are flags only; FamiStudio uses neither), DMA
+  CPU stalls (a fetch steals 1-4 CPU cycles on hardware; here the player's later register writes in
+  that frame land those few cycles early, which no row, write order or audible timing depends on),
+  the 1-3 cycle delay of a fetch after the buffer empties (here the same cycle), same-cycle
+  length/halt quirks, the APU-cycle phase of pulse/noise timers (counted in CPU cycles), triangle
+  periods below 2 (frozen, avoiding ultrasonic pops). Silent pulse/triangle/noise timers are not
+  stepped (their phase is reset by the write that makes them audible); the DMC timer always runs, as
+  on hardware (also while seeking, so a sample carries over a seek; idle stretches advance in one
+  step); timers run event to event, not cycle by cycle.
 - **Output**: the mixed level as band-limited steps into blip_buf (blargg's band-limited synthesis,
   the technique of game-music-emu and FamiStudio's own NesSndEmu), then a first-order 37 Hz
   high-pass and 14 kHz low-pass (Famicom-style output stage), × 2.0, L = R. The test song peaks at
-  0.67 (rms 0.15).
+  0.67 (rms 0.15), the DPCM test song at 0.80 (rms 0.16).
 
 ### CPU memory map
 
@@ -309,7 +320,7 @@ song onto an edited image in realtime and auditions notes with a release phase. 
 | `$07C0-$07FF` | audition streams, written by the machine (`NES_AUDITION_RAM`) |
 | `$4000-$4017` | APU, writes timestamped to their CPU cycle; `$4015` reads status |
 | `$8000-$8B11` | player image |
-| `$A000-$FFF9` | song region (`NES_SONG_BASE`..`NES_SONG_END`, 24570 bytes): the image's FamiStudio data |
+| `$8C00-$FFF9` | the image's region (`NES_SONG_BASE`..`NES_REGION_END`, 29690 bytes), shared: FamiStudio data from `$8C00` upward, the DPCM sample block (64-aligned, at or above `$C000`, where `$4012` can reach) above it; the DMC reads samples by DMA |
 | `$FFFA-$FFFF` | vectors → `nes_player_trap`, written by the machine |
 
 Everything else reads 0 and ignores writes.
@@ -319,28 +330,45 @@ Everything else reads 0 and ignores writes.
 Numbers are generated into both `nes_player_image.h` (`NES_IMAGE_*`) and `NesPlayerImage.kt`; the
 native loader is `nes/nes_image.c` (`nm_load_image`), which rejects anything off-contract with a
 reason (`NesImageInfo.problem`; the host test prints them) — mirror its checks in Kotlin validation
-for user-facing messages. `image_size` = 26650 bytes, little-endian:
+for user-facing messages. `image_size` = 31770 bytes, little-endian:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | `"TTNS"` |
-| 4 | 4 | player id = first 4 bytes of the player image sha256 (`NesPlayerImage.PLAYER_ID`, currently `0x47B5B60E`): an image only plays on the player build it was lowered for |
-| 8 | 2 | song base `$A000` |
-| 10 | 2 | data size: bytes of song data used; the rest of the region must be zero |
+| 4 | 4 | player id = first 4 bytes of the player image sha256 (`NesPlayerImage.PLAYER_ID`, currently `0xA9A250E3`): an image only plays on the player build it was lowered for |
+| 8 | 2 | song base `$8C00` |
+| 10 | 2 | data size S: bytes of song data from `$8C00` (≤ 29690; with samples ≤ sample start − `$8C00`) |
 | 12 | 1 | song index: 0 |
-| 13 | 1 | layout: 1 = Thor Tracker (below). 0 = raw FamiStudio export (tests and tools only: bytes 18/19/20 = rows per order, order count, loop order or `$FF`; no directory; plays, seeks from the start, live apply only copies bytes) |
+| 13 | 1 | layout: 1 = Thor Tracker (below). 0 = raw FamiStudio export + its `.dmc` (tests and tools only: bytes 18/19/20 = rows per order, order count, loop order or `$FF`; no directory; plays, seeks from the start, live apply only copies bytes) |
 | 14 | 1 | instrument count, 1..64 |
-| 15 | 1 | 0 |
+| 15 | 1 | DPCM list entries (mappings), 0..63 (`NES_IMAGE_HEADER_DPCM_COUNT`; raw: 0) |
 | 16 | 2 | envelope count = highest used directory index + 1 (≤ 512) |
-| 18 | 14 | 0 |
+| 18 | 4 | 0 |
+| 22 | 2 | sample block bytes B (`NES_IMAGE_HEADER_SAMPLE_SIZE`; both layouts); 0 = no samples |
+| 24 | 2 | sample block start A (`NES_IMAGE_HEADER_SAMPLE_START`; both layouts); 0 = no samples, else a multiple of 64, ≥ `$C000`, A + B ≤ `$FFFA`, and `$8C00` + S ≤ A |
+| 26 | 6 | 0 |
 | 32 | 2048 | envelope directory: 512 entries of {u16 address, u8 length (2..255), u8 kind (0 volume, 1 arpeggio, 2 duty, 3 pitch)}; address 0 = unused (all 4 bytes 0); entries ≥ count all zero |
-| 2080 | 24570 | song region, placed at `$A000` |
+| 2080 | 29690 | region: CPU memory `$8C00-$FFF9` (address *a* at region offset *a* − `$8C00`): song data `[$8C00, $8C00+S)`, samples `[A, A+B)`, every other byte zero |
 
-**Song region** (all pointers absolute, so data is lowered for `$A000`):
+One budget: song data and samples share the 29690 bytes. A song without samples may fill all of them
+(0.9.0 allowed 24570); with samples the song data must end at or below the sample block, which the
+Kotlin lowering packs as high as it fits (A = the highest multiple of 64 with A + B ≤ `$FFFA`; it
+must stay ≥ `$C000`, so samples total at most 16378 bytes). The raw layout's `.dmc` sits at `$C000`.
 
-- FamiStudio song list with exactly one song: `u8 1`, `word instruments`, `word samples−4`
-  (unused: no DPCM), five channel stream words (pulse 1, pulse 2, triangle, noise, DPCM), `word
-  tempoPal = 256*T/125`, `word tempoNtsc = 256*T/150` (T = FamiTracker tempo; 150 → 256).
+**Song data** (all pointers absolute, so data is lowered for `$8C00`):
+
+- FamiStudio song list with exactly one song: `u8 1`, `word instruments`, `word samples−4` (the
+  DPCM list; any value when byte 15 is 0), five channel stream words (pulse 1, pulse 2, triangle,
+  noise, DPCM), `word tempoPal = 256*T/125`, `word tempoNtsc = 256*T/150` (T = FamiTracker tempo;
+  150 → 256).
+- **DPCM list** (FamiStudio's, without bank switching): byte 15 entries of 4 bytes at `samples`
+  inside the song data, entry *k* (1-based) = mapping *k*: `$4012` = (sample address − `$C000`) / 64,
+  `$4013` = (sample bytes − 1) / 16, `$4010` = rate 0..15 | `$40` loop (IRQ and bits 4-5 zero), initial
+  `$4011` level 0..127 (FamiStudio: the sample's `DmcInitialValue` × 2, or the mapping's override).
+  Every entry's 16 *l* + 1 bytes from `$C000` + 64 *a* must lie inside the sample block `[A, A+B)`.
+- **Samples** (the sample block): DMC bytes as the hardware plays them (LSB first, 1 = +2), each from a
+  64-byte boundary, 16 *n* + 1 bytes ≤ 4081; FamiStudio's `.dmc` packs them in project order and pads
+  each to the next boundary with `$55`. Several mappings may share a sample (other rate, loop or level).
 - Instrument table: count × 8 bytes, four envelope pointers each: volume, arpeggio, duty, pitch.
   Each must be a directory entry of that kind (the triangle ignores duty, but the pointer must
   still be valid). Instrument *i* in streams is `$80|(i<<1)` (i < 64) or `$54 i`.
@@ -360,19 +388,20 @@ for user-facing messages. `image_size` = 26650 bytes, little-endian:
 
   | Terminator | Meaning |
   |---|---|
-  | `$01-$3F` | note, engine note = byte + 12 (13..75) |
-  | `$40 n` | note, engine note n (1..96) |
-  | `$00` | stop |
+  | `$01-$3F` | note, engine note = byte + 12 (13..75); DPCM: mapping *k* = the byte (1..entries) |
+  | `$40 n` | note, engine note n (1..96); DPCM: mapping n − 12 (n 13..75, ≤ entries + 12) |
+  | `$00` | stop (DPCM: the sample stops, `$4015 = $0F`) |
   | `$50 step from to` | slide note (ends on `to`); FamiStudio's step (see below) |
   | `$45` | release (volume envelope jumps to its release index; nothing if it has none) |
   | `$81\|(k<<1)` | empty run: this row + k more (k 0..63) |
 
   | Prefix | Meaning | Channels |
   |---|---|---|
-  | `$46 s` | speed (Fxx), 1..127; put it before `$47` so it applies at the row start | 0-3 |
-  | `$47 d` | note delay: the rest of the row plays at frame d+1 of the row (FamiStudio NoteDelay N = `$47 N−1`); at most one per row, 0..127 | 0-3 |
-  | `$48 c` | cut the note at frame c of the row (FamiStudio CutDelay N = `$48 N`), 0..127 | 0-3 |
-  | `$43` | next note without attack | 0-3 |
+  | `$46 s` | speed (Fxx), 1..127; put it before `$47` so it applies at the row start | 0-4 |
+  | `$47 d` | note delay: the rest of the row plays at frame d+1 of the row (FamiStudio NoteDelay N = `$47 N−1`); at most one per row, 0..127 | 0-4 |
+  | `$48 c` | cut the note at frame c of the row (FamiStudio CutDelay N = `$48 N`), 0..127; DPCM: stops the sample | 0-4 |
+  | `$43` | next note without attack (DPCM: the sample starts without its initial `$4011` level) | 0-4 |
+  | `$52 v` | DMC delta counter (FamiStudio DeltaCounter): `$80\|v` writes `$4011 = v` now; `v` (0..127) replaces the initial level of the next sample started | 4 |
   | `$70\|v` | volume track 0..15 (multiplies the envelope) | 0-3 |
   | `$51 step target` | volume slide | 0-3 |
   | `$4E f` | fine pitch: signed period offset (+ lowers the pitch) | 0-2 |
@@ -382,8 +411,12 @@ for user-facing messages. `image_size` = 26650 bytes, little-endian:
   | `$53` | phase reset | 0, 1 |
   | `$80\|(i<<1)`, `$54 i` | instrument (< count) | 0-3 |
 
-  The DPCM channel's rows are empty runs only. Anything else (`$52`, `$55`+, opcodes on a channel
-  whose engine table has no entry, which would write out of bounds) is rejected.
+  Anything else (`$55`+, release/slides/instruments on the DPCM channel, opcodes on a channel whose
+  engine table has no entry, which would write out of bounds, a DPCM note past the list, which would
+  read past it) is rejected. A DPCM note starts its mapping through FamiStudio's
+  `famistudio_music_sample_play`: `$4015 = $0F`, `$4012`, `$4013`, `$4010`, `$4011` (initial level,
+  or a pending `$52` value; none after `$43`), `$4015 = $1F`. FamiStudio's export puts a DPCM-only
+  instrument (one used on no other channel) in no instrument table: the mapping index says it all.
 - **Notes**: engine note n (1-96) indexes the NTSC note table; n = 46 is period `$0FD` (440.4 Hz on a
   pulse; FamiStudio calls it A3), so Thor Tracker's absolute note (scientific pitch: 0 = C0, A4 = 57 = 440 Hz)
   is **n + 11** (verified against 12-TET A440 in the host test). Absolute notes are the same pitch on every
@@ -401,7 +434,8 @@ for user-facing messages. `image_size` = 26650 bytes, little-endian:
 
 What `nm_load_image` derives (`NesImageInfo`): order count, loop, rows per order, the speed each
 order starts with in straight play (6, then the last `$46` of each order in engine order: rows,
-then channels 0..4), the NTSC tempo step and a sorted index of the directory.
+then channels 0..4), the NTSC tempo step, a sorted index of the directory, the DPCM list address
+and entry count and the used sample bytes.
 
 ### Position and seek (exact rows from engine state)
 
@@ -418,9 +452,13 @@ then channels 0..4), the NTSC tempo step and a sorted index of the directory.
   row) and silently replays the order's earlier rows (`CHIP_SEEK_FROM_ORDER`; instruments still
   sounding from earlier orders are lost, as on the Game Boy). Fails if not reached within
   `max_ticks` again, or for a row outside the song. Cost on the dev PC: 11.6 µs per frame (order 3
-  row 15, 416 frames: 4.8 ms); suggested `seekTicks` 12000 (~3.3 min, ~140 ms).
+  row 15, 416 frames: 4.8 ms); suggested `seekTicks` 12000 (~3.3 min, ~140 ms). The DMC runs through
+  the fast-forward, so a sample started before the target is heard from where straight play has it
+  (same level, address, bytes left and output-unit phase); the order fallback loses samples started in
+  earlier orders, like instruments. DPCM test song: 10-14 µs per frame (order 3 row 4, 252 frames:
+  2.7 ms).
 
-### Live edits (`apply_image`, realtime-safe, ~5 µs)
+### Live edits (`apply_image`, realtime-safe, ≤ 15 µs measured)
 
 At a tick boundary, Thor layout to Thor layout:
 
@@ -442,12 +480,23 @@ At a tick boundary, Thor layout to Thor layout:
    straight play's speed at the playhead if the edit changed it (song speed, an earlier Fxx in this
    order) or the playhead was clamped; otherwise the engine keeps its speed (e.g. one inherited
    through the loop).
+5. **Samples** (both layouts; decided before the new bytes replace the old): a sample the DMC is
+   playing (bytes left, or looping) keeps playing if its bytes (the `$4012`/`$4013` range) are
+   unchanged where they are; else, if an entry of the new DPCM list has a sample of the same length
+   with identical bytes, it continues at the same position there (`$4012` and the read address move
+   by the same distance); else it **stops**, as a `$4015` write with bit 4 clear does: no further
+   fetches, the bits already fetched (≤ 2 bytes) play out and the level holds. So editing, replacing or
+   deleting the playing sample cuts it; moving it (another sample grew or was removed, mappings
+   reordered) or editing any other sample does not. The latched rate/loop (`$4010`) and level stay
+   until the engine starts the next sample, which plays the new list entry and bytes.
 
-**Contract for the builder**: any layout that passes `nm_load_image` relocates — data may move
-freely between images. Keep directory indices stable for instrument envelopes (e.g. slot·4 + kind)
-so sustained notes follow envelope edits; effect envelopes may be renumbered. Raw layouts: bytes
-are copied (correct only if nothing moved). The host test applies a fully re-laid-out image before
-every one of 1080 frames and gets register writes identical to straight play.
+**Contract for the builder**: any layout that passes `nm_load_image` relocates — data and samples may
+move freely between images. Keep directory indices stable for instrument envelopes (e.g. slot·4 +
+kind) so sustained notes follow envelope edits; effect envelopes and DPCM mappings may be renumbered
+(the streams carry the new numbers). Raw layouts: bytes are copied (correct only if nothing moved).
+The host test applies a fully re-laid-out image before every one of 1080 frames and gets register
+writes identical to straight play; with the DPCM test song it moves every sample before every frame
+(298 playing samples relocated in 576 frames) and the DMC output stays sample-identical.
 
 ### Audition
 
@@ -458,9 +507,17 @@ triangle only), `$40 note`, then the silent loop — so the note sustains throug
 with the image's own instrument table and envelopes. Arguments: engine note 1..96 (absolute − 11),
 instrument = the cell's 1-based slot as the hosts pass it (`nes_chip.c` plays table index slot − 1;
 slot 0 is rejected; `nm_audition` itself takes the table index), fine = signed period offset −128..127 like `$4E` (ignored on
-noise). DPCM (4), raw images and out-of-range arguments are `CHIP_ERR_IMAGE`.
+noise). Raw images and out-of-range arguments are `CHIP_ERR_IMAGE`.
 
-`release()`: if no tick has run, or the instrument's volume envelope has no release index, returns 0
+`audition(4, k, slot, fine)` (DPCM): `k` is the 1-based entry of the image's DPCM list (the mapping of
+the cell's instrument and note, as the lowering numbered it; the Kotlin engine looks it up), the stream
+plays note byte `k`, so the engine starts that sample with its rate, loop and initial level exactly as a
+song row does; slot must be ≥ 1 (otherwise ignored), fine is ignored. `k` outside 1..entries is
+`CHIP_ERR_IMAGE`; to preview mappings the song does not use, the preview image's list must hold them.
+A looped mapping sustains until released.
+
+`release()`: on the DPCM channel always 0 (stop: the host drops the machine). Otherwise, if no tick
+has run, or the instrument's volume envelope has no release index, returns 0
 (the host drops the machine: a cut). Otherwise the channel's stream is pointed at `$45` + the
 silent loop and the accumulator is filled so the next frame reads it: the engine jumps the volume
 envelope to its release index; `release` returns 1 and `tick` returns 0 once the envelope has
@@ -477,16 +534,17 @@ clear all mutes (power-on).
 | `start(order, row)` | above; `seek_mode` from start or order |
 | `apply_image` | above; ignored on a faulted or auditioning machine |
 | `audition`, `release` | above |
-| `mute(channel 0-4)` | forces the channel's level to 0 in the APU mixer |
+| `mute(channel 0-4)` | forces the channel's level to 0 in the APU mixer (DPCM: the sample keeps running; unmuting resumes it at its current position) |
 | `position` | above |
 | `tick` | one frame: play routine + APU, 798-800 frames at 48 kHz; 0 after a released audition ended |
 
 ### Remaining for step 5 (not native)
 
-`.nsf` export is done (`NsfExporter`, docs/BACKENDS.md: a 128-byte NSF header — load `$8000`, init
+`.nsf` export (`NsfExporter`, docs/BACKENDS.md: a 128-byte NSF header — load `$8000`, init
 `$8000`, play `$8003`, NTSC speed 16639 µs, no bank switching — + `NesPlayerImage.BYTES` + zero fill
-to `$A000` + the lowered data). Still to measure on the Thor: realtime cost per tick and seek cost
-per frame (dev PC: 114 µs per tick, 147× realtime; the engine's worst frame 4828 CPU cycles), and
+to `$8C00` + the region up to its last used byte: song data, zero fill, the sample block). Still to measure on the Thor:
+realtime cost per tick and seek cost per frame (dev PC: 129 µs per tick, 129× realtime, on ft_test;
+206 µs, 81×, on the sample-heavy DPCM test song; the engine's worst frame 4828 CPU cycles), and
 output level against the Game Boy.
 
 ### FamiStudio 4.5.3 application (offline reference, not shipped)
@@ -516,20 +574,29 @@ It checks the vendored sources' sha256 and the assembler version (ca65/ld65 on P
 that the player ends below `NES_SONG_BASE`, that engine RAM ends below the audition area and the
 engine's channel/envelope tables, and writes `app/src/main/cpp/generated/nes_player_image.h`
 (bytes, entry/engine addresses, layout numbers, player id), `core/.../backend/NesPlayerImage.kt`
-and the test fixture `app/src/test/cpp/nes_ft_song.h`. The fixture comes from
+and the test fixtures `app/src/test/cpp/nes_ft_song.h` and `nes_dpcm_song.h`. The first comes from
 `tools/audio/nes/ft_test.txt` (FamiStudio text, FamiTracker tempo, written for these tests: Fxx
 6/7/4/8, note delays and cuts, release notes, volume track and slide, fine pitch, vibrato,
 arpeggio instrument and effect, slides on pulse and triangle, duty effect, phase reset, no-attack
 notes, loop to order 1) as exported by FamiStudio 4.5.3 itself (`ft_test_ca65.s`, committed;
-`--famistudio` re-exports and checks it is unchanged). The export is linked with ld65 at `$A000`
-(raw fixture) and parsed by the script, which must give the same bytes, then rearranged into the
+`--famistudio` re-exports and checks it is unchanged). The export is linked with ld65 at `$8C00`
+(`nes_song.cfg`; raw fixture) and parsed by the script, which must give the same bytes, then rearranged into the
 Thor layout without changing any row's bytes, plus variants (every block moved; one note and one
-envelope edited; cut to two orders). Two runs produce identical files.
+envelope edited; cut to two orders; the patterns moved to the top so the song data fills all 29690
+bytes). The second does the same for `tools/audio/nes/dpcm_test.txt`
+(five DMC samples synthesized for it, eight mappings over three rates, loops and per-sample /
+per-mapping initial levels; a DPCM channel with stops, delta counter now and at the next sample, note
+delay, cut, a no-attack note and a row of samples every row; Fxx 6/5/3/7; pulse and triangle on top)
+and its export `dpcm_test_ca65.s` + `dpcm_test_ca65.dmc` (the samples; the list is assembled with
+`FAMISTUDIO_DPCM_PTR = 0`, i.e. samples at `$C000`): raw fixture with the `.dmc`, the Thor layout with
+the samples where the `.dmc` has them, every block moved and the samples packed at the top, one Kick
+byte inverted, the samples at the top with the song data ending exactly at them; and the DMC writes the
+text asks for, derived from the text alone. Two runs produce identical files.
 
 ### Verification
 
 - `tools/audio/run_native_host_test.sh [dir]` also builds and runs `app/src/test/cpp/nes_machine_test.c`
-  (2026-11-07: **237 checks, 0 failures**; Game Boy unchanged at 145). APU: as in step 4 (pitch by
+  (2026-11-07: **336 checks, 0 failures**; Game Boy unchanged at 145). APU: as in step 4 (pitch by
   zero crossings, length/envelope/linear/sweep/frame counter, LFSR, mixer). Player: entry table,
   FamiTracker speed/step after init, note table vs 12-TET. Images: derived rows, loop and order-start
   speeds equal the text; 25 single-byte corruptions each rejected with its reason. Playback: the
@@ -548,8 +615,39 @@ envelope edited; cut to two orders). Two runs produce identical files.
   noise period/mode, triangle without release = cut, argument limits. Mute, faults (JAM, BRK,
   runaway, an unknown opcode in a raw image reaching the engine's BRK), and the ops table as the hosts
   drive it (start, rows over Fxx, apply keeps position, audition with channel borrow, release).
+- DPCM (same run). DMC unit checks against an independent NESdev table/model: the level steps once per
+  rate period at all 16 rates; `$0F $AA $00` from 64 gives 66 68 70 72 70 68 66 64 | 62 64 … | 62 60 … 48;
+  clamping at 126/127/1; `$4013 = 1` fetches 17 bytes `$C000-$C010` with `$4015` bit 4 until the last;
+  `$FFC0` + 65 bytes wraps to `$8000`; loop (694 fetches, no IRQ); IRQ flag set/kept/cleared; `$4015`
+  stop mid-sample (fetched bits play out, then the level holds); `$4011` during playback; identical DMC
+  state with and without synthesis. FamiStudio's export of `dpcm_test.txt` + its `.dmc`: the Thor layout
+  writes **the same APU registers in all 816 frames, 405 of them `$4010-$4013`/`$4015`**; 160 row starts
+  on the text's frames; all 30 DMC events of the text (26 sample starts, stops, cut, delay, delta counter
+  now and deferred, no attack) register for register at their frames and no other start; after the Kick
+  (rate `$C`) and the Long sample (1025 bytes, rate `$F`, fetched in 14 frames) the level equals a
+  bit-by-bit model of the bytes (28, 44); looped samples run to their Stop (884 / 2171 bytes, 27 / 66
+  passes); the DMC alone is audible and deterministic. Seek into the sample-heavy order 2 (3 targets),
+  mid-loop and mid-Long: the DMC state at landing equals straight play's, writes and DMC in step for
+  200 frames, the DMC heard afterwards sample-identical; the order fallback's DMC writes in step.
+  Live edits: every sample moved before every frame — same writes (`$4012` mapped), 298 relocations,
+  DMC output sample-identical; an edited playing Kick stops, an unchanged playing Snare continues, the
+  next Kick plays the edited bytes (model 14 vs 28); the same image mid-sample changes nothing. 21 DPCM
+  and sample-block corruptions rejected with reasons (misaligned, below `$C000`, past the vectors, size
+  without start, samples outside the block, bytes outside song and block). Audition of a mapping (first
+  tick `$4012 $4013 $4010 $4011 $4015=$1F`, other channels silent, release = 0), a looped mapping for
+  2 s, limits; mute 4 silences the DMC while it keeps fetching; the ops table with channel 4 borrowing.
+- Shared region (same run): a sample-less ft_test image with **29690 bytes of song data** (patterns at
+  `$FF1A`; 0.9.0's limit was 24570) plays register-identical to the compact layout for 1080 frames,
+  relocates between the two before every frame with identical writes, and seeks to 2/8 in step for 200
+  frames. dpcm_test with its samples at `$F880-$FFD0` and 27776 bytes of song data ending exactly at
+  `$F880` plays register-identical to the `$C000` layout (`$4012` mapped) for 816 frames, sounds
+  DMC-identical, and alternates with it before every frame (samples moving `$C000` ↔ `$F880`) with the
+  DMC identical; one more byte of song data, or the block starting 64 bytes lower, is rejected ("song
+  data overlaps the samples").
 - Evidence written to the directory: `nes_ft.wav` / `nes_ft_tonal.wav` (30 s, 48 kHz), `nes_trace.txt`
-  (per-frame APU writes), `nes_ft.nsf` (player + FamiStudio's export).
+  (per-frame APU writes), `nes_ft.nsf` (player + FamiStudio's export); `nes_dpcm.wav` /
+  `nes_dpcm_dmc.wav` (the DMC alone), `nes_dpcm_trace.txt`, `nes_dpcm.nsf` (player, export, samples
+  at `$C000`).
 - `tools/audio/nes_reference_check.py <dir> [--famistudio <FamiStudio 4.5.3 Linux release>]`
   (developer evidence: numpy, py65, libgme; FamiStudio, fetched by `fetch_famistudio.sh` unless
   `--famistudio` is given, needs .NET 8) — 2026-11-07, PASS:
@@ -562,5 +660,11 @@ envelope edited; cut to two orders). Two runs produce identical files.
     windows. libgme renders this song differently from both FamiStudio and us (same pitch class in
     ~45% of windows against either), so it only gets loose bounds (0.83 / 0.84 for us; 0.79 / 0.82
     FamiStudio vs libgme).
+  - DPCM song: py65 running `nes_dpcm.nsf`: 816 frames, 5878 APU writes (405 DMC) identical.
+    FamiStudio's own `nsf-export` in py65 (its kernel places the samples at `$E000`): identical APU
+    writes in all 816 frames with `$4012` relative to the sample base. Audio vs FamiStudio's
+    `wav-export`: envelope 0.90, log-spectrum 0.93, same pitch class in 92% of windows; the DMC alone:
+    envelope 0.92, log-spectrum 0.80 vs FamiStudio, and 0.98 / 0.92 / 88% vs libgme (blargg's DMC);
+    the two references agree with each other less (0.89 / 0.79 / 36%).
 - Not done: listening on hardware, blargg's APU test ROMs (they need a PPU and IRQs), a comparison
   with a real NES capture, Thor measurements.

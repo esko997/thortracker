@@ -23,10 +23,13 @@ object NesRules {
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
-    val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise")
-    val CHANNEL_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE)
+    val CHANNEL_NAMES = listOf("Pulse 1", "Pulse 2", "Triangle", "Noise", "DPCM")
+    val CHANNEL_KINDS = listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.TRIANGLE, ChannelKind.NOISE, ChannelKind.SAMPLE)
     const val TRIANGLE = 2
     const val NOISE = 3
+
+    /** The delta modulation channel: notes start the sample their instrument maps to them. */
+    const val DPCM = 4
 
     /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
     const val MAX_ORDERS = 255
@@ -45,6 +48,10 @@ object NesRules {
     const val FX_SLIDE_DOWN = 27 // R
     const val FX_NOTE_CUT = 28 // S
     const val FX_DUTY = 31 // V
+    const val FX_DELTA_COUNTER = 35 // Z
+
+    /** Zxx: DMC output levels 00-7F. */
+    const val DELTA_COUNTER_MAX = 0x7F
 
     /** Pxx with xx = [FINE_CENTRE] plays the plain note; each step above raises the pitch by one period unit. */
     const val FINE_CENTRE = 0x80
@@ -83,6 +90,9 @@ object NesRules {
         EffectSpec(FX_DUTY, "Duty", "xx: 00-03 (Noise 00-01)",
             "Pulse duty 12.5/25/50/75% from this row on (an instrument duty envelope takes over at its next step); on " +
                 "Noise 00 = hiss, 01 = metallic. Not on Triangle.", true),
+        EffectSpec(FX_DELTA_COUNTER, "DMC level", "xx: output level 00-7F",
+            "DPCM only. Set the DMC output level (FamiStudio's delta counter): with a note, its sample starts from xx " +
+                "instead of its initial value; without a note, at once. A high level makes Triangle and Noise quieter.", true),
     )
 
     private val BY_CODE = EFFECTS.associateBy { it.code }
@@ -91,11 +101,18 @@ object NesRules {
 
     fun kind(channel: Int): ChannelKind = CHANNEL_KINDS[channel]
 
-    /** Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle. */
+    /** True for the channels whose notes are note-table pitches (pulses and triangle). */
+    fun pitched(channel: Int): Boolean = kind(channel).let { it == ChannelKind.PULSE || it == ChannelKind.TRIANGLE }
+
+    /**
+     * Effects with no meaning on [channel]: pitch effects on Noise, volume and duty on the Triangle, everything but
+     * speed, delay, cut and the DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), and the DMC level elsewhere.
+     */
     private fun unusable(channel: Int): Set<Int> = when (kind(channel)) {
-        ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH)
-        ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY)
-        else -> emptySet()
+        ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER)
+        ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER)
+        ChannelKind.SAMPLE -> EFFECTS.map { it.code }.toSet() - setOf(FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT, FX_DELTA_COUNTER)
+        else -> setOf(FX_DELTA_COUNTER)
     }
 
     fun effectsFor(channel: Int): List<EffectSpec> = unusable(channel).let { no -> EFFECTS.filter { it.code !in no } }
@@ -129,8 +146,11 @@ object NesRules {
         if (cell.note == Cell.EMPTY && cell.instrument != 0) {
             return "instrument ${hex2(cell.instrument)} without a note does nothing; add a note or clear the instrument"
         }
-        if (cell.note >= 0 && kind(channel) != ChannelKind.NOISE && cell.note < LOWEST_TONAL) {
+        if (cell.note >= 0 && pitched(channel) && cell.note < LOWEST_TONAL) {
             return "${CHANNEL_NAMES[channel]} cannot play below A-1 (FamiStudio's longest period); play it an octave higher"
+        }
+        if (cell.note >= 0 && channel == DPCM && cell.instrument != 0) {
+            dpcmMappingProblem(song, cell.instrument, cell.note)?.let { return it }
         }
         if (!cell.hasEffect) return null
         val p = cell.param
@@ -164,7 +184,7 @@ object NesRules {
                     val target = cell.note + if (cell.effect == FX_SLIDE_UP) p else -p
                     when {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
-                        kind(channel) != ChannelKind.NOISE && target < LOWEST_TONAL -> "$fx from $noteName would end below A-1, which ${CHANNEL_NAMES[channel]} cannot play"
+                        pitched(channel) && target < LOWEST_TONAL -> "$fx from $noteName would end below A-1, which ${CHANNEL_NAMES[channel]} cannot play"
                         else -> null
                     }
                 }
@@ -175,8 +195,21 @@ object NesRules {
                 p > 3 -> "$fx: duties are V00-V03"
                 else -> null
             }
+            FX_DELTA_COUNTER -> if (p > DELTA_COUNTER_MAX) "$fx: DMC levels are Z00-Z7F" else null
             else -> null
         }
+    }
+
+    /**
+     * Why DPCM note [note] cannot play with instrument [slot] (1-based), or null: the instrument must map a sample to
+     * the note, and the mapping must name an existing sample.
+     */
+    fun dpcmMappingProblem(song: Song, slot: Int, note: Int): String? {
+        val name = NesSystem.noteName(note)
+        val mapping = song.nes.instruments.getOrNull(slot - 1)?.dpcm?.get(note)
+            ?: return "instrument ${hex2(slot)} maps no DPCM sample to $name; map one in its DPCM samples or play another note"
+        if (mapping.sample !in song.nes.samples.indices) return "instrument ${hex2(slot)} maps $name to sample ${mapping.sample + 1}, which does not exist"
+        return null
     }
 
     fun describeEffect(channel: Int, effect: Int, param: Int): String {
@@ -197,6 +230,7 @@ object NesRules {
             FX_NOTE_CUT -> if (param == 0) "Cut immediately" else "Cut after $param frames"
             FX_DUTY -> if (kind(channel) == ChannelKind.NOISE) (if (param == 1) "Noise metallic" else "Noise hiss")
                 else "Duty ${listOf("12.5%", "25%", "50%", "75%").getOrElse(param) { "?" }}"
+            FX_DELTA_COUNTER -> "DMC level $param"
             else -> "Unknown effect"
         }
     }

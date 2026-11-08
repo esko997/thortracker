@@ -9,7 +9,8 @@ import org.thortracker.model.Songs
  * The bundled NES demo: "Thor Quest", E minor, Em-C-G-D, speed 6. Intro, theme A and theme B, arranged 0-1-2-1-2
  * and looping to order 1. Shows the envelope instruments (a lead with a release tail and a duty sweep, a PWM pluck,
  * arpeggio chords, a triangle bass, pitched noise drums) and the effects: 0xy chords, 4xy vibrato, Axy fade, Cxx
- * volume, Gxx delay, Qxx/Rxx glides, Sxx cuts, Vxx duty and OFF releases.
+ * volume, Gxx delay, Qxx/Rxx glides, Sxx cuts, Vxx duty and OFF releases. DPCM plays the built-in starter kit
+ * ([DpcmStarterKit]) under the noise drums: kick and snare in the themes, tom fills at the ends of the intro and theme B.
  */
 internal object NesDemoSong {
     private const val LEAD = 1
@@ -21,6 +22,7 @@ internal object NesDemoSong {
     private const val HAT = 7
     private const val OPEN_HAT = 8
     private const val COUNTER = 9
+    private const val DRUM_KIT = 10
 
     /** Bar chords: Em C G D — pulse chord root, its arpeggio and the triangle bass root (sounds an octave lower). */
     private val CHORD_ROOTS = intArrayOf(n("E-4"), n("C-4"), n("G-4"), n("D-4"))
@@ -54,15 +56,16 @@ internal object NesDemoSong {
         bank[SNARE - 1] = NesInstrument(name = "Snare", volume = NesEnvelope(listOf(14, 11, 9, 7, 6, 5, 4, 3, 2, 1, 0)), arpeggio = NesEnvelope(listOf(2, 0)))
         bank[HAT - 1] = NesInstrument(name = "Closed hat", volume = NesEnvelope(listOf(8, 5, 3, 1, 0)))
         bank[OPEN_HAT - 1] = NesInstrument(name = "Open hat", volume = NesEnvelope(listOf(8, 8, 7, 6, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0)))
+        bank[DRUM_KIT - 1] = DpcmStarterKit.instrument(0)
         return base.copy(
             title = "Thor Quest",
             artist = "Thor Tracker",
-            comment = "NES demo: envelope instruments, arpeggio chords, vibrato, glides, cuts, releases. Loops to order 1.",
+            comment = "NES demo: envelope instruments, arpeggio chords, vibrato, glides, cuts, releases, DPCM drums. Loops to order 1.",
             ticksPerRow = 6,
             loopOrder = 1,
             patterns = listOf(intro(), themeA(), themeB()),
             orders = listOf(0, 1, 2, 1, 2),
-            sound = NesSound(bank),
+            sound = NesSound(bank, DpcmStarterKit.samples()),
         )
     }
 
@@ -82,6 +85,8 @@ internal object NesDemoSong {
                 note(3, r + 13, SNARE_NOTE, SNARE); fx(3, r + 13, NesRules.FX_VOLUME, 0x0C)
                 note(3, r + 14, SNARE_NOTE, SNARE); fx(3, r + 14, NesRules.FX_VOLUME, 0x0F)
                 note(3, r + 15, SNARE_NOTE, SNARE)
+                note(DPCM, r + 8, TOM_HIGH, DRUM_KIT)
+                note(DPCM, r + 12, TOM_LOW, DRUM_KIT)
             }
         }
         // A pickup into theme A: the lead glides up a fourth into its first note.
@@ -133,8 +138,10 @@ internal object NesDemoSong {
         fx(1, 63, NesRules.FX_VIBRATO, 0x00)
         // A late ghost snare, delayed into the middle of its row.
         note(3, 47, SNARE_NOTE, SNARE); fx(3, 47, NesRules.FX_NOTE_DELAY, 0x03)
-        // The last bass note falls an octave.
+        // The last bass note falls an octave over a tom fill.
         note(2, 60, BASS_ROOTS[3] + 12, BASS); fx(2, 60, NesRules.FX_SLIDE_DOWN, 0x0C)
+        note(DPCM, 60, TOM_HIGH, DRUM_KIT)
+        note(DPCM, 62, TOM_LOW, DRUM_KIT)
     }.build()
 
     private fun PatternBuilder.chords(bar: Int) {
@@ -163,6 +170,11 @@ internal object NesDemoSong {
         }
         fx(3, r + 10, NesRules.FX_VOLUME, 0x09)
         fx(3, r + 12, NesRules.FX_VOLUME, 0x0F)
+        // DPCM kick and snare under the noise; theme B's last beat is left to its tom fill.
+        for ((row, note) in listOf(0 to KIT_KICK, 4 to KIT_SNARE, 8 to KIT_KICK, 12 to KIT_SNARE)) {
+            if (bar == 3 && row == 12 && title == "Theme B") continue
+            note(DPCM, r + row, note, DRUM_KIT)
+        }
     }
 
     private fun PatternBuilder.melody(notes: List<Pair<Int, String>>) {
@@ -174,14 +186,21 @@ internal object NesDemoSong {
     private val SNARE_NOTE = n("F-4")
     private val HAT_NOTE = n("A#4")
 
+    /** The starter kit's notes ([DpcmStarterKit.NOTES]). */
+    private const val DPCM = NesRules.DPCM
+    private val KIT_KICK = n("C-3")
+    private val KIT_SNARE = n("D-3")
+    private val TOM_LOW = n("G-3")
+    private val TOM_HIGH = n("A-3")
+
     private fun n(name: String): Int {
         val index = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-").indexOf(name.substring(0, 2))
         require(index >= 0) { "bad note $name" }
         return name.substring(2).toInt() * 12 + index
     }
 
-    private class PatternBuilder(private val title: String) {
-        private val tracks = List(4) { Array(Songs.ROWS) { Cell.BLANK } }
+    private class PatternBuilder(val title: String) {
+        private val tracks = List(NesRules.CHANNEL_NAMES.size) { Array(Songs.ROWS) { Cell.BLANK } }
 
         fun note(channel: Int, row: Int, name: String, instrument: Int) = note(channel, row, n(name), instrument)
 

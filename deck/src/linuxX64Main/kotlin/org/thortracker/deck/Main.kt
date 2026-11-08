@@ -89,6 +89,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         input.keymap = shell.keymap
         popups.keys = shell.keymap
         pane.controllerFocused = true
+        session.onMenuRequest = { build -> menus.open(build) }
         session.onSongChanged = { transport.songChanged(it); pane.refresh() }
         session.onStateChanged = { pane.refresh() }
         session.onAudition = { channel, note, instrument, detune -> auditionLoop.stop(); audio.audition(channel, note, instrument, detune) }

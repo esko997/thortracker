@@ -28,7 +28,7 @@ class ProjectCodecTest {
         assertEquals(ProjectCodec.FORMAT, root["format"]!!.jsonPrimitive.content)
         assertEquals(ProjectCodec.VERSION.toString(), root["version"]!!.jsonPrimitive.content)
         assertEquals(GbSystem.id, root["backend"]!!.jsonPrimitive.content)
-        assertEquals(ProjectCodec.BACKEND_VERSION.toString(), root["backendVersion"]!!.jsonPrimitive.content)
+        assertEquals("1", root["backendVersion"]!!.jsonPrimitive.content)
     }
 
     @Test

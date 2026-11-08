@@ -1,7 +1,9 @@
 package org.thortracker.backend
 
 import org.thortracker.backend.FamiStudioEnvelopes.Kind
+import org.thortracker.model.NumberText
 import org.thortracker.model.Song
+import org.thortracker.system.nes.Dpcm
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
 import kotlin.math.abs
@@ -73,6 +75,7 @@ internal object FamiStudioLowering {
     private const val OP_DUTY = 0x4f
     private const val OP_SLIDE = 0x50
     private const val OP_VOLUME_SLIDE = 0x51
+    private const val OP_DELTA_COUNTER = 0x52
     private const val OP_VOLUME_BITS = 0x70
     private const val SINGLE_BYTE_NOTE_MIN = 12
     private const val SINGLE_BYTE_NOTE_MAX = SINGLE_BYTE_NOTE_MIN + 0x3f
@@ -83,17 +86,36 @@ internal object FamiStudioLowering {
         var address = 0
     }
 
-    /** The lowered song: FamiStudio data for [NesPlayerImage.SONG_BASE] and its envelope directory. */
-    class Lowered(val data: ByteArray, val envelopes: List<Envelope>, val instrumentCount: Int)
-
-    /** @throws IllegalArgumentException when the song has errors or its data does not fit the song region. */
-    fun lower(song: Song): Lowered {
-        val errors = NesSystem.errors(song)
-        require(errors.isEmpty()) { errors.first() }
-        return lower(FsSong.of(song))
+    /**
+     * The lowered song: FamiStudio data for [NesPlayerImage.SONG_BASE], its envelope directory, and the DPCM layout
+     * ([NesDpcm]): the sample block for [NesDpcm.Layout.start] and the sample list.
+     */
+    class Lowered(val data: ByteArray, val envelopes: List<Envelope>, val instrumentCount: Int, val dpcm: NesDpcm.Layout) {
+        val samples: ByteArray get() = dpcm.bytes
+        val sampleStart: Int get() = dpcm.start
+        val mappingCount: Int get() = dpcm.entries.size
     }
 
-    fun lower(fs: FsSong): Lowered {
+    /**
+     * The song as exported: only the samples and mappings it plays. [withUnplayed] (the preview image) adds every other
+     * DPCM mapping that fits, for auditioning, without taking room the song needs.
+     * @throws IllegalArgumentException when the song has errors or its data and samples do not fit the NES memory.
+     */
+    fun lower(song: Song, withUnplayed: Boolean = false): Lowered {
+        val errors = NesSystem.errors(song)
+        require(errors.isEmpty()) { errors.first() }
+        return lower(FsSong.of(song), withUnplayed)
+    }
+
+    fun lower(fs: FsSong, withUnplayed: Boolean = false): Lowered {
+        val played = lower(fs, NesDpcm.layout(fs))
+        if (!withUnplayed) return played
+        // Unplayed mappings only append list entries and samples: the song's own bytes and entry numbers stay.
+        val preview = NesDpcm.layout(fs, songBytes = played.data.size)
+        return if (preview.entries.size == played.mappingCount && preview.bytes.size == played.samples.size) played else lower(fs, preview)
+    }
+
+    private fun lower(fs: FsSong, dpcm: NesDpcm.Layout): Lowered {
         val base = NesPlayerImage.SONG_BASE
         val out = Bytes()
         // Header: song count, instruments, samples - 4, five channel streams, tempo words.
@@ -128,10 +150,12 @@ internal object FamiStudioLowering {
             e.address = base + at
             at += e.bytes.size
         }
-        val samplesAt = at // FamiStudio's (empty) DPCM sample list label.
+        // FamiStudio's DPCM sample list (`samples:`); the header points 4 bytes before it (entries count from 1).
+        val samplesAt = at
+        at += 4 * dpcm.entries.size
         val bySlot = envelopes.filter { it.index < EFFECT_ENVELOPES_START }.associateBy { it.index }
         val instrumentArpeggios = IntArray(instrumentCount) { bySlot.getValue(it * 4 + Kind.ARPEGGIO.ordinal).address }
-        val streams = Streams(fs, noArpeggio, vibratoOff, arpeggios, vibratos, instrumentArpeggios)
+        val streams = Streams(fs, noArpeggio, vibratoOff, arpeggios, vibratos, instrumentArpeggios, dpcm)
         val patterns = LinkedHashMap<Bytes.Key, Int>() // pattern stream bytes → offset
         val patternOrder = ArrayList<ByteArray>()
         val channelRefs = Array(CHANNELS) { arrayOfNulls<ByteArray>(fs.orders) }
@@ -157,8 +181,21 @@ internal object FamiStudioLowering {
                 at += bytes.size
             }
         }
-        require(at <= NesPlayerImage.SONG_END - base) {
-            "The song needs $at bytes of NES data; the player has room for ${NesPlayerImage.SONG_END - base}. Reuse patterns or shorten the song"
+        val sampleBytes = dpcm.bytes.size
+        require(sampleBytes <= Dpcm.MEMORY) {
+            "The DPCM samples the song plays need $sampleBytes bytes in 64-byte slots; at most ${Dpcm.MEMORY} fit " +
+                "(\$C000-\$FFF9). Use fewer or shorter samples"
+        }
+        val room = (if (sampleBytes == 0) NesPlayerImage.REGION_END else dpcm.start) - base
+        require(at <= room) {
+            if (sampleBytes == 0) {
+                "The song needs ${kb(at)} of NES song data; the player has room for ${kb(room)} " +
+                    "(\$${NumberText.hex(base, 4)}-\$FFF9). Reuse patterns or shorten the song"
+            } else {
+                "Song data ${kb(at)} + DPCM samples ${kb(sampleBytes)} exceed the NES's ${kb(NesPlayerImage.REGION_SIZE)} " +
+                    "(\$${NumberText.hex(base, 4)}-\$FFF9, samples from \$${NumberText.hex(dpcm.start, 4)}). " +
+                    "Reuse patterns, shorten the song or use fewer or shorter samples"
+            }
         }
         out.byte(1)
         out.word(base + instrumentsAt)
@@ -172,6 +209,7 @@ internal object FamiStudioLowering {
         }
         for (e in envelopes) out.bytes(e.bytes)
         check(out.size == samplesAt)
+        for (e in dpcm.entries) for (b in dpcm.entryBytes(e)) out.byte(b)
         for (c in 0 until CHANNELS) {
             check(out.size == channelAt[c])
             for (o in 0 until fs.orders) {
@@ -184,8 +222,11 @@ internal object FamiStudioLowering {
         }
         for (bytes in patternOrder) out.bytes(bytes)
         check(out.size == at)
-        return Lowered(out.toByteArray(), envelopes.sortedBy { it.index }, instrumentCount)
+        return Lowered(out.toByteArray(), envelopes.sortedBy { it.index }, instrumentCount, dpcm)
     }
+
+    /** "20.1 KB (20582 bytes)": sizes in budget messages. */
+    internal fun kb(bytes: Int): String = "${bytes / 1024}.${bytes % 1024 * 10 / 1024} KB ($bytes bytes)"
 
     /** One order's pattern stream of one channel: [bytes] and its number of row terminators. */
     class Chunk(val bytes: ByteArray, val notes: Int)
@@ -197,6 +238,7 @@ internal object FamiStudioLowering {
         val arpeggios: Map<Int, Envelope>,
         val vibratos: Map<Int, Envelope>,
         val instrumentArpeggios: IntArray,
+        val dpcm: NesDpcm.Layout,
     ) {
         /** FamiStudio's speed channel: the one whose patterns hold the most speed effects (the first on a tie). */
         val speedChannel: Int = run {
@@ -214,17 +256,49 @@ internal object FamiStudioLowering {
             best
         }
 
-        fun dpcm(): List<Chunk> = (0 until fs.orders).map { o ->
-            val b = Bytes()
-            var rows = fs.lengths[o]
-            var notes = 0
-            while (rows > 0) {
-                val k = minOf(rows - 1, MAX_REPEAT)
-                b.byte(0x81 or (k shl 1))
-                rows -= k + 1
-                notes++
+        /**
+         * The DPCM channel as `GetSongData` writes it: no instruments, volumes or pitches; a note is its sample list
+         * entry (`$43` first when it has no attack: the sample then keeps the current output level), `$52` the DMC level
+         * (bit 7 set: at once, as no note starts on that row), delays and cuts as on the other channels.
+         */
+        fun dpcm(): List<Chunk> {
+            val c = DPCM
+            val isSpeedChannel = c == speedChannel
+            return (0 until fs.orders).map { o ->
+                val b = Bytes()
+                var notes = 0
+                val end = fs.orderStart[o + 1]
+                var row = fs.orderStart[o]
+                while (row < end) {
+                    val note = fs.notes[c][row] ?: EMPTY
+                    if (isSpeedChannel) fs.speedAt(row).let { if (it >= 0) { b.byte(OP_SPEED); b.byte(it) } }
+                    row++
+                    if (note.noteDelay >= 0) { b.byte(OP_DELAYED_NOTE); b.byte(note.noteDelay - 1) }
+                    if (note.cutDelay >= 0) { b.byte(OP_DELAYED_CUT); b.byte(note.cutDelay) }
+                    if (note.deltaCounter >= 0) {
+                        b.byte(OP_DELTA_COUNTER); b.byte((if (note.isMusical) 0 else 0x80) or note.deltaCounter)
+                    }
+                    if (note.isValid) {
+                        if (note.isMusical) {
+                            if (!note.attack) b.byte(OP_DISABLE_ATTACK)
+                            b.byte(dpcm.index.getValue(note.instrument to note.value + NesRules.NOTE_OFFSET))
+                        } else {
+                            b.byte(0) // stop (OFF has no release on DPCM)
+                        }
+                    } else {
+                        var empty = 0
+                        while (row < end) {
+                            val n = fs.notes[c][row] ?: EMPTY
+                            if (empty >= MAX_REPEAT || n.isValid || n.hasRunBreakingEffect || (isSpeedChannel && fs.speedAt(row) >= 0)) break
+                            empty++
+                            row++
+                        }
+                        b.byte(0x81 or (empty shl 1))
+                    }
+                    notes++
+                }
+                Chunk(b.toByteArray(), notes)
             }
-            Chunk(b.toByteArray(), notes)
         }
 
         fun channel(c: Int): List<Chunk> {
