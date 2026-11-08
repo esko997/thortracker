@@ -36,7 +36,7 @@ object WorkspaceCodec {
     /** hUGE note 0 (C2 in scientific pitch): note 0 of the old `phrase` key. */
     const val LEGACY_NOTE_BASE = 24
 
-    /** Most channels any system has (the OPL3's 9), for the stored per-channel effect column counts. */
+    /** At least the most channels any system has (the Mega Drive's 10), for the stored per-channel effect column counts. */
     private const val MAX_CHANNELS = 16
 
     fun decode(text: String): MutableList<ViewState> {

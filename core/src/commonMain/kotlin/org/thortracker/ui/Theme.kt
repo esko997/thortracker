@@ -29,6 +29,7 @@ object Palette {
         0xFF6AC4E8.toInt(),
         0xFFE87AC4.toInt(),
         0xFFD8B48C.toInt(), // ninth lane (OPL3 channel 9): sand
+        0xFFC4CCD4.toInt(), // tenth lane (Mega Drive Noise): silver
     )
 
     fun channel(i: Int): Int = CHANNELS[i.mod(CHANNELS.size)]

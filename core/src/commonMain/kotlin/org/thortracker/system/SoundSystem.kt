@@ -341,6 +341,12 @@ interface SoundSystem {
      */
     fun selectSound(selection: Selection, song: Song): Selection
 
+    /**
+     * The sound number a new entry on a channel of [bank] starts with when the editor has none chosen for that bank
+     * yet (the Mega Drive: the first FM voice for FM channels, the first PSG sound for PSG channels).
+     */
+    fun defaultInstrument(song: Song, bank: Int): Int = 1
+
     /** The editor and painter of one of the system's own [views] (Instrument, Wave), or null for shared views. */
     fun view(kind: ViewKind): SystemView?
 

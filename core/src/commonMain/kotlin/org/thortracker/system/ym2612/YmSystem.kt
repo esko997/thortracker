@@ -41,14 +41,23 @@ object YmSystem : SoundSystem {
     val NTSC_HZ = YmPlayerImage.MCLK_NTSC.toDouble() / (YmPlayerImage.MCLK_PER_LINE * YmPlayerImage.LINES_NTSC)
     val PAL_HZ = YmPlayerImage.MCLK_PAL.toDouble() / (YmPlayerImage.MCLK_PER_LINE * YmPlayerImage.LINES_PAL)
 
+    /** [banks]: FM voices (FM 1-6) and PSG sounds (PSG 1-3, Noise) — two views of the one numbering of [SLOTS] slots. */
+    const val FM_BANK = 0
+    const val PSG_BANK = 1
+
     override val channels = YmRules.CHANNEL_NAMES.mapIndexed { ch, name ->
         when {
-            YmRules.isFm(ch) -> ChannelSpec(name, ChannelKind.VOICE, 0, tonal = true)
-            ch == YmRules.NOISE -> ChannelSpec(name, ChannelKind.NOISE, 0, tonal = false)
-            else -> ChannelSpec(name, ChannelKind.PULSE, 0, tonal = true)
+            YmRules.isFm(ch) -> ChannelSpec(name, ChannelKind.VOICE, FM_BANK, tonal = true)
+            ch == YmRules.NOISE -> ChannelSpec(name, ChannelKind.NOISE, PSG_BANK, tonal = false)
+            else -> ChannelSpec(name, ChannelKind.PULSE, PSG_BANK, tonal = true)
         }
     }
-    override val banks = listOf(BankSpec("Instruments", SLOTS))
+
+    /**
+     * Both banks name the same 64 slots (a slot holds an FM voice or a PSG sound; [YmSound.instruments]); they exist so
+     * the editor keeps a separate current sound for FM and PSG channels ([defaultInstrument]).
+     */
+    override val banks = listOf(BankSpec("FM voices", SLOTS), BankSpec("PSG sounds", SLOTS))
     override val noteRange = YmRules.NOTES
 
     /** FamiTracker-style names in scientific pitch: A-4 = 440 Hz. */
@@ -97,6 +106,10 @@ object YmSystem : SoundSystem {
     override fun effectColumns(channel: Int): Int = YmRules.EFFECT_COLUMNS
 
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int): String = YmRules.describe(song, channel, effect, param)
+
+    /** Arpeggios read with the notes they step through; locks on rows without a note say they are ignored ([YmEffectText]). */
+    override fun effectDetail(song: Song, pattern: Int, channel: Int, row: Int, column: Int): String? =
+        YmEffectText.detail(song, pattern, channel, row, column)
 
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? = YmValidator.cellProblem(song, channel, cell)
 
@@ -152,10 +165,10 @@ object YmSystem : SoundSystem {
     override val engine: PlaybackEngine = Engine
 
     override fun instrumentName(song: Song, bank: Int, slot: Int): String? =
-        if (bank != 0 || slot !in 1..SLOTS) null else instrument(song, slot)?.name?.ifEmpty { "Instrument ${NumberText.hex(slot, 2)}" } ?: EMPTY_NAME
+        if (bank !in banks.indices || slot !in 1..SLOTS) null else instrument(song, slot)?.name?.ifEmpty { "Instrument ${NumberText.hex(slot, 2)}" } ?: EMPTY_NAME
 
     override fun instrumentSummary(song: Song, bank: Int, slot: Int): String? =
-        if (bank != 0 || slot !in 1..SLOTS) null else instrument(song, slot)?.let(YmCurated::summary) ?: "Empty: choose a preset"
+        if (bank !in banks.indices || slot !in 1..SLOTS) null else instrument(song, slot)?.let(YmCurated::summary) ?: "Empty: choose a preset"
 
     override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? = null
 
@@ -176,7 +189,13 @@ object YmSystem : SoundSystem {
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
 
-    override fun view(kind: ViewKind): SystemView? = null
+    /** The first slot holding the bank's kind (an FM voice for [FM_BANK], a PSG sound for [PSG_BANK]), else 1. */
+    override fun defaultInstrument(song: Song, bank: Int): Int {
+        val found = song.ym.instruments.indexOfFirst { if (bank == PSG_BANK) it is YmPsgInstrument else it is YmFmInstrument }
+        return if (found >= 0) found + 1 else 1
+    }
+
+    override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) YmInstrumentView else null
 
     override val songSettings: List<SongSetting> get() = YmSongSettings.ALL
 
@@ -258,7 +277,7 @@ object YmSystem : SoundSystem {
         override val untonalNote = "Noise keeps every pitch (it only matters in pitched mode)."
         override val sketchChannels = "FM 1-6 or PSG 1-3; Noise has no tonal chord reference"
 
-        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = emptyList()
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = YmInstrumentView.helpSections(keys)
 
         override fun limits(song: Song): List<Pair<String, String>> = YmValidator.limits(song)
     }

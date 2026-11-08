@@ -47,10 +47,10 @@ object YmPresets {
             op(1, 4, d1r = 5, d2r = 2, sl = 2, rr = 9)), Category.FM),
         // Two detuned pairs whose modulators swell in slower than the carriers: the brass rasp opens up.
         Preset(fm("Brass", 4, 5,
-            op(1, 26, ar = 18, d1r = 4, d2r = 1, sl = 2, rr = 7, dt = 3),
-            op(1, 4, ar = 22, d1r = 3, d2r = 1, sl = 1, rr = 7, dt = 3),
-            op(1, 28, ar = 17, d1r = 4, d2r = 1, sl = 2, rr = 7, dt = 7),
-            op(1, 6, ar = 22, d1r = 3, d2r = 1, sl = 1, rr = 7, dt = 7)), Category.FM),
+            op(1, 26, ar = 21, d1r = 4, d2r = 1, sl = 2, rr = 7, dt = 3),
+            op(1, 4, ar = 27, d1r = 3, d2r = 1, sl = 1, rr = 7, dt = 3),
+            op(1, 28, ar = 20, d1r = 4, d2r = 1, sl = 2, rr = 7, dt = 7),
+            op(1, 6, ar = 27, d1r = 3, d2r = 1, sl = 1, rr = 7, dt = 7)), Category.FM),
         // Two pairs: a 14× tine that fades fast over a mellow body.
         Preset(fm("E-piano", 4, 3,
             op(14, 46, d1r = 14, d2r = 6, sl = 6, rr = 7, dt = 3),
@@ -121,8 +121,8 @@ object YmPresets {
             arpeggio = env(0, 0, 3, 3, 7, 7, loop = 0)), Category.PSG),
         // Noise: fixed-rate white noise drums and pitched periodic noise (PSG 3 goes silent while it sounds).
         Preset(psg("Noise snare", env(15, 13, 11, 9, 7, 6, 5, 4, 3, 2, 1, 0), noise = YmPsgInstrument.WHITE or 1), Category.NOISE, 48),
-        Preset(psg("Noise hat", env(11, 8, 5, 3, 1, 0), noise = YmPsgInstrument.WHITE or 0), Category.NOISE, 48),
-        Preset(psg("Noise open hat", env(11, 10, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0), noise = YmPsgInstrument.WHITE or 0), Category.NOISE, 48),
+        Preset(psg("Noise hat", env(14, 10, 6, 3, 1, 0), noise = YmPsgInstrument.WHITE or 0), Category.NOISE, 48),
+        Preset(psg("Noise open hat", env(14, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0), noise = YmPsgInstrument.WHITE or 0), Category.NOISE, 48),
         Preset(psg("Noise tom", env(15, 14, 12, 10, 8, 6, 4, 2, 1, 0), noise = YmPsgInstrument.WHITE or YmPsgInstrument.PITCHED,
             sweep = YmSweep(12, -12, 24)), Category.NOISE, 36),
         Preset(psg("Buzz bass", env(15, 15, 14, 14, 13, 13, 9, 5, 0, loop = 5, release = 6), noise = YmPsgInstrument.PITCHED), Category.NOISE, 36),
