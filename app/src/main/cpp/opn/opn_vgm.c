@@ -63,10 +63,51 @@ static void put_wait(Out* o, uint32_t n) {
     }
 }
 
-size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* player, uint8_t* out, size_t capacity,
+/* At the loop point: the next tick starts (loop order, row 0). */
+static int at_loop(const OpnPlayer* p, const OpnImage* image) {
+    return p->order == image->info.loop && p->row == 0 && p->tick == 0;
+}
+
+/* Finds the loop: the first pair of loop-point arrivals b < a whose player states are identical (opnp_same_state),
+ * by a digest per arrival and an exact comparison against a second player replayed to arrival b. Sets *loop_tick and
+ * *end_tick (the ticks before arrivals b and a) and returns 1, or returns 0 when no such pair exists within max_ticks
+ * ticks and OPN_VGM_MAX_ARRIVALS arrivals. */
+static int find_loop(const OpnImage* image, uint32_t max_ticks, OpnPlayer* p, OpnPlayer* q, uint32_t* loop_tick,
+                     uint32_t* end_tick) {
+    uint32_t tick_at[OPN_VGM_MAX_ARRIVALS];
+    uint64_t hash_at[OPN_VGM_MAX_ARRIVALS];
+    int arrivals = 0;
+    opnp_reset(p, image);
+    for (uint32_t t = 0;; ++t) {
+        if (at_loop(p, image)) {
+            const uint64_t h = opnp_state_hash(p);
+            for (int b = 0; b < arrivals; ++b) {
+                if (hash_at[b] != h) continue;
+                opnp_reset(q, image);
+                for (uint32_t k = 0; k < tick_at[b]; ++k) opnp_tick(q, image);
+                if (opnp_same_state(p, q)) {
+                    *loop_tick = tick_at[b];
+                    *end_tick = t;
+                    return 1;
+                }
+            }
+            if (arrivals == OPN_VGM_MAX_ARRIVALS) return 0;
+            tick_at[arrivals] = t;
+            hash_at[arrivals++] = h;
+        }
+        if (t == max_ticks) return 0;
+        opnp_tick(p, image);
+    }
+}
+
+size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* players, uint8_t* out, size_t capacity,
                       OpnVgmInfo* info) {
     memset(info, 0, sizeof *info);
     if (image->info.loaded != OPN_LOADED) return 0;
+    uint32_t loop_tick = 0, end_tick = max_ticks;
+    const int looped = find_loop(image, max_ticks, &players[0], &players[1], &loop_tick, &end_tick);
+    if (!looped) end_tick = max_ticks;
+    OpnPlayer* player = &players[0];
     const int chip = image->info.chip, opna = chip == OPN_CHIP_YM2608;
     Out o = {out, VGM_HEADER, capacity, capacity < VGM_HEADER, opna};
     if (opna && image->info.adpcm_size) { /* data block: YM2608 DELTA-T (ADPCM-B) memory */
@@ -86,18 +127,10 @@ size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* play
     uint64_t acc = 0;
     uint32_t samples = 0, loop_samples = 0;
     size_t loop_offset = 0;
-    int seen_loop = 0;
-    uint32_t t = 0;
-    OpnWrite dump[OPNP_MAX_DUMP_WRITES];
-    for (; t < max_ticks; ++t) {
-        if (player->order == image->info.loop && player->row == 0 && player->tick == 0) {
-            if (seen_loop) break;
-            seen_loop = 1;
+    for (uint32_t t = 0; t < end_tick; ++t) {
+        if (looped && t == loop_tick) { /* only the player's own writes follow, on every pass */
             loop_offset = o.n;
             loop_samples = samples;
-            /* the player's whole register state, so every pass of the loop starts from the same registers */
-            put_writes(&o, dump, 0, opnp_dump(player, dump));
-            put_writes(&o, dump, 0, opnp_dump_adpcm(player, dump));
         }
         opnp_tick(player, image);
         acc += step;
@@ -113,12 +146,12 @@ size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* play
         put_writes(&o, player->write, player->offs, player->writes);
         put_wait(&o, n);
     }
-    const int looped = t < max_ticks;
     put(&o, 0x66);
-    info->ticks = t;
+    info->ticks = end_tick;
     info->size = o.n;
     info->samples = samples;
     if (looped) {
+        info->loop_tick = loop_tick;
         info->loop_offset = (uint32_t)loop_offset;
         info->loop_samples = samples - loop_samples;
     }
@@ -133,12 +166,15 @@ size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* play
         vgm_put32(out + 0x20, samples - loop_samples);
     }
     vgm_put32(out + 0x34, VGM_HEADER - 0x34);
+    /* SSG (AY8910) flags. VGM 1.71 specification (vgmrips vgmspec171.txt): $79 "AY8910 Flags ... Default is 0x01"
+     * (bit 0 Legacy Output), and $7A / $7B are the same flags for the AY8910 "connected with/part of" the YM2203 /
+     * YM2608: the default. Bit 4 (YM2149 pin 26, an extra /2) stays 0: the SSG divider is the chip's own prescaler. */
     if (opna) {
         vgm_put32(out + 0x48, OPN_CLOCK_YM2608);
-        out[0x7B] = 0x01; /* YM2608 SSG (AY8910) flags: the default, legacy output */
+        out[0x7B] = 0x01;
     } else {
         vgm_put32(out + 0x44, OPN_CLOCK_YM2203);
-        out[0x7A] = 0x01; /* YM2203 SSG (AY8910) flags: the default, legacy output */
+        out[0x7A] = 0x01;
     }
     return o.n;
 }
@@ -162,9 +198,9 @@ uint8_t* opn_export_vgm(const uint8_t* image, size_t image_size, uint32_t max_ti
     }
     const char* system = chip == OPN_CHIP_YM2608 ? "PC-88/98 OPNA (Thor Tracker)" : "PC-88/98 OPN (Thor Tracker)";
     OpnImage* img = (OpnImage*)malloc(sizeof *img);
-    OpnPlayer* player = (OpnPlayer*)malloc(sizeof *player);
+    OpnPlayer* players = (OpnPlayer*)malloc(2 * sizeof *players);
     uint8_t* vgm = NULL;
-    if (!img || !player) {
+    if (!img || !players) {
         *problem = "out of memory";
         goto done;
     }
@@ -176,21 +212,21 @@ uint8_t* opn_export_vgm(const uint8_t* image, size_t image_size, uint32_t max_ti
     OpnVgmInfo info;
     char today[16];
     date = vgm_date(date, today);
-    opn_vgm_render(img, max_ticks, player, NULL, 0, &info); /* measure: the player is deterministic */
+    opn_vgm_render(img, max_ticks, players, NULL, 0, &info); /* measure: the player is deterministic */
     const size_t body = info.size, tag = vgm_gd3(title, system, author, date, GD3_CONVERTER, NULL);
     vgm = (uint8_t*)malloc(body + tag);
     if (!vgm) {
         *problem = "out of memory";
         goto done;
     }
-    opn_vgm_render(img, max_ticks, player, vgm, body, &info);
+    opn_vgm_render(img, max_ticks, players, vgm, body, &info);
     vgm_gd3(title, system, author, date, GD3_CONVERTER, vgm + body);
     vgm_put32(vgm + 0x04, (uint32_t)(body + tag - 4));
     vgm_put32(vgm + 0x14, (uint32_t)(body - 0x14));
     *size = body + tag;
 done:
     free(img);
-    free(player);
+    free(players);
     return vgm;
 }
 

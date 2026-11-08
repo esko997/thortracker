@@ -331,6 +331,7 @@ int opn_load_image(OpnImage* image, int chip) {
         return fail(image, "FM 3 mode must be 0 (normal), 1 (special) or 2 (CSM)", OPN_H_FM3_MODE);
     const int size = opn_u16(b + OPN_H_DATA_SIZE);
     if (size > (int)OPN_DATA_CAPACITY) return fail(image, "data size above the region", OPN_H_DATA_SIZE);
+    info->data_size = size;
     info->timer_a = opn_u16(b + OPN_H_TIMER_A);
     if (info->timer_a > OPN_TIMER_A_MAX) return fail(image, "timer A above 1023", OPN_H_TIMER_A);
     info->timer_b = b[OPN_H_TIMER_B];
@@ -367,6 +368,9 @@ int opn_load_image(OpnImage* image, int chip) {
     for (int n = 1; n <= OPN_MAX_INSTRUMENTS; ++n)
         if (check_instrument(image, n, size)) return -1;
     if (check_patterns(image, size)) return -1;
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (uint32_t i = 0; i < info->adpcm_size; ++i) h = (h ^ b[OPN_OFF_ADPCM + i]) * 0x100000001B3ull;
+    info->adpcm_hash = h;
     info->problem = NULL;
     info->problem_offset = -1;
     info->loaded = OPN_LOADED;
@@ -374,8 +378,11 @@ int opn_load_image(OpnImage* image, int chip) {
 }
 
 void opn_copy_image(OpnImage* dest, const OpnImage* src) {
+    const int same_adpcm = dest->info.loaded == OPN_LOADED && dest->info.adpcm_size == src->info.adpcm_size &&
+                           dest->info.adpcm_hash == src->info.adpcm_hash;
     dest->info = src->info;
-    memcpy(dest->bytes, src->bytes, opn_image_used(src));
+    memcpy(dest->bytes, src->bytes, OPN_OFF_DATA + (size_t)src->info.data_size);
+    if (!same_adpcm) memcpy(dest->bytes + OPN_OFF_ADPCM, src->bytes + OPN_OFF_ADPCM, src->info.adpcm_size);
 }
 
 void opn_next_row(const uint8_t* bytes, OpnCursor* cursor, OpnRow* row) {

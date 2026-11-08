@@ -12,8 +12,10 @@ data class OpnVgmTags(val title: String, val author: String, val date: String = 
 /**
  * Renders a VGM 1.71 file from an OPN or OPNA image with the native player (`opn_export_vgm` in `opn/opn_vgm.c`): one
  * player implementation for playback and export. [image] is a whole lowered image ([OpnChip.imageSize] bytes, the chip
- * is its header's); rendering stops at the second arrival at the loop point or after [maxTicks] ticks (then without a
- * loop). A YM2608 file carries the song's ADPCM-B memory as a data block and never the rhythm ROM.
+ * is its header's). The file holds only the player's own writes; its loop runs between the first two loop-point
+ * arrivals with identical player state, so every pass repeats native playback write for write (usually intro, one
+ * pass, then the looping pass). Without such a pair within [maxTicks] ticks it ends there, without a loop. A YM2608
+ * file carries the song's ADPCM-B memory as a data block and never the rhythm ROM.
  * @throws IllegalArgumentException with the loader's problem when the image is rejected.
  */
 fun interface OpnVgmRenderer {
@@ -30,7 +32,7 @@ object OpnVgm {
     /** Set by the host before the first export; null where no native player is linked. */
     var renderer: OpnVgmRenderer? = null
 
-    /** Ten minutes of ticks at the song's tick rate: a song that never returns to its loop point ends there. */
+    /** Ten minutes of ticks at the song's tick rate: the loop search and an unlooped file end there. */
     fun maxTicks(song: Song): Int = (OpnRules.tickHz(song.opn.timerB) * 600).toInt()
 
     /**

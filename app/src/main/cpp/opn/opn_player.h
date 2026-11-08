@@ -36,10 +36,9 @@
 extern "C" {
 #endif
 
-#define OPNP_MAX_WRITES 1024             /* per tick; a reset or dump is below 600 */
+#define OPNP_MAX_WRITES 1024             /* per tick; a reset is below 600 */
 #define OPNP_PITCH_MAX (8 * 768 - 1)     /* pitch units: 1/64 semitone, 0 = C-0 */
 #define OPNP_MAX_RESET_WRITES 512
-#define OPNP_MAX_DUMP_WRITES 512
 
 enum { OPNP_SSG_OFF = 0, OPNP_SSG_ON, OPNP_SSG_RELEASED }; /* SSG note phase */
 enum { OPNP_ENV_VOL = 0, OPNP_ENV_ARP, OPNP_ENV_PITCH, OPNP_ENV_MIXER, OPNP_ENV_NOISE, OPNP_ENVS };
@@ -104,8 +103,6 @@ typedef struct OpnPlayer {
     int rhythm_level;            /* YM2608 $11 */
     int fm3_mode;                /* OPN_FM3_* (the image's) */
     int noise_period;            /* Nxx / the image default 0 */
-    uint32_t ticks;              /* ticks run since reset / place (seek and ADPCM-B bookkeeping) */
-    uint32_t adpcm_key_tick;     /* `ticks` at the last ADPCM-B key-on */
     OpnChannel ch[OPN_MAX_CHANNELS];
     OpnCursor cursor[OPN_MAX_CHANNELS];
     int cursor_order, cursor_row; /* cursors are at (cursor_order, cursor_row), -1 = invalid */
@@ -142,15 +139,14 @@ void opnp_key_off(OpnPlayer* p, int channel);
  * mixer all off, volumes 0; rhythm: dump all, levels 0; ADPCM-B: reset, 8-bit DRAM mode, limit $FFFF). Returns the
  * count (<= OPNP_MAX_RESET_WRITES). */
 int opnp_machine_reset(int chip, OpnWrite* out);
-/* The player's register state as writes for a freshly reset chip (VGM loop dump, seek restore): global ($22, $11,
- * $24/$25, $27), SSG registers $00-$0C and the mixer (no $0D), FM operators, $B0/$B4 and frequencies, then $0D when an
- * SSG note with a hardware envelope sounds, then key-ons of keyed FM channels (FM 3 in CSM mode: $27 = $81 instead).
- * ADPCM-B ($100-$110) and rhythm keys are not included (opnp_dump_adpcm and the machine handle them). Returns the
- * count (<= OPNP_MAX_DUMP_WRITES). */
-int opnp_dump(const OpnPlayer* p, OpnWrite* out);
-/* The ADPCM-B registers $101-$10D of the shadow (the VGM loop dump; no control write, so a sample under way keeps
- * playing). Returns the count. */
-int opnp_dump_adpcm(const OpnPlayer* p, OpnWrite* out);
+/* Whether two players are in the same state: every field that decides their future writes (position, speed, jump,
+ * song-wide settings, every channel's note, effect and envelope state, the rows and cursors, the SSG envelopes' used
+ * values, the register shadow), compared field by field (never padding); the last batch (write[], writes, offs) is
+ * not part of it. Players in the same state produce identical write batches from then on (same image). The VGM export
+ * finds its loop with it. */
+int opnp_same_state(const OpnPlayer* a, const OpnPlayer* b);
+/* A 64-bit FNV-1a digest of the fields opnp_same_state compares (equal states, equal digests). */
+uint64_t opnp_state_hash(const OpnPlayer* p);
 
 /* Operator register offset of operator k (0..3 = operators 1..4) from the channel's: +0, +8, +4, +12. */
 extern const uint8_t OPNP_OP_OFFSET[4];

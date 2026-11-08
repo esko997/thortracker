@@ -33,13 +33,18 @@
  *  - audition and release until silent per part, fine pitch, argument limits; deterministic, non-silent output;
  *  - VGM: header, clocks, data block $81 with the ADPCM-B memory on the YM2608 with samples (none on the YM2203 or
  *    without samples), loop offset and samples, the end command, sample totals = ticks x tick length, the GD3 tag of
- *    opn_export_vgm; the ops tables as the hosts drive them; cost per tick.
+ *    opn_export_vgm; the ops tables as the hosts drive them; cost per tick;
+ *  - VGM loops: each file expanded (its loop body played 3 times) = exactly the writes of a fresh player ticked
+ *    straight that long (machine reset, init, every tick's batch), the loop between two arrivals at the loop point -
+ *    notes held across the wrap (SSG hardware envelope, CSM FM 3, looping ADPCM-B) loop from the second arrival, a
+ *    volume slide clamping after several passes loops later, an ever-rising pitch slide gives no loop.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes to the evidence directory: <tone>.wav + <tone>.vgm for every measured tone (opn_fm_a4, opn_fm_c2,
  * opn_fm_c6, opn_ssg_a4, opn_ssg_b0, opn_fm3_special and the opna_ ones plus opna_adpcm_root / opna_adpcm_up12),
  * opn_csm.wav / opna_csm.wav, opn_song.wav / .vgm / .bin and opna_song.wav / .vgm / .bin (the test songs and images),
- * with the ROM opna_rhythm.wav, and opn_evidence.txt (what each file holds), the inputs of
+ * <loop song>.vgm + <loop song>_trace.txt (opn_loop_wrap, opn_loop_volslide, opn_loop_none, opn_song and the opna_
+ * ones), with the ROM opna_rhythm.wav, and opn_evidence.txt (what each file holds), the inputs of
  * tools/audio/opn_reference_check.py. */
 #include <math.h>
 #include <stdio.h>
@@ -94,7 +99,7 @@ static int checks = 0;
 #define SONG_ROWS 32
 #define SONG_SPEED 3
 #define SONG_TICKS (SONG_ORDERS * SONG_ROWS * SONG_SPEED)
-#define SONG_LOOP_TICK (SONG_ROWS * SONG_SPEED)
+#define VGM_PASSES 3 /* loop passes a VGM is expanded to when compared with straight play's writes */
 
 static const char* ROM_SHA256 = "53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8";
 
@@ -103,7 +108,7 @@ static OpnImage g_img, g_bad, g_song[2], g_moved[2], g_drop, g_pos, g_rhythm;
 static int16_t g_sine_pcm[SINE_SAMPLES], g_chirp_pcm[CHIRP_SAMPLES];
 static uint8_t g_sine_adpcm[SINE_BYTES], g_chirp_adpcm[CHIRP_BYTES];
 static uint8_t g_vgm[4 << 20];
-static OpnPlayer g_vplayer;
+static OpnPlayer g_vplayer[2]; /* opn_vgm_render's scratch: two players */
 static FILE* g_manifest;
 
 /* ---- helpers -------------------------------------------------------------------------------------------------- */
@@ -874,7 +879,7 @@ static int tone_evidence(const char* dir, const char* name, int chip, const char
     free(ci);
     save_wav(dir, name, buf, frames);
     OpnVgmInfo info;
-    const size_t size = opn_vgm_render(im, TONE_TICKS, &g_vplayer, g_vgm, sizeof g_vgm, &info);
+    const size_t size = opn_vgm_render(im, TONE_TICKS, g_vplayer, g_vgm, sizeof g_vgm, &info);
     EXPECT(size > 0, "%s: VGM renders", name);
     char file[256];
     snprintf(file, sizeof file, "%s.vgm", name);
@@ -1235,7 +1240,7 @@ static void test_rhythm_with_rom(const char* dir) {
     EXPECT(ticks < 180, "the released drum ends with its sample (%d ticks)", ticks);
     opnm_destroy(m);
     OpnVgmInfo info;
-    const size_t n = opn_vgm_render(&g_rhythm, 600, &g_vplayer, g_vgm, sizeof g_vgm, &info);
+    const size_t n = opn_vgm_render(&g_rhythm, 600, g_vplayer, g_vgm, sizeof g_vgm, &info);
     int found = 0;
     for (size_t at = 0; at + 32 <= YM2608_RHYTHM_ROM_SIZE; at += 256) found += contains(g_vgm, n, rom + at, 32);
     EXPECT(n > 0 && !found, "no ROM bytes in the VGM (%d of 32 windows found)", found);
@@ -1808,7 +1813,7 @@ static void test_vgm(const char* dir, int chip) {
     const OpnImage* song = &g_song[chip];
     OpnVgmInfo info;
     const double t0 = now_us();
-    const size_t size = opn_vgm_render(song, 100000, &g_vplayer, g_vgm, sizeof g_vgm, &info);
+    const size_t size = opn_vgm_render(song, 100000, g_vplayer, g_vgm, sizeof g_vgm, &info);
     const double us = now_us() - t0;
     EXPECT(size > 0 && size == info.size, "renders (%zu bytes, info %zu)", size, info.size);
     if (!size) return;
@@ -1823,13 +1828,14 @@ static void test_vgm(const char* dir, int chip) {
     EXPECT(s.ok && s.ended, "commands well formed, ends with $66 (%s)", s.why ? s.why : "ok");
     EXPECT(opna ? s.writes[0] == 0 && s.writes[1] > 0 && s.writes[2] > 0 : s.writes[0] > 0 && !s.writes[1] && !s.writes[2],
            "write commands $55/$56/$57: %d/%d/%d", s.writes[0], s.writes[1], s.writes[2]);
-    EXPECT(info.ticks == SONG_TICKS, "stops at the second arrival at the loop point: %u ticks (%d)", info.ticks, SONG_TICKS);
+    EXPECT(info.loop_tick > 0 && info.loop_tick < info.ticks && info.ticks <= 100000,
+           "a loop found: ticks %u to %u", info.loop_tick, info.ticks);
     const double want = info.ticks * (double)TICK_SAMPLES * 44100.0 / NATIVE_HZ;
     EXPECT(s.samples == info.samples && opn_u32(v + 0x18) == s.samples && fabs(s.samples - want) <= 1.0,
            "total samples %u = header %u = %.1f (ticks x tick length)", s.samples, opn_u32(v + 0x18), want);
-    const double want_loop = (SONG_TICKS - SONG_LOOP_TICK) * (double)TICK_SAMPLES * 44100.0 / NATIVE_HZ;
+    const double want_loop = (info.ticks - info.loop_tick) * (double)TICK_SAMPLES * 44100.0 / NATIVE_HZ;
     EXPECT(info.loop_offset && 0x1C + opn_u32(v + 0x1C) == info.loop_offset && s.loop_seen && s.loop_samples == info.loop_samples &&
-               opn_u32(v + 0x20) == s.loop_samples && fabs(s.loop_samples - want_loop) <= 1.0,
+               opn_u32(v + 0x20) == s.loop_samples && fabs(s.loop_samples - want_loop) <= 2.0,
            "loop at %u (a command), %u samples (%.1f)", info.loop_offset, s.loop_samples, want_loop);
     if (opna) {
         const uint32_t used = song->info.adpcm_size;
@@ -1844,7 +1850,7 @@ static void test_vgm(const char* dir, int chip) {
         ins_fm_sine(&b, 1, 0);
         const Ev e = {0, 0, 0, A4, 1, 0, {0}};
         b_finish(&b, &e, 1);
-        const size_t n = opn_vgm_render(&g_img, 100, &g_vplayer, g_vgm, sizeof g_vgm, &info);
+        const size_t n = opn_vgm_render(&g_img, 100, g_vplayer, g_vgm, sizeof g_vgm, &info);
         VgmScan t;
         vgm_scan(g_vgm, n, &t);
         EXPECT(n > 0 && t.ok && t.blocks == 0, "YM2608 song without samples: no data block (%d)", t.blocks);
@@ -1852,15 +1858,216 @@ static void test_vgm(const char* dir, int chip) {
     } else {
         EXPECT(s.blocks == 0, "YM2203: no data block (%d)", s.blocks);
     }
-    EXPECT(opn_vgm_render(song, 100000, &g_vplayer, g_vgm, 1000, &info) == 0 && info.size == size, "too small a buffer: 0, size %zu", info.size);
-    opn_vgm_render(song, 100000, &g_vplayer, g_vgm, sizeof g_vgm, &info);
+    EXPECT(opn_vgm_render(song, 100000, g_vplayer, g_vgm, 1000, &info) == 0 && info.size == size, "too small a buffer: 0, size %zu", info.size);
+    opn_vgm_render(song, 100000, g_vplayer, g_vgm, sizeof g_vgm, &info);
     char name[64];
     snprintf(name, sizeof name, "%s_song.vgm", prefix(chip));
     save(dir, name, g_vgm, size);
     snprintf(name, sizeof name, "%s_song.bin", prefix(chip));
     save(dir, name, song->bytes, opn_image_size(chip));
-    if (g_manifest) fprintf(g_manifest, "song %s_song %s %u\n", prefix(chip), chip_name(chip), info.ticks);
-    printf("  %zu bytes, %u ticks, loop %u samples, rendered in %.0f us\n", size, info.ticks, info.loop_samples, us);
+    if (g_manifest) fprintf(g_manifest, "song %s_song %s %u %u\n", prefix(chip), chip_name(chip), info.ticks, info.loop_tick);
+    printf("  %zu bytes, loop ticks %u..%u, loop %u samples, rendered in %.0f us\n", size, info.loop_tick, info.ticks,
+           info.loop_samples, us);
+}
+
+/* ---- VGM loops: the file, its loop expanded, = straight play's writes --------------------------------------------- */
+
+typedef struct WriteList {
+    OpnWrite* w;
+    int n, cap;
+} WriteList;
+
+static void wl_add(WriteList* l, const OpnWrite* w, int n) {
+    if (n <= 0) return;
+    if (l->n + n > l->cap) {
+        l->cap = (l->n + n) * 2 + 1024;
+        l->w = (OpnWrite*)realloc(l->w, sizeof(OpnWrite) * (size_t)l->cap);
+    }
+    memcpy(l->w + l->n, w, sizeof(OpnWrite) * (size_t)n);
+    l->n += n;
+}
+
+/* The register writes of a VGM in file order ($55 / $56 port 0, $57 port 1); *loop_index = the index of the first
+ * write at or after the loop offset (-1: no loop offset, or not on a command). */
+static void vgm_writes(const uint8_t* v, size_t size, WriteList* out, int* loop_index) {
+    const size_t start = 0x34 + opn_u32(v + 0x34), loop = opn_u32(v + 0x1C) ? 0x1C + opn_u32(v + 0x1C) : 0;
+    *loop_index = -1;
+    size_t i = start;
+    while (i < size) {
+        if (loop && i == loop) *loop_index = out->n;
+        const uint8_t c = v[i];
+        if (c >= 0x55 && c <= 0x57) {
+            const OpnWrite w = {(uint8_t)(c == 0x57), v[i + 1], v[i + 2]};
+            wl_add(out, &w, 1);
+            i += 3;
+        } else if (c == 0x61) {
+            i += 3;
+        } else if (c == 0x62 || c == 0x63 || (c >= 0x70 && c <= 0x7F)) {
+            ++i;
+        } else if (c == 0x67) {
+            i += 7 + opn_u32(v + i + 3);
+        } else {
+            break; /* $66, or a command vgm_scan reports */
+        }
+    }
+}
+
+/* Renders `im`'s VGM (at most max_ticks ticks), expands it - the whole file, then its loop body VGM_PASSES - 1 more
+ * times - and requires exactly the writes of a fresh player: opnp_machine_reset's, opnp_reset's batch, then every
+ * tick's batch (key-off phase first, as the player orders them) of straight ticking for loop_tick + VGM_PASSES x
+ * (ticks - loop_tick) ticks (`ticks` without a loop). The loop must begin and end at arrivals of straight play at
+ * (loop order, row 0, tick 0). Without a loop (want_loop 0) the header's loop fields are 0 and the file holds
+ * max_ticks ticks. Writes <name>.vgm and <name>_trace.txt (straight play's writes, "port reg val" in hex) for
+ * opn_reference_check.py. */
+static OpnVgmInfo check_loop(const char* dir, const char* name, const OpnImage* im, uint32_t max_ticks, int want_loop) {
+    OpnVgmInfo info;
+    memset(&info, 0, sizeof info);
+    const size_t size = opn_vgm_render(im, max_ticks, g_vplayer, g_vgm, sizeof g_vgm, &info);
+    EXPECT(size > 0, "%s: VGM renders", name);
+    if (!size) return info;
+    VgmScan s;
+    vgm_scan(g_vgm, size, &s);
+    EXPECT(s.ok && s.ended, "%s: well formed (%s)", name, s.why ? s.why : "ok");
+    const int looped = info.loop_offset != 0;
+    if (want_loop)
+        EXPECT(looped && info.loop_tick > 0 && info.loop_tick < info.ticks && opn_u32(g_vgm + 0x1C) != 0,
+               "%s: a loop from tick %u to %u", name, info.loop_tick, info.ticks);
+    else
+        EXPECT(!looped && info.loop_tick == 0 && opn_u32(g_vgm + 0x1C) == 0 && opn_u32(g_vgm + 0x20) == 0 && info.ticks == max_ticks,
+               "%s: no loop within %u ticks (loop %u..%u, header %u/%u)", name, max_ticks, info.loop_tick, info.ticks,
+               opn_u32(g_vgm + 0x1C), opn_u32(g_vgm + 0x20));
+    const double want = info.ticks * (double)opn_tick_samples(im->info.timer_b) * 44100.0 / NATIVE_HZ;
+    EXPECT(fabs(s.samples - want) <= 1.0, "%s: %u samples = %u ticks (%.1f)", name, s.samples, info.ticks, want);
+
+    WriteList file = {0}, expanded = {0}, straight = {0};
+    int loop_index = -1;
+    vgm_writes(g_vgm, size, &file, &loop_index);
+    wl_add(&expanded, file.w, file.n);
+    if (looped) {
+        EXPECT(loop_index >= 0 && loop_index < file.n, "%s: the loop offset is on a command before writes (%d of %d)", name,
+               loop_index, file.n);
+        if (loop_index >= 0)
+            for (int k = 1; k < VGM_PASSES; ++k) wl_add(&expanded, file.w + loop_index, file.n - loop_index);
+    }
+    const uint32_t total = looped ? info.loop_tick + VGM_PASSES * (info.ticks - info.loop_tick) : info.ticks;
+    static OpnPlayer p;
+    static OpnWrite reset[OPNP_MAX_RESET_WRITES];
+    wl_add(&straight, reset, opnp_machine_reset(im->info.chip, reset));
+    opnp_reset(&p, im);
+    wl_add(&straight, p.write, p.writes);
+    int arrival_b = !looped, arrival_a = !looped, arrivals = 0;
+    for (uint32_t t = 0; t < total; ++t) {
+        if (p.order == im->info.loop && p.row == 0 && p.tick == 0) {
+            ++arrivals;
+            if (t == info.loop_tick) arrival_b = 1;
+            if (t == info.ticks) arrival_a = 1;
+        }
+        opnp_tick(&p, im);
+        wl_add(&straight, p.write, p.writes);
+    }
+    EXPECT(arrival_b && arrival_a, "%s: loop ticks %u and %u are arrivals at %d/0/0 in straight play (%d arrivals)", name,
+           info.loop_tick, info.ticks, im->info.loop, arrivals);
+    int first = -1;
+    const int n = expanded.n < straight.n ? expanded.n : straight.n;
+    for (int i = 0; i < n && first < 0; ++i)
+        if (memcmp(&expanded.w[i], &straight.w[i], sizeof(OpnWrite))) first = i;
+    EXPECT(expanded.n == straight.n && first < 0,
+           "%s: the VGM with its loop played %d times = %u ticks of straight play's writes (%d vs %d writes, first difference "
+           "at %d)", name, VGM_PASSES, total, expanded.n, straight.n, first);
+
+    char file_name[256], path[512];
+    snprintf(file_name, sizeof file_name, "%s.vgm", name);
+    save(dir, file_name, g_vgm, size);
+    snprintf(path, sizeof path, "%s/%s_trace.txt", dir, name);
+    FILE* f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "# %s: straight play's writes (reset, init, %u ticks); port reg val in hex\n", name, total);
+        for (int i = 0; i < straight.n; ++i) fprintf(f, "%d %02X %02X\n", straight.w[i].port, straight.w[i].reg, straight.w[i].val);
+        fclose(f);
+    }
+    if (g_manifest)
+        fprintf(g_manifest, "loop %s %s %u %u %u %d\n", name, chip_name(im->info.chip), total, info.loop_tick,
+                looped ? info.ticks : 0, VGM_PASSES);
+    printf("  %-22s loop %u..%u (%d arrivals checked), %d writes expanded = straight play\n", name, info.loop_tick, info.ticks,
+           arrivals, expanded.n);
+    free(file.w);
+    free(expanded.w);
+    free(straight.w);
+    return info;
+}
+
+/* Loop order 0 of two 4-row orders at speed 3; in the last row an SSG hardware-envelope note, a CSM FM 3 note and (YM2608)
+ * a looping ADPCM-B sample are keyed and held across the wrap; FM 1 keys at 0/0. Arrivals at ticks 0, 24, 48. */
+static int build_wrap(OpnImage* im, int chip) {
+    B s;
+    b_init(&s, im, chip, 2, 4, 3);
+    s.b[OPN_H_FM3_MODE] = OPN_FM3_CSM;
+    put16(s.b + OPN_H_TIMER_A, 624);
+    ins_fm_sine(&s, 1, 0);
+    ins_ssg(&s, 2, 0x0E, 1, 0, 0, NOENV, NOENV, NOENV);
+    Ev ev[4];
+    int n = 0;
+    ev[n++] = (Ev){0, 0, 0, A4, 1, 0, {0}};
+    ev[n++] = (Ev){1, 3, opn_ssg_first(chip), 45, 2, 0, {0}};
+    ev[n++] = (Ev){1, 3, OPN_CH_FM3, 64, 1, 0, {0}};
+    if (chip == OPN_CHIP_YM2608) {
+        b_sample(&s, 0, g_sine_adpcm, SINE_BYTES, 0, SINE_RATE);
+        ins_adpcm(&s, 3, 255, 0, A4, OPN_ADPCM_LOOP, 0xC0);
+        ev[n++] = (Ev){1, 3, OPNA_CH_ADPCM, A4, 3, 0, {0}};
+    }
+    return b_finish(&s, ev, n);
+}
+
+/* Order 0 (one row) keys FM 1 at C7F; loop order 1 (8 rows at speed 3) slides it down with A02 on every row, so the
+ * volume reaches 0 (and the state repeats) only after several passes. Arrivals at ticks 3, 27, 51, ... */
+static int build_volslide(OpnImage* im, int chip) {
+    B s;
+    b_init(&s, im, chip, 2, 8, 3);
+    s.b[OPN_OFF_ROWS] = 1;
+    put16(s.b + OPN_H_LOOP, 1);
+    ins_fm_sine(&s, 1, 0);
+    Ev ev[9];
+    ev[0] = (Ev){0, 0, 0, A4, 1, 1, {FX(OPN_FX_VOLUME, 0x7F)}};
+    for (int r = 0; r < 8; ++r) ev[1 + r] = (Ev){1, r, 0, NONE, 0, 1, {FX(OPN_FX_VOLUME_SLIDE, 0x02)}};
+    return b_finish(&s, ev, 9);
+}
+
+/* As build_volslide with 101 (slide up 1/64 semitone per tick) from C-0 instead: the pitch keeps rising for 6143
+ * ticks, so no two arrivals within 1200 ticks share a state. */
+static int build_slide(OpnImage* im, int chip) {
+    B s;
+    b_init(&s, im, chip, 2, 8, 3);
+    s.b[OPN_OFF_ROWS] = 1;
+    put16(s.b + OPN_H_LOOP, 1);
+    ins_fm_sine(&s, 1, 0);
+    Ev ev[9];
+    ev[0] = (Ev){0, 0, 0, 0, 1, 0, {0}};
+    for (int r = 0; r < 8; ++r) ev[1 + r] = (Ev){1, r, 0, NONE, 0, 1, {FX(OPN_FX_SLIDE_UP, 0x01)}};
+    return b_finish(&s, ev, 9);
+}
+
+static void test_vgm_loops(const char* dir) {
+    printf("VGM loops: the file with its loop expanded = straight play's writes\n");
+    char name[64];
+    for (int chip = 0; chip < 2; ++chip) {
+        const char* p = prefix(chip);
+        EXPECT(build_wrap(&g_img, chip) == 0, "%s wrap song (%s)", chip_name(chip), g_img.info.problem);
+        snprintf(name, sizeof name, "%s_loop_wrap", p);
+        OpnVgmInfo info = check_loop(dir, name, &g_img, 20000, 1);
+        EXPECT(info.loop_tick == 24 && info.ticks == 48,
+               "%s: notes held across the wrap repeat from the second arrival: loop %u..%u (24..48)", name, info.loop_tick,
+               info.ticks);
+        EXPECT(build_volslide(&g_img, chip) == 0, "%s volume-slide song (%s)", chip_name(chip), g_img.info.problem);
+        snprintf(name, sizeof name, "%s_loop_volslide", p);
+        info = check_loop(dir, name, &g_img, 20000, 1);
+        EXPECT(info.loop_tick > 27, "%s: the loop starts only once the slide has clamped (at tick %u, after the second "
+               "arrival at 27)", name, info.loop_tick);
+        EXPECT(build_slide(&g_img, chip) == 0, "%s pitch-slide song (%s)", chip_name(chip), g_img.info.problem);
+        snprintf(name, sizeof name, "%s_loop_none", p);
+        check_loop(dir, name, &g_img, 1200, 0);
+        snprintf(name, sizeof name, "%s_song", p);
+        check_loop(dir, name, &g_song[chip], 100000, 1);
+    }
 }
 
 /* The hosts' entry point (opn_export.h): the renderer's VGM plus a GD3 tag. */
@@ -1910,7 +2117,7 @@ static void test_export(int chip) {
            "GD3 fields: '%s', '%s', '%s', '%s', '%s'", fields[0], fields[4], fields[6], fields[8], fields[9]);
     /* the data before the tag = the renderer's VGM */
     OpnVgmInfo info;
-    const size_t plain = opn_vgm_render(song, 100000, &g_vplayer, g_vgm, sizeof g_vgm, &info);
+    const size_t plain = opn_vgm_render(song, 100000, g_vplayer, g_vgm, sizeof g_vgm, &info);
     EXPECT(plain == gd3_at && !memcmp(vgm + 0x18, g_vgm + 0x18, plain - 0x18) && !memcmp(vgm, g_vgm, 4),
            "the commands = opn_vgm_render's (%zu vs %u bytes)", plain, gd3_at);
     opn_export_free(vgm);
@@ -2066,6 +2273,7 @@ int main(int argc, char** argv) {
         test_ops(chip);
         test_costs(chip);
     }
+    test_vgm_loops(dir);
     test_rhythm_with_rom(dir);
     if (g_manifest) fclose(g_manifest);
     printf("OPN / OPNA: %d checks, %d failures\n", checks, failures);

@@ -2524,8 +2524,11 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
   seek is therefore sample-identical to straight play reaching that row (FM envelopes and release tails, SSG
   counters, rhythm and ADPCM-B positions, a running CSM timer all included). The cost is rendering the skipped stretch
   (not measured; WAV-export speed), bounded by `max_ticks`.
-- **Live edits** (`opnm_apply_image`, at a tick boundary, realtime-safe): the machine copies the new image's info and
-  used bytes (`opn_copy_image`: at most 320 KiB on a YM2608 song with full sample memory); the player keeps (order,
+- **Live edits** (`opnm_apply_image`, at a tick boundary, realtime-safe): the machine copies only what it reads
+  (`opn_copy_image`): the info, header and tables and the used data region (at most 64 KiB), plus the used ADPCM-B
+  memory only when its size or FNV-1a 64 digest (computed by the loader, off the audio thread) changed — an edit that
+  keeps the samples copies no sample bytes (a digest collision, about 2^-64 per edit, would keep stale samples). The
+  host's own hand-over of loaded images is unchanged (Android copies `image_storage` on its control thread); the player keeps (order,
   row, tick), clamps them to the new song and re-reads the current rows (the Mega Drive's relocation), and takes the
   header's LFO, timer A, rhythm level and FM 3 mode when they changed. A sample under way continues from its address
   in the new bytes; new start/end addresses apply at the next note. Switching FM 3's mode while FM 3 holds a note
@@ -2546,19 +2549,29 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
 
 ### VGM export (`opn/opn_vgm.c`, `opn_export.h`)
 
-VGM 1.71, data offset `$34` = `$CC`. YM2203: clock at `$44` = 3 993 600, AY flags `$7A` = 1, writes as command
-`$55`. YM2608: clock at `$48` = 7 987 200, AY flags `$7B` = 1, port 0 / 1 writes `$56` / `$57`, and first a data
-block `$67 $66 $81` ("YM2608 DELTA-T ROM data": u32 memory size 262 144, u32 start 0, the used ADPCM-B bytes) when
-the song has samples. Then the reset writes, each tick's writes with the key-off phase one 44.1 kHz sample earlier,
-waits from the native sample count (exact: 44 100 × 72 per native sample over 3 993 600), the loop point at the
-second arrival at (loop order, row 0, tick 0) with the player's register state dumped there (`opnp_dump`,
-`opnp_dump_adpcm`; a sample under way keeps playing), `$66`, then the GD3 tag (system "PC-88/98 OPN (Thor Tracker)" /
-"PC-88/98 OPNA (Thor Tracker)"). The rhythm ROM is never in a file: VGM players supply their own copy. Kotlin:
-`OpnVgm` with the host renderer (Android `ChipAudio.nativeOpnVgm`, Deck `DeckOpnVgm` over `opn_export_vgm`). Whether
-a given VGM player emulates CSM (timer A) is that player's matter; not checked. Known difference from playback: the
-loop-point dump is executed on the first pass too (as the Mega Drive's), and it rewrites `$0D` (restarting the SSG
-envelope generator) and, in CSM mode, `$27` (`$40` then `$81`, restarting timer A), so a VGM's first pass can differ
-slightly from the engine when such a note is sounding as the song first reaches the loop point.
+VGM 1.71, data offset `$34` = `$CC`. YM2203: clock at `$44` = 3 993 600, writes as command `$55`. YM2608: clock at
+`$48` = 7 987 200, port 0 / 1 writes `$56` / `$57`, and first a data block `$67 $66 $81` ("YM2608 DELTA-T ROM data":
+u32 memory size 262 144, u32 start 0, the used ADPCM-B bytes) when the song has samples. The SSG flags `$7A` / `$7B`
+are `$01`: the VGM 1.71 specification (vgmrips `vgmspec171.txt`) gives `$79` "AY8910 Flags … Default is 0x01" (bit 0
+Legacy Output) and `$7A` / `$7B` as the same flags for the AY8910 "connected with/part of" the YM2203 / YM2608; bit 4
+(YM2149 pin 26's extra /2) stays clear because the SSG divider is the chip's prescaler. Then the reset writes and each
+tick's writes with the key-off phase one 44.1 kHz sample earlier, waits from the native sample count (exact: 44 100 ×
+72 per native sample over 3 993 600), `$66`, then the GD3 tag (system "PC-88/98 OPN (Thor Tracker)" / "PC-88/98 OPNA
+(Thor Tracker)").
+
+**Loop without injected writes.** The file contains only writes the player makes in native playback, never a register
+dump. The renderer runs the player to its arrivals at (loop order, row 0, tick 0), A1, A2, …, and takes the first pair
+Ab < Aa whose complete player states are identical (`opnp_same_state`: position, speed, song-wide settings, every
+channel's note, effect and envelope state, rows, cursors, SSG envelope copies and the register shadow, field by
+field; a 64-bit digest finds candidates and a second player replayed to Ab confirms them exactly). From Ab on the
+player's writes repeat with period [Ab, Aa) forever, so the file holds the ticks before Aa with the loop offset at Ab:
+the first pass and every repeat send exactly native playback's writes — a held SSG hardware-envelope note, a held CSM
+note, a looping ADPCM-B sample or a slide across the wrap included. Usually Ab = A2 and Aa = A3, so the file holds the
+intro, one pass and the looping pass. Only the waits of a repeat reuse pass b's 44.1 kHz rounding (each write within
+one VGM sample of native timing). A song whose state never repeats within `max_ticks` (10 minutes in Kotlin's
+`OpnVgm.maxTicks`) and 64 arrivals ends there without a loop. Kotlin: `OpnVgm` with the host renderer (Android
+`ChipAudio.nativeOpnVgm`, Deck `DeckOpnVgm` over `opn_export_vgm`). The rhythm ROM is never in a file: VGM players
+supply their own copy. Whether a given VGM player emulates CSM (timer A) is that player's matter; not checked.
 
 ### Tools and verification (to be run by the parent; nothing here has been run)
 
@@ -2568,11 +2581,14 @@ slightly from the engine when such a note is sounding as the song first reaches 
   ownership; rhythm writes and silence plus the missing flag without the ROM; ADPCM-B sequence, end, loop, pan and
   level; positions; seeks sample-identical to straight play (an ADPCM-B sample keyed long before the target, FM
   release tails, the SSG envelope, CSM) and the order fallback; live edits before every tick; mute continuity at the
-  chip level (exact) and machine level; VGM structure; the ops tables; per-tick cost. Evidence WAVs, VGMs and images
-  go to the directory.
+  chip level (exact) and machine level; VGM structure and loops (each file expanded to three passes must equal a
+  fresh player's write trace exactly — songs with an SSG hardware-envelope note, a CSM note and a looping ADPCM-B
+  sample held across the wrap, a volume slide that settles only after some passes, and a song that never repeats and
+  so has no loop); the ops tables; per-tick cost. Evidence WAVs, VGMs, write traces and images go to the directory.
 - `python3 tools/audio/opn_reference_check.py [dir]` (standard library only, independent of the C code): parses the
   VGMs, recomputes frequencies from the logged registers with the datasheet formulas and the clocks above, decodes
-  ADPCM-B itself, and measures the evidence WAVs' pitch against them.
+  ADPCM-B itself, measures the evidence WAVs' pitch against them, and expands each loop VGM itself to compare it with
+  the player's straight write trace.
 - `wav_render_test.c` renders the demos `night-express.opnimg` and `paper-lanterns.opnaimg` and the shortest songs
   `opn-shortest.opnimg` and `opna-shortest.opnaimg` (from `exportSamples`).
 - `tools/audio/render_opn_image.sh image out.wav [seconds] [rom.bin | rom=path] [mute=1,7,16] [--vgm out.vgm]

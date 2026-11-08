@@ -12,7 +12,14 @@ Usage:
 Inputs (listed in <dir>/opn_evidence.txt by the host test):
   tone <name> <chip> <part> <channel> <note>   <name>.vgm (the tone's VGM, init + key-on + held) and <name>.wav (the
                                                same image rendered by the engine, 48 kHz stereo 16-bit)
-  song <name> <chip> <ticks>                   <name>.vgm (the test song's VGM with its loop) and <name>.bin (its image)
+  song <name> <chip> <ticks> <loop tick>       <name>.vgm (the test song's VGM with its loop) and <name>.bin (its image)
+  loop <name> <chip> <total> <loop tick> <loop end> <passes>
+                                               <name>.vgm and <name>_trace.txt: a fresh player's writes ("port reg
+                                               val", hex: machine reset, init, then `total` ticks of straight play).
+                                               The VGM's writes, with those from the loop offset on repeated until the
+                                               loop has played `passes` times, must equal the trace exactly (total =
+                                               loop tick + passes x (loop end - loop tick)); loop end 0 = no loop
+                                               expected: header loop fields 0, the file's writes = the trace.
 
 Formulas (fM = the VGM header clock: YM2203 $44 = 3993600 Hz, YM2608 $48 = 7987200 Hz, the PC-88 / PC-98 clocks, both
 at the power-on prescaler):
@@ -87,6 +94,7 @@ class Vgm:
         self.samples = 0
         self.loop_samples = 0
         self.loop_seen = False
+        self.loop_write = None  # index into writes of the first write at or after the loop offset
         self.blocks = []  # (offset of the command, type, payload)
         self.first_command = None
         self.end_at = None
@@ -107,6 +115,7 @@ class Vgm:
             after = self.loop and i >= self.loop
             if self.loop and i == self.loop:
                 self.loop_seen = True
+                self.loop_write = len(self.writes)
             c = data[i]
             wait = 0
             if c in (0x55, 0x56, 0x57):
@@ -302,18 +311,23 @@ def check_tone(d, name, chip, part, ch, note, measured_hz):
     return measured_hz
 
 
-def check_song(d, name, chip, ticks):
+def check_song(d, name, chip, ticks, loop_tick):
     image = (d / (name + ".bin")).read_bytes()
     vgm = Vgm((d / (name + ".vgm")).read_bytes(), chip)
     ok = vgm.structure(name + ".vgm")
     expect(image[:4] == b"TTOP" and image[5] == (1 if chip == "YM2608" else 0), "%s.bin: a %s image" % (name, chip))
     expect(len(image) == (327680 if chip == "YM2608" else 65536), "%s.bin: %d bytes" % (name, len(image)))
     tb = image[18]
-    native = ticks * 16 * (256 - tb)
-    want = native * 44100 * FM_DIV[chip] / CLOCK[chip]
+
+    def samples_of(t):
+        return t * 16 * (256 - tb) * 44100 * FM_DIV[chip] / CLOCK[chip]
+
+    want = samples_of(ticks)
     expect(abs(vgm.samples - want) <= 1, "%s: %d samples = %d ticks x 16 x (256 - %d) native samples at 44.1 kHz (%.1f)" % (
         name, vgm.samples, ticks, tb, want))
-    expect(vgm.loop != 0, "%s: has a loop" % name)
+    want_loop = want - samples_of(loop_tick)
+    expect(vgm.loop != 0 and 0 < loop_tick < ticks and abs(vgm.loop_samples - want_loop) <= 2,
+           "%s: loop over ticks %d..%d, %d samples (%.1f)" % (name, loop_tick, ticks, vgm.loop_samples, want_loop))
     used = u32(image, 24)
     if chip == "YM2608" and used:
         b = vgm.blocks
@@ -327,6 +341,31 @@ def check_song(d, name, chip, ticks):
     expect(keyons > 0, "%s: FM key-ons logged (%d)" % (name, keyons))
     print("  %-18s %d bytes, %d writes, %d samples (%.2f s), loop %d samples, %d data block(s)" % (
         name, len(vgm.data), len(vgm.writes), vgm.samples, vgm.samples / 44100.0, vgm.loop_samples, len(vgm.blocks)))
+
+
+def check_loop(d, name, chip, total, loop_tick, loop_end, passes):
+    """The VGM's writes with the loop body played `passes` times = straight play's writes (<name>_trace.txt)."""
+    vgm = Vgm((d / (name + ".vgm")).read_bytes(), chip)
+    vgm.structure(name + ".vgm")
+    writes = list(vgm.writes)
+    if loop_end:
+        ok = expect(vgm.loop != 0 and vgm.loop_write is not None, "%s: a loop offset on a command" % name)
+        expect(total == loop_tick + passes * (loop_end - loop_tick), "%s: trace length %d ticks = %d + %d x (%d - %d)" % (
+            name, total, loop_tick, passes, loop_end, loop_tick))
+        if ok:
+            writes += vgm.writes[vgm.loop_write:] * (passes - 1)
+    else:
+        expect(vgm.loop == 0 and vgm.loop_total == 0, "%s: no loop (offset %d, %d samples)" % (name, vgm.loop, vgm.loop_total))
+    trace = []
+    for line in (d / (name + "_trace.txt")).read_text().splitlines():
+        if line and not line.startswith("#"):
+            p, r, v = line.split()
+            trace.append((int(p), int(r, 16), int(v, 16)))
+    first = next((i for i, (a, b) in enumerate(zip(writes, trace)) if a != b), None)
+    expect(len(writes) == len(trace) and first is None,
+           "%s: VGM expanded (%d writes) = straight play's %d ticks (%d writes), first difference at %s" % (
+               name, len(writes), total, len(trace), first))
+    print("  %-22s loop ticks %d..%d, %d writes expanded = the trace" % (name, loop_tick, loop_end, len(writes)))
 
 
 def check_rom_absent(d):
@@ -370,7 +409,15 @@ def main():
     for line in manifest.read_text().splitlines():
         f = line.split()
         if f and f[0] == "song":
-            check_song(d, f[1], f[2], int(f[3]))
+            check_song(d, f[1], f[2], int(f[3]), int(f[4]))
+    print("OPN / OPNA VGM loops: the file with its loop expanded vs straight play's writes")
+    loops = 0
+    for line in manifest.read_text().splitlines():
+        f = line.split()
+        if f and f[0] == "loop":
+            check_loop(d, f[1], f[2], int(f[3]), int(f[4]), int(f[5]), int(f[6]))
+            loops += 1
+    expect(loops >= 8, "every loop trace of the host test present (%d)" % loops)
     if "opna_adpcm_root" in tones and "opna_adpcm_up12" in tones and tones["opna_adpcm_root"]:
         ratio = tones["opna_adpcm_up12"] / tones["opna_adpcm_root"]
         expect(abs(ratio / 2 - 1) < 0.005, "ADPCM-B +12 / root measured pitch ratio %.4f (2)" % ratio)

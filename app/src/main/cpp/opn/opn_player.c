@@ -485,10 +485,7 @@ static void update_adpcm(OpnPlayer* p, const OpnImage* image, int c) {
     wr(p, 1, 0x0B, ch->ins_level * (ch->vol8 >> 3) / 255);
     if (ch->key_pending) {
         ch->key_pending = 0;
-        if (s) {
-            wr_force(p, 1, 0x00, 0xA0 | (ch->loop ? 0x10 : 0x00));
-            p->adpcm_key_tick = p->ticks;
-        }
+        if (s) wr_force(p, 1, 0x00, 0xA0 | (ch->loop ? 0x10 : 0x00));
     }
     advance_effects(ch, 2040);
 }
@@ -595,7 +592,6 @@ void opnp_tick(OpnPlayer* p, const OpnImage* image) {
         if (p->ch[OPNA_CH_ADPCM].active) update_adpcm(p, image, OPNA_CH_ADPCM);
     }
     wr(p, 0, 0x27, mode_reg(p));
-    ++p->ticks;
     if (!p->audition && ++p->tick >= p->speed) {
         p->tick = 0;
         advance(p, image);
@@ -655,60 +651,98 @@ static void shadow_reset(OpnPlayer* p) {
     for (int i = 0; i < n; ++i) p->reg[w[i].port][w[i].reg] = w[i].val;
 }
 
-int opnp_dump(const OpnPlayer* p, OpnWrite* out) {
-    const int a = opna(p);
-    int n = 0;
-#define W(port, r) out[n++] = (OpnWrite){(uint8_t)(port), (uint8_t)(r), p->reg[port][r]}
-#define WV(port, r, v) out[n++] = (OpnWrite){(uint8_t)(port), (uint8_t)(r), (uint8_t)(v)}
-    if (a) {
-        W(0, 0x29);
-        W(0, 0x22);
-        W(0, 0x11);
+/* ---- state comparison (the VGM loop) ---------------------------------------------------------------------------- */
+
+/* The field lists below cover every field of these structs (the batch aside); these sizes fail to compile when a
+ * field is added without being listed here. */
+_Static_assert(sizeof(OpnRow) == 3 * sizeof(int) + 2 * OPN_MAX_EFFECTS, "OpnRow: note, instrument, effects, code, param");
+_Static_assert(sizeof(OpnChannel) == sizeof(OpnRow) + 4 * OPN_OP_BYTES + 50 * sizeof(int),
+               "OpnChannel: every field is listed in walk_channel");
+_Static_assert(sizeof(OpnPlayer) == 21 * sizeof(int) + sizeof(((OpnPlayer*)0)->ch) + sizeof(((OpnPlayer*)0)->cursor) +
+                                       sizeof(((OpnPlayer*)0)->reg) + sizeof(((OpnPlayer*)0)->env) +
+                                       sizeof(((OpnPlayer*)0)->write) + sizeof(((OpnPlayer*)0)->off),
+               "OpnPlayer: every field is listed in walk_player");
+
+/* Compares a's fields with b's (b != NULL: `differ`), or digests a's (b == NULL: `hash`). */
+typedef struct StateVisit {
+    int differ;
+    uint64_t hash;
+} StateVisit;
+
+static void visit(StateVisit* v, const void* a, const void* b, size_t n) {
+    if (b) {
+        if (!v->differ && memcmp(a, b, n) != 0) v->differ = 1;
+        return;
     }
-    W(0, 0x24);
-    W(0, 0x25);
-    const int csm_on = p->reg[0][0x27] == 0x81;
-    WV(0, 0x27, csm_on ? 0x40 : p->reg[0][0x27]);
-    for (int r = 0x00; r <= 0x0C; ++r) W(0, r);
-    for (int c = 0; c < p->fm_channels; ++c) {
-        const int port = fm_port(c);
-        for (int k = 0; k < 4; ++k)
-            for (int r = 0; r < OPN_OP_BYTES; ++r) W(port, fm_reg(OP_REG[r], c) + OPNP_OP_OFFSET[k]);
-        W(port, fm_reg(0xB0, c));
-        if (a) W(port, fm_reg(0xB4, c));
-        W(port, fm_reg(0xA4, c));
-        W(port, fm_reg(0xA0, c));
-        if (c == OPN_CH_FM3)
-            for (int k = 0; k < 3; ++k) {
-                W(0, FM3_HI[k]);
-                W(0, FM3_HI[k] - 4);
-            }
-    }
-    if (a)
-        for (int d = 0; d < OPN_RHYTHM; ++d) W(0, 0x18 + d);
-    for (int i = 0; i < OPN_SSG; ++i) {
-        const OpnChannel* ch = &p->ch[p->fm_channels + i];
-        if (ch->active && ch->phase != OPNP_SSG_OFF && ch->env_shape) {
-            W(0, 0x0D);
-            break;
-        }
-    }
-    for (int c = 0; c < p->fm_channels; ++c) {
-        const OpnChannel* ch = &p->ch[c];
-        if (ch->keyed && !ch->key_pending && !csm_fm3(p, c)) WV(0, 0x28, 0xF0 | key_select(c));
-    }
-    if (csm_on) WV(0, 0x27, 0x81);
-#undef W
-#undef WV
-    return n;
+    const uint8_t* p = (const uint8_t*)a;
+    for (size_t i = 0; i < n; ++i) v->hash = (v->hash ^ p[i]) * 0x100000001B3ull;
 }
 
-int opnp_dump_adpcm(const OpnPlayer* p, OpnWrite* out) {
-    if (!opna(p)) return 0;
-    int n = 0;
-    for (int r = 0x01; r <= 0x0D; ++r)
-        if (r != 0x08) out[n++] = (OpnWrite){1, (uint8_t)r, p->reg[1][r]};
-    return n;
+#define PAIR(x, y, f) visit(v, &(x)->f, (y) ? (const void*)&(y)->f : NULL, sizeof (x)->f)
+
+static void walk_row(StateVisit* v, const OpnRow* a, const OpnRow* b) {
+    PAIR(a, b, note);
+    PAIR(a, b, instrument);
+    PAIR(a, b, effects);
+    if (b && a->effects != b->effects) return; /* already different */
+    visit(v, a->code, b ? b->code : NULL, (size_t)a->effects);
+    visit(v, a->param, b ? b->param : NULL, (size_t)a->effects);
+}
+
+static void walk_channel(StateVisit* v, const OpnChannel* a, const OpnChannel* b) {
+    walk_row(v, &a->row, b ? &b->row : NULL);
+    PAIR(a, b, pending); PAIR(a, b, delay); PAIR(a, b, cut);
+    PAIR(a, b, instrument); PAIR(a, b, active); PAIR(a, b, keyed); PAIR(a, b, key_pending);
+    PAIR(a, b, ops);
+    PAIR(a, b, alg); PAIR(a, b, feedback); PAIR(a, b, ams_fms); PAIR(a, b, carriers);
+    PAIR(a, b, ch3);
+    PAIR(a, b, phase); PAIR(a, b, pos); PAIR(a, b, level); PAIR(a, b, mixer);
+    PAIR(a, b, pitch_relative); PAIR(a, b, pitch_acc);
+    PAIR(a, b, env_shape); PAIR(a, b, env_auto); PAIR(a, b, env_octave); PAIR(a, b, env_period);
+    PAIR(a, b, sample); PAIR(a, b, root); PAIR(a, b, loop); PAIR(a, b, ins_level);
+    PAIR(a, b, base); PAIR(a, b, target); PAIR(a, b, fine);
+    PAIR(a, b, arp); PAIR(a, b, arp_step);
+    PAIR(a, b, slide_mode); PAIR(a, b, slide_speed); PAIR(a, b, slide);
+    PAIR(a, b, vib_speed); PAIR(a, b, vib_depth); PAIR(a, b, vib_phase);
+    PAIR(a, b, sweep); PAIR(a, b, sweep_end); PAIR(a, b, sweep_step);
+    PAIR(a, b, vol8); PAIR(a, b, volslide); PAIR(a, b, pan);
+}
+
+static void walk_envelope(StateVisit* v, const OpnEnvelope* a, const OpnEnvelope* b) {
+    PAIR(a, b, length); PAIR(a, b, loop); PAIR(a, b, release);
+    if (b && a->length != b->length) return;
+    visit(v, a->value, b ? b->value : NULL, (size_t)a->length);
+}
+
+/* Every field but the batch (writes, offs, write[], pending_offs, off[]). */
+static void walk_player(StateVisit* v, const OpnPlayer* a, const OpnPlayer* b) {
+    PAIR(a, b, chip); PAIR(a, b, channels); PAIR(a, b, fm_channels);
+    PAIR(a, b, order); PAIR(a, b, row); PAIR(a, b, tick); PAIR(a, b, speed);
+    PAIR(a, b, jump); PAIR(a, b, jump_order); PAIR(a, b, jump_row); PAIR(a, b, audition);
+    PAIR(a, b, lfo); PAIR(a, b, timer_a); PAIR(a, b, rhythm_level); PAIR(a, b, fm3_mode); PAIR(a, b, noise_period);
+    for (int c = 0; c < OPN_MAX_CHANNELS; ++c) {
+        walk_channel(v, &a->ch[c], b ? &b->ch[c] : NULL);
+        PAIR(a, b, cursor[c].offset);
+        PAIR(a, b, cursor[c].run);
+    }
+    PAIR(a, b, cursor_order); PAIR(a, b, cursor_row);
+    PAIR(a, b, reg);
+    for (int i = 0; i < OPN_SSG; ++i)
+        for (int k = 0; k < OPNP_ENVS; ++k) walk_envelope(v, &a->env[i][k], b ? &b->env[i][k] : NULL);
+}
+
+#undef PAIR
+
+int opnp_same_state(const OpnPlayer* a, const OpnPlayer* b) {
+    StateVisit v = {0, 0};
+    walk_player(&v, a, b);
+    return !v.differ;
+}
+
+uint64_t opnp_state_hash(const OpnPlayer* p) {
+    StateVisit v = {0, 0xCBF29CE484222325ull};
+    walk_player(&v, p, NULL);
+    return v.hash;
 }
 
 void opnp_reset(OpnPlayer* p, const OpnImage* image) {

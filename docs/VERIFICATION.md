@@ -24,7 +24,9 @@ tested, run on a device or listened to**, no generator exists or was needed (`Op
    `opn-shortest.opnimg`, `opna-shortest.opnaimg`.
 2. Native host test and the independent check (both chips: loader, measured pitch, FM 3 special/CSM, SSG shared
    resources, rhythm without the ROM, ADPCM-B, seeks sample-identical to straight play, live edits, mute continuity,
-   VGM; the WAV test renders the two demos and the two shortest songs):
+   VGM structure, VGM loops expanded over three passes equal to the player's straight write trace (held SSG envelope,
+   CSM and ADPCM-B notes across the wrap; no loop for a never-repeating song); the WAV test renders the two demos and
+   the two shortest songs):
 
    ```sh
    tools/audio/run_native_host_test.sh /tmp/thor-evidence

@@ -226,6 +226,8 @@ typedef struct OpnInfo {
     int instruments;
     int samples;
     uint32_t adpcm_size;
+    int data_size;                         /* bytes of the data region the patterns and envelopes use */
+    uint64_t adpcm_hash;                   /* FNV-1a 64 of the used ADPCM-B memory (opn_copy_image skips equal memory) */
     uint32_t tick_samples;                 /* native samples per tick: opn_tick_samples(timer_b) */
     uint16_t rows[OPN_MAX_ORDERS];         /* rows of each order, 1..256 */
     uint8_t start_speed[OPN_MAX_ORDERS];   /* ticks per row each order starts with in sequential straight play */
@@ -234,8 +236,8 @@ typedef struct OpnInfo {
 
 #define OPN_LOADED 0x4F504E4C
 
-/* A loaded image. YM2203 images use bytes[0 .. OPN_IMAGE_SIZE - 1] only; machines copy the info and the bytes an image
- * uses (opn_image_used), never the unused ADPCM tail. */
+/* A loaded image. YM2203 images use bytes[0 .. OPN_IMAGE_SIZE - 1] only. Machines copy only what the player and chip
+ * read (opn_copy_image): the header and tables, the used data region and, when it changed, the used ADPCM-B memory. */
 typedef struct OpnImage {
     OpnInfo info;
     uint8_t bytes[OPNA_IMAGE_SIZE];
@@ -258,13 +260,14 @@ typedef struct OpnCursor {
 
 /* Image size of a chip's images (OPN_IMAGE_SIZE or OPNA_IMAGE_SIZE). */
 static inline size_t opn_image_size(int chip) { return chip == OPN_CHIP_YM2608 ? OPNA_IMAGE_SIZE : OPN_IMAGE_SIZE; }
-/* Bytes of image->bytes a loaded image uses: the song part, plus the used ADPCM-B memory on the YM2608. */
-static inline size_t opn_image_used(const OpnImage* image) { return OPN_IMAGE_SIZE + image->info.adpcm_size; }
 
 /* Validates image->bytes as an image of `chip` (the first opn_image_size(chip) bytes; the rest of bytes[] is ignored)
  * and fills image->info. Returns 0 or -1 (info.problem says why). */
 int opn_load_image(OpnImage* image, int chip);
-/* Copies a loaded image into `dest` (info and the used bytes only: realtime-safe, no allocation). */
+/* Copies a loaded image into `dest` for playing (realtime-safe, no allocation): the info, the header and fixed tables
+ * and the used data region (OPN_OFF_DATA + data_size bytes), and the used ADPCM-B memory unless `dest` is a loaded
+ * image whose ADPCM-B memory has the same size and digest (a live edit that kept the samples copies at most 64 KiB).
+ * `dest` bytes past those are left as they were: nothing reads them (the chip reads ADPCM-B up to adpcm_size only). */
 void opn_copy_image(OpnImage* dest, const OpnImage* src);
 
 /* Decodes the next row at the cursor (no bounds checks: loaded images only). */
