@@ -16,7 +16,11 @@
 ;   $8006 nes_player_idle  host-called routines return here (the native machine stops at its fetch).
 ;   $8009 nes_player_trap  BRK/IRQ/NMI target; reaching it is a driver fault.
 
-; NES_SONG_BASE is defined on the ca65 command line by the prepare script.
+; NES_SONG_BASE is defined on the ca65 command line by the prepare script. The Konami VRC6 build
+; (generated/nes_vrc6_player_image.h) is this file assembled with -D FAMISTUDIO_EXP_VRC6=1 on the
+; command line as well (the engine defaults it to 0): VRC6 pulse 1/2 and saw as channels 5-7, their
+; registers $9000-$9003, $A000-$A002, $B000-$B002, and its own song base (the page after the larger
+; player). Nothing here changes for it, so the plain build's bytes stay the same.
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1
