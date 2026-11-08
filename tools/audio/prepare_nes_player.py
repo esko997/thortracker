@@ -20,6 +20,11 @@ changes; the outputs are committed, so app/Deck/CI builds need no 6502 assembler
                                                   the Konami VRC7 build (FAMISTUDIO_EXP_VRC7 = 1, otherwise
                                                   identical), its song base and engine addresses
   app/src/test/cpp/nes_vrc7_song.h                VRC7 host-test fixtures (below)
+  app/src/main/cpp/generated/nes_s5b_player_image.h
+  core/src/commonMain/kotlin/org/thortracker/backend/NesS5bPlayerImage.kt
+                                                  the Sunsoft 5B build (FAMISTUDIO_EXP_S5B = 1, otherwise
+                                                  identical), its song base and engine addresses
+  app/src/test/cpp/nes_s5b_song.h                 S5B host-test fixtures (below)
 
 Steps (all checked):
   1. Check the vendored engine files (third_party/famistudio-4.5.3, unmodified copies from
@@ -59,7 +64,18 @@ Steps (all checked):
      parsed and rearranged as in 4. FamiStudio 4.5.3's ca65 export ends each VRC7 instrument's first `.byte` row
      with a comma (`$00, $10, `); the link and the parser drop it. In the Thor layout the 2A03 and the expansion
      instrument tables have the same count (the shorter one is padded with copies of its last entry).
-  8. Write the ten outputs. Two runs produce identical files.
+  8. S5B: the player assembled again with -D FAMISTUDIO_EXP_S5B=1 (8 channels: the 2A03's five, then 5B square 1-3;
+     the song header holds the expansion instrument pointer as for VRC7, 16-byte instruments: volume, arpeggio, pitch,
+     mixer and noise envelope words, envelope shape, auto-period octave or $80 = manual, manual period word, two zero
+     bytes), its song base measured as in 7, and the S5B test song tools/audio/nes/s5b_test.txt exported by FamiStudio
+     4.5.3 to s5b_test_ca65.s (written by `--famistudio DIR` when missing, else checked unchanged), linked, parsed and
+     rearranged as in 4 (Thor fixture directory: an expansion instrument's mixer envelope at 256 + 2 j, its noise
+     envelope at 257 + 2 j, effect envelopes from 384). FamiStudio 4.5.3's ca65 export prints a negative auto-period
+     octave (an sbyte widened to int, formatted `x2`) as `$ffffffXX` (-1 = `$ffffffff`), which ca65 rejects; as for the
+     VRC6 saw volume, the link and the parser read that token as its low byte, as FamiStudio's binary export writes it.
+     The `$5E` envelope period opcode is checked to sit on 5B square 1 only (FamiStudio moves every period effect
+     there) at the rows the text asks for.
+  9. Write the thirteen outputs. Two runs produce identical files.
 
 Assembler: cc65's ca65/ld65 on PATH, else run through `distrobox enter ubuntu --` (install with
 `distrobox enter ubuntu -- sudo apt-get install -y cc65`). Pinned: Ubuntu 24.04 cc65 2.19-1
@@ -89,6 +105,9 @@ OUT_VRC6_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_vrc6_song.h"
 OUT_VRC7_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_vrc7_player_image.h"
 OUT_VRC7_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesVrc7PlayerImage.kt"
 OUT_VRC7_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_vrc7_song.h"
+OUT_S5B_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_s5b_player_image.h"
+OUT_S5B_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesS5bPlayerImage.kt"
+OUT_S5B_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_s5b_song.h"
 
 FAMISTUDIO_TAG = "4.5.3"
 FAMISTUDIO_COMMIT = "c09dca64788606c09fcb5e70db28b9dd1f34be78"
@@ -110,6 +129,8 @@ VRC6_SONG_TXT = NES_DIR / "vrc6_test.txt"
 VRC6_SONG_CA65 = NES_DIR / "vrc6_test_ca65.s"
 VRC7_SONG_TXT = NES_DIR / "vrc7_test.txt"
 VRC7_SONG_CA65 = NES_DIR / "vrc7_test_ca65.s"
+S5B_SONG_TXT = NES_DIR / "s5b_test.txt"
+S5B_SONG_CA65 = NES_DIR / "s5b_test_ca65.s"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 
 PLAYER_BASE = 0x8000
@@ -139,6 +160,10 @@ MAX_ORDERS = 255
 MAX_ROWS = 255
 LAYOUT_RAW, LAYOUT_THOR = 0, 1
 KIND_VOLUME, KIND_ARPEGGIO, KIND_DUTY, KIND_PITCH = 0, 1, 2, 3
+KIND_MIXER, KIND_NOISE = 4, 5  # S5B images only: 5B mixer (tone-off bit 0, noise-off bit 3) and noise period envelopes
+EFFECT_ENVELOPES = 256  # directory indices of effect envelopes (arpeggio 0xy, vibrato) start here
+S5B_EFFECT_ENVELOPES = 384  # in S5B images: 256 + 2 slot (+ 1) hold the instrument slots' mixer (noise) envelopes
+S5B_MIXER_ENVELOPES = 256
 
 # Engine symbols the native machine and host test use (RAM variables, routines and tables).
 SYMBOLS = [
@@ -166,6 +191,12 @@ VRC6_SYMBOLS = ["famistudio_vrc6_saw_volume", "famistudio_saw_note_table_lsb", "
 VRC7_SYMBOLS = ["famistudio_exp_instrument_lo", "famistudio_exp_instrument_hi", "famistudio_chn_vrc7_patch",
                 "famistudio_chn_vrc7_sustain", "famistudio_chn_vrc7_prev_hi", "famistudio_chn_vrc7_trigger",
                 "famistudio_vrc7_note_table_lsb", "famistudio_vrc7_note_table_msb"]
+# Of the S5B build only: the expansion instrument table pointer, the shared manual envelope period ($5E or the instrument's
+# manual period), the flag set by $5E for the current frame, and the per-channel shape (bit 7: attack) and auto-period
+# octave ($80: manual). Its note tables are the 2A03's.
+S5B_SYMBOLS = ["famistudio_exp_instrument_lo", "famistudio_exp_instrument_hi", "famistudio_s5b_env_period_lo",
+               "famistudio_s5b_env_period_hi", "famistudio_s5b_env_override", "famistudio_s5b_chn_env_shape",
+               "famistudio_s5b_chn_env_octave"]
 
 # Stream opcodes ($40-$6F) of this build: operand bytes, and whether the opcode ends a row entry.
 # Mirrors famistudio_advance_channel and the jump table for the configuration in nes_player.s.
@@ -194,22 +225,35 @@ OPCODES = {
 }
 VRC6_OPCODES = {**OPCODES, 0x55: (1, False)}  # + VRC6 saw master volume
 VRC7_OPCODES = {**OPCODES, 0x56: (0, True)}  # + VRC7 release note (key off, then the volume envelope's release)
+S5B_OPCODES = {**OPCODES, 0x5E: (2, False)}  # + S5B manual envelope period: lo, hi
 
-# The builds: assembler defines, song base (VRC7: measured, see assemble_vrc7), engine channel count and the engine
-# tables the native machine reads (first envelope slot per channel, pitch envelope slot per channel; $FF = none);
-# "exp": the song header holds the expansion instrument pointer.
+# The builds: assembler defines, song base (VRC7, S5B: measured, see assemble_measured), engine channel count and the
+# engine tables the native machine reads (first envelope slot per channel, pitch envelope slot per channel; $FF = none);
+# "exp": the song header holds the expansion instrument pointer, "exp_kinds": the envelope words of an expansion
+# instrument; "effect_envelopes": the first directory index of effect envelopes.
 PLAYERS = {
     "2a03": {"defines": [], "song_base": SONG_BASE, "channels": 5, "opcodes": OPCODES, "exp": False,
-             "envelopes": 11, "pitch_envelopes": 3, "channel_env": [0, 3, 6, 8, 0xFF], "channel_pitch": [0, 1, 2, 0xFF, 0xFF]},
+             "envelopes": 11, "pitch_envelopes": 3, "channel_env": [0, 3, 6, 8, 0xFF], "channel_pitch": [0, 1, 2, 0xFF, 0xFF],
+             "effect_envelopes": EFFECT_ENVELOPES},
     "vrc6": {"defines": ["FAMISTUDIO_EXP_VRC6=1"], "song_base": VRC6_SONG_BASE, "channels": 8, "opcodes": VRC6_OPCODES, "exp": False,
              "envelopes": 20, "pitch_envelopes": 6, "channel_env": [0, 3, 6, 8, 0xFF, 11, 14, 17],
-             "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5]},
+             "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5], "effect_envelopes": EFFECT_ENVELOPES},
     "vrc7": {"defines": ["FAMISTUDIO_EXP_VRC7=1"], "song_base": None, "channels": 11, "opcodes": VRC7_OPCODES, "exp": True,
              "envelopes": 23, "pitch_envelopes": 9, "channel_env": [0, 3, 6, 8, 0xFF, 11, 13, 15, 17, 19, 21],
-             "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5, 6, 7, 8]},
+             "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5, 6, 7, 8],
+             "exp_kinds": (KIND_VOLUME, KIND_ARPEGGIO, KIND_PITCH), "effect_envelopes": EFFECT_ENVELOPES},
+    "s5b": {"defines": ["FAMISTUDIO_EXP_S5B=1"], "song_base": None, "channels": 8, "opcodes": S5B_OPCODES, "exp": True,
+            "envelopes": 23, "pitch_envelopes": 6, "channel_env": [0, 3, 6, 8, 0xFF, 11, 15, 19],
+            "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5],
+            "exp_kinds": (KIND_VOLUME, KIND_ARPEGGIO, KIND_PITCH, KIND_MIXER, KIND_NOISE),
+            "effect_envelopes": S5B_EFFECT_ENVELOPES},
 }
-EXP_INSTRUMENT_SIZE = 16  # FamiStudio's expansion instruments: 3 envelope words, VRC7: overrides, patch << 4, 8 registers
-EXP_ENVELOPES = 128  # Thor fixture: directory index of expansion instrument j's envelope of kind k = 128 + 4 j + k
+# FamiStudio's expansion instruments: 3 envelope words, then VRC7: overrides, patch << 4, 8 registers; S5B: mixer and
+# noise envelope words, shape, auto-period octave or $80, manual period word, 2 zero bytes.
+EXP_INSTRUMENT_SIZE = 16
+# Thor fixtures: directory index of expansion instrument j's envelope of kind k = 128 + 4 j + k (volume, arpeggio, pitch);
+# S5B mixer / noise: S5B_MIXER_ENVELOPES + 2 j / + 2 j + 1 (as the app lays out instrument slot j).
+EXP_ENVELOPES = 128
 
 
 def sha256(data: bytes) -> str:
@@ -265,16 +309,19 @@ def u16(data, at: int) -> int:
 
 def ca65_fixed(text: str) -> str:
     """FamiStudio's ca65 export as ca65 accepts it: FamiStudio 4.5.3 prints the VRC6 saw master volume of a
-    Quarter instrument (`$55` operand 1 - 2 = -1) as `$ffffffff`; its binary export writes the low byte. It also ends
-    the first `.byte` row of each VRC7 instrument (overrides, patch << 4) with a comma, which is dropped."""
+    Quarter instrument (`$55` operand 1 - 2 = -1) as `$ffffffff`, and the auto-period octave of an S5B instrument (the
+    second byte of its `.byte shape, octave` row; an sbyte widened to int) when negative as `$ffffffXX` (-1 to -8 =
+    `$ffffffff` to `$fffffff8`); its binary export writes the low byte, and so does this. It also ends the first `.byte`
+    row of each VRC7 instrument (overrides, patch << 4) with a comma, which is dropped."""
     text = re.sub(r"(\$55,\s*)\$ffffffff\b", r"\1$ff", text)
+    text = re.sub(r"^(\t\.byte \$[0-9a-f]{2},\s*)\$ffffff(f[89a-f])[ \t]*$", r"\1$\2", text, flags=re.M)
     return re.sub(r"^(\t\.byte .*?),[ \t]*$", r"\1", text, flags=re.M)
 
 
 def parse_famistudio_ca65(text: str, base: int, name: str = "ft_test_ca65.s"):
     """Assembles FamiStudio's ca65 music export (labels, .byte, .word, .lobyte/.hibyte, DPCM list entries
     `$nn+.lobyte(FAMISTUDIO_DPCM_PTR)` for samples at SAMPLE_BASE) at `base`.
-    Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03, VRC6 and VRC7 songs."""
+    Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03, VRC6, VRC7 and S5B songs."""
     text = ca65_fixed(text)
     items = []  # (label or None, directive, [operands])
     for raw in text.splitlines():
@@ -355,6 +402,30 @@ def read_entry(data: bytes, pos: int, player: dict):
                 return pos, 1, ptrs
 
 
+def entry_ops(entry: bytes, player: dict) -> list:
+    """The prefix tokens of one row entry (as read_entry walks it): [(opcode, operand bytes)]; an instrument change is
+    (0x80, b""), a volume track byte (0x70, b"")."""
+    out, pos = [], 0
+    while True:
+        b = entry[pos]
+        if b >= 0x80:
+            if b & 1:
+                return out
+            out.append((0x80, b""))
+            pos += 1
+        elif b < 0x40:
+            return out
+        elif b >= 0x70:
+            out.append((0x70, b""))
+            pos += 1
+        else:
+            size, ends = player["opcodes"][b]
+            out.append((b, bytes(entry[pos + 1:pos + 1 + size])))
+            pos += 1 + size
+            if ends:
+                return out
+
+
 def flatten_channel(data: bytes, start: int, loop: int, player: dict):
     """The rows of one channel stream in play order through one pass (until the `$42` back to the
     loop label), following `$41` references. Returns ([(entry bytes, rows, ptr offsets in entry)],
@@ -405,7 +476,7 @@ def split_orders(entries, rows_per_order: int, orders: int, channel: int):
 # ---- Thor Tracker layout builder ------------------------------------------------------------------
 
 def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plain", edits=(), env_edits=None,
-                     sample_edits=None, samples_top: bool = False, song_end: int = 0) -> bytes:
+                     sample_edits=None, samples_top: bool = False, song_end: int = 0, exp_edits=None) -> bytes:
     """Lays `song` (instruments, envelopes, per-order channel entries, DPCM list and samples) out as a Thor
     Tracker image. arrangement "plain": table, DPCM list, envelopes, order streams, patterns, samples exactly
     where FamiStudio's .dmc has them ($C000); "moved": patterns (reversed), envelopes, order streams (shuffled),
@@ -415,10 +486,11 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
     the sample block). Directory indices and mapping indices are identical in all (envelopes stay ascending by
     index, as the layout requires). edits: [(order, channel, entry index, old byte, new byte)] patched into
     that row's bytes; env_edits: {directory index: (old bytes, new bytes)}; sample_edits: {$4012 offset of a
-    sample in the .dmc: (byte index, new byte)}."""
+    sample in the .dmc: (byte index, new byte)}; exp_edits: [(expansion instrument index, byte offset in its entry,
+    old bytes, new bytes)]."""
     envs = song["envelopes"]  # directory index -> (kind, bytes)
     instruments = song["instruments"]  # [(vol, arp, duty, pitch) directory indices]
-    exp_instruments = song.get("exp_instruments", [])  # [(vol, arp, pitch) directory indices, 10 more bytes]
+    exp_instruments = song.get("exp_instruments", [])  # [((directory index per exp_kinds entry), the entry's other bytes)]
     orders = song["orders"][:order_count]
     base, channels = song["player"]["song_base"], song["player"]["channels"]
     exp = song["player"]["exp"]
@@ -492,7 +564,7 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
         + word(addr["dpcm"] - 4 if dpcm else base) + b"".join(word(addr[f"ch{c}"]) for c in range(channels)) + song["tempo_words"])
     put(addr["table"], b"".join(word(addr[f"env{i}"]) for ins in instruments for i in ins))
     if exp:
-        put(addr["exptable"], b"".join(b"".join(word(addr[f"env{i}"]) for i in ins[:3]) + ins[3] for ins in exp_instruments))
+        put(addr["exptable"], b"".join(b"".join(word(addr[f"env{i}"]) for i in idx) + tail for idx, tail in exp_instruments))
     for i in envs:
         put(addr[f"env{i}"], envs[i][1])
     env_index = song["effect_env_index"]  # (raw address, kind) -> directory index
@@ -523,6 +595,11 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
         if bytes(region[at:at + len(old)]) != old or len(new) != len(old):
             sys.exit("envelope edit target mismatch")
         region[at:at + len(new)] = new
+    for j, off, old, new in (exp_edits or ()):
+        at = addr["exptable"] - base + EXP_INSTRUMENT_SIZE * j + off
+        if bytes(region[at:at + len(old)]) != old or len(new) != len(old) or off + len(old) > EXP_INSTRUMENT_SIZE:
+            sys.exit("expansion instrument edit target mismatch")
+        region[at:at + len(new)] = new
     dpcm_moved = bytearray(dpcm)
     for k in range(0, len(dpcm), 4):
         dpcm_moved[k] = where[dpcm[k]]
@@ -551,10 +628,18 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
     return bytes(header + directory + region)
 
 
+def exp_envelope_index(j: int, kind: int) -> int:
+    """Thor fixture directory index of expansion instrument j's envelope of `kind` (see EXP_ENVELOPES)."""
+    if kind in (KIND_MIXER, KIND_NOISE):
+        return S5B_MIXER_ENVELOPES + 2 * j + (kind == KIND_NOISE)
+    return EXP_ENVELOPES + 4 * j + kind
+
+
 def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, dmc: bytes = b""):
     """FamiStudio's export of a test song (its .dmc samples `dmc`) for `player` (PLAYERS entry + "player_id")
-    re-expressed as the parts build_thor_image lays out. With an expansion instrument table (VRC7) both tables get
-    the same count: the shorter is padded with copies of its last entry (FamiStudio numbers each table from 0)."""
+    re-expressed as the parts build_thor_image lays out. With an expansion instrument table (VRC7, S5B) both tables get
+    the same count: the shorter is padded with copies of its last entry (FamiStudio numbers each table from 0).
+    Instrument envelopes get directory indices below player["effect_envelopes"], effect envelopes from it."""
     base, channels = player["song_base"], player["channels"]
     head = 7 if player["exp"] else 5  # count, instruments, [instruments_exp,] samples - 4
     song_attrs = re.search(r'^\tSong [^\n]*', txt, re.M).group(0)
@@ -592,11 +677,13 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
             sys.exit("expansion test song: at most 32 instruments of each kind, and at least one expansion instrument")
         for j in range(exp_count):
             at = exp_table + EXP_INSTRUMENT_SIZE * j
-            kinds = (KIND_VOLUME, KIND_ARPEGGIO, KIND_PITCH)
-            idx = tuple(EXP_ENVELOPES + 4 * j + k for k in kinds)
-            for i, k, w in zip(idx, kinds, range(3)):
+            kinds = player["exp_kinds"]
+            idx = tuple(exp_envelope_index(j, k) for k in kinds)
+            for w, (i, k) in enumerate(zip(idx, kinds)):
                 envs[i] = (k, env_bytes[u16(region, at + 2 * w)])
-            exp_instruments.append(idx + (bytes(region[at + 6:at + EXP_INSTRUMENT_SIZE]),))
+            exp_instruments.append((idx, bytes(region[at + 2 * len(kinds):at + EXP_INSTRUMENT_SIZE])))
+        if max(envs) >= player["effect_envelopes"]:
+            sys.exit("expansion test song: instrument envelopes reach the effect envelopes")
         n = max(len(instruments), len(exp_instruments))
         instruments += [instruments[-1]] * (n - len(instruments)) if instruments else []
         exp_instruments += [exp_instruments[-1]] * (n - len(exp_instruments))
@@ -620,7 +707,7 @@ def thor_song_from_export(region: bytes, labels_: dict, txt: str, player: dict, 
                 for off, kind in ptrs:
                     raw = b[off] | b[off + 1] << 8
                     if (raw, kind) not in effect_index:
-                        effect_index[(raw, kind)] = 256 + len(effect_index)
+                        effect_index[(raw, kind)] = player["effect_envelopes"] + len(effect_index)
                         envs[effect_index[(raw, kind)]] = (kind, env_bytes[raw])
         per_channel.append(groups)
     tempo = head + 2 * channels
@@ -730,7 +817,7 @@ def kotlin_hex(data: bytes) -> str:
 
 def assemble_player(prefix: list, t: Path, name: str, info: dict):
     """Assembles and links nes_player.s as the PLAYERS entry `name` and checks the result: entry table, the
-    song base past the player (VRC6, VRC7: the first page after it), engine RAM below the audition area, the engine
+    song base past the player (VRC6, VRC7, S5B: the first page after it), engine RAM below the audition area, the engine
     symbols and the channel/envelope tables. Returns (player bytes, symbols, segments)."""
     base = info["song_base"]
     defines = [a for d in info["defines"] for a in ("-D", d)]
@@ -751,7 +838,8 @@ def assemble_player(prefix: list, t: Path, name: str, info: dict):
     zp, bss = segs["ZEROPAGE"], segs["BSS"]
     if zp[0] != 0 or zp[1] > 0x100 or bss[0] != 0x200 or bss[0] + bss[1] > AUDITION_RAM:
         sys.exit(f"{name}: unexpected RAM layout {segs} (engine RAM must end below ${AUDITION_RAM:04X})")
-    missing = [s for s in SYMBOLS + {"vrc6": VRC6_SYMBOLS, "vrc7": VRC7_SYMBOLS}.get(name, []) if s not in syms]
+    missing = [s for s in SYMBOLS + {"vrc6": VRC6_SYMBOLS, "vrc7": VRC7_SYMBOLS, "s5b": S5B_SYMBOLS}.get(name, [])
+               if s not in syms]
     if missing:
         sys.exit(f"{name}: missing engine symbols {missing}")
     num_envelopes = syms["famistudio_env_repeat"] - syms["famistudio_env_value"]
@@ -767,18 +855,18 @@ def assemble_player(prefix: list, t: Path, name: str, info: dict):
     return player, syms, segs
 
 
-def assemble_vrc7(prefix: list, t: Path):
-    """The VRC7 build: assembled once at a provisional song base to measure the player (the base is only an operand
-    of init's famistudio_init call, so the code's size does not depend on it), then at the first page after it.
-    Returns (PLAYERS["vrc7"] with its song base, player bytes, symbols, segments)."""
-    probe = {**PLAYERS["vrc7"], "song_base": 0xC000}
-    defines = [a for d in probe["defines"] for a in ("-D", d)]
+def assemble_measured(prefix: list, t: Path, name: str):
+    """The VRC7 or S5B build: assembled once at a provisional song base to measure the player (the base is only an
+    operand of init's famistudio_init call, so the code's size does not depend on it), then at the first page after it.
+    Returns (PLAYERS[name] with its song base, player bytes, symbols, segments)."""
+    defines = [a for d in PLAYERS[name]["defines"] for a in ("-D", d)]
     run(prefix, ["ca65", "-I", str(ENGINE_DIR), "--bin-include-dir", str(ENGINE_DIR), *defines, "-D", "NES_SONG_BASE=$C000",
-                 str(NES_DIR / "nes_player.s"), "-o", str(t / "vrc7_probe.o")], t)
-    run(prefix, ["ld65", "-C", str(NES_DIR / "nes_player.cfg"), "-o", str(t / "vrc7_probe.bin"), str(t / "vrc7_probe.o")], t)
-    end = PLAYER_BASE + len((t / "vrc7_probe.bin").read_bytes())
-    info = {**PLAYERS["vrc7"], "song_base": (end + 0xFF) & ~0xFF}
-    player, syms, segs = assemble_player(prefix, t, "vrc7", info)
+                 str(NES_DIR / "nes_player.s"), "-o", str(t / f"{name}_probe.o")], t)
+    run(prefix, ["ld65", "-C", str(NES_DIR / "nes_player.cfg"), "-o", str(t / f"{name}_probe.bin"),
+                 str(t / f"{name}_probe.o")], t)
+    end = PLAYER_BASE + len((t / f"{name}_probe.bin").read_bytes())
+    info = {**PLAYERS[name], "song_base": (end + 0xFF) & ~0xFF}
+    player, syms, segs = assemble_player(prefix, t, name, info)
     return info, player, syms, segs
 
 
@@ -798,7 +886,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--famistudio", type=Path,
                     help="FamiStudio 4.5.3 Linux release dir: re-export the test songs and compare (a missing export, "
-                         "e.g. vrc7_test_ca65.s on first use, is written)")
+                         "e.g. vrc7_test_ca65.s or s5b_test_ca65.s on first use, is written)")
     args = ap.parse_args()
 
     for path, want in PINNED.items():
@@ -808,7 +896,8 @@ def main() -> None:
     if args.famistudio:
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             for txt, ca65, dmc in ((TEST_SONG_TXT, TEST_SONG_CA65, None), (DPCM_SONG_TXT, DPCM_SONG_CA65, DPCM_SONG_DMC),
-                                   (VRC6_SONG_TXT, VRC6_SONG_CA65, None), (VRC7_SONG_TXT, VRC7_SONG_CA65, None)):
+                                   (VRC6_SONG_TXT, VRC6_SONG_CA65, None), (VRC7_SONG_TXT, VRC7_SONG_CA65, None),
+                                   (S5B_SONG_TXT, S5B_SONG_CA65, None)):
                 fresh = Path(tmp) / ca65.name
                 famistudio_export(args.famistudio.resolve(), txt, fresh)
                 if not ca65.exists():
@@ -820,9 +909,10 @@ def main() -> None:
                 if dmc and fresh.with_suffix(".dmc").read_bytes() != dmc.read_bytes():
                     sys.exit(f"FamiStudio's samples of {txt.name} differ from {dmc.relative_to(ROOT)}")
                 print(f"FamiStudio re-export of {txt.name}: identical")
-    if not VRC7_SONG_CA65.exists():
-        sys.exit(f"{VRC7_SONG_CA65.relative_to(ROOT)} is missing: run with --famistudio \"$(tools/audio/fetch_famistudio.sh)\" "
-                 "once to export it")
+    for ca65 in (VRC7_SONG_CA65, S5B_SONG_CA65):
+        if not ca65.exists():
+            sys.exit(f"{ca65.relative_to(ROOT)} is missing: run with --famistudio \"$(tools/audio/fetch_famistudio.sh)\" "
+                     "once to export it")
 
     prefix = tool_prefix()
     version = run(prefix, ["ca65", "--version"], ROOT).strip()
@@ -833,13 +923,16 @@ def main() -> None:
         t = Path(tmp)
         player, syms, segs = assemble_player(prefix, t, "2a03", PLAYERS["2a03"])
         vplayer, vsyms, vsegs = assemble_player(prefix, t, "vrc6", PLAYERS["vrc6"])
-        vrc7_info, fplayer, fsyms, fsegs = assemble_vrc7(prefix, t)
+        vrc7_info, fplayer, fsyms, fsegs = assemble_measured(prefix, t, "vrc7")
         vrc7_base = vrc7_info["song_base"]
+        s5b_info, splayer, ssyms, ssegs = assemble_measured(prefix, t, "s5b")
+        s5b_base = s5b_info["song_base"]
         song = link_song(prefix, t, "ft_test", TEST_SONG_CA65.read_text(), SONG_BASE)
         dpcm_song = link_song(prefix, t, "dpcm_test", DPCM_SONG_CA65.read_text(), SONG_BASE,
                               f"FAMISTUDIO_DPCM_PTR = ${DPCM_PTR:02X}\n")
         vrc6_song = link_song(prefix, t, "vrc6_test", VRC6_SONG_CA65.read_text(), VRC6_SONG_BASE)
         vrc7_song = link_song(prefix, t, "vrc7_test", VRC7_SONG_CA65.read_text(), vrc7_base)
+        s5b_song = link_song(prefix, t, "s5b_test", S5B_SONG_CA65.read_text(), s5b_base)
     zp, bss = segs["ZEROPAGE"], segs["BSS"]
     vzp, vbss = vsegs["ZEROPAGE"], vsegs["BSS"]
     num_envelopes, num_pitch = PLAYERS["2a03"]["envelopes"], PLAYERS["2a03"]["pitch_envelopes"]
@@ -954,8 +1047,8 @@ def main() -> None:
             "FCustomB": (0x00, 0x00), "FFlute": (0x00, 0x40)}
     if set(fexp_names) != set(want) or set(fnames) != {"Lead", "Bass", "Hat"}:
         sys.exit(f"VRC7 test song: unexpected instruments {fnames} {fexp_names}")
-    seen = {n: tuple(fthor["exp_instruments"][j][3][:2]) for n, j in fexp_names.items()}
-    if seen != want or fthor["exp_instruments"][fexp_names["FCustomA"]][3][2:] != bytes((49, 97, 20, 5, 168, 100, 97, 39)):
+    seen = {n: tuple(fthor["exp_instruments"][j][1][:2]) for n, j in fexp_names.items()}
+    if seen != want or fthor["exp_instruments"][fexp_names["FCustomA"]][1][2:] != bytes((49, 97, 20, 5, 168, 100, 97, 39)):
         sys.exit(f"VRC7 test song: unexpected expansion instruments {seen}")
     releases = sum(1 for c in range(5, 11) for o in fthor["orders"] for b, _, _ in o[c] if b[-1:] == b"\x56")
     if not releases:
@@ -978,6 +1071,96 @@ def main() -> None:
     if len(entry) != 1:
         sys.exit("VRC7 edit target row not found")
     fedited = build_thor_image(fthor, forders, floop, edits=[(2, 5, entry[0], 0x29, 0x2C)], env_edits=fenv_edit)
+
+    # S5B test song: the same checks with the S5B player (8 channel streams, the expansion instrument table with mixer and
+    # noise envelopes and the hardware envelope settings, song base s5b_base).
+    splayer_sha = sha256(splayer)
+    splayer_id = int.from_bytes(bytes.fromhex(splayer_sha)[:4], "little")
+    s5b = {**s5b_info, "player_id": splayer_id}
+    s5b_text = S5B_SONG_CA65.read_text()
+    s5b_txt = S5B_SONG_TXT.read_text()
+    parsed, s5b_labels = parse_famistudio_ca65(s5b_text, s5b_base, S5B_SONG_CA65.name)
+    if parsed != s5b_song:
+        sys.exit("parser output differs from the ld65 link of s5b_test_ca65.s")
+    if len(s5b_song) > REGION_END - s5b_base or "FAMISTUDIO_EXP_S5B = 1" not in s5b_text \
+            or "FAMISTUDIO_USE_FAMITRACKER_TEMPO" not in s5b_text or "@instruments_exp" not in s5b_labels:
+        sys.exit("S5B test song: a FamiTracker-tempo S5B export with expansion instruments that fits the region expected")
+    sthor, srows, sorders, sloop = thor_song_from_export(s5b_song, s5b_labels, s5b_txt, s5b)
+    sexp_names = {n: int(i, 16) for i, n in re.findall(r"^\t\.word @env\d+, @env\d+, @env\d+ ; ([0-9a-f]{2}) : (\w+)$", s5b_text, re.M)}
+    snames = {n: int(i, 16) for i, n in re.findall(r"^\t\.word @env\d+,@env\d+,@env\d+,@env\d+ ; ([0-9a-f]{2}) : (\w+)$", s5b_text, re.M)}
+    # Each S5B instrument's entry bytes after its envelope words, from the text alone (FamiStudio's defaults: no
+    # hardware envelope, auto-period at octave 3, manual period 1000): shape 1-8 + 7 or 0, the octave's low byte or
+    # $80 = manual period, the manual period (u16), two zero bytes.
+    want = {}
+    for line in re.findall(r'^\tInstrument [^\n]*Expansion="S5B"[^\n]*', s5b_txt, re.M):
+        a = dict(re.findall(r'(\w+)="([^"]*)"', line))
+        shape, period = int(a.get("S5BEnvelopeShape", "0")), int(a.get("S5BEnvelopePitch", "1000"))
+        octave = int(a.get("S5BEnvelopeAutoPitchOctave", "3")) & 0xFF if a.get("S5BEnvelopeAutoPitch", "True") == "True" else 0x80
+        want[a["Name"]] = bytes((shape + 7 if shape else 0, octave, period & 0xFF, period >> 8, 0, 0))
+    if set(sexp_names) != set(want) or set(snames) != {"Lead", "Bass", "Hat"}:
+        sys.exit(f"S5B test song: unexpected instruments {snames} {sexp_names}")
+    seen = {n: sthor["exp_instruments"][j][1] for n, j in sexp_names.items()}
+    if seen != want or not {0x00, 0x01, 0x03, 0x80, 0xFD, 0xFF} <= {b[1] for b in seen.values()} \
+            or not {0x00, 0x08, 0x0A, 0x0B, 0x0D, 0x0E, 0x0F} <= {b[0] for b in seen.values()}:
+        sys.exit(f"S5B test song: unexpected expansion instruments {seen}")
+    # Mixer envelopes hold FamiStudio's processed values ($C0 + tone-off bit 0 + noise-off bit 3): all four appear.
+    mixer_bytes = {b for idx, _ in sthor["exp_instruments"] for b in sthor["envelopes"][idx[3]][1]}
+    if not {0xC0, 0xC1, 0xC8, 0xC9} <= mixer_bytes:
+        sys.exit(f"S5B test song: tone, noise, both and neither expected in the mixer envelopes, got {sorted(mixer_bytes)}")
+    # $5E (envelope period): only on 5B square 1, exactly at the orders/rows/values the text puts on any 5B square
+    # (FamiStudio moves them all to square 1; the text's patterns carrying one are each used once).
+    periods, want_periods = set(), set()
+    for o, chans in enumerate(sthor["orders"]):
+        for c, entries in enumerate(chans):
+            row = 0
+            for b, n, _ in entries:
+                for op, arg in entry_ops(b, s5b):
+                    if op == 0x5E:
+                        if c != 5:
+                            sys.exit(f"S5B test song: $5E on channel {c}")
+                        periods.add((o, row, u16(arg, 0)))
+                row += n
+    for chan in re.split(r'\n\t\tChannel ', s5b_txt)[1:]:
+        if not chan.startswith('Type="S5BSquare'):
+            continue
+        pats = {}
+        for pat in re.split(r'\n\t\t\tPattern ', chan)[1:]:
+            pats[re.match(r'Name="([^"]+)"', pat).group(1)] = re.findall(r'Note Time="(\d+)"[^\n]*? EnvelopePeriod="(\d+)"', pat)
+        for o, name in re.findall(r'PatternInstance Time="(\d+)" Pattern="([^"]+)"', chan):
+            want_periods |= {(int(o), int(r), int(v)) for r, v in pats.get(name, [])}
+    if periods != want_periods or len(want_periods) < 3:
+        sys.exit(f"S5B test song: envelope periods {sorted(periods)}, expected {sorted(want_periods)}")
+    # After the $5E at order 0 row 6, SEnvManual's next attack on 5B square 2 (row 8) rebinds the instrument, so its
+    # manual period is loaded again.
+    starts, at = [], 0
+    for b, n, _ in sthor["orders"][0][6]:
+        starts.append(at)
+        at += n
+    if not any(s == 8 and any(op == 0x80 for op, _ in entry_ops(sthor["orders"][0][6][i][0], s5b)) for i, s in enumerate(starts)):
+        sys.exit("S5B test song: no instrument rebind on 5B square 2 at order 0 row 8")
+    sspeeds = row_speeds(s5b_txt, srows, sorders)
+    sbase = build_thor_image(sthor, sorders, sloop)
+    smoved = build_thor_image(sthor, sorders, sloop, "moved")
+    # Edit: order 2's 5B square 1 note at row 8 (E4, $29) becomes G4 ($2C); the SLead volume envelope's sustain (12, 12)
+    # becomes (8, 8); in the expansion table SEnvManual's manual period 1000 becomes S5B_EDITED_PERIOD and SEnvAuto's
+    # shape $08 becomes S5B_EDITED_SHAPE.
+    s5b_edited_period, s5b_edited_shape = 2000, 0x0C
+    slead = exp_envelope_index(sexp_names["SLead"], KIND_VOLUME)
+    slead_vol = sthor["envelopes"][slead][1]
+    if slead_vol[3:5] != b"\xcc\xcc":
+        sys.exit("unexpected SLead volume envelope")
+    senv_edit = {slead: (slead_vol, slead_vol[:3] + b"\xc8\xc8" + slead_vol[5:])}
+    sexp_edits = [(sexp_names["SEnvManual"], 12, (1000).to_bytes(2, "little"), s5b_edited_period.to_bytes(2, "little")),
+                  (sexp_names["SEnvAuto"], 10, b"\x08", bytes((s5b_edited_shape,)))]
+    starts, at = [], 0
+    for b, n, _ in sthor["orders"][2][5]:
+        starts.append(at)
+        at += n
+    entry = [i for i, s in enumerate(starts) if s == 8 and sthor["orders"][2][5][i][0].endswith(b"\x29")]
+    if len(entry) != 1:
+        sys.exit("S5B edit target row not found")
+    sedited = build_thor_image(sthor, sorders, sloop, edits=[(2, 5, entry[0], 0x29, 0x2C)], env_edits=senv_edit,
+                               exp_edits=sexp_edits)
 
     sym_lines = "\n".join(f"#define NES_{s.upper()} 0x{syms[s]:04X}" for s in SYMBOLS)
     OUT_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
@@ -1484,6 +1667,172 @@ static const uint8_t nes_vrc7_speed[VRC7_TEST_ORDERS][VRC7_TEST_ROWS] = {{
 {c_array("nes_vrc7_edited", fedited)}
 #endif /* NES_VRC7_SONG_H_ */
 """)
+
+    szp, sbss = ssegs["ZEROPAGE"], ssegs["BSS"]
+    ssym_lines = "\n".join(f"#define NES_S5B_{s.upper()} 0x{ssyms[s]:04X}" for s in SYMBOLS + S5B_SYMBOLS)
+    sregion_size = REGION_END - s5b_base
+    simage_size = HEADER_SIZE + DIRECTORY_SIZE + sregion_size
+    OUT_S5B_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// FamiStudio sound engine {FAMISTUDIO_TAG} (github.com/BleuBleu/FamiStudio commit {FAMISTUDIO_COMMIT}),
+// famistudio_ca65.s sha256 {PINNED[ENGINE_DIR / 'famistudio_ca65.s']}, unmodified, configured (FamiTracker tempo)
+// and wrapped by tools/audio/nes/nes_player.s like nes_player_image.h, assembled with FAMISTUDIO_EXP_S5B = 1
+// (Sunsoft 5B: three squares with noise and a shared hardware envelope after the 2A03's five channels, register select
+// $C000, data $E000; the 2A03 note tables); assembled with {CC65_VERSION}.
+// Engine licence: "Copying and distribution of this file, with or without modification, are permitted in any
+// medium without royalty provided the copyright notice and this notice are preserved" (c) 2019-2026 Mathieu Gauthier.
+// image sha256 {splayer_sha}
+#ifndef NES_S5B_PLAYER_IMAGE_H_
+#define NES_S5B_PLAYER_IMAGE_H_
+#include <stdint.h>
+
+#define NES_S5B_PLAYER_BASE 0x{PLAYER_BASE:04X}
+#define NES_S5B_PLAYER_SIZE 0x{len(splayer):04X}
+#define NES_S5B_PLAYER_ID 0x{splayer_id:08X}u /* first 4 bytes of the image sha256, little-endian */
+#define NES_S5B_PLAYER_INIT 0x{ENTRY['nes_player_init']:04X} /* A = song index */
+#define NES_S5B_PLAYER_PLAY 0x{ENTRY['nes_player_play']:04X} /* one 60 Hz engine frame */
+#define NES_S5B_PLAYER_IDLE 0x{ENTRY['nes_player_idle']:04X} /* return address of host-called routines */
+#define NES_S5B_PLAYER_TRAP 0x{ENTRY['nes_player_trap']:04X} /* BRK/IRQ/NMI vector target: a fault */
+#define NES_S5B_SONG_BASE 0x{s5b_base:04X} /* song data (FamiStudio format) from here upward: the page after the player */
+#define NES_S5B_ZP_SIZE 0x{szp[1]:04X}
+#define NES_S5B_RAM_BASE 0x{sbss[0]:04X}
+#define NES_S5B_RAM_SIZE 0x{sbss[1]:04X}
+#define NES_S5B_NUM_ENVELOPES {PLAYERS['s5b']['envelopes']}
+#define NES_S5B_NUM_PITCH_ENVELOPES {PLAYERS['s5b']['pitch_envelopes']}
+#define NES_S5B_CHANNELS {PLAYERS['s5b']['channels']} /* 2A03 pulse 1, pulse 2, triangle, noise, DPCM, 5B square 1-3 */
+#define NES_S5B_EXP_INSTRUMENT_SIZE {EXP_INSTRUMENT_SIZE} /* the song header's instruments_exp entries */
+
+/* Image layout: nes_player_image.h's (header, envelope directory, limits, samples from NES_SAMPLE_BASE, region end
+ * NES_REGION_END) with the region = CPU memory NES_S5B_SONG_BASE..NES_REGION_END, and two more directory kinds: the
+ * 5B mixer (values $C0 + tone-off bit 0 + noise-off bit 3) and noise period envelopes. Instrument slot s's mixer
+ * envelope is directory entry 256 + 2 s, its noise envelope 257 + 2 s; effect envelopes start at
+ * NES_S5B_EFFECT_ENVELOPES. */
+#define NES_S5B_IMAGE_REGION_SIZE {sregion_size}
+#define NES_S5B_IMAGE_SIZE {simage_size}
+#define NES_S5B_KIND_MIXER {KIND_MIXER}
+#define NES_S5B_KIND_NOISE {KIND_NOISE}
+#define NES_S5B_EFFECT_ENVELOPES {S5B_EFFECT_ENVELOPES}
+
+{ssym_lines}
+
+static const uint8_t nes_s5b_player_code[NES_S5B_PLAYER_SIZE] = {{
+{c_bytes(splayer)}
+}};
+
+#endif /* NES_S5B_PLAYER_IMAGE_H_ */
+""")
+
+    OUT_S5B_KOTLIN.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+package org.thortracker.backend
+
+/**
+ * The NES + Sunsoft 5B preview player: the [NesPlayerImage] player assembled with `FAMISTUDIO_EXP_S5B = 1`
+ * (FamiStudio sound engine {FAMISTUDIO_TAG}, FamiTracker tempo, the same NSF-style entry table) by
+ * `tools/audio/prepare_nes_player.py`. Images use [NesPlayerImage]'s layout (header, envelope directory, limits,
+ * samples, kinds) with this player's [PLAYER_ID], [SONG_BASE] and [CHANNELS] channel streams in the song header, which
+ * also holds the expansion instrument pointer ([EXP_INSTRUMENT_SIZE]-byte entries), plus the [KIND_MIXER] and
+ * [KIND_NOISE] envelope kinds (`docs/AUDIO_ENGINE.md`, "S5B"). The same bytes play in the app (native
+ * `app/src/main/cpp/generated/nes_s5b_player_image.h`) and form an `.nsf` (expansion byte Sunsoft 5B) with the song
+ * region.
+ * Image sha256 `{splayer_sha}`.
+ * Engine licence: all-permissive, notice in NOTICE.txt.
+ */
+object NesS5bPlayerImage {{
+    /** Load, init (A = song index) and play addresses; the player starts at [LOAD]. */
+    const val LOAD = 0x{PLAYER_BASE:04X}
+    const val INIT = 0x{ENTRY['nes_player_init']:04X}
+    const val PLAY = 0x{ENTRY['nes_player_play']:04X}
+
+    /**
+     * Region: song data from [SONG_BASE] upward and the samples share CPU memory [SONG_BASE] until [REGION_END]
+     * (exclusive; vectors follow), [REGION_SIZE] bytes, as for [NesPlayerImage] but from the first page after this
+     * larger player.
+     */
+    const val SONG_BASE = 0x{s5b_base:04X}
+    const val REGION_END = 0x{REGION_END:04X}
+    const val REGION_SIZE = {sregion_size}
+
+    /** Header bytes 4..7 (little-endian): an image only plays on the player build it was lowered for. */
+    const val PLAYER_ID = 0x{splayer_id:08X}.toInt()
+
+    /** Bytes of a lowered image: header + envelope directory + region (address a at region offset a − [SONG_BASE]). */
+    const val IMAGE_SIZE = {simage_size}
+
+    /**
+     * Channel streams in the song header, in engine order: 2A03 pulse 1, pulse 2, triangle, noise, DPCM, then 5B
+     * square 1-3.
+     */
+    const val CHANNELS = {PLAYERS['s5b']['channels']}
+
+    /**
+     * Bytes of an expansion instrument entry: volume, arpeggio, pitch, mixer and noise envelope pointers, envelope
+     * shape (0 or `$08`-`$0F`), auto-period octave (signed) or `$80` = manual period, manual period (u16), two zeros.
+     */
+    const val EXP_INSTRUMENT_SIZE = {EXP_INSTRUMENT_SIZE}
+
+    /** Envelope directory kinds of this build only: 5B mixer (tone-off bit 0, noise-off bit 3) and noise period. */
+    const val KIND_MIXER = {KIND_MIXER}
+    const val KIND_NOISE = {KIND_NOISE}
+
+    /**
+     * First directory index of effect envelopes (arpeggio 0xy, vibrato): instrument slot s's mixer and noise envelopes
+     * take entries 256 + 2 s and 257 + 2 s below it.
+     */
+    const val EFFECT_ENVELOPES = {S5B_EFFECT_ENVELOPES}
+
+    /** The player image ({len(splayer)} bytes at [LOAD]); a fresh copy per call. */
+    val BYTES: ByteArray get() = ByteArray(HEX.length / 2) {{ HEX.substring(2 * it, 2 * it + 2).toInt(16).toByte() }}
+
+    private const val HEX =
+{kotlin_hex(splayer)}
+}}
+""")
+
+    sinstrument_defines = "\n".join(
+        [f"#define S5B_TEST_INSTRUMENT_{n.upper()} {i}" for n, i in sorted(snames.items(), key=lambda kv: kv[1])]
+        + [f"#define S5B_TEST_INSTRUMENT_{n.upper()} {i} /* expansion table */"
+           for n, i in sorted(sexp_names.items(), key=lambda kv: kv[1])])
+    sspeed_rows = ",\n".join("    {" + ", ".join(str(s) for s in line) + "}" for line in sspeeds)
+    OUT_S5B_SONG.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// S5B test song tools/audio/nes/s5b_test.txt (sha256 {sha256(S5B_SONG_TXT.read_bytes())}, FamiTracker tempo),
+// as exported by FamiStudio {FAMISTUDIO_TAG} itself (tools/audio/nes/s5b_test_ca65.s, sha256 {sha256(S5B_SONG_CA65.read_bytes())};
+// its negative auto-period octaves `$ffffffXX` read as `$XX`, as FamiStudio's binary export writes them).
+//   nes_s5b_raw:    that export linked at NES_S5B_SONG_BASE (song region bytes; raw layout, 8 channel streams).
+//   nes_s5b_thor:   the same rows rearranged into the Thor Tracker layout for the S5B player (both instrument tables
+//                   {len(sthor['instruments'])} entries); every row's bytes are FamiStudio's. Directory: 2A03 instrument i's
+//                   envelopes at 4 i + kind, expansion instrument j's volume/arpeggio/pitch at S5B_TEST_EXP_ENVELOPES
+//                   + 4 j + kind, its mixer at S5B_TEST_MIXER_ENVELOPES + 2 j and noise at + 2 j + 1, effect envelopes
+//                   from NES_S5B_EFFECT_ENVELOPES.
+//   nes_s5b_moved:  nes_s5b_thor with every block at another address (same directory indices).
+//   nes_s5b_edited: nes_s5b_thor with order 2 5B square 1 row 8 E4 -> G4, the SLead volume sustain 12,12 -> 8,8,
+//                   SEnvManual's manual period 1000 -> S5B_TEST_EDITED_PERIOD and SEnvAuto's shape $08 ->
+//                   S5B_TEST_EDITED_SHAPE.
+#ifndef NES_S5B_SONG_H_
+#define NES_S5B_SONG_H_
+#include <stdint.h>
+
+#define S5B_TEST_ROWS {srows}
+#define S5B_TEST_ORDERS {sorders}
+#define S5B_TEST_LOOP {sloop}
+#define S5B_TEST_INSTRUMENTS {len(sthor['instruments'])}
+#define S5B_TEST_TEMPO_NTSC {u16(s5b_song, 7 + 2 * PLAYERS['s5b']['channels'] + 2)}
+#define S5B_TEST_EXP_ENVELOPES {EXP_ENVELOPES}
+#define S5B_TEST_MIXER_ENVELOPES {S5B_MIXER_ENVELOPES}
+#define S5B_TEST_SLEAD_VOLUME_ENVELOPE {slead} /* directory index in nes_s5b_thor */
+#define S5B_TEST_EDITED_PERIOD {s5b_edited_period}
+#define S5B_TEST_EDITED_SHAPE 0x{s5b_edited_shape:02X}
+{sinstrument_defines}
+
+/* Speed in effect at each row of the first pass, read from s5b_test.txt (not from the export). */
+static const uint8_t nes_s5b_speed[S5B_TEST_ORDERS][S5B_TEST_ROWS] = {{
+{sspeed_rows}
+}};
+
+{c_array("nes_s5b_raw", s5b_song)}
+{c_array("nes_s5b_thor", sbase)}
+{c_array("nes_s5b_moved", smoved)}
+{c_array("nes_s5b_edited", sedited)}
+#endif /* NES_S5B_SONG_H_ */
+""")
     print(f"player: {len(player)} bytes at ${PLAYER_BASE:04X}, sha256 {player_sha}, id 0x{player_id:08X}")
     print(f"engine RAM: zp ${zp[0]:02X}+{zp[1]}, bss ${bss[0]:04X}+{bss[1]} (ends ${bss[0] + bss[1]:04X})")
     print(f"test song: {len(song)} bytes raw; Thor layout region {len(base) - HEADER_SIZE - DIRECTORY_SIZE} bytes, "
@@ -1497,9 +1846,14 @@ static const uint8_t nes_vrc7_speed[VRC7_TEST_ORDERS][VRC7_TEST_ROWS] = {{
           f"id 0x{fplayer_id:08X}; engine RAM zp ${fzp[0]:02X}+{fzp[1]}, bss ${fbss[0]:04X}+{fbss[1]}")
     print(f"VRC7 test song: {len(vrc7_song)} bytes raw, {len(fthor['instruments'])} instruments per table, "
           f"{len(fthor['envelopes'])} envelopes, {releases} VRC7 release rows")
+    print(f"S5B player: {len(splayer)} bytes at ${PLAYER_BASE:04X} (song base ${s5b_base:04X}), sha256 {splayer_sha}, "
+          f"id 0x{splayer_id:08X}; engine RAM zp ${szp[0]:02X}+{szp[1]}, bss ${sbss[0]:04X}+{sbss[1]}")
+    print(f"S5B test song: {len(s5b_song)} bytes raw, {len(sthor['instruments'])} instruments per table, "
+          f"{len(sthor['envelopes'])} envelopes, {len(periods)} envelope period rows")
     print("wrote " + ", ".join(str(p.relative_to(ROOT)) for p in
                                (OUT_PLAYER, OUT_KOTLIN, OUT_SONG, OUT_DPCM, OUT_VRC6_PLAYER, OUT_VRC6_KOTLIN, OUT_VRC6_SONG,
-                                OUT_VRC7_PLAYER, OUT_VRC7_KOTLIN, OUT_VRC7_SONG)))
+                                OUT_VRC7_PLAYER, OUT_VRC7_KOTLIN, OUT_VRC7_SONG, OUT_S5B_PLAYER, OUT_S5B_KOTLIN,
+                                OUT_S5B_SONG)))
 
 
 if __name__ == "__main__":
