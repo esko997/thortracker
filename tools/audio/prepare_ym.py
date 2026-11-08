@@ -114,6 +114,19 @@ def elf_symbol(elf, symbol):
     raise SystemExit("symbol %s not found" % symbol)
 
 
+def listing_labels(lst, names):
+    """Addresses of global labels in an sjasm listing (line number, address, code, label)."""
+    found = {}
+    for line in lst.splitlines():
+        m = re.match(r"\s*\d+\s+([0-9A-F]{4})\s+(?:[0-9A-F]{2}\s+)*([A-Za-z_]\w*)\b", line)
+        if m and m.group(2) in names and m.group(2) not in found:
+            found[m.group(2)] = int(m.group(1), 16)
+    missing = set(names) - set(found)
+    if missing:
+        raise SystemExit("driver listing lacks labels %s" % sorted(missing))
+    return found
+
+
 def write_driver(sgdk):
     src = os.path.join(sgdk, "src")
     for name, rel in DRIVER_FILES.items():
@@ -124,6 +137,8 @@ def write_driver(sgdk):
                         os.path.join(tmp, "drv_xgm.o80"), os.path.join(tmp, "out.lst")], check=True,
                        capture_output=True)
         image = read(os.path.join(tmp, "drv_xgm.o80"))
+        with open(os.path.join(tmp, "out.lst"), encoding="latin-1") as f:
+            labels = listing_labels(f.read(), ("pcm_mix", "sync_frame_loop"))
     shipped = libmd_driver(os.path.join(src, "lib/libmd.a"))
     if shipped.rstrip(b"\0") != image.rstrip(b"\0") or len(shipped) != len(image):
         raise SystemExit("assembled driver differs from drv_xgm in SGDK's lib/libmd.a")
@@ -138,6 +153,10 @@ def write_driver(sgdk):
         "#include <stdint.h>",
         "",
         "#define XGM_DRIVER_SIZE %d" % len(image),
+        "// Entry points of the driver's PCM mixer and its frame-wait loop (sjasm listing): where the machine's pass",
+        "// replay starts (ym/ym_machine.c).",
+        "#define XGM_DRIVER_PCM_MIX 0x%04X" % labels["pcm_mix"],
+        "#define XGM_DRIVER_SYNC_FRAME_LOOP 0x%04X" % labels["sync_frame_loop"],
         "static const uint8_t XGM_DRIVER[%d] = {" % len(image),
     ]
     for i in range(0, len(image), 24):

@@ -20,6 +20,72 @@
 
 #define PREFIX_MAX (YMP_MACHINE_RESET_WRITES + YMP_DUMP_WRITES + YMP_MAX_WRITES + 8)
 #define FIFO 64 /* positions of the last encoded player ticks (the driver lags behind heavy frames) */
+#define PSG_DIV (YMS_MCLK_PER_STEP / YMM_MCLK_PER_Z80) /* Z80 cycles per PSG counter step */
+
+/* Pass replay (below, "pass replay"): capacities. A mixer pass reads ~1100 bytes (code, variables, 768 null-sample
+ * bytes), writes ~1060 and makes ~190 chip writes; a frame-wait pass a few dozen. */
+#define RP_ENTRIES 64
+#define RP_ARENA (640u * 1024u)
+#define RP_MAX_READS 2048
+#define RP_MAX_EVENTS 512
+#define RP_MAX_REL 512
+#define RP_MAX_OBS 8
+#define RP_MAX_CYCLES 100000u
+#define PCM_RING 0x1800 /* the driver's four 256-byte PCM buffers, read through BC' */
+#define PCM_RING_SIZE 0x400
+#define IDLE_LOOP (YMM_PARAMS + 0x7C) /* the frame-wait loop's 16-bit iteration counter */
+
+typedef struct RpRead { uint32_t addr; uint8_t val; } RpRead;     /* addr bit 31: 68000 bus (ROM window) */
+typedef struct RpWrite { uint16_t addr; uint8_t val; } RpWrite;
+typedef struct RpEvent { uint32_t at; uint8_t kind, val; } RpEvent; /* kind 0..3 YM port, 4 PSG, 5 bank bit */
+typedef struct RpObs { uint16_t at; uint8_t b; } RpObs;          /* B' read after `at` relative reads */
+
+/* One recorded pass: from an opcode fetch at `start` to the next at `exit`, `len` cycles. */
+typedef struct RpEntry {
+    uint16_t start, exit;
+    uint32_t len;
+    z80_t in, out;       /* the Z80 at the two fetches */
+    uint64_t out_pins;
+    uint16_t ptr;        /* BC' (the PCM read pointer) at entry */
+    uint16_t ym_addr_in;
+    uint32_t bank_in;
+    uint8_t bank_free;   /* the pass sets all 9 bank bits before reading ROM: the entry bank is no input */
+    uint8_t r_loaded;    /* LD R,A in the pass: out.r is exact; else R advances by r_steps */
+    uint8_t r_steps;
+    uint8_t shared;      /* reads memory the 68000 side changes between ticks: may not straddle a tick */
+    uint16_t nrel, nobs;
+    uint32_t nreads, nwrites, nevents;
+    const uint8_t* rel;  /* values of the relative reads (BC' ring) */
+    const RpObs* obs;
+    const RpRead* reads; /* first reads of each byte, before any write of it */
+    const RpWrite* writes; /* final value of every byte written (applied at the pass end) */
+    const RpEvent* events;
+    uint8_t ring_written[PCM_RING_SIZE / 8];
+} RpEntry;
+
+typedef struct RpRecorder {
+    int on;
+    RpEntry e;
+    uint32_t cycle;
+    uint16_t ptr;        /* BC' as the relative reads advance it */
+    int rel_pending;     /* LD A,(BC) on BC' fetched: its data read is relative */
+    int prev_ed;         /* the last fetched byte was an ED prefix */
+    int bank_writes;
+    int counter_read;    /* frame-wait pass: IDLE_LOOP as read, -1 before */
+    uint8_t written[0x2000 / 8], seen[0x2000 / 8];
+    RpRead reads[RP_MAX_READS];
+    RpEvent events[RP_MAX_EVENTS];
+    uint8_t rel[RP_MAX_REL];
+    RpObs obs[RP_MAX_OBS];
+} RpRecorder;
+
+typedef struct RpPlayer {
+    int active, resume;  /* resume: the exit state is installed, its fetch is the next cycle */
+    const RpEntry* e;
+    uint32_t at, next;   /* cycles done, next event */
+    z80_t out;
+    uint16_t counter;
+} RpPlayer;
 
 struct YmMachine {
     uint32_t rate;
@@ -68,6 +134,15 @@ struct YmMachine {
     YmmLogEntry log[YMM_LOG_MAX];
     int nlog;
     uint32_t cycle_in_tick, last_tick_cycles;
+    /* pass replay */
+    int rp_enabled;
+    RpEntry rp[RP_ENTRIES];
+    int nrp;
+    uint8_t* arena;
+    uint32_t arena_used;
+    RpRecorder rec;
+    RpPlayer play;
+    uint64_t rp_hits, rp_cycles, rp_recorded;
 };
 
 /* ---- the Z80 bus --------------------------------------------------------------------------------- */
@@ -92,68 +167,391 @@ static uint8_t rom_read(const YmMachine* m, uint32_t a) {
     return 0xFF;
 }
 
+static void bank_write(YmMachine* m, uint8_t d) { m->bank = ((m->bank >> 1) | (uint32_t)(d & 1) << 8) & 0x1FF; }
+
+static void psg_bus_write(YmMachine* m, uint8_t d) {
+    ymps_write(&m->psg, d);
+    m->psg_written = 1; /* heard from the next step */
+    log_write(m, YM_W_PSG, 0, d);
+}
+
+/* ---- the chips, clocked in Z80 cycles ------------------------------------------------------------ */
+
+static void psg_step(YmMachine* m, int emit, uint32_t t) {
+    if (!ymps_step(&m->psg) && m->psg_written == 0) return;
+    m->psg_written = 0;
+    const int s = ymps_output(&m->psg);
+    if (s != m->psg_last) {
+        if (emit) {
+            const int d = (s - m->psg_last) * YM_PSG_GAIN >> 8;
+            blip_add_delta(m->blip[0], t, d);
+            blip_add_delta(m->blip[1], t, d);
+        }
+        m->psg_last = s;
+    }
+}
+
+static void ym_sample(YmMachine* m, int emit, uint32_t t) {
+    int32_t s[2];
+    ymo_generate(m->opn, m->fm_mute, &s[0], &s[1]);
+    for (int k = 0; k < 2; ++k) {
+        if (s[k] != m->fm_last[k]) {
+            if (emit) blip_add_delta(m->blip[k], t, (s[k] - m->fm_last[k]) * YM_FM_GAIN >> 8);
+            m->fm_last[k] = s[k];
+        }
+    }
+}
+
+/* The chips' part of one Z80 cycle (after its bus access), at blip time t. */
+static inline void chips_cycle(YmMachine* m, int emit, uint32_t t) {
+    m->mclk += YMM_MCLK_PER_Z80;
+    ++m->cycle_in_tick;
+    if (++m->psg_div == PSG_DIV) {
+        m->psg_div = 0;
+        psg_step(m, emit, t);
+    }
+    m->ym_acc += YMM_MCLK_PER_Z80;
+    if (m->ym_acc >= YMM_MCLK_PER_YM_SAMPLE) {
+        m->ym_acc -= YMM_MCLK_PER_YM_SAMPLE;
+        ym_sample(m, emit, t);
+    }
+}
+
+/* `n` cycles of chips_cycle from blip time t, jumping from one PSG step or YM2612 sample to the next. */
+static void chips_run(YmMachine* m, uint32_t n, int emit, uint32_t t) {
+    while (n) {
+        const uint32_t to_psg = PSG_DIV - m->psg_div;
+        const uint32_t to_ym = (YMM_MCLK_PER_YM_SAMPLE - m->ym_acc + YMM_MCLK_PER_Z80 - 1) / YMM_MCLK_PER_Z80;
+        uint32_t k = n < to_psg ? n : to_psg;
+        if (to_ym < k) k = to_ym;
+        m->mclk += YMM_MCLK_PER_Z80 * (uint64_t)k;
+        m->cycle_in_tick += k;
+        m->psg_div += k;
+        m->ym_acc += YMM_MCLK_PER_Z80 * k;
+        t += k;
+        n -= k;
+        if (m->psg_div == PSG_DIV) {
+            m->psg_div = 0;
+            psg_step(m, emit, t - 1);
+        }
+        if (m->ym_acc >= YMM_MCLK_PER_YM_SAMPLE) {
+            m->ym_acc -= YMM_MCLK_PER_YM_SAMPLE;
+            ym_sample(m, emit, t - 1);
+        }
+    }
+}
+
+/* ---- pass replay ---------------------------------------------------------------------------------
+ * Without PCM the driver spends ~92 % of its cycles in two pieces of fixed code: the PCM mixer (pcm_mix, ~47 k
+ * cycles per 256 silent samples) and the frame-wait loop (sync_frame_loop, 254 cycles per iteration). Neither reads
+ * the music. The machine records one execution of such a pass - from the opcode fetch at one of the two labels to
+ * the next fetch at either - with everything it reads and writes and its chip writes by cycle, and replays it when
+ * a pass starts with the same inputs: the chips run alone for the pass's cycles and receive its writes at the
+ * same cycles, its memory writes land, and the Z80 resumes in the recorded exit state. Inputs: the registers
+ * (those a pass loads before using are free), the first read of every byte, the YM address latch, the bank when
+ * read before set, and the PCM read pointer BC': its reads are re-based (values compared, never inside bytes the
+ * pass writes) and its page compared wherever the pass reads B'. The frame-wait counter is incremented, not
+ * compared. A pass reading memory the 68000 side changes between ticks (PENDING_FRM) only replays if it ends
+ * before the tick does. Exact by construction; the host test compares replayed and fully stepped machines bit for
+ * bit (samples, chip writes, Z80 state and RAM between passes). */
+
+static int ram_shared(uint16_t a) { return a == YMM_PENDING_FRM || a == YMM_REM_LOOP; }
+static uint16_t ring_add(uint16_t p, uint32_t n) { return (uint16_t)(PCM_RING + ((p - PCM_RING + n) & (PCM_RING_SIZE - 1))); }
+static int in_ring(uint16_t p) { return p >= PCM_RING && p < PCM_RING + PCM_RING_SIZE; }
+static int bit(const uint8_t* map, uint32_t i) { return map[i >> 3] >> (i & 7) & 1; }
+static void set_bit(uint8_t* map, uint32_t i) { map[i >> 3] |= (uint8_t)(1u << (i & 7)); }
+
+static void rec_start(YmMachine* m, uint16_t pc) {
+    RpRecorder* r = &m->rec;
+    if (!in_ring(m->cpu.bc2) || m->nrp == RP_ENTRIES) return;
+    memset(&r->e, 0, sizeof r->e);
+    r->e.start = pc;
+    r->e.in = m->cpu;
+    r->e.ptr = r->ptr = m->cpu.bc2;
+    r->e.ym_addr_in = m->ym_addr;
+    r->e.bank_in = m->bank;
+    r->e.bank_free = 1;
+    memset(r->written, 0, sizeof r->written);
+    memset(r->seen, 0, sizeof r->seen);
+    r->cycle = 0;
+    r->rel_pending = r->prev_ed = r->bank_writes = 0;
+    r->counter_read = -1;
+    r->on = 1;
+}
+
+/* Recording: an opcode fetch or memory read of the pass (pins = the request, d = the byte). */
+static void rec_read(YmMachine* m, uint64_t pins, uint16_t a, uint8_t d) {
+    RpRecorder* r = &m->rec;
+    RpEntry* e = &r->e;
+    if (a >= 0x4000 && a < 0x6000) { r->on = 0; return; } /* YM status: depends on time */
+    if (a >= 0x8000) {
+        const uint32_t abs = m->bank << 15 | (a & 0x7FFF);
+        if (r->bank_writes < 9) e->bank_free = 0;
+        if (abs >= YMM_RING && abs < YMM_RING + YMM_RING_SIZE) e->shared = 1;
+        if (e->nreads == RP_MAX_READS) { r->on = 0; return; }
+        r->reads[e->nreads++] = (RpRead){0x80000000u | abs, d};
+        return;
+    }
+    if (a >= 0x4000) return; /* $6000-$7FFF reads: always $FF */
+    const uint16_t ra = a & 0x1FFF;
+    if (pins & Z80_M1) {
+        if (r->prev_ed) {
+            if (d == 0x5F) { r->on = 0; return; } /* LD A,R: R would be an input */
+            if (d == 0x4F) e->r_loaded = 1;       /* LD R,A */
+        }
+        r->prev_ed = !m->cpu.prefix_active && d == 0xED;
+        if (!m->cpu.prefix_active && m->cpu.bc == r->ptr) { /* EXX'd: BC holds the PCM read pointer */
+            if (d == 0x0A) r->rel_pending = 1;             /* LD A,(BC) */
+            else if (d == 0x79) { r->on = 0; return; }     /* LD A,C */
+            else if (d == 0x78) {                          /* LD A,B */
+                if (e->nobs == RP_MAX_OBS) { r->on = 0; return; }
+                r->obs[e->nobs++] = (RpObs){e->nrel, m->cpu.b};
+            }
+        }
+    } else if (r->rel_pending) {
+        r->rel_pending = 0;
+        if (ra != r->ptr || bit(r->written, ra) || e->nrel == RP_MAX_REL) { r->on = 0; return; }
+        r->rel[e->nrel++] = d;
+        r->ptr = ring_add(r->ptr, 1);
+        return;
+    }
+    if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP && (ra == IDLE_LOOP || ra == IDLE_LOOP + 1)) {
+        if (bit(r->written, ra)) { r->on = 0; return; }
+        r->counter_read = (r->counter_read < 0 ? 0 : r->counter_read) | d << (ra == IDLE_LOOP ? 0 : 8);
+        return;
+    }
+    if (ram_shared(ra)) e->shared = 1;
+    if (bit(r->written, ra) || bit(r->seen, ra)) return;
+    set_bit(r->seen, ra);
+    if (e->nreads == RP_MAX_READS) { r->on = 0; return; }
+    r->reads[e->nreads++] = (RpRead){ra, d};
+}
+
+static void rec_event(YmMachine* m, int kind, uint8_t v) {
+    RpEntry* e = &m->rec.e;
+    if (e->nevents == RP_MAX_EVENTS) { m->rec.on = 0; return; }
+    m->rec.events[e->nevents++] = (RpEvent){m->rec.cycle, (uint8_t)kind, v};
+}
+
+static void rec_write(YmMachine* m, uint16_t a, uint8_t d) {
+    RpRecorder* r = &m->rec;
+    if (a < 0x4000) {
+        const uint16_t ra = a & 0x1FFF;
+        if (ram_shared(ra) || ra == YMM_MODIFYING_F || ra == YMM_STATUS) { r->on = 0; return; }
+        set_bit(r->written, ra);
+    } else if (a < 0x6000) {
+        rec_event(m, a & 3, d);
+    } else if (a < 0x6100) {
+        rec_event(m, 5, d);
+        ++r->bank_writes;
+    } else if ((a & 0xFFF9) == 0x7F11) {
+        rec_event(m, 4, d);
+    }
+}
+
+static void* arena_take(YmMachine* m, size_t bytes) {
+    const uint32_t at = (m->arena_used + 7u) & ~7u;
+    if (at + bytes > RP_ARENA) return NULL;
+    m->arena_used = at + (uint32_t)bytes;
+    return m->arena + at;
+}
+
+/* The recorded pass ends at the fetch at `pc` (pins = that fetch): keep it if it is replayable. */
+static void rec_finish(YmMachine* m, uint64_t pins, uint16_t pc) {
+    RpRecorder* r = &m->rec;
+    RpEntry* e = &r->e;
+    r->on = 0;
+    const int idle = e->start == XGM_DRIVER_SYNC_FRAME_LOOP;
+    if (!r->cycle || r->rel_pending || m->cpu.bc2 != r->ptr) return;
+    if (!e->r_loaded && ((m->cpu.r ^ e->in.r) & 0x80)) return;
+    if (idle && (r->counter_read < 0 || m->cpu.hl != ((r->counter_read + 1) & 0xFFFF))) return;
+    /* registers neither pass touches are carried through, not compared (regs_match) */
+    if (m->cpu.iy != e->in.iy || m->cpu.af2 != e->in.af2 || (idle && (m->cpu.bc != e->in.bc || m->cpu.sp != e->in.sp)))
+        return;
+    e->exit = pc;
+    e->len = r->cycle;
+    e->out = m->cpu;
+    e->out_pins = pins;
+    e->r_steps = (uint8_t)((m->cpu.r - e->in.r) & 0x7F);
+    uint32_t nwrites = 0;
+    for (uint32_t a = 0; a < 0x2000; ++a)
+        if (bit(r->written, a) && !(idle && (a == IDLE_LOOP || a == IDLE_LOOP + 1))) ++nwrites;
+    RpRead* reads = (RpRead*)arena_take(m, sizeof(RpRead) * e->nreads);
+    RpWrite* writes = (RpWrite*)arena_take(m, sizeof(RpWrite) * nwrites);
+    RpEvent* events = (RpEvent*)arena_take(m, sizeof(RpEvent) * e->nevents);
+    RpObs* obs = (RpObs*)arena_take(m, sizeof(RpObs) * e->nobs);
+    uint8_t* rel = (uint8_t*)arena_take(m, e->nrel);
+    if (!reads || !writes || !events || !obs || !rel) return;
+    memcpy(reads, r->reads, sizeof(RpRead) * e->nreads);
+    memcpy(events, r->events, sizeof(RpEvent) * e->nevents);
+    memcpy(obs, r->obs, sizeof(RpObs) * e->nobs);
+    memcpy(rel, r->rel, e->nrel);
+    for (uint32_t a = 0, i = 0; a < 0x2000; ++a) {
+        if (!bit(r->written, a) || (idle && (a == IDLE_LOOP || a == IDLE_LOOP + 1))) continue;
+        writes[i++] = (RpWrite){(uint16_t)a, m->ram[a]};
+        if (in_ring((uint16_t)a)) set_bit(e->ring_written, a - PCM_RING);
+    }
+    e->nwrites = nwrites;
+    e->reads = reads;
+    e->writes = writes;
+    e->events = events;
+    e->obs = obs;
+    e->rel = rel;
+    m->rp[m->nrp++] = *e;
+    ++m->rp_recorded;
+}
+
+/* Registers a pass may read: all but those it loads before use (the mixer: AF BC DE HL SP; the frame wait: AF HL),
+ * those it never touches (IY, AF'; the frame wait: BC, SP: carried through), WZ and the decoder's scratch; BC' and R
+ * are handled apart. */
+static int regs_match(const z80_t* a, const z80_t* b, int mix) {
+    if (a->ix != b->ix || a->de2 != b->de2 || a->hl2 != b->hl2 || a->i != b->i || a->im != b->im || a->iff1 != b->iff1 ||
+        a->iff2 != b->iff2 || a->int_bits != b->int_bits || a->step != b->step || a->hlx_idx != b->hlx_idx ||
+        a->prefix_active != b->prefix_active)
+        return 0;
+    return mix || a->de == b->de;
+}
+
+/* The entry whose inputs the Z80 meets now (the caller checks that a shared pass ends within the tick). */
+static const RpEntry* rp_find(const YmMachine* m, uint16_t pc) {
+    const uint16_t ptr = m->cpu.bc2;
+    if (!in_ring(ptr)) return NULL;
+    for (int i = 0; i < m->nrp; ++i) {
+        const RpEntry* e = &m->rp[i];
+        if (e->start != pc || !regs_match(&e->in, &m->cpu, pc == XGM_DRIVER_PCM_MIX) || m->ym_addr != e->ym_addr_in ||
+            (!e->bank_free && m->bank != e->bank_in))
+            continue;
+        int ok = 1;
+        for (uint32_t k = 0; ok && k < e->nobs; ++k) ok = ring_add(ptr, e->obs[k].at) >> 8 == e->obs[k].b;
+        for (uint32_t k = 0; ok && k < e->nrel; ++k) {
+            const uint16_t a = ring_add(ptr, k);
+            ok = m->ram[a] == e->rel[k] && !bit(e->ring_written, a - PCM_RING);
+        }
+        for (uint32_t k = 0; ok && k < e->nreads; ++k) {
+            const RpRead* rd = &e->reads[k];
+            ok = (rd->addr & 0x80000000u ? rom_read(m, rd->addr & 0x7FFFFFFFu) : m->ram[rd->addr]) == rd->val;
+        }
+        if (ok) return e;
+    }
+    return NULL;
+}
+
+static void rp_begin(YmMachine* m, const RpEntry* e) {
+    RpPlayer* p = &m->play;
+    p->active = 1;
+    p->e = e;
+    p->at = p->next = 0;
+    p->out = e->out;
+    p->out.bc2 = ring_add(m->cpu.bc2, e->nrel);
+    p->out.iy = m->cpu.iy;
+    p->out.af2 = m->cpu.af2;
+    if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP) {
+        p->out.bc = m->cpu.bc;
+        p->out.sp = m->cpu.sp;
+    }
+    if (!e->r_loaded) p->out.r = (uint8_t)((m->cpu.r & 0x80) | ((m->cpu.r + e->r_steps) & 0x7F));
+    if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP) {
+        p->counter = (uint16_t)(m->ram[IDLE_LOOP] + (m->ram[IDLE_LOOP + 1] << 8) + 1);
+        if (e->out.addr == e->out.hl) p->out.addr = p->counter;
+        p->out.hl = p->counter;
+    }
+    ++m->rp_hits;
+}
+
+/* Up to `budget` cycles of the replayed pass from blip time t; returns the cycles done. At its end the pass's
+ * memory writes land and the Z80 takes the exit state (its fetch is the next cycle). */
+static uint32_t replay(YmMachine* m, uint32_t budget, int emit, uint32_t t) {
+    RpPlayer* p = &m->play;
+    const RpEntry* e = p->e;
+    uint32_t done = 0;
+    while (done < budget) {
+        if (p->next < e->nevents && e->events[p->next].at == p->at) {
+            const RpEvent* ev = &e->events[p->next++];
+            if (ev->kind < 4) ym_bus_write(m, ev->kind, ev->val);
+            else if (ev->kind == 4) psg_bus_write(m, ev->val);
+            else bank_write(m, ev->val);
+            continue;
+        }
+        if (p->at == e->len) {
+            for (uint32_t k = 0; k < e->nwrites; ++k) m->ram[e->writes[k].addr] = e->writes[k].val;
+            if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP) {
+                m->ram[IDLE_LOOP] = (uint8_t)p->counter;
+                m->ram[IDLE_LOOP + 1] = (uint8_t)(p->counter >> 8);
+            }
+            m->cpu = p->out;
+            m->pins = e->out_pins;
+            p->active = 0;
+            p->resume = 1;
+            m->rp_cycles += e->len;
+            break;
+        }
+        const uint32_t until = p->next < e->nevents ? e->events[p->next].at : e->len;
+        uint32_t n = until - p->at;
+        if (n > budget - done) n = budget - done;
+        chips_run(m, n, emit, t + done);
+        p->at += n;
+        done += n;
+    }
+    return done;
+}
+
+/* ---- the Z80 ---------------------------------------------------------------------------------------- */
+
+/* The bus access of one Z80 cycle (pins as z80_tick returned them). */
+static inline uint64_t bus(YmMachine* m, uint64_t pins) {
+    if (pins & Z80_MREQ) {
+        const uint16_t a = Z80_GET_ADDR(pins);
+        if (pins & Z80_RD) {
+            uint8_t d = 0xFF;
+            if (a < 0x4000) d = m->ram[a & 0x1FFF];
+            else if (a < 0x6000) d = ymo_read_status(m->opn, m->mclk);
+            else if (a >= 0x8000) d = rom_read(m, m->bank << 15 | (a & 0x7FFF));
+            if (m->rec.on) rec_read(m, pins, a, d);
+            Z80_SET_DATA(pins, d);
+        } else if (pins & Z80_WR) {
+            const uint8_t d = Z80_GET_DATA(pins);
+            if (m->rec.on) rec_write(m, a, d);
+            if (a < 0x4000) m->ram[a & 0x1FFF] = d;
+            else if (a < 0x6000) ym_bus_write(m, a & 3, d);
+            else if (a < 0x6100) bank_write(m, d);
+            else if ((a & 0xFFF9) == 0x7F11) psg_bus_write(m, d);
+        }
+    } else if (pins & Z80_IORQ) {
+        m->rec.on = 0;
+        if (pins & Z80_RD) Z80_SET_DATA(pins, 0xFF);
+    }
+    return pins;
+}
+
 /* `cycles` Z80 cycles with the chips; output into the blip buffers when `emit`, at Z80-cycle times from `t0`. */
 static void run(YmMachine* m, uint32_t cycles, int emit, uint32_t t0) {
     uint64_t pins = m->pins;
-    for (uint32_t c = 0; c < cycles; ++c) {
-        pins = z80_tick(&m->cpu, pins);
-#ifdef YMM_PROFILE_HOOK
-        YMM_PROFILE_HOOK(m);
-#endif
-        if (pins & Z80_MREQ) {
-            const uint16_t a = Z80_GET_ADDR(pins);
-            if (pins & Z80_RD) {
-                uint8_t d = 0xFF;
-                if (a < 0x4000) d = m->ram[a & 0x1FFF];
-                else if (a < 0x6000) d = ymo_read_status(m->opn, m->mclk);
-                else if (a >= 0x8000) d = rom_read(m, m->bank << 15 | (a & 0x7FFF));
-                Z80_SET_DATA(pins, d);
-            } else if (pins & Z80_WR) {
-                const uint8_t d = Z80_GET_DATA(pins);
-                if (a < 0x4000) {
-                    m->ram[a & 0x1FFF] = d;
-                } else if (a < 0x6000) {
-                    ym_bus_write(m, a & 3, d);
-                } else if (a < 0x6100) {
-                    m->bank = ((m->bank >> 1) | (uint32_t)(d & 1) << 8) & 0x1FF;
-                } else if ((a & 0xFFF9) == 0x7F11) {
-                    ymps_write(&m->psg, d);
-                    m->psg_written = 1; /* heard from the next step */
-                    log_write(m, YM_W_PSG, 0, d);
-                }
-            }
-        } else if ((pins & (Z80_IORQ | Z80_RD)) == (Z80_IORQ | Z80_RD)) {
-            Z80_SET_DATA(pins, 0xFF);
+    uint32_t c = 0;
+    while (c < cycles) {
+        if (m->play.active) {
+            c += replay(m, cycles - c, emit, t0 + c);
+            pins = m->pins;
+            continue;
         }
-        m->mclk += YMM_MCLK_PER_Z80;
-        ++m->cycle_in_tick;
-        if (++m->psg_div == YMS_MCLK_PER_STEP / YMM_MCLK_PER_Z80) {
-            m->psg_div = 0;
-            if (!ymps_step(&m->psg) && m->psg_written == 0) goto ym;
-            m->psg_written = 0;
-            const int s = ymps_output(&m->psg);
-            if (s != m->psg_last) {
-                if (emit) {
-                    const int d = (s - m->psg_last) * YM_PSG_GAIN >> 8;
-                    blip_add_delta(m->blip[0], t0 + c, d);
-                    blip_add_delta(m->blip[1], t0 + c, d);
+        if (m->play.resume) m->play.resume = 0; /* pins: the exit fetch, as z80_tick returned it when recorded */
+        else pins = z80_tick(&m->cpu, pins);
+        if (m->rp_enabled && (pins & (Z80_M1 | Z80_MREQ | Z80_RD)) == (Z80_M1 | Z80_MREQ | Z80_RD) && !m->cpu.prefix_active) {
+            const uint16_t pc = Z80_GET_ADDR(pins);
+            if (pc == XGM_DRIVER_PCM_MIX || pc == XGM_DRIVER_SYNC_FRAME_LOOP) {
+                if (m->rec.on) rec_finish(m, pins, pc);
+                const RpEntry* e = rp_find(m, pc);
+                if (e && (!e->shared || e->len <= cycles - c)) {
+                    rp_begin(m, e);
+                    m->pins = pins;
+                    continue;
                 }
-                m->psg_last = s;
+                if (!e) rec_start(m, pc);
             }
         }
-    ym:
-        m->ym_acc += YMM_MCLK_PER_Z80;
-        if (m->ym_acc >= YMM_MCLK_PER_YM_SAMPLE) {
-            m->ym_acc -= YMM_MCLK_PER_YM_SAMPLE;
-            int32_t s[2];
-            ymo_generate(m->opn, m->fm_mute, &s[0], &s[1]);
-            for (int k = 0; k < 2; ++k) {
-                if (s[k] != m->fm_last[k]) {
-                    if (emit) blip_add_delta(m->blip[k], t0 + c, (s[k] - m->fm_last[k]) * YM_FM_GAIN >> 8);
-                    m->fm_last[k] = s[k];
-                }
-            }
-        }
+        pins = bus(m, pins);
+        chips_cycle(m, emit, t0 + c);
+        if (m->rec.on && ++m->rec.cycle > RP_MAX_CYCLES) m->rec.on = 0;
+        ++c;
     }
     m->pins = pins;
 }
@@ -207,13 +605,19 @@ static int machine_reset(YmMachine* m, int region) {
     m->bank = 0;
     m->pins = z80_init(&m->cpu);
     m->cycle_in_tick = 0;
-    const int was_logging = m->log_on;
+    m->rec.on = m->play.active = m->play.resume = 0;
+    const int was_logging = m->log_on, was_replaying = m->rp_enabled;
     m->log_on = 0;
+    m->rp_enabled = 0; /* the 68000 side writes the driver's tables right after the boot */
     uint32_t boot = 0;
     while (!(m->ram[YMM_STATUS] & 0x80)) {
         run(m, 256, 0, 0);
-        if ((boot += 256) > 200000) return -1;
+        if ((boot += 256) > 200000) {
+            m->rp_enabled = was_replaying;
+            return -1;
+        }
     }
+    m->rp_enabled = was_replaying;
     m->log_on = was_logging;
     /* Output starts here: the blip buffers hold no history, the chips' present output is their zero. */
     for (int k = 0; k < 2; ++k) blip_clear(m->blip[k]);
@@ -327,9 +731,11 @@ YmMachine* ymm_create(uint32_t sample_rate) {
     YmMachine* m = (YmMachine*)calloc(1, sizeof *m);
     if (!m) return NULL;
     m->rate = sample_rate;
+    m->rp_enabled = 1;
+    m->arena = (uint8_t*)malloc(RP_ARENA);
     m->opn = ymo_create();
     for (int i = 0; i < 2; ++i) m->blip[i] = blip_new((int)YMM_MAX_TICK_FRAMES + 64);
-    if (!m->opn || !m->blip[0] || !m->blip[1] || machine_reset(m, YM_NTSC)) {
+    if (!m->arena || !m->opn || !m->blip[0] || !m->blip[1] || machine_reset(m, YM_NTSC)) {
         ymm_destroy(m);
         return NULL;
     }
@@ -341,6 +747,7 @@ void ymm_destroy(YmMachine* m) {
     for (int i = 0; i < 2; ++i)
         if (m->blip[i]) blip_delete(m->blip[i]);
     if (m->opn) ymo_destroy(m->opn);
+    free(m->arena);
     free(m);
 }
 
@@ -557,3 +964,16 @@ const YmmLogEntry* ymm_log(const YmMachine* m, int* count) {
 const uint8_t* ymm_z80_ram(const YmMachine* m) { return m->ram; }
 uint32_t ymm_z80_cycles_per_tick(const YmMachine* m) { return m->last_tick_cycles; }
 int ymm_lag(const YmMachine* m) { return m->ram[YMM_PENDING_FRM]; }
+void ymm_set_replay(YmMachine* m, int enabled) {
+    m->rp_enabled = enabled != 0;
+    if (!enabled) m->rec.on = 0;
+}
+void ymm_replay_stats(const YmMachine* m, YmmReplayStats* s) {
+    s->entries = m->nrp;
+    s->arena_bytes = m->arena_used;
+    s->recorded = m->rp_recorded;
+    s->hits = m->rp_hits;
+    s->cycles = m->rp_cycles;
+}
+int ymm_replaying(const YmMachine* m) { return m->play.active; }
+const void* ymm_z80(const YmMachine* m) { return &m->cpu; }

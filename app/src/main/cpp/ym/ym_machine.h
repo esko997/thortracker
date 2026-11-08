@@ -90,6 +90,16 @@ const YmmLogEntry* ymm_log(const YmMachine* m, int* count);
 const uint8_t* ymm_z80_ram(const YmMachine* m);
 uint32_t ymm_z80_cycles_per_tick(const YmMachine* m); /* of the last tick */
 int ymm_lag(const YmMachine* m); /* vertical interrupts the driver has not processed yet (heavy frames) */
+/* Pass replay (ym_machine.c): on by default; off steps every Z80 cycle (the host test compares both). */
+void ymm_set_replay(YmMachine* m, int enabled);
+typedef struct YmmReplayStats {
+    int entries;          /* passes recorded and kept */
+    uint32_t arena_bytes; /* of their data */
+    uint64_t recorded, hits, cycles; /* totals since creation: kept, replayed, Z80 cycles replayed */
+} YmmReplayStats;
+void ymm_replay_stats(const YmMachine* m, YmmReplayStats* s);
+int ymm_replaying(const YmMachine* m); /* a pass is being replayed: the Z80 state and RAM are its entry's */
+const void* ymm_z80(const YmMachine* m);  /* the z80_t */
 
 #ifdef __cplusplus
 }

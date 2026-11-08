@@ -29,6 +29,7 @@
 #include "ym_machine.h"
 #include "ym_test_song.h"
 #include "ym_vgm.h"
+#include "z80.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -564,6 +565,86 @@ static void test_ring(void) {
     ymm_destroy(m);
 }
 
+static int z80_same(const z80_t* a, const z80_t* b) {
+    return a->step == b->step && a->addr == b->addr && a->dlatch == b->dlatch && a->opcode == b->opcode &&
+           a->hlx_idx == b->hlx_idx && a->prefix_active == b->prefix_active && a->pins == b->pins &&
+           a->int_bits == b->int_bits && a->pc == b->pc && a->af == b->af && a->bc == b->bc && a->de == b->de &&
+           a->hl == b->hl && a->ix == b->ix && a->iy == b->iy && a->wz == b->wz && a->sp == b->sp && a->ir == b->ir &&
+           a->af2 == b->af2 && a->bc2 == b->bc2 && a->de2 == b->de2 && a->hl2 == b->hl2 && a->im == b->im &&
+           a->iff1 == b->iff1 && a->iff2 == b->iff2;
+}
+
+/* Lockstep: `fast` (pass replay) against `full` (every Z80 cycle stepped) for `ticks` ticks: identical samples, chip
+ * writes (with their cycles), lag and positions every tick; identical Z80 state and RAM whenever `fast` is between
+ * passes. Returns the ticks compared without a difference. */
+static int lockstep(YmMachine* fast, YmMachine* full, int ticks, const char* what, int* states) {
+    static float a[YMM_MAX_TICK_FRAMES * 2], b[YMM_MAX_TICK_FRAMES * 2];
+    int same_ticks = 0, first_bad = -1;
+    for (int k = 0; k < ticks; ++k) {
+        const int na = ymm_tick(fast, a), nb = ymm_tick(full, b);
+        int nla, nlb, oa, ra, ta, ob, rb, tb;
+        const YmmLogEntry* la = ymm_log(fast, &nla);
+        const YmmLogEntry* lb = ymm_log(full, &nlb);
+        ymm_position(fast, &oa, &ra, &ta);
+        ymm_position(full, &ob, &rb, &tb);
+        int ok = na == nb && (na <= 0 || !memcmp(a, b, sizeof(float) * 2 * (size_t)na)) && nla == nlb &&
+                 !memcmp(la, lb, sizeof(YmmLogEntry) * (size_t)nla) && ymm_lag(fast) == ymm_lag(full) && oa == ob &&
+                 ra == rb && ta == tb;
+        if (ok && !ymm_replaying(fast)) {
+            ok = z80_same((const z80_t*)ymm_z80(fast), (const z80_t*)ymm_z80(full)) &&
+                 !memcmp(ymm_z80_ram(fast), ymm_z80_ram(full), 0x2000);
+            ++*states;
+        }
+        if (ok) ++same_ticks;
+        else if (first_bad < 0) first_bad = k;
+        if (na <= 0 || nb <= 0) break;
+    }
+    EXPECT(first_bad < 0, "%s: replayed = fully stepped in every tick (first difference at tick %d)", what, first_bad);
+    return same_ticks;
+}
+
+/* Pass replay is exact: the song (start, ring wrap, loops), PAL, a seek, auditions with release, mutes. */
+static void test_replay(void) {
+    printf("pass replay = every cycle stepped\n");
+    YmMachine* fast = ymm_create(RATE);
+    YmMachine* full = ymm_create(RATE);
+    ymm_set_replay(full, 0);
+    ymm_set_log(fast, 1);
+    ymm_set_log(full, 1);
+    int mode, states = 0, ticks = 0;
+    ymm_start(fast, &g_song, 0, 0, SEEK_BUDGET, &mode);
+    ymm_start(full, &g_song, 0, 0, SEEK_BUDGET, &mode);
+    ticks += lockstep(fast, full, 3400, "NTSC song across a ring wrap", &states);
+    ymm_start(fast, &g_pal, 0, 0, SEEK_BUDGET, &mode);
+    ymm_start(full, &g_pal, 0, 0, SEEK_BUDGET, &mode);
+    ticks += lockstep(fast, full, 600, "PAL song", &states);
+    ymm_start(fast, &g_song, 3, 20, SEEK_BUDGET, &mode);
+    ymm_start(full, &g_song, 3, 20, SEEK_BUDGET, &mode);
+    ymm_mute(fast, 2, 1);
+    ymm_mute(full, 2, 1);
+    ymm_mute(fast, 9, 1);
+    ymm_mute(full, 9, 1);
+    ticks += lockstep(fast, full, 400, "seek 3/20 with FM 3 and Noise muted", &states);
+    static const int aud[][3] = {{0, A4, SINE_SLOT}, {6, A4, SQUARE_SLOT}, {9, 48, TOM_SLOT}};
+    for (int i = 0; i < 3; ++i) {
+        ymm_audition(fast, &g_song, aud[i][0], aud[i][1], aud[i][2], 0);
+        ymm_audition(full, &g_song, aud[i][0], aud[i][1], aud[i][2], 0);
+        ticks += lockstep(fast, full, 90, "audition", &states);
+        EXPECT(ymm_release(fast) == ymm_release(full), "release alike");
+        ticks += lockstep(fast, full, 800, "audition release", &states);
+    }
+    YmmReplayStats s;
+    ymm_replay_stats(fast, &s);
+    const double share = (double)s.cycles / ((double)ticks * 59736.0);
+    EXPECT(states > ticks / 2, "Z80 state and RAM compared at %d of %d tick ends", states, ticks);
+    EXPECT(share > 0.8, "most Z80 cycles replayed (%.1f %%)", 100 * share);
+    EXPECT(s.entries < 64 && s.arena_bytes < 640u * 1024u, "memo bounded: %d passes, %u bytes", s.entries, s.arena_bytes);
+    printf("  %d ticks identical (Z80 state and RAM at %d); %d passes kept (%u KB), %llu replays, %.1f %% of Z80 cycles\n",
+           ticks, states, s.entries, s.arena_bytes / 1024, (unsigned long long)s.hits, 100 * share);
+    ymm_destroy(fast);
+    ymm_destroy(full);
+}
+
 static void test_audio(const char* dir, const YmImage* image, const char* wav, double tick_hz) {
     printf("audio (%s)\n", wav);
     const int ticks = (int)(SECONDS * tick_hz + 0.5);
@@ -672,37 +753,56 @@ static void test_seek(void) {
         printf("  %d/%d: %d ticks fast-forwarded in %.0f us\n", o, r, k - 1, us);
     }
     /* Sound after a seek against straight play from the same tick, 1 s: inside the pre-roll window bit-identical;
-     * beyond it the last 60 ticks streamed through the driver: the 20 ms loudness envelope over 0.5 s stays close
-     * (0.1: FM release tails and SSG-EG phases of notes keyed before the pre-roll are longer than the OPL3's 0.08). */
+     * beyond it the last 60 ticks streamed through the driver. Each channel's 20 ms loudness envelope over 0.5 s (those
+     * carrying 2 % of the energy or more) stays within 0.1 of straight play (FM release tails and SSG-EG phases of
+     * notes keyed before the pre-roll are longer than the OPL3's 0.08); the mix within 0.15 (it also depends on the
+     * channels' relative phases: PSG counters and FM phases restart at the restore, so near-unison channels beat
+     * differently). */
     static const int compare[][2] = {{0, 5}, {1, 0}, {1, 17}, {2, 12}, {3, 20}};
     for (size_t i = 0; i < sizeof compare / sizeof compare[0]; ++i) {
         const int o = compare[i][0], r = compare[i][1], k = ref_row_start(&REF_SONG, o, r);
         YmMachine* a = ymm_create(RATE);
-        int mode;
-        ymm_start(a, &g_song, 0, 0, SEEK_BUDGET, &mode);
-        for (int j = 1; j < k; ++j) ymm_tick(a, g_out);
-        float *x, *y;
-        const int fx = render(a, 60, &x);
-        ymm_start(m, &g_song, o, r, SEEK_BUDGET, &mode);
-        const int fy = render(m, 60, &y);
-        const int win = RATE / 50, wins = RATE / 2 / win;
-        double dev = 0, level = 0;
-        for (int w = 0; w < wins; ++w) {
-            const double rx = rms(x + 2 * w * win, win), ry = rms(y + 2 * w * win, win);
-            dev += (ry - rx) * (ry - rx);
-            level += rx * rx;
+        double worst = 0, env = 0, mix_level = 0;
+        int worst_ch = -1;
+        for (int solo = -1; solo < YM_CHANNELS; ++solo) {
+            int mode;
+            ymm_start(a, &g_song, 0, 0, SEEK_BUDGET, &mode);
+            for (int j = 1; j < k; ++j) ymm_tick(a, g_out);
+            ymm_start(m, &g_song, o, r, SEEK_BUDGET, &mode);
+            for (int c = 0; c < YM_CHANNELS; ++c) {
+                ymm_mute(a, c, solo >= 0 && c != solo);
+                ymm_mute(m, c, solo >= 0 && c != solo);
+            }
+            float *x, *y;
+            const int fx = render(a, 60, &x), fy = render(m, 60, &y);
+            const int win = RATE / 50, wins = RATE / 2 / win;
+            double dev = 0, level = 0;
+            for (int w = 0; w < wins; ++w) {
+                const double rx = rms(x + 2 * w * win, win), ry = rms(y + 2 * w * win, win);
+                dev += (ry - rx) * (ry - rx);
+                level += rx * rx;
+            }
+            const double e = level > 0 ? sqrt(dev / level) : 0;
+            if (solo < 0) {
+                env = e;
+                mix_level = level;
+                const int identical = fx == fy && !memcmp(x, y, sizeof(float) * 2 * (size_t)fx);
+                if (k - 1 <= YMM_PREROLL_TICKS)
+                    EXPECT(identical, "seek %d/%d (%d ticks, inside the pre-roll): sound = straight play", o, r, k - 1);
+                else
+                    EXPECT(e < 0.15, "seek %d/%d (%d ticks): mixed loudness envelope within %.3f of straight play", o, r, k - 1, e);
+                const double rx = rms(x + 2 * RATE / 2, fx - RATE / 2), ry = rms(y + 2 * RATE / 2, fy - RATE / 2);
+                EXPECT(ry > 0.8 * rx && ry < 1.25 * rx, "seek %d/%d: loudness 0.5-1 s after %.4f vs straight %.4f", o, r, ry, rx);
+            } else if (level > 0.02 * mix_level && e > worst) {
+                worst = e;
+                worst_ch = solo;
+            }
+            free(x);
+            free(y);
         }
-        const double env = sqrt(dev / level);
-        const int identical = fx == fy && !memcmp(x, y, sizeof(float) * 2 * (size_t)fx);
-        if (k - 1 <= YMM_PREROLL_TICKS)
-            EXPECT(identical, "seek %d/%d (%d ticks, inside the pre-roll): sound = straight play", o, r, k - 1);
-        else
-            EXPECT(env < 0.1, "seek %d/%d (%d ticks): loudness envelope within %.3f of straight play", o, r, k - 1, env);
-        const double rx = rms(x + 2 * RATE / 2, fx - RATE / 2), ry = rms(y + 2 * RATE / 2, fy - RATE / 2);
-        EXPECT(ry > 0.8 * rx && ry < 1.25 * rx, "seek %d/%d: loudness 0.5-1 s after %.4f vs straight %.4f", o, r, ry, rx);
-        printf("  %d/%d vs straight play: %s, envelope deviation %.3f\n", o, r, identical ? "identical" : "differs", env);
-        free(x);
-        free(y);
+        EXPECT(worst < 0.1, "seek %d/%d: every channel's loudness envelope within %.3f of straight play (channel %d)", o, r,
+               worst, worst_ch);
+        printf("  %d/%d vs straight play: envelope deviation %.3f mixed, %.3f worst channel (%d)\n", o, r, env, worst, worst_ch);
         ymm_destroy(a);
     }
     /* Order 3 rows 0-1 are only reached by the order fallback (order 2 breaks to row 2). */
@@ -1269,6 +1369,7 @@ int main(int argc, char** argv) {
     test_machine(dir);
     test_stream_vs_xgmtool();
     test_ring();
+    test_replay();
     test_audio(dir, &g_song, "ym_song.wav", NTSC_TICK_HZ);
     test_audio(dir, &g_pal, "ym_song_pal.wav", PAL_TICK_HZ);
     test_outliers();

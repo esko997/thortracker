@@ -12,6 +12,7 @@
  *   the slowest ticks by index, and the count above 3x the mean;
  * - paced: one tick per 1/59.92 s as an audio callback runs (the CPU idles between ticks, so its clock may drop);
  * - the player and the XGC encoder alone, and ymm_apply_image of a relocating live edit before every tick.
+ * - the same with pass replay off (every Z80 cycle stepped, as the spike did): before/after on one device.
  * Control thread: machine creation, audition setup, seeks (12000-tick budget, 60-tick pre-roll through the driver).
  * "core" = share of one CPU core at realtime. */
 #include <stdio.h>
@@ -153,6 +154,29 @@ int main(int argc, char** argv) {
     report("rest: Z80 + driver, PSG, player, XGC", rest, ticks);
     slowest("ticks", wall, core_wall, "core", ticks, 5);
     ymo_destroy(chip);
+    YmmReplayStats rs;
+    ymm_replay_stats(m, &rs);
+    printf("    pass replay: %d passes kept (%u KB), %llu replays, %.1f %% of the Z80's cycles\n", rs.entries,
+           rs.arena_bytes / 1024, (unsigned long long)rs.hits,
+           100.0 * (double)rs.cycles / ((double)(cold + 120 + ticks + 2) * 59736.0));
+
+    /* The same machine stepping every Z80 cycle (pass replay off): the spike's cost, for before/after on one device. */
+    {
+        YmMachine* full = ymm_create(rate);
+        ymm_set_replay(full, 0);
+        ymm_start(full, &g_image, 0, 0, 12000, &mode);
+        for (int t = 0; t < 120; ++t) ymm_tick(full, g_out);
+        const int n = ticks / 3;
+        for (int t = 0; t < n; ++t) {
+            const double w = now_us(), c = cpu_us();
+            ymm_tick(full, g_out);
+            cpu[t] = cpu_us() - c;
+            wall[t] = now_us() - w;
+        }
+        report("replay off: tick (whole machine)", wall, n);
+        report("replay off: tick, thread CPU time", cpu, n);
+        ymm_destroy(full);
+    }
 
     /* Paced like an audio callback. */
     ymm_start(m, &g_image, 0, 0, 12000, &mode);
