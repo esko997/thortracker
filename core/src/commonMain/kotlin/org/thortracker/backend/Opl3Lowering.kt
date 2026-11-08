@@ -1,5 +1,24 @@
 package org.thortracker.backend
 
+import org.thortracker.backend.Opl3PlayerImage.CHANNELS
+import org.thortracker.backend.Opl3PlayerImage.DATA_CAPACITY
+import org.thortracker.backend.Opl3PlayerImage.FLAG_DEFINED
+import org.thortracker.backend.Opl3PlayerImage.FLAG_FOUR_OP
+import org.thortracker.backend.Opl3PlayerImage.IMAGE_SIZE
+import org.thortracker.backend.Opl3PlayerImage.INSTRUMENT_SIZE
+import org.thortracker.backend.Opl3PlayerImage.MASK_EFFECT_SHIFT
+import org.thortracker.backend.Opl3PlayerImage.MASK_INSTRUMENT
+import org.thortracker.backend.Opl3PlayerImage.MASK_NOTE
+import org.thortracker.backend.Opl3PlayerImage.MAX_RUN
+import org.thortracker.backend.Opl3PlayerImage.NOTE_OFF
+import org.thortracker.backend.Opl3PlayerImage.OFF_DATA
+import org.thortracker.backend.Opl3PlayerImage.OFF_INSTRUMENTS
+import org.thortracker.backend.Opl3PlayerImage.OFF_ORDERS
+import org.thortracker.backend.Opl3PlayerImage.OFF_ROWS
+import org.thortracker.backend.Opl3PlayerImage.OFF_SHAPES
+import org.thortracker.backend.Opl3PlayerImage.OPERATOR_BYTES
+import org.thortracker.backend.Opl3PlayerImage.RUN
+import org.thortracker.backend.Opl3PlayerImage.SHAPE_SIZE
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.opl3.Opl3Instrument
@@ -9,8 +28,9 @@ import org.thortracker.system.opl3.opl3
 
 /**
  * Lowers an OPL3 song into the image Thor Tracker's OPL3 player (native `"opl3-fm"`, `opl3/opl3_player.c`) plays and
- * exports as VGM: the layout of docs/AUDIO_ENGINE.md "OPL3: Image layout", byte for byte what the reference builder
- * `tools/audio/opl3/opl3_song.py` (`build()`) writes for the same song (`Opl3GoldenTest`).
+ * exports as VGM: the layout of docs/AUDIO_ENGINE.md "OPL3: Image layout" (constants: [Opl3PlayerImage], generated from
+ * the C headers), byte for byte what the reference builder `tools/audio/opl3/opl3_song.py` (`build()`) writes for the
+ * same song (`Opl3GoldenTest`).
  *
  * Orders are the song's arrangement ([Opl3System.arranged]); each order's rows = its pattern's length; each
  * (order, channel) is that track's rows encoded as the player reads them, and byte-identical encodings are stored once
@@ -18,23 +38,6 @@ import org.thortracker.system.opl3.opl3
  * count is the highest), so the editor can audition any of them.
  */
 object Opl3Lowering {
-    const val IMAGE_SIZE = 65536
-    const val LAYOUT = 1
-    const val OFF_ROWS = 64
-    const val OFF_ORDERS = 320
-    const val OFF_INSTRUMENTS = 4928
-    const val OFF_SHAPES = 6976
-    const val OFF_DATA = 7232
-    const val INSTRUMENT_SIZE = 32
-    const val CHANNELS = 9
-
-    /** Bytes of pattern data the image holds. */
-    const val DATA_CAPACITY = IMAGE_SIZE - OFF_DATA
-
-    const val NOTE_OFF = 0xFE
-    const val FLAG_DEFINED = 0x80
-    const val FLAG_FOUR_OP = 0x01
-
     /** The lowered image of [document] (as played: parked orders left out). */
     fun lower(document: Song): ByteArray = ByteArray(IMAGE_SIZE).also { lower(document, it) }
 
@@ -47,19 +50,21 @@ object Opl3Lowering {
         out.fill(0, 0, IMAGE_SIZE)
         val song = Opl3System.arranged(document)
         val sound = song.opl3
-        out[0] = 'T'.code.toByte(); out[1] = 'T'.code.toByte(); out[2] = 'O'.code.toByte(); out[3] = '3'.code.toByte()
-        out[4] = LAYOUT.toByte()
-        out[5] = sound.multispeed.toByte()
-        out[6] = song.ticksPerRow.toByte()
-        out[7] = sound.depthByte.toByte()
-        u16(out, 8, song.orders.size)
-        u16(out, 10, song.loopOrder)
-        out[12] = highestSlot(sound).toByte()
-        out[13] = sound.chords.size.toByte()
+        Opl3PlayerImage.MAGIC.forEachIndexed { i, ch -> out[Opl3PlayerImage.H_MAGIC + i] = ch.code.toByte() }
+        out[Opl3PlayerImage.H_LAYOUT] = Opl3PlayerImage.LAYOUT.toByte()
+        out[Opl3PlayerImage.H_MULTISPEED] = sound.multispeed.toByte()
+        out[Opl3PlayerImage.H_SPEED] = song.ticksPerRow.toByte()
+        out[Opl3PlayerImage.H_DEPTH] = sound.depthByte.toByte()
+        u16(out, Opl3PlayerImage.H_ORDERS, song.orders.size)
+        u16(out, Opl3PlayerImage.H_LOOP, song.loopOrder)
+        out[Opl3PlayerImage.H_INSTRUMENTS] = highestSlot(sound).toByte()
+        out[Opl3PlayerImage.H_SHAPES] = sound.chords.size.toByte()
         sound.instruments.forEachIndexed { i, ins -> if (ins != null) record(ins).copyInto(out, OFF_INSTRUMENTS + INSTRUMENT_SIZE * i) }
-        sound.chords.forEachIndexed { k, chord -> chord.intervals.forEachIndexed { i, v -> out[OFF_SHAPES + 4 * k + i] = v.toByte() } }
+        sound.chords.forEachIndexed { k, chord ->
+            chord.intervals.forEachIndexed { i, v -> out[OFF_SHAPES + SHAPE_SIZE * k + i] = v.toByte() }
+        }
 
-        val blobs = LinkedHashMap<Blob, Int>()
+        val blobs = HashMap<Blob, Int>()
         var size = 0
         song.orders.forEachIndexed { o, p ->
             val pattern = song.patterns[p]
@@ -76,7 +81,7 @@ object Opl3Lowering {
                 u16(out, OFF_ORDERS + 2 * (CHANNELS * o + c), at)
             }
         }
-        u16(out, 14, size)
+        u16(out, Opl3PlayerImage.H_DATA_SIZE, size)
     }
 
     /** Bytes of pattern data [document] lowers to (after sharing identical tracks). */
@@ -104,20 +109,21 @@ object Opl3Lowering {
     /** The 32-byte instrument record; a 2-op instrument's operators 3 and 4 are zero. */
     fun record(ins: Opl3Instrument): ByteArray {
         val r = ByteArray(INSTRUMENT_SIZE)
-        r[0] = (FLAG_DEFINED or (if (ins.fourOp) FLAG_FOUR_OP else 0)).toByte()
-        r[1] = ins.algorithm.toByte()
-        r[2] = ins.feedback.toByte()
+        r[Opl3PlayerImage.I_FLAGS] = (FLAG_DEFINED or (if (ins.fourOp) FLAG_FOUR_OP else 0)).toByte()
+        r[Opl3PlayerImage.I_ALG] = ins.algorithm.toByte()
+        r[Opl3PlayerImage.I_FEEDBACK] = ins.feedback.toByte()
         for (k in 0 until ins.operatorCount) {
             val op = ins.operators[k]
-            r[4 + 5 * k] = op.reg20.toByte()
-            r[5 + 5 * k] = op.reg40.toByte()
-            r[6 + 5 * k] = op.reg60.toByte()
-            r[7 + 5 * k] = op.reg80.toByte()
-            r[8 + 5 * k] = op.regE0.toByte()
+            val at = Opl3PlayerImage.I_OPS + OPERATOR_BYTES * k
+            r[at] = op.reg20.toByte()
+            r[at + 1] = op.reg40.toByte()
+            r[at + 2] = op.reg60.toByte()
+            r[at + 3] = op.reg80.toByte()
+            r[at + 4] = op.regE0.toByte()
         }
-        r[24] = ins.sweep.start.toByte()
-        r[25] = ins.sweep.end.toByte()
-        r[26] = ins.sweep.speed.toByte()
+        r[Opl3PlayerImage.I_SWEEP_START] = ins.sweep.start.toByte()
+        r[Opl3PlayerImage.I_SWEEP_END] = ins.sweep.end.toByte()
+        r[Opl3PlayerImage.I_SWEEP_SPEED] = ins.sweep.speed.toByte()
         return r
     }
 
@@ -131,8 +137,8 @@ object Opl3Lowering {
         var empty = 0
         fun flush() {
             while (empty > 0) {
-                val k = minOf(empty, 128)
-                out += (0x80 or (k - 1)).toByte()
+                val k = minOf(empty, MAX_RUN)
+                out += (RUN or (k - 1)).toByte()
                 empty -= k
             }
         }
@@ -144,8 +150,7 @@ object Opl3Lowering {
             for (col in 0..cell.more.size) if (cell.effectCode(col) != 0 || cell.effectParam(col) != 0) effects++
             val hasNote = cell.note != Cell.EMPTY
             val hasInstrument = cell.instrument != 0
-            if (!hasNote && !hasInstrument && effects == 0) { empty++; continue }
-            out += ((if (hasNote) 1 else 0) or (if (hasInstrument) 2 else 0) or (effects shl 2)).toByte()
+            out += ((if (hasNote) MASK_NOTE else 0) or (if (hasInstrument) MASK_INSTRUMENT else 0) or (effects shl MASK_EFFECT_SHIFT)).toByte()
             if (hasNote) out += (if (cell.note == Cell.CUT) NOTE_OFF else cell.note).toByte()
             if (hasInstrument) out += cell.instrument.toByte()
             for (col in 0..cell.more.size) {

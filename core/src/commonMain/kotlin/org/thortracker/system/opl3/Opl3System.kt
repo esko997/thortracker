@@ -2,6 +2,7 @@ package org.thortracker.system.opl3
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
+import org.thortracker.backend.Opl3PlayerImage
 import org.thortracker.backend.Opl3Lowering
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
@@ -33,9 +34,9 @@ object Opl3System : SoundSystem {
     override val id = "opl3-fm"
     override val name = "OPL3 FM (YMF262)"
 
-    const val SLOTS = 64
-    const val MAX_CHORDS = 64
-    const val MAX_MULTISPEED = 8
+    const val SLOTS = Opl3PlayerImage.MAX_INSTRUMENTS
+    const val MAX_CHORDS = Opl3PlayerImage.MAX_SHAPES
+    const val MAX_MULTISPEED = Opl3PlayerImage.MAX_MULTISPEED
 
     override val channels = Opl3Rules.CHANNEL_NAMES.map { ChannelSpec(it, ChannelKind.VOICE, 0, tonal = true) }
     override val banks = listOf(BankSpec("Instruments", SLOTS))
@@ -162,10 +163,10 @@ object Opl3System : SoundSystem {
 
     private object Engine : PlaybackEngine {
         override val id = "opl3-fm"
-        override val imageSize = Opl3Lowering.IMAGE_SIZE
+        override val imageSize = Opl3PlayerImage.IMAGE_SIZE
 
-        /** At 60 ticks per second, ~3.3 minutes of song (2.3 ms on the dev PC). */
-        override val seekTicks = 12000
+        /** At 60 ticks per second, ~3.3 minutes of song. */
+        override val seekTicks = Opl3PlayerImage.SEEK_TICKS
 
         override fun lower(song: Song, out: ByteArray) = Opl3Lowering.lower(song, out)
 

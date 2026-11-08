@@ -1,5 +1,6 @@
 package org.thortracker.system.opl3
 
+import org.thortracker.backend.Opl3PlayerImage
 import org.thortracker.model.Cell
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
@@ -12,36 +13,37 @@ import org.thortracker.system.EffectSpec
  */
 object Opl3Rules {
     /** Absolute notes the player takes: C-0..B-7 (0 = C-0, 57 = A-4 = 440 Hz). */
-    val NOTES = 0..95
+    val NOTES = 0 until Opl3PlayerImage.NOTES
 
     /** Effect columns per channel (the player's limit). */
-    const val EFFECT_COLUMNS = 4
+    const val EFFECT_COLUMNS = Opl3PlayerImage.MAX_EFFECTS
 
     /** Channels 1-6 (0-based 0..5) own a 4-op pair; 7-9 are 2-op only. */
-    const val FOUR_OP_CHANNELS = 6
+    const val FOUR_OP_CHANNELS = Opl3PlayerImage.FOUR_OP_CHANNELS
 
-    val CHANNEL_NAMES = (1..9).map { "FM $it" }
+    val CHANNEL_NAMES = (1..Opl3PlayerImage.CHANNELS).map { "FM $it" }
 
-    const val FX_ARPEGGIO = 0
-    const val FX_SLIDE_UP = 1
-    const val FX_SLIDE_DOWN = 2
-    const val FX_PORTAMENTO = 3
-    const val FX_VIBRATO = 4
-    const val FX_PAN = 8
-    const val FX_VOLUME_SLIDE = 10 // A
-    const val FX_JUMP = 11 // B
-    const val FX_VOLUME = 12 // C
-    const val FX_BREAK = 13 // D
-    const val FX_FEEDBACK = 14 // E
-    const val FX_SPEED = 15 // F
-    const val FX_DELAY = 16 // G
-    const val FX_CHORD = 17 // H
-    const val FX_BRIGHTNESS = 18 // I
-    const val FX_SHAPE = 20 // K
-    const val FX_MULT = 22 // M
-    const val FX_FINE = 25 // P
-    const val FX_CUT = 28 // S
-    const val FX_WAVE = 32 // W
+    // Effect codes: the player's (generated from opl3_image.h).
+    const val FX_ARPEGGIO = Opl3PlayerImage.FX_ARPEGGIO
+    const val FX_SLIDE_UP = Opl3PlayerImage.FX_SLIDE_UP
+    const val FX_SLIDE_DOWN = Opl3PlayerImage.FX_SLIDE_DOWN
+    const val FX_PORTAMENTO = Opl3PlayerImage.FX_PORTAMENTO
+    const val FX_VIBRATO = Opl3PlayerImage.FX_VIBRATO
+    const val FX_PAN = Opl3PlayerImage.FX_PAN
+    const val FX_VOLUME_SLIDE = Opl3PlayerImage.FX_VOLUME_SLIDE
+    const val FX_JUMP = Opl3PlayerImage.FX_JUMP
+    const val FX_VOLUME = Opl3PlayerImage.FX_VOLUME
+    const val FX_BREAK = Opl3PlayerImage.FX_BREAK
+    const val FX_FEEDBACK = Opl3PlayerImage.FX_FEEDBACK
+    const val FX_SPEED = Opl3PlayerImage.FX_SPEED
+    const val FX_DELAY = Opl3PlayerImage.FX_DELAY
+    const val FX_CHORD = Opl3PlayerImage.FX_CHORD
+    const val FX_BRIGHTNESS = Opl3PlayerImage.FX_BRIGHTNESS
+    const val FX_SHAPE = Opl3PlayerImage.FX_SHAPE
+    const val FX_MULT = Opl3PlayerImage.FX_MULT
+    const val FX_FINE = Opl3PlayerImage.FX_FINE
+    const val FX_CUT = Opl3PlayerImage.FX_CUT
+    const val FX_WAVE = Opl3PlayerImage.FX_WAVE
 
     /** `Pxx` with no detune. */
     const val FINE_CENTRE = 0x80
