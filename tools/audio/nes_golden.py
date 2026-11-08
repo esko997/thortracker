@@ -7,10 +7,10 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
    `dotnet FamiStudio.dll <name>.txt famistudio-asm-export <name>_ca65.s -famistudio-asm-format:ca65`
    (a failed import or export fails this script, so it also proves FamiStudio opens our text).
 2. cc65's ca65/ld65 assemble that export alone at the song base of the player build the song needs ($8C00 for the 2A03
-   build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"` at NES_VRC6_SONG_BASE from
-   app/src/main/cpp/generated/nes_vrc6_player_image.h) into <name>.bin, with FAMISTUDIO_DPCM_PTR at the sample block
-   Thor Tracker uses (the top of $C000-$FFF9, 64-aligned). A song with DPCM samples also gets FamiStudio's sample bank,
-   <name>_ca65.dmc.
+   build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"` or `"MMC5"` (e.g. the golden songs mmc5_demo
+   and mmc5_effects) at NES_<CHIP>_SONG_BASE from app/src/main/cpp/generated/nes_<chip>_player_image.h) into
+   <name>.bin, with FAMISTUDIO_DPCM_PTR at the sample block Thor Tracker uses (the top of $C000-$FFF9, 64-aligned). A
+   song with DPCM samples also gets FamiStudio's sample bank, <name>_ca65.dmc.
 
 NesGoldenTest then compares the APU register traces of <name>.bin and our lowering through the embedded player, and
 our sample memory with <name>_ca65.dmc.
@@ -30,18 +30,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "core" / "src" / "jvmTest" / "resources" / "nes-golden"
 SONG_CFG = ROOT / "tools" / "audio" / "nes" / "nes_song.cfg"
-VRC6_HEADER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_vrc6_player_image.h"
+GENERATED = ROOT / "app" / "src" / "main" / "cpp" / "generated"
 FETCH_FAMISTUDIO = ROOT / "tools" / "audio" / "fetch_famistudio.sh"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 REGION_END = 0xFFFA
 
 
 def song_cfg(text: str, tmp: Path) -> Path:
-    """The ld65 layout for a song text: the 2A03 build's, or one at the VRC6 build's song base."""
-    if not re.search(r'^Project [^\n]*Expansions="VRC6"', text, re.M):
+    """The ld65 layout for a song text: the 2A03 build's, or one at the VRC6 / MMC5 build's song base."""
+    m = re.search(r'^Project [^\n]*Expansions="(VRC6|MMC5)"', text, re.M)
+    if not m:
         return SONG_CFG
-    base = int(re.search(r"#define NES_VRC6_SONG_BASE 0x([0-9A-F]{4})", VRC6_HEADER.read_text()).group(1), 16)
-    cfg = tmp / "nes_vrc6_song.cfg"
+    chip = m.group(1)
+    header = GENERATED / f"nes_{chip.lower()}_player_image.h"
+    base = int(re.search(rf"#define NES_{chip}_SONG_BASE 0x([0-9A-F]{{4}})", header.read_text()).group(1), 16)
+    cfg = tmp / f"nes_{chip.lower()}_song.cfg"
     cfg.write_text(f"MEMORY {{\n    SONG: start = ${base:04X}, size = ${REGION_END - base:04X}, type = ro, file = %O, fill = no;\n}}\n"
                    'SEGMENTS {\n    SONG: load = SONG, type = ro;\n}\n')
     return cfg

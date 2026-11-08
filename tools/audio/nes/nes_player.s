@@ -20,7 +20,12 @@
 ; (generated/nes_vrc6_player_image.h) is this file assembled with -D FAMISTUDIO_EXP_VRC6=1 on the
 ; command line as well (the engine defaults it to 0): VRC6 pulse 1/2 and saw as channels 5-7, their
 ; registers $9000-$9003, $A000-$A002, $B000-$B002, and its own song base (the page after the larger
-; player). Nothing here changes for it, so the plain build's bytes stay the same.
+; player). The Nintendo MMC5 build (generated/nes_mmc5_player_image.h) is the same with
+; -D FAMISTUDIO_EXP_MMC5=1: MMC5 pulse 1/2 as channels 5-6, playing the 2A03 note table and
+; instruments; the engine writes $5010 = $00 and $5015 = $03 at init and $5000/$5002/$5003,
+; $5004/$5006/$5007 per frame (of $5000-$5007 never $5001/$5005, the sweep units MMC5 lacks; never
+; $5011: the pinned engine has no MMC5 PCM), and its own song base (the first page after the
+; player, measured). Nothing here changes for either build, so the plain build's bytes stay the same.
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1
