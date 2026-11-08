@@ -106,6 +106,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
                 }.getOrNull()
             }
         override fun loadTuningFile(loaded: (Tuning) -> Unit) { tuningLoaded = loaded; launchTuningPicker() }
+        override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) {
+            fileLoad = FileLoad(extensions, maxBytes, loaded)
+            launchFilePicker()
+        }
     }
     private var secondary: Presentation? = null
     private var battery: PaneView.Battery? = null
@@ -220,6 +224,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             }
         })
         menus = AppMenus(session, panes, transport, popups, menuHost)
+        session.onMenuRequest = { build -> if (documentReady) { modalDisplay = focus; menus.open(build) } }
         session.onSongChanged = { song ->
             transport.songChanged(song)
             if (documentReady) {
@@ -687,6 +692,47 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }, "tuning-file").start()
     }
 
+    /** A pending [MenuHost.loadFile]: the extensions it accepts, its size limit and where the bytes go. */
+    private class FileLoad(val extensions: List<String>, val maxBytes: Int, val loaded: (String, String, ByteArray) -> Unit)
+
+    private var fileLoad: FileLoad? = null
+
+    private fun launchFilePicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }
+        try { startActivityForResult(intent, FILE_IMPORT) }
+        catch (e: Exception) { fileLoad = null; showError("No document provider could open: ${e.message}") }
+    }
+
+    /** Reads the file the generic picker returns off the UI thread, checks its extension and size, and hands it on. */
+    private fun importFile(uri: Uri) {
+        val load = fileLoad ?: return
+        fileLoad = null
+        Thread({
+            val result = runCatching {
+                val file = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "file"
+                val extension = load.extensions.firstOrNull { file.endsWith(it, ignoreCase = true) }
+                    ?: error("choose a ${load.extensions.joinToString(" or ")} file")
+                val bytes = checkNotNull(contentResolver.openInputStream(uri)) { "the file could not be opened" }.use { stream ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val n = stream.read(buffer)
+                        if (n < 0) break
+                        out.write(buffer, 0, n)
+                        check(out.size() <= load.maxBytes) { "the file is larger than ${load.maxBytes / 1024} KiB" }
+                    }
+                    out.toByteArray()
+                }
+                Triple(file.dropLast(extension.length), extension, bytes)
+            }
+            main.post {
+                if (isDestroyed) return@post
+                result.fold({ (name, extension, bytes) -> load.loaded(name, extension, bytes) }, { e -> showError("Not loaded: ${e.message}") })
+            }
+        }, "file-import").start()
+    }
+
     /** Writes or reads a keymap file off the UI thread; a provider that stalls cannot freeze input. */
     private fun keymapFile(request: Int, uri: Uri) {
         val snapshot = keymap
@@ -768,6 +814,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         }
         if (requestCode == TUNING_IMPORT) {
             if (resultCode == RESULT_OK) data?.data?.let(::importTuning)
+            return
+        }
+        if (requestCode == FILE_IMPORT) {
+            if (resultCode == RESULT_OK) data?.data?.let(::importFile) else fileLoad = null
             return
         }
         if (resultCode != RESULT_OK) { pickerSong = null; pickerGeneration = null; return }
@@ -913,6 +963,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
         private const val KEYMAP_EXPORT = 13
         private const val KEYMAP_IMPORT = 14
         private const val TUNING_IMPORT = 15
+        private const val FILE_IMPORT = 16
         private const val TUNING_ASSETS = "tunings"
                 private const val MAX_KEYMAP_BYTES = 64 * 1024
         private const val WORKING = "Working copy"

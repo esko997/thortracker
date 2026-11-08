@@ -43,6 +43,13 @@ class EditorSession(initial: Song) {
     var onAuditionSequence: ((Int, List<Int?>, Int, Long) -> Unit)? = null
     var onReleaseAudition: (() -> Unit)? = null
     var onTransport: ((Boolean) -> Unit)? = null
+    /** Opens a view's menu in the frontend ([requestMenu]); null where there are no menus (tests). */
+    var onMenuRequest: (((MenuContext) -> Unit) -> Unit)? = null
+
+    /** Asks the frontend to open a menu built by [build] (popups, file pickers) over the controller-focused display. */
+    fun requestMenu(build: (MenuContext) -> Unit) {
+        onMenuRequest?.invoke(build) ?: note("Menus are not available here")
+    }
 
     var selection: Selection = Selection()
         private set

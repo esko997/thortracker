@@ -24,6 +24,7 @@ import org.thortracker.system.ChannelSpec
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.FinePitch
+import org.thortracker.system.NoteSample
 import org.thortracker.system.PlaybackEngine
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemHelp
@@ -144,6 +145,25 @@ object NesSystem : SoundSystem {
 
     override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) NesInstrumentView else null
 
+    /** On DPCM, the keys instrument [instrument] maps to samples; other channels play every note. */
+    override fun mappedNotes(song: Song, channel: Int, instrument: Int): List<Int>? {
+        if (channel != NesRules.DPCM) return null
+        val ins = instrument(song, 0, instrument) ?: return emptyList()
+        // Views ask every frame; instruments are immutable, so the last one's sorted keys are reused.
+        if (ins !== mappedFor) { mappedFor = ins; mappedKeys = ins.dpcm.keys.sorted() }
+        return mappedKeys
+    }
+
+    private var mappedFor: NesInstrument? = null
+    private var mappedKeys: List<Int> = emptyList()
+
+    override fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? {
+        if (channel != NesRules.DPCM) return null
+        val m = song.dpcmMapping(instrument, note) ?: return null
+        val sample = song.nes.samples.getOrNull(m.sample) ?: return null
+        return NoteSample(sample.name, dpcmDetail(m))
+    }
+
     /** "vol 15 9 5 2 0 · arp 0 4 7 loop · duty 50%" — the envelopes in use. */
     fun summary(ins: NesInstrument): String {
         fun env(name: String, e: NesEnvelope, neutral: Int, text: (Int) -> String = Int::toString): String? {
@@ -244,11 +264,12 @@ object NesSystem : SoundSystem {
             "Played by the FamiStudio sound engine at FamiTracker tempo: a tick is one 60 Hz frame, Fxx sets frames per row.",
             "There are no jump effects: the song's loop order and each pattern's length arrange the song.",
             "Instruments are envelopes (volume, arpeggio, pitch, duty); effects change the playing note on top of them.",
+            "On DPCM a note plays the sample its instrument maps to that key (the instrument's DPCM page); only Fxx, Gxx, Sxx and Zxx apply there.",
         )
         override val tonalChannels = "Pulse and Triangle"
         override val tonalChannelsShort = "Pulse/Tri"
-        override val untonalNote = "Noise keeps every pitch (16 noise rates, repeating every 16 semitones)."
-        override val sketchChannels = "Pulse 1, Pulse 2 or Triangle; Noise has no tonal chord reference"
+        override val untonalNote = "Noise keeps every pitch (16 noise rates, repeating every 16 semitones); DPCM notes pick samples."
+        override val sketchChannels = "Pulse 1, Pulse 2 or Triangle; Noise and DPCM have no tonal chord reference"
 
         override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> = NesInstrumentView.helpSections(keys)
 
@@ -256,6 +277,7 @@ object NesSystem : SoundSystem {
             val used = HashSet<Int>()
             for (p in song.orders.toSet()) for (track in song.patterns[p].tracks) for (cell in track) if (cell.instrument > 0) used += cell.instrument
             add("Instruments" to "${used.size} of $SLOTS used")
+            add("Samples" to "${song.nes.samples.size}, ${Dpcm.memoryUsed(song)} of ${Dpcm.MEMORY} bytes of sample memory (\$C000-\$FFF9)")
             if (NesValidator.errors(song).isEmpty()) {
                 val bytes = FamiStudioLowering.lower(FsSong.of(song)).data.size
                 val room = org.thortracker.backend.NesPlayerImage.SONG_END - org.thortracker.backend.NesPlayerImage.SONG_BASE

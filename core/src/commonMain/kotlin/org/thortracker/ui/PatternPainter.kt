@@ -410,6 +410,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                         fittedFromText(s.patternAt(st.order), ch, st.row)
                 }
             }
+            cell.note >= 0 && system.mappedNotes(s, ch, if (cell.instrument > 0) cell.instrument else ctl.pen(bank)) != null -> {
+                val slot = if (cell.instrument > 0) cell.instrument else ctl.pen(bank)
+                "Note ${system.noteName(cell.note)} · " + (system.noteSample(s, ch, cell.note, slot)?.let { "${it.name} (${it.detail})" }
+                    ?: "no sample mapped in sound ${hex2(slot)}")
+            }
             cell.note >= 0 -> "Note ${song.system.noteName(cell.note)}" + fittedFromText(s.patternAt(st.order), ch, st.row)
             cell.note == Cell.CUT -> system.help.offInspector
             else -> "No note: the previous note keeps sounding"

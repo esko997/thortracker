@@ -168,6 +168,9 @@ interface SystemSound {
     val system: SoundSystem
 }
 
+/** A recording a note plays on a sample channel ([SoundSystem.noteSample]): [name], and [detail] such as its rate. */
+data class NoteSample(val name: String, val detail: String)
+
 /**
  * A sound chip with the driver that plays it: everything about a song that is not shared. Shared code (editor, views,
  * menus, validation entry points, tuning) asks the song's system instead of naming a chip. See docs/BACKENDS.md.
@@ -285,6 +288,16 @@ interface SoundSystem {
 
     /** The editor and painter of one of the system's own [views] (Instrument, Wave), or null for shared views. */
     fun view(kind: ViewKind): SystemView?
+
+    /**
+     * The notes sound [instrument] plays on [channel] when its notes select recordings rather than pitches (the NES
+     * DPCM channel's note → sample map), ascending; null on channels where every note of [noteRange] plays. The
+     * Pattern and Keyboard views step and label notes by it.
+     */
+    fun mappedNotes(song: Song, channel: Int, instrument: Int): List<Int>? = null
+
+    /** What [note] plays with [instrument] on a channel with [mappedNotes] (its sample), or null when nothing. */
+    fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? = null
 }
 
 /** The systems this build knows, by id. */
