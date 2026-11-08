@@ -40,7 +40,17 @@ class NesLoweringTest {
         assertEquals(NesPlayerImage.PLAYER_ID, u16(image, 4) or (u16(image, 6) shl 16))
         assertEquals(base, u16(image, 8))
         val size = u16(image, 10)
-        assertTrue(image.copyOfRange(region + size, image.size).all { it == 0.toByte() }, "$name: region not zero after the data")
+        val samplesAt = region + NesPlayerImage.SAMPLE_BASE - base
+        val sampleSize = u16(image, NesPlayerImage.HEADER_SAMPLE_SIZE)
+        assertTrue(image.copyOfRange(region + size, samplesAt).all { it == 0.toByte() }, "$name: region not zero after the data")
+        assertTrue(image.copyOfRange(samplesAt + sampleSize, image.size).all { it == 0.toByte() }, "$name: region not zero after the samples")
+        // Every sample list entry points at whole samples inside the sample bytes.
+        val listAt = u16(image, region + 3) + 4 - base
+        for (k in 0 until u8(image, NesPlayerImage.HEADER_DPCM_COUNT)) {
+            val e = region + listAt + 4 * k
+            assertTrue(64 * u8(image, e) + 16 * u8(image, e + 1) + 1 <= sampleSize, "$name: DPCM entry $k outside the samples")
+            assertTrue(u8(image, e + 2) and 0x80 == 0 && u8(image, e + 3) <= 127, "$name: DPCM entry $k")
+        }
         assertEquals(NesPlayerImage.LAYOUT_THOR, u8(image, 13))
         assertEquals(NesSystem.SLOTS, u8(image, 14))
         val envCount = u16(image, 16)
@@ -94,9 +104,16 @@ class NesLoweringTest {
         while (terms < n) {
             val op = u8(data, p++)
             when {
-                channel == 4 -> {
-                    assertTrue(op and 0x81 == 0x81, "DPCM channel must be empty runs only")
-                    rows += 1 + ((op and 0x7f) shr 1); terms++
+                channel == NesRules.DPCM -> when {
+                    // Runs, sample list entries (0 = stop), and only speed, delays, no attack and the DMC level.
+                    op >= 0x80 -> { assertTrue(op and 1 == 1, "DPCM has no instruments"); rows += 1 + ((op and 0x7f) shr 1); terms++; delays = 0 }
+                    op < 0x40 -> { rows++; terms++; delays = 0 }
+                    op == 0x43 -> Unit
+                    op == 0x46 -> assertTrue(u8(data, p++) in 1..127)
+                    op == 0x47 -> { p++; delays++; assertTrue(delays == 1, "one note delay per row") }
+                    op == 0x48 -> p++
+                    op == 0x52 -> p++
+                    else -> error("unexpected opcode ${op.toString(16)} on DPCM")
                 }
                 op >= 0x80 && op and 1 == 1 -> { rows += 1 + ((op and 0x7f) shr 1); terms++; delays = 0 }
                 op >= 0x80 -> assertTrue((op and 0x7f) shr 1 < NesSystem.SLOTS)

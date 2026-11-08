@@ -82,6 +82,10 @@ music_data_thor_quest:
 	.byte $00,$c0,$bf,$be,$02,$bf,$c0,$c0,$c1,$c2,$02,$c1,$00,$01
 
 @samples:
+	.byte $00+.lobyte(FAMISTUDIO_DPCM_PTR),$2f,$0f,$40 ; 00 Kick (Pitch:15)
+	.byte $0c+.lobyte(FAMISTUDIO_DPCM_PTR),$2a,$0f,$40 ; 01 Snare (Pitch:15)
+	.byte $17+.lobyte(FAMISTUDIO_DPCM_PTR),$41,$0d,$40 ; 02 Tom (Pitch:13)
+	.byte $17+.lobyte(FAMISTUDIO_DPCM_PTR),$41,$0f,$40 ; 03 Tom (Pitch:15)
 
 @song0ch0:
 	.byte $46, $06, $46, $06, $ef, $88, $50, $fc, $2b, $30, $8b, $45
@@ -188,7 +192,24 @@ music_data_thor_quest:
 	.byte $42
 	.word @song0ch3loop
 @song0ch4:
-	.byte $ff
+	.byte $ef, $04, $85, $03, $85
 @song0ch4loop:
-	.byte $ff, $ff, $ff, $ff, $42
+@song0ref474:
+	.byte $01, $85, $02, $85, $01, $85, $02, $85, $01, $85, $02, $85, $01, $85, $02, $85
+	.byte $41, $10
+	.word @song0ref474
+	.byte $41, $10
+	.word @song0ref474
+	.byte $41, $0e
+	.word @song0ref474
+	.byte $04, $81, $03, $81
+	.byte $41, $10
+	.word @song0ref474
+	.byte $41, $10
+	.word @song0ref474
+	.byte $41, $10
+	.word @song0ref474
+	.byte $41, $0e
+	.word @song0ref474
+	.byte $04, $81, $03, $81, $42
 	.word @song0ch4loop

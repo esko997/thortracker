@@ -4,7 +4,9 @@ import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
+import org.thortracker.system.nes.NesRules
 import kotlin.test.fail
 
 /**
@@ -51,7 +53,8 @@ class NesGoldenTest {
             val theirs = famiStudioEnvelopes(asm).map { it.toList() }.toSet()
             val fs = FsSong.of(build())
             val used = HashSet<Int>()
-            for (ch in fs.notes) for (n in ch) if (n != null && n.isMusical && n.instrument != 0) used += n.instrument
+            // FamiStudio leaves out instruments only DPCM plays (their envelopes are never used).
+            for ((c, ch) in fs.notes.withIndex()) if (c != NesRules.DPCM) for (n in ch) if (n != null && n.isMusical && n.instrument != 0) used += n.instrument
             val ours = ArrayList<Pair<String, ByteArray>>()
             for (slot in used) {
                 val ins = fs.instruments[slot - 1]
@@ -78,7 +81,11 @@ class NesGoldenTest {
             val theirs = bytes("$name.bin") ?: fail("missing fixture $name.bin")
             val song = build()
             val fs = FsSong.of(song)
-            val ours = FamiStudioLowering.lower(song).data
+            val lowered = FamiStudioLowering.lower(song)
+            val ours = lowered.data
+            // FamiStudio's sample bank (its .dmc) is our sample memory at $C000, byte for byte.
+            val dmc = bytes("${name}_ca65.dmc") ?: ByteArray(0)
+            assertContentEquals(dmc, lowered.samples, "$name: sample memory differs from FamiStudio's .dmc")
             // Two passes plus the loop again, at the slowest speed the song uses.
             val maxSpeed = (fs.notes.flatMap { it.toList() }.mapNotNull { it?.speed?.takeIf { s -> s > 0 } } + fs.speed).max()
             val loopRows = fs.totalRows - fs.orderStart[fs.loopOrder]
@@ -86,6 +93,7 @@ class NesGoldenTest {
             val a = NesTracer(theirs)
             val b = NesTracer(ours)
             var writes = 0
+            var dpcmStarts = 0
             for (f in 0 until frames) {
                 val ta = a.frame()
                 val tb = b.frame()
@@ -93,8 +101,13 @@ class NesGoldenTest {
                     fail("$name: frame $f differs: FamiStudio ${trace(ta)} vs ours ${trace(tb)}")
                 }
                 writes += ta.size
+                dpcmStarts += ta.count { it == (0x15 shl 8 or 0x1f) }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
+            if (dmc.isNotEmpty()) {
+                // The trace covers DPCM: sample starts write $4012/$4013/$4010 and start the DMC through $4015.
+                assertTrue(dpcmStarts > 0, "$name: no DPCM sample started")
+            }
         }
     }
 

@@ -6,9 +6,12 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
 1. FamiStudio imports the text and exports its sound-engine data:
    `dotnet FamiStudio.dll <name>.txt famistudio-asm-export <name>_ca65.s -famistudio-asm-format:ca65`
    (a failed import or export fails this script, so it also proves FamiStudio opens our text).
-2. cc65's ca65/ld65 assemble that export alone at the song base $A000 (tools/audio/nes/nes_song.cfg) into <name>.bin.
+2. cc65's ca65/ld65 assemble that export alone at the song base $8C00 (tools/audio/nes/nes_song.cfg) into <name>.bin,
+   with FAMISTUDIO_DPCM_PTR = 0 (samples at $C000). A song with DPCM samples also gets FamiStudio's sample bank,
+   <name>_ca65.dmc.
 
-NesGoldenTest then compares the APU register traces of <name>.bin and our lowering through the embedded player.
+NesGoldenTest then compares the APU register traces of <name>.bin and our lowering through the embedded player, and
+our sample memory with <name>_ca65.dmc.
 
 Usage: tools/audio/nes_golden.py [--famistudio DIR]   (DIR = FamiStudio 4.5.3 Linux release; default: the pinned
 release fetched and verified into the cache by tools/audio/fetch_famistudio.sh)
@@ -69,12 +72,17 @@ def main() -> int:
             asm = t / f"{name}_ca65.s"
             if not asm.exists() or "Error" in log:
                 sys.exit(f"FamiStudio did not export {txt.name}:\n{log}")
-            (t / f"{name}_song.s").write_text(f'.segment "SONG"\n.include "{name}_ca65.s"\n')
+            (t / f"{name}_song.s").write_text(f'FAMISTUDIO_DPCM_PTR = 0\n.segment "SONG"\n.include "{name}_ca65.s"\n')
             run(cc65 + ["ca65", "-o", f"{name}.o", f"{name}_song.s"], t)
             run(cc65 + ["ld65", "-C", str(SONG_CFG), "-o", f"{name}.bin", f"{name}.o"], t)
             shutil.copy(asm, FIXTURES / asm.name)
             shutil.copy(t / f"{name}.bin", FIXTURES / f"{name}.bin")
-            print(f"{name}: {(FIXTURES / f'{name}.bin').stat().st_size} bytes of FamiStudio data")
+            dmc = t / f"{name}_ca65.dmc"
+            (FIXTURES / dmc.name).unlink(missing_ok=True)
+            if dmc.exists():
+                shutil.copy(dmc, FIXTURES / dmc.name)
+            print(f"{name}: {(FIXTURES / f'{name}.bin').stat().st_size} bytes of FamiStudio data"
+                  + (f", {dmc.stat().st_size} bytes of samples" if dmc.exists() else ""))
     return 0
 
 

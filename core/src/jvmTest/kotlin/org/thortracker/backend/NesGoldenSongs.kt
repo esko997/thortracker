@@ -10,6 +10,9 @@ import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.nes
+import org.thortracker.system.nes.DpcmMapping
+import org.thortracker.system.nes.DpcmSample
+import org.thortracker.system.nes.DpcmStarterKit
 
 /**
  * Songs whose FamiStudio text export FamiStudio 4.5.3 itself turned into engine data (tools/audio/nes_golden.py):
@@ -22,6 +25,7 @@ object NesGoldenSongs {
         "demo" to NesSystem::demo,
         "effects" to ::effects,
         "envelopes" to ::envelopes,
+        "dpcm" to ::dpcm,
     )
 
     private fun n(name: String): Int {
@@ -149,5 +153,62 @@ object NesGoldenSongs {
         a.note(3, 0, "A-3", 7)
         a.note(3, 30, "C-4", 8, NesRules.FX_DUTY, 0x01)
         return base.copy(title = "Envelopes", ticksPerRow = 3, patterns = listOf(a.build()), orders = listOf(0, 0), sound = NesSound(bank))
+    }
+
+    /**
+     * DPCM: the starter kit plus a looping sample, a twin of the hat (identical data, its own initial value) and
+     * mapped but unplayed samples; notes with and without instrument (no attack), several rates, loop, an initial value
+     * override, Zxx with and without a note, delays, cuts, OFF, and the speed set on DPCM only.
+     */
+    fun dpcm(): Song {
+        val base = NesSystem.blank()
+        val kit = DpcmStarterKit.samples()
+        val samples = kit + listOf(
+            DpcmSample("Buzz loop", List(33) { if (it % 2 == 0) 0xFF else 0x00 }, dmcInitial = 20),
+            DpcmSample("Hat twin", kit[DpcmStarterKit.HAT].data, dmcInitial = 40),
+            DpcmSample("Never", List(17) { 0x5A }),
+        )
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = DpcmStarterKit.instrument(0)
+        bank[1] = NesInstrument("Effects", dpcm = mapOf(
+            60 to DpcmMapping(5, pitch = 9, loop = true),
+            62 to DpcmMapping(5, pitch = 13, loop = true, dmcInitial = 10),
+            64 to DpcmMapping(6),
+            65 to DpcmMapping(7),
+        ))
+        bank[2] = NesInstrument("Lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2))
+        val d = NesRules.DPCM
+        val a = P("Drums A")
+        a.note(d, 0, "C-3", 1)
+        a.note(d, 4, "F#3", 1)
+        a.note(d, 8, "D-3", 1)
+        a.note(d, 12, "F#3", 0) // no instrument: no attack, the level is kept
+        a.note(d, 16, "C-3", 1, NesRules.FX_DELTA_COUNTER, 0x20) // level for this sample's start
+        a.note(d, 20, "G-3", 1)
+        a.note(d, 24, "A-3", 1, NesRules.FX_NOTE_DELAY, 0x02)
+        a.off(d, 28)
+        a.fx(d, 30, NesRules.FX_DELTA_COUNTER, 0x60) // at once
+        a.note(d, 32, "C-5", 2)
+        a.note(d, 36, "D-5", 2)
+        a.note(d, 40, "E-5", 2, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(d, 44, "C-3", 1)
+        a.fx(d, 48, NesRules.FX_SPEED, 0x04)
+        a.note(d, 52, "D-3", 1)
+        a.note(d, 56, "C-5", 2)
+        a.fx(d, 60, NesRules.FX_DELTA_COUNTER, 0x00)
+        a.note(0, 0, "C-4", 3)
+        a.note(0, 16, "E-4", 3)
+        a.note(0, 32, "G-4", 3)
+        a.off(0, 48)
+        a.note(2, 0, "C-3", 3)
+        a.note(3, 8, "C-4", 3)
+        val b = P("Drums B", length = 32)
+        b.note(d, 0, "C-3", 1)
+        b.note(d, 8, "D-3", 1)
+        b.note(d, 16, "C-3", 1, NesRules.FX_DELTA_COUNTER, 0x7F)
+        b.note(d, 24, "D-3", 1)
+        b.note(0, 0, "A-3", 3)
+        return base.copy(title = "DPCM", ticksPerRow = 6, loopOrder = 1, patterns = listOf(a.build(), b.build()),
+            orders = listOf(0, 1, 1), sound = NesSound(bank, samples))
     }
 }

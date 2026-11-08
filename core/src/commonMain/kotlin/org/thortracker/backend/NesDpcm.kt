@@ -54,7 +54,7 @@ internal object NesDpcm {
             val note = n.value + NesRules.NOTE_OFFSET
             if (fs.instruments[n.instrument - 1].dpcm[note]?.sample in samples.indices) used += n.instrument to note
         }
-        val usedSamples = used.map { (slot, note) -> fs.instruments[slot - 1].dpcm.getValue(note).sample }.toSortedSet()
+        val usedSamples = used.map { (slot, note) -> fs.instruments[slot - 1].dpcm.getValue(note).sample }.toSet().sorted()
         val playedEnd = run {
             var end = 0
             val seen = HashSet<List<Int>>()
