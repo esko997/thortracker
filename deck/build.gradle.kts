@@ -84,7 +84,12 @@ kotlin {
     }
 }
 
-tasks.matching { it.name == "cinteropDecknativeLinuxX64" }.configureEach { dependsOn(buildEngine) }
+// cinterop embeds libdeck_native.a (staticLibraries) into its klib: it must rerun when the engine changes,
+// not only run after it, or the executable links a stale engine.
+tasks.matching { it.name == "cinteropDecknativeLinuxX64" }.configureEach {
+    dependsOn(buildEngine)
+    inputs.files(buildEngine)
+}
 
 // The fonts and built-in tunings ship beside the executable (the program loads them from its own directory).
 tasks.matching { it.name.startsWith("link") && it.name.endsWith("ExecutableLinuxX64") }.configureEach {
