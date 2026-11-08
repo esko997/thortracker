@@ -1,5 +1,18 @@
 # Thor Tracker verification — 2026-11-07
 
+## 0.10.0 NES DPCM samples
+
+NES songs gain the 2A03's fifth channel, **DPCM**: delta-modulation samples, played by the FamiStudio engine and emulated in the APU.
+
+- The Pattern view shows five NES channels. A DPCM note plays the sample its instrument maps to that key; the inspector and status line name the sample, and a non-looping sample's rail ends where the sample stops.
+- The NES instrument view has a **DPCM** page (L1/R1): each key maps to a sample with a pitch (rate 0-F), loop and start level. Add samples from the built-in **starter kit** (kick, snare, hat, tom, bass; synthesized by Thor Tracker) or **import a .wav or .dmc file**: a .wav is converted on the device at the rate you choose, with its size shown against the free sample memory. X listens to the shown key.
+- `Zxx` sets the DMC output level. The DPCM channel also takes `F`, `G` and `S`.
+- Memory: song data and samples share $8C00-$FFF9 (29,690 bytes); samples sit at the top, 64-byte aligned, never below $C000. Songs without samples have more room than in 0.9.x.
+- The NES demo, Thor Quest, now plays kit drums on the DPCM channel.
+- `.nsf` and FamiStudio text exports include the samples and mappings. NES songs from 0.9.x open with an empty DPCM channel; earlier releases cannot open NES songs saved by 0.10.0.
+
+Verified: 317 unit tests (JVM, Linux, Android unit); native engine checks: Game Boy 145, NES 336 (DMC rates and bit-level output, loops, seeking into sample-heavy patterns, live edits that move samples, the shared memory budget at its boundary); FamiStudio 4.5.3 writes the same APU registers every frame as our lowering for four golden songs, DMC included, and its sample bytes match ours; WAV conversion byte-identical to FamiStudio's own on five reference files; Game Boy factory `.uge` byte-identical and all 32 Game Boy view renders pixel-identical; 18 Android tests on the emulator; on a Retroid Pocket Nova: the NES demo plays with DPCM, an older NES song opens with an empty DPCM channel, and a .wav imported through the Android file picker converts, maps and plays.
+
 ## 0.9.1 Error bubbles clear when the problem does
 
 - On Android, the error bubble that says the preview is playing the last playable version (for example "Pulse 1 cannot play below A-1") now goes away as soon as the song is fixed, instead of staying on screen.

@@ -127,6 +127,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - 0.8.6: R2 + ↑/→/↓ show Pattern/Wave/Help (keymap version 5). Steam Deck AppImage from the shared core.
 - 0.9.0: NES (FamiStudio) sound system, true pitch (project format 9), GPL-3.0-or-later.
 - 0.9.1: Android error bubbles clear when the song is fixed; unplayable auditions are passing messages.
+- 0.10.0: NES DPCM channel (samples, starter kit, .wav/.dmc import), shared song+sample memory.
 - Idea (user, 2026-11-06), not scheduled: a third chord layer with L2 and R2 held together, cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous (`HostInput`); it would need a modifier-set binding (`Binding.modifiers`), keymap file support and capture of two-modifier chords.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
