@@ -1,8 +1,8 @@
-/* NES song images: the bytes a lowering produces for the "nes-famistudio" and "nes-famistudio-vrc6"
- * engines, their validation and the stream/envelope walkers the machine uses to seek and to relocate a
- * playing song onto a new image. Layout and contract: docs/AUDIO_ENGINE.md, "Image layout" and "VRC6";
- * numbers in generated/nes_player_image.h and nes_vrc6_player_image.h (owned by
- * tools/audio/prepare_nes_player.py), one NesPlayer per build (nes_player.h).
+/* NES song images: the bytes a lowering produces for the "nes-famistudio", "nes-famistudio-vrc6" and
+ * "nes-famistudio-mmc5" engines, their validation and the stream/envelope walkers the machine uses to seek and
+ * to relocate a playing song onto a new image. Layout and contract: docs/AUDIO_ENGINE.md, "Image layout",
+ * "VRC6" and "MMC5"; numbers in generated/nes_player_image.h, nes_vrc6_player_image.h and
+ * nes_mmc5_player_image.h (owned by tools/audio/prepare_nes_player.py), one NesPlayer per build (nes_player.h).
  *
  * An image is NES_IMAGE_HEADER_SIZE header bytes, the envelope directory (NES_IMAGE_MAX_ENVELOPES
  * entries of 4 bytes) and the region: CPU memory player->song_base..NES_REGION_END, shared by the song
@@ -16,7 +16,8 @@
  *   18 u8 rows per order, 19 u8 order count, 20 u8 loop order or 0xFF (raw only; position/seek)
  *   22 u16 sample block bytes, 24 u16 sample block address (both 0: no samples; both layouts)
  *   other bytes zero.
- * The song header holds player->channels stream words (5; 8 with VRC6: then VRC6 pulse 1, pulse 2, saw).
+ * The song header holds player->channels stream words (5; 8 with VRC6: then VRC6 pulse 1, pulse 2, saw; 7 with
+ * MMC5: then MMC5 pulse 1, pulse 2).
  * Pure functions; no allocation. */
 #ifndef THORTRACKER_NES_IMAGE_H_
 #define THORTRACKER_NES_IMAGE_H_
@@ -97,7 +98,7 @@ typedef struct NmEntry {
 } NmEntry;
 
 /* Walks the entry of channel `channel` at song address `addr`; returns NULL or why it is invalid.
- * Checks every opcode against the channel (and the player's VRC6 rules) and, with the Thor layout,
+ * Checks every opcode against the channel (and the player's VRC6 or MMC5 rules) and, with the Thor layout,
  * instrument, envelope and DPCM mapping operands against the table, directory and DPCM list. */
 const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* out);
 

@@ -97,6 +97,10 @@ typedef struct NesApu {
 
 /* NTSC DMC rate table: CPU cycles per output bit for $4010 rate index 0..15. */
 extern const uint16_t nes_dmc_rate[16];
+/* Length counter load values for $4003 bits 3-7 (also the MMC5 pulses'). */
+extern const uint8_t nes_length_table[32];
+/* Pulse duty sequences: output of duty 0..3 at sequencer step 0..7 (also the MMC5 pulses'). */
+extern const uint8_t nes_duty_table[4][8];
 
 /* Power-on state ($4017 = 0, all channels off, noise LFSR = 1, DMC level 0). Keeps `out`, `mute`
  * and `prg`. */

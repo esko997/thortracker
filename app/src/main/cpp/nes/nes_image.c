@@ -82,7 +82,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
     const uint32_t limit = base + info->size;
     const int thor = info->layout == NM_LAYOUT_THOR;
     const int tonal = nes_player_tonal(player, channel), pitched = nes_player_pitched(player, channel);
-    const int vrc6 = nes_player_vrc6_channel(player, channel);
+    const int vrc6 = nes_player_vrc6_channel(player, channel), mmc5 = nes_player_mmc5_channel(player, channel);
     uint32_t a = addr;
     int delays = 0;
     out->delay_end = 0;
@@ -153,10 +153,11 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             return NULL;
         case 0x43: case 0x4C: case 0x4D: size = 0; break;
         case 0x4A: if (!pitched) return "vibrato opcode on a channel without pitch envelope"; size = 0; break;
-        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses and the VRC6 channels */
-            if (channel > 1 && !vrc6) {
-                return player->expansion == NES_EXPANSION_VRC6 ? "phase reset only on the pulses and the VRC6 channels"
-                                                               : "phase reset only on the pulses";
+        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses, the VRC6 channels, the MMC5 pulses */
+            if (channel > 1 && !vrc6 && !mmc5) {
+                if (player->expansion == NES_EXPANSION_VRC6) return "phase reset only on the pulses and the VRC6 channels";
+                if (player->expansion == NES_EXPANSION_MMC5) return "phase reset only on the pulses and the MMC5 pulses";
+                return "phase reset only on the pulses";
             }
             size = 0;
             break;
@@ -179,7 +180,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             NEED(2);
             if (channel == 2) return "duty effect on the triangle";
             if (channel == VRC6_SAW && vrc6) return "duty effect on the VRC6 saw";
-            if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : "duty outside 0..3";
+            if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : mmc5 ? "MMC5 duty outside 0..3" : "duty outside 0..3";
             size = 1;
             break;
         case 0x51: size = 2; break;
@@ -189,7 +190,9 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             size = 1;
             break;
         case 0x55: /* VRC6 saw master volume: 1 - Vrc6SawMasterVolume (Full $01, Half $00, Quarter $FF) */
-            if (player->expansion != NES_EXPANSION_VRC6) return "opcode not allowed in a row";
+            if (player->expansion != NES_EXPANSION_VRC6) {
+                return player->expansion == NES_EXPANSION_MMC5 ? "VRC6 saw volume opcode in an MMC5 song" : "opcode not allowed in a row";
+            }
             if (channel != VRC6_SAW) return "saw master volume off the VRC6 saw";
             NEED(2);
             if (BYTE(1) != 0x00 && BYTE(1) != 0x01 && BYTE(1) != 0xFF) return "saw master volume not $00, $01 or $FF";

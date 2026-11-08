@@ -1,4 +1,4 @@
-/* NES machine: m6502 + nes_apu (+ nes_vrc6) running a FamiStudio player build (see nes_machine.h). */
+/* NES machine: m6502 + nes_apu (+ nes_vrc6 or nes_mmc5) running a FamiStudio player build (see nes_machine.h). */
 #include "nes_machine.h"
 
 #include <math.h>
@@ -7,6 +7,7 @@
 
 #include "blip_buf.h"
 #include "nes_apu.h"
+#include "nes_mmc5.h"
 #include "nes_vrc6.h"
 
 #include "m6502.h"
@@ -39,6 +40,7 @@ struct NesMachine {
     const NesPlayer* player;
     NesApu apu;
     NesVrc6 vrc6;         /* written only with the VRC6 build */
+    NesMmc5 mmc5;         /* written only with the MMC5 build */
     blip_t* blip;
     uint32_t sample_rate;
     uint32_t time;        /* CPU cycle within the current frame */
@@ -73,6 +75,9 @@ static uint8_t bus_read(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];
     if (addr >= 0x8000) return m->prg[addr - 0x8000]; /* VRC6 registers are write-only: reads see the ROM */
     if (addr == 0x4015) return nes_apu_read_status(&m->apu, m->time);
+    if (m->player->expansion == NES_EXPANSION_MMC5 && (addr == 0x5010 || addr == 0x5015)) {
+        return nes_mmc5_read(&m->mmc5, m->time, addr);
+    }
     return 0;
 }
 
@@ -94,6 +99,9 @@ static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     } else if (m->player->expansion == NES_EXPANSION_VRC6 && nes_vrc6_register(addr)) {
         log_write(m, addr, v);
         nes_vrc6_write(&m->vrc6, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_MMC5 && addr >= 0x5000 && addr <= 0x5FFF) {
+        log_write(m, addr, v); /* the whole MMC5 register page, so a non-audio write ($5104 ...) shows in the log */
+        if (nes_mmc5_register(addr)) nes_mmc5_write(&m->mmc5, m->time, addr, v);
     }
 }
 
@@ -148,11 +156,13 @@ fault:
 static void set_output(NesMachine* m, blip_t* out) {
     nes_apu_set_output(&m->apu, out);
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_set_output(&m->vrc6, out);
+    if (m->player->expansion == NES_EXPANSION_MMC5) nes_mmc5_set_output(&m->mmc5, out);
 }
 
 static void end_frame(NesMachine* m, uint32_t cycles) {
     nes_apu_end_frame(&m->apu, cycles);
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_end_frame(&m->vrc6, cycles);
+    if (m->player->expansion == NES_EXPANSION_MMC5) nes_mmc5_end_frame(&m->mmc5, cycles);
 }
 
 /* ---- lifecycle ---------------------------------------------------------------------------- */
@@ -222,6 +232,8 @@ static int reset(NesMachine* m, const NesImage* image) {
     nes_apu_set_mute(&m->apu, 0);
     nes_vrc6_reset(&m->vrc6);
     nes_vrc6_set_mute(&m->vrc6, 0);
+    nes_mmc5_reset(&m->mmc5);
+    nes_mmc5_set_mute(&m->mmc5, 0);
     blip_clear(m->blip);
     m->hp_in = m->hp_out = m->lp_out = 0.0f;
     m->time = 0;
@@ -586,6 +598,11 @@ int nm_mute_channel(NesMachine* m, int channel, int muted) {
         uint8_t mask = m->apu.mute;
         mask = muted ? (uint8_t)(mask | (1 << channel)) : (uint8_t)(mask & ~(1 << channel));
         nes_apu_set_mute(&m->apu, mask);
+    } else if (m->player->expansion == NES_EXPANSION_MMC5) { /* MMC5 pulse 1, pulse 2 */
+        const int bit = 1 << (channel - NES_APU_CHANNELS);
+        uint8_t mask = m->mmc5.mute;
+        mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
+        nes_mmc5_set_mute(&m->mmc5, mask);
     } else { /* VRC6 pulse 1, pulse 2, saw */
         const int bit = 1 << (channel - NES_APU_CHANNELS);
         uint8_t mask = m->vrc6.mute;
@@ -692,4 +709,5 @@ int nm_call(NesMachine* m, uint16_t addr, uint8_t a) {
 
 const NesApu* nm_apu(const NesMachine* m) { return &m->apu; }
 const NesVrc6* nm_vrc6(const NesMachine* m) { return &m->vrc6; }
+const NesMmc5* nm_mmc5(const NesMachine* m) { return &m->mmc5; }
 const NesPlayer* nm_player(const NesMachine* m) { return m->player; }

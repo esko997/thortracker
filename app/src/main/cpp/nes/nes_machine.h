@@ -1,6 +1,8 @@
 /* One emulated NTSC NES (6502 core m6502.h with BCD disabled + the 2A03 APU in nes_apu.c, + the Konami
- * VRC6 audio in nes_vrc6.c for the VRC6 build) running a pinned FamiStudio sound engine 4.5.3 player
- * build in FamiTracker tempo (nes_player.h: nes_player_2a03 or nes_player_vrc6, fixed at nm_create).
+ * VRC6 audio in nes_vrc6.c for the VRC6 build or the Nintendo MMC5 audio in nes_mmc5.c for the MMC5 build)
+ * running a pinned FamiStudio sound engine 4.5.3 player build in FamiTracker tempo (nes_player.h:
+ * nes_player_2a03, nes_player_vrc6 or nes_player_mmc5, fixed at nm_create). Only the build's own expansion unit
+ * is written, clocked and mixed.
  *
  * CPU address space:
  *   $0000-$07FF  RAM (mirrored to $1FFF): engine zero page/variables, stack, audition streams at
@@ -11,6 +13,9 @@
  *                and its DPCM sample block (64-aligned, >= $C000) above it; the DMC reads samples by DMA
  *   $9000-$9003, $A000-$A002, $B000-$B002  VRC6 build: VRC6 audio register writes (timestamped); reads
  *                there return the ROM (song data) as on the cartridge
+ *   $5000-$5FFF  MMC5 build: writes logged; the MMC5 audio registers ($5000-$5007, $5010, $5011, $5015) go to
+ *                the MMC5 unit (timestamped); $5010 and $5015 read its IRQ/revision and length status. No other
+ *                MMC5 function (banking, ExRAM, multiplier, PCM read mode) exists here.
  *   $FFFA-$FFFF  vectors -> the player's trap entry (an interrupt or BRK is a driver fault)
  * Everything else reads 0 and ignores writes.
  *
@@ -56,7 +61,8 @@ enum {
     NM_SEEK_FROM_ORDER = 1, /* budget exceeded: streams placed at the order start, its earlier rows replayed */
 };
 
-/* A machine for one player build (nes_player_2a03 / nes_player_vrc6); NULL for an unsupported rate. */
+/* A machine for one player build (nes_player_2a03 / nes_player_vrc6 / nes_player_mmc5); NULL for an unsupported
+ * rate. */
 NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player);
 void nm_destroy(NesMachine* m);
 
@@ -81,10 +87,10 @@ int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_t
 void nm_apply_image(NesMachine* m, const NesImage* image);
 
 /* Resets the machine to sound one held note through the engine with a one-note stream in RAM, using
- * the image's instruments and DPCM list (Thor layout). Tonal channels (0..3; VRC6 build also 5..7):
- * engine note 1..96 (absolute - 11), instrument table index, fine pitch -128..127 (period offset,
- * +lowers; channels with a pitch envelope: 0..2, 5..7). Channel 4 (DPCM): `note` = DPCM list entry
- * 1..mappings (the stream's note byte); instrument and fine are ignored. */
+ * the image's instruments and DPCM list (Thor layout). Tonal channels (0..3; VRC6 build also 5..7, MMC5
+ * build 5..6): engine note 1..96 (absolute - 11), instrument table index, fine pitch -128..127 (period
+ * offset, +lowers; channels with a pitch envelope: 0..2 and the expansion channels). Channel 4 (DPCM):
+ * `note` = DPCM list entry 1..mappings (the stream's note byte); instrument and fine are ignored. */
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine);
 
 /* Key-off of an audition: with a volume release point the engine releases the note (returns 1;
@@ -92,8 +98,8 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
  * DPCM channel, 0 (cut now: the host drops the machine). */
 int nm_release(NesMachine* m);
 
-/* Forces channel (0..4; VRC6 build 0..7) silent in the mixer (state keeps running, so unmuting resumes
- * mid-note). */
+/* Forces channel (0..4; VRC6 build 0..7, MMC5 build 0..6) silent in the mixer (state keeps running, so
+ * unmuting resumes mid-note). */
 int nm_mute_channel(NesMachine* m, int channel, int muted);
 
 /* Order/row/frame-in-row the next tick plays, from engine state (tick 0 = the next tick starts the
@@ -103,7 +109,8 @@ void nm_position(const NesMachine* m, int* order, int* row, int* tick);
 /* One NTSC frame: play routine + APU, 48 kHz-class float stereo (L = R) into out. Returns the
  * frame count (<= NM_MAX_TICK_FRAMES), 0 once a released audition has ended, or NM_ERR_FAULT. */
 int nm_tick(NesMachine* m, float* out);
-/* Same without synthesis (APU frame counter only); used for seeking. */
+/* Same without synthesis (APU frame counter and DMC; the MMC5 unit advances fully, arithmetically); used for
+ * seeking. */
 int nm_tick_silent(NesMachine* m);
 
 /* Diagnostics / test hooks. */
@@ -114,16 +121,18 @@ void nm_set_apu_logging(NesMachine* m, int enabled);
 /* (address low byte, value) pairs of the APU ($40xx) writes since the last log call, at most `capacity`
  * pairs. Both log calls drain the log. */
 int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity);
-/* (address low, address high, value) triples of every sound write (APU and VRC6) since the last log call,
- * at most `capacity`. */
+/* (address low, address high, value) triples of every sound write (APU, VRC6; MMC5 build: every write to
+ * $5000-$5FFF) since the last log call, at most `capacity`. */
 int nm_write_log(NesMachine* m, uint8_t* triples, int capacity);
 uint8_t nm_peek(NesMachine* m, uint16_t addr);
 void nm_poke(NesMachine* m, uint16_t addr, uint8_t value); /* RAM/PRG, for fault tests */
 /* Calls a routine with A, returning NM_OK or NM_ERR_FAULT (test hook). */
 int nm_call(NesMachine* m, uint16_t addr, uint8_t a);
-/* The APU and the VRC6 unit (tests read channel periods and levels), and the machine's player. */
+/* The APU and the VRC6 and MMC5 units (tests read channel periods and levels; only the machine's own build's
+ * unit is in use), and the machine's player. */
 const struct NesApu* nm_apu(const NesMachine* m);
 const struct NesVrc6* nm_vrc6(const NesMachine* m);
+const struct NesMmc5* nm_mmc5(const NesMachine* m);
 const NesPlayer* nm_player(const NesMachine* m);
 
 #ifdef __cplusplus

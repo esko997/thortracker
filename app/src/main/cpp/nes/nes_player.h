@@ -4,11 +4,15 @@
  *   nes_player_2a03  generated/nes_player_image.h       the 2A03 alone ("nes-famistudio"): 5 channels
  *   nes_player_vrc6  generated/nes_vrc6_player_image.h FAMISTUDIO_EXP_VRC6 = 1 ("nes-famistudio-vrc6"): the
  *                    2A03's 5 channels, then VRC6 pulse 1, pulse 2 and saw (engine channels 5, 6, 7)
+ *   nes_player_mmc5  generated/nes_mmc5_player_image.h FAMISTUDIO_EXP_MMC5 = 1 ("nes-famistudio-mmc5"): the
+ *                    2A03's 5 channels, then MMC5 pulse 1 and pulse 2 (engine channels 5, 6; the MMC5 PCM is not
+ *                    supported by the engine)
  *
- * Both are tools/audio/nes/nes_player.s assembled by tools/audio/prepare_nes_player.py: the same entry table
+ * All are tools/audio/nes/nes_player.s assembled by tools/audio/prepare_nes_player.py: the same entry table
  * and image layout (header, envelope directory, samples from NES_SAMPLE_BASE, region up to NES_REGION_END);
  * they differ in player bytes and id, song base (the page after the player), channel streams in the song
- * header, engine envelope slots and RAM addresses, and the VRC6 opcode/duty rules. */
+ * header, engine envelope slots and RAM addresses, and the expansion's opcode/duty rules (VRC6: duty 0..7 and
+ * `$55`; MMC5: the plain 2A03 opcodes, duty 0..3, `$53` phase reset also on the MMC5 pulses). */
 #ifndef THORTRACKER_NES_PLAYER_H_
 #define THORTRACKER_NES_PLAYER_H_
 
@@ -16,6 +20,7 @@
 
 #include "generated/nes_player_image.h"
 #include "generated/nes_vrc6_player_image.h"
+#include "generated/nes_mmc5_player_image.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,10 +29,11 @@ extern "C" {
 #define NM_MAX_CHANNELS 8         /* array sizes: the largest build's engine channels */
 #define NM_MAX_ENVELOPES 20       /* ... engine envelope slots (volume, arpeggio, duty per tonal channel) */
 #define NM_MAX_PITCH_ENVELOPES 6  /* ... engine pitch envelope slots */
-#define NM_DPCM 4                 /* the DPCM channel (both builds) */
+#define NM_DPCM 4                 /* the DPCM channel (every build) */
+#define NM_FIRST_EXP 5            /* the first expansion channel */
 #define NM_IMAGE_MAX_SIZE NES_IMAGE_SIZE /* the largest image (the 2A03 build's: its song base is lowest) */
 
-enum { NES_EXPANSION_NONE = 0, NES_EXPANSION_VRC6 = 1 };
+enum { NES_EXPANSION_NONE = 0, NES_EXPANSION_VRC6 = 1, NES_EXPANSION_MMC5 = 2 };
 
 /* Engine addresses the machine uses (RAM variables and ROM tables of that build). */
 typedef struct NesPlayerSymbols {
@@ -49,7 +55,7 @@ typedef struct NesPlayer {
     uint16_t region_size;
     uint32_t image_size;            /* header + directory + region */
     uint16_t ram_end;               /* engine RAM ends here (below NES_AUDITION_RAM) */
-    uint8_t channels;               /* channel streams in the song header: 5 or 8 */
+    uint8_t channels;               /* channel streams in the song header: 5, 8 (VRC6) or 7 (MMC5) */
     uint8_t envelopes, pitch_envelopes; /* engine envelope / pitch envelope slots */
     uint8_t duty_max;               /* largest duty value an envelope or `$4F` may hold: 3, or 7 with VRC6 pulses */
     uint8_t expansion;              /* NES_EXPANSION_* */
@@ -58,12 +64,15 @@ typedef struct NesPlayer {
 
 extern const NesPlayer nes_player_2a03;
 extern const NesPlayer nes_player_vrc6;
+extern const NesPlayer nes_player_mmc5;
 
 /* Channel roles of an engine channel index of `p`: carries notes and instruments (not DPCM), has a pitch
- * envelope (fine pitch, vibrato), is a VRC6 channel (5..7). */
+ * envelope (fine pitch, vibrato; the 2A03 pulses and triangle and every expansion channel), is a VRC6 channel
+ * (5..7), is an MMC5 pulse (5, 6). */
 static inline int nes_player_tonal(const NesPlayer* p, int c) { return c >= 0 && c < p->channels && c != NM_DPCM; }
-static inline int nes_player_pitched(const NesPlayer* p, int c) { return (c >= 0 && c <= 2) || (c >= 5 && c < p->channels); }
+static inline int nes_player_pitched(const NesPlayer* p, int c) { return (c >= 0 && c <= 2) || (c >= NM_FIRST_EXP && c < p->channels); }
 static inline int nes_player_vrc6_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_VRC6 && c >= 5 && c < 8; }
+static inline int nes_player_mmc5_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_MMC5 && c >= 5 && c < 7; }
 
 #ifdef __cplusplus
 }
