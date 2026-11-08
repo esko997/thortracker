@@ -1,5 +1,12 @@
 # Thor Tracker verification — 2026-11-07
 
+## 0.9.1 Error bubbles clear when the problem does
+
+- On Android, the error bubble that says the preview is playing the last playable version (for example "Pulse 1 cannot play below A-1") now goes away as soon as the song is fixed, instead of staying on screen.
+- Auditioning a note the channel cannot play shows a short status message that fades, instead of an error that stayed until the next playable note.
+
+Verified: 298 unit tests; reproduced the stuck bubble on a Retroid Pocket Nova and confirmed it clears about 1.5 s after the offending note is removed. NES engine speed measured on the test handhelds with the same C sources the app uses: Retroid Pocket Nova (QCS8550) 214× realtime, AYANEO Pocket DMG 98×, Konkr Pocket Block (MT8786) 46×; NES and Game Boy loudness already match within 1.5 dB.
+
 ## 0.9.0 NES songs, true pitch, GPL
 
 Thor Tracker now writes music for a second sound chip: the NES (2A03), played by the FamiStudio sound engine 4.5.3 on an emulated 6502, on the Thor and the Steam Deck.
