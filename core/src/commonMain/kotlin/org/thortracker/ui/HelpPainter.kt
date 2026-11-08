@@ -165,6 +165,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
             Line.Row("OFF", help.off),
+        ) + (system.keyOn?.let { on ->
+            listOf(Line.Row("$clear on OFF", "Enters ${system.noteName(on)} (key on): the gate opens again without restarting the note; $clear again clears it"))
+        } ?: emptyList()) + listOf(
             Line.Row("$editLr effect", "· is no effect, then ${system.effects.filter { it.supported }.take(2).joinToString(", ") { "${it.char} ${it.name.lowercase()}" }} and on. " +
                 "0 waits as 000 until you set its value"),
             Line.Row("$mark hold+$dpad", "Select a block for copy, cut, clear or duplicate"),

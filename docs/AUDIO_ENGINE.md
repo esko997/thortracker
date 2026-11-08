@@ -35,7 +35,8 @@ A new chip implements both sides. In Kotlin, `PlaybackEngine`:
 | `auditionProblem(channel, note, instrument, fine)` | why an audition cannot sound (absolute note, system fine pitch), or null; the host reports it as its error |
 | `note(note)`, `fine(note, fine)` | `audition`'s note and fine arguments for an absolute note and the system's fine value (Game Boy: note − 36, `40y` detune unchanged) |
 
-The host's held-audition cap on the Deck is about a minute of the system's `tickHz` ticks.
+The host's held-audition cap on the Deck is about a minute of the song's ticks (`SoundSystem.ticksPerSecond`, which
+counts multispeed).
 
 Natively, it adds one ops table to the registry in `chip_engine.c` (and its sources to `CMakeLists.txt`,
 `deck/build.gradle.kts` and the host test script) and implements:

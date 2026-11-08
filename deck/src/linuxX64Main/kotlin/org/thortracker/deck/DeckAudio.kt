@@ -24,7 +24,6 @@ class DeckAudio : TrackerAudio {
 
     /** The song the engine's current image was lowered from (audition note numbers depend on it, e.g. NES DPCM). */
     private var imageSong: Song? = null
-    private var auditionTicks = 0
     private var songError: String? = null
     private var commandError: String? = null
     private var deviceError: String? = null
@@ -58,7 +57,9 @@ class DeckAudio : TrackerAudio {
         val engine = ready() ?: return
         val song = imageSong ?: run { commandError = songError ?: "No playable song loaded"; return }
         engine.auditionProblem(song, channel, note, instrument, detune)?.let { commandError = it; return }
-        commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(note, detune), auditionTicks), "audition")
+        // The cap counts driver ticks, which multispeed songs run several times per frame.
+        val capTicks = (AUDITION_CAP_SECONDS * song.system.ticksPerSecond(song)).roundToInt()
+        commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(note, detune), capTicks), "audition")
     }
 
     override fun releaseAudition() { commandError = null; if (system != null) da_release_audition() }
@@ -82,7 +83,6 @@ class DeckAudio : TrackerAudio {
         deviceError = null
         system = next
         if (image.size != next.engine.imageSize) image = ByteArray(next.engine.imageSize)
-        auditionTicks = (AUDITION_CAP_SECONDS * next.tickHz).roundToInt()
         return next.engine
     }
 

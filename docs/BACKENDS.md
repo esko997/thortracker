@@ -281,6 +281,30 @@ muted in the song) stay in the hosts and work for every chip.
   `raster-run.{thor,sid,prg,sng,sidimg}`; `tools/audio/render_sid_image.sh` renders an image through the native
   engine.
 
+### Editor (step 2)
+
+- **Instrument view** (`SidInstrumentView`, `SidInstrumentPainter`): controller-only like the NES envelope editor, six
+  pages: *Envelope* (ADSR with the drawn curve and times, and *Preset*: `SidPresets`, eight starting sounds — saw lead,
+  PWM pad, filter bass, noise snare, wave-arpeggio kick, hi-hat, triangle bass, arpeggio chord; a filter preset routes
+  the Listen voice), *Wave*, *Pulse* and *Filter* programs, *Vibrato·HR* (restart mode, gate timer, first-frame
+  waveform, vibrato drawn) and *Tables*. A program is edited as rows of columns (`SidPrograms`): the first column is
+  the step's kind (wave: waveform, silent, wait, hold, command, jump; pulse: width, sweep, jump; filter: filter,
+  cutoff, sweep, jump), the others its values (shape, gate/sync/ring/test, relative/absolute/kept pitch; passband,
+  resonance, voices…); rows added, duplicated or deleted keep jump targets. Pulse and filter pages draw the width or
+  cutoff the program plays over 100 ticks. Every edit goes through `setSidInstrument`, which re-places the tables
+  (`SidTables.place(before, after)`), so unchanged programs keep their rows. Holding Edit on a sound setting
+  auditions the sound and each change re-auditions it from the new image.
+- **Raw tables**: the Tables page lists the 255 rows of each table as the player reads them (jumps as table rows; the
+  stop rows the lowering adds), each with the owning slot and program row; read-only, Edit opens the owning program.
+- **Shared state** (`SoundSystem.sharedState`, `SidFilterOwner`): the voice that last started a filter program (an
+  instrument with one on a note, or `Axx`; `B00` turns the filter off), in straight play up to the playhead or the
+  cursor; the Pattern view tags its lane header *FILTER* and the inspector names it.
+- **Song settings** (`SoundSystem.songSettings`, `SidSongSettings`): the Song view lists chip model, multispeed and
+  the hard-restart attack/decay and sustain/release after its shared rows (`ViewState.songHeaderItems`); other
+  systems have none, so their Song view is unchanged. `SoundSystem.ticksPerSecond(song)` (the SID: × multispeed) feeds
+  the Song view's BPM, Sketch's step and the Deck's audition cap.
+- **Key on** (`SoundSystem.keyOn`): Clear on an OFF enters GoatTracker's key on, shown as `ON`.
+
 ## Steps
 
 1. **Declare the Game Boy** — done. `SoundSystem` + `GbSystem` (`system/gb`); the editor, painters, Help and menus

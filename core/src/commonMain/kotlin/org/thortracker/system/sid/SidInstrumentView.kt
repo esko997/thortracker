@@ -379,13 +379,16 @@ object SidInstrumentView : SystemView() {
         st.programField = 0
     }
 
-    private fun insertStep(v: ViewController) {
+    /** A copy of the row under the cursor below it (the cursor follows); at the append position a new row. */
+    private fun duplicateStep(v: ViewController) {
         val st = v.state
         val table = page(st).table
         val p = program(v.session.song, st) ?: return
+        val row = p.rows.getOrNull(st.envStep) ?: run { appendStep(v); return }
         if (p.rows.size >= SidPrograms.MAX_ROWS) { v.session.note("A program has at most ${SidPrograms.MAX_ROWS} rows"); return }
-        val row = p.rows.getOrNull(st.envStep) ?: SidPrograms.appended(table, p.rows.lastOrNull())
-        v.session.editSidProgram(st.instrument, table, "Insert ${SidTables.NAMES[table].lowercase()} step") { SidPrograms.inserted(it, st.envStep, row) }
+        if (v.session.editSidProgram(st.instrument, table, "Duplicate ${SidTables.NAMES[table].lowercase()} step") { SidPrograms.inserted(it, st.envStep + 1, row) }) {
+            st.envStep++
+        }
     }
 
     override fun audition(v: ViewController) {
@@ -413,15 +416,13 @@ object SidInstrumentView : SystemView() {
                 session.copySidInstrument(slot)
                 session.setSidInstrument(slot, defaultSidInstrument(slot), "Cut sound")
             }
-            Action.DUPLICATE -> {
+            Action.DUPLICATE -> if (row(st) == Row.STEPS) duplicateStep(v) else {
                 if (slot >= SidSystem.SLOTS) { session.note("Sound ${EditorSession.hex2(slot)} is the last slot"); return true }
                 val src = sound(session.song, st) ?: return true
                 session.setSidInstrument(slot + 1, src.copy(name = (src.name + "+").take(SidInstrument.NAME_MAX)), "Duplicate sound")
                 st.instrument++
                 publish(v)
             }
-            Action.INSERT_ROW -> if (row(st) == Row.STEPS) insertStep(v) else return false
-            Action.DELETE_ROW -> if (row(st) == Row.STEPS) deleteStep(v) else return false
             else -> return false
         }
         return true
@@ -453,7 +454,7 @@ object SidInstrumentView : SystemView() {
                     h += Hint(v.lr(), "Column")
                     if (f != null) h += Hint(if (f.toggle) v.k(Action.EDIT) else v.editLr(), if (f.toggle) "Switch ${f.label}" else "Change ${f.label.lowercase()}")
                     h += Hint(v.k(Action.CLEAR), "Delete step")
-                    h += Hint(v.keys.pair(Action.INSERT_ROW, Action.DELETE_ROW, st.kind), "Insert/delete")
+                    h += Hint(v.k(Action.DUPLICATE), "Duplicate step")
                 }
             }
             Row.TABLE -> h += Hint(v.lr(), "Table")
@@ -487,7 +488,7 @@ object SidInstrumentView : SystemView() {
                 keys.held(Action.EDIT, lr) to "Change the value (${keys.held(Action.EDIT, ud)} in bigger steps); on a program row's first column: what the step is",
                 "$edit tap" to "Past the last program row: add one; on a bit (G S R T, Lo Bd Hi, V1-3): switch it; on a Tables row: edit its program",
                 "$clear tap" to "Delete the program row; on settings: their default",
-                keys.pair(Action.INSERT_ROW, Action.DELETE_ROW) to "Insert / delete a program row; jumps keep pointing at the same rows",
+                keys.label(Action.DUPLICATE) to "On a program row: a copy below it. Rows added or deleted keep every jump on the row it pointed at",
             ),
             "Envelope" to listOf(
                 "ADSR" to "Attack 2 ms-8 s, decay and release 6 ms-24 s, sustain level 0-F. Release starts at OFF (key off)",

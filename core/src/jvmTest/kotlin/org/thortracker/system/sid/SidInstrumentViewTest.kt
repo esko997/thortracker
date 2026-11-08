@@ -87,7 +87,7 @@ class SidInstrumentViewTest {
         val v = view { instrument = 1 }
         v.page(Page.WAVE, Row.STEPS)
         assertEquals(1, sound.wave.rows.size)
-        // Column 1 is the shape: saw → saw+tri? No, one step up the shape list (Tri+Saw).
+        // Column 1 is the shape: one step up from Saw is Tri+Saw.
         v.tap(Action.RIGHT)
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(0x31, sound.wave.rows[0].left)
@@ -112,13 +112,17 @@ class SidInstrumentViewTest {
         v.state.programField = SidPrograms.fields(SidTables.WAVE, sound.wave.rows[1], 3).indexOfFirst { it.label == "Note" }
         v.hold(Action.EDIT, Action.UP)
         assertEquals(12, SidTables.relativeOf(sound.wave.rows[1].right))
-        // Inserting before row 1 keeps the jump on the same row.
+        // Duplicating row 1 puts a copy below it; the jump still targets row 1.
         v.tap(Action.UP)
-        v.tap(Action.INSERT_ROW)
+        v.tap(Action.DUPLICATE)
         assertEquals(4, sound.wave.rows.size)
-        assertEquals(2, sound.wave.rows[3].right)
-        // Deleting it again restores the target.
+        assertEquals(1, v.state.envStep)
+        assertEquals(1, sound.wave.rows[3].right)
+        // Rows inserted before a jump's target move the target with them.
+        assertEquals(2, SidPrograms.inserted(sound.wave.rows, 0, SidRow.delay(1))[4].right)
+        // Deleting the copy restores the program.
         v.tap(Action.CLEAR)
+        assertEquals(3, sound.wave.rows.size)
         assertEquals(1, sound.wave.rows[2].right)
         assertNull((0 until 3).firstNotNullOfOrNull { SidTables.rowProblem(SidTables.WAVE, sound.wave.rows, it) })
     }
