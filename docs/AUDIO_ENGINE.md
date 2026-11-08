@@ -872,16 +872,21 @@ byte-identical).
   is always true there), else a stop. A custom-patch sound is never re-sent per order (the per-order instrument
   re-send of the other channels would rewrite `$00-$07` under another FM channel's custom sound); FamiStudio's
   `OtherVrc7ChannelUsesCustomPatch` makes a channel send its custom sound again after another FM channel had a note
-  of a different custom sound. At the loop, a channel reloads its first custom patch if another custom patch can
-  appear in the loop. This is deliberately conservative: Gxx can change which channel writes last. Patch restoration
-  keeps the channel's instrument identity so a legato note need not restart its envelopes.
-  FamiStudio 4.5.3's editor restores shared patches, but its exporter compares only each channel's own first/last
-  instrument: a two-order, two-custom-patch real-driver probe restored the lead at frame 385 in both exports, then
-  only Thor Tracker restored it at frames 769 and 1153. See upstream
-  [`FamitoneMusicFile.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/IO/FamitoneMusicFile.cs)
-  and [`ChannelStateVrc7.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelStateVrc7.cs).
-  Golden comparisons omit only idempotent writes of unchanged custom-patch bytes, retaining every key/envelope
-  write; separate real-driver regressions cover loop restoration, delayed final writers and held envelopes.
+  of a different custom sound. There are **two intentional corrections** to FamiStudio 4.5.3's exporter:
+  1. At the loop, a channel reloads its first custom patch if another custom patch can appear in the loop. This is
+     conservative because Gxx can change the final writer. Upstream compares only each channel's own first/last
+     instrument and can leave the wrong shared patch installed on later passes.
+  2. Mid-song, restoring a custom patch keeps the channel's instrument identity. A no-attack note therefore retains
+     its held envelope and does not key off/key on. Upstream invalidates the instrument after another custom patch
+     and forces a fresh attack, even though the note explicitly disabled attack. Loop restoration preserves legato too.
+  These follow FamiStudio's editor semantics, not its buggy export in those cases. See
+  [`FamitoneMusicFile.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/IO/FamitoneMusicFile.cs),
+  [`ChannelStateVrc7.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelStateVrc7.cs)
+  and [`ChannelState.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelState.cs).
+  The independent `vrc7_patch_restore` golden explicitly demonstrates both export differences through the real driver.
+  The ordinary parity goldens omit only idempotent writes of unchanged custom-patch bytes, retaining every key/envelope
+  write. Text imports retain the musical intent, but re-exporting them through FamiStudio 4.5.3 can reintroduce these
+  bugs; Thor Tracker's own NSF, WAV and playback use the corrections.
   Slides use the VRC7 note table and FamiStudio's VRC7 slide shift (delta >> 3). A cell's Pxx is converted to the FM step nearest
   the pulse's detune (`NesRules.vrc7FinePitch`); audition fine pitch on FM uses the same conversion. FM channels play
   VRC7 sounds that differ only in their names as one instrument, the first slot of them, as FamiStudio's export
@@ -928,6 +933,10 @@ link and the parser drop it. In the Thor layout both instrument tables have the 
   VRC7 image contract (header, both instrument tables, `$56` only on FM, no duty or saw opcodes there), the engine
   numbers and Pxx conversion, and the custom-patch rules (no per-order re-send, the loop reload). `NesExportTest`,
   `NesProjectCodecTest` and `NesInstrumentViewTest` cover the `.nsf`/text exports, validation, files and the FM page.
+  The separate `vrc7_patch_restore` upstream-export fixture is deliberately not an equality fixture: after another
+  channel changes the custom patch, it compares upstream's attack/envelope restart with our held legato envelope,
+  and upstream's wrong patch on repeated loops with our restored patch. Delayed final writers remain covered by
+  `NesLoweringTest`.
 - Not done: listening on a VRC7 cartridge, comparison with a reference VRC7 emulator's audio (NSFPlay), Thor
   measurements.
 

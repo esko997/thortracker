@@ -40,6 +40,28 @@ object NesGoldenSongs {
         "vrc7_demo" to NesVrc7System::demo,
         "vrc7_effects" to ::vrc7Effects,
     )
+    /** Independently exported witnesses for intentional corrections, not trace-equality fixtures. */
+    val CORRECTIONS: Map<String, () -> Song> = mapOf("vrc7_patch_restore" to ::vrc7PatchRestore)
+
+    fun vrc7PatchRestore(): Song {
+        val base = NesVrc7System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Held lead", volume = NesEnvelope(listOf(15, 12, 9, 6), loop = 3),
+            chip = NesChip.VRC7, fm = Vrc7Patch(Vrc7Presets.CUSTOM,
+                listOf(0x21, 0x61, 0x1A, 0x07, 0xF0, 0x80, 0x0F, 0x26)))
+        bank[1] = NesInstrument("Other patch", chip = NesChip.VRC7,
+            fm = Vrc7Patch(Vrc7Presets.CUSTOM, listOf(0x11, 0x01, 0x8A, 0x47, 0xF9, 0xF5, 0x13, 0x26)))
+        val fm1 = NesRules.VRC7_FM1
+        val first = P("Mid-song legato", length = 32, channels = base.system.channels.size)
+        first.note(fm1, 0, "A-4", 1)
+        first.note(fm1 + 1, 8, "C-3", 2)
+        first.note(fm1, 16, "C-5") // Restore lead without restarting its held envelope.
+        val loop = P("Loop restoration", length = 16, channels = base.system.channels.size)
+        loop.note(fm1, 0, "E-5") // The previous loop ended with the other channel's patch.
+        loop.note(fm1 + 1, 8, "C-3", 2)
+        return base.copy(patterns = listOf(first.build(), loop.build()), orders = listOf(0, 1),
+            loopOrder = 1, sound = base.nes.copy(instruments = bank))
+    }
 
     private fun n(name: String): Int {
         val index = listOf("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-").indexOf(name.substring(0, 2))
@@ -310,8 +332,8 @@ object NesGoldenSongs {
      * release ($56) and as stop, Sxx cuts and note delays; legato, slides, vibrato, Pxx (converted to frequency steps),
      * volume and volume slides, 0xy, pitch and arpeggio envelopes, the FM channels' lowest and a high note, the speed
      * set on an FM channel, and 2A03 channels alongside. The last custom-sound note before the song's end is FM 1's
-     * (FM 1 holds that sound when the loop is entered), so FamiStudio's exporter and the lowering send the same
-     * instruments at the loop.
+     * (FM 1 holds that sound when the loop is entered), so FamiStudio's exporter and the lowering have the same
+     * patch state at the loop. The two intentional export corrections have their own adversarial fixture.
      */
     fun vrc7Effects(): Song {
         val base = NesVrc7System.blank()

@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
 import org.thortracker.system.nes.NesRules
+import org.thortracker.system.nes.nes
 import kotlin.test.fail
 
 /**
@@ -20,11 +21,13 @@ import kotlin.test.fail
  * engine's live edits, so the bytes are not compared as a whole. Instead:
  * - the text export must equal the fixture (so the fixture is FamiStudio's reading of today's export);
  * - every envelope we encode must be one FamiStudio encoded (byte-identical envelope data);
- * - FamiStudio's data and ours, each run by the same embedded player on a 6502, must write the same APU registers
- *   with the same values in the same order on every frame, through two passes of the song and its loop.
+ * - For [NesGoldenSongs.ALL], FamiStudio's data and ours, run by the same embedded player on a 6502, must write the
+ *   same registers with the same values in the same order on every frame, through repeated song/loop passes.
  *   Rewriting an unchanged VRC7 custom-patch register is idempotent, unlike key-on/envelope registers: those
  *   redundant patch writes are omitted on both sides. Loop restoration conservatively reloads custom patches
  *   because delayed notes can change the final writer; the real-driver loop regressions cover that correction.
+ * - [NesGoldenSongs.CORRECTIONS] independently captures upstream export bugs: its VRC7 fixture must demonstrate
+ *   both upstream's mid-song legato retrigger and missed loop patch, versus our held envelope and restored patch.
  *
  * Run with `THOR_UPDATE_NES_GOLDEN=1` to rewrite the `.txt` fixtures, then `python3 tools/audio/nes_golden.py`.
  */
@@ -37,7 +40,7 @@ class NesGoldenTest {
 
     @Test
     fun textExportsMatchTheFixtures() {
-        for ((name, build) in NesGoldenSongs.ALL) {
+        for ((name, build) in NesGoldenSongs.ALL + NesGoldenSongs.CORRECTIONS) {
             val text = FamiStudioText.text(build())
             if (update) {
                 dir.mkdirs()
@@ -51,7 +54,7 @@ class NesGoldenTest {
     @Test
     fun envelopesAreFamiStudiosBytes() {
         if (update) return
-        for ((name, build) in NesGoldenSongs.ALL) {
+        for ((name, build) in NesGoldenSongs.ALL + NesGoldenSongs.CORRECTIONS) {
             val asm = resource("${name}_ca65.s") ?: fail("missing fixture ${name}_ca65.s")
             val theirs = famiStudioEnvelopes(asm).map { it.toList() }.toSet()
             val fs = FsSong.of(build())
@@ -119,6 +122,66 @@ class NesGoldenTest {
                 // The trace covers the expansion chip: the VRC6's pulses and saw, the VRC7's FM channels (a select and a
                 // data write per register, patch loads included) are written and compared every frame they sound.
                 assertTrue(expansionWrites > frames, "$name: only $expansionWrites expansion register writes in $frames frames")
+            }
+        }
+    }
+
+    /** Pin both intentional differences using FamiStudio's actual exported bytes, not a second sequencer model. */
+    @Test
+    fun vrc7PatchRestorationCorrectsUpstreamLegatoAndLoopExports() {
+        if (update) return
+        val song = NesGoldenSongs.vrc7PatchRestore()
+        val fs = FsSong.of(song)
+        val lowered = FamiStudioLowering.lower(song)
+        val upstream = NesTracer(bytes("vrc7_patch_restore.bin") ?: fail("missing correction fixture"), lowered.player)
+        val ours = NesTracer(lowered.data, lowered.player)
+        val upstreamRegisters = IntArray(64)
+        val ourRegisters = IntArray(64)
+        val upstreamPatch = IntArray(8) { -1 }
+        val ourPatch = IntArray(8) { -1 }
+        fun apply(trace: IntArray, registers: IntArray): Boolean {
+            var selected = -1
+            var keyOff = false
+            for (write in trace) when (write ushr 8) {
+                0x9010 -> selected = write and 0xff
+                0x9030 -> {
+                    registers[selected] = write and 0xff
+                    if (selected == 0x20 && write and 0x10 == 0) keyOff = true
+                }
+            }
+            return keyOff
+        }
+        val legatoFrame = 16 * fs.speed
+        val firstLoop = fs.orderStart[fs.loopOrder] * fs.speed
+        val loopTicks = (fs.totalRows - fs.orderStart[fs.loopOrder]) * fs.speed
+        for (frame in 0..firstLoop + 2 * loopTicks + 1) {
+            val a = upstream.frame()
+            val b = ours.frame()
+            val upstreamKeyOff = apply(a, upstreamRegisters)
+            val ourKeyOff = apply(b, ourRegisters)
+            if (frame < legatoFrame) {
+                assertContentEquals(withoutUnchangedPatchWrites(a, upstreamPatch),
+                    withoutUnchangedPatchWrites(b, ourPatch), "same playback before the correction at frame $frame")
+            }
+            if (frame == legatoFrame) {
+                assertTrue(upstreamKeyOff, "FamiStudio's export retriggers FM 1 after the other custom patch")
+                assertTrue(!ourKeyOff, "restoring a patch must not retrigger a no-attack note")
+                assertEquals(0, upstreamRegisters[0x30] and 15, "upstream restarts the volume envelope at 15")
+                assertEquals(9, ourRegisters[0x30] and 15, "ours keeps the held volume of 6")
+                assertContentEquals(song.nes.instruments[0].fm.regs, ourRegisters.take(8))
+                assertContentEquals(ourRegisters.take(8), upstreamRegisters.take(8), "both restore the patch mid-song")
+                assertEquals(upstreamRegisters[0x10], ourRegisters[0x10], "both play the requested pitch")
+                assertEquals(upstreamRegisters[0x20], ourRegisters[0x20], "same final pitch/key-on, different attack")
+            }
+            if (frame == legatoFrame + 1) {
+                assertEquals(3, upstreamRegisters[0x30] and 15, "upstream advances its restarted envelope to 12")
+                assertEquals(9, ourRegisters[0x30] and 15, "the legato envelope remains held")
+            }
+            if (frame >= firstLoop && (frame - firstLoop) % loopTicks == 1) {
+                assertContentEquals(song.nes.instruments[0].fm.regs, ourRegisters.take(8), "lead restored on loop $frame")
+                assertContentEquals(song.nes.instruments[if (frame < firstLoop + loopTicks) 0 else 1].fm.regs,
+                    upstreamRegisters.take(8), "upstream misses the patch on repeated loops")
+                assertEquals(9, ourRegisters[0x30] and 15, "loop restoration also preserves the held envelope")
             }
         }
     }
