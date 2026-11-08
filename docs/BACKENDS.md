@@ -616,16 +616,89 @@ Decisions:
   PAL console (SGDK's tempo is NTSC-based by default).
 - **Instruments**: one bank of 64 slots, each empty, an FM instrument (the chip's operator registers: DT/MUL, TL,
   RS/AR, AM/D1R, D2R, D1L/RR, SSG-EG per operator; algorithm, feedback, AMS/FMS; drum sweep) or a PSG instrument
-  (a software envelope: attack, decay, sustain, release in ticks per step; noise mode; drum sweep). FM slots play on
-  FM channels, PSG slots on PSG and Noise. Drums are pitched instruments with the sweep, as on the OPL3.
+  (software envelopes as on the NES: volume, arpeggio and pitch, one value per tick; noise mode; drum sweep — the
+  spike's attack/decay/sustain/release record was replaced, see below). FM slots play on FM channels, PSG slots on PSG
+  and Noise. Drums are pitched instruments with the sweep, as on the OPL3.
 - **Effects** (FamiTracker/OPL3 letters where meanings match, up to 4 columns): `0xy` `1xx` `2xx` `3xx` `4xy` `8xy`
   (FM pan) `Axy` `Bxx` `Cxx` (FM 00-7F, PSG 00-0F) `Dxx` `Exx` (feedback lock) `Fxx` `Gxx` `Ixx` (brightness lock,
   00-7F) `Lxx` (LFO: 00 off, 08-0F on at rate 0-7) `Mxy` (ratio lock) `Nxy` (noise mode lock) `Pxx` `Sxx`.
 - **Noise**: fixed rates (clock/512, /1024, /2048) or PSG 3's period ("pitched": the note sets it, periodic noise
   sounds at the note); while pitched noise sounds it owns PSG 3, which is silent.
 
-Not done in the spike (Kotlin side, next): the system, model, lowering, validation, editor, presets, demo; listening
-on hardware.
+### YM2612 model, lowering and exports
+
+- **System** (`system/ym2612`): `YmSystem`, id `"ym2612-fm"`, "Mega Drive (YM2612 + PSG)", ten channels `FM 1`-`FM 6`
+  (`ChannelKind.VOICE`), `PSG 1`-`PSG 3` (`PULSE`) and `Noise` (`NOISE`, not tonal: its notes only matter in pitched
+  mode), four effect columns each, notes C-0..B-7 (absolute 0..95 = the player's note; FamiTracker-style names, A-4 = 57
+  = 440 Hz), one bank of 64 slots, at most 256 orders. Ticks per second follow the region: 59.92 (NTSC, MCLK / (3420 ×
+  262)) or 49.70 (PAL). OFF is key off (FM release; a PSG sound jumps to its volume envelope's release point, or is
+  silent at once without one). Song settings (Song view): Region (NTSC/PAL) and LFO (off or rate 0-7, register $22 at
+  the song start). Constants come from `backend/YmPlayerImage` (generated from the C headers).
+- **Chip data** (`YmSound`): 64 slots, each `null` (empty: an error when a cell names it) or a `YmInstrument`, stored
+  with `"type"`: `YmFmInstrument` (`"fm"`: `algorithm` 0-7, operator 1 `feedback`, the LFO depths `ams` 0-3 and `fms`
+  0-7, four `YmOperator`s holding exactly the chip's register fields `dt mul tl ks ar am d1r d2r sl rr ssgEg`, and
+  the drum `YmSweep`) or `YmPsgInstrument` (`"psg"`: FamiStudio-style `volume` 0..15, `arpeggio` −64..63 semitones and
+  `pitch` −64..63 sixteenths of a semitone envelopes, one value per tick, as `NesEnvelope` (loop, and a release point
+  on the volume envelope only), `pitchRelative`, the Noise channel's `noise` mode — white/periodic and clock/512,
+  /1024, /2048 or pitched by PSG 3 — and the sweep); `pal` and `lfo`. FM slots play on FM 1-6, PSG slots on PSG 1-3
+  and Noise; a slot on the wrong kind of channel is an error. **PSG envelopes instead of the spike's ADSR** (decided
+  on the user's behalf): the NES editor's envelopes are what chiptune users know, arpeggio envelopes give PSG chords
+  without spare voices, and the editor reuses the NES envelope editor.
+- **Curated controls** (`YmCurated`, the OPL3's rule: the operator registers are the instrument; each control reads the
+  fields it owns, shows the nearest entry "≈" after hand edits and writes only its own fields): the 8 algorithms
+  (name, one-line diagram and routing edges/carriers for drawing: Chain, Two into chain, 1 and chain into 4, Pair and
+  3 into 4, Two pairs, One into three, Pair and two sines, Additive), 26 ratio sets of four multipliers with detune
+  patterns ("chorus": operators 1-2 up, 3-4 down; "shimmer") including the E-piano tine 14:1:1:1 and bells, 11 SSG-EG
+  presets (off; saw/bounce/rise shapes on the modulators — the tone cycles — or the carriers — the volume cycles or
+  holds), brightness and level 0-127 (127 − the lowest modulator/carrier TL, shifting the group together), attack
+  (every AR), decay (carriers' D1R), tone decay (modulators' D1R), sustain 0-15 (every SL), sustain rate (every D2R),
+  release (every RR), feedback, key scaling Off/Soft/Medium/Strong (KS 0-3 on every operator), vibrato depth (FMS) and
+  tremolo depth (AMS, with AM on the carriers). Changing the algorithm moves operators between roles and keeps level
+  and brightness as before.
+- **Presets** (`YmPresets`, 24, categories FM/DRUM/PSG/NOISE): Slap bass, Finger bass, Brass, E-piano, Bell, Strings,
+  Lead, Organ (additive), Pluck, Pad; FM drums Kick (sweep +30 → 0), Snare (feedback noise over a +12 → 0 body), Tom
+  (+12 → −2), Hi-hat and Crash; PSG lead (volume loop with a release tail and a delayed pitch vibrato), PSG pluck, PSG
+  arp major/minor (arpeggio envelopes); Noise snare, hat, open hat, a pitched white-noise tom with a sweep and the
+  pitched periodic Buzz bass. New songs have them in slots 01-24.
+- **Lowering** (`backend/YmLowering`): the arrangement (`YmSystem.arranged`: parked orders removed; the loop order and
+  every `Bxx` in any column renumbered) into the layout of `docs/AUDIO_ENGINE.md`: each order's rows = its pattern's
+  length; each (order, channel) track encoded as the player reads it, byte-identical tracks stored once in first-use
+  order; then the PSG envelopes (slots ascending; volume, arpeggio, pitch; byte-identical envelopes stored once; an empty
+  envelope is `$FFFF`); every filled slot is written (instrument count = the highest).
+- **Tunings** (`FinePitch` `Pxx`, as the OPL3): `P80+n` in the first free effect column; every degree within 0.8 cents.
+- **Validation** (`YmValidator`): structural (shapes, ranges, 64 slots, the LFO byte, every operator and envelope
+  field) and what `ym_load_image` rejects, as messages naming pattern, channel and row: an empty slot, an FM/PSG
+  instrument on the other kind of channel, effects a channel does not play (`8`, `E`, `I`, `M` FM only; `N` Noise
+  only), `Bxx` past the last order, `Cxx` above 7F (FM) or 0F (PSG), `Exx` above 7, `F00`, `Ixx` above 7F, `Lxx` not
+  00/08-0F, `Mxy` operator not 1-4, `Nxy` out of range, unknown effects, data beyond the image's 56.2 KB. Warnings (one
+  straight pass): a first note of an order without instrument, locks on rows without a note, `Gxx` at or beyond the
+  speed, PSG notes below A-2 (the 10-bit period's floor), PSG 3 notes while pitched noise owns PSG 3, and **heavy rows**:
+  the YM writes a row's key-ons need, estimated from the shadowed registers (a different instrument ≈ 30, changed locks
+  8, a retrigger 4), above the XGM driver's ~90 per frame (the song's first row, which the reset makes heavy anyway, is
+  not reported).
+- **Exports** (`YmExport`): `.vgm` (VGM 1.71 + GD3), `.xgm` (SGDK's `rescomp` `XGM` resource, with the GD3) and `.xgc`
+  (the compiled stream `XGM_startPlay` takes; the audio document calls it `.bin`, xgmtool's default; `.xgc` keeps it
+  apart from other binaries) through `YmExport.renderer`, which each host registers (Android JNI
+  `ChipAudio.nativeYmExport`, Deck cinterop over `ym/ym_export.h`). Ten minutes of ticks at the region's rate end
+  songs that never return to their loop point.
+- **Project files**: backend `"ym2612-fm"`, Mega Drive data version 1 (README, "Project format").
+- **Golden tests** (`YmGoldenTest`, `tools/audio/ym/ym_golden.py`): the native host test's song (`ym_song.test_song`)
+  and a features song (PAL, LFO rate 7, notes C-0 and B-7, FM slot 64 and PSG slot 63 behind empty slots, every
+  operator field at its extremes and every SSG-EG shape, AMS 3/FMS 7, algorithm 7, extreme sweeps, a volume loop with a
+  release point, negative arpeggio values, a relative pitch envelope, a 256-value envelope, an instrument without
+  envelopes and one sharing another's (stored once), noise periodic and white at every rate incl. pitched, `Nxy`
+  locks, four effect columns and blank columns before used ones, an instrument without a note, orders of 64, 20 and 1
+  rows, `Bxx`/`Dxx` across a parked order) rebuilt from Thor Tracker's model lower to exactly the bytes the reference
+  builder writes. `YmModelTest`: channels and effects per channel kind, project round trips, presets, curated controls
+  read back what they write and approximate readings, tunings, validation and warning messages, song settings,
+  arrangement, audition checks, the export seam, the demo.
+- **Demo**: "Neon Causeway" (`YmDemoSong`, A minor with a major dominant, Am-F-G-E and a Dm-G-C-E bridge, speed 6 =
+  150 BPM): a square FM lead with vibrato, two portamento glides and a falling slide with a fade; a slap bass with
+  brightness-locked octave pops; brass stabs on two channels panned left and right (strings in the bridge); swept FM
+  kick, FM snare, toms and a crash; PSG chord arpeggios from arpeggio envelopes (doubled an octave up in the bridge), a
+  PSG echo of the lead three rows late, noise hats and pitched-noise toms in the fill. Intro, theme A, bridge, theme
+  A, fill; loops to theme A; LFO rate 2. No errors or warnings; `exportSamples` writes `neon-causeway.{thor,ymimg}` and
+  `tools/audio/render_ym_image.sh` renders the image and its exports.
 
 ## Open questions
 
@@ -654,3 +727,10 @@ on hardware.
 - OPL3 curated lists (algorithms, 22 ratio sets, 20 waveform combinations per operator count, key scaling, LFO) and
   the 17 presets are a first proposal; the user's own FM simplification ideas may replace them (they only read and
   write operator registers, so songs are unaffected).
+- YM2612 curated lists (8 algorithms, 26 ratio sets with detune, 11 SSG-EG presets, key scaling, LFO depths) and the
+  24 presets are a first proposal, like the OPL3's; they only read and write operator registers and envelopes.
+- YM2612 heavy-row warning: the write estimate (≈30 per FM instrument change, 8 for changed locks, 4 per retrigger)
+  against a budget of 90 per frame is a heuristic from the spike's measurement (70-100 writes per frame), not a
+  simulation of the driver. Proposed: keep until device listening shows audible lag elsewhere.
+- YM2612 XGC export extension: `.xgc` (the audio document and xgmtool use `.bin`). Proposed: `.xgc`, which SGDK's
+  `rescomp` accepts as a `BIN` resource under any name.
