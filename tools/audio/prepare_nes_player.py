@@ -9,6 +9,7 @@ changes; the outputs are committed, so app/Deck/CI builds need no 6502 assembler
                                                   the same player bytes and layout numbers for Kotlin
                                                   (lowering, .nsf export)
   app/src/test/cpp/nes_ft_song.h                  host-test fixtures (below)
+  app/src/test/cpp/nes_dpcm_song.h                DPCM host-test fixtures (below)
 
 Steps (all checked):
   1. Check the vendored engine files (third_party/famistudio-4.5.3, unmodified copies from
@@ -26,7 +27,13 @@ Steps (all checked):
      (docs/AUDIO_ENGINE.md, "Image layout") without changing a single row's bytes: the layout fixture
      plays FamiStudio's own data. Variants for the live-edit tests: the same song with every block
      moved, with one note and one envelope edited, and cut to two orders.
-  5. Write the three outputs. Two runs produce identical files.
+  5. DPCM test song: tools/audio/nes/dpcm_test.txt (samples, mappings with pitch/loop/initial levels, a
+     DPCM channel with stop, delta counter, delay, cut and no-attack notes) exported the same way to
+     dpcm_test_ca65.s + dpcm_test_ca65.dmc (its samples, for SAMPLE_BASE; the list bytes use
+     FAMISTUDIO_DPCM_PTR = 0). Linked, parsed and rearranged likewise (plain: the .dmc where it is;
+     moved: every block and sample elsewhere; edited: one Kick byte inverted), plus the DMC writes the text
+     asks for, derived from the text alone.
+  6. Write the four outputs. Two runs produce identical files.
 
 Assembler: cc65's ca65/ld65 on PATH, else run through `distrobox enter ubuntu --` (install with
 `distrobox enter ubuntu -- sudo apt-get install -y cc65`). Pinned: Ubuntu 24.04 cc65 2.19-1

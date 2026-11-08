@@ -1391,15 +1391,19 @@ static void test_dpcm_images(void) {
 static void write_dpcm_evidence(NesMachine* m, const char* dir, const Trace* thor) {
     char path[512];
     static float wav[NM_MAX_TICK_FRAMES * 2 * 60 * 30];
-    int mode, frames = 0;
-    nm_start(m, &g_dthor, 0, 0, 0, &mode);
-    for (int f = 0; f < 60 * 30; ++f) {
-        int n = nm_tick(m, wav + 2 * frames);
-        frames += n > 0 ? n : 0;
+    int mode;
+    for (int dmc_only = 0; dmc_only < 2; ++dmc_only) {
+        int frames = 0;
+        nm_start(m, &g_dthor, 0, 0, 0, &mode);
+        for (int c = 0; c < 4 && dmc_only; ++c) nm_mute_channel(m, c, 1);
+        for (int f = 0; f < 60 * 30; ++f) {
+            int n = nm_tick(m, wav + 2 * frames);
+            frames += n > 0 ? n : 0;
+        }
+        snprintf(path, sizeof path, "%s/%s", dir, dmc_only ? "nes_dpcm_dmc.wav" : "nes_dpcm.wav");
+        write_wav(path, wav, frames);
+        printf("  wrote %s (%.1f s)\n", path, frames / (double)RATE);
     }
-    snprintf(path, sizeof path, "%s/nes_dpcm.wav", dir);
-    write_wav(path, wav, frames);
-    printf("  wrote %s (%.1f s)\n", path, frames / (double)RATE);
     snprintf(path, sizeof path, "%s/nes_dpcm_trace.txt", dir);
     FILE* ft = fopen(path, "w");
     if (ft) {
@@ -1449,7 +1453,7 @@ static void test_dpcm_playback(NesMachine* m, const char* dir) {
     static NesDmc dmc[8192];
     static int pos[8192][3];
     int mode, faults = 0;
-    double sum2 = 0, peak = 0;
+    double sum2 = 0, peak = 0, t0 = now_us();
     nm_start(m, &g_dthor, 0, 0, 0, &mode);
     nm_set_apu_logging(m, 1);
     for (int f = 0; f < frames; ++f) {
@@ -1467,7 +1471,8 @@ static void test_dpcm_playback(NesMachine* m, const char* dir) {
             sum2 += g_out[i] * g_out[i];
         }
     }
-    const double rms = sqrt(sum2 / (2.0 * frames * 798.7));
+    const double rms = sqrt(sum2 / (2.0 * frames * 798.7)), per_tick = (now_us() - t0) / frames;
+    printf("  rms %.4f, peak %.4f, %.1f us per tick (%.0fx realtime)\n", rms, peak, per_tick, 16639.0 / per_tick);
     EXPECT(faults == 0 && rms > 0.03 && peak < 1.0, "plays without faults, non-silent, unclipped (rms %.4f peak %.4f)", rms, peak);
     int d = first_difference(&raw, &thor, 0, frames);
     int dmc_writes = 0;
@@ -1581,7 +1586,9 @@ static void test_dpcm_seek(NesMachine* m) {
     const int targets[][2] = {{2, 5}, {2, 9}, {2, 13}, {1, 2}, {3, 4}};
     for (size_t i = 0; i < sizeof targets / sizeof targets[0]; ++i) {
         const int o = targets[i][0], r = targets[i][1], f0 = dpcm_row_frame(o, r);
+        const double s0 = now_us();
         const int res = nm_start(m, &g_dthor, o, r, 12000, &mode);
+        printf("  seek to %d/%d (%d frames): %.3f ms\n", o, r, f0, (now_us() - s0) / 1000.0);
         const NesDmc landed = nm_apu(m)->dmc;
         const int same_state = res == NM_OK && mode == NM_SEEK_FROM_START && nm_frames(m) == (uint32_t)f0 && dmc_equal(&landed, &ref_dmc[f0 - 1]);
         nm_set_apu_logging(m, 1);
@@ -1645,11 +1652,14 @@ static void test_dpcm_apply(NesMachine* m) {
     for (int k = 0; k < NES_DPCM_MAPPINGS; ++k) to_plain[lm[4 * k]] = l[4 * k];
     /* Every block and every sample moved, applied before every frame (alternating images). */
     int mode, relocated = 0, diff = -1;
+    double worst_us = 0;
     nm_start(m, &g_dthor, 0, 0, 0, &mode);
     nm_set_apu_logging(m, 1);
     for (int f = 0; f < frames; ++f) {
         const NesDmc before = nm_apu(m)->dmc;
+        const double a0 = now_us();
         nm_apply_image(m, (f & 1) ? &g_dmoved : &g_dthor);
+        if (now_us() - a0 > worst_us) worst_us = now_us() - a0;
         relocated += before.remaining && nm_apu(m)->dmc.start != before.start && nm_apu(m)->dmc.addr != before.addr;
         nm_tick_silent(m);
         record(m, &t, f);
@@ -1662,6 +1672,7 @@ static void test_dpcm_apply(NesMachine* m) {
            "moved samples applied before every frame: the same writes ($4012 = the moved address of the same sample) for %d frames, "
            "%d playing samples relocated (first difference %d)",
            frames, relocated, diff);
+    printf("  worst apply_image: %.1f us\n", worst_us);
     uint64_t h[2];
     for (int pass = 0; pass < 2; ++pass) {
         nm_start(m, &g_dthor, 0, 0, 0, &mode);
