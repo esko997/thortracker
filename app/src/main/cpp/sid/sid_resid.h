@@ -25,6 +25,8 @@ void sid_resid_free(SidResid* s);
 /* Power-on state of the chip (registers 0, envelopes idle) with the given model. */
 void sid_resid_reset(SidResid* s, int model);
 void sid_resid_write(SidResid* s, uint8_t reg, uint8_t value);
+/* Switches the chip model in place (a live song edit); the running voices keep their state. */
+void sid_resid_set_model(SidResid* s, int model);
 /* Advances `cycles` without producing samples (seeking). */
 void sid_resid_clock(SidResid* s, uint32_t cycles);
 /* Advances `cycles`, writing the samples that fall due (at most `max`); returns their count. */

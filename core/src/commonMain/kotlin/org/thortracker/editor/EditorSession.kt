@@ -739,7 +739,7 @@ object Follow {
             }
             ViewKind.SONG -> {
                 state.order = sel.order
-                state.songItem = ViewState.SONG_HEADER_ITEMS + sel.order
+                state.songItem = ViewState.songHeaderItems(song) + sel.order
             }
             ViewKind.KEYBOARD -> {
                 if (state.lockedSubject < 0) state.channel = sel.channel

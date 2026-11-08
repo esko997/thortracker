@@ -62,6 +62,11 @@ extern "C" void sid_resid_reset(SidResid* s, int model) {
     s->power_on(model == SID_RESID_6581 ? reSID::MOS6581 : reSID::MOS8580);
 }
 
+/* Allocation-free; reSID resets the filter's integrators (the player rewrites the cutoff every tick). */
+extern "C" void sid_resid_set_model(SidResid* s, int model) {
+    s->set_chip_model(model == SID_RESID_6581 ? reSID::MOS6581 : reSID::MOS8580);
+}
+
 extern "C" void sid_resid_write(SidResid* s, uint8_t reg, uint8_t value) { s->write(reg & 0x1F, value); }
 
 extern "C" void sid_resid_clock(SidResid* s, uint32_t cycles) {
