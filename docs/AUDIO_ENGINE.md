@@ -5187,9 +5187,9 @@ Yamaha's and is not distributed with Thor Tracker in any form.
 
 ## POKEY: Thor Tracker's own player on the Atari 8-bit POKEY (`"atari-pokey"`)
 
-**Integration status:** 0.31.0/code 44 merges the exact OPN/OPNA parent `d417843`; source only, **UNVERIFIED**.
-The ended-PCM portamento preflight fix and its native/Kotlin/reference regressions are preserved, not yet run.
-`VERIFICATION.md` lists the pending full-chain checks and the Kotlin sample-lifetime approximation risks.
+**Integration status:** 0.31.0/code 44 integrates verified OPN/OPNA `c3c054f`. Native/reference checks,
+831 JVM / 19 Linux / six Android-host tests, 21 permanent Android tests, all three reserved handhelds
+and four local SDL playback/audition scenes pass. See `VERIFICATION.md` for measurements and fidelity limits.
 
 The Atari 400/800/XL/XE's POKEY (C012294) has no console driver to run: songs play through Thor Tracker's **own
 player** (`pokey/pokey_player.c`, pure integer C without a chip, apart from the pitch search's doubles below), whose
@@ -5267,7 +5267,7 @@ of the engine numbers `backend/PokeyPlayerImage.kt`.
 
 ### Channels, sounds and the channels they take
 
-Four tracker channels, POKEY channels 1-4. A **sound** (instrument) is one of four kinds; a note takes every POKEY
+Four tracker channels, POKEY channels 1-4. A **sound** (instrument) is one of five kinds; a note takes every POKEY
 channel its kind needs, **cutting whatever sound held them** (the most recent note wins; the Kotlin song check warns
 where a note cuts a sound that has not been released, and the Pattern lanes show which channel holds which):
 
@@ -5297,7 +5297,8 @@ a reason and the byte (`PkInfo.problem`, `problem_offset`); the Kotlin validator
 | 0 | 4 | `"TTPK"` |
 | 4 | 1 | layout: 1 |
 | 5 | 1 | machine: 0 NTSC, 1 PAL |
-| 6 | 1 | multispeed N, 1..4 (player ticks per video frame) || 7 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 6 | 1 | multispeed N, 1..4 (player ticks per video frame) |
+| 7 | 1 | speed (ticks per row) at the song start, 1..255 |
 | 8 | 2 | order count, 1..256 |
 | 10 | 2 | loop order (< count) |
 | 12 | 1 | instrument count I = highest slot present, 0..64 |
@@ -5542,8 +5543,8 @@ Nothing to prepare: the POKEY system has no driver binary, no generated tables (
 
 ### Verification
 
-**Not run yet** (written source-only; the integrator runs it). `tools/audio/run_native_host_test.sh [dir]` builds and
-runs `app/src/test/cpp/pokey_machine_test.c` on the test song (`pokey_test_song.h`: 4 orders of 16/32/16/24 rows,
+**356 native checks pass.** `tools/audio/run_native_host_test.sh [dir]` builds and runs
+`app/src/test/cpp/pokey_machine_test.c` on the test song (`pokey_test_song.h`: 4 orders of 16/32/16/24 rows,
 speed 6, loop order 1, 13 instruments covering every kind, 2 samples; NTSC, and a PAL copy). It checks:
 
 - **The chip** against the Altirra manual's hardware numbers: the 4- and 5-bit generators' patterns
@@ -5605,9 +5606,10 @@ ops table as the hosts do (`tools/audio/pokey_render.c`), and its VGM through `p
 arm64, `-O2` and `-O3`): cold ticks, warm ticks against the chip alone fed the same writes, paced ticks, the player
 alone, `apply_image`, audition setup, seeks and 12000 clocked ticks.
 
-- `tools/audio/pokey_reference_check.py <dir> [--vgm2wav PATH]` (developer evidence; the audio part needs numpy) — NOT
-  RUN yet. `tools/audio/pokey/pokey_ref.py` is a second implementation of the player and machine, written from this
-  section without the C sources, on `tools/audio/pokey/pokey_chip_ref.py`, a POKEY model that steps every cycle (from
+- `tools/audio/pokey_reference_check.py <dir> [--vgm2wav PATH]` passes, including the independent MAME render:
+  envelope correlation **0.834**, log-spectrum **0.869**, pitch-class agreement **76%** of 300 windows,
+  level ratio **0.45** with the reference renderer at 25% master volume. `tools/audio/pokey/pokey_ref.py`
+  implements the player separately on `tools/audio/pokey/pokey_chip_ref.py`, a per-cycle POKEY model (from
   Altirra's manual and generator formulas and MAME's cycle order). The script requires: the host test's
   `pokey_trace.txt` (NTSC), `pokey_trace_pal.txt` (PAL) and `pokey_trace_porta.txt` (sticky portamento over samples)
   reproduced line for line (every tick's batch at its cycle, every timer interrupt with its writes); `pokey_song.vgm`
@@ -5624,11 +5626,14 @@ alone, `apply_image`, audition setup, seeks and 12000 clocked ticks.
 
 ### Hosts: threads and costs
 
-Not measured yet (run the bench). By construction: the callback runs `tick` (the player's tick, its pitch searches
+Production callback/seek costs were measured on Nova, DMG and Konkr; the standalone cold/warm bench
+has not been run. By construction: the callback runs `tick` (the player's tick, its pitch searches
 only when a voice's inputs change, the event-driven chip — work proportional to counter underflows and fires, i.e. to
 the pitches and sample rates playing, up to ~262 timer interrupts per tick for a sample at the 114-cycle minimum — the
 mix, blip_buf and one filter step per host sample), `apply_image` (a 64 KB copy plus a few row decodes) and `mute`;
 the control thread runs `start` (machine reset and every tick up to the target fully clocked: the cost of playing
 that stretch, without the audio output; `seekTicks` 12000 ≈ 200 s of song) and `audition` (reset only) on spare
-machines, and creation (allocation and the generator tables). Konkr-class devices: to be measured with
-`pokey_bench-arm64`.
+machines, and creation (allocation and the generator tables). Konkr's observed maximum callback was
+3.745 ms with no xruns or driver faults; a 16,065-tick order-local seek took 266.539 ms off the UI thread,
+with a maximum observed UI round trip of 32 ms. These are bounded software observations, not
+physical-button latency or human-listening measurements.

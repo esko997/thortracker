@@ -348,9 +348,9 @@ object SampleExportTool {
         val pokey = PokeySystem.demo()
         File(directory, "scanline-cruise.thor").writeText(ProjectCodec.encode(pokey), Charsets.UTF_8)
         File(directory, "scanline-cruise.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(pokey, it) })
-        val shortest = PokeyDemoSong.shortest()
-        File(directory, "pokey-shortest.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(shortest, it) })
-        println("Exported ${pokey.title} and ${shortest.title} to ${directory.absolutePath}")
+        val pokeyShortest = PokeyDemoSong.shortest()
+        File(directory, "pokey-shortest.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(pokeyShortest, it) })
+        println("Exported ${pokey.title} and ${pokeyShortest.title} to ${directory.absolutePath}")
         // The PC-88/98 OPN (YM2203) and OPNA (YM2608) demos: projects and engine images (their VGMs need the native
         // player: tools/audio/render_opn_image.sh renders them). Neither demo has rhythm notes, so neither needs the
         // rhythm ROM. Then each chip's shortest valid song (one one-row order at speed 1, one held FM 1 note), whose

@@ -1342,8 +1342,8 @@ roadmap autonomously):
 
 ## POKEY backend (Atari 8-bit)
 
-Integration target: **0.31.0/code 44**, merged with OPN/OPNA `d417843`; **UNVERIFIED**. No build, test, generator,
-device or listening result is claimed for this source integration; see `VERIFICATION.md`.
+Integrated for **0.31.0/code 44** with verified OPN/OPNA `c3c054f`. Native/reference, Kotlin, Android
+and SDL verification passes; see `VERIFICATION.md`. Human listening and original-hardware fidelity remain unverified.
 
 The Atari 400/800/XL/XE's POKEY has no console sound driver to run, so it follows the OPL3 precedent: Thor Tracker's
 own player (`pokey/pokey_player.c`) on its own cycle-exact POKEY model (`pokey/pokey_chip.c`, after the Altirra Hardware
@@ -1376,15 +1376,18 @@ VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
   loop (the image's rule: 1..length − 1, after the loop if there is one).
 - **Straight-play walk** (`PokeyStraightPlay`, `PokeySongState.kt`): runs rows in order (jumps and delays ignored) as
   the player decides channel ownership — instruments, notes, OFF and `Sxx`, portamento (a `3xx` note only retargets a
-  held voice: unreleased, and for a one-shot sample not yet run out by its length at the note's ideal rate; a
-  synthesized voice whose envelopes ended stays held), and the global `F K N W` at tick 0. `PokeyChannelHolders` turns
+  held voice: unreleased, and for a sample still playing according to its actual counters; a
+  synthesized voice whose envelopes ended stays held), and global `F K N W R T` at tick 0. `PokeyChannelHolders` turns
   it into the Pattern lane tags ("16-bit 1+2", "held by 2", "HP 1 by 3", "HP clock
   of 1", "saw 1+3", "samples", "1.79 MHz") and inspector lines (the AUDCTL state; each lane's voice, what it takes,
-  sounding/released/silent and since when). The player resets the base clock, noise generator and two-tone mode to the
-  loop order's straight-play start state on every loop arrival, so one walk describes every pass.
-  Sample lifetime is still an approximation: this walk uses the ideal note rate, not the rounded hardware timer
-  period or its 114-cycle minimum, and does not integrate changing pitch/glides over elapsed time. Sample-end
-  boundaries can therefore disagree with native playback; the ended-PCM portamento regressions remain unrun.
+  sounding/released/silent and since when). The player restores the base clock, noise generator and two-tone mode
+  on loop entry; the inspector is a straight-play projection, not a simulation of jumps or subsequent loop passes.
+  `PokeyOwnershipPlayback` and `PokeySampleClock` advance rounded counters with inherited phase, prescalers,
+  pending fires, STIMER, generator restarts and two-tone synchronization. Pitch slides/glides, arpeggios,
+  vibrato, fine pitch and envelopes affect sample lifetime per tick; absent `000` cells leave continuing effects
+  intact. Timer advancement is arithmetic or memoized, not per sample level; stable rows advance in bulk.
+  Sample-free songs retain the cheap row-only walk. Native boundary cases and an independent cycle-stepped
+  Kotlin timer oracle pass; the former ideal-rate estimate fails the preserved high-note ownership regression.
 - **Pitch** (`PokeyPitch`): the player's pitch-to-counter search in Kotlin, the same double operations (target period
   C / (f · D), coprimality with the distortion's pattern length, the 49-value 16-bit window clipped to the range, the
   difference sound's search, samples' 114-cycle minimum period, ties to the smaller N, rounding half away from zero).
@@ -1442,9 +1445,10 @@ VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
   order of one row at speed 1 with a held A-4 on POKEY 1. Both have no errors or warnings.
 - Tests: `PokeyModelTest` (registry, project round trips, presets, demo and shortest song checks, the pitch search's
   known values and true pitch across kinds, kind/lane and effect-parameter errors, unused fields, warnings, audition,
-  lane tags, samples and WAV import, the VGM seam, arrangement), `PokeyLoweringTest` (exact bytes of the shortest song,
+  lane ownership, sample lifetime under pitch effects, samples and WAV import, arrangement), `PokeyLoweringTest` (exact bytes of the shortest song,
   kind-specific records, sample packing, shared envelopes, and every `pk_load_image` condition re-checked on the demo,
   the shortest song and a song with every kind).
+  `PokeySampleClockTest` compares the accelerated counters with an independent cycle-stepped oracle.
 
 ### POKEY editor
 

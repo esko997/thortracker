@@ -750,10 +750,16 @@ static void test_loop(void) {
     pk_init(&scratch.chip, NULL, NULL);
     PkVgmInfo info;
     pk_vgm_render(&g_song, 36000, &scratch, NULL, 0, &info);
+    /* A measuring call guarantees only info.size; inspect timing from the actual exported stream. */
+    const size_t capacity = info.size;
+    uint8_t* vgm = (uint8_t*)malloc(capacity);
+    if (!vgm) abort();
+    pk_vgm_render(&g_song, 36000, &scratch, vgm, capacity, &info);
     const uint64_t want = pk_vgm_samples(PK_MACHINE_NTSC, (uint64_t)(first + len[0]) * PK_FRAME_CYCLES_NTSC) -
                           pk_vgm_samples(PK_MACHINE_NTSC, (uint64_t)first * PK_FRAME_CYCLES_NTSC);
     EXPECT(info.loop_samples == want && info.ticks == (uint32_t)(first + len[0]), "= the VGM loop (%u samples, %u ticks)",
            info.loop_samples, info.ticks);
+    free(vgm);
     printf("  first arrival after %d ticks, %d ticks per pass\n", first, len[0]);
     pkm_destroy(m);
 }
@@ -1000,7 +1006,7 @@ static long pattern_period(const Replay* r, int ch, uint64_t from, uint64_t to) 
 /* The difference sound's beat: its on-pulses' widths ramp and wrap once per beat. */
 static double beat_hz(const Replay* r, int ch, uint64_t from, double clock) {
     uint64_t rise = 0, first = 0, last = 0;
-    long wraps = 0, width = -1, max = 0;
+    long wraps = 0, width = -1;
     int prev = 0;
     for (long i = 0; i < r->n; ++i) {
         const int nib = (r->edges[i].levels >> (4 * ch)) & 15;
@@ -1008,8 +1014,9 @@ static double beat_hz(const Replay* r, int ch, uint64_t from, double clock) {
             if (!prev && nib) rise = r->edges[i].cycle;
             if (prev && !nib && rise) {
                 const long w = (long)(r->edges[i].cycle - rise);
-                if (w > max) max = w;
-                if (width >= 0 && w < width - max / 2) {
+                /* Coincident counter edges can merge two pulses. A running maximum then doubles and
+                 * hides ordinary wraps; the phase ramp wraps whenever its width decreases. */
+                if (width >= 0 && w < width) {
                     if (!wraps) first = r->edges[i].cycle;
                     last = r->edges[i].cycle;
                     ++wraps;

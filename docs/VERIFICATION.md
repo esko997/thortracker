@@ -1,46 +1,75 @@
 # Thor Tracker verification — 2026-11-09
 
-## Unreleased: Atari 8-bit POKEY — UNVERIFIED 0.31.0/code 44 integration
+## 0.31.0 Atari 8-bit POKEY — local verification complete; publication pending
 
-The POKEY source integrates verified OPN/OPNA `c3c054f`, preserving OPM, all earlier systems, project
-format 10, tuning provenance, the 500 bundled scales and optional local packs. Before this upstream merge,
-48 targeted JVM model/lowering/editor/timer-oracle tests passed. Full integrated builds, native and device
-verification remain pending; the released-system evidence below is not a POKEY frontend pass.
+**Atari 8-bit (POKEY)** (`atari-pokey`) adds four channels, NTSC/PAL timing, distortion polynomials,
+16-bit pairing, high-pass and shared-resource ownership, and platform-native volume-DAC samples.
+Thor Tracker's player and cycle model follow Altirra/MAME; the demo is **Scanline Cruise**, with VGM/WAV
+exports. Version **0.31.0/code 44** integrates verified OPN/OPNA `c3c054f`, retaining all earlier systems,
+project format 10, tuning provenance, 500 bundled scales and optional local packs.
 
-**Atari 8-bit (POKEY)** (`atari-pokey`) adds four channels, NTSC/PAL timing, distortion polynomials, 16-bit pairing,
-high-pass and shared-resource ownership, and platform-native volume-DAC sample playback. Thor Tracker's own player
-and cycle model follow Altirra/MAME; the demo is **Scanline Cruise**, with VGM and WAV exports. Android and Deck
-export registrations, native build lists, all-engine render scripts and the shared WAV fixtures include POKEY
-alongside the current systems. The shared rhythm firmware API remains `THOR_RHYTHM_ROM`, with the existing private
-filename and storage paths unchanged. Build locking, no-daemon/in-process Kotlin, one Gradle worker and the native
-two-slot compiler pool remain in force.
+### Sample ownership and native verification
 
-The native/Python ended-PCM distinction was checkpointed as `0c94315`: portamento holds an active,
-unreleased sample voice only while it is still playing; synthesized voices remain held after their envelopes
-end. Checkpoint `76112bf` replaces Kotlin's ideal-rate estimate with actual rounded counters, inherited
-timer phase, clock changes, two-tone synchronization and per-tick pitch effects/envelopes. A preserved
-pre-fix model fails the high-note lifetime regression (selects slot 61 while slot 60 is still playing).
-Verification also found that absent `000` effect cells incorrectly cleared a continuing arpeggio;
-the fixed inspector now skips them exactly as lowering does. All 48 targeted tests pass, including an
-independent cycle-stepped timer oracle; the 16,711,680-tick steady-row case took 0.103 s on this host.
-Native ownership cases and final frontend behavior still require execution after integration.
+- `0c94315` distinguishes ended PCM from synthesized voices: portamento holds an unreleased sample only
+  while it is playing; a synthesized voice stays held after its envelopes end. `76112bf` replaces the
+  inspector's ideal-rate estimate with rounded counters, inherited phase, pending fires, clock changes,
+  STIMER, two-tone synchronization and per-tick pitch effects/envelopes. The preserved old model selects
+  slot 61 while slot 60 is still playing. Verification also caught absent `000` cells incorrectly clearing
+  continuing arpeggio; the corrected inspector skips them as lowering does.
+- All **48 targeted model/lowering/editor/timer tests** pass, including an independent cycle-stepped
+  timer oracle. A 16,711,680-tick steady-row ownership query took **0.103 s** on this host. Sample-free
+  songs retain the cheap row-only walk; the inspector remains a straight-play projection, not a runtime
+  simulation of jumps or subsequent loop passes.
+- **356 POKEY native checks** pass, including 18 timer-boundary ownership cases. The integrated all-engine
+  native run passed the other engines and **2,093 shared WAV checks**. Two test-oracle defects were corrected:
+  VGM sizing does not promise loop metadata until actual rendering, and coincident edges invalidate a
+  maximum-width threshold for counting saw phase wraps. No production audio changed; all ten POKEY evidence
+  files remained byte-identical. An independent PCM spectrum put the saw beat at **129.525 Hz** versus
+  **129.568 Hz** analytically.
+- Independent Python reproduction matches **1,500 NTSC ticks / 38,964 interrupts / 19,641 writes**,
+  **1,500 PAL ticks / 42,396 interrupts / 22,902 writes**, and **144 sticky-portamento ticks /
+  32,137 interrupts / 41,000 writes** exactly. Its VGM matches all **27,437 bytes**, and the separate
+  parser checks 6,544 writes and the 292,908-sample loop. All **13 independent chip cases** match.
+- Independent libvgm/MAME rendering passes the unchanged gates: envelope correlation **0.834**,
+  log-spectrum correlation **0.869**, pitch-class agreement **76%** of 300 windows, level ratio **0.45**
+  with the reference renderer at 25% master volume. The renderer was rebuilt with its POKEY core enabled;
+  an initial reference-player crash came from that core being disabled.
+- Native host timing: mean **22.9 µs**, p99 **41.7 µs**, maximum **74.4 µs** per measured tick.
+  The chip's physical amplifier clamp and AC-coupling model are retained; no host headroom defect was demonstrated.
 
-Prerequisites and parent-run checks:
+### Frontends, exports and regression checks
 
-- No POKEY generator exists or is needed: `PokeyPlayerImage.kt` mirrors `pokey_image.h` by hand, and the native
-  regression constructs its images in C. Preserve the inherited generated headers and reference fixtures; this
-  merge does not require regenerating unrelated drivers. `tools/build.sh exportSamples` must create the demo
-  `scanline-cruise.pkimg` and `pokey-shortest.pkimg` before the shared native WAV suite.
-- Run the full Kotlin/app/Deck builds and suites serially, then `tools/audio/run_native_host_test.sh <evidence>`.
-  It includes POKEY and the existing engines, plus demo/shortest-song WAV checks.
-- Run `python3 tools/audio/pokey_reference_check.py <evidence>` for NTSC, PAL and the ended/playing/looping-sample
-  portamento trace. Its optional `--vgm2wav PATH` comparison needs an independent libvgm player; the audio analysis
-  needs NumPy. Retain the existing thresholds; no comparison is claimed here.
-- Exercise the real Android and Deck frontends: New/demo selection, all POKEY sound/sample pages and shared-resource
-  inspector, sample import, save/reload with tuning provenance, audition/live edits/seek/mute, and VGM/WAV exports.
-  Measure production callback and seek costs on reserved hardware; do not infer performance from source.
-- Preserve the completed OPM/OPNA and shared-rhythm-ROM behavior below. Human listening, physical-chip behavior
-  and POKEY's documented model omissions remain unverified.
+- **831 JVM, 19 Linux and six Android-host tests** pass, with no failures or skips.
+  After removing both temporary harness sources and rebuilding, the clean permanent Android suite passes
+  **21 tests** on Nova in **48.126 s**. Its general audio diagnostics observed one xrun and zero driver faults;
+  the separate POKEY scenarios below observed no xruns.
+- **32 Game Boy view renders are pixel-identical** to the verified OPNA baseline, and factory `.uge`
+  output is byte-identical. Temporary controller and screen-capture sources/APKs are retained outside the repository.
+- Two actual MainActivity/controller scenarios pass on **Nova (80.609 s), DMG (84.225 s) and Konkr
+  (91.240 s)**: all five sound kinds, four envelopes, relative pitch, clocks, high-pass/difference/partner
+  controls, sample root/rate/loop, Android WAV import (7,990 Hz / 2,045 levels), starter kit, NTSC→PAL,
+  multispeed 2, noise/base-clock settings, Undo/Redo, activity restart with exact state restoration,
+  playback plus tone/sample audition, seek/Stop, and actual New/demo and VGM/WAV document-picker flows.
+- Demo and edited VGM/WAV outputs are byte-identical across all three devices. All six document-picker
+  exports equal their corresponding rendered demo files. The actual Android demo VGM, excluding only GD3
+  metadata, equals the independent Python player's **172,896 bytes / 2,304 ticks / 1,695,623 samples**
+  exactly, including its loop.
+- Maximum observed POKEY callbacks: **Nova 2.760 ms, DMG 10.003 ms, Konkr 3.745 ms**; zero observed xruns
+  or driver faults in these scenarios. Konkr's 16,065-tick order-local seek took **266.539 ms** natively
+  (603 ms including capture/Stop), with 12 UI round trips and a maximum of **32 ms**.
+- Four actual SDL debug-executable scenes pass: NTSC and PAL, each with playback alone and playback plus
+  instrument audition. At four seconds the NTSC case reached row 30 and PAL/multispeed-2 reached row 50;
+  PCM was nonzero and held audition was active. Android imported-sample and desktop instrument surfaces were inspected.
+- The initial DMG picker attempt was obstructed by Sortie's Running apps overlay, confirmed by screenshot
+  and accessibility root. Dismissing it with the actual B gamepad event allowed both scenarios to pass;
+  no app workaround or timeout weakening was added.
+
+Production signing, version and non-debuggable status were verified for the candidate APK. Private rhythm
+firmware and aligned distinctive ROM chunks are absent from it; private OPNA-derived audio remains local.
+Thor/Deck are artifact-only targets; no wake/install/launch was performed on either during these checks.
+Local builds were serialized at nice 10 with a 1 GiB single-worker JVM, in-process Kotlin and no daemon;
+only the desktop debug executable was linked locally. Human listening, original-hardware fidelity,
+physical-button latency and the documented POKEY model omissions remain unverified.
 
 ## 0.30.0 PC-88/98 OPN and OPNA
 
@@ -51,6 +80,19 @@ LFO, six rhythm drums and ADPCM-B sample import, generation and editing. The rhy
 drums require the user's private YM2608 ROM; both factory demos work without it.
 EPSM and OPNA now share the same validated firmware loader and existing storage path.
 Version **0.30.0/code 43**; project format 10 and all 500 bundled scales are retained.
+
+Published as [v0.30.0](https://github.com/esko997/thortracker/releases/tag/v0.30.0)
+from main `238151e`; all four jobs of workflow `42684841340` passed. The downloaded,
+production-signed APK passed all three temporary frontend scenarios on Nova
+(147.242 s), DMG (122.671 s) and Konkr (157.097 s). Konkr's 16,065-tick order-local
+seeks took 15.746 s for OPNA and 7.471 s for OPN while the longest observed UI
+round trips were 21/15 ms; Stop remained responsive. Twelve actual Android exports
+passed VGM structure/mixer checks and private-firmware exclusion.
+The published optimized AppImage ran both demos locally for four seconds, advancing
+to rows 29/23 with nonzero PCM. APK/AppImage checksums were verified on Thor/Deck
+after artifact-only transfer; the Deck's stable symlink now targets 0.30.0.
+No Thor/Deck wake, install or launch occurred. Owned Android test packages and
+capture directories were removed; `/ThorTunez` was untouched.
 
 Observed integration evidence:
 
