@@ -29,6 +29,10 @@
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
  *   "sms-banjo"       the Banjo sound driver (joffb/banjo) on a Z80 + SN76489 (+ Game Gear stereo) + YM2413
  *                     (emu2413), every Master System layout (sms/sms_chip.c over sms/sms_machine.c, sms_image.c)
+ *   "ay-zx128", "ay-msx", "ay-atari-st", "ay-cpc"  Thor Tracker's own AY player on its own AY-3-8910 / YM2149 core,
+ *                     one engine per stock computer: ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910), Atari ST (YM2149F),
+ *                     Amstrad CPC (AY-3-8912, stereo socket) (ay/ay_chip.c over ay/ay_machine.c, ay_player.c,
+ *                     ay_psg.c, ay_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

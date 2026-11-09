@@ -19,6 +19,10 @@ import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.sms.SmsSystem
 import org.thortracker.system.ym2612.YmSystem
+import org.thortracker.system.ay.AyAtariStSystem
+import org.thortracker.system.ay.AyCpcSystem
+import org.thortracker.system.ay.AyMsxSystem
+import org.thortracker.system.ay.AyZx128System
 
 /**
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
@@ -411,7 +415,8 @@ interface SoundSystem {
 object SoundSystems {
     val ALL: List<SoundSystem> =
         listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System) + NesN163System.ALL +
-            listOf(NesS5bSystem, NesFdsSystem, NesMmc5System, NesEpsmSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL
+            listOf(NesS5bSystem, NesFdsSystem, NesMmc5System, NesEpsmSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL +
+            listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

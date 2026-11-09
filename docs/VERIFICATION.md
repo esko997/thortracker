@@ -1,5 +1,63 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.25.0 AY / YM2149 computers
+
+Four computer variants join the sound-system chooser: **ZX Spectrum 128, MSX,
+Atari ST and Amstrad CPC**. Each uses its own clock, frame rate and stock output
+wiring. Three tone channels share one noise generator and one hardware
+envelope; the Pattern inspector shows who owns those shared resources.
+
+The sound editor combines software envelopes with the chip's hardware shapes,
+pitched buzzer/sync sounds and drum sweeps. Its expert page exposes the raw
+envelope period, with divider/frequency readings and 16-level AY or 32-level
+YM shape diagrams. Each variant includes Copper Lane and exports VGM/WAV.
+The CPC's WAV/preview is stereo (A left, B both, C right); standard AY VGM is
+mono and cannot describe that socket wiring.
+
+Verification:
+
+- **612 JVM core tests, 14 Linux core tests and six Android-host tests passed**;
+  signed Android and desktop release builds succeeded. Builds used one Gradle
+  worker, in-process Kotlin compilation and serialized heavy jobs; no emulator.
+- The full native suite passed, including **1,010 AY checks and 1,580 WAV
+  export checks**. Independent Python player traces match all 1,500 ticks per
+  variant. VGM bytes, headers, fractional frame waits and loop boundaries
+  match the independent exporter.
+- An independent ayumi comparison checks **9,401,550 chip steps**: exact tone
+  counters/edges, noise LFSR, comparable envelope phases and gated DAC levels.
+  Solo/mixed audio RMS-envelope correlations are **0.9907–0.9994**. Reference
+  writes are scheduled at their exact chip clocks: rounding them to 48 kHz
+  sample boundaries changed synced-buzzer timbre and was an invalid comparison.
+  The original 0.95 correlation and 0.8–1.25 RMS bounds remain.
+- Fixed three reproduced envelope edges: AY period zero advances twice as fast
+  as period one (YM's rates are equal); a silent note retains its restart until
+  its first audible tick; a previously audible non-owner cannot cause a stale
+  restart when the shared envelope changes owner. The focused period check
+  failed 30 checks before the fix and passes all 172 afterward. Each old
+  restart implementation failed 16 checks; the corrected one passes all 40.
+- Nova passed the **21 permanent Android tests** after both temporary harnesses
+  were removed. Separate real-activity smokes on **Nova, DMG and Konkr**
+  exercised all four computers: playback, held-X audition during playback,
+  hardware shape/period and software-envelope edits, Undo and seek to order
+  3/row 48. All reported zero xruns and zero driver faults. Maximum native seek:
+  **0.56 / 1.18 / 2.73 ms** respectively; maximum audio callback:
+  **3.74 / 5.32 / 2.19 ms**. Their bursts were 4 / 20 / 20 ms.
+- Nova exported all four projects to WAV and VGM. WAVs are complete 48 kHz
+  stereo renders with nonzero signal and no clipping. Every VGM command stream
+  and normalized header byte-matches the independent Python export of the
+  factory image; GD3 metadata decodes correctly.
+- The actual SDL frontend opened each Android-saved project, played for six
+  seconds and switched to its sound editor. All four had advancing transport
+  and nonzero audio; desktop and real-device surfaces were inspected.
+- The Game Boy factory `.uge` is byte-identical to 0.24.0. **All 32 Game Boy
+  views are RGBA-pixel-identical** to that verified build.
+
+Temporary test packages and owned device captures were removed; device timeouts
+were restored and the reserved devices returned Home/asleep. `/ThorTunez` was
+untouched. No human listening test, vintage-hardware comparison or physical
+Deck controller test is claimed. VGM's sample-granularity timing and external
+players' resamplers can alter the phase-sensitive buzzer timbre; WAV preserves
+the app's render.
 ## 0.24.0 Cumulative controller layers
 
 **L2 + R2 is a third, independent chord layer**, whichever trigger is pressed

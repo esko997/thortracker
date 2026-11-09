@@ -21,6 +21,7 @@ set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
 set(SMS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sms)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
+set(AY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ay)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -100,9 +101,15 @@ add_library(chip_engines STATIC
     ${SMS_DIR}/sms_machine.c
     ${SMS_DIR}/sms_image.c
     ${SMS_DIR}/sms_vgm.c
+    ${AY_DIR}/ay_chip.c
+    ${AY_DIR}/ay_machine.c
+    ${AY_DIR}/ay_player.c
+    ${AY_DIR}/ay_psg.c
+    ${AY_DIR}/ay_image.c
+    ${AY_DIR}/ay_vgm.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${SMS_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${SMS_DIR} ${AY_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)

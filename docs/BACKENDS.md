@@ -1008,6 +1008,94 @@ pitch sweeps; PSG continues to reuse the NES envelope editor.
   three settings above. PCM and Noise are not scale/chord-reference lanes.
   Help derives the channel-specific effects and mapped-sample controls.
 
+## AY-3-8910 / YM2149 (ZX Spectrum 128, MSX, Atari ST, Amstrad CPC)
+
+Roadmap step 7, source only (branch `ay-systems`; unbuilt — the integrator runs generation, builds and tests). The
+engine contract (clocks and their sources, chip core, image, player, shared noise/envelope arbitration, effects, seek,
+VGM) is `docs/AUDIO_ENGINE.md`, "AY-3-8910 / YM2149".
+
+Decisions (made on the user's behalf; see "Open questions"):
+
+- **Four variants, one per stock computer**, grouped as the family "AY-3-8910 / YM2149" in New and Load demo, as the
+  NES expansions are: `AyZx128System` (`"ay-zx128"`, "ZX Spectrum 128 (AY-3-8912)", 1773450 Hz, 50.02 Hz frames),
+  `AyMsxSystem` (`"ay-msx"`, "MSX (AY-3-8910)", 1789772.5 Hz, 59.92 Hz), `AyAtariStSystem` (`"ay-atari-st"`,
+  "Atari ST (YM2149F)", 2005311.75 Hz, 50.05 Hz) and `AyCpcSystem` (`"ay-cpc"`, "Amstrad CPC (AY-3-8912)", 1000000 Hz,
+  50.08 Hz). The chip type decides the amplitude behaviour (AY: 16 levels and a 16-step envelope; YM: 32-level DAC and
+  a 32-step envelope, fixed volumes at the odd levels); the clock decides the period tables, so every note is true
+  pitch on every machine. Each machine's stock wiring: the ZX 128, MSX and ST mix to mono (no panning); the CPC's
+  stock stereo socket carries A left, C right and B on both sides, which its engine outputs (the internal speaker's
+  mono is not modelled). No stereo modifications (ABC/ACB boards) on the mono machines.
+- **Own player and own chip core**, as the OPL3: none of these machines has one standard music driver to put in the
+  loop, and none of them is emulated (no Z80/68000). Our core (`ay/ay_psg.c`) is written from the GI and Yamaha
+  manuals with MAME's `ay8910.cpp` and ayumi read for details, ayumi's measured DAC tables (MIT) and blip_buf output;
+  it can advance its exact state without synthesis, so play-from-position clocks the chip through the whole way from
+  the song start (no pre-roll approximation). ayumi itself is vendored for the host test's independent comparison.
+- **Exports**: VGM 1.71 (AY8910 family, with the variant's chip type and clock) and WAV. No `.ay`/`.sndh`/`.psg` or
+  executable formats (they would need a machine-specific player we do not run).
+- **Channels** `Channel A`-`Channel C` (`ChannelKind.PULSE`, tonal, bank 0), four effect columns each, one bank of 64
+  sounds ("Sounds"), notes from the variant's lowest reachable note (ZX/MSX A-0, ST B-0: tone periods stop at 4095; CPC C-0)
+  to B-7, FamiTracker-style names (A-4 = 57 = 440 Hz), at most 256 orders, OFF = key off (the volume envelope's release
+  or silence).
+
+### AY model, lowering and exports (`core`)
+
+- **Model** (`system/ay`): `AyVariant` (enum, serialized `"zx128"`, `"msx"`, `"atari-st"`, `"cpc"`; image byte, chip name,
+  YM flag, its system, engine id, clock and tick rate from `AyPlayerImage`). `AySound(variant, instruments: 64 ×
+  AyInstrument?)` (null = empty slot; a cell naming one is an error), `Song.ay`; a project's sound variant must match
+  its backend (structural error otherwise, as the NES expansions). `AyInstrument(name, volume, arpeggio, pitch,
+  pitchRelative, mixer, noise, envelope, sweep)`: five FamiStudio-style `NesEnvelope`s (volume 0..15 with loop and
+  release, arpeggio −64..63 semitones, pitch −64..63 sixteenths, mixer 0..3 = tone bit 0 / noise bit 1, noise period
+  0..31 — empty: 15 / 0 / 0 / tone only / no noise claim); `AyEnvelopeSettings(shape 0|8..15, auto, octave −8..7,
+  period 0..65535, sync)` — both the auto octave and the manual period are kept while the other mode is chosen
+  (lowering writes only the active one); `AySweep(start, end, speed)` as the Mega Drive's. Project files: backend =
+  the variant's id, AY data version 1.
+- **Shared resources, honestly**: the noise period and the hardware envelope are one per chip. Cells and instruments
+  only *ask* for them; the player gives each to the most recent key-on among the channels using it (AUDIO_ENGINE,
+  "Shared noise and envelope"). `AySystem.sharedState` simulates straight play row by row with the same rule and
+  tags the Pattern lanes (`ENV` owner, `env` playing another channel's envelope, `NZ` owner, `nz` using another's
+  noise period) and lists the owners with their shape/period in the inspector. Warnings name rows where a key-on
+  takes the envelope or noise from a channel still using it with different settings ("Channel B's note at 02:14 takes
+  the envelope (shape C, auto J00) from Channel A's held note (shape A, manual 0400); A plays B's envelope until B's
+  note ends").
+- **Lowering** (`backend/AyLowering.kt`): the arrangement (parked orders removed; loop order and every `Bxx`
+  renumbered) into the image, track encoding, sharing and envelope placement exactly as the Mega Drive's
+  (`YmLowering`, five envelopes per sound in slot order: volume, arpeggio, pitch, mixer, noise); byte-identical to the
+  reference builder `tools/audio/ay/ay_song.py` (golden test). Tunings: `P80+n` as the Mega Drive.
+- **Validation** (`AyValidator`): structural (shapes, ranges, 64 slots, variant, every instrument field and envelope)
+  and every `ay_load_image` reason (`AyPlayerImage.LOADER_PROBLEMS`) as messages naming pattern, channel and row;
+  warnings: a first note of an order without instrument, notes below the variant's lowest note, `Gxx` at or beyond the
+  speed, note settings on rows where nothing sounds, envelope/noise conflicts (above), `Jxx`/`Hxx`/`Ixx` on a note
+  whose sound has no hardware envelope shape and no `Exx`.
+- **Export** (`AyVgm`): `.vgm` through `AyVgm.renderer` (Android JNI `ChipAudio.nativeAyVgm`, Deck `DeckAyVgm`),
+  ten minutes of ticks at the variant's rate at most.
+- **Presets** (`AyPresets`, new songs fill slots 01..): Square lead (volume decay to a held level, delayed vibrato in
+  the pitch envelope), Pluck, Soft pad (slow volume swell), Arp major / Arp minor (arpeggio envelopes, the classic
+  one-channel chords), Buzzer bass (shape 8 saw, auto J00, tone off), Sync buzzer (shape 10 triangle with tone, sync),
+  Bell (shape 9 decay at a manual period, tone on), Envelope tremolo (shape 14, manual slow period, tone on), Kick
+  (tone + noise for two ticks, pitch sweep down), Snare (noise period envelope with a tone body), Closed hat / Open
+  hat (noise 1-2, short/long volume), Tom (sweep), Noise sweep (riser: noise period envelope 31 → 1).
+- **Demo** (`AyDemoSong.build(variant)`): one original composition for all four variants ("Copper Lane"), tempo
+  set per variant's tick rate so it has the same BPM: buzzer bass that hands the envelope to a synced lead in the
+  bridge (the shared envelope audible on purpose), arpeggio-envelope chords, noise drums sharing the noise generator
+  with a riser, vibrato and portamento, volume slides; no errors or warnings except the intentional, documented
+  shared-resource handovers (none on its default rows).
+
+### AY editor
+
+- **Instrument view** (`AyInstrumentView`, `AyInstrumentPainter`, `AyEdits`), controller-first, head rows Slot, Name,
+  Listen on, Page. *Sound* (curated): preset, gates (Tone / Noise / Tone + noise / Neither: a one-value mixer
+  envelope; "≈" when the mixer envelope varies), noise period (none = shared / 0-31: a one-value noise envelope;
+  "≈" when it varies), hardware envelope (Off or one of the eight shapes, drawn), period (Auto with octave / Manual
+  with value), sync tone, the drum sweep, with a reading of what the Listen note writes (TP, EP, the envelope's
+  frequency) and a line saying the noise and envelope are shared. *Volume*, *Arpeggio*, *Pitch*, *Mixer*, *Noise*:
+  the NES envelope editor (`EnvelopePlot`, `NesEnvelopes` edits) with each kind's range. *Envelope* (expert): the
+  raw R13 shape (all 16 values, the 8 aliases marked), auto/manual, octave, the 16-bit period (fine ←→, coarse
+  ↑↓), sync, and the chip's ramp drawn at the variant's resolution (16 or 32 steps). Every edit is one undo step;
+  empty slots take the Square lead on their first edit; Clear on Slot empties one; copy/paste a sound or an
+  envelope.
+- **Shared views**: Song, Keyboard, Sketch and Pattern as for the Mega Drive's PSG channels (three lanes, up to four
+  effect columns); Help: effects, the shared resources and the instrument pages; lane tags from `sharedState`.
+
 ## Open questions
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
@@ -1074,6 +1162,25 @@ pitch sweeps; PSG continues to reuse the NES envelope editor.
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- AY variants (decided on the user's behalf): four stock machines — ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910,
+  NTSC 60 Hz frames), Atari ST (YM2149F, PAL 50 Hz VBL) and Amstrad CPC (AY-3-8912 at 1 MHz, 50.08 Hz frames, the
+  stereo socket) — each with its own clock, chip type and wiring. Not modelled: PAL MSX (50 Hz), MSX-ENGINE machines
+  whose YM2149 has the YM's 32-step envelope, the NTSC ST, the CPC's 300 Hz interrupt rate as a tick, the CPC's mono
+  internal speaker, ABC/ACB stereo modifications of the mono machines. The CPC socket's B weight (equal on both
+  sides) is an inference from its resistive mixing, not a measured value. Review.
+- AY output summing: the three channels add linearly; the real machines tie the outputs through resistors (MAME's
+  resistor model; Hatari uses a measured 3-D table for the ST), which compresses loud chords a little. Proposed: keep
+  linear until a listening comparison asks otherwise.
+- AY envelope period 0 follows MAME's counter model: twice period 1's ramp rate on AY, the same rate as period 1
+  on YM2149. Native boundary tests and editor frequency readings agree; no physical-chip capture is claimed.
+- AY shared noise/envelope arbitration (decided on the user's behalf): the most recent key-on among the channels
+  using a resource owns it; an owner change re-writes R13 only when the shape differs, so a held buzzer bass is not
+  retriggered when a short note that borrowed the envelope ends (its envelope phase continues). Alternatives: a fixed
+  channel priority (FamiStudio's 5B: the highest channel) or per-song ownership. Review.
+- AY VGM loops do not dump R13 (a write restarts the envelope): a loop entered with a held hardware-envelope note
+  continues the envelope as the previous pass left it.
+- AY hardware envelope with volume: the chip cannot scale an envelope's level, so on such notes the volume envelope
+  and `Cxx` only gate it (any level above 0 plays the full envelope; 0 silences). Review.
 - Master System (decided on the user's behalf): four systems over one Banjo engine — `sms-psg`,
   `gg-psg`, `sms-fm`, `sms-fm-drums` — rather than one system with a layout setting (channel layouts are fixed per
   system). Review.

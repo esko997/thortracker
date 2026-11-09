@@ -50,7 +50,10 @@ Order below is the current intent; design notes for the chip work live in `docs/
      sequence becomes one chord; e.g. Keyboard on the other screen beside the pattern being edited). With one
      display (Deck, single-screen Android) they show on it. L2+R2+← stays free. No existing chord moved.
 7. **More chips** (unordered):
-   - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST, Amstrad CPC (the hardware envelope as a buzzer bass).
+   - **AY-3-8910 / YM2149 (0.25.0)** — ZX Spectrum 128, MSX, Atari ST and Amstrad CPC:
+     own player/core, shared noise and hardware-envelope ownership, buzzer/sync sounds, software envelopes,
+     VGM/WAV and Copper Lane demos. Verified on Nova, DMG, Konkr and the SDL frontend; CPC WAV retains stereo,
+     while standard AY VGM is mono.
    - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
    - Konami SCC — MSX wavetable cartridge (five channels).
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
