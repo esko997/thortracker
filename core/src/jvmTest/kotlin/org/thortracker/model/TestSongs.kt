@@ -53,7 +53,7 @@ internal object TestSongs {
                 val tracks = p.jsonObject.getValue("tracks").jsonArray.map { t -> JsonArray(t.jsonArray.map { c -> JsonArray(listOf(older(c.jsonArray[0])) + c.jsonArray.drop(1)) }) }
                 JsonObject(p.jsonObject + ("tracks" to JsonArray(tracks)))
             })
-            "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject(t + ("root" to older(t.getValue("root")))) } ?: value
+            "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject((t - "provenance") + ("root" to older(t.getValue("root")))) } ?: value
             else -> out[key] = value
         }
         return JsonObject(root + ("version" to JsonPrimitive(version)) + ("song" to JsonObject(out))).toString()
@@ -73,7 +73,7 @@ internal object TestSongs {
                 val tracks = p.jsonObject.getValue("tracks").jsonArray.map { t -> JsonArray(t.jsonArray.map { c -> JsonArray(listOf(older(c.jsonArray[0])) + c.jsonArray.drop(1)) }) }
                 JsonObject(p.jsonObject + ("tracks" to JsonArray(tracks)))
             })
-            "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject(t + ("root" to older(t.getValue("root")))) } ?: value
+            "tuning" -> out[key] = (value as? JsonObject)?.let { t -> JsonObject((t - "provenance") + ("root" to older(t.getValue("root")))) } ?: value
             else -> out[key] = value
         }
         return JsonObject(root + ("version" to JsonPrimitive(8)) + ("song" to JsonObject(out))).toString()

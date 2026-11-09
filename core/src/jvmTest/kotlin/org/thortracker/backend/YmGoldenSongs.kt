@@ -6,17 +6,24 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.nes.NesEnvelope
+import org.thortracker.system.nes.PcmData
+import org.thortracker.system.ym2612.YmFm3Mode
 import org.thortracker.system.ym2612.YmFmInstrument
 import org.thortracker.system.ym2612.YmInstrument
 import org.thortracker.system.ym2612.YmOperator
+import org.thortracker.system.ym2612.YmPcmInstrument
+import org.thortracker.system.ym2612.YmPcmMapping
+import org.thortracker.system.ym2612.YmPcmSample
 import org.thortracker.system.ym2612.YmPsgInstrument
+import org.thortracker.system.ym2612.YmRules
 import org.thortracker.system.ym2612.YmSound
 import org.thortracker.system.ym2612.YmSweep
 
 /**
  * The songs of `tools/audio/ym/ym_golden.py` written in Thor Tracker's model, for [YmGoldenTest]: the native host
- * test's song (`ym_song.test_song`) and the features song. Kept in the reference script's shape (instruments by slot,
- * patterns by name, orders naming a pattern per channel) so the two read alike.
+ * test's song (`ym_song.test_song`), the features song and the XGM2 song (FM 3 special mode, PCM kits and the compiled
+ * bank). Kept in the reference script's shape (instruments by slot, patterns by name, orders naming a pattern per
+ * channel: FM 1-6, PSG 1-3, Noise, PCM 1-3) so the two read alike.
  */
 object YmGoldenSongs {
     private const val OFF = 0xFE
@@ -26,8 +33,9 @@ object YmGoldenSongs {
         d1l: Int = 0, rr: Int = 15, ssg: Int = 0,
     ) = YmOperator(dt, mul, tl, rs, ar, am, d1r, d2r, d1l, rr, ssg)
 
-    private fun fm(ops: List<YmOperator>, alg: Int = 0, fb: Int = 0, ams: Int = 0, fms: Int = 0, sweep: Triple<Int, Int, Int> = Triple(0, 0, 0)) =
-        YmFmInstrument("", alg, fb, ams, fms, ops, YmSweep(sweep.first, sweep.second, sweep.third))
+    private fun fm(ops: List<YmOperator>, alg: Int = 0, fb: Int = 0, ams: Int = 0, fms: Int = 0, sweep: Triple<Int, Int, Int> = Triple(0, 0, 0),
+                   ch3: List<Int> = listOf(0, 0, 0, 0)) =
+        YmFmInstrument("", alg, fb, ams, fms, ops, YmSweep(sweep.first, sweep.second, sweep.third), ch3)
 
     private fun env(values: List<Int>, loop: Int? = null, release: Int? = null) = NesEnvelope(values, loop ?: -1, release ?: -1)
 
@@ -53,19 +61,19 @@ object YmGoldenSongs {
 
     private fun song(
         speed: Int, orders: List<Order>, patterns: Map<String, Map<Int, Cell>>, instruments: Map<Int, YmInstrument>,
-        loop: Int, region: Int = 0, lfo: Int = 0,
+        loop: Int, region: Int = 0, lfo: Int = 0, fm3: YmFm3Mode = YmFm3Mode.NORMAL, samples: List<YmPcmSample> = emptyList(),
     ): Song = Song(
         title = "Golden",
         ticksPerRow = speed,
         loopOrder = loop,
         patterns = orders.mapIndexed { o, order ->
-            Pattern("Order $o", (0 until 10).map { ch ->
-                val rows = order.patterns[ch]?.let { patterns.getValue(it) } ?: emptyMap()
+            Pattern("Order $o", (0 until YmRules.CHANNELS).map { ch ->
+                val rows = order.patterns.getOrNull(ch)?.let { patterns.getValue(it) } ?: emptyMap()
                 List(Songs.ROWS) { rows[it] ?: Cell.BLANK }
             }, length = order.rows)
         },
         orders = orders.indices.toList(),
-        sound = YmSound(instruments = List(64) { instruments[it + 1] }, pal = region == 1, lfo = lfo),
+        sound = YmSound(instruments = List(64) { instruments[it + 1] }, pal = region == 1, lfo = lfo, fm3Mode = fm3, pcmSamples = samples),
     )
 
     /** `ym_song.test_song()`: the native host test's song (all 8 algorithms, LFO, SSG-EG, every effect, PSG envelopes, noise modes). */
@@ -182,5 +190,41 @@ object YmGoldenSongs {
             Order(1, listOf(null, null, null, null, "c4", null, null, null, null, null)),
         )
         return song(5, orders, p, i, loop = 2, region = 1, lfo = 0x0F).copy(parkedOrders = listOf(1))
+    }
+
+    /**
+     * `ym_golden.xgm2_song()`: FM 3 special mode with operator offsets on two voices (one also on FM 1, which ignores
+     * them), three PCM kits over three formula samples — a duplicate source and a repeated (sample, pitch, level) that
+     * share variants, pitches −48..+12, levels 15, 7 and 0 (silent) — notes without an instrument, OFF, Gxx, Sxx, Fxx
+     * and Lxx on the PCM lanes, and one PCM track shared by two lanes.
+     * Samples: "ramp" 8000 Hz, 300 bytes, value (7 i) mod 256 as a signed byte; "ramp copy" the same bytes; "square"
+     * 22050 Hz, 1000 bytes, +100 for 25 bytes then −100 for 25.
+     */
+    fun xgm2(): Song {
+        val ramp = PcmData.of(ByteArray(300) { i -> (i * 7).toByte() })
+        val square = PcmData.of(ByteArray(1000) { i -> (if ((i / 25) % 2 == 0) 100 else -100).toByte() })
+        val samples = listOf(YmPcmSample("ramp", ramp, 8000), YmPcmSample("ramp copy", ramp, 8000), YmPcmSample("square", square, 22050))
+        val voice = listOf(op(tl = 30), op(tl = 32, mul = 2), op(tl = 34), op(tl = 36, mul = 3))
+        val i = mapOf(
+            1 to fm(voice, alg = 7, ch3 = listOf(0, 448, -64, 3072)),
+            2 to YmPcmInstrument("", 15, mapOf(
+                36 to YmPcmMapping(0), 37 to YmPcmMapping(1), 38 to YmPcmMapping(2), 40 to YmPcmMapping(2, -12),
+                41 to YmPcmMapping(2, 12), 42 to YmPcmMapping(0),
+            )),
+            3 to YmPcmInstrument("", 7, mapOf(36 to YmPcmMapping(2), 48 to YmPcmMapping(0, -48))),
+            4 to fm(voice, alg = 4, fb = 3, ch3 = listOf(-3072, 0, 1, -1)),
+            5 to YmPcmInstrument("", 0, mapOf(50 to YmPcmMapping(2, 3))),
+        )
+        val p = HashMap<String, Map<Int, Cell>>()
+        p["fm1"] = mapOf(0 to c(60, 1), 8 to c(OFF))
+        p["fm3"] = mapOf(0 to c(45, 1), 4 to c(48, null, '1' to 0x10), 8 to c(52, 4, '0' to 0x37), 12 to c(OFF))
+        p["pcm1"] = mapOf(0 to c(36, 2), 2 to c(37), 4 to c(OFF), 5 to c(38, 2, 'G' to 0x02), 8 to c(40, 2, 'S' to 0x02), 10 to c(41), 12 to c(42))
+        p["pcm2"] = mapOf(0 to c(36, 3), 3 to c(48, 3), 6 to c(OFF), 9 to c(null, null, 'L' to 0x08))
+        p["pcm3"] = mapOf(1 to c(50, 5), 7 to c(null, null, 'F' to 0x04))
+        val orders = listOf(
+            Order(16, listOf("fm1", null, "fm3", null, null, null, null, null, null, null, "pcm1", "pcm2", "pcm3")),
+            Order(8, listOf(null, null, null, null, null, null, null, null, null, null, "pcm2", "pcm2", null)),
+        )
+        return song(3, orders, p, i, loop = 0, fm3 = YmFm3Mode.SPECIAL, samples = samples)
     }
 }

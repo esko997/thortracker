@@ -22,8 +22,8 @@ int64_t now_ns() {
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
-aaudio_data_callback_result_t data_callback(AAudioStream*, void* user, void* audio, int32_t frames) {
-    return static_cast<Engine*>(user)->render(static_cast<float*>(audio), frames);
+aaudio_data_callback_result_t data_callback(AAudioStream* stream, void* user, void* audio, int32_t frames) {
+    return static_cast<Engine*>(user)->render(stream, static_cast<float*>(audio), frames);
 }
 
 void error_callback(AAudioStream*, void* user, aaudio_result_t error) {
@@ -120,6 +120,7 @@ int Engine::play(int order, int row, int max_ticks) {
     int o = 0, rw = 0, t = 0;
     ops_->position(slot->machine, &o, &rw, &t);
     last_position_.store(pack_position(false, o, rw));
+    published_play_seq_.store(slot->seq, std::memory_order_release);
     play_slots_.publish();
     last_seek_ns_.store(now_ns() - t0);
     seek_mode_.store(mode);
@@ -191,9 +192,9 @@ int Engine::ensure_stream() {
                 result = AAUDIO_ERROR_INVALID_FORMAT;
                 continue;
             }
-            // Two bursts, fixed: the usual low-latency setting. Not adapted on underrun;
-            // diagnostics() reports xruns so device evidence decides whether to grow it.
+            // Begin at two bursts; the callback grows only on observed underruns.
             AAudioStream_setBufferSizeInFrames(stream, AAudioStream_getFramesPerBurst(stream) * 2);
+            previous_xruns_ = std::max(0, AAudioStream_getXRunCount(stream));
             stream_ = stream;
         }
         if (!stream_) return result;
@@ -211,7 +212,7 @@ int Engine::ensure_stream() {
 
 bool Engine::suspend_if_idle() {
     std::lock_guard<std::mutex> lock(stream_mutex_);
-    if (!stream_ || !stream_started_ || playing_.load() || auditioning_.load()) return false;
+    if (!stream_ || !stream_started_ || start_pending() || playing_.load() || auditioning_.load()) return false;
     AAudioStream_requestStop(stream_);
     stream_started_ = false;
     return true;
@@ -235,12 +236,16 @@ void Engine::record_row(uint64_t frame, int order, int row) {
     ring_head_.store(head + 1, std::memory_order_release);
 }
 
-aaudio_data_callback_result_t Engine::render(float* out, int32_t frames) {
+aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, int32_t frames) {
     const int64_t t0 = now_ns();
     std::memset(out, 0, sizeof(float) * 2 * static_cast<size_t>(frames));
 
+    uint32_t consumed_play_seq = 0;
+    bool consumed_play = false;
     if (play_slots_.consume()) {
         play_ = play_slots_.front();
+        consumed_play_seq = play_->seq;
+        consumed_play = true;
         play_len_ = play_pos_ = 0;
         borrowed_channel_ = -1;
         session_.fetch_add(1, std::memory_order_relaxed);
@@ -322,8 +327,23 @@ aaudio_data_callback_result_t Engine::render(float* out, int32_t frames) {
 
     playing_.store(play_ != nullptr, std::memory_order_relaxed);
     auditioning_.store(aud_ != nullptr, std::memory_order_relaxed);
+    // Acknowledge only the slot actually consumed, after its playing/ended state is visible.
+    // A newer published start must stay pending, including when this one ended on its first tick.
+    if (consumed_play) acknowledged_play_seq_.store(consumed_play_seq, std::memory_order_release);
     frames_rendered_ += static_cast<uint64_t>(frames);
     frames_written_.store(static_cast<int64_t>(frames_rendered_), std::memory_order_release);
+    // AAudio/Oboe support latency tuning at the end of the data callback. This changes the used
+    // portion of the existing buffer, not its allocation; no stream lock or control-thread wait.
+    const int32_t xruns = AAudioStream_getXRunCount(stream);
+    if (xruns > previous_xruns_) {
+        previous_xruns_ = xruns;
+        const int32_t size = AAudioStream_getBufferSizeInFrames(stream);
+        const int32_t capacity = AAudioStream_getBufferCapacityInFrames(stream);
+        const int32_t burst = AAudioStream_getFramesPerBurst(stream);
+        if (size >= 0 && capacity > size && burst > 0) {
+            AAudioStream_setBufferSizeInFrames(stream, size + std::min(burst, capacity - size));
+        }
+    }
     const int64_t spent = now_ns() - t0;
     if (spent > max_callback_ns_.load(std::memory_order_relaxed)) {
         max_callback_ns_.store(spent, std::memory_order_relaxed);
@@ -346,10 +366,23 @@ int64_t Engine::presented_frame_locked() {
     return written - latency;
 }
 
+bool Engine::start_pending() const {
+    // Read acknowledgement before playing_: acquiring it makes the callback's state visible.
+    const uint32_t published = published_play_seq_.load(std::memory_order_acquire);
+    return after(published, acknowledged_play_seq_.load(std::memory_order_acquire)) &&
+           after(published, stop_seq_.load(std::memory_order_acquire)) &&
+           !stream_dead_.load(std::memory_order_acquire);
+}
+
 int64_t Engine::position() {
-    if (!playing_.load()) {
+    const int64_t pending = start_pending() ? (1LL << 41) : 0;
+    if (stream_dead_.load(std::memory_order_acquire)) {
         const int64_t last = last_position_.load();
         return last < 0 ? -1 : (last & ~kPlayingBit);
+    }
+    if (!playing_.load()) {
+        const int64_t last = last_position_.load();
+        return last < 0 ? (pending ? pending : -1) : ((last & ~kPlayingBit) | pending);
     }
     int64_t presented;
     {
@@ -374,8 +407,8 @@ int64_t Engine::position() {
         }
     }
     const int64_t pos = best >= 0 ? best : earliest;
-    if (pos < 0) return last_position_.load() | kPlayingBit;
-    return pack_position(true, static_cast<int>((pos >> 8) & 0xFF), static_cast<int>(pos & 0xFF));
+    if (pos < 0) return last_position_.load() | kPlayingBit | pending;
+    return pack_position(true, static_cast<int>((pos >> 8) & 0xFF), static_cast<int>(pos & 0xFF)) | pending;
 }
 
 void Engine::stats(int64_t* out, int count) {

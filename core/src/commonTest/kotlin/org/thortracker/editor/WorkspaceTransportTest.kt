@@ -36,6 +36,23 @@ class WorkspaceTransportTest {
         assertFalse(w.showView(ViewKind.KEYBOARD, ViewKind.entries.toSet()))
     }
 
+    @Test fun anOtherDisplayChordShowsTheViewThereAndKeepsFocusHere() {
+        val w = workspace()
+        val all = ViewKind.entries.toSet()
+        assertTrue(w.showView(ViewKind.SONG, all, pane = 1))
+        assertEquals(0, w.focus)
+        assertEquals(ViewKind.PATTERN, w.panes[0].kind)
+        assertEquals(ViewKind.SONG, w.panes[1].kind)
+        // Each pane remembers what its own chord replaced.
+        assertTrue(w.showView(ViewKind.INSTRUMENT, all))
+        assertTrue(w.showView(ViewKind.SONG, all, pane = 1))
+        assertEquals(ViewKind.KEYBOARD, w.panes[1].kind)
+        assertEquals(ViewKind.INSTRUMENT, w.panes[0].kind)
+        assertTrue(w.showView(ViewKind.INSTRUMENT, all))
+        assertEquals(ViewKind.PATTERN, w.panes[0].kind)
+        assertFalse(w.showView(ViewKind.SONG, all, pane = 2), "no such pane")
+    }
+
     @Test fun focusStaysInsideThePanes() {
         val w = workspace()
         w.focus = 5
@@ -75,6 +92,139 @@ class WorkspaceTransportTest {
         session.onSongChanged = { t.songChanged(it) }
         t.audio = audio
         return Triple(session, t, audio)
+    }
+
+    /** Deterministic control queue and callback boundaries: no clock, sleeping, or native device. */
+    private class DeferredAudio : TrackerAudio {
+        val commands = mutableListOf<Boolean>()
+        var published: Boolean? = null
+        var playing = false
+        var starts = 0
+        var stops = 0
+        override fun update(song: Song) {}
+        override fun play(order: Int, row: Int) { starts++; commands += true }
+        override fun stop() { stops++; commands += false }
+        override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {}
+        override fun releaseAudition() {}
+        override fun error(): String? = null
+        override fun position() = PlaybackPosition(playing = playing, pending = commands.isNotEmpty() || published != null)
+        override fun close() { commands.clear(); published = null; playing = false }
+        fun finishPreparation(failed: Boolean = false) {
+            val start = commands.removeAt(0)
+            if (!failed) published = start
+        }
+        fun callback(endsImmediately: Boolean = false) {
+            playing = published ?: playing
+            published = null
+            if (endsImmediately) playing = false
+        }
+    }
+
+    private fun deferredTransport(): Pair<Transport, DeferredAudio> {
+        val audio = DeferredAudio()
+        return Transport(EditorSession(Songs.demo())).also { it.audio = audio } to audio
+    }
+
+    @Test fun slowStartAndNativeHandoffKeepStopIntentUntilCallbackAcknowledges() {
+        val (t, audio) = deferredTransport()
+        t.start(4, 63)
+        // Arbitrarily many UI ticks during a queued/slow seek cannot expire the start.
+        repeat(2000) {
+            assertTrue(t.position()!!.pending)
+            assertTrue(t.requested)
+        }
+        audio.finishPreparation()
+        assertFalse(t.position()!!.playing, "nativePlay returned, but the callback has not consumed it")
+        assertTrue(t.requested, "publication is not acknowledgement")
+        audio.callback()
+        assertTrue(t.position()!!.playing)
+        assertFalse(t.position()!!.pending)
+        t.toggle(4, 63)
+        assertEquals(1, audio.starts, "the next press must stop, not restart the expensive seek")
+        assertEquals(1, audio.stops)
+        assertFalse(t.requested)
+        audio.finishPreparation()
+        audio.callback()
+        assertFalse(t.position()!!.playing)
+        assertFalse(t.position()!!.pending)
+    }
+
+    @Test fun stopWhilePreparingAndQuickRestartRetainTheNewestIntent() {
+        val (t, audio) = deferredTransport()
+        t.start(4, 63)
+        t.toggle(0, 0) // Stop while the old start is still preparing.
+        assertFalse(t.requested)
+        audio.finishPreparation()
+        audio.callback() // The earlier start can briefly play before the queued stop.
+        assertTrue(t.position()!!.playing)
+        assertFalse(t.requested, "an old start acknowledgement must not resurrect stopped intent")
+        t.toggle(1, 0) // Start again while Stop is still queued.
+        audio.finishPreparation()
+        audio.callback()
+        assertFalse(t.position()!!.playing)
+        assertTrue(t.position()!!.pending, "the newest start is still queued")
+        assertTrue(t.requested, "an old stop must not cancel the new start")
+        audio.finishPreparation()
+        assertTrue(t.position()!!.pending)
+        audio.callback()
+        assertTrue(t.position()!!.playing)
+        t.toggle(1, 0)
+        assertEquals(2, audio.starts)
+        assertEquals(2, audio.stops)
+        assertFalse(t.requested)
+    }
+
+    @Test fun failedStartAndFirstCallbackEndSettleWithoutEverObservingPlaying() {
+        val (t, audio) = deferredTransport()
+        t.start(0, 0)
+        audio.finishPreparation(failed = true)
+        assertFalse(t.position()!!.pending)
+        assertFalse(t.requested)
+        t.toggle(0, 0)
+        audio.finishPreparation()
+        audio.callback(endsImmediately = true)
+        assertFalse(t.position()!!.playing)
+        assertFalse(t.requested, "acknowledged end must not wait forever for playing=true")
+        t.toggle(0, 0)
+        assertEquals(3, audio.starts)
+        assertEquals(0, audio.stops)
+    }
+
+    @Test fun naturalEndFocusLossAndCloseDoNotLeavePendingIntent() {
+        val (t, audio) = deferredTransport()
+        t.start(0, 0)
+        audio.finishPreparation()
+        audio.callback()
+        assertTrue(t.position()!!.playing)
+        audio.callback(endsImmediately = true)
+        assertFalse(t.position()!!.playing)
+        assertFalse(t.requested)
+        t.start(4, 63)
+        t.halt()
+        audio.finishPreparation()
+        audio.callback()
+        assertTrue(t.position()!!.playing)
+        assertFalse(t.requested)
+        audio.finishPreparation()
+        audio.callback()
+        assertFalse(t.position()!!.pending)
+        t.start(4, 63)
+        audio.close()
+        assertFalse(t.position()!!.pending)
+        assertFalse(t.requested)
+    }
+
+    @Test fun synchronousPlaybackStillSettlesImmediately() {
+        val (_, t, audio) = transport()
+        t.start(0, 0)
+        assertTrue(t.position()!!.playing)
+        assertTrue(t.requested)
+        audio.playing = false // Synchronous rejection/end, with no pending phase.
+        assertFalse(t.position()!!.playing)
+        assertFalse(t.requested)
+        t.toggle(1, 2)
+        assertEquals(1 to 2, audio.played)
+        assertTrue(t.requested)
     }
 
     @Test fun playbackSkipsParkedOrdersAndPositionsMapBack() {

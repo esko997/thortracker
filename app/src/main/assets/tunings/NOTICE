@@ -1,0 +1,84 @@
+DaMuSc: Database of Musical Scales
+
+Database compilation, annotations and metadata © 2022–2026 John M. McBride
+and contributors. Licensed under Creative Commons Attribution 4.0 International
+(CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+The complete licence accompanies this data in LICENSE-CC-BY-4.0.txt.
+The upstream rights statement accompanies it in LICENSE.md (packaged as
+DaMuSc-LICENSE.txt). Both are unmodified.
+
+Source: https://github.com/jomimc/DaMuSc
+Pinned revision: 9a4589b99d229691fbefd99b4174e39814789a16
+Source files and SHA-256 digests are recorded in SOURCE.json.
+Only Data/measured_scales.csv, Metadata/sources.csv, Metadata/column_key.csv
+and the upstream licence files are vendored. No upstream software is used.
+LICENSE-MIT.txt is retained solely as the referenced companion to LICENSE.md;
+it does not replace the database's CC BY 4.0 licence.
+
+Requested citation:
+McBride JM, Passmore S, Tlusty T (2023) Convergent evolution in a large
+cross-cultural database of musical scales. PLoS ONE 18(12): e0284851.
+https://doi.org/10.1371/journal.pone.0284851
+Each generated record also supplies its MeasuredID, RefID, original-source
+citation from Metadata/sources.csv and the measurement's Reference field.
+
+Thor Tracker transformations (independently authored tools/tuning_packs.py):
+* Include the requested 424-record edition specified below, without any further
+  deduplication. The full 434-record licensed input CSV remains vendored.
+* Sum adjacent Intervals exactly with decimal arithmetic into cumulative cents;
+  omit only the implicit zero degree. No measurement rounding is performed.
+* Append 1200.0 cents only when the record's Octave_modified field is Y.
+  Otherwise the final measured cumulative value remains the period, even when
+  it is not an octave. Do not normalize, rotate, extract variants or transpose.
+* Construct fresh labels from source Name, Country and MeasuredID; group by
+  Region. Use stable measured/MNNNN.scl identities, not another collection's
+  filenames or descriptions. Encode cents with a decimal point for Scala.
+* Preserve original-source references and mark transformations in each entry.
+
+Coverage cross-check: the requested 424 measured identities are M0001–M0434
+except M0013, M0017, M0018, M0022, M0024, M0028, M0029, M0030, M0031 and M0037.
+Exactly those 424 identities are included in the default pack. The other ten
+licensed records are not bundled as tunings, matching the user's accepted
+496-entry addition (424 measured scales plus 72 independent EDOs). This is
+record-identity coverage, not a claim of byte-identical files, names,
+descriptions or numeric serialization.
+No Naren converter, enriched bibliography, descriptions or generated data is
+used in producing the DaMuSc or mathematical EDO packs.
+
+The upstream licence does not grant rights to underlying publications,
+evidence images or original audio; none of those materials is included here.
+The numerical measurements are reported facts; the database compilation and
+metadata remain attributed under CC BY 4.0. No endorsement is implied.
+This data is supplied without warranties; see the licence and upstream rights
+statement. Using a tuning does not itself place rendered music under CC BY.
+Preserve applicable attribution when redistributing the database or projects
+that contain its licensed metadata.
+
+Offline reproduction from the repository root:
+  python3 tools/tuning_packs.py bundled
+Ordinary application builds do not fetch or regenerate this data.
+
+Other bundled tuning packs:
+* edo.thorscales: 72 independently generated mathematical scales, 1–72 EDO.
+  Cumulative cents = 1200*k/N for k=1..N; nine decimal places, round half to
+  even; final period exactly 1200 cents. Fresh labels, no historical comments.
+* stock.thorscales: four existing stock tunings. 19-TET, 24-TET and 5-limit just
+  intonation retain their original mathematical values, generic descriptions
+  and bytes. 22-EDO is regenerated independently from 1200*k/22 to six decimal
+  places, round half to even, preserving the original numerical values and
+  generic description but replacing earlier annotations with fresh comments.
+These mathematical values are facts; the independently authored generator is
+covered by the repository's GPL-3.0 licence, not the DaMuSc database licence.
+
+Local user collections are never bundled or downloaded by this tool. To create
+a private pack, explicitly supply the directory containing your .scl files:
+  python3 tools/tuning_packs.py local --input /path/to/scales \
+    --output /path/to/my-scales.thorscales --id my-scales --name "My scales"
+An optional --attribution-file supplies an additional local UTF-8 notice.
+All .scl identities and raw UTF-8 contents are retained, even for invalid
+scales or duplicate musical content. Hidden directories and uppercase .SCL
+files are included. Symlinks, unreadable or non-UTF-8 files, and exceeded pack
+limits fail the operation rather than silently dropping data. The UI escapes
+control characters for display; the stored strings are not altered.
+User-supplied collections are labelled as having unverified redistribution
+rights. A local import is not permission to redistribute those files.

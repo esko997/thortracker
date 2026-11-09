@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the YM2612 engine benchmark (tools/audio/ym_bench.c) for the host and, with the NDK, as a static arm64
+# Builds the YM2612 engine benchmark (tools/audio/ym_bench.c: the XGM2 machine's ticks, live edits, seeks and exports
+# on the host test's songs, app/src/test/cpp/ym_test_song.h) for the host and, with the NDK, as a static arm64
 # Android executable to push to a device:
 #   tools/audio/build_ym_bench.sh [out-dir]          (default /tmp/ym_bench)
 #   adb push <out-dir>/ym_bench-arm64 /data/local/tmp/ && adb shell /data/local/tmp/ym_bench-arm64 30 48000 10
@@ -13,8 +14,8 @@ ndk="${ANDROID_NDK:-${ANDROID_HOME:-$HOME/Android/Sdk}/ndk/27.0.12077973}"
 bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 includes=(-I "$cpp" -I "$cpp/ym" -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/ymfm"
   -I "$root/app/src/test/cpp")
-csrc=("$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c" "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_psg.c" "$cpp/cpuz80.c"
-  "$cpp/third_party/blip_buf/blip_buf.c" "$root/tools/audio/ym_bench.c")
+csrc=("$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c" "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/vgm_gd3.c" "$cpp/cpuz80.c" "$cpp/third_party/blip_buf/blip_buf.c" "$root/tools/audio/ym_bench.c")
 cxxsrc=("$cpp/ym/ym_ymfm.cpp" "$cpp/third_party/ymfm/ymfm_adpcm.cpp" "$cpp/third_party/ymfm/ymfm_ssg.cpp")
 
 build() { # name cc cxx opt [extra link flags...]
