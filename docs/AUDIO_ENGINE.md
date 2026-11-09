@@ -3876,7 +3876,7 @@ the chip's one resource, for every channel, written at once (the globals) and ke
 | `0xy` arpeggio | x, y semitones | note: steps note, +x, +y every tick (also noise rates); also sets the step to 0 (on a row without a note it changes the sounding note's arpeggio); the next note without `0xy` plays plain |
 | `1xx` slide up | 1/64 semitones per tick | now: until `100`/`200`/`300`; a new note restarts the offset at 0 but keeps sliding |
 | `2xx` slide down | 1/64 semitones per tick | now: as `1xx`, down |
-| `3xx` portamento | 1/64 semitones per tick | now: while active a note on a sounding tone/sample channel glides there without key-on |
+| `3xx` portamento | 1/64 semitones per tick | now: while active a note on a held, unreleased tone/sample channel glides there without key-on; a note after OFF starts a fresh attack |
 | `4xy` vibrato | x speed, y depth | now: the player's vibrato (depth F ±1.86 semitones), independent of the chip's LFO; `4x0` off |
 | `8xy` pan | x left, y right, 0-F | now: the channel's balance R5 (`$FF` at reset; `800` silences) |
 | `Axy` volume slide | x up, y down, 1/8 step per tick | now: until `A00` |
