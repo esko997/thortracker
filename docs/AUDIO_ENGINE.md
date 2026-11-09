@@ -30,11 +30,11 @@ The Mega Drive system (`"ym2612-fm"`) streams Thor Tracker's player through
 **SGDK's XGM2 Z80 driver**, with a YM2612 (ymfm), SN76489 and three driver-mixed PCM lanes.
 It exports VGM, WAV and unpacked/packed XGM2. See [YM2612](#ym2612-sgdks-xgm2-driver-on-a-z80--ym2612--psg-ym2612-fm).
 
-The AY-3-8910 / YM2149 systems (`"ay-zx128"`, `"ay-msx"`, `"ay-atari-st"`, `"ay-cpc"`, roadmap step 7, source only)
+The AY-3-8910 / YM2149 systems (`"ay-zx128"`, `"ay-msx"`, `"ay-atari-st"`, `"ay-cpc"`, released in 0.25.0)
 play Thor Tracker's own player on its own AY/YM core, one variant per stock computer (clock, chip type, frame rate,
 stock wiring), and export VGM. See [AY-3-8910 / YM2149](#ay-3-8910--ym2149-thor-trackers-own-player-for-the-zx-spectrum-128-msx-atari-st-and-amstrad-cpc).
 
-The PC Engine system (`"pce-huc6280"`, unverified source slice) plays the HuC6280's six-channel wavetable PSG with
+The PC Engine system (`"pce-huc6280"`, 0.26.0) plays the HuC6280's six-channel wavetable PSG with
 Thor Tracker's own player (specified here, mirrored by an independent Python reference) on Mednafen's cycle-timed PSG,
 with noise on channels 5-6, the channel 2 → channel 1 LFO, stereo balances and DDA samples streamed from the CPU
 timer, and exports VGM. See [PC Engine](#pc-engine-thor-trackers-own-player-on-a-huc6280-psg-pce-huc6280).
@@ -3609,8 +3609,8 @@ headers, the reference or the test songs.
 
 ## PC Engine: Thor Tracker's own player on a HuC6280 PSG (`"pce-huc6280"`)
 
-**Status: unverified source slice** (branch `huc6280-system`): written without building, generating or running
-anything. The NEC PC Engine / TurboGrafx-16 sound generator is the PSG inside Hudson's HuC6280 CPU: six channels, each
+**Status: integrated for 0.26.0**, with native/reference, Android and SDL verification recorded in `VERIFICATION.md`.
+The NEC PC Engine / TurboGrafx-16 sound generator is the PSG inside Hudson's HuC6280 CPU: six channels, each
 a 32-step 5-bit wavetable or a direct D/A (DDA) output, noise on the last two, one shared LFO (channel 2's waveform
 modulating channel 1's frequency) and a two-stage stereo volume (per channel and master). There is no standard sound
 driver to run, so it follows the OPL3 and OPM: **our own player** (`pce/pce_player.c`, pure integer C without a chip)
@@ -3932,9 +3932,8 @@ writes nothing). Volume, pan and wave change sounding notes at the next update (
 player keys on the note with the slot's instrument, no locks, `fine` added like `Pxx`; ticks only update (no rows). A
 noise instrument off channels 4-5, an undefined slot or arguments outside these ranges are `CHIP_ERR_IMAGE`.
 `release()`: 0 before any tick (the audition is then over: `tick` returns 0); else OFF is applied and its batch written to the chip at once; returns 0 when that
-stopped the channel (no release point), else 1. `tick` returns 0 once the channel stopped (with or without a release: a
-one-shot sample ended), or, after a release, once its written R4 volume is 0 with its volume envelope at its last step,
-or 10 s after the release.
+stopped the channel (no release point), else 1. `tick` returns 0 once the channel stops (including a one-shot sample's
+end or the final zero of a released volume envelope), or 10 s after release for a tail that never reaches zero.
 
 ### Mute and ops behaviour
 
@@ -3966,7 +3965,7 @@ HuC6280 (`tools/audio/pce/pce_ref.py IMAGE --vgm OUT` writes the same bytes from
   (if not −1); then the tick's writes, then each timer interrupt of the tick at its time. The song ends at the second
   arrival at the loop point (or the tick limit, then without a loop) with the wait to that tick's start, then `0x66`.
   The dump re-establishes waves at the loop point, so a VGM player's first pass restarts the loaded waves' phases there
-  (the engine does not): an intended, inaudible-in-practice difference.
+  (the engine does not). This can alter loop-boundary phase; WAV preserves the app's continuous render.
 - Hosts' entry point (`pce/pce_export.h`): `pc_export_vgm(image, 131072, max_ticks, title, author, date, &size,
   &problem)`, as `o3_export_vgm` with GD3 system "PC Engine (Thor Tracker)", converter "Thor Tracker" (`vgm_gd3.c`).
 - Kotlin (`system/pce/PceVgm.kt`): `PceVgm.export(song)` = lower + `PceVgm.renderer.render(image, maxTicks,
@@ -3988,7 +3987,11 @@ reference player's per-tick and per-interrupt writes, positions, the reference V
 when `PCP_PERIOD_Q16` or any shared number disagrees with the Python reference. `python3 tools/audio/pce/pce_golden.py`
 writes `core/src/jvmTest/resources/pce-golden/*.bin.gz` for `PceGoldenTest`.
 
-### Verification (to be run by the parent; nothing here has been run)
+### Verification
+
+The native suite, independent traces/VGM, JVM/Linux tests, Android editor/playback/export checks and Game Boy
+pixel/UGE parity passed. See [0.26.0 verification](VERIFICATION.md#0260-pc-engine-huc6280) for evidence and limits.
+Commands for reproducing the checks:
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/pce_machine_test.c` (see that file
   and `docs/VERIFICATION.md`). `wav_render_test.c` renders `pce-demo.pcimg` (the demo) and `pce-shortest.pcimg` (one

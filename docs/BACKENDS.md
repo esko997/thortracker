@@ -1010,7 +1010,7 @@ pitch sweeps; PSG continues to reuse the NES envelope editor.
 
 ## AY-3-8910 / YM2149 (ZX Spectrum 128, MSX, Atari ST, Amstrad CPC)
 
-Roadmap step 7, source only (branch `ay-systems`; unbuilt — the integrator runs generation, builds and tests). The
+Roadmap step 7, released in 0.25.0 with native/reference, Android and SDL verification recorded in `VERIFICATION.md`. The
 engine contract (clocks and their sources, chip core, image, player, shared noise/envelope arbitration, effects, seek,
 VGM) is `docs/AUDIO_ENGINE.md`, "AY-3-8910 / YM2149".
 
@@ -1096,7 +1096,7 @@ Decisions (made on the user's behalf; see "Open questions"):
 - **Shared views**: Song, Keyboard, Sketch and Pattern as for the Mega Drive's PSG channels (three lanes, up to four
   effect columns); Help: effects, the shared resources and the instrument pages; lane tags from `sharedState`.
 
-## PC Engine (HuC6280 PSG): decisions (branch `huc6280-system`, unverified source slice)
+## PC Engine (HuC6280 PSG): decisions (0.26.0)
 
 Full contract: `docs/AUDIO_ENGINE.md`, "PC Engine". Decided on the user's behalf (the user approved working through the
 chip roadmap autonomously and asked for every onboard feature, including the direct-DAC sample mode):
@@ -1229,6 +1229,11 @@ chip roadmap autonomously and asked for every onboard feature, including the dir
   than hidden behind a vibrato abstraction, because that is what the chip does. Review once listened to.
 - PC Engine output gain: Mednafen's level ÷ 2 so six full unipolar channels do not clip after the high-pass; no
   hardware comparison yet.
+- PC Engine phase-exact seeking: the demo's order 4/row 48 took 134/283/428 ms on Nova/DMG/Konkr.
+  A deliberately extreme valid order (speed 255, five B-7 tones and one looped DDA sample, seek to row 63:
+  16,065 replayed ticks) took 14.87 s on Konkr. The UI remained responsive (maximum measured UI round trip 17 ms)
+  and audio reported no xruns or driver faults. Keep exact chip/filter state rather than silently changing the
+  sound; this long-seek case remains a performance tradeoff to revisit.
 - AY variants (decided on the user's behalf): four stock machines — ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910,
   NTSC 60 Hz frames), Atari ST (YM2149F, PAL 50 Hz VBL) and Amstrad CPC (AY-3-8912 at 1 MHz, 50.08 Hz frames, the
   stereo socket) — each with its own clock, chip type and wiring. Not modelled: PAL MSX (50 Hz), MSX-ENGINE machines
