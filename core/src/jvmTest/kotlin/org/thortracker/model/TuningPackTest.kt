@@ -23,6 +23,21 @@ class TuningPackTest {
         assertThrows(IllegalArgumentException::class.java) { Scl.parse(originals.last().scl, "") }
     }
 
+    @Test fun byteInputPreservesUnicodeAndRejectsMalformedUtf8() {
+        val source = """{"id":"utf8","name":"日本語 ♯","entries":[]}"""
+        assertEquals(TuningPack(id = "utf8", name = "日本語 ♯", entries = emptyList()),
+            TuningPackCodec.decode(source.encodeToByteArray()))
+        for (invalid in listOf(
+            byteArrayOf(0xff.toByte()),
+            byteArrayOf(0xc3.toByte()),
+            byteArrayOf(0xc0.toByte(), 0xaf.toByte()),
+            byteArrayOf(0xed.toByte(), 0xa0.toByte(), 0x80.toByte()),
+        )) assertThrows(IllegalArgumentException::class.java) { TuningPackCodec.decode(invalid) }
+        assertThrows(IllegalArgumentException::class.java) {
+            TuningPackCodec.decode(ByteArray(TuningPackCodec.MAX_BYTES + 1))
+        }
+    }
+
     @Test fun displayEscapesControlsWithoutChangingStoredFields() {
         val original = pack.copy(name = "A\nB\t\u0000\u202e", entries = listOf(entry.copy(id = "x\r\ny")))
         val decoded = TuningPackCodec.decode(TuningPackCodec.encode(original))

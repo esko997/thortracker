@@ -72,12 +72,13 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
-9. **Tuning library** — retain the four stock choices; add 424 DaMuSc measured tunings regenerated from
-   [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md)
-   and independently generated 1–72 EDO (496 additions). Preserve non-octave periods and attribution.
-   Other collections may be installed as optional local user-supplied packs; no uncleared scale files in the
-   repository or standard releases, and no automatic downloads. Search/category navigation must remain usable
-   with a controller. Do not contact upstream about licensing without new authorization.
+9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
+   [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md),
+   and independently generated 1–72 EDO (496 additions). Non-octave periods and attribution are preserved.
+   Controller paging/category/search, selected-tuning provenance and optional local `.thorscales` packs work on
+   Android and desktop; verified on Nova, DMG and Konkr, including a private 4,550-entry import.
+   No uncleared scale files in standard releases, no automatic downloads and no upstream licensing contact.
+   Project format 10 reads versions 1–9; older apps cannot read newly saved projects.
 10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
    - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
      and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).

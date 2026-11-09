@@ -38,6 +38,59 @@ parity, standalone renderer, clean permanent instrumentation suite and official
 artifact delivery. No human listening, original-hardware or independent-core
 audio comparison is claimed.
 
+## 0.28.0 Licensed tuning library and optional local packs
+
+The library contains **500 tunings**: four existing stock choices, **424 DaMuSc
+measured tunings** regenerated from pinned, explicitly licensed upstream data,
+and independently generated **1–72 EDO**. Non-octave periods, original numeric
+intervals and source/licence attribution are retained. Naren's files and
+annotations are not redistributed; other collections are local user imports,
+not bundled content or automatic downloads.
+
+Verification:
+
+- **706 JVM core tests, 14 Linux core tests and six Android-host tests passed**.
+  Production-signed Android, instrumentation and native desktop builds passed,
+  serialized with one Gradle worker and in-process Kotlin.
+- After removing both temporary instrumentation harnesses, the freshly built
+  clean test APK passed **all 21 permanent Android tests** on Nova (47.949 s).
+- All three generated packs reproduced byte-for-byte. The APK contains exactly
+  those three catalogue packs, totalling 500 entries, with packaged notices.
+  The 41 explicitly flagged octave completions, 334 non-octave periods and
+  measured scales spanning 2–25 degrees are preserved rather than normalised.
+- Real Nova, DMG and Konkr activities exercised collection/category paging,
+  search, numeric details and source scrolling, Apply, root/tolerance retention,
+  Undo, project roundtrip and activity recovery.
+- Actual Android document pickers imported a private **4,550-entry** local pack;
+  every entry parsed with the production Scala parser. Import plus validation
+  after file selection took **0.571 / 1.007 / 3.277 seconds** on Nova/DMG/Konkr.
+  Worst measured UI round trips during import were **8 / 16 / 41 ms**.
+  This private pack and its source files are not release assets.
+- All three devices passed same-ID replacement cancellation/confirmation,
+  invalid-scale visibility without Apply, removal cancellation/confirmation,
+  selected-tuning retention after removal, bundled-ID protection and invalid
+  UTF-8 rejection. DMG initially exposed a Sortie overlay obstructing the picker,
+  then a smoke-harness race that waited for deletion rather than the completed
+  library refresh; dismissing the overlay and awaiting the actual UI completion
+  resolved those harness failures without changing app behavior.
+- The actual SDL frontend exercised the same import/replace/remove lifecycle.
+  Confirming replacement and Quit in one input step left the replacement fully
+  persisted on exit. Oversized input and a corrupt installed pack produced
+  visible errors; invalid UTF-8 now identifies the encoding problem instead of
+  a generic file-operation error.
+- The production parser also accepted all **4,581 source files** in the private
+  audit corpus, including duplicate paths. Eight files initially failed because
+  an attached Scala `!` annotation was treated as part of the interval; the
+  corrected parser preserves and accepts those sources.
+- **All 32 Game Boy renders remain pixel-identical** to verified 0.27.0,
+  comparing complete decoded RGBA buffers. Factory Game Boy `.uge` bytes remain
+  unchanged. Device and SDL tuning-library surfaces were inspected.
+
+Project format is now **10**, storing only the selected tuning and its provenance,
+not the catalogue. Versions 1–9 remain readable; older apps cannot read newly
+saved format-10 projects, even when no tuning is selected. No new chip engine,
+original-hardware comparison or human listening result is claimed here.
+
 ## 0.27.0 Konami SCC and SCC+
 
 Two five-voice MSX wavetable systems: SCC shares waveform RAM between channels
