@@ -32,6 +32,12 @@
 ; (a manual mod speed whose low byte has bit 7 set, stored as low, high | $80). The Sunsoft 5B build
 ; (nes_s5b_player_image.h) adds -D FAMISTUDIO_EXP_S5B=1 (5B squares 1-3 as channels 5-7) and assembles a
 ; copy with S5B_ENGINE_PATCH (Thor Tracker's `$5F i` opcode).
+; The Nintendo MMC5 build (generated/nes_mmc5_player_image.h) adds -D FAMISTUDIO_EXP_MMC5=1 the same way
+; (the plain engine, no patch): MMC5 pulse 1/2 as channels 5-6, playing the 2A03 note table and
+; instruments; the engine writes $5010 = $00 and $5015 = $03 at init and $5000/$5002/$5003,
+; $5004/$5006/$5007 per frame (of $5000-$5007 never $5001/$5005, the sweep units MMC5 lacks; never
+; $5011: the pinned engine has no MMC5 PCM), and its own song base (the first page after the
+; player, measured).
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

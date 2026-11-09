@@ -15,6 +15,9 @@
  *                     2A03 + FDS (nes/nes_chip.c, nes/nes_fds.c)
  *   "nes-famistudio-s5b"  the same engine built with Sunsoft 5B support on a 6502 + 2A03 + 5B (YM2149F)
  *                     (nes/nes_chip.c, nes/nes_s5b.c)
+ *   "nes-famistudio-mmc5"  the same engine built with Nintendo MMC5 support on a 6502 + 2A03 + MMC5 audio, plus
+ *                     Thor Tracker's software PCM lane on the MMC5 DAC (channel 7; its image is the FamiStudio
+ *                     image followed by the lane's extension) (nes/nes_chip.c, nes/nes_mmc5.c, nes/nes_mmc5_pcm.c)
  *   "c64-sid"         GoatTracker 2.77 playroutine on a 6510 + reSID 1.0 (PAL C64)
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)

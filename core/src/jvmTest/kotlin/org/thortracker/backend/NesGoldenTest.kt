@@ -128,6 +128,7 @@ class NesGoldenTest {
             var n163 = 0
             var fds = 0
             var s5b = 0
+            var mmc5 = 0
             val patchA = IntArray(8) { -1 }
             val patchB = IntArray(8) { -1 }
             for (f in 0 until frames) {
@@ -142,6 +143,7 @@ class NesGoldenTest {
                 n163 += ta.count { (it shr 8) == 0x4800 }
                 fds += ta.count { (it shr 8) in 0x4080..0x408A }
                 s5b += ta.count { (it shr 8) >= 0xC000 }
+                mmc5 += ta.count { (it shr 8) in 0x5000..0x5015 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
@@ -164,6 +166,10 @@ class NesGoldenTest {
             if (lowered.player == NesPlayer.S5B) {
                 // The trace covers the 5B: every frame its squares sound, register selects and data writes (compared).
                 assertTrue(s5b > frames, "$name: only $s5b Sunsoft 5B register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.MMC5) {
+                // The trace covers the MMC5: its pulses' registers are written (and compared) every frame.
+                assertTrue(mmc5 > frames, "$name: only $mmc5 MMC5 register writes in $frames frames")
             }
         }
     }

@@ -1,9 +1,10 @@
 /* Renders a lowered NES image (the bytes NesSystem.engine.lower, NesVrc6System.engine.lower, NesVrc7System.engine.lower,
- * an N163 system's engine.lower, NesFdsSystem.engine.lower or NesS5bSystem.engine.lower write, e.g.
- * app/build/samples/thor-quest.nesimg, saw-sunrise.nesimg, lantern-point.nesimg, wavetable-garden-8ch.nesimg,
- * side-b.nesimg or copper-kite.nesimg) through the native engine of the player build named in its header (bytes 4..7:
- * "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds"
- * or "nes-famistudio-s5b") exactly as the audio hosts run it:
+ * an N163 system's engine.lower, NesFdsSystem.engine.lower, NesS5bSystem.engine.lower or NesMmc5System.engine.lower
+ * write, e.g. app/build/samples/thor-quest.nesimg, saw-sunrise.nesimg, lantern-point.nesimg,
+ * wavetable-garden-8ch.nesimg, side-b.nesimg, copper-kite.nesimg or tandem-skies.nesimg) through the native engine of
+ * the player build named in its header (bytes 4..7: "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7",
+ * "nes-famistudio-n163-1".."-8", "nes-famistudio-fds", "nes-famistudio-s5b" or "nes-famistudio-mmc5") exactly as the
+ * audio hosts run it:
  * chip_engine_ops lookup, load_image (the full image validation; its problem is printed when it fails), start at
  * order 0 row 0, then one tick per engine frame. Writes a 48 kHz stereo 16-bit WAV and prints peak/rms and any
  * driver fault. Built and run by tools/audio/render_nes_image.sh. */
@@ -14,6 +15,7 @@
 
 #include "chip_engine.h"
 #include "nes_image.h"
+#include "nes_mmc5_pcm.h"
 
 #define RATE 48000
 
@@ -25,7 +27,8 @@ int main(int argc, char** argv) {
     double seconds = argc > 3 ? atof(argv[3]) : 30.0;
     FILE* f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 1; }
-    static uint8_t bytes[NES_IMAGE_SIZE + 1];
+    /* The largest image: the MMC5 engine's (its FamiStudio image plus the PCM lane's extension). */
+    static uint8_t bytes[NES_MMC5_IMAGE_SIZE + NES_PCM_EXT_SIZE + 1];
     size_t size = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
     const uint32_t id = size >= 8 ? (uint32_t)bytes[4] | (uint32_t)bytes[5] << 8 | (uint32_t)bytes[6] << 16 | (uint32_t)bytes[7] << 24 : 0;
@@ -36,6 +39,7 @@ int main(int argc, char** argv) {
                          : id == NES_VRC7_PLAYER_ID ? "nes-famistudio-vrc7"
                          : id == NES_FDS_PLAYER_ID  ? "nes-famistudio-fds"
                          : id == NES_S5B_PLAYER_ID  ? "nes-famistudio-s5b"
+                         : id == NES_MMC5_PLAYER_ID ? "nes-famistudio-mmc5"
                                                     : "nes-famistudio";
     for (int n = 0; n < NM_N163_BUILDS; ++n) {
         if (id == nes_player_n163[n].id) engine = n163_engines[n];
@@ -49,7 +53,14 @@ int main(int argc, char** argv) {
     ChipImage* image = aligned_alloc(64, (ops->image_storage + 63) / 64 * 64);
     if (ops->load_image(image, bytes, size) != CHIP_OK) {
         const NesImage* bad = (const NesImage*)image;
-        fprintf(stderr, "image rejected: %s (at byte %u)\n", bad->info.problem ? bad->info.problem : "?", (unsigned)bad->info.problem_at);
+        const char* problem = bad->info.problem;
+        unsigned at = (unsigned)bad->info.problem_at;
+        if (!problem && id == NES_MMC5_PLAYER_ID) { /* the PCM lane's extension (nes_mmc5_pcm.h) */
+            const NesMmc5Image* mmc5 = (const NesMmc5Image*)image;
+            problem = mmc5->pcm.info.problem;
+            at = (unsigned)(mmc5->pcm.info.problem_at + NES_MMC5_IMAGE_SIZE);
+        }
+        fprintf(stderr, "image rejected: %s (at byte %u)\n", problem ? problem : "?", at);
         return 1;
     }
     ChipMachine* m = ops->create(RATE);

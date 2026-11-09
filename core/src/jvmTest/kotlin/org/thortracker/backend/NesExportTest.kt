@@ -7,6 +7,8 @@ import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesFdsSystem
+import org.thortracker.system.nes.NesMmc5DemoSong
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesS5bSystem
@@ -365,6 +367,76 @@ class NesExportTest {
         assertTrue(errorsWith(NesInstrument("E", s5b = S5bEnvelope(S5bShape.DECAY))).isNotEmpty())
         assertTrue(errorsWith(NesInstrument("N", chip = NesChip.S5B, noise = NesEnvelope(listOf(32)))).isNotEmpty())
         assertEquals(emptyList(), errorsWith(NesInstrument("Ok", chip = NesChip.S5B, mixer = NesEnvelope(listOf(0, 1, 2, 3)), noise = NesEnvelope(listOf(31)))))
+    }
+
+    /**
+     * NES + MMC5: the `.nsf` carries the MMC5 player and sets `$7B` bit 3; the text names the expansion and its two
+     * square channels, and its instruments (2A03 sounds) carry no expansion.
+     */
+    @Test
+    fun mmc5ExportsNameTheChip() {
+        val song = NesMmc5System.demo()
+        assertEquals(emptyList(), NesMmc5System.errors(song))
+        assertEquals(emptyList(), NesMmc5System.warnings(song))
+        val nsf = NesMmc5System.exports.first { it.extension == "nsf" }.export(song)
+        assertEquals(NesMmc5PlayerImage.LOAD, u16(nsf, 8))
+        assertEquals(NesMmc5PlayerImage.INIT, u16(nsf, 10))
+        assertEquals(NesMmc5PlayerImage.PLAY, u16(nsf, 12))
+        assertEquals(0x08, nsf[0x7b].toInt()) // expansion chips: MMC5
+        val body = nsf.copyOfRange(128, nsf.size)
+        assertContentEquals(NesMmc5PlayerImage.BYTES, body.copyOfRange(0, NesMmc5PlayerImage.BYTES.size))
+        val lowered = FamiStudioLowering.lower(song)
+        assertEquals(NesPlayer.MMC5, lowered.player)
+        val songAt = NesMmc5PlayerImage.SONG_BASE - NesMmc5PlayerImage.LOAD
+        assertContentEquals(lowered.data, body.copyOfRange(songAt, songAt + lowered.data.size))
+        assertContentEquals(lowered.samples, body.copyOfRange(lowered.sampleStart - NesMmc5PlayerImage.LOAD, body.size))
+        // The NSF's song plays like the lowered data, MMC5 writes included.
+        val a = NesTracer(lowered.data, NesPlayer.MMC5)
+        val b = NesTracer(body.copyOfRange(songAt, lowered.sampleStart - NesMmc5PlayerImage.LOAD), NesPlayer.MMC5)
+        var mmc5 = 0
+        repeat(600) {
+            val f = a.frame()
+            assertContentEquals(f, b.frame())
+            mmc5 += f.count { (it shr 8) in 0x5000..0x5015 }
+        }
+        assertTrue(mmc5 > 600, "the demo writes the MMC5 ($mmc5 writes in 600 frames)")
+        val lines = FamiStudioText.text(song).lines()
+        assertTrue(lines[0].endsWith("Expansions=\"MMC5\""), lines[0])
+        assertFalse(lines.any { it.contains("Expansion=") })
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM", "MMC5Square1", "MMC5Square2"),
+            lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+    }
+
+    /** MMC5 pulses: 2A03 sounds, A-1 as their lowest note, duties 00-03, no DMC level; one chip in the bank. */
+    @Test
+    fun mmc5ValidationTreatsItsPulsesAsPulses() {
+        val blank = NesMmc5System.blank()
+        fun errors(ch: Int, cell: Cell) = NesMmc5System.errors(withCell(blank, ch, 0, cell)).joinToString()
+        assertEquals("", errors(NesRules.MMC5_PULSE1, Cell(57, 1)))
+        assertEquals("", errors(NesRules.MMC5_PULSE2, Cell(NesRules.LOWEST_TONAL, 1))) // A-1
+        assertTrue(errors(NesRules.MMC5_PULSE1, Cell(NesRules.LOWEST_TONAL - 1, 1)).contains("MMC5 Pulse 1 cannot play below A-1"))
+        assertTrue(errors(NesRules.MMC5_PULSE2, Cell(30, 1, NesRules.FX_SLIDE_DOWN, 0x0A)).contains("below A-1, which MMC5 Pulse 2 cannot play"))
+        assertEquals("", errors(NesRules.MMC5_PULSE1, Cell(57, 1, NesRules.FX_DUTY, 0x03)))
+        assertTrue(errors(NesRules.MMC5_PULSE1, Cell(57, 1, NesRules.FX_DUTY, 0x04)).contains("V00-V03"))
+        assertTrue(errors(NesRules.MMC5_PULSE2, Cell(57, 1, NesRules.FX_DELTA_COUNTER, 0x10)).contains("has no effect on MMC5 Pulse 2"))
+        for (fx in listOf(NesRules.FX_ARPEGGIO to 0x37, NesRules.FX_VIBRATO to 0x44, NesRules.FX_VOLUME_SLIDE to 0x3F, NesRules.FX_VOLUME to 0x08,
+            NesRules.FX_FINE_PITCH to 0x84, NesRules.FX_SLIDE_UP to 0x02, NesRules.FX_NOTE_CUT to 0x02)) {
+            assertEquals("", errors(NesRules.MMC5_PULSE1, Cell(57, 1, fx.first, fx.second)), "${fx.first}")
+        }
+        // Every 2A03 pulse effect, with the 2A03's duties.
+        assertEquals(NesSystem.effectsFor(0).map { it.code }, NesMmc5System.effectsFor(NesRules.MMC5_PULSE1).map { it.code })
+        assertEquals("Duty 75%", NesMmc5System.describeEffect(blank, NesRules.MMC5_PULSE1, NesRules.FX_DUTY, 3))
+        // MMC5 songs hold 2A03 sounds only, and are not plain NES or VRC6 songs.
+        val bank = blank.nes.instruments.toMutableList().also { it[0] = NesInstrument("Stray", chip = NesChip.VRC6) }
+        assertTrue(NesMmc5System.structuralErrors(blank.copy(sound = blank.nes.copy(instruments = bank))).joinToString().contains("this song has no VRC6 chip"))
+        assertTrue(NesSystem.structuralErrors(blank).single().contains("NES + MMC5"))
+        assertTrue(NesVrc6System.structuralErrors(blank).single().contains("NES + MMC5"))
+        // The shortest song the WAV test renders: one one-row order at speed 1, a held note on MMC5 Pulse 1.
+        val shortest = NesMmc5DemoSong.shortest()
+        assertEquals(emptyList(), NesMmc5System.errors(shortest))
+        assertEquals(1, shortest.patterns.single().length)
+        assertEquals(1, shortest.ticksPerRow)
+        assertEquals(57, shortest.patterns[0].tracks[NesRules.MMC5_PULSE1][0].note)
     }
 
     @Test
