@@ -209,7 +209,7 @@ object SccValidator {
                 walk.row(pattern.tracks, o, row)
                 if (!walk.shared) continue
                 val (a, b) = SccSound.SHARED_CHANNELS.first to SccSound.SHARED_CHANNELS.last
-                val key = if (walk.keyed[a] && walk.keyed[b]) walk.waveSet(a) to walk.waveSet(b) else null
+                val key = if (walk.sharedOverlap) walk.overlapWaves(a) to walk.overlapWaves(b) else null
                 val clash = key != null && key.first.map { sound.wave(it)?.samples }.toSet() != key.second.map { sound.wave(it)?.samples }.toSet()
                 if (!clash) { previous = null; continue }
                 if (key == previous) continue
@@ -324,14 +324,17 @@ object SccValidator {
  * channel holds a note (keyed, not released); OFF and `Sxx` release a note whose volume envelope has a release point,
  * else (or when released) key it off. A released note plays its volume envelope from the release point one value per
  * tick and is keyed off in the tick that plays a final value 0 (a release ending above 0 holds keyed); the walk counts
- * ticks for that (rows of [speed] ticks, `Gxx` rows and `Sxx` at their tick). On the SCC a key-on on SCC 4 or SCC 5, or
+ * ticks for that (rows of [speed] ticks, `Gxx` rows and `Sxx` at their tick). Overlap is observed after rows, cuts and
+ * release ends at each event tick; ticks between events have the same keyed state and need no visit. On the SCC a
+ * key-on on SCC 4 or SCC 5, or
  * a change of the wave such a channel holds, is a wave claim: the claiming channel's wave fills the shared RAM unless
  * the test register freezes it. A channel's held wave follows its note while keyed (a released note included: `Wxx`, a
  * note that ends a lock, the wave envelope); keyed off, only an explicit `Wxx` changes it (the player keeps advancing
  * the envelope but no longer lets it reach a RAM), so after its key-off the channel keeps RAM 3 only until the other
  * channel claims it. A note's wave is its lock, else the first value of its instrument's wave envelope: the envelope's
- * later steps re-claim the RAM tick by tick while the note is keyed, which this row model does not follow (it says so
- * where it matters). Jumps and breaks are not followed (the walk is sequential, as the validator's).
+ * later steps re-claim the RAM tick by tick while the note is keyed, which this row model does not follow. Such a
+ * potential claim makes the displayed RAM estimate uncertain until a later definite write, even if the stepping
+ * note ends within the row. Jumps and breaks are not followed (the walk is sequential, as the validator's).
  */
 internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
     /** The latest claim of the SCC's shared wave RAM: by [channel] at ([order], [row]), its note's [slot] and [wave]. */
@@ -374,6 +377,43 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
 
     private val portamento = IntArray(channels)
     private val delays = IntArray(channels)
+    private val cuts = IntArray(channels)
+    private val overlapMasks = LongArray(channels)
+
+    /** Both shared voices were keyed together for at least one update in this row (not necessarily its last). */
+    var sharedOverlap = false
+        private set
+
+    /** An untracked wave-envelope step may have changed the RAM or its owner since the last definite write. */
+    var heldUncertain = false
+        private set
+
+    /** All waves a voice could play during this row's overlap, including before a delayed replacement note. */
+    fun overlapWaves(channel: Int): List<Int> =
+        (1..SccSound.WAVES).filter { overlapMasks[channel] and (1L shl (it - 1)) != 0L }
+
+    private fun waveMask(channel: Int): Long {
+        if (lock[channel] > 0) return 1L shl (lock[channel] - 1)
+        var mask = 0L
+        val values = sound.instrument(noteSlot[channel])?.wave?.values ?: return mask
+        for (wave in values) mask = mask or (1L shl (wave - 1))
+        return mask
+    }
+
+    /** Observe one keyed-state interval, without simulating envelope steps or allocating per tick. */
+    private fun observeShared() {
+        if (!shared) return
+        val a = SccSound.SHARED_CHANNELS.first
+        val b = SccSound.SHARED_CHANNELS.last
+        val wa = if (keyed[a]) waveMask(a) else 0L
+        val wb = if (keyed[b]) waveMask(b) else 0L
+        if (keyed[a] && keyed[b]) {
+            sharedOverlap = true
+            overlapMasks[a] = overlapMasks[a] or wa
+            overlapMasks[b] = overlapMasks[b] or wb
+        }
+        if (!frozen && ((wa and (wa - 1L)) != 0L || (wb and (wb - 1L)) != 0L)) heldUncertain = true
+    }
 
     /** The shared RAM's latest claim (SCC), or null before any. */
     var claim: Claim? = null
@@ -403,32 +443,42 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
     fun row(tracks: List<List<Cell>>, order: Int, r: Int) {
         this.order = order
         row = r
+        cuts.fill(-1)
+        overlapMasks.fill(0L)
+        sharedOverlap = false
         for (ch in 0 until channels) {
             val c = tracks[ch][r]
             for (col in 0..c.more.size) if (c.effectCode(col) == SccRules.FX_SPEED && c.effectParam(col) > 0) speed = c.effectParam(col)
         }
-        var delayed = false
+        // Rows run before cuts and release-end updates, including when a note retriggers at its old release end.
         for (ch in 0 until channels) {
             val c = tracks[ch][r]
             var d = 0
             for (col in 0..c.more.size) if (c.effectCode(col) == SccRules.FX_DELAY && c.effectParam(col) > 0) d = c.effectParam(col)
             delays[ch] = d
             when {
-                d == 0 -> run(c, ch, 0)
+                d == 0 -> Unit
                 d >= speed -> {
                     warn?.invoke("${where(ch)}: G${NumberText.hex(d, 2)} waits $d ticks but rows are $speed ticks; the row never plays")
                     delays[ch] = -1
                 }
-                else -> delayed = true
             }
         }
-        if (delayed) {
-            for (tick in 1 until speed) {
-                endReleases(rowTick + tick - 1)
-                for (ch in 0 until channels) if (delays[ch] == tick) run(tracks[ch][r], ch, tick)
+        var tick = 0
+        while (tick < speed) {
+            for (ch in 0 until channels) if (delays[ch] == tick) run(tracks[ch][r], ch, tick)
+            for (ch in 0 until channels) if (cuts[ch] == tick) keyOff(ch, tick)
+            endReleases(rowTick + tick)
+            observeShared()
+            var next = speed
+            for (ch in 0 until channels) {
+                if (delays[ch] > tick && delays[ch] < next) next = delays[ch]
+                if (cuts[ch] > tick && cuts[ch] < next) next = cuts[ch]
+                if (keyed[ch] && released[ch] && releaseEnd[ch] > rowTick + tick &&
+                    releaseEnd[ch] < rowTick + next) next = (releaseEnd[ch] - rowTick).toInt()
             }
+            tick = next
         }
-        endReleases(rowTick + speed - 1)
         rowTick += speed
     }
 
@@ -469,14 +519,17 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
             hasNote && portamento[ch] > 0 && keyed[ch] && !released[ch] -> Unit
             hasNote -> keyedOn = keyOn(ch)
         }
-        if (cut in tick until speed) keyOff(ch, cut)
+        cuts[ch] = cut
         // Keyed off, the held wave changes only through an explicit Wxx (the lock), as in the player; a key-on claims
-        // even when an Sxx on its row keys it off again.
+        // even when an Sxx on its row keys it off again in the cut pass.
         if (active[ch] && (keyedOn || keyed[ch] || lock[ch] > 0)) {
             val w = if (lock[ch] > 0) lock[ch] else sound.instrument(noteSlot[ch])?.wave?.values?.firstOrNull() ?: 0
             if (keyedOn || w != current[ch]) {
                 current[ch] = w
-                if (shared && ch in SccSound.SHARED_CHANNELS) claim = Claim(ch, order, row, noteSlot[ch], w, keyedOn)
+                if (shared && ch in SccSound.SHARED_CHANNELS) {
+                    claim = Claim(ch, order, row, noteSlot[ch], w, keyedOn)
+                    if (!frozen) heldUncertain = false
+                }
             }
         }
         if (shared && !frozen) claim?.let { held = current[it.channel] }
@@ -512,7 +565,8 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
         val how = if (c.byNote) "note" else "wave change"
         val holds = if (held == 0) "silence (the RAM was never written)" else SccRules.waveLabel(song, held)
         val frozenNote = if (held != c.wave) " (frozen by T${NumberText.hex(test, 2)}; the claim was for ${SccRules.waveLabel(song, c.wave)})" else ""
-        return "$holds from ${SccRules.CHANNEL_NAMES[c.channel]}'s $how at order ${NumberText.hex(c.order, 2)} row ${c.row}$frozenNote"
+        val estimate = "$holds from ${SccRules.CHANNEL_NAMES[c.channel]}'s $how at order ${NumberText.hex(c.order, 2)} row ${c.row}$frozenNote"
+        return if (heldUncertain) "$estimate (row estimate only; wave-envelope steps may have changed the wave and owner)" else estimate
     }
 
     private companion object {

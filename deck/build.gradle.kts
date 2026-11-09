@@ -144,7 +144,9 @@ val buildEngine by tasks.registering(Exec::class) {
         append("rm -f '${out}/libdeck_native.a'\n")
         append("if [ -x \"\$AR\" ]; then \"\$AR\" rcs '${out}/libdeck_native.a' '${out}'/*.o; else ar rcs '${out}/libdeck_native.a' '${out}'/*.o; fi\n")
     }
-    commandLine("bash", "-c", script)
+    // Feed the script through stdin: the growing engine list exceeds Linux's per-argument limit with bash -c.
+    commandLine("bash", "-s")
+    standardInput = script.byteInputStream()
 }
 
 kotlin {

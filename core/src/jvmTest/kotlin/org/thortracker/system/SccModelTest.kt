@@ -385,6 +385,65 @@ class SccModelTest {
     }
 
     @Test
+    fun sharedWaveWarningsIncludeReleaseOverlapInsideARow() {
+        // Consumer APIs only: this regression must also compile against the pre-fix row walk.
+        // Release at row 4 tick 4 = absolute tick 28; its final 0 is tick 31 = row 5 tick 1.
+        fun song(tailChannel: Int, stepping: Boolean, delay: Int = 0, cut: Int = 4): Song {
+            val tail = SccInstrument("tail", volume = NesEnvelope(listOf(15, 12, 8, 4, 0), release = 1),
+                wave = NesEnvelope(if (stepping) listOf(1, 2) else listOf(1), loop = 0))
+            val steady = SccInstrument("steady", volume = NesEnvelope(listOf(15)), wave = NesEnvelope(listOf(3)))
+            var s = withSound(SccSystem.blank().copy(ticksPerRow = 6)) {
+                it.withInstrument(20, tail).withInstrument(21, steady)
+                    .withWave(1, SccWave("positive", List(32) { 64 }))
+                    .withWave(2, SccWave("negative", List(32) { -64 }))
+                    .withWave(3, SccWave("alternating", List(32) { i -> if (i % 2 == 0) 64 else -64 }))
+            }
+            s = with(s, 0, tailChannel, 0, Cell(48, 20))
+            s = with(s, 0, tailChannel, 4, Cell(effect = SccRules.FX_CUT, param = cut))
+            return with(s, 0, 7 - tailChannel, 5, Cell(55, 21, SccRules.FX_DELAY, delay))
+        }
+        for (tailChannel in 3..4) for (stepping in listOf(false, true)) {
+            val overlap = song(tailChannel, stepping)
+            assertEquals("one tick of overlap, channel $tailChannel, stepping $stepping", 1, overlap.system.warnings(overlap).size)
+            val independent = plus(overlap)
+            assertTrue(independent.system.warnings(independent).isEmpty())
+            assertNull(independent.system.sharedState(independent, 0, 5))
+            // G01 starts on the final-0 tick, G02 after it: neither voice overlaps an update of the tail.
+            for (delay in 1..2) {
+                val delayed = song(tailChannel, stepping, delay)
+                assertTrue("G0$delay after release", delayed.system.warnings(delayed).isEmpty())
+                assertEquals("W03", delayed.system.sharedState(delayed, 0, 5)!!.tags[3])
+            }
+            // Starting release a tick earlier puts its terminal 0 at row 5 tick 0, before the shared-wave update.
+            val terminalZero = song(tailChannel, stepping, cut = 3)
+            assertTrue(terminalZero.system.warnings(terminalZero).isEmpty())
+            assertEquals("W03", terminalZero.system.sharedState(terminalZero, 0, 5)!!.tags[3])
+            // A second OFF at tick 0 also ends the tail before the entering voice's update.
+            val secondOff = with(overlap, 0, tailChannel, 5, Cell(Cell.CUT))
+            assertTrue(secondOff.system.warnings(secondOff).isEmpty())
+            assertEquals("W03", secondOff.system.sharedState(secondOff, 0, 5)!!.tags[3])
+            // Without a release point the first OFF cuts at tick 0 as well.
+            val noRelease = withSound(secondOff) {
+                it.withInstrument(20, SccInstrument("held", volume = NesEnvelope(listOf(15)),
+                    wave = NesEnvelope(if (stepping) listOf(1, 2) else listOf(1), loop = 0)))
+            }
+            val firstOff = with(noRelease, 0, tailChannel, 4, Cell())
+            assertTrue(firstOff.system.warnings(firstOff).isEmpty())
+            assertEquals("W03", firstOff.system.sharedState(firstOff, 0, 5)!!.tags[3])
+        }
+        // The tail may take RAM back in the overlap tick. Its ending does not restore the steady voice's wave:
+        // preserve the uncertainty in subsequent empty rows, until a fresh definite claim replaces it.
+        val uncertain = song(4, stepping = true)
+        for (row in 5..6) {
+            val state = uncertain.system.sharedState(uncertain, 0, row)!!
+            assertEquals("W03+", state.tags[3])
+            assertEquals(state.tags[3], state.tags[4])
+        }
+        val reclaimed = with(uncertain, 0, 3, 7, Cell(55, 21))
+        assertEquals("W03", reclaimed.system.sharedState(reclaimed, 0, 7)!!.tags[3])
+    }
+
+    @Test
     fun testRegisterWarningsAndFreezesDependOnTheBits() {
         fun song(param: Int, system: KonamiSccSystem = SccSystem) = blankWith(0, 0, Cell(57, lead, SccRules.FX_TEST, param), system)
         // Restart (bit 5) and normal operation are silent; frequency modes, unknown bits and freezes warn.

@@ -4100,7 +4100,13 @@ Tracker channels `SCC 1`-`SCC 5` = chip channels 0-4, one bank of instruments fo
 to channel *k*. On the SCC, RAMs 0-2 belong to channels 1-3 and **RAM 3 to whichever of channels 4 and 5 claimed it
 last** (the player's rule below): both channels always play its content. The Kotlin side never pretends otherwise: the
 song check warns where SCC 4 and SCC 5 overlap with different waves and the Pattern lane headers and inspector show
-which wave the shared RAM holds (`SoundSystem.sharedState`).
+the row model's shared-wave estimate (`SoundSystem.sharedState`). The check includes overlaps that end inside a row:
+it observes keyed state after rows, scheduled cuts and release ends at their event ticks, skipping unchanged ticks.
+A delayed note entering at or after the tail's final-0 tick does not overlap it; neither does a note entering when
+tick-0 OFF or a terminal 0 has already ended the other voice before the update. The model does not simulate wave
+envelope steps: a `+` lane tag and an inspector qualification mark possible changes of wave **or owner** by either
+keyed shared voice. That uncertainty survives the stepping voice's key-off (even within the same row) until a later
+definite write; a static-wave note entering during its tail is not presented as a definite RAM owner afterwards.
 
 ### Image layout (what the Kotlin lowering produces)
 
@@ -4310,12 +4316,18 @@ instruments with volume, pitch (relative: sweeps) and wave envelopes.
   the next tick starts (order, row) (`CHIP_SEEK_FROM_START`), counting *n* ticks; beyond `max_ticks`, from the order's
   row 0 with its start speed (`CHIP_SEEK_FROM_ORDER`, the OPL3's fallback and bounds; a row behind a `Dxx` of the same
   order is `CHIP_ERR_IMAGE`). Then from the reset again: the first *n* − P ticks run the player and apply its writes to
-  the core with **`sck_advance`** (no output), **P = `SCM_PREROLL_TICKS` 60 × multispeed**, and the last P ticks run
-  as in play (`sck_render` into the resampler, output discarded). The core's state at the target is therefore
-  **bit-identical to straight play** (phases, latches, wave RAMs: checked with `memcmp`); the only difference is the
-  resampler's history, which after the 1 s pre-roll leaves every output sample within 1 LSB (1/32768) of straight
-  play's (blip_buf's integer high-pass converges to a sub-LSB remainder; checked). With *n* ≤ P the whole way is
-  rendered and the output is bit-identical. Cost: ~0.3 µs per silent tick plus 60 rendered ticks.
+  the core with **`sck_advance`** (no output), **P = `SCM_PREROLL_TICKS` 60 × multispeed**. During those silent
+  ticks, `blip_skip_silence` also advances the cleared resampler's fractional sample phase in constant time,
+  using the same fixed-point factor and modulo as `blip_end_frame`; no samples or signal history are generated.
+  The last P ticks run as in play (`sck_render` into the resampler, output discarded), on **the same sample grid
+  as straight play**, not a grid restarted at the pre-roll boundary. A phase error persists through arbitrarily
+  long pre-roll and was the cause of the beyond-pre-roll seek mismatch despite matching core state.
+  The core's state at the target is **bit-identical to straight play** (phases, latches, wave RAMs); the only
+  difference is the resampler's signal history. The unchanged 1 s pre-roll rebuilds the finite impulse tail and
+  lets blip_buf's integer high-pass converge to a sub-LSB remainder. The regression requires every output sample
+  within 1 LSB (1/32768) of straight play's; with *n* ≤ P the whole way is rendered and must be bit-identical.
+  Silent ticks retain arithmetic chip advancement plus constant-time resampler phase advancement; rendered work
+  remains bounded by P ticks.
 - `apply_image` (live edit at a tick boundary, realtime-safe: a 64 KB copy plus a few row decodes): the player keeps no
   pointer into an image. The OPL3's rules (1)-(3) and (5) hold as written there (clamped position; speed; re-read jump
   and delays; multispeed from the next tick). Rule (4) differs: **sounding notes keep their slot** and read its edited
@@ -4477,7 +4489,8 @@ to order 3 row 2, order 3 ending at speed 5 and jumping back to the loop order, 
   [date=..]` renders a lowered image through the ops table as the hosts do, and its VGM through `sc_export_vgm`.
 - Not done: listening on hardware, a comparison with a real SCC or SCC+ cartridge.
 
-**Nothing in this section has been built or run yet** (source-only branch `scc-systems`): the parent runs
-`python3 tools/audio/prepare_scc.py`, `python3 tools/audio/scc/scc_golden.py`, the Kotlin tests,
-`tools/build.sh exportSamples`, `tools/audio/run_native_host_test.sh` and `tools/audio/scc_reference_check.py`, then
-fills in the measured numbers.
+Verified on 2026-11-09: generated tables/goldens and sample exports, 690 JVM / 14 Linux / six Android-host tests,
+607 SCC native checks and 1,841 WAV checks, independent player/chip/VGM checks, signed Android and desktop builds,
+both systems exercised on Nova/DMG/Konkr and the actual SDL frontend. Silent seek now retains blip's fractional
+sample phase; the previously failing targets are sample-identical without lengthening preroll or relaxing tolerance.
+See `docs/VERIFICATION.md` for timings, exports and limits. The optional libvgm comparison was not run.

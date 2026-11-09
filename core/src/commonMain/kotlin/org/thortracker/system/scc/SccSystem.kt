@@ -336,10 +336,10 @@ object SccSongSettings {
 /**
  * The chip's shared state where straight play reaches a song position ([SccWalk], document orders: those that play
  * before it, a parked order only on its own, rows up to and including the position's): on the SCC, the wave the RAM of
- * SCC 4 and SCC 5 holds (a "W05" tag on both lanes; "+" when the claiming note's wave envelope has several waves: the
- * RAM follows its steps while that note is keyed and keeps the one reached at its key-off after it) and inspector lines
- * saying who claimed it and what that means for the other channel; on both chips, a line for a test register that is
- * not 0.
+ * SCC 4 and SCC 5 holds (a "W05" tag on both lanes; "+" when untracked wave-envelope steps may have changed the
+ * wave or owner, even if that voice keyed off within an earlier row) and inspector lines saying who last claimed it
+ * in the row model and whether both voices overlapped within the row; on both chips, a line for a test register that
+ * is not 0. A later definite write clears uncertainty; this is not a tick-level wave-envelope simulation.
  */
 object SccSharedState {
     private var cacheSong: Song? = null
@@ -362,7 +362,7 @@ object SccSharedState {
         return walk
     }
 
-    /** The wave number the SCC's shared RAM holds after row [row] of order [order] (0 = never written; SCC+: 0). */
+    /** The row model's shared-wave estimate after this position (0 = never written; SCC+: 0); see [state] for uncertainty. */
     fun sharedWave(song: Song, order: Int, row: Int): Int = walk(song, order, row).held
 
     /** The lane tags and inspector lines (null on the SCC+ while the test register is 0). Cached per position. */
@@ -386,27 +386,35 @@ object SccSharedState {
                 val ins = sound.instrument(claim.slot)
                 val stepping = w.lock[claim.channel] == 0 && ins != null && ins.wave.values.distinct().size > 1
                 if (w.held != 0) {
-                    val tag = "W" + NumberText.hex(w.held, 2) + if (stepping) "+" else ""
+                    val tag = "W" + NumberText.hex(w.held, 2) + if (w.heldUncertain || stepping) "+" else ""
                     for (ch in SccSound.SHARED_CHANNELS) tags[ch] = tag
                 }
-                lines += "Shared wave RAM (SCC 4 + SCC 5) holds ${w.heldText(song)}; both channels play it"
+                lines += if (w.heldUncertain) {
+                    "Shared wave RAM (SCC 4 + SCC 5): ${w.heldText(song)}; both channels play the actual RAM, not necessarily this estimate"
+                } else {
+                    "Shared wave RAM (SCC 4 + SCC 5) holds ${w.heldText(song)}; both channels play it"
+                }
                 val other = if (claim.channel == SccSound.SHARED_CHANNELS.first) SccSound.SHARED_CHANNELS.last else SccSound.SHARED_CHANNELS.first
-                if (stepping && ins != null) {
+                if (stepping) {
                     val name = SccRules.CHANNEL_NAMES[claim.channel]
                     val effect = if (w.keyed[claim.channel]) {
-                        "each step re-claims the RAM for $name while its note is keyed, so both channels follow its wave envelope"
+                        "its steps can re-claim the RAM for $name while its note is keyed; the row model does not follow their timing"
                     } else {
-                        "$name is keyed off, so its steps no longer reach the RAM: it keeps the wave the envelope had reached " +
-                            "when it was keyed off until ${SccRules.CHANNEL_NAMES[other]} claims it"
+                        "$name is keyed off, so its steps no longer reach the RAM; the wave reached at key-off may remain " +
+                            "until ${SccRules.CHANNEL_NAMES[other]} claims it"
                     }
                     lines += "Instrument ${NumberText.hex(claim.slot, 2)} \"${ins.name}\" steps through waves ${SccRules.waveList(ins.wave)}: $effect"
                 }
-                if (w.keyed[other]) {
-                    val own = w.waveSet(other)
+                if (w.sharedOverlap || w.keyed[other]) {
+                    val own = if (w.sharedOverlap) w.overlapWaves(other) else w.waveSet(other)
                     val heldSamples = sound.wave(w.held)?.samples
                     if (own.map { sound.wave(it)?.samples }.toSet() != setOf(heldSamples)) {
                         val ownText = if (own.size == 1) SccRules.waveLabel(song, own[0]) else "waves " + own.joinToString(", ") { NumberText.hex(it, 2) }
-                        lines += "${SccRules.CHANNEL_NAMES[other]} is sounding too: it plays this wave, not its own $ownText"
+                        lines += if (w.sharedOverlap) {
+                            "${SccRules.CHANNEL_NAMES[other]} sounds during this row's overlap too: both use the same RAM, not independent waves ($ownText)"
+                        } else {
+                            "${SccRules.CHANNEL_NAMES[other]} is sounding too: it uses the shared RAM, not independently its own $ownText"
+                        }
                     }
                 }
             }
