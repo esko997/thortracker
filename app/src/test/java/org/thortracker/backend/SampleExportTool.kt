@@ -3,11 +3,14 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
-import org.thortracker.system.nes.N163Preset
+import org.thortracker.system.nes.FdsPresets
+import org.thortracker.system.nes.FdsSound
+import org.thortracker.system.nes.WavePreset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
+import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
@@ -53,6 +56,54 @@ object SampleExportTool {
         for (format in NesVrc7System.exports) File(directory, "lantern-point.${format.extension}").writeBytes(format.export(vrc7))
         File(directory, "lantern-point.nesimg").writeBytes(ByteArray(NesVrc7System.engine.imageSize).also { NesVrc7System.engine.lower(vrc7, it) })
         println("Exported ${vrc7.title} to ${directory.absolutePath}")
+        // The NES + FDS demo (its image plays on "nes-famistudio-fds"; the native WAV export test renders side-b.nesimg).
+        val fds = NesFdsSystem.demo()
+        File(directory, "side-b.thor").writeText(ProjectCodec.encode(fds), Charsets.UTF_8)
+        for (format in NesFdsSystem.exports) File(directory, "side-b.${format.extension}").writeBytes(format.export(fds))
+        File(directory, "side-b.nesimg").writeBytes(ByteArray(NesFdsSystem.engine.imageSize).also { NesFdsSystem.engine.lower(fds, it) })
+        println("Exported ${fds.title} to ${directory.absolutePath}")
+        // The shortest FDS song: one order of one row at speed 1, an FDS sine A-4 (FamiStudio's default FDS sound) on the
+        // FDS channel (fds-shortest; the one-row, one-tick edge case on "nes-famistudio-fds").
+        val fdsBlank = NesFdsSystem.blank()
+        val fdsBank = fdsBlank.nes.instruments.toMutableList()
+        fdsBank[0] = NesInstrument("Sine", chip = NesChip.FDS, volume = NesEnvelope(listOf(15)))
+        val fdsFirst = fdsBlank.patterns[0]
+        val fdsShortest = fdsBlank.copy(
+            ticksPerRow = 1, orders = listOf(0), loopOrder = 0,
+            patterns = listOf(fdsFirst.copy(length = 1, tracks = fdsFirst.tracks.mapIndexed { ch, rows ->
+                if (ch == NesRules.FDS) rows.toMutableList().also { it[0] = Cell(57, 1) } else rows
+            })),
+            sound = fdsBlank.nes.copy(instruments = fdsBank),
+        )
+        File(directory, "fds-shortest.nesimg")
+            .writeBytes(ByteArray(NesFdsSystem.engine.imageSize).also { NesFdsSystem.engine.lower(fdsShortest, it) })
+        // The golden FDS copy/loop cases as native images: the first legato note must select the original slot without
+        // replacing the loop's held modulation with the different intro values.
+        for (autoMod in listOf(false, true)) {
+            val bank = fdsBlank.nes.instruments.toMutableList()
+            bank[0] = NesInstrument("Original", chip = NesChip.FDS, volume = NesEnvelope(listOf(14)),
+                fds = FdsSound(modulation = FdsPresets.modulation(WavePreset.TRIANGLE),
+                    modSpeed = 0x100, modDepth = 12, modDelay = 3, autoMod = autoMod, autoModNumer = 1, autoModDenom = 2))
+            bank[1] = bank[0].copy(name = "Renamed copy")
+            fun pattern(name: String, cells: Map<Int, Cell>) = fdsFirst.copy(name = name, length = 8,
+                tracks = fdsFirst.tracks.mapIndexed { ch, rows ->
+                    if (ch == NesRules.FDS) rows.mapIndexed { r, cell -> cells[r] ?: cell } else rows
+                })
+            val intro = mutableMapOf(0 to Cell(48, 1), 3 to Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_DEPTH, 8))
+            val loop = mutableMapOf(0 to Cell(60), 4 to Cell(64, 2), 7 to Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_DEPTH, 24))
+            if (!autoMod) {
+                intro[1] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_HI, 1)
+                intro[2] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_LO, 0x20)
+                loop[5] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_HI, 2)
+                loop[6] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_LO, 0x60)
+            }
+            val copies = fdsBlank.copy(title = if (autoMod) "FDS auto copies" else "FDS copies", ticksPerRow = 3, loopOrder = 1,
+                patterns = listOf(pattern("Intro", intro), pattern("Loop", loop)), orders = listOf(0, 1),
+                sound = fdsBlank.nes.copy(instruments = bank))
+            val name = if (autoMod) "fds-auto-copies" else "fds-copies"
+            File(directory, "$name.nesimg")
+                .writeBytes(ByteArray(NesFdsSystem.engine.imageSize).also { NesFdsSystem.engine.lower(copies, it) })
+        }
         // Held identical copies: native live edits must follow the played bank slot, not an equal earlier slot.
         val copyBase = NesVrc7System.blank()
         val copyBank = copyBase.nes.instruments.toMutableList()
@@ -87,7 +138,7 @@ object SampleExportTool {
             // (n163-shortest-<n>ch; wav_render_test.c renders the one-row, one-tick edge case).
             val blank = system.blank()
             val bank = blank.nes.instruments.toMutableList()
-            bank[0] = NesInstrument("Sine", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(N163Preset.SINE, 16, 0, 1))))
+            bank[0] = NesInstrument("Sine", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.sine(16))))
             val first = blank.patterns[0]
             val shortest = blank.copy(
                 ticksPerRow = 1, orders = listOf(0), loopOrder = 0,

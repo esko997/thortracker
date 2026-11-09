@@ -11,6 +11,8 @@
  *                     (nes/nes_chip.c, nes/nes_vrc7.c over emu2413 1.6.4)
  *   "nes-famistudio-n163-1".."nes-famistudio-n163-8"  the same engine built with Namco 163 support for 1..8
  *                     N163 channels on a 6502 + 2A03 + N163 (nes/nes_chip.c, nes/nes_n163.c)
+ *   "nes-famistudio-fds"  the same engine built with Famicom Disk System support (and FDS auto-mod) on a 6502 +
+ *                     2A03 + FDS (nes/nes_chip.c, nes/nes_fds.c)
  *   "nes-famistudio-s5b"  the same engine built with Sunsoft 5B support on a 6502 + 2A03 + 5B (YM2149F)
  *                     (nes/nes_chip.c, nes/nes_s5b.c)
  *   "c64-sid"         GoatTracker 2.77 playroutine on a 6510 + reSID 1.0 (PAL C64)

@@ -9,6 +9,8 @@
  *   nes_player_n163[n - 1]  generated/nes_n163_<n>_player_image.h, n = 1..8: FAMISTUDIO_EXP_N163 = 1 with
  *                    FAMISTUDIO_EXP_N163_CHN_CNT = n ("nes-famistudio-n163-<n>"): the 2A03's 5 channels, then
  *                    Namco 163 channels 1..n (engine channels 5..4+n)
+ *   nes_player_fds   generated/nes_fds_player_image.h  FAMISTUDIO_EXP_FDS = 1 with FAMISTUDIO_USE_FDS_AUTOMOD = 1
+ *                    ("nes-famistudio-fds"): the 2A03's 5 channels, then the FDS channel (engine channel 5)
  *   nes_player_s5b   generated/nes_s5b_player_image.h  FAMISTUDIO_EXP_S5B = 1 ("nes-famistudio-s5b"): the
  *                    2A03's 5 channels, then Sunsoft 5B square 1, 2 and 3 (engine channels 5, 6, 7)
  *
@@ -18,8 +20,10 @@
  * header, engine envelope slots and RAM addresses, the VRC6 opcode/duty rules, with VRC7 the song header's
  * expansion instrument pointer (FamiStudio's `instruments_exp`: 16-byte entries) and the `$56` release opcode,
  * with N163 the same expansion instrument pointer, the wave-index envelope (the third envelope slot of each N163
- * channel) and the `$5A` release / `$5B` phase reset opcodes, and with the 5B the same expansion instrument pointer,
- * the mixer and noise envelope kinds (envelope slots 2 and 3 of each 5B square) and the `$5E` envelope period opcode. */
+ * channel) and the `$5A` release / `$5B` phase reset opcodes, with FDS the same expansion instrument pointer and
+ * wave-index envelope (the third envelope slot of the FDS channel) and the `$57` mod speed / `$58` mod depth / `$59`
+ * release opcodes, and with the 5B the same expansion instrument pointer, the mixer and noise envelope kinds
+ * (envelope slots 2 and 3 of each 5B square) and the `$5E` envelope period opcode. */
 #ifndef THORTRACKER_NES_PLAYER_H_
 #define THORTRACKER_NES_PLAYER_H_
 
@@ -37,6 +41,7 @@
 #include "generated/nes_n163_6_player_image.h"
 #include "generated/nes_n163_7_player_image.h"
 #include "generated/nes_n163_8_player_image.h"
+#include "generated/nes_fds_player_image.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,15 +56,19 @@ extern "C" {
 #define NM_FIRST_EXP 5            /* the first expansion channel */
 #define NM_EXP_INSTRUMENT_SIZE 16 /* FamiStudio's expansion instruments: vol, arp, pitch envelope words, then VRC7:
                                      overrides, patch << 4, the custom patch's 8 registers; N163: wave-index envelope
-                                     word, wave position, wave size, wave table word, 4 zero bytes; 5B: mixer and noise
-                                     envelope words, envelope shape, auto-period octave, manual period word, 2 zeros */
+                                     word, wave position, wave size, wave table word, 4 zero bytes; FDS: wave-index
+                                     envelope word, mod depth << 2 | master volume, wave table word, mod table word,
+                                     mod speed (nes_image.h), mod delay; 5B: mixer and noise envelope words, envelope
+                                     shape, auto-period octave, manual period word, 2 zeros */
 #define NM_N163_BUILDS 8          /* nes_player_n163[n - 1]: n N163 channels */
+#define NM_FDS 5                  /* the FDS build's FDS channel */
 
 /* The NSF expansion sound flag bit of each build's chip. */
 enum {
     NES_EXPANSION_NONE = 0,
     NES_EXPANSION_VRC6 = 1,
     NES_EXPANSION_VRC7 = 2,
+    NES_EXPANSION_FDS = 4,
     NES_EXPANSION_N163 = 0x10,
     NES_EXPANSION_S5B = 0x20
 };
@@ -94,6 +103,16 @@ typedef struct NesN163Symbols {
     uint16_t chn_n163_instrument, chn_n163_wave_index, chn_n163_wave_len;
 } NesN163Symbols;
 
+/* The FDS build only (all 0 otherwise): the expansion instrument table pointer and the engine's FDS variables
+ * (famistudio_<name>): the expansion instrument index the FDS channel loaded, the mod table pointer loaded into the
+ * chip last (2 bytes), the mod speed word (2 bytes), depth, delay and its counter, the override flags of `$57`/`$58`
+ * (bit 7 speed, bit 6 depth; cleared every update), the wave index uploaded last ($FF: upload on the next update),
+ * the auto-mod numerator (0: manual speed) and denominator, and the last $4083 value (phase reset). */
+typedef struct NesFdsSymbols {
+    uint16_t exp_instrument_lo, exp_instrument_hi;
+    uint16_t chn_fds_instrument, fds_mod_envelope, fds_mod_speed, fds_mod_depth, fds_mod_delay, fds_mod_delay_counter;
+    uint16_t fds_override_flags, fds_wave_index, fds_automod_numer, fds_automod_denom, fds_prev_hi;
+} NesFdsSymbols;
 /* 5B build only (all 0 otherwise): the expansion instrument table pointer, the shared manual envelope period (from
  * the last instrument with a manual period, or a `$5E`), the "`$5E` this frame" flag, and per 5B channel the
  * envelope shape (bit 7: reset at the next update, after a note attack; low nibble 0 or $8-$F) and auto-period
@@ -114,18 +133,20 @@ typedef struct NesPlayer {
     uint32_t image_size;            /* header + directory + region */
     uint16_t ram_end;               /* engine RAM ends here (below NES_AUDITION_RAM) */
     uint16_t effect_envelopes;      /* first directory index of effect envelopes (0xy arpeggios, vibratos): 256, N163
-                                       builds 320 (their wave-index envelopes take 256..319), the 5B build 384 (its
-                                       mixer and noise envelopes take 256..383); indices below it belong to an
-                                       instrument slot and keep it through live edits */
-    uint8_t channels;               /* channel streams in the song header: 5, 8 (VRC6, 5B), 11 (VRC7) or 5 + n (N163) */
+                                       builds and the FDS build 320 (their wave-index envelopes take 256..319), the 5B
+                                       build 384 (its mixer and noise envelopes take 256..383); indices below it belong
+                                       to an instrument slot and keep it through live edits */
+    uint8_t channels;               /* channel streams in the song header: 5, 6 (FDS), 8 (VRC6, 5B), 11 (VRC7) or 5 + n
+                                       (N163) */
     uint8_t envelopes, pitch_envelopes; /* engine envelope / pitch envelope slots */
     uint8_t duty_max;               /* largest duty value an envelope or `$4F` may hold: 3, or 7 with VRC6 pulses */
     uint8_t expansion;              /* NES_EXPANSION_* */
-    uint8_t exp_instruments;        /* 1: the song header holds the expansion instrument pointer (VRC7, N163, 5B) */
+    uint8_t exp_instruments;        /* 1: the song header holds the expansion instrument pointer (VRC7, N163, FDS, 5B) */
     uint8_t n163_channels;          /* N163 channels (engine channels 5..4+n), 0 for other builds */
     NesPlayerSymbols sym;
     NesVrc7Symbols vrc7;
     NesN163Symbols n163;
+    NesFdsSymbols fds;
     NesS5bSymbols s5b;
 } NesPlayer;
 
@@ -133,6 +154,7 @@ extern const NesPlayer nes_player_2a03;
 extern const NesPlayer nes_player_vrc6;
 extern const NesPlayer nes_player_vrc7;
 extern const NesPlayer nes_player_n163[NM_N163_BUILDS];
+extern const NesPlayer nes_player_fds;
 extern const NesPlayer nes_player_s5b;
 
 /* The N163 build with `channels` N163 channels (1..8), else NULL. */
@@ -146,13 +168,18 @@ static inline int nes_player_head(const NesPlayer* p) { return p->exp_instrument
 
 /* Channel roles of an engine channel index of `p`: carries notes and instruments (not DPCM), has a pitch
  * envelope (fine pitch, vibrato), is a VRC6 channel (5..7), is a VRC7 FM channel (5..10), is an N163 channel
- * (5..4+n), is a 5B square (5..7). */
+ * (5..4+n), is the FDS channel (5), has a wave-index envelope (N163 and FDS channels: third envelope slot,
+ * FAMISTUDIO_ENV_N163/FDS_WAVE_IDX_OFF = 2), is a 5B square (5..7). */
 static inline int nes_player_tonal(const NesPlayer* p, int c) { return c >= 0 && c < p->channels && c != NM_DPCM; }
 static inline int nes_player_pitched(const NesPlayer* p, int c) { return (c >= 0 && c <= 2) || (c >= NM_FIRST_EXP && c < p->channels); }
 static inline int nes_player_vrc6_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_VRC6 && c >= 5 && c < 8; }
 static inline int nes_player_vrc7_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_VRC7 && c >= 5 && c < 11; }
 static inline int nes_player_n163_channel(const NesPlayer* p, int c) {
     return p->expansion == NES_EXPANSION_N163 && c >= NM_FIRST_EXP && c < NM_FIRST_EXP + p->n163_channels;
+}
+static inline int nes_player_fds_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_FDS && c == NM_FDS; }
+static inline int nes_player_wave_channel(const NesPlayer* p, int c) {
+    return nes_player_n163_channel(p, c) || nes_player_fds_channel(p, c);
 }
 static inline int nes_player_s5b_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_S5B && c >= 5 && c < 8; }
 

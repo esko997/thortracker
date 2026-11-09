@@ -1,5 +1,5 @@
-/* NES machine: m6502 + nes_apu (+ nes_vrc6, nes_vrc7, nes_n163 or nes_s5b) running a FamiStudio player build (see
- * nes_machine.h). */
+/* NES machine: m6502 + nes_apu (+ nes_vrc6, nes_vrc7, nes_n163, nes_fds or nes_s5b) running a FamiStudio player build
+ * (see nes_machine.h). */
 #include "nes_machine.h"
 
 #include <math.h>
@@ -8,6 +8,7 @@
 
 #include "blip_buf.h"
 #include "nes_apu.h"
+#include "nes_fds.h"
 #include "nes_n163.h"
 #include "nes_s5b.h"
 #include "nes_vrc6.h"
@@ -53,6 +54,7 @@ struct NesMachine {
     NesVrc7 vrc7;         /* used only by the VRC7 build (its emu2413 instance allocated by nm_create) */
     float gain;           /* OUTPUT_GAIN, OUTPUT_GAIN_VRC7 for the VRC7 build, OUTPUT_GAIN_S5B for the 5B build */
     NesN163 n163;         /* used only by the N163 builds */
+    NesFds fds;           /* used only by the FDS build */
     NesS5b s5b;           /* used only by the 5B build */
     blip_t* blip;
     uint32_t sample_rate;
@@ -92,11 +94,13 @@ struct NesMachine {
     short samples[NM_MAX_TICK_FRAMES];
 };
 
-/* Engine RAM by symbol of the machine's player build (N163_RAM: the N163 builds' own symbols). */
+/* Engine RAM by symbol of the machine's player build (N163_RAM / FDS_RAM: the N163 / FDS builds' own symbols). */
 #define RAM(f) m->ram[m->player->sym.f]
 #define RAMX(f, i) m->ram[m->player->sym.f + (i)]
 #define N163_RAM(f) m->ram[m->player->n163.f]
 #define N163_RAMX(f, i) m->ram[m->player->n163.f + (i)]
+#define FDS_RAM(f) m->ram[m->player->fds.f]
+#define FDS_RAMX(f, i) m->ram[m->player->fds.f + (i)]
 
 /* ---- bus ---------------------------------------------------------------------------------- */
 
@@ -108,6 +112,7 @@ static uint8_t bus_read(NesMachine* m, uint16_t addr) {
     }
     if (addr == 0x4015) return nes_apu_read_status(&m->apu, m->time);
     if (addr >= 0x4800 && addr <= 0x4FFF && m->player->expansion == NES_EXPANSION_N163) return nes_n163_read(&m->n163, m->time);
+    if (m->player->expansion == NES_EXPANSION_FDS && nes_fds_readable(addr)) return nes_fds_read(&m->fds, m->time, addr);
     return 0;
 }
 
@@ -187,6 +192,9 @@ static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     } else if (m->player->expansion == NES_EXPANSION_N163 && nes_n163_register(addr)) {
         log_write(m, addr, v);
         nes_n163_write(&m->n163, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_FDS && nes_fds_register(addr)) {
+        log_write(m, addr, v);
+        nes_fds_write(&m->fds, m->time, addr, v);
     } else if (m->player->expansion == NES_EXPANSION_S5B && nes_s5b_register(addr)) {
         log_write(m, addr, v);
         nes_s5b_write(&m->s5b, m->time, addr, v);
@@ -246,6 +254,7 @@ static void set_output(NesMachine* m, blip_t* out) {
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_set_output(&m->vrc6, out);
     if (m->player->expansion == NES_EXPANSION_VRC7) nes_vrc7_set_output(&m->vrc7, out);
     if (m->player->expansion == NES_EXPANSION_N163) nes_n163_set_output(&m->n163, out);
+    if (m->player->expansion == NES_EXPANSION_FDS) nes_fds_set_output(&m->fds, out);
     if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_set_output(&m->s5b, out);
 }
 
@@ -254,6 +263,7 @@ static void end_frame(NesMachine* m, uint32_t cycles) {
     if (m->player->expansion == NES_EXPANSION_VRC6) nes_vrc6_end_frame(&m->vrc6, cycles);
     if (m->player->expansion == NES_EXPANSION_VRC7) nes_vrc7_end_frame(&m->vrc7, cycles);
     if (m->player->expansion == NES_EXPANSION_N163) nes_n163_end_frame(&m->n163, cycles);
+    if (m->player->expansion == NES_EXPANSION_FDS) nes_fds_end_frame(&m->fds, cycles);
     if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_end_frame(&m->s5b, cycles);
 }
 
@@ -297,8 +307,10 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
         if (nes_player_s5b_channel(player, owner) && kind >= 2) kind = kind == 2 ? NM_KIND_MIXER : NM_KIND_NOISE;
         m->slot_kind[s] = (uint8_t)kind;
     }
-    if (player->expansion == NES_EXPANSION_N163) { /* FAMISTUDIO_ENV_N163_WAVE_IDX_OFF = 2 */
-        for (int c = NM_FIRST_EXP; c < player->channels; ++c) m->slot_kind[m->channel_env[c] + 2] = NM_KIND_WAVE;
+    /* FAMISTUDIO_ENV_N163_WAVE_IDX_OFF = FAMISTUDIO_ENV_FDS_WAVE_IDX_OFF = 2: the wave-index slot of each N163 channel
+     * and of the FDS channel. */
+    for (int c = NM_FIRST_EXP; c < player->channels; ++c) {
+        if (nes_player_wave_channel(player, c)) m->slot_kind[m->channel_env[c] + 2] = NM_KIND_WAVE;
     }
     const float dt = 1.0f / (float)sample_rate;
     const float hp_rc = 1.0f / (2.0f * 3.14159265f * HIGHPASS_HZ);
@@ -353,6 +365,10 @@ static int reset(NesMachine* m, const NesImage* image) {
     if (p->expansion == NES_EXPANSION_N163) {
         nes_n163_reset(&m->n163);
         nes_n163_set_mute(&m->n163, 0);
+    }
+    if (p->expansion == NES_EXPANSION_FDS) {
+        nes_fds_reset(&m->fds);
+        nes_fds_set_mute(&m->fds, 0);
     }
     if (p->expansion == NES_EXPANSION_S5B) {
         nes_s5b_reset(&m->s5b);
@@ -497,8 +513,9 @@ static int order_plays_held_instrument(const NmView* v, int c, int order) {
  * not load itself would play the engine's silent dummy envelopes (and, VRC7, patch 0 over cleared custom registers)
  * until its next instrument change. famistudio_set_instrument loads the instrument straight play holds there, in
  * channel order, as the stream's own instrument change does (envelopes, VRC7 patch and custom registers, N163 wave,
- * 5B shape, octave and manual period). Shared chip state is approximate: the last channel loaded owns the VRC7 custom
- * patch and the 5B manual period, where straight play's could be another channel's or an `Ixx`/`Jyy`'s. */
+ * FDS waves, mod table and mod parameters, 5B shape, octave and manual period). Shared chip state is approximate: the
+ * last channel loaded owns the VRC7 custom patch and the 5B manual period, where straight play's could be another
+ * channel's or an `Ixx`/`Jyy`'s, and an FDS `$57`/`$58` mod speed/depth set in an earlier order is not restored. */
 static int restore_instruments(NesMachine* m, int order) {
     const NesPlayer* p = m->player;
     const NmView v = {m->prg + (p->song_base - 0x8000), m->meta + NES_IMAGE_HEADER_SIZE, &m->info};
@@ -593,9 +610,9 @@ static uint16_t remap_envelope(const NesMachine* m, const NesImage* image, int k
     const int same_index = idx < ni->envelopes && nm_rd16(ndir + 4 * idx) && ndir[4 * idx + 3] == kind;
     if (same_index && SAME(idx)) return nm_rd16(ndir + 4 * idx);
     /* Instrument envelopes keep their directory index (an instrument slot's, below player->effect_envelopes: 256,
-     * N163 builds 320 with their wave-index envelopes, the 5B build 384 with its mixer and noise envelopes): an
-     * edited one stays its own slot's even when another slot holds identical bytes. Only effect envelopes
-     * (renumbered by the lowering) are followed by content. */
+     * N163 builds and the FDS build 320 with their wave-index envelopes, the 5B build 384 with its mixer and noise
+     * envelopes): an edited one stays its own slot's even when another slot holds identical bytes. Only effect
+     * envelopes (renumbered by the lowering) are followed by content. */
     if (!(same_index && idx < m->player->effect_envelopes)) {
         for (int u = 0; u < ni->used_count; ++u) {
             if (SAME(ni->used[u])) return nm_rd16(ndir + 4 * ni->used[u]);
@@ -684,6 +701,122 @@ static uint8_t n163_changed_waves(const NesMachine* m, const NesImage* image) {
     return changed;
 }
 
+/* FDS, Thor layout to Thor layout: what the new image changes for the FDS channel's current sound (the expansion
+ * instrument famistudio_chn_fds_instrument of the table at famistudio_exp_instrument_lo/hi; the engine loads it in
+ * famistudio_set_fds_instrument and uploads its waves in famistudio_update_fds_wave, famistudio_ca65.s 5235-5435).
+ * Decided while the old bytes are still in place, applied by fds_apply after the region is replaced. */
+typedef struct FdsPlan {
+    int reupload;          /* master volume, wave count or a wave's bytes changed: the wave index goes to $FF */
+    int mod_pointer;       /* famistudio_fds_mod_envelope takes `mod_table` */
+    int mod_write;         /* the mod table's bytes changed: write it to the chip as the engine loads one */
+    uint16_t mod_table;    /* the current sound's mod table in the new image */
+    int speed, depth, delay; /* the engine value was the old sound's own: take the new sound's */
+    uint8_t speed_lo, speed_hi, numer, denom, depth_value, delay_value;
+} FdsPlan;
+
+static void fds_plan(const NesMachine* m, const NesImage* image, FdsPlan* plan) {
+    memset(plan, 0, sizeof *plan);
+    const NesPlayer* p = m->player;
+    const uint32_t base = p->song_base;
+    const NmView ov = {m->prg + (base - 0x8000), m->meta + NES_IMAGE_HEADER_SIZE, &m->info};
+    const NmView nv = nm_view(image);
+    const NesImageInfo* ni = &image->info;
+    const uint32_t old_table = (uint32_t)(FDS_RAM(exp_instrument_lo) | FDS_RAM(exp_instrument_hi) << 8);
+    const uint32_t loaded_mod = (uint32_t)(FDS_RAMX(fds_mod_envelope, 0) | FDS_RAMX(fds_mod_envelope, 1) << 8);
+    const uint32_t i = FDS_RAM(chn_fds_instrument);
+    const int known = loaded_mod >= base && loaded_mod + 32u <= base + m->info.size; /* 0: nothing loaded yet */
+    if (old_table != m->info.exp_instruments || i >= m->info.instruments || i >= ni->instruments) {
+        /* Not a sound of both images: upload again; forget the loaded mod table unless its bytes stay where they are
+         * (the next instrument load then writes a table, as after famistudio_init). */
+        plan->reupload = 1;
+        if (known && memcmp(ov.region + (loaded_mod - base), nv.region + (loaded_mod - base), 32)) {
+            plan->mod_pointer = 1;
+            plan->mod_table = 0;
+        }
+        return;
+    }
+    const uint32_t oe = old_table + NM_EXP_INSTRUMENT_SIZE * i, ne = ni->exp_instruments + NM_EXP_INSTRUMENT_SIZE * i;
+    const uint8_t* o = ov.region + (oe - base);
+    const uint8_t* n = nv.region + (ne - base);
+    /* Waves: master volume (byte 8 bits 0-1, written with every upload), wave count, each wave's 64 samples. */
+    const int waves = nm_n163_waves(&ov, (uint16_t)oe);
+    if (waves < 1 || (o[8] & 3) != (n[8] & 3) || waves != nm_n163_waves(&nv, (uint16_t)ne)) {
+        plan->reupload = 1;
+    } else {
+        const uint8_t* ot = ov.region + (nm_rd16(o + 9) - base);
+        const uint8_t* nt = nv.region + (nm_rd16(n + 9) - base);
+        for (int w = 0; w < waves && !plan->reupload; ++w) {
+            plan->reupload = memcmp(ov.region + (nm_rd16(ot + 2 * w) - base), nv.region + (nm_rd16(nt + 2 * w) - base), 64) != 0;
+        }
+    }
+    /* Mod table: the engine compares pointers only, so a moved table takes the new pointer; changed bytes go to the
+     * chip now (the engine would never rewrite them for the playing sound). */
+    if (known) {
+        plan->mod_pointer = 1;
+        plan->mod_table = nm_rd16(n + 11);
+        plan->mod_write = memcmp(ov.region + (loaded_mod - base), nv.region + (plan->mod_table - base), 32) != 0;
+    }
+    /* Speed / auto-mod (bytes 13-14, nm_fds_manual_speed: the patched engine stores a tagged manual speed's high byte
+     * without its tag), depth (byte 8 >> 2), delay (byte 15): the engine's value is the old sound's own (no `$57` /
+     * `$58` override in effect) -> the new sound's, as famistudio_set_fds_instrument would load it. */
+    const uint8_t numer = FDS_RAM(fds_automod_numer), denom = FDS_RAM(fds_automod_denom);
+    const uint8_t speed_lo = FDS_RAMX(fds_mod_speed, 0), speed_hi = FDS_RAMX(fds_mod_speed, 1);
+    const int old_speed = nm_fds_manual_speed(o + 13), new_speed = nm_fds_manual_speed(n + 13);
+    const int own_speed = old_speed < 0 ? numer == (o[13] & 0x7F) && denom == o[14] : !numer && (speed_lo | speed_hi << 8) == old_speed;
+    if (own_speed && (o[13] != n[13] || o[14] != n[14])) {
+        plan->speed = 1;
+        if (new_speed < 0) {
+            plan->numer = n[13] & 0x7F;
+            plan->denom = n[14];
+            plan->speed_lo = speed_lo; /* auto-mod leaves the speed word alone */
+            plan->speed_hi = speed_hi;
+        } else {
+            plan->numer = 0;
+            plan->denom = denom; /* the manual path leaves the denominator alone */
+            plan->speed_lo = (uint8_t)new_speed;
+            plan->speed_hi = (uint8_t)(new_speed >> 8);
+        }
+    }
+    if (FDS_RAM(fds_mod_depth) == o[8] >> 2 && o[8] >> 2 != n[8] >> 2) {
+        plan->depth = 1;
+        plan->depth_value = n[8] >> 2;
+    }
+    if (FDS_RAM(fds_mod_delay) == o[15] && o[15] != n[15]) {
+        plan->delay = 1;
+        plan->delay_value = n[15];
+    }
+}
+
+/* A register write between frames, at the unit's current time (the start of the next frame), logged as the engine's
+ * with that frame-relative cycle (nm_write_log_timed). */
+static void fds_put(NesMachine* m, uint16_t addr, uint8_t v) {
+    m->time = m->fds.time;
+    log_write(m, addr, v);
+    nes_fds_write(&m->fds, m->time, addr, v);
+}
+
+static void fds_apply(NesMachine* m, const FdsPlan* plan) {
+    if (plan->reupload) FDS_RAM(fds_wave_index) = 0xFF;
+    if (plan->mod_pointer) {
+        FDS_RAMX(fds_mod_envelope, 0) = (uint8_t)plan->mod_table;
+        FDS_RAMX(fds_mod_envelope, 1) = (uint8_t)(plan->mod_table >> 8);
+    }
+    if (plan->mod_write) { /* famistudio_set_fds_instrument @write_mod_table */
+        fds_put(m, 0x4087, 0x80);
+        fds_put(m, 0x4084, 0x80);
+        fds_put(m, 0x4085, 0x00);
+        for (int k = 0; k < 32; ++k) fds_put(m, 0x4088, m->prg[plan->mod_table - 0x8000 + k]);
+    }
+    if (plan->speed) {
+        FDS_RAM(fds_automod_numer) = plan->numer;
+        FDS_RAM(fds_automod_denom) = plan->denom;
+        FDS_RAMX(fds_mod_speed, 0) = plan->speed_lo;
+        FDS_RAMX(fds_mod_speed, 1) = plan->speed_hi;
+    }
+    if (plan->depth) FDS_RAM(fds_mod_depth) = plan->depth_value;
+    if (plan->delay) FDS_RAM(fds_mod_delay) = plan->delay_value;
+}
+
 /* VRC7, Thor layout to Thor layout: the patches the FM channels play follow their edited instruments now, rather
  * than at each channel's next instrument load (the engine loads one only when the instrument changes). Instrument
  * entries keep their index (slot - 1). For every FM channel the new entry's patch byte replaces its
@@ -770,6 +903,8 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
     follow_sample(m, image);
     const uint8_t n163_reupload =
         p->expansion == NES_EXPANSION_N163 && m->info.layout == NM_LAYOUT_THOR && ni->layout == NM_LAYOUT_THOR ? n163_changed_waves(m, image) : 0;
+    FdsPlan fds = {0};
+    if (p->expansion == NES_EXPANSION_FDS && m->info.layout == NM_LAYOUT_THOR && ni->layout == NM_LAYOUT_THOR) fds_plan(m, image, &fds);
     if (m->info.layout != NM_LAYOUT_THOR || ni->layout != NM_LAYOUT_THOR) {
         memcpy(m->prg + (p->song_base - 0x8000), nm_region(image), p->region_size);
         m->info = *ni;
@@ -841,6 +976,11 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
         }
     }
     if (p->expansion == NES_EXPANSION_VRC7) vrc7_follow_instruments(m, image);
+    if (p->expansion == NES_EXPANSION_FDS) {
+        FDS_RAM(exp_instrument_lo) = s[3];
+        FDS_RAM(exp_instrument_hi) = s[4];
+        fds_apply(m, &fds);
+    }
     if (p->expansion == NES_EXPANSION_S5B) s5b_follow_instruments(m, image);
     RAM(tempo_step_lo) = (uint8_t)ni->tempo_ntsc;
     RAM(tempo_step_hi) = (uint8_t)(ni->tempo_ntsc >> 8);
@@ -855,7 +995,7 @@ void nm_apply_image(NesMachine* m, const NesImage* image) {
 
 #define AUDITION_SILENT NES_AUDITION_RAM          /* $FF (64 empty rows), $42 back */
 #define AUDITION_NOTE (NES_AUDITION_RAM + 4)      /* [$54 i] [$4E f] $40 n, $42 to the silent loop; DPCM: k, $42 */
-#define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45 (VRC7 FM: $56, N163 channels: $5A), $42 to the silent loop */
+#define AUDITION_RELEASE (NES_AUDITION_RAM + 16)  /* $45 (VRC7 FM: $56, N163: $5A, FDS: $59), $42 to the silent loop */
 _Static_assert(AUDITION_RELEASE + 4 <= 0x800, "audition streams fit RAM");
 
 static void put_stream(NesMachine* m, uint16_t at, const uint8_t* bytes, int n) { memcpy(m->ram + at, bytes, (size_t)n); }
@@ -888,7 +1028,10 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
     held[n++] = 0x42;
     held[n++] = lo;
     held[n++] = hi;
-    const uint8_t release_op = (uint8_t)(nes_player_vrc7_channel(p, channel) ? 0x56 : nes_player_n163_channel(p, channel) ? 0x5A : 0x45);
+    const uint8_t release_op = (uint8_t)(nes_player_vrc7_channel(p, channel)   ? 0x56
+                                         : nes_player_n163_channel(p, channel) ? 0x5A
+                                         : nes_player_fds_channel(p, channel)  ? 0x59
+                                                                               : 0x45);
     const uint8_t release[] = {release_op, 0x42, lo, hi};
     put_stream(m, AUDITION_SILENT, silent, sizeof silent);
     put_stream(m, AUDITION_NOTE, held, n);
@@ -910,18 +1053,18 @@ static int release_point(const NesMachine* m, int slot) {
     return idx >= 0 && m->prg[addr - 0x8000] ? idx : -1;
 }
 
-/* 2A03/VRC6 channels: a release only with a volume release point (the tail ends at the envelope's final loop).
- * N163 channels: likewise, or without a volume release point with a wave-index release point (the tail ends at that
- * envelope's final loop; the engine's `$5A` releases both). VRC7 FM: always a key-off (`$56`: then also the volume
- * envelope's release, if any); the note ends once that tail is done and the chip's carrier is silent or can no
- * longer change (nes_vrc7_release_over). */
+/* 2A03/VRC6/5B channels: a release only with a volume release point (the tail ends at the envelope's final loop).
+ * N163 and FDS channels: likewise, or without a volume release point with a wave-index release point (the tail ends at
+ * that envelope's final loop; the engine's `$5A` / `$59` releases both). VRC7 FM: always a key-off (`$56`: then also
+ * the volume envelope's release, if any); the note ends once that tail is done and the chip's carrier is silent or can
+ * no longer change (nes_vrc7_release_over). */
 int nm_release(NesMachine* m) {
     if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM) return 0; /* DPCM: stop */
     const int c = m->aud_channel;
     int slot = m->channel_env[c];
     int idx = release_point(m, slot);
-    if (idx < 0 && nes_player_n163_channel(m->player, c)) {
-        slot += 2; /* FAMISTUDIO_ENV_N163_WAVE_IDX_OFF */
+    if (idx < 0 && nes_player_wave_channel(m->player, c)) {
+        slot += 2; /* FAMISTUDIO_ENV_N163_WAVE_IDX_OFF / FAMISTUDIO_ENV_FDS_WAVE_IDX_OFF */
         idx = release_point(m, slot);
     }
     const int fm = nes_player_vrc7_channel(m->player, c);
@@ -944,6 +1087,8 @@ int nm_mute_channel(NesMachine* m, int channel, int muted) {
         uint8_t mask = m->apu.mute;
         mask = muted ? (uint8_t)(mask | (1 << channel)) : (uint8_t)(mask & ~(1 << channel));
         nes_apu_set_mute(&m->apu, mask);
+    } else if (m->player->expansion == NES_EXPANSION_FDS) { /* channel 5: the FDS channel */
+        nes_fds_set_mute(&m->fds, muted);
     } else if (m->player->expansion == NES_EXPANSION_N163) { /* N163 1..n: bit k = FamiStudio N163 channel k */
         const int bit = 1 << (channel - NM_FIRST_EXP);
         uint8_t mask = m->n163.mute;
@@ -1029,7 +1174,7 @@ int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity) {
     int n = 0;
     for (int i = 0; i < m->log_len && n < capacity; ++i) {
         const uint8_t* e = m->log + 3 * i;
-        if (e[1] != 0x40) continue;
+        if (e[1] != 0x40 || e[0] > 0x17) continue; /* the APU's $4000-$4017 (not the FDS's $4040-$408A) */
         pairs[2 * n] = e[0];
         pairs[2 * n + 1] = e[2];
         ++n;
@@ -1077,6 +1222,7 @@ int nm_vrc7_instrument(const NesMachine* m, int channel) {
 }
 int nm_vrc7_custom_instrument(const NesMachine* m) { return m->player->expansion == NES_EXPANSION_VRC7 ? m->custom_instrument : -1; }
 const NesN163* nm_n163(const NesMachine* m) { return &m->n163; }
+const NesFds* nm_fds(const NesMachine* m) { return &m->fds; }
 const NesS5b* nm_s5b(const NesMachine* m) { return &m->s5b; }
 int nm_s5b_instrument(const NesMachine* m, int channel) {
     return nes_player_s5b_channel(m->player, channel) ? m->s5b_instrument[channel - NM_FIRST_EXP] : -1;

@@ -47,7 +47,7 @@ object NesValidator {
                     return@forEachIndexed
                 }
                 track.forEachIndexed { row, cell ->
-                    NesRules.cellRangeProblem(cell)?.let { out += "$label, ${NesRules.channelName(expansion, ch)} row $row: $it" }
+                    NesRules.cellRangeProblem(expansion, cell)?.let { out += "$label, ${NesRules.channelName(expansion, ch)} row $row: $it" }
                 }
             }
         }
@@ -65,6 +65,7 @@ object NesValidator {
             if (ins.chip != NesChip.VRC6 && ins.sawVolume != Vrc6SawVolume.HALF) out += "$where: only VRC6 sounds have a saw volume"
             if (ins.chip != NesChip.VRC7 && ins.fm != Vrc7Patch.DEFAULT) out += "$where: only VRC7 sounds have an FM patch"
             if (ins.chip != NesChip.N163 && ins.wave != N163Wave.DEFAULT) out += "$where: only N163 sounds have waves"
+            if (ins.chip != NesChip.FDS && ins.fds != FdsSound.DEFAULT) out += "$where: only FDS sounds have FDS waves and modulation"
             if (ins.chip != NesChip.APU && ins.dpcm.isNotEmpty()) out += "$where: only 2A03 sounds map DPCM samples"
             if (ins.chip == NesChip.VRC7) {
                 if (ins.duty.values.isNotEmpty()) out += "$where: VRC7 sounds have no duty envelope; clear it"
@@ -78,6 +79,10 @@ object NesValidator {
             if (ins.chip == NesChip.N163) {
                 if (ins.duty.values.isNotEmpty()) out += "$where: N163 sounds have no duty envelope; clear it"
                 n163Shape(out, where, ins.wave)
+            }
+            if (ins.chip == NesChip.FDS) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: FDS sounds have no duty envelope; clear it"
+                fdsShape(out, where, ins.fds)
             }
             if (ins.chip == NesChip.S5B) {
                 if (ins.duty.values.isNotEmpty()) out += "$where: 5B sounds have no duty envelope; clear it"
@@ -140,6 +145,31 @@ object NesValidator {
         if (w.release !in -1 until w.waves.size) out += "$where: the N163 wave release ${w.release} is outside the sequence"
     }
 
+    /**
+     * The shape of an FDS sound: what every consumer relies on (FamiStudio 4.5.3's limits, `Envelope.cs` and
+     * `ParamProviders.cs`: 1-16 waves of 64 samples 0..63, a repeat of 1-15 frames per wave, 32 modulation targets
+     * −64..63, mod speed 0-4095, depth 0-63, delay 0-255, auto-mod numerator and denominator 1-32).
+     */
+    private fun fdsShape(out: Report, where: String, f: FdsSound) {
+        if (f.waves.size !in 1..FdsSound.MAX_WAVES) out += "$where: ${f.waves.size} FDS waves; a sound holds 1-${FdsSound.MAX_WAVES} (FamiStudio's limit)"
+        f.waves.forEachIndexed { i, wave ->
+            if (wave.size != FdsSound.WAVE_SIZE) out += "$where: FDS wave ${i + 1} has ${wave.size} samples; FDS waves have ${FdsSound.WAVE_SIZE}"
+            wave.firstOrNull { it !in FdsSound.SAMPLE }?.let { out += "$where: FDS wave ${i + 1} sample $it is outside 0-63" }
+        }
+        if (f.repeat.size != f.waves.size) out += "$where: ${f.repeat.size} FDS wave repeats for ${f.waves.size} waves; each wave has one"
+        f.repeat.firstOrNull { it !in FdsSound.REPEAT }?.let { out += "$where: an FDS wave plays for $it frames; 1-15 frames per wave" }
+        if (f.loop !in -1 until f.waves.size) out += "$where: the FDS wave loop ${f.loop} is outside the sequence"
+        if (f.release !in -1 until f.waves.size) out += "$where: the FDS wave release ${f.release} is outside the sequence"
+        if (f.modulation.size != FdsSound.MOD_SIZE) out += "$where: the FDS modulation table has ${f.modulation.size} entries; it has ${FdsSound.MOD_SIZE}"
+        f.modulation.firstOrNull { it !in FdsSound.MOD_TARGET }?.let { out += "$where: FDS modulation value $it is outside -64..63" }
+        if (f.modSpeed !in FdsSound.MOD_SPEED) out += "$where: FDS mod speed ${f.modSpeed} is outside 0-4095"
+        if (f.modDepth !in FdsSound.MOD_DEPTH) out += "$where: FDS mod depth ${f.modDepth} is outside 0-63"
+        if (f.modDelay !in FdsSound.MOD_DELAY) out += "$where: FDS mod delay ${f.modDelay} is outside 0-255 frames"
+        if (f.autoModNumer !in FdsSound.AUTO_MOD || f.autoModDenom !in FdsSound.AUTO_MOD) {
+            out += "$where: the FDS auto-mod ratio ${f.autoModNumer}/${f.autoModDenom} is outside 1-32 / 1-32"
+        }
+    }
+
     private fun envelopeShape(out: Report, where: String, name: String, e: NesEnvelope, valid: IntRange) {
         if (e.values.size > NesEnvelope.MAX_LENGTH) out += "$where: the $name envelope has ${e.values.size} steps; at most ${NesEnvelope.MAX_LENGTH}"
         e.values.firstOrNull { it !in valid }?.let { out += "$where: $name value $it is outside ${valid.first}..${valid.last}" }
@@ -177,6 +207,7 @@ object NesValidator {
                 "noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE).size,
             )) if (size > 255) out += "$where: the $name envelope takes $size bytes once encoded; FamiStudio's limit is 255. Shorten it or repeat fewer changes"
             if (ins.chip == NesChip.N163) n163Rules(out, where, ins.wave, song.nes.expansion.n163Channels)
+            if (ins.chip == NesChip.FDS) fdsRules(out, where, ins.fds)
         }
         val played = song.orders.toSet()
         val squares = if (song.nes.expansion == NesExpansion.S5B) NesRules.S5B_SQUARE1 until song.nes.expansion.channels else IntRange.EMPTY
@@ -289,6 +320,7 @@ object NesValidator {
         firstNotesWithoutInstrument(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
         if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
+        if (song.nes.expansion == NesExpansion.FDS) fdsWarnings(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.S5B) NesS5b.warnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
@@ -381,6 +413,22 @@ object NesValidator {
     }
 
     /**
+     * What FamiStudio's engine and text import require of an FDS sound: the wave sequence's loop and release rules (as an
+     * N163 sound's: `Envelope` loop/release setters) and its encoded size. Every manual mod speed 0..4095 plays as itself
+     * (the lowering tags those whose low byte is $80-$FF for Thor Tracker's FDS player).
+     */
+    private fun fdsRules(out: Report, where: String, f: FdsSound) {
+        if (f.release >= 0 && f.loop < 0) {
+            out += "$where: the FDS wave release needs a wave loop before it (FamiStudio sustains a note by looping until it is released); set a loop"
+        }
+        if (f.release >= 0 && f.loop >= 0 && f.loop >= f.release) {
+            out += "$where: the FDS wave loop (wave ${f.loop + 1}) must come before the release (wave ${f.release + 1})"
+        }
+        val size = FamiStudioEnvelopes.waveIndex(f).size
+        if (size > 255) out += "$where: the FDS wave sequence takes $size bytes once encoded; FamiStudio's limit is 255. Use fewer waves or repeats"
+    }
+
+    /**
      * The N163's shared RAM as FamiStudio's engine uses it: each channel uploads its sound's current wave to that sound's
      * RAM position whenever the sequence moves to another wave (on every attack and every wave change), so two channels
      * sounding at once with overlapping RAM ranges overwrite each other's waves (identical single waves at the same place,
@@ -440,6 +488,85 @@ object NesValidator {
             if (w.waves.all { wave -> wave.all { it == 0 } }) {
                 out += "Sound ${NesRules.hex2(slot)} \"${ins.name}\": all its N163 samples are 0, which is silent (a constant level " +
                     "only clicks as the volume changes); draw a wave or pick a preset on the Wave page"
+            }
+        }
+        return out
+    }
+
+    /**
+     * The FDS channel as FamiStudio's engine plays it ([song] is the arrangement of a structurally valid song): auto-mod
+     * whose 16-bit multiply overflows on notes the song plays (`famistudio_mul`: frequency × numerator ≥ 65536 drops the
+     * carry, so the mod speed comes out far too low), Ixx/Jxx while an auto-mod sound plays (the engine then computes the
+     * speed from the pitch every frame and ignores them), silent waves, and modulation that cannot sound: a table, speed
+     * or auto-mod at Mod depth 0, a depth with a flat table or with speed 0 (the table stands still), unless effects set
+     * what is missing.
+     */
+    private fun fdsWarnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val ch = NesRules.FDS
+        val top = HashMap<Int, Int>() // auto-mod slot → the highest engine note it plays
+        val used = BooleanArray(fs.instruments.size + 1)
+        val ignored = HashSet<Int>()
+        var current = 0
+        var depthEffects = false
+        var speedEffects = false
+        fun where(row: Int): String {
+            val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+            return "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row ${row - fs.orderStart[o]}"
+        }
+        for (row in 0 until fs.totalRows) {
+            val n = fs.notes[ch][row] ?: continue
+            if (n.isMusical && n.instrument != 0) {
+                current = n.instrument
+                used[current] = true
+                val ins = fs.instruments[current - 1]
+                if (ins.fds.autoMod) {
+                    val arp = maxOf(0, ins.arpeggio.values.maxOrNull() ?: 0, if (n.arpeggio >= 0) maxOf(n.arpeggio shr 4, n.arpeggio and 0xF) else 0)
+                    top[current] = maxOf(top[current] ?: 0, maxOf(n.value, n.slideTarget) + arp)
+                }
+            }
+            if (n.fdsModDepth > 0) depthEffects = true
+            if (n.fdsModSpeed >= 0) {
+                speedEffects = true
+                // A row whose own sound is auto-mod is an error (NesRules.cellProblem); here the sound plays on.
+                val own = n.isMusical && n.attack
+                if (!own && current != 0 && fs.instruments[current - 1].fds.autoMod && ignored.add(current)) {
+                    out += "${where(row)}: I/J have no effect while an auto-mod sound plays: sound ${NesRules.hex2(current)} computes " +
+                        "its mod speed from the pitch every frame; remove the Ixx/Jxx or play a sound without Auto-mod"
+                }
+            }
+        }
+        for (slot in 1 until used.size) {
+            if (!used[slot]) continue
+            val ins = fs.instruments[slot - 1]
+            val f = ins.fds
+            val name = "Sound ${NesRules.hex2(slot)} \"${ins.name}\""
+            top[slot]?.let { high ->
+                val (numer, denom) = f.autoModFraction
+                val from = NesRules.fdsLowestOverflowingNote(numer)
+                if (from != null && NesRules.fdsAutoModOverflows(minOf(high, NesRules.FDS_HIGHEST_FS_NOTE), numer)) {
+                    val plays = minOf(high, NesRules.FDS_HIGHEST_FS_NOTE) - NesRules.FDS_TRANSPOSE + NesRules.NOTE_OFFSET
+                    out += "$name: auto-mod $numer/$denom overflows FamiStudio's 16-bit multiply (frequency × $numer ≥ 65536) from " +
+                        "${NesSystem.noteName(from)} up, and the song plays it up to ${NesSystem.noteName(plays)}: the mod speed there comes " +
+                        "out far too low. Use a smaller ratio (e.g. halve both numbers) or play it lower"
+                }
+            }
+            val firstSample = f.waves[0][0]
+            if (f.waves.all { wave -> wave.all { it == firstSample } }) {
+                out += "$name: all its FDS samples are $firstSample, which is silent (a constant level only clicks as the volume " +
+                    "changes); draw a wave or pick a preset"
+            }
+            val flat = f.modulation.all { it == 0 }
+            when {
+                f.modDepth == 0 && !depthEffects && (!flat || f.modSpeed > 0 || f.autoMod) ->
+                    out += "$name: its modulation (table, speed or auto-mod) does nothing at Mod depth 0; set a depth (or use Hxx) " +
+                        "or clear the modulation"
+                f.modDepth > 0 && flat ->
+                    out += "$name: Mod depth ${f.modDepth} with a flat modulation table bends nothing; draw the table or pick a preset"
+                f.modDepth > 0 && !f.autoMod && f.modSpeed == 0 && !speedEffects ->
+                    out += "$name: Mod depth ${f.modDepth} with mod speed 0: the modulation table stands still, so nothing is " +
+                        "modulated; set a speed, turn Auto-mod on or use Ixx/Jxx"
             }
         }
         return out

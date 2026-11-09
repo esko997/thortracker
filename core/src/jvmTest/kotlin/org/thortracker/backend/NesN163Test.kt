@@ -4,7 +4,6 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
-import org.thortracker.system.nes.N163Preset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
@@ -14,6 +13,7 @@ import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.nes.WavePreset
 import org.thortracker.system.nes.nes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -164,7 +164,7 @@ class NesN163Test {
         assertTrue(NesSystem.errors(high).any { it.contains("channel registers") && it.contains("0-127") }, NesSystem.errors(high).toString())
         assertEquals(emptyList(), NesSystem.errors(song(4, listOf(sine(120))) { t -> t[5][0] = Cell(n("C-4"), 1, 0, 0) }))
         // Two different sounds overlapping (0-15 and 8-23) on two channels at once.
-        val other = NesInstrument("Saw", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(N163Preset.SAWTOOTH, 16, 0, 1)), position = 8))
+        val other = NesInstrument("Saw", chip = NesChip.N163, wave = N163Wave(waves = listOf(N163Presets.wave(WavePreset.SAWTOOTH, 16, 0, 1)), position = 8))
         val clash = song(2, listOf(sine(0), other)) { t -> t[5][0] = Cell(n("C-4"), 1, 0, 0); t[6][2] = Cell(n("E-4"), 2, 0, 0) }
         assertEquals(emptyList(), NesSystem.errors(clash))
         val warning = NesSystem.warnings(clash).firstOrNull { it.contains("overwrites") }

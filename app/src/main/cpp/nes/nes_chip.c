@@ -1,7 +1,7 @@
-/* "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8" and
- * "nes-famistudio-s5b": the FamiStudio sound engine (FamiTracker tempo), the 2A03 build, the Konami VRC6 build, the
- * Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels) and the Sunsoft 5B build, on the NES machine
- * (nes_machine.h) behind the chip engine interface.
+/* "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds"
+ * and "nes-famistudio-s5b": the FamiStudio sound engine (FamiTracker tempo), the 2A03 build, the Konami VRC6 build,
+ * the Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels), the Famicom Disk System build and the
+ * Sunsoft 5B build, on the NES machine (nes_machine.h) behind the chip engine interface.
  * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
  * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
@@ -177,3 +177,27 @@ N163_OPS(5);
 N163_OPS(6);
 N163_OPS(7);
 N163_OPS(8);
+
+/* "nes-famistudio-fds": channels 0-4 as "nes-famistudio", then the FDS channel (5). On the FDS channel the instrument
+ * slot addresses the image's expansion instrument table (the same index as the 2A03 table). */
+static ChipMachine* fds_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_fds); }
+
+static int fds_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_fds, storage, bytes, size);
+}
+
+const ChipEngineOps nes_fds_chip_ops = {
+    .system_id = "nes-famistudio-fds",
+    .image_size = NES_FDS_IMAGE_SIZE,
+    .image_storage = sizeof(NesImage),
+    .create = fds_create,
+    .destroy = nes_destroy,
+    .load_image = fds_load_image,
+    .start = nes_start,
+    .apply_image = nes_apply_image,
+    .audition = nes_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};

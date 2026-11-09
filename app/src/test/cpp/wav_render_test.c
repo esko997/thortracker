@@ -9,7 +9,7 @@
  * its length after an identical prefix and ending near silence; the length limit stopping at the tick that reaches it
  * and reporting CHIP_WAV_CAPPED; closing a job before it completes removing its spool, a complete file staying; bad
  * arguments. Plus chip_wav_pcm16's rounding and clamping, and the shortest valid songs (one row, one tick; exported
- * per N163 build as n163-shortest-<n>ch.nesimg and for the 5B build as s5b-shortest.nesimg): once through is that one
+ * per N163 build as n163-shortest-<n>ch.nesimg, plus s5b-shortest.nesimg and fds-shortest.nesimg): once through is that one
  * tick, zero and two extra passes complete.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
@@ -60,6 +60,7 @@ static const Demo kDemos[] = {
     {"wavetable-garden-6ch.nesimg", "nes-famistudio-n163-6"},
     {"wavetable-garden-7ch.nesimg", "nes-famistudio-n163-7"},
     {"wavetable-garden-8ch.nesimg", "nes-famistudio-n163-8"},
+    {"side-b.nesimg", "nes-famistudio-fds"},
     {"copper-kite.nesimg", "nes-famistudio-s5b"},
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
@@ -67,7 +68,7 @@ static const Demo kDemos[] = {
 };
 
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; an N163 note on N163 1, a 5B
- * tone on 5B square 1. */
+ * tone on 5B square 1, or a sine on FDS. */
 static const Demo kShortest[] = {
     {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
     {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
@@ -78,6 +79,7 @@ static const Demo kShortest[] = {
     {"n163-shortest-7ch.nesimg", "nes-famistudio-n163-7"},
     {"n163-shortest-8ch.nesimg", "nes-famistudio-n163-8"},
     {"s5b-shortest.nesimg", "nes-famistudio-s5b"},
+    {"fds-shortest.nesimg", "nes-famistudio-fds"},
 };
 
 static char spool[512];

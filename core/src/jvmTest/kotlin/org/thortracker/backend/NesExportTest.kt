@@ -6,6 +6,7 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesS5bSystem
@@ -163,6 +164,42 @@ class NesExportTest {
             lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
         // 2A03 songs name no expansion.
         assertFalse(FamiStudioText.text(NesSystem.demo()).lines()[0].contains("Expansions"))
+    }
+
+    /** NES + FDS: the `.nsf` carries the FDS player and names the chip ($7B bit 2); the text names the expansion. */
+    @Test
+    fun fdsExportsNameTheChip() {
+        val song = NesFdsSystem.demo()
+        assertEquals(emptyList(), NesFdsSystem.errors(song))
+        val nsf = NesFdsSystem.exports.first { it.extension == "nsf" }.export(song)
+        assertEquals(NesFdsPlayerImage.LOAD, u16(nsf, 8))
+        assertEquals(NesFdsPlayerImage.INIT, u16(nsf, 10))
+        assertEquals(NesFdsPlayerImage.PLAY, u16(nsf, 12))
+        assertEquals("Side B", nsf.copyOfRange(0x0e, 0x0e + 6).decodeToString())
+        assertEquals(4, nsf[0x7b].toInt()) // expansion chips: FDS
+        val body = nsf.copyOfRange(128, nsf.size)
+        assertContentEquals(NesFdsPlayerImage.BYTES, body.copyOfRange(0, NesFdsPlayerImage.BYTES.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val songAt = NesFdsPlayerImage.SONG_BASE - NesFdsPlayerImage.LOAD
+        assertContentEquals(lowered.data, body.copyOfRange(songAt, songAt + lowered.data.size))
+        assertContentEquals(lowered.samples, body.copyOfRange(lowered.sampleStart - NesFdsPlayerImage.LOAD, body.size))
+        // The NSF's song plays like the lowered data, FDS writes included (volume, frequency, modulation every frame).
+        val a = NesTracer(lowered.data, NesPlayer.FDS)
+        val b = NesTracer(body.copyOfRange(songAt, lowered.sampleStart - NesFdsPlayerImage.LOAD), NesPlayer.FDS)
+        var fds = 0
+        repeat(600) {
+            val f = a.frame()
+            assertContentEquals(f, b.frame())
+            fds += f.count { (it shr 8) in 0x4040..0x408A }
+        }
+        assertTrue(fds > 600, "the demo writes the FDS ($fds writes in 600 frames)")
+        val lines = FamiStudioText.text(song).lines()
+        assertTrue(lines[0].endsWith("Expansions=\"FDS\""), lines[0])
+        assertTrue(lines.any { it.trim().startsWith("Instrument Name=\"09 FM bass\" Expansion=\"FDS\" FdsWaveCount=\"1\" FdsWavePreset=\"Sine\"") })
+        assertTrue(lines.any { it.trim().startsWith("Instrument Name=\"0A Vibrato lead\" Expansion=\"FDS\" FdsWaveCount=\"1\" FdsWavePreset=\"Custom\"") })
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM", "FDS"),
+            lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+        assertEquals(emptyList(), NesFdsSystem.warnings(song))
     }
 
     @Test

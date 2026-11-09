@@ -28,7 +28,9 @@ import kotlin.test.fail
  *   redundant patch writes are omitted on both sides. Loop restoration conservatively reloads custom patches
  *   because delayed notes can change the final writer; the real-driver loop regressions cover that correction.
  * - [NesGoldenSongs.CORRECTIONS] independently captures upstream export bugs: its VRC7 fixture must demonstrate
- *   both upstream's mid-song legato retrigger and missed loop patch, versus our held envelope and restored patch.
+ *   both upstream's mid-song legato retrigger and missed loop patch, versus our held envelope and restored patch; its
+ *   FDS witness expresses manual mod speeds with a low byte of $80-$FF through `Jxx`, which upstream exports
+ *   correctly, and must play exactly what our lowering plays for the same speeds held in the sounds.
  *
  * Run with `THOR_UPDATE_NES_GOLDEN=1` to rewrite the `.txt` fixtures, then `python3 tools/audio/nes_golden.py`.
  */
@@ -77,6 +79,15 @@ class NesGoldenTest {
                         ours += "slot $slot wave $i" to FamiStudioEnvelopes.n163WaveBytes(w)
                     }
                 }
+                if (ins.chip == NesChip.FDS) {
+                    // FamiStudio stores an FDS sound's wave-index envelope, each distinct wave and its modulation table
+                    // among its envelopes (`FamitoneMusicFile.OutputInstruments`).
+                    ours += "slot $slot wave index" to FamiStudioEnvelopes.waveIndex(ins.fds)
+                    for ((i, w) in FamiStudioEnvelopes.fdsWaves(ins.fds).stored.withIndex()) {
+                        ours += "slot $slot wave $i" to FamiStudioEnvelopes.fdsWaveBytes(w)
+                    }
+                    ours += "slot $slot mod table" to FamiStudioEnvelopes.fdsModBytes(ins.fds)
+                }
                 if (ins.chip == NesChip.S5B) {
                     ours += "slot $slot mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER)
                     ours += "slot $slot noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE)
@@ -115,6 +126,7 @@ class NesGoldenTest {
             var dpcmStarts = 0
             var expansionWrites = 0
             var n163 = 0
+            var fds = 0
             var s5b = 0
             val patchA = IntArray(8) { -1 }
             val patchB = IntArray(8) { -1 }
@@ -128,6 +140,7 @@ class NesGoldenTest {
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 expansionWrites += ta.count { (it shr 8) >= 0x9000 }
                 n163 += ta.count { (it shr 8) == 0x4800 }
+                fds += ta.count { (it shr 8) in 0x4080..0x408A }
                 s5b += ta.count { (it shr 8) >= 0xC000 }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
@@ -144,11 +157,46 @@ class NesGoldenTest {
                 // The trace covers the N163: frequencies, volumes and wave uploads through its data port, every frame.
                 assertTrue(n163 > frames, "$name: only $n163 N163 data writes in $frames frames")
             }
+            if (lowered.player == NesPlayer.FDS) {
+                // The trace covers the FDS: volume, frequency and modulation registers every frame, wave and table uploads.
+                assertTrue(fds > frames, "$name: only $fds FDS register writes in $frames frames")
+            }
             if (lowered.player == NesPlayer.S5B) {
                 // The trace covers the 5B: every frame its squares sound, register selects and data writes (compared).
                 assertTrue(s5b > frames, "$name: only $s5b Sunsoft 5B register writes in $frames frames")
             }
         }
+    }
+
+    /**
+     * Manual FDS mod speeds with a low byte of $80-$FF play as themselves: our lowering of
+     * [NesGoldenSongs.fdsManualSpeeds] (the speeds in its sounds) writes, frame by frame, the registers FamiStudio's own
+     * export of [NesGoldenSongs.fdsManualSpeedWitness] writes (sounds with upstream-safe speeds, the intended ones set by
+     * `Jxx` on every attack), through two loop passes; and that witness does play $080, $181 and $FFF.
+     */
+    @Test
+    fun fdsManualSpeedsPlayAsTheUpstreamSafeWitness() {
+        if (update) return
+        val song = NesGoldenSongs.fdsManualSpeeds()
+        assertEquals(emptyList(), org.thortracker.system.nes.NesFdsSystem.errors(song))
+        val fs = FsSong.of(song)
+        val lowered = FamiStudioLowering.lower(song)
+        val upstream = NesTracer(bytes("fds_manual_speed_witness.bin") ?: fail("missing correction fixture"), lowered.player)
+        val ours = NesTracer(lowered.data, lowered.player)
+        val frames = (fs.totalRows + 2 * (fs.totalRows - fs.orderStart[fs.loopOrder])) * fs.speed + 60
+        // $4086 holds the speed's low byte, $4087 its high nibble (bit 7: modulation halted).
+        val speeds = HashSet<Int>()
+        var low = -1
+        for (f in 0 until frames) {
+            val a = upstream.frame()
+            val b = ours.frame()
+            if (!a.contentEquals(b)) fail("frame $f differs: FamiStudio ${trace(a)} vs ours ${trace(b)}")
+            for (w in a) when (w ushr 8) {
+                0x4086 -> low = w and 0xff
+                0x4087 -> if (low >= 0 && w and 0x80 == 0) speeds += (w and 0x0f) shl 8 or low
+            }
+        }
+        for (s in listOf(0x080, 0x181, 0xFFF)) assertTrue(s in speeds, "the witness plays mod speed $s: $speeds")
     }
 
     /** Pin both intentional differences using FamiStudio's actual exported bytes, not a second sequencer model. */

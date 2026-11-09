@@ -5,9 +5,9 @@ import org.thortracker.system.nes.NesRules
 
 /**
  * One build of the NES preview player (FamiStudio sound engine 4.5.3, FamiTracker tempo): the plain 2A03 build
- * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage], the eight
- * N163 builds [NesN163PlayerImage1]..[NesN163PlayerImage8], [NesS5bPlayerImage]). Each has its own native engine
- * ([engineId]), player bytes and song region (the region starts on the page after the player, so a larger player
+ * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage], [NesFdsPlayerImage],
+ * the eight N163 builds [NesN163PlayerImage1]..[NesN163PlayerImage8], [NesS5bPlayerImage]). Each has its own native
+ * engine ([engineId]), player bytes and song region (the region starts on the page after the player, so a larger player
  * leaves less room); the image layout numbers all share stay in [NesPlayerImage].
  */
 class NesPlayer private constructor(
@@ -26,20 +26,20 @@ class NesPlayer private constructor(
     /** Channel streams in the song header: the 2A03's five plus the expansion's. */
     val channels: Int,
     /**
-     * NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 4 = Namco 163,
-     * bit 5 = Sunsoft 5B).
+     * NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 2 = FDS, bit 4 = Namco
+     * 163, bit 5 = Sunsoft 5B; FamiStudio's `NsfFile`).
      */
     val nsfChips: Int,
     /**
      * The song header holds FamiStudio's expansion instrument pointer (`instruments_exp`, after `instruments`) and the
-     * expansion's channels load their instruments from that table (FDS, N163, VRC7, EPSM and S5B builds: VRC7, N163 and
-     * 5B here).
+     * expansion's channels load their instruments from that table (FDS, N163, VRC7, EPSM and S5B builds: VRC7, N163,
+     * FDS and 5B here).
      */
     val expInstruments: Boolean,
     /**
      * The first envelope directory index of effect envelopes (`0xy` arpeggios, vibratos); the instruments' own envelopes
-     * sit below it, one stable index each (slot × 4 + kind; the N163 builds add each slot's wave-index envelope at
-     * 256 + slot, so their effect envelopes start at 320; the 5B build adds its mixer and noise envelopes at
+     * sit below it, one stable index each (slot × 4 + kind; the N163 and FDS builds add each slot's wave-index envelope
+     * at 256 + slot, so their effect envelopes start at 320; the 5B build adds its mixer and noise envelopes at
      * 256 + slot × 2 + 0/1, so its effect envelopes start at 384).
      */
     val effectEnvelopes: Int,
@@ -68,6 +68,17 @@ class NesPlayer private constructor(
             NesVrc7PlayerImage.PLAYER_ID, NesVrc7PlayerImage.IMAGE_SIZE, NesVrc7PlayerImage.CHANNELS, nsfChips = 0x02,
             expInstruments = true, effectEnvelopes = EFFECT_ENVELOPES,
         ) { NesVrc7PlayerImage.BYTES }
+
+        /**
+         * The FDS build (`FAMISTUDIO_EXP_FDS` with `FAMISTUDIO_USE_FDS_AUTOMOD`, as FamiStudio's own NSF kernel `nsf.s`):
+         * the 2A03's five channels and the FDS as channel 5.
+         */
+        val FDS = NesPlayer(
+            "nes-famistudio-fds", NesFdsPlayerImage.LOAD, NesFdsPlayerImage.INIT, NesFdsPlayerImage.PLAY,
+            NesFdsPlayerImage.SONG_BASE, NesFdsPlayerImage.REGION_END, NesFdsPlayerImage.REGION_SIZE,
+            NesFdsPlayerImage.PLAYER_ID, NesFdsPlayerImage.IMAGE_SIZE, NesFdsPlayerImage.CHANNELS, nsfChips = 0x04,
+            expInstruments = true, effectEnvelopes = FamiStudioLowering.WAVE_EFFECT_ENVELOPES_START,
+        ) { NesFdsPlayerImage.BYTES }
 
         /** The N163 builds, index n − 1 for n enabled channels (`FAMISTUDIO_EXP_N163_CHN_CNT` = n). */
         val N163: List<NesPlayer> = listOf(
@@ -101,7 +112,7 @@ class NesPlayer private constructor(
                          imageSize: Int, channels: Int, n163Channels: Int, code: () -> ByteArray): NesPlayer {
             check(channels == NesRules.APU_CHANNELS + n163Channels) { "N163 build with $n163Channels channels has $channels streams" }
             return NesPlayer("nes-famistudio-n163-$n163Channels", load, init, play, songBase, regionEnd, regionSize, playerId, imageSize,
-                channels, nsfChips = 0x10, expInstruments = true, effectEnvelopes = FamiStudioLowering.N163_EFFECT_ENVELOPES_START,
+                channels, nsfChips = 0x10, expInstruments = true, effectEnvelopes = FamiStudioLowering.WAVE_EFFECT_ENVELOPES_START,
                 code = code)
         }
 
@@ -123,6 +134,7 @@ val NesExpansion.player: NesPlayer
         NesExpansion.NONE -> NesPlayer.APU
         NesExpansion.VRC6 -> NesPlayer.VRC6
         NesExpansion.VRC7 -> NesPlayer.VRC7
+        NesExpansion.FDS -> NesPlayer.FDS
         NesExpansion.S5B -> NesPlayer.S5B
         else -> NesPlayer.N163[n163Channels - 1]
     }

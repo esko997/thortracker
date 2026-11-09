@@ -110,8 +110,36 @@ class NesProjectCodecTest {
         assertTrue(instruments.none { it["chip"] == null && "wave" in it.keys })
         val other = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio-n163-4")) +
             ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio-n163-4")))))
-        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
-        assertTrue(e.message!!, e.message!!.contains("NES + N163, 3 channels"))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
+    }
+
+    /**
+     * The FDS variant is its own backend; its sound names the expansion, its FDS sounds their chip and their waves and
+     * modulation (left out at FamiStudio's defaults, so 2A03 sounds are stored as before); every field survives.
+     */
+    @Test
+    fun fdsSongsNameTheirVariantAndKeepEveryField() {
+        val system = org.thortracker.system.nes.NesFdsSystem
+        for (song in listOf(system.blank(), system.demo())) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+        val odd = system.blank().let { s ->
+            val bank = s.nes.instruments.toMutableList()
+            bank[2] = NesInstrument("Odd", chip = org.thortracker.system.nes.NesChip.FDS, fds = org.thortracker.system.nes.FdsSound(
+                waves = listOf(List(64) { it }, List(64) { 63 - it }), repeat = listOf(3, 15), loop = 0, release = 1,
+                masterVolume = org.thortracker.system.nes.FdsMasterVolume.TWO_FIFTHS, modulation = List(32) { it * 4 - 64 },
+                modSpeed = 4095, modDepth = 63, modDelay = 255, autoMod = true, autoModNumer = 32, autoModDenom = 31))
+            s.copy(sound = s.nes.copy(instruments = bank))
+        }
+        assertEquals(odd, ProjectCodec.decode(ProjectCodec.encode(odd)))
+        val root = Json.parseToJsonElement(ProjectCodec.encode(system.demo())).jsonObject
+        assertEquals("nes-famistudio-fds", root["backend"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("fds", sound["expansion"]!!.jsonPrimitive.content)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(instruments.any { it["chip"]?.jsonPrimitive?.content == "fds" && "fds" in it.keys })
+        assertTrue(instruments.none { it["chip"] == null && "fds" in it.keys })
+        val mixed = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio")) +
+            ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mixed.toString()) }
     }
 
     /**

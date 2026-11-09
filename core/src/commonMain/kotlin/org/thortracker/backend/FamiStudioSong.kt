@@ -49,8 +49,17 @@ internal class FsNote {
      */
     var envelopePeriod = -1
 
-    /** N163 `X00`: FamiStudio's phase reset (the wave restarts from its first sample). */
+    /** N163 and FDS `X00`: FamiStudio's phase reset (the wave restarts from its first sample). */
     var phaseReset = false
+
+    /**
+     * FDS `Ixx`/`Jxx`: FamiStudio's `FdsModSpeed` note attribute (0..4095), the whole 12-bit speed: the half the cell does
+     * not set is the speed the channel has at that row along the played order (see [FsSong.of]). -1 = none.
+     */
+    var fdsModSpeed = -1
+
+    /** FDS `Hxx`: FamiStudio's `FdsModDepth` note attribute (0..63), -1 = none. */
+    var fdsModDepth = -1
 
     val isMusical get() = value in 1..96
     val isValid get() = value != INVALID
@@ -59,7 +68,7 @@ internal class FsNote {
     /** Any attribute that keeps FamiStudio's exporter from folding the row into an empty run. */
     val hasRunBreakingEffect
         get() = hasVolume || vibrato >= 0 || finePitch != NO_FINE || duty >= 0 || noteDelay >= 0 || cutDelay >= 0 || deltaCounter >= 0 ||
-            phaseReset || envelopePeriod >= 0
+            phaseReset || envelopePeriod >= 0 || fdsModSpeed >= 0 || fdsModDepth >= 0
 
     val isEmpty get() = !isValid && !hasRunBreakingEffect && speed < 0
 
@@ -117,15 +126,18 @@ internal class FsSong(
          * (see [NesRules.EFFECTS]) as FamiStudio note attributes. Context the cells leave implicit is resolved along
          * the played order here, so both consumers agree:
          * - a note without an instrument is legato (no attack) on the channel's current instrument;
-         * - OFF releases a sounding note whose instrument has a volume release point (on the N163's channels also one whose
-         *   wave sequence has a release point), and on the VRC7's FM channels any sounding note (key off: FamiStudio's
-         *   `CanRelease`), otherwise (or when the note was already released) it stops the channel;
+         * - OFF releases a sounding note whose instrument has a volume release point (on the N163's channels and the FDS
+         *   also one whose wave sequence has a release point), and on the VRC7's FM channels any sounding note (key off:
+         *   FamiStudio's `CanRelease`), otherwise (or when the note was already released) it stops the channel;
          * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none; on the
-         *   VRC7's FM and the N163's channels it is converted to the frequency step nearest the same pitch
-         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch]), on the 5B squares to their own periods
-         *   ([NesRules.s5bFinePitch]);
+         *   VRC7's FM, the N163's channels and the FDS it is converted to the frequency step nearest the same pitch
+         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch], [NesRules.fdsFinePitch]), on the 5B squares to their own
+         *   periods ([NesRules.s5bFinePitch]);
          * - a row's 5B envelope period (`Ixx` high byte, `Jyy` low byte, on any 5B squares: [NesRules.envPeriod]) is one
-         *   `EnvelopePeriod` on 5B Square 1.
+         *   `EnvelopePeriod` on 5B Square 1;
+         * - FDS `Ixx`/`Jxx` set one half of FamiStudio's 12-bit `FdsModSpeed`; the other half is the speed the channel has
+         *   at that row: the sound's own Mod speed once a note with an attack loads it (an auto-mod sound leaves the
+         *   engine's speed as it was: `famistudio_set_fds_instrument` skips it), else the last I/J value.
          * Requires a song without [NesSystem.errors].
          */
         fun of(document: Song): FsSong {
@@ -137,18 +149,23 @@ internal class FsSong(
             val channels = expansion.channels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
-
+                val fds = NesRules.isFds(expansion, ch)
                 var current = 0 // instrument slot sounding on the channel
                 var sounding = false // a note is playing and has not been released or stopped
                 var fine = 0
-                var playing = 0 // FamiStudio note of the last note (the one a Pxx without note detunes)
+                var playing = 0 // engine note of the last note (the pitch a Pxx without note detunes)
+                var modSpeed = 0 // FDS: the engine's mod speed (famistudio_fds_mod_speed starts at 0)
                 var row = 0
                 for (o in song.orders.indices) {
                     val pattern = song.patterns[song.orders[o]]
                     for (r in 0 until pattern.length) {
                         val cell = pattern.tracks[ch][r]
                         if (cell.note >= 0) playing = NesRules.engineNote(expansion, ch, cell.note)
-                        val n = convert(cell, ch, expansion, current, sounding, instruments, fine, playing)
+                        if (fds && cell.note >= 0 && cell.instrument != 0) {
+                            instruments.getOrNull(cell.instrument - 1)?.fds?.let { if (!it.autoMod) modSpeed = it.modSpeed }
+                        }
+                        val n = convert(cell, ch, expansion, current, sounding, instruments, fine, playing, modSpeed)
+                        if (n != null && n.fdsModSpeed >= 0) modSpeed = n.fdsModSpeed
                         if (n != null) {
                             if (n.isMusical) {
                                 if (n.instrument != 0) current = n.instrument
@@ -190,15 +207,17 @@ internal class FsSong(
         }
 
         private fun convert(cell: Cell, ch: Int, expansion: NesExpansion, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,
-                            playing: Int): FsNote? {
+                            playing: Int, modSpeed: Int): FsNote? {
             if (cell.isBlank) return null
             val vrc7 = NesRules.isVrc7(expansion, ch)
             val n163 = NesRules.isN163(expansion, ch)
             val s5b = NesRules.isS5b(expansion, ch)
+            val fds = NesRules.isFds(expansion, ch)
             val n = FsNote()
             val p = cell.param
             when {
                 cell.note >= 0 -> {
+                    // FamiStudio's engine note for the true pitch ([NesRules.engineNoteShift]: VRC7, 5B, FDS).
                     n.value = NesRules.engineNote(expansion, ch, cell.note)
                     if (cell.instrument != 0) n.instrument = cell.instrument
                     else if (current != 0) {
@@ -211,7 +230,8 @@ internal class FsSong(
                     // DPCM has no release: OFF stops the sample.
                     val releases = ch != NesRules.DPCM && sounding && current != 0 &&
                         (vrc7 || bank[current - 1].let {
-                            it.volume.release >= 0 && it.volume.loop >= 0 || n163 && it.wave.release >= 0 && it.wave.loop >= 0
+                            it.volume.release >= 0 && it.volume.loop >= 0 || n163 && it.wave.release >= 0 && it.wave.loop >= 0 ||
+                                fds && it.fds.release >= 0 && it.fds.loop >= 0
                         })
                     n.value = if (releases) FsNote.RELEASE else FsNote.STOP
                 }
@@ -230,6 +250,7 @@ internal class FsSong(
                 NesRules.FX_FINE_PITCH -> n.finePitch = when {
                     vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
                     n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
+                    fds -> NesRules.fdsFinePitch(playing, p - NesRules.FINE_CENTRE)
                     s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
                     else -> NesRules.FINE_CENTRE - p
                 }
@@ -239,7 +260,10 @@ internal class FsSong(
                 NesRules.FX_DUTY -> n.duty = p
                 NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
                 NesRules.FX_PHASE_RESET -> n.phaseReset = true
-                // 5B envelope period: gathered per row on 5B Square 1 by [of].
+                // I/J: the FDS's mod speed here; the 5B envelope period is gathered per row on 5B Square 1 by [of].
+                NesRules.FX_FDS_MOD_DEPTH -> if (fds) n.fdsModDepth = p
+                NesRules.FX_FDS_MOD_SPEED_HI -> if (fds) n.fdsModSpeed = ((p and 0xF) shl 8) or (modSpeed and 0xFF)
+                NesRules.FX_FDS_MOD_SPEED_LO -> if (fds) n.fdsModSpeed = (modSpeed and 0xF00) or p
             }
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.
             if (ch == NesRules.NOISE) n.finePitch = FsNote.NO_FINE

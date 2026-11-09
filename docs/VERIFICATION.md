@@ -1,4 +1,37 @@
-# Thor Tracker verification — 2026-11-08
+# Thor Tracker verification — 2026-11-09
+
+## 0.19.0 NES + FDS
+
+- **New blank song / Load demo → NES… → NES + FDS** adds the Famicom Disk System's wavetable voice after the NES's five channels. The demo is **Side B**.
+- Instruments have 64-sample, 6-bit wave sequences with repeats, loop and release; four master-volume levels; a 32-entry modulation table; depth, delay, full 12-bit manual speed and automatic pitch ratios. The editor distinguishes the table's targets from the steps the chip actually plays.
+- Playback, audition, live edits, NSF, FamiStudio text and WAV use the pinned FamiStudio 4.5.3 driver. A scoped loader correction disambiguates manual speed low bytes `$80`–`$FF` from automatic modulation. A scoped `$5F` instrument-load extension preserves runtime modulation without aliasing identical instruments' live-edit identities.
+
+Verified: 473 JVM core tests, 13 Linux core tests and six Android-host unit tests; the integrated native command passed
+(Game Boy 145, NES 336, VRC6 105, VRC7 115, N163 225, FDS 227, Sunsoft 5B 204 plus 10 seek-fallback checks,
+SID 151, OPL3 282, Mega Drive 501, WAV 850). Independent FamiStudio traces cover the demo, effects, manual and
+automatic instrument copies, and manual-speed command witnesses. The second-loop copy regression reproduced
+four native failures before correction and passes afterward. All 29 previous player/reference outputs, 64 previous
+golden files and 31 previous sample exports, including `thor-groove.uge`, remain byte-identical.
+
+The production-signed 0.19.0/code 32 candidate passed all 18 Android instrumentation tests on Nova. A separate
+temporary capture test produced 32 Game Boy views, all RGBA-identical to the same-device 0.14.1 baseline.
+The capture harness, test package and device capture files were removed.
+
+Actual Side B playback and its six-lane Pattern surface were inspected on Nova, DMG and Konkr. Each active audio
+track reported zero AudioFlinger underruns during its check. On Konkr, the whole app used 11.26 CPU seconds over
+24.78 wall seconds of playback: 45.4% of one core, including UI work, not an isolated audio-callback measurement.
+DMG exercised the wave and modulation pages, controller audition and a manual-speed edit across 127→128.
+Its saved and reloaded project retains speed 128, depth 4 and delay 18.
+
+NSF and FamiStudio text exported through Android's document picker are byte-identical to exports of that saved
+project through the actual desktop frontend. Fresh no-fade WAV exports both contain 1,226,779 frames of 48 kHz,
+16-bit stereo PCM; 140 of 2,453,558 samples differ, by at most two least-significant bits. The Android peak is
+25,797. The comparison uses fresh renders: a hidden Android WAV-ready popup deliberately retains its original
+snapshot, even when the working project changes. Owned Download smoke files were removed; `/ThorTunez` was untouched.
+
+The actual desktop frontend also exercised held-note audition (peak 0.45099) and playback (peak 0.63122).
+Native WAV checks include the shortest valid one-row, one-tick FDS song. These checks are not human listening,
+physical Famicom/RAM-adapter testing, or comparison with a reference FDS emulator's audio. Thor was not used.
 
 ## 0.18.0 NES + Sunsoft 5B
 
@@ -31,6 +64,15 @@ The four owned Download smoke files were removed, and `/ThorTunez` was untouched
 The actual desktop frontend also produced a nonzero audition peak (0.24216) and exported the shortest valid
 one-row, one-tick 5B song without a fade: 798 non-silent frames. These checks are not human listening or a comparison
 with a physical Sunsoft 5B cartridge or a reference emulator's audio.
+
+Published artifacts: main workflow `42535995173` passed build, Deck, APK publication and AppImage publication.
+The APK's production certificate and version 0.18.0/code 31 were verified; it was installed over the existing app
+and cold-launched on Nova, DMG and Konkr. Thor received the APK in Downloads without an install or wake.
+The Deck received the AppImage and an updated stable `thor-tracker` symlink without launching it.
+Both remote artifact digests matched the published checksums. The published AppImage itself played Copper Kite
+locally to row 29 in four seconds with peak 0.24205; its actual Pattern surface was inspected.
+APK SHA-256: `731bca584bb3d5b5515ebd0cc0e166a688bd04b805d8a92a0a92fa8e28d2b26d`.
+AppImage SHA-256: `3c4364f03eb31b48437b715839c36f36413b98e9a0e33f16818cea5c59591c9f`.
 
 ## 0.17.0 NES + Namco 163
 

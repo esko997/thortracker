@@ -54,8 +54,8 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
     /**
      * [e] made legal for this envelope of a [chip] sound: values clamped, loop < length, and a release only on volume
      * and only after a loop (loop < release < length; FamiStudio drops a release without a loop). An envelope the
-     * chip's sounds do not have ([belongsTo]: a VRC7, N163 or 5B sound's duty, a mixer or noise envelope off the 5B) is
-     * always empty.
+     * chip's sounds do not have ([belongsTo]: a VRC7, N163, FDS or 5B sound's duty, a mixer or noise envelope off the 5B)
+     * is always empty.
      */
     fun fixed(e: NesEnvelope, chip: NesChip = NesChip.APU): NesEnvelope {
         if (!belongsTo(chip)) return if (e.values.isEmpty() && e.loop < 0 && e.release < 0) e else NesEnvelope()
@@ -133,9 +133,10 @@ fun Song.nesInstrument(slot: Int): NesInstrument? = nes.instruments.getOrNull(sl
 fun defaultNesInstrument(slot: Int) = NesInstrument(name = "Sound ${hex2(slot)}")
 
 /**
- * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7, N163 and 5B sounds have none), the saw
- * volume, the FM patch, the N163 waves and the 5B's mixer, noise and hardware envelope back to their defaults when it
- * leaves that chip. Refused (with a note) when the chip is not the song's or the sound still maps DPCM samples, which
+ * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7, N163, FDS and 5B sounds have none), the saw
+ * volume, the FM patch, the N163 waves, the FDS waves and modulation and the 5B's mixer, noise and hardware envelope back
+ * to their defaults when it leaves that chip. Refused (with a note) when the chip is not the song's or the sound still
+ * maps DPCM samples, which only 2A03 sounds play.
  * only 2A03 sounds play.
  */
 fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
@@ -150,9 +151,10 @@ fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
 }
 
 /**
- * This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7, the N163 and the 5B), other chips'
- * settings reset. A sound becoming an N163 sound starts from FamiStudio's default wave (a 16-sample sine at RAM 0, legal
- * with any channel count).
+ * This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7, the N163, the FDS and the 5B), other
+ * chips' settings reset. A sound becoming an N163 sound starts from FamiStudio's default wave (a 16-sample sine at RAM 0,
+ * legal with any channel count); one becoming an FDS sound from FamiStudio's default FDS instrument (one sine wave, 100%
+ * master volume, no modulation).
  */
 fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
     chip = chip,
@@ -160,6 +162,7 @@ fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
     sawVolume = if (chip == NesChip.VRC6) sawVolume else Vrc6SawVolume.HALF,
     fm = if (chip == NesChip.VRC7) fm else Vrc7Patch.DEFAULT,
     wave = if (chip == NesChip.N163) wave else N163Wave.DEFAULT,
+    fds = if (chip == NesChip.FDS) fds else FdsSound.DEFAULT,
     mixer = NesEnvelopeKind.MIXER.fixed(mixer, chip),
     noise = NesEnvelopeKind.NOISE.fixed(noise, chip),
     s5b = if (chip == NesChip.S5B) s5b else S5bEnvelope.DEFAULT,
@@ -309,7 +312,7 @@ object N163Waves {
         fixed(w.withSequence(NesEnvelopes.withRelease(NesEnvelopeKind.VOLUME, sequence(w), release)), ram)
 
     /** Every wave of [w] made from [preset] (FamiStudio's values at the wave size; sweeping presets across all waves). */
-    fun withPreset(w: N163Wave, preset: N163Preset, ram: Int): N163Wave =
+    fun withPreset(w: N163Wave, preset: WavePreset, ram: Int): N163Wave =
         fixed(w.copy(waves = N163Presets.waves(preset, w.size, w.waves.size)), ram)
 
     /** The sequence as a volume-style envelope: one repeat per wave, the loop and the release. */
@@ -319,11 +322,142 @@ object N163Waves {
     private fun N163Wave.withSequence(e: NesEnvelope) = copy(repeat = e.values, loop = e.loop, release = e.release)
 }
 
+/**
+ * FDS sound edits, following FamiStudio 4.5.3's FDS instrument rules (`Instrument.cs`: `FdsWaveCount` 1..16
+ * (`FdsMaxWaveCount`), waves of 64 samples 0..63 in the `FdsWaveform` envelope, the `WaveformRepeat` envelope 1..15 with
+ * loop and release; `FdsModulation` 32 targets −64..63; `FdsModSpeed` 0..4095, `FdsModDepth` 0..63, `FdsModDelay`
+ * 0..255, `FdsAutoModNumer`/`FdsAutoModDenom` 1..32, `ParamProviders.cs` 220-240). The wave sequence's loop and release
+ * follow the volume envelope's rules (a release needs a loop, loop < release < count), as an N163 sound's
+ * ([N163Waves]). Every edit returns a sound [fixed] keeps legal.
+ */
+object FdsEdits {
+    /**
+     * The level a cleared sample takes: the middle of 0..63, FamiStudio's Flat preset (`round(63 / 2)` = 32,
+     * `Envelope.SetFromPreset`). The FDS's output is unipolar (wave × gain), so any constant wave is silent.
+     */
+    const val CENTRE = 32
+
+    /**
+     * [f] made legal: 1..[FdsSound.MAX_WAVES] waves of exactly [FdsSound.WAVE_SIZE] samples 0..63 (others resampled),
+     * one repeat (1..15) per wave, the volume envelope's loop and release rules on the sequence, [FdsSound.MOD_SIZE]
+     * modulation targets −64..63, and every number in its range. Returns [f] itself when it already is.
+     */
+    fun fixed(f: FdsSound): FdsSound {
+        val count = f.waves.size.coerceIn(1, FdsSound.MAX_WAVES)
+        val waves = if (f.waves.isEmpty()) listOf(FdsPresets.SINE) else f.waves.take(count).map { wave ->
+            val s = resampled(wave)
+            if (s.all { it in FdsSound.SAMPLE }) s else s.map { it.coerceIn(FdsSound.SAMPLE) }
+        }
+        val repeat = List(count) { (f.repeat.getOrNull(it) ?: FdsSound.REPEAT.first).coerceIn(FdsSound.REPEAT) }
+        val seq = NesEnvelopeKind.VOLUME.fixed(NesEnvelope(repeat, f.loop, f.release))
+        val modulation = if (f.modulation.size == FdsSound.MOD_SIZE && f.modulation.all { it in FdsSound.MOD_TARGET }) f.modulation
+            else List(FdsSound.MOD_SIZE) { (f.modulation.getOrNull(it) ?: 0).coerceIn(FdsSound.MOD_TARGET) }
+        val out = f.copy(
+            waves = waves, repeat = repeat, loop = seq.loop, release = seq.release, modulation = modulation,
+            modSpeed = f.modSpeed.coerceIn(FdsSound.MOD_SPEED),
+            modDepth = f.modDepth.coerceIn(FdsSound.MOD_DEPTH),
+            modDelay = f.modDelay.coerceIn(FdsSound.MOD_DELAY),
+            autoModNumer = f.autoModNumer.coerceIn(FdsSound.AUTO_MOD),
+            autoModDenom = f.autoModDenom.coerceIn(FdsSound.AUTO_MOD),
+        )
+        return if (out == f) f else out
+    }
+
+    /** [samples] stretched or squeezed to [FdsSound.WAVE_SIZE] samples ([N163Waves.resampled]); none: a flat wave. */
+    fun resampled(samples: List<Int>): List<Int> =
+        if (samples.isEmpty()) List(FdsSound.WAVE_SIZE) { CENTRE } else N163Waves.resampled(samples, FdsSound.WAVE_SIZE)
+
+    /** [f] with sample [index] of wave [wave] set to [value] (0..63). */
+    fun withSample(f: FdsSound, wave: Int, index: Int, value: Int): FdsSound {
+        val samples = f.waves.getOrNull(wave) ?: return f
+        if (index !in samples.indices) return f
+        return fixed(f.copy(waves = f.waves.replaced(wave, samples.replaced(index, value.coerceIn(FdsSound.SAMPLE)))))
+    }
+
+    /** [f] with wave [wave] replaced by [samples], resampled to 64 (a pasted wave). */
+    fun withWave(f: FdsSound, wave: Int, samples: List<Int>): FdsSound {
+        if (wave !in f.waves.indices) return f
+        return fixed(f.copy(waves = f.waves.replaced(wave, resampled(samples))))
+    }
+
+    /** True when [f] holds the most waves FamiStudio keeps (16). */
+    fun full(f: FdsSound): Boolean = f.waves.size >= FdsSound.MAX_WAVES
+
+    /** [f] with [count] waves (1..16): cut from the end, or extended with copies of the last wave. */
+    fun withCount(f: FdsSound, count: Int): FdsSound {
+        val n = count.coerceIn(1, FdsSound.MAX_WAVES)
+        val cur = f.waves.size
+        if (n == cur) return fixed(f)
+        val waves = if (n < cur) f.waves.take(n) else f.waves + List(n - cur) { f.waves.last() }
+        val repeat = if (n < cur) f.repeat.take(n) else f.repeat + List(n - cur) { f.repeat.lastOrNull() ?: FdsSound.REPEAT.first }
+        return fixed(f.copy(waves = waves, repeat = repeat))
+    }
+
+    /**
+     * [f] with a copy of wave [wave] (and its repeat) inserted after it; the loop and release keep marking the same
+     * waves. Unchanged when the sequence is [full].
+     */
+    fun duplicated(f: FdsSound, wave: Int): FdsSound {
+        if (wave !in f.waves.indices || full(f)) return f
+        fun shift(point: Int) = if (point > wave) point + 1 else point
+        val repeat = sequence(f).values
+        val waves = f.waves.toMutableList().also { it.add(wave + 1, f.waves[wave]) }
+        val repeats = repeat.toMutableList().also { it.add(wave + 1, repeat[wave]) }
+        return fixed(f.copy(waves = waves, repeat = repeats, loop = shift(f.loop), release = shift(f.release)))
+    }
+
+    /** [f] without wave [wave] (the last remaining wave stays); loop and release move as on a volume envelope. */
+    fun removed(f: FdsSound, wave: Int): FdsSound {
+        if (wave !in f.waves.indices || f.waves.size == 1) return f
+        val seq = NesEnvelopes.removed(NesEnvelopeKind.VOLUME, sequence(f), wave)
+        return fixed(f.copy(waves = f.waves.toMutableList().also { it.removeAt(wave) }).withSequence(seq))
+    }
+
+    /** [f] playing wave [wave] for [frames] frames (1..15). */
+    fun withRepeat(f: FdsSound, wave: Int, frames: Int): FdsSound {
+        if (wave !in f.waves.indices) return f
+        return fixed(f.copy(repeat = sequence(f).values.replaced(wave, frames.coerceIn(FdsSound.REPEAT))))
+    }
+
+    /** [f] looping back to wave [loop] after its last wave (-1: the last wave holds); kept before the release. */
+    fun withLoop(f: FdsSound, loop: Int): FdsSound =
+        fixed(f.withSequence(NesEnvelopes.withLoop(NesEnvelopeKind.VOLUME, sequence(f), loop)))
+
+    /**
+     * [f] releasing at wave [release] (-1: none), as a volume envelope releases: a release needs a loop (setting one
+     * without a loop loops from wave 0), loop < release < count.
+     */
+    fun withRelease(f: FdsSound, release: Int): FdsSound =
+        fixed(f.withSequence(NesEnvelopes.withRelease(NesEnvelopeKind.VOLUME, sequence(f), release)))
+
+    /** Every wave of [f] made from [preset] (FamiStudio's values; the PWM presets sweep across the waves). */
+    fun withPreset(f: FdsSound, preset: WavePreset): FdsSound = fixed(f.copy(waves = FdsPresets.waves(preset, f.waves.size)))
+
+    /** [f] with modulation target [index] (0..31) set to [value] (−64..63). */
+    fun withTarget(f: FdsSound, index: Int, value: Int): FdsSound {
+        if (index !in f.modulation.indices) return f
+        return fixed(f.copy(modulation = f.modulation.replaced(index, value.coerceIn(FdsSound.MOD_TARGET))))
+    }
+
+    /** [f]'s modulation table made from [preset] (one of [FdsPresets.MOD_PRESETS]). */
+    fun withModPreset(f: FdsSound, preset: WavePreset): FdsSound = fixed(f.copy(modulation = FdsPresets.modulation(preset)))
+
+    /** The sequence as a volume-style envelope: one repeat per wave, the loop and the release. */
+    private fun sequence(f: FdsSound) =
+        NesEnvelope(List(f.waves.size) { f.repeat.getOrNull(it) ?: FdsSound.REPEAT.first }, f.loop, f.release)
+
+    private fun FdsSound.withSequence(e: NesEnvelope) = copy(repeat = e.values, loop = e.loop, release = e.release)
+}
+
 /** Edits the waves of N163 sound [slot], kept legal for the song's N163 RAM ([N163Waves.fixed]). */
 fun EditorSession.editNesWave(slot: Int, label: String, f: (N163Wave) -> N163Wave): Boolean {
     val ram = N163Waves.ram(song)
     return editNesInstrument(slot, label) { if (it.chip == NesChip.N163) it.copy(wave = N163Waves.fixed(f(it.wave), ram)) else it }
 }
+
+/** Edits the waves and modulation of FDS sound [slot], kept legal ([FdsEdits.fixed]). */
+fun EditorSession.editNesFds(slot: Int, label: String, f: (FdsSound) -> FdsSound): Boolean =
+    editNesInstrument(slot, label) { if (it.chip == NesChip.FDS) it.copy(fds = FdsEdits.fixed(f(it.fds))) else it }
 
 /** Edits the FM patch of VRC7 sound [slot]. */
 fun EditorSession.editNesFm(slot: Int, label: String, f: (Vrc7Patch) -> Vrc7Patch): Boolean =
@@ -344,11 +478,16 @@ fun EditorSession.editVrc7Sustain(label: String, f: (Vrc7Sustain) -> Vrc7Sustain
     return apply(label) { s -> s.copy(sound = s.nes.copy(vrc7Sustain = next)) }
 }
 
-/** A copied NES instrument, one of its envelopes, or one N163 wave's samples. */
+/** A copied NES instrument, one of its envelopes, or one N163 or FDS wave's samples. */
 sealed interface NesClip : Clip {
     data class Sound(val instrument: NesInstrument) : NesClip
     data class Envelope(val kind: NesEnvelopeKind, val envelope: NesEnvelope, val relative: Boolean) : NesClip
-    data class Wave(val samples: List<Int>) : NesClip
+
+    /** A wave's [samples] with its chip's highest level [top] (N163 15, FDS 63), so a paste onto the other chip rescales it. */
+    data class Wave(val samples: List<Int>, val top: Int) : NesClip {
+        /** The samples on a scale of 0..[to], rounded to the nearest level. */
+        fun levels(to: Int): List<Int> = if (to == top) samples else samples.map { (it * to * 2 + top) / (top * 2) }
+    }
 }
 
 fun EditorSession.setNesInstrument(slot: Int, instrument: NesInstrument, label: String = "Edit ${instrument.name.ifBlank { "sound" }}"): Boolean {
@@ -377,21 +516,32 @@ fun EditorSession.copyNesEnvelope(slot: Int, kind: NesEnvelopeKind) {
     note("Copied the ${kind.label.lowercase()} envelope of sound ${hex2(slot)}")
 }
 
-/** Copies wave [wave] of N163 sound [slot]. */
+/** Copies wave [wave] of N163 or FDS sound [slot]. */
 fun EditorSession.copyNesWave(slot: Int, wave: Int) {
-    val samples = song.nesInstrument(slot)?.takeIf { it.chip == NesChip.N163 }?.wave?.waves?.getOrNull(wave) ?: return
-    hold(NesClip.Wave(samples))
-    note("Copied wave ${wave + 1} of sound ${hex2(slot)} (${samples.size} samples)")
+    val ins = song.nesInstrument(slot) ?: return
+    val clip = when (ins.chip) {
+        NesChip.N163 -> ins.wave.waves.getOrNull(wave)?.let { NesClip.Wave(it, N163Wave.SAMPLE.last) }
+        NesChip.FDS -> ins.fds.waves.getOrNull(wave)?.let { NesClip.Wave(it, FdsSound.SAMPLE.last) }
+        else -> null
+    } ?: return
+    hold(clip)
+    note("Copied wave ${wave + 1} of sound ${hex2(slot)} (${clip.samples.size} samples)")
 }
 
 /**
- * Pastes a copied wave over wave [wave] of N163 sound [slot], resampled to its size; a copied sound or envelope pastes
- * as [pasteNes] does.
+ * Pastes a copied wave over wave [wave] of N163 or FDS sound [slot], resampled to its size and rescaled to its chip's
+ * levels (0-15 / 0-63); a copied sound or envelope pastes as [pasteNes] does.
  */
 fun EditorSession.pasteNesWave(slot: Int, wave: Int, kind: NesEnvelopeKind): Boolean {
     val clip = clipboard as? NesClip.Wave ?: return pasteNes(slot, kind)
-    val ram = N163Waves.ram(song)
-    val ok = editNesWave(slot, "Paste wave") { N163Waves.withWave(it, wave, clip.samples, ram) }
+    val ok = when (song.nesInstrument(slot)?.chip) {
+        NesChip.N163 -> {
+            val ram = N163Waves.ram(song)
+            editNesWave(slot, "Paste wave") { N163Waves.withWave(it, wave, clip.levels(N163Wave.SAMPLE.last), ram) }
+        }
+        NesChip.FDS -> editNesFds(slot, "Paste wave") { FdsEdits.withWave(it, wave, clip.levels(FdsSound.SAMPLE.last)) }
+        else -> false
+    }
     note("Pasted into wave ${wave + 1}")
     return ok
 }
@@ -415,7 +565,7 @@ fun EditorSession.pasteNes(slot: Int, kind: NesEnvelopeKind): Boolean {
             note("Pasted the ${clip.kind.label.lowercase()} envelope into ${kind.label.lowercase()}")
             return ok
         }
-        is NesClip.Wave -> { note("A copied wave pastes onto a wave: the Waves page of an N163 sound, Wave or Samples row"); return false }
+        is NesClip.Wave -> { note("A copied wave pastes onto a wave: the Waves page of an N163 or FDS sound, Wave or Samples row"); return false }
         else -> { note("Clipboard holds no NES sound or envelope"); return false }
     }
 }
