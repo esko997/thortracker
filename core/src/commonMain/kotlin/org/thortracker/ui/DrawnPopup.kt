@@ -14,6 +14,11 @@ class DrawnPopup(private val ink: Ink) : PopupView {
     private var scroll = 0f
     private var cursor = 0
     private var editing = false
+    private var revealCursor = false
+    private var messageText: String? = null
+    private var messageWidth = 0f
+    private var messageSize = 0f
+    private var messageLines: List<String> = emptyList()
     private val rowRects = ArrayList<Rect>()
     private val panel = Rect()
     private val scratch = Rect()
@@ -23,18 +28,31 @@ class DrawnPopup(private val ink: Ink) : PopupView {
     override val fieldFocused: Boolean get() = editing && spec?.text != null
 
     override fun show(spec: PopupSpec, hasParent: Boolean, popups: Popups) {
-        if (spec !== this.spec) { scroll = 0f; editing = false }
+        if (spec !== this.spec) {
+            scroll = 0f
+            editing = false
+            // Long source/attribution messages open at their beginning, not at the action below them.
+            revealCursor = spec.message.isNullOrEmpty()
+        }
         this.spec = spec
         this.hasParent = hasParent
         owner = popups
         cursor = spec.selected
     }
 
-    override fun hide() { spec = null; owner = null; editing = false }
+    override fun hide() {
+        spec = null; owner = null; editing = false
+        messageText = null; messageLines = emptyList()
+    }
 
-    override fun select(entry: Int) { cursor = entry; editing = editing && entry == 0 }
+    override fun select(entry: Int) {
+        cursor = entry; editing = editing && entry == 0; revealCursor = true
+    }
 
-    override fun page(direction: Int) { scroll += direction * ink.dp(200f) }
+    override fun page(direction: Int) {
+        scroll += direction * ink.dp(200f)
+        revealCursor = false
+    }
 
     override fun focusField() { editing = spec?.text != null }
 
@@ -66,8 +84,15 @@ class DrawnPopup(private val ink: Ink) : PopupView {
         val bodySize = 15f * u
         val itemSize = 16f * u
 
-        // Message lines, wrapped to the panel.
-        val message = s.message?.let { wrap(it, w - pad * 2, bodySize) }.orEmpty()
+        // Reuse wrapping across frames; a selected Scala file can contain tens of thousands of characters.
+        val wrapWidth = w - pad * 2
+        if (s.message !== messageText || wrapWidth != messageWidth || bodySize != messageSize) {
+            messageText = s.message
+            messageWidth = wrapWidth
+            messageSize = bodySize
+            messageLines = s.message?.let { wrap(it, wrapWidth, bodySize) }.orEmpty()
+        }
+        val message = messageLines
         val lineH = bodySize * 1.25f * 1.15f
         val messageH = if (message.isEmpty()) 0f else message.size * lineH + 24f * u
         val fieldH = if (s.text != null) 64f * u else 0f
@@ -84,25 +109,29 @@ class DrawnPopup(private val ink: Ink) : PopupView {
         c.text(s.title, panel.left + pad, panel.top, titleH, Palette.TEXT, Face.SANS, true, titleSize, Align.LEFT)
         c.fillRect(panel.left, panel.top + titleH, panel.right, panel.top + titleH + u, Palette.RULE)
 
-        // Keep the cursor's row in view, then lay out the body below the title.
+        // Explicit row navigation reveals its cursor; manual paging remains free to read the message.
         val bodyTop = panel.top + titleH + u
         val entryTops = ArrayList<Pair<Float, Float>>()
         var y = messageH
         if (s.text != null) { entryTops += y to y + fieldH; y += fieldH }
         for (item in s.items) { val rh = if (item.heading) 34f * u else rowH; entryTops += y to y + rh; y += rh }
-        entryTops.getOrNull(cursor)?.let { (top, bottom) ->
-            if (top - scroll < 0) scroll = top - 8f * u
-            if (bottom - scroll > shownBody) scroll = bottom - shownBody + 8f * u
+        if (revealCursor) {
+            entryTops.getOrNull(cursor)?.let { (top, bottom) ->
+                if (top - scroll < 0) scroll = top - 8f * u
+                if (bottom - scroll > shownBody) scroll = bottom - shownBody + 8f * u
+            }
+            revealCursor = false
         }
         scroll = scroll.coerceIn(0f, maxOf(0f, bodyH - shownBody))
         val clipTop = bodyTop
         val clipBottom = bodyTop + shownBody
         fun visible(top: Float, bottom: Float) = bottom > clipTop && top < clipBottom
 
-        var my = bodyTop + 14f * u - scroll
-        for (line in message) {
-            if (visible(my, my + lineH)) c.text(line, panel.left + pad, my, lineH, Palette.TEXT, Face.SANS, false, bodySize, Align.LEFT)
-            my += lineH
+        val messageTop = bodyTop + 14f * u - scroll
+        val firstLine = ((clipTop - messageTop) / lineH).toInt().coerceIn(0, message.size)
+        val lastLine = (((clipBottom - messageTop) / lineH).toInt() + 1).coerceIn(firstLine, message.size)
+        for (i in firstLine until lastLine) {
+            c.text(message[i], panel.left + pad, messageTop + i * lineH, lineH, Palette.TEXT, Face.SANS, false, bodySize, Align.LEFT)
         }
         rowRects.clear()
         var entry = 0
@@ -159,9 +188,10 @@ class DrawnPopup(private val ink: Ink) : PopupView {
         val keys = owner?.keys ?: org.thortracker.input.Keymap.DEFAULT
         val onField = s.text != null && cursor == 0
         val leave = if (s.items.any { it.action == null }) "Back" else "Close"
-        val hints = if (s.capture != null) listOf("Button" to "Bind it", "Sel L2 R2 L3 +" to "Chord", "Back" to "Cancel") else buildList {
+        val hints = if (s.capture != null) listOf("Button" to "Bind it", "Sel L2 R2 L3 +" to "Chord", "L2+R2 +" to "Both", "Back" to "Cancel") else buildList {
             add(keys.pair(Action.UP, Action.DOWN) to "Move")
             add(keys.label(Action.EDIT) to if (onField) (if (fieldFocused) "Done" else "Type") else "Choose")
+            if (!s.message.isNullOrEmpty()) add("L1 R1" to "Page")
             add(keys.label(Action.CLEAR) to leave)
         }
         val size = ink.dp(12f) * 0.82f
@@ -181,12 +211,23 @@ class DrawnPopup(private val ink: Ink) : PopupView {
     private fun wrap(text: String, width: Float, size: Float): List<String> {
         val out = ArrayList<String>()
         for (paragraph in text.split('\n')) {
-            var line = ""
-            for (word in paragraph.split(' ')) {
-                val next = if (line.isEmpty()) word else "$line $word"
-                if (ink.labelWidth(next, size) > width && line.isNotEmpty()) { out += line; line = word } else line = next
+            if (paragraph.isEmpty()) { out += ""; continue }
+            var start = 0
+            while (start < paragraph.length) {
+                var end = start
+                var space = -1
+                while (end < paragraph.length) {
+                    val next = end + if (paragraph[end].isHighSurrogate() && end + 1 < paragraph.length &&
+                        paragraph[end + 1].isLowSurrogate()) 2 else 1
+                    if (end > start && ink.labelWidth(paragraph.substring(start, next), size) > width) break
+                    if (paragraph[end] == ' ') space = next
+                    end = next
+                }
+                // Break long ids/URLs as well as prose. Keep every character, including source whitespace.
+                if (end < paragraph.length && space > start) end = space
+                out += paragraph.substring(start, end)
+                start = end
             }
-            out += line
         }
         return out
     }

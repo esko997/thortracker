@@ -113,13 +113,18 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         return out
     }
 
-    /** Several actions in one key column: "Sel+X A B" when they share a modifier, else their labels. */
+    /** Several actions in one key column: "Sel+X A B" when they share their modifiers, else their labels. */
     private fun Keymap.group(vararg actions: Action): String {
         val bindings = actions.map { a -> control(a)?.let { binding(it) } }
-        val modifier = bindings.firstOrNull()?.modifier
-        if (modifier == null || bindings.any { it == null || it.modifier != modifier }) return actions.joinToString(" ") { label(it) }
-        return Keymap.buttonName(modifier) + "+" + bindings.joinToString(" ") { Keymap.buttonName(it!!.button) }
+        val modifiers = bindings.firstOrNull()?.modifiers.orEmpty()
+        if (modifiers.isEmpty() || bindings.any { it == null || it.modifiers != modifiers }) return actions.joinToString(" ") { label(it) }
+        return Keymap.modifiersLabel(modifiers) + "+" + bindings.joinToString(" ") { Keymap.buttonName(it!!.button) }
     }
+
+    /** The bound view chords for this song's views, here or for the other display: "R2+A Song  R2+B Instrument …". */
+    private fun viewChords(k: Keymap, toOther: Boolean): String =
+        Control.entries.filter { it.shows != null && it.toOther == toOther && it.shows in song.system.views && k.binding(it) != null }
+            .joinToString("  ") { "${k.label(it)} ${it.short}" }.ifEmpty { "Menu → Controls" }
 
     private fun controls(k: Keymap): List<Line> {
         val system = song.system
@@ -146,10 +151,14 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(channels, "Previous/next channel, bank, wave or page"),
             Line.Row(k.pair(Action.UNDO, Action.REDO), "Undo / redo (whole document, both displays)"),
             Line.Row(Keymap.MODIFIERS.joinToString(" ") { Keymap.buttonName(it) }, "Alone: only start chords, so a brushed trigger never edits"),
+            Line.Row("L2+R2", "Hold both triggers, in either order, for a third layer of chords. While both are held, an L2 or R2 " +
+                "chord does nothing, so a third-layer press never undoes or switches a view by mistake"),
             Line.Row(k.label(Control.SWAP), "Swap the complete views of the two displays"),
-            Line.Text(Control.entries.filter { it.shows != null && it.shows in system.views && k.binding(it) != null }.joinToString("  ") { "${k.label(it)} ${it.short}" }
-                .ifEmpty { "Menu → Controls" }, Palette.PLAYHEAD),
+            Line.Text(viewChords(k, toOther = false), Palette.PLAYHEAD),
             Line.Row("Views", "Show that view on this display; the same chord again returns to the previous view"),
+            Line.Text(viewChords(k, toOther = true), Palette.PLAYHEAD),
+            Line.Row("Other", "Show that view on the other display and keep the controller here (one display: on it); " +
+                "again returns to the previous view"),
             Line.Row(k.group(Action.COPY, Action.PASTE, Action.CUT), "Copy / paste / cut"),
             Line.Row(k.label(Action.DUPLICATE), "Duplicate"),
             Line.Row(k.group(Action.OCTAVE_DOWN, Action.OCTAVE_UP), "Octave down / up (Pattern entry, or the listening note)"),
@@ -202,7 +211,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(edit, "Listen: play.  Write: write at the pattern cursor and advance"),
             Line.Row(clear, "Write mode: place OFF and advance"),
             Line.Row(k.label(Action.DOWN), "Write mode: skip a step"),
-            Line.Row("Dark keys", "Above ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
+            Line.Row("Dark keys", (if (system.noteRange.first % 12 == 0) "Above" else "Below ${system.noteName(system.noteRange.first)}, the lowest note, and above") +
+                " ${system.noteName(system.noteRange.last)}, the highest note: they neither play nor write"),
         ) + (if (system.channels.none { it.kind == ChannelKind.SAMPLE }) emptyList() else listOf(
             Line.Row("Sample keys", "On ${system.channels.filter { it.kind == ChannelKind.SAMPLE }.joinToString { it.name }} each key shows the sample the sound maps to it; " +
                 "unnamed keys play nothing. In the pattern, ${k.held(Action.EDIT, lr)} on such a note steps through the mapped keys"),

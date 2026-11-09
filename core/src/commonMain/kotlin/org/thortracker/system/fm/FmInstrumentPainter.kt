@@ -2,6 +2,7 @@ package org.thortracker.system.fm
 
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.pow
 import kotlin.math.sqrt
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.channelCount
@@ -43,6 +44,62 @@ class FmRouting(val columns: Int, val rows: Int, val nodes: List<FmNode>, val ed
             }
             return FmRouting(cols, chains.size, nodes, edges)
         }
+
+        /**
+         * Routing of OPN-family (YM2612, YMF288) [algorithm] 0..7: operators placed by depth (modulators left of what
+         * they modulate), carriers ([isCarrier], 0-based) on the right; [edges] are the algorithm's modulator → modulated
+         * operator pairs, 1-based.
+         */
+        fun opn(algorithm: Int, edges: List<Pair<Int, Int>>, isCarrier: (Int) -> Boolean): FmRouting {
+            val alg = algorithm.coerceIn(0, 7)
+            val layout = OPN_LAYOUTS[alg]
+            val nodes = layout.mapIndexed { op, (column, row) -> FmNode(op, column, row, isCarrier(op)) }
+                .sortedWith(compareBy({ it.column }, { it.row }))
+            return FmRouting(layout.maxOf { it.first } + 1, OPN_ROWS[alg], nodes, edges.map { (a, b) -> (a - 1) to (b - 1) })
+        }
+
+        /** Operator positions (column, row) per OPN algorithm; carriers in the last column. */
+        private val OPN_LAYOUTS: List<List<Pair<Int, Float>>> = listOf(
+            listOf(0 to 0f, 1 to 0f, 2 to 0f, 3 to 0f),          // 1→2→3→4
+            listOf(0 to 0f, 0 to 1f, 1 to 0.5f, 2 to 0.5f),      // (1+2)→3→4
+            listOf(1 to 0f, 0 to 1f, 1 to 1f, 2 to 0.5f),        // (1+(2→3))→4
+            listOf(0 to 0f, 1 to 0f, 1 to 1f, 2 to 0.5f),        // ((1→2)+3)→4
+            listOf(0 to 0f, 1 to 0f, 0 to 1f, 1 to 1f),          // (1→2)+(3→4)
+            listOf(0 to 1f, 1 to 0f, 1 to 1f, 1 to 2f),          // 1→(2+3+4)
+            listOf(0 to 0f, 1 to 0f, 1 to 1f, 1 to 2f),          // (1→2)+3+4
+            listOf(0 to 0f, 0 to 1f, 0 to 2f, 0 to 3f),          // 1+2+3+4
+        )
+        private val OPN_ROWS = listOf(1, 2, 2, 2, 2, 3, 3, 4)
+    }
+}
+
+/**
+ * OPN-family (YM2612, YMF288) envelope timing for the editors' texts and sketches, at envelope-generator clock [egHz]
+ * (the chip clock / 144 / 3: the YM2612's NTSC 53267 Hz sample rate / 3, the YMF288's 8 MHz / 144 / 3).
+ */
+class OpnTiming(private val egHz: Float) {
+    /**
+     * Time to fall [db] at envelope rate [rate] (0..63, a register rate ×2 plus its own offset; 0 never): the chip
+     * steps its 10-bit attenuation every 2^(11 − rate/4) EG clocks by 1, 1.25, 1.5 or 1.75 (rate mod 4); key scaling
+     * ignored.
+     */
+    fun fallMs(rate: Int, db: Float): Float {
+        if (rate <= 0) return Float.POSITIVE_INFINITY
+        val r = rate.coerceAtMost(63)
+        val perClock = (1f + 0.25f * (r % 4)) * 2f.pow(r / 4 - 11)
+        return 1024f / perClock / egHz * 1000f * (db / 96f)
+    }
+
+    /** Attack to full at register rate [ar] (0 never, 31 instant): about a fourteenth of the same rate's full decay. */
+    fun attackMs(ar: Int): Float = when {
+        ar <= 0 -> Float.POSITIVE_INFINITY
+        ar >= 31 -> 0f
+        else -> fallMs(2 * ar, 96f) * 0.072f
+    }
+
+    companion object {
+        /** D1L/SL [sl] as decibels below full: 3 dB steps, 15 = 93 dB. */
+        fun slDb(sl: Int): Float = if (sl >= 15) 93f else sl * 3f
     }
 }
 

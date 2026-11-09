@@ -6,9 +6,9 @@
 #include <math.h>
 #include <string.h>
 
-static const uint8_t kLength[32] = {10, 254, 20, 2,  40, 4,  80, 6,  160, 8,  60, 10, 14, 12, 26, 14,
-                                    12, 16,  24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30};
-static const uint8_t kDuty[4][8] = {
+const uint8_t nes_length_table[32] = {10, 254, 20, 2,  40, 4,  80, 6,  160, 8,  60, 10, 14, 12, 26, 14,
+                                      12, 16,  24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30};
+const uint8_t nes_duty_table[4][8] = {
     {0, 1, 0, 0, 0, 0, 0, 0}, {0, 1, 1, 0, 0, 0, 0, 0}, {0, 1, 1, 1, 1, 0, 0, 0}, {1, 0, 0, 1, 1, 1, 1, 1}};
 static const uint8_t kTriangle[32] = {15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
                                       0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15};
@@ -32,10 +32,12 @@ void nes_apu_reset(NesApu* a) {
     blip_t* out = a->out;
     uint8_t mute = a->mute;
     const uint8_t* prg = a->prg;
+    const float amp_scale = a->amp_scale;
     memset(a, 0, sizeof *a);
     a->out = out;
     a->mute = mute;
     a->prg = prg;
+    a->amp_scale = amp_scale;
     a->noise.lfsr = 1;
     a->fc_reset_at = -1;
     a->pulse[0].timer = a->pulse[1].timer = 2;
@@ -47,6 +49,11 @@ void nes_apu_reset(NesApu* a) {
 }
 
 void nes_apu_set_memory(NesApu* a, const uint8_t* prg) { a->prg = prg; }
+
+void nes_apu_set_amp_scale(NesApu* a, float scale) { a->amp_scale = scale; }
+
+/* The instance's blip amplitude per mixer level 1.0. */
+static float amp_scale(const NesApu* a) { return a->amp_scale > 0.0f ? a->amp_scale : (float)NES_APU_AMP_SCALE; }
 
 /* ---- channel outputs ---------------------------------------------------------------------- */
 
@@ -63,7 +70,7 @@ static int pulse_muted(const NesPulse* p, int index) {
 static int envelope_volume(uint8_t ctrl, const NesEnvelope* e) { return (ctrl & 0x10) ? (ctrl & 15) : e->decay; }
 
 static int pulse_out(const NesPulse* p, int index) {
-    if (!p->length || pulse_muted(p, index) || !kDuty[p->ctrl >> 6][p->seq]) return 0;
+    if (!p->length || pulse_muted(p, index) || !nes_duty_table[p->ctrl >> 6][p->seq]) return 0;
     return envelope_volume(p->ctrl, &p->env);
 }
 
@@ -88,7 +95,7 @@ static float mix(const NesApu* a) {
 float nes_apu_mix_level(const NesApu* a) { return mix(a); }
 
 static void update_output(NesApu* a) {
-    int32_t amp = (int32_t)lrintf(mix(a) * (float)NES_APU_AMP_SCALE);
+    int32_t amp = (int32_t)lrintf(mix(a) * amp_scale(a));
     if (amp != a->amp) {
         blip_add_delta(a->out, a->time, amp - a->amp);
         a->amp = amp;
@@ -98,7 +105,7 @@ static void update_output(NesApu* a) {
 void nes_apu_set_output(NesApu* a, blip_t* out) {
     a->out = out;
     /* Start from the current level without a step: the buffer's output is DC-free anyway. */
-    a->amp = (int32_t)lrintf(mix(a) * (float)NES_APU_AMP_SCALE);
+    a->amp = (int32_t)lrintf(mix(a) * amp_scale(a));
 }
 
 void nes_apu_set_mute(NesApu* a, uint8_t mask) {
@@ -359,7 +366,7 @@ void nes_apu_write(NesApu* a, uint32_t t, uint16_t addr, uint8_t v) {
         int i = (addr >> 2) & 1;
         NesPulse* p = &a->pulse[i];
         p->period = (uint16_t)((p->period & 0xFF) | ((v & 7) << 8));
-        if (a->enabled & (1 << i)) p->length = kLength[v >> 3];
+        if (a->enabled & (1 << i)) p->length = nes_length_table[v >> 3];
         p->seq = 0;
         p->env.start = 1;
         break;
@@ -372,7 +379,7 @@ void nes_apu_write(NesApu* a, uint32_t t, uint16_t addr, uint8_t v) {
         break;
     case 0x400B:
         a->tri.period = (uint16_t)((a->tri.period & 0xFF) | ((v & 7) << 8));
-        if (a->enabled & 4) a->tri.length = kLength[v >> 3];
+        if (a->enabled & 4) a->tri.length = nes_length_table[v >> 3];
         a->tri.linear_reload = 1;
         break;
     case 0x400C:
@@ -382,7 +389,7 @@ void nes_apu_write(NesApu* a, uint32_t t, uint16_t addr, uint8_t v) {
         a->noise.mode_period = v;
         break;
     case 0x400F:
-        if (a->enabled & 8) a->noise.length = kLength[v >> 3];
+        if (a->enabled & 8) a->noise.length = nes_length_table[v >> 3];
         a->noise.env.start = 1;
         break;
     case 0x4010:

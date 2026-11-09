@@ -5,9 +5,12 @@ import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.ym2612.YmRules.FX_BRIGHTNESS
+import org.thortracker.system.ym2612.YmRules.FX_CUT
+import org.thortracker.system.ym2612.YmRules.FX_DELAY
 import org.thortracker.system.ym2612.YmRules.FX_PAN
 import org.thortracker.system.ym2612.YmRules.FX_PORTAMENTO
 import org.thortracker.system.ym2612.YmRules.FX_SLIDE_DOWN
+import org.thortracker.system.ym2612.YmRules.FX_SPEED
 import org.thortracker.system.ym2612.YmRules.FX_VIBRATO
 import org.thortracker.system.ym2612.YmRules.FX_VOLUME
 import org.thortracker.system.ym2612.YmRules.FX_VOLUME_SLIDE
@@ -19,9 +22,13 @@ import org.thortracker.system.ym2612.YmRules.FX_VOLUME_SLIDE
  * brightness-locked octave pops, FM 3 and FM 4 brass stabs panned left and right (strings in the bridge), FM 5 the
  * swept FM kick, FM 6 the FM snare, toms and crash; PSG 1 plays chord arpeggios from its arpeggio envelope, PSG 2
  * echoes the lead three rows late, PSG 3 doubles the arpeggio an octave up in the bridge, and the Noise channel plays
- * hats, then pitched-noise toms in the fill. The chip's LFO runs at rate 2 for the lead's and strings' vibrato.
+ * hats, then pitched-noise toms in the fill. The chip's LFO runs at rate 2 for the lead's and strings' vibrato. PCM 1-3
+ * stay empty (FM 6 needs the DAC), so the music is what it was before the XGM2 driver.
+ *
+ * Beside it: "Night Ferry" ([xgm2Demo]), the XGM2 fixture with PCM kits and FM 3 special mode, and the shortest songs
+ * the native WAV test renders ([shortest], [pcmShortest], [fm3Shortest]).
  */
-internal object YmDemoSong {
+object YmDemoSong {
     private const val SPEED = 6
 
     private val PRESET_SLOTS = YmPresets.ALL.mapIndexed { i, p -> p.name to i + 1 }.toMap()
@@ -181,6 +188,149 @@ internal object YmDemoSong {
         fx(LEAD_CH, 63, 0, FX_SLIDE_DOWN, 0x00)
         fx(LEAD_CH, 63, 1, FX_VOLUME, 0x7F)
     }.build()
+
+    // ---- "Night Ferry": PCM 1-3 and FM 3 special mode ---------------------------------------------------------------
+
+    private const val CH3_MINOR = 40
+    private const val CH3_MAJOR = 41
+    private const val KIT = 48
+    private const val SOFT_KIT = 49
+    private const val BASS_KIT = 50
+
+    private const val FM3_CH = 2
+    private const val STAB_CH = 3
+    private const val PCM_DRUMS = YmRules.PCM_FIRST
+    private const val PCM_HATS = YmRules.PCM_FIRST + 1
+    private const val PCM_BASS = YmRules.PCM_FIRST + 2
+
+    /**
+     * An additive FM 3 voice whose four operators sound a chord in special mode: root, [third] semitones, the fifth and
+     * the octave (that one 3/64 sharp for a slow beat). Normal mode would play four unison carriers.
+     */
+    private fun chordVoice(name: String, third: Int) = YmFmInstrument(
+        name = name, algorithm = 7, feedback = 0,
+        operators = List(4) { YmOperator(mul = 1, tl = 30, ar = 28, d1r = 5, d2r = 1, sl = 3, rr = 6) },
+        ch3 = listOf(0, third * 64, 7 * 64, 12 * 64 + 3),
+    )
+
+    /** A chord of a bar of Night Ferry: its root for the bass and FM 3, and whether the triad is minor. */
+    private class Ferry(val root: String, val minor: Boolean)
+
+    private val FERRY = listOf(Ferry("A-2", true), Ferry("F-2", false), Ferry("C-3", false), Ferry("G-2", false))
+
+    /**
+     * "Night Ferry", the XGM2 demo (not the bundled demo, so Neon Causeway's music is untouched): A minor, Am-F-C-G, speed
+     * 6, two patterns arranged 0-1-0-1 looping to order 0. FM 3 in special mode plays each chord from one channel (the
+     * voices' operator offsets: root, third, fifth, octave); FM 1 the lead, FM 2 the slap bass in "Deck", FM 4 brass
+     * stabs, PSG 1 the arpeggio envelopes. PCM 1 plays the synthesized kick and snare ([YmPcmKit]) with a quieter kit for
+     * ghost notes, PCM 2 the hats (one delayed with G03, one stopped by S02), PCM 3 in "Hold" the one-shot PCM bass
+     * chromatically (pitch = key − A-2) with OFF and its own F04/F06. FM 6 stays silent: the DAC replaces it.
+     */
+    fun xgm2Demo(): Song {
+        val base = YmSystem.blank()
+        val bank = base.ym.instruments.toMutableList()
+        bank[CH3_MINOR - 1] = chordVoice("Ch3 minor", 3)
+        bank[CH3_MAJOR - 1] = chordVoice("Ch3 major", 4)
+        bank[KIT - 1] = YmPcmKit.drums(0)
+        bank[SOFT_KIT - 1] = YmPcmKit.drums(0, level = 9, name = "PCM ghost drums")
+        bank[BASS_KIT - 1] = YmPcmKit.bassKit(0)
+        return base.copy(
+            title = "Night Ferry",
+            artist = "Thor Tracker",
+            comment = "Mega Drive XGM2 demo: FM 3 special-mode chords, synthesized PCM drums and a pitched PCM bass on PCM 1-3 " +
+                "(FM 6 is silent: the DAC replaces it). Loops to order 0.",
+            ticksPerRow = SPEED,
+            loopOrder = 0,
+            patterns = listOf(deck(), hold()),
+            orders = listOf(0, 1, 0, 1),
+            sound = base.ym.copy(instruments = bank, fm3Mode = YmFm3Mode.SPECIAL, pcmSamples = YmPcmKit.samples(), lfo = 0x0A),
+        )
+    }
+
+    /** What both Night Ferry patterns share: FM 3's chords, PCM drums and hats, the brass stabs and the PSG arpeggio. */
+    private fun PatternBuilder.ferryBed() {
+        for (bar in 0 until 4) {
+            val r = bar * 16
+            val chord = FERRY[bar]
+            note(FM3_CH, r, n(chord.root) + 12, if (chord.minor) CH3_MINOR else CH3_MAJOR)
+            for (beat in listOf(0, 8)) note(PCM_DRUMS, r + beat, YmPcmKit.KICK_KEY, KIT)
+            for (beat in listOf(4, 12)) note(PCM_DRUMS, r + beat, YmPcmKit.SNARE_KEY, KIT)
+            note(PCM_DRUMS, r + 14, YmPcmKit.SNARE_KEY, SOFT_KIT) // a ghost note from the quieter kit
+            for (off in listOf(2, 6, 10, 14)) note(PCM_HATS, r + off, YmPcmKit.HAT_KEY, KIT)
+            for (row in listOf(2, 10)) {
+                note(STAB_CH, r + row, n(chord.root) + 24 + (if (chord.minor) 3 else 4), BRASS)
+                cut(STAB_CH, r + row + 2)
+            }
+            for (row in listOf(0, 8)) note(ARP_CH, r + row, n(chord.root) + 24, if (chord.minor) ARP_MINOR else ARP_MAJOR)
+        }
+        fx(FM3_CH, 0, 0, FX_VOLUME, 0x70)
+        fx(STAB_CH, 2, 0, FX_PAN, 0x10)
+        fx(STAB_CH, 2, 1, FX_VOLUME, 0x68)
+        fx(ARP_CH, 0, 0, FX_VOLUME, 0x0A)
+        fx(PCM_HATS, 30, 0, FX_DELAY, 0x03) // this hat lands three ticks late
+        fx(PCM_HATS, 62, 0, FX_CUT, 0x02) // and this one is stopped after two ticks
+    }
+
+    /** "Deck": the lead over the FM slap bass. */
+    private fun deck() = PatternBuilder("Deck").apply {
+        ferryBed()
+        for (bar in 0 until 4) {
+            val r = bar * 16
+            val root = n(FERRY[bar].root)
+            for ((row, offset) in listOf(0 to 0, 3 to 0, 6 to 12, 8 to 0, 11 to 0, 14 to 12)) note(BASS_CH, r + row, root + offset, BASS)
+        }
+        fx(BASS_CH, 0, 0, FX_VOLUME, 0x78)
+        val melody = listOf(
+            0 to "E-5", 4 to "C-5", 6 to "D-5", 8 to "E-5", 12 to "A-4",
+            16 to "F-5", 20 to "E-5", 22 to "D-5", 24 to "C-5",
+            32 to "E-5", 36 to "G-5", 40 to "E-5", 44 to "D-5",
+            48 to "D-5", 52 to "B-4", 56 to "G-4", 60 to "B-4",
+        )
+        lead(melody)
+        fx(LEAD_CH, 0, 0, FX_VOLUME, 0x70)
+        for (row in listOf(8, 24, 40)) fx(LEAD_CH, row, 1, FX_VIBRATO, 0x52)
+    }.build()
+
+    /** "Hold": the FM bass rests while PCM 3 plays the bass kit; the song speeds up for a bar. */
+    private fun hold() = PatternBuilder("Hold").apply {
+        ferryBed()
+        cut(BASS_CH, 0)
+        cut(LEAD_CH, 0)
+        val line = listOf(0 to "A-2", 6 to "A-2", 8 to "E-2", 16 to "F-2", 22 to "F-2", 24 to "C-3", 32 to "C-3", 38 to "G-2",
+            40 to "E-2", 48 to "G-2", 52 to "A-2", 56 to "B-2")
+        for ((row, name) in line) note(PCM_BASS, row, n(name), BASS_KIT)
+        cut(PCM_BASS, 62) // OFF stops the one-shot
+        fx(PCM_BASS, 32, 0, FX_SPEED, 0x04) // the PCM lane's own Fxx: the song speeds up ...
+        fx(PCM_BASS, 48, 0, FX_SPEED, 0x06) // ... and back
+    }.build()
+
+    // ---- the shortest songs (the native WAV export test's one-row, one-tick edge cases) ------------------------------
+
+    /** One order of a one-row pattern at speed 1, looping to order 0, holding [note] on [channel] with [instrument]. */
+    private fun oneRow(title: String, channel: Int, note: Int, instrument: Int, sound: YmSound): Song {
+        val base = YmSystem.blank()
+        val held = Cell(note = note, instrument = instrument)
+        val tracks = List(YmRules.CHANNELS) { ch -> List(Songs.ROWS) { row -> if (ch == channel && row == 0) held else Cell.BLANK } }
+        return base.copy(title = title, ticksPerRow = 1, loopOrder = 0, patterns = listOf(Pattern("Pattern 00", tracks, length = 1)),
+            orders = listOf(0), sound = sound)
+    }
+
+    /** `ym-shortest.ymimg`: A-4 held on FM 1 with the Lead preset. */
+    fun shortest(): Song = oneRow("Mega Drive shortest", LEAD_CH, n("A-4"), LEAD, YmSystem.blank().ym)
+
+    /** `ym-pcm-shortest.ymimg`: the PCM bass kit's A-2 on PCM 1, restarted every tick (one tick per pass). */
+    fun pcmShortest(): Song {
+        val sound = YmSystem.blank().ym.let { it.copy(instruments = it.instruments.toMutableList().also { b -> b[0] = YmPcmKit.bassKit(0) }, pcmSamples = YmPcmKit.samples()) }
+        return oneRow("Mega Drive PCM shortest", YmRules.PCM_FIRST, YmPcmKit.BASS_ROOT, 1, sound)
+    }
+
+    /** `ym-fm3-shortest.ymimg`: an A minor chord from FM 3 in special mode, one voice, held. */
+    fun fm3Shortest(): Song {
+        val sound = YmSystem.blank().ym.let {
+            it.copy(instruments = it.instruments.toMutableList().also { b -> b[0] = chordVoice("Ch3 minor", 3) }, fm3Mode = YmFm3Mode.SPECIAL)
+        }
+        return oneRow("Mega Drive FM 3 shortest", FM3_CH, n("A-3"), 1, sound)
+    }
 
     private val KICK_NOTE = n("C-2")
     private val SNARE_NOTE = n("D-4")

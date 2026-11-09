@@ -1,13 +1,21 @@
-// JNI bridge for org.thortracker.audio.ChipAudio. Every call except nativePosition, nativeStats, nativeOpl3Vgm,
-// nativeYmExport and nativeWav* must come from ChipAudio's single control thread.
+// JNI bridge for org.thortracker.audio.ChipAudio. Every call except nativeInstallRhythmRom, nativeOpnVgm, nativePosition, nativeStats, nativeOpl3Vgm,
+// nativeOpmVgm, nativePceVgm, nativeSccVgm, nativeYmExport, nativeSmsVgm, nativeAyVgm and nativeWav* must come from ChipAudio's single
+// control thread.
 #include <jni.h>
 
 #include <string>
 
 #include "audio_engine.h"
 #include "chip_wav.h"
+#include "opn/opn_export.h"
+#include "ym2608_rhythm_rom.h"
+#include "ay/ay_export.h"
 #include "opl3/opl3_export.h"
+#include "opm/opm_export.h"
+#include "pce/pce_export.h"
+#include "scc/scc_export.h"
 #include "ym/ym_export.h"
+#include "sms/sms_export.h"
 
 using thortracker::Engine;
 
@@ -35,6 +43,20 @@ JNIEXPORT jlong JNICALL Java_org_thortracker_audio_ChipAudio_nativeCreate(JNIEnv
 
 JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeDestroy(JNIEnv*, jclass, jlong h) {
     delete engine(h);
+}
+
+// The YM2608 rhythm ROM (ym2608_rhythm_rom.h: every chip with rhythm drums reads it, the NES EPSM's YMF288 and the
+// YM2608; any thread, never concurrently with itself). Kotlin: `@JvmStatic external fun nativeInstallRhythmRom(rom:
+// ByteArray): Int` — 0 installed (or the same bytes again), -1 wrong size or other bytes than the installed ROM. The
+// host checks the ROM's SHA-256 first (Ym2608RhythmRom.problem).
+JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeInstallRhythmRom(JNIEnv* env, jclass, jbyteArray rom) {
+    if (!rom) return -1;
+    jbyte* bytes = env->GetByteArrayElements(rom, nullptr);
+    if (!bytes) return -1;  // OutOfMemoryError pending
+    const int result = ym2608_rhythm_rom_install(reinterpret_cast<const uint8_t*>(bytes),
+                                                 static_cast<size_t>(env->GetArrayLength(rom)));
+    env->ReleaseByteArrayElements(rom, bytes, JNI_ABORT);
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeSetImage(JNIEnv* env, jclass, jlong h,
@@ -113,6 +135,104 @@ JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeOpl3Vgm(
     return out;
 }
 
+// The OPN / OPNA VGM export (opn_export.h; any thread; allocates, renders the whole song: not the audio thread).
+// Kotlin: `@JvmStatic private external fun nativeOpnVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author:
+// ByteArray, date: ByteArray): ByteArray` — the chip is the image's ("ym2203-opn" 65536 bytes, "ym2608-opna" 327680).
+// Returns the file, or throws IllegalArgumentException with the loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeOpnVgm(JNIEnv* env, jclass, jbyteArray image,
+                                                                              jint max_ticks, jbyteArray title,
+                                                                              jbyteArray author, jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* vgm = opn_export_vgm(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                                  static_cast<uint32_t>(max_ticks < 0 ? 0 : max_ticks), t.c_str(), a.c_str(), d.c_str(),
+                                  &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!vgm) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "VGM export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
+    opn_export_free(vgm);
+    return out;
+}
+
+// The OPM VGM export (any thread; allocates, renders the whole song: not the audio thread). Returns the file, or
+// throws IllegalArgumentException with the loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeOpmVgm(JNIEnv* env, jclass, jbyteArray image,
+                                                                              jint max_ticks, jbyteArray title,
+                                                                              jbyteArray author, jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* vgm = om_export_vgm(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                                 static_cast<uint32_t>(max_ticks < 0 ? 0 : max_ticks), t.c_str(), a.c_str(), d.c_str(),
+                                 &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!vgm) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "VGM export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
+    om_export_free(vgm);
+    return out;
+}
+
+// The PC Engine VGM export (any thread; allocates, renders the whole song: not the audio thread). Returns the file, or
+// throws IllegalArgumentException with the loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativePceVgm(JNIEnv* env, jclass, jbyteArray image,
+                                                                              jint max_ticks, jbyteArray title,
+                                                                              jbyteArray author, jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* vgm = pc_export_vgm(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                                 static_cast<uint32_t>(max_ticks < 0 ? 0 : max_ticks), t.c_str(), a.c_str(), d.c_str(),
+                                 &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!vgm) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "VGM export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
+    pc_export_free(vgm);
+    return out;
+}
+
+// The SCC / SCC+ VGM export (any thread; allocates, renders the whole song: not the audio thread); the image's variant
+// decides the chip. Returns the file, or throws IllegalArgumentException with the loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeSccVgm(JNIEnv* env, jclass, jbyteArray image,
+                                                                              jint max_ticks, jbyteArray title,
+                                                                              jbyteArray author, jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* vgm = sc_export_vgm(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                                 static_cast<uint32_t>(max_ticks < 0 ? 0 : max_ticks), t.c_str(), a.c_str(), d.c_str(),
+                                 &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!vgm) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "VGM export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
+    sc_export_free(vgm);
+    return out;
+}
+
 // The YM2612 exports (any thread; allocates, renders the whole song: not the audio thread): format 0 VGM, 1 XGM, 2 XGC
 // (ym_export.h). Kotlin: `@JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int,
 // title: ByteArray, author: ByteArray, date: ByteArray): ByteArray`. Returns the file, or throws
@@ -137,6 +257,59 @@ JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeYmExport
     jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
     if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(file));
     ym_export_free(file);
+    return out;
+}
+
+// The Master System VGM export (any thread; allocates, renders the whole song: not the audio thread; sms_export.h).
+// Kotlin: `@JvmStatic private external fun nativeSmsVgm(image: ByteArray, maxTicks: Int, title: ByteArray,
+// author: ByteArray, date: ByteArray): ByteArray`. Returns the file, or throws IllegalArgumentException with the
+// loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeSmsVgm(JNIEnv* env, jclass, jbyteArray image,
+                                                                              jint max_ticks, jbyteArray title,
+                                                                              jbyteArray author, jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* file = sms_export_vgm(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(env->GetArrayLength(image)),
+                                   static_cast<uint32_t>(max_ticks < 0 ? 0 : max_ticks), t.c_str(), a.c_str(), d.c_str(),
+                                   &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!file) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "Master System export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(file));
+    sms_export_free(file);
+    return out;
+}
+
+// The AY-3-8910 / YM2149 VGM export (any thread; allocates, renders the whole song: not the audio thread): variant 0
+// ZX Spectrum 128, 1 MSX, 2 Atari ST, 3 Amstrad CPC (ay_export.h). Kotlin: `@JvmStatic private external fun nativeAyVgm(variant: Int,
+// image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray`. Returns the file,
+// or throws IllegalArgumentException with the loader's reason for a rejected image.
+JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeAyVgm(JNIEnv* env, jclass, jint variant,
+                                                                             jbyteArray image, jint max_ticks,
+                                                                             jbyteArray title, jbyteArray author,
+                                                                             jbyteArray date) {
+    const std::string t = utf8(env, title), a = utf8(env, author), d = utf8(env, date);
+    jbyte* bytes = env->GetByteArrayElements(image, nullptr);
+    if (!bytes) return nullptr;  // OutOfMemoryError pending
+    size_t size = 0;
+    const char* problem = nullptr;
+    uint8_t* vgm = ay_export_vgm(static_cast<int>(variant), reinterpret_cast<const uint8_t*>(bytes),
+                                 static_cast<size_t>(env->GetArrayLength(image)), static_cast<int>(max_ticks), t.c_str(),
+                                 a.c_str(), d.c_str(), &size, &problem);
+    env->ReleaseByteArrayElements(image, bytes, JNI_ABORT);
+    if (!vgm) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), problem ? problem : "AY VGM export failed");
+        return nullptr;
+    }
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(vgm));
+    ay_export_free(vgm);
     return out;
 }
 

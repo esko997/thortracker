@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Fetch the pinned SGDK commit (Stephane Dallongeville, MIT: the XGM Z80 driver the "ym2612-fm" engine runs, its
-# assembler sjasm and the reference converter xgmtool) into a persistent cache, build sjasm and xgmtool for the host,
-# and print the cache directory on the last stdout line: <dir>/src = the SGDK checkout, <dir>/bin/sjasm,
-# <dir>/bin/xgmtool. prepare_ym.py runs this unless given --sgdk DIR.
+# Fetch the pinned SGDK commit (Stephane Dallongeville, MIT: the XGM2 Z80 driver the "ym2612-fm" engine runs and the
+# prebuilt lib/libmd.a it is checked against, its assembler sjasm, and the reference converters src/bin/xgm2tool.jar
+# and xgmtool) into a persistent cache, build sjasm and xgmtool for the host, and print the cache directory on the last
+# stdout line: <dir>/src = the SGDK checkout, <dir>/bin/sjasm, <dir>/bin/xgmtool. prepare_ym.py runs this unless given
+# --sgdk DIR.
 #
 # Cache: ${THOR_TRACKER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/thor-tracker}/sgdk-<commit>. Idempotent: a complete
 # build is reused. The checkout must be the pinned commit (git verifies the object hashes). Needs git, gcc, g++.

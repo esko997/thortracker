@@ -1,6 +1,8 @@
 package org.thortracker.ui
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.editor.Action
 import org.thortracker.editor.ViewKind
@@ -57,11 +59,108 @@ class HostInputTest {
     }
 
     @Test fun ambiguousChordDoesNothingEvenOverAPopup() {
-        val input = HostInput()
+        // No L2+R2+A chord: L2+A and R2+A belong to the layers below, so the press does nothing.
+        val input = HostInput(Keymap.DEFAULT.with(Control.OTHER_SONG, null))
         input.down(Keys.BUTTON_L2, popup = true)
         input.down(Keys.BUTTON_R2, popup = true)
         assertEquals(none, input.down(Keys.BUTTON_A, popup = true))
         assertEquals(setOf(Keys.BUTTON_L2, Keys.BUTTON_R2), input.heldModifiers)
+    }
+
+    private val both = setOf(Keys.BUTTON_L2, Keys.BUTTON_R2)
+
+    /** The defaults with the L2+R2+A chord stated, so the tests show what they rely on. */
+    private fun layered() = Keymap.DEFAULT.with(Control.OTHER_SONG, Binding(Keys.BUTTON_A, both))
+
+    @Test fun bothTriggersFormTheirOwnLayerWhicheverWentDownFirst() {
+        for (order in listOf(listOf(Keys.BUTTON_L2, Keys.BUTTON_R2), listOf(Keys.BUTTON_R2, Keys.BUTTON_L2))) {
+            val input = HostInput(layered())
+            order.forEach { assertEquals(none, input.down(it)) }
+            assertEquals(order.toString(), HostInput.Route.Run(Control.OTHER_SONG), input.down(Keys.BUTTON_A))
+            assertEquals(none, input.up(Keys.BUTTON_A))
+            order.forEach { assertEquals(none, input.up(it)) }
+            assertEquals(HostInput.Route.Editor(Action.EDIT), input.down(Keys.BUTTON_A))
+        }
+    }
+
+    @Test fun whileBothTriggersAreHeldNoSingleTriggerChordOrBareKeyActs() {
+        val input = HostInput(Keymap.DEFAULT.with(Control.OTHER_SONG, null))
+        input.down(Keys.BUTTON_L2)
+        input.down(Keys.BUTTON_R2)
+        // L2+A (Undo), R2+A (Song) and A (Edit) all stay quiet, through repeat and release.
+        assertEquals(none, input.down(Keys.BUTTON_A))
+        assertEquals(none, input.route(Keys.BUTTON_A, true, 1, false, false, ViewKind.PATTERN))
+        assertEquals(none, input.up(Keys.BUTTON_A))
+        // Only L2 has a Start chord; it is still not run.
+        assertEquals(none, input.down(Keys.BUTTON_START))
+        assertEquals(none, input.up(Keys.BUTTON_START))
+        // L2+← acts only in sound views: in Pattern ← keeps moving, in Instrument it waits for one trigger to go.
+        assertEquals(HostInput.Route.Editor(Action.LEFT), input.down(Keys.DPAD_LEFT))
+        input.up(Keys.DPAD_LEFT)
+        assertEquals(none, input.down(Keys.DPAD_LEFT, view = ViewKind.INSTRUMENT))
+        assertEquals(none, input.up(Keys.DPAD_LEFT, view = ViewKind.INSTRUMENT))
+        // Nor does A reach a focused toolbar as its plain key.
+        assertEquals(none, input.down(Keys.BUTTON_A, toolbar = true))
+    }
+
+    @Test fun rollingReleasesKeepEachPressItsFirstMeaning() {
+        val input = HostInput(layered())
+        input.down(Keys.BUTTON_L2)
+        input.down(Keys.BUTTON_R2)
+        assertEquals(HostInput.Route.Run(Control.OTHER_SONG), input.down(Keys.BUTTON_A))
+        input.up(Keys.BUTTON_L2)   // one trigger first: A's repeat and release must not turn into R2+A
+        assertEquals(none, input.route(Keys.BUTTON_A, true, 1, false, false, ViewKind.PATTERN))
+        assertEquals(none, input.up(Keys.BUTTON_A))
+        // A new press with only R2 left is that layer's chord.
+        assertEquals(HostInput.Route.Run(Control.SHOW_SONG), input.down(Keys.BUTTON_A))
+        input.up(Keys.BUTTON_R2)
+        assertEquals(none, input.up(Keys.BUTTON_A))
+        assertEquals(emptySet<Int>(), input.heldModifiers)
+        // A held Listen stays the editor's through a third-layer chord, so its repeat and release still reach the editor.
+        assertEquals(HostInput.Route.Editor(Action.AUDITION), input.down(Keys.BUTTON_X))
+        input.down(Keys.BUTTON_R2)
+        input.down(Keys.BUTTON_L2)
+        assertEquals(HostInput.Route.Run(Control.OTHER_SONG), input.down(Keys.BUTTON_A))
+        input.up(Keys.BUTTON_A)
+        assertEquals(HostInput.Route.Editor(Action.AUDITION), input.route(Keys.BUTTON_X, true, 1, false, false, ViewKind.PATTERN))
+        input.up(Keys.BUTTON_R2)
+        input.up(Keys.BUTTON_L2)
+        assertEquals(HostInput.Route.Editor(Action.AUDITION), input.up(Keys.BUTTON_X))
+    }
+
+    @Test fun triggersAloneNeverAct() {
+        val input = HostInput(layered())
+        for (code in listOf(Keys.BUTTON_L2, Keys.BUTTON_R2)) assertEquals(none, input.down(code))
+        assertEquals(none, input.route(Keys.BUTTON_L2, true, 3, false, false, ViewKind.PATTERN))  // a held trigger's repeat
+        for (code in listOf(Keys.BUTTON_L2, Keys.BUTTON_R2)) assertEquals(none, input.up(code))
+        assertEquals(none, input.down(Keys.BUTTON_R2, popup = true))
+        assertEquals(none, input.up(Keys.BUTTON_R2, popup = true))
+        assertEquals(emptySet<Int>(), input.heldModifiers)
+        assertEquals(HostInput.Route.Editor(Action.EDIT), input.down(Keys.BUTTON_A))
+    }
+
+    @Test fun cancelledPressesAreForgottenWithoutActing() {
+        val input = HostInput(layered())
+        input.down(Keys.BUTTON_L2)
+        input.down(Keys.BUTTON_R2)
+        assertFalse(input.cancel(Keys.BUTTON_L2))   // e.g. the notification shade took focus
+        assertEquals(setOf(Keys.BUTTON_R2), input.heldModifiers)
+        assertEquals(HostInput.Route.Run(Control.SHOW_SONG), input.down(Keys.BUTTON_A))
+        assertFalse(input.cancel(Keys.BUTTON_A))    // a host control: nothing for the editor to drop
+        assertFalse(input.cancel(Keys.BUTTON_R2))
+        assertEquals(emptySet<Int>(), input.heldModifiers)
+        assertEquals(HostInput.Route.Editor(Action.EDIT), input.down(Keys.BUTTON_A))
+        assertTrue(input.cancel(Keys.BUTTON_A))     // the editor's hold must be cancelled, not released as a tap
+    }
+
+    @Test fun aCaptureTakesTheKeysButTriggersStayTrueToTheHardware() {
+        val input = HostInput(layered())
+        assertTrue(input.trackModifier(Keys.BUTTON_R2, true))
+        assertTrue(input.trackModifier(Keys.BUTTON_L2, true))
+        assertFalse(input.trackModifier(Keys.BUTTON_A, true))
+        assertEquals(both, input.heldModifiers)
+        input.trackModifier(Keys.BUTTON_R2, false)
+        assertEquals(setOf(Keys.BUTTON_L2), input.heldModifiers)
     }
 
     @Test fun chordWinsOverTheBareBindingAndKeepsItsMeaningUntilRelease() {
@@ -102,7 +201,7 @@ class HostInputTest {
             .with(Control.EDIT, Binding(Keys.BUTTON_Y))
             .with(Control.MARK, Binding(Keys.BUTTON_A))
             .with(Control.CUT, null)
-            .with(Control.UNDO, Binding(Keys.BUTTON_B, Keys.BUTTON_SELECT))
+            .with(Control.UNDO, Binding(Keys.BUTTON_B, setOf(Keys.BUTTON_SELECT)))
         val input = HostInput(keymap)
         assertEquals(HostInput.Route.Editor(Action.EDIT), input.down(Keys.BUTTON_Y))
         input.up(Keys.BUTTON_Y)
