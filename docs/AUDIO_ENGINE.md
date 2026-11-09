@@ -40,7 +40,7 @@ with noise on channels 5-6, the channel 2 → channel 1 LFO, stereo balances and
 timer, and exports VGM. See [PC Engine](#pc-engine-thor-trackers-own-player-on-a-huc6280-psg-pce-huc6280).
 
 The Konami SCC systems (`"msx-scc"`: the K051649 of Konami's MSX megaROM cartridges, `"msx-scc-plus"`: the K052539 of
-the Sound Cartridge in SCC+ mode; unverified source slice) play songs with Thor Tracker's **own player** (C, specified
+the Sound Cartridge in SCC+ mode; 0.28.0) play songs with Thor Tracker's **own player** (C, specified
 here, mirrored by an independent Python reference) on a K051649/K052539 sound core ported from MAME, at the MSX's
 3579545 Hz, and export VGM. See [SCC](#scc-and-scc-thor-trackers-own-player-on-a-konami-k051649--k052539-msx-scc-msx-scc-plus).
 
@@ -54,7 +54,7 @@ user's rhythm ROM + ADPCM-B with the song's own samples) at the PC-88/98 clocks,
 [OPN and OPNA](#opn-and-opna-thor-trackers-own-player-on-ymfms-ym2203--ym2608-ym2203-opn-ym2608-opna) and
 [the YM2608 rhythm ROM](#the-ym2608-rhythm-rom-shared-firmware).
 
-The Atari 2600 systems (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`, unverified source slice) play the TIA's two
+The Atari 2600 systems (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`, 0.32.0) play the TIA's two
 audio channels with Thor Tracker's own player (specified here, mirrored by an independent Python reference) on Stella
 7.0's TIA audio channel, every AUDC waveform with honest AUDF pitch quantization; they export WAV only (VGM has no
 TIA). See [Atari 2600](#atari-2600-thor-trackers-own-player-on-the-tia-atari2600-tia-ntsc-atari2600-tia-pal).
@@ -5769,8 +5769,8 @@ only in a reported AUDC 0/B "background sound" that no source pins down; not mod
     decay, mono PCM/frame continuity, unchanged chip state and nonlinear mix, and compares with a separate
     1/16-level blip driven from raw level probes and the rational mix formula (scaled back ×4, ≤16 PCM units
     for independent quantization). This is an independent signal-path oracle, not an independent blip
-    implementation; existing independent chip/register-trace comparisons are retained. Runtime results
-    remain for the parent's verification record.
+    implementation; existing independent chip/register-trace comparisons are retained. Observed native
+    and frontend results are recorded in `VERIFICATION.md`.
 - **Mute** (`tim_mute`): the mix takes a muted channel's level as 0; the chip, its registers and the player are
   untouched (AUDV gates only the output on the TIA, so the counters run on exactly as unmuted). A toggle between ticks
   takes effect at the next tick's clock 0 (the level is recomputed after that tick's batch).
@@ -6021,7 +6021,7 @@ the reference chip's per-phase-1 channel levels for the first ticks, byte offset
 and fails when a table or shared number disagrees with the Python reference. `python3 tools/audio/tia/tia_golden.py`
 writes `core/src/jvmTest/resources/tia-golden/*.bin.gz` for `TiaGoldenTest`.
 
-### Verification (to be run by the parent; nothing here has been run)
+### Verification commands
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/tia_machine_test.c` (it writes
   `tia_song.bin`, `tia_trace.txt` — one line per tick, `order row tick:` then ` RR=VV` per write —, `tia_song.wav`,
