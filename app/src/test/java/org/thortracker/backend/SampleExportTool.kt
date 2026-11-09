@@ -33,6 +33,10 @@ import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.saa.CmsSystem
+import org.thortracker.system.saa.SaaDemoSong
+import org.thortracker.system.saa.SaaVariant
+import org.thortracker.system.saa.SamCoupeSystem
 import org.thortracker.system.pokey.PokeyDemoSong
 import org.thortracker.system.pokey.PokeySystem
 import org.thortracker.system.opn.OpnChip
@@ -366,6 +370,24 @@ object SampleExportTool {
             File(directory, "$image-shortest.wsimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
             println("Exported ${demo.title} and the shortest ${system.name} song to ${directory.absolutePath}")
         }
+        // The SAM Coupé and CMS demos: projects and engine images (their VGMs need the native player:
+        // tools/audio/render_saa_image.sh saa-sam-demo.saaimg out.wav --vgm coupe-lights.vgm renders both), and the
+        // shortest valid song of each (one one-row order at speed 1, A-4 held on lane 1) whose images the native WAV
+        // export test renders through loops.
+        for ((system, file) in listOf(SamCoupeSystem to "coupe-lights", CmsSystem to "blaster-skyline")) {
+            val demo = system.demo()
+            val image = if (system == SamCoupeSystem) "saa-sam-demo.saaimg" else "saa-cms-demo.saaimg"
+            File(directory, "$file.thor").writeText(ProjectCodec.encode(demo), Charsets.UTF_8)
+            File(directory, image).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(demo, it) })
+            println("Exported ${demo.title} to ${directory.absolutePath}")
+        }
+        for ((variant, file) in listOf(SaaVariant.SAM to "saa-sam-shortest.saaimg", SaaVariant.CMS to "saa-cms-shortest.saaimg")) {
+            val shortest = SaaDemoSong.shortest(variant)
+            val system = variant.system
+            check(system.errors(shortest).isEmpty()) { "the shortest ${variant.label} song is invalid: ${system.errors(shortest)}" }
+            File(directory, file).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+        }
+        println("Exported the shortest SAM Coupé and CMS songs to ${directory.absolutePath}")
         // The VIC-20 and C16/Plus/4 demos (project and engine image; no register-log export exists for these chips) and
         // each chip's shortest valid song (one one-row order at speed 6, A-4 held with slot 01): the native WAV export
         // test renders all four images (tools/audio/render_cbm_image.sh renders one).

@@ -53,6 +53,10 @@
  * through is a single row (under 1 s), and it must still render a valid non-silent file equal to straight ticking,
  * deterministically for any step size, with loops=1 adding about one loop and a fade adding exactly its length; a
  * wrong image size is refused.
+ * The shortest songs (saa-sam-shortest.saaimg and saa-cms-shortest.saaimg: one order of one row at speed 1, A-4 held on
+ * lane 1, looping to order 0) run the same render paths at the other extreme: once through is a single engine tick
+ * (under 1 s), and it must still render a valid non-silent file equal to straight ticking, deterministically for any
+ * step size, with loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
@@ -113,6 +117,8 @@ static const Demo kDemos[] = {
     {"neon-causeway.ymimg", "ym2612-fm"},
     {"ws-demo.wsimg", "ws-wonderswan"},
     {"wsc-demo.wsimg", "ws-wonderswan-color"},
+    {"saa-sam-demo.saaimg", "sam-saa1099"},
+    {"saa-cms-demo.saaimg", "cms-saa1099"},
     {"vic-demo.cbimg", "vic20-vic"},
     {"ted-demo.cbimg", "c16-ted"},
     {"tia-demo.tiaimg", "atari2600-tia-ntsc"},
@@ -166,6 +172,8 @@ static const Demo kShortest[] = {
 /* Shortest songs of one row holding a note (written by exportSamples beside the demos): the shortest-song checks
  * above plus everything test_demo checks that does not need a song longer than one row. */
 static const Demo kShortestHeld[] = {
+    {"saa-sam-shortest.saaimg", "sam-saa1099"},
+    {"saa-cms-shortest.saaimg", "cms-saa1099"},
     {"tia-shortest.tiaimg", "atari2600-tia-ntsc"},
     {"pce-shortest.pcimg", "pce-huc6280"},
     {"scc-shortest.sccimg", "msx-scc"},

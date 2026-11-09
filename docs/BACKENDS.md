@@ -1882,3 +1882,106 @@ macro routines) is the authority and json2sms.py the independent export referenc
   Volume/Arpeggio/Pitch/Noise; FM pages Voice (instrument, modulator/carrier grid, routing and envelope sketch),
   Volume, Arpeggio; Kit page. Demo "Harbour Lights" arranged per layout.
 - **Tests**: `SmsLoweringTest`, `SmsModelTest`, `SmsEditorTest`, native `sms_machine_test.c` (hand-built images).
+
+## Philips SAA1099 (SAM Coupé, Creative Music System)
+
+Roadmap step 7 (more chips): the Philips SAA1099 as the stock SAM Coupé's one chip and the two chips of Creative's
+Music System / Game Blaster, two systems of one family ("Philips SAA1099…" in New and Load demo). The contract is
+`docs/AUDIO_ENGINE.md`, "SAA1099". Decisions (made on the user's behalf; see Open questions):
+
+- **The chips alone, two stock machines.** `"sam-saa1099"` = SAM Coupé (one SAA1099 at 8 MHz, six lanes, 50 Hz
+  ticks), `"cms-saa1099"` = Creative Music System / Game Blaster (two SAA1099s at 7159090 Hz, twelve lanes, summed into
+  one stereo output, 60 Hz ticks). Not the machines: no Z80/x86 emulation, no SAM DAC or Sound Blaster DSP (the Sound
+  Blaster 1.0's optional C/MS chips are the same CMS pair; no other boards or stereo mods).
+- **Own player + chip core + VGM**, the OPL3/SCC precedent: E-Tracker and the CMS drivers are not free and no driver
+  is a standard. Songs export as VGM (SAA1099 at header 0xC8, dual-chip bit 30 for the CMS, `0xBD` with bit 7 for chip
+  B) and WAV; no SAM or DOS executable is claimed.
+- **Core: a clock-exact C port of SAASound's model** (BSD-3-Clause, notice kept): SAASound has been revised against
+  recordings of real chips (envelope buffering, PDM levels, the LFSR) and follows the data sheet's routing (envelope 0
+  on channel 2 only, envelope 1 on channel 5 only), which MAME does not (it applies each envelope to three channels and
+  resets envelopes on every write); libvgm's Valley Bell core is close but its licence is unstated in the file and it
+  disagrees with the data sheet on the preset noise clocks. The port renders output-change events into blip_buf and
+  advances silently with identical state, so seeking is chip-exact.
+- **Shared resources, honestly.** Each chip's two noise generators serve lanes 1-3 and 4-6: an instrument's noise clock
+  claims its triple's generator (latest claim wins); the song check warns where lanes of a triple sound noise with
+  different clocks at once; lane headers and the inspector show each generator's clock and owner. The two hardware
+  envelopes exist only on lanes 3 and 6; their internal clock is lane 2's / 5's tone generator, shown on the lane
+  headers and in the instrument view, never replaced by a hidden voice. `Yxx` (sync/reset, sound off) is per chip.
+- **Instruments** are FamiStudio-style envelopes run by the player (volume with loop and release, arpeggio, pitch
+  absolute or relative, and a **mixer envelope**: off/tone/noise/tone + noise per tick), plus the instrument's noise
+  clock, stereo pan (left and right levels 0-15: the chip's twelve amplitude controllers) and an optional **hardware
+  envelope** (shape, 4- or 3-bit resolution, inverted right, internal or external clock with a rate in ticks, retrigger
+  per note). Envelopes reuse `NesEnvelope`. 64 slots, `null` = empty.
+- **Effects**: the SCC's movement/sequencing set (`0 1 2 3 4 A B C D F G P S`) plus `8xy` pan, `Exx` hardware envelope
+  control (lanes 3 and 6), `Mxx` mixer, `Nxx` noise clock and `Yxx` sync/sound. No chord effect.
+- **Pitch**: true pitch through two 768-step-per-octave divider tables (one per clock); A-4 = 440.14 Hz (SAM), 440.40
+  Hz (CMS); every note within 3.4 cents. Notes B-0..A#8 (SAM) and A-0..G#8 (CMS), the chips' real ranges.
+
+### SAA1099 model, lowering and exports
+
+- **Systems** (`system/saa`): `Saa1099System(variant)` with `SamCoupeSystem` (`"sam-saa1099"`, "SAM Coupé (SAA1099)")
+  and `CmsSystem` (`"cms-saa1099"`, "Creative Music System (2× SAA1099)"), family "Philips SAA1099"; channels `SAA 1`-
+  `SAA 6` or `A1`-`A6`, `B1`-`B6` (`ChannelKind.PULSE`, tonal; four effect columns each), notes 11..106 / 9..104 with
+  FamiTracker names, one
+  bank of 64 slots, 50 or 60 ticks per second × multispeed (Song view: Multispeed 1-8), at most 256 orders, OFF =
+  release (or cut without a release point), fine pitch `Pxx`. Constants come from `backend/SaaPlayerImage` (generated).
+  `backendVersion` 1.
+- **Chip data** (`SaaSound`): `variant` (`"sam"` / `"cms"`, matching the backend), 64 nullable `SaaInstrument`s
+  (`name`, `volume`, `arpeggio`, `pitch`, `mixer` `NesEnvelope`s, `pitchRelative`, `noise` 0..3, `panLeft`,
+  `panRight` 0..15, `envelope`: null or `SaaHardwareEnvelope(shape 0..7, threeBit, invertRight, external, rate 1..255,
+  retrigger)`), `multispeed` 1..8. A project whose backend and `variant` disagree is a structural error. A new
+  instrument has volume `[15]`, no other envelopes (tone), noise 0, pan 15/15 and no hardware envelope (when one is
+  switched on: shape 3, 4-bit, not inverted, internal, rate 1, retrigger; `rate` stays 1..255 and is stored as 0 for
+  an internal clock). New songs get presets in slots 01-12 (Lead, Square bass, Pluck, Stereo pad, Echo lead (its
+  volume envelope carries the repeats), Kick, Snare, Hat, Noise sweep, Buzz bass (lane 3: repetitive decay clocked by
+  lane 2), Slow swell (external triangle), Mirror (inverted right)).
+- **Lowering** (`backend/SaaLowering`): the canonical layout; `dataSize` for the validator.
+- **Validation** (`SaaValidator`): every `sa_load_image` check as a message naming pattern, channel and row, plus an
+  empty envelope that still carries a loop or release point. Warnings (a row-level walk of straight play, `SaaWalk`,
+  shared with the shared-state display): two lanes of one triple sounding noise with different clocks at once (once
+  per stretch: order, row, lanes, clocks and the claimant); a hardware envelope (instrument or `Exx`) on a lane without
+  one; an internal-clock envelope while its clock lane has never set a pitch; `Y02`/`Y03` still in force at the loop
+  point; `Nxx`/`Mxx`/`8xy`/`Exx` where nothing sounds; `Gxx` beyond the speed; an order's first note without an
+  instrument.
+- **Shared state** (`sharedState`, `SaaSharedState`): on the lane that claimed a noise generator last, `N0:31k` /
+  `N1:T4` (generator, clock: 31k, 16k, 7.8k on the SAM, 28k, 14k, 7.0k on the CMS, or `T1`/`T4` = lane 1's or 4's
+  tone); on lanes 3 and 6 `E←2` / `E←5` (envelope clocked by that lane) or `E ext`; `SYNC` / `OFF` replace a chip's
+  tags while `Y02` / `Y03` holds it. The inspector explains each. Walk details: `E00` on a lane without an envelope is
+  no warning; `Y02`/`Y03` in force at the end is excused when the loop order's row 0 restores that chip; volume slides
+  do not count when deciding whether a lane sounds noise.
+- **Exports**: `.vgm` (`SaaVgm`, the native renderer registered by each host) and `.wav` (the generic path).
+- **Demos**: "Coupé Lights" (SAM; E minor, 125 BPM): SAA 2's plucked line clocks the buzz bass on SAA 3 (a repetitive
+  hardware envelope with the mixer off, so the envelope is the waveform, three octaves below SAA 2), kick, snare and
+  hats on SAA 4-6 sharing one noise clock, stereo leads on SAA 1 (an echo lead swept with `8xy`); "Blaster Skyline"
+  (CMS; D major, a 7/6-tick groove at 60 Hz = 138.5 BPM, the nearest to 140 without faster instrument envelopes):
+  twelve lanes, both chips' envelopes (buzz bass, mirror, external slow swell), a lead doubled on B1/B2 restarted in
+  phase by `Y01`, a clock-3 noise riser. Both without errors or warnings; `SaaDemoSong.shortest(variant)` is the
+  one-row song the WAV test renders. `exportSamples` writes `coupe-lights.thor`, `blaster-skyline.thor`,
+  `saa-sam-demo.saaimg`, `saa-cms-demo.saaimg`, `saa-sam-shortest.saaimg` and `saa-cms-shortest.saaimg`.
+- **Tests**: `SaaModelTest` (round trips of both variants, validation and warnings, shared noise and envelope rules,
+  lowering bytes and dedup, arrangement, fine pitch, audition problems, shared state, demos), `SaaGoldenTest` (the
+  reference builder's songs rebuilt from the model lower to the same 65536 bytes) and `SaaEditorTest`.
+
+### SAA1099 editor
+
+- **Instrument view** (`SaaInstrumentView`, `SaaInstrumentPainter`): the 64-slot bank, then rows Slot, Name, Preset,
+  Listen on, Pan L | Pan R, Noise clock, Hardware envelope (Off/On), Shape (drawn), Resolution | Inverted right, Clock
+  (Internal: lane 2/5 / External) | Rate, Retrigger (the envelope rows only while the sound has one), Page, Length,
+  Loop, Release (volume), Mode (pitch), Steps; L1/R1 switch the Volume, Arpeggio, Pitch and Mixer pages
+  (`EnvelopePlot`, given the SCC slice's value-range overload, byte-identical to branch `scc-systems`). Rows that a
+  lane cannot use say so (the hardware envelope on lanes other than 3 and 6, the noise clock without noise in the
+  mixer). No Wave view.
+- **Help**: the effects page from `SaaRules`, the Instrument and Envelopes sections and a "SAA1099 shared noise and
+  envelopes" section.
+
+- SAA1099 noise from a tone generator: the data sheet says the controlling generator produces no tone; SAASound, MAME
+  and libvgm keep it audible and so do we. A recording would settle it.
+- SAA1099 preset noise clocks: the data sheet's 31.25/15.6/7.8 kHz (SAASound, MAME) rather than libvgm's twice those;
+  frequency writes latched at the half-cycle end (SAASound, MAME) rather than at once (libvgm). Exported VGMs played by
+  libvgm differ there.
+- SAA1099 tick rates: 50 Hz for the SAM Coupé (its frame interrupt), 60 Hz for the CMS (a PC timer is free; our
+  choice). Review.
+- SAA1099 one-shot external envelopes hold their last step (single attack holds full level) because the final clock
+  would restart them under VGM's address-plus-data writes; review if a "true end" is wanted.
+- SAA1099 mixing: SAM ×10, CMS ×5 into the resampler from SAASound's 0..480 output levels; no comparison with a
+  recorded SAM Coupé or Game Blaster yet.

@@ -13,9 +13,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-VIC/TED integration targets **0.33.0/code 46** on published TIA, retaining all earlier systems
-and the format-10 tuning library. Native/reference, JVM and all three Android frontends pass;
-Linux/SDL verification and publication remain in progress. See `docs/VERIFICATION.md`.
+SAA1099 integration targets **0.34.0/code 47**, retaining the VIC/TED candidate and all earlier systems.
+The analytical headroom bound and 960 pre-clamp stress/public-machine cases pass without changing gains.
+Full integration, frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
 
 WonderSwan source integration targets **0.36.0/code 49** atop VIC/TED candidate `4b1c95e4`.
 Its pre-resampler headroom correction is preserved; build, native/reference, Android and CI/SDL
@@ -93,7 +93,9 @@ verification remain pending. SAA 0.34 and VSU 0.35 are separate parent-owned int
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
      shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM and all three
      Android frontends pass; Linux/SDL verification and publication remain in progress.
-   - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
+   - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
+     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Pre-clamp headroom checks pass;
+     full integration and frontend verification remain pending.
    - Virtual Boy VSU — wavetable handheld.
    - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
      DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's

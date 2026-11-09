@@ -17,6 +17,7 @@ includes+=(-I "$cpp/sms" -I "$cpp/ay" -I "$cpp/pce" -I "$cpp/scc" -I "$cpp/opm" 
 includes+=(-I "$cpp/pokey")
 includes+=(-I "$cpp/cbm")
 includes+=(-I "$cpp/ws")
+includes+=(-I "$cpp/saa")
 objs=()
 for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
   "$cpp/ws/ws_chip.c" "$cpp/ws/ws_machine.c" "$cpp/ws/ws_player.c" "$cpp/ws/ws_image.c" "$cpp/ws/ws_apu.c" "$cpp/ws/ws_vgm.c" \
@@ -40,6 +41,8 @@ for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/hug
   "$cpp/opm/opm_chip.c" "$cpp/opm/opm_machine.c" "$cpp/opm/opm_player.c" "$cpp/opm/opm_image.c" "$cpp/opm/opm_vgm.c" \
   "$cpp/cbm/cbm_chip.c" "$cpp/cbm/cbm_machine.c" "$cpp/cbm/cbm_player.c" "$cpp/cbm/cbm_tables.c" "$cpp/cbm/cbm_image.c" \
   "$cpp/cbm/cbm_vic.c" "$cpp/cbm/cbm_ted.c" \
+  "$cpp/saa/saa_chip.c" "$cpp/saa/saa_machine.c" "$cpp/saa/saa_player.c" "$cpp/saa/saa_image.c" "$cpp/saa/saa_vgm.c" \
+  "$cpp/saa/saa_core.c" \
   "$root/tools/audio/tia_render.c"; do
   o="$build/$(basename "${src%.*}").o"
   ${CC:-gcc} -std=gnu11 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"

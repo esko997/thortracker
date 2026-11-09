@@ -54,6 +54,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * Atari POKEY (`atari-pokey`) 1.
  * VIC-20 (`vic20-vic`) 1 and C16/Plus/4 (`c16-ted`) 1.
  * WonderSwan (`ws-wonderswan`) 1 and WonderSwan Color (`ws-wonderswan-color`) 1 (their `sound` names its model: `color`).
+ * SAM Coupé (`sam-saa1099`) 1; Creative Music System (`cms-saa1099`) 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

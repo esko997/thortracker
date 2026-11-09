@@ -1154,6 +1154,18 @@ AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
 
 ## Unreleased: WonderSwan and WonderSwan Color — source slice, NOT verified
 
+**Source integration update:** exact SAA candidate `5c3e8c9` is merged into the WonderSwan
+integration based on `095c4f0`; the app remains **0.36.0/code 49**, project format 10.
+Both WonderSwan variants and both SAA1099 variants are retained in the native/Kotlin registries,
+Android JNI, desktop cinterop, all shared-registry renderers, sample export and native WAV coverage.
+The standalone SMS renderer is unchanged. WonderSwan's pre-blip `frame >> 2` headroom,
+hardware Color 16-bit headphone wrap, raw diagnostics and DMA timing are unchanged; Hyper Voice
+still refuses VGM while supporting WAV, and numeric-channel WAV decoding retains opt-in stereo
+and its regression. No builds, tests, generators or device runs were performed for this merge.
+The parent owns verification. The original source-slice procedures below are historical:
+all Kotlin/Native linking (including debug tests/executables) must run in CI, not locally;
+use disk-backed evidence under `~/.local/state/thortracker`, not `/tmp`.
+
 Branch `wonderswan-system` adds the **WonderSwan** (`"ws-wonderswan"`: CH1-CH4, CPU-fed voice samples on CH2, CH3
 sweep, CH4 noise) and **WonderSwan Color** (`"ws-wonderswan-color"`: the same plus Sound DMA on CH2 and Hyper Voice)
 systems — Thor Tracker's own player on a C port of ares's WonderSwan APU, VGM and WAV export — with the demos **Paper
@@ -1213,9 +1225,42 @@ below before anything is called verified; record the results here then, replacin
    the Pattern inspector's shared-state lines (timer, shift, DMA owner), VGM (refused with Hyper Voice notes) and WAV
    exports through the document picker.
 
-Untracked reference material left in the worktree for the parent to remove: `.ws-reference/` (fetched hardware
-sources: ares, Mesen 2, Mednafen 1.32.1 `wswan`, libvgm, the VGM 1.71 text), `.ws-kotlin-ref/` and
+Preserved untracked reference material: `.ws-reference/` (fetched hardware sources: ares, Mesen 2,
+Mednafen 1.32.1 `wswan`, libvgm, the VGM 1.71 text), `.ws-kotlin-ref/` and
 `.ws-native-scratch/` (the slices' read-only copies and scratch fragments).
+
+## Unreleased: Philips SAA1099 — SAM Coupé and Creative Music System (branch `saa1099-systems`, source only — nothing verified yet)
+
+The two SAA1099 systems (`sam-saa1099`, `cms-saa1099`; `docs/BACKENDS.md` "Philips SAA1099", contract in
+`docs/AUDIO_ENGINE.md` "SAA1099") were written without compiling, generating or running anything. No result below
+exists yet; the integrator runs, in the worktree, in this order (serialised, no emulator during builds):
+
+1. `python3 tools/audio/prepare_saa.py` — writes `app/src/main/cpp/generated/saa_tables.h`,
+   `core/src/commonMain/kotlin/org/thortracker/backend/SaaPlayerImage.kt` and `app/src/test/cpp/saa_test_song.h`
+   (commit them, as the OPL3's and SCC's generated files are). It asserts the C header constants against the reference
+   (image layout, effect codes, clocks, rates, pitch limit, note ranges 11..106 / 9..104) and that both test songs
+   reach an exactly repeating loop pass.
+2. `python3 tools/audio/saa/saa_golden.py` — writes `core/src/jvmTest/resources/saa-golden/{sam,cms,features}.bin.gz`.
+3. `tools/build.sh :core:jvmTest` (at least `SaaModelTest`, `SaaGoldenTest`, `org.thortracker.system.saa.*`, and any
+   editor test touching shared views the SAA editor extended), then `tools/build.sh exportSamples` (writes
+   `coupe-lights.thor`, `blaster-skyline.thor`, `saa-sam-demo.saaimg`, `saa-cms-demo.saaimg`,
+   `saa-sam-shortest.saaimg`, `saa-cms-shortest.saaimg`).
+4. `tools/audio/run_native_host_test.sh evidence/audio` — `saa_machine_test` plus every existing system's test and
+   `wav_render_test` (SAA demos and shortest songs); existing counts must not change.
+5. `python3 tools/audio/saa_reference_check.py evidence/audio [--vgm2wav PATH]` — trace, per-clock chip model, VGM
+   structure and exact loop repetition, A-4 pitch of both machines; with libvgm's vgm2wav also the tone VGMs' pitch
+   (header clocks and the dual-chip bit) and, for information, song correlations.
+6. `tools/audio/render_saa_image.sh evidence/audio/saa_sam_song.bin evidence/audio/saa_render.wav 10 --vgm
+   evidence/audio/saa_render.vgm` (and the CMS image), and the existing `render_*_image.sh` scripts (their source lists
+   now include the SAA engine).
+7. The Android build (CMake, JNI `nativeSaaVgm`) and the Deck build (cinterop `saa_export.h`, `DeckSaaVgm`); UI smoke of
+   New/Load demo → Philips SAA1099…, the Instrument view (hardware envelope rows on lanes 3/6, noise clock, pan), lane-header
+   shared-state tags, playback, seek, audition, mute, VGM and WAV export on a reserved handheld and the Deck.
+
+Assumptions to confirm by those runs or by listening: the noise clocks (data sheet / SAASound, not libvgm's doubled
+ones), frequency latching at the half-cycle end, the averaged PDM levels, the mixing levels (SAM × 10, CMS × 5), the
+one-shot external envelope hold rule, the 60 Hz CMS tick rate, the 1/32768 seek tolerance after the one-second
+pre-roll and the reference check's ±0.1 Hz pitch threshold.
 
 ## 0.16.0 NES + Konami VRC7
 
