@@ -21,6 +21,7 @@ import org.thortracker.system.ChannelSpec
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.FinePitch
+import org.thortracker.system.NoteSample
 import org.thortracker.system.PlaybackEngine
 import org.thortracker.system.SongSetting
 import org.thortracker.system.SoundSystem
@@ -236,6 +237,32 @@ object YmSystem : SoundSystem {
         if (keys.isEmpty()) return "it maps none yet"
         return keys.take(6).joinToString(" ") { noteName(it) } + if (keys.size > 6) " …" else ""
     }
+
+    /** On PCM 1-3, the keys kit [instrument] maps (none for an empty slot or another kind); other channels play every note. */
+    override fun mappedNotes(song: Song, channel: Int, instrument: Int): List<Int>? {
+        if (!YmRules.isPcm(channel)) return null
+        val kit = song.ym.instrument(instrument) as? YmPcmInstrument ?: return emptyList()
+        // Views ask every frame; kits are immutable, so the last one's sorted keys are reused.
+        val cached = mapped
+        if (cached != null && cached.kit === kit) return cached.keys
+        return kit.pcm.keys.sorted().also { mapped = MappedKeys(kit, it) }
+    }
+
+    private class MappedKeys(val kit: YmPcmInstrument, val keys: List<Int>)
+
+    private var mapped: MappedKeys? = null
+
+    /** On PCM 1-3, the source sample [note] plays with kit [instrument]: its name, pitch, rate and one-shot length. */
+    override fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? {
+        if (!YmRules.isPcm(channel)) return null
+        val m = song.ymPcmMapping(instrument, note) ?: return null
+        val sample = song.ym.pcmSamples.getOrNull(m.sample) ?: return null
+        return NoteSample(sample.name, ymPcmDetail(sample, m))
+    }
+
+    /** A PCM note is a one-shot sample that ends by itself ([YmPcmRows]); every other note sounds until the next note or OFF. */
+    override fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? =
+        if (YmRules.isPcm(channel)) YmPcmRows.soundingRows(song, pattern, channel, row) else null
 
     override fun selectSound(selection: Selection, song: Song): Selection = selection
 

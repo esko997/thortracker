@@ -24,9 +24,11 @@ import kotlin.math.roundToLong
  * waveform is padded with 0 to [PCM_ALIGN].
  *
  * Variants are numbered in first use, slots 1..64 then keys 0..95: a (sample, pitch, level) met before reuses its id,
- * and a waveform byte-identical to an earlier one shares that id. The bank is the variants in id order, contiguous
- * from 0 (XGM2's sample table takes each length from the next start). Beyond [PCM_MAX_VARIANTS] distinct waveforms or
- * [PCM_BANK_SIZE] bytes the song is refused, never cut: an authoring limit of Thor Tracker's image, not of the console.
+ * and a waveform byte-identical to an earlier one shares that id, taking no room even in a full bank. The bank is the
+ * variants in id order, contiguous from 0 (XGM2's sample table takes each length from the next start). Beyond
+ * [PCM_MAX_VARIANTS] distinct waveforms or [PCM_BANK_SIZE] bytes the song is refused, never cut: an authoring limit of
+ * Thor Tracker's image, not of the console. A waveform that cannot fit is refused before it is made unless one of the
+ * same size already in the bank could be its twin, so the work stays bounded by the bank.
  */
 object YmPcmLowering {
     /** 2^(s/12), s = 0..11, in Q28: exact power-of-two scaling of the doubles, rounded. */
@@ -121,9 +123,11 @@ object YmPcmLowering {
                 val step = step(sample.rate, m.pitch, mclk)
                 val length = length(sample.data.size, step)
                 val need = ((length.toLong() + PCM_ALIGN - 1) / PCM_ALIGN).toInt()
-                if (pages + need > maxPages) throw IllegalArgumentException(full(inputs, slot, key, pages, need))
+                // Only a waveform of the same padded size can be byte-identical to one already in the bank.
+                if (pages + need > maxPages && variants.none { it.pages == need }) throw IllegalArgumentException(full(inputs, slot, key, pages, need))
                 val wave = Wave(waveform(sample, step, length, kit.level, need * PCM_ALIGN))
                 val id = byWave[wave] ?: run {
+                    if (pages + need > maxPages) throw IllegalArgumentException(full(inputs, slot, key, pages, need))
                     if (variants.size >= PCM_MAX_VARIANTS) {
                         throw IllegalArgumentException("The PCM kits need more than $PCM_MAX_VARIANTS different compiled sounds " +
                             "(instrument ${hex2(slot)} ${YmSystem.noteName(key)} is number ${PCM_MAX_VARIANTS + 1}); XGM2 plays at most " +

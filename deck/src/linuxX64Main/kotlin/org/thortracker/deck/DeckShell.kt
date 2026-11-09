@@ -148,7 +148,7 @@ class DeckShell(
     }
 
     override fun export(song: Song, format: ExportFormat) =
-        FileBrowser(popups, "Export .${format.extension}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
+        FileBrowser(popups, "Export ${format.label}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
             // An export can refuse a song that its file format cannot represent.
             try {
                 val bytes = format.export(song)

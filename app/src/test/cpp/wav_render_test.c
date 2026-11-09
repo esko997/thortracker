@@ -174,11 +174,12 @@ static void save(const char* dir, const char* demo, const uint8_t* file, size_t 
 }
 
 /*
- * Straight ticking, independent of chip_wav.c's bookkeeping: a fresh machine from (0, 0), ticking until a row is
- * entered a second time (chip_engine.h: tick 0 before a tick, or a changed row_serial). Returns its 16-bit frames
- * (the caller frees them), their count and the frame the loop row was first entered at.
+ * Straight ticking, independent of chip_wav.c's bookkeeping: a fresh machine from (0, 0), stopping at the
+ * (loops + 2)th entry to the first repeated row (tick 0 before a tick, or a changed row_serial).
+ * Returns its 16-bit frames (the caller frees them), their count and the first entry to the loop row.
  */
-static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t size, uint64_t* frames, uint64_t* loop_start) {
+static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t size, int loops,
+                         uint64_t* frames, uint64_t* loop_start) {
     ChipImage* img = (ChipImage*)malloc(ops->image_storage);
     ChipMachine* m = ops->create(RATE);
     static uint32_t first[256 * 256];
@@ -186,7 +187,7 @@ static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t 
     size_t cap = (size_t)RATE * 2 * MAX_SECONDS;
     int16_t* out = (int16_t*)malloc(cap * sizeof *out);
     float buf[CHIP_MAX_TICK_FRAMES * 2];
-    int seek = 0, have = 0;
+    int seek = 0, have = 0, loop_row = -1, passes = 0;
     uint32_t serial = 0;
     uint64_t n = 0;
     *loop_start = 0;
@@ -203,11 +204,16 @@ static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t 
                 entered = t == 0;
             }
             if (entered && o >= 0 && o < 256 && r >= 0 && r < 256) {
-                if (first[o * 256 + r]) {
-                    *loop_start = first[o * 256 + r] - 1;
-                    break;
+                const int index = o * 256 + r;
+                if (first[index]) {
+                    if (loop_row < 0) {
+                        loop_row = index;
+                        *loop_start = first[index] - 1;
+                    }
+                    if (index == loop_row && ++passes > loops) break;
+                } else {
+                    first[index] = (uint32_t)n + 1;
                 }
-                first[o * 256 + r] = (uint32_t)n + 1;
             }
             const int k = ops->tick(m, buf);
             if (k <= 0 || (n + (uint64_t)k) * 2 > cap) break;
@@ -283,7 +289,7 @@ static void test_demo(const char* dir, const char* samples, const Demo* d) {
 
     /* Equal to straight ticking up to the first row entered again. */
     uint64_t fs = 0, loop_start = 0;
-    int16_t* pcm = straight(ops, image, size, &fs, &loop_start);
+    int16_t* pcm = straight(ops, image, size, 0, &fs, &loop_start);
     EXPECT(fs == f0, "%s: ends where straight ticking first re-enters a row (%llu vs %llu frames)", d->file,
            (unsigned long long)f0, (unsigned long long)fs);
     int same = fs == f0;
@@ -354,9 +360,8 @@ static void test_demo(const char* dir, const char* samples, const Demo* d) {
     free(image);
 }
 
-/* A one-row, one-tick song: once through is exactly its first tick (the row is entered again before the second),
- * identical to straight ticking and not silent; zero and two extra passes complete (not capped, not run to the
- * limit), each pass one more tick after an identical prefix. */
+/* A one-row, one-musical-tick song: zero and two extra passes stop at the correct row instance and match direct
+ * playback sample-for-sample. Driver stalls may stretch a pass, so its length is not a multiple of the first pass. */
 static void test_shortest(const char* samples, const Demo* d) {
     printf("%s (%s, shortest)\n", d->file, d->system);
     char path[512];
@@ -369,11 +374,6 @@ static void test_shortest(const char* samples, const Demo* d) {
     EXPECT(ops && ops->image_size == size, "%s: image of %zu bytes for the engine", d->file, size);
     if (!ops || ops->image_size != size) { free(image); return; }
 
-    uint64_t fs = 0, loop_start = 0;
-    int16_t* pcm = straight(ops, image, size, &fs, &loop_start);
-    EXPECT(fs > 0 && fs <= CHIP_MAX_TICK_FRAMES && loop_start == 0,
-           "%s: straight ticking re-enters its only row after one tick (%llu frames, loop at %llu)", d->file,
-           (unsigned long long)fs, (unsigned long long)loop_start);
     uint64_t prev = 0;
     uint8_t* prev_file = NULL;
     for (int loops = 0; loops <= 2; loops += 2) {
@@ -385,24 +385,25 @@ static void test_shortest(const char* samples, const Demo* d) {
         if (!file) continue;
         EXPECT(capped == 0, "%s loops=%d: completes, not capped", d->file, loops);
         const uint64_t f = check_header("shortest", file, sz);
-        EXPECT(f >= (uint64_t)(loops + 1) * (fs > 0 ? fs - 1 : 0) && f <= (uint64_t)(loops + 1) * (fs + 1),
-               "%s loops=%d: %d tick(s) of about %llu frames (%llu)", d->file, loops, loops + 1, (unsigned long long)fs,
-               (unsigned long long)f);
+        uint64_t fs = 0, loop_start = 0;
+        int16_t* pcm = straight(ops, image, size, loops, &fs, &loop_start);
+        EXPECT(f == fs && loop_start == 0,
+               "%s loops=%d: ends after the same row instances as direct playback (%llu vs %llu frames, loop at %llu)",
+               d->file, loops, (unsigned long long)f, (unsigned long long)fs, (unsigned long long)loop_start);
         EXPECT(peak(file + CHIP_WAV_HEADER, 0, f) > 0, "%s loops=%d: not silent", d->file, loops);
-        if (loops == 0) {
-            int same = f == fs;
-            for (uint64_t i = 0; same && i < f * 2; ++i) same = (int16_t)u16(file + CHIP_WAV_HEADER + 2 * i) == pcm[i];
-            EXPECT(same, "%s: once through = straight ticking's one tick", d->file);
-        } else if (prev_file) {
+        int same = f == fs;
+        for (uint64_t i = 0; same && i < f * 2; ++i) same = (int16_t)u16(file + CHIP_WAV_HEADER + 2 * i) == pcm[i];
+        EXPECT(same, "%s loops=%d: all samples match direct playback", d->file, loops);
+        if (prev_file) {
             EXPECT(f > prev && !memcmp(file + CHIP_WAV_HEADER, prev_file + CHIP_WAV_HEADER, (size_t)prev * 4),
                    "%s: two extra passes extend once through", d->file);
         }
+        free(pcm);
         free(prev_file);
         prev_file = file;
         prev = f;
     }
     free(prev_file);
-    free(pcm);
     free(image);
 }
 

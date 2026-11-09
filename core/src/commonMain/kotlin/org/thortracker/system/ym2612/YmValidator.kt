@@ -12,27 +12,11 @@ import org.thortracker.model.Songs
 /**
  * Mega Drive song checks. [errors] mirror what `ym_load_image` (`ym/ym_image.c`, [YmPlayerImage.LOADER_PROBLEMS])
  * rejects, plus what would play nothing (a PCM key no kit maps) or not fit (the PCM bank), as user-facing messages;
- * [warnings] are the specification's "Should"s, the driver's frame budget and the DAC's sharing of FM 6
+ * [warnings] are the specification's "Should"s and the DAC's sharing of FM 6
  * (docs/AUDIO_ENGINE.md, "YM2612").
  */
 object YmValidator {
     private const val MAX_REPORTED = 40
-
-    /**
-     * YM register writes the driver executes in one vertical interrupt (SGDK's original XGM driver measured ~70-100
-     * beside its PCM mixing; the XGM2 driver's figure is kept until it is measured); a row estimated above it makes the
-     * driver run late.
-     */
-    const val FRAME_WRITE_BUDGET = 90
-
-    /** Estimated YM writes of an FM key-on that loads a different instrument: 7 registers × 4 operators + $B0/$B4. */
-    private const val INSTRUMENT_LOAD_WRITES = 30
-
-    /** An FM key-on of the instrument already loaded: the frequency pair, key off and on. */
-    private const val RETRIGGER_WRITES = 4
-
-    /** A retrigger whose locks differ from the last note's: a few operator registers change (or are restored). */
-    private const val LOCK_CHANGE_WRITES = 8
 
     fun structuralErrors(song: Song): List<String> {
         val out = Report()
@@ -192,24 +176,20 @@ object YmValidator {
     /**
      * Walks the arrangement once in order (jumps, delays and cuts ignored) and reports note locks on rows without a
      * note, note delays the speed never reaches, PSG notes below the PSG's range, PSG 3 notes while pitched noise owns
-     * PSG 3, FM 3 operator offsets the song's normal FM 3 mode ignores, FM 6 notes and pan while PCM 1-3 own the DAC,
-     * and rows whose register writes exceed the driver's frame budget ([FRAME_WRITE_BUDGET]).
+     * PSG 3, FM 3 operator offsets the song's normal FM 3 mode ignores, and FM 6 notes and pan while PCM owns the DAC.
      */
     private fun straightPlay(song: Song, out: Report) {
         val sound = song.ym
         val instrument = IntArray(CHANNELS)
-        val loaded = IntArray(CHANNELS)
-        val loadedLocks = arrayOfNulls<List<Pair<Int, Int>>>(CHANNELS)
         var pitchedNoise = false
         var speed = song.ticksPerRow
         var warnedLow = 0
-        var warnedHeavy = 0
         var warnedPsg3 = 0
         var warnedCh3 = false
         var pcmPlays = false
         var fm6Note: String? = null
         var fm6Pan: String? = null
-        song.orders.forEachIndexed { o, p ->
+        song.orders.forEach { p ->
             val pattern = song.patterns[p]
             val label = Songs.patternLabel(song, p).cap()
             for (row in 0 until pattern.length) {
@@ -217,21 +197,17 @@ object YmValidator {
                     val c = pattern.tracks[ch][row]
                     for (col in 0..c.more.size) if (c.effectCode(col) == YmRules.FX_SPEED && c.effectParam(col) > 0) speed = c.effectParam(col)
                 }
-                var writes = 0
-                var loads = 0
                 for (ch in 0 until CHANNELS) {
                     val c = pattern.tracks[ch][row]
                     val where = "$label, ${YmRules.CHANNEL_NAMES[ch]} row $row"
                     if (c.instrument != 0) instrument[ch] = c.instrument
                     var noteFx: Char? = null
-                    val locks = ArrayList<Pair<Int, Int>>()
                     var noiseLock: Int? = null
                     for (col in 0..c.more.size) {
                         val code = c.effectCode(col)
                         val param = c.effectParam(col)
                         if (code == 0 && param == 0) continue
                         if (code in YmRules.NOTE_EFFECTS) {
-                            locks += code to param
                             if (noteFx == null) noteFx = YmRules.effectText(code, param)[0]
                         }
                         if (code == YmRules.FX_NOISE) noiseLock = ((param shr 4) shl 2) or (param and 3)
@@ -258,18 +234,9 @@ object YmValidator {
                                 out += "$where: sound ${hex2(instrument[ch])} \"${ins.name}\" has FM 3 operator pitches, which sound only " +
                                     "in FM 3's special mode; the song's FM 3 mode is normal (Song view)"
                             }
-                            // Registers are shadowed: only what differs from the last note is written.
-                            writes += when {
-                                loaded[ch] != instrument[ch] -> INSTRUMENT_LOAD_WRITES.also { loads++ }
-                                loadedLocks[ch] != locks -> LOCK_CHANGE_WRITES
-                                else -> RETRIGGER_WRITES
-                            }
-                            loaded[ch] = instrument[ch]
-                            loadedLocks[ch] = locks
                         }
                         continue
                     }
-                    // PSG writes go to the PSG port without the YM2612's busy waits: not counted.
                     if (ch == YmRules.NOISE) {
                         if (ins is YmPsgInstrument) pitchedNoise = ((noiseLock ?: ins.noise) and 3) == YmPsgInstrument.PITCHED
                         continue
@@ -282,12 +249,6 @@ object YmValidator {
                         warnedPsg3++
                         out += "$where: pitched noise on the Noise channel uses PSG 3's period, so this note is silent; end the noise with OFF first"
                     }
-                }
-                if (writes > FRAME_WRITE_BUDGET && !(o == 0 && row == 0) && warnedHeavy < 3) {
-                    warnedHeavy++
-                    out += "Order ${hex2(o)} row $row: $loads FM instrument changes at once (about $writes register writes); the sound driver " +
-                        "executes about $FRAME_WRITE_BUDGET per frame, so the row may sound up to ${(writes - 1) / FRAME_WRITE_BUDGET} ticks late. " +
-                        "Stagger the changes with Gxx or reuse instruments"
                 }
             }
         }

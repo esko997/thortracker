@@ -197,6 +197,15 @@ void ym_pcm_region(const YmImage* image, int id, int* start, int* pages, int* fl
     *flags = e[4];
 }
 
+int ym_pcm_same_variant(const YmImage* a, int ida, const YmImage* b, int idb) {
+    int sa, pa, fa, sb, pb, fb;
+    ym_pcm_region(a, ida, &sa, &pa, &fa);
+    ym_pcm_region(b, idb, &sb, &pb, &fb);
+    return pa == pb && fa == fb &&
+           !memcmp(a->bytes + YM_OFF_PCM_BANK + (size_t)sa * YM_PCM_ALIGN, b->bytes + YM_OFF_PCM_BANK + (size_t)sb * YM_PCM_ALIGN,
+                   (size_t)pa * YM_PCM_ALIGN);
+}
+
 /* The offset table entry of (order, channel) and the data region it points into. */
 static int pattern_entry(int order, int channel) {
     return channel < YM_TONAL_CHANNELS ? YM_OFF_ORDERS + 2 * (YM_TONAL_CHANNELS * order + channel)

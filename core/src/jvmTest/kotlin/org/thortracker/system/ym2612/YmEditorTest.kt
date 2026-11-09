@@ -10,7 +10,6 @@ import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
-import org.thortracker.input.Keymap
 import org.thortracker.model.Cell
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.ym2612.YmInstrumentView.Page
@@ -197,11 +196,4 @@ class YmEditorTest {
         assertEquals(noise.instrument, session.song.ymInstrument(60))
     }
 
-    @Test
-    fun helpAndSongSettingsNameTheMegaDrive() {
-        val sections = YmSystem.help.viewSections(Keymap.DEFAULT)
-        assertTrue(sections.map { it.first }.containsAll(listOf("Instruments", "FM Sound page")))
-        assertEquals(listOf("Region", "LFO"), YmSystem.songSettings.map { it.label })
-        assertEquals(YmInstrumentView, YmSystem.view(ViewKind.INSTRUMENT))
-    }
 }

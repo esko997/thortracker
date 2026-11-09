@@ -8,6 +8,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -344,6 +345,36 @@ class YmXgm2Test {
         assertTrue(YmPcmLowering.problem(huge)!!.contains("1024 KB"))
     }
 
+    @Test
+    fun aFullBankStillSharesIdenticalWaveformsButRefusesNewOnes() {
+        val step = YmPcmLowering.step(1000, 0, YmPcmLowering.mclk(false))
+        fun pages(size: Int) = (YmPcmLowering.length(size, step) + YmPlayerImage.PCM_ALIGN - 1) / YmPlayerImage.PCM_ALIGN
+        // The longest 1000 Hz source that compiles to exactly the whole bank.
+        var size = 90000
+        while (pages(size) > YmPlayerImage.PCM_BANK_PAGES) size--
+        assertEquals(YmPlayerImage.PCM_BANK_PAGES, pages(size))
+        val data = ByteArray(size) { (it % 200 - 100).toByte() }
+        val full = YmPcmSample("full", PcmData.of(data), 1000)
+        val twin = YmPcmSample("twin", PcmData.of(data.copyOf()), 1000) // the same bytes and rate, another sample
+        // The twin's key compiles to the bank's one waveform: it shares it, though the bank has no room left.
+        val shared = soundWith(listOf(full, twin), 1 to kit(36 to YmPcmMapping(0), 37 to YmPcmMapping(1)))
+        assertNull(YmPcmLowering.problem(shared))
+        val bank = YmPcmLowering.compile(shared)
+        assertEquals(1, bank.variants.size)
+        assertEquals(YmPlayerImage.PCM_BANK_PAGES, bank.pages)
+        assertEquals(listOf(1, 1), listOf(36, 37).map { bank.id(1, it) })
+        assertEquals(1, u8(YmLowering.lower(YmSystem.blank().copy(sound = shared)), YmPlayerImage.H_PCM_VARIANTS))
+        // A new waveform of the same size (another level) or any smaller one does not fit.
+        val quieter = soundWith(listOf(full, twin), 1 to kit(36 to YmPcmMapping(0)), 2 to kit(36 to YmPcmMapping(1), level = 14))
+        val problem = YmPcmLowering.problem(quieter)!!
+        assertTrue(problem, problem.contains("1024 KB") && problem.contains("instrument 02 C-3"))
+        val tiny = soundWith(listOf(full, YmPcmSample("tick", ramp, 8000)), 1 to kit(36 to YmPcmMapping(0), 37 to YmPcmMapping(1)))
+        assertTrue(YmPcmLowering.problem(tiny)!!.contains("1024 KB"))
+        // One more source byte is a page too many: refused alone, before it is made.
+        val over = YmPcmSample("over", PcmData.of(ByteArray(size + 20) { (it % 200 - 100).toByte() }), 1000)
+        assertTrue(YmPcmLowering.problem(soundWith(listOf(over), 1 to kit(36 to YmPcmMapping(0))))!!.contains("1024 KB"))
+    }
+
     // ---- malformed samples, kits and offsets -------------------------------------------------------------------------
 
     @Test
@@ -356,7 +387,7 @@ class YmXgm2Test {
         assertTrue(errors(soundWith(listOf(good), 1 to kit(36 to YmPcmMapping(0), level = 16))).contains("PCM level 16"))
         assertTrue(errors(soundWith(listOf(good.copy(rate = 999)))).contains("rate 999 Hz is outside 1000-48000"))
         assertTrue(errors(soundWith(listOf(good.copy(data = PcmData.of(ByteArray(0)))))).contains("the sample is empty"))
-        assertTrue(errors(soundWith(List(65) { good }))).contains("at most 64"))
+        assertTrue(errors(soundWith(List(65) { good })).contains("at most 64"))
         val big = YmPcmSample("big", PcmData.of(ByteArray(140000)), 8000)
         assertTrue(errors(soundWith(listOf(big, big))).contains("they share 256.0 KB"))
         val far = (YmPresets.instrument("Lead") as YmFmInstrument).copy(ch3 = listOf(0, 0, 3073, 0))
@@ -536,6 +567,119 @@ class YmXgm2Test {
         // Undo brings sample and keys back.
         session.undo()
         assertEquals(25, pcmKit(50).pcm.size)
+    }
+
+    // ---- PCM lanes in the Pattern and Keyboard views -----------------------------------------------------------------
+
+    @Test
+    fun pcmPatternEntryStartsOnAMappedKeyAndStepsBetweenMappedKeys() {
+        session.replaceSong(kitSong())
+        val pcm = YmRules.PCM_FIRST
+        val p = ViewController(session, ViewState(kind = ViewKind.PATTERN, channel = pcm))
+        fun note() = session.song.patterns[0].tracks[pcm][0].note
+        // An empty PCM row starts on the first kit's first mapped key, not C of the current octave.
+        p.tap(Action.EDIT)
+        assertEquals(Cell(YmPcmKit.KICK_KEY, 50), session.song.patterns[0].tracks[pcm][0])
+        assertTrue(YmSystem.errors(session.song).isEmpty())
+        // Edit+→/← visit the kit's keys only: snare, hat, no key past the hat; ← goes back.
+        p.tap(Action.UP)
+        p.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(YmPcmKit.SNARE_KEY, note())
+        assertEquals(Triple(pcm, YmPcmKit.SNARE_KEY, 50), auditions.last())
+        p.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(YmPcmKit.HAT_KEY, note())
+        p.hold(Action.EDIT, Action.LEFT)
+        assertEquals(YmPcmKit.SNARE_KEY, note())
+        // What the Keyboard view and the cell inspector label keys with: the kit's keys and each one's sample.
+        val song = session.song
+        assertEquals(listOf(YmPcmKit.KICK_KEY, YmPcmKit.SNARE_KEY, YmPcmKit.HAT_KEY), YmSystem.mappedNotes(song, pcm, 50))
+        assertEquals((YmPcmKit.BASS_ROOT - 12..YmPcmKit.BASS_ROOT + 12).toList(), YmSystem.mappedNotes(song, pcm, 51))
+        assertEquals(emptyList<Int>(), YmSystem.mappedNotes(song, pcm, slot("Lead")))
+        assertNull(YmSystem.mappedNotes(song, 0, 50))
+        assertNull(YmSystem.mappedNotes(song, YmRules.NOISE, 50))
+        val bass = YmSystem.noteSample(song, pcm, YmPcmKit.BASS_ROOT - 12, 51)!!
+        assertEquals("PCM bass", bass.name)
+        assertEquals("PCM hat", YmSystem.noteSample(song, pcm + 1, YmPcmKit.HAT_KEY, 50)?.name)
+        assertNull(YmSystem.noteSample(song, pcm, 37, 50))
+        assertNull(YmSystem.noteSample(song, 0, YmPcmKit.KICK_KEY, 50))
+    }
+
+    @Test
+    fun pcmNotesSoundForTheirOneShotLength() {
+        val pcm = YmRules.PCM_FIRST
+        val kick = YmPcmKit.samples()[0]
+        val ticks = YmPcmRows.ticks(kick, 0, pal = false)
+        // The driver's time: the compiled kick's length at the full rate, in NTSC ticks (a quarter second); PAL ticks are longer.
+        val variant = YmPcmLowering.compile(kitSong().ym).let { it.variants[it.id(50, YmPcmKit.KICK_KEY) - 1] }
+        assertEquals(kotlin.math.ceil(variant.length / YmPcm.fullRate(false) * YmSystem.NTSC_HZ).toInt(), ticks)
+        assertTrue(YmPcmRows.ticks(kick, 0, pal = true) < ticks)
+        val song = with(kitSong(), pcm, 0, Cell(YmPcmKit.KICK_KEY, 50))
+        val speed = song.ticksPerRow
+        fun rows(s: Song, row: Int = 0) = YmSystem.soundingRows(s, 0, pcm, row)
+        assertEquals((ticks + speed - 1) / speed, rows(song))
+        // Fxx on any channel sets the rows' length.
+        assertEquals(ticks, rows(with(song, 0, 0, Cell(effect = YmRules.FX_SPEED, param = 1))))
+        // A note without a kit number plays the lane's kit.
+        assertEquals(rows(song), rows(with(song, pcm, 8, Cell(YmPcmKit.KICK_KEY)), 8))
+        // Gxx starts it late; its row's Sxx stops it, unless the stop comes before the delay; a delay past the row never plays.
+        val delayed = Cell(YmPcmKit.KICK_KEY, 50, YmRules.FX_DELAY, speed - 1)
+        assertEquals((speed - 1 + ticks + speed - 1) / speed, rows(with(song, pcm, 0, delayed)))
+        assertEquals(1, rows(with(song, pcm, 0, Cell(YmPcmKit.KICK_KEY, 50, YmRules.FX_CUT, 2))))
+        val early = Cell(YmPcmKit.KICK_KEY, 50, YmRules.FX_DELAY, 3).withEffect(1, YmRules.FX_CUT, 2)
+        assertEquals((3 + ticks + speed - 1) / speed, rows(with(song, pcm, 0, early)))
+        assertEquals(1, rows(with(song, pcm, 0, Cell(YmPcmKit.KICK_KEY, 50, YmRules.FX_DELAY, speed))))
+        // Unmapped keys, a sound outlasting the pattern (the bass an octave down) and tonal lanes have no end of their own.
+        assertNull(rows(with(song, pcm, 0, Cell(37, 50))))
+        assertNull(rows(with(song, pcm, 60, Cell(YmPcmKit.BASS_ROOT - 12, 51)), 60))
+        assertNull(YmSystem.soundingRows(with(song, 0, 0, Cell(48, slot("Lead"))), 0, 0, 0))
+    }
+
+    // ---- copying PCM kits --------------------------------------------------------------------------------------------
+
+    @Test
+    fun copiedKitsKeepTheirSamplesThroughDeletesAndIntoOtherSongs() {
+        session.replaceSong(kitSong())
+        val samples = YmPcmKit.samples()
+        val keys = listOf(YmPcmKit.KICK_KEY to samples[0], YmPcmKit.SNARE_KEY to samples[1], YmPcmKit.HAT_KEY to samples[2])
+        fun assertPlays(slot: Int) {
+            val pool = session.song.ym.pcmSamples
+            for ((key, sample) in keys) assertEquals(sample, pool[pcmKit(slot).pcm.getValue(key).sample])
+        }
+        assertNull(session.song.ymInstrument(63))
+        assertTrue(session.copyYmInstrument(50))
+        // Deleting the kick moves the snare and hat down: the paste finds them by their bytes and adds the kick back.
+        session.deleteYmPcmSample(0)
+        assertTrue(session.pasteYm(63, null))
+        assertEquals(listOf("PCM snare", "PCM hat", "PCM bass", "PCM kick"), session.song.ym.pcmSamples.map { it.name })
+        assertPlays(63)
+        assertTrue(session.message!!.contains("added the 1 PCM sample it plays"))
+        assertNull(YmPcmLowering.problem(session.song.ym))
+        // One undo step takes back the kit and the sample.
+        assertEquals("Paste sound", session.undoLabel)
+        session.undo()
+        assertNull(session.song.ymInstrument(63))
+        assertEquals(3, session.song.ym.pcmSamples.size)
+        // Another song's unrelated samples are never bound: the kit's own are added after them, then reused.
+        val others = List(4) { n -> YmPcmSample("other $n", PcmData.of(ByteArray(100) { (it * (n + 3)).toByte() }), 8000) }
+        session.replaceSong(YmSystem.blank().let { it.copy(sound = it.ym.copy(pcmSamples = others)) })
+        assertTrue(session.pasteYm(63, null))
+        assertEquals(others + samples.take(3), session.song.ym.pcmSamples)
+        assertPlays(63)
+        assertTrue(session.pasteYm(64, null))
+        assertEquals(7, session.song.ym.pcmSamples.size)
+        assertPlays(64)
+        // A song without room refuses the paste, says why and changes nothing.
+        val crowded = YmSystem.blank().let { it.copy(sound = it.ym.copy(pcmSamples = List(62) { n -> YmPcmSample("s$n", ramp, 8000) })) }
+        session.replaceSong(crowded)
+        assertFalse(session.pasteYm(63, null))
+        assertTrue(session.message!!, session.message!!.contains("3 PCM samples") && session.message!!.contains("65 of the 64"))
+        assertEquals(crowded, session.song)
+        val big = YmPcmSample("big", PcmData.of(ByteArray(YmPcm.MEMORY - 1000)), 8000)
+        val full = YmSystem.blank().let { it.copy(sound = it.ym.copy(pcmSamples = listOf(big))) }
+        session.replaceSong(full)
+        assertFalse(session.pasteYm(63, null))
+        assertTrue(session.message!!, session.message!!.contains("PCM sample memory"))
+        assertEquals(full, session.song)
     }
 
     @Test

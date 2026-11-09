@@ -294,7 +294,7 @@ class YmModelTest {
     }
 
     @Test
-    fun warningsCoverLocksDelaysPsgRangePitchedNoiseAndHeavyRows() {
+    fun warningsCoverLocksDelaysPsgRangeAndPitchedNoise() {
         val bass = slot("Slap bass")
         val psg = slot("PSG lead")
         fun warnings(song: Song) = YmSystem.warnings(song).joinToString("\n")
@@ -306,12 +306,6 @@ class YmModelTest {
         noise = with(noise, 0, 8, 2, Cell(60, psg))
         assertTrue(warnings(noise).contains("pitched noise on the Noise channel uses PSG 3's period"))
         assertFalse(warnings(with(noise, 0, 9, 1, Cell(Cell.CUT))).contains("pitched noise"))
-        // Six FM channels loading six different instruments on one row (not the song's first).
-        var heavy = YmSystem.blank()
-        val names = listOf("Slap bass", "Brass", "E-piano", "Bell", "Strings", "Lead")
-        for (ch in 0 until 6) heavy = with(heavy, 0, ch, 4, Cell(48, slot(names[ch])))
-        assertTrue(warnings(heavy).contains("6 FM instrument changes at once"))
-        assertFalse(warnings(with(YmSystem.blank(), 0, 0, 4, Cell(48, bass))).contains("instrument changes"))
     }
 
     @Test

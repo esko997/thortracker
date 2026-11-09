@@ -10,9 +10,9 @@ song (ym_*) and the PCM + FM 3 song (ym_pcm_*) of tools/audio/run_native_host_te
      writes ($A4-$A6/$AC-$AE without the driver's key flags; keys, timer and DAC registers left to the driver).
   3. The XGM2 exports, parsed here: .xgm (unpacked) and .xgc (packed) headers, sample tables and banks agree; every
      packed block decodes (literal-LZ, no block across a 256-byte page but by the page marker) to exactly the .xgm's
-     stream bytes; both streams span the same number of frames as the trace and loop to the same frame.
-  4. With --xgm2tool (SGDK's src/bin/xgm2tool.jar; needs java): its conversion of the engine's .xgm to VGM parses and
-     its register state per frame equals the player's (an independent reader of the format; its loop is not used).
+     stream bytes; both streams span the reference player's loop and return to the same frame.
+  4. With --xgm2tool (SGDK's src/bin/xgm2tool.jar; needs java): the upstream compiler reads the engine's .xgm and
+     emits .xgc; independently unpacking it recovers the same commands, loop targets and PCM bank.
   5. With --vgm2wav (libvgm's vgm2wav, env VGM2WAV_YM2612_CORE=NUKE|GPGX selecting its YM2612 core; MAME SN76489):
      the VGM rendered by that independent player against the engine's own 30 s render (ym_song.wav): loudness envelope
      correlation, log-spectrum correlation, dominant pitch class; Nuked-OPN2 checked, Genesis Plus GX reported.
@@ -196,11 +196,26 @@ def check_vgm(name, vgm, image, trace, states):
     check(not h["loop_offset"] or (loop_at in offsets and loop_at in e0), "%s: loop point on the 0xE0 rewinding the PCM data"
           % name)
     ticks = round(total * MCLK[pal] / (VGM_RATE * TICK_MCLK[pal]))
-    frames = min(len(trace), len(states), ticks)
-    got = frame_states(writes, pal, frames)
-    bad = [f for f in range(frames) if got[f].compare(states[f])]
-    check(not bad, "%s: register state after each executed frame = the player's (%d frames%s)"
-          % (name, frames, "" if not bad else ", first differing %d: %s" % (bad[0], got[bad[0]].compare(states[bad[0]])[:6])))
+    want = min(len(trace), len(states))
+    got = frame_states(writes, pal, ticks)
+    # Tick t executes the next frame, or none when the driver skipped it (its PCM buffer too low at the interrupt: the
+    # frame executes a tick later, the chips holding the previous frame's state meanwhile).
+    f, skipped, bad = 0, 0, []
+    for t in range(ticks):
+        if f >= want:
+            break
+        if not got[t].compare(states[f]):
+            f += 1
+        elif f and not got[t].compare(states[f - 1]):
+            skipped += 1
+        else:
+            bad.append((t, f))
+            f += 1
+    check(not bad, "%s: register state after each executed frame = the player's (%d frames in %d ticks, %d skipped%s)"
+          % (name, f, ticks, skipped, "" if not bad else ", first differing frame %d at tick %d: %s"
+             % (bad[0][1], bad[0][0], got[bad[0][0]].compare(states[bad[0][1]])[:6])))
+    if not image.pcm_variants:
+        check(not skipped, "%s: without PCM the driver skips no frame (%d)" % (name, skipped))
 
 
 # ---- XGM2 --------------------------------------------------------------------------------------------------------
@@ -278,7 +293,10 @@ def unpack(data):
                 off = data[at]
                 at += 1
                 for _ in range(mat):
-                    block.append(block[len(block) - (256 - off)])
+                    index = len(out) + len(block) - (256 - off)
+                    if index < 0:
+                        raise ValueError("packed match precedes the stream")
+                    block.append(out[index] if index < len(out) else block[index - len(out)])
         out += block
         ok = ok and len(block) <= 255
     return bytes(out), blocks, ok
@@ -296,15 +314,24 @@ def parse_xgm2(data, compiled):
             "fm": data[at + slen:at + slen + fmlen], "psg": data[at + slen + fmlen:at + slen + fmlen + psglen]}
 
 
+def pcm_samples(image):
+    samples = {}
+    for i, (start, end) in enumerate(zip(image["sid"], image["sid"][1:])):
+        if start != 0xFFFF and end != 0xFFFF:
+            assert 0 <= start * 256 <= end * 256 <= len(image["samples"])
+            samples[i + 1] = image["samples"][start * 256:end * 256]
+    return samples
+
+
 def check_xgm2(name, xgm, xgc, ticks):
     a, b = parse_xgm2(xgm, False), parse_xgm2(xgc, True)
     check(a["version"] == b["version"] == 0x10 and a["flags"] & 0x08 == 0 and b["flags"] & 0x08 and a["flags"] & 0x04,
           "%s: XGM2 version 0x10, .xgm unpacked with GD3, .xgc packed" % name)
-    check(a["sid"] == b["sid"] and a["samples"] == b["samples"], "%s: same sample table and bank (%d bytes)"
+    check(pcm_samples(a) == pcm_samples(b), "%s: same sample IDs and PCM bytes (%d-byte bank)"
           % (name, len(a["samples"])))
     fm_n, fm_starts, fm_loop, fm_end = fm_frames(a["fm"])
     psg_n, psg_starts, psg_loop, psg_end = psg_frames(a["psg"])
-    check(fm_n == psg_n == ticks, "%s: FM and PSG streams span the trace's %d ticks (FM %d, PSG %d)" % (name, ticks, fm_n, psg_n))
+    check(fm_n == psg_n == ticks, "%s: streams span the reference's %d musical frames (FM %d, PSG %d)" % (name, ticks, fm_n, psg_n))
     check(fm_loop == 0xFFFFFF or (fm_loop in fm_starts and psg_loop in psg_starts), "%s: both loops land on a frame start" % name)
     for key, loop, end, frames in (("fm", fm_loop, fm_end, fm_frames), ("psg", psg_loop, psg_end, psg_frames)):
         out, blocks, ok = unpack(b[key])
@@ -317,21 +344,19 @@ def check_xgm2(name, xgm, xgc, ticks):
 
 # ---- upstream xgm2tool -------------------------------------------------------------------------------------------
 
-def check_xgm2tool(name, jar, xgm_path, image, states):
+def check_xgm2tool(name, jar, xgm_path, xgm, ticks):
+    # SGDK 1.08's XGM-to-VGM path casts a parsed base command to LoopCommand and throws even on its own files.
+    # Exercise the consumer path instead: XGM-to-packed-XGC, with no patches to the upstream tool.
     with tempfile.TemporaryDirectory() as tmp:
-        out = os.path.join(tmp, "song.vgm")
+        out = os.path.join(tmp, "song.xgc")
         r = subprocess.run(["java", "-jar", jar, xgm_path, out], capture_output=True, text=True)
         ok = r.returncode == 0 and os.path.exists(out)
-        check(ok, "%s: xgm2tool reads the engine's .xgm" % name)
+        check(ok, "%s: unmodified xgm2tool compiles the engine's .xgm" % name)
         if not ok:
+            print(r.stdout, r.stderr)
             return
-        h, writes, _, _, _, _, total = parse_vgm(read(out))
-    per = 882 if image.region else 735
-    frames = min(len(states), total // per)
-    got = frame_states(writes, image.region, frames, per)
-    bad = [f for f in range(frames) if got[f].compare(states[f])]
-    check(not bad, "%s: xgm2tool's VGM register state per frame = the player's (%d frames%s)"
-          % (name, frames, "" if not bad else ", first differing %d" % bad[0]))
+        compiled = read(out)
+    check_xgm2(name + " via xgm2tool", xgm, compiled, ticks)
 
 
 # ---- audio -------------------------------------------------------------------------------------------------------
@@ -395,6 +420,19 @@ def compare_audio(engine_wav, vgm_path, vgm2wav, core, seconds):
     return env, float(np.mean(spec)), same_pc / max(1, counted)
 
 
+def stream_ticks(image):
+    """Musical frames through the second loop arrival, independent of the driver's physical refill delays."""
+    player = ym_ref.Player(image)
+    seen = False
+    for ticks in range(200000):
+        if player.position() == (image.loop, 0, 0):
+            if seen:
+                return ticks
+            seen = True
+        player.tick()
+    raise ValueError("reference player did not reach the loop twice")
+
+
 def check_song(prefix, args):
     d = args.dir
     image = ym_ref.Image(read(os.path.join(d, prefix + "_image.bin")))
@@ -410,10 +448,10 @@ def check_song(prefix, args):
     xgm_path = os.path.join(d, prefix + "_song.xgm")
     xgm, xgc = read(xgm_path), read(os.path.join(d, prefix + "_song.xgc"))
     h = parse_vgm(vgm)[0]
-    ticks = round(h["samples"] * MCLK[image.region] / (VGM_RATE * TICK_MCLK[image.region]))
+    ticks = stream_ticks(image)
     check_xgm2(prefix, xgm, xgc, ticks)
     if args.xgm2tool:
-        check_xgm2tool(prefix, args.xgm2tool, xgm_path, image, states)
+        check_xgm2tool(prefix, args.xgm2tool, xgm_path, xgm, ticks)
     if args.vgm2wav and prefix == "ym":
         wav = os.path.join(d, "ym_song.wav")
         first = h["samples"] / VGM_RATE

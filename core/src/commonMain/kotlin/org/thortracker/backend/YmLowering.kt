@@ -76,7 +76,7 @@ object YmLowering {
         out[YmPlayerImage.H_LFO] = sound.lfo.toByte()
         u16(out, YmPlayerImage.H_ORDERS, song.orders.size)
         u16(out, YmPlayerImage.H_LOOP, song.loopOrder)
-        out[YmPlayerImage.H_INSTRUMENTS] = highestSlot(sound).toByte()
+        out[YmPlayerImage.H_INSTRUMENTS] = (sound.instruments.indexOfLast { it != null } + 1).toByte()
         out[YmPlayerImage.H_FM3] = sound.fm3Mode.code.toByte()
         out[YmPlayerImage.H_PCM_VARIANTS] = bank.variants.size.toByte()
         u16(out, YmPlayerImage.H_PCM_BANK_SIZE, bank.pages)

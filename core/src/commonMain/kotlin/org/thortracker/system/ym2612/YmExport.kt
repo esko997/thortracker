@@ -29,9 +29,9 @@ fun interface YmExportRenderer {
  */
 object YmExport {
     /**
-     * The three files: VGM 1.71 (players, archives; the DAC's actual PCM output included), XGM2 `.xgm` (SGDK's
-     * `rescomp` `XGM2` resource) and the compiled XGM2 `.xgc` (`XGM2_play`). Both XGM files are version 2 (XGM2):
-     * games built for SGDK's original XGM driver must switch to the XGM2 driver to play them.
+     * The three files: VGM 1.71 (players, archives; the DAC's actual PCM output included), unpacked XGM2 `.xgm` and
+     * compiled XGM2 `.xgc` (`XGM2_play`, imported as a 256-byte-aligned BIN). The pinned xgm2tool has XGM2 re-import
+     * defects; use the already compiled file. XGM1 games must switch to the XGM2 driver.
      */
     enum class Format(val code: Int, val label: String) {
         VGM(YmPlayerImage.EXPORT_VGM, "VGM"),

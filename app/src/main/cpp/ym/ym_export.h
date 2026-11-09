@@ -11,8 +11,8 @@ extern "C" {
 #endif
 
 #define YM_EXPORT_VGM 0 /* .vgm: VGM 1.71, YM2612 + SN76489, with a GD3 tag */
-#define YM_EXPORT_XGM 1 /* .xgm: XGM2 (version 0x10, unpacked; SGDK rescomp's XGM2 resource), with the same GD3 tag */
-#define YM_EXPORT_XGC 2 /* .xgc: the compiled XGM2 XGM2_play() plays (packed, what rescomp makes of the .xgm), no tag */
+#define YM_EXPORT_XGM 1 /* .xgm: XGM2 (version 0x10, unpacked), with the same GD3 tag */
+#define YM_EXPORT_XGC 2 /* .xgc: compiled XGM2 for XGM2_play() (packed, no tag); import as a 256-byte-aligned BIN */
 
 /* Renders a lowered "ym2612-fm" image (exactly YM_IMAGE_SIZE = 1188864 bytes) in `format` (at most max_ticks player
  * ticks). XGM/XGC need SGDK's XGM2 driver: XGM1 players (XGM_startPlay) cannot read them. The GD3

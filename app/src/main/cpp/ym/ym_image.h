@@ -211,6 +211,8 @@ int ym_ch3_offset(const YmImage* image, int slot, int k);
 int ym_pcm_variant(const YmImage* image, int slot, int note);
 /* Variant id's start page, length in pages and flags (loaded images, 1 <= id <= pcm_variants). */
 void ym_pcm_region(const YmImage* image, int id, int* start, int* pages, int* flags);
+/* Variant ida of a and idb of b hold the same compiled bytes at the same length and rate (loaded images, ids valid). */
+int ym_pcm_same_variant(const YmImage* a, int ida, const YmImage* b, int idb);
 
 static inline int ym_u16(const uint8_t* p) { return p[0] | p[1] << 8; }
 static inline int ym_channel_kind(int c) { return c < YM_CH_PSG ? YM_KIND_FM : c < YM_CH_PCM ? YM_KIND_PSG : YM_KIND_PCM; }

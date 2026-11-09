@@ -538,6 +538,46 @@ def row_delay(row):
     return g
 
 
+def variant_bytes(image, vid):
+    """Variant vid's compiled bytes, page count and flags (what the driver plays)."""
+    start, pages, flags = image.variants[vid]
+    at = OFF_PCM_BANK + start * PCM_ALIGN
+    return image.data[at: at + pages * PCM_ALIGN], pages, flags
+
+
+def same_kit(a, sa, b, sb):
+    """Slot sa of a and slot sb of b are the same kit: both PCM, a key mapped, every key unmapped in both or mapped
+    to variants with the same compiled bytes."""
+    inst = b.instrument(sb)
+    if inst is None or inst["kind"] != "pcm":
+        return False
+    mapped = False
+    for x in range(PCM_KEYS):
+        va, vb = a.pcm_variant(sa, x), b.pcm_variant(sb, x)
+        if bool(va) != bool(vb) or (va and variant_bytes(a, va) != variant_bytes(b, vb)):
+            return False
+        mapped = mapped or bool(va)
+    return mapped
+
+
+def relocate_pcm(t, old, image):
+    """A PCM track remembers its kit by slot and its sounding variant by id: an edit that renumbers the kits (or
+    recompiles the bank) moves them to the slot whose every key names the same sounds and to the variant with the
+    same bytes; a changed kit keeps its slot, a variant no longer compiled is forgotten."""
+    s = t.slot
+    inst = old.instrument(s) if s else None
+    if inst is not None and inst["kind"] == "pcm" and not same_kit(old, s, image, s):
+        for n in range(1, 65):
+            if n != s and same_kit(old, s, image, n):
+                t.slot = n
+                break
+    if t.pcm:
+        want = variant_bytes(old, t.pcm)
+        if t.pcm <= image.pcm_variants and variant_bytes(image, t.pcm) == want:
+            return
+        t.pcm = next((v for v in range(1, image.pcm_variants + 1) if variant_bytes(image, v) == want), 0)
+
+
 # ---- player ----------------------------------------------------------------------------------------------
 
 ON, RELEASED, OFF = "on", "released", "off"
@@ -1040,6 +1080,8 @@ class Player:
         if image.lfo != old.lfo:
             self.lfo = image.lfo
         self.fm3 = image.fm3
+        for t in self.tracks[CH_PCM:]:
+            relocate_pcm(t, old, image)
         started = self.tick_in_row > 0
         old_speed = speed_at(old, self.order, self.row, started)
         self.img = image

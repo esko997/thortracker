@@ -241,8 +241,9 @@ def pcm_waveform(data, step, length, level, padded):
 def compile_pcm(song):
     """The PCM bank, as YmPcmLowering compiles it: (waveforms in id order, each padded to whole pages,
     {(slot, key): id}, pages). Every key of every PCM kit, slots ascending then keys ascending: a (sample, pitch,
-    level) met before reuses its id; else the waveform is compiled (refused when it would not fit the bank, before
-    deduplication), and byte-identical to an earlier one shares that id, else is appended (refused past 123)."""
+    level) met before reuses its id; else the waveform is compiled (refused first when it would not fit the bank and
+    no compiled waveform has its page count, so none can share it), and byte-identical to an earlier one shares that
+    id, else is appended (refused when it would not fit the bank, then past 123)."""
     mclk = MCLK[song.region]
     waves, by_key, by_wave, ids, pages = [], {}, {}, {}, 0
     for slot in sorted(song.instruments):
@@ -264,11 +265,13 @@ def compile_pcm(song):
             step = pcm_step(rate, pitch, mclk)
             length = pcm_length(len(data), step)
             need = (length + PCM_ALIGN - 1) // PCM_ALIGN
-            if pages + need > PCM_BANK_PAGES:
+            if pages + need > PCM_BANK_PAGES and all(len(w) != need * PCM_ALIGN for w in waves):
                 raise ValueError("the PCM kits compile to more than 1024 KB (instrument %02X key %d)" % (slot, key))
             wave = pcm_waveform(data, step, length, kit.level, need * PCM_ALIGN)
             vid = by_wave.get(wave)
             if vid is None:
+                if pages + need > PCM_BANK_PAGES:
+                    raise ValueError("the PCM kits compile to more than 1024 KB (instrument %02X key %d)" % (slot, key))
                 if len(waves) >= PCM_MAX_VARIANTS:
                     raise ValueError("the PCM kits need more than 123 compiled sounds (instrument %02X key %d)" % (slot, key))
                 waves.append(wave)
@@ -675,10 +678,13 @@ def pcm_moved_song():
 
 
 def pcm_edited_song():
-    """The PCM song with the snare's bytes changed (other noise; same length): its variants (kit A key 38, kit B key
-    38) keep their ids and pages but not their bytes; every other variant is identical."""
+    """The PCM song with different snare noise and an inverted long tone, at unchanged lengths.
+    Their variants keep their ids and pages; the other variants are identical. The long edit stays sounding
+    beyond the driver's deferred bank-swap boundary, so the stop check cannot pass because the sample ended."""
     s = pcm_song()
     s.samples = _pcm_samples(snare_seed=7)
+    name, rate, data = s.samples[4]
+    s.samples[4] = (name, rate, bytes((-v) & 0xff for v in data))
     return s
 
 

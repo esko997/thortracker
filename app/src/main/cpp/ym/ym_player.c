@@ -560,11 +560,44 @@ static int speed_at(const YmImage* image, int order, int row, int started) {
     return s;
 }
 
+/* Slot sa of a and slot sb of b are the same kit: both PCM, at least one key mapped, every key unmapped in both or
+ * mapped to variants with the same compiled bytes. */
+static int same_kit(const YmImage* a, int sa, const YmImage* b, int sb) {
+    if (!ym_instrument(b, sb, YM_KIND_PCM)) return 0;
+    int mapped = 0;
+    for (int x = 0; x < YM_PCM_KEYS; ++x) {
+        const int va = ym_pcm_variant(a, sa, x), vb = ym_pcm_variant(b, sb, x);
+        if (!va != !vb || (va && !ym_pcm_same_variant(a, va, b, vb))) return 0;
+        mapped += va != 0;
+    }
+    return mapped > 0;
+}
+
+/* A PCM channel remembers its kit by slot and its sounding variant by id. An edit that renumbers the kits (or
+ * recompiles the bank) moves them to the slot whose every key names the same sounds and to the variant with the same
+ * bytes; a kit that changed keeps its slot, a variant no longer compiled is forgotten. */
+static void relocate_pcm(YmChannel* ch, const YmImage* old, const YmImage* next) {
+    const int s = ch->instrument;
+    if (s && ym_instrument(old, s, YM_KIND_PCM) && !same_kit(old, s, next, s))
+        for (int t = 1; t <= YM_MAX_INSTRUMENTS; ++t)
+            if (t != s && same_kit(old, s, next, t)) {
+                ch->instrument = t;
+                break;
+            }
+    if (ch->pcm) {
+        int to = ch->pcm <= next->info.pcm_variants && ym_pcm_same_variant(old, ch->pcm, next, ch->pcm) ? ch->pcm : 0;
+        for (int v = 1; v <= next->info.pcm_variants && !to; ++v)
+            if (ym_pcm_same_variant(old, ch->pcm, next, v)) to = v;
+        ch->pcm = to;
+    }
+}
+
 void ymp_relocate(YmPlayer* p, const YmImage* old, const YmImage* next) {
     if (p->audition) return;
     const YmInfo* info = &next->info;
     if (info->lfo != old->info.lfo) p->lfo = info->lfo;
     p->fm3 = info->fm3;
+    for (int c = YM_CH_PCM; c < YM_CHANNELS; ++c) relocate_pcm(&p->ch[c], old, next);
     const int started = p->tick > 0;
     const int old_speed = speed_at(old, p->order, p->row, started);
     int clamped = 0;

@@ -111,7 +111,8 @@ void ymp_reset(YmPlayer* p, const YmImage* image);
 void ymp_tick(YmPlayer* p, const YmImage* image);
 /* Start playing from (order, row 0) with the speed straight play starts that order with (seek fallback). */
 void ymp_place(YmPlayer* p, const YmImage* image, int order);
-/* Live edit at a tick boundary: positions kept (clamped), rows re-read from `next` (see the spec). */
+/* Live edit at a tick boundary: positions kept (clamped), rows re-read from `next`, PCM channels' kits and sounding
+ * variants followed to their renumbered slots and ids (see the spec). */
 void ymp_relocate(YmPlayer* p, const YmImage* old, const YmImage* next);
 /* Audition: reset, then key on `note` (0..95) on `channel` with instrument `slot` (FM slots on 0-5, PSG on 6-9, PCM
  * on 10-12 with `note` mapped) and fine pitch `fine` (pitch units, -128..127; PCM: ignored); ticks only update.

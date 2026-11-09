@@ -639,8 +639,7 @@ object YmInstrumentView : SystemView() {
             Action.CUT -> if (onEnvelope) {
                 session.copyYmEnvelope(slot, kind!!)
                 session.editYmEnvelope(slot, kind, "Cut ${kind.label.lowercase()} envelope") { defaultYmPsg(slot).envelope(kind) }
-            } else {
-                session.copyYmInstrument(slot)
+            } else if (session.copyYmInstrument(slot)) {
                 session.setYmInstrument(slot, null, "Cut sound")
                 keepPage(v, row)
             }

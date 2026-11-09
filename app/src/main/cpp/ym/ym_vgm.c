@@ -163,33 +163,40 @@ static uint8_t* render_vgm(const YmImage* image, uint32_t max_ticks, YmVgmInfo* 
     const int nreset = ymp_machine_reset(reset);
     for (int i = 0; i < nreset; ++i) vgm_write(&w, 0, reset[i].kind, reset[i].reg, reset[i].val);
     ymm_set_log(m, 1);
-    /* Frame f executes in silent tick f + 1: the VGM starts at silent tick 1, loops at the tick executing the loop
-     * frame and ends after the tick executing the frame before the second arrival (frames 0 .. E - 1, as the XGM2
-     * export has them). */
+    /* Frame f executes at the interrupt that starts the tick after the driver executed frame f - 1 (normally silent
+     * tick f + 1; a frame the driver skips executes a tick later). The VGM starts at silent tick 1, loops at the
+     * tick executing the loop frame (the first arrival at the loop point) and ends after the tick executing the
+     * frame before the second arrival (frames 0 .. E - 1, as the XGM2 export has them). */
     uint64_t cycles = 0, loop_cycles = 0;
     size_t loop_body = 0;
     uint32_t loop_dac = 0;
-    /* the player has made frame 0 (the song start); before silent tick f it is at frame f */
+    /* the player has made frame 0 (the song start); before a tick it is at the next frame it encodes */
     int seen_loop = image->info.loop == 0;
-    uint32_t loop_frame = 0, frame = 1, last = max_ticks;
+    uint32_t loop_frame = 0, end_frame = max_ticks, checked = 0, ran = 0;
     int looped = 0;
-    for (; frame <= last; ++frame) {
-        if (!looped && frame < max_ticks && at_loop(ymm_player(m), image)) {
-            if (seen_loop) {
-                looped = 1;
-                last = frame; /* this tick executes the pass's last frame */
-            } else {
-                seen_loop = 1;
-                loop_frame = frame;
+    while (ran < end_frame) {
+        const uint32_t next = ymm_frames(m);
+        if (!looped && next > checked && next < max_ticks) {
+            checked = next;
+            if (at_loop(ymm_player(m), image)) {
+                if (seen_loop) {
+                    looped = 1;
+                    end_frame = next; /* the pass ends with the frame before this one */
+                } else {
+                    seen_loop = 1;
+                    loop_frame = next;
+                }
             }
         }
         if (ymm_tick_silent(m) != YMM_OK) {
             *problem = "driver fault";
             goto done;
         }
+        const uint32_t was = ran;
+        ran = ymm_executed(m);
         int count;
         const YmmLogEntry* log = ymm_log(m, &count);
-        if (seen_loop && frame == loop_frame + 1 && !loop_body) { /* this tick executes the loop frame */
+        if (seen_loop && was <= loop_frame && loop_frame < ran && !loop_body) { /* this tick executes the loop frame */
             vgm_wait(&w, cycles * VGM_RATE * YMM_MCLK_PER_Z80 / mclk);
             w.last_dac_cmd = (size_t)-1;
             loop_cycles = cycles;
@@ -251,7 +258,7 @@ static uint8_t* render_vgm(const YmImage* image, uint32_t max_ticks, YmVgmInfo* 
         h[0x2A] = 16;   /* shift register width */
         vgm_put32(h + 0x2C, pal ? 7600489 : 7670453);
         vgm_put32(h + 0x34, VGM_HEADER - 0x34);
-        info->ticks = frame - 1;
+        info->ticks = ran;
         info->looped = looped;
         info->dac_bytes = (uint32_t)w.dac.n;
         info->size = out.n;
