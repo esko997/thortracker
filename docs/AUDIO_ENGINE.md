@@ -4455,7 +4455,7 @@ to order 3 row 2, order 3 ending at speed 5 and jumping back to the loop order, 
   the wrong wave port ignored, `sck_advance` ≡ `sck_render` state after random write streams); every single-byte
   corruption rejected with its reason; **the machine's writes equal the Python reference player's in all 1500 ticks**
   for `song`, `plus`, `edited`, `tempo`, with identical positions; the reset batch; 30 s non-silent in every second, no
-  clipping, bit-identical on a second start, tick cost flat; loop passes with identical positions; seeks (several
+  clipping, bit-identical on a second start; loop passes with identical positions; seeks (several
   targets beyond and within the pre-roll): position, writes equal to straight play for 200 ticks, **core state
   `memcmp`-equal to straight play's at the target**, output within 1/32768 (bit-identical within the pre-roll); the
   order fallback; live edits: the same image and `moved` alternating before every tick write the reference, a note edit
@@ -4494,9 +4494,11 @@ to order 3 row 2, order 3 ending at speed 5 and jumping back to the loop order, 
 - Not done: listening on hardware, a comparison with a real SCC or SCC+ cartridge.
 
 Verified on 2026-11-09: generated tables/goldens and sample exports, 690 JVM / 14 Linux / six Android-host tests,
-607 SCC native checks and 1,841 WAV checks, independent player/chip/VGM checks, signed Android and desktop builds,
+606 SCC functional checks and 1,841 WAV checks, independent player/chip/VGM checks, signed Android and desktop builds,
 both systems exercised on Nova/DMG/Konkr and the actual SDL frontend. Silent seek now retains blip's fractional
 sample phase; the previously failing targets are sample-identical without lengthening preroll or relaxing tolerance.
+Thread-CPU timing remains a reported benchmark, not a worst/mean correctness gate: even hosted CI's 52.3 µs worst
+tick exceeded three times its 12.7 µs mean despite remaining far inside the audio budget.
 See `docs/VERIFICATION.md` for timings, exports and limits. The optional libvgm comparison was not run.
 
 ## OPM: Thor Tracker's own player on a YM2151 (`"ym2151-opm"`)
