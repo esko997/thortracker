@@ -33,15 +33,16 @@ All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit wa
 
 ## 0.35.0 Virtual Boy VSU — source integration, runtime pending
 
-The `vsu` branch merges candidate `4b1c95e4` (VIC/TED plus all preceding systems), preserving the
-prepared VSU headroom/timing changes in commit `3ee5b32`. The parent must merge SAA 0.34.0/code 47
-before release; its backend is not included by this source-only integration. Version is 0.35.0/code 48.
-No builds, tests, generators, formatters or device operations were run for this merge.
+The `vsu` branch merges candidates `4b1c95e4` (VIC/TED plus all preceding systems) and `5c3e8c9`
+(SAM Coupé and Creative Music System), preserving the prepared VSU headroom/timing changes in
+commit `3ee5b32`. Version remains 0.35.0/code 48. No builds, tests, generators, formatters or device
+operations were run for this combined source merge; the incoming SAA candidate's separate evidence
+does not establish acceptance of this integration.
 
 - Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
-  alongside every candidate system. The existing registry-driven New/demo menus need no special VSU branch.
-- All 13 shared-registry renderer scripts include VSU, CBM, TIA, POKEY and the earlier engines, including
-  the Stella/PCE/ymfm wrappers and include paths. The SMS-only renderer remains intentionally standalone.
+  and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.
+- All 14 shared-registry renderer scripts include VSU, SAA, CBM, TIA, POKEY and the earlier engines,
+  including the Stella/PCE/ymfm wrappers and include paths. The SMS-only renderer remains intentionally standalone.
 - The prepared scale 8 precedes blip_buf; float divisor 24576 and raw physical diagnostics are unchanged.
   The seven-rate oracle bounds and independent-reference thresholds are retained. No 5–10 ms startup
   silence is invented; the hardware observation remains unresolved.
@@ -54,6 +55,7 @@ Parent verification (not executed here), serialized with SSD-backed evidence and
 nice -n 10 tools/build.sh --max-workers=1 :core:jvmTest :app:testDebugUnitTest :app:exportSamples
 tools/audio/run_native_host_test.sh "$HOME/.local/state/thortracker/vsu-035/native"
 python3 tools/audio/vsu_reference_check.py "$HOME/.local/state/thortracker/vsu-035/native"
+python3 tools/audio/saa_reference_check.py "$HOME/.local/state/thortracker/vsu-035/native"
 tools/audio/render_vsu_image.sh app/build/samples/crimson-stereoscope.vbimg "$HOME/.local/state/thortracker/vsu-035/demo.wav" 30 --vgm "$HOME/.local/state/thortracker/vsu-035/demo.vgm"
 tools/audio/render_vsu_image.sh app/build/samples/vsu-shortest.vbimg "$HOME/.local/state/thortracker/vsu-035/shortest.wav" 2
 nice -n 10 tools/build.sh --max-workers=1 -PthortrackerSigningDir="$SIGNING_DIR" :app:assembleRelease
@@ -64,7 +66,7 @@ Prerequisites: prepared pinned native drivers/tables, Android SDK/NDK/JDK (or th
 Distrobox), host C/C++ compilers and Python 3. The Gradle wrapper enforces the memory preflight,
 same shared build lock and bounded scope; serialize the native commands under the parent's resource
 policy as well. Re-exercise every shared-registry renderer, the full all-engine WAV suite and independent
-references after the SAA merge. Compare original scale-64 versus scale-8 headroom runs in isolated
+references on this combined source merge. Compare original scale-64 versus scale-8 headroom runs in isolated
 evidence worktrees: the original must fail and the prepared gain must pass, while raw register/sample,
 chip-case and VGM traces remain byte-identical. Do not weaken bounds to obtain that result.
 The optional `vsu_reference_check.py EVIDENCE_DIR --vgm2wav /path/to/vgm2wav` requires libvgm and numpy;
@@ -1152,6 +1154,39 @@ AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` sym
 The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
+
+## Unreleased: Philips SAA1099 — SAM Coupé and Creative Music System (branch `saa1099-systems`, source only — nothing verified yet)
+
+The two SAA1099 systems (`sam-saa1099`, `cms-saa1099`; `docs/BACKENDS.md` "Philips SAA1099", contract in
+`docs/AUDIO_ENGINE.md` "SAA1099") were written without compiling, generating or running anything. No result below
+exists yet; the integrator runs, in the worktree, in this order (serialised, no emulator during builds):
+
+1. `python3 tools/audio/prepare_saa.py` — writes `app/src/main/cpp/generated/saa_tables.h`,
+   `core/src/commonMain/kotlin/org/thortracker/backend/SaaPlayerImage.kt` and `app/src/test/cpp/saa_test_song.h`
+   (commit them, as the OPL3's and SCC's generated files are). It asserts the C header constants against the reference
+   (image layout, effect codes, clocks, rates, pitch limit, note ranges 11..106 / 9..104) and that both test songs
+   reach an exactly repeating loop pass.
+2. `python3 tools/audio/saa/saa_golden.py` — writes `core/src/jvmTest/resources/saa-golden/{sam,cms,features}.bin.gz`.
+3. `tools/build.sh :core:jvmTest` (at least `SaaModelTest`, `SaaGoldenTest`, `org.thortracker.system.saa.*`, and any
+   editor test touching shared views the SAA editor extended), then `tools/build.sh exportSamples` (writes
+   `coupe-lights.thor`, `blaster-skyline.thor`, `saa-sam-demo.saaimg`, `saa-cms-demo.saaimg`,
+   `saa-sam-shortest.saaimg`, `saa-cms-shortest.saaimg`).
+4. `tools/audio/run_native_host_test.sh evidence/audio` — `saa_machine_test` plus every existing system's test and
+   `wav_render_test` (SAA demos and shortest songs); existing counts must not change.
+5. `python3 tools/audio/saa_reference_check.py evidence/audio [--vgm2wav PATH]` — trace, per-clock chip model, VGM
+   structure and exact loop repetition, A-4 pitch of both machines; with libvgm's vgm2wav also the tone VGMs' pitch
+   (header clocks and the dual-chip bit) and, for information, song correlations.
+6. `tools/audio/render_saa_image.sh evidence/audio/saa_sam_song.bin evidence/audio/saa_render.wav 10 --vgm
+   evidence/audio/saa_render.vgm` (and the CMS image), and the existing `render_*_image.sh` scripts (their source lists
+   now include the SAA engine).
+7. The Android build (CMake, JNI `nativeSaaVgm`) and the Deck build (cinterop `saa_export.h`, `DeckSaaVgm`); UI smoke of
+   New/Load demo → Philips SAA1099…, the Instrument view (hardware envelope rows on lanes 3/6, noise clock, pan), lane-header
+   shared-state tags, playback, seek, audition, mute, VGM and WAV export on a reserved handheld and the Deck.
+
+Assumptions to confirm by those runs or by listening: the noise clocks (data sheet / SAASound, not libvgm's doubled
+ones), frequency latching at the half-cycle end, the averaged PDM levels, the mixing levels (SAM × 10, CMS × 5), the
+one-shot external envelope hold rule, the 60 Hz CMS tick rate, the 1/32768 seek tolerance after the one-second
+pre-roll and the reference check's ±0.1 Hz pitch threshold.
 
 ## 0.16.0 NES + Konami VRC7
 

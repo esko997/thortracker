@@ -29,6 +29,10 @@
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
  *   "vb-vsu"          Thor Tracker's own player on the Virtual Boy VSU, a Mednafen-derived core amended from the
  *                     Sacred Tech Scroll (vsu/vsu_engine.c over vsu/vsu_machine.c, vsu_player.c, vsu_chip.c, vsu_image.c)
+ *   "sam-saa1099"     Thor Tracker's own SAA1099 player on one Philips SAA1099 (our clock-exact port of SAASound's
+ *                     model) at the SAM Coupe's 8 MHz (saa/saa_chip.c over saa/saa_machine.c, saa_player.c,
+ *                     saa_image.c, saa_core.c)
+ *   "cms-saa1099"     the same player on two SAA1099s at 7159090 Hz: Creative Music System / Game Blaster (same files)
  *   "vic20-vic"       Thor Tracker's own VIC-20 player on the VIC's sound part (VICE's model)
  *   "c16-ted"         the same player on the C16/Plus/4 TED's sound part (plus4emu's model), D/A samples from the timer
  *                     (cbm/cbm_chip.c over cbm/cbm_machine.c, cbm_player.c, cbm_image.c, cbm_vic.c, cbm_ted.c)

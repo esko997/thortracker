@@ -30,6 +30,11 @@
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
 # reference player's) and opl3_song.vgm (the VGM export of the test song).
+# SAA1099: <dir>/saa_sam_song.wav, saa_cms_song.wav (30 s), saa_tone_sam.wav, saa_tone_cms.wav (A-4 + release),
+# saa_trace.txt (per tick: position, then the player writes chip:reg=val; = the Python reference player's),
+# saa_chip_trace.txt (a scripted single-chip register sequence and the core's output events), saa_sam_song.vgm,
+# saa_cms_song.vgm (the VGM exports) and saa_sam_song.bin, saa_cms_song.bin (the images), the inputs of
+# tools/audio/saa_reference_check.py.
 # VIC-20 / C16 (cbm): <dir>/cbm_trace_<name>.txt (per-tick and per-interrupt player writes of the fixture songs and, when
 # exportSamples wrote them, of vic-demo/vic-shortest/ted-demo/ted-shortest.cbimg; tools/audio/cbm/cbm_reference_check.py
 # compares them with the Python reference player), cbm_<name>.wav and cbm_<shortest>.wav (the A-4 tones).
@@ -98,7 +103,7 @@ includes+=(-I "$cpp/opm")
 includes+=(-I "$cpp/opn")
 includes+=(-I "$cpp/tia" -I "$cpp/third_party/stella-tia" -I "$cpp/third_party/stella-tia/shim")
 includes+=(-I "$cpp/pokey")
-includes+=(-I "$cpp/cbm" -I "$cpp/vsu")
+includes+=(-I "$cpp/cbm" -I "$cpp/vsu" -I "$cpp/saa")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -114,6 +119,8 @@ c_engines=(
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
   "$cpp/vsu/vsu_engine.c" "$cpp/vsu/vsu_machine.c" "$cpp/vsu/vsu_player.c" "$cpp/vsu/vsu_chip.c" "$cpp/vsu/vsu_image.c"
   "$cpp/vsu/vsu_vgm.c"
+  "$cpp/saa/saa_chip.c" "$cpp/saa/saa_machine.c" "$cpp/saa/saa_player.c" "$cpp/saa/saa_image.c" "$cpp/saa/saa_vgm.c"
+  "$cpp/saa/saa_core.c"
   "$cpp/cbm/cbm_chip.c" "$cpp/cbm/cbm_machine.c" "$cpp/cbm/cbm_player.c" "$cpp/cbm/cbm_tables.c" "$cpp/cbm/cbm_image.c"
   "$cpp/cbm/cbm_vic.c" "$cpp/cbm/cbm_ted.c"
   "$cpp/tia/tia_chip.c" "$cpp/tia/tia_machine.c" "$cpp/tia/tia_player.c" "$cpp/tia/tia_image.c"
@@ -144,7 +151,7 @@ for src in "${cxx_engines[@]}"; do
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
-  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test pokey_machine_test tia_machine_test cbm_machine_test vsu_machine_test wav_render_test; do
+  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test pokey_machine_test tia_machine_test cbm_machine_test vsu_machine_test saa_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -165,6 +172,7 @@ status=0
 "$build/opl3_machine_test" "$out" || status=1
 "$build/pokey_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/saa_machine_test" "$out" || status=1
 "$build/cbm_machine_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/tia_machine_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/opn_machine_test" "$out" || status=1

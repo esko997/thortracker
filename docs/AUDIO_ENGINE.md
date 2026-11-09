@@ -74,6 +74,11 @@ The Virtual Boy system (`"vb-vsu"`, written source-only, not yet built) plays so
 a VSU core ported from Mednafen and amended to the Sacred Tech Scroll's hardware findings, mirrored by an independent
 Python reference; it exports VGM and WAV. See [Virtual Boy VSU](#virtual-boy-vsu-thor-trackers-own-player-on-the-vsu-vb-vsu).
 
+The Philips SAA1099 systems (`"sam-saa1099"`: the SAM Coupé's one chip at 8 MHz, `"cms-saa1099"`: the two chips of
+Creative's Music System / Game Blaster at 7.15909 MHz) play songs with Thor Tracker's **own player** (C, specified here,
+mirrored by an independent Python reference) on our clock-exact port of SAASound's SAA1099 model, and export VGM. See
+[SAA1099](#saa1099-thor-trackers-own-player-on-one-or-two-philips-saa1099-sam-saa1099-cms-saa1099).
+
 ## Chip engine interface (what a new sound system implements)
 
 Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are
@@ -178,7 +183,7 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Mednafen VSU (ported) | `app/src/main/cpp/vsu/vsu_chip.c` (a C port of `src/vb/vsu.cpp` with the amendments listed in the file and in "Virtual Boy VSU"); not vendored | mednafen-1.32.1.tar.xz (mednafen.github.io/releases), sha256 `de7eb94ab66212ae7758376524368a8ab208234b33796625ca630547dbc83832` | GPL-2.0-or-later (GPL-3.0-compatible), © 2010-2016 Mednafen Team — notice in `NOTICE.txt` |
 | Virtual Boy Sacred Tech Scroll (Guy Perfect) | documentation only (the VSU behaviour the core and `tools/audio/vsu/vsu_ref.py` follow) | perfectkiosk.net/stsvb.html revision 2024-10-20 (web.archive.org copy sha256 `fc35994c6510182ccd82bcd69fe71f6af338b61d596a86758233a88703b16000`) | nothing shipped |
 | VGM 1.71 specification | documentation only | vgmrips/vgmplay-legacy `VGMPlay/vgmspec171.txt` sha256 `29c1e9f87253daf86ffd4373ce2db8850f976947f76c460951514d84c84a2d32` | nothing shipped |
-
+| SAASound (port) | `app/src/main/cpp/saa/saa_core.c/.h`: our clock-exact C port of SAASound's SAA1099 model (frequency latching, noise LFSR and clocks, the envelope state machine and `cs_EnvData` tables verbatim, tone/noise mixing, the PDM `EffectiveAmplitude` table, sync), restructured as an analytic advance and an event renderer | github.com/stripwax/SAASound commit `3d92322030d1e5627cbf8295bed1efc872bad6eb` (2025-10-18); `SAAEnv.cpp` sha256 `909d9451…350a9b36`, `SAAAmp.cpp` `1de289a8…c3a1c3c9`, `LICENCE` `dac0fc9a…ef366cd9` | BSD-3-Clause (Dave Hooper, Simon Owen) — the port keeps the notice in its header; notice in `NOTICE.txt` |
 | VICE `vic20sound.c` (adapted) | `app/src/main/cpp/cbm/cbm_vic.c` (its sound clock, Johnson counters, noise LFSR, `voltagefunction` table and output-stage model; original header kept, marked modified) | github.com/VICE-Team/svn-mirror commit `c60cc7afd46b739e84d28b300cdbcb6cb6ba2f5b` (file last changed in `9667781b`); `vice/src/vic20/vic20sound.c` sha256 `0c262a75…5b309b` | GPL-2.0-or-later (GPL-3.0-compatible); notice in `NOTICE.txt` |
 | plus4emu TED sound (adapted) | `app/src/main/cpp/cbm/cbm_ted.c` (`ted_snd.cpp`'s sound clock, decay, D/A mode, noise, mix/volume/distortion tables; the sound parts of `ted_write.cpp`, `ted_init.cpp`, `ted_main.cpp`, `ted.hpp`; original header kept, marked modified) | github.com/istvan-v/plus4emu commit `939e65233b227a47e5523eca149de8247176e28f`; `src/ted_snd.cpp` sha256 `be2b86ea…a469d030` | GPL-2.0-or-later (GPL-3.0-compatible); notice in `NOTICE.txt` |
 | Altirra 4.40 (POKEY generator formulas, mix table, output stage) | ported, not vendored: `pokey/pokey_chip.c` (`pk_init`'s generator steps from `pokeytables.cpp`, `pk_mix_init` from `pokey.cpp` UpdateMixTable) and `pokey/pokey_machine.c` (the AC coupling and clamp of `pokeyrenderer.cpp` PostFilter, constants in `pokey_chip.h`) | virtualdub.org/downloads/Altirra-4.40-src.7z (read 2026-11-08); behaviour from the Altirra Hardware Reference Manual 2026-01-02; MAME `pokey.cpp` consulted only, no code | GPL-2.0-or-later (GPL-3.0-compatible) — notice in `NOTICE.txt` |
@@ -6522,8 +6527,8 @@ fine in 1/64 semitone (0 on the VIC noise lane), `ticksPerSecond` = frame rate �
 
 ## Virtual Boy VSU: Thor Tracker's own player on the VSU (`"vb-vsu"`)
 
-Prepared for **0.35.0/code 48** on branch `vsu`, merged with candidate `4b1c95e4` (VIC/TED and earlier systems).
-SAA 0.34.0/code 47 is a separate parent integration prerequisite. **This source integration has not been built or run** — every number marked
+Prepared for **0.35.0/code 48** on branch `vsu`, merged with candidates `4b1c95e4` (VIC/TED and earlier systems)
+and `5c3e8c9` (SAM Coupé and Creative Music System). **This combined source integration has not been built or run** — every number marked
 "expected" is arithmetic, not measurement, until the integrator runs the checks under "Verification". The Virtual Boy
 has no standard music driver to embed, so the system plays through **our own player** (`vsu/vsu_player.c`, pure
 integer C without a chip), whose behaviour is this section; `tools/audio/vsu/vsu_ref.py` implements the same
@@ -6917,3 +6922,617 @@ optionally plays it through libvgm's vgm2wav (independent decoder; its VSU core 
 the amended behaviours above are expected and listed by the script). `tools/audio/render_vsu_image.sh image out.wav
 [seconds] [mute=0] [--vgm out.vgm]` renders an image through the ops table. Thresholds in those files are first
 guesses until the integrator runs them. Not done: any comparison with a real Virtual Boy.
+
+## SAA1099: Thor Tracker's own player on one or two Philips SAA1099 (`"sam-saa1099"`, `"cms-saa1099"`)
+
+Roadmap step 7 (more chips). No SAM Coupé or PC sound driver is in the loop: E-Tracker and the CMS drivers are not free
+and none is a standard to run, and the systems are the sound chips alone (no Z80/x86 machine). Like the OPL3 and the SCC,
+songs play through **our own player** (`saa/saa_player.c`, pure integer C without a chip) whose behaviour is this
+section; `tools/audio/saa/saa_ref.py` implements the same specification separately in Python and the host test requires
+identical register writes in every tick. Songs export as VGM (the player's register log) and WAV. This section is the
+contract of the Kotlin systems and lowering (`core` `system/saa`, `backend/SaaLowering.kt`); the numbers they share
+with the engine are generated into `backend/SaaPlayerImage.kt` ("Preparing" below). One image layout, player and
+machine serve both variants; the image says which machine it is for and each engine id loads only its own.
+
+### The chip (primary documentation and audited emulators)
+
+Sources: the Mullard/Philips **SAA1099 data sheet** (August 1984, "Microprocessor controlled stereo sound generator";
+scan at opl3.com `wp-content/uploads/2020/04/SAA-1099v1.pdf`, sha256 `f235b939…39f24c2e`, identical to theretroweb's
+copy): block diagram (Fig. 1), "Functional description" (frequency generators, noise generators, mixers, amplitude and
+envelope controllers, the address/data protocol). **SAASound** (Dave Hooper and Simon Owen, BSD-3-Clause;
+github.com/stripwax/SAASound commit `3d92322030d1e5627cbf8295bed1efc872bad6eb`, 2025-10-18; `SAAEnv.cpp` sha256
+`909d9451…350a9b36`, `SAAAmp.cpp` `1de289a8…c3a1c3c9`, `SAAFreq.cpp` `45c0604d…9e936cab`, `SAANoise.cpp`
+`c80d122f…664bff5f`, `SAADevice.cpp` `82fc8f45…95fe8bd1`, `LICENCE` `dac0fc9a…ef366cd9`), revised since 2018 against
+crowd-sourced recordings of real chips (its envelope test cases `envext_34b`/`envext_34c`/`EnvExt_imm`, Jepael's noise
+LFSR, stripwax's measured PDM tables). Compared, not used: MAME `src/devices/sound/saa1099.cpp` (BSD-3-Clause, Juergen
+Buchmueller, Manuel Abadia; commit `d0f1c15a0f6df2dd51a754cb46e6175b7079c8f2`, sha256 `7f2be89a…45db96d9`), which
+applies each envelope to
+all three channels of its half (the data sheet's Fig. 1 and SAASound wire envelope 0 to channel 2 and envelope 1 to
+channel 5 only), resets the envelope on every control write and clocks both envelopes on either address; libvgm's
+`emu/cores/saa1099_vb.c` (Valley Bell, `c5c03a2c`, VGM players' default core, tested against NewRisingSun's
+recordings), whose differences are listed under "VGM export".
+
+- **Six tone ("frequency") generators**: an 8-bit offset N and a 3-bit octave O each; a square wave of
+  f = clock · 2^O / (512 (511 − N)) Hz, i.e. a half-period of exactly H = (511 − N) · 2^(8 − O) clocks (8 MHz:
+  30.6 Hz at O 0 N 0 to 7812.5 Hz at O 7 N 255; data sheet: "30 Hz to 7.81 kHz", 256 tones per octave). Offsets and
+  octaves written while the chip runs take effect at the end of the current half-cycle (SAASound: new data is acted
+  upon at the generator's next half-cycle; MAME reloads there too). Octave registers hold two channels each
+  (`0x10` = channels 0/1, `0x11` = 2/3, `0x12` = 4/5).
+- **Two noise generators**, generator 0 for channels 0-2 and generator 1 for 3-5: an 18-bit Galois LFSR (feedback
+  x^18 + x^11 + x^1, period 262143; Jepael's analysis of a recorded SAA1099P, used by SAASound, MAME and libvgm) shifted
+  at one of four clocks: clock / 256, / 512, / 1024 (8 MHz: the data sheet's 31.25, 15.6 and 7.8 kHz) or **every
+  half-cycle of tone generator 0 (noise 0) or 3 (noise 1)** ("based on double the frequency generator output, i.e. 61 Hz
+  to 15.6 kHz"). The data sheet adds "there is no tone produced by the frequency generator when it is controlling the
+  noise generator"; no emulator models that (SAASound, MAME, libvgm all keep the tone audible) and no recording we found
+  settles it, so the generator keeps sounding here (open question, `docs/BACKENDS.md`).
+- **Six mixers**, each: off, tone, noise, or tone + noise (`0x14` tone enables, `0x15` noise enables, bit c = channel
+  c). Tone + noise: SAASound's measured rule, the tone gated with half its level while the noise bit is 1
+  (tone · (2 − noise) in half-steps).
+- **Twelve amplitude controllers**: 4 bits left (low nibble) and right (high nibble) per channel (`0x00`-`0x05`).
+  Hardware: pulse-density modulation of the output current sinks; modelled by the averaged level (below).
+- **Two envelope controllers**: envelope 0 controls **channel 2 only**, envelope 1 **channel 5 only** (data sheet
+  Fig. 1; "two of the six tone generators are under envelope control"). Control register `0x18`/`0x19`: bit 7 enable,
+  bit 5 clock (0 = internal: every half-cycle of tone generator 1 (envelope 0) or 4 (envelope 1); 1 = external: every
+  write of the *address* `0x18`/`0x19`), bit 4 resolution (0 = 16 levels, 1 = 8 levels), bits 3-1 shape (0 zero,
+  1 maximum, 2 single decay, 3 repetitive decay, 4 single triangle, 5 repetitive triangle, 6 single attack,
+  7 repetitive attack), bit 0 = the right output gets the inverse of the left. With an envelope the channel's amplitude
+  loses its least significant bit (data sheet). A control write while an envelope cycle runs is **buffered until the
+  cycle's end point** (SAASound's documented test cases); a write while it is off or ended applies at once; disabling
+  is immediate. "If the frequency channel controlled is OFF (NE = FE = 0) the envelope will appear at the output"
+  (data sheet): the envelope itself becomes the waveform.
+- **Control `0x1C`**: bit 0 = all channels enabled (sound on), bit 1 = **sync & reset**: while set, every tone and
+  noise generator is held at its reset phase, writes to offsets/octaves apply at once, and the outputs are 0
+  (SAASound); clearing it starts all six generators together (phase-aligned).
+- **Clock and output**: the SAM Coupé clocks its SAA1099 at **8 MHz** (`CLK` "nominal frequency of 8 MHz"; the SAM's
+  24 MHz master / 3); Creative's Music System / Game Blaster clocks both chips at **7159090 Hz** (14.31818 MHz / 2),
+  summing their left and right outputs into its stereo output. The outputs are unipolar current sinks (DC removed by
+  the analog stage; here by the resampler's high-pass).
+
+### Core: our clock-exact port of SAASound's model (`saa/saa_core.c`)
+
+`saa_core.c/.h` (prefix `sac_`, `SAC_`) is a C port of SAASound's SAA1099 behaviour above (BSD-3-Clause, its notice
+kept in the file and in `NOTICE.txt`) restructured on **exact chip clocks** instead of SAASound's sample-rate
+oversampling, with an **analytic advance** (no output) and an **event renderer** (outputs change only at tone edges,
+noise shifts and envelope steps). Both leave bit-identical state (`memcmp`), so a silent seek clocks the chip exactly
+as audible playback does. State (`SacCore`, plain data): `enable`, `sync`, the noise prescaler `prescale` (0..1023),
+per tone generator `oct`, `off`, `next_oct`, `next_off`, `pending`, `level` (0/1), `half` (H of `oct`/`off`), `count`
+(clocks to its next edge, 1..H); per noise generator `mode` (0..3) and `lfsr` (18 bits); per envelope SAASound's
+fields (`enabled`, `external`, `invert`, `shape`, `looping`, `phases`, `resolution` 1 or 2, `phase`, `pos`, `ended`,
+`new_data`, `next_data`, `left`, `right`); per channel `amp_l`, `amp_r` (0..15), `tone`, `noise` (mixer bits).
+
+**Reset** (`sac_reset`): enable 0, sync 0, prescale 0; tones O 0, N 0 (current and next), pending 0, level 1, count = H
+= 130816; noise mode 0, LFSR 0x3FFFF (the hardware seed is unknown and only must be non-zero; SAASound seeds
+0xFFFFFFFF); envelopes off and ended, phase 0, pos 0, resolution 1, shape 0, not looping, 1 phase, not external, not
+inverted, no buffered data, levels 0; amplitudes and mixers 0.
+
+**One clock** (nothing moves while `sync` = 1), in this order:
+
+1. `prescale` = (`prescale` + 1) mod 1024.
+2. Tone generators 0..5: `count` − 1; at 0 an **edge**: `level` ^= 1; tone 0 (3) with noise 0 (1) in mode 3 shifts that
+   LFSR; tone 1 (4) clocks envelope 0 (1) if it is enabled and internal; if `pending`: `oct` = `next_oct`,
+   `off` = `next_off`, `pending` = 0; `half` = H(`oct`, `off`); `count` = `half`.
+3. Noise generators in mode m < 3: shift when `prescale` mod (256 · 2^m) = 0 (a free-running divider: a mode change
+   keeps its phase).
+
+LFSR shift (SAASound `ChangeLevel`): if bit 0, `lfsr` = (`lfsr` >> 1) ^ 0x20400, else `lfsr` >> 1. Noise bit = bit 0.
+
+**Writes**: `sac_write(core, reg, val)` = an address write of `reg & 0x1F` then a data write, as a VGM `0xBD` command
+does (SAASound `WriteAddressData`). Address `0x18` clocks envelope 0 if it is enabled and external, `0x19` envelope 1
+(per register, as SAASound; MAME clocks both on either). Data:
+
+- `0x00`-`0x05`: `amp_l` = val & 15, `amp_r` = val >> 4.
+- `0x08`-`0x0D` (offset of channel reg − 8), `0x10`-`0x12` (octaves of channels 2k and 2k + 1, bits 0-2 and 4-6):
+  while `sync`: applied at once (`off` = `next_off` = N, or `oct` = `next_oct` = O, the other half taken from `next_*`;
+  `half` recomputed; `pending` 0); otherwise `next_off`/`next_oct` = the value and `pending` = 1 (both halves of an
+  octave register set their channel's `pending`). SAASound's additional rule that an offset written after an unchanged
+  octave waits one more half-cycle is marked untested there and not followed by MAME or libvgm; it is not modelled
+  (the player writes offset then octave in one instant).
+- `0x14`, `0x15`: tone / noise enables, bit c = channel c (bits 6-7 ignored).
+- `0x16`: noise 0 mode = val & 3, noise 1 mode = (val >> 4) & 3.
+- `0x18`, `0x19`: SAASound `SetEnvControl` exactly: if the envelope is off and the value does not enable it, nothing;
+  disabling sets ended (immediate); a resolution change applies at once (4 → 3 bits clears `pos` bit 0, 3 → 4 bits
+  sets it); then if ended the value loads now (`SetNewEnvData`: phase 0, pos 0, shape, invert, external, resolution,
+  enabled, ended = !enabled), else it is buffered (`new_data`, `next_data`) and the levels are recomputed.
+- `0x1C`: enable = bit 0; sync = bit 1. Sync 0 → 1: every tone generator `level` = 1, `oct`/`off` = `next_*`,
+  `pending` 0, `half` recomputed; `prescale` = 0. Sync 1 → 0: every tone `count` = `half` (the six restart together).
+- Other registers: ignored.
+
+**Envelope step** (SAASound `CSAAEnv::Tick`, ported verbatim): if ended, nothing; else `pos` += `resolution`; past 15
+the phase advances (`pos` − 16); at the last phase of a one-shot shape it ends (buffered data then loads), of a looping
+shape it wraps to phase 0 (buffered data then loads); within a phase new data stays buffered. Levels (SAASound's
+`cs_EnvData` tables, 16 entries per phase and resolution): left = the table value (0 for an ended one-shot), right =
+15 − left (4-bit) or 14 − left (3-bit) when `invert`, else left.
+
+**Output** of channel c, each side (0 while `sync` or `!enable`): x = mixer level in half-steps: off 0; tone 2 · t;
+noise 2 · n; tone + noise t · (2 − n) (t = tone `level`, n = noise bit of generator c / 3). If c is 2 or 5 and its
+envelope is enabled: **`SAC_PDM[amp >> 1][env level]` · 4 · (2 − x)** (SAASound's `EffectiveAmplitude`: the measured
+average of the ANDed amplitude and envelope PDM patterns, 8 × 16 table, 0..53; at most 424 per side, so the envelope
+sounds whenever the tone is low and becomes a level when the mixer is off); else **amp · x · 16** (0..480). The averaged
+levels stand for the chip's 64-step PDM patterns (their ~1 MHz ripple is not reproduced).
+
+API (`saa_core.h`): `sac_reset(core)`; `sac_write(core, reg, val)`; `sac_advance(core, clocks)`: the state after
+`clocks` clocks, O(1) per tone generator plus one step per LFSR shift and envelope step (tone edges counted by
+division; nothing feeds back into the tones, so each part advances independently and exactly);
+`sac_render(core, clocks, emit, ctx)`: the same advance, calling `emit(ctx, clock, channel, left, right)` (clock offset
+0..clocks − 1, nondecreasing) whenever a channel's output pair changes; `sac_output(core, channel, &left, &right)`.
+Constants `SAC_CHANNELS` 6, `SAC_CLOCK_SAM` 8000000, `SAC_CLOCK_CMS` 7159090, `SAC_PRESCALE` 1024, `SAC_LFSR_SEED`
+0x3FFFF, `SAC_LFSR_TAPS` 0x20400, `SAC_OUT_MAX` 480. Cost: one event per tone edge of a sounding high note (up to
+15.6 k per second per channel) and per noise shift (up to 31.25 k per second per generator).
+
+### What runs
+
+- **Chips**: SAM Coupé = one core at 8000000 Hz; CMS = two cores at 7159090 Hz, chip A (tracker channels 1-6) and
+  chip B (7-12), outputs summed per side (the card's stereo mix).
+- **Tick** = 1/50 s / multispeed on the SAM Coupé (its 50 Hz frame interrupt drives SAM music players) and 1/60 s /
+  multispeed on the CMS (a PC programs its timer freely; 60 Hz is our choice), multispeed N = 1..8 from the header: the
+  player runs once, its writes reach the cores at the tick's first clock in the order made, then the cores render the
+  tick's clocks (exact integer accumulation: 160000 per tick on the SAM at N = 1; 119318 or 119319 on the CMS).
+- **Resampling**: two blip_buf 1.1.0 buffers (left, right) at the chip clock to the host rate (its ~15 Hz high-pass
+  removes the outputs' DC). Input = the sum of the channels' outputs per side · `SAAM_LEVEL_SCALE` (SAM 10, CMS 5: at
+  most 28800 per side); output float = sample / 32768, stereo.
+- **Size**: `SaaImage` = 65536 bytes + `SaInfo`; a machine holds an image copy, two cores, the player and two blip
+  buffers. Creation allocates once; no tables are built.
+
+### SAA resampler headroom: bound and measured stress
+
+The existing scales **SAM 10 / CMS 5 remain unchanged**. The input peak 28800 alone is not a clipping proof:
+the sinc FIR can overshoot and the high-pass retains history. The following bound uses the pinned
+`third_party/blip_buf/blip_buf.c` table, its `bass_shift = 9`, the machine's 8000..96000 Hz rate range and
+multispeed limit 8. The analytical bound and finite runtime measurements below are separate evidence.
+
+**Physical range and routing.** `sac_output` is unipolar on each side: without hardware envelopes its maximum
+is `15 * 2 * 16 = 480`; with an envelope, including inverted right output, it is
+`max(SAC_PDM) * 4 * 2 = 53 * 8 = 424`. Tone/noise mixing has only levels 0, 1, 2. Envelopes cannot add an
+extra voice or exceed 480. Therefore either side's complete six/twelve-voice input is always in `[0,U]`,
+`U = 6 * 480 * 10 = 12 * 480 * 5 = 28800`. A cut, sync, disable, mute or unmute still selects a level in
+this same range. `sync_mutes` and `on_output` emit changes rather than adding another copy of the level;
+muting does not stop the generators. Independent side amplitudes/pans do not enlarge either side's bound.
+
+**Arbitrary fractional-clock FIR bound.** For phase `p = 0..32`, take the 16 coefficients used by
+`blip_add_delta` and let `S_p[j]` be their prefix sum through tap `j`. Sweeping the interpolated phase,
+the variations of these prefixes for `j = 0..7` are
+`[51,123,350,498,1166,1432,6383,21022]`; `j = 8..14` mirror `6..0` and `j = 15` is constant 32768.
+Thus the continuous step response has total variation
+`(2 * 10003 + 21022) / 32768 = 1.2520751953125`, not merely a fixed-phase row norm. Its derivative
+kernel `K` has integral 1, negative mass `N = 4130 / 32768`, and positive mass `1 + N`.
+This covers arbitrary edge timestamps and phase relationships, including all voices changing together.
+
+**High-pass history, without a spurious factor of two.** Write `a = 1/512`, `r = 511/512`.
+Ignoring integer rounding temporarily, blip's high-pass is the identity minus the delayed low-pass
+`L = a * sum(r^k * delay(k+1), k >= 0)`. The complete kernel is `K - L*K`, with integral zero.
+The low-pass/FIR history kernel has a nonnegative tail once all 16 FIR taps have arrived:
+within any phase interval its central derivative coefficient is at least `542/1024`;
+bounds for the negative derivatives of the first seven prefix sums are
+`[4,8,4,32,8,80,64]/1024`, mirrored on the other side. Their total is at most `400/1024`.
+Exponential tail reweighting changes their relative weights by at most `(512/511)^15`, so the positive
+central contribution alone exceeds every negative contribution combined
+(`542 > 400 * (512/511)^15`). The tail therefore cannot contribute negative mass.
+In the first 16 samples, the negative mass of `L*K` is at most `16*a*N` by the triangle inequality.
+Consequently the positive mass of `K - L*K` is at most `1 + N + N/32`; its negative mass is equal.
+For any input in `[0,U]`, starting from the cleared buffer or carrying any reachable history,
+
+`abs(ideal PCM) <= 28800 * (1 + (4130/32768) * (33/32)) < 32544`.
+
+This includes a sustained DC level followed by its opposite endpoint, silence after a simultaneous cut,
+and mute/unmute with the chip phase still advancing. Applying the generic bipolar `2 * FIR L1` estimate
+to this unipolar source would be unnecessarily loose and would not establish safety at the existing gain.
+
+**Integer margin.** Rounding `delta2` changes an event by less than one input unit times the difference
+of adjacent phase kernels. Every adjacent prefix difference is below 768/32768, so its integrated error
+is below `3/128` PCM units and lasts at most 16 samples. In the worst 16-sample window (2 ms at 8 kHz),
+even two chips at the faster SAM clock would contribute at most 1250 rate-derived emissions:
+per chip `6*15625` tone changes, `6*31250` noise changes and `2*15625` envelope changes per second.
+Allow another 28 for event-stream endpoints and 48 for two tick boundaries' render-start and mute
+emissions across all twelve channels: fewer than 1400 events per side. Actual CMS clocks are slower.
+All register writes, including external envelope clocks, are batched before the render-start emission.
+The high-pass can at most double this bounded finite error, contributing less than
+`2 * 1400 * (3/128) = 65.625` PCM units. Integrator/output quantization contributes less than one further
+unit (the feedback rounding error is a geometrically weighted fractional part with total weight one).
+Thus **`abs(PCM) < 32611`**, below either signed-16-bit rail; the unchanged `/32768` output also remains
+strictly inside unity. These bounds rely on the production machine's batched-write schedule, not an
+unbounded external caller emitting arbitrary register writes on every chip clock.
+
+No core levels, scale constants, per-voice balance, pan, envelope saturation, register traces, mute phase
+or diagnostic contract changed for this audit. No outer clamp/limiter is needed. The Python reference
+checks raw core events/register streams and the audition check derives its amplitude from the same
+scale constants; neither is an independent host-headroom proof. libvgm's song comparison is informational
+because its SAA model differs (see VGM export), not an absolute-amplitude oracle.
+
+**Runtime verification:** a scratch copy of the real machine/core/player and pinned blip adds one observer
+immediately before the signed-16-bit clamp, without changing the clamp or high-pass feedback recurrence.
+**768 register-stress cases + 192 public-machine cases** pass across SAM/CMS, 8/44.1/48/96 kHz and
+multispeed 1/8: **510,719,992 channel samples**, observed pre-clamp range **−28944..30071**, zero clipping.
+The cases include aligned/mixed pitches, independent CMS restart, real envelope DC and inverted transitions,
+sync release, mute/unmute, cut/restore, start/reload, silent seek/preroll and audition/release.
+Source hashes, per-side extrema and operation/sample coordinates are retained under
+`~/.local/state/thortracker/recovery-20261109/saa-preclamp/`. The bounded build and matrix took 14.48 seconds.
+This does not enumerate all six/twelve-lane masks, every joint CMS pair or all legal register histories.
+No production fix was indicated; **SAM 10 / CMS 5 are retained**, not attenuated to satisfy a loose bound.
+
+Concrete legal stress settings: use amplitude `0xFF` on every lane, tone mask `0x3F`, noise mask 0,
+envelopes disabled, and octave/offset 0 on all lanes, then sync/release both chips together. This gives
+the longest full-level tone plateau (130816 clocks, about 16.35 ms on SAM or 18.27 ms on CMS); unmute
+all lanes near its beginning after at least a second muted, or cut/mute near its end at 96 kHz, where
+the high-pass has substantially settled. For sustained envelope DC use mixer masks 0 and external
+constant-maximum envelope control `0xA2` on both generators with amplitude `0xFF` on lanes 3/6, then
+disable both envelopes or mute/unmute together; repeat with right inversion `0xA3`. For dense
+subsample transitions use noise mask `0x3F`, tone mask 0, noise mode `0x00` on both chips and sweep
+unmute times after settled silence, plus mixed tone/noise mask `0x3F` and differing tone divisors.
+CMS must include both phase-aligned and independently restarted chips. These settings exercise the
+large endpoint/history transitions and fast ringing cases. The 32611 bound permits arbitrary bounded
+input shapes, including sinc-lobe-matched transitions that may not be realizable by the chip; it is
+not a claim that a legal song can attain that peak or that any measured peak has approached it.
+
+### Channels and shared resources
+
+Tracker channel c (0-based) = chip c / 6, chip channel l = c mod 6. Lanes: SAM Coupé `SAA 1`-`SAA 6`; CMS `A1`-`A6`,
+`B1`-`B6`. Every lane is a real voice (no chords allocated). Shared per chip, never duplicated:
+
+- **Noise generator** g = l / 3 (lanes 1-3 share noise 0, lanes 4-6 noise 1): one clock setting for its three channels;
+  the player gives it to the latest **noise claim** (below), the song check warns where two lanes of a triple sound
+  noise with different clocks at once, and lane headers/inspector show the setting and its owner. Clock 3 runs at
+  twice lane 1's (4's) current tone frequency, whatever lane 1 (4) plays.
+- **Envelope generators** belong to lanes 3 and 6 (chip channels 2 and 5) only; an instrument's hardware envelope is
+  ignored on other lanes (song check warning). The internal envelope clock is **lane 2's (5's) tone generator**: the
+  envelope steps twice per period of lane 2's (5's) tone, so lane 2 (5) is the envelope's clock source whatever it is
+  doing (its generator keeps running after a cut); shown on the lane headers.
+- **Control `0x1C`** (sound on, sync) is per chip (`Yxx`).
+- **Octave registers** pair lanes (1/2, 3/4, 5/6): the player always writes the whole byte from its shadow, so this is
+  invisible to the user.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian, position-independent. Constants: `saa/saa_image.h` (`SA_*`); the reference
+builder is `tools/audio/saa/saa_song.py` (`build()`). The loader (`sa_load_image`) rejects anything off-contract with a
+reason and the byte (`SaInfo.problem`, `problem_offset`); the Kotlin validator mirrors its checks with user-facing
+messages.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTSA"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | variant: 0 = SAM Coupé (one chip, 8 MHz), 1 = CMS (two chips, 7159090 Hz) |
+| 6 | 1 | multispeed N, 1..8 (player ticks per 50 Hz (SAM) / 60 Hz (CMS) frame) |
+| 7 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | instrument count I = highest slot present, 0..64 |
+| 13 | 1 | channel count C: 6 (SAM) or 12 (CMS), matching the variant |
+| 14 | 2 | data size D: bytes of the data region used, ≤ 58048 |
+| 16 | 48 | 0 |
+| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 6144 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (12 *o* + *c*); entries with *o* ≥ count or *c* ≥ C 0 |
+| 6464 | 1024 | instrument slot *n* (1..64) at 6464 + 16 (*n* − 1) |
+| 7488 | 58048 | data region: patterns and envelopes, `[0, D)` |
+
+**Instrument** (16 bytes; all zero = no instrument; records above I must be zero; slot I defined when I > 0):
+
+| Byte | Field |
+|---|---|
+| 0 | flags: bit 7 defined (1); bit 0 `PITCH_RELATIVE` = the pitch envelope accumulates; bit 1 `ENV_RETRIGGER` = a note restarts the hardware envelope (only with byte 3 ≠ 0); other bits 0 |
+| 1 | noise clock 0..3 (0 = clock / 256, 1 = / 512, 2 = / 1024, 3 = tone generator 0/3) |
+| 2 | pan: bits 0-3 left level, bits 4-7 right level (0..15 each) |
+| 3 | hardware envelope: 0 = none, else the control register value: bit 7 set, bit 6 clear (bit 5 external, bit 4 3-bit, bits 3-1 shape, bit 0 invert right) |
+| 4 | external clock rate: 1..255 ticks per envelope step when byte 3 has bit 5, else 0 |
+| 5 | 0 |
+| 6, 8, 10, 12 | u16 offsets into the data region of the volume, arpeggio, pitch and mixer envelopes; `0xFFFF` = none |
+| 14 | 2 bytes 0 |
+
+**Envelope** (at its offset, wholly inside `[0, D)`): u16 length L (1..256), u16 loop (0..L − 1, `0xFFFF` none), u16
+release (1..L − 1, `0xFFFF` none; only volume envelopes may have one; with both, loop < release), then L value bytes:
+volume 0..15; arpeggio s8 −64..63 semitones; pitch s8 −64..63 sixteenths of a semitone; mixer 0..3 (bit 0 tone,
+bit 1 noise). Instruments may share an envelope's bytes.
+
+**Patterns**: decoded from their offset for exactly rows(*o*) rows (a longer run is cut there); every row read must lie
+inside `[0, D)`. Row encoding (the OPL3's and SCC's):
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
+| note | 0..119 = absolute note C-0..B-9 (57 = A-4 = 440 Hz), `0xFE` = OFF |
+| instrument | slot 1..64, defined |
+| effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+Load-time parameter checks: `Bxx` < order count, `Cxx` ≤ 0F, `F00` rejected, `Exx` = 00 or 80..BF, `Mxx`/`Nxx`/`Yxx`
+≤ 03; other allowed effects (`0 1 2 3 4 8 A D G P S`) take any parameter; any other code is rejected.
+
+**What the lowering writes** (the arranged song: parked orders removed) from a `Cell` with up to 4 effect columns: note
+`EMPTY` → no note byte, `CUT` → `0xFE`, an absolute note → itself; instrument 0 → no byte, else the slot; effect columns
+in column order, blank columns (code 0, parameter 0) omitted; a cell with none of these is an empty row.
+
+**Canonical layout** (the Kotlin lowering and the reference builder produce the same bytes; the golden test compares
+them): header speed = the song's ticks per row, multispeed, variant, C, I = the highest defined slot (0 if none), rows
+of order *o* = its pattern's length. The data region is filled in this order, each new byte string appended at the end
+and **an identical byte string already placed reused** (its first offset): (1) the tracks, order 0..count − 1,
+channel 0..C − 1 within each order: the pattern's rows of that channel, empty rows as maximal runs of at most 128;
+(2) the envelopes, slot 1..64 (defined only), volume, arpeggio, pitch, mixer within each: an envelope without values is
+`0xFFFF`, else its 6-byte header and values (s8 for arpeggio and pitch). D = the bytes used. Instrument bytes as the
+table; everything else 0.
+
+**Should** (not checked): an instrument on the first note of every order.
+
+`sa_load_image` derives (`SaInfo`) variant, channels, order count, loop, multispeed, speed, rows per order and the
+speed each order starts with in sequential straight play (header speed, then the last `Fxx` of each order: rows, then
+channels, then columns; jumps ignored), as the SCC's.
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, at most 7679 (B-9 + 63); a note is pitch 64 · note.
+**Octave and offset** of a pitch p on a chip of clock K: k = p / 768, r = p mod 768, t = `SA_DIV[r]` (the variant's
+table: `SA_DIV_SAM` or `SA_DIV_CMS`, `SA_DIV[r]` = floor(K / (512 · 440 · 2^((r/64 − 57)/12)) · 256 + 0.5), the
+divider 511 − N of C-0 + r/64 semitones at octave 0, in Q8). If t ≥ 131072: s = −1, d = (t + 256) >> 9; else s = 0,
+d = (t + 128) >> 8, and if d ≥ 512: s = −1, d = (t + 256) >> 9. O = k + s; if O < 0: O 0, N 0 (the chip's lowest
+tone); if O > 7: O 7, N 255 (its highest); else N = 511 − d. Resolution: every note within 3.4 cents of 12-TET A440
+(the divider's 1/256..1/511 steps). A-4: SAM O 3 N 227 = 440.14 Hz; CMS O 4 N 3 = 440.40 Hz. Notes: SAM B-0..A#8
+(11..106), CMS A-0..G#8 (9..104) (the chip's 30.6 Hz / 27.4 Hz floor and 7812.5 Hz / 6991 Hz ceiling); the player
+clamps any pitch to the chip's range. `generated/saa_tables.h` holds `SA_DIV_SAM`, `SA_DIV_CMS` and the vibrato sine
+`SA_SINE[i]` = floor(127 sin(2πi/64) + 0.5).
+
+**Writes** are `{chip, reg, val}` (chip 0 or 1, reg 0x00..0x1C). Every write goes through a per-chip **shadow** of the
+registers (`0x00`-`0x05`, `0x08`-`0x0D`, `0x10`-`0x12`, `0x14`, `0x15`, `0x16`, `0x18`, `0x19`, `0x1C`): a write equal
+to the shadow is not emitted, except where marked *forced*. A tick's writes form one batch, applied at one instant in
+the order made.
+
+**Reset** (start, audition): all state cleared; channels: instrument 0, channel volume 15, no effects, no overrides;
+noise generators value 0; speed = header speed; position (0, 0, tick 0). Writes, per chip 0..chips − 1, all *forced*
+(the shadow then equals them): `0x1C` = 0x02 (sync: generators held), `0x00`-`0x05` = 0, `0x08`-`0x0D` = 0,
+`0x10`-`0x12` = 0, `0x14` = 0, `0x15` = 0, `0x16` = 0, `0x18` = 0, `0x19` = 0, `0x1C` = 0x01 (sound on, generators
+released together). So any VGM player starts from the same registers and phases whatever its own reset does.
+
+**Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run): the SCC's steps with
+C channels:
+
+1. Tick 0 of a row: read every channel's row at (order, row); over channels 0..C − 1 and their effect columns in order:
+   `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position as the SCC's.
+   Then for each channel: its cut is cleared; `Gxx` with xx > 0 (the last `G` of the row) delays its row to tick xx;
+   otherwise the row runs now. Other ticks: each channel whose delayed row is due runs it, channels in order.
+2. Each channel whose cut tick (`Sxx`) equals this tick is keyed off, channels in order.
+3. Each channel 0..C − 1 is updated (below); then per chip 0..chips − 1: the mixer pass, the noise pass, the envelope
+   pass and the sync pass (below).
+4. tick + 1; when it reaches the speed: tick 0 and the next row exactly as the SCC's (jumps, order wrap to the loop
+   order, **loop speed** = `SaInfo.start_speed[loop]` whenever the next row is row 0 of the loop order).
+
+**Running a row** of a channel: if the row has a note 0..119, the arpeggio effect, fine pitch and the note-scoped
+overrides (pan `8`, mixer `M`, noise `N`, envelope `E`) are cleared; an instrument byte sets the channel's instrument;
+the effect columns run in order (table below); then the note: OFF keys the channel off; a note with portamento active
+(`3xx`, xx > 0) while the channel is keyed only sets the glide target; any other note keys on.
+
+**Key-on** (note *n*): if the channel's instrument is not a defined slot, nothing happens. Else the note slot = that
+instrument; every envelope index = 0, not released, the relative pitch accumulator = 0; base = target = 64 *n*, slide
+offset 0 (the slide mode persists), arpeggio step 0, vibrato phase 0; keyed; active; this tick is its key-on tick
+(for the passes and the noise claim); the external envelope counter and clock count = 0.
+
+**Key-off** (OFF, `Sxx`): if keyed: when the note's volume envelope has a release point and the note is not released,
+it is released (volume envelope index = the release point); otherwise the channel is no longer keyed.
+
+**Update** (every channel, in order). An **active** channel (keyed since reset, slot still defined; keyed or not) reads
+its note slot's record and envelopes from the **current** image (live edits reach sounding notes; an index past an
+edited envelope's length is first set to its last value); values at the current indexes: volume e (15 without an
+envelope), arpeggio a (0), pitch v (0), mixer m (1 = tone without an envelope); the mixer override `Mxx` replaces m.
+Pitch offset q = 4 v, or with `PITCH_RELATIVE` accumulator = clamp(accumulator + 4 v, −7680, 7680) and q = accumulator.
+Pitch = clamp(base + 64 (a + arp) + fine + slide + vibrato + q, 0, 7679), arp = 0, x, y for step 0, 1, 2 of `0xy`,
+vibrato = floor(`SA_SINE`[phase] · depth / 16) (arithmetic shift). Writes: offset (`0x08` + l) = N, then octave
+(`0x10` + l / 2) = the shadow byte with l's field (bits 0-2 for even l, 4-6 for odd l) = O. So a cut channel's tone
+generator keeps following its pitch (it may be a noise or envelope clock). Then every channel (active or not) writes its
+amplitude (`0x00` + l) = left | right << 4: for an active keyed channel, per side e · cv · p / 225 (integer division),
+at least 1 when e > 0, cv > 0 and p > 0 (cv = channel volume / 16, 0..15; pan (pl, pr) = the `8xy` override, else the
+instrument's byte 2), else 0 (shadowed: an idle channel writes nothing after its first 0). Its mixer value for the
+passes is m when active and keyed, else 0. An active keyed channel with m bit 1 makes a **noise claim** on its
+generator when this is its key-on tick, or its previous tick's mixer value lacked bit 1, or its noise clock (the `Nxx`
+override, else instrument byte 1) differs from its previous tick's; the claim sets the generator's value to that clock
+(latest claim wins; within a tick the higher channel comes later). A channel remembers its mixer value and noise clock
+for the next tick (0 when not keyed). Then an active channel advances as the SCC's (envelope indexes incl. the mixer
+envelope, arpeggio step, slides, portamento, vibrato phase, `Axy`); a released or cut note keeps updating.
+
+**Envelope index advance**: the SCC's (end = the release point while not released and the envelope has one, else L;
+next index, else the loop point when not released, else hold).
+
+**Mixer pass** (per chip): `0x14` = bits of the chip's channels whose mixer value has bit 0, then `0x15` = those with
+bit 1. **Noise pass**: `0x16` = value of generator 0 | value of generator 1 << 4.
+
+**Envelope pass** (per chip, envelope e = 0 then 1, register `0x18` + e, channel l = 3e + 2): only when that channel is
+active and keyed. Its control value V = the `Exx` override if set (`E00` = 0), else instrument byte 3; ext rate R =
+instrument byte 4, or 1 when 0.
+- Key-on tick: if V ≠ 0 and the instrument has `ENV_RETRIGGER` (an `Exx` override always retriggers) and the shadow has
+  bit 7: write 0x00, then V (the chip disables at once and reloads at once: the envelope restarts); else write V. Both
+  shadowed. The counter and clock count = 0.
+- Other ticks: if V differs from the shadow: write V (the chip buffers it until the running cycle's end; counter and
+  clock count = 0). Else, if V has bits 7 and 5 (external): counter + 1; when it reaches R: counter 0 and, if the shape
+  loops (1, 3, 5, 7) or the clock count < len − 1 (len = phases · (16, or 8 with bit 4); phases 2 for shapes 4 and 5,
+  else 1), write V **forced** (the address write is the external clock; the data equals what the chip holds) and the
+  clock count + 1. A one-shot shape therefore holds its last step's level (0, except single attack: 15): the final
+  clock would also load the buffered same value and restart it, in our core and in a VGM player alike.
+
+**Sync pass** (per chip): if a row run this tick on one of the chip's channels had `Yxx` (the last one, channels in
+order): `Y00` → `0x1C` = 0x01; `Y01` → `0x1C` = 0x03 then 0x01, both forced (all six tone and both noise generators
+restart together, after this tick's frequency writes, which the sync applies at once); `Y02` → `0x1C` = 0x03 (held:
+silent and frozen until `Y00`/`Y01`); `Y03` → `0x1C` = 0x00 (sound off until `Y00`). Shadowed except `Y01`.
+
+### Effects (what Kotlin's effect specs declare for `"sam-saa1099"` and `"cms-saa1099"`)
+
+One character each (`docs/BACKENDS.md`, "Effect columns"); up to 4 columns per channel. "Note" = applies to the note
+keyed on this row only (on a row without a note it changes the sounding note until its next note); "now" = from this
+row on, persisting.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: steps note, +x, +y every tick |
+| `1xx` slide up | 1/64 semitone per tick | now, as the SCC's |
+| `2xx` slide down | 1/64 semitone per tick | now, as the SCC's |
+| `3xx` portamento | 1/64 semitone per tick | now, as the SCC's |
+| `4xy` vibrato | x speed, y depth | now, as the SCC's |
+| `8xy` pan | x left, y right level 0-F | note: replaces the instrument's pan (`8F0` hard left, `80F` hard right) |
+| `Axy` volume slide | x up, y down, 1/16 step per tick | now, as the SCC's |
+| `Bxx` jump | order | as the SCC's |
+| `Cxx` volume | 00-0F | now: channel volume (start 0F) |
+| `Dxx` break | row | as the SCC's |
+| `Exx` hardware envelope | 00 or 80-BF | note: lanes 3 and 6 only (ignored elsewhere): the envelope control value (bit 7 on, bit 5 external, bit 4 3-bit, bits 3-1 shape, bit 0 inverted right); `E00` off |
+| `Fxx` speed | 01-FF | as the SCC's |
+| `Gxx` note delay | ticks | as the SCC's (`Y` is part of the delayed row) |
+| `Mxx` mixer | 00-03 | note: 0 off, 1 tone, 2 noise, 3 tone + noise, replacing the mixer envelope |
+| `Nxx` noise clock | 00-03 | note: 0 31.3 kHz, 1 15.6 kHz, 2 7.8 kHz (SAM; CMS × 0.895), 3 twice lane 1's (4's) tone; claims the triple's noise generator |
+| `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones until the next note |
+| `Sxx` note off | tick | as the SCC's |
+| `Yxx` sync/sound | 00-03 | now, global per chip: 00 normal, 01 restart every generator in phase, 02 hold all generators (silent), 03 sound off |
+
+No chord effect: the chip's six (twelve) voices are the lanes. Drums are instruments with volume, pitch (relative:
+sweeps) and mixer envelopes.
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the SCC's policy: the cores and player are reset and the player runs alone from the
+  song start to the target, counting *n* ticks (`CHIP_SEEK_FROM_START`); beyond `max_ticks` from the order's row 0 with
+  its start speed (`CHIP_SEEK_FROM_ORDER`). Then from the reset again: the first *n* − P ticks apply the player's writes
+  to the cores with **`sac_advance`**, P = `SAAM_PREROLL_TICKS` = one second (50 or 60 × multispeed ticks), and the last
+  P ticks render (output discarded). Core state at the target is **bit-identical to straight play** (`memcmp`); output
+  within 1/32768 of straight play's after the pre-roll; bit-identical when *n* ≤ P. Kotlin `seekTicks` = 12000
+  (`SAAM_SEEK_TICKS`: 4 minutes at 50 Hz, 3:20 at 60 Hz × 1).
+- `apply_image`: the SCC's rules: positions clamped, speed, jumps and delays re-read, multispeed from the next tick;
+  **sounding notes keep their slot** and read its edited envelopes, pan, noise clock and hardware envelope from the
+  next tick (a changed envelope control value is written then, buffered by the chip until the running cycle's end; an
+  index past a shortened envelope moves to its last value; a slot that is no longer defined cuts the note: amplitude
+  0, mixer bits 0, channel inactive). Edited cells are heard from the next row processed. Ignored while auditioning or
+  for an image of the other variant.
+
+### Audition
+
+`audition(channel 0..C − 1, note 0..119, slot 1..64, fine −128..127)`: the (spare) machine is reset and the player keys
+on the note on that channel with the slot's instrument, `fine` added like `Pxx`; ticks then only update that channel
+(and its chip's passes), no rows. An undefined slot or arguments outside these ranges are `CHIP_ERR_IMAGE`.
+`release()`: as the SCC's (0 before any tick, when no longer keyed, or without a release point: the key-off zeroes the
+amplitude; else 1 and `tick` returns 0 once the released volume envelope holds 0 after the channel volume, or after
+`SAAM_RELEASE_SECONDS` 10 s).
+
+### Mute and ops behaviour
+
+`mute(channel)` leaves the channel out of the resampler input only (its output steps to 0 at the next tick's first
+clock; unmuting steps it back to the channel's current output): player, cores, noise, envelopes and the VGM are
+untouched, so unmuting resumes mid-note. `start`/`audition` clear mutes.
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `sa_load_image`, then the variant must be the ops' (`"sam-saa1099"` 0, `"cms-saa1099"` 1); `image_storage` = `sizeof(SaaImage)` |
+| `start(order, row)` | above |
+| `apply_image`, `audition`, `release`, `mute`, `position` | above |
+| `tick` | one tick: SAM 960 frames at 48 kHz (multispeed N: 960 / N), ≤ 1921 at 96 kHz; CMS 800 (≤ 1601); 0 after a released audition ended |
+
+**Kotlin** (`PlaybackEngine` for both ids): `imageSize` 65536, `seekTicks` 12000, `note(n)` = n, `fine` = the fine
+pitch in 1/64 semitones, `ticksPerSecond` = 50 (SAM) or 60 (CMS) × multispeed.
+
+### VGM export
+
+`sa_vgm_render` (`saa/saa_vgm.c`) runs the player headless and logs its writes as a VGM 1.71; `saa_ref.py IMAGE --vgm
+OUT` writes the same bytes. File:
+
+- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x18 = total samples (44.1 kHz),
+  0x1C = loop offset − 0x1C and 0x20 = loop samples (0 without a loop), 0x24 = 50 (SAM) or 60 (CMS), 0x34 = 0xCC
+  (data at 0x100), **0xC8 = SAA1099 clock**: 8000000 (SAM) or **0x4000_0000 | 7159090** (CMS: bit 30 = dual chip,
+  the VGM convention; libvgm `GetChipCount`).
+- Data: the reset batch; per tick its writes as **`0xBD aa dd`** with aa = reg | 0x80 for chip B (VGM: "0xBD aa dd:
+  SAA1099, write value dd to register aa"; libvgm `Cmd_SAA_Reg`: chip = aa bit 7, address write `aa & 0x7F` then data
+  write `dd`, the core's own order), then the tick's wait (44100 / (rate · N) samples by exact accumulation: 882 =
+  `0x63` at 50 Hz, 735 = `0x62` at 60 Hz; `0x70`-`0x7F` for 1-16, `0x61 nn nn` otherwise).
+- **Loop without injected writes**: the renderer runs the player and, at each arrival at (loop order, row 0, tick 0)
+  before that tick, compares the player state with the previous arrival's (`sap_same_state`: every `SaPlayer` field,
+  field by field, except the write buffer and the row state that tick 0 overwrites before reading it: the channels'
+  current row data, pattern cursors, `Gxx`-pending rows and delays, `Sxx` cut ticks and the chips' pending `Yxx`).
+  The first equal pair of **consecutive arrivals** makes the loop: the loop point is the previous arrival (before its
+  tick) and the file ends at the current one (before its tick), then `0x66`; so the first pass and every repeat send
+  exactly native playback's writes (envelopes, claims and slides held across the wrap). One pass, scratch = the player
+  and the previous arrival's snapshot. No equal pair within `max_ticks`: no loop, the file ends at `max_ticks`.
+- VGM players differ from our core where the emulators differ: libvgm's default SAA core (Valley Bell's) shifts the
+  preset noise at clock / 128, / 256, / 512 (twice ours), latches frequency writes immediately and outputs a held level
+  for a channel whose mixer is off; MAME-based players (VGMPlay legacy) apply each envelope to three channels and clock
+  both envelopes on either envelope address. Songs avoiding mixer-off levels and hardware envelopes play alike.
+- **Hosts' entry point** (`saa/saa_export.h`, self-contained for cinterop): `sa_export_vgm(image, 65536, max_ticks,
+  title, author, date, &size, &problem)` validates, renders (measured, then one allocation) and appends a **GD3 1.00**
+  tag: system "SAM Coupé (Thor Tracker)" or "Creative Music System (Thor Tracker)", converter "Thor Tracker", the rest
+  as the SCC's; `sa_export_free`. Control thread only.
+- **Kotlin** (`system/saa/SaaVgm.kt`): `SaaVgm.export(song)` lowers and calls `SaaVgm.renderer.render(image, maxTicks,
+  SaaVgmTags(title, author, date))`, registered by Android's `ChipAudio` (JNI `ChipAudio.nativeSaaVgm`) and the Deck's
+  `main` (`DeckSaaVgm`). WAV export is the generic `chip_wav.c` path.
+
+### Preparing the tables and fixtures
+
+`python3 tools/audio/prepare_saa.py` (pure Python 3) writes `app/src/main/cpp/generated/saa_tables.h` (`SA_DIV_SAM`,
+`SA_DIV_CMS`, `SA_SINE`), `core/src/commonMain/kotlin/org/thortracker/backend/SaaPlayerImage.kt` (constants parsed
+from `saa_image.h`, `saa_player.h`, `saa_machine.h`, `saa_vgm.h`, `saa_core.h`; both tables; `fun octaveOffset(pitch:
+Int, cms: Boolean): Int` = O << 8 | N, `fun hz(octaveOffset: Int, cms: Boolean): Double`, `LOADER_PROBLEMS`) and
+`app/src/test/cpp/saa_test_song.h`. `python3 tools/audio/saa/saa_golden.py` writes
+`core/src/jvmTest/resources/saa-golden/{sam,cms,features}.bin.gz`. Rerun both after changing this specification, the
+engine headers, the reference player or the test song.
+
+`SaaPlayerImage` (generated; the names the Kotlin code uses): `ENGINE_ID_SAM` = `"sam-saa1099"`, `ENGINE_ID_CMS` =
+`"cms-saa1099"`, `IMAGE_SIZE`, `MAGIC`, `LAYOUT`, `H_MAGIC`, `H_LAYOUT`, `H_VARIANT`, `H_MULTISPEED`, `H_SPEED`,
+`H_ORDERS`, `H_LOOP`, `H_INSTRUMENTS`, `H_CHANNELS`, `H_DATA_SIZE`, `HEADER_SIZE`, `VARIANT_SAM`, `VARIANT_CMS`,
+`CHANNELS_SAM`, `CHANNELS_CMS`, `MAX_CHANNELS`, `OFF_ROWS`, `OFF_ORDERS`, `OFF_INSTRUMENTS`, `INSTRUMENT_SIZE`,
+`OFF_DATA`, `DATA_CAPACITY`, `I_FLAGS`, `I_NOISE`, `I_PAN`, `I_ENVELOPE`, `I_RATE`, `I_VOLUME`, `I_ARPEGGIO`,
+`I_PITCH`, `I_MIXER`, `FLAG_DEFINED`, `FLAG_PITCH_RELATIVE`, `FLAG_ENV_RETRIGGER`, `ENV_ENABLE`, `ENV_EXTERNAL`,
+`ENV_3BIT`, `ENV_SHAPE_SHIFT`, `ENV_INVERT`, `ENV_NONE`, `ENV_HEADER`, `MAX_ENVELOPE`, `RUN`, `MAX_RUN`, `MASK_NOTE`,
+`MASK_INSTRUMENT`, `MASK_EFFECT_SHIFT`, `NOTE_OFF`, `NOTES`, `MAX_ORDERS`, `MAX_INSTRUMENTS`, `MAX_EFFECTS`,
+`MAX_MULTISPEED`, `PITCH_UNITS_PER_SEMITONE`, `PITCH_MAX`, `EFFECT_LETTERS`, `FX_ARPEGGIO`, `FX_SLIDE_UP`,
+`FX_SLIDE_DOWN`, `FX_PORTAMENTO`, `FX_VIBRATO`, `FX_PAN`, `FX_VOLUME_SLIDE`, `FX_JUMP`, `FX_VOLUME`, `FX_BREAK`,
+`FX_ENVELOPE`, `FX_SPEED`, `FX_DELAY`, `FX_MIXER`, `FX_NOISE`, `FX_FINE`, `FX_CUT`, `FX_SYNC`, `CLOCK_SAM`, `CLOCK_CMS`,
+`RATE_SAM`, `RATE_CMS`, `VGM_DUAL`, `SEEK_TICKS`, `PREROLL_SECONDS`, `GD3_SYSTEM_SAM`, `GD3_SYSTEM_CMS`,
+`GD3_CONVERTER`, `DIV_SAM`, `DIV_CMS` (768 entries each), `LOWEST_NOTE_SAM` 11, `HIGHEST_NOTE_SAM` 106,
+`LOWEST_NOTE_CMS` 9, `HIGHEST_NOTE_CMS` 104, `octaveOffset`, `hz`, `LOADER_PROBLEMS`.
+
+`saa_test_song.h` (C, generated; images stored up to their last non-zero byte, zero-padded to 65536 by the test):
+`SAA_REF_TICKS` 1500; images `saa_sam_image` (the test song, SAM), `saa_cms_image` (a twelve-channel test song, CMS),
+`saa_moved_image` (the SAM song laid out anew: patterns and envelopes reversed behind a 37-byte gap), `saa_edited_image`
+(a note edit), `saa_tempo_image` (an `Fxx` edit), `saa_short_image` (cut to two orders), `saa_x2_image` (multispeed 2),
+`saa_env_edit_image` (instrument 3's hardware envelope and volume envelope changed); for `sam`, `cms`, `edited`,
+`tempo`: the reference batches (reset batch, then one per tick) as `saa_ref_NAME_offsets[SAA_REF_TICKS + 2]`,
+`saa_ref_NAME_chips[]`, `saa_ref_NAME_regs[]`, `saa_ref_NAME_vals[]` (unsigned char) and
+`saa_ref_NAME_pos[3 · (SAA_REF_TICKS + 1)]` (order, row, tick before each batch; −1 for the reset batch); VGM checks
+`SAA_SAM_REF_VGM_{SIZE,FNV,TICKS,LOOP_OFFSET,LOOP_SAMPLES,SAMPLES}` and the same six `SAA_CMS_REF_VGM_*` (FNV-1a 64 of
+the file); corruption offsets `SAA_OFFSET_MASK`, `SAA_OFFSET_NOTE`, `SAA_OFFSET_INST`, `SAA_OFFSET_EFFECT`,
+`SAA_OFFSET_PARAM_<X>` for X in `B C E F M N Y`, `SAA_OFFSET_ENV_VOLUME` (a volume envelope with a release point: its
+header), `SAA_OFFSET_ENV_MIXER` (the first value of a mixer envelope) and `SAA_OFFSET_INSTRUMENT` (slot 1's record).
+
+The test song (`tools/audio/saa/saa_song.py`, 4 orders of 16/32/16/24 rows, `B01` back to loop order 1): every effect
+in several columns, OFF cells, delays and cuts, empty runs, patterns used twice; instruments with looping and releasing
+volume envelopes, absolute and relative pitch envelopes, arpeggio and mixer envelopes, pans; lanes 1 and 2 claiming
+noise 0 alternately with different clocks, noise clock 3; lane 3 with internal (lane 2 as clock) and external
+(rate 2, one-shot decay and repetitive triangle, 3-bit, inverted right) hardware envelopes, with and without
+retrigger, `E00`, an `Exx` change mid-note; `Y01` with a note, `Y02` then `Y00`, `Y03` then `Y00`; speed changes, a
+break to order 3 row 2, order 3 ending at speed 5 and jumping back to the loop order. The CMS song adds chip B with
+the same features on other lanes and `Y` on one chip only.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/saa_machine_test.c`: core unit checks
+  (half-period H for corner O/N, latching at the half-cycle end, sync hold/apply/release in phase, noise rates and
+  clock-3 coupling, the LFSR sequence, envelope shapes in both resolutions, inversion, buffering until the cycle end,
+  immediate disable, resolution change mid-cycle, external clock per address, mixer-off envelope level, tone + noise
+  rule, `sac_advance` ≡ `sac_render` state after random write streams); every single-byte corruption rejected with its
+  reason; **the machine's writes equal the Python reference player's in all 1500 ticks** for `sam`, `cms`, `edited`,
+  `tempo`, with identical positions; 30 s non-silent, no clipping, bit-identical on a second start; loop passes; seeks:
+  writes equal to straight play, **cores `memcmp`-equal at the target**, output within 1/32768; the order fallback;
+  live edits (same/moved images alternating, note edit, tempo, cut song, x2, `env_edit` under a sounding note, a deleted
+  instrument cutting its note); audition: **A-4 measured 440.14 Hz (SAM) and 440.40 Hz (CMS)**, release with and
+  without a release point; mute leaves the writes equal and silences only that lane; shared noise (lane 2's claim
+  changes lane 1's noise), the envelope clocked by lane 2's pitch; **VGM bytes equal the reference's** for both
+  variants, the loop expanded over three passes equals a fresh player's writes; `sa_export_vgm` with GD3 decoded; the
+  ops tables with the variant check. Evidence: `saa_sam_song.wav`, `saa_cms_song.wav` (30 s), `saa_tone_sam.wav`,
+  `saa_tone_cms.wav` (A-4 + release), `saa_trace.txt`, `saa_chip_trace.txt` (`W clock reg val` and
+  `E clock channel left right` lines of a scripted single-chip sequence), `saa_sam_song.vgm`, `saa_cms_song.vgm`,
+  `saa_sam_song.bin`, `saa_cms_song.bin`.
+- `app/src/test/cpp/wav_render_test.c`: both demo images and the shortest valid songs (`saa-sam-shortest.saaimg`,
+  `saa-cms-shortest.saaimg`: one order of one row at speed 1, A-4 held on lane 1) through `chip_wav.c`.
+- `tools/audio/saa_reference_check.py <dir> [--vgm2wav PATH]`: the reference player reproduces `saa_trace.txt`; an
+  independent per-clock chip model (the "One clock" steps literally, one clock at a time) reproduces every event of
+  `saa_chip_trace.txt`; the VGMs parse from the format alone (header clock and bit 30, waits summing to the header's
+  samples, loop expansion equal to the trace); **pitch** of the tone WAVs by FFT (440.14 / 440.40 Hz); with
+  `--vgm2wav` (libvgm) the exported VGMs rendered and measured the same (pitch, which also proves the header clocks).
+- `tools/audio/render_saa_image.sh image out.wav [seconds] [mute=..] [--vgm out.vgm]` renders a lowered image through
+  the ops table as the hosts do, and its VGM through `sa_export_vgm`.
+- Not done: listening on a SAM Coupé or a Game Blaster.
+
+**Nothing in this section has been built or run yet** (source-only branch `saa1099-systems`): the parent runs
+`python3 tools/audio/prepare_saa.py`, `python3 tools/audio/saa/saa_golden.py`, the Kotlin tests,
+`tools/build.sh exportSamples`, `tools/audio/run_native_host_test.sh` and `tools/audio/saa_reference_check.py`, then
+fills in the measured numbers.
+
