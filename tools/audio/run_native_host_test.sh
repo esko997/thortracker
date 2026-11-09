@@ -18,8 +18,9 @@
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # POKEY: <dir>/pokey_song.bin, pokey_song_pal.bin (the test images), pokey_trace.txt, pokey_trace_pal.txt (per-tick and
-# per-interrupt player writes with their machine cycles), pokey_song.vgm, pokey_song.wav, pokey_tone.wav and
-# pokey_chip_cases.txt (chip scenarios: writes and every output change), the inputs of the Python reference checks.
+# per-interrupt player writes with their machine cycles), pokey_porta.bin and pokey_trace_porta.txt (sticky portamento
+# over samples), pokey_song.vgm, pokey_song.wav, pokey_tone.wav and pokey_chip_cases.txt (chip scenarios: writes and
+# every output change), the inputs of the Python reference checks.
 # The engines are C except reSID and ymfm (C++17): C sources (emu2413, the VRC7's FM chip, included) build with $CC,
 # reSID, ymfm and their C wrappers with $CXX, and the tests link with $CXX (libstdc++), as the app (CMake) and the Deck
 # (deck/build.gradle.kts) do.

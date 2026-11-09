@@ -142,7 +142,7 @@ internal class PokeyStraightPlay(private val song: Song) {
             when {
                 c.note == Cell.CUT -> release(lane, tick)
                 c.note >= 0 -> {
-                    if (portamento[lane] > 0 && voiceSlot[lane] != 0 && unreleased(lane)) {
+                    if (portamento[lane] > 0 && held(lane)) {
                         voiceNote[lane] = c.note
                     } else {
                         keyOn(lane, c, order, row)
@@ -198,6 +198,17 @@ internal class PokeyStraightPlay(private val song: Song) {
 
     /** The voice of [lane] sounds and has not been released (at the current row's start). */
     fun unreleased(lane: Int): Boolean = voiceSlot[lane] != 0 && releaseTick[lane] < 0 && !endedByItself(lane)
+
+    /**
+     * The voice of [lane] is held as the player's portamento decides (at the current row's start): keyed on, not
+     * released, and for a one-shot sample not yet run to its end (a note then keys on afresh). A synthesized voice
+     * whose envelopes have ended is still held: a portamento note only retargets it.
+     */
+    private fun held(lane: Int): Boolean {
+        if (voiceSlot[lane] == 0 || releaseTick[lane] >= 0) return false
+        val ins = sound.instrument(voiceSlot[lane]) ?: return false
+        return ins.kind != PokeyKind.SAMPLE || !endedByItself(lane)
+    }
 
     /** The voice of [lane] is silent for good: released without a tail, or its one-shot envelope or sample has run out. */
     fun silent(lane: Int): Boolean {

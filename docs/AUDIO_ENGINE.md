@@ -2545,7 +2545,11 @@ instrument byte sets the lane's instrument; effects run in column order (table);
 (envelopes with a release point jump to it; a voice whose volume envelope has no release point, or that has no volume
 envelope, is **silent at once**: level 0, its channels kept until a note takes them, its envelopes stop stepping, pitch
 still updates; samples stop: AUDC 0, interrupt off); a note with portamento active (`3xx` > 0) on a lane whose voice
-sounds unreleased (not released, not silenced) only sets the glide target; any other note keys on.
+is **held** only sets the glide target; any other note keys on. Held = keyed on and neither released nor silenced by
+OFF/`Sxx`, and for a sample voice still playing: a one-shot sample whose timer interrupt has run past its last level
+(or that stopped because a live edit shrank it) is no longer held, so the next note keys on and restarts it even
+under a sticky `3xx`. A looping sample stays held until OFF or `Sxx`; a synthesized voice stays held after its
+envelopes end (even at level 0) until OFF or `Sxx`. A voice cut by another lane's key-on has ended and is not held.
 
 **Key-on** (note *n*, lane *l*): if the lane's instrument is not a defined slot or its kind cannot play on this lane,
 nothing happens (the lane's old voice keeps sounding). Else the old voice of this lane ends; every POKEY channel the
@@ -2581,7 +2585,7 @@ a note: the sounding voice, until the next note); "now" = from this row on; "glo
 |---|---|---|
 | `0xy` arpeggio | x, y semitones | note, plus x, plus y each tick |
 | `1xx` / `2xx` slide | 1/64 semitones per tick | now: up / down until `100`/`200`/`300`; a note restarts the offset |
-| `3xx` portamento | 1/64 semitones per tick | now: a note on a sounding voice glides there |
+| `3xx` portamento | 1/64 semitones per tick | now: a note on a held voice (see Running a row) glides there |
 | `4xy` vibrato | speed x, depth y | now: ±floor(SINE · y / 16) sixty-fourths (y F: ±1.86 semitones) |
 | `Axy` volume slide | x up, y down, 1/8 step per tick | now |
 | `Bxx` jump | order | global: after this row play order xx |
@@ -2722,6 +2726,12 @@ speed 6, loop order 1, 13 instruments covering every kind, 2 samples; NTSC, and 
   tick; argument and lane limits (`pokey_tone.wav`).
 - **Mute**: writes unchanged; lanes holding no channel leave the output bit-identical, the lane holding them silences
   it; all lanes silent after 100 ms, unmuting resumes, a mute before the first tick holds.
+- **Sticky portamento over samples** (`pokey_porta.bin`, 24 rows at speed 6, every lane C-4 `310` then E-4 on row 8
+  and G-4 on row 16, into `pokey_trace_porta.txt`): a 200-level one-shot at 7990 Hz, over long before row 8, keys on
+  afresh on each note — the row's tick-0 batch writes AUDC1 at its first level and IRQEN with timer 1, then 199 timer 1
+  levels and the stop; nothing between notes; base = target (no glide); audible on rows 0, 8 and 16 alone and silent
+  on rows 7 and 15. An 8000-level one-shot still playing at row 8 glides on (index kept) and, over by row 16,
+  restarts; a looping sample and a tone whose one-shot volume envelope ended at 0 stay held and glide.
 - **Multispeed** ×2: 120 ticks = 60 frames of cycles and host frames, 20 rows.
 - **VGM**: header fields, the file parsed from the format alone (waits sum to the header's total = samples of the
   end cycle) and its 0xBB writes equal, sample for sample, to the machine's writes (IRQEN left out) with the reset
@@ -2743,10 +2753,11 @@ alone, `apply_image`, audition setup, seeks and 12000 clocked ticks.
   RUN yet. `tools/audio/pokey/pokey_ref.py` is a second implementation of the player and machine, written from this
   section without the C sources, on `tools/audio/pokey/pokey_chip_ref.py`, a POKEY model that steps every cycle (from
   Altirra's manual and generator formulas and MAME's cycle order). The script requires: the host test's
-  `pokey_trace.txt` (NTSC) and `pokey_trace_pal.txt` (PAL) reproduced line for line (every tick's batch at its cycle,
-  every timer interrupt with its writes); `pokey_song.vgm` reproduced byte for byte (36000-tick limit) and parsed from
-  the format alone (1.71 header, POKEY clock at 0xB0, frame rate, data at 0x100, no GD3, waits summing to the header's
-  total, the loop point on a command boundary followed by the SKCTL/AUDCTL/AUDF/AUDC dump equal to the registers the
+  `pokey_trace.txt` (NTSC), `pokey_trace_pal.txt` (PAL) and `pokey_trace_porta.txt` (sticky portamento over samples)
+  reproduced line for line (every tick's batch at its cycle, every timer interrupt with its writes); `pokey_song.vgm`
+  reproduced byte for byte (36000-tick limit) and parsed from the format alone (1.71 header, POKEY clock at 0xB0,
+  frame rate, data at 0x100, no GD3, waits summing to the header's total, the loop point on a command boundary
+  followed by the SKCTL/AUDCTL/AUDF/AUDC dump equal to the registers the
   trace reaches before the loop order's first tick, writes and their 44.1 kHz times = the reset batch and trace writes
   without IRQEN); every case of `pokey_chip_cases.txt` replayed through the reference chip (stepping every cycle, and
   event-driven: both agree) giving exactly the engine's output changes; the reference generators' 4- and 5-bit

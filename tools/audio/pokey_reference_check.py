@@ -3,7 +3,8 @@
 
   1. The Python reference player (pokey/pokey_ref.py, on the reference chip pokey/pokey_chip_ref.py for the
      timers' interrupt cycles) reproduces the engine's traces line for line: pokey_song.bin -> pokey_trace.txt
-     (NTSC) and pokey_song_pal.bin -> pokey_trace_pal.txt (PAL); the first difference is printed with context.
+     (NTSC), pokey_song_pal.bin -> pokey_trace_pal.txt (PAL) and pokey_porta.bin -> pokey_trace_porta.txt (sticky
+     portamento over ended, playing and looping samples); the first difference is printed with context.
   2. The reference VGM equals pokey_song.vgm byte for byte (max ticks 36000, as the host test).
   3. The VGM parsed from the file format alone: 1.71 header, POKEY clock at 0xB0, frame rate, data at 0x100,
      end-of-file offset, waits summing to the header's samples, the loop point on a command boundary and followed
@@ -246,6 +247,8 @@ def main():
             images[name] = pokey_ref.Image(f.read())
         check(images[name].machine == (0 if name == "NTSC" else 1), "%s image declares %s" % (image_file, name))
         compare_trace(name, images[name], path(trace_file))
+    with open(path("pokey_porta.bin"), "rb") as f:
+        compare_trace("sticky portamento over samples", pokey_ref.Image(f.read()), path("pokey_trace_porta.txt"))
     with open(path("pokey_song.vgm"), "rb") as f:
         vgm = f.read()
     check_vgm(images["NTSC"], vgm, path("pokey_trace.txt"))

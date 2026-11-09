@@ -464,8 +464,12 @@ static void process_row(PkPlayer* p, const PokeyImage* image, int l) {
     if (row->note == PK_NOTE_OFF) {
         release_voice(p, image, l);
     } else if (has_note) {
+        /* Portamento glides only a held voice: keyed on, not released, and (a sample) still playing. A one-shot sample
+         * the timer interrupt has run to its end keys on afresh; a synthesized voice whose envelopes have ended is
+         * still held. */
         const PkVoice* v = &lane->voice;
-        if (lane->slide_mode == 3 && v->active && !v->released) lane->target = row->note * 64;
+        const int held = v->active && !v->released && (v->kind != PKP_SAMPLE || v->playing);
+        if (lane->slide_mode == 3 && held) lane->target = row->note * 64;
         else key_on(p, image, l, row->note);
     }
 }

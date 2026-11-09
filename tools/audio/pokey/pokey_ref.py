@@ -31,7 +31,8 @@ Readings of points the specification leaves open (agreed with the native slice a
     release point (or the sound has none) the voice is silenced at once: own channel level 0, partners keep the
     partner AUDC, envelopes stop advancing (their steps are still read: a relative pitch accumulator keeps
     adding its frozen step), pitch still updates. Samples stop (AUDC 0, interrupt off). OFF on a released voice
-    does nothing. Portamento treats a released voice as not sounding.
+    does nothing. Portamento glides only a held voice: not released, and a sample voice still playing (a one-shot
+    sample the interrupt routine ran to its end keys on afresh); a synthesized voice whose envelopes ended is held.
   - Arrival at row 0 of the loop order (the wrap, a jump, the first pass) sets the speed, the shared AUDCTL bits
     and the two-tone state to those sequential straight play starts the loop order with.
   - 16-bit pitch search: N0 = the N whose period is nearest the target (floor(x + 0.5) of Pt - 7 or
@@ -468,7 +469,8 @@ class Player:
             self.release(lane_index)
         elif playing_note:
             v = lane.voice
-            if lane.slide_kind == "porta" and v is not None and not v.released:
+            held = v is not None and not v.released and (v.kind != SAMPLE or v.playing)
+            if lane.slide_kind == "porta" and held:
                 lane.target = 64 * note
             else:
                 self.key_on(lane_index, note)

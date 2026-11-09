@@ -310,6 +310,41 @@ class PokeyModelTest {
     }
 
     @Test
+    fun stickyPortamentoKeysOnAfreshAfterAOneShotSampleEnds() {
+        // As the native player and pokey_ref.py decide (pokey_machine_test.c test_porta_samples plays the same song):
+        // 200 levels at 7990 Hz end ~25 ms after their note, 8000 levels last ~1 s, slot 62 loops, slot 63 is a tone
+        // whose one-shot volume envelope ends at 0 (a synthesized voice stays held: portamento only retargets it).
+        val levels = { n: Int -> List(n) { if (it % 2 == 0) 3 else 12 } }
+        val samples = listOf(PokeySample("short", levels(200)), PokeySample("long", levels(8000)))
+        var song = PokeySystem.blank().let { it.copy(sound = it.pokey.copy(samples = samples)) }
+        song = withInstrument(song, 60, PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0))
+        song = withInstrument(song, 61, PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 1))
+        song = withInstrument(song, 62, PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0, loop = 0))
+        song = withInstrument(song, 63, PokeyInstrument(volume = NesEnvelope(listOf(15, 8, 0))))
+        for ((lane, slot) in listOf(0 to 60, 1 to 61, 2 to 63, 3 to 62)) {
+            song = with(song, lane, 0, Cell(48, slot, PokeyRules.FX_PORTAMENTO, 0x10))
+            song = with(song, lane, 8, Cell(52))
+            song = with(song, lane, 16, Cell(55))
+        }
+        assertEquals(emptyList<String>(), PokeySystem.errors(song))
+        fun since(row: Int, lane: Int): String {
+            val line = PokeySystem.sharedState(song, 0, row)!!.lines.single { it.startsWith("POKEY ${lane + 1}:") }
+            return line.substringAfterLast("(since ").removeSuffix(")")
+        }
+        // The short one-shot ended long before rows 8 and 16: each note keys on afresh under the sticky 310.
+        assertEquals("order 00 row 08", since(8, 0))
+        assertEquals("order 00 row 10", since(16, 0))
+        // The long one is still playing at row 8 (the note glides) and has ended by row 16 (keyed on afresh).
+        assertEquals("order 00 row 00", since(8, 1))
+        assertEquals("order 00 row 10", since(16, 1))
+        // The looping sample and the ended tone stay held: both notes only glide.
+        for (row in listOf(8, 16)) {
+            assertEquals("order 00 row 00", since(row, 2))
+            assertEquals("order 00 row 00", since(row, 3))
+        }
+    }
+
+    @Test
     fun starterKitIsDeterministicAndFitsTheLevels() {
         val kit = PokeySamples.starterKit()
         assertEquals(kit, PokeySamples.starterKit())

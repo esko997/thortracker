@@ -896,8 +896,10 @@ VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
   cutting whatever voice held them. Envelope release steps may sit on any of the four envelopes, with or without a
   loop (the image's rule: 1..length − 1, after the loop if there is one).
 - **Straight-play walk** (`PokeyStraightPlay`, `PokeySongState.kt`): runs rows in order (jumps and delays ignored) as
-  the player decides channel ownership — instruments, notes, OFF and `Sxx`, portamento, and the global `F K N W` at
-  tick 0. `PokeyChannelHolders` turns it into the Pattern lane tags ("16-bit 1+2", "held by 2", "HP 1 by 3", "HP clock
+  the player decides channel ownership — instruments, notes, OFF and `Sxx`, portamento (a `3xx` note only retargets a
+  held voice: unreleased, and for a one-shot sample not yet run out by its length at the note's ideal rate; a
+  synthesized voice whose envelopes ended stays held), and the global `F K N W` at tick 0. `PokeyChannelHolders` turns
+  it into the Pattern lane tags ("16-bit 1+2", "held by 2", "HP 1 by 3", "HP clock
   of 1", "saw 1+3", "samples", "1.79 MHz") and inspector lines (the AUDCTL state; each lane's voice, what it takes,
   sounding/released/silent and since when). The player resets the base clock, noise generator and two-tone mode to the
   loop order's straight-play start state on every loop arrival, so one walk describes every pass.

@@ -11,13 +11,16 @@
  * note edit, tempo edit ahead of and behind the playhead, song cut, multispeed and machine changes); audition pitch
  * measured from the chip's output edges (A-4 at 64 kHz = 437.8 Hz, fast 16-bit, fast 8-bit, a distortion C note at its
  * 15-step period, the difference "saw" at its beat, fine pitch), samples at their rate stopping or looping, release;
- * mute; multispeed; the VGM parsed back against the machine's writes; the hosts' entry point; the ops table; costs.
+ * mute; sticky portamento over samples (a one-shot sample that ended keys on afresh: AUDC, IRQEN, its interrupts and
+ * audible; a playing or looping sample and a tone whose envelope ended glide); multispeed; the VGM parsed back against
+ * the machine's writes; the hosts' entry point; the ops table; costs.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes <dir>/pokey_song.bin and pokey_song_pal.bin (the test images), pokey_trace.txt and pokey_trace_pal.txt (1500
- * ticks: `T tick order row tickInRow cycle:` and `I cycle timers:` lines with ` R=VV` writes), pokey_song.vgm (no GD3),
- * pokey_song.wav (30 s), pokey_tone.wav (A-4 + release) and pokey_chip_cases.txt (chip scenarios: `CASE`, `W`, `E`,
- * `END`), the inputs of tools/audio/pokey_reference_check.py. */
+ * ticks: `T tick order row tickInRow cycle:` and `I cycle timers:` lines with ` R=VV` writes), pokey_porta.bin and
+ * pokey_trace_porta.txt (the portamento song, 144 ticks), pokey_song.vgm (no GD3), pokey_song.wav (30 s),
+ * pokey_tone.wav (A-4 + release) and pokey_chip_cases.txt (chip scenarios: `CASE`, `W`, `E`, `END`), the inputs of
+ * tools/audio/pokey_reference_check.py. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,7 +54,7 @@ static int checks = 0;
 #define FNV_BASIS 0xCBF29CE484222325ull
 
 static float g_out[PKM_MAX_TICK_FRAMES * 2];
-static PokeyImage g_song, g_pal, g_moved, g_edited, g_tempo, g_short, g_x2, g_bad;
+static PokeyImage g_song, g_pal, g_moved, g_edited, g_tempo, g_short, g_x2, g_bad, g_porta;
 
 static double clock_us(clockid_t id) {
     struct timespec t;
@@ -1172,6 +1175,170 @@ static void test_mute(void) {
     pkm_destroy(m);
 }
 
+/* ---- sticky portamento over samples --------------------------------------------------------------------------- */
+
+/* One order of 24 rows at speed 6; every lane plays C-4 with 310 on row 0, then E-4 on row 8 and G-4 on row 16
+ * without a sound number. POKEY 1: a 200-level one-shot (~25 ms at 7990 Hz, over long before row 8); POKEY 2: an
+ * 8000-level one-shot (~1 s: still playing at row 8, over by row 16); POKEY 3: a tone whose one-shot volume envelope
+ * ends at 0 (still held); POKEY 4: the 200 levels looping. Levels alternate 3 and 12, so every interrupt writes AUDC. */
+#define PORTA_ROWS 24
+#define PORTA_SPEED 6
+#define PORTA_SHORT 200
+#define PORTA_LONG 8000
+enum { PORTA_ONCE = 1, PORTA_LONG_ONCE, PORTA_LOOPED, PORTA_TONE };
+
+static void porta_instrument(uint8_t* b, int slot, int flags, int sample, int loop, int volume) {
+    uint8_t* p = b + PK_OFF_INSTRUMENTS + PK_INSTRUMENT_SIZE * (slot - 1);
+    p[PK_I_FLAGS] = (uint8_t)(PK_FLAG_DEFINED | flags);
+    if (flags & PK_FLAG_SAMPLE) {
+        p[PK_I_SAMPLE] = (uint8_t)sample;
+        p[PK_I_ROOT] = PKT_N(C, 4);
+        pkt_u16(p + PK_I_RATE, 7990);
+    }
+    pkt_u16(p + PK_I_LOOP, loop);
+    pkt_u16(p + PK_I_ENV_VOLUME, volume);
+    for (int k = 1; k < PKP_ENVS; ++k) pkt_u16(p + PK_I_ENV_VOLUME + 2 * k, PK_ENV_NONE);
+}
+
+static void build_porta(PokeyImage* image) {
+    static const int fade[] = {15, 8, 0};
+    static const int slot[PK_CHANNELS] = {PORTA_ONCE, PORTA_LONG_ONCE, PORTA_TONE, PORTA_LOOPED};
+    static const int notes[3] = {PKT_N(C, 4), PKT_N(E, 4), PKT_N(G, 4)};
+    uint8_t* b = image->bytes;
+    memset(b, 0, PK_IMAGE_SIZE);
+    memcpy(b, "TTPK", 4);
+    b[PK_H_LAYOUT] = PK_LAYOUT;
+    b[PK_H_MACHINE] = PK_MACHINE_NTSC;
+    b[PK_H_MULTISPEED] = 1;
+    b[PK_H_SPEED] = PORTA_SPEED;
+    pkt_u16(b + PK_H_ORDERS, 1);
+    b[PK_H_INSTRUMENTS] = PORTA_TONE;
+    b[PK_OFF_ROWS] = PORTA_ROWS;
+    PktOut o = {b, 0};
+    const int env = pkt_env(&o, fade, 3, PK_ENV_NONE, PK_ENV_NONE);
+    for (int lane = 0; lane < PK_CHANNELS; ++lane) {
+        pkt_u16(b + PK_OFF_ORDERS + 2 * lane, o.at);
+        for (int k = 0; k < 3; ++k) {
+            pkt_put(&o, k ? 0x01 : 0x01 | 0x02 | (1 << 2)); /* the note; on row 0 also the sound and 310 */
+            pkt_put(&o, notes[k]);
+            if (!k) pkt_put(&o, slot[lane]), pkt_put(&o, PK_FX_PORTAMENTO), pkt_put(&o, 0x10);
+            pkt_put(&o, 0x80 | 6); /* 7 empty rows */
+        }
+    }
+    pkt_u16(b + PK_H_DATA_SIZE, o.at);
+    const int lengths[2] = {PORTA_SHORT, PORTA_LONG};
+    int bytes = 0;
+    for (int k = 0; k < 2; ++k) {
+        uint8_t* e = b + PK_OFF_SAMPLES + PK_SAMPLE_ENTRY_SIZE * k;
+        pkt_u16(e, bytes);
+        pkt_u16(e + 2, lengths[k]);
+        memset(b + PK_OFF_SAMPLE_DATA + bytes, 0xC3, (size_t)lengths[k] / 2); /* 3, 12, 3, ... (low nibble first) */
+        bytes += lengths[k] / 2;
+    }
+    pkt_u16(b + PK_H_SAMPLE_SIZE, bytes);
+    b[PK_H_SAMPLES] = 2;
+    porta_instrument(b, PORTA_ONCE, PK_FLAG_SAMPLE, 0, 0xFFFF, PK_ENV_NONE);
+    porta_instrument(b, PORTA_LONG_ONCE, PK_FLAG_SAMPLE, 1, 0xFFFF, PK_ENV_NONE);
+    porta_instrument(b, PORTA_LOOPED, PK_FLAG_SAMPLE, 0, 0, PK_ENV_NONE);
+    porta_instrument(b, PORTA_TONE, 0, 0, 0xFFFF, env);
+    const int rc = pk_load_image(image);
+    EXPECT(rc == 0, "portamento image loads: %s at %d", image->info.problem ? image->info.problem : "", image->info.problem_offset);
+}
+
+typedef struct PortaLog {
+    Sink trace;                /* pokey_trace_porta.txt, for tools/audio/pokey_reference_check.py */
+    int key_audc1[PORTA_ROWS]; /* AUDC1 the row's tick-0 batch wrote, -1 none */
+    int key_irqen[PORTA_ROWS]; /* IRQEN the row's tick-0 batch wrote, -1 none */
+    int levels[PORTA_ROWS];    /* non-zero AUDC1 writes of the row's interrupts */
+    int stops[PORTA_ROWS];     /* AUDC1 = 0 writes of the row's interrupts */
+} PortaLog;
+
+static void porta_event(void* ctx, const PkmEvent* e) {
+    PortaLog* l = (PortaLog*)ctx;
+    sink_event(&l->trace, e);
+    if (e->order != 0 || e->row < 0 || e->row >= PORTA_ROWS) return;
+    for (int k = 0; k < e->count; ++k) {
+        const int reg = e->writes[k].reg, val = e->writes[k].val;
+        if (e->irq) {
+            if (reg == PK_AUDC1) ++*(val ? &l->levels[e->row] : &l->stops[e->row]);
+        } else if (e->tick == 0) {
+            if (reg == PK_AUDC1) l->key_audc1[e->row] = val;
+            if (reg == PK_IRQEN) l->key_irqen[e->row] = val;
+        }
+    }
+}
+
+/* A one-shot sample the interrupt routine ran to its end is no longer held: the next note keys on afresh even under a
+ * sticky 3xx. A still-playing or looping sample and a synthesized voice whose envelope has ended only glide. */
+static void test_porta_samples(const char* dir) {
+    printf("sticky portamento over samples\n");
+    static PortaLog pl;
+    memset(&pl, 0, sizeof pl);
+    sink_init(&pl.trace);
+    for (int r = 0; r < PORTA_ROWS; ++r) pl.key_audc1[r] = pl.key_irqen[r] = -1;
+    char path[512];
+    snprintf(path, sizeof path, "%s/pokey_trace_porta.txt", dir);
+    pl.trace.f = fopen(path, "w");
+    write_file(dir, "pokey_porta.bin", g_porta.bytes, sizeof g_porta.bytes);
+    PokeyMachine* m = pkm_create(RATE);
+    int mode;
+    EXPECT(pkm_start(m, &g_porta, 0, 0, SEEK_BUDGET, &mode) == PKM_OK, "start");
+    pkm_set_trace(m, porta_event, &pl);
+    const PkPlayer* p = pkm_player(m);
+    PkLane at8[PK_CHANNELS], at16[PK_CHANNELS];
+    for (int t = 0; t < PORTA_ROWS * PORTA_SPEED; ++t) {
+        pkm_tick(m, g_out);
+        if (t == 8 * PORTA_SPEED) memcpy(at8, p->lane, sizeof at8);
+        if (t == 16 * PORTA_SPEED) memcpy(at16, p->lane, sizeof at16);
+    }
+    pkm_set_trace(m, NULL, NULL);
+    if (pl.trace.f) fclose(pl.trace.f);
+    /* POKEY 1: each note restarts the sample: AUDC1 at its first level and timer 1 enabled in the row's tick-0 batch,
+     * then every further level through timer 1 interrupts and the stop. */
+    for (int r = 0; r < PORTA_ROWS; r += 8) {
+        EXPECT(pl.key_audc1[r] == (PK_AUDC_VOLUME_ONLY | 3) && pl.key_irqen[r] >= 0 && (pl.key_irqen[r] & PK_IRQ_TIMER1),
+               "row %d: POKEY 1 keys its one-shot on (tick 0 writes AUDC1 %02X, IRQEN %02X; -1 = none)", r, pl.key_audc1[r],
+               pl.key_irqen[r]);
+        EXPECT(pl.levels[r] == PORTA_SHORT - 1 && pl.stops[r] == 1,
+               "row %d: %d interrupt levels and %d stop (want %d and 1)", r, pl.levels[r], pl.stops[r], PORTA_SHORT - 1);
+    }
+    int stray = 0;
+    for (int r = 0; r < PORTA_ROWS; ++r)
+        if (r % 8) stray += pl.levels[r] + pl.stops[r] + (pl.key_audc1[r] >= 0);
+    EXPECT(stray == 0, "POKEY 1 writes nothing between its notes (%d AUDC1 writes)", stray);
+    const int e4 = 64 * PKT_N(E, 4), g4 = 64 * PKT_N(G, 4);
+    EXPECT(at8[0].base == e4 && at8[0].target == e4 && at16[0].base == g4 && at16[0].target == g4,
+           "POKEY 1 keyed on at E-4 and G-4, not gliding (row 8 base %d target %d, row 16 base %d target %d)", at8[0].base,
+           at8[0].target, at16[0].base, at16[0].target);
+    /* POKEY 2: still playing at row 8 (the note glides on), over by row 16 (keyed on afresh). */
+    EXPECT(at8[1].voice.playing && at8[1].voice.index > PORTA_LONG / 2 && at8[1].target == e4 && at8[1].base < e4,
+           "row 8: the playing one-shot glides on (index %d, base %d, target %d)", at8[1].voice.index, at8[1].base, at8[1].target);
+    EXPECT(at16[1].voice.playing && at16[1].voice.index < PORTA_LONG / 2 && at16[1].base == g4 && at16[1].target == g4,
+           "row 16: the ended one-shot restarts (index %d, base %d, target %d)", at16[1].voice.index, at16[1].base, at16[1].target);
+    /* POKEY 3 (the tone, its envelope at 0) and POKEY 4 (looping) stay held: both later notes glide. */
+    for (int l = 2; l < PK_CHANNELS; ++l) {
+        const int sample = l == 3;
+        EXPECT(at8[l].voice.active && !at8[l].voice.released && at8[l].target == e4 && at8[l].base < e4 && at16[l].target == g4 &&
+                   at16[l].base < g4 && (sample ? at8[l].voice.playing && at16[l].voice.playing : at8[l].voice.level == 0),
+               "POKEY %d held: notes glide (row 8 base %d target %d, row 16 base %d target %d)", l + 1, at8[l].base, at8[l].target,
+               at16[l].base, at16[l].target);
+    }
+    /* Audible: POKEY 1 alone (the other lanes muted) sounds on rows 0, 8 and 16 and is silent before 8 and 16. */
+    pkm_start(m, &g_porta, 0, 0, SEEK_BUDGET, &mode);
+    for (int c = 1; c < PK_CHANNELS; ++c) pkm_mute(m, c, 1);
+    double row_rms[PORTA_ROWS];
+    for (int r = 0; r < PORTA_ROWS; ++r) {
+        float* buf;
+        const long n = render(m, PORTA_SPEED, &buf);
+        row_rms[r] = rms(buf, n);
+        free(buf);
+    }
+    EXPECT(row_rms[0] > 0.002 && row_rms[8] > 0.002 && row_rms[16] > 0.002, "POKEY 1 audible on rows 0, 8, 16 (rms %.4f %.4f %.4f)",
+           row_rms[0], row_rms[8], row_rms[16]);
+    EXPECT(row_rms[7] < 0.0005 && row_rms[15] < 0.0005, "and silent on rows 7 and 15 (rms %.6f %.6f)", row_rms[7], row_rms[15]);
+    pkm_destroy(m);
+}
+
 static void test_multispeed(void) {
     printf("multispeed\n");
     PokeyMachine* m = pkm_create(RATE);
@@ -1483,6 +1650,7 @@ int main(int argc, char** argv) {
     build(&g_tempo, (PkSongOptions){PK_MACHINE_NTSC, 1, 0, 0, 1, 0});
     build(&g_short, (PkSongOptions){PK_MACHINE_NTSC, 1, 0, 0, 0, 1});
     build(&g_x2, (PkSongOptions){PK_MACHINE_NTSC, 2, 0, 0, 0, 0});
+    build_porta(&g_porta);
     EXPECT(memcmp(g_song.bytes, g_moved.bytes, PK_IMAGE_SIZE) != 0, "the re-laid-out image differs in its bytes");
     test_chip(dir);
     test_images();
@@ -1494,6 +1662,7 @@ int main(int argc, char** argv) {
     test_live_edits();
     test_audition(dir);
     test_mute();
+    test_porta_samples(dir);
     test_multispeed();
     test_vgm(dir);
     test_export();
