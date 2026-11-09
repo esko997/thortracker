@@ -17,8 +17,14 @@
  * loop pass adding exactly one tick, and a fade of a silent song cut to the one second of silence kept after the last
  * audible frame.
  *
+ * The shortest songs (epsm-shortest.nesimg, opn-shortest.opnimg and opna-shortest.opnaimg: one order of one row at
+ * speed 1, a held note on FM 1 of the EPSM / YM2203 / YM2608, looping to order 0) run the same render paths at the
+ * other extreme: once through is a single engine tick (under 1 s), and it must still render a valid non-silent file
+ * equal to straight ticking, deterministically for any step size, with loops=1 adding about one loop and a fade adding
+ * exactly its length; a wrong image size is refused.
+ *
  * The EPSM demo's rhythm drums play the YM2608 rhythm ROM, which is not part of Thor Tracker: with
- * THOR_EPSM_RHYTHM_ROM naming the user's own 8192-byte copy it is installed first and the drums are in the renders;
+ * THOR_RHYTHM_ROM naming the user's own 8192-byte copy it is installed first and the drums are in the renders;
  * without it they are silent (every check above still holds; the app itself refuses to export such a song).
  *
  * The shortest held songs (pce-shortest.pcimg: one order of one row, A-4 held on the PC Engine's PSG 1; and
@@ -39,7 +45,7 @@
 
 #include "chip_engine.h"
 #include "chip_wav.h"
-#include "nes_epsm.h"
+#include "ym2608_rhythm_rom.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -84,6 +90,8 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"night-express.opnimg", "ym2203-opn"},
+    {"paper-lanterns.opnaimg", "ym2608-opna"},
     {"opm-demo.omimg", "ym2151-opm"},
     {"night-ferry.ymimg", "ym2612-fm"}, /* PCM kits on PCM 1-3 through the XGM2 driver, FM 3 special mode */
     {"harbour-lights-sms-psg.smsimg", "sms-banjo"},
@@ -118,6 +126,8 @@ static const Demo kShortest[] = {
     {"ym-pcm-shortest.ymimg", "ym2612-fm"},  /* XGM2 PCM channel 0 restarted every tick */
     {"ym-fm3-shortest.ymimg", "ym2612-fm"},  /* FM 3 special mode */
     {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
+    {"opn-shortest.opnimg", "ym2203-opn"},
+    {"opna-shortest.opnaimg", "ym2608-opna"},
     {"opm-shortest.omimg", "ym2151-opm"},
     {"sms-shortest-sms-psg.smsimg", "sms-banjo"},
     {"sms-shortest-gg-psg.smsimg", "sms-banjo"},
@@ -581,15 +591,15 @@ int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
     snprintf(spool, sizeof spool, "%s/wav_render_test.part", dir);
-    const char* rom_path = getenv("THOR_EPSM_RHYTHM_ROM");
+    const char* rom_path = getenv("THOR_RHYTHM_ROM");
     if (rom_path && *rom_path) {
         size_t rom_size = 0;
         uint8_t* rom = read_file(rom_path, &rom_size);
-        EXPECT(rom && nes_epsm_install_rhythm_rom(rom, rom_size) == 0 && nes_epsm_rhythm_rom_installed(),
-               "THOR_EPSM_RHYTHM_ROM %s: an 8192-byte rhythm ROM installs", rom_path);
+        EXPECT(rom && ym2608_rhythm_rom_install(rom, rom_size) == 0 && ym2608_rhythm_rom_installed(),
+               "THOR_RHYTHM_ROM %s: an 8192-byte rhythm ROM installs", rom_path);
         free(rom);
     } else {
-        printf("EPSM rhythm ROM not given (THOR_EPSM_RHYTHM_ROM): the EPSM demo renders with silent rhythm drums\n");
+        printf("EPSM rhythm ROM not given (THOR_RHYTHM_ROM): the EPSM demo renders with silent rhythm drums\n");
     }
     const char* problem = NULL;
     uint8_t byte = 0;

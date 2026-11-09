@@ -75,8 +75,8 @@ import org.thortracker.ui.hideFromAccessibility
 import java.io.File
 import java.io.IOException
 import android.util.AtomicFile
-import org.thortracker.system.nes.EpsmRhythmRom
-import org.thortracker.system.nes.EpsmRomMenu
+import org.thortracker.system.fm.RhythmRomMenu
+import org.thortracker.system.fm.Ym2608RhythmRom
 
 /** Two display hosts, one document. Musical edits and driver state never live here. */
 class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.InputDeviceListener {
@@ -127,7 +127,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             fileLoad = FileLoad(extensions, maxBytes, loaded)
             launchFilePicker()
         }
-        override fun installEpsmRhythmRom(bytes: ByteArray): String? = this@MainActivity.installRhythmRom(bytes)
+        override fun installRhythmRom(bytes: ByteArray): String? = this@MainActivity.installRhythmRom(bytes)
         override fun openUrl(url: String): Boolean = try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             true
@@ -1288,12 +1288,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         run.popup = null
     }
 
-    // ---- EPSM rhythm ROM: device firmware the user imports ----------------------------------------------
+    // ---- YM2608 rhythm ROM: device firmware the user imports (NES EPSM and PC-88/98 OPNA drums) -----------
 
-    /** Where the imported YMF288 rhythm ROM is kept: app-private storage, outside every project and export. */
-    private val rhythmRomFile: File get() = File(File(filesDir, "firmware"), EpsmRhythmRom.FILE_NAME)
+    /** Where the imported YM2608 rhythm ROM is kept: app-private storage, outside every project and export. */
+    private val rhythmRomFile: File get() = File(File(filesDir, "firmware"), Ym2608RhythmRom.FILE_NAME)
 
-    /** [MenuHost.installEpsmRhythmRom]: saves the checked [bytes] atomically, then installs them in the native engine. */
+    /** [MenuHost.installRhythmRom]: saves the checked [bytes] atomically, then installs them in the native engine. */
     private fun installRhythmRom(bytes: ByteArray): String? {
         try {
             rhythmRomFile.parentFile?.mkdirs()
@@ -1320,7 +1320,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             return "native audio is not available (${e.message})"
         }
         if (result != 0) return "the audio engine refused it (error $result)"
-        EpsmRhythmRom.markInstalled()
+        Ym2608RhythmRom.markInstalled()
         return null
     }
 
@@ -1328,11 +1328,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private fun loadRhythmRom() {
         val file = rhythmRomFile
         if (!file.exists()) return
-        val problem = if (file.length() > EpsmRomMenu.MAX_FILE) "it is ${file.length()} bytes, not ${EpsmRhythmRom.SIZE}" else {
+        val problem = if (file.length() > RhythmRomMenu.MAX_FILE) "it is ${file.length()} bytes, not ${Ym2608RhythmRom.SIZE}" else {
             val bytes = try { AtomicFile(file).readFully() } catch (e: IOException) { null }
-            if (bytes == null) "it could not be read" else EpsmRhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
+            if (bytes == null) "it could not be read" else Ym2608RhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
         }
-        if (problem != null) showError("The saved EPSM rhythm ROM was not installed: $problem. Import it again (${EpsmRomMenu.LABEL} in the menu)")
+        if (problem != null) showError("The saved YM2608 rhythm ROM was not installed: $problem. Import it again (${RhythmRomMenu.LABEL} in the menu)")
     }
 
     /** Device, Android, displays and ChipAudio's measurements for the diagnostics ([org.thortracker.ui.About]). */

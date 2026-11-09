@@ -59,6 +59,12 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ym/ym_xgm.c").asFile,
         engineSrc.file("ym/ym_vgm.c").asFile,
         engineSrc.file("ym/ym_psg.c").asFile,
+        engineSrc.file("ym2608_rhythm_rom.c").asFile,
+        engineSrc.file("opn/opn_chip.c").asFile,
+        engineSrc.file("opn/opn_machine.c").asFile,
+        engineSrc.file("opn/opn_player.c").asFile,
+        engineSrc.file("opn/opn_image.c").asFile,
+        engineSrc.file("opn/opn_vgm.c").asFile,
         engineSrc.file("opm/opm_chip.c").asFile,
         engineSrc.file("opm/opm_machine.c").asFile,
         engineSrc.file("opm/opm_player.c").asFile,
@@ -88,16 +94,16 @@ val buildEngine by tasks.registering(Exec::class) {
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
-    // ymfm (the YM2612 and the EPSM's YMF288): ym/ym_ymfm.cpp compiles ymfm_opn.cpp itself and instantiates the OPNA
-    // templates nes/nes_epsm_ymfm.cpp uses; opm/opm_ymfm.cpp compiles ymfm_opm.cpp for the YM2151.
+    // ymfm (the YM2612, EPSM, OPN and OPNA): ym/ym_ymfm.cpp compiles ymfm_opn.cpp itself and instantiates the OPNA
+    // templates nes/nes_epsm_ymfm.cpp and opn/opn_ymfm.cpp use; opm/opm_ymfm.cpp compiles ymfm_opm.cpp for the YM2151.
     // Mednafen's PSG (the PC Engine): pce/pce_psg.cpp compiles
     // third_party/mednafen-pce-psg/pce_psg.cpp itself against the shim.
-    val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "nes/nes_epsm_ymfm.cpp", "opm/opm_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp",
+    val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "nes/nes_epsm_ymfm.cpp", "opm/opm_ymfm.cpp", "opn/opn_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp",
         "third_party/ymfm/ymfm_ssg.cpp", "pce/pce_psg.cpp") +
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "opm", "sms", "ay", "pce", "scc", "third_party/chips", "third_party/blip_buf",
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "opn", "opm", "sms", "ay", "pce", "scc", "third_party/chips", "third_party/blip_buf",
             "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
@@ -113,6 +119,8 @@ val buildEngine by tasks.registering(Exec::class) {
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
+        "ym2608_rhythm_rom.h", "opn/opn_image.h", "opn/opn_player.h", "opn/opn_ymfm.h", "opn/opn_machine.h", "opn/opn_vgm.h",
+        "opn/opn_export.h",
         "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm2_driver_image.h",
         "opm/opm_image.h", "opm/opm_player.h", "opm/opm_machine.h", "opm/opm_ymfm.h", "opm/opm_vgm.h", "opm/opm_export.h",
         "sms/sms_image.h", "sms/sms_machine.h", "sms/sms_export.h", "generated/banjo_driver_image.h",
@@ -165,9 +173,10 @@ kotlin {
             }
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
-                // nes/nes_epsm.h: nes_epsm_install_rhythm_rom / nes_epsm_rhythm_rom_installed for the Deck's rhythm ROM.
+                // ym2608_rhythm_rom.h: ym2608_rhythm_rom_install / ym2608_rhythm_rom_installed for the Deck's rhythm ROM;
+                // opn/opn_export.h: the OPN / OPNA VGM export.
                 includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"),
-                    engineSrc.dir("ay"), engineSrc.dir("pce"), engineSrc.dir("scc"), engineSrc.dir("opm"))
+                    engineSrc.dir("ay"), engineSrc.dir("pce"), engineSrc.dir("scc"), engineSrc.dir("opm"), engineSrc.dir("opn"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

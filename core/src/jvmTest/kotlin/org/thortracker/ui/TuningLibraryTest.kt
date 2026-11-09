@@ -74,7 +74,7 @@ class TuningLibraryTest {
         override fun importKeymap() = unexpected()
         override fun loadTuningFile(loaded: (Tuning) -> Unit) = unexpected()
         override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) = unexpected()
-        override fun installEpsmRhythmRom(bytes: ByteArray): String? = unexpected()
+        override fun installRhythmRom(bytes: ByteArray): String? = unexpected()
         override fun diagnostics(): List<Pair<String, String>> = unexpected()
         override fun shareDiagnostics(text: String) = unexpected()
     }

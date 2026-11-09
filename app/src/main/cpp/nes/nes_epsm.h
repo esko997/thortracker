@@ -1,4 +1,4 @@
-/* The EPSM's sound chip and its rhythm ROM firmware.
+/* The EPSM's sound chip.
  *
  * EPSM (Expansion Port Sound Module, NESdev "Expansion Port Sound Module"): a Yamaha YMF288 (OPN3-L: the YM2608's
  * six 4-operator FM channels, three SSG channels and six ADPCM-A rhythm drums from an on-chip ROM; no ADPCM-B, no
@@ -6,16 +6,13 @@
  * Synthesis is ymfm's ymf288 (Aaron Giles, BSD-3-Clause; third_party/ymfm, unmodified) at OPN_FIDELITY_MED: one
  * native sample per 144 clocks, 55555.6 Hz, the same rate as the chip's own FM output; the SSG runs at its 2 MHz
  * effective clock and is resampled 9:2 exactly as ymfm's ymf288::generate does. nes_epsm_ymfm.cpp compiles against
- * ymfm_opn.cpp, which ym/ym_ymfm.cpp compiles once for the whole program (link both).
+ * ymfm_opn.cpp, which ym/ym_ymfm.cpp compiles once for the whole program (link both), and ym2608_rhythm_rom.c.
  *
- * The rhythm drums play the YM2608 rhythm ROM (8192 bytes: bass drum, snare, top cymbal, hi-hat, tom, rim shot at
- * ymfm's fixed addresses). The ROM is Yamaha's and is not distributed with Thor Tracker: the user imports it, the
- * host installs it once with nes_epsm_install_rhythm_rom, and every chip reads it from there. A rhythm key-on while
- * no ROM is installed makes no sound (that drum is left out of the mix until its next key-on with the ROM) and sets
- * the chip's nes_epsm_chip_rhythm_missing flag; the Kotlin side refuses to play such songs, so the flag is a
- * diagnostic, never a substitute sound.
- *
- * Only this header is visible to the Deck's Kotlin (decknative.def): plain C, no other includes. */
+ * The rhythm drums play the YM2608 rhythm ROM, which the host installs once into the module every chip with rhythm
+ * drums reads (ym2608_rhythm_rom.h: ym2608_rhythm_rom_install). A rhythm key-on while no ROM is installed makes no
+ * sound (that drum is left out of the mix until its next key-on with the ROM) and sets the chip's
+ * nes_epsm_chip_rhythm_missing flag; the Kotlin side refuses to play such songs, so the flag is a diagnostic, never
+ * a substitute sound. */
 #ifndef THORTRACKER_NES_EPSM_H_
 #define THORTRACKER_NES_EPSM_H_
 
@@ -25,16 +22,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define NES_EPSM_RHYTHM_ROM_SIZE 8192u
-
-/* Installs the rhythm ROM: copies `size` bytes into static storage and publishes it (atomic release store) for every
- * EPSM chip. 0 ok (also: the identical bytes again, a no-op); -1 when `rom` is NULL, `size` is not 8192, or other
- * bytes than an already installed ROM (installed storage is never rewritten while audio threads may read it). The
- * caller checks the ROM's identity (SHA-256, EpsmRhythmRom.kt). Never called concurrently with itself; any thread. */
-int nes_epsm_install_rhythm_rom(const uint8_t* rom, size_t size);
-/* 1 once a ROM is installed, else 0. Any thread. */
-int nes_epsm_rhythm_rom_installed(void);
 
 /* ---- the chip (used by the NES machine's EPSM unit, nes_epsm_unit.h) ---------------------------------------------- */
 

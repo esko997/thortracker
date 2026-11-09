@@ -75,7 +75,7 @@ class PceEditorTest {
                 }
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
-                override fun installEpsmRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
+                override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
             })
         }
     }

@@ -44,9 +44,15 @@ the Sound Cartridge in SCC+ mode; unverified source slice) play songs with Thor 
 here, mirrored by an independent Python reference) on a K051649/K052539 sound core ported from MAME, at the MSX's
 3579545 Hz, and export VGM. See [SCC](#scc-and-scc-thor-trackers-own-player-on-a-konami-k051649--k052539-msx-scc-msx-scc-plus).
 
-The OPM system (`"ym2151-opm"`, unverified source slice) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
+The OPM system (`"ym2151-opm"`, 0.29.0) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
 own player (specified here, mirrored by an independent Python reference) on ymfm's YM2151, with the chip's LFO,
 noise and CSM as shared song state, and exports VGM. See [OPM](#opm-thor-trackers-own-player-on-a-ym2151-ym2151-opm).
+
+The PC-88/98 systems (`"ym2203-opn"` and `"ym2608-opna"`, 0.30.0) play songs with Thor
+Tracker's own OPN player (C) on ymfm's YM2203 (3 FM + SSG) and YM2608 (6 stereo FM + SSG + six rhythm drums from the
+user's rhythm ROM + ADPCM-B with the song's own samples) at the PC-88/98 clocks, and export VGM. See
+[OPN and OPNA](#opn-and-opna-thor-trackers-own-player-on-ymfms-ym2203--ym2608-ym2203-opn-ym2608-opna) and
+[the YM2608 rhythm ROM](#the-ym2608-rhythm-rom-shared-firmware).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -187,10 +193,12 @@ library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implemen
 `sid/sid_machine.c`, `sid/sid_image.c`; the OPL3 files `opl3/opl3_chip.c`, `opl3/opl3_machine.c`,
 `opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; `vgm_gd3.c` (the VGM exports'
 GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
-`ym/ym_xgm.c`, `ym/ym_vgm.c`, `ym/ym_psg.c`; the AY files `ay/ay_chip.c`, `ay/ay_machine.c`, `ay/ay_player.c`,
+`ym/ym_xgm.c`, `ym/ym_vgm.c`, `ym/ym_psg.c`; the OPN files `opn/opn_chip.c`, `opn/opn_machine.c`, `opn/opn_player.c`,
+`opn/opn_image.c`, `opn/opn_vgm.c`; the AY files `ay/ay_chip.c`, `ay/ay_machine.c`, `ay/ay_player.c`,
 `ay/ay_psg.c`, `ay/ay_image.c`, `ay/ay_vgm.c`; always with `NDEBUG`), static C++17 libraries `resid` (reSID 1.0 and
 `sid/sid_resid.cpp`, its C interface; `-O2 -w`) and `ymfm` (`ym/ym_ymfm.cpp`, which compiles ymfm's `ymfm_opn.cpp`
-itself, plus `ymfm_adpcm.cpp`, `ymfm_ssg.cpp`) that `chip_engines` links, and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with
+itself and instantiates the OPN and OPNA engine templates, `nes/nes_epsm_ymfm.cpp`, `opn/opn_ymfm.cpp`, `opm/opm_ymfm.cpp`,
+`ym2608_rhythm_rom.c`, plus `ymfm_adpcm.cpp`, `ymfm_ssg.cpp`) that `chip_engines` links, and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with
 NDK `aaudio`, `log`, `m`, `dl` and the NDK's default static C++ runtime. No third-party Java/Gradle
 dependency. The engines the hosts call
 are C; the Deck compiles the same files with Kotlin/Native's clang and reSID with its clang++ against the
@@ -3096,20 +3104,20 @@ and `$401F` (data, A1 = 1). It is not a full YM2608.
   phases, feedback and the LFO, the SSG's tone/noise/envelope counters and the rhythm drums' ADPCM positions are those
   of straight play — no register-snapshot restore. A machine reset restores a snapshot of a freshly constructed chip
   (ymfm's save/restore state, taken once at creation; no allocation).
-- **Rhythm ROM** (`nes/nes_epsm.h`): the drums play the YM2608 rhythm ROM (8192 bytes: bass drum, snare, top cymbal,
+- **Rhythm ROM** (`ym2608_rhythm_rom.h`): the drums play the YM2608 rhythm ROM (8192 bytes: bass drum, snare, top cymbal,
   hi-hat, tom, rim shot at ymfm's fixed addresses), which Thor Tracker does not distribute. `int
-  nes_epsm_install_rhythm_rom(const uint8_t* rom, size_t size)` copies it once into static storage and publishes it
-  with an atomic release store for every EPSM chip: 0 ok (the identical bytes again are a no-op); −1 for NULL, a
+  ym2608_rhythm_rom_install(const uint8_t* rom, size_t size)` copies it once into static storage and publishes it
+  with an atomic release store for EPSM and OPNA: 0 ok (the identical bytes again are a no-op); −1 for NULL, a
   size other than 8192, or other bytes than an installed ROM (installed storage is never rewritten while audio
-  threads may read it). `nes_epsm_rhythm_rom_installed()` is 0/1. The caller checks the ROM's identity first
-  (`EpsmRhythmRom.problem()`: size, then SHA-256 `53afd0fa…eba8`). Hosts: Android
+  threads may read it). `ym2608_rhythm_rom_installed()` is 0/1. The caller checks the ROM's identity first
+  (`Ym2608RhythmRom.problem()`: size, then SHA-256 `53afd0fa…eba8`). Hosts: Android
   `ChipAudio.nativeInstallRhythmRom(rom: ByteArray): Int` (JNI, `audio_jni.cpp`), called by `MainActivity` at start
   for a stored `filesDir/firmware/ym2608_adpcm_rom.bin` that still verifies and after an import; the Deck calls the
   same C function through `decknative.def` for `~/.local/share/thortracker/firmware/ym2608_adpcm_rom.bin`. Without
   a ROM a rhythm key-on makes no sound (that drum stays out of the mix until a key-on with the ROM) and sets
   `nes_epsm_chip_rhythm_missing` (`nm_epsm_rhythm_missing`): a diagnostic only — Kotlin's `lower()` refuses a song
-  whose played orders contain a rhythm note, and audition refuses a drum, with `EpsmRhythmRom.MISSING` ("… import
-  your copy once with "EPSM rhythm ROM…" …"), so nothing ever substitutes another sound.
+  whose played orders contain a rhythm note, and audition refuses a drum, with `Ym2608RhythmRom.MISSING` ("… import
+  your copy once with "YM2608 rhythm ROM…" …"), so nothing ever substitutes another sound.
 - **Live edits**: SSG: the machine sees on the bus which expansion entry each SSG loaded last (the engine's store of
   the shape byte right after reading entry + 10) and which entry the manual period came from (the store after reading
   entry + 12; a `$5D` makes it none);
@@ -3158,12 +3166,12 @@ the LFO, SSG-EG, releases, slides, vibrato, fine pitch, stop, the range ends C-1
   `nes_epsm.wav` (30 s, all channels; the drums silent without the ROM), `nes_epsm_tonal.wav` (drums muted),
   `nes_epsm_trace.txt` (per frame `$4000-$4017` and `$401C-$401F` writes), `nes_epsm.nsf` (`$7B` = `$80`), and, only
   with a private ROM (below), `nes_epsm_rhythm.wav` (only the drums).
-- **Private rhythm checks**: `THOR_EPSM_RHYTHM_ROM=/path/to/ym2608_adpcm_rom.bin` (the user's own copy; size and
+- **Private rhythm checks**: `THOR_RHYTHM_ROM=/path/to/ym2608_adpcm_rom.bin` (the user's own copy; size and
   SHA-256 checked, anything else refused) enables the rhythm checks of `nes_epsm_test` (which then also writes
   `nes_epsm_rhythm.wav`) and the drums of `tools/audio/nes_render.c` (also its optional fourth argument:
   `tools/audio/render_nes_image.sh image.nesimg out.wav [seconds] [rhythm-rom]`). `tools/audio/nes_reference_check.py`
   never reads the ROM: it compares `nes_epsm_rhythm.wav`, when present, with FamiStudio's wav-export (FamiStudio's
-  emulator has its own built-in copy). Unset, the test prints "rhythm ROM checks skipped (THOR_EPSM_RHYTHM_ROM
+  emulator has its own built-in copy). Unset, the test prints "rhythm ROM checks skipped (THOR_RHYTHM_ROM
   unset)". Nothing copies, stores or commits the ROM; keep it and the rhythm evidence outside the repository.
 - `tools/audio/nes_reference_check.py <evidence-dir>`: py65 runs our `nes_epsm.nsf` and FamiStudio's own NSF export of
   `epsm_test.txt`; both must write our trace's registers (values differing only in pitch registers on slide frames,
@@ -4856,7 +4864,8 @@ system's fine pitch in 1/64 semitones, `ticksPerSecond` = 60 × multispeed.
 - WAV: the generic `chip_wav.c` over the `"ym2151-opm"` ops (no system code).
 - VGM players' CSM: the VGM holds the `$10`/`$11`/`$14` writes only; whether and how long a player keys on at timer A
   overflows depends on its YM2151 core (stock ymfm, also inside MAME, keeps the CSM key-on until its next register
-  write re-prepares the operators, so it may sound different from the engine). Not checked against any player.
+  write re-prepares the operators, so it may sound different from the engine). The independent MAME/Nuked
+  looped-song comparisons are recorded in `docs/VERIFICATION.md`; they do not establish CSM equivalence.
 
 ### Preparing the fixtures and constants
 
@@ -4893,3 +4902,277 @@ generated table header: the vibrato sine is written out in both implementations.
   the clean 21-test Android suite, Nova/DMG/Konkr activity exercises, SDL playback and all 32 unchanged Game Boy
   renders. Device timings, export evidence and comparison limits belong in `docs/VERIFICATION.md`.
 - Not done: human listening or a real YM2151 / X68000 measurement.
+
+## OPN and OPNA: Thor Tracker's own player on ymfm's YM2203 / YM2608 (`"ym2203-opn"`, `"ym2608-opna"`)
+
+**Integration verified:** 1,806 native checks, 420 independent Python checks, 2,006 WAV checks,
+783 JVM / 19 Linux / six Android-host tests, 21 permanent Android tests and 32 unchanged Game Boy
+renders. Nova/DMG/Konkr activity smokes, real document pickers, preserved EPSM firmware, desktop
+playback and artifact privacy scans pass. Human listening and physical-board comparison remain
+unperformed; `docs/VERIFICATION.md` records the measured costs, isolated Nova underruns and limits.
+
+### Hardware, clocks and sources
+
+- **Chips**: Yamaha YM2203 (OPN: three 4-operator FM channels, mono; the SSG: three square channels sharing one noise
+  generator and one envelope generator) and YM2608 (OPNA: six stereo FM channels with the LFO; the same SSG; the
+  rhythm unit's six ADPCM-A drums from an on-chip ROM; one ADPCM-B channel reading external memory). Emulated by ymfm
+  (`ym2203`, `ym2608`; the pin of the table above, unmodified).
+- **Clocks** (the PC-88 / PC-98 sound clocks): YM2203 **3 993 600 Hz**, YM2608 **7 987 200 Hz**. Evidence: MAME's
+  `src/mame/nec/pc8801.cpp` (`PC8801FH_OSC3` = 31.9488 MHz, `MASTER_CLOCK` = OSC3 / 8 for the YM2203, × 2 for the
+  YM2608), `src/devices/bus/pc98_cbus/pc9801_26.cpp` (YM2203 at 15.9744 MHz / 4, "divider not verified") and
+  `pc9801_86.cpp` (YM2608 at 7.987 MHz). These are an emulator's board descriptions, not datasheets or a measured
+  board; no hardware measurement backs them here.
+- **Rates**: at the power-on prescaler (FM ÷6, SSG ÷4) one FM sample takes 72 master clocks on the YM2203 and 144 on
+  the YM2608: **55 466.67 Hz on both** ("native samples"). The effective AY-compatible SSG clock is **1 996 800 Hz**
+  on both, distinct from the **249 600 Hz counter-update rate** (YM2203 fM/16, YM2608 fM/32). Each tone period
+  toggles the output; two toggles complete a cycle, giving **124 800 / TP Hz** (YM2203 fM/(32 TP), YM2608 fM/(64 TP)).
+  The wrapper clocks nine SSG updates per two native samples. This agrees with
+  [upstream ymfm](https://github.com/aaronsgiles/ymfm/blob/main/src/ymfm_opn.h) and the independent
+  [MAME-derived OPN prescaler](https://github.com/ValleyBell/libvgm/blob/master/emu/cores/fmopn.c)
+  (`SSG clock = master × 2 / (4 × pre_divider)`, with pre_divider 1 for YM2203 and 2 for YM2608).
+  The [YM2608 application manual §3-1](https://manualmachine.com/yamaha/ym2608/5410883-user-manual/#35) gives the
+  latter tone formula explicitly; no conflicting YM2203 manual passage or original-hardware measurement is established here.
+- **ADPCM-B memory**: 256 KiB, the size of the PC-9801-86's and Sound Board II's DRAM as commonly documented (MAME
+  maps 2 MiB and marks the size unconfirmed); the chip runs in 8-bit DRAM mode (`$101` bit 1), so start/end registers
+  count 32 bytes.
+
+### What runs
+
+- **Player** (`opn/opn_player.c`, `opn_player.h`): Thor Tracker's own, a port of the YM2612 player to the OPN family.
+  It sequences an image and produces register writes per tick; the machine sends them to ymfm, the VGM export logs
+  them, and seeking runs the player alone to count ticks. No allocation; the only floating point is a 768-entry
+  2^(i/768) table built once (`opn_tables_init`, `pthread_once`), everything else is 64-bit integer.
+- **Chip** (`opn/opn_ymfm.cpp`, `opn_ymfm.h`): ymfm's `ym2203` / `ym2608` subclassed so one native sample is one FM
+  clock with every part's output kept apart (for mutes): the FM computed channel by channel (every channel the chip
+  computes, so a muted channel's feedback history advances exactly as unmuted; only the sum leaves it out), the SSG
+  resampled 9:2 per channel exactly as ymfm's `resample_2_9` (4.5 SSG samples per FM sample at prescaler 6), the
+  YM2608's ADPCM-A clocked on the envelope cycle and ADPCM-B every sample as `ym2608::clock_fm_and_adpcm`. Timers:
+  ymfm schedules timer A/B through its interface; the wrapper counts master clocks (72 / 144 per sample) and delivers
+  expiries, a reload counting from the expired deadline, so CSM keys FM 3 at exactly timer A's rate. Reset restores a
+  power-on snapshot (ymfm save/restore, no allocation). External memory: ADPCM-A reads the installed rhythm ROM
+  (latched at a rhythm key-on), ADPCM-B the machine's copy of the image's sample memory.
+- **Machine** (`opn/opn_machine.c`): player + chip + blip_buf (native rate → host rate, stereo). One tick = 16 ×
+  (256 − TB) native samples; the key-off phase reaches the chip one native sample before the rest of the tick.
+- **Ops** (`opn/opn_chip.c`): `opn_chip_ops` (`"ym2203-opn"`, images of 65 536 bytes) and `opna_chip_ops`
+  (`"ym2608-opna"`, 327 680 bytes); `image_storage` is `sizeof(OpnImage)` for both. Images of the other chip are
+  refused.
+
+### Channels and parts
+
+| Chip | Channels |
+|---|---|
+| YM2203 | 0-2 FM 1-3, 3-5 SSG 1-3 |
+| YM2608 | 0-5 FM 1-6 (4-6 on port 1), 6-8 SSG 1-3, 9-14 Kick, Snare, Cymbal, Hi-hat, Tom, Rim (register `$10` bits 0-5), 15 ADPCM |
+
+A channel plays sounds of its own part only (FM voice, SSG sound, rhythm sound, ADPCM sound); the loader refuses
+other cells. FM 3 is the channel with the special and CSM modes.
+
+### Image layout (what the Kotlin lowering produces)
+
+`opn/opn_image.h` is the contract (Kotlin mirrors it by hand in `OpnPlayerImage.kt`; there is no generator). One
+fixed-size image: 64-byte header (`"TTOP"`, layout 1, chip, speed, `$22`, orders, loop, instrument count, FM 3 mode,
+data size, timer A, timer B, rhythm level, sample count, ADPCM-B bytes used), rows per order (256 × u8), the order
+table (256 orders × 16 channels × u16 data offsets), 64 instrument records of 48 bytes (flags = defined | kind; FM:
+algorithm, feedback, `$B4` AMS/FMS, four × seven operator registers, four s16 FM 3 operator pitch offsets; SSG: pitch
+mode, hardware envelope shape / auto / octave / manual period, five envelope offsets; rhythm: level, pan; ADPCM:
+pan, level, sample, root note, loop; FM, SSG and ADPCM: the drum sweep), 64 ADPCM-B sample entries (start, end,
+rate), the data region (patterns and SSG envelopes, 52 928 bytes) and, on the YM2608, the 256 KiB ADPCM-B memory.
+Patterns use the Mega Drive's row encoding (runs, mask byte, absolute notes 0..95, `$FE` off, up to four effect
+columns). `opn_load_image` checks every byte the player can reach: header ranges (TB 183..250, NA ≤ 1023, `$11` ≤ 63,
+YM2203: LFO, rhythm level and samples 0), records per kind, envelopes, samples (32-byte aligned, ascending, inside the
+used memory, rate 1000..55 466), unused bytes 0 (including the ADPCM-B tail), every pattern decoding to exactly its
+rows, notes (SSG ≥ B-0), kinds per channel, and each effect against its channel and chip.
+
+### Player
+
+- **Pitch** in 1/64 semitones (`u`, 0 = C-0; f(u) = 13.75 Hz × 2^((u + 192) / 768), so A-4 = 3648 = 440 Hz): note ×
+  64 + arpeggio × 64 + `Pxx` fine + slide + vibrato (`(sine × depth) >> 4`, the Mega Drive's 64-step table) + sweep,
+  plus the SSG's arpeggio (× 64) and pitch (× 4) envelopes; clamped 0..6143.
+  - FM: block = u / 768, F-number = round(f × 2^21 / (55 466.67 × 2^block)) (618..1235: the standard octave
+    split, the same on both chips because their FM rates are equal).
+  - SSG: TP = round(124 800 / f), 1..4095 (the lowest playable note is B-0).
+  - ADPCM-B: Δ-N = round(rate × 65 536 / 55 466.67 × 2^((u − root × 64) / 768)), 1..65 535.
+- **Writes** are diffed against a shadow of both ports, except `$28` key, `$0D` (a write restarts the SSG envelope),
+  `$10` rhythm key and `$100` ADPCM-B control, and frequency pairs, written high byte first, both whenever either
+  changes. Each batch starts with its key-off phase (`$28` off, rhythm dump `$10 = $80 | bit`, ADPCM-B stop
+  `$100 = $01`).
+- **Per tick**: `$22` and `$11` (YM2608) and timer A (`$24 = NA >> 2`, `$25 = NA & 3`) diffed; the row (rows, `Gxx`
+  delays, `Sxx` cuts, `Bxx`/`Dxx` jumps, `Fxx`, the loop order's start speed: the Mega Drive player's sequencing);
+  updates FM, then SSG, then rhythm, then ADPCM-B; `$27` last (normal `$00`, special `$40`, CSM `$81` while FM 3 holds
+  a note, else `$40`).
+- **FM**: a key-on writes the operators (carrier TL + 127 − volume), `$B0` and on the YM2608 `$B4` (pan | AMS/FMS);
+  `$28 = $F0 | channel` follows at the next update. Locks `Exx`/`Ixx`/`Mxy` change only that note's copy. FM 3 in the
+  special or CSM mode plays operator k at u + its sound's offset k: `$AD/$A9` operator 1, `$AE/$AA` 2, `$AC/$A8` 3,
+  `$A6/$A2` 4 (the chip's mapping; ymfm `opn_registers::cache_operator_data`). In CSM mode an FM 3 note writes no `$28`:
+  `$27 = $81` (CSM, timer A loaded) makes timer A key all four operators on every (1024 − NA) native samples
+  (18.03 µs × (1024 − NA)); its OFF or `Sxx` sets `$27 = $40`.
+- **SSG**: the five envelopes are copied at key-on (later instrument edits apply to the next note). Per channel and
+  tick: level = (volume envelope × channel volume + 7) / 15 into `$08+i`, or with a hardware envelope `$10` while that
+  level is above 0 (the volume envelope then gates the generator); mixer from the mixer envelope (empty = tone).
+  Shared: `$07` from the three channels' mixers (an inactive channel disables both); `$06` noise period = `Nxx`'s,
+  overridden each tick by the highest-numbered sounding channel with a noise envelope; `$0B/$0C` envelope period from
+  the highest-numbered sounding channel with a hardware envelope (auto: TP >> octave, negative octaves shift left,
+  1..65 535; manual: the sound's period or `Jxx` × 256); `$0D` at the key-on of such a note (`Hxx` overrides the
+  shape). Release: the volume envelope's release part, as the Mega Drive's PSG.
+- **Rhythm** (YM2608): `$18+d = pan | (level × channel volume + 15) / 31` every tick (diffed; `Cxx`/`Axy` act on a
+  sounding drum), and at a note `$10 = 1 << d` (re-trigger without a dump); OFF/`Sxx` dump in the key-off phase.
+  `Rxx` sets the total level `$11`.
+- **ADPCM-B** (YM2608): a note stops the previous sample in the key-off phase (`$100 = $01`), then writes `$101 = pan
+  | $02` (8-bit DRAM), start / 32 and end / 32 − 1 to `$102-$105`, Δ-N to `$109/$10A` and `$10B = level × channel
+  volume / 255` (both every tick), then `$100 = $A0 | (loop ? $10 : 0)`. OFF/`Sxx` stop it.
+- **Reset** (`opnp_machine_reset`, then `opnp_reset`): all operators silent (TL `$7F`, SL/RR `$FF`), frequencies 0,
+  `$B4 = $C0` and `$29 = $80` (six FM channels) on the YM2608, keys off, SSG off (`$07 = $3F`), rhythm dumped with
+  levels 0, ADPCM-B reset with `$101 = $02` and limit `$FFFF`; then the header's `$22`, `$11`, timer A and `$27`.
+
+### Effects (what Kotlin's effect specs declare)
+
+As the Mega Drive's where the letters match (`0` arpeggio, `1`/`2` slides, `3` portamento, `4` vibrato, `8` pan, `A`
+volume slide, `B` jump, `C` volume, `D` break, `E` feedback lock, `F` speed, `G` delay, `I` brightness lock, `L` LFO,
+`M` ratio lock, `P` fine pitch, `S` note off), plus `H` SSG hardware-envelope shape lock (00 none, 08-0F), `J` SSG
+manual envelope period lock (xx × 256), `N` SSG noise period (00-1F), `R` rhythm total level (00-3F, YM2608) and `T`
+timer A = xx × 4 (the CSM rate). Volumes: FM `C00-C7F`, SSG `C00-C0F`, rhythm `C00-C1F`, ADPCM `C00-CFF`. Pan,
+`L` and `R` exist on the YM2608 only. `B`, `D`, `F`, `L`, `R`, `T` load on every channel; pitch effects not on
+rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
+
+### Position, seek and live edits
+
+- **Position** is the player's (order, row, tick); `tick 0` marks row starts (no `row_serial`).
+- **Seek** (`opnm_start`): the player runs alone first to count the ticks to the target, within `max_ticks`
+  (`SEEK_TICKS` = 12 000) from the song start, else from the target order's start with the speed straight play starts
+  it with (`CHIP_SEEK_FROM_ORDER`). Then the machine is reset to exactly a fresh machine (chip power-on snapshot and
+  reset writes, empty resamplers) and every tick up to the target runs as straight play runs it — all writes, the
+  whole chip clocked, the resampler fed and read — with the output discarded. From the song start the sound after a
+  seek is therefore sample-identical to straight play reaching that row (FM envelopes and release tails, SSG
+  counters, rhythm and ADPCM-B positions, a running CSM timer all included). The cost is rendering the skipped stretch
+  (not measured; WAV-export speed), bounded by `max_ticks`.
+- **Live edits** (`opnm_apply_image`, at a tick boundary, realtime-safe): the machine copies only what it reads
+  (`opn_copy_image`): the info, header and tables and the used data region (at most 64 KiB), and the used ADPCM-B
+  memory only when its bytes differ from the machine's copy (compared exactly with `memcmp`, then copied): an edit
+  that keeps the samples reads them once and writes none. The host's own hand-over of loaded images is unchanged
+  (Android copies `image_storage` on its control thread); the player keeps (order,
+  row, tick), clamps them to the new song and re-reads the current rows (the Mega Drive's relocation), and takes the
+  header's LFO, timer A and rhythm level when they changed. A sample under way continues from its address in the new
+  bytes; new start/end addresses apply at the next note. FM 3's mode is not taken at the edit: the player reads it
+  from the image only at FM 3's key-ons (and at reset). An FM 3 note and its release tail keep the mode they started
+  with: their frequency registers and `$27`; normal/special key off with `$28`, and CSM uses `$27 = $40` at OFF or
+  `Sxx`. At a new FM 3 note, `$27` changes directly to that note's current image mode; CSM has no `$28` key-off phase.
+  With FM 3 idle, an edited mode likewise takes effect only at FM 3's next note.
+
+### Audition, mute, mix
+
+- **Audition** on any channel with a sound of its part (`opnp_audition`); fine pitch on FM, SSG, ADPCM. Release keys
+  off and ticks until the part is silent (FM carriers at ymfm's quiet attenuation, SSG level 0, the drum or sample at
+  its end) or 10 s. A drum audition without the rhythm ROM is refused in Kotlin (`Ym2608RhythmRom.MISSING`).
+- **Mute** leaves a tracker channel's part out of the sums only (`OPN_MUTE_*`); the chip keeps computing it, so
+  unmuting continues exactly as if never muted.
+- **Mix** (MAME's relative routing in `pc8801.cpp`): YM2203 (FM + SSG A + B + C) / 2, mono;
+  YM2608 clamp16(FM + rhythm + ADPCM-B, ymfm's own sum: FM >> 1, ADPCM-B >> 1) +
+  (SSG A + B + C) / 3 on both sides (MAME: SSG 0.25 against FM 0.5). Apply a fixed **3/16 output
+  gain before blip_buf**, without clipping the combined route. Preserve the YM2203 floating-point DAC
+  and YM2608's inner DAC saturation before adding SSG. The unscaled legal route ranges are
+  −16384..40956 and −32768..49149 respectively; additive FM algorithms can reach the DAC limits.
+  Budget the full DC-to-opposite-rail span, not just the positive peak: the larger span is below
+  2.5 host units. The integrated `bl_step` table's total variation is below two, including linear
+  phase interpolation; use two as a conservative reconstruction span bound for arbitrary held
+  levels. The high-pass subtracts a running DC estimate, so budget that entire reconstructed span:
+  2.5 × 2 × 3/16 = 0.9375, with more than 2048 PCM units left for integer rounding.
+  This gain does not change relative part levels or register writes; it is not a limiter or automatic gain.
+  The native headroom regression covers both chips at 8, 44.1, 48 and 96 kHz with full additive FM,
+  full-volume SSG, held DC, DC-to-square and simultaneous cuts, comparing against an independently
+  routed chip plus blip path (including DAC saturation). The final native run passes 1,806 checks; the old
+  production mixer fails 58 against that regression. External observation of 16 loud/demo/rate cases
+  (32 sides) finds no outer-clamp loss, resampler clipping, observer mismatch or integrator overflow;
+  the maximum preclip peak is 0.317718506.
+  The balance between FM and SSG on real boards differs by model and is not measured here.
+
+### VGM export (`opn/opn_vgm.c`, `opn_export.h`)
+
+VGM 1.71, command data at `$114` (relative data offset `$34` = `$E0`). YM2203: clock at `$44` = 3 993 600, writes as command `$55`. YM2608: clock at
+`$48` = 7 987 200, port 0 / 1 writes `$56` / `$57`, and first a data block `$67 $66 $81` ("YM2608 DELTA-T ROM data":
+u32 memory size 262 144, u32 start 0, the used ADPCM-B bytes) when the song has samples. The SSG flags `$7A` / `$7B`
+are `$01`: the VGM 1.71 specification (vgmrips `vgmspec171.txt`) gives `$79` "AY8910 Flags … Default is 0x01" (bit 0
+Legacy Output) and `$7A` / `$7B` as the same flags for the AY8910 "connected with/part of" the YM2203 / YM2608; bit 4
+(YM2149 pin 26's extra /2) stays clear because the SSG divider is the chip's prescaler. Then the reset writes and each
+tick's writes with the key-off phase one 44.1 kHz sample earlier, waits from the native sample count (exact: 44 100 ×
+72 per native sample over 3 993 600), `$66`, then the GD3 tag (system "PC-88/98 OPN (Thor Tracker)" / "PC-88/98 OPNA
+(Thor Tracker)").
+
+**Board mix metadata.** The [VGM 1.71 extended header](https://github.com/vgmrips/vgmplay-legacy/blob/master/VGMPlay/vgmspec171.txt)
+at `$100` has size 12 and one volume entry: first-chip paired SSG `$86` / `$87`,
+relative volume `$8600` / `$8200` (YM2203 ×6 / YM2608 ×2). VGMPlay's default normalized
+SSG/FM routing is not the preview's board mix. Independent MAME renders of isolated
+FM and SSG tones agree in their reference-to-engine gains within 0.83% after this
+metadata; without it the SSG is too quiet. Overall output gain remains the VGM
+player's choice. No register writes, waits, sample data or native PCM change.
+
+**Loop without injected writes.** The file contains only writes the player makes in native playback, never a register
+dump. The renderer runs the player to its arrivals at (loop order, row 0, tick 0), A1, A2, …, and takes the first pair
+Ab < Aa whose complete player states are identical (`opnp_same_state`: position, speed, song-wide settings, every
+channel's note, effect and envelope state, rows, cursors, SSG envelope copies and the register shadow, field by
+field; a 64-bit digest finds candidates and a second player replayed to Ab confirms them exactly). From Ab on the
+player's writes repeat with period [Ab, Aa) forever, so the file holds the ticks before Aa with the loop offset at Ab:
+the first pass and every repeat send exactly native playback's writes — a held SSG hardware-envelope note, a held CSM
+note, a looping ADPCM-B sample or a slide across the wrap included. Usually Ab = A2 and Aa = A3, so the file holds the
+intro, one pass and the looping pass. Only the waits of a repeat reuse pass b's 44.1 kHz rounding (each write within
+one VGM sample of native timing). A song whose state never repeats within `max_ticks` (10 minutes in Kotlin's
+`OpnVgm.maxTicks`) and 64 arrivals ends there without a loop. Kotlin: `OpnVgm` with the host renderer (Android
+`ChipAudio.nativeOpnVgm`, Deck `DeckOpnVgm` over `opn_export_vgm`). The rhythm ROM is never in a file: VGM players
+supply their own copy. Whether a given VGM player emulates CSM (timer A) is that player's matter; not checked.
+
+### Tools and verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opn_machine_test.c` (both chips,
+  images built in C, no fixtures, no ROM): loader rejections; pitch measured from rendered audio (FM, SSG, ADPCM-B);
+  FM 3 special-mode writes and pitch; CSM timer A expiry rate and stop; FM 3's mode switched live under a held note
+  (every ordered pair of modes, released by OFF or by a retriggering note: writes and samples = the unedited song's
+  until the next note, the release in the old mode, then the new mode as a seek to that note sets it); SSG mixer /
+  noise / hardware-envelope ownership; rhythm writes and silence plus the missing flag without the ROM; ADPCM-B
+  sequence, end, loop, pan and level; positions; seeks sample-identical to straight play (an ADPCM-B sample keyed
+  long before the target, FM release tails, the SSG envelope, CSM) and the order fallback; live edits before every
+  tick; mute continuity at the
+  chip level (exact) and machine level; VGM structure and loops (each file expanded to three passes must equal a
+  fresh player's write trace exactly — songs with an SSG hardware-envelope note, a CSM note and a looping ADPCM-B
+  sample held across the wrap, a volume slide that settles only after some passes, and a song that never repeats and
+  so has no loop); the ops tables; per-tick cost. Evidence WAVs, VGMs, write traces and images go to the directory.
+- `python3 tools/audio/opn_reference_check.py [dir]` (standard library only, independent of the C code): parses the
+  VGMs, recomputes frequencies from the logged registers with the datasheet formulas and the clocks above, decodes
+  ADPCM-B itself, measures the evidence WAVs' pitch against them, expands each loop VGM itself to compare it with
+  the player's straight write trace, and validates the relative extended-header offsets and paired-SSG mix.
+- `wav_render_test.c` renders the demos `night-express.opnimg` and `paper-lanterns.opnaimg` and the shortest songs
+  `opn-shortest.opnimg` and `opna-shortest.opnaimg` (from `exportSamples`).
+- `tools/audio/render_opn_image.sh image out.wav [seconds] [rom.bin | rom=path] [mute=1,7,16] [--vgm out.vgm]
+  [title=… author=… date=…]` renders an image through the machine (rhythm with a private ROM path or
+  `THOR_RHYTHM_ROM`; it says so when a song keyed drums without one) and optionally its VGM.
+- **Private rhythm checks**: `THOR_RHYTHM_ROM=/path/to/ym2608_adpcm_rom.bin` (the user's own copy, size and SHA-256
+  checked) also runs the audible-rhythm checks; without it they are reported as skipped. Keep the ROM and its
+  evidence outside the repository.
+- The focused held/idle FM 3 mode check passed 264/264 on 2026-11-09; the preserved pre-fix player failed 72 checks.
+  The final focused native suite passes 1,806 checks, independent Python reference 420 checks and WAV export
+  2,006 checks. All 14 independent MAME tone checks pass unchanged 0.2% FM/SSG and 0.5% ADPCM tolerances;
+  maximum error is 0.1621% for the ADPCM octave, with FM 3 at 880.208 versus 880.198 Hz.
+  Full demo exports also pass independent envelope/spectrum/pitch-class comparison after the board-mix
+  metadata fix. Reserved-device UI, actual WAV import and VGM/WAV save pickers, firmware reuse and artifact
+  privacy were exercised; see `docs/VERIFICATION.md`. No human listening or real PC-88/98 measurement is claimed.
+
+## The YM2608 rhythm ROM (shared firmware)
+
+One module serves every chip with rhythm drums — the NES EPSM's YMF288 (`"nes-famistudio-epsm"`) and the YM2608
+(`"ym2608-opna"`): `ym2608_rhythm_rom.h` / `.c`. The ROM (8192 bytes: bass drum, snare, top cymbal, hi-hat, tom, rim
+shot at ymfm's fixed addresses; SHA-256 `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`) is
+Yamaha's and is not distributed with Thor Tracker in any form.
+
+- `int ym2608_rhythm_rom_install(const uint8_t* rom, size_t size)` copies it once into static storage and publishes it
+  with an atomic release store: 0 ok (the identical bytes again are a no-op); −1 for NULL, a size other than 8192, or
+  other bytes than an installed ROM (installed storage is never rewritten while audio threads may read it).
+  `ym2608_rhythm_rom_installed()` is 0/1; `ym2608_rhythm_rom()` returns the bytes or NULL (acquire). The caller checks
+  the ROM's identity first (`Ym2608RhythmRom.problem()` in `system/fm`: size, then SHA-256).
+- Hosts: Android `ChipAudio.nativeInstallRhythmRom(rom: ByteArray): Int` (JNI, `audio_jni.cpp`), called by
+  `MainActivity` at start for a stored `filesDir/firmware/ym2608_adpcm_rom.bin` that still verifies and after an
+  import; the Deck calls the same C function through `decknative.def` for
+  `~/.local/share/thortracker/firmware/ym2608_adpcm_rom.bin`. One import (main menu "YM2608 rhythm ROM…", shown for
+  songs whose system plays it, `SoundSystem.rhythmRom`, or the EPSM / OPNA Rhythm pages) serves both systems; the file
+  name and both host storage directories are unchanged from EPSM-only versions. Startup validates and loads that
+  existing file in place; there is no copy, rename, alternate path, or deprecated API alias.
+- Needed only when used: Kotlin's `lower()` refuses a song whose played orders hold a rhythm note, and audition
+  refuses a drum, with `Ym2608RhythmRom.MISSING`; FM, SSG and ADPCM-B play without it, and NSF, FamiStudio text and
+  VGM exports never contain or need it (a WAV export plays the song, so a rhythm song needs it there too).

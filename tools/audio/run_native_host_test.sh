@@ -17,9 +17,9 @@
 # s5b-manual-copies.nesimg from the samples).
 # EPSM: <dir>/nes_epsm.wav (all channels), nes_epsm_tonal.wav (rhythm drums muted), nes_epsm_trace.txt (per-frame APU +
 # $401C-$401F writes) and nes_epsm.nsf (the EPSM test song, expansion byte $7B = $80). The YM2608 rhythm ROM is not
-# part of Thor Tracker: set THOR_EPSM_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192 bytes, SHA-256 checked) for
-# the private rhythm checks, which then also write nes_epsm_rhythm.wav (rhythm drums only) and put the drums into
-# nes_epsm.wav and the EPSM demo's WAV renders; without it those checks are skipped with a notice. Keep the ROM outside
+# part of Thor Tracker: set THOR_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192 bytes, SHA-256 checked) for the
+# private rhythm checks (EPSM and OPNA), which then also write nes_epsm_rhythm.wav (rhythm drums only), put the drums
+# into nes_epsm.wav and write opna_rhythm.wav; without it those checks are skipped with a notice. Keep the ROM outside
 # the repository and give a ROM run an evidence directory outside it too (e.g. tools/audio/run_native_host_test.sh
 # /tmp/thor-evidence), so no drum render sits in the worktree.
 # MMC5: <dir>/nes_mmc5.wav, nes_mmc5_trace.txt (per-frame APU + MMC5 writes) and nes_mmc5.nsf (the MMC5 test song,
@@ -30,6 +30,11 @@
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
 # reference player's) and opl3_song.vgm (the VGM export of the test song).
+# OPN / OPNA (opn_machine_test, images built in C): one <tone>.wav (the engine's render, 48 kHz stereo) and <tone>.vgm
+# (the same image's VGM) per measured tone - opn_fm_a4, opn_fm_c2, opn_fm_c6, opn_ssg_a4, opn_ssg_b0, opn_fm3_special
+# and the opna_ ones plus opna_adpcm_root / opna_adpcm_up12 -, opn_csm.wav / opna_csm.wav, opn_song.wav / .vgm / .bin
+# and opna_song.wav / .vgm / .bin (the test songs and their images) and opn_evidence.txt (what each file holds). Then
+# check them independently (Python 3 stdlib only): python3 tools/audio/opn_reference_check.py <dir>
 # YM2612 (SGDK's XGM2 driver; tools/audio/ym_reference_check.py reads these): <dir>/ym_image.bin, ym_trace.txt
 # (per-tick player writes and PCM commands, = the Python reference player's), ym_song.wav, ym_song.vgm, ym_song.xgm
 # and ym_song.xgc for the tonal test song; the same for the PCM song (ym_pcm_image.bin, ym_pcm_trace.txt,
@@ -74,6 +79,7 @@ includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid"
   -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm" -I "$cpp/third_party/mednafen-pce-psg/shim"
   -I "$root/third_party/ayumi" -I "$root/app/src/test/cpp")
 includes+=(-I "$cpp/opm")
+includes+=(-I "$cpp/opn")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -87,6 +93,8 @@ c_engines=(
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/ym2608_rhythm_rom.c" "$cpp/opn/opn_image.c" "$cpp/opn/opn_player.c" "$cpp/opn/opn_vgm.c" "$cpp/opn/opn_chip.c"
+  "$cpp/opn/opn_machine.c"
   "$cpp/opm/opm_chip.c" "$cpp/opm/opm_machine.c" "$cpp/opm/opm_player.c" "$cpp/opm/opm_image.c" "$cpp/opm/opm_vgm.c"
   "$cpp/sms/sms_chip.c" "$cpp/sms/sms_machine.c" "$cpp/sms/sms_image.c" "$cpp/sms/sms_vgm.c"
   "$cpp/ay/ay_chip.c" "$cpp/ay/ay_machine.c" "$cpp/ay/ay_player.c" "$cpp/ay/ay_psg.c" "$cpp/ay/ay_image.c" "$cpp/ay/ay_vgm.c"
@@ -94,7 +102,7 @@ c_engines=(
   "$cpp/scc/scc_chip.c" "$cpp/scc/scc_machine.c" "$cpp/scc/scc_player.c" "$cpp/scc/scc_image.c" "$cpp/scc/scc_vgm.c"
   "$cpp/scc/scc_k051649.c"
 )
-cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/opm/opm_ymfm.cpp" "$cpp/pce/pce_psg.cpp")
+cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/opm/opm_ymfm.cpp" "$cpp/opn/opn_ymfm.cpp" "$cpp/pce/pce_psg.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
 for f in sid voice wave envelope filter dac extfilt pot; do cxx_engines+=("$cpp/third_party/resid-1.0/$f.cc"); done
 objs=()
@@ -110,7 +118,7 @@ for src in "${cxx_engines[@]}"; do
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
-  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test wav_render_test; do
+  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -130,10 +138,12 @@ status=0
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/opn_machine_test" "$out" || status=1
 "$build/sms_machine_test" "$out" || status=1
 "$build/ay_machine_test" "$out" || status=1
 "$build/pce_machine_test" "$out" || status=1
 "$build/scc_machine_test" "$out" || status=1
 "$build/opm_machine_test" "$out" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+echo "OPN / OPNA independent reference check of the evidence: python3 tools/audio/opn_reference_check.py $out"
 exit $status

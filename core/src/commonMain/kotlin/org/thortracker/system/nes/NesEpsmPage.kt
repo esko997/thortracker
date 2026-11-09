@@ -3,13 +3,14 @@ package org.thortracker.system.nes
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Hint
-import org.thortracker.editor.MenuContext
 import org.thortracker.editor.ViewController
 import org.thortracker.input.Keymap
 import org.thortracker.model.NumberText
 import org.thortracker.model.Song
 import org.thortracker.system.fm.FmInstrumentPainter
 import org.thortracker.system.fm.OpnTiming
+import org.thortracker.system.fm.RhythmRomMenu
+import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.NesInstrumentView.Row
 import org.thortracker.system.ym2612.YmCurated
 import org.thortracker.system.ym2612.YmFmInstrument
@@ -89,7 +90,7 @@ object NesEpsmPage {
     /** The first volume step a rhythm drum plays at (0-15; empty = 15). */
     fun rhythmLevel(ins: NesInstrument): Int = ins.volume.values.firstOrNull() ?: 15
 
-    fun romText(): String = if (EpsmRhythmRom.installed) "installed (SHA-256 verified)   ${EpsmRomMenu.LABEL} replaces it" else "missing: ${EpsmRhythmRom.MISSING}"
+    fun romText(): String = if (Ym2608RhythmRom.installed) "installed (SHA-256 verified)   ${RhythmRomMenu.LABEL} replaces it" else "missing: ${Ym2608RhythmRom.MISSING}"
 
     /** The preset the patch is (pan aside), or null. */
     fun preset(p: EpsmPatch): YmPresets.Preset? = p.asYm().let { ym -> PRESETS.firstOrNull { (it.instrument as YmFmInstrument).copy(name = "") == ym } }
@@ -113,7 +114,7 @@ object NesEpsmPage {
             Row.OPN_BRIGHTNESS, Row.OPN_TONE_DECAY -> k.brightness < 0
             Row.OPN_VIBRATO, Row.OPN_TREMOLO, Row.OPN_AMS, Row.OPN_FMS -> song.nes.epsmLfo and 8 == 0
             Row.EPSM_PAN -> !ins.epsm.left || !ins.epsm.right
-            Row.RHYTHM_ROM -> !EpsmRhythmRom.installed
+            Row.RHYTHM_ROM -> !Ym2608RhythmRom.installed
             else -> false
         }
     }
@@ -211,7 +212,7 @@ object NesEpsmPage {
             Row.OPN_PRESET -> applyPreset(v, 1)
             Row.OPN_OP_AM -> session.editNesEpsm(slot, "Set AM") { it.withYm(YmInstrumentView.step(it.asYm(), YmRow.OP_AM, operator(v.state), 1, 0)) }
             Row.EPSM_PAN -> session.editNesEpsm(slot, "Set pan") { stepPan(it, 1) }
-            Row.RHYTHM_ROM -> session.requestMenu { EpsmRomMenu.open(it) }
+            Row.RHYTHM_ROM -> session.requestMenu { RhythmRomMenu.open(it) }
             in ALL_ROWS -> Unit
             else -> return false
         }
@@ -326,7 +327,7 @@ object NesEpsmPage {
             row in OPN -> { h += Hint(v.editLr(), "±1 (${v.ud()} coarse)"); h += Hint(v.k(Action.CLEAR), "Default") }
             row == Row.EPSM_PAN -> { h += Hint(v.editLr(), "Both / left / right / off"); h += Hint(v.k(Action.CLEAR), "Both") }
             row == Row.RHYTHM_LEVEL -> { h += Hint(v.editLr(), "Level ±1 (${v.ud()} ±4)"); h += Hint(v.k(Action.CLEAR), "15") }
-            row == Row.RHYTHM_ROM -> h += Hint(v.k(Action.EDIT), if (EpsmRhythmRom.installed) "Replace the rhythm ROM…" else "Import the rhythm ROM…")
+            row == Row.RHYTHM_ROM -> h += Hint(v.k(Action.EDIT), if (Ym2608RhythmRom.installed) "Replace the rhythm ROM…" else "Import the rhythm ROM…")
             else -> return false
         }
         if (row !in GRID) h += Hint(v.lr(), "Sound slot")
@@ -382,7 +383,7 @@ object NesEpsmPage {
                     "Arpeggio, pitch, mixer, noise and the FM patch do not apply",
                 "Pan" to "The sound's pan (the same L/R bits as its FM pan)",
                 "Rhythm ROM" to "The drums need the YM2608 rhythm ROM (ym2608_adpcm_rom.bin, 8192 bytes), which Thor Tracker does not " +
-                    "include: import your own copy with \"EPSM rhythm ROM…\" (main menu, or $edit on the Rhythm page's ROM row). It is " +
+                    "include: import your own copy with \"${RhythmRomMenu.LABEL}\" (main menu, or $edit on the Rhythm page's ROM row). It is " +
                     "checked (size and SHA-256), kept on this device and never written into projects or exports. Without it, songs " +
                     "whose drums play are refused with a message; FM and SSG play without it",
             ),
@@ -392,27 +393,3 @@ object NesEpsmPage {
     private val EPSM_PAGES = listOf(NesEnvelopeKind.VOLUME, NesEnvelopeKind.ARPEGGIO, NesEnvelopeKind.PITCH, NesEnvelopeKind.MIXER, NesEnvelopeKind.NOISE)
 }
 
-/**
- * The rhythm ROM import (main menu and the Rhythm page): a picked file is checked ([EpsmRhythmRom.problem]: exactly
- * 8192 bytes with the known SHA-256), then the host keeps it as device firmware and installs it in the native engine
- * ([MenuContext.installEpsmRhythmRom]). The bytes never go into a project or an export.
- */
-object EpsmRomMenu {
-    const val LABEL = "EPSM rhythm ROM…"
-
-    /** Largest file the picker reads: well above the ROM's 8 KiB, so a wrong file is reported by size, not refused unread. */
-    const val MAX_FILE = 64 * 1024
-
-    fun open(menu: MenuContext) {
-        menu.pickFile("EPSM rhythm ROM (${EpsmRhythmRom.FILE_NAME})", EpsmRhythmRom.EXTENSIONS, MAX_FILE) { name, extension, bytes ->
-            import(menu, name + extension, bytes)
-        }
-    }
-
-    /** Checks [bytes] read from [file] and installs them; the result goes to [menu]'s status or error line. */
-    fun import(menu: MenuContext, file: String, bytes: ByteArray) {
-        val problem = EpsmRhythmRom.problem(bytes) ?: menu.installEpsmRhythmRom(bytes)
-        if (problem != null) menu.error("$file was not installed: $problem")
-        else menu.status("EPSM rhythm ROM installed from $file: the six rhythm drums play")
-    }
-}

@@ -19,10 +19,10 @@ interface MenuContext {
     fun error(message: String)
 
     /**
-     * Keeps [bytes], an already checked YMF288 rhythm ROM, as this device's firmware and installs it in the native
-     * engine ([org.thortracker.ui.MenuHost.installEpsmRhythmRom]); returns why it failed, or null.
+     * Keeps [bytes], an already checked YM2608 rhythm ROM, as this device's firmware and installs it in the native
+     * engine ([org.thortracker.ui.MenuHost.installRhythmRom]); returns why it failed, or null.
      */
-    fun installEpsmRhythmRom(bytes: ByteArray): String?
+    fun installRhythmRom(bytes: ByteArray): String?
 
     /** Help → About's actions popup: report a bug, copy diagnostics. */
     fun about() = status("About is not available here")

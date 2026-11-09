@@ -49,6 +49,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * PCM kits and samples, FM 3's mode and voices' FM 3 operator offsets.
  * AY-3-8910 / YM2149 (`ay-zx128`, `ay-msx`, `ay-atari-st`, `ay-cpc`; the sound names its `variant`, which must be the backend's) 1.
  * PC Engine (`pce-huc6280`) 1. SCC (`msx-scc`) 1; SCC+ (`msx-scc-plus`) 1; OPM (`ym2151-opm`) 1.
+ * PC-88/98 OPN (`ym2203-opn`) and OPNA (`ym2608-opna`) 1 (OPNA ADPCM-B sample data is one Base64 string per sample).
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

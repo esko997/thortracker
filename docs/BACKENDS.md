@@ -466,13 +466,14 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
     period, octave, manual period), **FM** (the shared curated FM editor with the Mega Drive presets), **FM Expert**
     (every register field) and **Rhythm** (level = the first volume step, pan = the patch's left/right, shared with FM;
     the rhythm ROM's status and import). On EPSM songs the Chip row offers 2A03 and EPSM; the song's LFO is a Song-view
-    setting. **EPSM rhythm ROM…** is in the main menu while an EPSM song is open and on the Rhythm page.
+    setting. **YM2608 rhythm ROM…** is in the main menu while an EPSM (or YM2608) song is open and on the Rhythm page.
   - *Rhythm ROM (never bundled).* The rhythm unit plays Yamaha's 8 KB ADPCM-A drum ROM (MAME's `ym2608_adpcm_rom.bin`).
-    It is not in the repository, APK, AppImage, demos or any export: the user imports their own copy (**EPSM rhythm
-    ROM…**), which `EpsmRhythmRom.problem()` checks (exactly 8192 bytes, SHA-256
-    `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`) before the host stores it as device firmware —
-    Android `filesDir/firmware/ym2608_adpcm_rom.bin`, Deck `~/.local/share/thortracker/firmware/ym2608_adpcm_rom.bin`
-    — and installs it into the native engine (`nes_epsm_install_rhythm_rom`) at every start. FM/SSG-only songs play
+    It is not in the repository, APK, AppImage, demos or any export: the user imports their own copy once (**YM2608
+    rhythm ROM…**), which `Ym2608RhythmRom.problem()` (`system/fm`, shared with the YM2608 system) checks (exactly 8192
+    bytes, SHA-256 `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`) before the host stores it as
+    device firmware — Android `filesDir/firmware/ym2608_adpcm_rom.bin`, Deck
+    `~/.local/share/thortracker/firmware/ym2608_adpcm_rom.bin` — and installs it into the native engine
+    (`ym2608_rhythm_rom_install`, the one copy every rhythm-playing chip reads) at every start. FM/SSG-only songs play
     without it. A song whose played orders contain a rhythm note, or a rhythm audition, fails with an actionable
     message while it is missing; nothing substitutes another sound. `.nsf` and text exports never need or contain it
     (NSF players bring their own copy).
@@ -1289,6 +1290,56 @@ roadmap autonomously):
   operator; *Drum* — drum and noise presets, noise on/off and frequency, the sweep. A noise sound listens on FM 8.
 - Demo: "Sharp Corners" (original), all eight channels, the LFO, DT2 bells, noise drums on FM 8 and a CSM passage.
 
+## OPN and OPNA (PC-88/98): YM2203 and YM2608
+
+**Status: 0.30.0/code 43 source integration on `opna-systems`, UNVERIFIED.** The focused native FM 3 regression passed 264/264 before integration; full builds, suites, device checks and listening remain pending (`docs/VERIFICATION.md`).
+
+- *Systems.* Two standalone systems in the family "PC-88/98" (New and Load demo list them together):
+  `OpnSystem` = **PC-88/98 OPN (YM2203)** (`"ym2203-opn"`: FM 1-3, SSG 1-3) and `OpnaSystem` = **PC-88/98 OPNA
+  (YM2608)** (`"ym2608-opna"`: FM 1-6, SSG 1-3, Kick, Snare, Cymbal, Hi-hat, Tom, Rim, ADPCM), one
+  `OpnFamilySystem(chip)` in `system/opn/`. Music-only, like the OPL3: Thor Tracker's own C player (no console driver
+  to run) on ymfm's `ym2203` / `ym2608` at the PC-88/98 clocks (3.9936 MHz / 7.9872 MHz; sources in
+  `docs/AUDIO_ENGINE.md`, "OPN and OPNA"), exported as VGM; WAV through the generic path.
+- *Notes and timing.* Absolute notes C-0..B-7, FamiTracker names (A-4 = 440 Hz); the SSG's lowest is B-0 (its 12-bit
+  period). One tick per timer B period, a song setting (TB 183-250, 47.5-578 ticks per second, default 198 = 59.77
+  Hz), as PC-98 drivers time their tempo; `ticksPerSecond(song)` follows it. Up to four effect columns per channel.
+- *Model* (`OpnSound`, project `sound` with `"chip":"ym2203"|"ym2608"`, backend version 1 for both): 64 sound slots
+  of any part — `"type":"fm"` (the Mega Drive's OPN voice fields: algorithm, feedback, `ams`, `fms`, four `operators`
+  with `dt mul tl ks ar am d1r d2r sl rr ssgEg`, plus `ch3`: four operator pitch offsets in 1/64 semitones for FM 3's
+  special/CSM modes, and the drum `sweep`), `"ssg"` (volume / arpeggio / pitch / mixer / noise envelopes, pitch mode,
+  the hardware `envelope` as the EPSM's: shape, autoPitch, octave, period, and `sweep`), `"rhythm"` (level 0-31,
+  left/right) and `"adpcm"` (sample index, root note, level 0-255, left/right, loop, `sweep`); the YM2608's `samples`
+  (`name`, recorded `rate`, ADPCM-B `data` as one Base64 string); song settings `timerB`, `fm3Mode`
+  (`normal`/`special`/`csm`), `timerA` (CSM rate), and on the YM2608 `lfo` (`$22`) and `rhythmLevel` (`$11`). Banks
+  are views of the one slot list by part (FM voices, SSG sounds, Rhythm sounds, ADPCM sounds), as the Mega Drive's FM
+  and PSG banks; a cell's sound must match its channel's part. A YM2203 song may not use OPNA-only features (LFO and its
+  depths, pans, rhythm, ADPCM, samples): the validator names each.
+- *Shared hardware, shared in the model.* The SSG's noise generator and envelope generator are one per chip: `Nxx`
+  and noise envelopes drive the noise period, the highest-numbered SSG channel sounding a hardware-envelope sound sets
+  its period, and each such note restarts it (`$0D`). FM 3's mode and timer A are song settings (`Txx` changes the
+  CSM rate while playing); the YM2608's LFO (`Lxx`) and rhythm total level (`Rxx`) likewise.
+- *ADPCM-B samples are song data* (onboard hardware, so fully supported): imported from `.wav` (any rate up to 55 466
+  Hz, resampled on request), or generated from Thor Tracker's own procedural starter kit (`OpnSampleKit`: Kick,
+  Snare, Hat, Bass, Bell, Voice — original synthesis, no recorded audio), then edited on the device (trim, gain,
+  normalise, reverse, fades, resample, rename, replace, delete); `OpnAdpcm` encodes with an exact model of ymfm's
+  ADPCM-B decoder (edits other than trimming the end decode and re-encode, which adds a little noise each time). The
+  lowering places every sample, 32-byte aligned, in the chip's 256 KiB; the VGM carries them as a data block. Notes
+  transpose from the sound's root note through Δ-N.
+- *Rhythm* plays the user-imported YM2608 rhythm ROM (shared with the EPSM; see
+  `docs/AUDIO_ENGINE.md`, "The YM2608 rhythm ROM"): needed only to play a song whose played orders hold a rhythm note
+  or to audition a drum; VGM export never needs or contains it.
+- *Editor* (`OpnInstrumentView`): a Type row switches a slot between the chip's parts. FM: **Sound** (the Mega
+  Drive's curated controls and presets via `asYm()`/`withYm`), **Expert** (every register; AM, AMS, FMS only on the
+  YM2608), **Ch3** (FM 3's mode and the four operator pitch offsets in semitones and 1/64 fine; Listen plays FM 3),
+  **Drum** (sweep). SSG: **Volume**, **Arpeggio**, **Pitch**, **Mixer**, **Noise**, **Hw env** (shape, auto/manual
+  period, octave, period), **Drum**. Rhythm: level, pan and the rhythm ROM row. ADPCM: **Sample** (sample, root,
+  level, pan, loop, name, trim, Tools…, Add sample… with memory used/free) and **Drum**. Song view: tick rate (timer
+  B), FM 3 mode, CSM rate (timer A); on the YM2608 also LFO and rhythm level.
+- *Demos.* "Night Express" (YM2203, D minor: FM 3 special-mode chords, SSG arpeggios, hardware-envelope buzz bass and
+  swell, tone/noise drums) and "Paper Lanterns" (YM2608, A major at TB 192: six panned FM voices with the LFO,
+  ADPCM-B kick, snare and a looping voice from the starter kit, SSG; no rhythm notes, so it plays without the ROM).
+  `OpnDemoSong.shortest(chip)` is the one-row song of the WAV export test.
+
 ## Open questions
 
 - OPM clock (decided on the user's behalf, per the brief): 4 MHz (X68000) only; a 3.579545 MHz (arcade) variant would
@@ -1450,6 +1501,18 @@ roadmap autonomously):
 - EPSM mixing level and stereo: the machine outputs true stereo (FM and rhythm pans, 2A03 centred). The YMF288's level
   against the 2A03 follows the evidence in `docs/AUDIO_ENGINE.md`, "EPSM"; no hardware comparison yet. Listening may
   ask for a different balance.
+- OPN/OPNA mixing (decided on the user's behalf): the chips' own DAC range with MAME's `pc8801.cpp` weights (YM2203 FM
+  and SSG channels equal; YM2608 SSG at half the FM route's weight), a full FM carrier at 0.125 as on the OPL3. Board
+  balances differ (PC-88 models, PC-9801-26K, -86); listening may ask for another.
+- OPN/OPNA tempo as timer B (decided on the user's behalf): ticks are timer B periods, as PC-98 drivers do, rather
+  than a fixed 60 Hz with multispeed; 60 Hz is not exactly reachable (TB 198 = 59.77 Hz). Review.
+- OPN/OPNA FM 3 CSM: an FM 3 note sets `$27 = $81` and timer A keys the operators until the note's OFF (no regular
+  key-on). Whether every VGM player emulates CSM is not checked. Review after listening.
+- OPN/OPNA ADPCM-B memory: 256 KiB (the PC-9801-86 / Sound Board II DRAM as commonly documented; not measured). Samples
+  are stored ADPCM-only in projects, so editing re-encodes them (generation loss); storing the source PCM too would
+  double the project size. Review.
+- OPN/OPNA seeks replay every tick through the whole chip (exact, as OPM's); the cost on the Konkr for a long song is
+  not measured.
 - MMC5 PCM is played by Thor Tracker's software lane, not by the pinned engine and not by an invented hardware timer:
   open questions are the 256 KiB / 64-sample budget, the −48..+24 pitch range, a delay longer than its row being forced
   at the next row, and the lower MMC5/N163 output level from the full-span, two-filter budget (about 14.1/10.5 dB

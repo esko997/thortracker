@@ -4,7 +4,7 @@ import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
 import org.thortracker.system.nes.EpsmPatch
-import org.thortracker.system.nes.EpsmRhythmRom
+import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.FdsPresets
 import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.WavePreset
@@ -29,6 +29,10 @@ import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.opn.OpnChip
+import org.thortracker.system.opn.OpnDemoSong
+import org.thortracker.system.opn.OpnSystem
+import org.thortracker.system.opn.OpnaSystem
 import org.thortracker.system.pce.PceDemoSong
 import org.thortracker.system.pce.PceSystem
 import org.thortracker.system.scc.SccDemoSong
@@ -290,16 +294,16 @@ object SampleExportTool {
         check(NesEpsmSystem.errors(epsmCopies).isEmpty()) { "the EPSM copies song is invalid: ${NesEpsmSystem.errors(epsmCopies)}" }
         File(directory, "epsm-copies.nesimg")
             .writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(epsmCopies, it) })
-        // EPSM drums only with the user's genuine YM2608 rhythm ROM (THOR_EPSM_RHYTHM_ROM, checked as the app checks an
+        // EPSM drums only with the user's genuine YM2608 rhythm ROM (THOR_RHYTHM_ROM, checked as the app checks an
         // import; never bundled or copied): all six drums, left/right/both pans and their first volumes, one order of 16
         // rows at speed 3 looping. Without the ROM nothing is written, as the app refuses to play drums without it.
-        val romPath = System.getenv("THOR_EPSM_RHYTHM_ROM")
+        val romPath = System.getenv("THOR_RHYTHM_ROM")
         if (romPath == null) {
-            println("THOR_EPSM_RHYTHM_ROM not set: epsm-rhythm.nesimg not exported (the drums need the YM2608 rhythm ROM)")
+            println("THOR_RHYTHM_ROM not set: epsm-rhythm.nesimg not exported (the drums need the YM2608 rhythm ROM)")
         } else {
-            val problem = EpsmRhythmRom.problem(File(romPath).readBytes())
-            check(problem == null) { "THOR_EPSM_RHYTHM_ROM: $problem" }
-            EpsmRhythmRom.markInstalled() // the native renderer installs the same file before playing this image
+            val problem = Ym2608RhythmRom.problem(File(romPath).readBytes())
+            check(problem == null) { "THOR_RHYTHM_ROM: $problem" }
+            Ym2608RhythmRom.markInstalled() // the native renderer installs the same file before playing this image
             val drBase = NesEpsmSystem.blank()
             val drBank = drBase.nes.instruments.toMutableList()
             drBank[0] = NesInstrument("Drum both", volume = NesEnvelope(listOf(15)), chip = NesChip.EPSM)
@@ -337,6 +341,23 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The PC-88/98 OPN (YM2203) and OPNA (YM2608) demos: projects and engine images (their VGMs need the native
+        // player: tools/audio/render_opn_image.sh renders them). Neither demo has rhythm notes, so neither needs the
+        // rhythm ROM. Then each chip's shortest valid song (one one-row order at speed 1, one held FM 1 note), whose
+        // images the native WAV export test renders through loops.
+        val opn = OpnSystem.demo()
+        File(directory, "night-express.thor").writeText(ProjectCodec.encode(opn), Charsets.UTF_8)
+        File(directory, "night-express.opnimg").writeBytes(ByteArray(OpnSystem.engine.imageSize).also { OpnSystem.engine.lower(opn, it) })
+        val opna = OpnaSystem.demo()
+        File(directory, "paper-lanterns.thor").writeText(ProjectCodec.encode(opna), Charsets.UTF_8)
+        File(directory, "paper-lanterns.opnaimg").writeBytes(ByteArray(OpnaSystem.engine.imageSize).also { OpnaSystem.engine.lower(opna, it) })
+        for ((chip, name) in listOf(OpnChip.YM2203 to "opn-shortest.opnimg", OpnChip.YM2608 to "opna-shortest.opnaimg")) {
+            val shortest = OpnDemoSong.shortest(chip)
+            val system = shortest.system
+            check(system.errors(shortest).isEmpty()) { "the shortest ${chip.label} song is invalid: ${system.errors(shortest)}" }
+            File(directory, name).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+        }
+        println("Exported ${opn.title}, ${opna.title} and the shortest OPN and OPNA songs to ${directory.absolutePath}")
         // The AY demo on each computer: project and engine image (its VGM needs the native player:
         // tools/audio/render_ay_image.sh copper-lane-zx128.ayimg out.wav --vgm copper-lane-zx128.vgm renders both).
         for (variant in AyVariant.entries) {

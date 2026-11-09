@@ -21,6 +21,8 @@ import org.thortracker.system.pce.PceSystem
 import org.thortracker.system.scc.SccPlusSystem
 import org.thortracker.system.scc.SccSystem
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.opn.OpnSystem
+import org.thortracker.system.opn.OpnaSystem
 import org.thortracker.system.sms.SmsSystem
 import org.thortracker.system.ym2612.YmSystem
 import org.thortracker.system.ay.AyAtariStSystem
@@ -411,6 +413,12 @@ interface SoundSystem {
     /** Song-wide chip settings the Song view lists after its shared rows; none on most systems. */
     val songSettings: List<SongSetting> get() = emptyList()
 
+    /**
+     * True when the system's rhythm drums play the YM2608 rhythm ROM the user imports
+     * ([org.thortracker.system.fm.Ym2608RhythmRom]): the main menu then offers its import. The NES EPSM and the YM2608.
+     */
+    val rhythmRom: Boolean get() = false
+
     /** Shared chip state at ([order], [row]) of [song] as straight play reaches it, or null when the chip has none. */
     fun sharedState(song: Song, order: Int, row: Int): SharedState? = null
 }
@@ -420,7 +428,7 @@ object SoundSystems {
     val ALL: List<SoundSystem> =
         listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System) + NesN163System.ALL +
             listOf(NesS5bSystem, NesFdsSystem, NesMmc5System, NesEpsmSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL +
-            listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem, SccSystem, SccPlusSystem, PceSystem, OpmSystem)
+            listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem, SccSystem, SccPlusSystem, PceSystem, OpmSystem, OpnSystem, OpnaSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

@@ -33,13 +33,13 @@ import platform.posix.remove
 import platform.posix.uname
 import platform.posix.utsname
 import kotlin.time.TimeSource
-import decknative.nes_epsm_install_rhythm_rom
-import org.thortracker.system.nes.EpsmRhythmRom
-import org.thortracker.system.nes.EpsmRomMenu
+import decknative.ym2608_rhythm_rom_install
+import org.thortracker.system.fm.RhythmRomMenu
+import org.thortracker.system.fm.Ym2608RhythmRom
 
 /**
  * The Deck's platform side of the shared menus: projects and exports in ~/ThorTracker via the in-app [FileBrowser],
- * working-song recovery, keymap and imported firmware (the EPSM rhythm ROM, firmware/) in ~/.local/share/thortracker,
+ * working-song recovery, keymap and imported firmware (the YM2608 rhythm ROM, firmware/) in ~/.local/share/thortracker,
  * bundled tunings beside the executable. WAV exports render in slices of the frame loop ([pumpExport]) behind a
  * progress popup.
  */
@@ -61,9 +61,9 @@ class DeckShell(
     private val keymapFile = "$data/keymap.json"
     /** Where a WAV export renders before it moves to its destination (removed when the export ends, and at startup). */
     private val wavSpool = "$data/wav-export.wav.part"
-    /** Device firmware the user imports (the EPSM's rhythm ROM): kept here, never in projects or exports. */
+    /** Device firmware the user imports (the YM2608 rhythm ROM of the NES EPSM and OPNA drums): kept here, never in projects or exports. */
     private val firmware = "$data/firmware"
-    private val rhythmRom = "$firmware/${EpsmRhythmRom.FILE_NAME}"
+    private val rhythmRom = "$firmware/${Ym2608RhythmRom.FILE_NAME}"
 
     /** The project file the working song was opened from or last saved to. */
     private var currentFile: String? = null
@@ -415,8 +415,8 @@ class DeckShell(
             loaded(file.dropLast(extension.length), extension, bytes)
         }.show(documents)
 
-    /** [MenuHost.installEpsmRhythmRom]: saves the checked [bytes] (temporary file and rename), then installs them. */
-    override fun installEpsmRhythmRom(bytes: ByteArray): String? {
+    /** [MenuHost.installRhythmRom]: saves the checked [bytes] (temporary file and rename), then installs them. */
+    override fun installRhythmRom(bytes: ByteArray): String? {
         Files.mkdirs(firmware)
         if (!Files.write(rhythmRom, bytes)) return "it could not be saved in ${Files.pretty(firmware)}"
         return installRhythmRomNative(bytes)
@@ -424,19 +424,19 @@ class DeckShell(
 
     /** Hands checked ROM [bytes] to the native engine and marks the ROM installed; returns why not, or null. */
     private fun installRhythmRomNative(bytes: ByteArray): String? {
-        val result = bytes.usePinned { nes_epsm_install_rhythm_rom(it.addressOf(0).reinterpret<UByteVar>(), bytes.size.convert()) }
+        val result = bytes.usePinned { ym2608_rhythm_rom_install(it.addressOf(0).reinterpret<UByteVar>(), bytes.size.convert()) }
         if (result != 0) return "the audio engine refused it (error $result)"
-        EpsmRhythmRom.markInstalled()
+        Ym2608RhythmRom.markInstalled()
         return null
     }
 
     /** At start: installs a ROM imported earlier after checking it again; a changed or damaged file is reported, not used. */
     private fun loadRhythmRom() {
         if (!Files.exists(rhythmRom)) return
-        val bytes = Files.readBytes(rhythmRom, max = EpsmRomMenu.MAX_FILE.toLong())
-        val problem = if (bytes == null) "it could not be read" else EpsmRhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
-        if (problem != null) error("The saved EPSM rhythm ROM (${Files.pretty(rhythmRom)}) was not installed: $problem. " +
-            "Import it again (${EpsmRomMenu.LABEL} in the menu)")
+        val bytes = Files.readBytes(rhythmRom, max = RhythmRomMenu.MAX_FILE.toLong())
+        val problem = if (bytes == null) "it could not be read" else Ym2608RhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
+        if (problem != null) error("The saved YM2608 rhythm ROM (${Files.pretty(rhythmRom)}) was not installed: $problem. " +
+            "Import it again (${RhythmRomMenu.LABEL} in the menu)")
     }
 
     override fun extraMenuItems(): List<Pair<String, () -> Unit>> = listOf("Quit" to quit)

@@ -10,17 +10,17 @@
  * driver fault. Built and run by tools/audio/render_nes_image.sh.
  *
  * EPSM rhythm drums need the YM2608 rhythm ROM, which is not part of Thor Tracker: for private local checks pass the
- * user's own copy (8192 bytes) as the 4th argument or in $THOR_EPSM_RHYTHM_ROM. Without it the drums are silent and
- * the render says so. */
+ * user's own copy (8192 bytes) as the 4th argument or in $THOR_RHYTHM_ROM. Without it the drums are silent and the
+ * render says so. */
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "chip_engine.h"
-#include "nes_epsm.h"
 #include "nes_image.h"
 #include "nes_machine.h"
+#include "ym2608_rhythm_rom.h"
 #include "nes_mmc5_pcm.h"
 
 #define RATE 48000
@@ -32,10 +32,10 @@ static int install_rom(const char* path) {
         perror(path);
         return 1;
     }
-    static uint8_t rom[NES_EPSM_RHYTHM_ROM_SIZE + 1];
+    static uint8_t rom[YM2608_RHYTHM_ROM_SIZE + 1];
     const size_t size = fread(rom, 1, sizeof rom, f);
     fclose(f);
-    if (nes_epsm_install_rhythm_rom(rom, size) != 0) {
+    if (ym2608_rhythm_rom_install(rom, size) != 0) {
         fprintf(stderr, "%s: not an 8192-byte rhythm ROM (%zu bytes)\n", path, size);
         return 1;
     }
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     double seconds = argc > 3 ? atof(argv[3]) : 30.0;
-    const char* rom_path = argc > 4 ? argv[4] : getenv("THOR_EPSM_RHYTHM_ROM");
+    const char* rom_path = argc > 4 ? argv[4] : getenv("THOR_RHYTHM_ROM");
     FILE* f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 1; }
     /* The largest image: the MMC5 engine's (its FamiStudio image plus the PCM lane's extension). */
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     printf("%s: %.1f s, peak %.3f, rms %.4f, ended at order %d row %d\n", argv[2], frames / (double)RATE, peak,
            sqrt(sum / (frames * 2.0)), order, row);
     if (id == NES_EPSM_PLAYER_ID && nm_epsm_rhythm_missing((const NesMachine*)m)) {
-        printf("EPSM rhythm drums were keyed without a rhythm ROM and are silent (pass the ROM or set THOR_EPSM_RHYTHM_ROM)\n");
+        printf("EPSM rhythm drums were keyed without a rhythm ROM and are silent (pass the ROM or set THOR_RHYTHM_ROM)\n");
     }
     ops->destroy(m);
     free(image);

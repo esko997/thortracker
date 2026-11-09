@@ -23,6 +23,7 @@ import org.thortracker.model.Songs
 import org.thortracker.audio.WavExport
 import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.opl3.Opl3Vgm
+import org.thortracker.system.opn.OpnVgm
 import org.thortracker.system.pce.PceVgm
 import org.thortracker.system.scc.SccVgm
 import org.thortracker.system.sms.SmsExport
@@ -66,6 +67,7 @@ fun main(args: Array<String>) {
     check(dd_init(renderer, "$appDir/fonts") == 0) { "fonts missing next to the executable" }
 
     Opl3Vgm.renderer = DeckOpl3Vgm
+    OpnVgm.renderer = DeckOpnVgm
     SccVgm.renderer = DeckSccVgm
     PceVgm.renderer = DeckPceVgm
     OpmVgm.renderer = DeckOpmVgm

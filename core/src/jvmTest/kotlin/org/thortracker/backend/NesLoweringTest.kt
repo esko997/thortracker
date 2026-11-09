@@ -3,7 +3,7 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.nes.EpsmPatch
-import org.thortracker.system.nes.EpsmRhythmRom
+import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesEpsmSystem
@@ -40,7 +40,7 @@ import kotlin.test.assertTrue
  * header, envelope directory, instrument tables (with an expansion's table; with the EPSM its FM patch blocks), channel
  * streams of `$41` per order plus `$42`, flat pattern streams with one terminator per row and only the opcodes each
  * channel's engine code takes, and the engine-facing numbers of each variant's engine. Tests never install the EPSM
- * rhythm ROM ([EpsmRhythmRom.markInstalled] is one-way for the process): songs with drums are built into images through
+ * rhythm ROM ([Ym2608RhythmRom.markInstalled] is one-way for the process): songs with drums are built into images through
  * [NesImageLayout] directly.
  */
 class NesLoweringTest {
@@ -54,7 +54,7 @@ class NesLoweringTest {
             val engine = song.system.engine
             assertEquals(song.nes.expansion.player.engineId, engine.id, name)
             val image = ByteArray(engine.imageSize)
-            if (NesRules.playsRhythm(song) && !EpsmRhythmRom.installed) {
+            if (NesRules.playsRhythm(song) && !Ym2608RhythmRom.installed) {
                 NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), image)
             } else engine.lower(song, image)
             check(name, song, image)
@@ -753,8 +753,8 @@ class NesLoweringTest {
         assertTrue(e.auditionProblem(song, NesRules.EPSM_FM1, 57, 1, 0)!!.contains("2A03 sound"))
         assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("EPSM sound"))
         // A drum audition needs the rhythm ROM (tests never install it); any note is the drum.
-        assertFalse(EpsmRhythmRom.installed)
-        assertEquals(EpsmRhythmRom.MISSING, e.auditionProblem(song, NesRules.EPSM_RHYTHM1, 100, 2, 0))
+        assertFalse(Ym2608RhythmRom.installed)
+        assertEquals(Ym2608RhythmRom.MISSING, e.auditionProblem(song, NesRules.EPSM_RHYTHM1, 100, 2, 0))
         assertEquals("Kick", NesEpsmSystem.noteSample(song, NesRules.EPSM_RHYTHM1, 57, 2)?.name)
         val image = ByteArray(e.imageSize)
         e.lower(song, image)
@@ -779,18 +779,18 @@ class NesLoweringTest {
 
     /**
      * The rhythm ROM is the user's: an EPSM song whose played orders hold a drum note does not lower for playback
-     * without it (the actionable [EpsmRhythmRom.MISSING]); FM and SSG songs, drums only in parked orders, and the
+     * without it (the actionable [Ym2608RhythmRom.MISSING]); FM and SSG songs, drums only in parked orders, and the
      * `.nsf` and FamiStudio text exports do.
      */
     @Test
     fun drumsNeedTheRhythmRomOnlyForPlayback() {
-        assertFalse(EpsmRhythmRom.installed)
+        assertFalse(Ym2608RhythmRom.installed)
         val song = NesGoldenSongs.epsmRhythm()
         assertEquals(emptyList(), NesEpsmSystem.errors(song))
         assertTrue(NesRules.playsRhythm(song))
         val image = ByteArray(NesEpsmSystem.engine.imageSize)
         val e = assertFailsWith<IllegalArgumentException> { NesEpsmSystem.engine.lower(song, image) }
-        assertEquals(EpsmRhythmRom.MISSING, e.message)
+        assertEquals(Ym2608RhythmRom.MISSING, e.message)
         assertTrue(NsfExporter.export(song).isNotEmpty())
         assertTrue(FamiStudioText.text(song).contains("EPSMRythm6"))
         val noDrums = song.copy(patterns = song.patterns.map { p ->

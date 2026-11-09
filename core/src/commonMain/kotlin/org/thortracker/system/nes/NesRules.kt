@@ -254,7 +254,7 @@ object NesRules {
 
     /**
      * True when [song] is an EPSM song whose played orders (parked ones excluded) hold a note on a rhythm channel: the
-     * song then needs the rhythm ROM to play ([EpsmRhythmRom]).
+     * song then needs the rhythm ROM to play ([org.thortracker.system.fm.Ym2608RhythmRom]).
      */
     fun playsRhythm(song: Song): Boolean {
         val sound = song.sound as? NesSound ?: return false

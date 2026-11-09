@@ -19,6 +19,7 @@ set(OPL3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opl3)
 set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
+set(OPN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opn)
 set(OPM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opm)
 set(SMS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sms)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
@@ -44,17 +45,20 @@ target_compile_definitions(resid PRIVATE NDEBUG=1)
 target_compile_options(resid PRIVATE -O2 -fPIC -w)
 set_target_properties(resid PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# ymfm (C++): the YM2612, the EPSM's YMF288 and the YM2151. ym/ym_ymfm.cpp (the YM2612's C interface) compiles ymfm_opn.cpp itself
-# and instantiates the OPNA templates that nes/nes_epsm_ymfm.cpp (the YMF288's C interface) uses.
-# opm/opm_ymfm.cpp compiles ymfm_opm.cpp; link all three wrappers.
+# ymfm (C++): the YM2612, the EPSM's YMF288 and the YM2203 / YM2608. ym/ym_ymfm.cpp (the YM2612's C interface)
+# compiles ymfm_opn.cpp itself and instantiates the OPN and OPNA templates that nes/nes_epsm_ymfm.cpp (the YMF288's C
+# interface) and opn/opn_ymfm.cpp (the YM2203's and YM2608's) use; link these wrappers and the OPM wrapper. ym2608_rhythm_rom.c (C) is the one
+# rhythm ROM both rhythm chips read, kept in this library beside its readers.
 add_library(ymfm STATIC
     ${YM_DIR}/ym_ymfm.cpp
     ${NES_DIR}/nes_epsm_ymfm.cpp
     ${OPM_DIR}/opm_ymfm.cpp
+    ${OPN_DIR}/opn_ymfm.cpp
+    ym2608_rhythm_rom.c
     ${YMFM_DIR}/ymfm_adpcm.cpp
     ${YMFM_DIR}/ymfm_ssg.cpp
 )
-target_include_directories(ymfm PRIVATE ${YMFM_DIR} ${YM_DIR} ${NES_DIR} ${OPM_DIR})
+target_include_directories(ymfm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${YMFM_DIR} ${YM_DIR} ${NES_DIR} ${OPN_DIR} ${OPM_DIR})
 target_compile_definitions(ymfm PRIVATE NDEBUG=1)
 target_compile_options(ymfm PRIVATE -O2 -fPIC -w)
 set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -104,6 +108,11 @@ add_library(chip_engines STATIC
     ${YM_DIR}/ym_xgm.c
     ${YM_DIR}/ym_vgm.c
     ${YM_DIR}/ym_psg.c
+    ${OPN_DIR}/opn_chip.c
+    ${OPN_DIR}/opn_machine.c
+    ${OPN_DIR}/opn_player.c
+    ${OPN_DIR}/opn_image.c
+    ${OPN_DIR}/opn_vgm.c
     ${OPM_DIR}/opm_chip.c
     ${OPM_DIR}/opm_machine.c
     ${OPM_DIR}/opm_player.c
@@ -133,7 +142,7 @@ add_library(chip_engines STATIC
     ${SCC_DIR}/scc_k051649.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR}
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPN_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable

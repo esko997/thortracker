@@ -1,5 +1,79 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.30.0 PC-88/98 OPN and OPNA
+
+Adds **PC-88/98 OPN (YM2203)** (`ym2203-opn`, **Night Express**) and **PC-88/98 OPNA
+(YM2608)** (`ym2608-opna`, **Paper Lanterns**), using Thor Tracker's player on ymfm.
+Both have FM and SSG, FM 3 special/CSM modes and VGM/WAV export. OPNA adds stereo,
+LFO, six rhythm drums and ADPCM-B sample import, generation and editing. The rhythm
+drums require the user's private YM2608 ROM; both factory demos work without it.
+EPSM and OPNA now share the same validated firmware loader and existing storage path.
+Version **0.30.0/code 43**; project format 10 and all 500 bundled scales are retained.
+
+Observed integration evidence:
+
+- **783 JVM, 19 Linux and six Android-host tests**, zero failures/errors/skips;
+  **21 permanent Android tests** passed after removing both temporary harness sources.
+  All **32 Game Boy view captures** and the factory `.uge` remain byte/pixel-identical.
+- **1,806 native checks**, zero failures, including FM/SSG/ADPCM pitch, FM 3/CSM,
+  mute continuity, live edits, fully clocked seeks and VGM loop traces. The old
+  mixer fails 58 of these checks; fixed **3/16 gain before blip_buf** preserves the
+  chip's inner DAC saturation without clipping the combined route.
+- **420 independent Python checks**, covering 14 tones, eight loop traces, 22 VGM
+  files and the extended volume headers; **2,006 WAV-export checks** passed.
+  External observation of 16 loud/demo/rate cases, 32 sides, found no outer-clamp
+  loss, resampler clips, observer mismatches or integrator overflows; maximum
+  preclip peak **0.317718506**.
+- All 14 independent MAME tone comparisons pass unchanged 0.2% FM/SSG and 0.5%
+  ADPCM tolerances. Maximum error is 0.1621% for the ADPCM octave; FM 3 measures
+  880.208 versus 880.198 Hz. The focused FM 3 live-mode regression separately
+  passes 264 checks; the old player fails 72.
+- The final independent mixed-song check caught VGMPlay's different default
+  FM/SSG balance. VGM 1.71 paired-SSG volume metadata now preserves the preview's
+  nominal balance: isolated FM/SSG reference gains differ by **0.80% OPN / 0.82%
+  OPNA**, rather than factors of about six/two. The new checker fails on all 24
+  pre-fix structure checks. After the export-only fix, all 19 native WAVs and
+  both Android demo WAVs are byte-identical.
+- Both final Android document-picker VGMs were rendered by independent MAME:
+  envelope correlations **0.815 / 0.983**, averaged log-spectrum correlations
+  **0.848 / 0.921**, dominant pitch-class agreement **81% / 94%** (OPN / OPNA).
+  These pass the existing 0.8/0.8/70% comparison gates; they are not bit-exact
+  emulator equivalence, original-hardware measurements or a human listening review.
+- **Nova, DMG and Konkr** passed actual activity/controller checks for playback,
+  held audition, FM Sound/Expert/Ch3/Drum, SSG envelopes/noise/hardware envelopes,
+  ADPCM generation/loop/trim/reverse, a real Android WAV import picker, exact
+  undo/redo, restart, Stop and both exports. New blank/demo family menus and
+  VGM/WAV save pickers were exercised on Nova, including after the metadata fix.
+- Konkr replayed **16,065 ticks** in **15.60 s OPNA / 7.55 s OPN** without freezing
+  the UI: 700/339 interaction rounds, maximum 14/22 ms, and Stop remained usable.
+  Konkr and DMG reported no underruns or driver faults in these checks. Nova had
+  isolated single settling underruns, including the legacy EPSM check; its buffer
+  expanded 384→576 frames and subsequent stable windows had no further growth.
+  No driver faults were observed.
+- Nova's **pre-existing EPSM firmware** loaded without re-importing, played all six
+  OPNA drums and all six EPSM drums, and appeared as installed in the real menu.
+  Konkr/DMG correctly refused all six rhythm auditions without firmware.
+  Private EPSM PCM was checked only in device cache and deleted there; neither
+  that recording nor the ROM was copied into repository or release artifacts.
+- Local desktop debug builds passed eight playback/audition/FM-3/Song/Stop scenes;
+  both demos were played and visually inspected again after the export fix.
+  The corrected signed APK's 28 entries, desktop executable and two picker VGMs
+  contain neither the whole private ROM nor any of 256 distinct aligned 32-byte
+  chunks. All 143 generated sample-export files passed the earlier same scan.
+
+Local evidence is retained under `/tmp/thor-opna-final-frontend-e8ujjrin`,
+`/tmp/thor-opna-final-vgm-60soo3d8` and `/tmp/thor-opna-vgm-mix-sz0dupl5`.
+Native/private evidence also includes `/tmp/thor-opna-headroom-verified-trtorenl`
+and `/tmp/thor-opna-final-renders-4cybt44o`; do not publish these directories.
+
+Builds were serialized, one worker, in-process Kotlin. A combined optimized
+desktop link was cancelled when it caused heavy swapping; the successful local
+builds used a **1 GiB JVM, Serial GC, two active processors and debug desktop
+linking**. No unrelated process was killed. The optimized AppImage build and
+published-artifact smoke are publication gates. Thor/Deck receive artifacts only;
+`/ThorTunez` remains untouched. Human listening and physical PC-88/98 comparison
+remain unperformed.
+
 ## 0.29.0 OPM FM and reliable asynchronous transport
 
 **OPM FM (YM2151)** (`ym2151-opm`) adds eight four-operator FM channels at
@@ -60,7 +134,16 @@ Observed integration evidence:
   scenarios with inspected surfaces. The standalone eight-second render produced
   peak **0.445**, RMS **0.0868**, and a **7,316-byte VGM** with a 5.98-second loop.
 
-This records candidate verification; published-artifact smoke and delivery follow CI publication.
+Published as **v0.29.0**, PR #40 / main `8f7c0ad`. CI's build, Deck and signed-APK jobs
+passed; GitHub then marked the workflow failed without creating the AppImage attachment
+job, produced no failed-job logs, and refused a retry. The successful Deck job's original
+artifact was checksum-verified, exercised as an AppImage, and attached to the existing release.
+The official APK passed activity smoke on Nova, DMG and Konkr. Nova recorded **one underrun**
+before the first settled playback-plus-audition sample, with no subsequent growth; DMG/Konkr
+recorded zero and all three recorded zero driver faults. The official Konkr deep seek took
+**14.58 seconds native**, remained responsive (657 UI rounds, maximum 13 ms) and stopped correctly.
+Thor received the APK in Downloads without installation or wake; the Deck received the
+AppImage and updated stable `~/thortracker-deck/thor-tracker` symlink without launch or wake.
 No human listening or original-hardware measurement is claimed.
 
 ## 0.28.0 Licensed tuning library and optional local packs
