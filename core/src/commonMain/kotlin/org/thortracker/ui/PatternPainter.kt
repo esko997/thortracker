@@ -82,12 +82,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         gridLeft = area.left + rulerW
         multi = ctl.multiColumn()
         laneCount = channels
+        val minLane = cw * 10f + cw * 1.2f
+        variableLanes = multi || channels * minLane > area.width() - rulerW
         val wantInspector: Boolean
         val inspectorW: Float
-        if (!multi) {
-            val laneInner = cw * 10f
-            val lanePad = cw * 1.2f
-            val minLane = laneInner + lanePad
+        if (!variableLanes) {
             wantInspector = area.width() - rulerW - channels * minLane > ink.unit * 15f
             laneW = if (wantInspector) minOf(cw * 15f, (area.width() - rulerW - ink.unit * 15f) / channels)
             else (area.width() - rulerW) / channels
@@ -123,9 +122,12 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
         // The chip's shared state (SID: which voice owns the filter) where the song is heard: the playhead, else the cursor.
         val shared = if (playing) s.system.sharedState(s, v.playback.order, v.playback.row) else s.system.sharedState(s, st.order, st.row)
+        val rightScrollLabel = if (variableLanes && lastLane < channels - 1) "${channels - 1 - lastLane}▶" else ""
+        val rightScrollW = if (rightScrollLabel.isEmpty()) 0f else ink.labelWidth(rightScrollLabel, ink.unit * 0.75f, true) + cw
         for (ch in firstLane..lastLane) {
             val x = laneLeft(ch)
             val laneW = laneWidth(ch)
+            val headerW = laneW - (if (ch == lastLane) rightScrollW else 0f)
             val col = Palette.channel(ch)
             val heard = if (ch != auditionChannel) 0f else if (auditionLit) 1f else motion.fade(auditionEnd, 320)
             val lamp = maxOf(playLamp(ch), heard)
@@ -133,20 +135,24 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             ink.rect(c, x, laneTop, x + laneW, laneTop + ink.dp(3f), if (lamp > 0f) Palette.mix(col, Palette.TEXT, 0.6f * lamp) else col)
             val pen = ctl.pen(s.system.channels[ch].bank)
             val penName = s.system.instrumentName(s, s.system.channels[ch].bank, pen) ?: ""
-            ink.label(c, names[ch], x + cw * 0.6f, laneTop, laneHeaderH, col, true)
-            val nw = ink.labelWidth(names[ch], ink.unit, true)
             // Hidden effect columns that hold effects (they still play): "+n" in the lane header.
             val hidden = if (multi) ctl.usedColumns(ch) - ctl.shownColumns(ch) else 0
             val tag = shared?.tags?.getOrNull(ch) ?: if (hidden > 0) "+$hidden fx" else null
             val tagW = if (tag == null) 0f else ink.labelWidth(tag, ink.unit * 0.7f, true) + cw * 1.2f
+            val name = ink.fit(names[ch], (headerW - cw * 1.2f - tagW).coerceAtLeast(0f), ink.unit, true)
+            ink.label(c, name, x + cw * 0.6f, laneTop, laneHeaderH, col, true)
+            val nw = ink.labelWidth(name, ink.unit, true)
             if (tag != null) {
-                val tr = Rect(x + laneW - tagW, laneTop + laneHeaderH * 0.2f, x + laneW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
+                val tr = Rect(x + headerW - tagW, laneTop + laneHeaderH * 0.2f, x + headerW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
                 ink.round(c, tr, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 60))
                 ink.label(c, tag, tr.centerX(), tr.top, tr.height(), Palette.PLAYHEAD, true, ink.unit * 0.7f, Align.CENTER)
             }
-            ink.label(c, ink.fit("${hex2(pen)} $penName", laneW - nw - cw * 2f - tagW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
+            val penW = headerW - nw - cw * 2f - tagW
+            if (penW >= ink.labelWidth("…", ink.unit * 0.8f)) {
+                ink.label(c, ink.fit("${hex2(pen)} $penName", penW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
+            }
         }
-        if (multi) drawLaneScroll(c, area, laneHeaderH)
+        if (variableLanes) drawLaneScroll(c, area, laneHeaderH, rightScrollLabel, rightScrollW)
 
         // rows background + ruler
         for (r in first..last) {
@@ -258,25 +264,28 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
     // ---- lanes ---------------------------------------------------------------------------------------
 
-    /** Several effect columns (the OPL3): lanes differ in width and scroll sideways to keep the cursor's in view. */
+    /** Whether the sound system supports editing several effect columns. */
     private var multi = false
+    /** Variable-width/scrollable layout also serves single-effect systems whose lanes cannot fit legibly. */
+    private var variableLanes = false
     private var laneCount = 0
-    private val laneXs = FloatArray(MAX_LANES)
-    private val laneWs = FloatArray(MAX_LANES)
+    // PaneView recreates painters when the sound system changes.
+    private val laneXs = FloatArray(song.channelCount())
+    private val laneWs = FloatArray(song.channelCount())
     private var firstLane = 0
     private var lastLane = 0
-    /** First lane shown while the lanes do not all fit (several-column systems only). */
+    /** First lane shown while the lanes do not all fit. */
     private var laneScroll = 0
     private val scrollLeft = Rect()
     private val scrollRight = Rect()
 
-    private fun laneLeft(ch: Int): Float = if (multi) laneXs[ch] else gridLeft + ch * laneW
+    private fun laneLeft(ch: Int): Float = if (variableLanes) laneXs[ch] else gridLeft + ch * laneW
 
-    private fun laneWidth(ch: Int): Float = if (multi) laneWs[ch] else laneW
+    private fun laneWidth(ch: Int): Float = if (variableLanes) laneWs[ch] else laneW
 
-    private fun laneRight(ch: Int): Float = if (multi) laneXs[ch] + laneWs[ch] else gridLeft + (ch + 1) * laneW
+    private fun laneRight(ch: Int): Float = if (variableLanes) laneXs[ch] + laneWs[ch] else gridLeft + (ch + 1) * laneW
 
-    private fun gridRight(): Float = if (multi) laneRight(lastLane) else gridLeft + laneW * laneCount
+    private fun gridRight(): Float = if (variableLanes) laneRight(lastLane) else gridLeft + laneW * laneCount
 
     /**
      * Lays out lanes of `note sound` plus 4 characters per shown effect column. The text keeps its size on every
@@ -332,7 +341,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     }
 
     /** "◀ 2" / "3 ▶" beside the lane headers when lanes are scrolled out of view (tap to move there). */
-    private fun drawLaneScroll(c: Surface, area: Rect, h: Float) {
+    private fun drawLaneScroll(c: Surface, area: Rect, h: Float, rightLabel: String, rightWidth: Float) {
         scrollLeft.set(0f, 0f, 0f, 0f)
         scrollRight.set(0f, 0f, 0f, 0f)
         val size = ink.unit * 0.75f
@@ -341,13 +350,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             ink.rect(c, scrollLeft, Palette.alpha(Palette.PLAYHEAD, 40))
             ink.label(c, "◀$firstLane", scrollLeft.centerX(), laneTop, h, Palette.PLAYHEAD, true, size, Align.CENTER)
         }
-        val more = laneCount - 1 - lastLane
-        if (more > 0) {
+        if (rightLabel.isNotEmpty()) {
             val right = laneRight(lastLane)
-            val w = ink.labelWidth("$more▶", size, true) + cw
-            scrollRight.set(right - w, laneTop + h * 0.1f, right - cw * 0.2f, laneTop + h * 0.9f)
+            scrollRight.set(right - rightWidth, laneTop + h * 0.1f, right - cw * 0.2f, laneTop + h * 0.9f)
             ink.round(c, scrollRight, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 90))
-            ink.label(c, "$more▶", scrollRight.centerX(), scrollRight.top, scrollRight.height(), Palette.TEXT, true, size, Align.CENTER)
+            ink.label(c, rightLabel, scrollRight.centerX(), scrollRight.top, scrollRight.height(), Palette.TEXT, true, size, Align.CENTER)
         }
     }
 
@@ -903,8 +910,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         touchTarget = when {
             insp != null && insp.contains(x, y) -> if (y >= orderListTop) 3 else 0
             y < headerBottom -> 0
-            multi && scrollLeft.contains(x, y) -> 4
-            multi && scrollRight.contains(x, y) -> 5
+            variableLanes && scrollLeft.contains(x, y) -> 4
+            variableLanes && scrollRight.contains(x, y) -> 5
             y < gridTop -> 2
             x >= gridLeft && x < gridRight() -> 1
             x < gridLeft && y >= gridTop -> 1
@@ -934,7 +941,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 if (y < gridTop || row >= s.rowCount(s.patternAt(st.order))) return
                 st.row = row
                 if (x >= gridLeft) {
-                    if (!multi) {
+                    if (!variableLanes) {
                         val ch = ((x - gridLeft) / laneW).toInt().coerceIn(0, s.channelCount() - 1)
                         val local = (x - gridLeft - ch * laneW - cw * 0.7f) / cw
                         st.channel = ch
@@ -956,7 +963,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 ctl.publishPattern()
             }
             2 -> {
-                val ch = if (multi) laneAt(x) ?: -1 else ((x - gridLeft) / laneW).toInt()
+                val ch = if (variableLanes) laneAt(x) ?: -1 else ((x - gridLeft) / laneW).toInt()
                 if (ch in 0 until s.channelCount()) { st.channel = ch; ctl.publishPattern() }
             }
             4, 5 -> {
@@ -999,8 +1006,6 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
     private companion object {
         const val LAMP_ROWS = 4
-        /** Most channels a system has room for in the lane arrays (the OPL3 has 9). */
-        const val MAX_LANES = 16
         /** Lanes that must still show beside the inspector when lanes scroll; fewer and the inspector gives way. */
         const val INSPECTOR_LANES = 6
         /** Pitch classes on black piano keys, C = 0. */

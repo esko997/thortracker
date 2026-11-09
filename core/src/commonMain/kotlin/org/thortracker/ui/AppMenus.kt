@@ -22,6 +22,10 @@ import org.thortracker.model.TuningMap
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SoundSystems
+import org.thortracker.system.nes.EpsmRhythmRom
+import org.thortracker.system.nes.EpsmRomMenu
+import org.thortracker.system.nes.NesExpansion
+import org.thortracker.system.nes.NesSound
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared
@@ -78,6 +82,13 @@ interface MenuHost {
      * extensions go through [error] instead.
      */
     fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (name: String, extension: String, bytes: ByteArray) -> Unit)
+    /**
+     * Keeps [bytes], a checked YMF288 rhythm ROM ([org.thortracker.system.nes.EpsmRhythmRom.problem] found nothing), as
+     * this device's firmware (`firmware/ym2608_adpcm_rom.bin` in the app's data, never in a project or export), installs
+     * it in the native engine and marks it installed ([org.thortracker.system.nes.EpsmRhythmRom.markInstalled]).
+     * Returns why it could not, or null.
+     */
+    fun installEpsmRhythmRom(bytes: ByteArray): String?
     /** Platform rows at the end of the main menu (e.g. Quit on the Deck). */
     fun extraMenuItems(): List<Pair<String, () -> Unit>> = emptyList()
 
@@ -118,6 +129,11 @@ class AppMenus(
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
+        override fun installEpsmRhythmRom(bytes: ByteArray): String? {
+            val problem = host.installEpsmRhythmRom(bytes)
+            if (problem == null) transport.songChanged(session.song)
+            return problem
+        }
         override fun about() = this@AppMenus.about()
     }
 
@@ -169,6 +185,10 @@ class AppMenus(
         menu("Thor Tracker", buildList {
             add("Files" to ::fileMenu)
             add("Song details / tempo" to host::showSongDetails)
+            // The EPSM's drum ROM is device firmware the user supplies; offered (with its state) while an EPSM song is open.
+            if ((session.song.sound as? NesSound)?.expansion == NesExpansion.EPSM) {
+                add(EpsmRomMenu.LABEL + (if (EpsmRhythmRom.installed) "  installed" else "  missing") to { open(EpsmRomMenu::open) })
+            }
             add("Views / layout" to { viewOptions(focus) })
             if (host.displayCount > 1) add("Switch controller focus" to host::switchFocus)
             add("Play from song start" to { transport.start(0, 0) })
@@ -333,7 +353,7 @@ class AppMenus(
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
-        ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
+        ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
             "Export .wav…" to ::exportWav,
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
@@ -341,12 +361,50 @@ class AppMenus(
         ))
     }
 
-    /** Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows one. */
+    /**
+     * Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows
+     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants; within
+     * it, variants of one group (the NES + N163's channel counts) are one entry that opens the group.
+     */
     private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
         val systems = SoundSystems.ALL
         val current = session.song.system
         if (systems.size == 1) return chosen(current)
-        menu(title, systems.map { it.name to { chosen(it) } }, selected = systems.indexOf(current).coerceAtLeast(0))
+        val (entries, selected) = grouped(systems, current, { it.family }, chosen) { family, variants ->
+            val (inner, innerSelected) = grouped(variants, current, { it.familyGroup }, chosen) { group, members ->
+                menu("$title $group", members.map { it.name to { chosen(it) } }, selected = members.indexOf(current).coerceAtLeast(0))
+            }
+            menu("$title $family", inner, innerSelected)
+        }
+        menu(title, entries, selected)
+    }
+
+    /**
+     * Menu entries for [systems]: each system on its own ([chosen] picks it), except systems [key] puts in one group,
+     * listed once as "group…", which [open]s with the group's members; and the index of the entry holding [current].
+     */
+    private fun grouped(
+        systems: List<SoundSystem>,
+        current: SoundSystem,
+        key: (SoundSystem) -> String?,
+        chosen: (SoundSystem) -> Unit,
+        open: (String, List<SoundSystem>) -> Unit,
+    ): Pair<List<Pair<String, () -> Unit>>, Int> {
+        val entries = ArrayList<Pair<String, () -> Unit>>()
+        var selected = 0
+        val seen = HashSet<String>()
+        for (system in systems) {
+            val k = key(system)
+            if (k == null) {
+                if (system == current) selected = entries.size
+                entries += system.name to { chosen(system) }
+            } else if (seen.add(k)) {
+                val members = systems.filter { key(it) == k }
+                if (current in members) selected = entries.size
+                entries += "$k…" to { open(k, members) }
+            }
+        }
+        return entries to selected
     }
 
     private fun export(format: ExportFormat) {

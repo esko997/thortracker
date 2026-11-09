@@ -288,7 +288,7 @@ object YmCurated {
 
     // ---- summaries ---------------------------------------------------------------------------------------------
 
-    /** One line for lists: "Two pairs · 14:1:1:1 · bright 82 · fb 2" or "PSG · vol 12 steps · arp · white /1024". */
+    /** One line for lists: "Two pairs · 14:1:1:1 · bright 82 · fb 2", "PSG · vol 12 steps · arp · white /1024" or "PCM kit · 3 keys · level 15". */
     fun summary(ins: YmInstrument): String = when (ins) {
         is YmFmInstrument -> {
             val c = controls(ins)
@@ -299,6 +299,7 @@ object YmCurated {
                 if (ins.feedback != 0) "fb ${ins.feedback}" else null,
                 if (c.ssg != 0 || !c.ssgExact) "SSG-EG" else null,
                 if (ins.sweep.active) "sweep ${YmRules.signed(ins.sweep.start)}→${YmRules.signed(ins.sweep.end)}" else null,
+                if (ins.hasCh3) "FM 3 operator pitches" else null,
             ).joinToString(" · ")
         }
         is YmPsgInstrument -> listOfNotNull(
@@ -309,6 +310,11 @@ object YmCurated {
             if (ins.pitch.values.isNotEmpty()) "pitch" else null,
             "noise ${YmRules.noiseText(ins.noise)}",
             if (ins.sweep.active) "sweep ${YmRules.signed(ins.sweep.start)}→${YmRules.signed(ins.sweep.end)}" else null,
+        ).joinToString(" · ")
+        is YmPcmInstrument -> listOf(
+            "PCM kit",
+            if (ins.pcm.isEmpty()) "no keys yet" else "${ins.pcm.size} key${if (ins.pcm.size == 1) "" else "s"}",
+            "level ${ins.level}",
         ).joinToString(" · ")
     }
 }

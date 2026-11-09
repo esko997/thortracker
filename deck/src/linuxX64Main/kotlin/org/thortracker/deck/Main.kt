@@ -22,6 +22,7 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.audio.WavExport
 import org.thortracker.system.opl3.Opl3Vgm
+import org.thortracker.system.sms.SmsExport
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
@@ -62,6 +63,7 @@ fun main(args: Array<String>) {
 
     Opl3Vgm.renderer = DeckOpl3Vgm
     YmExport.renderer = DeckYmExport
+    SmsExport.renderer = DeckSmsVgm
     WavExport.renderer = DeckWav
     val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
     app.script = ArrayDeque(script)
@@ -151,6 +153,8 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }
             pane.playback = transport.position() ?: PlaybackPosition()
+            // Desktop play commands finish synchronously; a rejected start must not leave the next press acting as Stop.
+            if (!pane.playback.playing) transport.requested = false
             pane.heldModifiers = if (popups.isOpen) emptySet() else input.heldModifiers
             pane.draw(output.width, output.height)
             popup.draw(pane.surface, output.width.toFloat(), output.height.toFloat())

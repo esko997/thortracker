@@ -8,11 +8,34 @@ Game Boy playback uses hUGEDriver 6.1.3 (public domain) and binjgb at commit
 The binjgb audio output buffer is locally adapted to floating-point samples.
 
 NES playback uses the FamiStudio sound engine 4.5.3 (notice below; its NTSC note
-tables are part of FamiStudio, MIT, notice below), the m6502.h 6502 emulator from
-floooh/chips at commit 9e88298ce56319953ac7a43213a1120359f7a3a6 (zlib, notice below)
-and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public License 2.1 or later;
-source in app/src/main/cpp/third_party/blip_buf with its license.txt). The 2A03 APU
-emulation is Thor Tracker's own code (GPL-3.0-or-later).
+tables, for NES + VRC6 songs its VRC6 build's saw note tables, for NES + VRC7
+songs its VRC7 build's note tables, for NES + FDS songs its FDS note tables, and
+for NES + N163 songs its N163 note tables for 1-8 channels, are part of
+FamiStudio, MIT, notice below), the m6502.h 6502
+emulator from floooh/chips at commit 9e88298ce56319953ac7a43213a1120359f7a3a6
+(zlib, notice below) and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public
+License 2.1 or later; source in app/src/main/cpp/third_party/blip_buf with its
+license.txt). The 2A03 APU, VRC6, FDS, MMC5, Namco 163 and Sunsoft 5B audio emulation are
+Thor Tracker's own code (GPL-3.0-or-later). The Namco 163 was written from the
+NESdev wiki page "Namco 163 audio"; the Sunsoft 5B from the NESdev wiki with
+emu2149's documented behaviour as a reference (no emu2149 code is included).
+The VRC7's FM synthesis is emulated by emu2413 1.6.4 by Mitsutaka Okazaki
+(MIT, notice below; source in app/src/main/cpp/third_party/emu2413 with its LICENSE,
+github.com/digital-sound-antiques/emu2413 at commit
+a1d5120903b75f93d3eb7690e34a29c0b4add903).
+Thor Tracker's Sunsoft 5B build adds a scoped $5F instrument-load opcode to keep
+the shared manual envelope period when switching between identical instrument
+copies. The generator applies this modification to a temporary copy of the
+pinned engine source; the vendored FamiStudio source is unchanged.
+The FDS emulation was written from the NESdev wiki page "FDS audio". Its DAC
+levels are the 2C33 measurements by plgDavid (cleaned up by Persune) as tabulated
+in FamiStudio 4.5.3's ThirdParty/NesSndEmu/nes_apu/Nes_Fds.cpp (Nes_Snd_Emu,
+GNU Lesser General Public License 2.1 or later).
+Thor Tracker's FDS build corrects the instrument loader's ambiguity between
+manual modulation speeds and automatic modulation, using a tagged high byte.
+It also adds a scoped $5F instrument-load opcode to retain runtime modulation
+while selecting the actual bank slot for legato notes and live edits.
+These patches apply only to a temporary copy of the pinned engine source.
 
 Commodore 64 SID playback uses the GoatTracker 2.77 playroutine by Lasse Oorni
 (Cadaver), which is not under the GPL and may be used freely (notice below), the
@@ -27,13 +50,27 @@ below; source in app/src/main/cpp/third_party/nuked-opl3 with its LICENSE,
 github.com/nukeykt/Nuked-OPL3 at commit 765ec962e473aeb767e4cba74ffdc8f588ffbfe8),
 resampled with the same blip_buf.
 
-The Mega Drive (YM2612) system runs SGDK's XGM Z80 sound driver by Stephane
-Dallongeville (MIT, notice below; source in third_party/sgdk-xgm, SGDK commit
+The Mega Drive (YM2612) system runs SGDK's XGM2 Z80 sound driver by Stephane
+Dallongeville (MIT, notice below; source in third_party/sgdk-xgm2, SGDK commit
 9a78a44143a867cd8c5053b95cd061a21f0b73c2) on the Z80 emulator z80.h by Andre
 Weissflog (zlib, the chips notice above), with the YM2612 emulated by ymfm by
 Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
-commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
-xgmtool's conversion (MIT).
+commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM2 stream encoding
+follows SGDK's XGM2 driver and xgm2tool formats (MIT).
+
+NES + EPSM songs run the FamiStudio sound engine 4.5.3 built with its EPSM support
+(with FamiStudio's EPSM note tables, MIT, notice below) on the same m6502.h, and
+emulate the EPSM's Yamaha YMF288 (OPN3-L: FM, SSG and rhythm) with the same ymfm
+by Aaron Giles (BSD-3-Clause, notice below; its ymf288 class).
+Thor Tracker applies scoped corrections to a temporary copy of that driver:
+the FM patch loader writes LFO settings to global register $22, an SSG attack
+exits before it can overwrite rhythm pan state, and a $5F SSG instrument-load
+extension preserves legato envelope positions and runtime periods while
+retaining the actual instrument slot for live edits.
+The Yamaha YM2608 rhythm ROM (the 8 KB of ADPCM-A drum samples the rhythm channels
+play) is NOT included in Thor Tracker, its source, its builds, its demo songs or
+anything it exports. Users who own a copy import it themselves; Thor Tracker only
+checks it (size and SHA-256) and keeps it in its private storage on that device.
 
 binjgb
 https://github.com/binji/binjgb
@@ -74,6 +111,31 @@ https://github.com/BleuBleu/FamiStudio
 MIT License
 
 Copyright (c) 2019 BleuBleu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+emu2413
+https://github.com/digital-sound-antiques/emu2413
+
+The MIT License (MIT)
+
+Copyright (c) 2001-2019 Mitsutaka Okazaki
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -155,7 +217,7 @@ WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for
 more details (app/src/main/cpp/third_party/nuked-opl3/LICENSE).
 
-SGDK (XGM driver, xgmtool)
+SGDK (XGM2 driver, xgm2tool formats)
 https://github.com/Stephane-D/SGDK
 
 MIT License - Copyright (c) 2025 Stephane Dallongeville
@@ -203,6 +265,42 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The Master System and Game Gear systems run the Banjo sound driver by Joe
+Kennedy (MIT, joffb/banjo commit 7aaf837ebbe67e567e019b5819b5467bf62253ad,
+unmodified sources in third_party/banjo) on the same Z80 core, assembled with
+WLA-DX v10.7 (a build tool, GPL-2.0-or-later, not shipped). The YM2413 of the
+FM Sound Unit is emulated by emu2413 1.6.4 by Mitsutaka Okazaki (MIT,
+app/src/main/cpp/third_party/emu2413, commit
+a1d5120903b75f93d3eb7690e34a29c0b4add903).
+
+Banjo
+https://github.com/joffb/banjo
+Copyright (c) 2024 Joe Kennedy
+
+emu2413
+https://github.com/digital-sound-antiques/emu2413
+Copyright (c) 2001-2019 Mitsutaka Okazaki
+
+Both are licensed under the MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 Android/Kotlin libraries are distributed under their respective Apache 2.0
 licenses; see https://www.apache.org/licenses/LICENSE-2.0 and upstream sources.

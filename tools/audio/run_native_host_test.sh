@@ -4,17 +4,44 @@
 # Game Boy: pass/fail per check, seek and per-tick timings, <dir>/host_demo.wav (48 kHz stereo)
 # and <dir>/host_trace.txt (per-tick hUGEDriver APU register writes) for reference comparison.
 # NES: <dir>/nes_ft.wav, <dir>/nes_trace.txt (per-frame APU writes) and <dir>/nes_ft.nsf (test song).
+# VRC6: <dir>/nes_vrc6.wav, nes_vrc6_trace.txt (per-frame APU + VRC6 writes) and nes_vrc6.nsf (the VRC6 test song, expansion
+# byte $7B = $01).
+# VRC7: <dir>/nes_vrc7.wav, nes_vrc7_trace.txt (per-frame APU + VRC7 writes) and nes_vrc7.nsf (the VRC7 test song,
+# expansion byte $7B = $02).
+# N163: <dir>/nes_n163.wav, nes_n163_trace.txt (per-frame APU + N163 port writes) and nes_n163.nsf (the 8-channel N163
+# test song, expansion byte $7B = $10).
+# FDS: <dir>/nes_fds.wav, nes_fds_trace.txt (per-frame APU + FDS register writes) and nes_fds.nsf (the FDS test song,
+# expansion byte $7B = $04).
+# Sunsoft 5B: <dir>/nes_s5b.wav, nes_s5b_trace.txt (per-frame APU + 5B writes) and nes_s5b.nsf (the 5B test song,
+# expansion byte $7B = $20); nes_s5b_fallback_test: the seek fallback keeps a square's held manual-period sound (reads
+# s5b-manual-copies.nesimg from the samples).
+# EPSM: <dir>/nes_epsm.wav (all channels), nes_epsm_tonal.wav (rhythm drums muted), nes_epsm_trace.txt (per-frame APU +
+# $401C-$401F writes) and nes_epsm.nsf (the EPSM test song, expansion byte $7B = $80). The YM2608 rhythm ROM is not
+# part of Thor Tracker: set THOR_EPSM_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192 bytes, SHA-256 checked) for
+# the private rhythm checks, which then also write nes_epsm_rhythm.wav (rhythm drums only) and put the drums into
+# nes_epsm.wav and the EPSM demo's WAV renders; without it those checks are skipped with a notice. Keep the ROM outside
+# the repository and give a ROM run an evidence directory outside it too (e.g. tools/audio/run_native_host_test.sh
+# /tmp/thor-evidence), so no drum render sits in the worktree.
+# MMC5: <dir>/nes_mmc5.wav, nes_mmc5_trace.txt (per-frame APU + MMC5 writes) and nes_mmc5.nsf (the MMC5 test song,
+# expansion byte $7B = $08).
+# MMC5 / N163 mix budget (nes_mix_budget_test): end-to-end swings of every voice at 8-96 kHz stay inside the output,
+# rendered relative levels, and the MMC5 PCM lane's mute (a muted DAC mixes as its centre).
 # SID: <dir>/sid_gt_8580.wav, sid_gt_6581.wav, sid_tone_8580.wav, sid_trace.txt (per-tick SID writes) and
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
 # reference player's) and opl3_song.vgm (the VGM export of the test song).
-# YM2612: <dir>/ym_song.wav, ym_song_pal.wav, ym_tone_fm.wav, ym_tone_psg.wav, ym_trace.txt (per-tick player
-# writes, = the Python reference player's), ym_song.vgm, ym_song.xgm and ym_song.bin (the XGC; = xgmtool's) and
-# ym_image.bin (the image).
+# YM2612 (SGDK's XGM2 driver; tools/audio/ym_reference_check.py reads these): <dir>/ym_image.bin, ym_trace.txt
+# (per-tick player writes and PCM commands, = the Python reference player's), ym_song.wav, ym_song.vgm, ym_song.xgm
+# and ym_song.xgc for the tonal test song; the same for the PCM song (ym_pcm_image.bin, ym_pcm_trace.txt,
+# ym_pcm_song.wav/.vgm/.xgm/.xgc); ym_song_pal.wav, ym_pal_song.vgm/.xgm/.xgc and the auditions ym_tone_fm.wav,
+# ym_tone_psg.wav and ym_tone_pcm.wav.
+# Master System (Banjo; needs app/src/main/cpp/generated/banjo_driver_image.h from tools/audio/prepare_sms.py):
+# <dir>/sms_psg.wav, sms_gg.wav, sms_fm.wav, sms_drums.wav (the test songs) and sms_fm.vgm (the VGM export).
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
-# The engines are C except reSID and ymfm (C++17): C sources build with $CC, reSID, ymfm and their C wrappers with
-# $CXX, and the tests link with $CXX (libstdc++), as the app (CMake) and the Deck (deck/build.gradle.kts) do.
+# The engines are C except reSID and ymfm (C++17): C sources (emu2413, the VRC7's FM chip, included) build with $CC,
+# reSID, ymfm and their C wrappers with $CXX, and the tests link with $CXX (libstdc++), as the app (CMake) and the Deck
+# (deck/build.gradle.kts) do.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="${1:-$root/evidence/audio}"
@@ -25,20 +52,25 @@ CC="${CC:-gcc}"
 CXX="${CXX:-g++}"
 warn=(-Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare
   -Wno-missing-field-initializers -Wno-enum-compare)
-includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/third_party/chips"
+includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/sms" -I "$cpp/third_party/chips"
   -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0" -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm"
   -I "$root/app/src/test/cpp")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
-  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
+  "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c" "$cpp/nes/nes_n163.c"
+  "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/nes/nes_epsm_unit.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c"
+  "$cpp/nes/nes_mmc5.c" "$cpp/nes/nes_mmc5_pcm.c"
+  "$cpp/nes/nes_players.c"
+  "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c"
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c"
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/sms/sms_chip.c" "$cpp/sms/sms_machine.c" "$cpp/sms/sms_image.c" "$cpp/sms/sms_vgm.c"
 )
-cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp")
+cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
 for f in sid voice wave envelope filter dac extfilt pot; do cxx_engines+=("$cpp/third_party/resid-1.0/$f.cc"); done
 objs=()
@@ -52,15 +84,28 @@ for src in "${cxx_engines[@]}"; do
   "$CXX" -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-for t in huge_machine_test nes_machine_test sid_machine_test opl3_machine_test ym_machine_test wav_render_test; do
+for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
+  nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
+  opl3_machine_test ym_machine_test sms_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
-  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
+  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
 status=0
 "$build/huge_machine_test" "$out" || status=1
 "$build/nes_machine_test" "$out" || status=1
+"$build/nes_vrc6_test" "$out" || status=1
+"$build/nes_vrc7_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_n163_test" "$out" || status=1
+"$build/nes_fds_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_s5b_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_s5b_fallback_test" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_epsm_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_mmc5_test" "$out" || status=1
+"$build/nes_mmc5_pcm_test" || status=1
+"$build/nes_mix_budget_test" || status=1
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
+"$build/sms_machine_test" "$out" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 exit $status

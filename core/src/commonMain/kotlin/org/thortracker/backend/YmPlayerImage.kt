@@ -2,21 +2,26 @@
 package org.thortracker.backend
 
 /**
- * The YM2612 (Mega Drive) system's native contract: Thor Tracker's own player streamed through SGDK's XGM
- * driver on a Z80 + YM2612 + SN76489, engine `"ym2612-fm"`. The image layout the lowering writes, its limits,
- * the effect codes and the loader's rejection messages, as `ym_image.h`, `ym_player.h` and `ym_machine.h`
- * define them (`docs/AUDIO_ENGINE.md`, "YM2612": the specification). All multi-byte fields are little-endian.
+ * The YM2612 (Mega Drive) system's native contract: Thor Tracker's own player streamed through SGDK's XGM2
+ * driver on a Z80 + YM2612 + SN76489 (the driver mixing three PCM channels into the YM2612's DAC), engine
+ * `"ym2612-fm"`. The image layout the lowering writes, its limits, the effect codes and the loader's rejection
+ * messages, as `ym_image.h`, `ym_player.h` and `ym_machine.h` define them (`docs/AUDIO_ENGINE.md`, "YM2612": the
+ * specification). All multi-byte fields are little-endian.
  */
 object YmPlayerImage {
     /** Native engine id ([org.thortracker.system.PlaybackEngine.id]). */
     const val ENGINE_ID = "ym2612-fm"
 
-    /** One fixed-size image per song. */
-    const val IMAGE_SIZE = 65536
+    /** One fixed-size image per song (layout 2): the layout-1 tonal prefix of [TONAL_SIZE] bytes, then the
+     * extensions (FM 3 offsets, PCM orders, key maps, variants, PCM patterns, the PCM bank). */
+    const val IMAGE_SIZE = 1188864
     const val MAGIC = "TTYM"
-    const val LAYOUT = 1
+    const val LAYOUT = 2
+    const val TONAL_SIZE = 65536
 
-    /** Header field offsets (64-byte header; byte 13 and bytes 16..63 zero). */
+    /** Header field offsets (64-byte header; byte 13 and bytes 24..63 zero). [H_FM3]: [FM3_NORMAL] or
+     * [FM3_SPECIAL]; [H_PCM_VARIANTS]: compiled variants; [H_PCM_BANK_SIZE]: u16 bank pages used; [H_PCM_DATA_SIZE]:
+     * u32 PCM pattern bytes used. */
     const val H_MAGIC = 0
     const val H_LAYOUT = 4
     const val H_REGION = 5
@@ -26,6 +31,12 @@ object YmPlayerImage {
     const val H_LOOP = 10
     const val H_INSTRUMENTS = 12
     const val H_DATA_SIZE = 14
+    const val H_FM3 = 16
+    const val FM3_NORMAL = 0
+    const val FM3_SPECIAL = 1
+    const val H_PCM_VARIANTS = 17
+    const val H_PCM_BANK_SIZE = 18
+    const val H_PCM_DATA_SIZE = 20
     const val HEADER_SIZE = 64
 
     /** Header byte [H_REGION]: NTSC (60 Hz, the default) or PAL (50 Hz). [H_LFO]: register $22, 0 = off or
@@ -35,9 +46,10 @@ object YmPlayerImage {
     const val LFO_ON = 0x08
 
     /**
-     * Fixed tables: rows of order o at [OFF_ROWS] + o (1..255, 0 = 256); the pattern of (order o, channel c) as a
-     * u16 offset into the data region at [OFF_ORDERS] + 2 (10 o + c); instrument slot n (1..64) at
-     * [OFF_INSTRUMENTS] + [INSTRUMENT_SIZE] (n - 1); pattern data from [OFF_DATA], [DATA_CAPACITY] bytes.
+     * Fixed tables: rows of order o at [OFF_ROWS] + o (1..255, 0 = 256); the pattern of (order o, tonal channel c)
+     * as a u16 offset into the tonal data region at [OFF_ORDERS] + 2 ([TONAL_CHANNELS] o + c); instrument slot n
+     * (1..64) at [OFF_INSTRUMENTS] + [INSTRUMENT_SIZE] (n - 1); tonal pattern and envelope data from [OFF_DATA],
+     * [DATA_CAPACITY] bytes.
      */
     const val OFF_ROWS = 64
     const val OFF_ORDERS = 320
@@ -47,18 +59,48 @@ object YmPlayerImage {
     const val DATA_CAPACITY = 57536
 
     /**
-     * Instrument record: flags ([FLAG_DEFINED], [FLAG_PSG]; all-zero = no instrument). FM: algorithm 0..7,
+     * Extensions. FM 3 special-mode offsets: slot n's four s16 (operators 1..4 in algorithm-diagram order, 1/64
+     * semitone, -[CH3_LIMIT]..[CH3_LIMIT]) at [OFF_CH3] + 8 (n - 1), FM records only. PCM orders: the pattern of
+     * (order o, PCM channel k) as a u16 offset into the PCM data region at [OFF_PCM_ORDERS] + 2 (3 o + k). PCM key
+     * maps: slot n's variant for note x at [OFF_PCM_KEYS] + [PCM_KEYS] (n - 1) + x (0 = unmapped), PCM records
+     * only. Variants (= XGM2 sample ids 1..[PCM_MAX_VARIANTS]) at [OFF_PCM_VARIANTS] + [PCM_VARIANT_SIZE] (id - 1):
+     * u16 start page, u16 length in pages, u8 flags ([PCM_HALF_RATE]: the driver plays its first half at half
+     * rate, the second half zero), 3 bytes zero; contiguous in id order from page 0. PCM patterns from
+     * [OFF_PCM_DATA], [PCM_DATA_CAPACITY] bytes; the signed 8-bit bank from [OFF_PCM_BANK] in [PCM_ALIGN]-byte
+     * pages. Output rate: master clocks per sample [PCM_FULL_DIVIDER] (full) / [PCM_HALF_DIVIDER] (half).
+     */
+    const val OFF_CH3 = 65536
+    const val CH3_LIMIT = 3072
+    const val OFF_PCM_ORDERS = 66048
+    const val OFF_PCM_KEYS = 67584
+    const val PCM_KEYS = 96
+    const val OFF_PCM_VARIANTS = 73728
+    const val PCM_VARIANT_SIZE = 8
+    const val PCM_MAX_VARIANTS = 123
+    const val PCM_HALF_RATE = 1
+    const val OFF_PCM_DATA = 74752
+    const val PCM_DATA_CAPACITY = 65536
+    const val OFF_PCM_BANK = 140288
+    const val PCM_BANK_SIZE = 1048576
+    const val PCM_ALIGN = 256
+    const val PCM_BANK_PAGES = 4096
+    const val PCM_FULL_DIVIDER = 4032
+    const val PCM_HALF_DIVIDER = 8064
+
+    /**
+     * Instrument record: flags ([FLAG_DEFINED], [FLAG_PSG], [FLAG_PCM]; all-zero = no instrument). FM: algorithm 0..7,
      * operator-1 feedback 0..7, AMS/FMS (register $B4 without pan), operator k (0..3 = operators 1..4) at [I_OPS] +
      * 7 k = registers $30 $40 $50 $60 $70 $80 $90 (reserved bits 0). PSG: noise mode at [I_PSG_NOISE] (bit 2 white,
      * bits 0-1 source; 3 = PSG 3's period), [PSG_PITCH_RELATIVE] at [I_PSG_FLAGS], byte 3 zero, the u16 data-region
      * offsets of the volume, arpeggio and pitch envelopes at [I_ENV_VOLUME], [I_ENV_ARPEGGIO], [I_ENV_PITCH]
      * ([NO_ENVELOPE] = none: volume 15, no arpeggio, no pitch offset), bytes 10..31 zero. Both: drum sweep start/end
      * (s8 semitones -96..96 from the note) and speed (1/16 semitone per tick, 0 = none) at [I_SWEEP_START]..
-     * [I_SWEEP_SPEED], bytes 35..39 zero.
+     * [I_SWEEP_SPEED], bytes 35..39 zero. PCM: flags only (its key map is an extension).
      */
     const val I_FLAGS = 0
     const val FLAG_DEFINED = 128
     const val FLAG_PSG = 1
+    const val FLAG_PCM = 2
     const val I_ALG = 1
     const val I_FEEDBACK = 2
     const val I_AMS_FMS = 3
@@ -103,11 +145,17 @@ object YmPlayerImage {
     const val NOTE_OFF = 254
     const val NOTES = 96
 
-    /** Limits. Channels 0..5 FM 1-6 (FM slots), 6..8 PSG 1-3 and 9 Noise (PSG slots). */
-    const val CHANNELS = 10
+    /** Limits. Channels 0..5 FM 1-6 (FM slots; [CH_FM3] has the special mode, [CH_FM6] gives way to the DAC), 6..8
+     * PSG 1-3 and 9 Noise (PSG slots), 10..12 PCM 1-3 (PCM slots; XGM2 PCM channels 0..2). */
+    const val CHANNELS = 13
+    const val TONAL_CHANNELS = 10
     const val FM_CHANNELS = 6
+    const val CH_FM3 = 2
+    const val CH_FM6 = 5
     const val CH_PSG = 6
     const val CH_NOISE = 9
+    const val CH_PCM = 10
+    const val PCM_CHANNELS = 3
     const val MAX_ORDERS = 256
     const val MAX_INSTRUMENTS = 64
     const val MAX_EFFECTS = 4
@@ -144,11 +192,10 @@ object YmPlayerImage {
     const val MCLK_PER_LINE = 3420
     const val LINES_NTSC = 262
     const val LINES_PAL = 313
-    /** Seek: [org.thortracker.system.PlaybackEngine.seekTicks] budget; the last [PREROLL_TICKS] ticks stream through the driver. */
+    /** Seek: [org.thortracker.system.PlaybackEngine.seekTicks] budget (the whole machine runs to the target). */
     const val SEEK_TICKS = 12000
-    const val PREROLL_TICKS = 60
 
-    /** Exports (native `ym_export`): formats and the GD3 system and converter names the files carry. */
+    /** Exports (native `ym_export`): VGM, XGM2 (.xgm) and compiled XGM2 (.xgc), and the GD3 names the files carry. */
     const val EXPORT_VGM = 0
     const val EXPORT_XGM = 1
     const val EXPORT_XGC = 2
@@ -235,6 +282,7 @@ object YmPlayerImage {
      * validator accepts must never produce one; mirror the checks with user-facing messages.
      */
     val LOADER_PROBLEMS: List<String> = listOf(
+        "effect not available on a PCM channel (only B, D, F, G, L, S)",
         "8xy pan on a PSG channel (FM only)",
         "Bxx jumps past the last order",
         "Cxx volume above 7F",
@@ -257,8 +305,12 @@ object YmPlayerImage {
         "volume release point needs a loop before it",
         "volume envelope value outside 0..15",
         "arpeggio or pitch envelope value outside -64..63",
+        "PCM key map of a slot that is not a PCM instrument",
+        "FM 3 operator offsets of a slot that is not an FM instrument",
         "instrument record past the instrument count",
         "instrument flags",
+        "PCM instrument reserved bytes 1..39",
+        "PCM key maps a variant past the variant count",
         "PSG noise mode above 7",
         "PSG flags: only bit 0",
         "PSG instrument reserved byte 3",
@@ -267,8 +319,19 @@ object YmPlayerImage {
         "FM feedback above 7",
         "FM AMS/FMS byte: only bits 0-2 and 4-5",
         "FM operator register with reserved bits set",
+        "FM 3 operator offset outside -3072..3072",
         "sweep start/end outside -96..96 semitones",
         "instrument reserved bytes 35..39",
+        "PCM variant entry past the variant count",
+        "PCM variants must follow each other in id order",
+        "PCM variant length must be at least one page",
+        "PCM variant flags: only bit 0",
+        "PCM variant reserved bytes 5..7",
+        "PCM variant past the bank size",
+        "half-rate PCM variant needs an even page count",
+        "half-rate PCM variant needs its zeroed second half",
+        "PCM bank size differs from its variants",
+        "PCM bank bytes past the bank size",
         "not a YM2612 image (magic)",
         "unknown layout",
         "region must be 0 (NTSC) or 1 (PAL)",
@@ -279,7 +342,14 @@ object YmPlayerImage {
         "instrument count above 64",
         "header reserved byte 13",
         "data size above the region",
-        "header reserved bytes 16..63",
+        "FM 3 mode must be 0 (normal) or 1 (special)",
+        "PCM variant count above 123",
+        "PCM bank size above 1 MiB",
+        "PCM data size above the region",
+        "header reserved bytes 24..63",
+        "tonal data bytes past the data size",
+        "PCM variant table padding",
+        "PCM data bytes past the PCM data size",
         "rows of an order past the order count",
         "patterns of an order past the order count",
         "pattern offset past the data size",
@@ -288,6 +358,8 @@ object YmPlayerImage {
         "row runs past the data size",
         "note byte",
         "row names an instrument the image does not define",
+        "FM or PSG instrument on a PCM channel",
+        "PCM instrument on an FM or PSG channel",
         "FM instrument on a PSG channel",
         "PSG instrument on an FM channel",
         "effect code above Z",

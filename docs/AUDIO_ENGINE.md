@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engine, the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engines
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -8,6 +8,14 @@ behaviour are whatever the driver code does on the emulated CPU and APU.
 The NES system (`"nes-famistudio"`) follows the same principle: the FamiStudio sound engine 4.5.3
 (FamiTracker tempo) runs on an emulated 6502 + 2A03 with all five channels, DPCM samples included;
 its image layout, seek, live-edit and audition contract are in [NES](#nes-famistudio-sound-engine-on-a-6502--2a03-nes-famistudio).
+The expansion variants run the same engine assembled with the selected chip:
+[VRC6](#vrc6-the-same-engine-with-konamis-vrc6-nes-famistudio-vrc6),
+[VRC7](#vrc7-the-same-engine-with-konamis-vrc7-nes-famistudio-vrc7), Namco
+[N163](#n163-the-same-engine-with-namcos-163-nes-famistudio-n163-1--8) with 1..8 wavetable channels
+(`"nes-famistudio-n163-1"`..`"-8"`),
+[Sunsoft 5B](#sunsoft-5b-the-same-engine-with-sunsofts-5b-nes-famistudio-s5b),
+[FDS](#fds-the-same-engine-with-the-famicom-disk-systems-sound-nes-famistudio-fds), and
+[EPSM](#epsm-the-same-engine-with-a-ymf288-nes-famistudio-epsm).
 
 The C64 SID system (`"c64-sid"`, design step 6, native spike) runs the GoatTracker 2.77 playroutine
 on an emulated 6510 + reSID 1.0 (MOS 6581 or 8580, PAL); its image layout, timing, seek, audition and
@@ -18,9 +26,9 @@ Thor Tracker's **own player** (C, specified in this document and mirrored by an 
 on a YMF262 emulated by Nuked-OPL3 1.8, and exports VGM. Core choice, image layout, player specification,
 effects, seek, live edits, audition and VGM export are in [OPL3](#opl3-thor-trackers-own-player-on-a-ymf262-opl3-fm).
 
-The Mega Drive system (`"ym2612-fm"`, design step 8, native spike) streams Thor Tracker's own player, as XGC frames,
-through **SGDK's XGM Z80 driver** (the driver games ship) on an emulated Z80 with a YM2612 (ymfm) and the SN76489;
-it exports VGM, XGM and XGC. See [YM2612](#ym2612-sgdks-xgm-driver-on-a-z80--ym2612--psg-ym2612-fm).
+The Mega Drive system (`"ym2612-fm"`) streams Thor Tracker's player through
+**SGDK's XGM2 Z80 driver**, with a YM2612 (ymfm), SN76489 and three driver-mixed PCM lanes.
+It exports VGM, WAV and unpacked/packed XGM2. See [YM2612](#ym2612-sgdks-xgm2-driver-on-a-z80--ym2612--psg-ym2612-fm).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -110,15 +118,19 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | FamiStudio sound engine 4.5.3 | `third_party/famistudio-4.5.3/` (`famistudio_ca65.s`, `NoteTables/famistudio_note_table_{lsb,msb}.bin`, `readme.txt`, `LICENSE`); assembled into `app/src/main/cpp/generated/nes_player_image.h`; the test song `tools/audio/nes/ft_test.txt` (ours) and its FamiStudio 4.5.3 export `ft_test_ca65.s` | github.com/BleuBleu/FamiStudio tag `4.5.3`, commit `c09dca64788606c09fcb5e70db28b9dd1f34be78` (the engine file is unchanged since tag 4.5.0 and still says 4.5.0 in its banner); `famistudio_ca65.s` sha256 `e126a8f3…71fe`, note tables `b917b0eb…ee41` / `b52e4924…69fb` | engine: all-permissive ("copyright notice and this notice are preserved"); note tables: FamiStudio's MIT licence. Both notices are in `NOTICE.txt` |
 | m6502.h (floooh/chips) | `app/src/main/cpp/third_party/chips/` (`m6502.h`, `LICENSE`); implemented once in `cpu6502.c` for the NES and SID machines | github.com/floooh/chips commit `9e88298ce56319953ac7a43213a1120359f7a3a6`, `m6502.h` sha256 `b3fc32a0…868d46e` | zlib — keep the notice; it is in `NOTICE.txt` |
 | blip_buf 1.1.0 | `app/src/main/cpp/third_party/blip_buf/` (`blip_buf.c/.h`, `license.txt`, `readme.txt`, `changes.txt`) | Shay Green's release archive `blip_buf-1.1.0.zip` (code.google.com archive of blip-buf, sha256 `37a9b4f0…2b398e4c`); `blip_buf.c` sha256 `66c4a3f3…0c7573`, unmodified | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
+| FDS DAC levels | 64 values in `app/src/main/cpp/nes/nes_fds.c` (the 2C33's 6-bit wave DAC) | FamiStudio commit `c09dca64…be78`, `ThirdParty/NesSndEmu/nes_apu/Nes_Fds.cpp` `dac_lookup` (plgDavid's measurements, cleaned up by Persune, NESdev Discord) | Nes_Snd_Emu: LGPL-2.1-or-later (GPL-3.0-compatible); credited in `NOTICE.txt` |
+| FamiStudio FDS note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_fds_note_table_{lsb,msb}.bin`, assembled into `generated/nes_fds_player_image.h` | the FamiStudio pin; sha256 `db5d9908…c6f8` / `84a7b0d6…cbf` | FamiStudio's MIT licence (in `NOTICE.txt`) |
 | cc65 `ca65`/`ld65` | offline only (`tools/audio/prepare_nes_player.py`) | Ubuntu 24.04 package `cc65 2.19-1` ("ca65 V2.18 - Ubuntu 2.19-1"), checked by the script | tools are not shipped |
 | GoatTracker 2.77 playroutine | `third_party/goattracker-2.77/player.s` (unmodified `src/player.s`, CRLF kept by `.gitattributes`); assembled into `app/src/main/cpp/generated/sid_player_image.h`; the test song `tools/audio/sid/gt_test_song.py` → `gt_test.sng` (ours) and GoatTracker's own packing `gt_test.sid` | SourceForge `GoatTracker 2/2.77/GoatTracker_2.77.zip` (Lasse Öörni, 2025-01-20), sha256 `96c2bd6a…4561ef` (the digest SourceForge lists); `player.s` sha256 `ee9ddbe9…5fad609a`, identical to the copy embedded in the release's packer (`goatdata.c`) | its own notice: "This playroutine source code does not fall under the GPL license! Use it, or song binaries created from it freely for any purpose, commercial or noncommercial." In `NOTICE.txt` |
 | reSID 1.0 | `app/src/main/cpp/third_party/resid-1.0/` (`sid`, `voice`, `wave`, `envelope`, `filter`, `dac`, `extfilt`, `pot` `.cc/.h`, `spline.h`, the eight generated `wave*.h` tables, `siddefs.h.in`, `COPYING`, `AUTHORS`, `README`, `NEWS`), unmodified; plus `siddefs.h` (ours: `siddefs.h.in` with configure's defaults) | github.com/daglem/reSID commit `02c456abfe23cc4f06d94424e40beab8c90fa31f` (2021-12-10: the reSID 1.0 lineage as maintained in VICE, with Leandro Nini's fixes; the last commit before the 2022 rework, whose compile-time `exp()` tables only build with g++) | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | GoatTracker 2.77 `gt2reloc` + `gtasm` | offline only (`tools/audio/fetch_goattracker.sh`, `prepare_sid_player.py`): the release's command-line packer, and `tools/audio/sid/gtasm.c` over its embedded assembler (Magnus Lind's, from Exomizer) | built from the pinned release | GPL-2.0-or-later (packer) / Exomizer's licence (assembler); tools are not shipped, their output is the free playroutine |
-| SGDK XGM driver | `third_party/sgdk-xgm/` (`drv_xgm.s80`, `z80_def.i80`, `z80_mac.i80`, `z80_fct.i80`, `xgm.txt`, `LICENSE.txt`), unmodified; assembled into `app/src/main/cpp/generated/xgm_driver_image.h` by `tools/audio/prepare_ym.py` | github.com/Stephane-D/SGDK commit `9a78a44143a867cd8c5053b95cd061a21f0b73c2` (2026-10-20); `drv_xgm.s80` sha256 `aae47f6f…6e81b63`; image (5888 bytes) sha256 `557fe542…cf31e` = `drv_xgm` in SGDK's `lib/libmd.a` | MIT — notice in `NOTICE.txt` |
-| SGDK sjasm 0.39j, xgmtool 1.76 | offline only (`tools/audio/fetch_sgdk.sh` builds both from the pinned commit) | the SGDK pin | sjasm zlib, xgmtool MIT; not shipped (xgmtool's conversion is ported in `ym/ym_xgm.c`, MIT notice kept) |
+| SGDK XGM2 driver | `third_party/sgdk-xgm2/`, unmodified driver and includes; assembled into `app/src/main/cpp/generated/xgm2_driver_image.h` by `tools/audio/prepare_ym.py` | github.com/Stephane-D/SGDK commit `9a78a44143a867cd8c5053b95cd061a21f0b73c2`; image 8192 bytes, SHA-256 `c7c9d630faf2397580d407878008c8cb7c836ad3d6c0c0ab26d6db9b59583358`, equal to `drv_xgm2` in SGDK's `lib/libmd.a` | MIT — notice in `NOTICE.txt` |
+| SGDK sjasm 0.39j and xgm2tool | offline assembly and format-interoperability tools from the pinned SGDK checkout | the SGDK pin | sjasm zlib, xgm2tool MIT; not shipped |
 | z80.h (floooh/chips) | `app/src/main/cpp/third_party/chips/z80.h`; implemented once in `cpuz80.c` | the `m6502.h` commit `9e88298c`; `z80.h` sha256 `6ca70ffd…de734f3` | zlib (the chips notice) |
 | ymfm | `app/src/main/cpp/third_party/ymfm/` (`ymfm.h`, `ymfm_opn.h/.cpp`, `ymfm_fm.h/.ipp`, `ymfm_adpcm.h/.cpp`, `ymfm_ssg.h/.cpp`, `LICENSE`), unmodified | github.com/aaronsgiles/ymfm commit `81aec25ccbb98f4873a255f7551ac4dadac59b4a` (2026-07-27); `ymfm_opn.cpp` sha256 `8734c6d5…913b489`, `ymfm_fm.ipp` `4fb7fe59…f6ab4b9` | BSD-3-Clause — notice in `NOTICE.txt` |
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
+| emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
+| FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -150,7 +162,7 @@ assembled at app runtime or per Play.
 src/main/cpp/CMakeLists.txt`, ABIs `arm64-v8a`, `x86_64`. The CMake project builds a static C11
 library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implementation), `huge_chip.c`,
 `huge_machine.c`, which `#include`s binjgb's `emulator.c`, plus `common.c`; the NES files `nes/nes_chip.c`,
-`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
+`nes/nes_machine.c`, `nes/nes_image.c`, `nes/nes_apu.c`, `nes/nes_vrc6.c`, `nes/nes_mmc5.c`, `nes/nes_players.c` and `blip_buf.c`; the SID files `sid/sid_chip.c`,
 `sid/sid_machine.c`, `sid/sid_image.c`; the OPL3 files `opl3/opl3_chip.c`, `opl3/opl3_machine.c`,
 `opl3/opl3_player.c`, `opl3/opl3_image.c`, `opl3/opl3_vgm.c` and Nuked-OPL3's `opl3.c`; `vgm_gd3.c` (the VGM exports'
 GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
@@ -248,10 +260,17 @@ notes (one undo step); neither these previews nor their scheduling touch project
   instrument, AAudio failure, driver fault) or null; no method throws for these.
 - The stream opens on first Play/audition (exclusive low-latency, falls back to shared; usage
   `AAUDIO_USAGE_GAME` on API 28+, resolved with `dlsym` because minSdk is 26; 48 kHz
-  float stereo, buffer fixed at 2 bursts — not adapted on underrun; `diagnostics()` reports
-  xruns for device evaluation), stops after 10 s idle, and is reopened after a device
+  float stereo, buffer initially 2 bursts), stops after 10 s idle, and is reopened after a device
   error (transport is stopped, not silently resumed). `close()` destroys everything on the
   control thread and waits (≤ 2 s).
+- If AAudio's underrun count increases, the data callback grows the used buffer by one
+  hardware burst, never beyond its existing capacity. It does not shrink during that stream's
+  lifetime; a newly opened stream starts at two bursts again. This follows
+  [AAudio's documented tuning policy](https://developer.android.com/ndk/guides/audio/aaudio/aaudio#tuning-buffers-to-minimize-latency)
+  and [Oboe's callback-safe tuning contract](https://github.com/google/oboe/blob/main/include/oboe/LatencyTuner.h):
+  no new allocation, stream lock or control-thread wait in the callback. Diagnostics retain
+  the real underrun count and actual buffer size. This matters for clocked FM engines whose
+  complete driver tick can exceed a FAST track's initial two-burst window.
 - Thor (Android 13) output path, measured 2026-11-05 by the parent: the stream is a normal
   mixer track (960-frame burst, 1920-frame buffer, ~83–106 ms timestamp latency, 0 xruns), not
   FAST, although the primary output has a FastMixer (192 frames) with free slots. Cause, from
@@ -531,13 +550,12 @@ At a tick boundary, Thor layout to Thor layout:
    pattern, empty-run remainder) is recomputed in the new data for "rows 0..row of this order
    consumed" — or "0..row−1, positioned after the row's `$47 d`" when the channel has a delayed note
    pending. Edited cells are heard from the next row processed.
-3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots) is found in the
-   old directory and moved to: the same index if its bytes are unchanged; else an entry of the same
-   kind with identical bytes (effect envelopes renumbered by the lowering); else the same index
-   edited — keeping the read position if it is still an instruction start, else restarting that
-   envelope; else the engine's silent dummy envelope. So a sustained note follows an edit of its
-   own instrument's envelope (GB: the next note does) unless an identical copy of the old envelope
-   remains elsewhere.
+3. **Envelopes**: every engine envelope pointer (11 envelope slots, 3 pitch slots in the base NES build) is
+   found in the old directory. Instrument envelopes retain their stable slot even if an identical copy of the
+   old bytes remains elsewhere, so editing one instrument affects its sustained notes, not another instrument.
+   Effect envelopes can be renumbered: keep an unchanged slot, else find identical bytes of the same kind,
+   else follow the edited slot. An edited envelope keeps its read position if it is still an instruction
+   start, otherwise restarts; a removed envelope falls back to the engine's silent dummy.
 4. Instrument table pointer, DPCM list pointer and tempo step are re-read; the speed is set to
    straight play's speed at the playhead if the edit changed it (song speed, an earlier Fxx in this
    order) or the playhead was clamped; otherwise the engine keeps its speed (e.g. one inherited
@@ -553,9 +571,9 @@ At a tick boundary, Thor layout to Thor layout:
    until the engine starts the next sample, which plays the new list entry and bytes.
 
 **Contract for the builder**: any layout that passes `nm_load_image` relocates — data and samples may
-move freely between images. Keep directory indices stable for instrument envelopes (e.g. slot·4 +
-kind) so sustained notes follow envelope edits; effect envelopes and DPCM mappings may be renumbered
-(the streams carry the new numbers). Raw layouts: bytes are copied (correct only if nothing moved).
+move freely between images. Instrument envelope indices are `slot·4 + kind` (0..255); effect envelopes
+start at 256 and may be renumbered, as may DPCM mappings (the streams carry the new numbers). Raw
+layouts: bytes are copied (correct only if nothing moved).
 The host test applies a fully re-laid-out image before every one of 1080 frames and gets register
 writes identical to straight play; with the DPCM test song it moves every sample before every frame
 (298 playing samples relocated in 576 frames) and the DMC output stays sample-identical.
@@ -730,6 +748,780 @@ text asks for, derived from the text alone. Two runs produce identical files.
     the two references agree with each other less (0.89 / 0.79 / 36%).
 - Not done: listening on hardware, blargg's APU test ROMs (they need a PPU and IRQs), a comparison
   with a real NES capture, Thor measurements.
+
+## VRC6: the same engine with Konami's VRC6 (`"nes-famistudio-vrc6"`)
+
+The first NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips"). Everything in the
+NES section above holds for this engine; this section lists only what differs. The 2A03 engine, its
+player bytes, image size and song base are unchanged (`prepare_nes_player.py` checks its four outputs
+stay byte-identical).
+
+### What runs
+
+- **Player** (`generated/nes_vrc6_player_image.h`, `NesVrc6PlayerImage.kt`; 3430 bytes at `$8000`, id
+  `$6CCBFF6E`, image sha256 `6effcb6c…eab`): `tools/audio/nes/nes_player.s` assembled a second time with
+  `-D FAMISTUDIO_EXP_VRC6=1`, nothing else changed: the same entry table (`$8000` init, `$8003` play,
+  `$8006` idle, `$8009` trap), the same configuration plus FamiStudio's VRC6 code and its saw note
+  tables (`NoteTables/famistudio_saw_note_table_lsb/msb.bin`, pinned). Engine RAM `$0200-$0326`, 20
+  envelope slots and 6 pitch envelope slots (2A03: 11 and 3); the audition streams stay at `$07C0`.
+- **Song base `$8E00`**: the first page after the larger player, so the region is `$8E00-$FFF9`,
+  **29178 bytes** (the 2A03 build: 29690), shared with the DPCM samples exactly as there (samples at the
+  top, 64-aligned, never below `$C000`). Image = 32-byte header + directory + region = **31258 bytes**
+  (`NES_VRC6_IMAGE_SIZE`); the header layout is the same, with this player's id and song base.
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5 VRC6 Pulse 1, 6 VRC6 Pulse 2, 7 VRC6 Saw**.
+  The FamiStudio song header has a stream word per channel: count, instrument table, samples − 4,
+  **eight** channel streams, PAL tempo, NTSC tempo (offsets 21 and 23). Thor layout as before: one
+  order stream (`$41 n ptr` per order, `$42`) per channel, eight of them.
+- **Opcodes**: `$55 v` (VRC6 saw only) sets `famistudio_vrc6_saw_volume`: `$01` Full (volume × 4),
+  `$00` Half (× 2, the power-on value), `$FF` Quarter (× 1) — FamiStudio writes `1 − Vrc6SawMasterVolume`,
+  which its ca65 export prints as `$ffffffff` for Quarter (the binary export and our lowering write
+  `$FF`). The saw's 6-bit accumulator rate is the volume (envelope × volume track, `famistudio_volume_table`)
+  shifted by it; rates above 42 overflow and distort. `$4F d` (duty effect) takes 0-7 on the VRC6 pulses
+  (`famistudio_vrc6_duty_lookup`: duty d = d + 1 of 16 steps) and is invalid on the saw; `$53` (phase
+  reset) is valid on the 2A03 pulses and all three VRC6 channels. Duty envelope values are 0-7 on VRC6
+  instruments. The VRC6 pulses use the 2A03 note table (their 12-bit periods reach every note down to C-1),
+  the saw `famistudio_saw_note_table` (CPU / (14 f) − 1). Pitch shift 0: slides have the 2A03's one
+  fraction bit.
+- **VRC6 audio** (`nes/nes_vrc6.c`, written here from the NESdev wiki "VRC6 audio"): registers
+  `$9000-$9003`, `$A000-$A002`, `$B000-$B002` (writes timestamped to the CPU cycle like the APU's; reads
+  there return the ROM, as the registers are write-only). Pulses: 12-bit divider, a 16-step duty generator
+  counting down, output volume V while step ≤ duty D (or always with the mode bit), clearing E silences and
+  resets to step 15. Saw: the rate is added to an 8-bit accumulator on clocks 2, 4 … 12 and the 14th clock
+  resets it; output = accumulator >> 3; clearing E forces it to 0. `$9003`: H halts every oscillator, B
+  shifts the periods right by 4, A by 8 (overriding B). Mix: a linear DAC of pulse + pulse + saw (0-61), one
+  step = the 2A03 mixer's full pulse ÷ 15 (NESdev: a full VRC6 pulse ≈ a full 2A03 pulse), added to the
+  2A03's band-limited buffer with positive polarity. Event-driven with output, arithmetic without (seek).
+- **Machine** (`nes_machine.c`): one machine is created for one build (`nm_create(rate, &nes_player_vrc6)`;
+  `nes/nes_player.h` describes both builds from their generated headers: bytes, entries, song base, region
+  and image size, channel count, envelope slots, duty range, engine RAM symbols). Images are loaded for a
+  build (`nm_load_image(image, player)`); a machine refuses images loaded for the other one. Seek, live
+  relocation, audition and mute work on all eight channels exactly as on five. Audition takes channels
+  0-3 and 5-7 (fine pitch on 0-2 and 5-7). Mute 5-7 silences the VRC6 channels in the mix.
+  `nm_write_log` gives every sound write (APU and VRC6) as (address low, high, value); `nm_apu_log` still
+  gives only the APU's.
+- **Validation** (`nes_image.c`, per build): stream and song pointers against this build's song base and
+  region, eight streams, the duty range 0-7 in envelopes and `$4F` on the VRC6 pulses, `$55` only on the
+  saw with `$00`/`$01`/`$FF` (on the 2A03 build `$55` is "not allowed in a row"). Raw FamiStudio exports
+  with eight channels load too (song stride 2 × 8 + 4).
+- **Ops** (`nes_chip.c`): `nes_vrc6_chip_ops`, id `"nes-famistudio-vrc6"`, `image_size` 31258, the same
+  functions as `"nes-famistudio"` over a machine of the VRC6 build. `.nsf` export: the VRC6 player at
+  `$8000`, the data at `$8E00`, header byte `$7B` = `$01` (VRC6), so NSF players emulate the chip.
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds both players in one run. For the VRC6 build it also
+writes the fixtures `app/src/test/cpp/nes_vrc6_song.h` from `tools/audio/nes/vrc6_test.txt` (FamiStudio
+text with `Expansions="VRC6"`: 2A03 lead, bass and hat beside VPulse/VSweep/VThin on the VRC6 pulses with
+all eight duties, duty envelopes and effects, the three saw master volumes switching between instruments,
+vibrato, slides on a VRC6 pulse and the saw, fine pitch, volume track and slide, note delay, cut, phase
+reset, release notes, no-attack, Fxx 6/7/4/5, loop to order 1) as exported by FamiStudio 4.5.3
+(`vrc6_test_ca65.s`, committed): raw at `$8E00`, the Thor layout, every block moved, and one note plus the
+VPulse sustain edited.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_vrc6_test.c`: VRC6 unit
+  checks (each duty's high steps, mode bit, 12-bit period timing, disable/reset, the saw's accumulator
+  sequence at rate 42 and the wrap above 42, `$9003` H/B/A, mixer level vs the 2A03 pulse, mute); image
+  rules (raw and Thor loads, eight streams, order-start speeds, the builds refusing each other's images,
+  duty 8 and saw volume `$02` rejected, song base and region size); playback (**the Thor layout writes the
+  same APU and VRC6 registers as FamiStudio's own export through the first pass and two loops**, row starts
+  on the text's frames, duty 7 and the note-table period on VRC6 Pulse 1, saw rates 2×/4×/1× for
+  Half/Full/Quarter, VThin's duty envelope 1-3-5, the saw period from the saw table, the saw table vs
+  12-TET, pitch of a held VRC6 pulse and saw note by zero crossings); seek to six targets in step with
+  straight play for 200 frames and the order fallback holding the order's saw volume; live relocation
+  before every frame with identical writes, the VPulse sustain edit heard, the edited note at 2/8;
+  audition on VRC6 Pulse 1/2 and the saw (periods, fine pitch, release tail, cut, limits); mute of 5-7 in
+  the mix; the ops table. Evidence: `nes_vrc6.wav`, `nes_vrc6_trace.txt` (per-frame APU and VRC6 writes),
+  `nes_vrc6.nsf` (player + FamiStudio's export, `$7B` = `$01`).
+- Kotlin: `NesGoldenTest` runs the golden songs `vrc6_demo` and `vrc6_effects` (FamiStudio's export of our
+  text vs our lowering, register traces with the VRC6 writes compared every frame); `NesLoweringTest`
+  checks the VRC6 image contract; `NesExportTest`, `NesProjectCodecTest` and `NesInstrumentViewTest` cover
+  the `.nsf`/text exports, files and the editor.
+- Not done: listening on hardware or a VRC6 cartridge, comparison with a reference VRC6 emulator's audio
+  (libgme/NSFPlay), Thor measurements.
+
+## VRC7: the same engine with Konami's VRC7 (`"nes-famistudio-vrc7"`)
+
+The second NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips", VRC7). Everything in
+the NES section holds; this section lists what differs. The 2A03 and VRC6 builds' player bytes, image
+sizes, song bases and fixtures are unchanged (`prepare_nes_player.py` checks its outputs for them stay
+byte-identical).
+
+### What runs
+
+- **Player** (`generated/nes_vrc7_player_image.h`, `NesVrc7PlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_VRC7=1`, nothing else changed: the same entry table and configuration plus
+  FamiStudio's VRC7 code and its note tables (`NoteTables/famistudio_vrc7_note_table_lsb/msb.bin`, pinned). 11
+  channels, 23 envelope slots, 9 pitch envelope slots. Song base: the first page after the player (measured by the
+  script, `NES_VRC7_SONG_BASE` / `NesVrc7PlayerImage.SONG_BASE`); the region up to `$FFF9` is shared with the DPCM
+  samples as on the 2A03 build; image = 32-byte header + directory + region (`NES_VRC7_IMAGE_SIZE`).
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5-10 VRC7 FM 1-6**.
+- **Song header** (FamiStudio's for expansions with their own instruments): count, instruments, **instruments_exp**,
+  samples − 4, eleven channel streams, PAL tempo, NTSC tempo (`famistudio_init` reads the stream words from offset
+  7). The Thor layout keeps one order stream per channel (`$41 n ptr` per order, `$42`).
+- **Instruments**: the 2A03 table (64 slots × 8 bytes, as before) and right after it the expansion table, **64 slots
+  × 16 bytes** (`FAMISTUDIO_USE_INSTRUMENT_EXTENDED_RANGE`: an FM channel's instrument byte `$80 | (slot − 1) << 1`
+  indexes it × 16): volume, arpeggio and pitch envelope words (directory entries `slot × 4 + 0/1/3`), the sustain
+  override byte (`$20` release, `$80` stop; the song's `Vrc7Sustain`, the same in every entry), `patch << 4`
+  (0 = custom), and the 8 patch registers (a built-in patch's ROM values; loaded only for patch 0). Loading an FM
+  instrument (`famistudio_set_vrc7_instrument`) sets the envelopes (not on a no-attack note), the global
+  `famistudio_chn_vrc7_sustain`, the channel's patch byte, and for patch 0 writes `$00-$07` at once.
+- **Opcodes**: `$56` (FM channels only) releases: the channel keys off at its next update and its volume envelope
+  jumps to its release point (as `$45`, which FM channels never get). `$4F` (duty) and `$55` are invalid on FM.
+  Stop (note 0) and cut key off with the sustain bit cleared, or set with the stop override.
+- **Per frame and FM channel** (`famistudio_update_vrc7_channel_sound`): a new attack on a still keyed channel first
+  writes `$20+c` = 0 (so the chip retriggers); then `$30+c` = `patch << 4 | (15 − volume)` (volume = envelope ×
+  volume track, so 0 is the chip's quietest, −45 dB, not silence), `$10+c` = F-number low, and `$20+c` = sustain
+  byte | key | block << 1 | F-number bit 8. The frequency is the VRC7 note table (F-number already shifted by the
+  block) + (pitch envelope + fine pitch) × 8 + the slide (pitch shift 3: slides carry no fraction bit here), halved
+  until it is below `$200` to find the block. Writes go through `$9010` (select) and `$9030` (data); init writes
+  `$E000` = 0 (audio on). One engine quirk is kept as it plays: a stop on a note whose `$20+c` value has no block or
+  F-number bit 8 left after masking takes the stop-override path (sustain bit set).
+- **Sounding pitch**: VRC7 engine note 46 is approximately 220 Hz, while the same 2A03 note is approximately 440 Hz.
+  `NesRules.engineNote` therefore adds 12 on the FM channels: absolute 57 becomes engine note 58. This applies to
+  audition, lowered songs and FamiStudio text. The driver table limits FM to C-1..B-7; validation also rejects
+  slides above B-7. Pxx uses the pulse period at the unshifted sounding note and the FM frequency at the shifted
+  engine note, retaining one detune meaning across both chips. The released base NES mapping is unchanged.
+- **Lowering** (Kotlin, what differs from the 2A03's): OFF on a sounding FM note is `$56` (FamiStudio's `CanRelease`
+  is always true there), else a stop. A custom-patch sound is never re-sent per order (the per-order instrument
+  re-send of the other channels would rewrite `$00-$07` under another FM channel's custom sound); FamiStudio's
+  `OtherVrc7ChannelUsesCustomPatch` makes a channel send its custom sound again after another FM channel had a note
+  of a different custom sound. There are **two intentional corrections** to FamiStudio 4.5.3's exporter:
+  1. At the loop, a channel reloads its first custom patch if another custom patch can appear in the loop. This is
+     conservative because Gxx can change the final writer. Upstream compares only each channel's own first/last
+     instrument and can leave the wrong shared patch installed on later passes.
+  2. Mid-song, restoring a custom patch keeps the channel's instrument identity. A no-attack note therefore retains
+     its held envelope and does not key off/key on. Upstream invalidates the instrument after another custom patch
+     and forces a fresh attack, even though the note explicitly disabled attack. Loop restoration preserves legato too.
+  These follow FamiStudio's editor semantics, not its buggy export in those cases. See
+  [`FamitoneMusicFile.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/IO/FamitoneMusicFile.cs),
+  [`ChannelStateVrc7.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelStateVrc7.cs)
+  and [`ChannelState.cs`](https://github.com/BleuBleu/FamiStudio/blob/4.5.3/FamiStudio/Source/ChannelStates/ChannelState.cs).
+  The independent `vrc7_patch_restore` golden explicitly demonstrates both export differences through the real driver.
+  The ordinary parity goldens omit only idempotent writes of unchanged custom-patch bytes, retaining every key/envelope
+  write. Text imports retain the musical intent, but re-exporting them through FamiStudio 4.5.3 can reintroduce these
+  bugs; Thor Tracker's own NSF, WAV and playback use the corrections.
+  Slides use the VRC7 note table and FamiStudio's VRC7 slide shift (delta >> 3). A cell's Pxx is converted to the FM step nearest
+  the pulse's detune (`NesRules.vrc7FinePitch`); audition fine pitch on FM uses the same conversion. Sounds that differ
+  only in their names compare equal for legato and custom-patch restoration, as FamiStudio's export merges identical
+  instruments (`Project.MergeIdenticalInstruments`). Streams nevertheless retain each note's own bank slot so held
+  notes follow edits to that slot, not its first equal copy. Switching copies can rewrite unchanged custom bytes.
+- **VRC7 audio** (native): emu2413 1.6.4 in VRC7 mode (`OPLL_setChipType` 1, its `OPLL_VRC7_TONE` ROM patches,
+  which equal FamiStudio's `Vrc7InstrumentPatch` table), one OPLL sample per 36 CPU cycles (49715.9 Hz). Registers:
+  `$9010` select, `$9030` data, `$E000` bit 6 the reset latch (set: chip registers and the tremolo LFO cleared, the
+  vibrato phase kept, writes ignored, silent); only the VRC7's registers `$00-$07`, `$0F`, `$10-$15`, `$20-$25`,
+  `$30-$35` reach the chip. Mix: one emu2413 output unit = (2A03 full pulse level / 2) · 10^(11.09/20) / 1863.1 of the
+  2A03 mixer scale, from rainwarrior's VRC7 level survey (+11.3 dB, +10.88 dB on Lagrange Point) and that test
+  patch's RMS on emu2413; the VRC7 build's output gain is 2.0 / (1 + six FM channels' full swing) (the 2A03 and VRC6
+  builds keep 2.0).
+  Instance creation goes through `chip_opll_new`: a shared mutex protects emu2413's lazy global table initialization
+  when playback and background WAV rendering create chips concurrently. Chip stepping is per-instance and never
+  takes that mutex; the vendored emulator is unchanged.
+- **Machine**: seek runs the chip without output, so FM envelopes and phases advance as in straight play; the order
+  fallback leaves an FM channel whose order starts with a custom sound without an instrument until its next
+  instrument byte (custom sounds are not re-sent per order). Mute leaves a channel out of the mix (the chip keeps running). Live edits: the machine tracks which
+  expansion entry each FM channel loaded and which entry the custom registers came from; `apply_image` updates the
+  channels' patch nibble and the sustain byte, and rewrites `$00-$07` when that entry's registers changed, so a
+  custom-patch edit is heard at once. Audition release is `$56`; the audition ends when the volume envelope's tail
+  has finished and the carrier is silent (or frozen at release rate 0).
+- **Exports**: `.nsf` with the VRC7 player, header byte `$7B` = `$02` (NSF players emulate the chip); `.wav` through
+  `chip_wav_open("nes-famistudio-vrc7", …)`; FamiStudio text (`Expansions="VRC7"`, `Vrc7Patch`, `Vrc7Reg0-7` for
+  custom patches, `Vrc7OverrideRelease`/`Vrc7OverrideStop` from the song setting, channels `VRC7FM1-6`).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the VRC7 player with the others: assembled once to measure its
+size, then again at its song base (the code does not depend on it). It writes `nes_vrc7_player_image.h`,
+`NesVrc7PlayerImage.kt` and the fixtures `app/src/test/cpp/nes_vrc7_song.h` from `tools/audio/nes/vrc7_test.txt` as
+exported by FamiStudio 4.5.3 (`vrc7_test_ca65.s`; `--famistudio DIR` writes it when missing, else checks it is
+unchanged). FamiStudio's ca65 export ends each VRC7 instrument's first `.byte` row with a comma (`$00, $10, `); the
+link and the parser drop it. In the Thor layout both instrument tables have the same count.
+
+### Verification
+
+- Kotlin: `NesGoldenTest` runs the golden songs `vrc7_demo` and `vrc7_effects` (FamiStudio's export of our text vs
+  our lowering through the VRC7 player; `$9010`/`$9030`/`$E000` writes compared every frame through two passes and
+  the loop; `vrc7_effects` has two custom sounds and an identical twin taking the custom patch in turn, also on one
+  row, the song's release and stop overrides, `$56` releases and stops, cuts, delays, slides, vibrato, Pxx, volume
+  slides, arpeggios, pitch envelopes, C-1 and B-7, and speed changes on an FM channel). `NesLoweringTest` checks the
+  VRC7 image contract (header, both instrument tables, `$56` only on FM, no duty or saw opcodes there), the engine
+  numbers and Pxx conversion, and the custom-patch rules (no per-order re-send, the loop reload). `NesExportTest`,
+  `NesProjectCodecTest` and `NesInstrumentViewTest` cover the `.nsf`/text exports, validation, files and the FM page.
+  The separate `vrc7_patch_restore` upstream-export fixture is deliberately not an equality fixture: after another
+  channel changes the custom patch, it compares upstream's attack/envelope restart with our held legato envelope,
+  and upstream's wrong patch on repeated loops with our restored patch. Delayed final writers remain covered by
+  `NesLoweringTest`.
+- Native: `nes_vrc7_test` also consumes `vrc7-held-copies.nesimg`, generated by Kotlin's `exportSamples`. Editing an
+  unused identical custom original leaves the held copy unchanged; editing a held preset copy changes only its own
+  voice, and a held custom copy follows its own patch edit immediately. All retain their settled volume envelopes.
+- Not done: listening on a VRC7 cartridge, comparison with a reference VRC7 emulator's audio (NSFPlay), Thor
+  measurements.
+
+## N163: the same engine with Namco's 163 (`"nes-famistudio-n163-1"`..`"-8"`)
+
+The Namco 163 expansion (design in `docs/BACKENDS.md`, "NES expansion chips"): up to eight wavetable channels
+sharing 128 bytes of sound RAM. FamiStudio builds its engine for a fixed channel count, so there are **eight
+builds and eight engines**, `"nes-famistudio-n163-<n>"` for n = 1..8 N163 channels. Everything in the NES
+section above holds; this section lists only what differs. The 2A03 and VRC6 engines, their player bytes,
+image sizes and song bases are unchanged.
+
+### What runs
+
+- **Players** (`generated/nes_n163_<n>_player_image.h`, `NesN163PlayerImages.kt` objects `NesN163PlayerImage<n>`):
+  `tools/audio/nes/nes_player.s` assembled with `-D FAMISTUDIO_EXP_N163=1 -D FAMISTUDIO_EXP_N163_CHN_CNT=<n>` and the
+  pinned N163 note tables (`NoteTables/famistudio_n163_note_table_<n>ch_lsb/msb.bin`), nothing else changed: the same
+  entry table (`$8000` init, `$8003` play, `$8006` idle, `$8009` trap). Engine channels 5 + n, envelope slots
+  11 + 3n (N163 channel k: volume, arpeggio and **wave index** from slot 11 + 3k), pitch envelope slots 3 + n.
+- **Song base**: the first page after each player (measured by the prepare script), region up to `$FFF9` as
+  before; image = 32-byte header + directory + region (`NES_N163_<n>_IMAGE_SIZE`, below the 2A03's).
+- **Channels**: engine channels 0-4 as the 2A03 build, then **N163 1..n** (engine channels 5..4+n; N163 channel k
+  = engine channel 5 + k = hardware channel 8 − k, registers `$78 − 8k`).
+- **N163 audio** (`nes/nes_n163.c`, written here from the NESdev wiki "Namco 163 audio"): 128 bytes of sound RAM,
+  the address port `$F800-$FFFF` (bit 7 auto-increment; the address stops at `$7F`, no wrap), the data port
+  `$4800-$4FFF` (writes store, reads return RAM and auto-increment), `$E000-$E7FF` bit 6 disables sound (the DAC
+  outputs 0, the oscillators keep running; power-on enabled; the engine never writes it). One channel is updated
+  every **15 CPU cycles**, cycling from channel 8 (`$78`) downwards through the enabled count (`$7F` bits 4-6, + 1,
+  read at every update: a change applies from the next slot, the round restarting at channel 8 once the position
+  reaches the count): phase += frequency mod (length << 16), stored back in RAM (length = 256 − (`$7C` & `$FC`)),
+  sample = the nibble at ((phase >> 16) + address) & `$FF` (the even sample in the low nibble), DAC = (sample − 8) ×
+  volume, **held until the next update**: the chip does not mix, its output is time-multiplexed. So a channel plays
+  f = CPU × freq / (15 × 65536 × L × c). Every slot is computed exactly with output attached or not, so a silent
+  seek leaves RAM, phases and the round-robin position as audible play does; with output the DAC level goes into
+  the 2A03's band-limited buffer whenever it changes.
+- **Mixing level**: NESdev "Mixing" measures the loudest N163 square in 1-channel mode **11 to 19.5 dB** louder
+  than the loudest 2A03 square, by board (submapper 3: 11.0-13.0 dB, 4: 16.0-17.0, 5: 18.0-19.5). FamiStudio songs
+  are balanced for the quieter class, so we take **12 dB**: a full DAC swing (225 units: sample 0 to 15 at volume
+  15) = the 2A03 mixer's pulse at volume 15 × 10^(12/20) (`NES_N163_STEP` per unit), positive polarity, the 2A03
+  build's output gain unchanged. Peak headroom: one N163 slot reaches ±0.32 of the 2A03 mixer's full scale.
+- **Multiplex whine**: the output switches channel every 15 cycles, so the per-channel update rate is
+  119.3 kHz / c: at 7-8 channels (17.0 / 14.9 kHz) the switching pattern is audible as a high whine, as on the
+  hardware (NESdev: "very loud and apparent" through A/V output). We keep it; the output stage's 14 kHz low-pass
+  softens it at 8 channels.
+- **Machine** (`nes_machine.c`, `nm_create(rate, &nes_player_n163[n − 1])`): on N163 builds the bus routes `$4800-$4FFF`
+  (writes and reads), `$E000-$E7FF` and `$F800-$FFFF` (writes) to the unit, timestamped like the APU; reads at
+  `$8000+` still return the ROM. Only the build's own expansion unit is reset, clocked and mixed. `nm_write_log`
+  includes the N163 port writes; `nm_apu_log` still gives only the APU's. Mute 5..4+n silences N163 channel k's
+  slots (bit k of the unit's mask): RAM, phases and the round robin never change on mute.
+
+### CPU memory map additions
+
+| Range | Use |
+|---|---|
+| `$4800-$4FFF` | N163 data port (write: store at the address, read: the RAM byte; both auto-increment with bit 7 of the address) |
+| `$E000-$E7FF` | N163 sound disable (bit 6); writes only, reads return the ROM (song data) |
+| `$F800-$FFFF` | N163 address port; writes only, reads return the ROM (song data; the vectors) |
+
+### Image layout additions (Thor layout, N163 builds)
+
+- **Song header**: `u8 1`, `word instruments`, `word instruments_exp` (the expansion instrument table), `word
+  samples−4`, 5 + n channel stream words, PAL tempo, NTSC tempo (FamiStudio's `exp` header: 7 bytes before the stream
+  words, `nes_player_head`). The raw layout accepts the same header (song stride 2 × (5 + n) + 4).
+- **Expansion instrument table**: one 16-byte entry per instrument (the same count as the 2A03 table; instrument i
+  on an N163 channel loads entry i — `$54 i` / `$80|i<<1` as on the other channels): words volume (kind 0),
+  arpeggio (kind 1), pitch (kind 3) — the same directory entries as the 2A03 table — and the **wave-index envelope**
+  (kind 4); byte 8 wave position (samples, even), byte 9 wave size (samples, multiple of 4, ≥ 4), position + size
+  ≤ 256 − 16n (the wave RAM below the n channels' registers); word 10 the wave table; bytes 12-15 zero. Every slot
+  is well formed (non-N163 slots carry default N163 data).
+- **Wave table**: one pointer per distinct wave (FamiStudio's dedup order), each to size / 2 packed bytes (the even
+  sample in the low nibble) inside the song data; tables and waves may be shared. `nm_load_image` requires a table
+  entry for every index the wave-index envelope produces (largest value + 1 entries) and every wave inside the data.
+- **Directory kind 4 = WAVE** (`NM_KIND_WAVE`, N163 images only; rejected by other builds): encoded
+  like a volume envelope (byte 0 = release index or 0, values `$C0` + wave index 0..63, holds, loops; ends in a
+  loop); `nm_envelope_start(WAVE)` = 1. Slot s's wave-index envelope sits at directory **256 + (s − 1)** (256..319);
+  effect envelopes start at **320** in N163 and FDS images (384 in 5B and EPSM images, 256 in the other builds).
+- **Opcodes on N163 channels**: `$5A` release (0 operands, ends the row: the volume **and** the wave-index envelopes
+  jump to their release points), `$5B` phase reset (0 operands, prefix: after the channel updates the engine
+  writes phase 0), fine pitch `$4E f` (frequency offset, + raises; the Kotlin side converts), vibrato and arpeggio as
+  on the other pitched channels. `$5A`/`$5B` are rejected off the N163 channels (and on other builds: "opcode not
+  allowed in a row"); `$4F` (duty) and `$53` (2A03 phase reset) are rejected on N163 channels.
+- **Notes**: the build's N163 note table, tuned for 16-sample waves (a wave of L samples sounds 12·log2(16 / L)
+  semitones from the note); the tables saturate at `$FFFF` from note 95 (4 ch), 92 (5), 88 (6), 86 (7), 83 (8):
+  Kotlin validation rejects those notes.
+
+### Live edits, audition, ops
+
+- **Live edit** (`nm_apply_image`, Thor to Thor): the wave-index envelope of each N163 channel (slot kind WAVE) is
+  remapped like every envelope pointer, and `famistudio_exp_instrument_lo/hi` follow the new table. The engine
+  uploads a wave only when its wave index changes, so for every N163 channel whose current instrument
+  (`famistudio_chn_n163_instrument`) has another wave in the new image — position, size, wave count or any wave's
+  bytes, compared by content (a moved but identical wave is unchanged) — the machine sets
+  `famistudio_chn_n163_wave_index[k]` = `$FF`: the next engine frame re-uploads it. `apply_image` itself leaves chip RAM
+  and phases untouched, and never restarts transport. The extra upload costs CPU cycles, so later timed writes can
+  shift and a pitch-changing channel need not end that frame at the phase of unedited playback. Relocated data can
+  likewise change indexed-read page crossings. Timed-write replay checks the exact resulting chip state rather
+  than incorrectly requiring identical phases under different write timings.
+- **Audition** on N163 channels: `$54 i`, `$4E f`, `$40 n` as on the other pitched channels; the release stream is
+  `$5A`. `release()` returns 1 if the instrument's volume envelope has a release point (the tail ends at its final
+  loop) or else its wave-index envelope has one (the tail ends at that envelope's final loop); otherwise 0 (cut).
+- **Ops** (`nes_chip.c`): `nes_n163_<n>_chip_ops`, ids `"nes-famistudio-n163-1"`..`"-8"`, `image_size` =
+  `NES_N163_<n>_IMAGE_SIZE`, the same functions as `"nes-famistudio"` over a machine of that build (nothing allocated
+  after `create`). `.nsf` export: the build's player at `$8000`, the data at its song base, header byte `$7B` = `$10`
+  (Namco 163).
+
+### Preparing the players
+
+`python3 tools/audio/prepare_nes_player.py` builds all players in one run: the eight N163 builds, their headers and
+`NesN163PlayerImages.kt`, and from `tools/audio/nes/n163_test.txt` (an 8-channel FamiStudio text exported by FamiStudio
+4.5.3 as `n163_test_ca65.s`) the fixtures `app/src/test/cpp/nes_n163_song.h`: raw at the 8-channel song base, the Thor
+layout, every block (wave tables and waves included) moved, and an edited copy (one note, one volume envelope byte,
+one wave byte; `N163_TEST_EDIT_*`).
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_n163_test.c`: N163 unit checks
+  from NESdev **for every channel count 1..8** (slot timing every 15 cycles and the order from channel 8 down, the
+  phase after U updates = U × freq mod (L << 16) across frame boundaries and the frequency against NESdev's
+  formula, mute changing neither RAM nor phases, a silent run equal to an audible one), then wave address, length
+  and nibble order, auto-increment stopping at `$7F`, data port reads, `$E000` disable, silence at volume 0 and
+  with a wave of 8s, the 12 dB level; image rules (raw and Thor loads, 13 streams, wave-index envelopes at
+  256 + j, refusals of the other builds' images, kind 4 only on N163 builds, odd wave position, sizes 6 and 0, a
+  wave reaching the registers, nonzero bytes 12-15, wave table and wave outside the data, a wrong-kind wave-index
+  word, `$53`/`$4F` on N163 channels and `$5A`/`$5B` off them); playback of the 8-channel test song (**the Thor layout
+  writes the same APU and N163 registers as FamiStudio's own export through the first pass and two loops**, row
+  starts, every sounding channel's current wave in RAM at its instrument's position with matching wave address and
+  length registers, no driver faults; the measured worst call is 15,827 CPU cycles); the wave index following
+  FamiStudio's envelope walk (repeats, loop, release); a `$5B` row writing phase 0; seek (registers for 200 frames,
+  and N163 RAM, phases and round robin equal to audible straight play); live relocation before every frame with
+  identical register sequences and each chip state matching a separate replay of its own timed writes; the edited
+  wave re-uploaded in the next frame without restart or phase-reset writes, and the edited note; audition (frequency registers, fine
+  pitch `+10` = `10 << 5 << 2`, `$5A` reaching the wave-index envelope's release); mute of 5-12 in the mix with chip
+  state unchanged; all eight ops tables. Evidence: `nes_n163.wav`, `nes_n163_trace.txt` (per-frame APU and N163
+  port writes), `nes_n163.nsf` (8-channel player + FamiStudio's export, `$7B` = `$10`).
+- Not done: listening on hardware or an N163 cartridge, comparison with a reference N163 emulator's audio
+  (NSFPlay, Mesen), Thor measurements.
+
+## FDS: the same engine with the Famicom Disk System's sound (`"nes-famistudio-fds"`)
+
+The Famicom Disk System's 2C33 sound unit (design in `docs/BACKENDS.md`, "NES expansion chips"): one wavetable channel
+(64 samples of 6 bits) with frequency modulation from a 32-entry table. One build, one engine. Everything in the NES
+section above holds; this section lists only what differs. The 2A03, VRC6, VRC7, N163 and Sunsoft 5B engines, their player
+bytes, image sizes and song bases are unchanged.
+
+### What runs
+
+- **Player** (`generated/nes_fds_player_image.h`, `NesFdsPlayerImage.kt`): `tools/audio/nes/nes_player.s` assembled with
+  `-D FAMISTUDIO_EXP_FDS=1 -D FAMISTUDIO_USE_FDS_AUTOMOD=1` (auto-mod as FamiStudio's own NSF kernel `nsf.s` enables it)
+  and the pinned FDS note tables (`NoteTables/famistudio_fds_note_table_lsb/msb.bin`). Two scoped patches support the full
+  manual-speed range and preserve runtime modulation during legato instrument re-sends; the vendored source stays
+  unchanged. The player is 3868 bytes at `$8000`, with the same entry table and song data at `$9000`.
+  Engine channels 6 (FDS = 5), envelope slots 14 (`3+3+2+3+3`: FDS volume, arpeggio and **wave index** from slot 11),
+  pitch envelope slots 4 (FDS: 3). Image = 32-byte header + directory + region (`NES_FDS_IMAGE_SIZE`).
+- **FDS audio** (`nes/nes_fds.c`, written here from the NESdev wiki "FDS audio", raw wikitext, with Disch's
+  `FDS.txt` "Unit Activity" where the wiki is silent):
+  - registers `$4040-$407F` wave RAM (writes only while `$4089` bit 7 is set; reads `$40 |` the addressed sample while
+    writable, else the sample at the current position), `$4080` volume envelope / gain (bit 7: gain = bits 0-5,
+    envelope off; resets the envelope timer), `$4082/$4083` 12-bit frequency (`$4083` bit 7 halts the wave unit and
+    resets its accumulator, so the position is 0; bit 6 disables both envelopes and resets their timers), `$4084` mod
+    envelope / gain, `$4085` mod counter (7-bit signed; it does **not** reset the table position, NESdev), `$4086/$4087`
+    12-bit mod frequency (`$4087` bit 7 halts the mod unit, forces accumulator bits 0-12 to 0 keeping the table address
+    in bits 13-17, and allows `$4088`; bit 6 forces a step every tick), `$4088` mod table write at the address then
+    advance (32 writes end where they began), `$4089` write enable + master volume, `$408A` envelope speed (power-on
+    `$E8`, as the BIOS leaves it, with `$4080` = `$80`; `$4023` = `$83`, the sound registers enabled, is not modelled
+    further), reads `$4090-$4097` (gains, accumulators, `$4094` = bits 4-11 of the completed counter × gain, `$4095`
+    the next increment `0,1,2,4,C,C,E,F`, `$4096` the DAC sample, `$4097` the counter);
+  - a **unit tick every 16 CPU cycles**: the mod unit (accumulator bits 0-11 += mod frequency; on a carry out of bit 11
+    the counter takes the entry at bits 13-17 — 0, +1, +2, +4, reset, −4, −2, −1, wrapping in 7 bits — and the 6-bit
+    position advances, bit 12 being the "ghost" bit that applies each entry twice), then the wave unit (24-bit
+    accumulator += NESdev's modulated pitch `temp = counter × gain; if ((temp & $0F) && !(temp & $800)) temp += $20;
+    temp = ((temp + $400) >> 4) & $FF; pitch = (frequency × temp) & $FFFFF`, applied whether the mod unit runs or
+    not; position = bits 18-23). A 64-sample wave therefore sounds **CPU × frequency / 2^22** Hz unmodulated;
+  - envelopes (enabled by bit 7 = 0, `$408A` ≠ 0, `$4083` bits 6-7 clear): one step every 8 × (speed + 1) ×
+    (`$408A` + 1) cycles, up to 32 or down to 0 (FamiStudio never enables them; modelled anyway);
+  - output: the gain the DAC uses is latched from the volume gain only while the wave position is 0 (or when the
+    accumulator wraps past it, as FamiStudio's `Nes_Fds.cpp`), writing gain 0 mutes at once; `$4089` bit 7 holds the
+    DAC sample while the wave unit runs on; level = DAC(sample) × min(gain, 32) / 32 × 2 / (2 + master), DAC =
+    **FamiStudio's measured curve** (`Nes_Fds.cpp` `dac_lookup`, plgDavid's measurements cleaned up by Persune; Nes_Snd_Emu,
+    LGPL-2.1-or-later: the 64-entry table only) normalised to 1 at 63; volume applied linearly (the wiki: the 32-cycle
+    PWM "may be emulated simply as a linear volume control");
+  - not modelled (the wiki marks them unverified, or no song depends on them): the `$4023` audio reset, the "envelopes
+    4× faster" and "halts the mod table accumulator" remarks on `$4083` bit 7 (Disch and FamiStudio keep the mod unit
+    running), the delayed first mod step after clearing `$4087` bit 7, the multiplier's intermediate `$4094` values.
+  Event-driven like the other units: with output attached or not every tick and envelope step is computed exactly,
+  so a silent seek leaves every register, RAM, accumulator, timer and the latch as audible play.
+- **Mixing**: NESdev "Mixing": the FDS maximum is "roughly 2.4x the maximum volume of the APU square, and the
+  polarity is the same", through a filter "approximated as a 1-pole lowpass with a cutoff of ~2000Hz". Full output
+  (sample 63, gain ≥ 32, master 0) = 2.4 × the 2A03 mixer's pulse at volume 15 (`NES_FDS_FULL_LEVEL`), positive
+  polarity, into the 2A03's band-limited buffer through a 1-pole 2000 Hz low-pass stepped once per unit tick (sent
+  with `blip_add_delta_fast`: the filtered signal has no edges). The filter is output state: attaching the output
+  starts it at the current level.
+- **Machine** (`nm_create(rate, &nes_player_fds)`): on the FDS build the bus routes writes `$4040-$408A` and reads
+  `$4040-$407F`, `$4090-$4097` to the unit, timestamped like the APU. Only the FDS unit is reset, clocked and mixed.
+  `nm_write_log` includes the FDS writes; `nm_apu_log` gives only `$4000-$4017`. Mute 5 forces the FDS output to 0;
+  nothing else changes.
+- **Pitch**: FamiStudio's FDS table is frequency = f × 2^20 / CPU (f = FamiStudio's pitch of the note) while the chip
+  plays CPU × frequency / 2^22 per wave, so **engine note n sounds two octaves below the 2A03's n with a one-cycle wave**
+  (engine note 70: frequency 1031 = 439.9 Hz; engine note 46: 258 = 110 Hz; NESdev, Disch, FamiStudio's own Nes_Fds and its
+  register viewer `RegisterInterpreter.cs` agree). Thor Tracker keeps the table (FamiStudio parity, `.nsf`), so its
+  FDS channel plays **absolute note a as engine note a + 13** (absolute 57 = A-4 = 440 Hz; range C-1..G#6 = engine
+  25..93; above engine note 93 the 12-bit frequency overflows).
+
+### CPU memory map additions
+
+| Range | Use |
+|---|---|
+| `$4040-$407F` | FDS wave RAM (writes while `$4089` bit 7 is set; reads `$40` + sample) |
+| `$4080-$408A` | FDS sound registers (writes) |
+| `$4090-$4097` | FDS sound state (reads) |
+
+### Image layout additions (Thor layout, FDS build)
+
+- **Song header**: `u8 1`, `word instruments`, `word instruments_exp`, `word samples−4`, 6 channel stream words, PAL
+  tempo, NTSC tempo (7 bytes before the stream words, `nes_player_head`). The raw layout accepts the same header.
+- **Expansion instrument table**: one 16-byte entry per instrument (the same count as the 2A03 table; non-FDS slots
+  carry well-formed default FDS data), as FamiStudio's `FamitoneMusicFile.cs` writes it and
+  `famistudio_set_fds_instrument` / `famistudio_update_fds_wave` read it (`famistudio_ca65.s` 5235-5435): words volume
+  (kind 0), arpeggio (kind 1), pitch (kind 3), the **wave-index envelope** (kind 4, directory **256 + slot − 1**);
+  byte 8 = mod depth << 2 | master volume (any value); word 9 the wave table; word 11 the **mod table** (32 entries
+  0..7 inside the song data; may be shared); bytes 13-14 the manual mod speed word (0..4095), with `hi | $80` when the
+  low byte is `$80-$FF`. That high-byte tag distinguishes the manual word from auto-mod `$80 | numerator, denominator`
+  (1..32 each). Other manual words retain FamiStudio's bytes. Byte 15 is the mod delay (0..255).
+- **Wave table**: one pointer per distinct wave (FamiStudio's dedup order), each to 64 samples 0..63 inside the song
+  data; a table entry for every index the wave-index envelope produces (largest value + 1).
+- **Directory kind 4 = WAVE** is valid on N163 and FDS images ("envelope kind outside 0..4"); effect envelopes start at
+  **320** in FDS images.
+- **Opcodes on the FDS channel (5)**: `$57 lo hi` mod speed (≤ `$0FFF`), `$58 d` mod depth (≤ 63) — both set the
+  engine's value and its override flag, so an instrument loaded later in the same row keeps them; the values persist
+  until the next instrument load without override —, `$59` release (0 operands, ends the row: the wave-index and the
+  volume envelopes jump to their release points), `$53` phase reset (`famistudio_process_phase_resets` writes
+  `$4083` = prev_hi | `$80`, then prev_hi), `$4E f` fine pitch (frequency offset, + raises; pitch shift 0), vibrato,
+  arpeggio, volume, slides, instruments, delays, cut. Thor Tracker's `$5F i` loads the actual zero-based instrument slot
+  and envelope pointers while retaining runtime modulation (table, speed, depth, auto ratio and delay). It temporarily
+  sets unused bit 5 of `famistudio_fds_override_flags` around that load and restores the row's original flags afterward.
+  This preserves both loop-held effects and the correct target for live instrument edits.
+  Rejected: `$4F` and `$52` on FDS, `$57`-`$59` off FDS, `$55`/`$56`/`$5A`/`$5B` on the FDS build.
+  `$5F` is valid only on FDS in this build (its separate Sunsoft 5B meaning is unchanged).
+- **Engine behaviours kept**: auto-mod multiplies the 16-bit frequency by the numerator in 16 bits (`famistudio_mul`
+  wraps), then divides and clamps the result to `$FFF`; mod delay d keeps modulation reset for d − 1 frames and
+  enables it in frame d (`dec; bne`). The tagged manual-speed correction avoids upstream's ambiguous low-byte flag;
+  the app and NSF/WAV exports support the full range. FamiStudio text preserves exact speeds, but upstream 4.5.3
+  assembly/NSF export can reintroduce that ambiguity.
+
+### Live edits, audition, ops
+
+- **Live edit** (`nm_apply_image`, Thor to Thor): the FDS channel's wave-index envelope (slot kind WAVE) is remapped
+  like every envelope pointer and `famistudio_exp_instrument_lo/hi` follow the new table. For the channel's current
+  sound (`famistudio_chn_fds_instrument`), decided while the old bytes are in place:
+  - master volume, wave count or any wave's 64 samples changed (by content): `famistudio_fds_wave_index` = `$FF`, the
+    next engine frame uploads the wave (the engine uploads only on a wave index change);
+  - its mod table changed by content: the machine writes the new table to the chip at once as the engine does on
+    loading a sound (`$4087` = `$80`, `$4084` = `$80`, `$4085` = 0, 32 × `$4088`; the engine's next update re-enables
+    the unit) and `famistudio_fds_mod_envelope` takes the new pointer; moved but identical: only the pointer moves
+    (the engine compares pointers, so a later load sharing the table writes nothing, as in straight play);
+  - mod speed or auto-mod fraction, depth and delay: where the engine's value equals the old sound's own (no `$57` /
+    `$58` override in effect), the new sound's is taken, as a reload would.
+  Chip state is otherwise never touched.
+- **Audition** on the FDS channel: `$54 i`, `$4E f`, `$40 n` as on the other pitched channels (engine notes); the
+  release stream is `$59`. `release()` returns 1 if the volume envelope has a release point (the tail ends at its final
+  loop) or else the wave-index envelope has one (the tail ends at that envelope's final loop); otherwise 0 (cut).
+- **Ops** (`nes_chip.c`): `nes_fds_chip_ops`, id `"nes-famistudio-fds"`, `image_size` = `NES_FDS_IMAGE_SIZE`, the same
+  functions as `"nes-famistudio"` over a machine of the FDS build. `.nsf` export: the FDS player at `$8000`, the data at
+  its song base, header byte `$7B` = `$04` (FDS, `NsfFile.cs`).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the FDS player with the others, its header and `NesFdsPlayerImage.kt`,
+and from `tools/audio/nes/fds_test.txt` (exported by FamiStudio 4.5.3) the fixtures `app/src/test/cpp/nes_fds_song.h`:
+raw at the FDS song base, the Thor layout, every block (wave tables, waves and mod tables included) moved, and an edited
+copy (one note, one volume envelope byte, one wave sample, one mod table entry; `FDS_TEST_EDIT_*`), with the order
+lengths (`nes_fds_order_rows`) and each FDS instrument's waves, mod speed, depth, delay and auto-mod fraction.
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_fds_test.c`: FDS unit checks from
+  NESdev (wave frequency CPU × freq / 2^22 by zero crossings and the 24-bit accumulator; true pitch: engine note 70 =
+  440 Hz and 46 = 110 Hz with a one-cycle wave, the player's note table = FamiStudio's; mod table ring writes, `$4088`
+  ignored while running, the ghost bit, every step value, 7-bit wrap both ways, mod frequency carries, `$4087` bit 7
+  keeping the address; the modulation formula's examples and every counter × gain against the wiki's code; halt and
+  reset; write-enable hold; the gain latch at position 0 and the immediate mute; master volume ratios; the 2.4 × pulse
+  level, gain clamp and DAC curve; envelope timing, clamps, `$408A`, `$4083` bit 6; every read; mute and a silent run
+  leaving the unit state identical); image rules (raw and Thor loads, refusals of the other builds' images and of
+  `$57`-`$59` there, kind 5, wave table / wave / mod table outside the data, a sample of 64, an entry of 8, auto-mod
+  fractions 0 and 33, manual speed `$1000`, a wrong-kind wave-index word, `$57`/`$58` ranges, `$57`/`$58`/`$59` off the
+  FDS channel, `$4F`/`$52`/`$55`/`$56`/`$5A`/`$5B` on it, `$53` on the triangle); playback of the test song (**the Thor
+  layout writes the same APU and FDS registers as FamiStudio's own export through the first pass and two loops**, row
+  starts, the instrument's current wave in the chip's wave RAM, its mod table in the chip's ring with
+  `famistudio_fds_mod_envelope` pointing at it, the mod unit every frame — halted on cut and delay, depth and manual or
+  auto-mod speed `min($FFF, freq × n / d)` — `$57`/`$58` rows and re-binds without them); the wave index following
+  FamiStudio's envelope walk and `$59`; delay d enabling in frame d; a `$53` row; seek (registers for 200 frames and
+  the full unit state equal to audible straight play); live relocation before every frame with identical writes and
+  unit state; the edited wave uploaded with the next frame; the edited mod table written as the engine loads one;
+  the edited note; audition (the note table frequency, fine `+10`, `$59` reaching the wave release, cut); mute; the ops
+  table. Evidence: `nes_fds.wav`, `nes_fds_trace.txt` (per-frame APU and FDS writes), `nes_fds.nsf` (`$7B` = `$04`).
+- Full 12-bit manual modulation speeds include the ambiguous low-byte range `$80`–`$FF`, checked against independent
+  `$57` speed-command witnesses. Manual and automatic instrument-copy fixtures exercise the second loop and live
+  master-volume edits; `$5F` keeps runtime modulation while retaining the actual bank slot. Their register traces
+  also match independent FamiStudio exports. The native FDS suite currently has 227 checks.
+- Production-signed Android and desktop smoke evidence, including same-device Game Boy pixel parity and the
+  Android/desktop FDS export comparison, is recorded in `docs/VERIFICATION.md`.
+- Not done: listening on a Famicom with a RAM adapter, comparison with a reference FDS emulator's audio (NSFPlay,
+  Mesen), Thor measurements.
+
+## Sunsoft 5B: the same engine with Sunsoft's 5B (`"nes-famistudio-s5b"`)
+
+A further NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips"). Everything in the NES
+section holds; this section lists what differs. The 2A03 and VRC6 builds' player bytes, image sizes, song
+bases and fixtures are unchanged (`prepare_nes_player.py` checks its outputs for them stay byte-identical).
+
+### What runs
+
+- **Player** (`generated/nes_s5b_player_image.h`, `NesS5bPlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_S5B=1` and a scoped `$5F` extension described below. The generator patches
+  a temporary copy of the pinned FamiStudio source; the vendored source stays unchanged. The extension adds
+  30 bytes (3552 total), no RAM, and leaves the song base at `$8E00`. The same entry table and configuration
+  use FamiStudio's 5B code (its squares use the 2A03 note table). 8 channels, **23 envelope slots** (a 5B square has
+  four: volume, arpeggio, **mixer** at offset 2, **noise** at offset 3; `famistudio_channel_env` = 0, 3, 6, 8, —,
+  11, 15, 19), 6 pitch envelope slots (the squares' are 3-5). Song base: the first page after the player
+  (measured by the script, `NES_S5B_SONG_BASE` / `NesS5bPlayerImage.SONG_BASE`); the region up to `$FFF9` is
+  shared with the DPCM samples as on the 2A03 build; image = 32-byte header + directory + region
+  (`NES_S5B_IMAGE_SIZE`).
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5 5B Square 1, 6 5B Square 2, 7 5B Square 3**.
+- **Song header** (FamiStudio's for expansions with their own instruments): count, instruments,
+  **instruments_exp**, samples − 4, eight channel streams, PAL tempo, NTSC tempo (`nes_player_head` = 7 bytes
+  before the stream words). The Thor layout keeps one order stream per channel (`$41 n ptr` per order, `$42`).
+- **Instruments**: the 2A03 table (count × 8 bytes, as before; every slot has one) and the expansion table at
+  header word 3, one **16-byte entry per slot** (`FAMISTUDIO_USE_INSTRUMENT_EXTENDED_RANGE`: a 5B square's
+  instrument byte `$80 | i << 1` / `$54 i` indexes entry i × 16; FamitoneMusicFile.cs `instruments_exp`,
+  `famistudio_set_s5b_instrument`):
+
+  | Offset | Size | Field |
+  |---|---|---|
+  | 0 | 2 | volume envelope (directory entry of kind 0) |
+  | 2 | 2 | arpeggio envelope (kind 1) |
+  | 4 | 2 | pitch envelope (kind 3) |
+  | 6 | 2 | **mixer** envelope (kind 5) |
+  | 8 | 2 | **noise** envelope (kind 6) |
+  | 10 | 1 | hardware envelope shape: 0 = none, else `$08-$0F` (FamiStudio's S5BEnvelopeShape 1..8 + 7) |
+  | 11 | 1 | auto-period octave, signed −8..8, or `$80` = manual period |
+  | 12 | 2 | manual envelope period (u16, any value; used with `$80`) |
+  | 14 | 2 | 0 |
+
+  `nm_load_image` checks the five words are directory entries of those kinds, the shape, the octave and the
+  zero bytes, and that the table lies inside the song data (raw layout: that the pointer does).
+- **Directory kinds 5 (mixer) and 6 (noise)**, legal in 5B and EPSM images and rejected by other builds.
+  Neither has a header byte (instructions from index 0, like arpeggio and duty). Mixer values are
+  FamiStudio's processed bits, tone off in bit 0 and noise off in bit 3: `$C0` (tone + noise), `$C1` (noise),
+  `$C8` (tone), `$C9` (neither: a constant level at the volume); noise values 0..31 (`$C0-$DF`). Hold counts and
+  loops as every envelope. Thor Tracker's directory indices: slot × 4 + kind for volume, arpeggio, duty and
+  pitch (unchanged), mixer 256 + 2 × slot, noise 256 + 2 × slot + 1, effect envelopes (`0xy` arpeggios,
+  vibratos) from **384** (`NesPlayer.effect_envelopes`; EPSM also uses 384, N163/FDS use 320, the remaining builds 256).
+- **Opcodes**: `$5E lo hi` (5B squares only; not a terminator) sets the shared manual envelope period
+  (`famistudio_s5b_env_period`) and `famistudio_s5b_env_override` for the frame, so an instrument loaded later
+  in that frame keeps the effect's period. FamiStudio's export moves every envelope period effect to 5B Square
+  1 (Thor Tracker's lowering likewise); the walker accepts it on any square and rejects it elsewhere and in
+  other builds. `$4F` (duty) and `$53` (phase reset) are invalid on the squares; `$55` stays VRC6-only. An order
+  does not re-send a manual-period sound its square holds (the load would set the shared period).
+  `$5F i` is Thor Tracker's extension for this 5B build: load the actual zero-based instrument slot while keeping the
+  shared manual period. The handler saves `famistudio_s5b_env_override`, sets it for this load, then restores
+  it and continues the stream. This is used for renamed, otherwise identical manual-period instruments:
+  FamiStudio merges them and emits no load, but Thor Tracker must retain distinct slot identity for live edits.
+  Ordinary changes and forced reloads still use the original load instruction. The walker validates the square,
+  build and slot; independent FamiStudio exports do not use this opcode. The manual-copy reference song
+  previously diverged at frame 24 (900 instead of 2000); the extension restores trace equality.
+- **Per frame** (`famistudio_update_s5b_channel_sound`, squares in order 0..2): tone period = note table + pitch
+  envelope, fine pitch and slide **+ 1** (`$00-$05`; the 5B divides by 32 × period, so a note sounds an octave
+  below a pulse's: Kotlin sends the 5B squares FamiStudio's note + 12, true pitch); volume = envelope × volume track, with bit 4 (E) when the
+  instrument has a shape (`$08-$0A`). The last square with a shape and a note sets the hardware envelope: its
+  octave `$80` takes the manual period, else its tone period shifted by the octave (left for negative octaves,
+  right for positive ones with the last shift rounding an odd value up); `$0B/$0C` are written then, and `$0D` =
+  shape after any square's note attack (bit 7 of `famistudio_s5b_chn_env_shape`). `$07` = the three mixer
+  envelope values shifted by square (bits 0-2 tone off, 3-5 noise off), `$06` = a noise envelope value (the
+  engine's noise mask only tests Square 1's mixer correctly: Squares 2 and 3 always store theirs; kept as it
+  plays). Writes go through `$C000` (select) and `$E000` (data); init writes `$07` = `$38`.
+- **5B audio** (`nes/nes_s5b.c`, written here from the NESdev wiki "Sunsoft 5B audio"; emu2149, FamiStudio's 5B
+  core, MIT, read as a reference for the noise and envelope details, no code taken): `$C000-$DFFF` select (bits
+  4-7 set: data writes ignored until a clean select), `$E000-$FFFF` data; reads there return the ROM. One /16
+  prescaler clocks every generator: tone up-counters (period 0 = 1; a reach flips the square and resets; a
+  shortened period flips at the next clock), f = CPU / (32 P); noise: the same counter on 5 bits toggling a /2
+  prescaler whose rising edge steps a 17-bit LFSR (bit 0 ^ bit 3 into bit 16, seed 1, output = !bit 0); envelope:
+  16-bit period (0 = 1), 32 levels per ramp, `$0D` restarts it at once, NESdev's shape table (`$00-$07` as `$09`
+  / `$0F`; at a ramp's end: no continue → 0 held; hold → attack ^ alternate ? 31 : 0 held; alternate → turn
+  around, the edge level repeated; else the ramp restarts). Mixer: on = (tone off | square) & (noise off |
+  noise); level = the envelope's (E) or 2 V + 1; DAC logarithmic 1.5 dB per step, 31 full, levels 0 and 1 silent;
+  the three channels mixed linearly. **Mix level**: a channel at full = the 2A03 pulse at 15 (95.88 /
+  (8128 / 15 + 100)) × 1.56563, FamiStudio 4.5.3's balance (Nes_Sunsoft's 0.793774 × 4080 / 12240 over
+  Nes_Vrc6's square 0.169; NESdev: a full VRC6 pulse ≈ a full 2A03 pulse); the 5B build's output gain is 2.0 /
+  (1 + 3 × that level) (the 2A03 and VRC6 builds keep 2.0). The 5B's amplifier nonlinearity and filtering are
+  not modelled. With output the unit runs clock by clock (deltas at their CPU cycle); without (seek) every
+  counter, the LFSR and the envelope advance arithmetically to the same state.
+- **Machine**: only the build's expansion unit is reset, clocked and mixed. Seek runs the 5B silently, so tone
+  phases, the LFSR and the envelope are those of straight play. Mute 5-7 leaves a square out of the mix (it keeps
+  running). `nm_write_log` gives the `$C000`/`$E000` writes with the APU's. Live edits: the machine sees on the
+  bus which expansion entry each square loaded last (the engine's store to `famistudio_s5b_chn_env_shape` right
+  after its read of entry + 10) and which entry the manual period came from (the store to
+  `famistudio_s5b_env_period` after reading entry + 12; a `$5E` makes it none); `apply_image` rewrites each
+  square's shape nibble (keeping bit 7, a pending reset: the new shape is written to `$0D` at the next attack)
+  and octave from its entry, the manual period from its entry, and a square whose entry turned manual after the
+  period's last store loads its period as the engine's own load would; the expansion table pointer moves with the
+  table. An identical image changes nothing (the host test applies a moved image before every frame). Audition
+  takes the squares (fine pitch on them), release is the generic `$45` (a volume release point).
+- **Ops** (`nes_chip.c`): `nes_s5b_chip_ops`, id `"nes-famistudio-s5b"`, `image_size` `NES_S5B_IMAGE_SIZE`, the
+  same functions as `"nes-famistudio"` over a machine of the 5B build. `.nsf` export: the 5B player, header byte
+  `$7B` = `$20` (Sunsoft 5B).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the 5B player with the others and writes
+`nes_s5b_player_image.h`, `NesS5bPlayerImage.kt` and the fixtures `app/src/test/cpp/nes_s5b_song.h` from
+`tools/audio/nes/s5b_test.txt` as exported by FamiStudio 4.5.3 (`s5b_test_ca65.s`; `--famistudio DIR` writes it
+when missing): raw at the 5B song base, the Thor layout (both instrument tables padded to one count), every block
+moved, and an edited copy (one note, the SLead volume sustain, SEnvManual's manual period, SEnvAuto's shape).
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_s5b_test.c`: 5B unit checks
+  (the select latch and register widths; tone flips per period incl. 0, 4095 and the immediate flip on a
+  shortened period; the LFSR's first steps, sequence and maximal 131071 period through the /2 prescaler; all 16
+  shapes' 200-step level sequences and holds at two periods, period 0, a 16-bit period, the `$0D` restart; E bit
+  and 2 V + 1 volumes; the mixer's AND and DC; the DAC's steps; the mix level; mute; random register writes giving
+  identical state silent and audible; a synthesized 220 Hz tone); image rules (raw and Thor loads, the expansion
+  entries, the builds refusing each other's images, mixer/noise kinds and values, shape, octave, zero bytes,
+  table pointers, `$5E` only on the squares, no duty or phase reset there); playback (**the Thor layout writes
+  the same APU and 5B registers as FamiStudio's own export through the first pass and two loops**, row starts,
+  `$07` = the mixer envelopes every frame, `$0B/$0C` = the auto or manual period in every frame with an envelope,
+  the note-table period + 1 and its pitch, the `$5E` keeping its period against a same-frame instrument load);
+  seek to six targets (the unit's state equal to straight audible play). A separate manual-copy fixture proves
+  the order fallback restores held instruments: without restoration, the slot is −1, the shape is cleared
+  and Square 1 is silent; with restoration all ten checks pass. Fallback still does not reconstruct prior
+  shared-period effects or generator phases. Live relocation
+  before every frame with identical writes, the SLead sustain and note edits, SEnvManual's period and SEnvAuto's
+  shape followed at once, and edits (also an octave change and an entry turned manual) giving the envelope state
+  of a fresh start on the edited data at seven rows; audition (period + 1, fine pitch, release tail, the hardware
+  envelope running); mute; the ops table. Evidence: `nes_s5b.wav`, `nes_s5b_trace.txt`, `nes_s5b.nsf`.
+  `wav_render_test.c` renders the demo `copper-kite.nesimg`.
+- Not done: listening on a 5B cartridge, the 5B amplifier's nonlinearity, comparison with a reference emulator's
+  audio (NSFPlay, FamiStudio), Thor measurements.
+## MMC5: the same engine with Nintendo's MMC5 (`"nes-famistudio-mmc5"`)
+
+The second NES expansion (design in `docs/BACKENDS.md`, "NES expansion chips", MMC5). Everything in the NES
+section holds; this section lists what differs. Source-only so far: the numbers below that depend on the assembled
+player (size, id, RAM, song base, image size) are written by `prepare_nes_player.py` into the generated files and
+are not repeated here until the parent generates and verifies them.
+
+- **Player** (`generated/nes_mmc5_player_image.h`, `NesMmc5PlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_MMC5=1`, nothing else changed (same entry table and configuration, the 2A03
+  note tables; no extra tables). 17 envelope slots (`3+3+2+3+3+3`) and 5 pitch envelope slots; the MMC5 pulses'
+  envelopes start at slots 11 and 14, their pitch envelopes are 3 and 4; RAM adds `famistudio_mmc5_pulse1_prev` /
+  `_pulse2_prev` (the period-high caches, `$80` at init).
+- **Song base** `NES_MMC5_SONG_BASE`: the first page after the player, measured by `prepare_nes_player.py` (it
+  assembles once at a provisional base, then at the page after the measured end; the base only changes the operands
+  of the init call). Region = song base..`$FFF9`, samples as before; image = 32-byte header + directory + region
+  (`NES_MMC5_IMAGE_SIZE`, at most the 2A03 build's).
+- **Channels**: 0-4 as the 2A03 build, then **5 MMC5 Pulse 1, 6 MMC5 Pulse 2**; the FamiStudio song header has
+  **seven** stream words, the Thor layout seven order streams.
+- **Opcodes**: the plain 2A03 set; the engine has no MMC5 opcode (`$55`, VRC6 saw volume, is refused). `$4F d` takes
+  0-3 on the MMC5 pulses (`famistudio_duty_lookup`, as the 2A03 pulses); `$53` (phase reset) is valid on the 2A03 and
+  MMC5 pulses (`famistudio_channel_to_phase_reset_mask` `$20`, `$40`; it rewrites `$5003`/`$5007` with the cached
+  period high). Duty envelopes 0-3. Notes use the 2A03 pulse table: the same period on MMC5 Pulse 1 as on Pulse 1 for
+  every note (absolute 57 = engine note 46 = A4 ≈ 440 Hz); A-1 is the lowest note (11-bit periods).
+- **Register writes** (`famistudio_ca65.s`): init `$5010 = $00`, `$5015 = $03` (lines 1390-1399); every frame
+  `famistudio_update_channel_sound` per MMC5 pulse (lines 4292-4294): `$5002`/`$5006` (period low), `$5003`/`$5007`
+  only when the period high changes (no `FAMISTUDIO_CFG_SMOOTH_VIBRATO` sweep trick, which needs a sweep unit: a
+  crossing restarts the duty sequence, audible as a click), `$5000`/`$5004` = duty | `$30` | volume. Never written:
+  `$5001`/`$5005` (sweep), `$5011` (PCM) and `$5104` (ExRAM mode).
+- **PCM: not driven by FamiStudio's engine; played by Thor Tracker's software PCM lane.** Header line 107: "Nintendo
+  MMC5 (2 extra squares, extra DPCM not supported)"; the MMC5 build has no PCM channel, opcode or `$5011` write, and
+  FamiStudio 4.5.3 never activates its `Mmc5Dpcm` channel type. The engine keeps its **seven** channels (generated
+  player unchanged, `CHANNELS = 7`); MMC5 songs have an **eighth lane, MMC5 PCM** (`NesRules.MMC5_PCM` = 7,
+  `NesExpansion.engineChannels` = 7), played by `nes/nes_mmc5_pcm.c`: a host-side sample player that writes the real
+  DAC (`$5011`, write mode) on the machine's CPU-cycle timebase. It is not emulated MMC5 hardware (the DAC has no
+  sample clock or DMA) and the emulated 6502 does not pay the streaming cost a real game would. Details below,
+  "MMC5 PCM lane".
+- **MMC5 audio** (`nes/nes_mmc5.c`, written here from the NESdev wiki "MMC5 audio"; see its header): pulses as the
+  2A03's (shared `nes_duty_table` and `nes_length_table` from `nes_apu.c`) without a sweep unit and without
+  silencing periods below 8; envelopes and length counters clocked together every 7424 CPU cycles (241.08 Hz;
+  NESdev's die-image figure, not bench-confirmed); `$5015` enables (reads give the length status); `$5010` mode and
+  IRQ enable, `$5011` write-mode 8-bit DAC (`$00` keeps the DAC and trips the IRQ flag; ignored in read mode).
+  **Read-mode PCM** feeds the DAC on every CPU read of `$8000-$BFFF`, including opcode fetches and dummy reads;
+  direct `$5011` writes are ignored in that mode. The unit resets its DAC to 0; the software PCM lane centres it
+  at 128 while output is detached. Mix: the pulses through the 2A03 pulse formula, the DAC as a DMC level of the same value (up to twice
+  the DMC's 127) through the tnd formula, the sum **negated** (NESdev: every MMC5 channel has the opposite polarity)
+  into the 2A03's band-limited buffer. Event-driven with output; arithmetic without, so seeks clock every timer,
+  sequencer, envelope and length counter.
+
+#### MMC5 PCM lane
+
+- **Image**: `"nes-famistudio-mmc5"`'s `image_size` is `NES_MMC5_IMAGE_SIZE` (the seven-channel FamiStudio image,
+  byte-for-byte as before) + `NES_PCM_EXT_SIZE` (411020); `image_storage` = `sizeof(NesMmc5Image)` (other engines keep
+  `sizeof(NesImage)`). Extension (little-endian; `nes_mmc5_pcm.h`, `NesPcmLowering`): header 0 `"TTPC"`, 4 version 1,
+  5 samples (≤ 64), 6 u16 mappings (≤ 6144 = 64 slots × 96 keys), 8 u32 data bytes (≤ 262144), 12 u16 events
+  (≤ 16320 = 255 orders × 64 rows), 14 orders (= the FamiStudio image's), 15 zero; at 16: 255 × {u16 first event,
+  u16 count} (identical orders share a range); at 1036: 64 × {u32 offset, u32 length, u32 loop start}; at 1804: 6144 ×
+  {u8 sample, u8 flags (bit 0 loop), u16 binding, u32 period}; binding = `(slot−1)×96 + key−12`, strictly ascending.
+  At 50956: 16320 × {u8 row, u8 flags (1 note, 2 OFF, 4 volume, 8 delay, 16 cut), u16 mapping,
+  u16 volume bits 0-3 / delay 4-8 / cut 9-13}; at 148876: sample bytes, each 1..255.
+  `nes_pcm_load` checks reserved bytes, counts, ranges, rows, periods, nonzero data and unique ascending bindings
+  0..6143. A row cannot combine delay and cut, matching the authored lane's single effect column.
+- **Periods** are 16.16 CPU cycles per sample step: `round(1789773 × 65536 / (rate × 2^(pitch/12)))`, computed by the
+  lowering (`Pcm.period`) and checked against 8..32768 cycles; rates 1000..48000 Hz and pitches −48..+24 semitones give
+  9.3..28636 cycles, so no u32 overflow.
+- **Timing**: at cycle 0 before the play call, a new row forces any pending delayed note/OFF and applies its own
+  event; other frames advance the delay countdown. Cuts are counted after that and survive row and order boundaries.
+  Any immediate or fired delayed note/OFF cancels an earlier cut; the new row's own `Sxx` is installed after its note,
+  so `S00` cuts immediately. Steps land on the cycle their 16.16 time rounds up to; the lane runs to the current cycle
+  before every MMC5 register access and at frame end, so writes reach the unit in time order.
+- **DAC rules**: value = 128 + (sample − 128) × volume / 15 (1..255; never `$00`, which would hold the DAC and trip
+  the IRQ); silence is 128. Reset always centres it, including songs with no mappings. Muting machine channel 7
+  mixes the centre value instead of zero while position and phase continue; idle mute/unmute introduces no step.
+- **Seek**: the silent fast-forward counts steps arithmetically (equal to stepped play). The order fallback walks the
+  earlier orders' events once (rows last the speed in effect after them: `nm_row_speeds`, tempo 150) and reconstructs
+  voice, position, phase, volume and pending delay/cut at the order start, including cuts crossing rows and orders,
+  using straight play's 29780/29781-cycle frame alternation; later frames of the fallback may alternate differently
+  (at most one cycle per two frames).
+- **Live edits** (`nm_apply_image_pcm`): held and pending notes follow the authored slot/key binding, found by binary
+  search, not their compact table indices. Inserting an earlier key cannot retarget a note. An unchanged sample,
+  even moved, retains position and phase and adopts its binding's new pitch/loop settings; a removed binding or
+  changed sample stops the held note at 128 or cancels the pending one. Machines copy the extension; no image pointer is retained.
+  The lane's state is allocated only in `nm_create` (MMC5 build); start, tick, apply and seek allocate nothing.
+- **Audition**: `nm_audition_pcm` on channel 7 with note = mapping index + 1; held (a loop sustains), release cuts.
+- **Mix budget** (also the N163 builds): total span W = 1.0 (2A03) + `NES_MMC5_SPAN` (≈ 1.4115), or +
+  `NES_N163_SPAN` (≈ 0.5947). The bound includes blip_buf's interpolated kernel and high-pass plus the machine's
+  37 Hz high-pass and 14 kHz low-pass: the step-response total variation gives peak/W ≤ 1.1188 before the int16
+  stage and ≤ 1.1184 after the filters over the supported 8–96 kHz range. Use 1.12 with margin:
+  every unit scales by `32000 / (1.12 × W)`, and post-filter gain is `0.98 × 32768 / 32000`.
+  The derived peaks are below 31966 internally and 0.979 at output, without changing relative chip levels.
+  MMC5 is about 14.1 dB and N163 10.5 dB quieter than the plain 2A03 build at equal 2A03 content.
+  `nes_mix_budget_test.c` exercises simultaneous register swings, relative levels and idle mute through `nm_tick`;
+  rendered verification is recorded separately. Every other build retains its scale and gain.
+- **Exports**: `.nsf` and FamiStudio text refuse a song whose PCM lane plays a note (`NesPcmLowering.exportProblem`);
+  with a silent lane they export the seven channels unchanged (unplayed PCM samples and mappings stay in the project);
+  a PCM-lane `Fxx` becomes the song speed on Pulse 1 where no engine lane sets one that row (`FsSong.of`). WAV export
+  runs the engine image, lane included.
+- **Machine** (`nes_machine.c`): `nm_create(rate, &nes_player_mmc5)`; writes to `$5000-$5FFF` go to `nm_write_log`
+  (so a stray ExRAM write would show) and the audio registers to the unit; `$5010`/`$5015` reads come from the unit.
+  Seek, live relocation, audition (channels 0-3 and 5-6, fine pitch on 0-2 and 5-6) and mute (5-6) as on the other
+  builds.
+- **Validation** (`nes_image.c`): seven streams against this build's song base; duty 0-3 everywhere ("MMC5 duty
+  outside 0..3" on the MMC5 pulses), `$53` on channels 0, 1, 5, 6, `$55` refused.
+- **Ops** (`nes_chip.c`): `nes_mmc5_chip_ops`, id `"nes-famistudio-mmc5"`, `image_size` `NES_MMC5_IMAGE_SIZE`.
+  `.nsf` export: the MMC5 player at `$8000`, the data at its song base, header byte `$7B` = `$08` (MMC5).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py --famistudio "$(tools/audio/fetch_famistudio.sh)"` once (it writes
+FamiStudio 4.5.3's export of `tools/audio/nes/mmc5_test.txt` to `mmc5_test_ca65.s` when missing), then plain runs.
+It writes `nes_mmc5_player_image.h`, `NesMmc5PlayerImage.kt` and the fixtures `app/src/test/cpp/nes_mmc5_song.h`
+(raw at the song base, the Thor layout, every block moved, and order 2 MMC5 Pulse 1 row 8 E4 → G4 plus the
+MPulse sustain edited), and checks the seven existing outputs are unchanged. `mmc5_test.txt` (`Expansions="MMC5"`,
+2A03 instruments only) covers duty envelopes 0-3 and `Vxx`, vibrato, slides (one crossing a period-high
+boundary), arpeggio, fine pitch, volume and volume slide, delay, cut, release, no-attack, phase reset, the A-1 and
+B-8 edges and instruments shared between 2A03 and MMC5 pulses. FamiStudio's text names notes an octave below
+scientific pitch (its "A3" is absolute 57, 440 Hz).
+
+### Verification (to be run by the parent; nothing here has been built or run yet)
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_mmc5_test.c`: unit checks
+  against NESdev (duty steps, no sweep, periods below 8 audible, the 7424-cycle clock, `$5015`, length halt, `$5011`
+  write and read modes, inverted polarity, mute); pitch (the MMC5 and 2A03 pulse periods equal for engine note 46,
+  ≈ 440 Hz); FamiStudio's export vs the Thor layout (identical APU + MMC5 writes and row timing through a loop);
+  seek with clocked unit state; live relocation and edits; audition and mute on 5-6; image rules; the ops; the
+  driver's init writes and the registers it never writes. Evidence: `nes_mmc5.wav`, `nes_mmc5_trace.txt`,
+  `nes_mmc5.nsf` (`$7B` = `$08`). `wav_render_test.c` renders `tandem-skies.nesimg` and the shortest valid MMC5
+  song `mmc5-shortest.nesimg` (one row, speed 1).
+- Kotlin: `NesGoldenTest` golden songs `mmc5_demo` and `mmc5_effects` (fixtures generated with
+  `THOR_UPDATE_NES_GOLDEN=1` and `tools/audio/nes_golden.py`), `NesLoweringTest`, `NesExportTest`,
+  `NesProjectCodecTest`, `NesInstrumentViewTest`.
+- Not done: any build or run, listening, an MMC5 cartridge, a reference-emulator comparison.
 
 ## C64 SID: GoatTracker 2 playroutine on a 6510 + reSID (`"c64-sid"`)
 
@@ -1550,119 +2342,71 @@ The hosts treat the machine like the SID's (`Engine::create` on the control thre
 machines, the callback only ticks, mutes and applies images); nothing in `audio_engine.cpp` or `deck_audio.c` is
 system-specific.
 
-## YM2612: SGDK's XGM driver on a Z80 + YM2612 + PSG (`"ym2612-fm"`)
+## YM2612: SGDK's XGM2 driver on a Z80 + YM2612 + PSG (`"ym2612-fm"`)
 
-Design step 8 (FM), second chip, native spike (branch `ym2612-spike`): `chip_engine_ops("ym2612-fm")` plays songs
-lowered into the image layout below **through SGDK's XGM Z80 driver**, the driver Mega Drive homebrew ships. The
-driver investigation and the reasons for each choice are in `docs/BACKENDS.md`, "YM2612 (Mega Drive)". XGM is a
-register stream, so the musical part is Thor Tracker's **own player** (`ym/ym_player.c`, pure integer C, specified
-here and mirrored by the independent Python reference `tools/audio/ym/ym_ref.py`; the host test requires identical
-writes in every tick). Its per-tick writes are the VGM export; xgmtool's VGM → XGM → XGC conversion (ported to C,
-`ym/ym_xgm.c`, proven byte-equal to xgmtool 1.76) turns them into the XGC frames the driver reads from the emulated
-cartridge, one frame per vertical interrupt, exactly as `XGM_startPlay` plays a song in a game. This section is the
-contract of the Kotlin system and lowering (`core` `system/ym2612`, `backend/YmLowering`); the numbers they share
-with the engine are generated into `core/.../backend/YmPlayerImage.kt` (below, "Preparing").
+Thor Tracker's integer player (`ym/ym_player.c`) turns rows and effects into register
+writes and PCM commands. `ym/ym_xgm.c` encodes them into separate FM and PSG XGM2
+streams, consumed by the unmodified SGDK driver on an emulated Z80. The driver,
+not a parallel host mixer, mixes the three PCM lanes into the YM2612 DAC.
+The independent Python player is `tools/audio/ym/ym_ref.py`.
+Kotlin's `system/ym2612`, `backend/YmLowering` and `YmPcmLowering` produce the
+layout below; shared constants are generated into `backend/YmPlayerImage.kt`.
 
 ### What runs
 
-- **Z80** (floooh `z80.h`, the pinned `m6502.h` commit, cycle-stepped, `cpuz80.c` its one implementation) at
-  MCLK / 15 with the Mega Drive's Z80 map: 8 KiB RAM at `$0000` (mirrored to `$3FFF`), YM2612 ports at
-  `$4000-$4003` (mirrored to `$5FFF`; reads return the status byte with the busy flag), the bank register at
-  `$6000` (9 serial bit-0 writes select A15-A23 of the 68000 address the window shows), the PSG at `$7F11`
-  (`$7F11/13/15/17`), the 32 KiB bank window at `$8000`. The emulated 68000 address space holds only what the
-  driver reads: a 256-byte null sample (`YM_NULL_SAMPLE` = `$010000`, zeros) and the music ring (`YM_RING` =
-  `$020000`, 64 KiB); everything else reads `$FF`. Z80 accesses to the 68000 bus take no extra wait states (real
-  hardware adds about 3 cycles each; it slows the driver's PCM mixing, not its frame processing). No interrupts:
-  the driver runs with interrupts disabled. Most of its cycles are not stepped but replayed (below, "Pass replay").
-- **Driver**: `drv_xgm.s80` (SGDK `9a78a441`, MIT), unmodified, assembled with SGDK's sjasm into
-  `generated/xgm_driver_image.h` (5888 bytes; byte-identical to `drv_xgm` in SGDK's `lib/libmd.a`).
-- **YM2612**: ymfm (`81aec25c`, BSD-3-Clause) `ymfm::ym2612` behind a C interface (`ym/ym_ymfm.cpp`, built like
-  reSID: C++17, `-O2 -w`), clocked at MCLK / 7 (one sample per 1008 MCLK = 53267.0 Hz NTSC, 52781.2 Hz PAL); a
-  data write sets the busy flag for 32 × 6 chip clocks (ymfm's figure; 89.6 Z80 cycles), which the driver polls.
-  Writes take effect at the next chip sample (ymfm is sample-based); the driver's busy waits keep a key-off and a
-  key-on of one channel at least one sample apart.
-- **PSG**: `ym/ym_psg.c`, an SN76489 as integrated in the Mega Drive VDP (written for Thor Tracker from the SMS Power
-  documentation): three 10-bit tone counters and a noise counter decremented at MCLK / 240 (PSG clock / 16), a tone
-  output flips when its counter reloads (period 0 counts as 1), 16-bit noise LFSR (white noise: feedback from bits
-  0 and 3, i.e. taps 0x0009; periodic: bit 0 recirculated), reset to `$8000` by every noise-register write, shifted
-  each time the noise counter's flip-flop rises; noise rates clock/512, /1024, /2048 (counter 16, 32, 64) or tone 3's
-  period; 4-bit attenuation in 2 dB steps (15 = off). Bipolar output (±level).
-- **Timing**: one engine tick = one vertical interrupt: 3420 MCLK per line × 262 lines (NTSC, MCLK 53693175 Hz,
-  59.92 Hz) or 313 lines (PAL, MCLK 53203424 Hz, 49.70 Hz): 59736 (71364) Z80 cycles, 888.9 (1061.96) YM samples,
-  3733.5 (4460.25) PSG counter steps per tick, all accumulated exactly in master clocks. (The VGM export uses
-  VGM's 1/60 s and 1/50 s, as xgmtool does.)
-- **Mix and resampling**: YM2612 left/right and the PSG (centred) go through band-limited steps (blip_buf 1.1.0, as
-  the NES/OPL3) clocked at the Z80 rate (one step per YM sample, one per PSG change) to the host rate, with
-  blip_buf's ~15 Hz high-pass. Levels: ymfm's 14-bit sum × `YM_FM_GAIN`, the PSG's channel level table × 
-  `YM_PSG_GAIN` (see "Mix"), float = sample / 32768.
-- **68000 side** (`ym/ym_machine.c`, what SGDK's `xgm.c` does): at reset `YM2612_reset()` and `PSG_reset()`'s writes
-  go to the chips (below, "Machine reset writes"), the driver is copied to Z80 RAM and the Z80 reset; it runs until
-  it reports ready (`STATUS` bit 7, 20.4 k cycles); then the null sample entry at `$1C00` and the 63 sample ids at
-  `$1C04` (all the null sample: no PCM), the music address `PARAMS+$00` = `YM_RING`, `COMMAND` |= `$40` (play).
-  Per tick: if `MODIFYING_F` (`PARAMS+$0E`) is set the Z80 runs until it clears (inside the tick's cycles), then
-  `PENDING_FRM` (`PARAMS+$0F`) += 1, then the tick's Z80 cycles run with the chips.
+- **Driver:** SGDK commit `9a78a441`, MIT, `third_party/sgdk-xgm2/`.
+  `generated/xgm2_driver_image.h` is 8192 bytes, assembled with SGDK's sjasm
+  and compared against `drv_xgm2` in its `lib/libmd.a`.
+  SHA-256: `c7c9d630faf2397580d407878008c8cb7c836ad3d6c0c0ab26d6db9b59583358`.
+- **Z80:** floooh's `z80.h`, at MCLK/15. RAM `$0000-$1FFF` mirrors to `$3FFF`;
+  YM2612 ports are at `$4000-$4003`, mirrored through `$5FFF`; nine serial writes
+  to `$6000` select the 68000 bank at `$8000-$FFFF`; PSG writes use `$7F11`.
+  The emulated cartridge maps the FM ring at `$020000`, PSG ring at `$030000`,
+  and PCM bank at `$100000`. Each stream ring is 64 KiB; the bank is at most 1 MiB.
+  Unmapped ROM reads return `$FF`. Accesses to the 68000 bus (`$7F00-$FFFF`) add
+  three Z80 wait cycles; chip clocks and the interrupt line continue during the wait.
+  The 68000 side implements SGDK's XGM2 RAM handshake; it does not emulate a 68000 CPU.
+- **YM2612:** ymfm `81aec25c` (BSD-3-Clause), through `ym/ym_ymfm.cpp`.
+  Clock MCLK/7, one generated sample per 1008 master clocks. Busy timing and
+  timer A are visible to the Z80. Timer A belongs to the driver's PCM mixer;
+  FM3 special mode uses bit 6 of `$27`, without overwriting the timer-control bits.
+- **PSG:** `ym/ym_psg.c`, Sega's SN76489: three 10-bit tones, 16-bit noise
+  LFSR with white-noise taps `$0009`, periodic noise, and four 2 dB attenuation
+  controls. Noise source 3 shares tone 3's period.
+- **Timing:** one tick is a vertical interrupt, held for one line (228 Z80
+  cycles). NTSC uses MCLK 53693175 Hz and 262 × 3420 master clocks per tick
+  (about 59.92 Hz); PAL uses 53203424 Hz and 313 lines (about 49.70 Hz).
+  Chips keep running through driver work and seek. The old XGM1 pass-replay
+  optimization is not used.
+- **Output:** YM2612 stereo plus centred PSG, resampled with blip_buf at the
+  Z80 clock rate. Float output is the mixed sample divided by 32768.
+  Gain constants are `YM_FM_GAIN` and `YM_PSG_GAIN`; PCM is already in the
+  YM2612 output, not mixed a second time.
 
-### Streaming XGC frames (driver in the loop)
+### Streaming XGM2
 
-The driver executes a frame when `PENDING_FRM` > 0 and, right after, **prefetches the next frame** into its buffer.
-So the engine keeps the player one tick ahead: at engine tick *k* it runs player tick *k* + 1, encodes its writes
-into XGC frames (`ym/ym_xgm.c`, xgmtool's algorithm, below) and appends them to the ring; then it releases tick *k*,
-in which the driver executes the frames of player tick *k* (prefetched during tick *k* − 1) and prefetches those of
-*k* + 1. Starting play encodes player tick 0, sets the play command and runs one tick in which the driver picks the
-command up (its `external_com` runs after a processed frame) and prefetches; that tick's output is discarded.
-`position()` reports the position of the player tick whose frames the next engine tick executes.
+The driver prefetches music. The machine keeps an encoded frame ahead of execution
+and tracks the driver's consumed frames separately from the player's position.
+`position()` and `row_serial()` must follow execution, including repeated
+one-row loops; enqueueing another frame is not proof that it was heard.
+When a frame is still pending, the producer stops advancing rather than overwriting
+its position history. Full register frames occur at stream start and the first loop
+arrival, not on every subsequent loop.
 
-- A player tick may become several XGC frames (a frame holds ≤ 250 bytes; xgmtool ends a full frame with the
-  frame-skip command, so the driver executes the parts back to back in the same interrupt).
-- **Ring wrap**: when a tick's frames would not fit before the ring's end, the engine first writes a frame holding
-  only frame-skip + loop to offset 0 (`$FA $FC 00 00 00`, a 6-byte frame), which the driver executes within the same
-  interrupt as the next frame (the frame-skip adds the interrupt the loop's frame end consumes), then writes the
-  tick's frames from the ring start. The driver counts loops down in `REM_LOOP` (`PARAMS+$38`) and stops at 0; the
-  engine sets it to 0 (= 256 more loops) at every wrap.
-- The engine never writes the XGC file's 3 leading empty frames (they only align PCM, which this system has none of)
-  nor its loop command (the player follows the song's loop itself). Every arrival at (loop order, row 0, tick 0)
-  encodes the **loop frame** as the export has it: the player's register dump and xgmtool's loop start (the frame
-  carries every register). From the song start the stream is therefore **byte-identical to xgmtool's XGC** of the
-  exported VGM for the whole first pass, loop frame included (host test); later passes dump the player's state then
-  (the game re-executes the first arrival's dump; they differ only in registers the song leaves changed at its end).
-- **Driver lag (heavy frames)**: the XGM v1 driver spends most of each frame mixing PCM (silent here) and executes
-  about 70-100 YM writes per vertical interrupt; a heavier frame spills into the next interrupts and the frames
-  queued behind it then run back to back until it has caught up (`PENDING_FRM` counts the interrupts it owes). Measured
-  on the test song: the song start (the machine reset writes, ~280 writes) and each loop frame (the full dump) lag up
-  to 3 ticks, 31 of 1500 ticks lag at all. A game does exactly the same with this XGC; the Kotlin validator should warn
-  about rows whose writes exceed the budget. `position()` follows the driver: it is the position of the first tick the
-  driver has not finished (`encoded − 1 − PENDING_FRM`), so behind a heavy frame it waits and then catches up.
+FM and PSG have independent packed streams. Each unpacked frame, including its
+end command, must fit in 255 bytes: a full 256-byte circular buffer would appear
+empty to the driver. The encoder reserves four bytes for a wait or loop command.
+It never splits an oversized music frame with an XGM1-style frame-skip opcode.
+Packed literals respect 256-byte pages; ring wrap uses each stream's own loop
+command. Instrument loads and the `$9x` TL command preserve the driver's cached
+TL and sustain/release state, including after an algorithm change.
 
-### Pass replay (the driver's idle work, `ym/ym_machine.c`)
+PCM commands identify a compiled variant (1-123) and one of three driver channels.
+Variant zero stops the channel. The sample table has 124 entries, including the
+end page. Samples are signed 8-bit, padded with signed zero to 256-byte boundaries.
+The driver's timer gives a nominal full rate of MCLK/4032 (about 13.3 kHz NTSC);
+half-rate variants use MCLK/8064.
 
-Without PCM the driver spends ~92 % of its Z80 cycles in two pieces of fixed code: its PCM mixer (`pcm_mix`, 43917
-cycles per 256 silent samples, about one pass per tick) and its frame-wait loop (`sync_frame_loop`, 254 cycles per
-iteration). Neither reads the music. The machine records one execution of such a **pass** — from the opcode fetch at
-one of the two labels (addresses from the sjasm listing, `XGM_DRIVER_PCM_MIX`, `XGM_DRIVER_SYNC_FRAME_LOOP` in
-`generated/xgm_driver_image.h`) to the next fetch at either — and replays it whenever a pass starts with the same
-inputs: the chips run alone for its cycles and receive its chip and bank writes at the same cycles, its memory
-writes land at its end, and the Z80 continues in the recorded exit state. Driver, timing and output are exactly the
-fully stepped machine's.
-
-- **Inputs compared**: the first read of every byte (code included, ROM reads by address), the YM address latch,
-  the bank register if read before the pass sets it, the registers a pass reads (not those it loads before use:
-  the mixer's AF BC DE HL SP, the frame wait's AF HL).
-- **Re-based, not compared**: the PCM read pointer BC' (each `LD A,(BC)` under EXX is a relative read: its value is
-  compared at the re-based address, which must not be one the pass writes; wherever the pass reads B' its page is
-  compared; BC' ends advanced by the pass's reads), R (advanced, or exact after an `LD R,A`), the frame-wait
-  counter (`IDLE_LOOP` + 1, and HL with it), and registers neither pass touches (IY, AF'; the frame wait's BC, SP:
-  carried through, checked unchanged when recorded).
-- **Ticks**: a pass may run on across the tick boundary (the vertical interrupt, the ring append) unless it read
-  memory the 68000 side changes there (`PENDING_FRM`, `REM_LOOP`, the ring): such a pass (the frame wait) only
-  replays if it ends within the tick, else it is stepped.
-- **Recording** aborts on anything else (a YM status read, an I/O access, a write to the 68000's variables, `LD A,R`,
-  `LD A,C` on the pointer); those passes are simply stepped. At most 64 passes and 640 KiB per machine (allocated
-  at creation); the test song keeps 18 (190 KiB), 40 with PAL and auditions. The memo survives `start` and
-  `audition` (same driver); the first ticks of a new machine record (a cold tick costs what a stepped one does).
-- **Proof**: the host test runs a replayed and a fully stepped machine side by side (the song across a ring wrap,
-  PAL, a seek with mutes, FM/PSG/Noise auditions with release; 4817 ticks) and requires identical samples, chip
-  writes with their cycles, lag and positions every tick, and identical Z80 state and RAM whenever the replayed one
-  is between passes; 95 % of the Z80's cycles were replayed. `ymm_set_replay(m, 0)` steps every cycle (test hook).
 
 ### Machine reset writes (SGDK's `YM2612_reset()` + `PSG_reset()`)
 
@@ -1674,42 +2418,59 @@ for i = 0..3: `$80 | i<<5`, `$00`, `$90 | i<<5 | $0F`.
 
 ### Channels
 
-| Channel | 0-5 | 6, 7, 8 | 9 |
-|---|---|---|---|
-| Name | FM 1-6 | PSG 1-3 | Noise |
-| Chip | YM2612 channel *c*: port *c* / 3, register offset *c* mod 3, key select (`$28`) 4·(*c* / 3) + *c* mod 3 | SN76489 tone *c* − 6 | SN76489 noise (index 3) |
-| Instruments | FM slots | PSG slots | PSG slots |
+| Channel | 0-5 | 6, 7, 8 | 9 | 10-12 |
+|---|---|---|---|---|
+| Name | FM 1-6 | PSG 1-3 | Noise | PCM 1-3 |
+| Chip | YM2612 FM | SN76489 tone | SN76489 noise | XGM2 mixer → YM2612 DAC |
+| Instruments | FM slots | PSG slots | PSG slots | PCM kits |
 
-FM 6 is an ordinary FM channel (the driver's DAC is off without PCM). No channel 3 special mode, no DAC.
+FM 6 is an ordinary FM voice when the DAC is off. While PCM plays, the DAC replaces
+its output and uses FM 6's stereo routing. FM3 special mode gives its four operators
+independent pitches; it does not add four independently sequenced tracker lanes.
 
 ### Image layout (what the Kotlin lowering produces)
 
-`image_size` = 65536 bytes, little-endian, every pattern reference an offset into the data region (so any layout
-that passes `ym_load_image` relocates). Constants: `ym/ym_image.h` (`YM_*`); the reference builder is
-`tools/audio/ym/ym_song.py` (`build()`). The loader rejects anything off-contract with a reason and the byte
-(`YmInfo.problem`, `problem_offset`): mirror its checks in Kotlin validation for user-facing messages.
+`image_size` = 1188864 bytes, layout 2, little-endian. The original 65536-byte
+tonal prefix and its 57536-byte pattern/envelope capacity remain intact.
+`ym/ym_image.h` is authoritative; `tools/audio/ym/ym_song.py` is the reference
+builder. `ym_load_image` reports a reason and offending offset on rejection.
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | `"TTYM"` |
-| 4 | 1 | layout: 1 |
-| 5 | 1 | region: 0 = NTSC (60 Hz), 1 = PAL (50 Hz) |
-| 6 | 1 | speed (ticks per row) at the song start, 1..255 |
-| 7 | 1 | LFO (register `$22`) at the start: 0 = off, `$08`-`$0F` = on, rate 0..7 (3.98 … 72.2 Hz) |
+| 4 | 1 | layout 2 |
+| 5 | 1 | region: 0 NTSC, 1 PAL |
+| 6 | 1 | initial speed, 1..255 ticks per row |
+| 7 | 1 | initial LFO register `$22`: 0 or `$08-$0F` |
 | 8 | 2 | order count, 1..256 |
-| 10 | 2 | loop order (< count) |
-| 12 | 1 | instrument count I = highest slot present, 0..64 |
-| 13 | 1 | 0 |
-| 14 | 2 | data size D: bytes of pattern and envelope data used, ≤ 57536 |
-| 16 | 48 | 0 |
-| 64 | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
-| 320 | 5120 | pattern of (order *o*, channel *c*) = u16 offset into the data region at 320 + 2 (10 *o* + *c*); entries ≥ count 0 |
-| 5440 | 2560 | instrument slot *n* (1..64) at 5440 + 40 (*n* − 1) |
-| 8000 | 57536 | data region: patterns and PSG envelopes, `[0, D)` |
+| 10 | 2 | loop order, below order count |
+| 12 | 1 | highest instrument slot present, 0..64 |
+| 13 | 1 | zero |
+| 14 | 2 | used tonal pattern/envelope bytes, at most 57536 |
+| 16 | 1 | FM3 mode: 0 normal, 1 special |
+| 17 | 1 | compiled PCM variants, 0..123 |
+| 18 | 2 | used PCM bank pages, 0..4096 |
+| 20 | 4 | used PCM pattern bytes, at most 65536 |
+| 24 | 40 | zero |
+| 64 | 256 | rows per order: 1..255, 0 means 256 |
+| 320 | 5120 | tonal pattern offsets: 256 × 10 × u16 |
+| 5440 | 2560 | instruments: 64 × 40 bytes |
+| 8000 | 57536 | tonal patterns and PSG envelopes |
+| 65536 | 512 | FM3 offsets: 64 × 4 × s16, diagram operator order |
+| 66048 | 1536 | PCM pattern offsets: 256 × 3 × u16 |
+| 67584 | 6144 | kit/key variant ids: 64 × 96 bytes; 0 unmapped |
+| 73728 | 984 | 123 variant records, eight bytes each |
+| 74752 | 65536 | PCM pattern data |
+| 140288 | 1048576 | compiled signed 8-bit PCM bank |
+
+Pattern offsets are relative to their own tonal or PCM data region. Unused order
+entries and reserved bytes are zero. Each variant record is a u16 start page,
+u16 nonzero length in pages, flags (bit 0 half rate), and three zero bytes.
+FM3 offsets are −3072..3072 in 1/64 semitones and zero on non-FM slots.
 
 
 **Instrument** (40 bytes; an all-zero record = no instrument; records above I must be zero). Byte 0, flags: bit 7
-= defined (1), bit 0 = PSG instrument (1) or FM (0); other bits 0.
+= defined (1), bit 0 = PSG, bit 1 = PCM; FM has neither kind bit. Other bits are zero.
 
 FM instrument (flags `$80`):
 
@@ -1743,6 +2504,14 @@ region, so instruments can share them.
 | 32 | drum sweep start, end, speed (as FM) |
 | 35 | 5 bytes 0 |
 
+PCM instrument (flags `$82`): the remaining 39 bytes are zero. Its 96-key table
+selects compiled variants; unmapped keys do not play. The project holds at most
+64 source samples sharing 256 KiB, sample rates 1..48000 Hz, kit level 0..15,
+and key pitch offsets −48..24 semitones. Lowering resamples and bakes the kit level
+into each mapped sound, deduplicates identical padded waveforms, and enforces
+123 variants / 1 MiB. Levels are 2 dB steps below 15; zero is silent.
+There are no sample loops or runtime PCM pitch/volume commands.
+
 **Envelope** (at its offset, wholly inside `[0, D)`): u16 length L 1..256, u16 loop index (< L, `$FFFF` = none),
 u16 release index (`$FFFF` = none; volume only, and only with a loop: loop < release < L), then L signed bytes.
 The reference builder places envelopes after the patterns, slots 1..64 ascending (volume, arpeggio, pitch), each
@@ -1757,7 +2526,7 @@ inside `[0, D)`. Row encoding:
 | `0x80 \| k` | k + 1 empty rows (k 0..127) |
 | `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
 | note | 0..95 = absolute note C-0..B-7 (0 = C-0, 57 = A-4 = 440 Hz), `0xFE` = OFF (key off) |
-| instrument | slot 1..64, defined, FM on channels 0-5, PSG on 6-9 |
+| instrument | slot 1..64, defined; FM on 0-5, PSG on 6-9, PCM on 10-12 |
 | effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
 
 **What the lowering writes** from a `Cell(note, instrument, effect, param)` with up to 4 effect columns: note
@@ -1818,10 +2587,10 @@ Noise: instrument 0, volume `$0F`; LFO = header byte 7; speed = header speed; po
 **Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
 
 1. `YM0 $22` = the LFO value.
-2. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..9 and their effect columns in
+2. Tick 0 of a row: read every channel's row at (order, row). Then, over channels 0..12 and their effect columns in
    order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position:
    `B` only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop
-   order; both → (B's order, D's row). Then for each channel 0..9: its cut is cleared; if the row has `Gxx` with xx >
+   order; both → (B's order, D's row). Then for each channel 0..12: its cut is cleared; if the row has `Gxx` with xx >
    0 (the last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel
    whose delayed row is due (tick = xx) runs it, channels in order.
 3. Each channel whose cut tick (`Sxx`) equals this tick is keyed off, channels in order.
@@ -1876,11 +2645,24 @@ steps (FamiStudio's rules): next = position + 1; not released and next = the rel
 else next = L → the loop index if the envelope has a loop and no release point, else L − 1 (hold the last value).
 A released note whose volume position is now L − 1 with value 0 turns off (pitched noise frees PSG 3).
 
+**FM3 special mode:** apply the instrument's four signed offsets to the current
+FM3 pitch after note effects. Diagram operators 1, 2, 3 and 4 use `$AD/$A9`,
+`$AE/$AA`, `$AC/$A8` and `$A6/$A2` respectively. High register precedes low.
+Normal mode and other FM lanes ignore the offsets. The encoder changes mode
+with the driver's dedicated command rather than replacing timer register `$27`.
+
+**PCM row:** a note selects the current kit's key mapping and triggers that variant
+on the lane's driver channel. OFF and `Sxx` stop it. `Gxx` delays the trigger;
+`B`, `D`, `F` and `L` retain their global meanings. There is no tonal update
+for PCM: the driver advances samples and mixes them between musical ticks.
+
 ### Effects (what Kotlin's effect specs declare for `"ym2612-fm"`)
 
 Names are one character (`docs/BACKENDS.md`, "Effect columns"); up to 4 columns per channel. "Note" = applies to
-the note keyed on this row only (parameter lock); "now" = from this row on, persisting. Channels: FM = 0-5, PSG =
-6-8, N = 9; an effect on a channel it does not list is rejected by the loader.
+the note keyed on this row only (parameter lock); "now" = from this row on, persisting.
+In this table "all" means the ten tonal channels; PCM additionally accepts only
+`B`, `D`, `F`, `G`, `L` and `S`. FM = 0-5, PSG = 6-8, N = 9.
+An effect outside its channel's supported set is rejected by the loader.
 
 | Effect | Channels | Parameter | Meaning |
 |---|---|---|---|
@@ -1911,105 +2693,97 @@ sweep, the note giving the pitch.
 **`Lxx` and the header LFO**: `Lxx` writes `$22` at once and sets the player's LFO value, which step 1 rewrites
 every tick (emitted only on change).
 
-### XGM / XGC encoding (`ym/ym_xgm.c`: xgmtool 1.76's algorithm)
+### XGM2 files (`ym/ym_xgm.c`, `ym/ym_vgm.c`)
 
-The player's writes, frame by frame (one frame per tick; the VGM's frame), become XGM and XGC as xgmtool converts
-the exported VGM (`xgmtool song.vgm song.xgm` / `song.bin`); the host test checks byte equality with xgmtool built
-from the pinned SGDK. Per frame (with a loop-start marker on the first arrival at the loop point):
+Both file forms contain the compiled sample bank and separate FM/PSG streams,
+with page-aligned lengths and a 124-entry sample-address table:
 
-1. **Clean** (`VGM_cleanCommands`): YM writes update a register state (`YM2612_set`: `$28` keeps the channel's
-   key nibble, `$27` keeps bits 6-7; registers xgmtool ignores — port 1 `$22`-`$2B`, `$30`-`$B7` with offset 3,
-   everything below `$22` and from `$B8` — are dropped). A key write (`$28`) is kept as is; a non-key write after
-   key writes first flushes: the state's delta since the last flush, then those key writes. At the frame end: the
-   remaining delta, the remaining key writes, then the PSG delta (`PSG_getDelta`: per index 0..3, tone then
-   attenuation; a tone whose high bits are unchanged is one byte). The YM delta lists the register pairs
-   (`$24`/`$25`, `$A4`/`$A0`, `$A5`/`$A1`, `$A6`/`$A2`, `$AC`/`$A8`, `$AD`/`$A9`, `$AE`/`$AA`; port 1 too except
-   `$24`) first, both when either differs, then port 0 and port 1 registers in ascending order. A loop-start marker
-   resets the old state (the loop frame carries every register written so far).
-2. **XGM** (`XGM_extractMusic`): PSG writes, key writes and port 0/1 writes are grouped; a port write after key
-   writes flushes port 0, port 1, then keys; at the end port 0 (≤ 16 writes per `$2X`), port 1 (`$3X`), keys (≤ 16 per
-   `$4X`), PSG (≤ 16 per `$1X`); then `$00` (frame), or at the very end the loop command `$7E` (offset of the loop
-   frame) and `$7F`.
-3. **XGC** (`XGC_extractMusic`): per XGM frame a size byte, then the PSG writes (split per XGM PSG command into
-   envelope writes, ≤ 4 per command, then tone writes, ≤ 8), the YM commands in order with key commands split at 6
-   writes and `$2B` writes removed, then **state** commands (`$60 | n−1`, pairs (index, value): D1L/RR registers
-   `$80`-`$8E` that changed, index `$44` + slot, port 0 then 1), a frame skip + loop at the loop's end; command
-   bytes are the XGM codes << 1 (frame skip `$7D` → `$FA`, loop `$FC`); a frame reaching 250 bytes is closed with a
-   frame skip and continued in a new frame. The file has 3 empty frames first, the sample table (all "silent":
-   `$FFFF`, `$0001`), `$FE` = 0, `$FF` = PAL flag.
+- **`.xgm`**: `"XGM2"` magic, format version `$10`, 260-byte header, unpacked
+  streams, GD3 metadata. The PAL bit selects the region.
+- **`.xgc`**: the same header without the four-byte magic (256 bytes), packed
+  streams and the packed flag set; no metadata.
 
-`.xgm` files carry a GD3 tag (flag bit 1) when the export has one; xgmtool appends " - Optimized with XGMTool" to the
-converter field, Thor Tracker writes its own GD3 (as the VGM's).
+These are XGM2 formats, not XGM1 or xgmtool 1.76's XGC. Consumers must use the
+XGM2 driver/toolchain. The exporter retains key ordering, operator-frequency
+pairs, cached instrument state and PCM ids. Loop offsets address each stream
+independently. Frame overflow is an explicit error, never a silently split frame.
+
+For SGDK, import the **already compiled `.xgc`** without further conversion or
+resource compression: `BIN music "song.xgc" 256` in the `.res` file, then
+`XGM2_play(music)`. The 256-byte address alignment is required by the driver's
+sample and stream address tables.
+
+**Pinned converter limitation:** xgm2tool 1.08 at `9a78a441` does not correctly
+re-import XGM2 files. Its XGM→XGC path leaves unpacked loop offsets in the packed
+streams and adds `$80` to already signed PCM bytes; its XGM→VGM path throws a
+`LoopCommand` cast exception even on a file generated by the same tool.
+Do not run these exports through that converter or its `XGM2` resource processor.
+The unpacked `.xgm` remains available for format-aware tooling; the `.xgc`
+bypasses those converter defects.
 
 ### VGM export
 
-`ym_vgm_render` (`ym/ym_vgm.c`) runs the player headless and logs its writes as a VGM 1.71 for one YM2612 and one
-SN76489; `tools/audio/ym/ym_ref.py IMAGE --vgm OUT` writes the same bytes from the Python reference. File:
+`ym_render(..., YM_FORMAT_VGM, ...)` runs the actual machine and records its
+YM2612 and PSG writes with Z80-cycle timestamps. VGM 1.71 uses the region's
+YM2612/SN76489 clocks and converts elapsed master clocks to 44.1 kHz waits;
+it does not replace console timing with exactly 60/50 Hz.
 
-- Header (256 bytes, others 0): `"Vgm "`, 0x04 = file size − 4, 0x08 = 0x171, 0x0C = SN76489 clock (3579545 NTSC,
-  3546895 PAL), 0x18 = total samples (44.1 kHz), 0x1C = loop offset − 0x1C and 0x20 = loop samples (both 0
-  without a loop), 0x24 = 60 / 50 (rate), 0x28 = 0x0009 (SN76489 feedback), 0x2A = 16 (shift register width), 0x2B =
-  0 (flags), 0x2C = YM2612 clock (7670453 / 7600489), 0x34 = 0xCC (data at 0x100). `ym_vgm_render` writes no GD3 tag;
-  the hosts' entry point appends one and sets 0x14.
-- Data: the machine reset writes, then the player's reset batch; then per tick: at the first arrival at (loop order,
-  row 0, tick 0) the loop point and a dump of the player's register state (`YM0 $22`; per FM channel 0..5: operators
-  1..4 `$30`-`$90`, `$B0`, `$B4`, `$A4`, `$A0`; per tone 0..2 its period as two bytes and its attenuation; the noise
-  control and attenuation 3 — all values, including zeros), so each pass of the loop starts from the same registers;
-  the key-off phase writes; if there were any, a one-sample wait (`0x70`, so the key-off reaches VGM players' chips
-  one sample before a key-on: a retrigger); the other writes; the rest of the tick's wait: 735 (`0x62`, NTSC) or 882
-  (`0x63`, PAL) samples, after a one-sample gap 734 / 881 (`0x61 nn nn`). Writes are `0x52 reg val` (port 0), `0x53
-  reg val` (port 1) and `0x50 byte` (PSG). The song ends at the second arrival at the loop point (or at the tick limit,
-  then without a loop), then `0x66`.
+The output starts with the chip reset registers. Commands `$52`/`$53` carry
+YM writes and `$50` PSG writes. DAC bytes go into a PCM data block and use
+`$8n` output/wait commands; `$E0` restores the PCM cursor at the loop point.
+Thus a looping VGM reuses the appropriate DAC bytes rather than running off
+the sample block. The host entry point appends GD3 and updates EOF/tag offsets.
+The exporter observes a bounded number of ticks when the song never returns
+to its declared loop.
 
 ### Position, seek and live edits
 
-- `position()`: above (the player runs one tick ahead; the heard position lags behind heavy frames).
-- `row_serial()`: the player ticks encoded at tick 0 up to the heard position's tick (`ymm_row_serial`, stored beside
-  each FIFO position), so a lag that repeats `(order, row, 0)` is not a new row and a speed-1 row jumping to itself is.
-- `start(order, row, max_ticks)`: machine reset (chips reset, SGDK's reset writes, driver boot), then the **player and
-  the encoder's state** run alone from the song start until the next tick starts (order, row) (`CHIP_SEEK_FROM_START`;
-  0.18 µs per tick: `ymx_absorb` keeps the encoder state without encoding, exact because the clean and XGC states are
-  both every register written so far); then, from `YMM_PREROLL_TICKS` (60) ticks before the target, the chips receive
-  the player's register dump (and a key-on for its keyed FM channels) directly (the 68000's part; the YM address latch
-  is left on `$2A` as the driver expects) and the last 60 ticks stream through the driver with the output discarded.
-  The player and the stream after a seek equal straight play's; the sound is **identical to straight play when the
-  target is within 60 ticks of the start** (the whole way streams from the song start, host test: bit-identical); beyond,
-  notes keyed earlier restart 1 s before the target. Measured on the test song: each channel's 20 ms loudness
-  envelope over 0.5 s stays 0.012-0.028 from straight play (channels with at least 2 % of the energy; limit 0.1 —
-  FM release tails and SSG-EG phases of notes keyed before the pre-roll), the mix 0.005-0.103 (limit 0.15: it also
-  depends on the channels' relative phases, as PSG counters and FM phases restart at the restore; the OPL3's mix
-  measures 0.026), loudness 0.5-1 s after within 0.8-1.25×. Beyond `max_ticks` the player is placed at the order
-  start (`CHIP_SEEK_FROM_ORDER`, as the OPL3). Cost: ~20 ms on the dev PC (60 ticks of driver and chips, the
-  driver's idle work replayed: 36-44 ms stepped); suggested `seekTicks` 12000 (2.5 ms more). The hosts seek on a
-  spare machine off the audio thread (Android's control thread, the Deck's main thread), as for every system.
-- `apply_image` (realtime-safe, 2.7 µs mean / 13 µs worst): `ymp_relocate`, the OPL3's rules, plus: a changed header
-  LFO byte replaces the player's LFO value. The player is one tick ahead, so an edit is heard from the tick after next
-  (≤ 2 ticks, 33 ms). A changed region applies at the next start.
+- `position()`: the next frame the driver executes, not the latest encoded frame. Normally the player is one tick
+  ahead. If the driver skips an interrupt to refill PCM, the queued frame remains pending and the player waits;
+  musical time stretches as it does when the real driver plays an exported stream.
+- `row_serial()`: the row instance stored beside each queued position. A stalled `(order, row, 0)` is not another
+  row; a speed-1 row jumping to itself is.
+- `start(order, row, max_ticks)`: the player first finds the target, bounded by `max_ticks`. If unreachable within
+  that budget, it starts at the target order's row 0 and searches within that order (`CHIP_SEEK_FROM_ORDER`, bounded
+  by 65536 ticks). An unreachable row is rejected. The machine then resets and **replays the whole driver and chips**
+  until the target frame is next to execute. This preserves the Z80, PCM cursors, chip phases and register-write
+  cycles; the old 60-tick register-restore shortcut cannot reconstruct XGM2's PCM buffers.
+  Silent replay advances the resampler's fractional time but discards its earlier filter history: the tests compare
+  Z80 registers/RAM and subsequent cycle-stamped writes exactly, and audio 1–2 seconds after the seek within
+  `1e-4` RMS. Cost is linear in the replay distance, not the old fixed pre-roll cost. Hosts prepare a spare machine
+  off the audio callback (Android's control thread, the Deck's main thread).
+- `apply_image`: copies used image regions and relocates the player, including remembered PCM kit/sample bindings
+  and the header LFO setting. A changed PCM bank waits until old frames have executed and the driver fetches its
+  `main_loop` PCM-fill boundary; there are no forced mid-fill or interrupt-handler swaps. Unchanged compiled
+  waveforms continue at their rebased address; changed waveforms stop. A third preallocated image retains the latest
+  edit while a bank swap is pending. Queued old frames finish first, so a busy PCM refill can delay the edit. No
+  allocation occurs on this path. A region change applies at the next start.
 
 ### Audition
 
-`audition(channel 0..9, note 0..95, slot, fine −128..127)`: FM slots on channels 0-5, PSG slots on 6-9 (else
-`CHIP_ERR_IMAGE`). The (spare) machine is reset and the driver booted (0.35 ms); the stream starts with the audition
-batch alone (the encoder knows the reset registers, so the frame is light and the driver executes it at once); ticks
-then only update (sweeps and envelopes play). `release()`: 0 before any tick or when the note is already silent (FM:
-every carrier's envelope at `0x3FF` in ymfm; PSG: phase off and attenuation 15 on the chip); else the key-off goes
-into the next frame and `tick` returns 0 once the driver has executed it and the note is silent, or after 10 s.
-Measured: A-4 440.126 Hz (FM sine, F-number 1083) and 440.397 Hz (PSG period 254); release 112 ticks (sine, RR 6),
-30 ticks (PSG square: the volume envelope's 30-value tail), 1-3 ticks for a PSG or Noise instrument without a release
-point (silent at key-off, once the driver has executed it); the Noise channel's pitched noise follows the note and
-the relative pitch envelope (PSG 3's period).
+`audition(channel 0..12, note 0..95, slot, fine −128..127)`: FM slots on channels 0–5, PSG slots on 6–9, PCM kits
+on 10–12; wrong kinds and unmapped PCM keys return `CHIP_ERR_IMAGE`. PCM uses the key's compiled pitch and level;
+fine pitch applies to tonal voices. The spare machine resets and boots the driver; its first full frame contains the
+audition, followed by sweep/envelope updates.
+
+`release()` returns 0 before any tick or when already silent. Otherwise FM/PSG send a key-off through the next
+stream frame; PCM is a one-shot and plays out without a stop command. Ticking ends after the driver's release and
+silence, or the 10-second release limit. FM silence means every carrier envelope is at `0x3FF`; PSG means envelope
+off and attenuation 15; PCM means the driver has cleared its channel's STATUS bit.
+Measured tonal auditions retain A-4 at 440.126 Hz (FM sine, F-number 1083) and 440.397 Hz (PSG period 254).
 
 ### Mute, mix and ops behaviour
 
-`mute(channel 0-9)` leaves the channel out of the chips' output only: an FM channel contributes what the chip outputs
-for a channel with its `$B4` output bits clear (the DAC offset; `ym/ym_ymfm.cpp` sums ymfm's channels itself), a PSG
-channel contributes nothing; the player, the driver and the chips run on, so the stream and the VGM are unchanged and
-unmuting resumes mid-note. `start`/`audition` clear mutes.
+`mute(channel 0..9)` removes only the tonal channel's output. Muted FM operators still run their feedback and
+envelopes; PSG counters continue, so unmuting resumes mid-note. FM 6 mute **does not mute the DAC**.
+`mute(channel 10..12)` instead queues the real driver's PCM stop and suppresses subsequent triggers on that lane;
+unmuting permits future notes, not the stopped one-shot. The stop takes effect when its frame executes, including
+any driver refill delay. `start` and `audition` clear mutes.
 
 **Mix**: ymfm's YM2612 sum × 192/256 (one full-level FM channel peaks at 0.125 of full scale, six at 0.75) and the PSG
 level table (2 dB steps, 4096 at attenuation 0) × 65/256, both through blip_buf, float = sample / 32768. The FM:PSG
 balance is libvgm's default (VGMPlay volumes YM2612 0x200 : SN76489 0x100): a full-level PSG square has 0.35 times
-the rms of a full-level FM sine. Test song: rms 0.07, peak 0.39.
+the rms of a full-level FM sine.
 
 | Op | Behaviour |
 |---|---|
@@ -2017,99 +2791,354 @@ the rms of a full-level FM sine. Test song: rms 0.07, peak 0.39.
 | `start(order, row)` | above; `seek_mode` from start or order |
 | `apply_image` | above; ignored while auditioning |
 | `audition`, `release` | above |
-| `mute(channel 0-9)` | above |
+| `mute(channel 0..12)` | tonal output suppression or a PCM stop, above |
 | `position` | the next tick the driver executes |
-| `tick` | one vertical interrupt: 801-802 frames at 48 kHz NTSC (965-966 PAL), ≤ 1933 at 96 kHz PAL; 0 after a released audition ended; `CHIP_ERR_FAULT` if the driver stopped playing |
+| `tick` | one vertical interrupt: 801–802 frames at 48 kHz NTSC (965–966 PAL), ≤ 1933 at 96 kHz PAL; 0 after a released audition ended; `CHIP_ERR_FAULT` if the driver stops or makes no progress for 128 ticks |
 
-**Kotlin** (`PlaybackEngine` for `"ym2612-fm"`): `imageSize` 65536, `seekTicks` 12000, `note(n)` = n (absolute
-0..95), `fine` = the system's fine pitch in 1/64 semitones (0 by default), `ticksPerSecond` = 59.92 (NTSC) or 49.70
-(PAL) — the console's vertical interrupt; the VGM's 60/50 Hz is its own convention. Validation should mirror
-`YmPlayerImage.LOADER_PROBLEMS` and warn about heavy rows (driver lag), PSG 3 notes under pitched noise, locks without a
-note and PSG notes below A-2.
+**Kotlin** (`PlaybackEngine` for `"ym2612-fm"`): `imageSize` 1188864, `seekTicks` 12000, `note(n)` = n (absolute
+0..95), `fine` in 1/64 semitones for tonal voices, `ticksPerSecond` = 59.92 (NTSC) or 49.70 (PAL). Validation mirrors
+`YmPlayerImage.LOADER_PROBLEMS`, including PCM bank limits, and warns about PSG 3 under pitched noise, note locks
+without notes, PSG notes below A-2, ignored FM 3 offsets in normal mode, and FM 6/DAC sharing. The XGM1 90-write
+heuristic is removed: XGM2's encoded-frame bound is a different constraint, and real refill stalls are handled by
+the machine rather than predicted from a register-write count.
 
 ### Exports on the hosts
 
-`ym_export(image, 65536, format, max_ticks, title, author, date, &size, &problem)` (`ym/ym_export.h`, self-contained
-for cinterop; `ym_export_free`): format `YM_EXPORT_VGM` (the VGM above plus a GD3 1.00 tag: system "Mega Drive (Thor
-Tracker)", converter "Thor Tracker", date today unless given), `YM_EXPORT_XGM` (`.xgm`: xgmtool's XGM of that VGM, the
-same GD3 tag appended and flag bit 1 set — the input of SGDK's `rescomp` `XGM` resource) or `YM_EXPORT_XGC` (`.bin`:
-xgmtool's compiled XGC, what `XGM_startPlay` plays; no tag). Rejected images report the loader's reason ("image size",
-"format", "out of memory", "frame too large" otherwise). Android: JNI
-`Java_org_thortracker_audio_ChipAudio_nativeYmExport(image, format, maxTicks, title, author, date)` (strings as UTF-8
-byte arrays; `IllegalArgumentException(problem)` on rejection) in `audio_jni.cpp`, declared in `ChipAudio`'s companion,
-which registers it as `YmExport.renderer`; Deck: `ym_export.h` is in `decknative.def`, `DeckYmExport` (`DeckVgm.kt`)
-is registered by `main`. The 30 s test song renders its XGM in 1.2 ms on the dev PC.
+`ym_export(image, YM_IMAGE_SIZE, format, max_ticks, title, author, date,
+&size, &problem)` is declared in `ym/ym_export.h`; release its result with
+`ym_export_free`. Invalid size, layout, format, frame overflow and allocation
+failures are reported, not replaced with an empty export.
+
+Formats are `YM_EXPORT_VGM`, `YM_EXPORT_XGM` (unpacked XGM2 with GD3) and
+`YM_EXPORT_XGC` (packed XGM2 without metadata). Android registers JNI
+`ChipAudio.nativeYmExport` as `YmExport.renderer`; the Deck uses cinterop
+over the same entry point. The shared menu and desktop picker show each
+format's `ExportFormat.label`, distinguishing XGM2 from the old driver.
+WAV uses the common native playback renderer. Export ticks are capped at
+ten minutes in the selected region.
 
 ### Preparing the driver, tables and fixtures
 
-`python3 tools/audio/prepare_ym.py [--sgdk DIR]` (needs `tools/audio/fetch_sgdk.sh`: clones the pinned SGDK into
-`~/.cache/thor-tracker/sgdk-9a78a441` and builds sjasm and xgmtool) checks the vendored `third_party/sgdk-xgm` files
-against the checkout, assembles the driver with sjasm and compares it with `drv_xgm` in SGDK's `lib/libmd.a`, then
-writes `generated/xgm_driver_image.h`, `generated/ym_tables.h` (from `ym_ref.py`'s table functions),
-`core/.../backend/YmPlayerImage.kt` (layout, limits, effect codes, timing, export formats, F-number tables and
-`LOADER_PROBLEMS` parsed from the C headers) and `app/src/test/cpp/ym_test_song.h` (the test images: the song, the
-same song laid out anew, a note edit, a tempo edit, the song cut to two orders and a PAL version; the reference
-player's per-tick writes, key-off phase lengths and positions for 1500 ticks of four of them; the reference VGM's
-size, FNV-1a hash and loop for NTSC and PAL; xgmtool's XGM and XGC of those VGMs; byte offsets for the corruption
-checks). Rerun after changing the driver pin, the player specification, the reference player or the test song.
+`python3 tools/audio/prepare_ym.py [--sgdk DIR]` verifies
+`third_party/sgdk-xgm2/` against the pinned SGDK checkout, assembles the driver
+with sjasm and compares it to SGDK's `drv_xgm2`. It writes:
+
+- `generated/xgm2_driver_image.h` and `generated/ym_tables.h`;
+- Kotlin `backend/YmPlayerImage.kt`, from the native headers;
+- `app/src/test/cpp/ym_test_song.h`, including tonal, PCM, FM3, relocated,
+  edited and PAL fixtures plus the independent player's expected writes.
+
+`python3 tools/audio/ym/ym_golden.py` generates the Kotlin lowering fixtures.
+`exportSamples` supplies Neon Causeway, Night Ferry (PCM + FM3), and the
+shortest tonal/PCM/FM3 songs used by the WAV renderer checks.
+Regenerate after changing layout, driver pin, reference player or fixtures.
 
 ### Verification
 
-- The test song (`tools/audio/ym/ym_song.py`, 4 orders of 16/32/16/24 rows, `B01` back to the loop order 1): all 8
-  algorithms with feedback (FM 6 included), LFO (header, `Lxx`, AMS/FMS, operator AM), SSG-EG, DT/MUL variety, every
-  effect where allowed, 4 columns, OFF cells, retriggers, an FM kick sweep, PSG envelopes (a volume loop before its
-  release point, release tails, ends held at 0 and above 0, no envelope at all, an arpeggio envelope, absolute and
-  relative pitch envelopes, one envelope shared by two instruments), white/periodic noise at fixed rates and pitched
-  (muting PSG 3), runs, shared patterns.
-- `tools/audio/run_native_host_test.sh [dir]` runs `app/src/test/cpp/ym_machine_test.c` — 2026-11-08: **500 checks, 0
-  failures** (Game Boy 145, NES 336, SID 151, OPL3 282 unchanged): pitch tables (A-4 = 440.13 Hz NTSC / 440.14 PAL, FM
-  notes from C-1 within 0.66 cents, PSG A-2..A-6 within 12 cents); 67 single-byte corruptions rejected with their
-  reason (envelopes included); **the player's writes and positions equal the independent Python reference's in all
-  1500 ticks, NTSC and PAL**; the machine's player (one tick ahead), its heard positions (lagging behind heavy frames,
-  max 3 ticks) and **the driver's chip writes equal to the streamed XGC frames, in order** (18501 writes, the DAC kept
-  off); **the engine's XGC stream equals xgmtool's XGC of the reference VGM for the whole first pass** (9933 bytes); a
-  3126-tick run across a ring wrap; **pass replay = every cycle stepped** (4817 ticks: samples, chip writes,
-  positions; Z80 state and RAM at 4537 tick ends; 95 % of the Z80's cycles replayed; 40 passes, 444 KiB); 30 s NTSC
-  and PAL non-silent in every second, no clipping, bit-identical on a second start; tick cost flat (≤ 3× the mean);
-  loop passes step through identical positions = the VGM loop; eight seeks with exact positions and writes, sound
-  inside the pre-roll bit-identical, beyond within the per-channel and mix envelope limits; the order fallback; live
-  edits (same and re-laid-out image before every tick, a note edit, tempo edits ahead of and behind the playhead, the
-  song cut under the playhead); audition (A-4 on FM and PSG measured, NTSC and PAL, fine +64, every algorithm, the
-  kick sweep, release incl. the PSG release tail and instruments without a release point, pitched noise on the Noise
-  channel, argument limits); mute (writes unchanged, silence, resume, FM 6/Noise/PSG alone, before the first tick,
-  after a seek); PAL timing (71364 Z80 cycles per tick); **VGM bytes = the reference's (NTSC, PAL), XGM and XGC bytes
-  = xgmtool's (NTSC, PAL)**; the export entry point (GD3 fields incl. 4-byte UTF-8, default date, rejections); the
-  ops table. Evidence: `ym_song.wav`, `ym_song_pal.wav`, `ym_tone_fm.wav`, `ym_tone_psg.wav`, `ym_trace.txt`,
-  `ym_song.vgm`, `ym_song.xgm`, `ym_song.bin` (XGC), `ym_image.bin`.
-- `tools/audio/ym_reference_check.py <dir> [--xgmtool PATH] [--vgm2wav PATH]` (developer evidence) — 2026-11-08: the
-  reference reproduces the engine's trace in 1500/1500 ticks and the VGM byte for byte; the VGM parsed from the format
-  alone (header, waits = 346185 samples, loop point on the dump, stream = trace); xgmtool's XGM/XGC of the VGM = the
-  engine's exports; played by libvgm's vgm2wav (local patch: env `VGM2WAV_YM2612_CORE`) over the first pass against the
-  engine's render: Nuked-OPN2 envelope correlation 0.947, log-spectrum 0.788, same pitch class 91 %, level ×4.1;
-  Genesis Plus GX 0.935 / 0.765 / 88 %. Per channel soloed (Nuked): envelope 0.98-1.00 except FM 2 (the bell and
-  E-piano, where GPGX and Nuked themselves differ by 2-3×) and PSG 2 after the first pass (its volume slide runs across
-  the loop: the VGM replays pass 1, the player plays on).
-- `tools/audio/render_ym_image.sh image out.wav [seconds] [mute=190] [--vgm|--xgm|--xgc out]` renders an image through
-  the ops table and the exports through `ym_export`.
-- **Bench**: `tools/audio/build_ym_bench.sh [dir]` builds `tools/audio/ym_bench.c` for the host and as static arm64
-  executables (`-O2`, `-O3`); `adb push` and run `ym_bench-arm64 [seconds] [rate] [paced_seconds]`: cold, warm and
-  paced ticks with pass replay, the same machine with replay off (the spike's cost, for before/after on one device),
-  live edits, auditions and seeks. Built 2026-11-08 into `/tmp/ym_bench2/` (the spike's in `/tmp/ym_bench/`).
-- Not done: listening on hardware, a comparison with a real YM2612 or an emulator running a whole game.
+Run `tools/audio/run_native_host_test.sh DIR` for native driver, PCM, FM3,
+seek, live-edit, audition, mute, stream-wrap and common WAV checks.
+`tools/audio/ym_reference_check.py DIR` independently parses both file forms and
+checks them against the reference player, distinguishing musical frames from
+physical PCM refill delays. Optional `--xgm2tool PATH` is a converter compatibility
+diagnostic: it currently fails on the pinned upstream converter's loop and sample
+re-import defects above, rather than accepting its corrupted output.
+Optional `--vgm2wav PATH` adds an independent VGM player.
+`tools/audio/render_ym_image.sh` exercises images and native exports.
+
+`tools/audio/build_ym_bench.sh DIR` builds host and arm64 benchmarks.
+Measure paced playback as well as warm ticks, seeks, held audition and live
+sample-bank edits on the reserved handhelds. Current release evidence belongs
+in `docs/VERIFICATION.md`; the old XGM1 pass-replay timings do not describe XGM2.
+Host/reference agreement is not a physical Mega Drive or human listening test.
 
 ### Hosts: threads and costs
 
-Dev PC (`ym_bench-host`, 48 kHz, 30 s of the test song, 2026-11-08). Konkr, spike (before pass replay, measured by
-the integrator): 1.9 ms per warm tick (Z80 and driver 1.3 ms of it), paced 6.9 ms mean / 10.5 ms worst, seek 3/20
-112 ms. The devices have not run `/tmp/ym_bench2/` yet.
+Machine creation, seek and audition preparation run on control/spare machines,
+not the audio callback. Playback and image application must remain allocation-free.
+`ym_copy_image` copies the used pattern region and used PCM pages rather than
+the full reserved bank. Performance must be measured with real PCM activity:
+the old driver's silent-mixer shortcut cannot establish XGM2's cost.
 
-| Work | Thread | Dev PC |
-|---|---|---|
-| `tick` (player + encoder + driver + ymfm + PSG + resample) | audio callback | 353 µs mean (p99 532, worst 744); ymfm alone 235 µs, the rest (the driver's frame work stepped, its idle work replayed, PSG, player, XGC encoder, blip) 118 µs; paced at 59.92 Hz 487 µs mean (p99 885; the CPU clocks down between ticks); cold first 60 ticks 402 µs. Replay off (the spike): 695 µs warm |
-| `apply_image` (relocating) | audio callback, tick boundary | 2.4 µs mean, worst 19 µs |
-| machine creation | control | 0.4 ms (640 KiB replay arena reserved, touched as passes are kept) |
-| `audition` setup (driver boot) | control, spare machine | 0.35 ms |
-| `start` (seek) | control, spare machine | 10.7 ms within the first second (all through the driver), 20 ms for 3/20 (60 ticks through the driver; 36 ms stepped) + 2.9 ms for 12000 player ticks |
+## Master System: the Banjo driver on a Z80 + SN76489 + YM2413 (`"sms-banjo"`)
 
-Expected on the Konkr from the spike's split: the Z80's 1.3 ms shrinks to its frame work (~8 % of its cycles) plus
-replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~45 ms; to be confirmed with the bench.
+One engine for the four Master System systems (`sms-psg`, `gg-psg`, `sms-fm`, `sms-fm-drums`); the image's layout byte
+selects the chips and channels. Sources: `sms/sms_image.{h,c}`, `sms/sms_machine.{h,c}`, `sms/sms_chip.c`,
+`sms/sms_vgm.c` + `sms/sms_export.h`; Kotlin `backend/SmsImageLayout.kt`, `BanjoSong.kt`, `SmsLowering.kt`.
+
+### Pins and preparation
+
+- Banjo `7aaf837ebbe67e567e019b5819b5467bf62253ad` (MIT), `third_party/banjo` (driver directories banjo, sn, opll,
+  opll_drums, defines, json2sms.py, README, format_spec, LICENSE), unmodified.
+- WLA-DX v10.7 (`91c52b1f4ef3cc8ba3c0638f7536539579af6a9f`, GPL-2.0-or-later, build tool only) via
+  `tools/audio/fetch_wladx.sh`.
+- `tools/audio/prepare_sms.py` checks the vendored files against upstream, assembles
+  `tools/audio/sms/thor_banjo_host.asm` (the driver with BANJO_SYS=1, a 15-channel array, first-row initialization
+  and two-chip update/mute routines) and writes `app/src/main/cpp/generated/banjo_driver_image.h`
+  (the 16 KiB bank, its sha256, the label addresses; struct sizes 32/34/12 checked). **The native build needs this
+  generated header**; rerun after changing the pin or the host file.
+- emu2413 1.6.4 (`a1d5120903b75f93d3eb7690e34a29c0b4add903`, MIT), `third_party/emu2413`, unmodified, run at
+  clock/72 (49716 Hz, no rate converter).
+
+### Machine
+
+- Z80 map: $0000-$3FFF driver bank (an opcode fetch elsewhere, other than the return trap $FFF0, is a fault);
+  $4000-$BFFF the image region; $C000-$DFFF RAM (mirrored), audition song at $D000, stack below $DFF0.
+  I/O: $40-$7F SN76489, $F0/$F1 YM2413, $06 Game Gear stereo (Game Gear layout only); reads $FF.
+- Start: `banjo_init(15, SN | OPLL?)`, `banjo_system_flags` = GG on the Game Gear layout (what
+  `banjo_check_hardware` reports there), the region's call fields filled for the layout, `banjo_play_song($4000)`.
+  The channel-init callback increments `tic` after `music_play` resets it, so row zero lasts a full row even at
+  speed 1 or 255. Exported song sources include the same callback; the vendored driver remains unmodified.
+- Tick = NTSC frame, 59736 Z80 cycles: `banjo_update_song` at cycle 0, the chips clocked through the frame with each
+  write at its cycle (PSG every 16 cycles, YM2413 every 72), blip_buf to the host rate, 20 Hz DC high-pass, gain 2.5.
+  Mix: PSG level × 3/8 + YM2413 × 3/4 (a full square and a full FM channel peak alike); listening may adjust.
+- Positions from driver state: a row starts when `process_new_line` is set or `tic` is 1; row = pattern_length − line;
+  an order jump or the order end predicts the next order.
+- Seek: silent ticks with the driver and chips clocked throughout, preserving held voices' oscillator, envelope and
+  LFO history. Past the tick budget, a linear command scan restores carried instruments and the last shared FM
+  custom voice, then starts cold at the order boundary with its straight-play speeds and replays to the target.
+  This fallback does not reconstruct previously held notes or their envelope/phase history. A target requiring
+  more than the replay budget even from its order start is refused.
+- Live edit: per channel, the pointer and line wait after the current row in the new track (a pending note delay
+  continues after the same delay of the new row when it has one); instrument macro pointers re-read, positions past a
+  shortened macro stop it; the FM preset nibble refreshed; the custom voice the chip holds is rewritten when edited;
+  speeds follow when the straight-play speed at the playhead changed.
+- Audition: a one-order song in RAM (speed 255, 64 rows, no loop) loads the instrument (FM_DRUM on rhythm channels) and
+  plays the driver note. Release: NOTE_RELEASE when the volume macro has a release part, else NOTE_OFF, read on the next
+  tick through the TIC_WAIT path; returns 0 for SN sounds without a release; ends after 3 silent ticks or 10 s.
+- Mute: SN channel bits, YM2413 channel and rhythm masks (bass drum, snare, tom, cymbal, hi-hat).
+
+### Image layout
+
+Meta (0x400 bytes): "TTSB", version 1, layout (0 PSG, 1 GG, 2 FM, 3 FM rhythm), channels (4/4/13/15), orders (1-255),
+loop order, pattern length (1-64, even from the lowering), data size (u16), instrument count (u16), rows per order at
+0x20, speed 1 / speed 2 at each order's start (straight play) at 0x120 / 0x220. Region (0x8000 bytes) = Z80
+$4000-$BFFF: Banjo's 34-byte header (call fields 0), order pointer table, order rows, 12-byte instrument records,
+macros, FM patches (8 registers) and kit pitches (6 bytes), tracks. The loader validates every pointer, macro header
+(volume: sustain length/loop, release length/loop; others length/loop), command size (`$00` and `$1F` refused, note
+delay and speeds ≥ 1), row count per track, instrument and order references and the patch of every custom voice or
+fixed kit a track loads.
+
+### Song data (`BanjoSong`) and json2sms 7aaf837
+
+Same structure and commands as json2sms; deliberate differences, each because the driver reads it so: arpeggio and
+extra macro loop = value index + 2 (`music_update_arp_macro`/`ex_macro` read the loop position's own byte; json2sms's
++ 1 replays the previous step, or the loop byte itself for loop 0); volume macros as json2sms (+ 4). The initial
+`tic` is speed + 1, established by the song's channel-init callback because `music_play` overwrites the header's
+counter. Every order shorter than the pattern length and
+the last order (when looping to a later order) end with an explicit ORDER_JUMP; D00 is an ORDER_JUMP to the next
+order (ORDER_NEXT would wrap to order 0, not the loop order); OFF is NOTE_RELEASE for instruments with a volume release
+part. Driver limits respected by the validator: one pitch effect per channel, note delay/cut within the row, one
+custom FM voice, rhythm drums without pitch effects or macros, FM voices without the extra macro (inverted type test in
+`opll/volume_change.inc`).
+
+### VGM export
+
+VGM 1.51 with GD3: the driver's own writes from a silent run (SN76489 0x50, YM2413 0x51, Game Gear 0x4F), 44.1 kHz
+waits from Z80 cycles, the driver's initialisation at time 0, the loop at the first arrival at (loop order, row 0) and
+the end at the second (or 10 minutes, no loop). SN feedback 0x0009, width 16, flags 0.
+
+### Verification
+
+`tools/audio/run_native_host_test.sh` runs `app/src/test/cpp/sms_machine_test.c` (images built by hand in C from this
+contract); `tools/audio/render_sms_image.sh` renders an image (SampleExportTool writes the demos'). JVM:
+`SmsLoweringTest`, `SmsModelTest`, `SmsEditorTest`.
+
+## EPSM: the same engine with a YMF288 (`"nes-famistudio-epsm"`)
+
+**Status: verified for 0.21.0.** `prepare_nes_player.py` generated the player: 5048 bytes at
+`$8000`, song base `$9400`, SHA-256 `46215fde7f7ed01b36167e955ec1436fc48a9e8193bea28e6656f8501dbec758`.
+All 32 previous NES generated outputs stayed byte-identical. Runtime verification is recorded separately in
+`docs/VERIFICATION.md`. Everything in the NES section holds; this section lists what differs.
+
+The EPSM (NESdev "Expansion Port Sound Module") is a Yamaha **YMF288 (OPN3-L)** — the YM2608's six 4-operator FM
+channels, three SSG channels and six ADPCM-A rhythm drums from an on-chip ROM; **no ADPCM-B and no clock prescaler** —
+on an 8 MHz oscillator, written through `$401C` (address, A1 = 0), `$401D` (data, A1 = 0), `$401E` (address, A1 = 1)
+and `$401F` (data, A1 = 1). It is not a full YM2608.
+
+### What runs
+
+- **Player** (`generated/nes_epsm_player_image.h`, `NesEpsmPlayerImage.kt`): `tools/audio/nes/nes_player.s`
+  assembled with `-D FAMISTUDIO_EXP_EPSM=1` (3 SSG, 6 FM, 6 rhythm channels), plus FamiStudio's EPSM note tables
+  (`NoteTables/famistudio_epsm_note_table_{lsb,msb}.bin` for FM, `famistudio_epsm_s_note_table_{lsb,msb}.bin` for
+  the SSG, byte-identical to tag 4.5.3 and SHA-256-pinned in the script). **20 channels**, **35 envelope slots** and
+  **12 pitch envelope slots**; `famistudio_channel_env` covers channels 0-13 only (the rhythm drums have no envelope
+  slots): an SSG has four (volume, arpeggio, **mixer** at offset 2, **noise** at offset 3), an FM channel two (volume,
+  arpeggio). Song base: the first page after the player (`NES_EPSM_SONG_BASE` / `NesEpsmPlayerImage.SONG_BASE`); the
+  region up to the vectors is shared with the DPCM samples as on the 2A03 build; image = 32-byte header + directory +
+  region (`NES_EPSM_IMAGE_SIZE`). `NES_EXPANSION_EPSM` = `$80`, matching the NSF expansion flag.
+- **Channels**: engine channels 0-4 as the 2A03 build, then **5-7 SSG 1-3**, **8-13 FM 1-6** and **14-19 the rhythm
+  drums** bass drum, snare, top cymbal, hi-hat, tom and rim shot (Thor Tracker: Kick, Snare, Cymbal, Hi-hat, Tom, Rim).
+- **Song header** (FamiStudio's for expansions with their own instruments): count, instruments, **instruments_exp**,
+  samples − 4, twenty channel stream words, PAL tempo, NTSC tempo (`nes_player_head` = 7 bytes before the stream
+  words). The Thor layout keeps one order stream per channel (`$41 n ptr` per order, `$42`).
+- **Instruments**: the 2A03 table (64 × 8 bytes, as before) and the expansion table at header word 3, one **16-byte
+  entry per slot** (an EPSM channel's instrument byte indexes entry i × 16, the same index as the 2A03 table;
+  FamitoneMusicFile.cs `instruments_exp`, `famistudio_set_epsm_instrument`):
+
+  | Offset | Size | Field |
+  |---|---|---|
+  | 0 | 2 | volume envelope (directory entry of kind 0) |
+  | 2 | 2 | arpeggio envelope (kind 1) |
+  | 4 | 2 | pitch envelope (kind 3) |
+  | 6 | 2 | **mixer** envelope (kind 5) |
+  | 8 | 2 | **noise** envelope (kind 6) |
+  | 10 | 1 | SSG hardware envelope shape: 0 = none, else `$08-$0F` (`EPSMSquareEnvelopeShape` 1..8 + 7) |
+  | 11 | 1 | auto-period octave, signed −8..8, or `$80` = manual period |
+  | 12 | 2 | manual envelope period (u16) |
+  | 14 | 2 | pointer to the sound's **31-byte FM patch** |
+
+  Patch blocks follow the expansion table (identical blocks shared), in FamiStudio's export order (`epsmRegOrder`,
+  the engine's `famistudio_epsm_register_order`): `$B0` (feedback, algorithm), `$B4` (L, R, AMS, PMS), then for
+  operators 1-4 (algorithm-diagram numbering, register offsets +0, +8, +4, +C) `$30 $50 $60 $70 $80 $90`, then the
+  four total levels (`$40 $48 $44 $4C`, written with the volume rather than at the load), and byte 30 = `$22`, the
+  song's LFO (`NesSound.epsmLfo`, the same in every block). The rhythm drums read only the volume envelope's first
+  value and byte 1's pan bits (`& $C0`). `nm_load_image` checks the five envelope words are directory entries of those
+  kinds, the shape, the octave, and that each patch pointer's 31 bytes and the table lie inside the song data.
+- **Directory kinds 5 (mixer) and 6 (noise)** are shared by the 5B and EPSM builds. Neither has a header byte
+  (instructions from index 0, like arpeggio and duty). Mixer values are FamiStudio's processed bits `$C0` (tone +
+  noise), `$C1` (noise), `$C8` (tone), `$C9` (neither); noise values 0..31 encode as `$C0-$DF`.
+  Thor Tracker's directory indices: slot × 4 + kind for volume, arpeggio, duty and pitch (unchanged), mixer
+  256 + 2 × slot, noise 256 + 2 × slot + 1, effect envelopes (`0xy`, vibratos) from **384** (`effect_envelopes`).
+- **Opcodes**: `$5C` (FM 1-6 only; ends the row) = FM release: key off, so the note fades at the patch's release
+  rates (an OFF on a sounding FM note; a second OFF is the usual stop). `$5D lo hi` (SSG 1-3 only) = the shared manual
+  envelope period for the frame (`Ixx`/`Jyy`; FamiStudio's exporter moves them to SSG 1, as Thor Tracker's lowering
+  does). `$4F` (duty) is invalid on every EPSM channel; the rhythm channels also reject release, slides, pitch and
+  vibrato commands. The scoped `$5F o` SSG load selects slot `o & $3F`; bit 7 preserves the shared manual period,
+  and bit 6 must be zero. It uses attack-style envelope addressing while retaining the row's no-attack flag and
+  envelope positions, correcting upstream's legato mixer/noise pointer writes into volume/arpeggio slots.
+- **What the driver writes** (FamiStudio 4.5.3, `famistudio_ca65.s`): init `$07` = `$38` (three tones, no noise),
+  `$29` = `$80` (all six FM channels), `$27` = `$00`, rhythm total level `$11` = `$37`. **FM**: an instrument load
+  writes the patch registers and `$22`; every frame the carriers' total levels = the patch's TL + the attenuation
+  `famistudio_epsm_fm_vol_table[volume]` (`$7E` at volume 0 … `$00` at 15; carriers by algorithm), the frequency
+  `$A4`/`$A0` (block and F-number from the FM note table + pitch) and `$B4` (pan, AMS, PMS); an attack keys the
+  channel off and on again (`$28` = `$F0` | channel, `$F4-$F6` for FM 4-6); a stop keys it off and writes `$B4` = 0
+  (both outputs off). **SSG**: the tone period from the SSG note table, `$08-$0A` = volume | `$10` when the sound has
+  a shape; the last SSG writes the shared `$0B/$0C` (the envelope period of the highest SSG sounding a sound with a
+  shape: its tone period shifted right by a positive octave, the last shift rounding up, or left by a negative one;
+  or the manual period), `$06` (the noise period of the highest SSG with noise in its mixer), `$07` (the three mixer
+  values) and, after any SSG attack with a shape, `$0D`. **Rhythm**: on an attack `$18 + i` = (volume × 2) | pan,
+  then `$10` = 1 << i (key on).
+  A scoped loader correction writes the FM patch's LFO byte to global `$22`, never `$22` plus the channel offset.
+  Another correction exits the SSG attack path after setting its envelope-trigger bit: upstream's inverted branch
+  fell through into the FM trigger array and overwrote the hi-hat, tom or rim-shot pan. The vendored source stays
+  unchanged; the temporary patched source is pinned to SHA-256
+  `42739f0b0ada0f363d28ae88c9f47e2e27ac7deb49f1838c3f412527a77d1c66`.
+- **Pitch** (from FamiStudio's tables and the 8 MHz hardware): note byte n sounds at absolute n − 1, an octave below
+  the name FamiStudio shows. SSG: TP = table[n], f = 8 MHz / 64 / TP (n = 58 → 440.1 Hz). FM: the driver normalises
+  the table value to an F-number and block, f = F · (8 MHz / 144) / 2^(21 − B) (n = 58 → 439.1 Hz). Kotlin sends EPSM
+  SSG and FM notes as `NesRules.engineNote(expansion, channel, note)` with shift 12, so absolute 57 = A-4 = 440 Hz
+  on every pitched channel; the text export writes FamiStudio's n (shown an octave higher there).
+- **YMF288** (`nes/nes_epsm_ymfm.cpp`, `nes/nes_epsm.h`): ymfm's `ymf288` (Aaron Giles, BSD-3-Clause, the
+  Mega Drive's pin, unmodified; `ym/ym_ymfm.cpp` compiles `ymfm_opn.cpp` once for both) at `OPN_FIDELITY_MED`: one
+  native sample per 144 chip clocks = 55555.6 Hz, the chip's own FM rate; the SSG runs at its effective 2 MHz and is
+  resampled 9:2 as ymfm's `ymf288::generate` does. Mesen2 emulates the EPSM the same way.
+- **EPSM unit** (`nes/nes_epsm_unit.c`): bus `$401C-$401F` (writes timestamped to the CPU cycle: the chip runs up to
+  it first; reads see the ROM, the registers are write-only). Clock: one native sample per 144 × 1789773 / 8000000 =
+  **32.216 NTSC CPU cycles**, counted exactly in fixed point (8000000 units per CPU cycle, 144 × 1789773 per sample).
+  The chip runs whether or not output is attached.
+  Band-limited output buffers budget the full raw FM/rhythm/SSG range, including filter overshoot, before their
+  int16 stage. The machine restores the relative scale when combining the EPSM and 2A03.
+- **Stereo and mix level**: each native sample's left and right levels go as band-limited steps into two extra
+  blip_buf buffers at the sample's CPU cycle; the machine adds its centred 2A03 to both and runs one output stage per
+  side. **This build's output is true stereo** (FM `$B4` and rhythm pans); the other NES builds stay mono. The levels
+  are **FamiStudio 4.5.3's own EPSM-to-2A03 balance** (`Nes_EPSM.cpp`, `ym3438.cpp`, `Simple_Apu.cpp`) in the 2A03
+  mixer's scale: one FamiStudio unit = 10.59857 / 163430 (its EPSM Blip_Synth volume over its range); FM = 18 / 16
+  units per ymfm OPNA unit (FamiStudio sums 6 × the YM3438-mode 9-bit output on 3 of 4 cycles; ymfm's sum is that
+  >> 1); rhythm = 1.1 units per ymfm ADPCM-A unit (4 of 24 cycles × value >> 1 × 11/20); SSG = (4080 × 10 / 18) /
+  (16382 × 2 / 3) units per ymfm mix unit (emu2149's YM2149 table top over ymfm's, FamiStudio's × 10 / 18).
+  The raw side spans about 27.89 full 2A03 mixer units. Both buffer and final-output budgets include a 1.12
+  filter-overshoot allowance; the calculated final bound is below 0.979. This deliberately preserves ymfm's
+  unclipped linear sums and the relative balance, at the cost of about **35.6 dB less master gain than plain NES**.
+  The demo is consequently quiet (native test RMS 0.0064, peak 0.0400); this is not automatic loudness normalization.
+  **This is not measured hardware loudness or verified DAC-overflow behavior.** Yamaha's
+  [YMF288 application manual](https://www.quarter-dev.info/archives/yamaha/YMF288.pdf) specifies a 16-bit serial
+  output and an SSG-to-FM ratio, but does not specify the sum's overflow rule. We do not invent clipping or wrapping.
+- **Seek**: the YMF288 is clocked sample by sample through the silent frames (output detached), so FM envelopes,
+  phases, feedback and the LFO, the SSG's tone/noise/envelope counters and the rhythm drums' ADPCM positions are those
+  of straight play — no register-snapshot restore. A machine reset restores a snapshot of a freshly constructed chip
+  (ymfm's save/restore state, taken once at creation; no allocation).
+- **Rhythm ROM** (`nes/nes_epsm.h`): the drums play the YM2608 rhythm ROM (8192 bytes: bass drum, snare, top cymbal,
+  hi-hat, tom, rim shot at ymfm's fixed addresses), which Thor Tracker does not distribute. `int
+  nes_epsm_install_rhythm_rom(const uint8_t* rom, size_t size)` copies it once into static storage and publishes it
+  with an atomic release store for every EPSM chip: 0 ok (the identical bytes again are a no-op); −1 for NULL, a
+  size other than 8192, or other bytes than an installed ROM (installed storage is never rewritten while audio
+  threads may read it). `nes_epsm_rhythm_rom_installed()` is 0/1. The caller checks the ROM's identity first
+  (`EpsmRhythmRom.problem()`: size, then SHA-256 `53afd0fa…eba8`). Hosts: Android
+  `ChipAudio.nativeInstallRhythmRom(rom: ByteArray): Int` (JNI, `audio_jni.cpp`), called by `MainActivity` at start
+  for a stored `filesDir/firmware/ym2608_adpcm_rom.bin` that still verifies and after an import; the Deck calls the
+  same C function through `decknative.def` for `~/.local/share/thortracker/firmware/ym2608_adpcm_rom.bin`. Without
+  a ROM a rhythm key-on makes no sound (that drum stays out of the mix until a key-on with the ROM) and sets
+  `nes_epsm_chip_rhythm_missing` (`nm_epsm_rhythm_missing`): a diagnostic only — Kotlin's `lower()` refuses a song
+  whose played orders contain a rhythm note, and audition refuses a drum, with `EpsmRhythmRom.MISSING` ("… import
+  your copy once with "EPSM rhythm ROM…" …"), so nothing ever substitutes another sound.
+- **Live edits**: SSG: the machine sees on the bus which expansion entry each SSG loaded last (the engine's store of
+  the shape byte right after reading entry + 10) and which entry the manual period came from (the store after reading
+  entry + 12; a `$5D` makes it none);
+  `apply_image` rewrites each SSG's shape nibble (keeping bit 7, a pending envelope restart) and octave from its
+  entry, and the shared manual period from the entry it came from; an SSG whose entry turned manual after the
+  period's last store sets it, as the engine's own load would. FM: a channel whose loaded instrument's 31-byte patch
+  differs in the new image gets that instrument stored into `famistudio_chn_epsm_fm_instrument` again, so the
+  engine's next update reloads the patch, algorithm, pan and operator levels exactly as its own load does. Rhythm:
+  each drum's instrument is identified from the loader's actual `ptr1 + r3` entry, not an arbitrary program-memory
+  read window; its level and pan are re-read from that slot. An identical image changes nothing.
+  An unchanged FM sound is not reloaded solely at an order boundary: that would briefly restore its raw carrier
+  levels before the row's volume is applied. The `epsm_effects` reference trace catches this at frame 504.
+- **Audition**: on every EPSM channel. A held note `$54 i [$4E f] $40 n` (fine pitch on SSG and FM); release is the
+  generic `$45` on SSG (only with a volume release point, else a cut), **`$5C` on FM** (always: the patch's release,
+  ending when the volume tail is done and the carriers are quiet); a drum is a one-shot of the ROM and ends at its
+  end address.
+- **Mute** 5-19 leaves a channel out of the chip's sums (it keeps running; unmuting resumes mid-note).
+  `nm_write_log` gives the `$401C-$401F` writes with the APU's.
+- **Validation** (`nes_image.c`, EPSM build): twenty stream words, the 7-byte head with the `instruments_exp`
+  pointer, the expansion entries and patch blocks above, mixer values `$C0/$C1/$C8/$C9`, noise 0..31, directory kinds
+  0..3 and 5/6, effect envelopes from 384, `$5C` only on FM 1-6, `$5D lo hi` only on SSG 1-3, `$5F o` only on
+  SSG with a valid slot/flag operand, and the rhythm-channel restrictions above. Other builds refuse EPSM images
+  and the reverse.
+- **Ops** (`nes_chip.c`): `nes_epsm_chip_ops`, id `"nes-famistudio-epsm"`, `image_size` `NES_EPSM_IMAGE_SIZE`, the
+  same functions as `"nes-famistudio"` over a machine of the EPSM build. `.nsf` export: the EPSM player, header byte
+  `$7B` = `$80` (FamiStudio `NsfFile.cs`: EPSM), so NSF players emulate the chip (and use their own rhythm ROM copy).
+  FamiStudio text: `Expansions="EPSM"`, see `docs/BACKENDS.md` (a manual SSG envelope period other than 4000 cannot be
+  written there; the text export refuses it).
+
+### Preparing the player
+
+`python3 tools/audio/prepare_nes_player.py` builds the EPSM player with the others and writes
+`nes_epsm_player_image.h` (`NES_EPSM_*` and `NES_EPSM_FAMISTUDIO_*` macros), `NesEpsmPlayerImage.kt` (`CHANNELS` 20,
+`EXP_INSTRUMENT_SIZE` 16, `PATCH_SIZE` 31, `KIND_MIXER` 5, `KIND_NOISE` 6, `EFFECT_ENVELOPES` 384) and
+`app/src/test/cpp/nes_epsm_song.h` from `tools/audio/nes/epsm_test.txt` as exported by FamiStudio 4.5.3
+(`epsm_test_ca65.s`; `--famistudio "$(tools/audio/fetch_famistudio.sh)"` writes it when missing). The test text
+covers the 2A03 beside SSG (mixer tone/noise/both/none and noise envelopes, hardware-envelope shapes with auto
+periods at octaves 3/1/−1/−3 and a manual period, `EnvelopePeriod`, slides, vibrato, arpeggio, volume slide, delay,
+cut, release), FM (the Default preset and custom algorithms 0/2/4/5/7, feedback, left/right/both pans, AMS/PMS with
+the LFO, SSG-EG, releases, slides, vibrato, fine pitch, stop, the range ends C-1/B-7) and all six rhythm drums
+(left/right/both, `Cxx`, delay, cut).
+
+### Verification
+
+- `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/nes_epsm_test.c`. Evidence:
+  `nes_epsm.wav` (30 s, all channels; the drums silent without the ROM), `nes_epsm_tonal.wav` (drums muted),
+  `nes_epsm_trace.txt` (per frame `$4000-$4017` and `$401C-$401F` writes), `nes_epsm.nsf` (`$7B` = `$80`), and, only
+  with a private ROM (below), `nes_epsm_rhythm.wav` (only the drums).
+- **Private rhythm checks**: `THOR_EPSM_RHYTHM_ROM=/path/to/ym2608_adpcm_rom.bin` (the user's own copy; size and
+  SHA-256 checked, anything else refused) enables the rhythm checks of `nes_epsm_test` (which then also writes
+  `nes_epsm_rhythm.wav`) and the drums of `tools/audio/nes_render.c` (also its optional fourth argument:
+  `tools/audio/render_nes_image.sh image.nesimg out.wav [seconds] [rhythm-rom]`). `tools/audio/nes_reference_check.py`
+  never reads the ROM: it compares `nes_epsm_rhythm.wav`, when present, with FamiStudio's wav-export (FamiStudio's
+  emulator has its own built-in copy). Unset, the test prints "rhythm ROM checks skipped (THOR_EPSM_RHYTHM_ROM
+  unset)". Nothing copies, stores or commits the ROM; keep it and the rhythm evidence outside the repository.
+- `tools/audio/nes_reference_check.py <evidence-dir>`: py65 runs our `nes_epsm.nsf` and FamiStudio's own NSF export of
+  `epsm_test.txt`; both must write our trace's registers (values differing only in pitch registers on slide frames,
+  where FamiStudio's asm and NSF exports compute different slide steps); our SSG + FM + 2A03 audio is compared with
+  FamiStudio's wav-export of channels 0-13 (libgme has no EPSM).
+- `wav_render_test.c` renders `expansion-port.nesimg` (the demo, no rhythm) and `epsm-shortest.nesimg` (one row at
+  speed 1, A-4 held on FM 1), checking exact loop boundaries, PCM equality against straight engine ticking and
+  chunk-size independence. Demo master volume is not a format invariant.
+- Kotlin: `NesGoldenTest` runs the golden songs `epsm_demo`, `epsm_effects` and `epsm_rhythm` (FamiStudio's export of
+  our text vs our lowering, register traces with the EPSM writes compared every frame; generate them as in
+  `docs/VERIFICATION.md`); `NesLoweringTest`, `TruePitchTest` and `NesInstrumentViewTest` cover the image contract,
+  pitch and editor.
+- Completed: 515 JVM core, 13 Linux core and six Android-host unit tests; 332 native EPSM checks with a private
+  rhythm ROM; 999 WAV checks after removing the incidental per-demo loudness threshold. Other engine checks passed.
+  The production APK passed 19 permanent Android tests and 32 unchanged Game Boy renders; actual Android/desktop
+  exports match and Nova/DMG/Konkr playback/audition checks passed. See `docs/VERIFICATION.md` for evidence and limits.
+- Not done: human listening; a hardware EPSM; a comparison with Mesen2's or FamiStudio's audio; Thor measurements.

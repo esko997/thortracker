@@ -59,7 +59,7 @@ class DeckAudio : TrackerAudio {
         engine.auditionProblem(song, channel, note, instrument, detune)?.let { commandError = it; return }
         // The cap counts driver ticks, which multispeed songs run several times per frame.
         val capTicks = (AUDITION_CAP_SECONDS * song.system.ticksPerSecond(song)).roundToInt()
-        commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(note, detune), capTicks), "audition")
+        commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune), capTicks), "audition")
     }
 
     override fun releaseAudition() { commandError = null; if (system != null) da_release_audition() }
