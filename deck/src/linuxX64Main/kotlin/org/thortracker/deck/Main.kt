@@ -21,8 +21,10 @@ import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.audio.WavExport
+import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.pce.PceVgm
+import org.thortracker.system.sms.SmsExport
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
@@ -64,6 +66,8 @@ fun main(args: Array<String>) {
     Opl3Vgm.renderer = DeckOpl3Vgm
     PceVgm.renderer = DeckPceVgm
     YmExport.renderer = DeckYmExport
+    AyVgm.renderer = DeckAyVgm
+    SmsExport.renderer = DeckSmsVgm
     WavExport.renderer = DeckWav
     val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
     app.script = ArrayDeque(script)
@@ -153,6 +157,8 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }
             pane.playback = transport.position() ?: PlaybackPosition()
+            // Desktop play commands finish synchronously; a rejected start must not leave the next press acting as Stop.
+            if (!pane.playback.playing) transport.requested = false
             pane.heldModifiers = if (popups.isOpen) emptySet() else input.heldModifiers
             pane.draw(output.width, output.height)
             popup.draw(pane.surface, output.width.toFloat(), output.height.toFloat())
@@ -225,6 +231,9 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
     /** The same layers as Android's MainActivity.routeKey: binding capture, popup, host controls, then the pane. */
     private fun route(code: Int, down: Boolean, repeat: Int) {
         popups.top?.capture?.let { capture ->
+            // The capture takes the key, but the trigger edges above read [HostInput.heldModifiers]: keep them true, so
+            // a trigger let go during the capture is released there too and never joins the chord.
+            input.trackModifier(code, down)
             if (repeat == 0) capture(code, down)
             return
         }
@@ -248,6 +257,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             Control.TOOLBAR -> menus.appMenu()
             Control.SWAP, Control.FOCUS -> {}
             else -> {
+                // One pane: other-display view chords show their view on it, like the R2 ones.
                 val shows = control.shows
                 val action = control.action
                 if (shows != null) {

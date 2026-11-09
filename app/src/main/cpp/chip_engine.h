@@ -9,12 +9,30 @@
  *                     (nes/nes_chip.c, nes/nes_vrc6.c; nes/nes_player.h describes every build)
  *   "nes-famistudio-vrc7"  the same engine built with Konami VRC7 support on a 6502 + 2A03 + VRC7
  *                     (nes/nes_chip.c, nes/nes_vrc7.c over emu2413 1.6.4)
+ *   "nes-famistudio-n163-1".."nes-famistudio-n163-8"  the same engine built with Namco 163 support for 1..8
+ *                     N163 channels on a 6502 + 2A03 + N163 (nes/nes_chip.c, nes/nes_n163.c)
+ *   "nes-famistudio-fds"  the same engine built with Famicom Disk System support (and FDS auto-mod) on a 6502 +
+ *                     2A03 + FDS (nes/nes_chip.c, nes/nes_fds.c)
+ *   "nes-famistudio-s5b"  the same engine built with Sunsoft 5B support on a 6502 + 2A03 + 5B (YM2149F)
+ *                     (nes/nes_chip.c, nes/nes_s5b.c)
+ *   "nes-famistudio-mmc5"  the same engine built with Nintendo MMC5 support on a 6502 + 2A03 + MMC5 audio, plus
+ *                     Thor Tracker's software PCM lane on the MMC5 DAC (channel 7; its image is the FamiStudio
+ *                     image followed by the lane's extension) (nes/nes_chip.c, nes/nes_mmc5.c, nes/nes_mmc5_pcm.c)
+ *   "nes-famistudio-epsm"  the same engine built with EPSM support on a 6502 + 2A03 + YMF288 (ymfm), true stereo;
+ *                     its rhythm drums play the user-installed rhythm ROM (nes/nes_chip.c, nes/nes_epsm_unit.c,
+ *                     nes/nes_epsm_ymfm.cpp; nes/nes_epsm.h: nes_epsm_install_rhythm_rom)
  *   "c64-sid"         GoatTracker 2.77 playroutine on a 6510 + reSID 1.0 (PAL C64)
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
- *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
+ *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM2 driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "sms-banjo"       the Banjo sound driver (joffb/banjo) on a Z80 + SN76489 (+ Game Gear stereo) + YM2413
+ *                     (emu2413), every Master System layout (sms/sms_chip.c over sms/sms_machine.c, sms_image.c)
+ *   "ay-zx128", "ay-msx", "ay-atari-st", "ay-cpc"  Thor Tracker's own AY player on its own AY-3-8910 / YM2149 core,
+ *                     one engine per stock computer: ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910), Atari ST (YM2149F),
+ *                     Amstrad CPC (AY-3-8912, stereo socket) (ay/ay_chip.c over ay/ay_machine.c, ay_player.c,
+ *                     ay_psg.c, ay_image.c)
  *   "pce-huc6280"     Thor Tracker's own PC Engine player on the HuC6280's PSG (Mednafen 1.32.1), DDA samples from
  *                     the CPU timer (pce/pce_chip.c over pce/pce_machine.c, pce_player.c, pce_image.c, pce_psg.cpp)
  *
@@ -108,8 +126,8 @@ typedef struct ChipEngineOps {
     int (*tick)(ChipMachine* m, float* out);
 
     /* Optional (NULL: tick 0 marks row starts, above). For engines whose position follows a
-     * lagging driver (the Mega Drive's XGM: behind a heavy frame the position waits, so tick 0
-     * repeats without a new row, then catches up several rows in one tick): a counter of row
+     * lagging driver (the Mega Drive's XGM2 waits while refilling PCM, so tick 0 may
+     * repeat without a new row): a counter of row
      * starts, the value belonging to the row instance position() reports. It changes exactly
      * when position() moves into a newly started row instance (also a row re-entered by a jump
      * to itself). start() resets it. Used by the WAV export's loop detection (chip_wav.c). */

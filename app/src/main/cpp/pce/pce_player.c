@@ -325,7 +325,7 @@ static void process_row(PcPlayer* p, const PceImage* image, int c) {
     if (row->note == PC_NOTE_OFF) {
         off(p, image, c);
     } else if (has_note) {
-        if (ch->slide_mode == 3 && ch->sounding && ch->kind != PC_KIND_NOISE) ch->target = row->note * 64;
+        if (ch->slide_mode == 3 && ch->sounding && !ch->released && ch->kind != PC_KIND_NOISE) ch->target = row->note * 64;
         else key_on(p, image, c, row->note);
     }
 }
@@ -355,6 +355,12 @@ static void update(PcPlayer* p, const PceImage* image, int c) {
     Envelope env[PC_ENVELOPE_COUNT];
     for (int k = 0; k < PC_ENVELOPE_COUNT; ++k) envelope(rec, k, &env[k]);
     const int volume = env[PC_ENV_VOLUME].length ? env_byte(image, &env[PC_ENV_VOLUME], ch->env[PC_ENV_VOLUME]) : 31;
+    /* End only on the final zero itself, not when advancing toward it: keep the preceding tail tick intact. */
+    if (ch->released && env[PC_ENV_VOLUME].length && volume == 0 &&
+        ch->env[PC_ENV_VOLUME] >= env[PC_ENV_VOLUME].length - 1) {
+        stop(p, c);
+        return;
+    }
     const int arp_env = env[PC_ENV_ARPEGGIO].length ? (int8_t)env_byte(image, &env[PC_ENV_ARPEGGIO], ch->env[PC_ENV_ARPEGGIO]) : 0;
     int pitch_env = 0;
     if (env[PC_ENV_PITCH].length) {

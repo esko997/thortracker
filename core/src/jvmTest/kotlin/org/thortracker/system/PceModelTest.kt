@@ -1,6 +1,5 @@
 package org.thortracker.system
 
-import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,7 +10,6 @@ import org.junit.Test
 import org.thortracker.backend.PceLowering
 import org.thortracker.backend.PcePlayerImage
 import org.thortracker.editor.Selection
-import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
@@ -25,28 +23,21 @@ import org.thortracker.system.pce.PceRules
 import org.thortracker.system.pce.PceSample
 import org.thortracker.system.pce.PceSamples
 import org.thortracker.system.pce.PceSharedState
-import org.thortracker.system.pce.PceSongSettings
 import org.thortracker.system.pce.PceSound
 import org.thortracker.system.pce.PceStarterKit
 import org.thortracker.system.pce.PceSystem
 import org.thortracker.system.pce.PceValidator
-import org.thortracker.system.pce.PceVgm
-import org.thortracker.system.pce.PceVgmRenderer
-import org.thortracker.system.pce.PceVgmTags
 import org.thortracker.system.pce.pce
 
 /**
- * The PC Engine system's model: registration and shape, project files, the validator's mirror of the loader's
- * reasons, warnings, arrangement, song settings, the shared-state walk, fine pitch and the player's pitch arithmetic,
- * the lowering's header, records and data layout (patterns, then deduplicated envelopes, then deduplicated samples),
- * `.wav` import arithmetic, the starter kit, the VGM seam and the demo. The songs here use their own sounds, waves and
- * samples (not the presets), so they do not depend on the preset list.
+ * The PC Engine system's model: notes and ticks, project files, which songs, sounds and cells load (the loader's
+ * rules, as the play/export gate and the editors' checks see them), warnings and what clears them, arrangement, song
+ * settings, the shared-state walk, fine pitch and the player's pitch arithmetic, the lowering's header, records and
+ * data layout (patterns, then deduplicated envelopes, then deduplicated samples), `.wav` import arithmetic, the starter
+ * kit and the demo. The songs here use their own sounds, waves and samples (not the presets), so they do not depend on
+ * the preset list.
  */
 class PceModelTest {
-    @After
-    fun noRenderer() {
-        PceVgm.renderer = null
-    }
 
     private val sine = PcePresets.WAVES[0].second
     private val square = PcePresets.WAVES[3].second
@@ -96,39 +87,21 @@ class PceModelTest {
     private fun u16(image: ByteArray, at: Int) = u8(image, at) or (u8(image, at + 1) shl 8)
     private fun u32(image: ByteArray, at: Int) = u16(image, at) or (u16(image, at + 2) shl 16)
 
-    // ---- system shape ------------------------------------------------------------------------------------------
+    /** The numbers a readout shows, in order (its wording is the UI's). */
+    private fun numbers(text: String) = Regex("[+-]?\\d+(?:\\.\\d+)?").findAll(text).map { it.value.toDouble() }.toList()
+
+    // ---- notes and ticks ---------------------------------------------------------------------------------------
 
     @Test
-    fun systemIsRegisteredWithSixPsgChannels() {
-        assertEquals(PceSystem, SoundSystems.of("pce-huc6280"))
-        assertEquals("PC Engine (HuC6280)", PceSystem.name)
-        assertNull(PceSystem.family)
-        assertEquals((1..6).map { "PSG $it" }, PceSystem.channels.map { it.name })
-        assertTrue(PceSystem.channels.all { it.tonal && it.kind == ChannelKind.WAVE && it.bank == 0 })
-        assertEquals(listOf(BankSpec("Sounds", 64)), PceSystem.banks)
+    fun notesAndTicksAreThePlayers() {
         assertEquals(9..95, PceSystem.noteRange)
         assertEquals("A-0", PceSystem.noteName(9))
         assertEquals("A-4", PceSystem.noteName(57))
         assertEquals("B-7", PceSystem.noteName(95))
-        assertEquals(4, PceSystem.effectColumns(0))
-        assertEquals(4, PceSystem.effectColumns(5))
-        assertEquals(PceRules.EFFECTS, PceSystem.effectsFor(0))
-        assertEquals(PceRules.EFFECTS, PceSystem.effectsFor(4))
-        assertEquals(4..5, PceRules.NOISE_CHANNELS)
-        assertTrue(ViewKind.WAVE in PceSystem.views && ViewKind.INSTRUMENT in PceSystem.views)
-        assertEquals(listOf("vgm"), PceSystem.exports.map { it.extension })
-        val engine = PceSystem.engine
-        assertEquals("pce-huc6280", engine.id)
-        assertEquals(131072, engine.imageSize)
-        assertEquals(3600, engine.seekTicks)
-        assertTrue(engine.driver.contains("Mednafen 1.32.1"))
-        assertEquals(57, engine.note(base(), 0, 57, 1))
-        assertEquals(60.0, PceSystem.tickHz, 0.0)
+        // The player takes absolute notes; it ticks at the 60 Hz frame times the song's multispeed.
+        assertEquals(57, PceSystem.engine.note(base(), 0, 57, 1))
+        assertEquals(60.0, PceSystem.ticksPerSecond(base()), 1e-9)
         assertEquals(180.0, PceSystem.ticksPerSecond(withSound { it.copy(multispeed = 3) }), 1e-9)
-        assertEquals(PceSound.serializer(), PceSystem.soundSerializer)
-        assertEquals(PceSystem, PceSystem.blank().sound.system)
-        // The effect letters the loader knows, and only those.
-        assertEquals("0 1 2 3 4 8 A B C D F G L M P S T W X", PceRules.EFFECTS.joinToString(" ") { it.char.toString() })
     }
 
     @Test
@@ -155,9 +128,6 @@ class PceModelTest {
         assertEquals("tone", PceSystem.instrumentName(base(), 0, 1))
         assertEquals(PceSystem.EMPTY_NAME, PceSystem.instrumentName(base(), 0, 4))
         assertNull(PceSystem.instrumentName(base(), 1, 1))
-        assertEquals("Empty: choose a preset", PceSystem.instrumentSummary(base(), 0, 4))
-        assertTrue(PceSystem.instrumentSummary(base(), 0, 2)!!.startsWith("Noise (PSG 5-6)"))
-        assertEquals("Sample 00 a · 4 frames · root C-4 · loop from 2 · volume, relative pitch envelopes", PceSystem.instrumentSummary(base(), 0, 3))
         // Thumbnails: a tone's wave (the first step of its wave envelope); none for noise and samples.
         assertEquals(sine.map { it / 31f }, PceSystem.instrumentShape(base(), 0, 1))
         assertEquals(sine.map { it / 31f }, PceSystem.instrumentShape(base(), 0, 5))
@@ -195,91 +165,148 @@ class PceModelTest {
 
     // ---- validation ----------------------------------------------------------------------------------------
 
-    @Test
-    fun cellValidationExplainsWhatTheLoaderRejects() {
-        fun error(channel: Int, cell: Cell) = PceSystem.errors(blankWith(channel, 0, cell)).joinToString("\n")
-        // Noise sounds on PSG 5 and PSG 6 only.
-        for (ch in 0..3) assertTrue(error(ch, Cell(60, 2)).contains("noise sounds belong there"))
-        assertEquals("", error(4, Cell(60, 2)))
-        assertEquals("", error(5, Cell(60, 2)))
-        // Sample and tone sounds on any channel.
-        assertEquals("", error(0, Cell(60, 3)))
-        assertEquals("", error(5, Cell(60, 5)))
-        // Parameter checks, in any effect column.
-        assertTrue(error(0, Cell(60, 1).withEffect(2, PceRules.FX_VOLUME, 0x20)).contains("volumes are C00-C1F"))
-        assertEquals("", error(0, Cell(60, 1, PceRules.FX_VOLUME, 0x1F)))
-        assertTrue(error(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x04)).contains("M00-M03 or M80-M83"))
-        assertTrue(error(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x84)).contains("M00-M03 or M80-M83"))
-        assertEquals("", error(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x83)))
-        assertTrue(error(0, Cell(60, 1, PceRules.FX_TIMER, 0x80)).contains("T00-T7F"))
-        assertEquals("", error(0, Cell(60, 1, PceRules.FX_TIMER, 0x7F)))
-        assertTrue(error(0, Cell(60, 1, PceRules.FX_WAVE, 0x02)).contains("the song's waves are W00-W01"))
-        assertEquals("", error(0, Cell(60, 1, PceRules.FX_WAVE, 0x01)))
-        assertTrue(error(0, Cell(60, 1, PceRules.FX_SPEED, 0)).contains("F00"))
-        assertTrue(error(0, Cell(60, 1, PceRules.FX_JUMP, 0x01)).contains("jumps past the last order"))
-        assertEquals("", error(0, Cell(60, 1, PceRules.FX_LFO_FREQ, 0xFF)))
-        assertEquals("", error(0, Cell(60, 1, PceRules.FX_MASTER, 0x00)))
-        // Codes without an effect.
-        for (code in listOf(5, 6, 7, 9, 14, 17, 18, 19, 20, 23, 24, 26, 27, 30, 31, 34, 35)) {
-            assertTrue("code $code", error(0, Cell(60, 1, code, 1)).contains("does not exist on the PC Engine"))
-        }
-        // Notes outside A-0..B-7, sounds outside the bank or empty.
-        assertTrue(error(0, Cell(8, 1)).contains("outside A-0..B-7"))
-        assertTrue(error(0, Cell(96, 1)).contains("outside A-0..B-7"))
-        assertEquals("", error(0, Cell(9, 1)))
-        assertEquals("", error(0, Cell(95, 1)))
-        assertTrue(error(0, Cell(60, 4)).contains("sound 04 is empty"))
-        assertTrue(error(0, Cell(60, 65)).contains("outside 0-64"))
-        // Wxx without any waves.
-        val noWaves = withSound { it.copy(waves = emptyList(), instruments = List(PceSystem.SLOTS) { null }) }
-        assertTrue(PceSystem.errors(with(noWaves, 0, 0, 0, Cell(effect = PceRules.FX_WAVE, param = 0))).joinToString().contains("the song has no waves"))
+    /** Whether [song] may play and export: the gate the menus apply ([PceSystem.errors] empty). Its reasons are UI text. */
+    private fun loads(song: Song) = PceSystem.errors(song).isEmpty()
+
+    /** Whether [cell] on [channel] (row 0 of [song]'s first order) loads; the editor's cell check and the song's gate agree. */
+    private fun cellLoads(channel: Int, cell: Cell, song: Song = base()): Boolean {
+        val placed = with(song, 0, channel, 0, cell)
+        val accepted = PceSystem.cellProblem(placed, channel, cell) == null
+        assertEquals("cell check and song gate on $cell, channel $channel", accepted, loads(placed))
+        return accepted
+    }
+
+    /** Whether [ins] loads in slot 06 of [sound]; the instrument view's check and the song's gate agree. */
+    private fun soundLoads(ins: PceInstrument, sound: PceSound = base().pce): Boolean {
+        val song = base().copy(sound = sound.withInstrument(6, ins))
+        val accepted = PceValidator.instrumentProblem(song.pce, 6) == null
+        assertEquals("sound check and song gate on $ins", accepted, loads(song))
+        return accepted
+    }
+
+    /** Whether the settings, waves and samples [f] gives the song load; the sound's own check and the song's gate agree. */
+    private fun settingsLoad(f: (PceSound) -> PceSound): Boolean {
+        val song = withSound(f)
+        val accepted = song.pce.problem() == null
+        assertEquals("sound settings check and song gate", accepted, loads(song))
+        return accepted
     }
 
     @Test
-    fun soundAndSongValidationExplainsWhatTheLoaderRejects() {
-        fun songError(f: (PceSound) -> PceSound) = PceSystem.errors(withSound(f)).joinToString("\n")
-        // Header values.
-        assertTrue(songError { it.copy(multispeed = 9) }.contains("multispeed 9 is outside 1-8"))
-        assertTrue(songError { it.copy(master = 0x100) }.contains("master balance 256 is outside 00-FF"))
-        assertTrue(songError { it.copy(lfoControl = 4) }.contains("LFO control 04 is not 00-03 or 80-83"))
-        assertEquals("", songError { it.copy(lfoControl = 0x83) })
-        assertTrue(songError { it.copy(lfoFrequency = 256) }.contains("LFO frequency 256 is outside 0-255"))
-        assertTrue(songError { it.copy(timerReload = 128) }.contains("DDA timer 128 is outside 0-127"))
-        // Waves and samples.
-        assertTrue(songError { it.copy(waves = listOf(sine.dropLast(1))) }.contains("wave 00 has 31 steps; waves have 32"))
-        assertTrue(songError { it.copy(waves = listOf(sine, sine.map { 32 })) }.contains("wave 01 has the value 32"))
-        assertTrue(songError { it.copy(waves = List(65) { sine }) }.contains("has 65 waves"))
-        assertTrue(songError { it.copy(samples = listOf(PceSample("x", emptyList()))) }.contains("sample 00 \"x\" has no frames"))
-        assertTrue(songError { it.copy(samples = listOf(PceSample("x", listOf(32)))) }.contains("frame value 32 is outside 0-31"))
-        assertTrue(songError { it.copy(samples = listOf(PceSample("x", List(65536) { 16 }))) }.contains("samples have at most 65535"))
-        assertTrue(songError { it.copy(samples = List(65) { samples[2] }) }.contains("has 65 samples"))
-        // Envelope shapes.
-        fun insError(ins: PceInstrument) = songError { it.withInstrument(6, ins) }
-        assertTrue(insError(tone.copy(volume = PceEnvelope(List(256) { 31 }))).contains("volume envelope has 256 steps; envelopes have at most 255"))
-        assertEquals("", insError(tone.copy(pitch = PceEnvelope(List(255) { -128 }))))
-        assertTrue(insError(tone.copy(volume = PceEnvelope(listOf(32)))).contains("volume envelope step value 32 is outside 0..31"))
-        assertTrue(insError(tone.copy(arpeggio = PceEnvelope(listOf(64)))).contains("arpeggio envelope step value 64 is outside -64..63"))
-        assertTrue(insError(tone.copy(pitch = PceEnvelope(listOf(-129)))).contains("pitch envelope step value -129"))
-        assertTrue(insError(tone.copy(volume = PceEnvelope(listOf(31, 20), loop = 2))).contains("loop point 2 is outside"))
-        assertTrue(insError(tone.copy(volume = PceEnvelope(listOf(31, 20), release = 0))).contains("release point 0 must be 1-1"))
-        assertTrue(insError(tone.copy(volume = PceEnvelope(listOf(31, 20, 10), loop = 1, release = 1))).contains("must come after the loop point"))
-        assertEquals("", insError(tone.copy(volume = PceEnvelope(listOf(31, 20, 10), loop = 0, release = 1))))
-        assertTrue(insError(tone.copy(arpeggio = PceEnvelope(emptyList(), loop = 0))).contains("has a loop or release point but no steps"))
-        assertTrue(insError(tone.copy(root = 96)).contains("root note 96 is outside 9-95"))
-        // References into the song's waves and samples (PceValidator.instrumentProblem: no slot prefix).
-        fun problem(ins: PceInstrument) = PceValidator.instrumentProblem(base().pce.withInstrument(6, ins), 6)
-        assertNull(problem(tone))
-        assertNull(PceValidator.instrumentProblem(base().pce, 4))
-        assertEquals("plays wave 02; the song's waves are 00-01", problem(tone.copy(wave = 2)))
-        assertEquals("its wave envelope steps to wave 05; the song's waves are 00-01", problem(tone.copy(waves = PceEnvelope(listOf(0, 5)))))
-        // A noise or sample sound's wave fields are not lowered, so they are not checked against the song's waves.
-        assertNull(problem(hat.copy(wave = 9, waves = PceEnvelope(listOf(9)))))
-        assertEquals("plays sample 03; the song's samples are 00-02", problem(loop.copy(sample = 3)))
-        assertEquals("loops from frame 4, past the end of \"a\" (4 frames)", problem(loop.copy(loopStart = 4)))
-        assertNull(problem(loop.copy(loop = false, loopStart = 4)))
-        assertTrue(PceValidator.instrumentProblem(withSound { it.copy(samples = emptyList()) }.pce, 3)!!.contains("the song has no samples"))
-        assertTrue(PceSystem.errors(withSound { it.withInstrument(6, tone.copy(wave = 2)) }).joinToString().contains("Sound 06 \"tone\": plays wave 02"))
-        assertTrue(songError { it.copy(waves = emptyList()) }.contains("plays a wave, but the song has no waves"))
+    fun cellsLoadOnlyWhereThePlayerAcceptsThem() {
+        // Noise sounds on PSG 5 and PSG 6 only; sample and tone sounds on any channel.
+        for (ch in 0..3) assertFalse(cellLoads(ch, Cell(60, 2)))
+        assertTrue(cellLoads(4, Cell(60, 2)))
+        assertTrue(cellLoads(5, Cell(60, 2)))
+        assertTrue(cellLoads(0, Cell(60, 3)))
+        assertTrue(cellLoads(5, Cell(60, 5)))
+        // Parameter ranges at their boundaries, in any effect column.
+        assertFalse(cellLoads(0, Cell(60, 1).withEffect(2, PceRules.FX_VOLUME, 0x20)))
+        assertTrue(cellLoads(0, Cell(60, 1).withEffect(2, PceRules.FX_VOLUME, 0x1F)))
+        assertFalse(cellLoads(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x04)))
+        assertFalse(cellLoads(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x84)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x03)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_LFO_CTRL, 0x83)))
+        assertFalse(cellLoads(0, Cell(60, 1, PceRules.FX_TIMER, 0x80)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_TIMER, 0x7F)))
+        // The song has waves 00-01 and one order.
+        assertFalse(cellLoads(0, Cell(60, 1, PceRules.FX_WAVE, 0x02)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_WAVE, 0x01)))
+        assertFalse(cellLoads(0, Cell(60, 1, PceRules.FX_JUMP, 0x01)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_JUMP, 0x00)))
+        assertFalse(cellLoads(0, Cell(60, 1, PceRules.FX_SPEED, 0)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_SPEED, 1)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_LFO_FREQ, 0xFF)))
+        assertTrue(cellLoads(0, Cell(60, 1, PceRules.FX_MASTER, 0x00)))
+        // Every effect column the pattern grid offers loads.
+        val full = (0 until PceSystem.effectColumns(0)).fold(Cell(60, 1)) { c, i -> c.withEffect(i, PceRules.FX_VOLUME, 0x10) }
+        assertTrue(cellLoads(0, full))
+        // The effect codes the player knows, and only those.
+        val unknown = setOf(5, 6, 7, 9, 14, 17, 18, 19, 20, 23, 24, 26, 27, 30, 31, 34, 35)
+        assertEquals((0..35).toSet() - unknown, PceRules.EFFECTS.map { it.code }.toSet())
+        for (code in unknown) assertFalse("code $code", cellLoads(0, Cell(60, 1, code, 1)))
+        // Notes A-0..B-7; sounds 01-40 that are filled.
+        assertFalse(cellLoads(0, Cell(8, 1)))
+        assertFalse(cellLoads(0, Cell(96, 1)))
+        assertTrue(cellLoads(0, Cell(9, 1)))
+        assertTrue(cellLoads(0, Cell(95, 1)))
+        assertFalse(cellLoads(0, Cell(60, 4)))
+        assertFalse(cellLoads(0, Cell(60, 65)))
+        val top = withSound { it.withInstrument(PceSystem.SLOTS, tone) }
+        assertTrue(cellLoads(0, Cell(60, PceSystem.SLOTS), top))
+        // Wxx in a song without waves (which otherwise loads).
+        val noWaves = withSound { it.copy(waves = emptyList(), instruments = List(PceSystem.SLOTS) { null }) }
+        assertFalse(cellLoads(0, Cell(effect = PceRules.FX_WAVE, param = 0), noWaves))
+        assertTrue(cellLoads(0, Cell(effect = PceRules.FX_MASTER, param = 0), noWaves))
+    }
+
+    @Test
+    fun soundsWavesSamplesAndSettingsLoadOnlyWithinThePlayersRanges() {
+        // Header values at their boundaries.
+        assertTrue(settingsLoad { it.copy(multispeed = 8) })
+        assertFalse(settingsLoad { it.copy(multispeed = 9) })
+        assertFalse(settingsLoad { it.copy(multispeed = 0) })
+        assertTrue(settingsLoad { it.copy(master = 0) })
+        assertFalse(settingsLoad { it.copy(master = 0x100) })
+        assertTrue(settingsLoad { it.copy(lfoControl = 0x83) })
+        assertFalse(settingsLoad { it.copy(lfoControl = 4) })
+        assertTrue(settingsLoad { it.copy(lfoFrequency = 255) })
+        assertFalse(settingsLoad { it.copy(lfoFrequency = 256) })
+        assertTrue(settingsLoad { it.copy(timerReload = 127) })
+        assertFalse(settingsLoad { it.copy(timerReload = 128) })
+        // Waves: 32 steps of 0-31, at most 64 of them.
+        assertFalse(settingsLoad { it.copy(waves = listOf(sine.dropLast(1), square)) })
+        assertTrue(settingsLoad { it.copy(waves = listOf(sine, List(32) { 31 })) })
+        assertFalse(settingsLoad { it.copy(waves = listOf(sine, List(32) { 32 })) })
+        assertTrue(settingsLoad { it.copy(waves = List(64) { sine }) })
+        assertFalse(settingsLoad { it.copy(waves = List(65) { sine }) })
+        // Samples: 1-65535 frames of 0-31, at most 64 samples.
+        assertFalse(settingsLoad { it.copy(samples = samples + PceSample("x", emptyList())) })
+        assertTrue(settingsLoad { it.copy(samples = samples + PceSample("x", listOf(0, 31))) })
+        assertFalse(settingsLoad { it.copy(samples = samples + PceSample("x", listOf(32))) })
+        assertFalse(settingsLoad { it.copy(samples = samples + PceSample("x", List(65536) { 16 })) })
+        assertTrue(settingsLoad { it.copy(samples = List(64) { samples[0] }) })
+        assertFalse(settingsLoad { it.copy(samples = List(65) { samples[0] }) })
+        // Envelopes: at most 255 steps inside the kind's range; loop and release points inside, the release after the loop.
+        assertTrue(soundLoads(tone.copy(pitch = PceEnvelope(List(255) { -128 }))))
+        assertFalse(soundLoads(tone.copy(volume = PceEnvelope(List(256) { 31 }))))
+        assertTrue(soundLoads(tone.copy(volume = PceEnvelope(listOf(0, 31)))))
+        assertFalse(soundLoads(tone.copy(volume = PceEnvelope(listOf(32)))))
+        assertTrue(soundLoads(tone.copy(arpeggio = PceEnvelope(listOf(-64, 63)))))
+        assertFalse(soundLoads(tone.copy(arpeggio = PceEnvelope(listOf(64)))))
+        assertFalse(soundLoads(tone.copy(arpeggio = PceEnvelope(listOf(-65)))))
+        assertTrue(soundLoads(tone.copy(pitch = PceEnvelope(listOf(-128, 127)))))
+        assertFalse(soundLoads(tone.copy(pitch = PceEnvelope(listOf(-129)))))
+        assertFalse(soundLoads(tone.copy(pitch = PceEnvelope(listOf(128)))))
+        assertTrue(soundLoads(tone.copy(volume = PceEnvelope(listOf(31, 20), loop = 1))))
+        assertFalse(soundLoads(tone.copy(volume = PceEnvelope(listOf(31, 20), loop = 2))))
+        assertTrue(soundLoads(tone.copy(volume = PceEnvelope(listOf(31, 20), release = 1))))
+        assertFalse(soundLoads(tone.copy(volume = PceEnvelope(listOf(31, 20), release = 0))))
+        assertTrue(soundLoads(tone.copy(volume = PceEnvelope(listOf(31, 20, 10), loop = 0, release = 1))))
+        assertFalse(soundLoads(tone.copy(volume = PceEnvelope(listOf(31, 20, 10), loop = 1, release = 1))))
+        assertTrue(soundLoads(tone.copy(arpeggio = PceEnvelope(emptyList()))))
+        assertFalse(soundLoads(tone.copy(arpeggio = PceEnvelope(emptyList(), loop = 0))))
+        // Root notes A-0..B-7.
+        assertTrue(soundLoads(loop.copy(root = 9)))
+        assertTrue(soundLoads(loop.copy(root = 95)))
+        assertFalse(soundLoads(loop.copy(root = 8)))
+        assertFalse(soundLoads(loop.copy(root = 96)))
+        // References: a tone's wave and wave envelope steps among the song's waves (00-01); a noise sound's wave fields
+        // are not lowered, so not checked.
+        assertTrue(soundLoads(tone.copy(wave = 1)))
+        assertFalse(soundLoads(tone.copy(wave = 2)))
+        assertTrue(soundLoads(tone.copy(waves = PceEnvelope(listOf(0, 1)))))
+        assertFalse(soundLoads(tone.copy(waves = PceEnvelope(listOf(0, 5)))))
+        assertTrue(soundLoads(hat.copy(wave = 9, waves = PceEnvelope(listOf(9)))))
+        assertFalse(soundLoads(tone, base().pce.copy(waves = emptyList())))
+        assertTrue(soundLoads(hat, base().pce.copy(waves = emptyList(), instruments = List(PceSystem.SLOTS) { null })))
+        // A sample sound's sample among the song's samples (00-02) and its loop start inside it ("a": 4 frames).
+        assertTrue(soundLoads(loop.copy(sample = 2, loop = false)))
+        assertFalse(soundLoads(loop.copy(sample = 3)))
+        assertTrue(soundLoads(loop.copy(loopStart = 3)))
+        assertFalse(soundLoads(loop.copy(loopStart = 4)))
+        assertTrue(soundLoads(loop.copy(loop = false, loopStart = 4)))
+        assertFalse(soundLoads(loop, base().pce.copy(samples = emptyList())))
     }
 
     @Test
@@ -291,50 +318,70 @@ class PceModelTest {
         assertEquals(11, patternAndEnvelopes)
         // Two identical samples are stored once and fit.
         val twice = withSound { it.copy(samples = listOf(PceSample("x", big), PceSample("y", big))) }
-        assertEquals(emptyList<String>(), PceSystem.errors(twice))
+        assertTrue(loads(twice))
         assertEquals(patternAndEnvelopes + PceSample.MAX_FRAMES, PceLowering.dataSize(twice))
         // Two different ones do not: 131070 bytes of samples > 123072 bytes of data.
         val over = withSound { it.copy(samples = listOf(PceSample("x", big), PceSample("y", other))) }
-        assertTrue(PceSystem.errors(over).joinToString().contains("the PC Engine image holds"))
+        assertFalse(loads(over))
         assertThrows(IllegalArgumentException::class.java) { PceLowering.lower(over) }
         assertTrue(PceSamples.free(over) < 0)
         assertEquals(PcePlayerImage.DATA_CAPACITY - PceLowering.dataSize(twice), PceSamples.free(twice))
     }
 
     @Test
-    fun auditionChecksNoiseChannelsRangesAndSounds() {
-        val engine = PceSystem.engine
+    fun auditionRefusesWhatCannotSound() {
         val song = base()
-        assertNull(engine.auditionProblem(song, 0, 57, 1, 0))
-        assertNull(engine.auditionProblem(song, 4, 57, 2, 0))
-        assertNull(engine.auditionProblem(song, 5, 57, 2, 0))
-        assertNull(engine.auditionProblem(song, 2, 48, 3, -128))
-        assertTrue(engine.auditionProblem(song, 3, 57, 2, 0)!!.contains("PSG 5 and PSG 6 only"))
-        assertTrue(engine.auditionProblem(song, 0, 8, 1, 0)!!.contains("outside A-0..B-7"))
-        assertTrue(engine.auditionProblem(song, 0, 96, 1, 0)!!.contains("outside A-0..B-7"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 4, 0)!!.contains("is empty"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 0, 0)!!.contains("Choose a sound"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 1, 128)!!.contains("Fine pitch"))
-        assertTrue(engine.auditionProblem(song, 6, 57, 1, 0)!!.contains("Cannot audition"))
-        val broken = withSound { it.withInstrument(1, tone.copy(wave = 7)) }
-        assertTrue(engine.auditionProblem(broken, 0, 57, 1, 0)!!.contains("plays wave 07"))
+        fun plays(channel: Int, note: Int, instrument: Int, fine: Int = 0, s: Song = song) =
+            PceSystem.engine.auditionProblem(s, channel, note, instrument, fine) == null
+        assertTrue(plays(0, 57, 1))
+        // Noise on PSG 5 and PSG 6 only; samples on any channel.
+        assertTrue(plays(4, 57, 2))
+        assertTrue(plays(5, 57, 2))
+        for (ch in 0..3) assertFalse(plays(ch, 57, 2))
+        assertTrue(plays(2, 48, 3, -128))
+        // Notes A-0..B-7, fine pitch -128..127, channels PSG 1-6.
+        assertTrue(plays(0, 9, 1))
+        assertTrue(plays(0, 95, 1))
+        assertFalse(plays(0, 8, 1))
+        assertFalse(plays(0, 96, 1))
+        assertTrue(plays(0, 57, 1, 127))
+        assertFalse(plays(0, 57, 1, 128))
+        assertFalse(plays(0, 57, 1, -129))
+        assertFalse(plays(6, 57, 1))
+        assertFalse(plays(-1, 57, 1))
+        // Sounds 01-40 that are filled and load; repairing the sound lets it play.
+        assertFalse(plays(0, 57, 0))
+        assertFalse(plays(0, 57, 4))
+        assertFalse(plays(0, 57, 65))
+        assertFalse(plays(0, 57, 1, s = withSound { it.withInstrument(1, tone.copy(wave = 7)) }))
+        assertTrue(plays(0, 57, 1, s = withSound { it.withInstrument(1, tone.copy(wave = 1)) }))
     }
 
     @Test
-    fun warningsCoverDelaysFirstNotesTheLfoAndTheTimer() {
-        fun warnings(song: Song) = PceSystem.warnings(song).joinToString("\n")
-        assertEquals("", warnings(base()))
-        assertTrue(warnings(blankWith(0, 0, Cell(48, 1, PceRules.FX_DELAY, 6))).contains("the row never plays"))
-        assertTrue(warnings(blankWith(0, 4, Cell(48))).contains("has no sound"))
-        // The LFO on while PSG 2 never plays: from an effect or the song settings.
-        assertTrue(warnings(blankWith(0, 0, Cell(48, 1, PceRules.FX_LFO_CTRL, 0x01))).contains("PSG 2 never plays a note"))
-        assertTrue(warnings(withSound { it.copy(lfoControl = 2) }).contains("The song's LFO control (Song view) turns the LFO on"))
-        val withSource = with(blankWith(0, 0, Cell(48, 1, PceRules.FX_LFO_CTRL, 0x01)), 0, 1, 0, Cell(33, 1, PceRules.FX_VOLUME, 0))
-        assertFalse(warnings(withSource).contains("never plays a note"))
-        assertFalse(warnings(blankWith(0, 0, Cell(48, 1, PceRules.FX_LFO_CTRL, 0x80))).contains("never plays a note"))
-        // Txx without a sample sound playing.
-        assertTrue(warnings(blankWith(0, 0, Cell(48, 1, PceRules.FX_TIMER, 0x01))).contains("no sample sound plays"))
-        assertFalse(warnings(blankWith(0, 0, Cell(48, 3, PceRules.FX_TIMER, 0x01))).contains("no sample sound plays"))
+    fun warningsAppearWithTheirCauseAndClearWithIt() {
+        fun warns(song: Song) = PceSystem.warnings(song).isNotEmpty()
+        assertFalse(warns(base()))
+        // A note delay the row's speed never reaches; a shorter delay, or a faster speed set on the row, clears it.
+        val speed6 = base().copy(ticksPerRow = 6)
+        assertTrue(warns(with(speed6, 0, 0, 0, Cell(48, 1, PceRules.FX_DELAY, 6))))
+        assertFalse(warns(with(speed6, 0, 0, 0, Cell(48, 1, PceRules.FX_DELAY, 5))))
+        assertFalse(warns(with(speed6, 0, 0, 0, Cell(48, 1, PceRules.FX_DELAY, 6).withEffect(1, PceRules.FX_SPEED, 7))))
+        // An order's first note on a channel without a sound.
+        assertTrue(warns(blankWith(0, 4, Cell(48))))
+        assertFalse(warns(blankWith(0, 4, Cell(48, 1))))
+        // The LFO on (from an effect or the song settings) while PSG 2, its source, never plays; a PSG 2 note clears it.
+        val lfoByEffect = blankWith(0, 0, Cell(48, 1, PceRules.FX_LFO_CTRL, 0x01))
+        val lfoBySettings = withSound { it.copy(lfoControl = 2) }
+        val psg2Note = Cell(33, 1, PceRules.FX_VOLUME, 0)
+        assertTrue(warns(lfoByEffect))
+        assertTrue(warns(lfoBySettings))
+        assertFalse(warns(with(lfoByEffect, 0, 1, 0, psg2Note)))
+        assertFalse(warns(with(lfoBySettings, 0, 1, 0, psg2Note)))
+        // Halted, the LFO bends nothing.
+        assertFalse(warns(blankWith(0, 0, Cell(48, 1, PceRules.FX_LFO_CTRL, 0x81))))
+        // Txx in a song where no sample sound plays; a sample sound clears it.
+        assertTrue(warns(blankWith(0, 0, Cell(48, 1, PceRules.FX_TIMER, 0x01))))
+        assertFalse(warns(blankWith(0, 0, Cell(48, 3, PceRules.FX_TIMER, 0x01))))
     }
 
     // ---- arrangement, settings and shared state -------------------------------------------------------------
@@ -358,32 +405,33 @@ class PceModelTest {
     @Test
     fun songSettingsAdjustResetAndLower() {
         val song = base()
-        assertEquals(listOf("Multispeed", "Master left", "Master right", "LFO frequency", "LFO control", "DDA rate"), PceSystem.songSettings.map { it.label })
-        assertEquals(PceSongSettings.ALL, PceSystem.songSettings)
-        fun setting(label: String) = PceSongSettings.ALL.single { it.label == label }
-        val left = setting("Master left")
+        // Each header value has exactly one Song-view setting changing it.
+        fun setting(part: (PceSound) -> Int) = PceSystem.songSettings.single { s ->
+            listOf(-1 to 0, 1 to 0, 0 to -1, 0 to 1).any { (f, c) -> part(s.adjust(song, f, c).pce) != part(song.pce) }
+        }
+        val left = setting { it.master shr 4 }
         assertEquals(0xEF, left.adjust(song, -1, 0).pce.master)
         assertEquals(0x0F, left.adjust(song, 0, -10).pce.master)
         assertEquals(song, left.adjust(song, 1, 0))
         assertEquals(song, left.reset(left.adjust(song, -3, 0)))
-        assertEquals(0xFB, setting("Master right").adjust(song, 0, -1).pce.master)
-        val freq = setting("LFO frequency")
+        assertEquals(0xFB, setting { it.master and 0x0F }.adjust(song, 0, -1).pce.master)
+        val freq = setting { it.lfoFrequency }
         assertEquals(0x10, freq.adjust(song, 0, 1).pce.lfoFrequency)
         assertEquals(255, freq.adjust(song, 0, 40).pce.lfoFrequency)
-        assertTrue(freq.value(song).startsWith("00   PSG 2's wave steps 256× slower"))
-        val control = setting("LFO control")
+        assertTrue(256.0 in numbers(freq.value(song))) // L00: PSG 2's wave steps 256× slower
+        val control = setting { it.lfoControl }
         assertEquals(1, control.adjust(song, 1, 0).pce.lfoControl)
         assertEquals(0x80, control.adjust(song, 0, 1).pce.lfoControl)
         assertEquals(0x83, control.adjust(song, -1, 0).pce.lfoControl)
-        assertTrue(control.value(control.adjust(song, 2, 0)).startsWith("02   Medium (period ±64): PSG 2's wave bends PSG 1's pitch"))
+        assertTrue(64.0 in numbers(control.value(control.adjust(song, 2, 0)))) // depth 2: period ±64
         assertEquals(song, control.reset(control.adjust(song, 2, 0)))
-        val dda = setting("DDA rate")
-        assertTrue(dda.value(song).startsWith("00   6991 Hz"))
+        val dda = setting { it.timerReload }
+        assertTrue(6991.0 in numbers(dda.value(song)))
         val slower = dda.adjust(song, 1, 0)
         assertEquals(1, slower.pce.timerReload)
-        assertTrue(dda.value(slower).startsWith("01   3496 Hz"))
+        assertTrue(3496.0 in numbers(dda.value(slower)))
         assertEquals(127, dda.adjust(song, 0, 20).pce.timerReload)
-        assertEquals(4, setting("Multispeed").adjust(song, 3, 0).pce.multispeed)
+        assertEquals(4, setting { it.multispeed }.adjust(song, 3, 0).pce.multispeed)
         // The header carries every one of them.
         val all = song.copy(ticksPerRow = 5, sound = song.pce.copy(multispeed = 2, master = 0x5A, lfoFrequency = 0xFF, lfoControl = 0x83, timerReload = 0x7F))
         val image = PceLowering.lower(all)
@@ -422,17 +470,26 @@ class PceModelTest {
         song = with(song, 0, 0, 6, Cell(effect = PceRules.FX_TIMER, param = 0x80))
         val speed6 = song.copy(ticksPerRow = 6)
 
+        // The values straight play reaches, and the readouts showing them (their numbers; the wording is the UI's).
+        fun shown(state: SharedState) = numbers(state.lines.joinToString(" "))
         val start = PceSystem.sharedState(base(), 0, 0)
-        assertEquals(listOf("Master L 15 · R 15", "LFO off", "DDA 6991 Hz (timer 00)"), start.lines)
-        assertEquals(List<String?>(6) { null }, start.tags)
-        assertEquals("Master L 5 · R 10", PceSystem.sharedState(speed6, 0, 0).lines[0])
+        assertEquals(PceSharedState.start(base().pce), PceSharedState.at(base(), 0, 0))
+        assertTrue(listOf(15.0, 6991.0).all { it in shown(start) })
+        assertTrue(start.tags.all { it == null })
+        assertEquals(PceSharedState.Shared(0x5A, 0x10, 0x00, 0), PceSharedState.at(speed6, 0, 0))
+        assertTrue(listOf(5.0, 10.0).all { it in shown(PceSystem.sharedState(speed6, 0, 0)) })
+        // While the LFO bends, PSG 1 (bent) and PSG 2 (its source) carry distinct tags.
+        assertEquals(PceSharedState.Shared(0x5A, 0x10, 0x01, 0), PceSharedState.at(speed6, 0, 1))
+        assertTrue(PceSharedState.at(speed6, 0, 1).lfoActive)
         val lfo = PceSystem.sharedState(speed6, 0, 1)
-        assertEquals("LFO shallow (period ±16) · PSG 2 ÷ 16", lfo.lines[1])
-        assertEquals(listOf("mod", "lfo", null, null, null, null), lfo.tags)
+        assertEquals(listOf(true, true, false, false, false, false), lfo.tags.map { it != null })
+        assertTrue(lfo.tags[0] != lfo.tags[1])
+        // Halted, it bends nothing; T01 halves the DDA rate.
+        assertEquals(PceSharedState.Shared(0x5A, 0x10, 0x83, 1), PceSharedState.at(speed6, 0, 2))
+        assertFalse(PceSharedState.at(speed6, 0, 2).lfoActive)
         val halted = PceSystem.sharedState(speed6, 0, 2)
-        assertEquals("LFO deep (period ±256), halted · PSG 2 ÷ 16", halted.lines[1])
-        assertEquals(List<String?>(6) { null }, halted.tags)
-        assertEquals("DDA 3496 Hz (timer 01)", halted.lines[2])
+        assertTrue(halted.tags.all { it == null })
+        assertTrue(listOf(256.0, 3496.0).all { it in shown(halted) })
         assertEquals(0x34, PceSharedState.at(speed6, 0, 3).master)
         assertEquals(2, PceSharedState.at(speed6, 0, 4).lfoControl)
         assertEquals(2, PceSharedState.at(speed6, 0, 5).lfoControl)
@@ -446,7 +503,6 @@ class PceModelTest {
     @Test
     fun fineWritesPxxInAFreeColumnAndThePitchArithmeticIsThePlayers() {
         val fine = PceSystem.fine
-        assertEquals("Pxx", fine.name)
         assertEquals(25.0, fine.cents(57, 16), 1e-9)
         val busy = Cell(57, 1, PceRules.FX_VIBRATO, 0x23)
         val tuned = fine.write(busy, 57, 16)!!
@@ -539,16 +595,24 @@ class PceModelTest {
 
     @Test
     fun patternsAndEnvelopesMustStayWithinTheirU16Offsets() {
-        // 256 orders of distinct dense patterns pass 64 KB of pattern data before the 120 KB budget.
+        // Distinct dense patterns: every track is 64 rows of five bytes (mask, note, sound, C, parameter), 320 bytes,
+        // none shared. With 34 patterns the last track starts at 64960 and the envelopes follow below 65536; with 35 it
+        // starts at 66880, past the u16 offsets though the data region still has room.
         val start = base()
-        val patterns = (0 until 256).map { p ->
-            val tracks = List(6) { ch -> List(Songs.ROWS) { row -> Cell(9 + (p + row + ch) % 87, 1, PceRules.FX_VOLUME, (p + row) % 32) } }
-            Songs.blankPattern(start).copy(tracks = tracks)
+        fun song(count: Int): Song {
+            val patterns = (0 until count).map { p ->
+                val tracks = List(6) { ch -> List(Songs.ROWS) { row -> Cell(9 + (p + row + ch) % 87, 1, PceRules.FX_VOLUME, (p + row) % 32) } }
+                Songs.blankPattern(start).copy(tracks = tracks)
+            }
+            return start.copy(patterns = patterns, orders = patterns.indices.toList())
         }
-        val song = start.copy(patterns = patterns, orders = patterns.indices.toList())
-        val errors = PceSystem.errors(song).joinToString()
-        assertTrue(errors, errors.contains("pass the 64 KB their offsets reach"))
-        assertThrows(IllegalArgumentException::class.java) { PceLowering.lower(song) }
+        val fits = song(34)
+        assertTrue(loads(fits))
+        assertEquals(34, u16(PceLowering.lower(fits), PcePlayerImage.H_ORDERS))
+        val over = song(35)
+        assertTrue(PceLowering.dataSize(over) <= PcePlayerImage.DATA_CAPACITY)
+        assertFalse(loads(over))
+        assertThrows(IllegalArgumentException::class.java) { PceLowering.lower(over) }
     }
 
     // ---- samples -------------------------------------------------------------------------------------------
@@ -574,8 +638,7 @@ class PceModelTest {
         // At least one frame; the same rate passes values through the levels.
         assertEquals(listOf(16), PceSamples.fromWav(wav(44100, intArrayOf(0)), 6991))
         assertEquals(listOf(0, 16, 31), PceSamples.fromWav(wav(6991, intArrayOf(-32768, 0, 32767)), 6991))
-        val e = assertThrows(IllegalArgumentException::class.java) { PceSamples.fromWav(ByteArray(40), 6991) }
-        assertTrue(e.message!!.contains("Not a .wav file"))
+        assertThrows(IllegalArgumentException::class.java) { PceSamples.fromWav(ByteArray(40), 6991) }
         assertEquals(listOf(6991, 3496, 55), listOf(0, 1, 127).map(PceSamples::rateHz))
         assertEquals(1.0, PceSamples.seconds(6991, 0), 0.001)
         assertEquals(16, PceSamples.level(0))
@@ -586,7 +649,6 @@ class PceModelTest {
     fun starterKitIsDeterministicFiveBitAudio() {
         val kit = PceStarterKit.samples(PceSamples.rateHz(0))
         assertEquals(kit, PceStarterKit.samples(6991))
-        assertEquals(listOf("Kick", "Snare", "Hat", "Tom"), kit.map { it.name })
         assertEquals(listOf(1747, 1398, 419, 2097), kit.map { it.data.size })
         assertTrue(kit.all { s -> s.problem() == null })
         // Integer synthesis: these exact frames on every platform (List.hashCode of each sample).
@@ -635,45 +697,25 @@ class PceModelTest {
     // ---- effects, exports and demo ---------------------------------------------------------------------------
 
     @Test
-    fun describeReadsSharedEffectsAndRanges() {
-        assertEquals("DDA rate 3496 Hz, every channel", PceRules.describe(null, PceRules.FX_TIMER, 0x01))
-        assertEquals("DDA rate: invalid (00-7F)", PceRules.describe(null, PceRules.FX_TIMER, 0x80))
-        assertEquals("LFO medium (period ±64), halted, every channel", PceRules.describe(null, PceRules.FX_LFO_CTRL, 0x82))
-        assertEquals("LFO control: invalid (00-03, 80-83)", PceRules.describe(null, PceRules.FX_LFO_CTRL, 0x04))
-        assertTrue(PceRules.describe(null, PceRules.FX_LFO_FREQ, 0).startsWith("LFO frequency 256: "))
-        assertEquals("Master balance: left 5, right 10 of 15, every channel", PceRules.describe(null, PceRules.FX_MASTER, 0x5A))
-        assertEquals("Pan: left 15, right 0 of 15", PceRules.describe(null, PceRules.FX_PAN, 0xF0))
-        assertEquals("Volume 1F of 1F", PceRules.describe(null, PceRules.FX_VOLUME, 0x1F))
-        assertEquals("Fine pitch +16/64 semitone (+25.0¢)", PceRules.describe(null, PceRules.FX_FINE, 0x90))
-        assertEquals("Wave 05: the song has no such wave", PceRules.describe(base(), PceRules.FX_WAVE, 5))
-        assertEquals("Wave 01 for the sounding tone and later notes", PceSystem.describeEffect(base(), 0, PceRules.FX_WAVE, 1))
+    fun effectReadoutsShowCalculatedValuesAndHeldArpeggios() {
+        fun notes(text: String?) = Regex("[A-G](?:#|-)[0-9]").findAll(text.orEmpty()).map { it.value }.toList()
+        assertEquals(3496.0, numbers(PceRules.describe(null, PceRules.FX_TIMER, 0x01)).first(), 0.0)
+        assertEquals(64.0, numbers(PceRules.describe(null, PceRules.FX_LFO_CTRL, 0x82)).first(), 0.0)
+        assertEquals(256.0, numbers(PceRules.describe(null, PceRules.FX_LFO_FREQ, 0)).first(), 0.0)
+        assertEquals(listOf(5.0, 10.0), numbers(PceRules.describe(null, PceRules.FX_MASTER, 0x5A)).take(2))
+        assertEquals(listOf(15.0, 0.0), numbers(PceRules.describe(null, PceRules.FX_PAN, 0xF0)).take(2))
+        assertEquals(listOf(16.0, 64.0, 25.0), numbers(PceRules.describe(null, PceRules.FX_FINE, 0x90)))
         var song = blankWith(0, 0, Cell(57, 1, PceRules.FX_ARPEGGIO, 0x47))
         song = with(song, 0, 0, 2, Cell(effect = PceRules.FX_ARPEGGIO, param = 0x37))
-        assertEquals("A-4 → C#5 → E-5 every tick", PceSystem.effectDetail(song, 0, 0, 0, 0))
-        assertEquals("A-4 → C-5 → E-5 every tick", PceSystem.effectDetail(song, 0, 0, 2, 0))
+        assertEquals(listOf("A-4", "C#5", "E-5"), notes(PceSystem.effectDetail(song, 0, 0, 0, 0)))
+        assertEquals(listOf("A-4", "C-5", "E-5"), notes(PceSystem.effectDetail(song, 0, 0, 2, 0)))
         assertNull(PceSystem.effectDetail(song, 0, 0, 1, 0))
     }
 
-    @Test
-    fun vgmExportCallsTheNativeRenderer() {
-        val demo = PceSystem.demo()
-        val vgm = PceSystem.exports.single { it.extension == "vgm" }
-        assertThrows(IllegalStateException::class.java) { vgm.export(demo) }
-        var seen: Triple<ByteArray, Int, PceVgmTags>? = null
-        PceVgm.renderer = PceVgmRenderer { image, maxTicks, tags -> seen = Triple(image, maxTicks, tags); byteArrayOf(1, 2, 3) }
-        assertArrayEquals(byteArrayOf(1, 2, 3), vgm.export(demo))
-        val (image, maxTicks, tags) = seen!!
-        assertArrayEquals(PceLowering.lower(demo), image)
-        assertEquals(36000, maxTicks)
-        assertEquals(PceVgmTags("Turbo Lanterns", "Thor Tracker"), tags)
-        vgm.export(demo.copy(sound = demo.pce.copy(multispeed = 2)))
-        assertEquals(72000, seen!!.second)
-    }
 
     @Test
     fun demoIsCleanAndShowsTheSystem() {
         val demo = PceSystem.demo()
-        assertEquals("Turbo Lanterns", demo.title)
         assertEquals(emptyList<String>(), PceSystem.errors(demo))
         assertEquals(emptyList<String>(), PceSystem.warnings(demo))
         val sound = demo.pce

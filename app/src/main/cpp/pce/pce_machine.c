@@ -215,23 +215,12 @@ void pcm_position(const PceMachine* m, int* order, int* row, int* tick) {
     *tick = m->player.tick;
 }
 
-/* The audition note has ended: its channel stopped (a one-shot sample's end, or OFF without a release point), or,
- * released, its written volume is 0 with the volume envelope at its last step. */
-static int audition_done(const PceMachine* m) {
-    const PcChannel* ch = &m->player.ch[m->audition_channel];
-    if (!ch->sounding) return 1;
-    if (!m->released || !ch->released || (ch->r4 & 0x1F)) return 0;
-    const uint8_t* env = m->image.bytes + PC_OFF_INSTRUMENTS + PC_INSTRUMENT_SIZE * (ch->slot - 1) + PC_I_ENVELOPES +
-                         PC_ENVELOPE_BYTES * PC_ENV_VOLUME;
-    const int length = env[2];
-    return length && ch->env[PC_ENV_VOLUME] >= length - 1;
-}
 
 int pcm_tick(PceMachine* m, float* out) {
     if (!m->loaded) return 0;
     if (m->audition && m->ticks) {
         const int limit = PCM_RELEASE_SECONDS * 60 * m->image.info.multispeed;
-        if (m->ended || audition_done(m) || (m->released && m->release_ticks >= limit)) {
+        if (m->ended || !m->player.ch[m->audition_channel].sounding || (m->released && m->release_ticks >= limit)) {
             m->ended = 1;
             m->loaded = 0;
             return 0;

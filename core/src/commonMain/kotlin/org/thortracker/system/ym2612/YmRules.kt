@@ -7,10 +7,11 @@ import org.thortracker.model.Song
 import org.thortracker.system.EffectSpec
 
 /**
- * YM2612 (Mega Drive) cell semantics: Thor Tracker's own player streamed through SGDK's XGM driver
+ * YM2612 (Mega Drive) cell semantics: Thor Tracker's own player streamed through SGDK's XGM2 driver
  * (docs/AUDIO_ENGINE.md, "YM2612: Effects"), up to [EFFECT_COLUMNS] effect columns per channel, the OPL3's letters
  * where meanings match. FM locks (`E`, `I`, `M`) and the noise lock (`N`) shape the note keyed on their row; volume,
- * pan and the LFO change at once. Channels 0-5 are FM 1-6, 6-8 PSG 1-3, 9 the Noise channel.
+ * pan and the LFO change at once. Channels 0-5 are FM 1-6, 6-8 PSG 1-3, 9 the Noise channel and 10-12 PCM 1-3, the
+ * driver's three PCM channels (one-shot samples in FM 6's DAC: only [PCM_EFFECTS] play there).
  */
 object YmRules {
     /** Absolute notes the player takes: C-0..B-7 (0 = C-0, 57 = A-4 = 440 Hz). */
@@ -20,16 +21,27 @@ object YmRules {
     const val EFFECT_COLUMNS = YmPlayerImage.MAX_EFFECTS
 
     const val CHANNELS = YmPlayerImage.CHANNELS
+    const val TONAL_CHANNELS = YmPlayerImage.TONAL_CHANNELS
     const val FM_CHANNELS = YmPlayerImage.FM_CHANNELS
+    const val FM3 = YmPlayerImage.CH_FM3
+    const val FM6 = YmPlayerImage.CH_FM6
     const val PSG_FIRST = YmPlayerImage.CH_PSG
     const val NOISE = YmPlayerImage.CH_NOISE
+    const val PCM_FIRST = YmPlayerImage.CH_PCM
+    const val PCM_CHANNELS = YmPlayerImage.PCM_CHANNELS
 
-    val CHANNEL_NAMES = (1..FM_CHANNELS).map { "FM $it" } + (1..3).map { "PSG $it" } + "Noise"
+    val CHANNEL_NAMES = (1..FM_CHANNELS).map { "FM $it" } + (1..3).map { "PSG $it" } + "Noise" + (1..PCM_CHANNELS).map { "PCM $it" }
 
     /** The lowest note the PSG tones reach: below A-2 the 10-bit period clamps at 1023 (109.3 Hz). */
     const val PSG_LOWEST = 45
 
     fun isFm(channel: Int) = channel in 0 until FM_CHANNELS
+
+    /** PSG 1-3 and the Noise channel. */
+    fun isPsg(channel: Int) = channel in PSG_FIRST..NOISE
+
+    /** PCM 1-3. */
+    fun isPcm(channel: Int) = channel in PCM_FIRST until PCM_FIRST + PCM_CHANNELS
 
     // Effect codes: the player's (generated from ym_image.h).
     const val FX_ARPEGGIO = YmPlayerImage.FX_ARPEGGIO
@@ -61,6 +73,12 @@ object YmRules {
     /** Effects only the FM channels play. */
     val FM_ONLY = setOf(FX_PAN, FX_FEEDBACK, FX_BRIGHTNESS, FX_MULT)
 
+    /**
+     * What PCM 1-3 play besides notes and OFF: the song's flow (B, D, F), the chip's LFO (L), note delay (G) and stop
+     * (S). A driver sample cannot change once it plays, so no volume, pitch or pan effect exists there.
+     */
+    val PCM_EFFECTS = setOf(FX_JUMP, FX_BREAK, FX_SPEED, FX_DELAY, FX_LFO, FX_CUT)
+
     val EFFECTS = listOf(
         EffectSpec(FX_ARPEGGIO, "Arpeggio", "xy: +x, +y semitones",
             "Cycle note, +x, +y every tick for the note on this row (or the sounding note); the next note without 0xy plays plain.", true),
@@ -73,7 +91,7 @@ object YmRules {
         EffectSpec(FX_VIBRATO, "Vibrato", "xy: x speed 0-F, y depth 0-F",
             "Wobble the pitch (depth F: ±1.9 semitones); 4x0 stops it; the phase restarts with each note.", true),
         EffectSpec(FX_PAN, "Pan", "xy: x≠0 left, y≠0 right (FM)",
-            "FM output left (10), right (01) or both (11); 800 silences. Applies at once.", true),
+            "FM output left (10), right (01) or both (11); 800 silences. Applies at once. FM 6's pan also pans PCM 1-3 (the DAC).", true),
         EffectSpec(FX_VOLUME_SLIDE, "Volume slide", "xy: x up, y down (1/8 step per tick)",
             "Change the channel volume every tick until A00.", true),
         EffectSpec(FX_JUMP, "Jump", "xx: order",
@@ -87,7 +105,8 @@ object YmRules {
         EffectSpec(FX_SPEED, "Speed", "xx: ticks per row 01-FF",
             "Ticks per row from this row on, all channels; the last Fxx of a row wins.", true),
         EffectSpec(FX_DELAY, "Note delay", "xx: ticks",
-            "Run this channel's row (note, instrument and effects except B, D, F) at tick xx; never if xx ≥ the speed.", true),
+            "Run this channel's row (note, instrument and effects except B, D, F) at tick xx; never if xx ≥ the speed. The row's " +
+                "own Sxx still counts from the row's start: one before the delay never fires.", true),
         EffectSpec(FX_BRIGHTNESS, "Brightness lock", "xx: 00-7F (FM)",
             "Every modulator's level = 7F − xx for the note on this row (7F brightest); algorithm 7 has none.", true),
         EffectSpec(FX_LFO, "LFO", "xx: 00 off, 08-0F on at rate 0-7",
@@ -100,7 +119,7 @@ object YmRules {
         EffectSpec(FX_FINE, "Fine pitch", "xx: 80 = none, 1/64 semitone",
             "Detune by xx − 80 sixty-fourths of a semitone (±2 semitones) until the next note; tunings use it.", true),
         EffectSpec(FX_CUT, "Note off", "xx: tick",
-            "Key off at tick xx of this row (the release plays), like an OFF at that tick.", true),
+            "Key off at tick xx of this row (the release plays), like an OFF at that tick; on PCM 1-3 the sample stops.", true),
     )
 
     private val BY_CODE = EFFECTS.associateBy { it.code }
@@ -108,6 +127,7 @@ object YmRules {
     private val FM_EFFECTS = EFFECTS.filter { it.code != FX_NOISE }
     private val PSG_EFFECTS = EFFECTS.filter { it.code !in FM_ONLY && it.code != FX_NOISE }
     private val NOISE_EFFECTS = EFFECTS.filter { it.code !in FM_ONLY }
+    private val PCM_EFFECT_SPECS = EFFECTS.filter { it.code in PCM_EFFECTS }
 
     fun effect(code: Int): EffectSpec? = BY_CODE[code]
 
@@ -115,6 +135,7 @@ object YmRules {
     fun effectsFor(channel: Int): List<EffectSpec> = when {
         isFm(channel) -> FM_EFFECTS
         channel == NOISE -> NOISE_EFFECTS
+        isPcm(channel) -> PCM_EFFECT_SPECS
         else -> PSG_EFFECTS
     }
 
@@ -127,6 +148,10 @@ object YmRules {
         val fx = effectText(code, param)
         val fm = isFm(channel)
         if (effect(code) == null) return "effect ${EffectSpec.charOf(code)} does not exist on the Mega Drive"
+        if (isPcm(channel) && code !in PCM_EFFECTS) {
+            return "$fx does not play on PCM lanes: an XGM2 sample cannot change once it starts. PCM 1-3 take notes, OFF, " +
+                "Gxx, Sxx and the song's Bxx, Dxx, Fxx and Lxx; set loudness with the kit's level"
+        }
         if (!fm && code in FM_ONLY) return "$fx plays on FM channels only"
         if (code == FX_NOISE && channel != NOISE) return "$fx sets the noise mode; it plays on the Noise channel only"
         return when (code) {

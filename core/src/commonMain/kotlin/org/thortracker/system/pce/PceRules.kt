@@ -165,7 +165,7 @@ object PceRules {
         EffectSpec(FX_SLIDE_DOWN, "Slide down", "xx: 1/64 semitone per tick",
             "Lower the pitch every tick from this row until 100, 200 or 300.", true),
         EffectSpec(FX_PORTAMENTO, "Portamento", "xx: 1/64 semitone per tick, 00 = off",
-            "While on, a note on a sounding tone or sample channel glides there without restarting; 300 ends it.", true),
+            "While on, a note on a held tone or sample channel glides there without restarting; after OFF it starts a new attack. 300 ends portamento.", true),
         EffectSpec(FX_VIBRATO, "Vibrato", "xy: x speed 0-F, y depth 0-F",
             "The player's own pitch wobble (depth F: ±1.86 semitones), separate from the chip's LFO; 4x0 stops it; " +
                 "the phase restarts with each note.", true),

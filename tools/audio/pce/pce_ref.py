@@ -593,7 +593,7 @@ class Player:
         if note == NOTE_OFF:
             self.off(c)
         elif playing:
-            if t.slide_mode == "porta" and t.sounding and t.kind in (KIND_TONE, KIND_SAMPLE):
+            if t.slide_mode == "porta" and t.sounding and not t.released and t.kind in (KIND_TONE, KIND_SAMPLE):
                 t.target = note * UNITS_PER_SEMITONE
             else:
                 self.key_on(c, note)
@@ -624,6 +624,10 @@ class Player:
         t = self.ch[c]
         ins = self.img.instrument(t.latched)
         v = self.env_value(t, ins, ENV_VOLUME)
+        volume_envelope = ins.env[ENV_VOLUME] if ins else None
+        if t.released and volume_envelope is not None and v == 0 and t.env_idx[ENV_VOLUME] >= len(volume_envelope.values) - 1:
+            self.stop(c)
+            return
         vol = max(0, (31 if v is None else v) + (t.vol8 >> 3) - 31)
         arp = 0
         if t.arp_step == 1:

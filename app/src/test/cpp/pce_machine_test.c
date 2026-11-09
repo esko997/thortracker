@@ -1231,6 +1231,72 @@ static void test_audition(const char* dir) {
     pcm_destroy(m);
 }
 
+/* OFF releases a note, not a legato target. Keep every audible tail tick; a final zero stops DDA too. */
+static void test_release_portamento(void) {
+    for (int kind = PC_KIND_TONE; kind <= PC_KIND_SAMPLE; kind += PC_KIND_SAMPLE - PC_KIND_TONE) {
+        for (int ending = 0; ending < 3; ++ending) {
+            uint8_t data[] = {
+                0x89, 0x07, 48, 1, PC_FX_PORTAMENTO, 0x40,
+                0x01, PC_NOTE_OFF, 0x01, 52, 0x01, PC_NOTE_OFF,
+                0x83, 0x01, 55, 0x80,
+                31, 20, 10, 0, 0, 31, 0, 31
+            };
+            if (ending == 1) data[19] = 7; /* A nonzero release end remains audible. */
+            if (ending == 2) data[17] = 0; /* An intermediate zero must not end the release. */
+            PceImage im;
+            base_image(&im, 10, 1, data, sizeof data);
+            set_pattern(&im, 0, 1);
+            im.bytes[PC_H_SAMPLES] = 1;
+            put32(im.bytes + PC_OFF_SAMPLES, 20);
+            put32(im.bytes + PC_OFF_SAMPLES + 4, 4);
+            put_instrument(&im, 1, kind, 0, 0, kind == PC_KIND_SAMPLE ? 48 : 0, kind == PC_KIND_SAMPLE, 0);
+            put_envelope(&im, 1, PC_ENV_VOLUME, 16, 4, PC_ENV_NONE, 1);
+            EXPECT(pc_load_image(&im) == 0, "release/porta image loads: %s", im.info.problem);
+            PcPlayer p;
+            pcp_reset(&p, &im);
+            for (int tick = 0; tick <= 8; ++tick) {
+                pcp_tick(&p, &im);
+                if (tick == 1 || tick == 3)
+                    EXPECT(p.ch[0].sounding && p.ch[0].released && (p.ch[0].r4 & 31) == data[17],
+                           "kind %d ending %d retains first release tick", kind, ending);
+                if (tick == 2 || tick == 8) {
+                    const int note = tick == 2 ? 52 : 55;
+                    EXPECT(p.ch[0].sounding && !p.ch[0].released && p.ch[0].base == note * 64 &&
+                           (p.ch[0].r4 & 31) == 31,
+                           "kind %d ending %d note %d starts a fresh attack after OFF", kind, ending, note);
+                }
+                if (tick == 4)
+                    EXPECT(p.ch[0].sounding && (p.ch[0].r4 & 31) == 10,
+                           "kind %d ending %d preserves penultimate release level", kind, ending);
+                if (tick == 5) {
+                    EXPECT(p.ch[0].sounding == (ending == 1) && (p.ch[0].r4 & 31) == data[19],
+                           "kind %d ending %d finishes only the zero-ended release", kind, ending);
+                    if (ending != 1) {
+                        EXPECT(!p.ch[0].dda, "finished release stops the sample timer lane");
+                        pcp_timer(&p, &im);
+                        EXPECT(p.writes == 0, "finished release emits no further sample frames");
+                    }
+                }
+                for (int irq = 0; irq < 8; ++irq) pcp_timer(&p, &im);
+            }
+        }
+    }
+    /* A held, silent envelope is still a legato target: only OFF changes that ownership. */
+    const uint8_t held[] = {0x83, 0x07, 48, 1, PC_FX_PORTAMENTO, 0x40, 0x80, 0x01, 52, 0x80, 31, 0};
+    PceImage im;
+    base_image(&im, 4, 1, held, sizeof held);
+    set_pattern(&im, 0, 1);
+    put_instrument(&im, 1, PC_KIND_TONE, 0, 0, 0, 0, 0);
+    put_envelope(&im, 1, PC_ENV_VOLUME, 10, 2, PC_ENV_NONE, PC_ENV_NONE);
+    EXPECT(pc_load_image(&im) == 0, "held-silent portamento image loads");
+    PcPlayer p;
+    pcp_reset(&p, &im);
+    for (int tick = 0; tick < 3; ++tick) pcp_tick(&p, &im);
+    EXPECT(p.ch[0].sounding && !p.ch[0].released && p.ch[0].base == 49 * 64 &&
+           p.ch[0].target == 52 * 64 && (p.ch[0].r4 & 31) == 0,
+           "held silent note glides without restarting its envelope");
+}
+
 /* The chip's LFO: PSG 2's waveform offsets PSG 1's period (M01: +-16 on 254, about +-1 semitone, at 5.5 Hz), so 50 ms
  * windows over 2 s spread widely; M00 and the halt bit ($81) leave the pitch alone. */
 static void test_lfo(void) {
@@ -1587,6 +1653,7 @@ int main(int argc, char** argv) {
     test_seek();
     test_live_edits();
     test_audition(dir);
+    test_release_portamento();
     test_lfo();
     test_noise();
     test_balance();

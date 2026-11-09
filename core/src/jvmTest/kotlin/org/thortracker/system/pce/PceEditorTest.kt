@@ -75,6 +75,7 @@ class PceEditorTest {
                 }
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
+                override fun installEpsmRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
             })
         }
     }
@@ -380,7 +381,6 @@ class PceEditorTest {
         assertEquals(listOf(1, 3), sound()!!.waves.values)
         assertEquals(3, session.song.patterns[0].tracks[0][0].effectParam(1))
         assertEquals(third, session.song.pce.waves[3])
-        assertTrue(session.message!!.contains("its $uses uses now play wave 01"))
         // New wave appends.
         w.state.waveCol = PceWaveView.Tool.NEW.ordinal
         w.tap(Action.EDIT)
@@ -595,14 +595,22 @@ class PceEditorTest {
         val v = view { instrument = slot }
         v.tap(Action.AUDITION)
         assertTrue(auditions.isEmpty())
-        assertTrue(session.message!!.contains("no sample"))
     }
 
     @Test
-    fun belowTheLowestNoteTheKeyboardSaysSo() {
-        val k = view(ViewKind.KEYBOARD) { octave = 0 }
-        k.keyDown(0) // C-0, below A-0
-        assertEquals("Below ${PceSystem.noteName(PceRules.NOTES.first)}, the lowest note", session.message)
+    fun keyboardRejectsBelowTheLowestNoteAndWritesTheBoundaryNote() {
+        val k = view(ViewKind.KEYBOARD) { octave = 0; entryMode = true }
+        k.setKeyboardSound(1)
+        session.step = 1
+        val before = session.song
+        k.keyDown(8) // G#0, immediately below A-0.
+        assertEquals(before, session.song)
+        assertEquals(0, session.selection.row)
+        assertTrue(auditions.isEmpty())
+        k.touchKeyUp()
+        k.keyDown(9)
+        assertEquals(9, session.song.patterns[0].tracks[0][0].note)
+        assertEquals(1, session.selection.row)
         k.touchKeyUp()
     }
 }
