@@ -39,6 +39,8 @@
  *                     MSX's 3.58 MHz (scc/scc_chip.c over scc/scc_machine.c, scc_player.c, scc_image.c,
  *                     scc_k051649.c)
  *   "msx-scc-plus"    the same player and core as a K052539 in SCC+ mode (five wave RAMs; same files)
+ *   "ym2151-opm"      Thor Tracker's own OPM player on a YM2151 (ymfm) at the X68000's 4 MHz
+ *                     (opm/opm_chip.c over opm/opm_machine.c, opm_player.c, opm_image.c, opm_ymfm.cpp)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

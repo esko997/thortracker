@@ -210,7 +210,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private var wavRun: WavRun? = null
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
-    private var awaitingTransportUntil = 0L
     private lateinit var transport: Transport
     private val audioFeedback = Runnable { refresh() }
     /** Looks again while an audio error shows: the audio thread clears it after the edit that fixed it was drawn. */
@@ -220,8 +219,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             if (!active) return
             val position = transport.position()
             if (position != null) hosts.values.forEach { it.tracker.playback = position }
-            if (android.os.SystemClock.uptimeMillis() >= awaitingTransportUntil && position?.playing != true) transport.requested = false
-            if (position?.playing == true || android.os.SystemClock.uptimeMillis() < awaitingTransportUntil) {
+            if (position?.playing == true || position?.pending == true) {
                 hosts.values.forEach { it.transport.text = if (transport.requested) "Stop" else "Play" }
                 main.postDelayed(this, 32)
             } else hosts.values.forEach { it.transport.text = "Play" }
@@ -249,7 +247,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             override fun mayPlay() = requestAudioFocus()
             override fun audioMissing() = showError("Audio is not ready yet")
             override fun transportChanged(starting: Boolean) {
-                awaitingTransportUntil = android.os.SystemClock.uptimeMillis() + if (starting) 1500 else 100
                 main.removeCallbacks(tick)
                 main.post(tick)
                 refresh()

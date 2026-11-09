@@ -58,6 +58,11 @@ Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
 commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM2 stream encoding
 follows SGDK's XGM2 driver and xgm2tool formats (MIT).
 
+OPM (YM2151) FM playback uses Thor Tracker's own player (GPL-3.0-or-later) on the
+YM2151 emulation of the same ymfm by Aaron Giles (BSD-3-Clause, notice below; its
+ymfm_opm.h and ymfm_opm.cpp, unmodified, from the same commit), resampled with the
+same blip_buf.
+
 NES + EPSM songs run the FamiStudio sound engine 4.5.3 built with its EPSM support
 (with FamiStudio's EPSM note tables, MIT, notice below) on the same m6502.h, and
 emulate the EPSM's Yamaha YMF288 (OPN3-L: FM, SSG and rhythm) with the same ymfm

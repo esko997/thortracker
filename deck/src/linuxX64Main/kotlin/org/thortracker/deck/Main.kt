@@ -26,6 +26,7 @@ import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.pce.PceVgm
 import org.thortracker.system.scc.SccVgm
 import org.thortracker.system.sms.SmsExport
+import org.thortracker.system.opm.OpmVgm
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
@@ -67,6 +68,7 @@ fun main(args: Array<String>) {
     Opl3Vgm.renderer = DeckOpl3Vgm
     SccVgm.renderer = DeckSccVgm
     PceVgm.renderer = DeckPceVgm
+    OpmVgm.renderer = DeckOpmVgm
     YmExport.renderer = DeckYmExport
     AyVgm.renderer = DeckAyVgm
     SmsExport.renderer = DeckSmsVgm
@@ -160,8 +162,6 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }
             pane.playback = transport.position() ?: PlaybackPosition()
-            // Desktop play commands finish synchronously; a rejected start must not leave the next press acting as Stop.
-            if (!pane.playback.playing) transport.requested = false
             pane.heldModifiers = if (popups.isOpen) emptySet() else input.heldModifiers
             pane.draw(output.width, output.height)
             popup.draw(pane.surface, output.width.toFloat(), output.height.toFloat())

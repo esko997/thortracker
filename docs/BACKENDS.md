@@ -1249,7 +1249,57 @@ Decisions (made on the user's behalf; see Open questions):
 - **Help**: the effects page from `SccRules`, the Instrument, Envelopes and Waves sections and an "SCC and SCC+ wave
   RAM" section.
 
+### YM2151 (OPM): decisions, model, lowering and editor (branch `opm-systems`, unverified source slice)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "OPM". Decided on the user's behalf (the user approved working through the chip
+roadmap autonomously):
+
+- **Standalone system** `"ym2151-opm"`, "OPM FM (YM2151)", no family: the X68000's and arcade boards' chip has no
+  standard sound driver to run, so it follows the OPL3: **our own player** (C, mirrored by an independent Python
+  reference) on **ymfm's `ym2151`** (the vendored pin; `ymfm_opm.h/.cpp` fetched at that commit), exporting VGM and WAV.
+  ymfm rather than a die-accurate core: none with a GPL-compatible licence is vendored, ymfm's OPM uses David Viens'
+  chip-verified pitch table, and it shares the YM2612's code path already in the app.
+- **Clock: 4 MHz**, the X68000's (16 MHz / 4; MAME's `x68k.cpp`). Key codes are defined for 3.579545 MHz, so the
+  player subtracts 123/64 semitone (192.27 cents) to keep Thor Tracker's absolute pitch; the playable range is then
+  D#0..D-8. Arcade boards at 3.58 MHz are not a separate variant (a song plays at true pitch either way; only the
+  range ends and envelope/LFO speeds would differ by 11.7 %).
+- **Tick**: 60 Hz × multispeed from the host (as the OPL3), not the chip's timer B (on the X68000 drivers such as
+  MXDRV take their tempo from timer B; it makes no sound, so Thor Tracker's own tick keeps tempo semantics identical
+  across systems).
+- **Eight channels, no chords** (each channel is one hardware channel; no voice allocation).
+- **Shared resources are song state**, not per-voice settings: the LFO (rate, waveform, AMD, PMD), the noise
+  generator (exists only on FM 8's operator 4) and CSM/timer A are header fields (Song view rows) and global effects
+  (`L`, `W`, `T`, `V`, `N`, `Q`, `X`); instruments hold only what is per channel (PMS, AMS, AM enables) and the noise
+  flag/frequency of their FM 8 note. A noise sound named on FM 1-7 is an error, not silently ignored. The Pattern
+  inspector and lane tags show the shared state at the cursor (`SoundSystem.sharedState`).
+- **CSM** is the YM2151's real feature (timer A keys on all eight channels' operators at each overflow), modelled in the
+  ymfm wrapper by running ymfm's timers on the sample clock; auditions run without it (it would retrigger a released
+  note forever).
+- **Not exposed**: CT1/CT2 (X68000 ADPCM clock and floppy pins, not sound), timer B (no sound), the test register's
+  undocumented LFO reset, the X68000's separate MSM6258 ADPCM chip.
+- **Model** (`system/opm/OpmSound.kt`): `OpmInstrument` (algorithm, feedback, PMS, AMS, four `OpmOperator`s with the
+  register fields DT1, MUL, TL, KS, AR, AM, D1R, DT2, D2R, D1L, RR, `noise` + `noiseFrequency`, the drum sweep),
+  `OpmSound` (64 slots, multispeed and the shared state at the song start). Operators are numbered as in the
+  algorithm diagrams (1 = M1, 2 = C1, 3 = M2, 4 = C2); the lowering writes each to its register slot.
+- **Lowering** (`backend/OpmLowering.kt`) mirrors the OPL3's (`OpmGoldenTest` against `tools/audio/opm/opm_song.py`).
+- **Editor** (`OpmInstrumentView`, `OpmInstrumentPainter`, reusing the shared FM pieces unchanged): head rows Slot,
+  Name, Listen on, Page; *Sound* — the curated controls of `OpmCurated` (preset, algorithm, ratios with DT1 and DT2,
+  brightness, level, feedback, attack, decay, sustain, sustain rate, release, tone decay, key scaling, vibrato = PMS,
+  tremolo = AMS); *Expert* — algorithm, feedback, PMS, AMS, then DT1, MUL, TL, KS, AR, AM, D1R, DT2, D2R, D1L, RR per
+  operator; *Drum* — drum and noise presets, noise on/off and frequency, the sweep. A noise sound listens on FM 8.
+- Demo: "Sharp Corners" (original), all eight channels, the LFO, DT2 bells, noise drums on FM 8 and a CSM passage.
+
 ## Open questions
+
+- OPM clock (decided on the user's behalf, per the brief): 4 MHz (X68000) only; a 3.579545 MHz (arcade) variant would
+  be a second system id with its own pitch offset (0) and range. Review if arcade-accurate envelope/LFO speeds matter.
+- OPM tempo source: the player's own 60 Hz × multispeed tick rather than the chip's timer B (which X68000 drivers use).
+  Timer B makes no sound, so nothing audible is lost; tempos are not expressed in timer B units. Review.
+- OPM noise: modelled as an FM 8-only instrument flag plus `Nxx` (the hardware has one noise generator on FM 8's
+  operator 4). Alternative: a song-level noise setting with FM 8 instruments ignoring it. Review.
+- OPM CSM in VGM players: the VGM carries the `$10`/`$11`/`$14` writes; whether a player emulates CSM key-ons
+  depends on its YM2151 core (ymfm and MAME do). Not checked against other players.
+- OPM curated lists and presets are a first proposal, like the OPL3's and YM2612's.
 
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
   now.

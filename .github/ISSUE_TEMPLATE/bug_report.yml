@@ -44,6 +44,7 @@ body:
         - PC Engine (HuC6280)
         - MSX SCC
         - MSX SCC+
+        - OPM FM (YM2151)
         - Not song-related
     validations:
       required: true

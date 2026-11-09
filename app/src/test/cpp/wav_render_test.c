@@ -84,6 +84,7 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"opm-demo.omimg", "ym2151-opm"},
     {"night-ferry.ymimg", "ym2612-fm"}, /* PCM kits on PCM 1-3 through the XGM2 driver, FM 3 special mode */
     {"harbour-lights-sms-psg.smsimg", "sms-banjo"},
     {"harbour-lights-gg-psg.smsimg", "sms-banjo"},
@@ -117,6 +118,7 @@ static const Demo kShortest[] = {
     {"ym-pcm-shortest.ymimg", "ym2612-fm"},  /* XGM2 PCM channel 0 restarted every tick */
     {"ym-fm3-shortest.ymimg", "ym2612-fm"},  /* FM 3 special mode */
     {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
+    {"opm-shortest.omimg", "ym2151-opm"},
     {"sms-shortest-sms-psg.smsimg", "sms-banjo"},
     {"sms-shortest-gg-psg.smsimg", "sms-banjo"},
     {"sms-shortest-sms-fm.smsimg", "sms-banjo"},

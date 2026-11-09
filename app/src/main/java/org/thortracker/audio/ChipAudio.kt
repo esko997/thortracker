@@ -6,6 +6,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
@@ -13,6 +14,8 @@ import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.ay.AyVgmRenderer
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
+import org.thortracker.system.opm.OpmVgm
+import org.thortracker.system.opm.OpmVgmRenderer
 import org.thortracker.system.pce.PceVgm
 import org.thortracker.system.pce.PceVgmRenderer
 import org.thortracker.system.scc.SccVgm
@@ -53,6 +56,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     @Volatile private var closed = false
     private val pendingSong = AtomicReference<Song?>(null)
     @Volatile private var songError: String? = null
+    // Covers queueing and preparation. Native position covers publication through callback acknowledgement.
+    private val pendingTransport = AtomicInteger()
 
     /** The song the engine's current image was lowered from (audition note numbers depend on it, e.g. NES DPCM). */
     private var imageSong: Song? = null
@@ -71,7 +76,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         if (pendingSong.getAndSet(song) == null) post { applyPendingSong() }
     }
 
-    override fun play(order: Int, row: Int) = post {
+    override fun play(order: Int, row: Int) = post(transport = true) {
         applyPendingSong()
         val h = readyHandle() ?: return@post
         val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
@@ -80,7 +85,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         scheduleIdleCheck()
     }
 
-    override fun stop() = post {
+    override fun stop() = post(transport = true) {
         commandError = null   // a failed command is over once its sound is
         val h = handle
         if (h != 0L) nativeStop(h)
@@ -122,14 +127,18 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     override fun position(): PlaybackPosition = synchronized(handleLock) {
+        if (closed) return PlaybackPosition()
+        // Read before nativePosition: seeing the control task finish also sees its native publication.
+        val queued = pendingTransport.get() != 0
         val h = handle
-        if (h == 0L) return PlaybackPosition()
+        if (h == 0L) return PlaybackPosition(pending = queued)
         val packed = nativePosition(h)
-        if (packed < 0) return PlaybackPosition()
+        if (packed < 0) return PlaybackPosition(pending = queued)
         PlaybackPosition(
             playing = (packed shr 40) and 1L == 1L,
             order = ((packed shr 16) and 0xFF).toInt(),
             row = (packed and 0xFF).toInt(),
+            pending = queued || (packed shr 41) and 1L == 1L,
         )
     }
 
@@ -182,19 +191,23 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         }
     }
 
-    private fun post(block: () -> Unit) {
+    private fun post(transport: Boolean = false, block: () -> Unit) {
         if (closed) return
+        if (transport) pendingTransport.incrementAndGet()
         try {
             executor.execute {
                 try {
-                    block()
+                    if (!closed) block()
                 } catch (t: RuntimeException) {
                     // Never let a preview problem take down the host; report it instead.
                     Log.e(TAG, "audio command failed", t)
                     commandError = "Audio error: ${t.message ?: t.javaClass.simpleName}"
+                } finally {
+                    if (transport) pendingTransport.decrementAndGet()
                 }
             }
         } catch (_: RejectedExecutionException) {
+            if (transport) pendingTransport.decrementAndGet()
         }
     }
 
@@ -298,6 +311,9 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             PceVgm.renderer = PceVgmRenderer { image, maxTicks, tags ->
                 nativePceVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
+            OpmVgm.renderer = OpmVgmRenderer { image, maxTicks, tags ->
+                nativeOpmVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
@@ -351,6 +367,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeSccVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativePceVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** UTF-8 tags; throws IllegalArgumentException(loader problem) for a rejected image. */
+        @JvmStatic private external fun nativeOpmVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** `ay_export.h`: [variant] 0 ZX Spectrum 128, 1 MSX, 2 Atari ST, 3 Amstrad CPC; UTF-8 tags; throws IllegalArgumentException(loader problem). */

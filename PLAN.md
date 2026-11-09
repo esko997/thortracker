@@ -60,7 +60,11 @@ Order below is the current intent; design notes for the chip work live in `docs/
      SCC (K051649, channels 4/5 share a wave) and SCC+ (K052539, five waves), own player on a port of MAME's k051649,
      VGM/WAV, wave/envelope editors and shared-wave inspector. Verified on Nova, DMG, Konkr and the SDL frontend.
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
-   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, FM 8 noise and a shared LFO.
+   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, one shared LFO, noise on channel 8, CSM.
+     Integrated for **0.29.0** ("OPM FM (YM2151)", `"ym2151-opm"`, demo "Sharp Corners"):
+     Thor Tracker's own player on ymfm at the X68000's 4 MHz, VGM/WAV export, native and independent-core
+     comparison, Nova/DMG/Konkr and SDL verification complete. No human listening or original-hardware
+     measurement claimed; `docs/VERIFICATION.md` records the evidence.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
@@ -95,6 +99,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
+- **Korg DS-10 / DS-10+ interface discussion:** revisit the Nintendo DS instruments together and discuss
+  interface ideas that could suit Thor Tracker. Discussion only for now; no research or implementation
+  requested, and no specific interaction or feature selected yet.
 - **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
   hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
   display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence

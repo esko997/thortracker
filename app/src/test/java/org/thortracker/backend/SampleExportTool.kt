@@ -35,6 +35,8 @@ import org.thortracker.system.scc.SccDemoSong
 import org.thortracker.system.scc.SccPlusSystem
 import org.thortracker.system.scc.SccSystem
 import org.thortracker.system.scc.SccVariant
+import org.thortracker.system.opm.OpmDemoSong
+import org.thortracker.system.opm.OpmSystem
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmDemoSong
 import org.thortracker.system.sms.SmsExport
@@ -407,5 +409,15 @@ object SampleExportTool {
             File(directory, file).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
         }
         println("Exported the shortest SCC and SCC+ songs to ${directory.absolutePath}")
+        // The OPM demo: project and engine image (its VGM needs the native player: tools/audio/render_opm_image.sh
+        // opm-demo.omimg out.wav --vgm sharp-corners.vgm renders both), and the shortest valid OPM song (one one-row
+        // order at speed 1, A-4 held on FM 1) whose image the native WAV export test renders through loops.
+        val opm = OpmSystem.demo()
+        File(directory, "sharp-corners.thor").writeText(ProjectCodec.encode(opm), Charsets.UTF_8)
+        File(directory, "opm-demo.omimg").writeBytes(ByteArray(OpmSystem.engine.imageSize).also { OpmSystem.engine.lower(opm, it) })
+        val opmShortest = OpmDemoSong.shortest()
+        check(OpmSystem.errors(opmShortest).isEmpty()) { "the shortest OPM song is invalid: ${OpmSystem.errors(opmShortest)}" }
+        File(directory, "opm-shortest.omimg").writeBytes(ByteArray(OpmSystem.engine.imageSize).also { OpmSystem.engine.lower(opmShortest, it) })
+        println("Exported ${opm.title} and the shortest OPM song to ${directory.absolutePath}")
     }
 }

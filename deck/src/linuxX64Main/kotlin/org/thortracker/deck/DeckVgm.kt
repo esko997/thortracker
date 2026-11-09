@@ -6,6 +6,8 @@ import decknative.ay_export_free
 import decknative.ay_export_vgm
 import decknative.o3_export_free
 import decknative.o3_export_vgm
+import decknative.om_export_free
+import decknative.om_export_vgm
 import decknative.pc_export_free
 import decknative.pc_export_vgm
 import decknative.sc_export_free
@@ -19,6 +21,8 @@ import org.thortracker.system.ay.AyVgmRenderer
 import org.thortracker.system.ay.AyVgmTags
 import org.thortracker.system.opl3.Opl3VgmRenderer
 import org.thortracker.system.opl3.Opl3VgmTags
+import org.thortracker.system.opm.OpmVgmRenderer
+import org.thortracker.system.opm.OpmVgmTags
 import org.thortracker.system.pce.PceVgmRenderer
 import org.thortracker.system.pce.PceVgmTags
 import org.thortracker.system.scc.SccVgmRenderer
@@ -77,6 +81,23 @@ internal object DeckPceVgm : PceVgmRenderer {
             vgm.readBytes(size.value.toInt())
         } finally {
             pc_export_free(vgm)
+        }
+    }
+}
+
+/** OPM VGM export through the native player linked into the Deck (`opm/opm_export.h`); registered by [main]. */
+internal object DeckOpmVgm : OpmVgmRenderer {
+    override fun render(image: ByteArray, maxTicks: Int, tags: OpmVgmTags): ByteArray = memScoped {
+        val size = alloc<size_tVar>()
+        val problem = alloc<CPointerVar<ByteVar>>()
+        val vgm = image.usePinned {
+            om_export_vgm(it.addressOf(0).reinterpret(), image.size.convert(), maxTicks.coerceAtLeast(0).convert(),
+                tags.title, tags.author, tags.date, size.ptr, problem.ptr)
+        } ?: throw IllegalArgumentException(problem.value?.toKString() ?: "VGM export failed")
+        try {
+            vgm.readBytes(size.value.toInt())
+        } finally {
+            om_export_free(vgm)
         }
     }
 }

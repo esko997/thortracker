@@ -1,3 +1,3 @@
-headers = deck_audio.h deck_draw.h opl3_export.h scc_export.h ym_export.h sms_export.h ay_export.h pce_export.h chip_wav.h nes_epsm.h
+headers = deck_audio.h deck_draw.h opl3_export.h opm_export.h scc_export.h ym_export.h sms_export.h ay_export.h pce_export.h chip_wav.h nes_epsm.h
 package = decknative
 staticLibraries = libdeck_native.a

@@ -16,6 +16,7 @@ extern const ChipEngineOps nes_epsm_chip_ops;
 extern const ChipEngineOps sid_chip_ops;
 extern const ChipEngineOps opl3_chip_ops;
 extern const ChipEngineOps ym_chip_ops;
+extern const ChipEngineOps opm_chip_ops;
 extern const ChipEngineOps sms_chip_ops;
 extern const ChipEngineOps ay_zx128_chip_ops;
 extern const ChipEngineOps ay_msx_chip_ops;
@@ -33,7 +34,7 @@ static const ChipEngineOps* const systems[] = {&huge_chip_ops,       &nes_chip_o
                                                &nes_epsm_chip_ops,   &sid_chip_ops,        &opl3_chip_ops,
                                                &ym_chip_ops,        &sms_chip_ops,        &ay_zx128_chip_ops,
                                                &ay_msx_chip_ops,     &ay_atari_st_chip_ops, &ay_cpc_chip_ops,
-                                               &pce_chip_ops,        &scc_chip_ops,        &scc_plus_chip_ops};
+                                               &pce_chip_ops,        &scc_chip_ops,        &scc_plus_chip_ops,   &opm_chip_ops};
 
 const ChipEngineOps* chip_engine_ops(const char* system_id) {
     if (!system_id) return NULL;
