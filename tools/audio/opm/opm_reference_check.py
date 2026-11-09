@@ -244,7 +244,7 @@ def compare_audio(engine_wav, vgm_path, vgm2wav):
         b = b[-shift:]
     n = min(len(a), len(b))
     w = rate // 10
-    spec, same_pc, counted = [], 0, 0
+    raw_spec, power_a, power_b, same_pc, counted = [], [], [], 0, 0
     freqs = np.fft.rfftfreq(w, 1 / rate)
     band = (freqs > 60) & (freqs < 2000)
     for i in range(0, n - w, w):
@@ -252,17 +252,29 @@ def compare_audio(engine_wav, vgm_path, vgm2wav):
         sb = np.abs(np.fft.rfft(b[i:i + w] * np.hanning(w)))
         if sa.max() < 1e-3 or sb.max() < 1e-3:
             continue
-        spec.append(np.corrcoef(np.log(sa + 1e-4), np.log(sb + 1e-4))[0, 1])
+        raw_spec.append(np.corrcoef(np.log(sa + 1e-4), np.log(sb + 1e-4))[0, 1])
+        power_a.append(sa ** 2)
+        power_b.append(sb ** 2)
         pa = freqs[band][np.argmax(sa[band])]
         pb = freqs[band][np.argmax(sb[band])]
         counted += 1
         same_pc += round(12 * np.log2(pa / pb)) % 12 == 0
+    # Independent noise generators need not share phase. A single 100 ms periodogram
+    # compares their random peaks, not their spectral envelopes. Average five Hann
+    # periodograms (500 ms), retaining the final shorter group and every frequency bin.
+    # Keep the unaveraged diagnostic; pitch and envelope still use 100/20 ms windows.
+    spec = []
+    for i in range(0, len(power_a), 5):
+        sa = np.sqrt(np.mean(power_a[i:i + 5], axis=0))
+        sb = np.sqrt(np.mean(power_b[i:i + 5], axis=0))
+        spec.append(np.corrcoef(np.log(sa + 1e-4), np.log(sb + 1e-4))[0, 1])
     level = np.sqrt(np.mean(b[:n] ** 2)) / np.sqrt(np.mean(a[:n] ** 2))
-    print("  libvgm vs engine (ymfm): envelope correlation %.3f (lag %d ms), log-spectrum correlation %.3f, same "
-          "pitch class %.0f%% of %d windows, level ratio %.2f"
-          % (env, lag * 20, float(np.mean(spec)), 100.0 * same_pc / max(1, counted), counted, level))
+    print("  libvgm vs engine (ymfm): envelope correlation %.3f (lag %d ms), averaged log-spectrum correlation "
+          "%.3f (single-periodogram %.3f), same pitch class %.0f%% of %d windows, level ratio %.2f"
+          % (env, lag * 20, float(np.mean(spec)), float(np.mean(raw_spec)),
+             100.0 * same_pc / max(1, counted), counted, level))
     check(env > 0.8, "loudness envelope correlation > 0.8")
-    check(np.mean(spec) > 0.8, "log-spectrum correlation > 0.8")
+    check(np.mean(spec) > 0.8, "averaged log-spectrum correlation > 0.8")
     check(counted and same_pc / counted > 0.7, "dominant pitch class agrees in > 70% of windows")
 
 
