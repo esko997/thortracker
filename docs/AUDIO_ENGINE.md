@@ -4511,7 +4511,8 @@ See `docs/VERIFICATION.md` for timings, exports and limits. The optional libvgm 
 
 ## OPM: Thor Tracker's own player on a YM2151 (`"ym2151-opm"`)
 
-**Status: unverified source slice** (branch `opm-systems`): written without building, generating or running anything.
+**Status: integration in progress** (branch `opm-systems`): native and independent-reference checks pass;
+final frontend/device verification is pending in `docs/VERIFICATION.md`.
 The YM2151 (OPM) is the Sharp X68000's sound chip (also many arcade boards); like the OPL3 it plays through **our own
 player** (`opm/opm_player.c`, pure integer C without a chip) whose behaviour is the specification in this section;
 `tools/audio/opm/opm_ref.py` implements the same specification separately in Python and the host test requires
@@ -4553,8 +4554,11 @@ the engine are generated into `backend/OpmPlayerImage.kt` (below, "Preparing").
   player is unaffected (already on); a released channel restarts its attack. Timer A period = (1024 − NA) samples:
   **62500 / (1024 − NA) Hz**, 61.0 Hz (NA 0) to 62.5 kHz (NA 1023).
 - **Output**: ymfm's 16-bit sum (14-bit channels, then the YM3012 DAC's 10.3 floating-point round trip) per channel
-  pair, resampled band-limited with blip_buf 1.1.0 from 62500 Hz to the host rate (its ~15 Hz high-pass), float =
-  sample / 32768. Muted channels are left out of the sum before the DAC round trip, but every channel is still computed
+  pair is scaled by **7/16 before** blip_buf 1.1.0 resamples 62500 Hz to the host rate (its ~15 Hz high-pass).
+  This preserves the DAC's own saturation while leaving headroom for resampling and DC removal before blip's
+  int16 output stage; float = sample / 32768. The unscaled test song clipped at 44.1, 48 and 96 kHz; the corrected
+  native regression passes at 8, 44.1, 48 and 96 kHz (48 kHz: peak 0.4452, RMS 0.0830).
+  Muted channels are left out of the sum before the DAC round trip, but every channel is still computed
   (one `fm_engine::output` call per channel: ymfm advances a channel's feedback history only while computing its
   output); registers and the player are untouched.
 - **Chip reset**: `start` and `audition` rebuild the chip in place (`omc_reset`: ymfm's `reset()` leaves the envelope,

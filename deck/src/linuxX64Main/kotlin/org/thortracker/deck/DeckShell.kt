@@ -353,7 +353,7 @@ class DeckShell(
                 val bytes = checkNotNull(Files.readBytes(path, max = TuningPackCodec.MAX_BYTES.toLong())) {
                     "pack could not be read or exceeds 16 MiB"
                 }
-                val pack = TuningPackCodec.decode(bytes.decodeToString(throwOnInvalidSequence = true))
+                val pack = TuningPackCodec.decode(bytes)
                 PackWorkResult(packs = readPackFiles(bundled, installed), candidate = pack, bytes = bytes)
             }) { result ->
                 val pack = checkNotNull(result.candidate)
@@ -455,7 +455,7 @@ class DeckShell(
                         val bytes = checkNotNull(Files.readBytes("$directory/$file", max = TuningPackCodec.MAX_BYTES.toLong())) {
                             "pack could not be read or exceeds 16 MiB"
                         }
-                        val pack = TuningPackCodec.decode(bytes.decodeToString(throwOnInvalidSequence = true))
+                        val pack = TuningPackCodec.decode(bytes)
                         check(isBundled || file == "${pack.id}.thorscales") { "filename does not match pack id" }
                         check(ids.add(pack.id)) { "duplicate or protected bundled pack id: ${pack.id}" }
                         result += InstalledTuningPack(pack, isBundled)

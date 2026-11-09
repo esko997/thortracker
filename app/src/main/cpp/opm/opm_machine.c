@@ -38,9 +38,12 @@ static void generate(OpmMachine* m, int from, int to) {
         int32_t s[2];
         omc_generate(m->chip, m->mute, &s[0], &s[1]);
         for (int k = 0; k < 2; ++k) {
-            if (s[k] != m->last[k]) {
-                blip_add_delta(m->blip[k], (unsigned)i, s[k] - m->last[k]);
-                m->last[k] = s[k];
+            /* Keep the YM3012's own saturation, but leave headroom before blip_buf's int16 stage.
+             * The DAC's full -32768..32704 swing becomes 28644 units, with room for filter overshoot. */
+            const int level = s[k] * 7 / 16;
+            if (level != m->last[k]) {
+                blip_add_delta(m->blip[k], (unsigned)i, level - m->last[k]);
+                m->last[k] = level;
             }
         }
     }

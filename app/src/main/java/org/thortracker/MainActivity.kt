@@ -795,7 +795,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         }, "tuning-packs").start()
     }
 
-    private fun readTuningPack(stream: java.io.InputStream): String = stream.use {
+    private fun readTuningPack(stream: java.io.InputStream): ByteArray = stream.use {
         val out = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(8192)
         while (true) {
@@ -804,16 +804,16 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             check(out.size() + n <= TuningPackCodec.MAX_BYTES) { "pack exceeds 16 MiB" }
             out.write(buffer, 0, n)
         }
-        out.toByteArray().decodeToString(throwOnInvalidSequence = true)
+        out.toByteArray()
     }
 
     /** Called only on the file thread, under the process-wide storage lock. A broken pack is never hidden. */
     private fun readTuningPacks(): List<InstalledTuningPack> {
         val result = ArrayList<InstalledTuningPack>()
         val ids = HashSet<String>()
-        fun add(file: String, bundled: Boolean, text: () -> String) {
+        fun add(file: String, bundled: Boolean, bytes: () -> ByteArray) {
             try {
-                val pack = TuningPackCodec.decode(text())
+                val pack = TuningPackCodec.decode(bytes())
                 check(bundled || file == "${pack.id}.thorscales") { "filename does not match pack id" }
                 check(ids.add(pack.id)) { "duplicate or protected bundled pack id: ${pack.id}" }
                 result += InstalledTuningPack(pack, bundled)
@@ -846,7 +846,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private fun importTuningPack(done: () -> Unit) {
         menuHost.loadFile("Import .thorscales", listOf(".thorscales"), TuningPackCodec.MAX_BYTES) { _, _, bytes ->
             tuningPackWork({
-                val pack = TuningPackCodec.decode(bytes.decodeToString(throwOnInvalidSequence = true))
+                val pack = TuningPackCodec.decode(bytes)
                 val existing = readTuningPacks().firstOrNull { it.pack.id == pack.id }
                 check(existing?.bundled != true) { "bundled pack ${pack.id} cannot be replaced" }
                 pack to (existing != null)
