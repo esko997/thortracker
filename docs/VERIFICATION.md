@@ -48,7 +48,6 @@ Verification:
 Thor and physical Deck controller ergonomics were not tested in this round.
 Reserved-device test packages and owned render files were removed; external
 projects and `/ThorTunez` were untouched.
-
 ## 0.23.0 Mega Drive PCM kits, FM channel 3 and XGM2
 
 Mega Drive songs now have three PCM lanes alongside the six FM and four PSG
