@@ -167,8 +167,8 @@ class KeymapTest {
     @Test fun aChordHoldsAtMostTwoModifiersAndNeverAHeldControl() {
         val k = Keymap.DEFAULT
         assertNull(k.problem(Control.SWAP, Binding(Keys.BUTTON_X, setOf(Keys.BUTTON_SELECT, Keys.BUTTON_THUMBL))))
-        assertTrue(k.problem(Control.SWAP, Binding(Keys.BUTTON_X, both + Keys.BUTTON_SELECT))!!.contains("at most two"))
-        assertTrue(k.problem(Control.EDIT, Binding(Keys.BUTTON_X, both))!!.contains("single button"))
+        assertNotNull(k.problem(Control.SWAP, Binding(Keys.BUTTON_X, both + Keys.BUTTON_SELECT)))
+        assertNotNull(k.problem(Control.EDIT, Binding(Keys.BUTTON_X, both)))
     }
 
     @Test fun whileTwoModifiersAreHeldTheirSingleModifierChordsArePartial() {

@@ -1,5 +1,54 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.24.0 Cumulative controller layers
+
+**L2 + R2 is a third, independent chord layer**, whichever trigger is pressed
+first. Its defaults mirror the R2 view shortcuts: A/B/X/Y show
+Song/Instrument/Sketch/Keyboard, and Up/Right/Down show Pattern/Wave/Help.
+With two displays they change the other pane without moving controller focus;
+with one display they act on that display. L2+R2+Left remains unassigned.
+No existing shortcut moved. A missing third-layer chord cannot accidentally
+run a matching L2-only or R2-only command.
+
+Controls can capture two modifiers and export them in keymap format 6.
+Older keymaps retain their custom bindings and gain unclaimed new defaults.
+Rolling releases preserve a press's original meaning. Releasing an analog
+trigger during capture now removes it from the captured chord.
+
+Canceled controller input no longer turns an A release into a tap or cursor
+advance. Edits already made on press or during a held adjustment remain;
+cancellation is not Undo. The cursor-advance defect was reproduced on Nova
+before the fix and the same regression passed afterward.
+
+Verification:
+
+- 575 JVM core tests, 14 Linux core tests and six Android-host unit tests
+  passed. Signed Android and desktop release builds succeeded with serialized,
+  single-worker builds; no emulator was used.
+- Nova passed all **21 permanent Android tests** with the temporary render
+  harness removed. The real Controls UI captured both triggers, excluded a
+  trigger released before the button, and preserved both bindings through
+  export, reset and import. DMG and Konkr each passed the three targeted
+  layer/cancellation/capture regressions.
+- Nova also passed the other-pane test with a **1240×1080 simulated secondary
+  display**. The test required two actually attached app hosts; it verified
+  unchanged controller focus and unchanged document data. A live screenshot
+  showed Song on the secondary presentation beside the primary Pattern view.
+  The overlay setting and device timeouts were restored.
+- The actual desktop frontend exercised all seven third-layer view shortcuts,
+  both trigger orders, existing Undo/Redo and R2 shortcuts, and both right-stick
+  double-flick jumps. A separate SDL event-injection smoke opened the real
+  binding capture, held L2/R2, released L2, then pressed Left: the app persisted
+  **R2+Left**, not L2+R2+Left.
+- The factory Game Boy `.uge` remained byte-identical. Full-RGBA comparisons
+  found **30 of 32 Game Boy renders identical** to 0.22.0; only the two
+  Help→Controls renders changed for the new layer's instructions and shortcuts.
+  Those changed surfaces were inspected.
+
+Thor and physical Deck controller ergonomics were not tested in this round.
+Reserved-device test packages and owned render files were removed; external
+projects and `/ThorTunez` were untouched.
+
 ## 0.23.0 Mega Drive PCM kits, FM channel 3 and XGM2
 
 Mega Drive songs now have three PCM lanes alongside the six FM and four PSG

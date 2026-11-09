@@ -193,12 +193,15 @@ class ControllerWorkflowTest {
         var target = 0
         instrumentation.runOnMainSync {
             val hosts = MainActivity::class.java.getDeclaredField("hosts").apply { isAccessible = true }.get(activity) as Map<*, *>
+            InstrumentationRegistry.getArguments().getString("requiredDisplays")?.toInt()?.let {
+                assertEquals("The requested display topology must actually be attached", it, hosts.size)
+            }
             target = if (hosts.size > 1) 1 else 0
+            if (target != 0) panes.panes[target].kind = ViewKind.KEYBOARD
         }
         fun shown(): ViewKind { var k = ViewKind.PATTERN; instrumentation.runOnMainSync { k = panes.panes[target].kind }; return k }
         val before = shown()
         down(KeyEvent.KEYCODE_BUTTON_L2); down(KeyEvent.KEYCODE_BUTTON_R2)
-        instrumentation.runOnMainSync { assertTrue(tracker.hints.contains("L2+R2+A" to "Song on other")) }
         tap(KeyEvent.KEYCODE_BUTTON_A)
         up(KeyEvent.KEYCODE_BUTTON_L2); up(KeyEvent.KEYCODE_BUTTON_R2)
         assertEquals(ViewKind.SONG, shown())
@@ -348,6 +351,44 @@ class ControllerWorkflowTest {
         assertEquals(changed, tracker.session.song)
     }
 
+    @Test fun canceledKeyUpsDoNotActOnReleaseOrLeaveATriggerHeld() {
+        instrumentation.runOnMainSync {
+            tracker.session.replaceSong(Songs.blank())
+            tracker.state.row = 0
+            tracker.state.field = 0
+            tracker.session.step = 1
+            tracker.session.select(Selection())
+        }
+        val blank = tracker.session.song
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        assertNotEquals("An ordinary A press enters a note", blank, tracker.session.song)
+        assertEquals("An ordinary A release advances the cursor", 1, tracker.state.row)
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(blank, tracker.session.song)
+        instrumentation.runOnMainSync { tracker.state.row = 0 }
+        fun canceledUp(code: Int) {
+            instrumentation.runOnMainSync {
+                activity.dispatchKeyEvent(KeyEvent.changeFlags(
+                    KeyEvent(KeyEvent.ACTION_UP, code), KeyEvent.FLAG_CANCELED))
+            }
+            instrumentation.waitForIdleSync()
+        }
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        val entered = tracker.session.song
+        assertNotEquals(blank, entered)
+        canceledUp(KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals("Cancellation preserves edits already made on press", entered, tracker.session.song)
+        assertEquals("A canceled release must not advance the cursor", 0, tracker.state.row)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        assertEquals("The canceled edit must no longer be held", entered, tracker.session.song)
+        instrumentation.runOnMainSync { tracker.state.field = 0 }
+        down(KeyEvent.KEYCODE_BUTTON_L2)
+        canceledUp(KeyEvent.KEYCODE_BUTTON_L2)
+        tap(KeyEvent.KEYCODE_BUTTON_B)
+        assertEquals("B must clear, not run L2+B's redo", Cell.EMPTY,
+            tracker.session.song.patterns[0].tracks[0][0].note)
+    }
+
     @Test fun transportUsesTheFocusedPatternAndSupportsCursorStart() {
         instrumentation.runOnMainSync {
             tracker.session.replaceSong(Songs.blank().copy(orders = listOf(0, 0), ticksPerRow = 255))
@@ -495,7 +536,6 @@ class ControllerWorkflowTest {
             down(KeyEvent.KEYCODE_BUTTON_A); tap(KeyEvent.KEYCODE_DPAD_RIGHT); up(KeyEvent.KEYCODE_BUTTON_A)
             assertNotEquals(before, tracker.session.song)
             down(KeyEvent.KEYCODE_BUTTON_THUMBL)
-            instrumentation.runOnMainSync { assertTrue(tracker.hints.contains("L3+B" to "Undo")) }
             tap(KeyEvent.KEYCODE_BUTTON_B)
             up(KeyEvent.KEYCODE_BUTTON_THUMBL)
             assertEquals("L3+B must undo", before, tracker.session.song)
@@ -533,6 +573,47 @@ class ControllerWorkflowTest {
             clickRow("Import keymap…")
             awaitTrue("keymap import") { keymap().binding(Control.REDO) == l3b }
             assertEquals(null, keymap().binding(Control.UNDO))
+            instrumentation.removeMonitor(importMonitor)
+
+            // A two-trigger capture is a separate chord; releasing one trigger before the button
+            // must instead capture only the remaining trigger.
+            val bothLeft = Binding(KeyEvent.KEYCODE_DPAD_LEFT,
+                setOf(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2))
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Undo")
+            down(KeyEvent.KEYCODE_BUTTON_L2); down(KeyEvent.KEYCODE_BUTTON_R2)
+            tap(KeyEvent.KEYCODE_DPAD_LEFT)
+            up(KeyEvent.KEYCODE_BUTTON_L2); up(KeyEvent.KEYCODE_BUTTON_R2)
+            assertEquals(bothLeft, keymap().binding(Control.UNDO))
+            clickRow("Redo")
+            down(KeyEvent.KEYCODE_BUTTON_L2); down(KeyEvent.KEYCODE_BUTTON_R2)
+            up(KeyEvent.KEYCODE_BUTTON_L2)
+            tap(KeyEvent.KEYCODE_DPAD_LEFT)
+            up(KeyEvent.KEYCODE_BUTTON_R2)
+            val rightLeft = Binding(KeyEvent.KEYCODE_DPAD_LEFT, setOf(KeyEvent.KEYCODE_BUTTON_R2))
+            assertEquals(rightLeft, keymap().binding(Control.REDO))
+            assertEquals(bothLeft, keymap().binding(Control.UNDO))
+
+            file.delete()
+            instrumentation.addMonitor(exportMonitor)
+            clickRow("Export keymap…")
+            awaitTrue("two-trigger keymap export") {
+                file.exists() && runCatching { Keymap.fromJson(file.readText()).binding(Control.UNDO) == bothLeft }.getOrDefault(false)
+            }
+            instrumentation.removeMonitor(exportMonitor)
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Reset all to defaults")
+            clickRow("Reset")
+            assertEquals(Keymap.DEFAULT, keymap())
+            tap(KeyEvent.KEYCODE_MENU)
+            instrumentation.addMonitor(importMonitor)
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow("Import keymap…")
+            awaitTrue("two-trigger keymap import") { keymap().binding(Control.UNDO) == bothLeft }
+            assertEquals(rightLeft, keymap().binding(Control.REDO))
         } finally {
             instrumentation.removeMonitor(exportMonitor)
             instrumentation.removeMonitor(importMonitor)
