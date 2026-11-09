@@ -37,8 +37,22 @@ object TuningPackCodec {
     private val packId = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
     private val json = Json { encodeDefaults = true }
 
+    fun decode(bytes: ByteArray): TuningPack {
+        require(bytes.size <= MAX_BYTES) { "Tuning pack exceeds $MAX_BYTES UTF-8 bytes" }
+        val text = try {
+            bytes.decodeToString(throwOnInvalidSequence = true)
+        } catch (e: CharacterCodingException) {
+            throw IllegalArgumentException("Tuning pack is not valid UTF-8", e)
+        }
+        return decodeJson(text)
+    }
+
     fun decode(text: String): TuningPack {
         require(utf8Size(text) <= MAX_BYTES) { "Tuning pack exceeds $MAX_BYTES UTF-8 bytes" }
+        return decodeJson(text)
+    }
+
+    private fun decodeJson(text: String): TuningPack {
         val pack = try {
             val root = json.parseToJsonElement(text)
             require(root is JsonObject) { "Invalid tuning pack JSON: expected an object" }
