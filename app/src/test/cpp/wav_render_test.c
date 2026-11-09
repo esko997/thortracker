@@ -65,10 +65,14 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"harbour-lights-sms-psg.smsimg", "sms-banjo"},
+    {"harbour-lights-gg-psg.smsimg", "sms-banjo"},
+    {"harbour-lights-sms-fm.smsimg", "sms-banjo"},
+    {"harbour-lights-sms-fm-drums.smsimg", "sms-banjo"},
 };
 
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; an N163 note on N163 1, a 5B
- * tone on 5B square 1, or a sine on FDS. */
+ * tone on 5B square 1, a sine on FDS, or a Square 1 tone in each Sega layout. */
 static const Demo kShortest[] = {
     {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
     {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
@@ -80,6 +84,10 @@ static const Demo kShortest[] = {
     {"n163-shortest-8ch.nesimg", "nes-famistudio-n163-8"},
     {"s5b-shortest.nesimg", "nes-famistudio-s5b"},
     {"fds-shortest.nesimg", "nes-famistudio-fds"},
+    {"sms-shortest-sms-psg.smsimg", "sms-banjo"},
+    {"sms-shortest-gg-psg.smsimg", "sms-banjo"},
+    {"sms-shortest-sms-fm.smsimg", "sms-banjo"},
+    {"sms-shortest-sms-fm-drums.smsimg", "sms-banjo"},
 };
 
 static char spool[512];

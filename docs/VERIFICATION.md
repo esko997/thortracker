@@ -1,5 +1,23 @@
 # Thor Tracker verification — 2026-11-09
 
+## Unreleased: Master System and Game Gear
+
+The four layouts (SMS PSG, Game Gear PSG, SMS FM and SMS FM with rhythm voices)
+passed 496 JVM core tests, 13 Linux core tests and six Android-host unit tests.
+The full native run passed, including 120 Sega checks and 1,074 WAV-export checks.
+Each layout's demo and shortest-song fixture rendered through the real Banjo driver.
+
+Independent assembly verification compiled every exported song with both WLA-DX
+and SDAS/GBDK, using the pinned upstream Banjo driver. For each layout, the exported
+ROMs and the application's `SmsMachine` executed 3,457 ticks, 577 row starts and two
+loops with identical transport and driver state. All chip writes matched in order
+and CPU cycle: SMS PSG 26,130; Game Gear 26,149 (including 19 stereo writes);
+SMS FM 20,516; SMS FM rhythm 19,114. Relocated song data also matched byte-for-byte.
+This exercises the exported initialization stub, including the first-row tick,
+rather than asserting assembly-source spelling.
+
+Android UI, live-device performance and desktop frontend checks remain pending.
+
 ## 0.19.0 NES + FDS
 
 - **New blank song / Load demo → NES… → NES + FDS** adds the Famicom Disk System's wavetable voice after the NES's five channels. The demo is **Side B**.

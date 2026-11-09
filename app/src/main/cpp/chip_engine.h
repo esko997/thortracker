@@ -21,6 +21,8 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "sms-banjo"       the Banjo sound driver (joffb/banjo) on a Z80 + SN76489 (+ Game Gear stereo) + YM2413
+ *                     (emu2413), every Master System layout (sms/sms_chip.c over sms/sms_machine.c, sms_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

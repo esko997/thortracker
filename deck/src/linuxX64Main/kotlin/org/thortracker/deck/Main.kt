@@ -22,6 +22,7 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.audio.WavExport
 import org.thortracker.system.opl3.Opl3Vgm
+import org.thortracker.system.sms.SmsExport
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.ui.AppMenus
 import org.thortracker.ui.DrawnPopup
@@ -62,6 +63,7 @@ fun main(args: Array<String>) {
 
     Opl3Vgm.renderer = DeckOpl3Vgm
     YmExport.renderer = DeckYmExport
+    SmsExport.renderer = DeckSmsVgm
     WavExport.renderer = DeckWav
     val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
     app.script = ArrayDeque(script)
