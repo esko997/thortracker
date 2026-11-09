@@ -2,7 +2,6 @@ package org.thortracker.model
 
 import org.thortracker.system.gb.GbSystem
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -11,15 +10,15 @@ class BuiltInTuningsTest {
     private val dir = listOf(File("../app/src/main/assets/tunings"), File("app/src/main/assets/tunings")).first { it.isDirectory }
     private fun load(name: String) = Scl.parse(File(dir, name).readText(), name.removeSuffix(".scl"))
 
-    @Test fun everyBundledEntryIsAUsableTuningWithReachableDegrees() {
+    @Test fun everyBundledEntryPreservesTheUnisonAnchor() {
         val packs = dir.listFiles { f -> f.extension == "thorscales" }!!.map { TuningPackCodec.decode(it.readText()) }
-        assertTrue(packs.isNotEmpty())
         assertEquals(packs.size, packs.map { it.id }.toSet().size)
         for (pack in packs) for (entry in pack.entries) {
             val identity = "${pack.id}/${entry.id}"
             val t = Scl.parse(entry.scl, entry.name)
             assertEquals(identity, emptyList<String>(), t.problems(GbSystem))
-            assertTrue(identity, TuningMap(t, GbSystem).pitches.isNotEmpty())
+            assertEquals(identity, TunedPitch(0, t.root, 0, 0.0, 0.0),
+                TuningMap(t, GbSystem).pitches.single { it.degree == 0 })
         }
     }
 

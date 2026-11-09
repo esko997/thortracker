@@ -428,13 +428,13 @@ class AppMenus(
             if (entry.attribution.isNotEmpty()) { append("\n\n"); append(entry.attribution) }
         }
         val message = buildString {
-            append(TuningPackCodec.display(provenance, multiline = true))
-            append("\n\n")
             if (parsed == null) append(TuningPackCodec.display(problem!!, multiline = true))
             else {
                 append("${parsed.steps} degrees; period ${parsed.period} cents\n1/1: 0.0 cents\n")
                 parsed.cents.forEachIndexed { i, cents -> append("${i + 1}: $cents cents\n") }
             }
+            append("\nSource and licence:\n")
+            append(TuningPackCodec.display(provenance, multiline = true))
             append("\nScala source (ratios and annotations preserved):\n")
             append(TuningPackCodec.display(entry.scl, multiline = true))
         }
