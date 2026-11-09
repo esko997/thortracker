@@ -55,7 +55,7 @@ typedef struct ScChannel {
     int volume;         /* channel volume 0..240 (1/16 steps) */
     int volslide;       /* Axy param */
     int wave_lock;      /* Wxx: 0 none, 1..64 */
-    int wave;           /* wave number played at the last update, 0 none */
+    int wave;           /* wave number the channel holds: changes at updates while keyed, keyed off only by Wxx; 0 none */
 } ScChannel;
 
 typedef struct ScPlayer {

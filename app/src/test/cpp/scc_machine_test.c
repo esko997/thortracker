@@ -17,8 +17,10 @@
  * bit-identical inside the pre-roll) and the order fallback; live edits (re-laid image, note edit, tempo edit, cut
  * song, multispeed, a wave edited while it sounds, an instrument deleted under a sounding note); audition (A-4
  * measured 440.40 Hz on P 253, fine pitch, releases, held notes, the 10 s release bound, argument limits); mute; the
- * SCC's shared wave RAM against the SCC+'s five; VGM bytes identical to the reference's for both chips; the hosts' VGM
- * entry point and its GD3 tag; both ops tables as the hosts drive them, including the variant check; costs.
+ * SCC's shared wave RAM against the SCC+'s five; keyed-off notes (a cut looping wave envelope, a release tail keyed off
+ * by a second OFF) keeping their wave out of the other channel's RAM while an explicit Wxx still claims, on both chips;
+ * VGM bytes identical to the reference's for both chips; the hosts' VGM entry point and its GD3 tag; both ops tables
+ * as the hosts drive them, including the variant check; costs.
  *
  * Build and run (no Android needed): tools/audio/run_native_host_test.sh [evidence-dir]
  * Writes <dir>/scc_song.wav and scc_plus_song.wav (48 kHz stereo, 30 s), scc_tone.wav (the A-4 audition, 2 s, and
@@ -1935,6 +1937,116 @@ static void test_shared_wave(void) {
     scm_destroy(b);
 }
 
+/* ---- keyed-off notes and the wave RAMs ------------------------------------------------------------------------ */
+
+/* One 64-row order at speed 1 (row r runs at tick r); waves 1 sine, 2 saw, 3 square, 4 triangle; slot 1 "organ" (wave
+ * envelope [3]), slot 2 "looper" (waves [1 2] looping, no volume envelope: OFF cuts it), slot 3 "tail" (volume
+ * [15 15 6 0], loop 0, release 2; waves 1 2 1 2 ... over 32 steps, looping); SCC 1-3 empty, `p4`/`p5` on SCC 4/5. */
+static void off_image(SccImage* im, int variant, const uint8_t* p4, int n4, const uint8_t* p5, int n5) {
+    base_image(im, variant, 4);
+    uint8_t* b = im->bytes;
+    b[SC_H_SPEED] = 1;
+    b[SC_H_INSTRUMENTS] = 3;
+    b[SC_OFF_ROWS] = 64;
+    memcpy(b + SC_OFF_WAVES + 32, g_saw, 32);
+    memcpy(b + SC_OFF_WAVES + 64, g_square, 32);
+    memcpy(b + SC_OFF_WAVES + 96, g_triangle, 32);
+    static const uint8_t head[] = {
+        SC_RUN | 63,                         /* 0: 64 empty rows (SCC 1-3) */
+        1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 3,     /* 1: organ waves (base_image's slot 1 points here) */
+        2, 0, 0, 0, 0xFF, 0xFF, 1, 2,        /* 8: looper waves, loop 0 */
+        4, 0, 0, 0, 2, 0, 15, 15, 6, 0,      /* 16: tail volume, loop 0, release 2 */
+        32, 0, 0, 0, 0xFF, 0xFF,             /* 26: tail waves, loop 0; the 32 values follow */
+    };
+    uint8_t* d = b + SC_OFF_DATA;
+    int n = (int)sizeof head;
+    memcpy(d, head, sizeof head);
+    for (int i = 0; i < 32; ++i) d[n++] = (uint8_t)(1 + (i & 1));
+    memcpy(d + n, p4, (size_t)n4);
+    memcpy(d + n + n4, p5, (size_t)n5);
+    put16(b + SC_H_DATA_SIZE, n + n4 + n5);
+    put16(b + SC_OFF_ORDERS + 2 * 3, n);
+    put16(b + SC_OFF_ORDERS + 2 * 4, n + n4);
+    uint8_t* looper = b + instrument_at(2);
+    uint8_t* tail = b + instrument_at(3);
+    looper[SC_I_FLAGS] = tail[SC_I_FLAGS] = SC_FLAG_DEFINED;
+    put16(looper + SC_I_VOLUME, SC_ENV_NONE);
+    put16(tail + SC_I_VOLUME, 16);
+    put16(looper + SC_I_ARPEGGIO, SC_ENV_NONE);
+    put16(tail + SC_I_ARPEGGIO, SC_ENV_NONE);
+    put16(looper + SC_I_PITCH, SC_ENV_NONE);
+    put16(tail + SC_I_PITCH, SC_ENV_NONE);
+    put16(looper + SC_I_WAVE, 8);
+    put16(tail + SC_I_WAVE, 26);
+}
+
+static int ram_is(const SccCore* c, int k, const int8_t* wave) { return !memcmp(c->ram[k], wave, SC_WAVE_BYTES); }
+
+/* A keyed-off note's wave envelope keeps advancing but no longer changes the wave it holds, so on the SCC it never takes
+ * RAM 3 back from SCC 5; a release tail is still keyed and still claims; an explicit Wxx on a keyed-off channel still
+ * claims. Two songs on both chips: (a) SCC 4 "looper" from tick 0, OFF (a cut) at tick 3, W04 on the keyed-off SCC 4
+ * at tick 40; (b) SCC 4 "tail" from tick 0, OFF at tick 2 (its release), OFF again at tick 4 (the cut); both with the
+ * organ (wave 3) on SCC 5 from tick 6. */
+static void test_keyed_off_wave(void) {
+    printf("keyed-off notes and the wave RAMs\n");
+    static const uint8_t looper4[] = {SC_MASK_NOTE | SC_MASK_INSTRUMENT, A4, 2, SC_RUN | 1, SC_MASK_NOTE, SC_NOTE_OFF,
+                                      SC_RUN | 35, 1 << SC_MASK_EFFECT_SHIFT, SC_FX_WAVE, 4, SC_RUN | 22};
+    static const uint8_t tail4[] = {SC_MASK_NOTE | SC_MASK_INSTRUMENT, A4, 3, SC_RUN, SC_MASK_NOTE, SC_NOTE_OFF, SC_RUN,
+                                    SC_MASK_NOTE, SC_NOTE_OFF, SC_RUN | 58};
+    static const uint8_t organ5[] = {SC_RUN | 5, SC_MASK_NOTE | SC_MASK_INSTRUMENT, A4, 1, SC_RUN | 56};
+    static SccImage im;
+    for (int plus = 0; plus < 2; ++plus) {
+        for (int tail = 0; tail < 2; ++tail) {
+            const char* chip = plus ? "SCC+" : "SCC";
+            const char* what = tail ? "release tail, OFF twice" : "looping waves, OFF";
+            const int variant = plus ? SC_VARIANT_PLUS : SC_VARIANT_SCC;
+            if (tail) off_image(&im, variant, tail4, (int)sizeof tail4, organ5, (int)sizeof organ5);
+            else off_image(&im, variant, looper4, (int)sizeof looper4, organ5, (int)sizeof organ5);
+            EXPECT(sc_load_image(&im) == 0, "%s, %s: the image loads (%s)", chip, what,
+                   im.info.problem ? im.info.problem : "ok");
+            if (im.info.loaded != SC_LOADED) continue;
+            SccMachine* m = scm_create(RATE);
+            int mode;
+            EXPECT(scm_start(m, &im, 0, 0, SEEK_BUDGET, &mode) == SCM_OK, "%s, %s: start", chip, what);
+            const ScPlayer* p = scm_player(m);
+            const SccCore* c = scm_core(m);
+            /* SCC 4 is keyed until `off`; then it holds the wave of its last keyed tick: the looper's tick 2 step
+             * (wave 1), the tail's tick 3 step (wave 2, released but keyed). The W04 (looper) changes it at tick 40. */
+            const int off = tail ? 4 : 3, w04 = tail ? 64 : 40;
+            const int8_t* held = tail ? g_saw : g_sine;
+            int bad_key = -1, bad_held = -1, bad_organ = -1, bad_w04 = -1, tail_claim = 0, organ_heard = 0;
+            for (int t = 0; t < 64; ++t) {
+                scm_tick(m, g_out);
+                if ((c->key >> 3 & 1) != (t < off) && bad_key < 0) bad_key = t;
+                /* SCC 4's own RAM (the SCC: RAM 3 until SCC 5 claims it) keeps the held wave */
+                const int held_until = plus ? w04 : 6;
+                const int held_ok = ram_is(c, 3, held) && (plus || p->owner3 == 3);
+                if (t >= off && t < held_until && !held_ok && bad_held < 0) bad_held = t;
+                /* SCC 5's organ: RAM 4 on the SCC+ (never touched by SCC 4, W04 included); RAM 3 on the SCC until W04 */
+                const int organ_ok = plus ? ram_is(c, 4, g_square) : ram_is(c, 3, g_square) && p->owner3 == 4;
+                if (t >= 6 && t < (plus ? 64 : w04) && !organ_ok && bad_organ < 0) bad_organ = t;
+                /* the explicit Wxx on the keyed-off SCC 4: its RAM gets wave 4; on the SCC it claims RAM 3 for SCC 5 too */
+                if (t >= w04 && !(ram_is(c, 3, g_triangle) && (plus || p->owner3 == 3)) && bad_w04 < 0) bad_w04 = t;
+                if (tail && t == 3)
+                    tail_claim = p->ch[3].keyed && p->ch[3].released && ram_is(c, 3, g_saw) && (plus || p->owner3 == 3);
+                if (t == 20) organ_heard = follows(c, 4, g_square);
+            }
+            EXPECT(bad_key < 0, "%s, %s: SCC 4's key bit set until tick %d, then clear (wrong at tick %d)", chip, what,
+                   off, bad_key);
+            EXPECT(bad_held < 0, "%s, %s: keyed off, SCC 4 keeps wave %d in RAM 3 while its wave envelope advances "
+                   "(wrong at tick %d)", chip, what, tail ? 2 : 1, bad_held);
+            EXPECT(bad_organ < 0, "%s, %s: SCC 5's organ wave stays in its RAM from tick 6 (wrong at tick %d)", chip,
+                   what, bad_organ);
+            if (!tail)
+                EXPECT(bad_w04 < 0, "%s: W04 on the keyed-off SCC 4 writes wave 4 to RAM 3 (wrong at tick %d)", chip,
+                       bad_w04);
+            if (tail) EXPECT(tail_claim, "%s: the released (still keyed) tail claims RAM 3 with its wave step", chip);
+            EXPECT(organ_heard, "%s, %s: SCC 5 plays the organ wave at tick 20", chip, what);
+            scm_destroy(m);
+        }
+    }
+}
+
 /* ---- VGM ----------------------------------------------------------------------------------------------------- */
 
 static uint32_t rd32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
@@ -2358,6 +2470,7 @@ int main(int argc, char** argv) {
     test_audition(dir);
     test_mute();
     test_shared_wave();
+    test_keyed_off_wave();
     test_multispeed();
     test_vgm(dir);
     test_export();

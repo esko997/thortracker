@@ -287,9 +287,11 @@ abstract class KonamiSccSystem internal constructor(val variant: SccVariant) : S
                 "note plays (wave numbers 01-40; the Wave view draws them).",
             when (variant) {
                 SccVariant.SCC -> "SCC 4 and SCC 5 share one wave RAM on the K051649: whatever it holds, both channels play. " +
-                    "The channel that last keyed a note or changed its wave (Wxx, a wave envelope step) writes its wave there, " +
-                    "so when SCC 4 and SCC 5 sound together with different waves both play the latest one. Give them the same " +
-                    "wave, alternate phrases (OFF before the other enters), or switch the song to SCC+, which has five wave " +
+                    "The channel that last keyed a note or changed its wave (Wxx, or a wave envelope step while its note is " +
+                    "keyed, release included) writes its wave there, so when SCC 4 and SCC 5 sound together with different " +
+                    "waves both play the latest one. After OFF a channel's wave envelope no longer reaches the RAM; it keeps " +
+                    "its last wave there until the other channel claims it. Give them the same wave, alternate phrases (OFF " +
+                    "before the other enters; a second OFF ends a release), or switch the song to SCC+, which has five wave " +
                     "RAMs. The Pattern lane headers of SCC 4 and SCC 5 show the wave the shared RAM holds; the song check " +
                     "lists overlaps."
                 SccVariant.PLUS -> "The SCC+ (K052539 in SCC+ mode) gives every channel its own wave RAM, so all five " +
@@ -333,9 +335,10 @@ object SccSongSettings {
 /**
  * The chip's shared state where straight play reaches a song position ([SccWalk], document orders: those that play
  * before it, a parked order only on its own, rows up to and including the position's): on the SCC, the wave the RAM of
- * SCC 4 and SCC 5 holds (a "W05" tag on both lanes; "+" when the claiming note's wave envelope steps through several
- * waves) and inspector lines saying who claimed it and what that means for the other channel; on both chips, a line
- * for a test register that is not 0.
+ * SCC 4 and SCC 5 holds (a "W05" tag on both lanes; "+" when the claiming note's wave envelope has several waves: the
+ * RAM follows its steps while that note is keyed and keeps the one reached at its OFF after it) and inspector lines
+ * saying who claimed it and what that means for the other channel; on both chips, a line for a test register that is
+ * not 0.
  */
 object SccSharedState {
     private var cacheSong: Song? = null
@@ -386,11 +389,17 @@ object SccSharedState {
                     for (ch in SccSound.SHARED_CHANNELS) tags[ch] = tag
                 }
                 lines += "Shared wave RAM (SCC 4 + SCC 5) holds ${w.heldText(song)}; both channels play it"
-                if (stepping && ins != null) {
-                    lines += "Instrument ${NumberText.hex(claim.slot, 2)} \"${ins.name}\" steps through waves ${SccRules.waveList(ins.wave)}: " +
-                        "each step re-claims the RAM for ${SccRules.CHANNEL_NAMES[claim.channel]}, so both channels follow its wave envelope"
-                }
                 val other = if (claim.channel == SccSound.SHARED_CHANNELS.first) SccSound.SHARED_CHANNELS.last else SccSound.SHARED_CHANNELS.first
+                if (stepping && ins != null) {
+                    val name = SccRules.CHANNEL_NAMES[claim.channel]
+                    val effect = if (w.keyed[claim.channel]) {
+                        "each step re-claims the RAM for $name while its note is keyed, so both channels follow its wave envelope"
+                    } else {
+                        "$name is keyed off, so its steps no longer reach the RAM: it keeps the wave the envelope had reached at " +
+                            "the OFF until ${SccRules.CHANNEL_NAMES[other]} claims it"
+                    }
+                    lines += "Instrument ${NumberText.hex(claim.slot, 2)} \"${ins.name}\" steps through waves ${SccRules.waveList(ins.wave)}: $effect"
+                }
                 if (w.keyed[other]) {
                     val own = w.waveSet(other)
                     val heldSamples = sound.wave(w.held)?.samples

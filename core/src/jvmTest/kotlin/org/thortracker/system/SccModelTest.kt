@@ -401,6 +401,10 @@ class SccModelTest {
         song = with(song, 0, 4, 7, Cell(43, bass))
         song = with(song, 0, 0, 8, Cell(effect = SccRules.FX_TEST, param = 0x00))
         song = with(song, 0, 4, 10, Cell(55, morph))
+        song = with(song, 0, 4, 12, Cell(Cell.CUT)) // Morph has a release point: this OFF releases it (still keyed)
+        song = with(song, 0, 4, 13, Cell(Cell.CUT)) // the second OFF keys it off
+        song = with(song, 0, 3, 14, Cell(48, organ))
+        song = with(song, 0, 4, 15, Cell(effect = SccRules.FX_WAVE, param = 3)) // W03 on the keyed-off SCC 5
 
         val start = SccSystem.sharedState(SccSystem.blank(), 0, 0)!!
         assertEquals(List<String?>(5) { null }, start.tags)
@@ -433,6 +437,21 @@ class SccModelTest {
         val stepping = SccSystem.sharedState(song, 0, 10)!!
         assertEquals("W01+", stepping.tags[4])
         assertTrue(stepping.lines.any { it.contains("steps through waves 01, 02, 03, 04") })
+        assertTrue(stepping.lines.any { it.contains("re-claims the RAM for SCC 5 while its note is keyed") })
+        // Released, the note is still keyed and its steps still claim; keyed off, they no longer reach the RAM.
+        assertTrue(SccSystem.sharedState(song, 0, 12)!!.lines.any { it.contains("re-claims the RAM for SCC 5 while its note is keyed") })
+        val keyedOff = SccSystem.sharedState(song, 0, 13)!!
+        assertEquals("W01+", keyedOff.tags[3])
+        assertTrue(keyedOff.lines.any { it.contains("SCC 5 is keyed off, so its steps no longer reach the RAM") && it.contains("until SCC 4 claims it") })
+        assertFalse(keyedOff.lines.any { it.contains("re-claims") })
+        // SCC 4's next note claims it; the keyed-off Morph does not take it back, so no stepping line remains.
+        val organAgain = SccSystem.sharedState(song, 0, 14)!!
+        assertEquals(listOf(null, null, null, "W07", "W07"), organAgain.tags)
+        assertFalse(organAgain.lines.any { it.contains("steps through waves") })
+        // An explicit W on the keyed-off SCC 5 still claims it.
+        val explicit = SccSystem.sharedState(song, 0, 15)!!
+        assertEquals("W03", explicit.tags[3])
+        assertTrue(explicit.lines[0].contains("from SCC 5's wave change at order 00 row 15"))
 
         // The SCC+ shares nothing: only the test register shows.
         val p = plus(song)

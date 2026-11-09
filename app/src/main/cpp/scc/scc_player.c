@@ -84,9 +84,8 @@ int scp_period(int pitch) {
 /* ---- notes ----------------------------------------------------------------------------------------------------- */
 
 /* Wave claims of one tick (SCC channels 4 and 5: index 0, 1), resolved and dropped by that tick's wave pass. Song
- * key-ons happen in the tick whose pass resolves them. scp_audition's key-on happens outside a tick, but it follows a
- * reset (the channel's last-played wave is 0) and the first update of the note plays a wave 1..64, which is a claim
- * of its own: the same owner at the same pass. */
+ * key-ons happen in the tick whose pass resolves them; scp_audition's key-on happens outside a tick, so it gives RAM 3
+ * to its channel itself. */
 typedef struct Claims {
     int c[2];
 } Claims;
@@ -110,6 +109,11 @@ static void key_on(ScPlayer* p, const SccImage* image, int c, int note, Claims* 
     ch->active = 1;
     ch->force = 1;
     ch->restart = (sc_instrument_flags(image, ch->slot) & SC_FLAG_RESTART) != 0;
+    /* the note's first wave is held from the key-on, so a key-off in the same tick (S00) leaves it, not an older one */
+    ScEnvelope wave;
+    sc_envelope(image, ch->slot, SC_I_WAVE, &wave);
+    if (ch->wave_lock) ch->wave = ch->wave_lock;
+    else if (wave.length) ch->wave = wave.values[0];
     claim(claims->c, p, c);
 }
 
@@ -223,8 +227,13 @@ static void update(ScPlayer* p, const SccImage* image, int c, Claims* claims) {
     if (ch->restart) wr_test(p, p->test, 0);
     ch->force = ch->restart = 0;
     wr_volume(p, c, channel_volume(ch, value[ENV_VOLUME]), 0);
-    if (w != ch->wave) claim(claims->c, p, c);
-    ch->wave = w;
+    /* The wave the channel holds follows w while the note is keyed (released or not). Keyed off, its envelopes keep
+     * advancing but only an explicit Wxx (the lock) changes the wave: a silent note's wave envelope never rewrites its
+     * RAM, so on the SCC it cannot take RAM 3 back from the other channel. */
+    if (ch->keyed || ch->wave_lock) {
+        if (w != ch->wave) claim(claims->c, p, c);
+        ch->wave = w;
+    }
 
     for (int k = 0; k < ENVS; ++k) env_advance(ch, k, &env[k]);
     if (ch->arp) ch->arp_step = (ch->arp_step + 1) % 3;
@@ -456,9 +465,12 @@ int scp_audition(ScPlayer* p, const SccImage* image, int channel, int note, int 
     if (slot < 1 || slot > SC_MAX_INSTRUMENTS || !defined(image, slot)) return -1;
     scp_reset(p, image);
     p->audition = 1;
-    Claims claims = {{0, 0}}; /* resolved by the first tick's update (see above) */
+    Claims claims = {{0, 0}};
     p->ch[channel].instrument = slot;
     key_on(p, image, channel, note, &claims);
+    /* no tick runs this key-on: its claim is resolved here, as a wave pass would */
+    if (claims.c[1]) p->owner3 = 4;
+    else if (claims.c[0]) p->owner3 = 3;
     p->ch[channel].fine = fine;
     return 0;
 }

@@ -219,8 +219,9 @@ object SccValidator {
                 out += "Order ${hex2(o)} row $row: ${NAMES[a]} (${setText(song, key!!.first)}) and ${NAMES[b]} (${setText(song, key.second)}) " +
                     "sound together, but the SCC (K051649) gives them one shared wave RAM, so both play the latest claim: " +
                     "${walk.heldText(song)}. Give both the same wave, end one note with OFF before the other starts (a note " +
-                    "holds the RAM until OFF, even after its volume has faded), or switch the song to SCC+ (K052539), which " +
-                    "has a wave RAM per channel"
+                    "counts as sounding until it is keyed off, even after its volume has faded: OFF releases a note with a " +
+                    "release point, a second OFF keys it off), or switch the song to SCC+ (K052539), which has a wave RAM " +
+                    "per channel"
             }
         }
         if (sharedMore > 0) out += "...and $sharedMore more places where SCC 4 and SCC 5 sound together with different waves"
@@ -321,11 +322,14 @@ object SccValidator {
  * run at tick 0 and delayed rows (`Gxx`) at their tick (never when the speed does not reach it); a row's effects run in
  * column order before its note. A note keys on unless its slot is empty or portamento (`3xx`) glides to it while the
  * channel is keyed; OFF and `Sxx` release a note whose volume envelope has a release point, else (or when released)
- * key it off. On the SCC a key-on on SCC 4 or SCC 5, or a change of the wave such a channel plays (`Wxx`, a note that
- * ends a lock), is a wave claim: the claiming channel's wave fills the shared RAM unless the test register freezes it.
- * A note's wave is its lock, else the first value of its instrument's wave envelope: the envelope's later steps
- * re-claim the RAM tick by tick, which this row model does not follow (it says so where it matters). Jumps and breaks
- * are not followed (the walk is sequential, as the validator's).
+ * key it off. On the SCC a key-on on SCC 4 or SCC 5, or a change of the wave such a channel holds, is a wave claim: the
+ * claiming channel's wave fills the shared RAM unless the test register freezes it. A channel's held wave follows its
+ * note while keyed (a released note included: `Wxx`, a note that ends a lock, the wave envelope); keyed off, only an
+ * explicit `Wxx` changes it (the player keeps advancing the envelope but no longer lets it reach a RAM), so after OFF
+ * the channel keeps RAM 3 only until the other channel claims it. A note's wave is its lock, else the first value of
+ * its instrument's wave envelope: the envelope's later steps re-claim the RAM tick by tick while the note is keyed,
+ * which this row model does not follow (it says so where it matters). Jumps and breaks are not followed (the walk is
+ * sequential, as the validator's).
  */
 internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
     /** The latest claim of the SCC's shared wave RAM: by [channel] at ([order], [row]), its note's [slot] and [wave]. */
@@ -443,7 +447,9 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
             hasNote -> keyedOn = keyOn(ch)
         }
         if (cut in tick until speed) keyOff(ch)
-        if (active[ch]) {
+        // Keyed off, the held wave changes only through an explicit Wxx (the lock), as in the player; a key-on claims
+        // even when an Sxx on its row keys it off again.
+        if (active[ch] && (keyedOn || keyed[ch] || lock[ch] > 0)) {
             val w = if (lock[ch] > 0) lock[ch] else sound.instrument(noteSlot[ch])?.wave?.values?.firstOrNull() ?: 0
             if (keyedOn || w != current[ch]) {
                 current[ch] = w

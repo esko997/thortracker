@@ -2548,7 +2548,8 @@ target (no key-on); any other note keys on.
 slide offset 0 (the slide mode persists), arpeggio step 0, vibrato phase 0; keyed; active; this tick's update writes the
 period **forced** (both bytes, so the step restarts at the note), and if the instrument has `RESTART` that write is
 wrapped in test = value | 0x20 … test = value (shadowed), so the waveform restarts at position 0 (the chip's bit 5).
-On the SCC a key-on on channel 4 or 5 is a **wave claim** (below).
+The held wave (below) = the note's first wave (its wave lock, else the wave envelope's first value), so a key-off in the
+same tick (`S00`) leaves that wave. On the SCC a key-on on channel 4 or 5 is a **wave claim** (below).
 
 **Key-off** (OFF, `Sxx`): if keyed: when the note's volume envelope has a release point and the note is not released,
 it is released (volume envelope index = the release point); otherwise the channel is no longer keyed (its key bit
@@ -2561,8 +2562,11 @@ wave lock, if set, replaces w. Pitch offset q = 4 v, or with `PITCH_RELATIVE` ac
 −6144, 6144) and q = accumulator. Pitch = clamp(base + 64 (a + arp) + fine + slide + vibrato + q, 0, 6143), arp = 0,
 x, y for step 0, 1, 2 of `0xy`, vibrato = floor(`SC_SINE`[phase] · depth / 16) (arithmetic shift). Writes: period
 low byte then high byte of P(pitch) (port 1, regs 2c, 2c + 1; forced at key-on, wrapped as above); volume (port 2, reg
-c) = e · cv / 15 (integer division), at least 1 when e > 0 and cv > 0, cv = channel volume / 16 (0..15). Then on the
-SCC, a channel 4 or 5 whose wave number w differs from its previous tick's is a **wave claim**. Then everything
+c) = e · cv / 15 (integer division), at least 1 when e > 0 and cv > 0, cv = channel volume / 16 (0..15). Then the
+channel's **held wave**: while the channel is keyed (a released note included) or has a wave lock, it becomes w, and on
+the SCC a channel 4 or 5 whose held wave changes makes a **wave claim**; a keyed-off channel without a lock keeps the
+wave it held (its wave envelope still advances, but its steps no longer reach a wave RAM), so after OFF only its next
+key-on or an explicit `Wxx` claims RAM 3 again. Then everything
 advances: each envelope index (below); arpeggio step (mod 3) while `0xy` ≠ 0; slide offset ± speed (clamped to
 ±6144) for `1xx`/`2xx`; base toward target by the speed (no overshoot) for `3xx`; vibrato phase + speed (mod 64) while
 speed and depth are set; channel volume (in 1/16 steps, 0..240) + x − y for `Axy`. A released or keyed-off note keeps
@@ -2571,13 +2575,18 @@ updating (its release follows slides and vibrato).
 **Envelope index advance**: end = the release point while the note is not released and the envelope has one, else L.
 If index + 1 < end: index + 1; else if the envelope loops and the note is not released: the loop point; else it holds
 (index = end − 1). So a released note plays from the release point to the end and holds the last value, and a note
-held before a release point without a loop sustains the value before it (FamiStudio's envelope behaviour).
+held before a release point without a loop sustains the value before it. The volume envelope follows FamiStudio here;
+the others do not: FamiStudio's release (`famistudio_ca65.s`, `@jump_to_release_envelope`) moves only an envelope with
+a release point and keeps looping the rest, while this player stops every loop (arpeggio, pitch, wave) at the release:
+each runs on to its end and holds its last value (the Mega Drive's PSG envelopes follow FamiStudio; `docs/BACKENDS.md`,
+open questions).
 
 **Wave pass**: for each wave RAM with an active owner — the SCC+'s RAM *k* and the SCC's RAMs 0-2: channel *k*; the
 SCC's RAM 3: the channel among 4 and 5 that made the latest wave claim (in a tick, channel 5's claim comes last, so it
-wins a tie; before any claim RAM 3 has no owner) — the 32 bytes of the owner's wave w are read from the current image
-and every byte that differs from the shadow is written (index order), unless the test register protects that RAM. A
-wave edited live is therefore heard at the next tick; an owner that is no longer active writes nothing.
+wins a tie; before any claim RAM 3 has no owner) — the 32 bytes of the owner's held wave are read from the current
+image and every byte that differs from the shadow is written (index order), unless the test register protects that
+RAM. A wave edited live is therefore heard at the next tick; an owner that is no longer active writes nothing. A
+keyed-off owner keeps RAM 3 (its held wave, fixed) until the other channel claims it.
 
 **Test register** (`Txx`): the value is written at once (shadowed, port 5) when the row runs. If bits 0-1 changed,
 every active channel's period is written forced in this tick's update, so the new frequency mode applies at once.
@@ -2603,7 +2612,7 @@ keyed on this row only; "now" = from this row on, persisting.
 | `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones (±2 semitones) until the next note |
 | `Sxx` note off | tick | key off at tick xx of this row, like an OFF cell at that tick |
 | `Txx` test register | bits | now, global: the chip's test register = xx (bit 5 waves restart at period writes, bit 6 all waves frozen, bit 7 SCC: the shared wave frozen; bits 0/1 unverified frequency modes; 2-4 nothing) |
-| `Wxx` wave | 01-W | note: the note keyed on this row plays wave xx instead of its instrument's wave envelope; on a row without a note the sounding note switches to xx until its next note |
+| `Wxx` wave | 01-W | note: the note keyed on this row plays wave xx instead of its instrument's wave envelope; on a row without a note the sounding note switches to xx until its next note. On a keyed-off channel (silent; the song check warns) it still becomes the held wave: the channel's RAM is rewritten, and on the SCC, when xx differs from the wave SCC 4 / SCC 5 held, that channel claims RAM 3 with it (the only claim a keyed-off channel makes) |
 
 No chord effect: the SCC has five fixed voices (`docs/BACKENDS.md`); chords are written across channels. Drums are
 instruments with volume, pitch (relative: sweeps) and wave envelopes.
@@ -2752,7 +2761,11 @@ to order 3 row 2, order 3 ending at speed 5 and jumping back to the loop order, 
   sounding note cuts it; audition: **A-4 measured 440.40 Hz** (sine wave, P 253), `fine` +64 = A#4 (P 239, 466.09 Hz),
   release with and without a release point, held notes, argument limits; mute silences and leaves the writes equal to
   the reference; the SCC's shared wave: channel 5's claim changes what channel 4 plays (core RAM 3 = channel 5's wave,
-  channel 4's output follows it) while the SCC+ keeps both; **VGM bytes equal the reference player's** for both
+  channel 4's output follows it) while the SCC+ keeps both; **keyed-off notes** (constructed images, both chips): SCC 4
+  with a looping two-wave envelope cut by OFF, and a release-tail instrument keyed off by a second OFF, keep their last
+  wave in RAM 3 while their envelopes advance, so SCC 5's organ entering afterwards keeps RAM 3 (SCC) or RAM 4 (SCC+)
+  and is heard; the released note still claims; a `W04` on the keyed-off SCC 4 still claims RAM 3 on the SCC and leaves
+  the SCC+'s RAM 4 alone; **VGM bytes equal the reference player's** for both
   variants (header clock and bit 31); `sc_export_vgm` with GD3 decoded back; the ops tables as the hosts drive them,
   including the variant check. Evidence in the directory: `scc_song.wav`, `scc_plus_song.wav` (30 s), `scc_tone.wav`
   (A-4 + release), `scc_trace.txt` (per tick: position, then the writes `port:reg=val`), `scc_chip_trace.txt` (a

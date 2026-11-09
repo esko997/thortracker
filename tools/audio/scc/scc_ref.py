@@ -385,7 +385,7 @@ class Channel:
         self.volume = VOLUME_MAX  # channel volume in 1/16 steps
         self.volslide = 0
         self.wave_lock = 0
-        self.wave = 0             # wave number of the last update
+        self.wave = 0             # wave number held: follows updates while keyed, keyed off only Wxx
         self.claim = False        # SCC: claimed wave RAM 3 this tick
 
 
@@ -477,6 +477,12 @@ class Player:
         ch.keyed = ch.active = True
         ch.force = True
         ch.restart = bool(flags & FLAG_RESTART)
+        # the note's first wave is held from the key-on, so a key-off in the same tick (S00) leaves it
+        wave = self.img.envelope(ch.slot, 3)
+        if ch.wave_lock:
+            ch.wave = ch.wave_lock
+        elif wave is not None:
+            ch.wave = wave.values[0]
         if not self.plus and c >= 3:
             ch.claim = True
 
@@ -585,9 +591,12 @@ class Player:
         if e > 0 and cv > 0 and vol < 1:
             vol = 1
         self.write(PORT_VOLUME, c, vol)
-        if not self.plus and c >= 3 and w != ch.wave:
-            ch.claim = True
-        ch.wave = w
+        # the held wave follows w while keyed (released or not); keyed off, only an explicit Wxx (the lock) changes it,
+        # so a silent note's wave envelope never re-claims RAM 3 on the SCC
+        if ch.keyed or ch.wave_lock:
+            if not self.plus and c >= 3 and w != ch.wave:
+                ch.claim = True
+            ch.wave = w
         # advance
         for k, env in enumerate(envs):
             if env is None:

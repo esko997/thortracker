@@ -885,13 +885,16 @@ Decisions (made on the user's behalf; see Open questions):
 - **Clock**: 3579545 Hz (the MSX bus clock: BiFi's "fclock = 3,579,545 Hz"); f = 3579545 / (32 (P + 1)). The VGM header
   carries 1789773 (the format's halved convention its players use; checked against libvgm's formula).
 - **Shared wave, honestly**: on the SCC the player gives RAM 3 to whichever of SCC 4 / SCC 5 made the latest wave claim
-  (a key-on or a change of its wave); both channels always play it. The song check warns where the two overlap with
-  different waves, the Pattern lane headers and inspector show what RAM 3 holds (`sharedState`), and Help and the
-  editors say so. SCC+ songs have no such rule.
+  (a key-on, or a change of the wave it holds: `Wxx`, or a wave envelope step while its note is keyed, release tail
+  included); both channels always play it. After OFF keys a note off, its envelope no longer reaches the RAM (it keeps
+  the last wave there until the other channel claims it); only an explicit `Wxx` on that keyed-off channel still claims.
+  The song check warns where the two overlap with different waves, the Pattern lane headers and inspector show what
+  RAM 3 holds (`sharedState`), and Help and the editors say so. SCC+ songs have no such rule.
 - **Instruments** are FamiStudio-style envelopes run by the player (the chip has none): volume (with loop and release),
   arpeggio, pitch (absolute or relative) and a **wave envelope** (wave numbers per tick: wave sequences/morphs), plus
   a `restart` flag (the waveform restarts at each note through the test register's bit 5). Envelopes reuse
-  `NesEnvelope` (same values/loop/release semantics and ranges). 64 slots, `null` = empty, like the OPL3.
+  `NesEnvelope` (same values, loop and release fields and ranges); the release rule differs from FamiStudio's for
+  arpeggio, pitch and wave (open questions). 64 slots, `null` = empty, like the OPL3.
 - **Waves**: 64 per song, 32 signed 8-bit samples each, always all present (an unused wave is silent), drawn in the
   Wave view. Live edits of a sounding wave or instrument are heard from the next tick (the player reads the image every
   tick), which suits wavetable editing; this differs from the OPL3 (sounding notes keep their registers).
@@ -924,8 +927,9 @@ Decisions (made on the user's behalf; see Open questions):
   changes are lost until cleared); `Wxx` where nothing sounds; `Gxx` beyond the speed; an order's first note without
   an instrument; notes above G#6 with their actual cents and period.
 - **Shared state** (`sharedState`): on the SCC the lane tags of SCC 4 and SCC 5 name the wave RAM 3 holds (`W05`, `W05+`
-  when the claiming instrument's wave envelope steps through several waves) and the inspector says who claimed it and
-  where; a non-zero test register is listed on both variants.
+  when the claiming instrument's wave envelope has several waves) and the inspector says who claimed it and where, and
+  whether the claiming note still steps (keyed) or left the wave reached at its OFF (keyed off); a non-zero test
+  register is listed on both variants.
 - **Exports**: `.vgm` (`SccVgm`, the native renderer registered by each host, like the OPL3's) and `.wav` (the generic
   path). No MSX executable export: no MSX driver is in the loop.
 - **Demos**: "Cartridge Dusk" (SCC; D minor, 150 BPM): SCC 4 and SCC 5 play one organ instrument together or alternate
@@ -1020,6 +1024,11 @@ Decisions (made on the user's behalf; see Open questions):
 - SCC shared wave (decided on the user's behalf): on the K051649 the latest claim by SCC 4 or SCC 5 wins RAM 3 and the
   song check warns about overlaps, rather than forbidding different waves on the two channels or silently giving SCC 5
   priority. Review.
+- SCC envelope loops at a release (decided in the source spec, unreviewed): a released note stops every loop — volume,
+  arpeggio, pitch and wave — and runs each envelope to its end. FamiStudio (and the Mega Drive's PSG envelopes) move
+  only an envelope with a release point and keep looping the rest, so here Arp lead's looping arpeggio settles on its
+  last step and Morph's wave cycle stops during their release tails. Matching FamiStudio would also let a released but
+  still keyed note re-claim RAM 3 through its whole silent tail until a second OFF. Review.
 - SCC test register bits 0-1 ("4-bit"/"8-bit frequency"): modelled as openMSX documents Manuel Pazos's measurements
   (applied at period writes); BiFi's early tests reported other multipliers, MAME and libvgm ignore the bits. Exposed
   through `Txx` with a warning; unverified on hardware.
