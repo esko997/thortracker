@@ -43,6 +43,11 @@
  * still render a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1
  * adding about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
+ * The shortest songs (vic-shortest.cbimg, ted-shortest.cbimg: one order of one row, A-4 held on the VIC's soprano / the
+ * TED's voice 1, looping to order 0) run the same render paths at the other extreme: once through is a single row
+ * (under 1 s), and it must still render a valid non-silent file equal to straight ticking, deterministically for any
+ * step size, with loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
+ *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
  * through and a 5 s fade, as the app's default export); its spool files go to <dir> and are removed. */
@@ -100,6 +105,8 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"vic-demo.cbimg", "vic20-vic"},
+    {"ted-demo.cbimg", "c16-ted"},
     {"tia-demo.tiaimg", "atari2600-tia-ntsc"},
     {"tia-pal-demo.tiaimg", "atari2600-tia-pal"},
     {"scanline-cruise.pkimg", "atari-pokey"},
@@ -156,6 +163,8 @@ static const Demo kShortestHeld[] = {
     {"scc-shortest.sccimg", "msx-scc"},
     {"scc-plus-shortest.sccimg", "msx-scc-plus"},
     {"pokey-shortest.pkimg", "atari-pokey"},
+    {"vic-shortest.cbimg", "vic20-vic"},
+    {"ted-shortest.cbimg", "c16-ted"},
 };
 
 static char spool[512];

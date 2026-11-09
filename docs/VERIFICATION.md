@@ -1,6 +1,87 @@
 # Thor Tracker verification — 2026-11-09
 
-## 0.32.0 Atari 2600 TIA — local verification complete; publication pending
+## Workstation recovery and enforced build limits
+
+The second reported lockup interrupted VIC/TED verification. Recovered on-disk JVM reports contain
+**883 tests, zero failures/errors** (2026-11-09 21:42:57–21:43:11 UTC); no completed APK survived that
+invocation. These reports are not proof of the later shared-state changes.
+
+`/tmp` is a **14 GiB tmpfs** on this workstation. Prior temporary audio/build evidence was RAM-backed
+and was lost on reboot; historical results below remain records of observed runs, but their `/tmp`
+artifacts are no longer available. Harness source was recovered from persistent transcripts, not
+revalidated by that recovery. New evidence lives under `~/.local/state/thortracker/` on the SSD.
+The previous boot records an OOM kill of Chrome at 13:15 local time; it does not establish the exact
+cause of the later reported lockup.
+
+`tools/build.sh` now enforces local Linux limits inside the actual host/Distrobox build process:
+8 GiB available-memory preflight, 3 GiB memory-high threshold, 4 GiB hard maximum, zero swap,
+two-CPU quota, low CPU/I/O priority, and disk-backed compiler scratch including Java's temporary
+directory. The shared build lock and single-use/in-process compiler policy remain.
+
+Smoke evidence: the real Gradle 8.9 `help` invocation succeeds; a temporary init probe in its JVM
+reports `MemoryHigh=3221225472`, `MemoryMax=4294967296`, `MemorySwapMax=0`,
+`CPUQuotaPerSecUSec=2s` and the SSD Java temporary directory. `TMPDIR=/tmp` is rejected before Gradle.
+A separate intentional 128 MiB allocation in a **64 MiB** scope is killed locally with
+`Result=oom-kill`, `MemoryPeak=67108864`, `MemorySwapPeak=0`; the workstation remains responsive.
+This demonstrates containment, not that unrelated desktop workloads cannot exhaust the host.
+
+The subsequent bounded **debug Linux test link** still caused file-cache churn: the owned scope recorded
+**511,098,163,200 bytes read**, over one million memory-high events, about **2 GiB/s** current reads,
+and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux test/desktop-build pass
+is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
+All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
+
+## 0.33.0 VIC-20 VIC and C16/Plus4 TED
+
+Integrates published TIA and all earlier systems. The reference fixture is deterministic across two runs.
+Focused headroom verification passes **6,704 checks**: the saved original VIC gain produces 14 failures,
+including both 96 kHz adversaries clipping at 32767. The 11/16 pre-resampler gain preserves raw chip levels
+and passes the quiet oracle. Fixed the oracle's unequal starting phase and explicitly exercised TED noise
+with distinct tone reloads; no audio threshold was relaxed.
+
+- **888 JVM and 6 Android host tests** pass; the production-signed release APK builds within the new
+  4 GiB/no-swap scope. Five shared-state regressions fail against the preserved old implementation and
+  pass corrected: selected versus playing instrument identity, DAC portamento, per-tick pitch/envelopes,
+  timer changes, and interrupt phase/stop timing. The inspector now follows the actual native scheduler.
+- Native integration passes every other engine and **2,393 WAV checks**. Its two CBM failures were
+  test defects: reading the end-of-tick register to assert the initial DAC frame, and an arbitrary
+  host worst/mean timing ratio. The first now checks the key-on trace before interrupts; host CPU
+  timings remain diagnostics, not machine-dependent assertions. The corrected CBM run passes
+  **7,131 checks**. No engine behavior was changed to satisfy either assertion.
+- All **eight** fixture/export player traces match the separate Python reference. Measured shortest-song
+  fundamentals are **444.07 Hz VIC / 439.84 Hz TED**, including both actual renderer CLI outputs.
+  The documented renderer builds and runs both systems.
+- Independent pinned-upstream comparison passes **82,388,935 field comparisons**, **3,814,784 single
+  clocks**, and **67,621 native-level transitions**; **88 scheduler assertions** cover 18 scenarios.
+  Six local reference files match the pinned upstream bytes. VIC cold noise reset differs between
+  the two models; strict comparison starts after natural convergence over 16,384 disabled clocks.
+  This is raw chip/scheduler evidence, not cold-start equivalence, resampled-PCM equality or analog
+  hardware validation.
+- The clean production-targeted Android suite passes **21 tests in 48.078 s**, zero observed xruns
+  and faults. Both real controller scenarios pass on **Nova, DMG and Konkr**, covering New/demo,
+  tone/noise/master-volume instruments, envelopes, TED DAC/root/loop/rate and actual WAV import,
+  playback plus audition, live edits, undo/redo, exact restart, seek, settings and project/WAV pickers.
+  All measured scenarios have **zero xruns and driver faults**. Worst callbacks for VIC/TED:
+  Nova **1.229/3.216 ms**, DMG **7.004/5.127 ms**, Konkr **1.097/2.472 ms**; all below their actual
+  4 ms (Nova) or 20 ms (DMG/Konkr) burst period. These are observations, not future-load guarantees.
+- All **32 Game Boy views** match the recovered verified baseline in full RGBA, and factory `.uge`
+  bytes remain identical. Actual Android instrument/shared-control surfaces were visually inspected.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/{cbm-native,cbm-native-oracle,cbm-frontend}`.
+Optional private YM2608 ROM checks were not run after reboot: that private `/tmp` input was lost.
+
+CI run **42715356447**, candidate `4b1c95e4a5826f2e4ecbc6024dd829225e341dc3`, passes Linux
+core tests, Android builds, byte-identical factory UGE and the full integrated native/WAV suite.
+Its optimized AppImage also passes five actual local SDL scenarios: VIC solo/playback-plus-audition,
+TED square solo/playback-plus-audition, and TED DAC solo. Playback reaches **order 1, row 35 VIC /
+row 36 TED**; solo peaks are **0.037128 VIC, 0.303803 TED square, 0.453918 TED DAC**.
+The imported Android-edited TED lead has a wave envelope `[0]` and correctly produces silence;
+explicitly selecting its sounding square/DAC instruments verifies audition without changing the engine.
+Instrument, DAC and Pattern surfaces were visually inspected. Offscreen/dummy output verifies PCM/UI,
+not physical speakers or human listening. Evidence: `cbm-ci-appimage/` and `cbm-desktop/` under the
+same SSD evidence root. Temporary Android harness sources have been removed.
+
+## 0.32.0 Atari 2600 TIA
 
 Integrates verified POKEY `c8a7d46` and published OPN/OPNA. **Cartridge Dawn** has NTSC and PAL variants,
 both TIA voices, all 16 AUDC modes, tonal/raw instruments, honest divider quantization and WAV export.
@@ -46,7 +127,26 @@ VGM has no TIA command; no substitute register format or cartridge export is adv
 - Temporary instrumentation sources are removed and retained only with local evidence. Private-ROM
   and distinctive-chunk exclusion passes for the candidate APK; no private audio is published.
 
-Official CI artifacts and artifact-only Thor/Deck delivery remain pending.
+### Official release
+
+Published from `93510f7be39974f5e8e2f04c5bd431130abc15a6` after all four jobs in workflow
+`42708368638` passed. The signed APK is **0.32.0/code 45**, non-debuggable, arm64/x86_64,
+with the established production certificate.
+
+- The **official APK** passes both regional scenarios on Nova, DMG and Konkr: **two tests each**,
+  zero xruns and driver faults. Worst callbacks are **2.927 / 5.019 / 1.877 ms**, respectively;
+  all below the devices' burst periods.
+- The **official optimized AppImage** runs locally with each region's exported project, playback,
+  held instrument audition and return to Pattern: final rows **43 NTSC / 41 PAL**, one audition each,
+  released-audition peaks **0.2305603 / 0.2303772**. Both final surfaces were visually inspected.
+  Offscreen/dummy output verifies PCM generation and UI, not physical speaker output.
+- Thor receives the byte-verified APK in `Download`; Deck receives the byte-verified AppImage and
+  its existing `~/thortracker-deck/thor-tracker` symlink points to 0.32.0. Neither device was woken,
+  installed to or launched; no `/ThorTunez` data was touched.
+
+APK SHA-256: `2455a9803b8d8c2322404f27992a5aaced93a2d968662845433770f0be1b0c61`.
+AppImage SHA-256: `07a438e0387308078a207b463a6c39e700b475964db8725bc2c827fdd0cc6107`.
+Retained official artifacts and evidence: `~/.local/state/thortracker/recovery-20261109/`.
 
 ## 0.31.0 Atari 8-bit POKEY
 

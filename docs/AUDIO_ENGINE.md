@@ -65,6 +65,11 @@ Hardware Reference Manual (NTSC or PAL clock, every distortion, 16-bit linking, 
 two-tone, volume-only samples through timer interrupts, Altirra's nonlinear mix and output coupling); it exports VGM.
 See [POKEY](#pokey-thor-trackers-own-player-on-the-atari-8-bit-pokey-atari-pokey).
 
+The VIC-20 and C16/Plus/4 systems (`"vic20-vic"`, `"c16-ted"`, unverified source slice) play songs with Thor
+Tracker's **own player** (one image layout and player for both, mirrored by an independent Python reference) on the
+VIC and the TED, emulated by code adapted from VICE and plus4emu, PAL or NTSC per song; project and WAV export only
+(VGM defines neither chip). See [VIC-20 and C16/Plus/4](#vic-20-and-c16plus4-thor-trackers-own-player-on-the-vic-and-the-ted-vic20-vic-c16-ted).
+
 ## Chip engine interface (what a new sound system implements)
 
 Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are
@@ -166,6 +171,8 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| VICE `vic20sound.c` (adapted) | `app/src/main/cpp/cbm/cbm_vic.c` (its sound clock, Johnson counters, noise LFSR, `voltagefunction` table and output-stage model; original header kept, marked modified) | github.com/VICE-Team/svn-mirror commit `c60cc7afd46b739e84d28b300cdbcb6cb6ba2f5b` (file last changed in `9667781b`); `vice/src/vic20/vic20sound.c` sha256 `0c262a75…5b309b` | GPL-2.0-or-later (GPL-3.0-compatible); notice in `NOTICE.txt` |
+| plus4emu TED sound (adapted) | `app/src/main/cpp/cbm/cbm_ted.c` (`ted_snd.cpp`'s sound clock, decay, D/A mode, noise, mix/volume/distortion tables; the sound parts of `ted_write.cpp`, `ted_init.cpp`, `ted_main.cpp`, `ted.hpp`; original header kept, marked modified) | github.com/istvan-v/plus4emu commit `939e65233b227a47e5523eca149de8247176e28f`; `src/ted_snd.cpp` sha256 `be2b86ea…a469d030` | GPL-2.0-or-later (GPL-3.0-compatible); notice in `NOTICE.txt` |
 | Altirra 4.40 (POKEY generator formulas, mix table, output stage) | ported, not vendored: `pokey/pokey_chip.c` (`pk_init`'s generator steps from `pokeytables.cpp`, `pk_mix_init` from `pokey.cpp` UpdateMixTable) and `pokey/pokey_machine.c` (the AC coupling and clamp of `pokeyrenderer.cpp` PostFilter, constants in `pokey_chip.h`) | virtualdub.org/downloads/Altirra-4.40-src.7z (read 2026-11-08); behaviour from the Altirra Hardware Reference Manual 2026-01-02; MAME `pokey.cpp` consulted only, no code | GPL-2.0-or-later (GPL-3.0-compatible) — notice in `NOTICE.txt` |
 | ayumi | `third_party/ayumi/` (`ayumi.c`, `ayumi.h`, `LICENSE`, our `README.md`), unmodified; its measured `AY_dac_table`/`YM_dac_table` copied as data into `ay/ay_psg.c`; the file itself linked only by the native host test (independent comparison) | github.com/true-grue/ayumi commit `07c08b4874c359169e4a028edf73f046d8b763e2` (2021-11-24); `ayumi.c` sha256 `8824bc34…f19401d`, `ayumi.h` `506e3b75…f17099`, `LICENSE` `20bb6439…a66da` | MIT — notice in `NOTICE.txt` |
 | Mednafen 1.32.1 PSG | `app/src/main/cpp/third_party/mednafen-pce-psg/` (`pce_psg.cpp`, `pce_psg.h`, `COPYING`), unmodified, compiled through `pce/pce_psg.cpp` against our shim (`shim/mednafen/mednafen.h`, `shim/trio/trio.h`) | `mednafen-1.32.1.tar.xz` (mednafen.github.io/releases/files/) sha256 `de7eb94ab66212ae7758376524368a8ab208234b33796625ca630547dbc83832`; `src/hw_sound/pce_psg/pce_psg.cpp` sha256 `e6a029e33e0c1fe9330b358b0610c146eec481b5a2e7b804324b10f87d55f8c5`, `pce_psg.h` `5307959029251c8f85e43f1231215f0add2e59d12ce15ec486053f1fe31f796c`, `COPYING` `8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643` | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
@@ -6027,3 +6034,480 @@ writes `core/src/jvmTest/resources/tia-golden/*.bin.gz` for `TiaGoldenTest`.
   `--edges` checks the AUDF edge table against a direct nearest-divider search at every pitch.
 - `tools/audio/render_tia_image.sh image out.wav [seconds] [mute=...]` (the region from the image header).
 - Kotlin: `TiaGoldenTest` (the lowering against the reference builder), `TiaModelTest`, `TiaEditorTest`.
+
+## VIC-20 and C16/Plus/4: Thor Tracker's own player on the VIC and the TED (`"vic20-vic"`, `"c16-ted"`)
+
+**Status: 0.33.0/code 46 integration.** Deterministic fixtures and 6,704 focused headroom checks pass;
+full integration/reference/frontend verification remains pending. Two systems share one player, image and machine:
+
+- **VIC-20** (`"vic20-vic"`, "VIC-20 (VIC)"): the MOS 6560 (NTSC) / 6561 (PAL) Video Interface Chip's sound part:
+  three square voices one octave apart (bass, alto, soprano), one noise voice, **one** 4-bit master volume. No
+  per-voice volume exists.
+- **C16 / Plus/4** (`"c16-ted"`, "C16 / Plus/4 (TED)"): the MOS 7360/8360 TED's sound part: two square voices, voice 2
+  alternatively a noise generator, **one** volume (0..8) and the D/A mode that turns the volume register into a DAC
+  for samples.
+
+Neither machine has a standard sound driver with a GPL-compatible licence to run, so both follow the OPL3: **our own
+player** (`cbm/cbm_player.c`, pure integer C without a chip) whose behaviour is this section; `tools/audio/cbm/cbm_ref.py`
+implements the same specification separately in Python and the host test requires identical register writes. The
+machines of both systems run the same player on two chip units adapted from GPL-2.0-or-later emulators (below).
+Exports: the project and WAV. **There is no register-log export**: VGM 1.72 defines no VIC or TED chip, and Thor
+Tracker does not invent one (a `.prg` with a real 6502 driver would be a console executable, out of scope). The
+contract of the Kotlin systems and lowering (`core` `system/cbm`, `backend/CbmLowering.kt`, `backend/CbmImage.kt`) is
+this section.
+
+### Stock variants and clocks
+
+Each system has the stock **PAL** and **NTSC** machines, chosen per song (image header byte 6, the Song view's
+"Machine" row); notes stay absolute, the lowering and the player use the variant's clock. No other boards, no
+stereo or SID-card mods.
+
+| Variant | Chip clock (timeline unit) | Frame (cycles) | Frame rate | Sound clock |
+|---|---|---|---|---|
+| VIC-20 PAL (6561) | CPU φ2 = 17734475 / 16 = 1108404.6875 Hz | 71 × 312 = 22152 | 50.0363 Hz | voices count φ2 cycles |
+| VIC-20 NTSC (6560) | CPU φ2 = 14318181.82 / 14 = 315000000 / 308 = 1022727.27 Hz | 65 × 261 = 16965 | 60.2845 Hz | voices count φ2 cycles |
+| C16/Plus/4 PAL (8360) | TED single clock = 17734475 / 20 = 886723.75 Hz | 57 × 312 = 17784 | 49.8608 Hz | single clock / 4 = 221680.94 Hz |
+| C16/Plus/4 NTSC (7360) | TED single clock = 315000000 / 352 = 894886.36 Hz | 57 × 262 = 14934 | 59.9228 Hz | single clock / 4 = 223721.59 Hz |
+
+(VICE `vic20.h`/`plus4.h`: VIC-20 1108405 / 1022727 Hz, 71 × 312 / 65 × 261; Plus/4 double clock 1773447 / 1789772 Hz
+with 114 double cycles × 312 / 262 lines. The crystals are 4 × the PAL / NTSC colour subcarrier.)
+
+**Tick** = one frame / multispeed (header byte 7, N = 1..4: the raster interrupts a driver would take per frame).
+Tick *k* (from the song start or audition) spans timeline cycles ⌊k · F / N⌋ .. ⌊(k + 1) · F / N⌋ with F the frame
+in cycles above (exact integers). The player's batch is written at the tick's first cycle (all at one cycle, in order).
+`ticksPerSecond` = frame rate × N. Unlike the OPL3 (host 60 Hz) the tempo is the machine's own frame rate.
+
+### Chip units
+
+**VIC** (`cbm/cbm_vic.c`, adapted from VICE's `src/vic20/vic20sound.c`, Rami Räsänen and Ville-Matias Heikkilä
+(viznut), GPL-2.0-or-later; VICE svn-mirror commit `c60cc7afd46b739e84d28b300cdbcb6cb6ba2f5b`, file last changed in
+`9667781bae474b5f43437801591ee29473227502`, sha256 `0c262a753f419ee4fb97e526ae4bd559f414fc50cd768a765ca6260a895b309b`).
+VICE's current model is viznut's reverse engineering of the 6561. Per φ2 cycle, for each voice *j* = 0..3 (bass, alto,
+soprano, noise) with divider shift `s = 4, 3, 2, 1`:
+
+- `ctr -= 1`; when `ctr <= 0`: `a = (~reg) & 127` (0 → 128); `ctr += a << s`; `enabled = reg >> 7`; for the noise
+  voice `edge = (lfsr & 1) && !lfsr0_old` (computed before the LFSR moves). Voices 0-2, or the noise voice on an
+  edge: `shift = (shift << 1) | (((shift >> 7) ^ 1) & enabled)` (8 bits: a Johnson counter, 16 steps per period while
+  enabled; disabled it fills with zeros). The noise voice then clocks its 16-bit LFSR: `g = ((b3 ^ b12) ^ (b14 ^ b15)) ^ 1`,
+  `lfsr0_old = lfsr & 1`, `lfsr = (lfsr << 1) | ((g & enabled) ^ 1)`. `out = shift & 1` (noise: `& enabled`).
+  Outputs change only at these counter expiries.
+- A register value *r* plays period *a* = 127 − *r* for *r* = 0..126 and **128 for *r* = 127** (the 7-bit counter
+  wraps); voice frequency = φ2 / (16 · (a << s)) = φ2 / (256 a), / (128 a), / (64 a) for bass, alto, soprano. Register
+  value from a period: *r* = (127 − *a*) & 127.
+- **Output level** (per cycle): *n* = the number of voices with `out` = 1 that are **not muted**; level =
+  `voltagefunction[(7 n + 1) · volume]` (VICE's measured table of 436 values, indices 0..435, copied exactly; its index for *n*
+  outputs is VICE's average `accum · 7 / cycles + 1` at a constant *n*). The unit retains this rounded **raw**
+  level for diagnostics, but hands differences of `floor(raw · 11 / 16)` to blip_buf at the cycle (clock rate = φ2).
+  This host headroom follows the measured nonlinearity; a volume change alone still steps the level (the `+ 1`:
+  the DC offset VIC-20 digis use). There is no compensating post-filter boost.
+- **Output stage** (VICE's model of the VIC-20 board, applied per output frame after blip_buf, in float):
+  `o = lp − hp; hp += hb · (lp − hp); lp += lb · (x − lp)` with *x* the blip sample, `lb = dt / (dt + 1e-4)` (1 kΩ,
+  100 nF: 1591 Hz low-pass), `hb = dt / (dt + 1e-3)` (1 kΩ, 1 µF: 159 Hz high-pass), `dt = 1 / rate`; output
+  `o / 32768` on both stereo sides. blip_buf's own ~15 Hz high-pass stays.
+- **Reset state** (start, audition): every register 0, `shift` 0, `ctr` 0, `out` 0, **`lfsr` = `$FFFF`,
+  `lfsr0_old` = 1** (the state after the noise voice has been disabled for ≥ 16 LFSR clocks, as at power-up after the
+  KERNAL; VICE's static all-zero start would lock an enabled LFSR at zero), filters and blip cleared, mutes cleared.
+- Differences from VICE, all in the plumbing: per-cycle level into blip_buf instead of VICE's per-sample box average
+  looked up once (the nonlinear table is applied to each cycle's state, which is what the DAC does); event-driven
+  stepping to the next counter expiry (bit-identical to per-cycle stepping); mute masks; the LFSR seed.
+
+**Host headroom audit (source bound and focused regressions verified).** The VIC's legal rounded raw span is
+0..29491 (all four outputs high, volume 15); TED's is 0..24576, including D/A and all square/noise combinations.
+TED's volume table saturates at 75, mix table at 2, and the distortion index is the sum of two values ≤150.
+Those hardware nonlinearities are untouched. Neither chip adds channels after its mono nonlinear mix; stereo
+duplicates the mono result, not a sum of two buses. Muting only changes the heard mix; generators keep running.
+
+The pinned blip table's **continuous interpolated step-response total variation** is 41028/32768 =
+1.2520751953125 (use <1.26). This is the sum of variations of the cumulative 16-tap kernels across phases
+0..32, including adjacent-sample joins, not just the norm of one fixed-phase FIR. Thus arbitrary timestamp
+phases and sign patterns are covered. A unipolar span R gives a filtered range of width at most 1.26R.
+Blip's high-pass pole is c=511/512: its L1 norm is 2, so centering the original span bounds its output by
+1.26R even after arbitrarily long DC holds and opposite transitions. Without headroom, VIC's FIR alone can
+reach `(1 + 1.2520751953125) · 29491 / 2 = 33207.97`, beyond signed 16-bit **before** the board filter.
+The new regression constructs a clock-quantized positive-lobe adversary to exercise that risk.
+
+VIC also needs a final-float bound for the board's second high-pass, not only a clean blip read. Put
+ε=1/512, h=hb=1/(1+0.001·rate), a=1−h. Cascading the two high-passes gives, after the unit impulse,
+`−h²/(h−ε) · a^(n−1) + ε²/(h−ε) · c^(n−1)`. Triangle summation bounds its L1 by
+`2h/(h−ε) ≤ 1024/415` for **every** supported integer rate 8000..96000. The board low-pass has nonnegative
+coefficients summing to one and cannot increase that bound; delays do not change it. With raw span centered,
+the complete VIC output is therefore at most `1.26 · floor(29491·11/16) · 512/415`.
+Reserve a further 512 PCM units for fixed-point/interpolation and floating-point rounding: VIC is below
+26059 before the int16 read and below **32030/32768** after the board filter; unchanged TED is below
+**31478/32768**. No outer clamp, limiter, changed volume curve or post-blip normalization is needed.
+
+The rounding reserve is deliberately loose: the maximum adjacent-phase cumulative-coefficient difference is
+723/32768; rounding the interpolated delta by <1 affects only its 16-sample support. Even at the largest
+clock/rate ratio (VIC PAL / 8000), fewer than 2220 clock positions overlap. Allowing two output submissions
+per clock gives <98 units before the high-passes, <392 after both (the low-pass does not amplify); the
+remaining reserve covers the sample quantizer and float recurrence. Production batches/mutes occur at tick
+boundaries, not an unlimited number of writes per chip clock. Scaled **absolute endpoints**, not separately
+rounded deltas, prevent gain-rounding drift. Raw `CbVic.level`, TED states, traces and register timing remain
+unchanged. The VIC preview/WAV level is intentionally 11/16 of its former unclipped value.
+
+`cbm_machine_test.c:test_headroom` adds PAL/NTSC × both chips × 8/11.025/22.05/44.1/48/96 kHz cases with
+long DC holds, maximum-volume opposites, dense DAC changes, square/noise routes, mute/unmute and a quiet
+parallel-blip linearity oracle. A separate 96 kHz VIC adversary uses legal high voice bits/counter intervals
+and timed volume writes, checks the unchanged raw voltage and demands an unclipped scaled peak.
+The focused run passes **6,704 checks**. The saved original VIC gain fails 14: its two 96 kHz adversaries
+hit **32767**, while the corrected gain preserves the quiet oracle's peak within eight PCM units.
+The initial oracle itself had two false failures because `blip_set_rates` does not reset its phase:
+both compared paths now start cleared. TED coverage explicitly selects noise (`0x50`, not `0x70`,
+whose square enable takes precedence) and uses distinct tone reloads. No tolerance was relaxed.
+The quiet blip is not an independent hardware reference. Full integration must still retain the
+trace/mute-state/seek tests and render ordinary PAL/NTSC demos and timer-driven TED samples.
+VICE's box-average output is not a bit-identical resampling oracle, and plus4emu's hardware distortion
+must not be normalized away. Human listening remains a separate review.
+
+**TED** (`cbm/cbm_ted.c`, adapted from plus4emu's `src/ted_snd.cpp` and the sound parts of `ted_write.cpp`,
+`ted_init.cpp`, `ted_main.cpp`, `ted.hpp` by István Varga, GPL-2.0-or-later; github.com/istvan-v/plus4emu commit
+`939e65233b227a47e5523eca149de8247176e28f`; sha256 `ted_snd.cpp` `be2b86ea8afe3e742f65ae17cf591da7158de638d2a21d2f35230baab469d030`,
+`ted_write.cpp` `e18a6e94173ed5b76ceb6257383d37310f08ce74555c029cd68892980510bd17`, `ted.hpp`
+`ecbd508839243a7941c413a216ce8788cc5ee1a1aa4ba2f65162f4cff0ad7047`, `ted_init.cpp`
+`bf3c7812faa0be882ce66680cc48dc0cd131eaaf8048a4605b69e5390dea4fbf`, `ted_main.cpp`
+`94b560dc95ee1653a6d8b755d3eba2a8f74fb463e5f167858a831bfd1619f806`). plus4emu was chosen over VICE's `ted-sound.c`
+(per output sample, "inspired by SDL-YAPE") because it steps the TED's sound clock exactly, including the `$3FE`
+no-toggle case and its ~0.85 s decay to high, the D/A mode's counter hold, the noise register's refill when D/A mode
+ends (by the 4-cycle phase), the volume curve and the output's nonlinearity. Ported unchanged except for plumbing:
+
+- Registers (offsets of `$FF00`): `$0E` voice 1 frequency bits 0-7, `$12` bits 0-1 voice 1 frequency bits 8-9 (bits
+  2-7 are video: the unit ignores them; the player writes them 0), `$0F` voice 2 bits 0-7, `$10` bits 0-1 voice 2 bits
+  8-9, `$11` = bit 7 D/A mode, bit 6 voice 2 noise, bit 5 voice 2 square, bit 4 voice 1 square, bits 0-3 volume (0..8;
+  9-15 = 8). Reload of a 10-bit value *x*: `((x + 1) ^ $3FF) & $3FF) + 1` = 1023 − *x* for *x* ≤ 1022, 1024 for
+  `$3FF`. A voice toggles on each counter underflow except when the previous sound cycle also underflowed (reload 1,
+  *x* = `$3FE`: no tone; the state goes high after `soundDecayCycles` = `$2E000` sound cycles). Square frequency =
+  sound clock / (2 · reload). Register value from a reload *P* (2..1024): *x* = (1023 − *P*) & `$3FF`.
+- The noise generator is an 8-bit LFSR (feedback = parity of `state & $B2`) clocked on voice 2's toggles; its output
+  is the inverted bit 0. With both bits 5 and 6 set voice 2 plays the square (plus4emu's mix table).
+- Output per sound clock: `soundOutput = mixTable[flags | v1 << 2 | v2 << 1 | noise & 1] · volumeTable[vol]`,
+  `out = distortionTable[prvSoundOutput + soundOutput]` (tables copied exactly: volume 0, 6, 16, …, 66, 75; the mix
+  table counts the outputs that are high, D/A mode included; the distortion table's 301 entries). The unit hands each
+  `out` change to blip_buf at the sound clock; float = sample / 32768.
+- **D/A mode** (bit 7): counters held at their reloads, both voice states high, the noise register refilled with ones
+  at the single-clock phase; the output is `mixTable` of the enabled bits 4/5 × the volume: the volume register is a
+  9-level DAC per enabled voice, both enabled giving the louder curve. Leaving D/A mode shifts in `(prv − phase) & 3`
+  one-bits (plus4emu's `prvCycleCount`), so the unit keeps plus4emu's 4-cycle `cycle_count` phase: the sound step runs
+  when `cycle_count` = 0 (then 4), `cycle_count` decreases every single clock.
+- Reset state: plus4emu's `TED7360::reset` sound part (counters and reloads `$3FF`, states 1, noise `$FF`, decays
+  `soundDecayCycles`, flags/volume/outputs 0, `cycle_count` 0, `prvCycleCount` 0), blip cleared, mutes cleared.
+- No board filter is modelled (none is known for the C16/Plus/4 audio path; the output is the TED pin through the
+  distortion curve); blip_buf's ~15 Hz high-pass removes the DC.
+
+**Mutes** (both units, `mute(channel)`): a muted voice is left out of the output only; every counter, shift register,
+LFSR, decay and phase keeps running, and the player's writes are unchanged. VIC: *n* counts unmuted voices. TED: outside
+D/A mode a muted voice 1 clears bit 3 (voice 1 enable) and a muted voice 2 clears bits 4-5 of the mix index; in D/A
+mode only the DAC lane's mute applies (output 0). The shared volume is the chip's: a muted lane that owns the master
+volume envelope (below) still drives it.
+
+### Lanes and shared resources
+
+| System | Channel | Lane | Hardware | Notes (absolute, 0 = C-0, 57 = A-4) PAL / NTSC |
+|---|---|---|---|---|
+| VIC | 0 | Bass | `$900A`, shift 4 | 13..52 / 11..48 |
+| VIC | 1 | Alto | `$900B`, shift 3 | 25..64 / 23..60 |
+| VIC | 2 | Soprano | `$900C`, shift 2 | 37..76 / 35..72 |
+| VIC | 3 | Noise | `$900D`, shift 1 | 0..127 (noise rate index, below) |
+| TED | 0 | Voice 1 | `$0E`/`$12`, square | 33..108 |
+| TED | 1 | Voice 2 | `$0F`/`$10`, square or noise | 33..127 (a square above 108 is more than 50 cents out: Kotlin warns) |
+| TED | 2 | DAC | `$11` in D/A mode | 24..108 (sample pitch) |
+
+Tonal ranges = the notes whose period, as the player rounds it, sounds within ±50 cents (contiguous from the lowest);
+worst errors inside: VIC PAL 46.5 cents, NTSC 32.8; TED PAL 32.8, NTSC 47.5 (A-4: VIC soprano *a* 39 = 444.07 Hz PAL
+(+15.9 cents), 36 = 443.89 Hz NTSC (+15.2); TED *P* 252 = 439.84 Hz PAL (−0.6), 254 = 440.40 Hz NTSC (+1.6)). The VIC's
+coarse 7-bit periods are the instrument's character, not an error to hide. **No chords, no voice allocation**: each
+lane is one hardware voice. Shared resources are visible song state:
+
+| Shared resource | Register | Song start (header) | Changed by |
+|---|---|---|---|
+| Master volume level *M* | VIC `$900E` bits 0-3 (0..15); TED `$11` bits 0-3 (0..8) | byte 15 | `Vxx`, `Axy` (shared); the owner's volume envelope (below) |
+| DAC timer *T* (TED) | TED timer 1 reload = 64 + 4 *T* single clocks (no sound register) | byte 16 | `Txx` |
+| D/A mode (TED) | `$11` bit 7: takes both voices while a DAC note sounds | — | DAC lane notes |
+
+**Master volume owner**: a key-on whose instrument has a volume envelope makes its lane the owner; a key-on without one
+on the owner lane, or the owner's note stopping, ends ownership (owner −1). The volume written each tick is
+`max(0, env + M − MAX)` while there is an owner (env = its envelope value, MAX = 15 VIC / 8 TED), else *M*. So one
+envelope shapes every voice, as on the hardware; Kotlin shows the owner in the lane tags (`SharedState`).
+
+The Pattern shared-state walk reports row tick 0, after its row events and before timer interrupts at that cycle.
+Owner descriptions and OFF use the slot latched by the playing note, not a later instrument-only selection or a
+portamento target's selected slot. A released volume/wave envelope holds its terminal value in song playback,
+including zero; it does not automatically free ownership (audition completion has a separate rule).
+For TED D/A tags, the walk follows tick-by-tick fine pitch, arpeggio, slides, vibrato, portamento and sample pitch/
+arpeggio envelopes. It batches timer interrupts arithmetically, preserving the pending interrupt through `Txx`
+and through silence; reloads use the new timer. One-shots stop on the interrupt that finds the position past the
+length, not the preceding interrupt that advanced it there. Coincident tick/interrupt events run the player first.
+The note rail remains a fixed-header-rate/pitch estimate; it now includes that final stop interrupt.
+Five focused `CbmModelTest` regressions fail against the old walk and pass corrected. Independent native
+scheduler checks cover 18 scenarios (88 assertions); the full JVM suite and real Nova/DMG/Konkr
+controller/audio scenarios pass. See `docs/VERIFICATION.md` for counts, measurements and reference limits.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = **131072** bytes, little-endian, one layout for both chips (header byte 5 = chip). Every pattern and
+envelope reference is a u16 offset and every sample a u32 offset into the data region, so data relocates. Constants:
+`cbm/cbm_image.h` (`CB_*`); Kotlin `backend/CbmImage.kt` (`object CbmImage`, the same names without the prefix, checked
+by `tools/audio/prepare_cbm.py`); the reference builder `tools/audio/cbm/cbm_song.py`. `cb_load_image` rejects anything
+off-contract with a reason and the byte (`CbInfo.problem`, `problem_offset`); the Kotlin validator mirrors every check
+with a user-facing message.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTCB"` |
+| 4 | 1 | layout: 1 (`CB_LAYOUT`) |
+| 5 | 1 | chip: 0 VIC (`CB_CHIP_VIC`), 1 TED (`CB_CHIP_TED`); must match the ops (`"vic20-vic"` / `"c16-ted"`) |
+| 6 | 1 | video: 0 PAL (`CB_VIDEO_PAL`), 1 NTSC (`CB_VIDEO_NTSC`) |
+| 7 | 1 | multispeed N, 1..4 (`CB_MAX_MULTISPEED`) |
+| 8 | 1 | speed (ticks per row) at the start, 1..255 |
+| 9 | 1 | instrument count I = highest slot present, 0..64 |
+| 10 | 2 | order count, 1..256 |
+| 12 | 2 | loop order (< count) |
+| 14 | 1 | sample count S, 0..64 (VIC: 0) |
+| 15 | 1 | master volume *M* at the start: VIC 0..15, TED 0..8 |
+| 16 | 1 | DAC timer *T* at the start, 0..255 (VIC: 0) |
+| 17 | 3 | 0 |
+| 20 | 4 | data size D: bytes of the data region used, ≤ `CB_DATA_CAPACITY` |
+| 24 | 40 | 0 |
+| 64 (`CB_OFF_ROWS`) | 256 | rows of order *o* at 64 + *o*: 1..255, 0 = 256; entries ≥ count 0 |
+| 320 (`CB_OFF_ORDERS`) | 2048 | pattern of (order *o*, channel *c*) = u16 data offset at 320 + 2 (4 *o* + *c*); entries ≥ count 0; TED channel 3 entries 0 |
+| 2368 (`CB_OFF_INSTRUMENTS`) | 2048 | instrument slot *n* (1..64) at 2368 + 32 (*n* − 1) |
+| 4416 (`CB_OFF_SAMPLES`) | 512 | sample *s* (0..63) at 4416 + 8 *s*: u32 data offset, u32 length in frames (1..65535); entries ≥ S zero |
+| 4928 | 192 | 0 |
+| 5120 (`CB_OFF_DATA`) | 125952 (`CB_DATA_CAPACITY`) | data region `[0, D)`: patterns, envelopes, sample frames (0..8, one per byte) |
+
+Other constants: `CB_IMAGE_SIZE` 131072, `CB_HEADER_SIZE` 64, `CB_MAX_CHANNELS` 4, `CB_VIC_CHANNELS` 4,
+`CB_TED_CHANNELS` 3, `CB_MAX_ORDERS` 256, `CB_MAX_INSTRUMENTS` 64, `CB_MAX_SAMPLES` 64, `CB_MAX_EFFECTS` 2,
+`CB_INSTRUMENT_SIZE` 32, `CB_SAMPLE_ENTRY_SIZE` 8, `CB_MAX_ENVELOPE` 255, `CB_MAX_SAMPLE_FRAMES` 65535,
+`CB_VIC_MAX_VOLUME` 15, `CB_TED_MAX_VOLUME` 8, `CB_DAC_MAX` 8, `CB_TED_NOISE_CHANNEL` 1, `CB_TED_DAC_CHANNEL` 2,
+`CB_VIC_NOISE_CHANNEL` 3. Header byte offsets: `CB_H_MAGIC` 0, `CB_H_LAYOUT` 4, `CB_H_CHIP` 5, `CB_H_VIDEO` 6,
+`CB_H_MULTISPEED` 7, `CB_H_SPEED` 8, `CB_H_INSTRUMENTS` 9, `CB_H_ORDERS` 10, `CB_H_LOOP` 12, `CB_H_SAMPLES` 14,
+`CB_H_VOLUME` 15, `CB_H_TIMER` 16, `CB_H_DATA_SIZE` 20.
+
+Pattern and envelope offsets are u16: the lowering places patterns, then envelopes, then sample frames, and refuses a
+song whose patterns or envelopes would start beyond data offset 65535 ("patterns and envelopes pass the 64 KB their
+offsets reach"). Samples may lie anywhere below D.
+
+**Instrument** (32 bytes; all zero = no instrument; records above I zero):
+
+| Byte | Field |
+|---|---|
+| 0 (`CB_I_FLAGS`) | bit 7 = defined (`CB_FLAG_DEFINED`); bits 0-1 kind: 0 tone (`CB_KIND_TONE`), 1 sample (`CB_KIND_SAMPLE`, TED only); bit 2 = pitch envelope relative (`CB_FLAG_RELATIVE`); others 0 |
+| 1 (`CB_I_WAVE`) | tone: the wave without a wave envelope: 1 square (`CB_WAVE_SQUARE`; VIC: always 1), 2 noise (`CB_WAVE_NOISE`, TED only); sample: 0 |
+| 2 (`CB_I_SAMPLE`) | sample: index 0..S − 1; tone 0 |
+| 3 (`CB_I_ROOT`) | sample: root note 24..108 (one frame per timer interrupt); tone 0 |
+| 4 (`CB_I_LOOP`) | sample: 1 loop, 0 one-shot; tone 0 |
+| 5 | 0 |
+| 6 (`CB_I_LOOP_START`) | u16 loop start frame (< the sample's length; 0 without loop or for tones) |
+| 8 + 6 *k* (`CB_I_ENVELOPES`) | envelope *k* = 0 volume (`CB_ENV_VOLUME`), 1 arpeggio, 2 pitch, 3 wave (`CB_ENV_WAVE`): u16 data offset, u8 length L (0 = none: offset 0, loop and release `$FF`), u8 loop (`$FF` = `CB_ENV_NONE`, else < L), u8 release (`$FF`, else 1..L − 1, > loop when both), u8 0 |
+
+Envelope values: volume = the master volume shape, 0..15 VIC / 0..8 TED; arpeggio s8 −64..63 semitones; pitch s8
+−128..127 in 1/64 semitone (absolute, or relative with the flag); wave per tick: 0 off, 1 square, 2 noise (2 TED
+only). Sample instruments have no volume and no wave envelope (length 0): the DAC ignores the master volume.
+
+**Placement rules** (loader and validator): a tone instrument plays on the voice lanes (VIC 0-3, TED 0-1); a tone
+instrument that can play noise (wave byte 2 or any wave value 2) only on TED voice 2 (channel 1); sample instruments
+only on the TED DAC lane (channel 2). On the VIC noise lane every tone instrument plays noise (its waves 1/0 gate it).
+
+**Patterns** (decoded from the offset for exactly rows(*o*) rows; a run past the order's rows is cut; every byte read
+inside `[0, D)`):
+
+| Bytes | Meaning |
+|---|---|
+| `0x80 \| k` | k + 1 empty rows (k 0..127) |
+| `m` (0x01..0x0B), then data | bit 0: note byte follows; bit 1: instrument byte; bits 2-3: effect count 0..2; bits 4-6 zero, m ≠ 0 |
+| note | absolute note inside the lane's range (table above, by the header's chip and video), `0xFE` = OFF (`CB_NOTE_OFF`) |
+| instrument | slot 1..64, defined, allowed on the lane (placement rules) |
+| effects | per column: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
+
+Effect codes (`CB_FX_*`): `0` 0, `1` 1, `2` 2, `3` 3, `4` 4, `A` 10, `B` 11, `D` 13, `F` 15, `G` 16, `P` 25, `S` 28,
+`T` 29 (TED only), `V` 31, `W` 32 (TED voice lanes only). Any other code is rejected ("unknown effect code"), as are
+`T`/`W` on the VIC, `W` on the DAC lane, `W02` off voice 2, `W` > 02, `Bxx` ≥ order count, `F00`, `Vxx` above the
+chip's MAX. Header checks: magic, layout, chip = the ops' chip, video 0..1, multispeed 1..4, speed ≥ 1, I/S ≤ 64,
+VIC S = 0 and T = 0, volume ≤ MAX, D ≤ capacity, reserved bytes 0, row bytes of orders ≥ count 0 (any value below:
+0 = 256), order-table entries of orders ≥ count 0, TED channel 3 entries 0. `cb_load_image` derives `CbInfo` (orders, loop, chip, video,
+multispeed, speed, instrument and sample counts, rows per order, the speed each order starts with in sequential
+straight play: header speed, then the last `Fxx` of each order by rows, channels, columns; jumps ignored).
+
+**What the lowering writes** from a `Cell` with up to 2 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
+an absolute note → itself; instrument 0 → no byte; effect columns in order, blank columns omitted; empty rows in runs
+(≤ 128 per run byte); byte-identical (order, channel) encodings stored once in first-use order (orders, then
+channels), then each slot's envelopes in slot order (volume, arpeggio, pitch, wave; byte-identical envelopes stored
+once, first use), then the samples in sample order (identical frames stored once); every filled slot written
+(I = the highest), S = the song's sample count.
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, a note *n* is 64 *n*; pitches are clamped to 0..8191.
+
+**Period tables** (`cbm/cbm_tables.c`, `CBP_PERIOD_Q16[4][768]`, index 0 VIC PAL, 1 VIC NTSC, 2 TED PAL, 3 TED NTSC):
+`T[v][i] = floor(clk_v / (div_v · 440 · 2^((i / 64 − 57) / 12)) · 65536 + 0.5)` in IEEE double, with clk = φ2 (VIC,
+div 64 = the soprano's) or the sound clock (TED, div 2), the clocks as the exact quotients above evaluated in double
+(17734475 / 16, 315000000 / 308, 17734475 / 80, 315000000 / 1408). `cbm_ref.py` computes them with this formula and
+`prepare_cbm.py` fails on any difference. **Period** of pitch *p* with octave shift *s* (VIC alto 1, bass 2, else 0):
+*q* = p + 768 *s*, *o* = q / 768, *i* = q mod 768, period = (T[i] + 2^(15 + o)) >> (16 + o) (64-bit), clamped to
+1..128 (VIC) or 2..1024 (TED).
+
+**VIC noise rate**: the noise lane's notes are rate indices *k* = 0..127 (period *a* = 128 − *k*, so higher notes are
+brighter); played rate = clamp(keyed note + semitones, 0, 127) (the note of the last key-on, not the glide base),
+register = (*k* + 127) & 127 | gate. Only arpeggios (the effect and the envelope) act on it; slides, portamento,
+vibrato, `Pxx` and pitch envelopes are ignored there (a note on the noise lane always keys on, even under `3xx`).
+
+**Sample step** (TED DAC): `CBP_STEP_Q16[i]` = floor(65536 · 2^(i / 768) + 0.5), *i* = 0..767. For *d* = pitch − 64 ·
+root: *o* = floor(d / 768), *i* = d − 768 *o*; step = STEP[i] << o (o ≥ 0) or STEP[i] >> −o, clamped 1..2^24 (16.16
+frames per timer interrupt; the root plays 65536).
+
+**DAC timer** (TED): timer 1 counts single clocks; interrupt period R = 64 + 4 *T* (13.86 kHz .. 818 Hz PAL; *T* = 12:
+112 = 7917 Hz). The first interrupt comes R cycles after the start/audition reset (*T* = the header's), each next R
+cycles later with *T* as the player holds it at that interrupt (a `Txx` takes effect from the next reload). An
+interrupt on a tick's first cycle runs after that tick's batch. VIC: no timer.
+
+**Writes** are (register, value) pairs, register = the address's low byte (`$0A`..`$0E` VIC, `$0E`..`$12` TED). Every
+register has a shadow (the value last written); a write equal to its shadow is not emitted. Write order inside a
+voice: VIC its one register; TED low byte then high byte (`$0E` then `$12`; `$0F` then `$10`).
+
+**Reset** (start, audition): all player state cleared, channels: instrument 0, not sounding, cut −1, overrides none;
+shared: *M* and *T* from the header, master slide 0, owner −1, DAC inactive, DAC level 0; position (0, 0, tick 0) with
+the header speed. Reset batch (every write emitted, setting the shadows): VIC `$0A` 0, `$0B` 0, `$0C` 0, `$0D` 0, `$0E`
+= *M*; TED `$0E` 0, `$12` 0, `$0F` 0, `$10` 0, `$11` = *M*.
+
+**Tick**:
+
+1. Tick 0 of a row: read every channel's row at (order, row). Over channels in order and their columns in order: `Fxx`
+   sets the speed (last wins, this row included); `B`/`D` record the next position (`B` only → (xx, 0); `D` only →
+   (next order, xx), next order = order + 1 or past the last the loop order; both → (B's order, D's row)). Then per
+   channel: cut cleared; a row with `Gxx`, xx > 0 (the last `G` of the row) is delayed to tick xx, else it runs now.
+   Other ticks: delayed rows due now run, channels in order.
+2. Each channel whose cut tick (`Sxx`) equals this tick gets OFF, channels in order.
+3. Each sounding channel is updated (below), channels in order.
+4. **Control**: VIC `$0E` = volume out (above, owner rule); TED `$11` = D/A active ? `$80 | $30 | dac_level` :
+   volume out | (voice 1 sounding with wave 1 ? `$10`) | (voice 2 sounding with wave 1 ? `$20` : wave 2 ? `$40`).
+   Then the shared slide: if `Axy` is set, *M*·8 += x − y, clamped 0..MAX·8 (*M* = that >> 3).
+5. tick + 1; at the speed: tick 0 and the next row (the recorded jump, row clamped to the target order's last row;
+   else row + 1, after an order's last row the next order, after the last order the loop order). Whenever the next row
+   is row 0 of the loop order the speed becomes `CbInfo.start_speed[loop]`.
+
+**Running a row**: a row with a note (not OFF) clears the arpeggio effect, `Pxx` and the wave override (`Wxx`) before
+its effects run (so the row's own `0`/`P`/`W` set them again); an instrument byte sets the channel's instrument;
+effects run in column order (`B`, `D`, `F`, `G` already acted); then the note: OFF → **OFF**; a note with portamento
+active (`3xx`, xx > 0) on a sounding channel other than the VIC noise lane only sets the glide target; any other note
+keys on. The TED control value
+outside a tick (audition release, a one-shot's end in an interrupt) uses the volume out of the last control step.
+
+**Key-on** (note *n*): nothing if the instrument is not a defined slot allowed on the lane. Else: slot latched;
+envelope indices 0, released 0, relative accumulator 0; base = target = 64 *n*, slide 0, arpeggio step 0, vibrato
+phase 0; sounding = 1, fresh = 1; owner rule (above); DAC lane: position = `$10000` (frame 1 next). Nothing is written
+now.
+
+**OFF**: nothing if not sounding. If the instrument's volume or wave envelope has a release point: released = 1 and
+every envelope with a release point jumps to it. Else **stop**: sounding = 0; owner → −1 if this lane owned; DAC lane:
+D/A inactive. (The control step then writes the gate/D/A change; VIC voices: the update of a stopped channel does not
+run, so stop also writes the voice register with bit 7 clear through its shadow at once.)
+
+**Envelopes**: held part [0, H), H = release if set, else L. Not released, or released without a release point:
+next = idx + 1, at H: loop if set, else H − 1. Released with a release point: next = idx + 1, at most L − 1. No
+envelope: volume none (no owner), arpeggio 0, pitch 0, wave = override (`Wxx`) if set, else the instrument's wave byte.
+A relative pitch envelope adds to the accumulator (clamped ±8192) before use. Indices advance after the update reads
+them.
+
+**Update** of a sounding channel: semitones = arpeggio effect (0, x, y for steps 0, 1, 2 of `0xy`) + arpeggio value;
+pitch = clamp(base + 64 · semitones + fine + slide + vibrato + pitch value, 0, 8191), vibrato = (SINE[phase] · depth)
+>> 4 (arithmetic), `CBP_SINE[i]` = floor(127 sin(2π i / 64) + 0.5); wave = envelope value, else override, else
+instrument; the owner keeps its volume value for the control step. Writes:
+
+- VIC voice 0-2: *a* = period(pitch, shift), reg = (wave ≥ 1 ? `$80` : 0) | ((127 − a) & 127). Noise lane: rate as
+  above, reg = (wave ≥ 1 ? `$80` : 0) | ((k + 127) & 127).
+- TED voice: *P* = period(pitch), *x* = (1023 − P) & `$3FF`: low then high register. The wave goes into the control
+  step.
+- TED DAC: step = sample step(pitch, root); if fresh: D/A active and `$11` = `$B0 | frame 0` (dac_level = frame 0).
+
+Then fresh = 0 and the channel advances: envelope indices; arpeggio step mod 3 when set; slide ± speed (clamped ±8192)
+for `1xx`/`2xx`; base toward target by the speed for `3xx` (no overshoot); vibrato phase + speed (mod 64) when speed
+and depth are both set.
+
+**Timer interrupt** (TED, its own batch): if the DAC lane is D/A active: f = position >> 16; past the length: loop →
+position = (loop start << 16) + (position − (length << 16)) mod ((length − loop start) << 16); one-shot → stop (D/A
+inactive, sounding 0) and `$11` = the control value without D/A at once. Else `$11` = `$B0 | frame f` (dac_level), position
++= step (the last update's).
+
+### Effects (Kotlin's effect specs for both systems)
+
+Two effect columns per lane. "Shared" = the chip's one resource, for every lane, last one in row order wins.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note: note, +x, +y each tick (VIC noise: rate steps); a row without a note changes the sounding note's arpeggio |
+| `1xx` / `2xx` slide | 1/64 semitone per tick | now, until `100`/`200`/`300`; not on the VIC noise lane |
+| `3xx` portamento | 1/64 semitone per tick | now; a note on a sounding lane glides there; not on the VIC noise lane |
+| `4xy` vibrato | speed, depth | now; `4x0` off; not on the VIC noise lane |
+| `Axy` master volume slide | x up, y down, 1/8 level per tick | shared, until `A00` |
+| `Bxx` jump | order | after this row: order xx |
+| `Dxx` break | row | after this row: row xx of the next order |
+| `Fxx` speed | 01-FF | now, this row included |
+| `Gxx` delay | ticks | the lane's row runs at tick xx (never if ≥ speed) |
+| `Pxx` fine | 80 = none | xx − 80 in 1/64 semitone until the next note; not on the VIC noise lane |
+| `Sxx` note off | tick | OFF at tick xx of this row |
+| `Txx` DAC rate (TED) | 00-FF | shared: timer reload 64 + 4·xx single clocks from the next interrupt |
+| `Vxx` master volume | VIC 00-0F, TED 00-08 | shared: *M* = xx (*M*·8 = 8 xx) |
+| `Wxx` wave (TED voices) | 00 off, 01 square, 02 noise (voice 2) | now: the sounding note and later notes until a note row without `W`; ignored by instruments with a wave envelope |
+
+### Position, seek and live edits
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the player alone counts the ticks straight play needs to reach (order, row, 0); if
+  ≤ `max_ticks` the machine resets and plays that many ticks with the chip unit, the DAC timer, blip_buf and the VIC
+  output stage clocked exactly as audible playback and the output discarded (`CHIP_SEEK_FROM_START`: every counter,
+  shift register, LFSR, decay, phase and filter equals straight play's). Otherwise (`CHIP_SEEK_FROM_ORDER`): reset,
+  place at the order start with the speed straight play starts it with (shared state from the header: `V`/`A`/`T`
+  of earlier orders are not replayed), the order's earlier rows replayed the same clocked way; a row unreachable behind
+  a `Dxx` of the same order = `CHIP_ERR_IMAGE`. Kotlin `seekTicks` = `CBM_SEEK_TICKS` = 3600 (72 s PAL).
+- `apply_image` (tick boundary, realtime-safe, no allocation): an image of the other chip is ignored. (1) position
+  clamped as the OPL3/PC Engine rule: an order past the new count → the last order's last row, a row past its order's
+  rows → that order's last row; a clamped position drops the recorded jump and delayed rows, takes the speed straight
+  play has there and, if its row had not started, counts it as played. (2) Otherwise when the speed straight play has
+  at (order, row) differs between the old and new image, the new one is taken. (3) A started row's jump and delayed
+  rows are re-read from the new data. (4) Sounding notes keep their state and read their latched slot's envelopes and
+  sample from the new image each tick (indices clamped to the new lengths; a slot no longer allowed on its lane or no
+  longer defined stops its note; a sample position past the new length follows the end rule). (5) Each shared header
+  field (volume, timer) whose value differs between old and new header sets the player's value. (6) Multispeed or
+  **video** changes rebase the tick timeline at the next tick (tick *k* from the edit's tick *k₀*: base + ⌊(k − k₀) ·
+  F / N⌋); a video change also switches the unit's clock (blip rates; TED: the sound/timer clock), the period table and
+  the frame F from the next tick; the units' state continues.
+
+### Audition
+
+`audition(channel, note, slot, fine −128..127)`: reset (header shared state), key on with the slot, `fine` added like
+`Pxx`; ticks only update and run the control step (and the TED timer). An undefined slot, a slot not allowed on the
+lane, a note outside the lane's range or a bad channel = `CHIP_ERR_IMAGE`. `release()`: 0 before any tick (audition
+over); else OFF, its writes sent at once (stop: the voice register / the control value); returns 0 when that stopped
+the note, else 1. `tick` returns 0 once the note stopped (also a one-shot sample's end), or, after a release, once its
+wave envelope is at its last step with value 0 or the written volume is 0 with the owner's envelope at its last step,
+or 10 s after the release.
+
+### Ops
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `cb_load_image` with the ops' chip; `image_storage` = `sizeof(CbmImage)` |
+| `tick` | one tick: PAL 48 kHz ≈ 959 (VIC) / 963 (TED) frames, ≤ 1926 at 96 kHz (< `CHIP_MAX_TICK_FRAMES`); 0 after a released audition ended |
+| `row_serial` | NULL |
+
+Kotlin `PlaybackEngine` (both): `imageSize` 131072, `seekTicks` 3600, `note(n)` = n, `fine(channel, note, fine)` =
+fine in 1/64 semitone (0 on the VIC noise lane), `ticksPerSecond` = frame rate × multispeed.
+
+### Preparing and checking (nothing here has been run)
+
+- `python3 tools/audio/prepare_cbm.py [--check-only]`: checks `cbm_tables.c` (`CBP_PERIOD_Q16`, `CBP_STEP_Q16`,
+  `CBP_SINE`), every shared `CB_*` constant of `cbm_image.h`, the constants and lane ranges of `backend/CbmImage.kt`
+  and the lane-range rule against the Python reference (fails on any difference, writing nothing), then writes
+  `app/src/test/cpp/cbm_test_song.h` (the four test images of `tools/audio/cbm/cbm_song.py` — `vic_pal`, `vic_ntsc`
+  (multispeed 2), `ted_pal`, `ted_ntsc` (multispeed 3) — and the reference's batches per tick and per interrupt for
+  1500, 1500, 600 and 900 ticks).
+- `tools/audio/run_native_host_test.sh DIR` builds and runs `app/src/test/cpp/cbm_machine_test.c DIR SAMPLES` (SAMPLES =
+  `$THOR_SAMPLES` or `app/build/samples`, from `exportSamples`): writes `cbm_trace_{vic_pal,vic_ntsc,ted_pal,ted_ntsc}.txt`,
+  `cbm_trace_{vic-demo,vic-shortest,ted-demo,ted-shortest}.txt` (3000 ticks of the Kotlin images), the fixtures' WAVs
+  and `cbm_vic_shortest.wav` / `cbm_ted_shortest.wav`; `wav_render_test.c` renders `vic-demo.cbimg` and `ted-demo.cbimg`
+  with the demos and checks the two shortest songs separately.
+- `python3 tools/audio/cbm/cbm_reference_check.py DIR --images app/build/samples --pitch DIR/cbm_vic_shortest.wav=444.07
+  DIR/cbm_ted_shortest.wav=439.84`: every native trace against the reference player (the Kotlin-exported images
+  through the reference loader too), A-4 recomputed in closed form from the clocks, the lane ranges from the tables,
+  and the WAVs' fundamentals within 0.5 %.
+- `tools/audio/render_cbm_image.sh image out.wav [seconds] [mute=mask]` (the chip from header byte 5).

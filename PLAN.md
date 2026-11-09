@@ -13,9 +13,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-TIA integration targets **0.32.0/code 45** on verified POKEY `c8a7d46`, retaining all earlier systems and
-the format-10 tuning library. Integrated builds, independent references, three reserved Android
-handhelds and SDL playback/audition pass. Publication remains pending; evidence is in `docs/VERIFICATION.md`.
+VIC/TED integration targets **0.33.0/code 46** on published TIA, retaining all earlier systems
+and the format-10 tuning library. Native/reference, JVM, all three Android frontends, Linux tests and
+the CI-built optimized AppImage pass. Publication is the remaining gate. See `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -82,10 +82,13 @@ handhelds and SDL playback/audition pass. Publication remains pending; evidence 
      Native/reference comparisons, 831 JVM tests, 32 unchanged Game Boy views, all three reserved
      Android handhelds and SDL playback/audition pass, including the official APK/AppImage artifacts.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
-     Integration **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
-     WAV-only, Cartridge Dawn demos. All 1,812 native TIA checks, independent references, Android
-     controller/edit/export scenarios and SDL playback/audition pass; publication remains pending.
-   - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
+     Released **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
+     WAV-only, Cartridge Dawn demos. Native/reference, Android controller/edit/export and SDL
+     playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
+   - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
+     "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
+     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
+     Android frontends and the CI-built optimized AppImage pass; publication is the remaining gate.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
@@ -101,6 +104,15 @@ handhelds and SDL playback/audition pass. Publication remains pending; evidence 
    - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
      and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
      This is a roadmap target, not a working port or an established performance claim.
+   - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
+     (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
+     vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
+     No application was launched, installed or changed during this inspection.
+   - Packaging target: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects/settings outside the Pak
+     (proposed `/mnt/SDCARD/ThorTunez/`) so Pak Store replacement cannot remove user data.
+     Follow [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/), use its environment
+     and diagnostics locations, preserve global ALSA/display settings, and return cleanly to the launcher.
+     Prefer the device's vendor SDL2/GPU integration; linking and callback behavior still need an executable spike.
    - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
      Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
      Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
@@ -119,6 +131,23 @@ handhelds and SDL playback/audition pass. Publication remains pending; evidence 
 - **Korg DS-10 / DS-10+ interface discussion:** revisit the Nintendo DS instruments together and discuss
   interface ideas that could suit Thor Tracker. Discussion only for now; no research or implementation
   requested, and no specific interaction or feature selected yet.
+- **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
+  and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
+  - **Colour themes:** eight semantic palette roles, with independent background/text/focus contrast;
+    BRIXEQ ships DEFAULT, AMBER, DAISY, LAVENDER, LCD, LCD INV, NIGHT and DAY. For Thor Tracker,
+    discuss accessible dark/light palettes and persistent workspace selection without changing song data.
+  - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
+    and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
+    Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
+    readable, avoid flicker, and measure GPU/frame-time/power impact on Brick and Android.
+  - **Workflow:** persistent focused-parameter editing across steps; explicit step audition; bounded
+    selection randomization with one-step Undo; queued pattern/scene changes; trigless parameter locks.
+    These are research ideas, not approved implementations. Keep hardware-specific effect legality,
+    deterministic/native-export semantics and editable instrument-slot identity.
+  - BRIXEQ's complete per-step instrument snapshots are an interesting contrast to tracker instruments,
+    not a reason to replace Thor Tracker's model. Its repository has no declared project license;
+    availability of Lua in the release is not reuse permission. Discuss ideas and implement independently,
+    rather than copying its code, palettes, artwork or shaders into the GPL project.
 - **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
   hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
   display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence
@@ -133,8 +162,11 @@ handhelds and SDL playback/audition pass. Publication remains pending; evidence 
   in the keymap; the L2+R2 layer is unaffected. Thresholds may need tuning on the Thor's sticks.
 - **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
   compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
-  Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware
-  for UI smoke tests. The host reset alone does not establish the crash cause.
+  Local Linux Gradle runs now require 8 GiB available memory and use an enforced 4 GiB/no-swap scope
+  (3 GiB reclaim threshold, two-CPU quota), created inside Distrobox around the real build.
+  Put compiler scratch and audio evidence on SSD, never RAM-backed `/tmp`; retain evidence across reboots.
+  Check available memory, swap activity and pressure before each heavy run; prefer reserved Android hardware.
+  The reset alone does not establish the cause of the latest lockup.
 
 ## Agreed MVP scope
 

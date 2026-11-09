@@ -23,6 +23,7 @@ set(OPN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opn)
 set(OPM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opm)
 set(SMS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sms)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
+set(CBM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cbm)
 set(TIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tia)
 set(STELLA_TIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stella-tia)
 set(POKEY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pokey)
@@ -111,6 +112,13 @@ add_library(chip_engines STATIC
     ${YM_DIR}/ym_xgm.c
     ${YM_DIR}/ym_vgm.c
     ${YM_DIR}/ym_psg.c
+    ${CBM_DIR}/cbm_chip.c
+    ${CBM_DIR}/cbm_machine.c
+    ${CBM_DIR}/cbm_player.c
+    ${CBM_DIR}/cbm_tables.c
+    ${CBM_DIR}/cbm_image.c
+    ${CBM_DIR}/cbm_vic.c
+    ${CBM_DIR}/cbm_ted.c
     ${TIA_DIR}/tia_chip.c
     ${TIA_DIR}/tia_machine.c
     ${TIA_DIR}/tia_player.c
@@ -156,7 +164,7 @@ add_library(chip_engines STATIC
     ${SCC_DIR}/scc_k051649.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPN_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR} ${TIA_DIR} ${POKEY_DIR}
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${CBM_DIR} ${OPN_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR} ${TIA_DIR} ${POKEY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim ${STELLA_TIA_DIR} ${STELLA_TIA_DIR}/shim)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable

@@ -477,3 +477,29 @@ not redistributed; optional local import does not grant redistribution rights.
 
 Android/Kotlin libraries are distributed under their respective Apache 2.0
 licenses; see https://www.apache.org/licenses/LICENSE-2.0 and upstream sources.
+
+VICE (vic20sound.c)
+https://vice-emu.sourceforge.io/ (github.com/VICE-Team/svn-mirror)
+
+Written by Rami Rasanen and Ville-Matias Heikkila. This file is part of VICE,
+the Versatile Commodore Emulator.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version. Thor Tracker's adaptation (app/src/main/cpp/cbm/cbm_vic.c) is
+distributed under the GNU General Public License version 3 or later.
+
+plus4emu (TED sound)
+https://github.com/istvan-v/plus4emu
+
+Copyright (C) 2003-2008 Istvan Varga <istvanv@users.sourceforge.net>
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version. Thor Tracker's adaptation (app/src/main/cpp/cbm/cbm_ted.c) is
+distributed under the GNU General Public License version 3 or later.
+
+Android/Kotlin libraries are distributed under their respective Apache 2.0
+licenses; see https://www.apache.org/licenses/LICENSE-2.0 and upstream sources.
