@@ -73,12 +73,13 @@ public:
     bool suspend_if_idle();
     bool has_image() const { return has_image_; }
 
-    // Any thread. Packed: bit 40 = playing, bits 16..23 order, bits 0..7 row; -1 = never played.
+    // Any thread. Packed: bit 41 = start pending callback acknowledgement, bit 40 = playing,
+    // bits 16..23 order, bits 0..7 row; -1 = never played and no start pending.
     int64_t position();
     void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
 
     // AAudio callbacks.
-    aaudio_data_callback_result_t render(float* out, int32_t frames);
+    aaudio_data_callback_result_t render(AAudioStream* stream, float* out, int32_t frames);
     void on_error(aaudio_result_t error);
 
 private:
@@ -87,6 +88,7 @@ private:
     void close_stream_locked();
     void record_row(uint64_t frame, int order, int row);
     int64_t presented_frame_locked();
+    bool start_pending() const;
 
     const ChipEngineOps* const ops_;
 
@@ -106,6 +108,8 @@ private:
     MachineSlot slot_storage_[6];
     std::atomic<uint32_t> stop_seq_{0};
     std::atomic<uint32_t> release_seq_{0};
+    std::atomic<uint32_t> published_play_seq_{0};
+    std::atomic<uint32_t> acknowledged_play_seq_{0};
     std::atomic<bool> stream_dead_{false};
 
     // Audio-thread state.
@@ -118,6 +122,7 @@ private:
     float aud_buf_[CHIP_MAX_TICK_FRAMES * 2];
     int play_len_ = 0, play_pos_ = 0, aud_len_ = 0, aud_pos_ = 0;
     uint64_t frames_rendered_ = 0;
+    int32_t previous_xruns_ = 0;  // callback-owned; reset before starting a newly opened stream
 
     // Shared (audio thread writes, others read).
     std::atomic<bool> playing_{false};
