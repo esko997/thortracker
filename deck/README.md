@@ -16,7 +16,7 @@ The Deck uses the shared button routing (`HostInput`), popups and menus (`AppMen
 - **Open the menu** with a back grip (L4/R4/L5/R5, if Steam Input passes them through) or **Select+Start** (the Thor's toolbar chord; the Deck has no toolbar). B goes back. While rebinding a button, Menu cancels.
 - **Files** live in `~/ThorTracker`. Open, Save as, Export .uge and keymap files use an in-app folder browser that works with the D-pad, so no system dialog is needed in Gaming Mode. Saving names the file after the song title and asks before replacing a file.
 - **Recovery:** the working song is written to `~/.local/share/thortracker/working.thor` a second after each change and on Quit, and reopens on the next start. "Load demo", "New blank song" and Open keep the replaced song as `previous.thor` for "Recover previous project". The keymap is saved beside it.
-- Built-in tunings ship in `tunings/` beside the executable.
+- **Tuning library:** 500 licensed or independently generated entries ship in `tunings/` beside the executable. Categories, search, details and source credits use the shared controller menus; L1/R1 page long details. Optional local `.thorscales` packs import through the file browser and live in `~/.local/share/thortracker/tuning-packs`. Replacement and removal require confirmation; removing a collection keeps the song's selected tuning and attribution. Catalogue loading and pack I/O run on a lazy worker, which is drained on exit.
 
 ## What has been verified (SteamOS 3.8.28)
 

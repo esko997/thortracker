@@ -69,7 +69,10 @@ static void psg_noise(YmPlayer* p, int mode) {
     emit(p, YM_W_PSG, 0, 0xE0 | mode);
 }
 
-static void begin_batch(YmPlayer* p) { p->writes = p->offs = p->pending_offs = 0; }
+static void begin_batch(YmPlayer* p) {
+    p->writes = p->offs = p->pending_offs = 0;
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k) p->pcm[k] = YMP_PCM_NONE;
+}
 
 /* Puts the key-off phase in front of the batch. */
 static void end_batch(YmPlayer* p) {
@@ -122,7 +125,10 @@ static void key_off(YmPlayer* p, int c) {
     YmChannel* ch = &p->ch[c];
     if (!ch->keyed) return;
     ch->keyed = 0;
-    if (c < YM_FM_CHANNELS) {
+    if (c >= YM_CH_PCM) {
+        ch->pcm = 0;
+        p->pcm[c - YM_CH_PCM] = YMP_PCM_STOP;
+    } else if (c < YM_FM_CHANNELS) {
         ch->key_pending = 0;
         key_write(p, c, 0);
     } else {
@@ -153,12 +159,23 @@ static void start_pitch(YmChannel* ch, const uint8_t* rec, int note) {
     ch->sweep_step = speed * 4;
 }
 
-/* Key on `note` with the channel's instrument; `row` gives this row's locks (NULL: none). */
+/* Key on `note` with the channel's instrument; `row` gives this row's locks (NULL: none). A missing instrument (or an
+ * unmapped PCM note) does nothing: the sounding note goes on. A PCM note starts its variant on the channel's XGM2
+ * channel, which replaces whatever it played. */
 static void key_on(YmPlayer* p, const YmImage* image, int c, int note, const YmRow* row) {
     YmChannel* ch = &p->ch[c];
-    const int psg = ym_is_psg_channel(c);
-    const uint8_t* rec = ym_instrument(image, ch->instrument, psg);
+    const int kind = ym_channel_kind(c), psg = kind == YM_KIND_PSG;
+    const uint8_t* rec = ym_instrument(image, ch->instrument, kind);
     if (!rec) return;
+    if (kind == YM_KIND_PCM) {
+        const int v = ym_pcm_variant(image, ch->instrument, note);
+        if (!v) return;
+        ch->pcm = v;
+        p->pcm[c - YM_CH_PCM] = v;
+        ch->keyed = 1;
+        ch->active = 1;
+        return;
+    }
     key_off(p, c);
     if (!psg) {
         ch->alg = rec[YM_I_ALG];
@@ -166,6 +183,7 @@ static void key_on(YmPlayer* p, const YmImage* image, int c, int note, const YmR
         ch->ams_fms = rec[YM_I_AMS_FMS];
         ch->carriers = CARRIERS[ch->alg];
         memcpy(ch->ops, rec + YM_I_OPS, sizeof ch->ops);
+        for (int k = 0; k < 4; ++k) ch->ch3[k] = ym_ch3_offset(image, ch->instrument, k);
         for (int e = 0; row && e < row->effects; ++e) {
             const int v = row->param[e], x = v >> 4, y = v & 15;
             switch (row->code[e]) {
@@ -302,7 +320,19 @@ static void update_fm(YmPlayer* p, int c) {
     for (int k = 0; k < 4; ++k)
         if (ch->carriers >> k & 1) wr(p, port, fm_reg(0x40, c) + YMP_OP_OFFSET[k], tl_out(ch, k));
     int a4, a0;
-    fm_frequency(p->region, pitch(ch, 0), &a4, &a0);
+    const int units = pitch(ch, 0);
+    if (c == YM_CH_FM3 && p->fm3 == YM_FM3_SPECIAL) {
+        /* Operators 1-3 on their own registers ($AD/$A9, $AE/$AA, $AC/$A8 as ymfm and the chip pair them), operator 4
+         * on the channel's; each at the note's pitch plus its offset. */
+        static const uint8_t HI[3] = {0xAD, 0xAE, 0xAC};
+        for (int k = 0; k < 3; ++k) {
+            fm_frequency(p->region, clamp(units + ch->ch3[k], 0, YMP_PITCH_MAX), &a4, &a0);
+            wr_pair(p, 0, HI[k], a4, a0);
+        }
+        fm_frequency(p->region, clamp(units + ch->ch3[3], 0, YMP_PITCH_MAX), &a4, &a0);
+    } else {
+        fm_frequency(p->region, units, &a4, &a0);
+    }
     wr_pair(p, port, fm_reg(0xA4, c), a4, a0);
     if (ch->key_pending) {
         ch->key_pending = 0;
@@ -414,6 +444,7 @@ static void advance(YmPlayer* p, const YmImage* image) {
 void ymp_tick(YmPlayer* p, const YmImage* image) {
     begin_batch(p);
     wr(p, 0, 0x22, p->lfo);
+    wr(p, 0, 0x27, p->fm3 == YM_FM3_SPECIAL ? 0x40 : 0x00);
     if (!p->audition) {
         if (p->tick == 0) {
             row_start(p, image);
@@ -431,7 +462,7 @@ void ymp_tick(YmPlayer* p, const YmImage* image) {
     for (int c = 0; c < YM_CHANNELS; ++c) {
         if (!p->ch[c].active) continue;
         if (c < YM_FM_CHANNELS) update_fm(p, c);
-        else update_psg(p, c);
+        else if (c < YM_CH_PCM) update_psg(p, c);
     }
     if (!p->audition && ++p->tick >= p->speed) {
         p->tick = 0;
@@ -485,45 +516,23 @@ int ymp_machine_reset(YmWrite* out) {
     return n;
 }
 
-int ymp_dump(const YmPlayer* p, YmWrite* out) {
-    int n = 0;
-#define W(k, r, v) out[n++] = (YmWrite){(uint8_t)(k), (uint8_t)(r), (uint8_t)(v)}
-    W(0, 0x22, p->ym[0][0x22]);
-    for (int c = 0; c < YM_FM_CHANNELS; ++c) {
-        const int port = fm_port(c);
-        for (int k = 0; k < 4; ++k)
-            for (int r = 0; r < YM_OP_BYTES; ++r) {
-                const int reg = fm_reg(OP_REG[r], c) + YMP_OP_OFFSET[k];
-                W(port, reg, p->ym[port][reg]);
-            }
-        static const uint8_t ch_reg[4] = {0xB0, 0xB4, 0xA4, 0xA0};
-        for (int r = 0; r < 4; ++r) W(port, fm_reg(ch_reg[r], c), p->ym[port][fm_reg(ch_reg[r], c)]);
-    }
-    for (int i = 0; i < 3; ++i) {
-        W(YM_W_PSG, 0, 0x80 | i << 5 | (p->tone[i] & 15));
-        W(YM_W_PSG, 0, (p->tone[i] >> 4) & 0x3F);
-        W(YM_W_PSG, 0, 0x90 | i << 5 | p->att[i]);
-    }
-    W(YM_W_PSG, 0, 0xE0 | p->noise_ctrl);
-    W(YM_W_PSG, 0, 0x90 | 3 << 5 | p->att[3]);
-#undef W
-    return n;
-}
-
 void ymp_reset(YmPlayer* p, const YmImage* image) {
     memset(p, 0, sizeof *p);
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k) p->pcm[k] = YMP_PCM_NONE;
     shadow_reset(p);
     for (int c = 0; c < YM_CHANNELS; ++c) {
         p->ch[c].cut = -1;
         p->ch[c].phase = YM_PSG_OFF;
-        p->ch[c].vol8 = c < YM_FM_CHANNELS ? 1016 : 120;
+        p->ch[c].vol8 = c < YM_FM_CHANNELS ? 1016 : c < YM_CH_PCM ? 120 : 0;
         p->ch[c].pan = 0xC0;
     }
     p->cursor_order = p->cursor_row = -1;
     p->speed = image->info.speed;
     p->region = image->info.region;
     p->lfo = image->info.lfo;
+    p->fm3 = image->info.fm3;
     wr(p, 0, 0x22, p->lfo);
+    wr(p, 0, 0x27, p->fm3 == YM_FM3_SPECIAL ? 0x40 : 0x00);
     end_batch(p);
 }
 
@@ -551,10 +560,44 @@ static int speed_at(const YmImage* image, int order, int row, int started) {
     return s;
 }
 
+/* Slot sa of a and slot sb of b are the same kit: both PCM, at least one key mapped, every key unmapped in both or
+ * mapped to variants with the same compiled bytes. */
+static int same_kit(const YmImage* a, int sa, const YmImage* b, int sb) {
+    if (!ym_instrument(b, sb, YM_KIND_PCM)) return 0;
+    int mapped = 0;
+    for (int x = 0; x < YM_PCM_KEYS; ++x) {
+        const int va = ym_pcm_variant(a, sa, x), vb = ym_pcm_variant(b, sb, x);
+        if (!va != !vb || (va && !ym_pcm_same_variant(a, va, b, vb))) return 0;
+        mapped += va != 0;
+    }
+    return mapped > 0;
+}
+
+/* A PCM channel remembers its kit by slot and its sounding variant by id. An edit that renumbers the kits (or
+ * recompiles the bank) moves them to the slot whose every key names the same sounds and to the variant with the same
+ * bytes; a kit that changed keeps its slot, a variant no longer compiled is forgotten. */
+static void relocate_pcm(YmChannel* ch, const YmImage* old, const YmImage* next) {
+    const int s = ch->instrument;
+    if (s && ym_instrument(old, s, YM_KIND_PCM) && !same_kit(old, s, next, s))
+        for (int t = 1; t <= YM_MAX_INSTRUMENTS; ++t)
+            if (t != s && same_kit(old, s, next, t)) {
+                ch->instrument = t;
+                break;
+            }
+    if (ch->pcm) {
+        int to = ch->pcm <= next->info.pcm_variants && ym_pcm_same_variant(old, ch->pcm, next, ch->pcm) ? ch->pcm : 0;
+        for (int v = 1; v <= next->info.pcm_variants && !to; ++v)
+            if (ym_pcm_same_variant(old, ch->pcm, next, v)) to = v;
+        ch->pcm = to;
+    }
+}
+
 void ymp_relocate(YmPlayer* p, const YmImage* old, const YmImage* next) {
     if (p->audition) return;
     const YmInfo* info = &next->info;
     if (info->lfo != old->info.lfo) p->lfo = info->lfo;
+    p->fm3 = info->fm3;
+    for (int c = YM_CH_PCM; c < YM_CHANNELS; ++c) relocate_pcm(&p->ch[c], old, next);
     const int started = p->tick > 0;
     const int old_speed = speed_at(old, p->order, p->row, started);
     int clamped = 0;
@@ -594,7 +637,9 @@ void ymp_relocate(YmPlayer* p, const YmImage* old, const YmImage* next) {
 
 int ymp_audition(YmPlayer* p, const YmImage* image, int channel, int note, int slot, int fine) {
     if (channel < 0 || channel >= YM_CHANNELS || note < 0 || note >= YM_NOTES || fine < -128 || fine > 127) return -1;
-    if (!ym_instrument(image, slot, ym_is_psg_channel(channel))) return -1;
+    const int kind = ym_channel_kind(channel);
+    if (!ym_instrument(image, slot, kind)) return -1;
+    if (kind == YM_KIND_PCM && !ym_pcm_variant(image, slot, note)) return -1;
     ymp_reset(p, image);
     p->audition = 1;
     p->ch[channel].instrument = slot;

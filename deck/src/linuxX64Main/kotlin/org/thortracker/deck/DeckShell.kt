@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, kotlin.native.concurrent.ObsoleteWorkersApi::class)
 
 package org.thortracker.deck
 
@@ -14,7 +14,15 @@ import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Scl
 import org.thortracker.model.Song
 import org.thortracker.model.Tuning
+import org.thortracker.model.InstalledTuningPack
+import org.thortracker.model.TuningPack
+import org.thortracker.model.TuningPackCodec
+import kotlin.native.concurrent.Future
+import kotlin.native.concurrent.FutureState
+import kotlin.native.concurrent.TransferMode
+import kotlin.native.concurrent.Worker
 import org.thortracker.ui.HostInput
+import platform.posix.chmod
 import org.thortracker.ui.MenuHost
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.PopupItem
@@ -25,11 +33,15 @@ import platform.posix.remove
 import platform.posix.uname
 import platform.posix.utsname
 import kotlin.time.TimeSource
+import decknative.ym2608_rhythm_rom_install
+import org.thortracker.system.fm.RhythmRomMenu
+import org.thortracker.system.fm.Ym2608RhythmRom
 
 /**
  * The Deck's platform side of the shared menus: projects and exports in ~/ThorTracker via the in-app [FileBrowser],
- * working-song recovery and keymap in ~/.local/share/thortracker, bundled tunings beside the executable. WAV exports
- * render in slices of the frame loop ([pumpExport]) behind a progress popup.
+ * working-song recovery, keymap and imported firmware (the YM2608 rhythm ROM, firmware/) in ~/.local/share/thortracker,
+ * bundled tunings beside the executable. WAV exports render in slices of the frame loop ([pumpExport]) behind a
+ * progress popup.
  */
 class DeckShell(
     private val session: EditorSession,
@@ -49,6 +61,9 @@ class DeckShell(
     private val keymapFile = "$data/keymap.json"
     /** Where a WAV export renders before it moves to its destination (removed when the export ends, and at startup). */
     private val wavSpool = "$data/wav-export.wav.part"
+    /** Device firmware the user imports (the YM2608 rhythm ROM of the NES EPSM and OPNA drums): kept here, never in projects or exports. */
+    private val firmware = "$data/firmware"
+    private val rhythmRom = "$firmware/${Ym2608RhythmRom.FILE_NAME}"
 
     /** The project file the working song was opened from or last saved to. */
     private var currentFile: String? = null
@@ -65,6 +80,7 @@ class DeckShell(
         Files.mkdirs(data)
         remove(wavSpool)   // a render the last run did not live to finish
         Files.readText(keymapFile)?.let { text -> runCatching { Keymap.fromJson(text) }.getOrNull() }?.let { applyKeymap(it, null) }
+        loadRhythmRom()
     }
 
     /** The song to start with: the recovered working song, or null for the demo. */
@@ -140,8 +156,16 @@ class DeckShell(
     }
 
     override fun export(song: Song, format: ExportFormat) =
-        FileBrowser(popups, "Export .${format.extension}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
-            if (Files.write(path, format.export(song))) status("${format.extension.uppercase()} exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
+        FileBrowser(popups, "Export ${format.label}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
+            // An export can refuse a song that its file format cannot represent.
+            try {
+                val bytes = format.export(song)
+                if (Files.write(path, bytes)) status("${format.extension.uppercase()} exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
+            } catch (e: IllegalArgumentException) {
+                error("${format.extension.uppercase()} export failed: ${e.message}")
+            } catch (e: IllegalStateException) {
+                error("${format.extension.uppercase()} export failed: ${e.message}")
+            }
         }.show(documents)
 
     override fun exportWav(song: Song, options: WavOptions) =
@@ -270,10 +294,110 @@ class DeckShell(
         runCatching { Keymap.fromJson(text) }.fold({ applyKeymap(it, "Keymap imported") }, { error("Keymap import failed: ${it.message}") })
     }.show(documents)
 
-    override fun builtInTunings(): List<Tuning> {
-        val dir = "$appDir/tunings"
-        return Files.list(dir).orEmpty().filter { it.endsWith(".scl") }.sorted().mapNotNull { file ->
-            Files.readText("$dir/$file")?.let { runCatching { Scl.parse(it, file.removeSuffix(".scl")) }.getOrNull() }
+    private var tuningPacks: List<InstalledTuningPack>? = null
+    private var tuningWorker: Worker? = null
+    private var tuningTask: Future<PackWorkResult>? = null
+    private var tuningDone: ((PackWorkResult) -> Unit)? = null
+
+    private class PackWorkResult(
+        val packs: List<InstalledTuningPack> = emptyList(),
+        val candidate: TuningPack? = null,
+        val bytes: ByteArray? = null,
+        val problem: String? = null,
+    )
+
+    /** The existing frame loop collects completions; this one lazy worker never touches UI or audio. */
+    private fun tuningWork(work: () -> PackWorkResult, done: (PackWorkResult) -> Unit) {
+        if (tuningTask != null) return error("A tuning library operation is already running")
+        val worker = tuningWorker ?: Worker.start(name = "tuning-packs").also { tuningWorker = it }
+        tuningDone = done
+        tuningTask = worker.execute(TransferMode.SAFE, { work }) { operation ->
+            try { operation() } catch (e: Exception) { PackWorkResult(problem = e.message ?: "file operation failed") }
+        }
+    }
+
+    fun pumpTuningPacks() {
+        val task = tuningTask ?: return
+        if (task.state != FutureState.COMPUTED) return
+        val result = task.result
+        val done = tuningDone
+        tuningTask = null
+        tuningDone = null
+        if (result.problem != null) error("Tuning library: ${result.problem}") else done?.invoke(result)
+    }
+
+    /** Finish an in-flight atomic write before exit; discard its UI callback and release the native worker. */
+    fun close() {
+        tuningDone = null
+        tuningWorker?.requestTermination(processScheduledJobs = true)?.result
+        tuningTask?.result // Consume the completed future even when its popup callback is discarded.
+        tuningTask = null
+        tuningWorker = null
+    }
+
+    override fun loadTuningPacks(loaded: (List<InstalledTuningPack>) -> Unit) {
+        tuningPacks?.let { loaded(it); return }
+        val bundled = "$appDir/tunings"
+        val installed = "$data/tuning-packs"
+        tuningWork({ PackWorkResult(packs = readPackFiles(bundled, installed)) }) {
+            tuningPacks = it.packs
+            loaded(it.packs)
+        }
+    }
+
+    override fun importTuningPack(done: () -> Unit) =
+        FileBrowser(popups, "Import .thorscales", listOf(".thorscales")) { path ->
+            val bundled = "$appDir/tunings"
+            val installed = "$data/tuning-packs"
+            tuningWork({
+                val bytes = checkNotNull(Files.readBytes(path, max = TuningPackCodec.MAX_BYTES.toLong())) {
+                    "pack could not be read or exceeds 16 MiB"
+                }
+                val pack = TuningPackCodec.decode(bytes)
+                PackWorkResult(packs = readPackFiles(bundled, installed), candidate = pack, bytes = bytes)
+            }) { result ->
+                val pack = checkNotNull(result.candidate)
+                val bytes = checkNotNull(result.bytes)
+                val existing = result.packs.firstOrNull { it.pack.id == pack.id }
+                if (existing?.bundled == true) {
+                    error("Bundled pack ${TuningPackCodec.display(pack.id)} cannot be replaced")
+                } else {
+                    fun save() {
+                        val target = "$installed/${pack.id}.thorscales"
+                        val replacing = existing != null
+                        tuningWork({
+                            Files.mkdirs(installed)
+                            check(Files.isDirectory(installed)) { "private tuning-packs directory could not be created" }
+                            check(chmod(installed, 0x1C0u) == 0) { "tuning-packs directory could not be made private" }
+                            check(replacing || !Files.exists(target)) { "pack was installed meanwhile; import again to confirm replacement" }
+                            check(Files.write(target, bytes)) { "pack could not be saved" }
+                            PackWorkResult()
+                        }) {
+                            tuningPacks = null
+                            done()
+                        }
+                    }
+                    if (existing != null) popups.show(PopupSpec("Replace tuning pack?",
+                        message = "Replace ${TuningPackCodec.display(pack.id)}? Songs already using it keep their tuning.",
+                        items = listOf(PopupItem("Replace", PopupItem.Tone.DANGER) { save() }, PopupItem.dismiss()),
+                        selected = 1), 0)
+                    else save()
+                }
+            }
+        }.show(documents)
+
+    override fun removeTuningPack(id: String, done: () -> Unit) {
+        val bundled = "$appDir/tunings"
+        val installed = "$data/tuning-packs"
+        tuningWork({
+            val pack = readPackFiles(bundled, installed).firstOrNull { it.pack.id == id }
+                ?: kotlin.error("pack is no longer installed")
+            check(!pack.bundled) { "bundled packs cannot be removed" }
+            check(remove("$installed/${pack.pack.id}.thorscales") == 0) { "pack could not be removed" }
+            PackWorkResult()
+        }) {
+            tuningPacks = null
+            done()
         }
     }
 
@@ -291,9 +415,60 @@ class DeckShell(
             loaded(file.dropLast(extension.length), extension, bytes)
         }.show(documents)
 
+    /** [MenuHost.installRhythmRom]: saves the checked [bytes] (temporary file and rename), then installs them. */
+    override fun installRhythmRom(bytes: ByteArray): String? {
+        Files.mkdirs(firmware)
+        if (!Files.write(rhythmRom, bytes)) return "it could not be saved in ${Files.pretty(firmware)}"
+        return installRhythmRomNative(bytes)
+    }
+
+    /** Hands checked ROM [bytes] to the native engine and marks the ROM installed; returns why not, or null. */
+    private fun installRhythmRomNative(bytes: ByteArray): String? {
+        val result = bytes.usePinned { ym2608_rhythm_rom_install(it.addressOf(0).reinterpret<UByteVar>(), bytes.size.convert()) }
+        if (result != 0) return "the audio engine refused it (error $result)"
+        Ym2608RhythmRom.markInstalled()
+        return null
+    }
+
+    /** At start: installs a ROM imported earlier after checking it again; a changed or damaged file is reported, not used. */
+    private fun loadRhythmRom() {
+        if (!Files.exists(rhythmRom)) return
+        val bytes = Files.readBytes(rhythmRom, max = RhythmRomMenu.MAX_FILE.toLong())
+        val problem = if (bytes == null) "it could not be read" else Ym2608RhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
+        if (problem != null) error("The saved YM2608 rhythm ROM (${Files.pretty(rhythmRom)}) was not installed: $problem. " +
+            "Import it again (${RhythmRomMenu.LABEL} in the menu)")
+    }
+
     override fun extraMenuItems(): List<Pair<String, () -> Unit>> = listOf("Quit" to quit)
 
     private companion object {
+        /** Structural decode only, on demand and off the frame thread; never silently drop broken files. */
+        private fun readPackFiles(bundled: String, installed: String): List<InstalledTuningPack> {
+            val result = ArrayList<InstalledTuningPack>()
+            val ids = HashSet<String>()
+            fun add(directory: String, isBundled: Boolean) {
+                val files = checkNotNull(Files.list(directory)) { "${Files.pretty(directory)} could not be read" }
+                    .filter { it.endsWith(".thorscales") }.sorted()
+                check(!isBundled || files.isNotEmpty()) { "no bundled tuning packs were found" }
+                for (file in files) {
+                    try {
+                        val bytes = checkNotNull(Files.readBytes("$directory/$file", max = TuningPackCodec.MAX_BYTES.toLong())) {
+                            "pack could not be read or exceeds 16 MiB"
+                        }
+                        val pack = TuningPackCodec.decode(bytes)
+                        check(isBundled || file == "${pack.id}.thorscales") { "filename does not match pack id" }
+                        check(ids.add(pack.id)) { "duplicate or protected bundled pack id: ${pack.id}" }
+                        result += InstalledTuningPack(pack, isBundled)
+                    } catch (e: Exception) {
+                        throw IllegalStateException("${TuningPackCodec.display(file)}: ${e.message}", e)
+                    }
+                }
+            }
+            add(bundled, true)
+            if (Files.exists(installed)) add(installed, false)
+            return result
+        }
+
         /** Song view header row of ticks per row (as on Android). */
         const val SONG_TEMPO_ITEM = 2
     }
