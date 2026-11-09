@@ -6846,9 +6846,10 @@ row on, persisting.
   behind a `Dxx` of the same order is unreachable: `CHIP_ERR_IMAGE`). Then the machine is reset exactly as a fresh one
   and **every one of the *n* ticks runs with the chip fully clocked** (player writes, all 100000 clocks of each tick):
   no register snapshot, no guessed pre-roll. The output path (sampling, RC filter, blip_buf) runs, discarded, for the
-  last min(*n*, 50) ticks (1 s, 45 RC time constants) and is skipped before that; so the chip state after a seek from
-  the start is straight play's exactly and the output equals straight play's to float rounding (expected; checked
-  with a tolerance). **Bound**: `seekTicks` 12000 (4 minutes); expected cost a few µs per unsampled tick (an
+  last min(*n*, 50) ticks (1 s, 45 RC time constants). Before that, `blip_skip_silence` advances both resamplers'
+  fractional time without signal history, preserving half-sample frame alternation at 11025 Hz. The chip state
+  after a seek from the start is straight play's exactly; the native output comparison retains its 2e-3 bound.
+  **Bound**: `seekTicks` 12000 (4 minutes); expected cost a few µs per unsampled tick (an
   event-driven 100000-clock step: ~21 effects ticks per channel, at most 10000 noise steps).
 - `apply_image`: the OPL3's rules (1)-(3) (clamping, speed, re-read jumps and delays); (4) sounding notes keep what
   they were keyed with, the next key-on reads the edited instrument by slot (slot identity is kept: two identical

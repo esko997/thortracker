@@ -82,6 +82,7 @@ static void run_tick(VsuMachine* m, int output) {
     if (m->trace_tick) m->trace_tick(m->trace_ctx, order, row, tick, start, p->write, p->writes);
     if (!output) {
         vsu_run(&m->chip, VBP_TICK_CLOCKS);
+        for (int k = 0; k < 2; ++k) blip_skip_silence(m->blip[k], VBP_TICK_CLOCKS);
         m->clock = end;
         return;
     }

@@ -1042,6 +1042,44 @@ static void test_seek(void) {
     vbm_destroy(m);
 }
 
+/* An odd silent prefix at 11025 Hz must retain the half-sample phase, not restart its frame alternation. */
+static void test_seek_sample_rates(void) {
+    printf("seek sample-rate phase\n");
+    static const unsigned rates[] = {8000, 11025, 22050, 32000, 44100, 48000, 96000};
+    float expected[2 * VBM_MAX_TICK_FRAMES];
+    for (unsigned i = 0; i < sizeof rates / sizeof rates[0]; ++i) {
+        VsuMachine* straight = vbm_create(rates[i]);
+        VsuMachine* seek = vbm_create(rates[i]);
+        int mode, order = 0, row = 0, tick = 0, elapsed = 0;
+        EXPECT(vbm_start(straight, &g_song, 0, 0, SEEK_BUDGET, &mode) == VBM_OK, "rate %u: straight start", rates[i]);
+        for (; elapsed < 1200; ++elapsed) {
+            vbm_position(straight, &order, &row, &tick);
+            if (elapsed > VBM_OUTPUT_TICKS && ((elapsed - VBM_OUTPUT_TICKS) & 1) && tick == 0) break;
+            vbm_tick(straight, g_out);
+        }
+        EXPECT(elapsed < 1200, "rate %u: reachable row with an odd silent prefix", rates[i]);
+        if (elapsed < 1200) {
+            EXPECT(vbm_start(seek, &g_song, order, row, SEEK_BUDGET, &mode) == VBM_OK &&
+                       mode == VBM_SEEK_FROM_START && vsu_equal(vbm_chip(straight), vbm_chip(seek)),
+                   "rate %u: seek reconstructs the same chip", rates[i]);
+            int count_errors = 0;
+            double worst = 0;
+            for (int t = 0; t < 30; ++t) {
+                const int na = vbm_tick(straight, expected), nb = vbm_tick(seek, g_out);
+                count_errors += na != nb;
+                for (int s = 0; s < 2 * (na < nb ? na : nb); ++s) {
+                    const double d = fabs((double)expected[s] - g_out[s]);
+                    if (d > worst) worst = d;
+                }
+            }
+            EXPECT(count_errors == 0 && worst < 2e-3,
+                   "rate %u: seek keeps frame phase and PCM (count errors %d, worst %.9f)", rates[i], count_errors, worst);
+        }
+        vbm_destroy(straight);
+        vbm_destroy(seek);
+    }
+}
+
 /* ---- live edits ------------------------------------------------------------------------------------------------ */
 
 /* Per-tick write hashes of straight play of `image` with alt0 applied before tick `from` (or, with `every`, alt0 and
@@ -1741,6 +1779,7 @@ int main(int argc, char** argv) {
     test_headroom();
     test_note_on_timing();
     test_seek();
+    test_seek_sample_rates();
     test_live_edits();
     test_audition(dir);
     test_mute();

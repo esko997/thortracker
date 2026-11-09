@@ -31,13 +31,18 @@ and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux t
 is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
 All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
 
-## 0.35.0 Virtual Boy VSU — source integration, runtime pending
+## 0.35.0 Virtual Boy VSU — integration verification
 
-The `vsu` branch merges candidates `4b1c95e4` (VIC/TED plus all preceding systems) and `5c3e8c9`
-(SAM Coupé and Creative Music System), preserving the prepared VSU headroom/timing changes in
-commit `3ee5b32`. Version remains 0.35.0/code 48. No builds, tests, generators, formatters or device
-operations were run for this combined source merge; the incoming SAA candidate's separate evidence
-does not establish acceptance of this integration.
+The `vsu` branch integrates SAA candidate `c27a60b` and the preceding systems, preserving the prepared
+headroom changes in `3ee5b32`. Version is 0.35.0/code 48. **956 JVM tests**, the Android host suite,
+the initial signed release and clean instrumentation build pass within the enforced resource scope.
+
+A seven-rate seek probe found one real timing defect: at 11025 Hz, an odd silent prefix reset the
+half-sample frame phase (**30/30 frame-count mismatches**, worst PCM difference **0.017578125**).
+Advancing both cleared resamplers with `blip_skip_silence` fixes it: the same target now has exact frame
+counts and **bit-identical PCM at all seven rates, 8–96 kHz**, with identical raw chip state.
+The permanent regression keeps the existing 2e-3 bound. Evidence: `recovery-20261109/vsu-before/`
+under `~/.local/state/thortracker`. Full native/headroom/reference and frontend gates remain in progress.
 
 - Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
   and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.
