@@ -1442,6 +1442,137 @@ static void test_cost(void) {
     }
 }
 
+/* Headroom regressions. The quiet parallel blip is a linearity oracle,
+ * not an independent chip model. Raw chip diagnostics remain at physical gain. */
+static void test_headroom(void) {
+    static const int rates[] = {8000, 11025, 22050, 44100, 48000, 96000};
+    short actual[256], quiet[256];
+    for (int variant = 0; variant < 4; ++variant) {
+        for (unsigned r = 0; r < sizeof rates / sizeof rates[0]; ++r) {
+            const int chip = variant / 2, rate = rates[r];
+            blip_t* b = blip_new(256);
+            blip_t* q = blip_new(256);
+            blip_set_rates(b, CBM_CLOCK_HZ[variant], rate);
+            blip_set_rates(q, CBM_CLOCK_HZ[variant], rate);
+            blip_clear(b);
+            blip_clear(q);
+            CbVic v;
+            CbTed t;
+            cbv_reset(&v);
+            cbt_reset(&t);
+            if (chip == TED) {
+                cbt_write(&t, 0x12, 3);
+                cbt_write(&t, 0x0E, 0xE5);
+                cbt_write(&t, 0x10, 3);
+                cbt_write(&t, 0x0F, 0x9A);
+            }
+            int prev = 0, peak = 0, error = 0, rails = 0;
+            float lp = 0, hp = 0, output_peak = 0;
+            const float lb = 1.0f / (1.0f + rate * 1e-4f);
+            const float hb = 1.0f / (1.0f + rate * 1e-3f);
+            /* All VIC voices run, including while muted. TED alternates maximum
+             * DAC and square/noise paths, with long DC holds then opposite edges. */
+            if (chip == VIC)
+                for (int ch = 0; ch < 4; ++ch) cbv_write(&v, b, 0, 0x0A + ch, 0x80);
+            for (int frame = 0; frame < 240; ++frame) {
+                const unsigned clocks = (unsigned)(CBM_CLOCK_HZ[variant] / rate * 128);
+                for (unsigned at = 0; at < clocks; ++at) {
+                    const int volume = frame < 80 ? 15 : frame < 160 ? 0 :
+                        (((at / 7 + (unsigned)frame) & 1) ? 15 : 0);
+                    if (chip == VIC) {
+                        cbv_write(&v, b, at, 0x0E, volume);
+                        cbv_mute(&v, b, at, frame >= 180 && frame < 200 ? 15 : 0);
+                        cbv_run(&v, b, at, at + 1);
+                    } else {
+                        cbt_write(&t, 0x11, (frame < 200 ? 0xB0 : frame < 220 ? 0x30 : 0x50) | volume);
+                        cbt_mute(&t, frame >= 180 && frame < 190 ? 7 : 0);
+                        cbt_run(&t, b, at, at + 1);
+                    }
+                    const int raw = chip == VIC ? v.level : t.level;
+                    const int level = chip == VIC ? raw * 11 / 16 : raw;
+                    const int half = level / 2;
+                    if (half != prev) blip_add_delta(q, at, half - prev);
+                    prev = half;
+                }
+                blip_end_frame(b, clocks);
+                blip_end_frame(q, clocks);
+                const int n = blip_read_samples(b, actual, 256, 0);
+                EXPECT(blip_read_samples(q, quiet, 256, 0) == n, "headroom frame count");
+                for (int i = 0; i < n; ++i) {
+                    const int e = abs(actual[i] - 2 * quiet[i]);
+                    if (e > error) error = e;
+                    if (abs(actual[i]) > peak) peak = abs(actual[i]);
+                    rails += actual[i] == 32767 || actual[i] == -32768;
+                    float out = actual[i];
+                    if (chip == VIC) {
+                        out = lp - hp;
+                        hp += hb * (lp - hp);
+                        lp += lb * (actual[i] - lp);
+                    }
+                    if (fabsf(out) > output_peak) output_peak = fabsf(out);
+                }
+            }
+            EXPECT(peak > 100 && !rails && error <= 8,
+                   "chip %d video %d rate %d: peak %d rails %d half-scale error %d",
+                   chip, variant & 1, rate, peak, rails, error);
+            EXPECT(output_peak < 32768, "chip %d rate %d final output %g", chip, rate, output_peak);
+            blip_delete(b);
+            blip_delete(q);
+        }
+    }
+    /* Construct the positive-lobe adversary from low-level one-clock impulses.
+     * This isolates resampler clipping from the VIC's later analog filter.
+     * All four voice bits hold high for <254 clocks, a legal counter interval;
+     * only master-volume writes change during that interval. */
+    for (int video = 0; video < 2; ++video) {
+        const double clock = CBM_CLOCK_HZ[video];
+        const unsigned clocks = (unsigned)ceil(clock * 20 / 96000);
+        unsigned char high[256] = {0};
+        blip_t* b = blip_new(64);
+        blip_t* q = blip_new(64);
+        blip_set_rates(b, clock, 96000);
+        blip_set_rates(q, clock, 96000);
+        blip_clear(b); /* Match the phase of the cleared impulse probes and quiet oracle. */
+        for (unsigned at = 0; at < clocks; ++at) {
+            blip_clear(q);
+            blip_add_delta(q, at, 16384);
+            blip_add_delta(q, at + 1, -16384);
+            blip_end_frame(q, clocks);
+            const int n = blip_read_samples(q, quiet, 64, 0);
+            EXPECT(n > 17, "impulse probe reaches target");
+            high[at] = quiet[17] > 0;
+        }
+        blip_clear(q);
+        CbVic v;
+        cbv_reset(&v);
+        for (int ch = 0; ch < 4; ++ch) {
+            v.ch[ch].reg = 0x80;
+            v.ch[ch].shift = 255;
+            v.ch[ch].out = 1;
+            v.ch[ch].ctr = 254;
+        }
+        int previous = 0;
+        for (unsigned at = 0; at < clocks; ++at) {
+            cbv_write(&v, b, at, 0x0E, high[at] ? 15 : 0);
+            cbv_run(&v, b, at, at + 1);
+            EXPECT(v.level == (high[at] ? 29491 : 0), "raw VIC voltage unchanged");
+            const int quarter = v.level / 4;
+            if (quarter != previous) blip_add_delta(q, at, quarter - previous);
+            previous = quarter;
+        }
+        blip_end_frame(b, clocks);
+        blip_end_frame(q, clocks);
+        const int n = blip_read_samples(b, actual, 64, 0);
+        EXPECT(blip_read_samples(q, quiet, 64, 0) == n, "adversary frame count");
+        EXPECT(4 * quiet[17] > 32767, "VIC %d unattenuated adversary exceeds int16: %d",
+               video, 4 * quiet[17]);
+        EXPECT(fabs(actual[17] - quiet[17] * 2.75) <= 8,
+               "VIC %d pre-blip gain preserves peak: %d vs %g", video, actual[17], quiet[17] * 2.75);
+        blip_delete(b);
+        blip_delete(q);
+    }
+}
+
 int main(int argc, char** argv) {
     g_dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
@@ -1455,6 +1586,7 @@ int main(int argc, char** argv) {
     test_noise();
     test_dac();
     test_ted_decay();
+    test_headroom();
     test_mute();
     test_seek();
     test_live_edits();

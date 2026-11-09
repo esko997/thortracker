@@ -2391,8 +2391,10 @@ soprano, noise) with divider shift `s = 4, 3, 2, 1`:
   value from a period: *r* = (127 − *a*) & 127.
 - **Output level** (per cycle): *n* = the number of voices with `out` = 1 that are **not muted**; level =
   `voltagefunction[(7 n + 1) · volume]` (VICE's measured table of 436 values, indices 0..435, copied exactly; its index for *n*
-  outputs is VICE's average `accum · 7 / cycles + 1` at a constant *n*). The unit hands each level change to blip_buf
-  at its cycle (clock rate = φ2). A volume change alone steps the level (the `+ 1`: the DC offset VIC-20 digis use).
+  outputs is VICE's average `accum · 7 / cycles + 1` at a constant *n*). The unit retains this rounded **raw**
+  level for diagnostics, but hands differences of `floor(raw · 11 / 16)` to blip_buf at the cycle (clock rate = φ2).
+  This host headroom follows the measured nonlinearity; a volume change alone still steps the level (the `+ 1`:
+  the DC offset VIC-20 digis use). There is no compensating post-filter boost.
 - **Output stage** (VICE's model of the VIC-20 board, applied per output frame after blip_buf, in float):
   `o = lp − hp; hp += hb · (lp − hp); lp += lb · (x − lp)` with *x* the blip sample, `lb = dt / (dt + 1e-4)` (1 kΩ,
   100 nF: 1591 Hz low-pass), `hb = dt / (dt + 1e-3)` (1 kΩ, 1 µF: 159 Hz high-pass), `dt = 1 / rate`; output
@@ -2403,6 +2405,54 @@ soprano, noise) with divider shift `s = 4, 3, 2, 1`:
 - Differences from VICE, all in the plumbing: per-cycle level into blip_buf instead of VICE's per-sample box average
   looked up once (the nonlinear table is applied to each cycle's state, which is what the DAC does); event-driven
   stepping to the next counter expiry (bit-identical to per-cycle stepping); mute masks; the LFSR seed.
+
+**Host headroom audit (source bound and focused regressions verified).** The VIC's legal rounded raw span is
+0..29491 (all four outputs high, volume 15); TED's is 0..24576, including D/A and all square/noise combinations.
+TED's volume table saturates at 75, mix table at 2, and the distortion index is the sum of two values ≤150.
+Those hardware nonlinearities are untouched. Neither chip adds channels after its mono nonlinear mix; stereo
+duplicates the mono result, not a sum of two buses. Muting only changes the heard mix; generators keep running.
+
+The pinned blip table's **continuous interpolated step-response total variation** is 41028/32768 =
+1.2520751953125 (use <1.26). This is the sum of variations of the cumulative 16-tap kernels across phases
+0..32, including adjacent-sample joins, not just the norm of one fixed-phase FIR. Thus arbitrary timestamp
+phases and sign patterns are covered. A unipolar span R gives a filtered range of width at most 1.26R.
+Blip's high-pass pole is c=511/512: its L1 norm is 2, so centering the original span bounds its output by
+1.26R even after arbitrarily long DC holds and opposite transitions. Without headroom, VIC's FIR alone can
+reach `(1 + 1.2520751953125) · 29491 / 2 = 33207.97`, beyond signed 16-bit **before** the board filter.
+The new regression constructs a clock-quantized positive-lobe adversary to exercise that risk.
+
+VIC also needs a final-float bound for the board's second high-pass, not only a clean blip read. Put
+ε=1/512, h=hb=1/(1+0.001·rate), a=1−h. Cascading the two high-passes gives, after the unit impulse,
+`−h²/(h−ε) · a^(n−1) + ε²/(h−ε) · c^(n−1)`. Triangle summation bounds its L1 by
+`2h/(h−ε) ≤ 1024/415` for **every** supported integer rate 8000..96000. The board low-pass has nonnegative
+coefficients summing to one and cannot increase that bound; delays do not change it. With raw span centered,
+the complete VIC output is therefore at most `1.26 · floor(29491·11/16) · 512/415`.
+Reserve a further 512 PCM units for fixed-point/interpolation and floating-point rounding: VIC is below
+26059 before the int16 read and below **32030/32768** after the board filter; unchanged TED is below
+**31478/32768**. No outer clamp, limiter, changed volume curve or post-blip normalization is needed.
+
+The rounding reserve is deliberately loose: the maximum adjacent-phase cumulative-coefficient difference is
+723/32768; rounding the interpolated delta by <1 affects only its 16-sample support. Even at the largest
+clock/rate ratio (VIC PAL / 8000), fewer than 2220 clock positions overlap. Allowing two output submissions
+per clock gives <98 units before the high-passes, <392 after both (the low-pass does not amplify); the
+remaining reserve covers the sample quantizer and float recurrence. Production batches/mutes occur at tick
+boundaries, not an unlimited number of writes per chip clock. Scaled **absolute endpoints**, not separately
+rounded deltas, prevent gain-rounding drift. Raw `CbVic.level`, TED states, traces and register timing remain
+unchanged. The VIC preview/WAV level is intentionally 11/16 of its former unclipped value.
+
+`cbm_machine_test.c:test_headroom` adds PAL/NTSC × both chips × 8/11.025/22.05/44.1/48/96 kHz cases with
+long DC holds, maximum-volume opposites, dense DAC changes, square/noise routes, mute/unmute and a quiet
+parallel-blip linearity oracle. A separate 96 kHz VIC adversary uses legal high voice bits/counter intervals
+and timed volume writes, checks the unchanged raw voltage and demands an unclipped scaled peak.
+The focused run passes **6,704 checks**. The saved original VIC gain fails 14: its two 96 kHz adversaries
+hit **32767**, while the corrected gain preserves the quiet oracle's peak within eight PCM units.
+The initial oracle itself had two false failures because `blip_set_rates` does not reset its phase:
+both compared paths now start cleared. TED coverage explicitly selects noise (`0x50`, not `0x70`,
+whose square enable takes precedence) and uses distinct tone reloads. No tolerance was relaxed.
+The quiet blip is not an independent hardware reference. Full integration must still retain the
+trace/mute-state/seek tests and render ordinary PAL/NTSC demos and timer-driven TED samples.
+VICE's box-average output is not a bit-identical resampling oracle, and plus4emu's hardware distortion
+must not be normalized away. Human listening remains a separate review.
 
 **TED** (`cbm/cbm_ted.c`, adapted from plus4emu's `src/ted_snd.cpp` and the sound parts of `ted_write.cpp`,
 `ted_init.cpp`, `ted_main.cpp`, `ted.hpp` by István Varga, GPL-2.0-or-later; github.com/istvan-v/plus4emu commit

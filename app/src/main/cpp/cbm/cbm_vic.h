@@ -30,7 +30,7 @@ typedef struct CbVic {
     uint8_t lfsr0_old;
     uint8_t volume;     /* $900E bits 0-3 */
     unsigned mute;      /* bit j: voice j left out of the output */
-    int level;          /* the level last handed to blip_buf */
+    int level;          /* raw measured level; blip receives 11/16-scaled absolute endpoints */
 } CbVic;
 
 /* Reset state: registers, counters, shift registers and outputs 0, LFSR $FFFF with lfsr0_old 1, mutes cleared, level 0. */

@@ -95,7 +95,7 @@ static const float voltagefunction[] = {
 _Static_assert(sizeof voltagefunction / sizeof voltagefunction[0] == (7 * 4 + 1) * 15 + 1,
                "voltagefunction covers every (7 n + 1) * volume");
 
-/* The output level as an integer blip_buf amplitude: VICE's table value for the unmuted voices whose output is 1. */
+/* Raw measured voltage, retained in CbVic.level for chip diagnostics. */
 static int level_of(const CbVic* v) {
     int n = 0;
     for (int j = 0; j < 4; ++j)
@@ -106,7 +106,11 @@ static int level_of(const CbVic* v) {
 static void set_level(CbVic* v, blip_t* blip, unsigned time) {
     const int level = level_of(v);
     if (level != v->level) {
-        blip_add_delta(blip, time, level - v->level);
+        /* Host headroom, AFTER the measured nonlinearity and BEFORE blip's int16
+         * read. Scale absolute endpoints, not deltas (no truncation drift).
+         * 11/16 covers FIR ringing, blip's DC history and the board's second
+         * high-pass at every supported rate; see AUDIO_ENGINE.md. */
+        blip_add_delta(blip, time, level * 11 / 16 - v->level * 11 / 16);
         v->level = level;
     }
 }
