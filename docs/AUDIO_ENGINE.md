@@ -5762,8 +5762,8 @@ only in a reported AUDC 0/B "background sound" that no source pins down; not mod
     decay, mono PCM/frame continuity, unchanged chip state and nonlinear mix, and compares with a separate
     1/16-level blip driven from raw level probes and the rational mix formula (scaled back ×4, ≤16 PCM units
     for independent quantization). This is an independent signal-path oracle, not an independent blip
-    implementation; existing independent chip/register-trace comparisons are retained. Runtime results
-    remain for the parent's verification record.
+    implementation; existing independent chip/register-trace comparisons are retained. Observed native
+    and frontend results are recorded in `VERIFICATION.md`.
 - **Mute** (`tim_mute`): the mix takes a muted channel's level as 0; the chip, its registers and the player are
   untouched (AUDV gates only the output on the TIA, so the counters run on exactly as unmuted). A toggle between ticks
   takes effect at the next tick's clock 0 (the level is recomputed after that tick's batch).
@@ -6014,7 +6014,7 @@ the reference chip's per-phase-1 channel levels for the first ticks, byte offset
 and fails when a table or shared number disagrees with the Python reference. `python3 tools/audio/tia/tia_golden.py`
 writes `core/src/jvmTest/resources/tia-golden/*.bin.gz` for `TiaGoldenTest`.
 
-### Verification (to be run by the parent; nothing here has been run)
+### Verification commands
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/tia_machine_test.c` (it writes
   `tia_song.bin`, `tia_trace.txt` — one line per tick, `order row tick:` then ` RR=VV` per write —, `tia_song.wav`,
