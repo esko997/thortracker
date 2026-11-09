@@ -2479,6 +2479,96 @@ Constants `SAC_CHANNELS` 6, `SAC_CLOCK_SAM` 8000000, `SAC_CLOCK_CMS` 7159090, `S
 - **Size**: `SaaImage` = 65536 bytes + `SaInfo`; a machine holds an image copy, two cores, the player and two blip
   buffers. Creation allocates once; no tables are built.
 
+### SAA resampler headroom: bound and measured stress
+
+The existing scales **SAM 10 / CMS 5 remain unchanged**. The input peak 28800 alone is not a clipping proof:
+the sinc FIR can overshoot and the high-pass retains history. The following bound uses the pinned
+`third_party/blip_buf/blip_buf.c` table, its `bass_shift = 9`, the machine's 8000..96000 Hz rate range and
+multispeed limit 8. The analytical bound and finite runtime measurements below are separate evidence.
+
+**Physical range and routing.** `sac_output` is unipolar on each side: without hardware envelopes its maximum
+is `15 * 2 * 16 = 480`; with an envelope, including inverted right output, it is
+`max(SAC_PDM) * 4 * 2 = 53 * 8 = 424`. Tone/noise mixing has only levels 0, 1, 2. Envelopes cannot add an
+extra voice or exceed 480. Therefore either side's complete six/twelve-voice input is always in `[0,U]`,
+`U = 6 * 480 * 10 = 12 * 480 * 5 = 28800`. A cut, sync, disable, mute or unmute still selects a level in
+this same range. `sync_mutes` and `on_output` emit changes rather than adding another copy of the level;
+muting does not stop the generators. Independent side amplitudes/pans do not enlarge either side's bound.
+
+**Arbitrary fractional-clock FIR bound.** For phase `p = 0..32`, take the 16 coefficients used by
+`blip_add_delta` and let `S_p[j]` be their prefix sum through tap `j`. Sweeping the interpolated phase,
+the variations of these prefixes for `j = 0..7` are
+`[51,123,350,498,1166,1432,6383,21022]`; `j = 8..14` mirror `6..0` and `j = 15` is constant 32768.
+Thus the continuous step response has total variation
+`(2 * 10003 + 21022) / 32768 = 1.2520751953125`, not merely a fixed-phase row norm. Its derivative
+kernel `K` has integral 1, negative mass `N = 4130 / 32768`, and positive mass `1 + N`.
+This covers arbitrary edge timestamps and phase relationships, including all voices changing together.
+
+**High-pass history, without a spurious factor of two.** Write `a = 1/512`, `r = 511/512`.
+Ignoring integer rounding temporarily, blip's high-pass is the identity minus the delayed low-pass
+`L = a * sum(r^k * delay(k+1), k >= 0)`. The complete kernel is `K - L*K`, with integral zero.
+The low-pass/FIR history kernel has a nonnegative tail once all 16 FIR taps have arrived:
+within any phase interval its central derivative coefficient is at least `542/1024`;
+bounds for the negative derivatives of the first seven prefix sums are
+`[4,8,4,32,8,80,64]/1024`, mirrored on the other side. Their total is at most `400/1024`.
+Exponential tail reweighting changes their relative weights by at most `(512/511)^15`, so the positive
+central contribution alone exceeds every negative contribution combined
+(`542 > 400 * (512/511)^15`). The tail therefore cannot contribute negative mass.
+In the first 16 samples, the negative mass of `L*K` is at most `16*a*N` by the triangle inequality.
+Consequently the positive mass of `K - L*K` is at most `1 + N + N/32`; its negative mass is equal.
+For any input in `[0,U]`, starting from the cleared buffer or carrying any reachable history,
+
+`abs(ideal PCM) <= 28800 * (1 + (4130/32768) * (33/32)) < 32544`.
+
+This includes a sustained DC level followed by its opposite endpoint, silence after a simultaneous cut,
+and mute/unmute with the chip phase still advancing. Applying the generic bipolar `2 * FIR L1` estimate
+to this unipolar source would be unnecessarily loose and would not establish safety at the existing gain.
+
+**Integer margin.** Rounding `delta2` changes an event by less than one input unit times the difference
+of adjacent phase kernels. Every adjacent prefix difference is below 768/32768, so its integrated error
+is below `3/128` PCM units and lasts at most 16 samples. In the worst 16-sample window (2 ms at 8 kHz),
+even two chips at the faster SAM clock would contribute at most 1250 rate-derived emissions:
+per chip `6*15625` tone changes, `6*31250` noise changes and `2*15625` envelope changes per second.
+Allow another 28 for event-stream endpoints and 48 for two tick boundaries' render-start and mute
+emissions across all twelve channels: fewer than 1400 events per side. Actual CMS clocks are slower.
+All register writes, including external envelope clocks, are batched before the render-start emission.
+The high-pass can at most double this bounded finite error, contributing less than
+`2 * 1400 * (3/128) = 65.625` PCM units. Integrator/output quantization contributes less than one further
+unit (the feedback rounding error is a geometrically weighted fractional part with total weight one).
+Thus **`abs(PCM) < 32611`**, below either signed-16-bit rail; the unchanged `/32768` output also remains
+strictly inside unity. These bounds rely on the production machine's batched-write schedule, not an
+unbounded external caller emitting arbitrary register writes on every chip clock.
+
+No core levels, scale constants, per-voice balance, pan, envelope saturation, register traces, mute phase
+or diagnostic contract changed for this audit. No outer clamp/limiter is needed. The Python reference
+checks raw core events/register streams and the audition check derives its amplitude from the same
+scale constants; neither is an independent host-headroom proof. libvgm's song comparison is informational
+because its SAA model differs (see VGM export), not an absolute-amplitude oracle.
+
+**Runtime verification:** a scratch copy of the real machine/core/player and pinned blip adds one observer
+immediately before the signed-16-bit clamp, without changing the clamp or high-pass feedback recurrence.
+**768 register-stress cases + 192 public-machine cases** pass across SAM/CMS, 8/44.1/48/96 kHz and
+multispeed 1/8: **510,719,992 channel samples**, observed pre-clamp range **−28944..30071**, zero clipping.
+The cases include aligned/mixed pitches, independent CMS restart, real envelope DC and inverted transitions,
+sync release, mute/unmute, cut/restore, start/reload, silent seek/preroll and audition/release.
+Source hashes, per-side extrema and operation/sample coordinates are retained under
+`~/.local/state/thortracker/recovery-20261109/saa-preclamp/`. The bounded build and matrix took 14.48 seconds.
+This does not enumerate all six/twelve-lane masks, every joint CMS pair or all legal register histories.
+No production fix was indicated; **SAM 10 / CMS 5 are retained**, not attenuated to satisfy a loose bound.
+
+Concrete legal stress settings: use amplitude `0xFF` on every lane, tone mask `0x3F`, noise mask 0,
+envelopes disabled, and octave/offset 0 on all lanes, then sync/release both chips together. This gives
+the longest full-level tone plateau (130816 clocks, about 16.35 ms on SAM or 18.27 ms on CMS); unmute
+all lanes near its beginning after at least a second muted, or cut/mute near its end at 96 kHz, where
+the high-pass has substantially settled. For sustained envelope DC use mixer masks 0 and external
+constant-maximum envelope control `0xA2` on both generators with amplitude `0xFF` on lanes 3/6, then
+disable both envelopes or mute/unmute together; repeat with right inversion `0xA3`. For dense
+subsample transitions use noise mask `0x3F`, tone mask 0, noise mode `0x00` on both chips and sweep
+unmute times after settled silence, plus mixed tone/noise mask `0x3F` and differing tone divisors.
+CMS must include both phase-aligned and independently restarted chips. These settings exercise the
+large endpoint/history transitions and fast ringing cases. The 32611 bound permits arbitrary bounded
+input shapes, including sinc-lobe-matched transitions that may not be realizable by the chip; it is
+not a claim that a legal song can attain that peak or that any measured peak has approached it.
+
 ### Channels and shared resources
 
 Tracker channel c (0-based) = chip c / 6, chip channel l = c mod 6. Lanes: SAM Coupé `SAA 1`-`SAA 6`; CMS `A1`-`A6`,
