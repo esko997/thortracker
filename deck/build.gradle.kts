@@ -69,18 +69,24 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ay/ay_psg.c").asFile,
         engineSrc.file("ay/ay_image.c").asFile,
         engineSrc.file("ay/ay_vgm.c").asFile,
+        engineSrc.file("pce/pce_chip.c").asFile,
+        engineSrc.file("pce/pce_machine.c").asFile,
+        engineSrc.file("pce/pce_player.c").asFile,
+        engineSrc.file("pce/pce_image.c").asFile,
+        engineSrc.file("pce/pce_vgm.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
     // ymfm (the YM2612 and the EPSM's YMF288): ym/ym_ymfm.cpp compiles ymfm_opn.cpp itself and instantiates the OPNA
-    // templates nes/nes_epsm_ymfm.cpp uses.
+    // templates nes/nes_epsm_ymfm.cpp uses. Mednafen's PSG (the PC Engine): pce/pce_psg.cpp compiles
+    // third_party/mednafen-pce-psg/pce_psg.cpp itself against the shim.
     val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "nes/nes_epsm_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp",
-        "third_party/ymfm/ymfm_ssg.cpp") +
+        "third_party/ymfm/ymfm_ssg.cpp", "pce/pce_psg.cpp") +
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "sms", "ay", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
-            "third_party/nuked-opl3", "third_party/ymfm")
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "sms", "ay", "pce", "third_party/chips", "third_party/blip_buf",
+            "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
@@ -98,9 +104,11 @@ val buildEngine by tasks.registering(Exec::class) {
         "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm2_driver_image.h",
         "sms/sms_image.h", "sms/sms_machine.h", "sms/sms_export.h", "generated/banjo_driver_image.h",
         "third_party/emu2413/emu2413.h",
-        "ay/ay_image.h", "ay/ay_player.h", "ay/ay_psg.h", "ay/ay_machine.h", "ay/ay_vgm.h", "ay/ay_export.h", "generated/ay_tables.h"),
+        "ay/ay_image.h", "ay/ay_player.h", "ay/ay_psg.h", "ay/ay_machine.h", "ay/ay_vgm.h", "ay/ay_export.h", "generated/ay_tables.h",
+        "pce/pce_image.h", "pce/pce_player.h", "pce/pce_machine.h", "pce/pce_psg.h", "pce/pce_vgm.h", "pce/pce_export.h"),
         engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
+        engineSrc.dir("third_party/mednafen-pce-psg").asFileTree,
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
@@ -142,7 +150,7 @@ kotlin {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
                 // nes/nes_epsm.h: nes_epsm_install_rhythm_rom / nes_epsm_rhythm_rom_installed for the Deck's rhythm ROM.
                 includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"),
-                    engineSrc.dir("ay"))
+                    engineSrc.dir("ay"), engineSrc.dir("pce"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }
@@ -151,7 +159,7 @@ kotlin {
             entryPoint = "org.thortracker.deck.main"
             // Links against deps/lib/libSDL3.so. The AppImage bundles that library in lib/ beside the executable, found
             // through the rpath; without it the system's SDL3 is used (SteamOS ships one).
-            // libstdc++: reSID and ymfm (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
+            // libstdc++: reSID, ymfm and Mednafen's PSG (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
             linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
         }
     }

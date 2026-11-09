@@ -33,6 +33,8 @@
  *                     one engine per stock computer: ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910), Atari ST (YM2149F),
  *                     Amstrad CPC (AY-3-8912, stereo socket) (ay/ay_chip.c over ay/ay_machine.c, ay_player.c,
  *                     ay_psg.c, ay_image.c)
+ *   "pce-huc6280"     Thor Tracker's own PC Engine player on the HuC6280's PSG (Mednafen 1.32.1), DDA samples from
+ *                     the CPU timer (pce/pce_chip.c over pce/pce_machine.c, pce_player.c, pce_image.c, pce_psg.cpp)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

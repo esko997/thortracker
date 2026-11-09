@@ -21,6 +21,7 @@ extern const ChipEngineOps ay_zx128_chip_ops;
 extern const ChipEngineOps ay_msx_chip_ops;
 extern const ChipEngineOps ay_atari_st_chip_ops;
 extern const ChipEngineOps ay_cpc_chip_ops;
+extern const ChipEngineOps pce_chip_ops;
 
 static const ChipEngineOps* const systems[] = {&huge_chip_ops,       &nes_chip_ops,        &nes_vrc6_chip_ops,
                                                &nes_vrc7_chip_ops,   &nes_n163_1_chip_ops, &nes_n163_2_chip_ops,
@@ -29,7 +30,8 @@ static const ChipEngineOps* const systems[] = {&huge_chip_ops,       &nes_chip_o
                                                &nes_fds_chip_ops,    &nes_s5b_chip_ops,    &nes_mmc5_chip_ops,
                                                &nes_epsm_chip_ops,   &sid_chip_ops,        &opl3_chip_ops,
                                                &ym_chip_ops,        &sms_chip_ops,        &ay_zx128_chip_ops,
-                                               &ay_msx_chip_ops,     &ay_atari_st_chip_ops, &ay_cpc_chip_ops};
+                                               &ay_msx_chip_ops,     &ay_atari_st_chip_ops, &ay_cpc_chip_ops,
+                                               &pce_chip_ops};
 
 const ChipEngineOps* chip_engine_ops(const char* system_id) {
     if (!system_id) return NULL;

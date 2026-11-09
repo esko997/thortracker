@@ -1217,7 +1217,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Plays [key]; in write mode also writes it at the shared pattern cursor and advances by the step. */
     fun keyDown(key: Int) {
         state.kbKey = key.coerceIn(0, KEYS - 1)
-        if (!keyPlayable(state.kbKey)) { session.note("Above ${system.noteName(system.noteRange.last)}, the highest note"); return }
+        if (!keyPlayable(state.kbKey)) {
+            if (keyNote(state.kbKey) < system.noteRange.first) session.note("Below ${system.noteName(system.noteRange.first)}, the lowest note")
+            else session.note("Above ${system.noteName(system.noteRange.last)}, the highest note")
+            return
+        }
         val note = keyNote(state.kbKey)
         keyHeld = true
         playKey(note)

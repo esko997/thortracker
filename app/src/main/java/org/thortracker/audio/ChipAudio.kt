@@ -13,6 +13,8 @@ import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.ay.AyVgmRenderer
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
+import org.thortracker.system.pce.PceVgm
+import org.thortracker.system.pce.PceVgmRenderer
 import org.thortracker.system.sms.SmsExport
 import org.thortracker.system.sms.SmsVgmRenderer
 import org.thortracker.system.ym2612.YmExport
@@ -288,6 +290,9 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
                 nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
+            PceVgm.renderer = PceVgmRenderer { image, maxTicks, tags ->
+                nativePceVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
@@ -337,6 +342,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
+        @JvmStatic private external fun nativePceVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** `ay_export.h`: [variant] 0 ZX Spectrum 128, 1 MSX, 2 Atari ST, 3 Amstrad CPC; UTF-8 tags; throws IllegalArgumentException(loader problem). */

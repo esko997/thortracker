@@ -78,6 +78,14 @@ with the same blip_buf. Its per-level DAC tables are the measured tables of
 ayumi by Peter Sovietov (MIT, notice below; github.com/true-grue/ayumi at
 commit 07c08b4874c359169e4a028edf73f046d8b763e2, vendored in third_party/ayumi).
 
+PC Engine (HuC6280) playback uses Thor Tracker's own player (GPL-3.0-or-later) on
+the HuC6280 PSG emulation of Mednafen 1.32.1 (GNU General Public License 2 or
+later, notice below; its src/hw_sound/pce_psg/pce_psg.cpp and pce_psg.h,
+unmodified, in app/src/main/cpp/third_party/mednafen-pce-psg with Mednafen's
+COPYING, from mednafen-1.32.1.tar.xz at mednafen.github.io), resampled with the
+same blip_buf. Thor Tracker adds a minimal compatibility header (shim/) and a C
+interface (pce/pce_psg.cpp).
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -205,6 +213,17 @@ This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
 Foundation; either version 2 of the License, or (at your option) any later
 version.
+
+Mednafen (HuC6280 PSG: src/hw_sound/pce_psg)
+https://mednafen.github.io/
+
+Copyright (C) 2001 Charles MacDonald (original skeleton write handler and PSG
+structure definition); the Mednafen Team.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version (app/src/main/cpp/third_party/mednafen-pce-psg/COPYING).
 
 chips (m6502.h)
 https://github.com/floooh/chips

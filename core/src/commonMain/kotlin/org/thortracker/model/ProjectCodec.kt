@@ -47,6 +47,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * OPL3 (`opl3-fm`) 1; Mega Drive (`ym2612-fm`) 2 adds PCM 1-3 (tracks 10-12; version 1 songs gain three empty ones),
  * PCM kits and samples, FM 3's mode and voices' FM 3 operator offsets.
  * AY-3-8910 / YM2149 (`ay-zx128`, `ay-msx`, `ay-atari-st`, `ay-cpc`; the sound names its `variant`, which must be the backend's) 1.
+ * PC Engine (`pce-huc6280`) 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

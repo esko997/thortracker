@@ -21,6 +21,11 @@
  * THOR_EPSM_RHYTHM_ROM naming the user's own 8192-byte copy it is installed first and the drums are in the renders;
  * without it they are silent (every check above still holds; the app itself refuses to export such a song).
  *
+ * The shortest song (pce-shortest.pcimg: one order of one row, A-4 held on the PC Engine's PSG 1, looping to order 0)
+ * runs the same render paths at the other extreme: once through is a single row (under 1 s), and it must still render
+ * a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1 adding about
+ * one loop and a fade adding exactly its length; a wrong image size is refused.
+ *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
  * through and a 5 s fade, as the app's default export); its spool files go to <dir> and are removed. */
@@ -87,6 +92,7 @@ static const Demo kDemos[] = {
     {"copper-lane-msx.ayimg", "ay-msx"},
     {"copper-lane-atari-st.ayimg", "ay-atari-st"},
     {"copper-lane-cpc.ayimg", "ay-cpc"},
+    {"pce-demo.pcimg", "pce-huc6280"},
 };
 
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; a held expansion note,
@@ -112,6 +118,12 @@ static const Demo kShortest[] = {
     {"sms-shortest-gg-psg.smsimg", "sms-banjo"},
     {"sms-shortest-sms-fm.smsimg", "sms-banjo"},
     {"sms-shortest-sms-fm-drums.smsimg", "sms-banjo"},
+};
+
+/* Shortest songs of one row holding a note (written by exportSamples beside the demos): the shortest-song checks
+ * above plus everything test_demo checks that does not need a song longer than one row. */
+static const Demo kShortestHeld[] = {
+    {"pce-shortest.pcimg", "pce-huc6280"},
 };
 
 static char spool[512];
@@ -490,6 +502,74 @@ static void test_shortest(const char* samples, const Demo* d) {
     free(image);
 }
 
+/* The shortest valid song holding a note: everything test_demo checks that does not need a song longer than one row. */
+static void test_shortest_held(const char* samples, const Demo* d) {
+    printf("%s (%s): the shortest song\n", d->file, d->system);
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s", samples, d->file);
+    size_t size = 0;
+    uint8_t* image = read_file(path, &size);
+    EXPECT(image != NULL, "%s missing: run `tools/build.sh exportSamples` first (or set THOR_SAMPLES)", path);
+    if (!image) return;
+    const ChipEngineOps* ops = chip_engine_ops(d->system);
+    EXPECT(ops && ops->image_size == size, "%s: image of %zu bytes for the engine", d->file, size);
+    if (!ops || ops->image_size != size) { free(image); return; }
+
+    size_t s0 = 0;
+    int capped = -1;
+    const char* problem = NULL;
+    uint8_t* once = render(d->system, image, size, 0, 0, MAX_SECONDS, &s0, &capped, &problem);
+    EXPECT(once != NULL, "%s: renders (%s)", d->file, problem ? problem : "");
+    if (!once) { free(image); return; }
+    EXPECT(capped == 0, "%s: once through is not capped", d->file);
+    const uint64_t f0 = check_header("once", once, s0);
+    const uint8_t* data0 = once + CHIP_WAV_HEADER;
+    EXPECT(f0 > 0 && f0 < (uint64_t)RATE, "%s: once through lasts %llu frames (one row, under 1 s)", d->file,
+           (unsigned long long)f0);
+    const int p0 = f0 ? peak(data0, 0, f0) : 0;
+    EXPECT(p0 > 500, "%s: not silent (peak %d)", d->file, p0);
+
+    uint64_t fs = 0, loop_start = 0;
+    int16_t* pcm = straight(ops, image, size, 0, &fs, &loop_start);
+    EXPECT(fs == f0 && loop_start == 0, "%s: straight ticking re-enters its only row after %llu frames (file %llu, loop at %llu)",
+           d->file, (unsigned long long)fs, (unsigned long long)f0, (unsigned long long)loop_start);
+    int same = fs == f0;
+    for (uint64_t i = 0; same && i < f0 * 2; ++i) same = (int16_t)u16(data0 + 2 * i) == pcm[i];
+    EXPECT(same, "%s: samples identical to straight ticking", d->file);
+    free(pcm);
+
+    for (int step = 1; step <= 997; step = step * 31 + 3) {
+        size_t ss = 0;
+        uint8_t* again = stepped(d->system, image, size, 0, 0, step, &ss);
+        EXPECT(again && ss == s0 && !memcmp(again, once, s0), "%s: stepped by %d = one call", d->file, step);
+        free(again);
+    }
+
+    size_t s1 = 0;
+    uint8_t* twice = render(d->system, image, size, 1, 0, MAX_SECONDS, &s1, &capped, &problem);
+    const uint64_t f1 = twice ? check_header("loops=1", twice, s1) : 0;
+    const uint64_t loop = f0 - loop_start;
+    EXPECT(twice && f1 > f0 && !memcmp(twice + CHIP_WAV_HEADER, data0, (size_t)f0 * 4), "%s: loops=1 extends once through", d->file);
+    EXPECT(f1 + 2 * CHIP_MAX_TICK_FRAMES >= f0 + loop && f1 <= f0 + loop + 2 * CHIP_MAX_TICK_FRAMES,
+           "%s: loops=1 adds one loop (%llu frames, loop %llu)", d->file, (unsigned long long)(f1 - f0), (unsigned long long)loop);
+    free(twice);
+
+    size_t sf = 0;
+    uint8_t* faded = render(d->system, image, size, 0, FADE_MS, MAX_SECONDS, &sf, &capped, &problem);
+    const uint64_t ff = faded ? check_header("fade", faded, sf) : 0;
+    const uint64_t fade = (uint64_t)FADE_MS * RATE / 1000;
+    EXPECT(ff == f0 + fade, "%s: fade adds %llu frames (got %llu)", d->file, (unsigned long long)fade,
+           (unsigned long long)(ff - f0));
+    EXPECT(faded && ff == f0 + fade && !memcmp(faded + CHIP_WAV_HEADER, data0, (size_t)f0 * 4), "%s: fade starts at the loop point",
+           d->file);
+    free(faded);
+
+    EXPECT(!chip_wav_open(d->system, image, size - 1, 0, 0, 1, spool, &problem) && problem && !strcmp(problem, "image"),
+           "%s: wrong image size refused", d->file);
+    free(once);
+    free(image);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
@@ -515,6 +595,10 @@ int main(int argc, char** argv) {
     EXPECT(CHIP_WAV_HEADER + 4ull * CHIP_WAV_MAX_FRAMES <= 0x7FFFFFFFull, "the largest file fits RIFF and a 32-bit off_t");
     for (size_t i = 0; i < sizeof kDemos / sizeof kDemos[0]; ++i) test_demo(dir, samples, &kDemos[i]);
     for (size_t i = 0; i < sizeof kShortest / sizeof kShortest[0]; ++i) test_shortest(samples, &kShortest[i]);
+    for (size_t i = 0; i < sizeof kShortestHeld / sizeof kShortestHeld[0]; ++i) {
+        test_shortest(samples, &kShortestHeld[i]);
+        test_shortest_held(samples, &kShortestHeld[i]);
+    }
     test_shortest_ay(0, "ay-zx128");
     test_shortest_ay(1, "ay-msx");
     test_shortest_ay(2, "ay-atari-st");

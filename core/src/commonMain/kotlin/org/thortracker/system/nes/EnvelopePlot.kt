@@ -29,10 +29,12 @@ internal class EnvelopePlot(private val ink: Ink) {
     /**
      * Draws [env] of [kind] in [r] under [title], cursor at [step]; [valueText] names a value on the scale, [muted]
      * greys bars the listening channel ignores, [focused] when the cursor is on the steps ([cursor] its colour,
-     * [editing] while Edit is held); [range] is the value scale (the sound's: VRC6 duties go to 7).
+     * [editing] while Edit is held); [range] is the value scale (the sound's: VRC6 duties go to 7); [maxLength] the
+     * envelope's most steps (no append position once it has them; the PC Engine's envelopes hold 255).
      */
     fun draw(c: Surface, r: Rect, title: String, kind: NesEnvelopeKind, env: NesEnvelope, step: Int, valueText: (Int) -> String,
-             muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean, range: IntRange = kind.range) {
+             muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean, range: IntRange = kind.range,
+             maxLength: Int = NesEnvelope.MAX_LENGTH) {
         val values = env.values
         ink.round(c, r, ink.dp(4f), Palette.LANE)
         ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, if (focused) Palette.DIM else Palette.FAINT, size = ink.unit * 0.8f)
@@ -99,7 +101,7 @@ internal class EnvelopePlot(private val ink: Ink) {
             ink.rect(c, x + gap, minOf(t, b - ink.dp(2f)), x + cellW - gap, b, if (on && focused) (if (editing) Palette.WRITE else col) else barColor)
         }
         // append position
-        if (values.size < NesEnvelope.MAX_LENGTH && values.size in stepScroll until stepScroll + fit) {
+        if (values.size < maxLength && values.size in stepScroll until stepScroll + fit) {
             val x = xOf(values.size)
             ink.outline(c, Rect(x + gap, inner.top + gap, x + cellW - gap, inner.bottom - gap), Palette.FAINT, ink.dp(1f), ink.dp(2f))
             ink.mono(c, "+", x + cellW / 2, inner.top, inner.height(), Palette.FAINT, size = ink.unit * 0.8f, align = Align.CENTER)
