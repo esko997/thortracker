@@ -56,9 +56,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
      while standard AY VGM is mono.
    - **PC Engine HuC6280 (0.26.0)** — six 32-step wavetable channels, shared LFO, noise, stereo balance and timer-driven
      DDA samples; own player on Mednafen's PSG, controller wave/sample editors, VGM/WAV and Turbo Lanterns.
-   - Konami SCC — MSX wavetable cartridge (five channels). Source-only branch `scc-systems`: two systems, SCC
-     (K051649, channels 4/5 share a wave) and SCC+ (K052539, five waves), own player on a port of MAME's k051649,
-     VGM/WAV export, wave and envelope editors (`docs/BACKENDS.md`, "Konami SCC and SCC+"); not yet built or verified.
+   - **Konami SCC / SCC+ (0.27.0)** — MSX wavetable cartridges, five channels:
+     SCC (K051649, channels 4/5 share a wave) and SCC+ (K052539, five waves), own player on a port of MAME's k051649,
+     VGM/WAV, wave/envelope editors and shared-wave inspector. Verified on Nova, DMG, Konkr and the SDL frontend.
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
    - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, one shared LFO, noise on channel 8, CSM.
      Exists as an **unverified source slice** on branch `opm-systems` ("OPM FM (YM2151)", `"ym2151-opm"`, demo "Sharp
@@ -72,7 +72,26 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
-9. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
+9. **Tuning library** — retain the four stock choices; add 424 DaMuSc measured tunings regenerated from
+   [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md)
+   and independently generated 1–72 EDO (496 additions). Preserve non-octave periods and attribution.
+   Other collections may be installed as optional local user-supplied packs; no uncleared scale files in the
+   repository or standard releases, and no automatic downloads. Search/category navigation must remain usable
+   with a controller. Do not contact upstream about licensing without new authorization.
+10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
+   - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
+     and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
+     This is a roadmap target, not a working port or an established performance claim.
+   - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
+     Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
+     Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
+   - Then stress SID, OPL3, EPSM and Mega Drive with simultaneous audition, realistic projects/Undo history,
+     exports, SD-card save/recovery, suspend/resume and clean return to NextUI. Do not silently reduce chip fidelity
+     or remove systems to pass the port.
+   - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
+     stack. The installed Kotlin 2.1.0 compiler lists ARM32 hard-float, but marks it deprecated; the existing
+     16 MiB glyph atlas and full-chip CPU budget need measurement. Neither handheld port has been run yet.
+11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
 

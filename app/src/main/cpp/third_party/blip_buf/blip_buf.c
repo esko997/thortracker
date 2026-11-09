@@ -166,6 +166,14 @@ void blip_clear( blip_t* m )
 	memset( SAMPLES( m ), 0, (m->size + buf_extra) * sizeof (buf_t) );
 }
 
+/* Thor Tracker extension: keep the sample grid aligned during silent seek,
+without synthesizing samples or disturbing the cleared signal history. */
+void blip_skip_silence( blip_t* m, unsigned t )
+{
+	assert( m->avail == 0 && m->integrator == 0 );
+	m->offset = (t * m->factor + m->offset) & (time_unit - 1);
+}
+
 int blip_clocks_needed( const blip_t* m, int samples )
 {
 	fixed_t needed;

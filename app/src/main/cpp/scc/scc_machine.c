@@ -100,11 +100,16 @@ static void run_tick(SccMachine* m) {
     blip_end_frame(m->blip, n);
 }
 
-/* One player tick with the core advanced silently (seek). */
+/* One player tick with exact chip and fractional resampler time but no signal history (seek). */
 static void run_silent_tick(SccMachine* m) {
     scp_tick(&m->player, &m->image);
     send_writes(m);
-    sck_advance(&m->core, next_clocks(m));
+    const uint32_t n = next_clocks(m);
+    sck_advance(&m->core, n);
+    /* The buffer is still cleared: only its sample grid advances before the rendered preroll.
+     * Resetting that grid at the preroll boundary shifts every later delta; warming the high-pass
+     * history cannot remove a fractional-sample timing error. */
+    blip_skip_silence(m->blip, n);
 }
 
 static int at(const ScPlayer* p, int order, int row) { return p->order == order && p->row == row && p->tick == 0; }
@@ -141,8 +146,9 @@ int scm_start(SccMachine* m, const SccImage* image, int order, int row, int max_
             return SCM_ERR_IMAGE;
         }
     }
-    /* From the reset again: the core follows the player exactly, advanced silently until the last
-     * SCM_PREROLL_TICKS x N ticks, which are rendered (output discarded) so the resampler's history settles. */
+    /* From the reset again: core and resampler time follow every tick exactly, with no signal history
+     * until the last SCM_PREROLL_TICKS x N ticks. Those render on straight play's sample grid
+     * (output discarded) so only the resampler's finite impulse and high-pass history must settle. */
     machine_reset(m, m->image.info.variant);
     if (from_order) scp_place(p, &m->image, order);
     else scp_reset(p, &m->image);
