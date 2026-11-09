@@ -1103,38 +1103,26 @@ The published AppImage also played the eight-channel demo on this PC: row 29 aft
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
 
-## Unreleased: Philips SAA1099 — SAM Coupé and Creative Music System (branch `saa1099-systems`, source only — nothing verified yet)
+## 0.34.0 Philips SAA1099 — integration verification
 
-The two SAA1099 systems (`sam-saa1099`, `cms-saa1099`; `docs/BACKENDS.md` "Philips SAA1099", contract in
-`docs/AUDIO_ENGINE.md` "SAA1099") were written without compiling, generating or running anything. No result below
-exists yet; the integrator runs, in the worktree, in this order (serialised, no emulator during builds):
+SAM Coupé and Creative Music System integrate all preceding systems. Six generated fixtures repeat
+byte-identically; **925 JVM and 6 Android host tests** pass. The initial production-signed Android
+release and temporary frontend harness compile successfully within the enforced build scope.
 
-1. `python3 tools/audio/prepare_saa.py` — writes `app/src/main/cpp/generated/saa_tables.h`,
-   `core/src/commonMain/kotlin/org/thortracker/backend/SaaPlayerImage.kt` and `app/src/test/cpp/saa_test_song.h`
-   (commit them, as the OPL3's and SCC's generated files are). It asserts the C header constants against the reference
-   (image layout, effect codes, clocks, rates, pitch limit, note ranges 11..106 / 9..104) and that both test songs
-   reach an exactly repeating loop pass.
-2. `python3 tools/audio/saa/saa_golden.py` — writes `core/src/jvmTest/resources/saa-golden/{sam,cms,features}.bin.gz`.
-3. `tools/build.sh :core:jvmTest` (at least `SaaModelTest`, `SaaGoldenTest`, `org.thortracker.system.saa.*`, and any
-   editor test touching shared views the SAA editor extended), then `tools/build.sh exportSamples` (writes
-   `coupe-lights.thor`, `blaster-skyline.thor`, `saa-sam-demo.saaimg`, `saa-cms-demo.saaimg`,
-   `saa-sam-shortest.saaimg`, `saa-cms-shortest.saaimg`).
-4. `tools/audio/run_native_host_test.sh evidence/audio` — `saa_machine_test` plus every existing system's test and
-   `wav_render_test` (SAA demos and shortest songs); existing counts must not change.
-5. `python3 tools/audio/saa_reference_check.py evidence/audio [--vgm2wav PATH]` — trace, per-clock chip model, VGM
-   structure and exact loop repetition, A-4 pitch of both machines; with libvgm's vgm2wav also the tone VGMs' pitch
-   (header clocks and the dual-chip bit) and, for information, song correlations.
-6. `tools/audio/render_saa_image.sh evidence/audio/saa_sam_song.bin evidence/audio/saa_render.wav 10 --vgm
-   evidence/audio/saa_render.vgm` (and the CMS image), and the existing `render_*_image.sh` scripts (their source lists
-   now include the SAA engine).
-7. The Android build (CMake, JNI `nativeSaaVgm`) and the Deck build (cinterop `saa_export.h`, `DeckSaaVgm`); UI smoke of
-   New/Load demo → Philips SAA1099…, the Instrument view (hardware envelope rows on lanes 3/6, noise clock, pan), lane-header
-   shared-state tags, playback, seek, audition, mute, VGM and WAV export on a reserved handheld and the Deck.
+- All earlier native engines and **2,567 WAV checks** pass. The first SAA run found a fractional
+  resampler-time loss during silent seek and a test assuming the new tone period had already latched.
+- Reusing `blip_skip_silence` for both stereo sides fixes CMS seek at order 3/row 21 from **9 LSB**
+  difference to **bit-identical**, retaining the original 1/32768 limit. The envelope test now covers
+  exactly eight actual edges, including the initial pending reset half-period. The corrected SAA run
+  passes **618 checks**. Both uninterrupted song WAVs, raw player/chip traces and VGM files remain
+  byte-identical to the pre-fix run.
+- Pre-clamp stress/public-machine probes cover **510,719,992 channel samples**, with extrema
+  **−28,944 / +30,071**, zero clipping; existing SAM ×10/CMS ×5 gain is retained. See the source
+  audit for the finite coverage and analytical bound, not an exhaustive-history claim.
 
-Assumptions to confirm by those runs or by listening: the noise clocks (data sheet / SAASound, not libvgm's doubled
-ones), frequency latching at the half-cycle end, the averaged PDM levels, the mixing levels (SAM × 10, CMS × 5), the
-one-shot external envelope hold rule, the 60 Hz CMS tick rate, the 1/32768 seek tolerance after the one-second
-pre-roll and the reference check's ±0.1 Hz pitch threshold.
+Evidence: `~/.local/state/thortracker/recovery-20261109/{saa-native,saa-corrected,saa-preclamp,saa-frontend}`.
+Independent references, corrected Android rebuild/live-device checks, optimized CI AppImage and
+official publication remain pending. Physical SAM Coupé/Game Blaster listening has not been performed.
 
 ## 0.16.0 NES + Konami VRC7
 
