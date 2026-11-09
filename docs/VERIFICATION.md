@@ -1,5 +1,64 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.20.0 NES + MMC5
+
+**New blank song / Load demo → NES… → NES + MMC5** adds two pulse voices and an
+eight-bit PCM lane to the NES's five channels. **Tandem Skies** demonstrates the
+pulse voices; **Sample Courier** exercises pitched PCM mappings, loops and drums.
+The PCM editor imports WAV files, maps samples to notes and edits pitch and looping.
+Its clocked software player drives the MMC5 DAC; it does not model the 6502 cost
+of a game's sample-feeding routine. FamiStudio 4.5.3 still plays the seven other lanes.
+
+WAV exports include PCM. NSF and FamiStudio text exports retain the real seven-stream
+driver and reject songs that play the PCM lane rather than silently dropping it.
+Android now removes the newly created export document if generation or writing fails;
+the working project is not that document and is never deleted by this cleanup.
+
+Verification so far: 493 JVM core tests, 13 Linux core tests, six Android-host unit
+tests; native coverage includes 130 MMC5, 95 PCM, 13 mixer-budget and 962 WAV checks.
+The cleaned permanent Android suite passed all 18 tests on Nova. A temporary capture
+produced 32 Game Boy views, all identical to the same-device baseline in full RGBA bytes.
+The capture source, device capture files and temporary test package were removed.
+
+Nova exercised PCM audition, a pitch edit, project save/reload and WAV import.
+The saved pitch edit changed only the selected mapping. An imported 16 kHz fixture
+preserved every byte except its 256 zero values, which became 1 as reported by the UI
+because the MMC5 DAC ignores zero writes; the existing sample pool stayed unchanged.
+The imported project also played through the actual desktop frontend.
+
+Android's no-fade PCM WAV contains 1,175,663 frames of 48 kHz, 16-bit stereo audio,
+peak 8,494 and no rail samples. A separate 19.84-second REMOTE_SUBMIX capture confirms
+live Android output (peak 1,378, RMS 0.007669 at the device's existing volume), not a
+microphone recording or human listening. Valid tonal-demo NSF and text exports are
+byte-identical to the generated reference exports. Both rejected PCM formats display
+the actionable error and leave no empty document. Owned Download smoke files were
+removed; `/ThorTunez` was untouched.
+
+The final production-signed, non-debuggable 0.20.0/code 33 candidate passed actual
+tonal and PCM playback, mapped audition and editor inspection on DMG and Konkr.
+Both active app AudioFlinger tracks reported zero underruns. Konkr used 32.44 CPU
+seconds over 65.57 wall seconds: 49.5% of one core for the whole app, including UI,
+not an isolated callback measurement. Original display timeouts were restored and
+both devices returned Home/asleep.
+
+The versioned desktop frontend exported the same edited PCM project through its
+actual WAV dialog. Both platform exports contain the same 1,175,663 stereo frames;
+only six of 2,351,326 samples differ, each by one least-significant bit.
+
+### N163 output clipping
+
+The N163 mixer now budgets the combined 2A03/N163 range before the int16 blip stage and the final output stage,
+including filter overshoot. This preserves the chip-to-APU balance, reduces master level by about 10.5 dB,
+and leaves the previous driver images and song exports unchanged.
+
+All 13 combined mixer-budget checks passed. The rendered N163 extreme peaked at 0.7680; the calculated bound
+over the supported sample rates is below 0.979. The eight demo WAV peaks were 12680, 10687, 9862, 8745, 8466,
+7825, 7964 and 7932, rather than the first three hitting the 32767 rail.
+
+The actual desktop frontend played the one-voice demo through its APU-only introduction into the N163 lead:
+11 seconds, order 1/row 36, peak 0.3869816, with the active N163 pattern visible. This was offscreen/dummy-audio
+execution with rendered output measurements, not human listening or a physical-cartridge comparison.
+
 ## 0.19.0 NES + FDS
 
 - **New blank song / Load demo → NES… → NES + FDS** adds the Famicom Disk System's wavetable voice after the NES's five channels. The demo is **Side B**.
@@ -32,6 +91,19 @@ snapshot, even when the working project changes. Owned Download smoke files were
 The actual desktop frontend also exercised held-note audition (peak 0.45099) and playback (peak 0.63122).
 Native WAV checks include the shortest valid one-row, one-tick FDS song. These checks are not human listening,
 physical Famicom/RAM-adapter testing, or comparison with a reference FDS emulator's audio. Thor was not used.
+
+Published as [v0.19.0](https://github.com/esko997/thortracker/releases/tag/v0.19.0) from main
+`9f8b9fa4741ae7bb0367bf49ecb96768c94bee25`; PR run 42540956821 and publication run 42541693480 passed.
+The downloaded release APK is version code 32, signed by the production certificate, and its SHA-256 is
+`84a30e55630bc24e35e106d956e3dc4f1417ed6881e7f7963d94749f004f2f23`.
+It was installed over the existing app on Nova, DMG and Konkr; each reported 0.19.0 and cold-launched to an
+observed app surface. Device timeouts were restored and the devices returned Home/asleep.
+Thor received that same verified APK in `Download/Thor Tracker/` only: no install, wake or launch.
+The published AppImage SHA-256 is `c07464ccb33f7cc4ec20ad83f8314f8e92d45e2c908304851478d9d58981fe02`;
+the Deck copy was verified and its stable `~/thortracker-deck/thor-tracker` symlink updated without launching it.
+Locally, the published AppImage opened *Side B* in an isolated home and advanced playback to row 30 with
+peak 0.63122; its actual Pattern surface was captured and inspected. Both artifacts matched their published
+checksum files. `/ThorTunez` was untouched.
 
 ## 0.18.0 NES + Sunsoft 5B
 
@@ -137,7 +209,6 @@ The published 0.16.0 APK and AppImage passed their checksum manifests; the APK h
 Lantern Point (peak 0.19839096). The official APK was installed and cold-launch checked on Nova, DMG and Konkr;
 the Thor received only the APK in Downloads, and the Deck's stable `thor-tracker` symlink was updated without
 launching or changing Steam settings.
-
 ## 0.15.0 NES + Konami VRC6
 
 - **New blank song / Load demo → NES… → NES + VRC6** adds two eight-duty pulse channels and a sawtooth to the NES's five channels. The demo is **Saw Sunrise**.

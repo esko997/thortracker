@@ -15,6 +15,10 @@
 # Sunsoft 5B: <dir>/nes_s5b.wav, nes_s5b_trace.txt (per-frame APU + 5B writes) and nes_s5b.nsf (the 5B test song,
 # expansion byte $7B = $20); nes_s5b_fallback_test: the seek fallback keeps a square's held manual-period sound (reads
 # s5b-manual-copies.nesimg from the samples).
+# MMC5: <dir>/nes_mmc5.wav, nes_mmc5_trace.txt (per-frame APU + MMC5 writes) and nes_mmc5.nsf (the MMC5 test song,
+# expansion byte $7B = $08).
+# MMC5 / N163 mix budget (nes_mix_budget_test): end-to-end swings of every voice at 8-96 kHz stay inside the output,
+# rendered relative levels, and the MMC5 PCM lane's mute (a muted DAC mixes as its centre).
 # SID: <dir>/sid_gt_8580.wav, sid_gt_6581.wav, sid_tone_8580.wav, sid_trace.txt (per-tick SID writes) and
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
@@ -44,7 +48,9 @@ c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
   "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c" "$cpp/nes/nes_n163.c"
-  "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c" "$cpp/nes/nes_players.c"
+  "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/nes/nes_mmc5.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c"
+  "$cpp/nes/nes_mmc5_pcm.c"
+  "$cpp/nes/nes_players.c"
   "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c"
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c"
@@ -67,7 +73,8 @@ for src in "${cxx_engines[@]}"; do
   objs+=("$o")
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
-  nes_s5b_fallback_test sid_machine_test opl3_machine_test ym_machine_test wav_render_test; do
+  nes_s5b_fallback_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test opl3_machine_test \
+  ym_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -80,6 +87,9 @@ status=0
 "$build/nes_fds_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/nes_s5b_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/nes_s5b_fallback_test" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_mmc5_test" "$out" || status=1
+"$build/nes_mmc5_pcm_test" || status=1
+"$build/nes_mix_budget_test" || status=1
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1

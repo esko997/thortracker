@@ -137,7 +137,12 @@ internal class FsSong(
          *   `EnvelopePeriod` on 5B Square 1;
          * - FDS `Ixx`/`Jxx` set one half of FamiStudio's 12-bit `FdsModSpeed`; the other half is the speed the channel has
          *   at that row: the sound's own Mod speed once a note with an attack loads it (an auto-mod sound leaves the
-         *   engine's speed as it was: `famistudio_set_fds_instrument` skips it), else the last I/J value.
+         *   engine's speed as it was: `famistudio_set_fds_instrument` skips it), else the last I/J value;
+         * - the MMC5's software PCM lane is not one of the engine's channels ([NesExpansion.engineChannels]: [notes] holds
+         *   the seven engine channels) and is lowered separately ([NesPcmLowering]); its `Fxx` is a song speed like any
+         *   lane's, so a row whose engine channels set no speed takes the PCM lane's on Pulse 1 (as the song's first speed
+         *   is placed): the engine, which times the PCM lane's rows too, and both exports get it, and the first lane in
+         *   order still wins a row where several set one.
          * Requires a song without [NesSystem.errors].
          */
         fun of(document: Song): FsSong {
@@ -146,7 +151,7 @@ internal class FsSong(
             val lengths = IntArray(song.orders.size) { song.patterns[song.orders[it]].length }
             val total = lengths.sum()
             val expansion = song.nes.expansion
-            val channels = expansion.channels
+            val channels = expansion.engineChannels
             val notes = Array(channels) { arrayOfNulls<FsNote>(total) }
             for (ch in 0 until channels) {
                 val fds = NesRules.isFds(expansion, ch)
@@ -191,6 +196,19 @@ internal class FsSong(
                         if (period >= 0) {
                             val ch = NesRules.S5B_SQUARE1
                             notes[ch][row] = (notes[ch][row] ?: FsNote()).also { it.envelopePeriod = period }
+                        }
+                        row++
+                    }
+                }
+            }
+            if (expansion.hasPcmLane) {
+                var row = 0
+                for (o in song.orders.indices) {
+                    val pattern = song.patterns[song.orders[o]]
+                    for (r in 0 until pattern.length) {
+                        val cell = pattern.tracks[NesRules.MMC5_PCM][r]
+                        if (cell.hasEffect && cell.effect == NesRules.FX_SPEED && (0 until channels).none { (notes[it][row]?.speed ?: -1) >= 0 }) {
+                            notes[0][row] = (notes[0][row] ?: FsNote()).also { it.speed = cell.param }
                         }
                         row++
                     }

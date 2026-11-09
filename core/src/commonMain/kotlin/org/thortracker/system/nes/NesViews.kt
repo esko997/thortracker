@@ -19,7 +19,8 @@ import org.thortracker.ui.Painter
  * The NES instrument editor: the one shared bank, the selected sound's name, on songs with an expansion chip its chip
  * (and on VRC6 sounds the saw volume), the channel Listen plays on, its envelopes edited step by step with the
  * controller, and on 2A03 sounds a fifth page, DPCM: the sound's note → sample mappings and the song's samples
- * ([NesDpcmPage]). VRC7 sounds have no duty: their fourth page is the FM patch ([FM_PAGE]): the built-in patch or the
+ * ([NesDpcmPage]); in NES + MMC5 songs a sixth, PCM: the note → PCM sample mappings of the MMC5 PCM lane and the song's
+ * PCM samples ([NesPcmPage], [PCM_PAGE]). VRC7 sounds have no duty: their fourth page is the FM patch ([FM_PAGE]): the built-in patch or the
  * custom patch's registers per operator, and the release/stop sustain. N163 sounds have no duty either: their fourth
  * page is the Waves page ([WAVE_PAGE]): the preset, wave size and RAM position, the sequence of waves with each wave's
  * repeat, its loop and release, and the shown wave's samples. FDS sounds have no duty: their fourth page is their Waves
@@ -50,6 +51,8 @@ object NesInstrumentView : SystemView() {
         MOD_PRESET, MOD_SPEED, MOD_DEPTH, MOD_DELAY, MOD_AUTO, MOD_NUMER, MOD_DENOM, MOD_TABLE,
         // 5B envelope page (5B sounds): the shape, auto or manual period, the auto octave, the manual period
         ENV_SHAPE, ENV_AUTO, ENV_OCTAVE, ENV_PERIOD,
+        // PCM page (2A03 sounds of MMC5 songs): the mapping of one key, a chromatic spread, then the song's PCM samples
+        PCM_KEY, PCM_SAMPLE, PCM_PITCH, PCM_LOOP, PCM_SPREAD, PCM_SAMPLES, PCM_NAME, PCM_LOOP_START, PCM_ADD,
     }
 
     /** The page after the four envelopes: DPCM mappings and samples (2A03 sounds only). */
@@ -67,6 +70,9 @@ object NesInstrumentView : SystemView() {
     /** 5B sounds: the hardware envelope page, after volume, arpeggio, pitch, mixer and noise. */
     const val S5B_ENV_PAGE = 5
 
+    /** 2A03 sounds of NES + MMC5 songs: the PCM page, after DPCM. */
+    const val PCM_PAGE = 5
+
     /** The envelope each page of a sound shows, by chip (the 2A03 and VRC6 four; the 5B's mixer and noise in duty's place). */
     private val APU_PAGES = listOf(NesEnvelopeKind.VOLUME, NesEnvelopeKind.ARPEGGIO, NesEnvelopeKind.PITCH, NesEnvelopeKind.DUTY)
     private val S5B_PAGES = listOf(NesEnvelopeKind.VOLUME, NesEnvelopeKind.ARPEGGIO, NesEnvelopeKind.PITCH, NesEnvelopeKind.MIXER, NesEnvelopeKind.NOISE)
@@ -82,6 +88,10 @@ object NesInstrumentView : SystemView() {
     /** DPCM plays only on its own channel, so the page has no Listen row. */
     val DPCM_ROWS = listOf(Row.SLOT, Row.NAME, Row.ENVELOPE, Row.KEY, Row.SAMPLE, Row.PITCH, Row.SAMPLE_LOOP, Row.LEVEL,
         Row.SAMPLES, Row.SAMPLE_NAME, Row.SAMPLE_LEVEL, Row.ADD)
+
+    /** The PCM page: the MMC5 PCM lane plays it, so it has no Listen row either. */
+    val PCM_ROWS = listOf(Row.SLOT, Row.NAME, Row.ENVELOPE, Row.PCM_KEY, Row.PCM_SAMPLE, Row.PCM_PITCH, Row.PCM_LOOP, Row.PCM_SPREAD,
+        Row.PCM_SAMPLES, Row.PCM_NAME, Row.PCM_LOOP_START, Row.PCM_ADD)
 
     /** The FM page (only on VRC7 songs, so it has the Chip row). */
     val FM_ROWS = listOf(Row.SLOT, Row.NAME, Row.CHIP, Row.LISTEN, Row.ENVELOPE, Row.PATCH, Row.SUSTAIN_RELEASE, Row.SUSTAIN_STOP) +
@@ -116,6 +126,13 @@ object NesInstrumentView : SystemView() {
 
     /** Whether the DPCM page of a 2A03 sound is shown. */
     fun dpcmPage(song: Song, state: ViewState): Boolean = state.envelope == DPCM_PAGE && chip(song, state) == NesChip.APU
+
+    /** Whether the PCM page of a 2A03 sound of an MMC5 song is shown. */
+    fun pcmPage(song: Song, state: ViewState): Boolean =
+        state.envelope == PCM_PAGE && chip(song, state) == NesChip.APU && song.nes.expansion.hasPcmLane
+
+    /** Either sample page (DPCM, PCM): no envelope, no Listen row. */
+    fun samplePage(song: Song, state: ViewState): Boolean = dpcmPage(song, state) || pcmPage(song, state)
 
     /** Whether the FM patch page of a VRC7 sound is shown. */
     fun fmPage(song: Song, state: ViewState): Boolean = state.envelope == FM_PAGE && chip(song, state) == NesChip.VRC7
@@ -156,31 +173,32 @@ object NesInstrumentView : SystemView() {
     fun chip(song: Song, state: ViewState): NesChip = sound(song, state)?.chip ?: NesChip.APU
 
     /**
-     * Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples); a VRC7 sound's
-     * volume, arpeggio and pitch envelopes and its FM patch; an N163 sound's three and its Waves page; an FDS sound's
-     * three, its Waves and its Modulation page; a 5B sound's volume, arpeggio, pitch, mixer and noise envelopes and its
-     * hardware envelope.
+     * Pages of the shown sound: its four envelopes, and DPCM on 2A03 sounds (only they map samples), then PCM in MMC5
+     * songs; a VRC7 sound's volume, arpeggio and pitch envelopes and its FM patch; an N163 sound's three and its Waves
+     * page; an FDS sound's three, its Waves and its Modulation page; a 5B sound's volume, arpeggio, pitch, mixer and noise
+     * envelopes and its hardware envelope.
      */
     fun pages(song: Song, state: ViewState): Int = when (chip(song, state)) {
-        NesChip.APU -> DPCM_PAGE + 1
+        NesChip.APU -> if (song.nes.expansion.hasPcmLane) PCM_PAGE + 1 else DPCM_PAGE + 1
         NesChip.FDS -> MOD_PAGE + 1
         NesChip.S5B -> S5B_ENV_PAGE + 1
         else -> DPCM_PAGE
     }
 
     /**
-     * The rows of the shown page. Songs with an expansion chip add Chip after Name, and VRC6 sounds the saw volume;
-     * 2A03-only songs keep the rows they always had.
+     * The rows of the shown page. Songs whose expansion brings a chip of its own add Chip after Name, and VRC6 sounds the
+     * saw volume; songs with one chip (2A03 only, or the MMC5, whose pulses play 2A03 sounds) keep the rows they always had.
      */
     fun rows(state: ViewState, song: Song): List<Row> {
         if (dpcmPage(song, state)) return DPCM_ROWS
+        if (pcmPage(song, state)) return PCM_ROWS
         if (fmPage(song, state)) return FM_ROWS
         if (wavePage(song, state)) return WAVE_ROWS
         if (fdsWavePage(song, state)) return FDS_WAVE_ROWS
         if (modPage(song, state)) return MOD_ROWS
         if (s5bEnvPage(song, state)) return S5B_ROWS
         val base = ROWS.getValue(kind(song, state))
-        if (song.nes.expansion == NesExpansion.NONE) return base
+        if (song.nes.expansion.chips.size == 1) return base
         val extra = if (chip(song, state) == NesChip.VRC6) listOf(Row.CHIP, Row.SAW) else listOf(Row.CHIP)
         return base.take(2) + extra + base.drop(2)
     }
@@ -362,7 +380,7 @@ object NesInstrumentView : SystemView() {
     fun channelNote(kind: NesEnvelopeKind, channel: ChannelKind, chip: NesChip = NesChip.APU, saw: Vrc6SawVolume = Vrc6SawVolume.HALF,
                     channelChip: NesChip = chip, shape: S5bShape = S5bShape.OFF, n163Channels: Int = 1): String? = when {
         channelChip != chip -> "${chip.label} sounds play on the ${chip.label} channel${if (chip == NesChip.FDS) "" else "s"} only"
-        channel == ChannelKind.SAMPLE -> "DPCM plays samples: envelopes do not apply"
+        channel == ChannelKind.SAMPLE -> "DPCM and MMC5 PCM play samples (their own pages): envelopes do not apply"
         channel == ChannelKind.SAW -> when (kind) {
             NesEnvelopeKind.VOLUME -> "Saw: volume ${sawText(saw)}"
             NesEnvelopeKind.DUTY -> "The saw has no duty"
@@ -493,7 +511,7 @@ object NesInstrumentView : SystemView() {
             st.waveCol = sampleIndex(st, s)
         }
         if (modPage(song, st)) st.programField = modIndex(st)
-        NesDpcmPage.normalise(v)
+        if (pcmPage(song, st)) NesPcmPage.normalise(v) else NesDpcmPage.normalise(v)
     }
 
     override fun subject(state: ViewState): Int = state.instrument
@@ -504,12 +522,15 @@ object NesInstrumentView : SystemView() {
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
         val wasDpcm = dpcmPage(song, state)
+        val wasPcm = pcmPage(song, state)
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
-        // The DPCM channel's sounds are their sample mappings: show that page, on the selected note's key.
+        // The DPCM channel's and the MMC5 PCM lane's sounds are their sample mappings: show that page, on the selected
+        // note's key.
         val onDpcm = selection.channel == NesRules.DPCM
-        if (onDpcm != wasDpcm) state.envelope = if (onDpcm) DPCM_PAGE else 0
-        if (onDpcm && selection.order in song.orders.indices) {
+        val onPcm = NesRules.isMmc5Pcm(song.nes.expansion, selection.channel)
+        if (onDpcm != wasDpcm || onPcm != wasPcm) state.envelope = if (onDpcm) DPCM_PAGE else if (onPcm) PCM_PAGE else 0
+        if ((onDpcm || onPcm) && selection.order in song.orders.indices) {
             val note = song.patterns[song.orders[selection.order]].tracks.getOrNull(selection.channel)?.getOrNull(selection.row)?.note ?: -1
             if (note >= 0) state.dpcmKey = note
         }
@@ -527,12 +548,14 @@ object NesInstrumentView : SystemView() {
         val song = v.session.song
         val row = row(st, song)
         val wasDpcm = dpcmPage(song, st)
+        val wasPcm = pcmPage(song, st)
         st.envelope = index.mod(pages(song, st))
         val rows = rows(st, song)
         st.instField = rows.indexOf(row).takeIf { it >= 0 }
             ?: SAME_ROW[row]?.firstNotNullOfOrNull { same -> rows.indexOf(same).takeIf { it >= 0 } }
             ?: rows.indexOf(when {
                 dpcmPage(song, st) -> Row.KEY
+                pcmPage(song, st) -> Row.PCM_KEY
                 fmPage(song, st) -> Row.PATCH
                 wavePage(song, st) || fdsWavePage(song, st) -> Row.WAVE_PRESET
                 modPage(song, st) -> Row.MOD_PRESET
@@ -542,6 +565,7 @@ object NesInstrumentView : SystemView() {
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
         // Arriving on DPCM from an envelope page: start on the sound's first mapped key if the shown one has none.
         if (dpcmPage(song, st) && !wasDpcm) NesDpcmPage.showFirstMapping(v)
+        if (pcmPage(song, st) && !wasPcm) NesPcmPage.showFirstMapping(v)
     }
 
     /**
@@ -555,6 +579,14 @@ object NesInstrumentView : SystemView() {
         Row.LOOP to listOf(Row.WAVE_LOOP), Row.WAVE_LOOP to listOf(Row.LOOP),
         Row.RELEASE to listOf(Row.WAVE_RELEASE), Row.WAVE_RELEASE to listOf(Row.RELEASE),
         Row.WAVE_PRESET to listOf(Row.MOD_PRESET), Row.MOD_PRESET to listOf(Row.WAVE_PRESET),
+        // The DPCM and PCM pages' rows that do the same thing for their own samples.
+        Row.KEY to listOf(Row.PCM_KEY), Row.PCM_KEY to listOf(Row.KEY),
+        Row.SAMPLE to listOf(Row.PCM_SAMPLE), Row.PCM_SAMPLE to listOf(Row.SAMPLE),
+        Row.PITCH to listOf(Row.PCM_PITCH), Row.PCM_PITCH to listOf(Row.PITCH),
+        Row.SAMPLE_LOOP to listOf(Row.PCM_LOOP), Row.PCM_LOOP to listOf(Row.SAMPLE_LOOP),
+        Row.SAMPLES to listOf(Row.PCM_SAMPLES), Row.PCM_SAMPLES to listOf(Row.SAMPLES),
+        Row.SAMPLE_NAME to listOf(Row.PCM_NAME), Row.PCM_NAME to listOf(Row.SAMPLE_NAME),
+        Row.ADD to listOf(Row.PCM_ADD), Row.PCM_ADD to listOf(Row.ADD),
     )
 
     /**
@@ -576,6 +608,7 @@ object NesInstrumentView : SystemView() {
         val fdsSwitch = now != before && (now == NesChip.FDS || before == NesChip.FDS) && st.envelope == MOD_PAGE
         if (st.envelope >= pages(song, st) || fdsSwitch) showEnvelope(v, 0)
         else if (dpcmPage(song, st)) NesDpcmPage.showFirstMapping(v)
+        else if (pcmPage(song, st)) NesPcmPage.showFirstMapping(v)
         publish(v)
     }
 
@@ -645,7 +678,8 @@ object NesInstrumentView : SystemView() {
         val song = v.session.song
         val rows = rows(st, song)
         val row = row(st, song)
-        if (dpcmPage(song, st) && !v.editHeld && dy == 0 && NesDpcmPage.direction(v, row, dx)) return
+        if (!v.editHeld && dy == 0 &&
+            (dpcmPage(song, st) && NesDpcmPage.direction(v, row, dx) || pcmPage(song, st) && NesPcmPage.direction(v, row, dx))) return
         val e = envelope(song, st)
         when {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
@@ -753,7 +787,10 @@ object NesInstrumentView : SystemView() {
             Row.ENV_AUTO -> if (dx != 0 || dy != 0) session.editNesS5b(slot, "Set 5B envelope period mode") { it.copy(autoPitch = !it.autoPitch) }
             Row.ENV_OCTAVE -> session.editNesS5b(slot, "Set 5B envelope octave") { it.copy(octave = it.octave + dx + 4 * dy) }
             Row.ENV_PERIOD -> session.editNesS5b(slot, "Set 5B envelope period") { it.copy(period = octaveOf(it.period + dx, dy)) }
-            else -> NesDpcmPage.adjust(v, row, dx, dy)
+            else -> { // the sample pages' rows (each page handles only its own)
+                NesDpcmPage.adjust(v, row, dx, dy)
+                NesPcmPage.adjust(v, row, dx, dy)
+            }
         }
     }
 
@@ -1005,7 +1042,10 @@ object NesInstrumentView : SystemView() {
             Row.MOD_AUTO -> toggleAutoMod(v)
             Row.MOD_SPEED, Row.MOD_DEPTH, Row.MOD_DELAY, Row.MOD_NUMER, Row.MOD_DENOM, Row.MOD_TABLE -> Unit
             in FM_PARAMS -> FM_PARAMS.getValue(row).let { p -> if (p.max == 1) setFmParam(v, p) { 1 - it } }
-            else -> NesDpcmPage.editTap(v, row)
+            else -> {
+                NesDpcmPage.editTap(v, row)
+                NesPcmPage.editTap(v, row)
+            }
         }
     }
 
@@ -1070,14 +1110,21 @@ object NesInstrumentView : SystemView() {
             Row.ENV_AUTO -> session.editNesS5b(slot, "Set 5B envelope period mode") { it.copy(autoPitch = S5bEnvelope.DEFAULT.autoPitch) }
             Row.ENV_OCTAVE -> session.editNesS5b(slot, "Set 5B envelope octave") { it.copy(octave = S5bEnvelope.DEFAULT.octave) }
             Row.ENV_PERIOD -> session.editNesS5b(slot, "Set 5B envelope period") { it.copy(period = S5bEnvelope.DEFAULT.period) }
-            else -> NesDpcmPage.clear(v, row)
+            else -> {
+                NesDpcmPage.clear(v, row)
+                NesPcmPage.clear(v, row)
+            }
         }
     }
 
     override fun audition(v: ViewController) {
-        // DPCM plays the shown key's mapping, whichever page is up.
-        if (dpcmPage(v.session.song, v.state) || v.state.listenChannel == NesRules.DPCM) NesDpcmPage.audition(v)
-        else v.startAudition(v.state.listenChannel, v.defaultNote(), v.state.instrument)
+        // DPCM and the MMC5 PCM lane play the shown key's mapping, whichever page is up.
+        val song = v.session.song
+        when {
+            pcmPage(song, v.state) || NesRules.isMmc5Pcm(song.nes.expansion, v.state.listenChannel) -> NesPcmPage.audition(v)
+            dpcmPage(song, v.state) || v.state.listenChannel == NesRules.DPCM -> NesDpcmPage.audition(v)
+            else -> v.startAudition(v.state.listenChannel, v.defaultNote(), v.state.instrument)
+        }
     }
 
     /**
@@ -1085,7 +1132,7 @@ object NesInstrumentView : SystemView() {
      * sound's Waves and Modulation pages and a 5B sound's hardware envelope page have no envelope.
      */
     private fun envelopeRow(song: Song, state: ViewState, row: Row) =
-        !dpcmPage(song, state) && !fdsPage(song, state) && !s5bEnvPage(song, state) && row != Row.SLOT && row != Row.NAME &&
+        !samplePage(song, state) && !fdsPage(song, state) && !s5bEnvPage(song, state) && row != Row.SLOT && row != Row.NAME &&
             row != Row.CHIP &&
             row != Row.SAW && row != Row.LISTEN && row != Row.PATCH && row != Row.SUSTAIN_RELEASE && row != Row.SUSTAIN_STOP &&
             row !in FM_PARAMS && row !in WAVE_SETTINGS
@@ -1216,13 +1263,16 @@ object NesInstrumentView : SystemView() {
             Row.ENV_AUTO -> { h += Hint(v.k(Action.EDIT), "Auto / manual period"); h += Hint(v.k(Action.CLEAR), "Auto") }
             Row.ENV_OCTAVE -> { h += Hint(v.editLr(), "Octave ±1 (${v.ud()} ±4)"); h += Hint(v.k(Action.CLEAR), "3") }
             Row.ENV_PERIOD -> { h += Hint(v.editLr(), "Period ±1 (${v.ud()} ×2 / ÷2)"); h += Hint(v.k(Action.CLEAR), "1000") }
-            else -> NesDpcmPage.hints(v, row, h)
+            else -> {
+                NesDpcmPage.hints(v, row, h)
+                NesPcmPage.hints(v, row, h)
+            }
         }
         if (row == Row.LENGTH || row == Row.LOOP || row == Row.RELEASE || row == Row.MODE || row == Row.CHIP || row == Row.SAW ||
             row == Row.PATCH || row == Row.SUSTAIN_RELEASE || row == Row.SUSTAIN_STOP ||
             (row in WAVE_SETTINGS && row !in WAVE_SHAPE_ROWS && row != Row.MOD_TABLE) || row in S5B_ROWS.drop(5)) h += Hint(v.lr(), "Sound slot")
         h += Hint(v.channels(), "Page")
-        if (dpcmPage(song, st)) {
+        if (samplePage(song, st)) {
             h += Hint(v.k(Action.AUDITION), "Listen to ${NesSystem.noteName(st.dpcmKey)}")
             h += Hint(v.copyPaste(), "Copy/paste sound")
             return
@@ -1239,7 +1289,8 @@ object NesInstrumentView : SystemView() {
     /**
      * Help rows for this view (heading, then key → meaning), named with the current [keys]; [expansion] adds its chip's
      * rows (the VRC6's Chip and Saw rows, the VRC7's FM patch page, the N163's Waves page for its channel count, the FDS's
-     * Waves and Modulation pages, the 5B's mixer, noise and hardware envelope pages, and their envelope meanings).
+     * Waves and Modulation pages, the 5B's mixer, noise and hardware envelope pages, and their envelope meanings; what the
+     * MMC5's pulses play).
      */
     fun helpSections(keys: Keymap, expansion: NesExpansion = NesExpansion.NONE): List<Pair<String, List<Pair<String, String>>>> {
         val edit = keys.label(Action.EDIT)
@@ -1313,6 +1364,15 @@ object NesInstrumentView : SystemView() {
                 ) + S5B_PAGES.map { it.label to envelopeSummary(it, NesChip.S5B) },
             )
             NesExpansion.FDS -> fdsHelp(keys)
+            NesExpansion.MMC5 -> listOf(
+                "MMC5 Pulse 1/2" to listOf(
+                    "Sounds" to "The MMC5 pulses play the bank's 2A03 sounds with every envelope, as Pulse 1/2 do (duty 0-3), " +
+                        "so sounds have no Chip row; Listen on can pick MMC5 Pulse 1 or 2",
+                    "Phase reset" to "Without a sweep unit FamiStudio cannot smooth an MMC5 pulse's pitch changes: a pitch envelope, " +
+                        "slide or vibrato that crosses a period high-byte boundary restarts the waveform with a soft click",
+                ),
+                "MMC5 PCM samples" to NesPcmPage.helpRows(keys),
+            )
             else -> n163Help(keys, expansion.n163Channels)
         }
     }

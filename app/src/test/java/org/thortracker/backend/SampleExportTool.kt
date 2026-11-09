@@ -12,6 +12,8 @@ import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesMmc5DemoSong
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesS5bSystem
@@ -206,6 +208,30 @@ object SampleExportTool {
             patterns = listOf(mcA, mcB), orders = listOf(0, 1), sound = mcBase.nes.copy(instruments = mcBank))
         File(directory, "s5b-manual-copies.nesimg")
             .writeBytes(ByteArray(NesS5bSystem.engine.imageSize).also { NesS5bSystem.engine.lower(manualCopies, it) })
+        // The NES + MMC5 demo (its image plays on "nes-famistudio-mmc5"), and the shortest valid MMC5 song (one one-row
+        // order at speed 1, A-4 on MMC5 Pulse 1; mmc5-shortest, the one-row, one-tick edge case wav_render_test.c renders).
+        val mmc5 = NesMmc5System.demo()
+        File(directory, "tandem-skies.thor").writeText(ProjectCodec.encode(mmc5), Charsets.UTF_8)
+        for (format in NesMmc5System.exports) File(directory, "tandem-skies.${format.extension}").writeBytes(format.export(mmc5))
+        File(directory, "tandem-skies.nesimg").writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(mmc5, it) })
+        val mmc5Shortest = NesMmc5DemoSong.shortest()
+        check(NesMmc5System.errors(mmc5Shortest).isEmpty()) { "the shortest MMC5 song is invalid: ${NesMmc5System.errors(mmc5Shortest)}" }
+        File(directory, "mmc5-shortest.nesimg")
+            .writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(mmc5Shortest, it) })
+        println("Exported ${mmc5.title} and the shortest MMC5 song to ${directory.absolutePath}")
+        // The MMC5 PCM lane fixtures (the image extension of nes_mmc5_pcm.h after the seven-channel image): "Sample
+        // Courier" (project and engine image only: .nsf and FamiStudio text refuse a playing PCM lane) and the shortest PCM
+        // song (one one-row order at speed 1, the looping PCM bass on A-2; mmc5-pcm-shortest). The native tests
+        // (nes_mmc5_pcm_test.c) and wav_render_test.c render both.
+        val courier = NesMmc5DemoSong.pcmDemo()
+        check(NesMmc5System.errors(courier).isEmpty()) { "the PCM fixture is invalid: ${NesMmc5System.errors(courier)}" }
+        File(directory, "sample-courier.thor").writeText(ProjectCodec.encode(courier), Charsets.UTF_8)
+        File(directory, "sample-courier.nesimg").writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(courier, it) })
+        val pcmShortest = NesMmc5DemoSong.pcmShortest()
+        check(NesMmc5System.errors(pcmShortest).isEmpty()) { "the shortest PCM song is invalid: ${NesMmc5System.errors(pcmShortest)}" }
+        File(directory, "mmc5-pcm-shortest.nesimg")
+            .writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(pcmShortest, it) })
+        println("Exported ${courier.title} and the shortest MMC5 PCM song to ${directory.absolutePath}")
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

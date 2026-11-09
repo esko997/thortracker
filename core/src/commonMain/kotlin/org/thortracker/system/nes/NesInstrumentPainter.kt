@@ -31,8 +31,8 @@ import org.thortracker.ui.Surface
  */
 internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private companion object {
-        /** DPCM page rows drawn inside the sample box rather than as setting rows. */
-        val BOX_ROWS = setOf(Row.SAMPLES, Row.SAMPLE_NAME, Row.SAMPLE_LEVEL, Row.ADD)
+        /** DPCM and PCM page rows drawn inside the sample box rather than as setting rows. */
+        val BOX_ROWS = setOf(Row.SAMPLES, Row.SAMPLE_NAME, Row.SAMPLE_LEVEL, Row.ADD, Row.PCM_SAMPLES, Row.PCM_NAME, Row.PCM_LOOP_START, Row.PCM_ADD)
     }
 
     private val tabs = ArrayList<Pair<Rect, Int>>()
@@ -92,6 +92,9 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         val rx = left.right + pad
         val rw = area.right - pad - rx
         val dpcm = NesInstrumentView.dpcmPage(s, st)
+        val pcm = NesInstrumentView.pcmPage(s, st)
+        val pcmMapping = if (pcm) ins.pcm[st.dpcmKey] else null
+        val pcmSample = pcmMapping?.let { s.nes.pcmSamples.getOrNull(it.sample) }
         val fm = NesInstrumentView.fmPage(s, st)
         val wavePage = NesInstrumentView.wavePage(s, st)
         val fdsWaves = NesInstrumentView.fdsWavePage(s, st)
@@ -207,6 +210,28 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                     mapping.dmcInitial < 0 -> "the sample's own (${(s.nes.samples.getOrNull(mapping.sample)?.dmcInitial ?: DpcmSample.DEFAULT_DMC_INITIAL) * 2})"
                     else -> "${mapping.dmcInitial * 2} at note start"
                 }, rx, vx, y, h, sel, mapping == null || mapping.dmcInitial < 0)
+                Row.PCM_KEY -> setting(c, "Key", NesSystem.noteName(st.dpcmKey) + when {
+                    ins.pcm.isEmpty() -> "   no keys mapped yet"
+                    pcmMapping == null -> "   not mapped (${ins.pcm.size} key${if (ins.pcm.size == 1) "" else "s"} are)"
+                    else -> "   key ${ins.pcm.keys.count { it <= st.dpcmKey }} of ${ins.pcm.size} mapped"
+                }, rx, vx, y, h, sel, pcmMapping == null)
+                Row.PCM_SAMPLE -> setting(c, "Sample", when {
+                    pcmMapping == null -> "none"
+                    pcmSample == null -> "missing PCM sample ${pcmMapping.sample + 1}"
+                    else -> "${pcmSample.name}  (${pcmSample.data.size} bytes, ${pcmSeconds(pcmSample)})"
+                }, rx, vx, y, h, sel, pcmMapping == null)
+                Row.PCM_PITCH -> setting(c, "Pitch", when {
+                    pcmMapping == null -> "—"
+                    pcmSample == null -> "${pcmMapping.pitch} st"
+                    else -> "${if (pcmMapping.pitch > 0) "+" else ""}${pcmMapping.pitch} st  plays at ${Pcm.rateText(Pcm.playRate(pcmSample.rate, pcmMapping.pitch))}"
+                }, rx, vx, y, h, sel, pcmMapping == null || pcmMapping.pitch == 0)
+                Row.PCM_LOOP -> setting(c, "Loop", when {
+                    pcmMapping == null -> "—"
+                    pcmMapping.loop -> "on: repeats from the loop start until the next note, OFF or a cut"
+                    else -> "off: plays once"
+                }, rx, vx, y, h, sel, pcmMapping?.loop != true)
+                Row.PCM_SPREAD -> setting(c, "Spread", if (pcmMapping == null) "—" else
+                    "map this sample an octave either way, a semitone per key", rx, vx, y, h, sel, pcmMapping == null)
                 Row.WAVE_PRESET -> {
                     val preset = if (ins.chip == NesChip.FDS) FdsPresets.presetOf(fds.waves) else N163Presets.presetOf(wave.waves, wave.size)
                     val count = seq?.waves?.size ?: 1
@@ -256,10 +281,13 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             if (sel) ink.outline(c, Rect(rx - ink.unit * 0.4f, y + 1, rx + rw + ink.unit * 0.4f, y + h - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
             y += h
         }
-        if (dpcm) {
+        if (dpcm || pcm) {
             plot.hide()
             val boxTop = y + ink.unit * 0.4f
-            if (area.bottom - boxTop > ink.unit * 6f) drawDpcm(c, Rect(rx, boxTop, rx + rw, area.bottom - ink.unit * 0.4f), ins, row, col)
+            if (area.bottom - boxTop > ink.unit * 6f) {
+                val box = Rect(rx, boxTop, rx + rw, area.bottom - ink.unit * 0.4f)
+                if (pcm) drawPcm(c, box, ins, row, col) else drawDpcm(c, box, ins, row, col)
+            }
             return
         }
         if (fm) {
@@ -336,8 +364,9 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
             if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
             ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
             val modTab = page == NesInstrumentView.MOD_PAGE && ins.chip == NesChip.FDS
+            val pcmTab = page == NesInstrumentView.PCM_PAGE && ins.chip == NesChip.APU
             val size = k?.of(ins)?.values?.size ?: when (ins.chip) {
-                NesChip.APU -> ins.dpcm.size
+                NesChip.APU -> if (pcmTab) ins.pcm.size else ins.dpcm.size
                 NesChip.N163 -> ins.wave.waves.size
                 NesChip.FDS -> if (modTab) 0 else ins.fds.waves.size
                 else -> 0
@@ -347,7 +376,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
                 NesChip.N163 -> "Waves"
                 NesChip.FDS -> if (modTab) "Modulation" else "Waves"
                 NesChip.S5B -> if (ins.s5b.shape == S5bShape.OFF) "5B env" else "5B env ✓"
-                else -> "DPCM"
+                else -> if (pcmTab) "PCM" else "DPCM"
             }
             val label = if (size == 0) name else "$name ($size)"
             ink.label(c, ink.fit(label, w - ink.unit * 0.4f, bold = on), t.centerX(), t.top, t.height(), color, on, align = Align.CENTER)
@@ -642,6 +671,140 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
         boxRow(addRect.top, Row.ADD, "Add", "starter kit or .wav / .dmc file…", false)
     }
 
+    /**
+     * The PCM page's box (as the DPCM page's): left, every key the sound maps to a PCM sample (key, sample, pitch, loop);
+     * right, the song's PCM samples with their sizes and the PCM memory they share, the selected sample's waveform (its
+     * 8-bit values, the loop start marked), its name and loop start, and the Add row.
+     */
+    private fun drawPcm(c: Surface, r: Rect, ins: NesInstrument, row: Row, col: Int) {
+        val s = song
+        val samples = s.nes.pcmSamples
+        val gap = ink.unit * 0.6f
+        val small = ink.unit * 0.8f
+        val titleH = ink.unit * 1.4f
+        val left = Rect(r.left, r.top, r.left + (r.width() - gap) * 0.42f, r.bottom)
+        val right = Rect(left.right + gap, r.top, r.right, r.bottom)
+
+        // mapped keys
+        ink.round(c, left, ink.dp(4f), Palette.LANE)
+        ink.label(c, ink.fit("PCM keys of sound ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, Palette.DIM, size = small)
+        keyList = ins.pcm.keys.sorted()
+        keyRowH = ink.unit * 1.25f
+        keyRect = Rect(left.left, left.top + titleH, left.right, left.bottom - ink.unit * 0.3f)
+        val keyRows = maxOf(1, (keyRect.height() / keyRowH).toInt())
+        val shown = keyList.indexOf(st.dpcmKey)
+        if (shown >= 0) keyScroll = keyScroll.coerceIn(maxOf(0, shown - keyRows + 1), shown)
+        keyScroll = keyScroll.coerceIn(0, maxOf(0, keyList.size - keyRows))
+        if (keyList.isEmpty()) {
+            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, Palette.FAINT, size = small)
+        }
+        val keyFocus = row == Row.PCM_KEY || row == Row.PCM_SAMPLE || row == Row.PCM_PITCH || row == Row.PCM_LOOP || row == Row.PCM_SPREAD
+        for (i in keyScroll until minOf(keyList.size, keyScroll + keyRows)) {
+            val key = keyList[i]
+            val m = ins.pcm.getValue(key)
+            val y = keyRect.top + (i - keyScroll) * keyRowH
+            val on = key == st.dpcmKey
+            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 140))
+            if (on) ink.rect(c, left.left, y, left.left + ink.dp(3f), y + keyRowH, col)
+            ink.mono(c, NesSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else Palette.DIM, on, small)
+            val tail = (if (m.pitch > 0) "+${m.pitch}" else m.pitch.toString()) + if (m.loop) " ↻" else ""
+            val tailW = ink.labelWidth(tail, small) + ink.unit * 0.5f
+            val name = samples.getOrNull(m.sample)?.name ?: "missing"
+            ink.label(c, ink.fit(name, left.width() - ink.unit * 3.6f - tailW, small), left.left + ink.unit * 3.2f, y, keyRowH,
+                if (m.sample in samples.indices) (if (on) Palette.TEXT else Palette.DIM) else Palette.ERROR, size = small)
+            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+        }
+
+        // samples
+        ink.round(c, right, ink.dp(4f), Palette.LANE)
+        val used = Pcm.stored(s.nes)
+        val over = used > Pcm.MEMORY
+        ink.label(c, ink.fit("PCM · ${Pcm.kb(used)} of ${Pcm.kb(Pcm.MEMORY)}", right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH,
+            if (over) Palette.ERROR else Palette.DIM, size = small)
+        val barL = right.left + right.width() * 0.64f
+        val barR = right.right - ink.unit * 0.5f
+        val barY = right.top + titleH * 0.42f
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / Pcm.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+
+        val lineH = ink.unit * 1.35f
+        addRect = Rect(right.left, right.bottom - lineH - ink.unit * 0.2f, right.right, right.bottom - ink.unit * 0.2f)
+        val loopY = addRect.top - lineH
+        val nameY = loopY - lineH
+        val waveH = minOf(ink.unit * 3.2f, (nameY - right.top - titleH) * 0.45f)
+        val waveRect = Rect(right.left + ink.unit * 0.5f, nameY - waveH - ink.unit * 0.2f, right.right - ink.unit * 0.5f, nameY - ink.unit * 0.2f)
+        sampleRowH = ink.unit * 1.2f
+        sampleRect = Rect(right.left, right.top + titleH, right.right, waveRect.top - ink.unit * 0.2f)
+        val sampleRows = maxOf(1, (sampleRect.height() / sampleRowH).toInt())
+        sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - sampleRows + 1), st.dpcmSample.coerceAtLeast(0))
+        sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - sampleRows))
+        val keyed = ins.pcm[st.dpcmKey]?.sample ?: -1
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        for (i in sampleScroll until minOf(samples.size, sampleScroll + sampleRows)) {
+            val sample = samples[i]
+            val y = sampleRect.top + (i - sampleScroll) * sampleRowH
+            val on = i == st.dpcmSample
+            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, Palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else Palette.FAINT, i == keyed, small)
+            val size = "${pcmSeconds(sample)} · ${Pcm.rateText(sample.rate.toDouble())}"
+            ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, right.width() - ink.unit * 2.6f - ink.labelWidth(size, small) - ink.unit), right.left + ink.unit * 2.2f, y, sampleRowH,
+                if (on) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+            if (on && row == Row.PCM_SAMPLES) ink.outline(c, Rect(right.left + 2, y + 1, right.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+
+        // the selected sample: waveform with its loop start, name, loop start
+        val sample = samples.getOrNull(st.dpcmSample)
+        ink.rect(c, waveRect, Palette.BG)
+        if (sample != null && sample.data.size > 0 && waveRect.width() > 4f && waveRect.height() > 4f) {
+            val data = sample.data
+            val columns = maxOf(1, waveRect.width().toInt() / 2)
+            val per = data.size.toFloat() / columns
+            val cw = waveRect.width() / columns
+            val mid = waveRect.top + waveRect.height() / 2
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            for (k in 0 until columns) {
+                val a = (k * per).toInt().coerceIn(0, data.size - 1)
+                val b = ((k + 1) * per).toInt().coerceIn(a + 1, data.size)
+                // At most 64 reads per column: long samples are drawn from a stride of their bytes.
+                val stride = maxOf(1, (b - a) / 64)
+                var lo = 255
+                var hi = 0
+                var i = a
+                while (i < b) { val v = data[i]; if (v < lo) lo = v; if (v > hi) hi = v; i += stride }
+                val y0 = waveRect.bottom - waveRect.height() * hi / 255f
+                val y1 = waveRect.bottom - waveRect.height() * lo / 255f
+                ink.rect(c, waveRect.left + k * cw, y0, waveRect.left + k * cw + maxOf(1f, cw - 0.5f), maxOf(y1, y0 + ink.dp(1f)), Palette.alpha(col, 200))
+            }
+            if (sample.loopStart > 0) {
+                val lx = waveRect.left + waveRect.width() * sample.loopStart / data.size
+                ink.line(c, lx, waveRect.top, lx, waveRect.bottom, Palette.PLAYHEAD, ink.dp(2f))
+            }
+            ink.label(c, "${data.size} B", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+        }
+        val vx = right.left + ink.unit * 4.4f
+        fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
+            val sel = row == which
+            val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
+            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
+            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small, bold = sel), vx, y, lineH,
+                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+            if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+        boxRow(nameY, Row.PCM_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)
+        if (row == Row.PCM_NAME && sample != null) {
+            val before = sample.name.take(st.textPos).padEnd(st.textPos, ' ')
+            val cx = vx + ink.labelWidth(before, small, true)
+            val w = maxOf(ink.labelWidth(sample.name.getOrNull(st.textPos)?.toString() ?: " ", small, true), small * 0.5f)
+            ink.outline(c, Rect(cx - 1, nameY + 3, cx + w + 1, nameY + lineH - 3), cursorColor(), ink.dp(2f), ink.dp(2f))
+        }
+        boxRow(loopY, Row.PCM_LOOP_START, "Loop", sample?.let {
+            if (it.loopStart == 0) "from the start (whole sample)" else "from byte ${it.loopStart} of ${it.data.size}"
+        } ?: "—", sample == null || sample.loopStart == 0)
+        boxRow(addRect.top, Row.PCM_ADD, "Add", "import a .wav file…", false)
+    }
+
     private fun drawSteps(c: Surface, r: Rect, kind: NesEnvelopeKind, env: NesEnvelope, listen: org.thortracker.system.ChannelKind?, col: Int, focused: Boolean,
                           ins: NesInstrument) {
         val chip = ins.chip
@@ -932,6 +1095,7 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
 
     override fun down(x: Float, y: Float): Boolean {
         if (NesInstrumentView.dpcmPage(song, st)) dpcmDown(x, y)?.let { return it }
+        if (NesInstrumentView.pcmPage(song, st)) pcmDown(x, y)?.let { return it }
         fmDown(x, y)?.let { return it }
         waveDown(x, y)?.let { return it }
         modDown(x, y)?.let { return it }
@@ -1042,6 +1206,31 @@ internal class NesInstrumentPainter(v: PaneView) : Painter(v) {
     private fun finish() {
         drawing?.let { session.endGesture(it) }
         drawing = null
+    }
+
+    /** PCM page taps: a mapped key shows it, a sample selects it, Add opens the import. Null: not on them. */
+    private fun pcmDown(x: Float, y: Float): Boolean? {
+        val rows = NesInstrumentView.rows(st, song)
+        when {
+            keyRect.contains(x, y) && keyRowH > 0f -> {
+                val key = keyList.getOrNull(keyScroll + ((y - keyRect.top) / keyRowH).toInt()) ?: return true
+                st.dpcmKey = key
+                st.instField = rows.indexOf(Row.PCM_KEY)
+                song.pcmMapping(st.instrument, key)?.let { st.dpcmSample = it.sample }
+            }
+            sampleRect.contains(x, y) && sampleRowH > 0f -> {
+                val i = sampleScroll + ((y - sampleRect.top) / sampleRowH).toInt()
+                if (i !in song.nes.pcmSamples.indices) return true
+                st.dpcmSample = i
+                st.instField = rows.indexOf(Row.PCM_SAMPLES)
+            }
+            addRect.contains(x, y) -> {
+                st.instField = rows.indexOf(Row.PCM_ADD)
+                PcmSampleMenu.open(session, st.instrument, st.dpcmKey)
+            }
+            else -> return null
+        }
+        return true
     }
 
     /** DPCM page taps: a mapped key shows it, a sample selects it, Add opens the add menu. Null: not on them. */

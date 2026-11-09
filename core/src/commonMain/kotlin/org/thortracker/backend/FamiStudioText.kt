@@ -24,7 +24,8 @@ import org.thortracker.system.nes.Vrc7Presets
  * name", with their DPCM mappings), one arpeggio per `0xy` used, and per channel one FamiStudio pattern per distinct
  * order content (FamiStudio keeps note durations and releases inside patterns, so an order whose notes end or release
  * differently gets its own copy). A song with an expansion chip names it (`Expansions="VRC6"`; the N163 also
- * `NumN163Channels`), its instruments of that chip carry `Expansion="VRC6"` and the saw master volume
+ * `NumN163Channels`; the MMC5's pulses play 2A03 instruments, which carry no expansion), its instruments of that chip
+ * carry `Expansion="VRC6"` and the saw master volume
  * (`Expansion="VRC7"`: the patch, the custom patch's registers and the release/stop overrides; `Expansion="N163"`: the
  * wave size, position and count with the `N163Wave` and `Repeat` envelopes; `Expansion="FDS"`: the wave count, the wave
  * and modulation presets, master volume and modulation settings with the `FDSWave`, `FDSMod` and `Repeat` envelopes;
@@ -46,26 +47,35 @@ object FamiStudioText {
         expansion == NesExpansion.VRC6 -> listOf("VRC6Square1", "VRC6Square2", "VRC6Saw")[c - APU_TYPES.size]
         expansion.chip == NesChip.N163 -> "N163Wave${c - APU_TYPES.size + 1}"
         expansion == NesExpansion.FDS -> "FDS"
+        expansion == NesExpansion.MMC5 -> "MMC5Square${c - APU_TYPES.size + 1}"
         expansion == NesExpansion.S5B -> "S5BSquare${c - APU_TYPES.size + 1}"
         else -> "VRC7FM${c - APU_TYPES.size + 1}"
     }
 
     /** FamiStudio's expansion names (`ExpansionType.InternalNames`). */
-    private fun expansionName(chip: NesChip): String = when (chip) {
-        NesChip.APU -> ""
-        NesChip.VRC6 -> "VRC6"
-        NesChip.VRC7 -> "VRC7"
-        NesChip.N163 -> "N163"
-        NesChip.FDS -> "FDS"
-        NesChip.S5B -> "S5B"
+    private fun expansionName(expansion: NesExpansion): String = when {
+        expansion == NesExpansion.MMC5 -> "MMC5"
+        else -> when (expansion.chip) {
+            NesChip.APU -> ""
+            NesChip.VRC6 -> "VRC6"
+            NesChip.VRC7 -> "VRC7"
+            NesChip.N163 -> "N163"
+            NesChip.FDS -> "FDS"
+            NesChip.S5B -> "S5B"
+        }
     }
 
     fun export(song: Song): ByteArray = text(song).encodeToByteArray()
 
-    /** @throws IllegalArgumentException for a song with errors. */
+    /**
+     * @throws IllegalArgumentException for a song with errors, or an MMC5 song whose PCM lane plays (FamiStudio has no
+     * MMC5 PCM channel to hold it; [NesPcmLowering.exportProblem]). A silent PCM lane's samples and mappings stay in the
+     * project, and its `Fxx` is in the song's speeds ([FsSong]).
+     */
     fun text(song: Song): String {
         val errors = org.thortracker.system.nes.NesSystem.errors(song)
         require(errors.isEmpty()) { errors.first() }
+        NesPcmLowering.exportProblem(song, "FamiStudio text")?.let { throw IllegalArgumentException(it) }
         return text(FsSong.of(song))
     }
 
@@ -77,7 +87,7 @@ object FamiStudioText {
         }
         line(0, "Project" + attr("Version", "4.5.3") + attr("TempoMode", "FamiTracker") +
             attr("Name", fs.title.ifBlank { "Untitled" }) + (if (fs.artist.isNotBlank()) attr("Author", fs.artist) else "") +
-            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", expansionName(fs.expansion.chip)) else "") +
+            (if (fs.expansion != NesExpansion.NONE) attr("Expansions", expansionName(fs.expansion)) else "") +
             (if (fs.expansion.chip == NesChip.N163) attr("NumN163Channels", fs.expansion.n163Channels) else ""))
         val names = instrumentNames(fs)
         val samples = sampleNames(fs, names.keys)
@@ -145,8 +155,9 @@ object FamiStudioText {
         val untouched = NesSound.blank().instruments
         val names = LinkedHashMap<Int, String>()
         for ((i, ins) in fs.instruments.withIndex()) {
-            // Untouched slots (NesSound.blank's) stay out of the FamiStudio project.
-            if (i + 1 !in used && ins == untouched[i]) continue
+            // Untouched slots (NesSound.blank's) stay out of the FamiStudio project; MMC5 PCM mappings, which FamiStudio
+            // cannot hold (an unplayed PCM lane's data stays in the Thor Tracker project), do not count as an edit.
+            if (i + 1 !in used && ins.copy(pcm = emptyMap()) == untouched[i]) continue
             names[i + 1] = "${NumberText.hex(i + 1, 2)} ${ins.name}".trimEnd()
         }
         return names

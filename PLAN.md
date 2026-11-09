@@ -10,7 +10,7 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
-Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive), with VRC6 in 0.15.0, VRC7 in 0.16.0 and N163 in 0.17.0 extending the NES family.
+Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive); VRC6, VRC7, N163, Sunsoft 5B, FDS and MMC5 extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
@@ -22,7 +22,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
    (three squares with shared noise/envelope, 0.18.0) and FDS (one 64-sample wavetable voice with modulation,
    0.19.0) are implemented, with driver/native, desktop and reserved-handheld checks recorded in
    `docs/VERIFICATION.md`. N163's eight channel-count variants are grouped under NES → NES + N163….
-   Next: MMC5, EPSM (YMF288/OPN3-L).
+   MMC5's two pulse voices and software-driven PCM lane are integrated for 0.20.0, with core/native,
+   Android import/edit/export, desktop WAV parity and reserved-handheld playback/editor checks complete.
+   Next: EPSM (YMF288/OPN3-L).
    Source-only worktrees do not count as verified releases.
 4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
    GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).

@@ -8,8 +8,9 @@ package org.thortracker.backend
  * its address port `$F800` and data port `$4800`, so register choices and wave uploads are compared; FDS `$4040-$408A`,
  * its wave RAM, frequency, envelope, modulation and master volume registers, so wave and mod-table uploads are compared
  * too; Sunsoft 5B register select `$C000-$DFFF` and data `$E000-$FFFF`, which as on the cartridge leave the ROM
- * unchanged). Two song datas that write the same registers in the same order with the same values on every frame sound
- * identical on any chip; that is the golden comparison between FamiStudio's own export and our lowering.
+ * unchanged; MMC5 `$5000-$5015`, its pulses and enable). Two song datas that write the same registers in the same order
+ * with the same values on every frame sound identical on any chip; that is the golden comparison between FamiStudio's
+ * own export and our lowering.
  */
 class NesTracer(songData: ByteArray, private val player: NesPlayer = NesPlayer.APU) : Cpu6502() {
     private val frameWrites = ArrayList<Int>()
@@ -37,7 +38,7 @@ class NesTracer(songData: ByteArray, private val player: NesPlayer = NesPlayer.A
         val ad = addr and 0xffff
         if (ad in 0x4000..0x4017 || player.nsfChips and VRC6 != 0 && ad in VRC6_REGISTERS || player.nsfChips and VRC7 != 0 && ad in VRC7_REGISTERS ||
             player.nsfChips and N163 != 0 && (ad == N163_DATA || ad == N163_ADDRESS) || player.nsfChips and FDS != 0 && ad in FDS_REGISTERS ||
-            player.nsfChips and S5B != 0 && ad >= 0xC000
+            player.nsfChips and S5B != 0 && ad >= 0xC000 || player.nsfChips and MMC5 != 0 && ad in MMC5_REGISTERS
         ) {
             frameWrites += ad shl 8 or (v and 0xff)
         } else if (ad < 0x0800) mem[ad] = v and 0xff
@@ -51,6 +52,8 @@ class NesTracer(songData: ByteArray, private val player: NesPlayer = NesPlayer.A
         private const val FDS = 0x04
         private val FDS_REGISTERS = 0x4040..0x408A
         private const val S5B = 0x20
+        private const val MMC5 = 0x08
+        private val MMC5_REGISTERS = 0x5000..0x5015
         private const val N163_DATA = 0x4800
         private const val N163_ADDRESS = 0xF800
         private val VRC6_REGISTERS = setOf(0x9000, 0x9001, 0x9002, 0x9003, 0xA000, 0xA001, 0xA002, 0xB000, 0xB001, 0xB002)
