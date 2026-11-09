@@ -31,7 +31,7 @@ and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux t
 is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
 All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
 
-## 0.33.0 VIC-20 VIC and C16/Plus4 TED — integration verification
+## 0.33.0 VIC-20 VIC and C16/Plus4 TED
 
 Integrates published TIA and all earlier systems. The reference fixture is deterministic across two runs.
 Focused headroom verification passes **6,704 checks**: the saved original VIC gain produces 14 failures,
@@ -69,7 +69,17 @@ with distinct tone reloads; no audio threshold was relaxed.
 
 Evidence: `~/.local/state/thortracker/recovery-20261109/{cbm-native,cbm-native-oracle,cbm-frontend}`.
 Optional private YM2608 ROM checks were not run after reboot: that private `/tmp` input was lost.
-Linux/SDL verification and official publication remain in progress.
+
+CI run **42715356447**, candidate `4b1c95e4a5826f2e4ecbc6024dd829225e341dc3`, passes Linux
+core tests, Android builds, byte-identical factory UGE and the full integrated native/WAV suite.
+Its optimized AppImage also passes five actual local SDL scenarios: VIC solo/playback-plus-audition,
+TED square solo/playback-plus-audition, and TED DAC solo. Playback reaches **order 1, row 35 VIC /
+row 36 TED**; solo peaks are **0.037128 VIC, 0.303803 TED square, 0.453918 TED DAC**.
+The imported Android-edited TED lead has a wave envelope `[0]` and correctly produces silence;
+explicitly selecting its sounding square/DAC instruments verifies audition without changing the engine.
+Instrument, DAC and Pattern surfaces were visually inspected. Offscreen/dummy output verifies PCM/UI,
+not physical speakers or human listening. Evidence: `cbm-ci-appimage/` and `cbm-desktop/` under the
+same SSD evidence root. Temporary Android harness sources have been removed.
 
 ## 0.32.0 Atari 2600 TIA
 

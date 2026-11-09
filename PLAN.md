@@ -14,8 +14,8 @@ Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, 
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 VIC/TED integration targets **0.33.0/code 46** on published TIA, retaining all earlier systems
-and the format-10 tuning library. Native/reference, JVM and all three Android frontends pass;
-Linux/SDL verification and publication remain in progress. See `docs/VERIFICATION.md`.
+and the format-10 tuning library. Native/reference, JVM, all three Android frontends, Linux tests and
+the CI-built optimized AppImage pass. Publication is the remaining gate. See `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -87,8 +87,8 @@ Linux/SDL verification and publication remain in progress. See `docs/VERIFICATIO
      playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
    - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
-     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM and all three
-     Android frontends pass; Linux/SDL verification and publication remain in progress.
+     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
+     Android frontends and the CI-built optimized AppImage pass; publication is the remaining gate.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
