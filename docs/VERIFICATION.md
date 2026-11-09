@@ -1,5 +1,30 @@
 # Thor Tracker verification — 2026-11-09
 
+## Workstation recovery and enforced build limits
+
+The second reported lockup interrupted VIC/TED verification. Recovered on-disk JVM reports contain
+**883 tests, zero failures/errors** (2026-11-09 21:42:57–21:43:11 UTC); no completed APK survived that
+invocation. These reports are not proof of the later shared-state changes.
+
+`/tmp` is a **14 GiB tmpfs** on this workstation. Prior temporary audio/build evidence was RAM-backed
+and was lost on reboot; historical results below remain records of observed runs, but their `/tmp`
+artifacts are no longer available. Harness source was recovered from persistent transcripts, not
+revalidated by that recovery. New evidence lives under `~/.local/state/thortracker/` on the SSD.
+The previous boot records an OOM kill of Chrome at 13:15 local time; it does not establish the exact
+cause of the later reported lockup.
+
+`tools/build.sh` now enforces local Linux limits inside the actual host/Distrobox build process:
+8 GiB available-memory preflight, 3 GiB memory-high threshold, 4 GiB hard maximum, zero swap,
+two-CPU quota, low CPU/I/O priority, and disk-backed compiler scratch including Java's temporary
+directory. The shared build lock and single-use/in-process compiler policy remain.
+
+Smoke evidence: the real Gradle 8.9 `help` invocation succeeds; a temporary init probe in its JVM
+reports `MemoryHigh=3221225472`, `MemoryMax=4294967296`, `MemorySwapMax=0`,
+`CPUQuotaPerSecUSec=2s` and the SSD Java temporary directory. `TMPDIR=/tmp` is rejected before Gradle.
+A separate intentional 128 MiB allocation in a **64 MiB** scope is killed locally with
+`Result=oom-kill`, `MemoryPeak=67108864`, `MemorySwapPeak=0`; the workstation remains responsive.
+This demonstrates containment, not that unrelated desktop workloads cannot exhaust the host.
+
 ## Current integration: VIC-20 VIC and C16/Plus4 TED 0.33.0/code 46
 
 Integrates locally verified TIA and all earlier systems. The reference fixture is deterministic across two runs.

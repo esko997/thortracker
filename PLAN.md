@@ -104,6 +104,15 @@ full integration, independent references and frontends remain pending. See `docs
    - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
      and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
      This is a roadmap target, not a working port or an established performance claim.
+   - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
+     (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
+     vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
+     No application was launched, installed or changed during this inspection.
+   - Packaging target: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects/settings outside the Pak
+     (proposed `/mnt/SDCARD/ThorTunez/`) so Pak Store replacement cannot remove user data.
+     Follow [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/), use its environment
+     and diagnostics locations, preserve global ALSA/display settings, and return cleanly to the launcher.
+     Prefer the device's vendor SDL2/GPU integration; linking and callback behavior still need an executable spike.
    - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
      Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
      Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
@@ -122,6 +131,23 @@ full integration, independent references and frontends remain pending. See `docs
 - **Korg DS-10 / DS-10+ interface discussion:** revisit the Nintendo DS instruments together and discuss
   interface ideas that could suit Thor Tracker. Discussion only for now; no research or implementation
   requested, and no specific interaction or feature selected yet.
+- **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
+  and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
+  - **Colour themes:** eight semantic palette roles, with independent background/text/focus contrast;
+    BRIXEQ ships DEFAULT, AMBER, DAISY, LAVENDER, LCD, LCD INV, NIGHT and DAY. For Thor Tracker,
+    discuss accessible dark/light palettes and persistent workspace selection without changing song data.
+  - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
+    and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
+    Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
+    readable, avoid flicker, and measure GPU/frame-time/power impact on Brick and Android.
+  - **Workflow:** persistent focused-parameter editing across steps; explicit step audition; bounded
+    selection randomization with one-step Undo; queued pattern/scene changes; trigless parameter locks.
+    These are research ideas, not approved implementations. Keep hardware-specific effect legality,
+    deterministic/native-export semantics and editable instrument-slot identity.
+  - BRIXEQ's complete per-step instrument snapshots are an interesting contrast to tracker instruments,
+    not a reason to replace Thor Tracker's model. Its repository has no declared project license;
+    availability of Lua in the release is not reuse permission. Discuss ideas and implement independently,
+    rather than copying its code, palettes, artwork or shaders into the GPL project.
 - **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
   hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
   display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence
@@ -136,8 +162,11 @@ full integration, independent references and frontends remain pending. See `docs
   in the keymap; the L2+R2 layer is unaffected. Thresholds may need tuning on the Thor's sticks.
 - **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
   compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
-  Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware
-  for UI smoke tests. The host reset alone does not establish the crash cause.
+  Local Linux Gradle runs now require 8 GiB available memory and use an enforced 4 GiB/no-swap scope
+  (3 GiB reclaim threshold, two-CPU quota), created inside Distrobox around the real build.
+  Put compiler scratch and audio evidence on SSD, never RAM-backed `/tmp`; retain evidence across reboots.
+  Check available memory, swap activity and pressure before each heavy run; prefer reserved Android hardware.
+  The reset alone does not establish the cause of the latest lockup.
 
 ## Agreed MVP scope
 
