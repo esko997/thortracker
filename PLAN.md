@@ -14,8 +14,8 @@ Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, 
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 SAA1099 integration targets **0.34.0/code 47**, retaining the verified VIC/TED candidate and all earlier systems.
-The analytical headroom bound, 960 pre-clamp cases, 925 JVM tests and corrected native checks pass.
-Independent references, frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
+The analytical headroom bound, 960 pre-clamp cases, 925 JVM tests, corrected native checks and
+independent references pass. Frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -91,7 +91,7 @@ Independent references, frontend verification and publication remain pending. Se
      Android frontends and the CI-built optimized AppImage pass; publication is the remaining gate.
    - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
      (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Headroom, JVM and corrected
-     native checks pass; independent references and frontend verification remain pending.
+     native/reference checks pass; frontend verification remains pending.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.

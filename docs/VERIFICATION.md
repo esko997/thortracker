@@ -31,6 +31,32 @@ and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux t
 is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
 All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
 
+## 0.34.0 Philips SAA1099 — integration verification
+
+SAM Coupé and Creative Music System integrate all preceding systems. Six generated fixtures repeat
+byte-identically; **925 JVM and 6 Android host tests** pass. The corrected production-signed Android
+release and clean/temporary frontend instrumentation compile within the enforced build scope.
+
+- All earlier native engines and **2,567 WAV checks** pass. The first SAA run found a fractional
+  resampler-time loss during silent seek and a test assuming the new tone period had already latched.
+- Reusing `blip_skip_silence` for both stereo sides fixes CMS seek at order 3/row 21 from **9 LSB**
+  difference to **bit-identical**, retaining the original 1/32768 limit. The envelope test now covers
+  exactly eight actual edges, including the initial pending reset half-period. The corrected SAA run
+  passes **618 checks**. Both uninterrupted song WAVs, raw player/chip traces and VGM files remain
+  byte-identical to the pre-fix run.
+- Pre-clamp stress/public-machine probes cover **510,719,992 channel samples**, with extrema
+  **−28,944 / +30,071**, zero clipping; existing SAM ×10/CMS ×5 gain is retained. See the source
+  audit for the finite coverage and analytical bound, not an exhaustive-history claim.
+- Independent reference: **1,501 player batches**, **2,000,461 chip clocks / 5,684 output events**,
+  byte-exact VGM streams and repeated loops pass. A-4 measures **440.141 Hz SAM / 440.397 Hz CMS**;
+  pinned libvgm `c5c03a2c` independently renders **440.141 / 440.394 Hz** and recognizes both CMS chips.
+  Its differing noise/envelope model is documented: song envelope/spectrum correlations
+  **0.972/0.777 SAM, 0.801/0.730 CMS** are diagnostics, not an equivalence or listening claim.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/{saa-native,saa-corrected,saa-preclamp,saa-frontend}`.
+Live-device checks, optimized CI AppImage and official publication remain pending.
+Physical SAM Coupé/Game Blaster listening has not been performed.
+
 ## 0.33.0 VIC-20 VIC and C16/Plus4 TED
 
 Integrates published TIA and all earlier systems. The reference fixture is deterministic across two runs.
@@ -1112,27 +1138,6 @@ AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` sym
 The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
-
-## 0.34.0 Philips SAA1099 — integration verification
-
-SAM Coupé and Creative Music System integrate all preceding systems. Six generated fixtures repeat
-byte-identically; **925 JVM and 6 Android host tests** pass. The initial production-signed Android
-release and temporary frontend harness compile successfully within the enforced build scope.
-
-- All earlier native engines and **2,567 WAV checks** pass. The first SAA run found a fractional
-  resampler-time loss during silent seek and a test assuming the new tone period had already latched.
-- Reusing `blip_skip_silence` for both stereo sides fixes CMS seek at order 3/row 21 from **9 LSB**
-  difference to **bit-identical**, retaining the original 1/32768 limit. The envelope test now covers
-  exactly eight actual edges, including the initial pending reset half-period. The corrected SAA run
-  passes **618 checks**. Both uninterrupted song WAVs, raw player/chip traces and VGM files remain
-  byte-identical to the pre-fix run.
-- Pre-clamp stress/public-machine probes cover **510,719,992 channel samples**, with extrema
-  **−28,944 / +30,071**, zero clipping; existing SAM ×10/CMS ×5 gain is retained. See the source
-  audit for the finite coverage and analytical bound, not an exhaustive-history claim.
-
-Evidence: `~/.local/state/thortracker/recovery-20261109/{saa-native,saa-corrected,saa-preclamp,saa-frontend}`.
-Independent references, corrected Android rebuild/live-device checks, optimized CI AppImage and
-official publication remain pending. Physical SAM Coupé/Game Blaster listening has not been performed.
 
 ## 0.16.0 NES + Konami VRC7
 
