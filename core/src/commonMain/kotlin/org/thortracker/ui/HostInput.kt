@@ -132,10 +132,9 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
                 else -> { owners[code] = Owner.Global; Route.Menu }
             }
         }
-        val layer = held.toSet()
-        val chord = if (layer.isEmpty()) null else keymap.control(Binding(code, layer), view)
+        val chord = if (held.isEmpty()) null else keymap.control(Binding(code, held), view)
         // A chord of a layer below the held one (L2+A while L2+R2 are held) must not run, nor its bare key act.
-        if (chord == null && keymap.partialChord(code, layer, view) != null) return deliver(code, Owner.Global)
+        if (chord == null && held.size > 1 && keymap.partialChord(code, held, view) != null) return deliver(code, Owner.Global)
         val control = chord ?: keymap.control(Binding(code), view)
             ?: if (code == Keys.SPACE) Control.PLAY_PATTERN else null
         if (popupOpen) {
