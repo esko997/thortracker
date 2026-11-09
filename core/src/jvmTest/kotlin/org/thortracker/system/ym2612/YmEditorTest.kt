@@ -46,8 +46,9 @@ class YmEditorTest {
     private fun psg(slot: Int) = session.song.ymInstrument(slot) as YmPsgInstrument
 
     @Test
-    fun tenChannelsWithFourEffectColumnsAndANonTonalNoise() {
-        assertEquals(listOf("FM 1", "FM 2", "FM 3", "FM 4", "FM 5", "FM 6", "PSG 1", "PSG 2", "PSG 3", "Noise"), YmSystem.channels.map { it.name })
+    fun thirteenChannelsWithFourEffectColumnsAndANonTonalNoise() {
+        assertEquals(listOf("FM 1", "FM 2", "FM 3", "FM 4", "FM 5", "FM 6", "PSG 1", "PSG 2", "PSG 3", "Noise", "PCM 1", "PCM 2", "PCM 3"),
+            YmSystem.channels.map { it.name })
         assertTrue(YmSystem.channels.take(9).all { it.tonal })
         assertTrue(!YmSystem.channels[YmRules.NOISE].tonal)
         val v = view(ViewKind.PATTERN)
@@ -165,7 +166,13 @@ class YmEditorTest {
         assertTrue(session.song.ymInstrument(50) is YmPsgInstrument)
         assertEquals("Sound 32", session.song.ymInstrument(50)!!.name)
         v.goTo(Row.TYPE)
-        v.tap(Action.EDIT)
+        v.tap(Action.EDIT) // PSG → PCM kit
+        assertTrue(session.song.ymInstrument(50) is YmPcmInstrument)
+        assertEquals("Sound 32", session.song.ymInstrument(50)!!.name)
+        assertEquals(YmRules.PCM_FIRST, v.state.listenChannel)
+        assertEquals(YmInstrumentView.PCM_PAGES, YmInstrumentView.pages(session.song, v.state))
+        v.goTo(Row.TYPE)
+        v.tap(Action.EDIT) // PCM kit → FM
         assertTrue(session.song.ymInstrument(50) is YmFmInstrument)
         assertEquals("Sound 32", session.song.ymInstrument(50)!!.name)
         assertEquals(0, v.state.listenChannel)

@@ -26,6 +26,7 @@ import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.ym2612.YmDemoSong
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
 
@@ -244,11 +245,25 @@ object SampleExportTool {
         File(directory, "glass-harbour.thor").writeText(ProjectCodec.encode(opl3), Charsets.UTF_8)
         File(directory, "glass-harbour.o3img").writeBytes(ByteArray(Opl3System.engine.imageSize).also { Opl3System.engine.lower(opl3, it) })
         println("Exported ${opl3.title} to ${directory.absolutePath}")
-        // The Mega Drive demo: project and engine image (its VGM/XGM/XGC need the native player:
+        // The Mega Drive demo: project and engine image (its VGM/XGM2/XGC need the native player:
         // tools/audio/render_ym_image.sh neon-causeway.ymimg out.wav --vgm neon-causeway.vgm renders them).
         val ym = YmSystem.demo()
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The XGM2 fixture "Night Ferry" (PCM kits on PCM 1-3, FM 3 special mode): project and image (render_ym_image.sh
+        // night-ferry.ymimg out.wav --vgm/--xgm/--xgc renders its exports), and the shortest songs wav_render_test.c renders
+        // (one one-row order at speed 1): A-4 on FM 1 (ym-shortest), the PCM bass kit's A-2 on PCM 1, restarted every tick
+        // (ym-pcm-shortest), FM 3's special-mode chord (ym-fm3-shortest).
+        val ferry = YmDemoSong.xgm2Demo()
+        check(YmSystem.errors(ferry).isEmpty()) { "Night Ferry is invalid: ${YmSystem.errors(ferry)}" }
+        File(directory, "night-ferry.thor").writeText(ProjectCodec.encode(ferry), Charsets.UTF_8)
+        File(directory, "night-ferry.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ferry, it) })
+        for ((name, song) in listOf("ym-shortest" to YmDemoSong.shortest(), "ym-pcm-shortest" to YmDemoSong.pcmShortest(),
+            "ym-fm3-shortest" to YmDemoSong.fm3Shortest())) {
+            check(YmSystem.errors(song).isEmpty()) { "$name is invalid: ${YmSystem.errors(song)}" }
+            File(directory, "$name.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(song, it) })
+        }
+        println("Exported ${ferry.title} and the shortest Mega Drive songs to ${directory.absolutePath}")
     }
 }

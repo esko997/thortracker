@@ -1,16 +1,18 @@
-/* Thor Tracker's YM2612 player: sequences an image (ym_image.h) and produces YM2612 and SN76489 register writes,
- * one batch per tick. Pure integer code without a chip: the machine (ym_machine.c) encodes the writes into XGC frames
- * for SGDK's XGM driver, the VGM/XGM export (ym_vgm.c, ym_xgm.c) logs them, and seeking runs it alone. The behaviour
- * is specified in docs/AUDIO_ENGINE.md ("YM2612: player"); tools/audio/ym/ym_ref.py is an independent Python
- * implementation of the same specification, and the host test compares their writes.
+/* Thor Tracker's YM2612 player: sequences an image (ym_image.h) and produces YM2612 and SN76489 register writes and
+ * PCM commands, one batch per tick. Pure integer code without a chip: the machine (ym_machine.c) encodes each batch
+ * into XGM2 FM and PSG frames (ym_xgm.h) for SGDK's XGM2 driver, the XGM2 exports (ym_vgm.c) write the same frames,
+ * and seeking runs it inside the machine. The behaviour is specified in docs/AUDIO_ENGINE.md ("YM2612: player");
+ * tools/audio/ym/ym_ref.py is an independent Python implementation of the same specification, and the host test
+ * compares their writes and PCM commands.
  *
  * YM writes are diffed against a shadow of both ports' registers, PSG writes against a shadow of the tone periods,
  * attenuations and noise control (the shadow starts as the chips after SGDK's YM2612_reset() + PSG_reset()); a write
- * equal to the shadow is not emitted, except that the frequency pair $A4/$A0 is written together when either
- * changes. Key-on/off ($28) follows the channels' key state. A batch has two phases: first every $28 key-off in the
- * order the player made them (write[0 .. offs - 1]), then the rest; the VGM separates them by one sample (a key-off
- * and key-on in the same sample would not retrigger on a VGM player's chip). The player keeps no pointer to an
- * image; every call takes the (copied, loaded) image it should read. No allocation. */
+ * equal to the shadow is not emitted, except that a frequency pair ($A4/$A0, $AC/$A8 ...) is written together when
+ * either changes. Key-on/off ($28) follows the channels' key state. Register $27 carries only the FM 3 mode (bit 6;
+ * the XGM2 driver owns the timer bits). A batch has two phases: first every $28 key-off in the order the player made
+ * them (write[0 .. offs - 1]), then the rest. PCM channels make no writes: pcm[k] holds the tick's command for XGM2
+ * PCM channel k (YMP_PCM_NONE, YMP_PCM_STOP or a variant id). The player keeps no pointer to an image; every call
+ * takes the (copied, loaded) image it should read. No allocation. */
 #ifndef THORTRACKER_YM_PLAYER_H_
 #define THORTRACKER_YM_PLAYER_H_
 
@@ -25,7 +27,8 @@ extern "C" {
 #define YMP_MAX_WRITES 1024       /* per tick; a reset or loop dump frame is below 400 */
 #define YMP_PITCH_MAX (8 * 768 - 1) /* pitch units: 1/64 semitone, 0 = C-0 */
 #define YMP_MACHINE_RESET_WRITES (3 + 2 * 3 * 4 * 7 + 2 * 3 * 6 + 6 + 4 * 3)
-#define YMP_DUMP_WRITES (1 + 6 * (4 * 7 + 4) + 3 * 3 + 2)
+#define YMP_PCM_NONE (-1)         /* pcm[k]: no command this tick */
+#define YMP_PCM_STOP 0            /* pcm[k]: stop the channel (XGM2 sample id 0) */
 
 enum { YM_W_PORT0 = 0, YM_W_PORT1 = 1, YM_W_PSG = 2 };
 enum { YM_PSG_OFF = 0, YM_PSG_ON, YM_PSG_RELEASED }; /* PSG note phase */
@@ -55,15 +58,17 @@ typedef struct YmChannel {
     /* note */
     int instrument;      /* slot for the next note, 0 none */
     int active;          /* a note has been keyed since reset (updates run) */
-    int keyed;
+    int keyed;           /* FM/PSG: the note is held; PCM: a sample was started and not stopped */
     int key_pending;     /* FM: the key-on is written by the next update */
     uint8_t ops[4][YM_OP_BYTES]; /* FM: the note's operator registers (locks applied, TL without volume) */
     int alg, feedback, ams_fms, carriers; /* carriers: bit k = operator k + 1 */
+    int ch3[4];          /* FM 3: the note's special-mode operator offsets (pitch units, diagram order) */
     int phase;           /* PSG: YM_PSG_OFF / ON / RELEASED */
     int pos[3];          /* PSG: envelope positions (volume, arpeggio, pitch) */
     int level;           /* PSG: this tick's volume envelope value 0..15 */
     int pitch_relative, pitch_acc; /* PSG: pitch envelope mode and accumulator (pitch units) */
     int noise;           /* Noise: the note's mode (bit 2 white, bits 0-1 source) */
+    int pcm;             /* PCM: the variant last started, 0 none */
     int base, target;    /* pitch units */
     int fine;
     int arp, arp_step;
@@ -82,6 +87,7 @@ typedef struct YmPlayer {
     int audition;                /* audition mode: no sequencing */
     int region;
     int lfo;                     /* register $22 */
+    int fm3;                     /* YM_FM3_NORMAL / YM_FM3_SPECIAL */
     YmChannel ch[YM_CHANNELS];
     YmCursor cursor[YM_CHANNELS];
     int cursor_order, cursor_row; /* cursors are at (cursor_order, cursor_row), -1 = invalid */
@@ -91,6 +97,7 @@ typedef struct YmPlayer {
     uint8_t noise_ctrl;          /* shadow of the PSG noise control */
     int writes;
     int offs;                    /* write[0 .. offs - 1] is the key-off phase */
+    int pcm[YM_PCM_CHANNELS];    /* this batch's PCM commands (YMP_PCM_NONE, YMP_PCM_STOP, variant id) */
     YmEnvelope env[4][3];        /* PSG 1-3 and Noise: the sounding note's volume, arpeggio and pitch envelopes */
     YmWrite write[YMP_MAX_WRITES];
     int pending_offs;            /* key-off writes of the batch being built */
@@ -106,18 +113,15 @@ void ymp_tick(YmPlayer* p, const YmImage* image);
 void ymp_place(YmPlayer* p, const YmImage* image, int order);
 /* Live edit at a tick boundary: positions kept (clamped), rows re-read from `next` (see the spec). */
 void ymp_relocate(YmPlayer* p, const YmImage* old, const YmImage* next);
-/* Audition: reset, then key on `note` (0..95) on `channel` with instrument `slot` (FM slots on 0-5, PSG on 6-9) and
- * fine pitch `fine` (pitch units, -128..127); ticks only update. Returns 0 or -1 (bad arguments). */
+/* Audition: reset, then key on `note` (0..95) on `channel` with instrument `slot` (FM slots on 0-5, PSG on 6-9, PCM
+ * on 10-12 with `note` mapped) and fine pitch `fine` (pitch units, -128..127; PCM: ignored); ticks only update.
+ * Returns 0 or -1 (bad arguments, an unmapped PCM note). */
 int ymp_audition(YmPlayer* p, const YmImage* image, int channel, int note, int slot, int fine);
-/* Key off a channel (audition release) as a new batch in write[] (call between ticks). */
+/* Key off a channel (audition release) as a new batch in write[] / pcm[] (call between ticks). */
 void ymp_key_off(YmPlayer* p, int channel);
 
 /* The machine reset writes (SGDK's YM2612_reset() then PSG_reset()), YMP_MACHINE_RESET_WRITES records. */
 int ymp_machine_reset(YmWrite* out);
-/* The player's register state as writes (VGM loop dump, seek restore), YMP_DUMP_WRITES records: $22; per FM channel
- * operators 1..4 $30-$90, $B0, $B4, $A4, $A0; per tone period (two bytes) and attenuation; noise control,
- * attenuation 3. */
-int ymp_dump(const YmPlayer* p, YmWrite* out);
 /* Pitched noise owns PSG 3 (channel 8 is silent). */
 int ymp_noise_owns_tone3(const YmPlayer* p);
 /* Operator register offset of operator k (0..3 = operators 1..4) from the channel's: +0, +8, +4, +12. */

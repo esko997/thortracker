@@ -11,10 +11,11 @@ extern "C" {
 #endif
 
 #define YM_EXPORT_VGM 0 /* .vgm: VGM 1.71, YM2612 + SN76489, with a GD3 tag */
-#define YM_EXPORT_XGM 1 /* .xgm: XGM 1.01 (SGDK rescomp's XGM resource), with the same GD3 tag */
-#define YM_EXPORT_XGC 2 /* .bin: the compiled XGM XGM_startPlay() plays (what rescomp makes of the .xgm), no tag */
+#define YM_EXPORT_XGM 1 /* .xgm: XGM2 (version 0x10, unpacked; SGDK rescomp's XGM2 resource), with the same GD3 tag */
+#define YM_EXPORT_XGC 2 /* .xgc: the compiled XGM2 XGM2_play() plays (packed, what rescomp makes of the .xgm), no tag */
 
-/* Renders a lowered "ym2612-fm" image (exactly 65536 bytes) in `format` (at most max_ticks player ticks). The GD3
+/* Renders a lowered "ym2612-fm" image (exactly YM_IMAGE_SIZE = 1188864 bytes) in `format` (at most max_ticks player
+ * ticks). XGM/XGC need SGDK's XGM2 driver: XGM1 players (XGM_startPlay) cannot read them. The GD3
  * 1.00 tag: track = title, system "Mega Drive (Thor Tracker)", author, date (VGM convention "yyyy/mm/dd"; NULL or
  * "" = today, local time), converter "Thor Tracker"; game and notes empty; UTF-8 in (NULL = ""), UTF-16LE in the
  * file. Returns the file (free it with ym_export_free) and its size, or NULL with *problem = ym_load_image's reason

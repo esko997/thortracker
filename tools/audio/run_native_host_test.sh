@@ -23,9 +23,11 @@
 # sid_gt.sid (GoatTracker's own packing of the test song), plus cost per tick and the realtime factor.
 # OPL3: <dir>/opl3_song.wav, opl3_tone.wav, opl3_trace.txt (per-tick player writes, compared with the Python
 # reference player's) and opl3_song.vgm (the VGM export of the test song).
-# YM2612: <dir>/ym_song.wav, ym_song_pal.wav, ym_tone_fm.wav, ym_tone_psg.wav, ym_trace.txt (per-tick player
-# writes, = the Python reference player's), ym_song.vgm, ym_song.xgm and ym_song.bin (the XGC; = xgmtool's) and
-# ym_image.bin (the image).
+# YM2612 (SGDK's XGM2 driver; tools/audio/ym_reference_check.py reads these): <dir>/ym_image.bin, ym_trace.txt
+# (per-tick player writes and PCM commands, = the Python reference player's), ym_song.wav, ym_song.vgm, ym_song.xgm
+# and ym_song.xgc for the tonal test song; the same for the PCM song (ym_pcm_image.bin, ym_pcm_trace.txt,
+# ym_pcm_song.wav/.vgm/.xgm/.xgc); ym_song_pal.wav, ym_pal_song.vgm/.xgm/.xgc and the auditions ym_tone_fm.wav,
+# ym_tone_psg.wav and ym_tone_pcm.wav.
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # The engines are C except reSID and ymfm (C++17): C sources (emu2413, the VRC7's FM chip, included) build with $CC,

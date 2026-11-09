@@ -69,8 +69,11 @@ data class EffectSpec(
     }
 }
 
-/** A file format a song exports to, e.g. hUGETracker's `.uge`. [export] receives a song with no [SoundSystem.errors]. */
-class ExportFormat(val extension: String, val export: (Song) -> ByteArray)
+/**
+ * A file format a song exports to, e.g. hUGETracker's `.uge`; [label] is how the Files menu names it (".xgm (XGM2)" where
+ * the extension alone is ambiguous). [export] receives a song with no [SoundSystem.errors].
+ */
+class ExportFormat(val extension: String, val label: String = ".$extension", val export: (Song) -> ByteArray)
 
 /**
  * How a system plays a pitch between its note-table notes (tuning realisation): a note plus an upward "fine" value

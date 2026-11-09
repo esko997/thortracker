@@ -1,5 +1,6 @@
 package org.thortracker.system.ym2612
 
+import org.thortracker.backend.YmPlayerImage
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Hint
@@ -20,24 +21,31 @@ import org.thortracker.ui.Painter
 
 /**
  * The Mega Drive instrument editor, controller-only: the one bank of [YmSystem.SLOTS] sounds, each empty, an FM voice
- * (FM 1-6) or a PSG sound (PSG 1-3, Noise). Head rows: slot, name, the channel Listen plays on, the sound's type, the
- * page. An FM voice has the OPL3 editor's pages (shared FM pieces): *Sound*, the curated controls of [YmCurated] beside
- * the drawn algorithm and envelope (SSG-EG drawn on it); *Expert*, algorithm, feedback, AMS/FMS and every OPN2 operator
- * field as a grid; *Drum*, the pitch sweep. A PSG sound has the NES editor's envelopes (volume, arpeggio, pitch, edited
- * step by step) and a *Noise·Drum* page (noise type and rate for the Noise channel, the sweep).
+ * (FM 1-6), a PSG sound (PSG 1-3, Noise) or a PCM kit (PCM 1-3). Head rows: slot, name, the channel Listen plays on,
+ * the sound's type, the page. An FM voice has the OPL3 editor's pages (shared FM pieces): *Sound*, the curated controls
+ * of [YmCurated] beside the drawn algorithm and envelope (SSG-EG drawn on it); *Expert*, algorithm, feedback, AMS/FMS
+ * and every OPN2 operator field as a grid; *Ch3*, FM 3's mode and the voice's four operator pitch offsets (heard on
+ * FM 3 in special mode); *Drum*, the pitch sweep. A PSG sound has the NES editor's envelopes (volume, arpeggio, pitch,
+ * edited step by step) and a *Noise·Drum* page (noise type and rate for the Noise channel, the sweep). A PCM kit has
+ * one *PCM* page ([YmPcmPage]): its level, keys mapped to samples and the song's samples.
  * State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope] (the page index among
- * [pages]), [ViewState.envStep] (Expert: the operator 0..3; envelopes: the step, size = append), [ViewState.listenChannel].
+ * [pages]), [ViewState.envStep] (Expert/Ch3: the operator 0..3; envelopes: the step, size = append),
+ * [ViewState.listenChannel], [ViewState.dpcmKey]/[ViewState.dpcmSample] (PCM page).
  * Holding Edit on a sound row sounds the instrument and every change restarts it, so edits are heard as made.
  */
 object YmInstrumentView : SystemView() {
     enum class Page(val label: String, val envelope: NesEnvelopeKind? = null) {
-        SOUND("Sound"), EXPERT("Expert"), DRUM("Drum"),
+        SOUND("Sound"), EXPERT("Expert"), CH3("Ch3"), DRUM("Drum"),
         VOLUME("Volume", NesEnvelopeKind.VOLUME), ARPEGGIO("Arpeggio", NesEnvelopeKind.ARPEGGIO), PITCH("Pitch", NesEnvelopeKind.PITCH),
-        NOISE("Noise·Drum"),
+        NOISE("Noise·Drum"), PCM("PCM"),
     }
 
-    val FM_PAGES = listOf(Page.SOUND, Page.EXPERT, Page.DRUM)
+    /** What a slot holds, or (empty) what Listen's channel plays. */
+    enum class Kind { FM, PSG, PCM }
+
+    val FM_PAGES = listOf(Page.SOUND, Page.EXPERT, Page.CH3, Page.DRUM)
     val PSG_PAGES = listOf(Page.VOLUME, Page.ARPEGGIO, Page.PITCH, Page.NOISE)
+    val PCM_PAGES = listOf(Page.PCM)
 
     enum class Row(val label: String) {
         SLOT("Slot"), NAME("Name"), LISTEN("Listen on"), TYPE("Type"), PAGE("Page"),
@@ -47,9 +55,12 @@ object YmInstrumentView : SystemView() {
         RAW_ALGORITHM("Algorithm"), RAW_FEEDBACK("Feedback"), AMS("AMS"), FMS("FMS"),
         OP_DT("DT"), OP_MUL("MUL"), OP_TL("TL"), OP_KS("KS"), OP_AR("AR"), OP_AM("AM"), OP_D1R("D1R"), OP_D2R("D2R"),
         OP_SL("SL"), OP_RR("RR"), OP_SSG("SSG"),
+        FM3_MODE("FM 3 mode"), CH3_SEMI("Semitones"), CH3_FINE("Fine /64"),
         DRUM_PRESET("Drum preset"), SWEEP_START("Sweep start"), SWEEP_END("Sweep end"), SWEEP_SPEED("Sweep speed"),
         LENGTH("Length"), LOOP("Loop"), ENV_RELEASE("Release"), MODE("Mode"), STEPS("Steps"),
         NOISE_TYPE("Noise"), NOISE_RATE("Noise rate"),
+        PCM_LEVEL("Level"), PCM_KEY("Key"), PCM_SAMPLE("Sample"), PCM_PITCH("Pitch"), PCM_SPREAD("Spread"),
+        PCM_SAMPLES("Samples"), PCM_NAME("Name"), PCM_ADD("Add"),
     }
 
     private val HEAD = listOf(Row.SLOT, Row.NAME, Row.LISTEN, Row.TYPE, Row.PAGE)
@@ -58,41 +69,68 @@ object YmInstrumentView : SystemView() {
     val GRID = listOf(Row.OP_DT, Row.OP_MUL, Row.OP_TL, Row.OP_KS, Row.OP_AR, Row.OP_AM, Row.OP_D1R, Row.OP_D2R, Row.OP_SL,
         Row.OP_RR, Row.OP_SSG)
 
+    /** The Ch3 grid: each operator's FM 3 pitch offset, semitones and 1/64 semitone. */
+    val CH3_GRID = listOf(Row.CH3_SEMI, Row.CH3_FINE)
+
+    /** Rows whose cursor moves between operators (←→, L1/R1). */
+    private val OPERATOR_ROWS: Set<Row> = (GRID + CH3_GRID).toSet()
+
     private val SWEEP = listOf(Row.SWEEP_START, Row.SWEEP_END, Row.SWEEP_SPEED)
 
     private val ROWS = mapOf(
         Page.SOUND to HEAD + listOf(Row.PRESET, Row.ALGORITHM, Row.RATIO, Row.BRIGHTNESS, Row.LEVEL, Row.FEEDBACK, Row.ATTACK,
             Row.DECAY, Row.SUSTAIN, Row.SUSTAIN_RATE, Row.RELEASE, Row.TONE_DECAY, Row.KEY_SCALE, Row.VIBRATO, Row.TREMOLO, Row.SSG),
         Page.EXPERT to HEAD + listOf(Row.RAW_ALGORITHM, Row.RAW_FEEDBACK, Row.AMS, Row.FMS) + GRID,
+        Page.CH3 to HEAD + listOf(Row.FM3_MODE) + CH3_GRID,
         Page.DRUM to HEAD + listOf(Row.DRUM_PRESET) + SWEEP,
         Page.VOLUME to HEAD + listOf(Row.PRESET, Row.LENGTH, Row.LOOP, Row.ENV_RELEASE, Row.STEPS),
         Page.ARPEGGIO to HEAD + listOf(Row.PRESET, Row.LENGTH, Row.LOOP, Row.STEPS),
         Page.PITCH to HEAD + listOf(Row.PRESET, Row.LENGTH, Row.LOOP, Row.MODE, Row.STEPS),
         Page.NOISE to HEAD + listOf(Row.PRESET, Row.NOISE_TYPE, Row.NOISE_RATE) + SWEEP,
+        Page.PCM to HEAD + listOf(Row.PCM_LEVEL, Row.PCM_KEY, Row.PCM_SAMPLE, Row.PCM_PITCH, Row.PCM_SPREAD, Row.PCM_SAMPLES,
+            Row.PCM_NAME, Row.PCM_ADD),
     )
 
+    /** PCM page rows that are about the song's samples, not how the kit sounds. */
+    private val SAMPLE_LIST_ROWS = setOf(Row.PCM_SAMPLES, Row.PCM_NAME, Row.PCM_ADD)
+
     /** Rows whose edits change how the sound plays: holding Edit on them sounds it. */
-    private val SOUND_ROWS = ROWS.values.flatMap { it.drop(HEAD.size) }.toSet() - Row.STEPS + Row.TYPE
+    private val SOUND_ROWS = ROWS.values.flatMap { it.drop(HEAD.size) }.toSet() - Row.STEPS - SAMPLE_LIST_ROWS + Row.TYPE
 
     /** On/off register bits of the Expert grid: a tap switches them. */
     private val TOGGLES = setOf(Row.OP_AM)
 
     /** List controls: Edit+←→ chooses, wrapping. */
-    private val LISTS = setOf(Row.ALGORITHM, Row.RATIO, Row.KEY_SCALE, Row.SSG, Row.RAW_ALGORITHM, Row.NOISE_TYPE, Row.NOISE_RATE)
+    private val LISTS = setOf(Row.ALGORITHM, Row.RATIO, Row.KEY_SCALE, Row.SSG, Row.RAW_ALGORITHM, Row.NOISE_TYPE, Row.NOISE_RATE, Row.FM3_MODE)
 
     private const val COARSE = FmControls.COARSE
     const val NAME_MAX = FmControls.NAME_MAX
 
     fun sound(song: Song, state: ViewState): YmInstrument? = song.ymInstrument(state.instrument)
 
-    /** True when the slot's pages are FM's: an FM voice, or an empty slot while Listen is on an FM channel. */
-    fun fmPages(song: Song, state: ViewState): Boolean = when (sound(song, state)) {
-        is YmFmInstrument -> true
-        is YmPsgInstrument -> false
-        null -> YmRules.isFm(state.listenChannel)
+    /** The slot's kind: what it holds, or for an empty slot the kind Listen's channel plays. */
+    fun kind(song: Song, state: ViewState): Kind = when (sound(song, state)) {
+        is YmFmInstrument -> Kind.FM
+        is YmPsgInstrument -> Kind.PSG
+        is YmPcmInstrument -> Kind.PCM
+        null -> kindOf(state.listenChannel)
     }
 
-    fun pages(song: Song, state: ViewState): List<Page> = if (fmPages(song, state)) FM_PAGES else PSG_PAGES
+    /** The kind [channel] plays. */
+    fun kindOf(channel: Int): Kind = when {
+        YmRules.isFm(channel) -> Kind.FM
+        YmRules.isPcm(channel) -> Kind.PCM
+        else -> Kind.PSG
+    }
+
+    /** True when the slot's pages are FM's: an FM voice, or an empty slot while Listen is on an FM channel. */
+    fun fmPages(song: Song, state: ViewState): Boolean = kind(song, state) == Kind.FM
+
+    fun pages(song: Song, state: ViewState): List<Page> = when (kind(song, state)) {
+        Kind.FM -> FM_PAGES
+        Kind.PSG -> PSG_PAGES
+        Kind.PCM -> PCM_PAGES
+    }
 
     fun page(song: Song, state: ViewState): Page = pages(song, state).let { it[state.envelope.coerceIn(0, it.size - 1)] }
 
@@ -100,16 +138,21 @@ object YmInstrumentView : SystemView() {
 
     fun row(song: Song, state: ViewState): Row = rows(song, state).let { it[state.instField.coerceIn(0, it.size - 1)] }
 
-    /** The operator (0-based) the Expert grid's cursor is on. */
+    /** The operator (0-based) the Expert or Ch3 grid's cursor is on. */
     fun operator(state: ViewState): Int = state.envStep.coerceIn(0, 3)
 
     /** The PSG envelope a page shows, or null. */
     fun envelopeKind(song: Song, state: ViewState): NesEnvelopeKind? = page(song, state).envelope
 
-    /** The channel a held Listen plays [ins] on: FM voices on an FM channel (FM 1 unless Listen is one), PSG sounds on PSG/Noise. */
-    fun listenChannel(state: ViewState, ins: YmInstrument?): Int = when {
+    /**
+     * The channel a held Listen plays [ins] on: FM voices on an FM channel (FM 1 unless Listen is one; FM 3 on the Ch3
+     * page, where the offsets sound), PSG sounds on PSG/Noise, PCM kits on PCM 1-3.
+     */
+    fun listenChannel(state: ViewState, ins: YmInstrument?, page: Page? = null): Int = when {
+        ins is YmFmInstrument && page == Page.CH3 -> YmRules.FM3
         ins is YmFmInstrument && !YmRules.isFm(state.listenChannel) -> 0
-        ins is YmPsgInstrument && YmRules.isFm(state.listenChannel) -> YmRules.PSG_FIRST
+        ins is YmPsgInstrument && !YmRules.isPsg(state.listenChannel) -> YmRules.PSG_FIRST
+        ins is YmPcmInstrument && !YmRules.isPcm(state.listenChannel) -> YmRules.PCM_FIRST
         else -> state.listenChannel
     }
 
@@ -131,8 +174,9 @@ object YmInstrumentView : SystemView() {
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
         st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
         when {
-            page(song, st) == Page.EXPERT -> st.envStep = st.envStep.coerceIn(0, 3)
+            page(song, st) == Page.EXPERT || page(song, st) == Page.CH3 -> st.envStep = st.envStep.coerceIn(0, 3)
             envelopeKind(song, st) != null -> st.envStep = st.envStep.coerceIn(0, envelope(song, st)?.let(::lastStep) ?: 0)
+            page(song, st) == Page.PCM -> YmPcmPage.normalise(v)
         }
     }
 
@@ -147,11 +191,15 @@ object YmInstrumentView : SystemView() {
         state.listenChannel = selection.channel
     }
 
-    /** Selects the slot for entry, in the bank of its kind (FM voices or PSG sounds share the slot numbers). */
+    /** Selects the slot for entry, in the bank of its kind (FM voices, PSG sounds and PCM kits share the slot numbers). */
     fun publish(v: ViewController) {
         v.syncLock()
         val session = v.session
-        val bank = if (sound(session.song, v.state) is YmPsgInstrument) YmSystem.PSG_BANK else YmSystem.FM_BANK
+        val bank = when (sound(session.song, v.state)) {
+            is YmPsgInstrument -> YmSystem.PSG_BANK
+            is YmPcmInstrument -> YmSystem.PCM_BANK
+            else -> YmSystem.FM_BANK
+        }
         session.select(session.selection.copy(bank = bank, instrument = v.state.instrument, context = ViewKind.KEYBOARD))
     }
 
@@ -184,6 +232,7 @@ object YmInstrumentView : SystemView() {
         st.instrument = slot
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         keepPage(v, row)
+        if (page(v.session.song, st) == Page.PCM) YmPcmPage.showFirstMapping(v)
         publish(v)
     }
 
@@ -203,8 +252,9 @@ object YmInstrumentView : SystemView() {
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
             row == Row.LISTEN -> { st.listenChannel = (st.listenChannel + dx).mod(song.system.channels.size); keepPage(v, row) }
             row == Row.PAGE -> showPage(v, st.envelope + dx)
-            row in GRID -> st.envStep = (st.envStep + dx).coerceIn(0, 3)
+            row in OPERATOR_ROWS -> st.envStep = (st.envStep + dx).coerceIn(0, 3)
             row == Row.STEPS -> if (e != null) st.envStep = (st.envStep + dx).coerceIn(0, lastStep(e))
+            row == Row.PCM_KEY || row == Row.PCM_SAMPLES || row == Row.PCM_NAME -> YmPcmPage.direction(v, row, dx)
             else -> moveSlot(v, dx)
         }
     }
@@ -243,6 +293,12 @@ object YmInstrumentView : SystemView() {
             Row.NOISE_RATE -> session.editYmPsg(slot, "Set noise rate") { it.copy(noise = (it.noise and YmPsgInstrument.WHITE) or ((it.noise and 3) + d).mod(4)) }
             in SWEEP -> if (fmPages(session.song, st)) session.editYmFm(slot, "Set ${row.label.lowercase()}") { it.copy(sweep = stepSweep(it.sweep, row, dx, dy)) }
                 else session.editYmPsg(slot, "Set ${row.label.lowercase()}") { it.copy(sweep = stepSweep(it.sweep, row, dx, dy)) }
+            Row.FM3_MODE -> d != 0 && stepFm3Mode(v, d)
+            Row.CH3_SEMI, Row.CH3_FINE -> session.editYmFm(slot, "Set FM 3 operator ${operator(st) + 1} offset") {
+                stepCh3(it, operator(st), row, dx, dy)
+            }.also { if (it && session.song.ym.fm3Mode == YmFm3Mode.NORMAL) fm3Note(v) }
+            Row.PCM_LEVEL, Row.PCM_KEY, Row.PCM_SAMPLE, Row.PCM_PITCH, Row.PCM_SPREAD, Row.PCM_SAMPLES, Row.PCM_NAME, Row.PCM_ADD ->
+                YmPcmPage.adjust(v, row, dx, dy)
             else -> session.editYmFm(slot, "Set ${row.label.lowercase()}") { step(it, row, operator(st), dx, dy) }
         }
         if (changed) {
@@ -256,6 +312,31 @@ object YmInstrumentView : SystemView() {
         Row.SWEEP_START -> (s.start + dx + 12 * dy).coerceIn(-96, 96).let { s.copy(start = it, speed = FmControls.sweepSpeed(s.speed, it, s.end)) }
         Row.SWEEP_END -> (s.end + dx + 12 * dy).coerceIn(-96, 96).let { s.copy(end = it, speed = FmControls.sweepSpeed(s.speed, s.start, it)) }
         else -> s.copy(speed = (s.speed + dx + 16 * dy).coerceIn(0, 255))
+    }
+
+    /** Operator [op]'s FM 3 offset stepped: semitones (↑↓ octaves) or 1/64 semitones (↑↓ eighths), within ±[YmPlayerImage.CH3_LIMIT]. */
+    fun stepCh3(ins: YmFmInstrument, op: Int, row: Row, dx: Int, dy: Int): YmFmInstrument {
+        val offsets = List(4) { ins.ch3.getOrElse(it) { 0 } }
+        val step = if (row == Row.CH3_SEMI) 64 * (dx + 12 * dy) else dx + 8 * dy
+        val next = (offsets[op] + step).coerceIn(-YmPlayerImage.CH3_LIMIT, YmPlayerImage.CH3_LIMIT)
+        return ins.copy(ch3 = offsets.toMutableList().also { it[op] = next })
+    }
+
+    /** Switches the song's FM 3 mode (normal ⇄ special); true when it changed. */
+    private fun stepFm3Mode(v: ViewController, d: Int): Boolean {
+        if (d % 2 == 0) return false
+        val changed = v.session.apply("Set FM 3 mode") { s ->
+            s.copy(sound = s.ym.copy(fm3Mode = if (s.ym.fm3Mode == YmFm3Mode.NORMAL) YmFm3Mode.SPECIAL else YmFm3Mode.NORMAL))
+        }
+        if (changed) fm3Note(v)
+        return changed
+    }
+
+    private fun fm3Note(v: ViewController) {
+        v.session.note(when (v.session.song.ym.fm3Mode) {
+            YmFm3Mode.NORMAL -> "FM 3 is in normal mode: the operator offsets sound only in special mode (FM 3 mode row, or Song view)"
+            YmFm3Mode.SPECIAL -> "FM 3 special mode: each operator of FM 3's voice plays the note plus its offset"
+        })
     }
 
     /** [ins] with [row]'s value stepped by [dx] (fine) and [dy] (coarse); list controls wrap. */
@@ -336,21 +417,34 @@ object YmInstrumentView : SystemView() {
         return changed
     }
 
-    /** FM ⇄ PSG: the slot gets the other kind's starting sound (keeping its name); undo brings the old one back. */
+    /** FM → PSG → PCM → FM: the slot gets the next kind's starting sound (keeping its name); undo brings the old one back. */
     private fun switchType(v: ViewController): Boolean {
         val st = v.state
         val session = v.session
         val slot = st.instrument
         val cur = sound(session.song, st)
-        val toFm = !fmPages(session.song, st)
-        val next: YmInstrument = if (toFm) defaultYmFm(slot) else defaultYmPsg(slot)
+        val to = when (kind(session.song, st)) {
+            Kind.FM -> Kind.PSG
+            Kind.PSG -> Kind.PCM
+            Kind.PCM -> Kind.FM
+        }
+        val next: YmInstrument = when (to) {
+            Kind.FM -> defaultYmFm(slot)
+            Kind.PSG -> defaultYmPsg(slot)
+            Kind.PCM -> defaultYmPcm(slot)
+        }
         val named = cur?.let { next.named(it.name) } ?: next
-        val ok = session.setYmInstrument(slot, named, if (toFm) "Make FM voice" else "Make PSG sound")
-        if (toFm && !YmRules.isFm(st.listenChannel)) st.listenChannel = 0
-        if (!toFm && YmRules.isFm(st.listenChannel)) st.listenChannel = YmRules.PSG_FIRST
+        val label = when (to) { Kind.FM -> "Make FM voice"; Kind.PSG -> "Make PSG sound"; Kind.PCM -> "Make PCM kit" }
+        val ok = session.setYmInstrument(slot, named, label)
+        if (kindOf(st.listenChannel) != to) st.listenChannel = when (to) { Kind.FM -> 0; Kind.PSG -> YmRules.PSG_FIRST; Kind.PCM -> YmRules.PCM_FIRST }
         keepPage(v, Row.TYPE)
-        session.note("Sound ${EditorSession.hex2(slot)} is now ${if (toFm) "an FM voice (FM 1-6)" else "a PSG sound (PSG 1-3, Noise)"}" +
-            if (cur != null) "; undo brings the old sound back" else "")
+        if (to == Kind.PCM) YmPcmPage.normalise(v)
+        val what = when (to) {
+            Kind.FM -> "an FM voice (FM 1-6)"
+            Kind.PSG -> "a PSG sound (PSG 1-3, Noise)"
+            Kind.PCM -> "a PCM kit (PCM 1-3)"
+        }
+        session.note("Sound ${EditorSession.hex2(slot)} is now $what" + if (cur != null) "; undo brings the old sound back" else "")
         return ok
     }
 
@@ -368,23 +462,31 @@ object YmInstrumentView : SystemView() {
         }
     }
 
-    /** The presets the slot's kind offers: FM voices and drums, or PSG tones and noise sounds; [drums] only drums. */
+    /** The presets the slot's kind offers: FM voices and drums, or PSG tones and noise sounds; [drums] only drums. PCM kits have none. */
     fun presets(song: Song, state: ViewState, drums: Boolean): List<YmPresets.Preset> = YmPresets.ALL.filter {
-        if (fmPages(song, state)) (if (drums) it.category == YmPresets.Category.DRUM else it.category == YmPresets.Category.FM || it.category == YmPresets.Category.DRUM)
-        else it.category == YmPresets.Category.PSG || it.category == YmPresets.Category.NOISE
+        when (kind(song, state)) {
+            Kind.FM -> if (drums) it.category == YmPresets.Category.DRUM else it.category == YmPresets.Category.FM || it.category == YmPresets.Category.DRUM
+            Kind.PSG -> it.category == YmPresets.Category.PSG || it.category == YmPresets.Category.NOISE
+            Kind.PCM -> false
+        }
     }
 
-    /** Presets [delta] steps from the one the sound is (or the first), replacing the sound; noise presets listen on Noise. */
+    /**
+     * Presets [delta] steps from the one the sound is (or the first), replacing the sound; noise presets listen on
+     * Noise. An FM voice keeps its FM 3 operator offsets (the Ch3 page's), which no preset sets.
+     */
     private fun applyPreset(v: ViewController, delta: Int, drums: Boolean): Boolean {
         val st = v.state
         val presets = presets(v.session.song, st, drums)
         if (presets.isEmpty()) return false
         val ins = sound(v.session.song, st)
-        val preset = presets[FmControls.presetStep(presets.indexOfFirst { it.instrument == ins }, delta, presets.size)]
-        val ok = v.session.setYmInstrument(st.instrument, preset.instrument, "Preset ${preset.name}")
+        val ch3 = (ins as? YmFmInstrument)?.ch3
+        fun kept(p: YmPresets.Preset): YmInstrument = p.instrument.let { if (it is YmFmInstrument && ch3 != null) it.copy(ch3 = ch3) else it }
+        val preset = presets[FmControls.presetStep(presets.indexOfFirst { kept(it) == ins }, delta, presets.size)]
+        val ok = v.session.setYmInstrument(st.instrument, kept(preset), "Preset ${preset.name}")
         when (preset.category) {
             YmPresets.Category.NOISE -> st.listenChannel = YmRules.NOISE
-            YmPresets.Category.PSG -> if (st.listenChannel == YmRules.NOISE || YmRules.isFm(st.listenChannel)) st.listenChannel = YmRules.PSG_FIRST
+            YmPresets.Category.PSG -> if (!YmRules.isPsg(st.listenChannel) || st.listenChannel == YmRules.NOISE) st.listenChannel = YmRules.PSG_FIRST
             else -> if (!YmRules.isFm(st.listenChannel)) st.listenChannel = 0
         }
         v.session.note("${preset.name}: ${YmCurated.summary(preset.instrument)}" + (preset.note?.let { " · voiced at ${YmSystem.noteName(it)}" } ?: ""))
@@ -411,7 +513,8 @@ object YmInstrumentView : SystemView() {
         val changed = when {
             row == Row.SLOT -> {
                 if (empty) session.setYmInstrument(slot, defaultYmInstrument(slot, st.listenChannel), "New sound").also {
-                    session.note("Sound ${EditorSession.hex2(slot)}: a new ${if (YmRules.isFm(st.listenChannel)) "FM voice" else "PSG sound"} to start from")
+                    val what = when (kindOf(st.listenChannel)) { Kind.FM -> "FM voice"; Kind.PSG -> "PSG sound"; Kind.PCM -> "PCM kit" }
+                    session.note("Sound ${EditorSession.hex2(slot)}: a new $what to start from")
                 }
                 else { publish(v); session.note("Sound ${EditorSession.hex2(slot)} selected for entry"); false }
             }
@@ -420,6 +523,8 @@ object YmInstrumentView : SystemView() {
             row == Row.DRUM_PRESET -> applyPreset(v, 1, drums = true)
             row in TOGGLES -> session.editYmFm(slot, "Set ${row.label}") { step(it, row, operator(st), 1, 0) }
             row == Row.MODE || row == Row.NOISE_TYPE -> { adjust(v, 1, 0); false }
+            row == Row.FM3_MODE -> stepFm3Mode(v, 1)
+            row == Row.PCM_SAMPLE || row == Row.PCM_SAMPLES || row == Row.PCM_SPREAD || row == Row.PCM_ADD -> YmPcmPage.editTap(v, row)
             row == Row.STEPS -> {
                 val kind = envelopeKind(session.song, st) ?: return
                 val e = envelope(session.song, st) ?: return
@@ -447,7 +552,7 @@ object YmInstrumentView : SystemView() {
         fun fm(label: String, f: (YmFmInstrument) -> YmFmInstrument) { session.editYmFm(slot, label, f) }
         when (row) {
             Row.SLOT -> session.setYmInstrument(slot, null, "Empty sound").also { session.note("Sound ${EditorSession.hex2(slot)} is empty: notes naming it are refused") }
-            Row.PRESET, Row.DRUM_PRESET -> session.setYmInstrument(slot, if (fm) blank else defaultYmPsg(slot), "Reset sound")
+            Row.PRESET, Row.DRUM_PRESET -> session.setYmInstrument(slot, if (fm) blank.copy(ch3 = (sound(song, st) as? YmFmInstrument)?.ch3 ?: blank.ch3) else defaultYmPsg(slot), "Reset sound")
             Row.NAME -> session.renameYm(slot) { ViewController.deleteChar(it, st.textPos) }
             Row.ALGORITHM -> fm("Reset algorithm") { YmCurated.withAlgorithm(it, reset.algorithm) }
             Row.RATIO -> fm("Reset ratios") { YmCurated.withRatio(it, 0) }
@@ -467,6 +572,10 @@ object YmInstrumentView : SystemView() {
             Row.SSG -> fm("SSG-EG off") { YmCurated.withSsg(it, 0) }
             Row.RAW_ALGORITHM -> fm("Algorithm 0") { it.copy(algorithm = 0) }
             in GRID -> fm("Reset ${row.label}") { it.withOperator(operator(st), resetField(it.operators[operator(st)], row)) }
+            Row.FM3_MODE -> session.apply("Set FM 3 mode") { s -> s.copy(sound = s.ym.copy(fm3Mode = YmFm3Mode.NORMAL)) }
+            Row.CH3_SEMI, Row.CH3_FINE -> fm("Reset FM 3 operator ${operator(st) + 1} offset") { ins ->
+                ins.copy(ch3 = List(4) { k -> if (k == operator(st)) 0 else ins.ch3.getOrElse(k) { 0 } })
+            }
             in SWEEP -> if (fm) fm("Sweep off") { it.copy(sweep = YmSweep.NONE) } else session.editYmPsg(slot, "Sweep off") { it.copy(sweep = YmSweep.NONE) }
             Row.LENGTH -> envelopeKind(song, st)?.let { k -> session.editYmEnvelope(slot, k, "Reset ${k.label.lowercase()} envelope") { defaultYmPsg(slot).envelope(k) } }
             Row.LOOP -> envelopeKind(song, st)?.let { k -> session.editYmEnvelope(slot, k, "Clear ${k.label.lowercase()} loop") { it.copy(loop = -1) } }
@@ -477,6 +586,7 @@ object YmInstrumentView : SystemView() {
                 envelope(session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
             }
             Row.NOISE_TYPE, Row.NOISE_RATE -> session.editYmPsg(slot, "Reset noise") { it.copy(noise = defaultYmPsg(slot).noise) }
+            in YmPcmPage.KEY_ROWS, in YmPcmPage.BOX_ROWS, Row.PCM_LEVEL -> YmPcmPage.clear(v, row)
             else -> Unit // Listen, Type, Page
         }
     }
@@ -501,13 +611,14 @@ object YmInstrumentView : SystemView() {
 
     override fun audition(v: ViewController) {
         val st = v.state
-        val ins = sound(v.session.song, st)
+        val song = v.session.song
+        val ins = sound(song, st)
         if (ins == null) { v.session.note("Sound ${EditorSession.hex2(st.instrument)} is empty: ${v.k(Action.EDIT)} on Slot makes one"); return }
-        val ch = listenChannel(st, ins)
-        if (ch != st.listenChannel) {
-            v.session.note("${ins.name.ifEmpty { "This sound" }} is ${if (ins is YmFmInstrument) "an FM voice" else "a PSG sound"}: listening on ${v.session.song.system.channels[ch].name}")
+        val ch = listenChannel(st, ins, page(song, st))
+        if (ch != st.listenChannel && page(song, st) != Page.CH3) {
+            v.session.note("${ins.name.ifEmpty { "This sound" }} is ${YmSystem.kindName(ins)}: listening on ${song.system.channels[ch].name}")
         }
-        v.startAudition(ch, v.defaultNote(), st.instrument)
+        if (ins is YmPcmInstrument) YmPcmPage.audition(v, ch) else v.startAudition(ch, v.defaultNote(), st.instrument)
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
@@ -521,7 +632,7 @@ object YmInstrumentView : SystemView() {
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 val d = if (a == Action.NEXT_CHANNEL) 1 else -1
-                if (row in GRID) st.envStep = (st.envStep + d).coerceIn(0, 3) else showPage(v, st.envelope + d)
+                if (row in OPERATOR_ROWS) st.envStep = (st.envStep + d).coerceIn(0, 3) else showPage(v, st.envelope + d)
             }
             Action.COPY -> if (onEnvelope) session.copyYmEnvelope(slot, kind!!) else session.copyYmInstrument(slot)
             Action.PASTE -> { session.pasteYm(slot, kind); keepPage(v, row) }
@@ -559,7 +670,11 @@ object YmInstrumentView : SystemView() {
             row == Row.NAME -> { h += Hint(v.lr(), "Letter position"); h += Hint(v.editLr(), "Change letter"); h += Hint(v.k(Action.CLEAR), "Delete letter") }
             row == Row.LISTEN -> h += Hint(v.lr(), "Channel Listen plays on")
             row == Row.PAGE -> h += Hint(v.lr(), "Page")
-            row == Row.TYPE -> h += Hint(v.k(Action.EDIT), if (fmPages(song, st)) "Make it a PSG sound" else "Make it an FM voice")
+            row == Row.TYPE -> h += Hint(v.k(Action.EDIT), when (kind(song, st)) {
+                Kind.FM -> "Make it a PSG sound"
+                Kind.PSG -> "Make it a PCM kit"
+                Kind.PCM -> "Make it an FM voice"
+            })
             row == Row.PRESET || row == Row.DRUM_PRESET -> {
                 h += Hint(v.editLr(), if (row == Row.PRESET) "Start from a preset" else "Drum presets"); h += Hint(v.k(Action.CLEAR), "Default sound")
             }
@@ -568,6 +683,13 @@ object YmInstrumentView : SystemView() {
                 if (row in TOGGLES) h += Hint(v.k(Action.EDIT), "Switch ${row.label}") else h += Hint(v.editLr(), "${row.label} ±1 (${v.ud()} coarse)")
                 h += Hint(v.k(Action.CLEAR), "Default")
             }
+            row in CH3_GRID -> {
+                h += Hint(v.lr(), "Operator"); h += Hint(v.channels(), "Operator")
+                h += Hint(v.editLr(), if (row == Row.CH3_SEMI) "±1 semitone (${v.ud()} octave)" else "±1/64 (${v.ud()} ±8/64)")
+                h += Hint(v.k(Action.CLEAR), "Offset 0")
+            }
+            row == Row.FM3_MODE -> { h += Hint(v.k(Action.EDIT), "Normal / special"); h += Hint(v.k(Action.CLEAR), "Normal") }
+            page(song, st) == Page.PCM && row !in HEAD -> YmPcmPage.hints(v, row, h)
             row == Row.STEPS -> {
                 h += Hint(v.lr(), "Step"); h += Hint(v.editUd(), "Value"); h += Hint(v.editLr(), "Draw value along")
                 h += Hint(v.k(Action.CLEAR), "Delete step")
@@ -580,10 +702,11 @@ object YmInstrumentView : SystemView() {
             row in LISTS || row == Row.NOISE_RATE -> { h += Hint(v.editLr(), "Choose"); h += Hint(v.k(Action.CLEAR), "Default") }
             else -> { h += Hint(v.editLr(), "±1 (${v.ud()} coarse)"); h += Hint(v.k(Action.CLEAR), "Default") }
         }
-        if (row !in HEAD && row !in GRID && row != Row.STEPS) h += Hint(v.lr(), "Sound slot")
-        if (row !in GRID) h += Hint(v.channels(), "Page")
-        h += Hint(v.k(Action.AUDITION), "Listen on ${song.system.channels.getOrNull(listenChannel(st, ins))?.name ?: ""}")
-        h += Hint(v.octaves(), "Listen at ${YmSystem.noteName(v.defaultNote())}")
+        if (row !in HEAD && row !in OPERATOR_ROWS && row != Row.STEPS && page(song, st) != Page.PCM) h += Hint(v.lr(), "Sound slot")
+        if (row !in OPERATOR_ROWS) h += Hint(v.channels(), "Page")
+        h += Hint(v.k(Action.AUDITION), "Listen on ${song.system.channels.getOrNull(listenChannel(st, ins, page(song, st)))?.name ?: ""}")
+        if (ins is YmPcmInstrument) h += Hint(v.k(Action.AUDITION), "Listen: key ${YmSystem.noteName(st.dpcmKey)}")
+        else h += Hint(v.octaves(), "Listen at ${YmSystem.noteName(v.defaultNote())}")
         h += Hint(v.copyPaste(), if (envelopeKind(song, st) != null && row !in HEAD) "Copy/paste envelope" else "Copy/paste sound")
     }
 
@@ -599,13 +722,15 @@ object YmInstrumentView : SystemView() {
         return listOf(
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, type, page, then the page's settings",
-                lr to "On settings: the sound slot; on the Expert grid: the operator; on envelope steps: the step",
-                channels to "Pages. FM voices: Sound (curated), Expert (every register), Drum (pitch sweep). PSG sounds: Volume, Arpeggio, Pitch, Noise·Drum",
-                "Listen on" to "The channel $listen plays the sound on: FM voices on FM 1-6, PSG sounds on PSG 1-3 or Noise. Holding $edit on a setting sounds the sound and every change restarts it",
-                "Type" to "FM voice (FM 1-6) or PSG sound (PSG 1-3, Noise); $edit switches, giving the slot the other kind's starting sound",
+                lr to "On settings: the sound slot; on the Expert and Ch3 grids: the operator; on envelope steps: the step; on PCM keys: the key",
+                channels to "Pages. FM voices: Sound (curated), Expert (every register), Ch3 (FM 3 operator pitches), Drum (pitch sweep). " +
+                    "PSG sounds: Volume, Arpeggio, Pitch, Noise·Drum. PCM kits: PCM",
+                "Listen on" to "The channel $listen plays the sound on: FM voices on FM 1-6 (FM 3 on the Ch3 page), PSG sounds on PSG 1-3 or Noise, " +
+                    "PCM kits on PCM 1-3 (the shown key). Holding $edit on a setting sounds the sound and every change restarts it",
+                "Type" to "FM voice (FM 1-6), PSG sound (PSG 1-3, Noise) or PCM kit (PCM 1-3); $edit steps to the next kind, giving the slot its starting sound",
                 editLr to "Change the value (${keys.held(Action.EDIT, ud)} in bigger steps); lists step through their choices",
                 "$clear tap" to "The setting's default; on Slot: empty the slot (notes naming it are refused)",
-                "$edit on Slot" to "An empty slot gets a new sound to start from: an FM voice when Listen is on FM 1-6, else a PSG sound",
+                "$edit on Slot" to "An empty slot gets a new sound to start from, of the kind Listen's channel plays",
             ),
             "FM Sound page" to listOf(
                 "Preset" to "Starting sounds: slap and finger bass, brass, E-piano, bell, strings, lead, organ, pluck, pad and FM drums (kick, snare, tom, hi-hat, crash)",
@@ -630,6 +755,13 @@ object YmInstrumentView : SystemView() {
                 "Noise·Drum" to "On the Noise channel: white or periodic noise at a fixed rate (/512, /1024, /2048) or pitched by the note " +
                     "(PSG 3's period: PSG 3 is silent while it sounds); and the PSG sound's pitch sweep",
             ),
+            "Ch3 page" to listOf(
+                "FM 3 mode" to "The song's FM 3 mode (also in the Song view). Normal: FM 3 plays like FM 1-6. Special: each of FM 3's four " +
+                    "operators sounds the note plus its own offset, so one voice can play a chord or a detuned stack",
+                "Semitones, Fine" to "Operator offsets in semitones and 1/64 semitones (±4 octaves), operators numbered as in the algorithm drawing. " +
+                    "Slides, vibrato, arpeggios and tunings move the note; the offsets follow it. Other FM channels ignore them",
+            ),
+            "PCM page" to YmPcmPage.helpRows(keys),
         )
     }
 

@@ -1,92 +1,40 @@
-/* Mega Drive music machine (ym_machine.h): SGDK's XGM driver on z80.h + ymfm YM2612 + SN76489 + blip_buf, fed by
- * the player through the XGC encoder. */
+/* Mega Drive music machine (ym_machine.h): SGDK's XGM2 driver on z80.h + ymfm YM2612 + SN76489 + blip_buf, fed by the
+ * player through the XGM2 encoder. */
 #include "ym_machine.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #include "blip_buf.h"
-#include "generated/xgm_driver_image.h"
+#include "generated/xgm2_driver_image.h"
 #include "ym_psg.h"
 #include "ym_xgm.h"
 #include "ym_ymfm.h"
 #include "z80.h"
 
 /* Output scale (/ 256, then sample / 32768): ymfm's YM2612 sum (one full-level sine channel peaks at 0.125, six at
- * 0.75) and the PSG's level table, in libvgm's default balance (VGMPlay volumes YM2612 0x200 : SN76489 0x100 with its
- * GPGX and MAME cores: a full-level PSG square has 0.35 times the rms of a full-level FM sine); docs "Mix". */
+ * 0.75; the DAC replaces FM 6) and the PSG's level table, in libvgm's default balance (VGMPlay volumes YM2612 0x200 :
+ * SN76489 0x100 with its GPGX and MAME cores: a full-level PSG square has 0.35 times the rms of a full-level FM sine);
+ * docs "Mix". */
 #define YM_FM_GAIN 192
 #define YM_PSG_GAIN 65
 
-#define PREFIX_MAX (YMP_MACHINE_RESET_WRITES + YMP_DUMP_WRITES + YMP_MAX_WRITES + 8)
+#define FRAME_WRITES (2 * YMP_MAX_WRITES + 8)
 #define FIFO 64 /* positions of the last encoded player ticks (the driver lags behind heavy frames) */
 #define PSG_DIV (YMS_MCLK_PER_STEP / YMM_MCLK_PER_Z80) /* Z80 cycles per PSG counter step */
+#define BOOT_CYCLES 400000u  /* the driver's boot: clears, mutes, ready (well below 0.2 s) */
+#define ACCESS_WAIT 8192u    /* the 68000 waits at most this long for the driver's access flag */
 
-/* Pass replay (below, "pass replay"): capacities. A mixer pass (43917 cycles) reads 2041 bytes first (code,
- * variables, the null sample three times), writes 279 and makes 224 chip and bank writes; a frame-wait pass (254
- * cycles) reads 54. The test song keeps 18 passes (~190 KB) per machine, 40 with PAL and auditions. */
-#define RP_ENTRIES 64
-#define RP_ARENA (640u * 1024u)
-#define RP_MAX_READS 4096
-#define RP_MAX_EVENTS 512
-#define RP_MAX_REL 512
-#define RP_MAX_OBS 8
-#define RP_MAX_CYCLES 100000u
-#define PCM_RING 0x1800 /* the driver's four 256-byte PCM buffers, read through BC' */
-#define PCM_RING_SIZE 0x400
-#define IDLE_LOOP (YMM_PARAMS + 0x7C) /* the frame-wait loop's 16-bit iteration counter */
-
-typedef struct RpRead { uint32_t addr; uint8_t val; } RpRead;     /* addr bit 31: 68000 bus (ROM window) */
-typedef struct RpWrite { uint16_t addr; uint8_t val; } RpWrite;
-typedef struct RpEvent { uint32_t at; uint8_t kind, val; } RpEvent; /* kind 0..3 YM port, 4 PSG, 5 bank bit */
-typedef struct RpObs { uint16_t at; uint8_t b; } RpObs;          /* B' read after `at` relative reads */
-
-/* One recorded pass: from an opcode fetch at `start` to the next at `exit`, `len` cycles. */
-typedef struct RpEntry {
-    uint16_t start, exit;
-    uint32_t len;
-    z80_t in, out;       /* the Z80 at the two fetches */
-    uint64_t out_pins;
-    uint16_t ptr;        /* BC' (the PCM read pointer) at entry */
-    uint16_t ym_addr_in;
-    uint32_t bank_in;
-    uint8_t bank_free;   /* the pass sets all 9 bank bits before reading ROM: the entry bank is no input */
-    uint8_t r_loaded;    /* LD R,A in the pass: out.r is exact; else R advances by r_steps */
-    uint8_t r_steps;
-    uint8_t shared;      /* reads memory the 68000 side changes between ticks: may not straddle a tick */
-    uint16_t nrel, nobs;
-    uint32_t nreads, nwrites, nevents;
-    const uint8_t* rel;  /* values of the relative reads (BC' ring) */
-    const RpObs* obs;
-    const RpRead* reads; /* first reads of each byte, before any write of it */
-    const RpWrite* writes; /* final value of every byte written (applied at the pass end) */
-    const RpEvent* events;
-    uint8_t ring_written[PCM_RING_SIZE / 8];
-} RpEntry;
-
-typedef struct RpRecorder {
-    int on;
-    RpEntry e;
-    uint32_t cycle;
-    uint16_t ptr;        /* BC' as the relative reads advance it */
-    int rel_pending;     /* LD A,(BC) on BC' fetched: its data read is relative */
-    int prev_ed;         /* the last fetched byte was an ED prefix */
-    int bank_writes;
-    int counter_read;    /* frame-wait pass: IDLE_LOOP as read, -1 before */
-    uint8_t written[0x2000 / 8], seen[0x2000 / 8];
-    RpRead reads[RP_MAX_READS];
-    RpEvent events[RP_MAX_EVENTS];
-    uint8_t rel[RP_MAX_REL];
-    RpObs obs[RP_MAX_OBS];
-} RpRecorder;
-
-typedef struct RpPlayer {
-    int active, resume;  /* resume: the exit state is installed, its fetch is the next cycle */
-    const RpEntry* e;
-    uint32_t at, next;   /* cycles done, next event */
-    z80_t out;
-    uint16_t counter;
-} RpPlayer;
+/* Driver command and parameter bits (SGDK drv_xgm2.s80, xgm2.c). */
+#define CMD_RESUME 0x08
+#define CMD_PLAY 0x10
+#define CMD_PAUSE 0x20
+#define PLAY_ARG_FM_ADDR (YMM_PARAMS + 0x00)
+#define PLAY_ARG_PSG_ADDR (YMM_PARAMS + 0x02)
+#define PLAY_ARG_LOOP (YMM_PARAMS + 0x04)
+#define TEMPO_ARG_INC_FRAC (YMM_PARAMS + 0x0A)
+#define TEMPO_ARG_INC (YMM_PARAMS + 0x0B)
+#define SID_ENTRIES 124 /* the single-track sample table XGM2_load writes: 123 starts and the last end */
 
 struct YmMachine {
     uint32_t rate;
@@ -97,9 +45,12 @@ struct YmMachine {
     uint64_t pins;
     uint8_t ram[0x2000];
     uint32_t bank;
-    uint16_t ym_addr; /* the YM2612 address latch as the Z80 last wrote it (bit 8: port 2) */
-    uint8_t ring[YMM_RING_SIZE];
-    uint32_t ring_pos;
+    uint32_t int_left;   /* cycles the vertical interrupt still holds INT */
+    uint16_t ym_addr;    /* the YM2612 address latch as the Z80 last wrote it (bit 8: port 2) */
+    uint8_t fm_ring[YMM_STREAM_SIZE];
+    uint8_t psg_ring[YMM_STREAM_SIZE];
+    uint32_t fm_pos, psg_pos;
+    int fm_last_at, fm_last_size, psg_last_at, psg_last_size;
     /* chips */
     YmOpn2* opn;
     YmPsg psg;
@@ -109,15 +60,20 @@ struct YmMachine {
     int psg_written;     /* a PSG write since the last step (its output may change) */
     uint32_t tick_acc;   /* NTSC/PAL frame accumulator (whole Z80 cycles per tick) */
     unsigned fm_mute;
+    unsigned pcm_mute;   /* bit k: PCM channel k muted */
+    unsigned pcm_stop;   /* bit k: the next frame stops PCM channel k */
     /* output */
     blip_t* blip[2];
     int fm_last[2];
     int psg_last;
     short pcm[2 * YMM_MAX_TICK_FRAMES + 16];
-    /* player and encoder */
+    /* player, images and stream */
     YmPlayer player;
-    YmXgmEncoder enc;
-    YmImage image;
+    YmImage* img[2];
+    int cur;             /* the player's image */
+    int rom;             /* the image whose PCM bank the cartridge maps (and the sample table points into) */
+    int swap_pending;    /* img[cur]'s bank waits for the driver's next PCM fill boundary */
+    uint32_t swap_frame; /* the first frame encoded from img[cur] */
     int loaded;
     int fifo[FIFO][3];   /* position of player tick i at fifo[i % FIFO] */
     uint32_t fifo_rows[FIFO]; /* row_starts after player tick i was encoded: its row instance (ymm_row_serial) */
@@ -127,26 +83,21 @@ struct YmMachine {
     int audition, audition_channel, released, release_ticks;
     uint32_t keyoff_tick; /* the encoded tick whose frame carries the audition's key-off */
     /* scratch */
-    YmWrite prefix[PREFIX_MAX];
+    YmWrite prefix[YMP_MAX_WRITES];
+    int prefix_pcm[YM_PCM_CHANNELS]; /* the prefix batch's PCM commands */
     int nprefix;
-    YmWrite frame[PREFIX_MAX];
-    uint8_t xgc[YMX_MAX_FRAME_BYTES];
-    int last_frames_at, last_frames_size;
+    YmWrite frame[FRAME_WRITES];
+    YmxFrame xf;
+    uint8_t cmds[YMX_FRAME_MAX];
     /* test hooks */
     int log_on;
     YmmLogEntry log[YMM_LOG_MAX];
     int nlog;
     uint32_t cycle_in_tick, last_tick_cycles;
-    /* pass replay */
-    int rp_enabled;
-    RpEntry rp[RP_ENTRIES];
-    int nrp;
-    uint8_t* arena;
-    uint32_t arena_used;
-    RpRecorder rec;
-    RpPlayer play;
-    uint64_t rp_hits, rp_cycles, rp_recorded;
 };
+
+_Static_assert(sizeof XGM2_DRIVER <= sizeof ((YmMachine*)0)->ram, "the driver fits the Z80's 8 KiB");
+_Static_assert(YMX_FRAME_MAX < YMX_BUFFER, "a frame never fills the driver's command buffer");
 
 /* ---- the Z80 bus --------------------------------------------------------------------------------- */
 
@@ -155,18 +106,12 @@ static void log_write(YmMachine* m, int kind, int reg, int val) {
         m->log[m->nlog++] = (YmmLogEntry){m->cycle_in_tick, (uint8_t)kind, (uint8_t)reg, (uint8_t)val};
 }
 
-static void ym_bus_write(YmMachine* m, int port, uint8_t v) {
-    ymo_write(m->opn, m->mclk, port, v);
-    if (!(port & 1)) {
-        m->ym_addr = (uint16_t)((port & 2 ? 0x100 : 0) | v);
-    } else if ((port & 2) == (m->ym_addr & 0x100 ? 2 : 0)) {
-        log_write(m, m->ym_addr >> 8, m->ym_addr & 0xFF, v);
-    }
-}
-
 static uint8_t rom_read(const YmMachine* m, uint32_t a) {
-    if (a >= YMM_NULL_SAMPLE && a < YMM_NULL_SAMPLE + 0x100) return 0;
-    if (a >= YMM_RING && a < YMM_RING + YMM_RING_SIZE) return m->ring[a - YMM_RING];
+    if (a >= YMM_FM_STREAM && a < YMM_FM_STREAM + YMM_STREAM_SIZE) return m->fm_ring[a - YMM_FM_STREAM];
+    if (a >= YMM_PSG_STREAM && a < YMM_PSG_STREAM + YMM_STREAM_SIZE) return m->psg_ring[a - YMM_PSG_STREAM];
+    const YmImage* rom = m->img[m->rom];
+    if (a >= YMM_SAMPLES && a < YMM_SAMPLES + (uint32_t)rom->info.pcm_pages * YM_PCM_ALIGN)
+        return rom->bytes[YM_OFF_PCM_BANK + (a - YMM_SAMPLES)];
     return 0xFF;
 }
 
@@ -220,285 +165,94 @@ static inline void chips_cycle(YmMachine* m, int emit, uint32_t t) {
     }
 }
 
-/* `n` cycles of chips_cycle from blip time t, jumping from one PSG step or YM2612 sample to the next. */
-static void chips_run(YmMachine* m, uint32_t n, int emit, uint32_t t) {
-    while (n) {
-        const uint32_t to_psg = PSG_DIV - m->psg_div;
-        const uint32_t to_ym = (YMM_MCLK_PER_YM_SAMPLE - m->ym_acc + YMM_MCLK_PER_Z80 - 1) / YMM_MCLK_PER_Z80;
-        uint32_t k = n < to_psg ? n : to_psg;
-        if (to_ym < k) k = to_ym;
-        m->mclk += YMM_MCLK_PER_Z80 * (uint64_t)k;
-        m->cycle_in_tick += k;
-        m->psg_div += k;
-        m->ym_acc += YMM_MCLK_PER_Z80 * k;
-        t += k;
-        n -= k;
-        if (m->psg_div == PSG_DIV) {
-            m->psg_div = 0;
-            psg_step(m, emit, t - 1);
+/* ---- the PCM bank of a live edit ------------------------------------------------------------------
+ * The cartridge maps img[rom]'s bank at YMM_SAMPLES and the driver's sample table points into it. A live edit that
+ * changes the bank (img[cur]) is mapped when the driver fetches main_loop: the start of its PCM fill round, where the
+ * three channels' address and length variables hold where each continues (no fill has them in registers, the
+ * interrupt handler is not running). A sounding sample whose bytes the new bank holds unchanged (the same variant id
+ * first, else any variant with the same bytes, length and rate) continues at the same offset there; any other stops
+ * (its STATUS bit cleared, as the driver clears it at a sample's end). Then the sample table is rewritten. */
+
+static void write_sids(YmMachine* m) {
+    const YmImage* rom = m->img[m->rom];
+    const int n = rom->info.pcm_variants;
+    for (int i = 0; i < SID_ENTRIES; ++i) {
+        uint32_t page = 0;
+        if (i < n) {
+            int start, pages, flags;
+            ym_pcm_region(rom, i + 1, &start, &pages, &flags);
+            page = (uint32_t)start;
+        } else if (i == n && n) {
+            page = (uint32_t)rom->info.pcm_pages;
         }
-        if (m->ym_acc >= YMM_MCLK_PER_YM_SAMPLE) {
-            m->ym_acc -= YMM_MCLK_PER_YM_SAMPLE;
-            ym_sample(m, emit, t - 1);
-        }
+        const uint32_t addr = i <= n && n ? (YMM_SAMPLES >> 8) + page : 0;
+        m->ram[YMM_SID_TABLE + 2 * i] = (uint8_t)addr;
+        m->ram[YMM_SID_TABLE + 2 * i + 1] = (uint8_t)(addr >> 8);
     }
 }
 
-/* ---- pass replay ---------------------------------------------------------------------------------
- * Without PCM the driver spends ~92 % of its cycles in two pieces of fixed code: the PCM mixer (pcm_mix, ~47 k
- * cycles per 256 silent samples) and the frame-wait loop (sync_frame_loop, 254 cycles per iteration). Neither reads
- * the music. The machine records one execution of such a pass - from the opcode fetch at one of the two labels to
- * the next fetch at either - with everything it reads and writes and its chip writes by cycle, and replays it when
- * a pass starts with the same inputs: the chips run alone for the pass's cycles and receive its writes at the
- * same cycles, its memory writes land, and the Z80 resumes in the recorded exit state. Inputs: the registers
- * (those a pass loads before using are free), the first read of every byte, the YM address latch, the bank when
- * read before set, and the PCM read pointer BC': its reads are re-based (values compared, never inside bytes the
- * pass writes) and its page compared wherever the pass reads B'. The frame-wait counter is incremented, not
- * compared. A pass reading memory the 68000 side changes between ticks (PENDING_FRM) only replays if it ends
- * before the tick does. Exact by construction; the host test compares replayed and fully stepped machines bit for
- * bit (samples, chip writes, Z80 state and RAM between passes). */
-
-static int ram_shared(uint16_t a) { return a == YMM_PENDING_FRM || a == YMM_REM_LOOP; }
-static uint16_t ring_add(uint16_t p, uint32_t n) { return (uint16_t)(PCM_RING + ((p - PCM_RING + n) & (PCM_RING_SIZE - 1))); }
-static int in_ring(uint16_t p) { return p >= PCM_RING && p < PCM_RING + PCM_RING_SIZE; }
-static int bit(const uint8_t* map, uint32_t i) { return map[i >> 3] >> (i & 7) & 1; }
-static void set_bit(uint8_t* map, uint32_t i) { map[i >> 3] |= (uint8_t)(1u << (i & 7)); }
-
-static void rec_start(YmMachine* m, uint16_t pc) {
-    RpRecorder* r = &m->rec;
-    if (!in_ring(m->cpu.bc2) || m->nrp == RP_ENTRIES) return;
-    memset(&r->e, 0, sizeof r->e);
-    r->e.start = pc;
-    r->e.in = m->cpu;
-    r->e.ptr = r->ptr = m->cpu.bc2;
-    r->e.ym_addr_in = m->ym_addr;
-    r->e.bank_in = m->bank;
-    r->e.bank_free = 1;
-    memset(r->written, 0, sizeof r->written);
-    memset(r->seen, 0, sizeof r->seen);
-    r->cycle = 0;
-    r->rel_pending = r->prev_ed = r->bank_writes = 0;
-    r->counter_read = -1;
-    r->on = 1;
+static int same_region(const YmImage* a, int ida, const YmImage* b, int idb) {
+    int sa, pa, fa, sb, pb, fb;
+    ym_pcm_region(a, ida, &sa, &pa, &fa);
+    ym_pcm_region(b, idb, &sb, &pb, &fb);
+    return pa == pb && fa == fb &&
+           !memcmp(a->bytes + YM_OFF_PCM_BANK + (size_t)sa * YM_PCM_ALIGN, b->bytes + YM_OFF_PCM_BANK + (size_t)sb * YM_PCM_ALIGN,
+                   (size_t)pa * YM_PCM_ALIGN);
 }
 
-/* Recording: an opcode fetch or memory read of the pass (pins = the request, d = the byte). */
-static void rec_read(YmMachine* m, uint64_t pins, uint16_t a, uint8_t d) {
-    RpRecorder* r = &m->rec;
-    RpEntry* e = &r->e;
-    if (a >= 0x4000 && a < 0x6000) { r->on = 0; return; } /* YM status: depends on time */
-    if (a >= 0x8000) {
-        const uint32_t abs = m->bank << 15 | (a & 0x7FFF);
-        if (r->bank_writes < 9) e->bank_free = 0;
-        if (abs >= YMM_RING && abs < YMM_RING + YMM_RING_SIZE) e->shared = 1;
-        if (e->nreads == RP_MAX_READS) { r->on = 0; return; }
-        r->reads[e->nreads++] = (RpRead){0x80000000u | abs, d};
-        return;
-    }
-    if (a >= 0x4000) return; /* $6000-$7FFF reads: always $FF */
-    const uint16_t ra = a & 0x1FFF;
-    if (pins & Z80_M1) {
-        if (r->prev_ed) {
-            if (d == 0x5F) { r->on = 0; return; } /* LD A,R: R would be an input */
-            if (d == 0x4F) e->r_loaded = 1;       /* LD R,A */
-        }
-        r->prev_ed = !m->cpu.prefix_active && d == 0xED;
-        if (!m->cpu.prefix_active && m->cpu.bc == r->ptr) { /* EXX'd: BC holds the PCM read pointer */
-            if (d == 0x0A) r->rel_pending = 1;             /* LD A,(BC) */
-            else if (d == 0x79) { r->on = 0; return; }     /* LD A,C */
-            else if (d == 0x78) {                          /* LD A,B */
-                if (e->nobs == RP_MAX_OBS) { r->on = 0; return; }
-                r->obs[e->nobs++] = (RpObs){e->nrel, m->cpu.b};
+static int banks_equal(const YmImage* a, const YmImage* b) {
+    return a->info.pcm_variants == b->info.pcm_variants && a->info.pcm_pages == b->info.pcm_pages &&
+           !memcmp(a->bytes + YM_OFF_PCM_VARIANTS, b->bytes + YM_OFF_PCM_VARIANTS, (size_t)YM_PCM_VARIANT_SIZE * (size_t)a->info.pcm_variants) &&
+           !memcmp(a->bytes + YM_OFF_PCM_BANK, b->bytes + YM_OFF_PCM_BANK, (size_t)a->info.pcm_pages * YM_PCM_ALIGN);
+}
+
+static void map_bank(YmMachine* m) {
+    const YmImage* old = m->img[m->rom];
+    const YmImage* next = m->img[m->cur];
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k) {
+        if (!(m->ram[YMM_STATUS] & (1 << k))) continue;
+        uint8_t* v = m->ram + YMM_PCM_VARS + 8 * k;
+        const uint32_t addr = (uint32_t)v[0] | (uint32_t)v[1] << 8 | (uint32_t)v[2] << 16;
+        int id = 0, start = 0, pages = 0, flags = 0;
+        if (addr >= YMM_SAMPLES) {
+            const uint32_t page = (addr - YMM_SAMPLES) >> 8;
+            for (int i = 1; i <= old->info.pcm_variants && !id; ++i) {
+                ym_pcm_region(old, i, &start, &pages, &flags);
+                if (page >= (uint32_t)start && page < (uint32_t)(start + pages)) id = i;
             }
         }
-    } else if (r->rel_pending) {
-        r->rel_pending = 0;
-        if (ra != r->ptr || bit(r->written, ra) || e->nrel == RP_MAX_REL) { r->on = 0; return; }
-        r->rel[e->nrel++] = d;
-        r->ptr = ring_add(r->ptr, 1);
-        return;
-    }
-    if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP && (ra == IDLE_LOOP || ra == IDLE_LOOP + 1)) {
-        if (bit(r->written, ra)) { r->on = 0; return; }
-        r->counter_read = (r->counter_read < 0 ? 0 : r->counter_read) | d << (ra == IDLE_LOOP ? 0 : 8);
-        return;
-    }
-    if (ram_shared(ra)) e->shared = 1;
-    if (bit(r->written, ra) || bit(r->seen, ra)) return;
-    set_bit(r->seen, ra);
-    if (e->nreads == RP_MAX_READS) { r->on = 0; return; }
-    r->reads[e->nreads++] = (RpRead){ra, d};
-}
-
-static void rec_event(YmMachine* m, int kind, uint8_t v) {
-    RpEntry* e = &m->rec.e;
-    if (e->nevents == RP_MAX_EVENTS) { m->rec.on = 0; return; }
-    m->rec.events[e->nevents++] = (RpEvent){m->rec.cycle, (uint8_t)kind, v};
-}
-
-static void rec_write(YmMachine* m, uint16_t a, uint8_t d) {
-    RpRecorder* r = &m->rec;
-    if (a < 0x4000) {
-        const uint16_t ra = a & 0x1FFF;
-        if (ram_shared(ra) || ra == YMM_MODIFYING_F || ra == YMM_STATUS) { r->on = 0; return; }
-        set_bit(r->written, ra);
-    } else if (a < 0x6000) {
-        rec_event(m, a & 3, d);
-    } else if (a < 0x6100) {
-        rec_event(m, 5, d);
-        ++r->bank_writes;
-    } else if ((a & 0xFFF9) == 0x7F11) {
-        rec_event(m, 4, d);
-    }
-}
-
-static void* arena_take(YmMachine* m, size_t bytes) {
-    const uint32_t at = (m->arena_used + 7u) & ~7u;
-    if (at + bytes > RP_ARENA) return NULL;
-    m->arena_used = at + (uint32_t)bytes;
-    return m->arena + at;
-}
-
-/* The recorded pass ends at the fetch at `pc` (pins = that fetch): keep it if it is replayable. */
-static void rec_finish(YmMachine* m, uint64_t pins, uint16_t pc) {
-    RpRecorder* r = &m->rec;
-    RpEntry* e = &r->e;
-    r->on = 0;
-    const int idle = e->start == XGM_DRIVER_SYNC_FRAME_LOOP;
-    if (!r->cycle || r->rel_pending || m->cpu.bc2 != r->ptr) return;
-    if (!e->r_loaded && ((m->cpu.r ^ e->in.r) & 0x80)) return;
-    if (idle && (r->counter_read < 0 || m->cpu.hl != ((r->counter_read + 1) & 0xFFFF))) return;
-    /* registers neither pass touches are carried through, not compared (regs_match) */
-    if (m->cpu.iy != e->in.iy || m->cpu.af2 != e->in.af2 || (idle && (m->cpu.bc != e->in.bc || m->cpu.sp != e->in.sp)))
-        return;
-    e->exit = pc;
-    e->len = r->cycle;
-    e->out = m->cpu;
-    e->out_pins = pins;
-    e->r_steps = (uint8_t)((m->cpu.r - e->in.r) & 0x7F);
-    uint32_t nwrites = 0;
-    for (uint32_t a = 0; a < 0x2000; ++a)
-        if (bit(r->written, a) && !(idle && (a == IDLE_LOOP || a == IDLE_LOOP + 1))) ++nwrites;
-    RpRead* reads = (RpRead*)arena_take(m, sizeof(RpRead) * e->nreads);
-    RpWrite* writes = (RpWrite*)arena_take(m, sizeof(RpWrite) * nwrites);
-    RpEvent* events = (RpEvent*)arena_take(m, sizeof(RpEvent) * e->nevents);
-    RpObs* obs = (RpObs*)arena_take(m, sizeof(RpObs) * e->nobs);
-    uint8_t* rel = (uint8_t*)arena_take(m, e->nrel);
-    if (!reads || !writes || !events || !obs || !rel) return;
-    memcpy(reads, r->reads, sizeof(RpRead) * e->nreads);
-    memcpy(events, r->events, sizeof(RpEvent) * e->nevents);
-    memcpy(obs, r->obs, sizeof(RpObs) * e->nobs);
-    memcpy(rel, r->rel, e->nrel);
-    for (uint32_t a = 0, i = 0; a < 0x2000; ++a) {
-        if (!bit(r->written, a) || (idle && (a == IDLE_LOOP || a == IDLE_LOOP + 1))) continue;
-        writes[i++] = (RpWrite){(uint16_t)a, m->ram[a]};
-        if (in_ring((uint16_t)a)) set_bit(e->ring_written, a - PCM_RING);
-    }
-    e->nwrites = nwrites;
-    e->reads = reads;
-    e->writes = writes;
-    e->events = events;
-    e->obs = obs;
-    e->rel = rel;
-    m->rp[m->nrp++] = *e;
-    ++m->rp_recorded;
-}
-
-/* Registers a pass may read: all but those it loads before use (the mixer: AF BC DE HL SP; the frame wait: AF HL),
- * those it never touches (IY, AF'; the frame wait: BC, SP: carried through), WZ and the decoder's scratch; BC' and R
- * are handled apart. */
-static int regs_match(const z80_t* a, const z80_t* b, int mix) {
-    if (a->ix != b->ix || a->de2 != b->de2 || a->hl2 != b->hl2 || a->i != b->i || a->im != b->im || a->iff1 != b->iff1 ||
-        a->iff2 != b->iff2 || a->int_bits != b->int_bits || a->step != b->step || a->hlx_idx != b->hlx_idx ||
-        a->prefix_active != b->prefix_active)
-        return 0;
-    return mix || a->de == b->de;
-}
-
-/* The entry whose inputs the Z80 meets now (the caller checks that a shared pass ends within the tick). */
-static const RpEntry* rp_find(const YmMachine* m, uint16_t pc) {
-    const uint16_t ptr = m->cpu.bc2;
-    if (!in_ring(ptr)) return NULL;
-    for (int i = 0; i < m->nrp; ++i) {
-        const RpEntry* e = &m->rp[i];
-        if (e->start != pc || !regs_match(&e->in, &m->cpu, pc == XGM_DRIVER_PCM_MIX) || m->ym_addr != e->ym_addr_in ||
-            (!e->bank_free && m->bank != e->bank_in))
-            continue;
-        int ok = 1;
-        for (uint32_t k = 0; ok && k < e->nobs; ++k) ok = ring_add(ptr, e->obs[k].at) >> 8 == e->obs[k].b;
-        for (uint32_t k = 0; ok && k < e->nrel; ++k) {
-            const uint16_t a = ring_add(ptr, k);
-            ok = m->ram[a] == e->rel[k] && !bit(e->ring_written, a - PCM_RING);
+        int to = 0;
+        if (id) {
+            if (id <= next->info.pcm_variants && same_region(old, id, next, id)) to = id;
+            for (int i = 1; i <= next->info.pcm_variants && !to; ++i)
+                if (same_region(old, id, next, i)) to = i;
         }
-        for (uint32_t k = 0; ok && k < e->nreads; ++k) {
-            const RpRead* rd = &e->reads[k];
-            ok = (rd->addr & 0x80000000u ? rom_read(m, rd->addr & 0x7FFFFFFFu) : m->ram[rd->addr]) == rd->val;
-        }
-        if (ok) return e;
-    }
-    return NULL;
-}
-
-static void rp_begin(YmMachine* m, const RpEntry* e) {
-    RpPlayer* p = &m->play;
-    p->active = 1;
-    p->e = e;
-    p->at = p->next = 0;
-    p->out = e->out;
-    p->out.bc2 = ring_add(m->cpu.bc2, e->nrel);
-    p->out.iy = m->cpu.iy;
-    p->out.af2 = m->cpu.af2;
-    if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP) {
-        p->out.bc = m->cpu.bc;
-        p->out.sp = m->cpu.sp;
-    }
-    if (!e->r_loaded) p->out.r = (uint8_t)((m->cpu.r & 0x80) | ((m->cpu.r + e->r_steps) & 0x7F));
-    if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP) {
-        p->counter = (uint16_t)(m->ram[IDLE_LOOP] + (m->ram[IDLE_LOOP + 1] << 8) + 1);
-        if (e->out.addr == e->out.hl) p->out.addr = p->counter;
-        p->out.hl = p->counter;
-    }
-    ++m->rp_hits;
-}
-
-/* Up to `budget` cycles of the replayed pass from blip time t; returns the cycles done. At its end the pass's
- * memory writes land and the Z80 takes the exit state (its fetch is the next cycle). */
-static uint32_t replay(YmMachine* m, uint32_t budget, int emit, uint32_t t) {
-    RpPlayer* p = &m->play;
-    const RpEntry* e = p->e;
-    uint32_t done = 0;
-    while (done < budget) {
-        if (p->next < e->nevents && e->events[p->next].at == p->at) {
-            const RpEvent* ev = &e->events[p->next++];
-            if (ev->kind < 4) ym_bus_write(m, ev->kind, ev->val);
-            else if (ev->kind == 4) psg_bus_write(m, ev->val);
-            else bank_write(m, ev->val);
+        if (!to) {
+            m->ram[YMM_STATUS] &= (uint8_t)~(1 << k);
             continue;
         }
-        if (p->at == e->len) {
-            for (uint32_t k = 0; k < e->nwrites; ++k) m->ram[e->writes[k].addr] = e->writes[k].val;
-            if (e->start == XGM_DRIVER_SYNC_FRAME_LOOP) {
-                m->ram[IDLE_LOOP] = (uint8_t)p->counter;
-                m->ram[IDLE_LOOP + 1] = (uint8_t)(p->counter >> 8);
-            }
-            m->cpu = p->out;
-            m->pins = e->out_pins;
-            p->active = 0;
-            p->resume = 1;
-            m->rp_cycles += e->len;
-            break;
-        }
-        const uint32_t until = p->next < e->nevents ? e->events[p->next].at : e->len;
-        uint32_t n = until - p->at;
-        if (n > budget - done) n = budget - done;
-        chips_run(m, n, emit, t + done);
-        p->at += n;
-        done += n;
+        int nstart, npages, nflags;
+        ym_pcm_region(next, to, &nstart, &npages, &nflags);
+        const uint32_t moved = addr + (uint32_t)(nstart - start) * YM_PCM_ALIGN;
+        v[0] = (uint8_t)moved;
+        v[1] = (uint8_t)(moved >> 8);
+        v[2] = (uint8_t)(moved >> 16);
     }
-    return done;
+    m->rom = m->cur;
+    m->swap_pending = 0;
+    write_sids(m);
 }
 
 /* ---- the Z80 ---------------------------------------------------------------------------------------- */
+
+static void ym_bus_write(YmMachine* m, int port, uint8_t v) {
+    ymo_write(m->opn, m->mclk, port, v);
+    if (!(port & 1)) {
+        m->ym_addr = (uint16_t)((port & 2 ? 0x100 : 0) | v);
+    } else if ((port & 2) == (m->ym_addr & 0x100 ? 2 : 0)) {
+        log_write(m, m->ym_addr >> 8, m->ym_addr & 0xFF, v);
+    }
+}
 
 /* The bus access of one Z80 cycle (pins as z80_tick returned them). */
 static inline uint64_t bus(YmMachine* m, uint64_t pins) {
@@ -509,19 +263,16 @@ static inline uint64_t bus(YmMachine* m, uint64_t pins) {
             if (a < 0x4000) d = m->ram[a & 0x1FFF];
             else if (a < 0x6000) d = ymo_read_status(m->opn, m->mclk);
             else if (a >= 0x8000) d = rom_read(m, m->bank << 15 | (a & 0x7FFF));
-            if (m->rec.on) rec_read(m, pins, a, d);
             Z80_SET_DATA(pins, d);
         } else if (pins & Z80_WR) {
             const uint8_t d = Z80_GET_DATA(pins);
-            if (m->rec.on) rec_write(m, a, d);
             if (a < 0x4000) m->ram[a & 0x1FFF] = d;
             else if (a < 0x6000) ym_bus_write(m, a & 3, d);
             else if (a < 0x6100) bank_write(m, d);
             else if ((a & 0xFFF9) == 0x7F11) psg_bus_write(m, d);
         }
-    } else if (pins & Z80_IORQ) {
-        m->rec.on = 0;
-        if (pins & Z80_RD) Z80_SET_DATA(pins, 0xFF);
+    } else if ((pins & Z80_IORQ) && (pins & Z80_RD)) {
+        Z80_SET_DATA(pins, 0xFF);
     }
     return pins;
 }
@@ -529,32 +280,19 @@ static inline uint64_t bus(YmMachine* m, uint64_t pins) {
 /* `cycles` Z80 cycles with the chips; output into the blip buffers when `emit`, at Z80-cycle times from `t0`. */
 static void run(YmMachine* m, uint32_t cycles, int emit, uint32_t t0) {
     uint64_t pins = m->pins;
-    uint32_t c = 0;
-    while (c < cycles) {
-        if (m->play.active) {
-            c += replay(m, cycles - c, emit, t0 + c);
-            pins = m->pins;
-            continue;
+    for (uint32_t c = 0; c < cycles; ++c) {
+        if (m->int_left) {
+            pins |= Z80_INT;
+            --m->int_left;
+        } else {
+            pins &= ~Z80_INT;
         }
-        if (m->play.resume) m->play.resume = 0; /* pins: the exit fetch, as z80_tick returned it when recorded */
-        else pins = z80_tick(&m->cpu, pins);
-        if (m->rp_enabled && (pins & (Z80_M1 | Z80_MREQ | Z80_RD)) == (Z80_M1 | Z80_MREQ | Z80_RD) && !m->cpu.prefix_active) {
-            const uint16_t pc = Z80_GET_ADDR(pins);
-            if (pc == XGM_DRIVER_PCM_MIX || pc == XGM_DRIVER_SYNC_FRAME_LOOP) {
-                if (m->rec.on) rec_finish(m, pins, pc);
-                const RpEntry* e = rp_find(m, pc);
-                if (e && (!e->shared || e->len <= cycles - c)) {
-                    rp_begin(m, e);
-                    m->pins = pins;
-                    continue;
-                }
-                if (!e) rec_start(m, pc);
-            }
-        }
+        pins = z80_tick(&m->cpu, pins);
+        if (m->swap_pending && (pins & (Z80_M1 | Z80_MREQ | Z80_RD)) == (Z80_M1 | Z80_MREQ | Z80_RD) &&
+            Z80_GET_ADDR(pins) == XGM2_DRIVER_MAIN_LOOP)
+            map_bank(m);
         pins = bus(m, pins);
         chips_cycle(m, emit, t0 + c);
-        if (m->rec.on && ++m->rec.cycle > RP_MAX_CYCLES) m->rec.on = 0;
-        ++c;
     }
     m->pins = pins;
 }
@@ -567,7 +305,7 @@ static uint32_t tick_cycles(YmMachine* m) {
     return n;
 }
 
-/* ---- the 68000 side (SGDK xgm.c) ------------------------------------------------------------------ */
+/* ---- the 68000 side (SGDK z80_ctrl.c, xgm2.c) ------------------------------------------------------- */
 
 static void write_chips(YmMachine* m, const YmWrite* w, int n) {
     for (int i = 0; i < n; ++i) {
@@ -579,13 +317,21 @@ static void write_chips(YmMachine* m, const YmWrite* w, int n) {
             ymo_write(m->opn, m->mclk, w[i].kind * 2 + 1, w[i].val);
         }
     }
-    /* the driver keeps the address latch on the DAC register between its writes */
-    ymo_write(m->opn, m->mclk, 0, 0x2A);
-    m->ym_addr = 0x2A;
 }
 
-/* Power on: chips reset, SGDK's YM2612_reset() + PSG_reset(), the driver loaded and booted until ready, the
- * null sample and the 63 sample ids (all silent), the music address = the ring, the play command. */
+/* getAccess: the 68000 waits (the Z80 runs) while the driver processes its commands. Returns the cycles waited. */
+static uint32_t access_wait(YmMachine* m, int emit, uint32_t t0) {
+    uint32_t waited = 0;
+    while ((m->ram[YMM_ACCESS] & 1) && waited < ACCESS_WAIT) {
+        run(m, 1, emit, t0 + waited);
+        ++waited;
+    }
+    return waited;
+}
+
+/* Power on: chips reset, SGDK's Z80_loadDriverInternal (YM2612_reset(), PSG_reset(), RAM cleared, the driver
+ * uploaded, the Z80 reset) until the driver is ready, then XGM2_loadDriver's infinite loop count and the tempo of a
+ * song played in its own region (one frame per vertical interrupt). */
 static int machine_reset(YmMachine* m, int region) {
     m->region = region;
     m->mclk_per_tick = YMM_MCLK_PER_LINE * (region == YM_PAL ? YMM_LINES_PAL : YMM_LINES_NTSC);
@@ -604,129 +350,138 @@ static int machine_reset(YmMachine* m, int region) {
     YmWrite reset[YMP_MACHINE_RESET_WRITES];
     write_chips(m, reset, ymp_machine_reset(reset));
     memset(m->ram, 0, sizeof m->ram);
-    memcpy(m->ram, XGM_DRIVER, sizeof XGM_DRIVER);
+    memcpy(m->ram, XGM2_DRIVER, sizeof XGM2_DRIVER);
     m->bank = 0;
+    m->int_left = 0;
     m->pins = z80_init(&m->cpu);
     m->cycle_in_tick = 0;
-    m->rec.on = m->play.active = m->play.resume = 0;
-    const int was_logging = m->log_on, was_replaying = m->rp_enabled;
+    m->fm_mute = m->pcm_mute = m->pcm_stop = 0;
+    m->psg.mute = 0;
+    const int was_logging = m->log_on;
     m->log_on = 0;
-    m->rp_enabled = 0; /* the 68000 side writes the driver's tables right after the boot */
     uint32_t boot = 0;
-    while (!(m->ram[YMM_STATUS] & 0x80)) {
+    while (!(m->ram[YMM_STATUS] & YMM_STAT_READY)) {
         run(m, 256, 0, 0);
-        if ((boot += 256) > 200000) {
-            m->rp_enabled = was_replaying;
-            return -1;
-        }
+        if ((boot += 256) > BOOT_CYCLES) return -1;
     }
-    m->rp_enabled = was_replaying;
     m->log_on = was_logging;
+    m->ram[PLAY_ARG_LOOP] = 0xFF;
+    access_wait(m, 0, 0);
+    m->ram[TEMPO_ARG_INC_FRAC] = 0;
+    m->ram[TEMPO_ARG_INC] = 1;
     /* Output starts here: the blip buffers hold no history, the chips' present output is their zero. */
     for (int k = 0; k < 2; ++k) blip_clear(m->blip[k]);
-    const uint32_t null = YMM_NULL_SAMPLE;
-    for (int i = 0; i < 64; ++i) { /* entry 0: the null sample; ids 1..63: silent (the null sample) */
-        m->ram[YMM_ID_TABLE + 4 * i + 0] = (uint8_t)(null >> 8);
-        m->ram[YMM_ID_TABLE + 4 * i + 1] = (uint8_t)(null >> 16);
-        m->ram[YMM_ID_TABLE + 4 * i + 2] = 0x01;
-        m->ram[YMM_ID_TABLE + 4 * i + 3] = 0x00;
-    }
-    const uint32_t music = YMM_RING;
-    for (int i = 0; i < 4; ++i) m->ram[YMM_PARAMS + i] = (uint8_t)(music >> (8 * i));
-    m->ram[YMM_COMMAND] = (uint8_t)((m->ram[YMM_COMMAND] & 0x0F) | 0x40);
-    m->ram[YMM_PENDING_FRM] = 0;
-    m->ring_pos = 0;
-    m->fm_mute = 0;
-    m->psg.mute = 0;
+    m->fm_pos = m->psg_pos = 0;
+    m->fm_last_at = m->fm_last_size = m->psg_last_at = m->psg_last_size = 0;
     return 0;
 }
 
-/* The 68000's vertical interrupt (setNextXFrame): PENDING_FRM += 1 once the Z80 is not modifying it. Returns the
- * Z80 cycles spent waiting (the first cycles of the tick). */
-static uint32_t vint(YmMachine* m) {
-    uint32_t waited = 0;
-    while (m->ram[YMM_MODIFYING_F] && waited < 4096) {
-        run(m, 1, 1, waited);
-        ++waited;
-    }
-    m->ram[YMM_PENDING_FRM] = (uint8_t)(m->ram[YMM_PENDING_FRM] + 1);
-    return waited;
+/* The vertical interrupt: the VDP raises the Z80's INT for one line. A live edit's bank still waiting when the first
+ * frame encoded from it is about to execute is mapped now (a driver busy the whole tick in its interrupt handler). */
+static void vint(YmMachine* m) {
+    if (m->swap_pending && m->encoded >= m->swap_frame + 2) map_bank(m);
+    m->int_left = YMM_INT_CYCLES;
 }
 
-/* Appends XGC bytes to the ring; wraps with a frame-skip + loop frame (and the driver's loop counter reset). */
-static void ring_append(YmMachine* m, const uint8_t* bytes, size_t n) {
-    if (m->ring_pos + n + 6 > YMM_RING_SIZE) {
-        static const uint8_t wrap[6] = {0x06, YMX_XGC_FRAME_SKIP, YMX_XGC_LOOP, 0, 0, 0};
-        memcpy(m->ring + m->ring_pos, wrap, sizeof wrap);
-        m->ring_pos = 0;
-        m->ram[YMM_REM_LOOP] = 0;
-    }
-    memcpy(m->ring + m->ring_pos, bytes, n);
-    m->last_frames_at = (int)m->ring_pos;
-    m->last_frames_size = (int)n;
-    m->ring_pos += (uint32_t)n;
+/* Appends one frame (its commands, a one-frame wait or - near the ring's end - the loop command to the ring start) as
+ * a packed block to a stream ring. */
+static void stream_append(uint8_t* ring, uint32_t* pos, const uint8_t* cmds, int n, int psg, uint8_t* scratch, int* last_at,
+                          int* last_size) {
+    memcpy(scratch, cmds, (size_t)n);
+    const int wrap = *pos + 2u * YMX_PACKED_MAX > YMM_STREAM_SIZE;
+    n += wrap ? ymx_loop(scratch + n, psg, 0) : ymx_wait(scratch + n, psg, 1);
+    const size_t size = ymx_pack(scratch, n, *pos, ring + *pos);
+    *last_at = (int)*pos;
+    *last_size = (int)size;
+    *pos = wrap ? 0 : *pos + (uint32_t)size;
 }
 
-/* Runs the player one tick (the prefix first: machine reset writes, a reset or key-off batch) and streams its
- * XGC frames. Returns 0 or -1 (encoder overflow). */
+/* Runs the player one tick (the prefix first: a reset or key-off batch) and streams its FM and PSG frames. The stream
+ * start and every arrival at the loop point (outside auditions) are full frames, as the export has them. Returns 0 or
+ * -1 (a frame the encoder cannot hold). */
 static int encode_tick(YmMachine* m) {
     YmPlayer* p = &m->player;
+    const YmImage* image = m->img[m->cur];
     int* pos = m->fifo[m->encoded % FIFO];
     pos[0] = p->order;
     pos[1] = p->row;
     pos[2] = p->tick;
     if (p->tick == 0) ++m->row_starts;
     m->fifo_rows[m->encoded % FIFO] = m->row_starts;
-    int n = m->nprefix, loop_at = -1;
+    const int full = m->encoded == 0 || (!m->audition && p->order == image->info.loop && p->row == 0 && p->tick == 0);
+    int n = m->nprefix;
     memcpy(m->frame, m->prefix, sizeof m->prefix[0] * (size_t)n);
     m->nprefix = 0;
-    if (!m->audition && p->order == m->image.info.loop && p->row == 0 && p->tick == 0) {
-        /* The loop frame, as the export has it: the register dump, and xgmtool's loop start (every register) */
-        loop_at = n;
-        n += ymp_dump(p, m->frame + n);
-    }
-    ymp_tick(p, &m->image);
+    ymp_tick(p, image);
     memcpy(m->frame + n, p->write, sizeof p->write[0] * (size_t)p->writes);
     n += p->writes;
-    size_t xgc_size = 0;
-    if (!ymx_frame(&m->enc, m->frame, n, loop_at, NULL, m->xgc, sizeof m->xgc, &xgc_size)) return -1;
-    ring_append(m, m->xgc, xgc_size);
+    int pcm[YM_PCM_CHANNELS];
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k) {
+        const unsigned bit = 1u << k;
+        int v = p->pcm[k] != YMP_PCM_NONE ? p->pcm[k] : m->prefix_pcm[k];
+        m->prefix_pcm[k] = YMP_PCM_NONE;
+        if (v > 0 && (m->pcm_mute & bit)) v = YMP_PCM_NONE; /* a muted channel's notes are not sent */
+        if ((m->pcm_stop & bit) && v <= 0) v = YMP_PCM_STOP;
+        pcm[k] = v;
+    }
+    m->pcm_stop = 0;
+    if (ymx_encode(image, p, m->frame, n, pcm, full, &m->xf)) return -1;
+    stream_append(m->fm_ring, &m->fm_pos, m->xf.fm, m->xf.fm_size, 0, m->cmds, &m->fm_last_at, &m->fm_last_size);
+    stream_append(m->psg_ring, &m->psg_pos, m->xf.psg, m->xf.psg_size, 1, m->cmds, &m->psg_last_at, &m->psg_last_size);
     ++m->encoded;
     return 0;
 }
 
-/* Player ticks the driver has executed completely: all encoded ones but the queued frame and the vertical
- * interrupts it has not processed yet (heavy frames make it lag). */
+/* Player ticks the driver has executed completely: ELAPSED_FRAME counts the FM frames it processed since play. */
 static uint32_t executed(const YmMachine* m) {
-    const uint32_t behind = 1u + m->ram[YMM_PENDING_FRM];
+    const uint8_t* e = m->ram + YMM_ELAPSED_FRAME;
+    const uint32_t elapsed = (uint32_t)e[0] | (uint32_t)e[1] << 8 | (uint32_t)e[2] << 16;
+    const uint32_t behind = (m->encoded - elapsed) & 0xFFFFFFu;
     return m->encoded > behind ? m->encoded - behind : 0;
 }
 
-/* The prefix the next frame starts with: `n` writes. */
-static void add_prefix(YmMachine* m, const YmWrite* w, int n) {
-    if (m->nprefix + n > PREFIX_MAX) n = PREFIX_MAX - m->nprefix;
-    memcpy(m->prefix + m->nprefix, w, sizeof w[0] * (size_t)n);
+/* The prefix the next frame starts with: a batch's writes and PCM commands. */
+static void add_prefix(YmMachine* m, const YmPlayer* p) {
+    int n = p->writes;
+    if (m->nprefix + n > YMP_MAX_WRITES) n = YMP_MAX_WRITES - m->nprefix;
+    memcpy(m->prefix + m->nprefix, p->write, sizeof p->write[0] * (size_t)n);
     m->nprefix += n;
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k)
+        if (p->pcm[k] != YMP_PCM_NONE) m->prefix_pcm[k] = p->pcm[k];
 }
 
-/* One vertical interrupt's worth of Z80 and chips into the blip buffers. */
-static void run_tick(YmMachine* m) {
+static void clear_prefix(YmMachine* m) {
+    m->nprefix = 0;
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k) m->prefix_pcm[k] = YMP_PCM_NONE;
+}
+
+/* One vertical interrupt's worth of Z80 and chips (into the blip buffers when `emit`). */
+static void run_tick(YmMachine* m, int emit) {
     m->nlog = 0;
     m->cycle_in_tick = 0;
     const uint32_t cycles = tick_cycles(m);
-    const uint32_t waited = vint(m);
-    run(m, cycles > waited ? cycles - waited : 0, 1, waited);
+    vint(m);
+    run(m, cycles, emit, 0);
     m->last_tick_cycles = cycles;
-    for (int k = 0; k < 2; ++k) blip_end_frame(m->blip[k], cycles);
+    if (emit)
+        for (int k = 0; k < 2; ++k) blip_end_frame(m->blip[k], cycles);
 }
 
-/* After the player is in place: the first frame is encoded and the driver takes the play command and prefetches it
- * in one tick (the caller discards its output). */
+/* After the player is in place: the sample table (XGM2_load), the stream addresses and the play command
+ * (XGM2_playTrack, after the access wait), and the first frame encoded; the driver takes the command and unpacks the
+ * frame in one tick (no output). */
 static int begin_stream(YmMachine* m) {
     m->encoded = 0;
     m->row_starts = 0;
+    write_sids(m);
+    access_wait(m, 0, 0);
+    m->ram[PLAY_ARG_FM_ADDR] = (uint8_t)(YMM_FM_STREAM >> 8);
+    m->ram[PLAY_ARG_FM_ADDR + 1] = (uint8_t)(YMM_FM_STREAM >> 16);
+    m->ram[PLAY_ARG_PSG_ADDR] = (uint8_t)(YMM_PSG_STREAM >> 8);
+    m->ram[PLAY_ARG_PSG_ADDR + 1] = (uint8_t)(YMM_PSG_STREAM >> 16);
+    m->ram[YMM_COMMAND] = (uint8_t)((m->ram[YMM_COMMAND] & ~(CMD_RESUME | CMD_PAUSE)) | CMD_PLAY);
     if (encode_tick(m)) return -1;
-    run_tick(m);
+    run_tick(m, 0);
     return 0;
 }
 
@@ -737,11 +492,12 @@ YmMachine* ymm_create(uint32_t sample_rate) {
     YmMachine* m = (YmMachine*)calloc(1, sizeof *m);
     if (!m) return NULL;
     m->rate = sample_rate;
-    m->rp_enabled = 1;
-    m->arena = (uint8_t*)malloc(RP_ARENA);
     m->opn = ymo_create();
-    for (int i = 0; i < 2; ++i) m->blip[i] = blip_new((int)YMM_MAX_TICK_FRAMES + 64);
-    if (!m->arena || !m->opn || !m->blip[0] || !m->blip[1] || machine_reset(m, YM_NTSC)) {
+    for (int i = 0; i < 2; ++i) {
+        m->blip[i] = blip_new((int)YMM_MAX_TICK_FRAMES + 64);
+        m->img[i] = (YmImage*)calloc(1, sizeof(YmImage));
+    }
+    if (!m->opn || !m->blip[0] || !m->blip[1] || !m->img[0] || !m->img[1] || machine_reset(m, YM_NTSC)) {
         ymm_destroy(m);
         return NULL;
     }
@@ -750,10 +506,11 @@ YmMachine* ymm_create(uint32_t sample_rate) {
 
 void ymm_destroy(YmMachine* m) {
     if (!m) return;
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < 2; ++i) {
         if (m->blip[i]) blip_delete(m->blip[i]);
+        free(m->img[i]);
+    }
     if (m->opn) ymo_destroy(m->opn);
-    free(m->arena);
     free(m);
 }
 
@@ -761,123 +518,103 @@ void ymm_destroy(YmMachine* m) {
 
 static int at(const YmPlayer* p, int order, int row) { return p->order == order && p->row == row && p->tick == 0; }
 
-/* The player from the song start (or at the order's row 0 with its start speed: from_order) for `ticks` ticks, or
- * until the next tick starts (order, row) when ticks < 0 (at most `bound` ticks, never leaving the order
- * from_order); the encoder absorbs every frame (the first with the machine reset writes) when `feed`. Returns the
- * ticks run, or -1 if (order, row) was not reached. */
-static int run_player(YmMachine* m, int from_order, int order, int row, int ticks, int bound, int feed) {
+/* The player alone from the song start (or at the order's row 0 with its start speed: from_order) until the next
+ * tick starts (order, row), at most `bound` ticks (never leaving the order from_order). Returns the ticks, or -1 if
+ * (order, row) was not reached. */
+static int ticks_to(YmMachine* m, int from_order, int order, int row, int bound) {
     YmPlayer* p = &m->player;
-    if (from_order) ymp_place(p, &m->image, order);
-    else ymp_reset(p, &m->image);
-    ymx_reset(&m->enc);
-    m->nprefix = 0;
-    YmWrite reset[YMP_MACHINE_RESET_WRITES];
-    add_prefix(m, reset, ymp_machine_reset(reset));
-    add_prefix(m, p->write, p->writes);
+    const YmImage* image = m->img[m->cur];
+    if (from_order) ymp_place(p, image, order);
+    else ymp_reset(p, image);
     int n = 0;
-    for (; ticks < 0 ? !at(p, order, row) && n < bound && (!from_order || p->order == order) : n < ticks; ++n) {
-        ymp_tick(p, &m->image);
-        if (feed) {
-            int k = m->nprefix;
-            memcpy(m->frame, m->prefix, sizeof m->prefix[0] * (size_t)k);
-            memcpy(m->frame + k, p->write, sizeof p->write[0] * (size_t)p->writes);
-            ymx_absorb(&m->enc, m->frame, k + p->writes);
-        }
-        m->nprefix = 0;
-    }
-    return ticks >= 0 || at(p, order, row) ? n : -1;
+    for (; !at(p, order, row) && n < bound && (!from_order || p->order == order); ++n) ymp_tick(p, image);
+    return at(p, order, row) ? n : -1;
 }
 
-/* The player's register state onto the chips (the driver has booted; the encoder state already matches): its
- * dump, then key-on for the FM channels it has keyed. */
-static void restore(YmMachine* m) {
-    YmWrite dump[YMP_DUMP_WRITES + YM_FM_CHANNELS];
-    int n = ymp_dump(&m->player, dump);
-    for (int c = 0; c < YM_FM_CHANNELS; ++c)
-        if (m->player.ch[c].keyed && !m->player.ch[c].key_pending)
-            dump[n++] = (YmWrite){YM_W_PORT0, 0x28, (uint8_t)(0xF0 | ((c / 3) * 4 + c % 3))};
-    write_chips(m, dump, n);
-}
+static int stream_tick(YmMachine* m, int emit);
 
-static void discard_output(YmMachine* m) {
-    for (int k = 0; k < 2; ++k) blip_read_samples(m->blip[k], m->pcm, (int)YMM_MAX_TICK_FRAMES, 0);
+/* Loads `image` as the machine's only image (player and cartridge). */
+static void take_image(YmMachine* m, const YmImage* image) {
+    ym_copy_image(m->img[0], image);
+    m->cur = m->rom = 0;
+    m->swap_pending = 0;
 }
-
-static int stream_tick(YmMachine* m);
 
 int ymm_start(YmMachine* m, const YmImage* image, int order, int row, int max_ticks, int* seek_mode) {
     if (seek_mode) *seek_mode = YMM_SEEK_FROM_START;
     if (image->info.loaded != YM_LOADED || order < 0 || order >= image->info.orders || row < 0 ||
         row >= image->info.rows[order])
         return YMM_ERR_IMAGE;
-    memcpy(&m->image, image, sizeof m->image);
     m->loaded = 0;
     m->audition = m->released = m->release_ticks = 0;
-    if (machine_reset(m, image->info.region)) return YMM_ERR_FAULT;
+    take_image(m, image);
     int from_order = 0;
-    int ticks = run_player(m, 0, order, row, -1, max_ticks, 0);
+    int ticks = ticks_to(m, 0, order, row, max_ticks);
     if (ticks < 0) {
-        /* Replaying the order's earlier rows takes < 256 rows x 255 ticks: its own bound instead of max_ticks. A
-         * row behind a Dxx/Bxx of the same order is unreachable. */
+        /* A row behind a Dxx/Bxx of the same order is unreachable. */
         from_order = 1;
         if (seek_mode) *seek_mode = YMM_SEEK_FROM_ORDER;
-        ticks = run_player(m, 1, order, row, -1, 256 * 256, 0);
+        ticks = ticks_to(m, 1, order, row, YMM_ORDER_SEEK_TICKS);
         if (ticks < 0) return YMM_ERR_IMAGE;
     }
-    /* The player and encoder run alone until YMM_PREROLL_TICKS before the target; the chips then receive the
-     * player's state and the rest streams through the driver (output discarded), so held notes and release tails
-     * arrive under way. From the song start the stream is straight play's. */
-    const int silent = ticks > YMM_PREROLL_TICKS ? ticks - YMM_PREROLL_TICKS : 0;
-    run_player(m, from_order, order, row, silent, 0, 1);
-    if (silent) restore(m);
+    if (machine_reset(m, image->info.region)) return YMM_ERR_FAULT;
+    if (from_order) ymp_place(&m->player, m->img[m->cur], order);
+    else ymp_reset(&m->player, m->img[m->cur]);
+    clear_prefix(m);
+    add_prefix(m, &m->player);
     if (begin_stream(m)) return YMM_ERR_FAULT;
-    discard_output(m);
     m->loaded = 1;
-    for (int t = silent; t < ticks; ++t) {
-        if (stream_tick(m) < 0) {
+    /* The whole machine runs to the target: the driver, the chips and the PCM channels as straight play leaves them. */
+    for (int t = 0; t < ticks; ++t) {
+        if (stream_tick(m, 0) < 0) {
             m->loaded = 0;
             return YMM_ERR_FAULT;
         }
-        discard_output(m);
     }
+    for (int k = 0; k < 2; ++k) blip_clear(m->blip[k]); /* the present output is the zero */
     m->ticks = 0;
     return YMM_OK;
 }
 
 void ymm_apply_image(YmMachine* m, const YmImage* image) {
     if (!m->loaded || m->audition || image->info.loaded != YM_LOADED) return;
-    ymp_relocate(&m->player, &m->image, image);
-    memcpy(&m->image, image, sizeof m->image);
+    if (m->swap_pending) map_bank(m); /* two edits within one fill round: the first is mapped now */
+    const int next = m->cur ^ 1;
+    ym_copy_image(m->img[next], image);
+    ymp_relocate(&m->player, m->img[m->cur], m->img[next]);
+    m->cur = next;
+    if (banks_equal(m->img[m->rom], m->img[next])) {
+        m->rom = next;
+    } else {
+        m->swap_pending = 1;
+        m->swap_frame = m->encoded;
+    }
 }
 
 int ymm_audition(YmMachine* m, const YmImage* image, int channel, int note, int slot, int fine) {
     if (image->info.loaded != YM_LOADED) return YMM_ERR_IMAGE;
-    memcpy(&m->image, image, sizeof m->image);
     m->loaded = 0;
     m->released = m->release_ticks = 0;
+    take_image(m, image);
     if (machine_reset(m, image->info.region)) return YMM_ERR_FAULT;
-    if (ymp_audition(&m->player, &m->image, channel, note, slot, fine)) return YMM_ERR_IMAGE;
-    /* The chips hold the reset state already: the stream starts with the audition batch alone (a light frame the
-     * driver executes at once), the encoder knowing the reset registers. */
-    ymx_reset(&m->enc);
-    YmWrite reset[YMP_MACHINE_RESET_WRITES];
-    ymx_absorb(&m->enc, reset, ymp_machine_reset(reset));
-    m->nprefix = 0;
-    add_prefix(m, m->player.write, m->player.writes);
+    if (ymp_audition(&m->player, m->img[m->cur], channel, note, slot, fine)) return YMM_ERR_IMAGE;
+    /* The stream starts with the audition batch (a full frame the driver executes at once). */
+    clear_prefix(m);
+    add_prefix(m, &m->player);
     m->audition = 1;
     m->audition_channel = channel;
     if (begin_stream(m)) return YMM_ERR_FAULT;
-    discard_output(m);
     m->loaded = 1;
     m->ticks = 0;
     return YMM_OK;
 }
 
-/* The audition note is silent on the chips: FM every carrier's envelope at the bottom, PSG the attenuation 15 (and
- * the envelope off). */
+/* The audition note is silent: FM every carrier's envelope at the bottom; PSG the attenuation 15 (and the envelope
+ * off); PCM its sample played out (the driver cleared the channel's STATUS bit). */
 static int audition_silent(const YmMachine* m) {
     const int c = m->audition_channel;
     const YmChannel* ch = &m->player.ch[c];
+    if (c >= YM_CH_PCM) return executed(m) > 0 && !(m->ram[YMM_STATUS] & (1 << (c - YM_CH_PCM)));
     if (c < YM_FM_CHANNELS) {
         for (int k = 0; k < 4; ++k)
             if ((ch->carriers >> k & 1) && ymo_envelope(m->opn, c, k) < 0x3FF) return 0;
@@ -894,8 +631,11 @@ int ymm_release(YmMachine* m) {
         return 0;
     }
     if (!m->released) {
-        ymp_key_off(&m->player, m->audition_channel);
-        add_prefix(m, m->player.write, m->player.writes);
+        /* A PCM sample is a one-shot: it plays out (a key-off would stop it). */
+        if (m->audition_channel < YM_CH_PCM) {
+            ymp_key_off(&m->player, m->audition_channel);
+            add_prefix(m, &m->player);
+        }
         m->released = 1;
         m->release_ticks = 0;
         m->keyoff_tick = m->encoded; /* the next frame encoded carries the key-off */
@@ -908,11 +648,16 @@ int ymm_mute(YmMachine* m, int channel, int muted) {
     if (channel < YM_FM_CHANNELS) {
         if (muted) m->fm_mute |= 1u << channel;
         else m->fm_mute &= ~(1u << channel);
-    } else {
+    } else if (channel < YM_CH_PCM) {
         const unsigned bit = 1u << (channel - YM_CH_PSG);
         if (muted) m->psg.mute |= bit;
         else m->psg.mute &= ~bit;
         m->psg_written = 1; /* the output changes at the next step */
+    } else {
+        const unsigned bit = 1u << (channel - YM_CH_PCM);
+        if (muted && !(m->pcm_mute & bit)) m->pcm_stop |= bit; /* the sounding sample stops through the driver */
+        if (muted) m->pcm_mute |= bit;
+        else m->pcm_mute &= ~bit;
     }
     return YMM_OK;
 }
@@ -934,25 +679,30 @@ void ymm_position(const YmMachine* m, int* order, int* row, int* tick) {
 uint32_t ymm_row_serial(const YmMachine* m) { return m->fifo_rows[heard(m)]; }
 
 /* One engine tick: the player's next frame is encoded and streamed, then one vertical interrupt's worth of Z80 and
- * chips run (the driver executes the frame queued the tick before). Returns the frames now in the blip buffers. */
-static int stream_tick(YmMachine* m) {
+ * chips run (the driver executes the frame queued the tick before and unpacks this one). */
+static int stream_tick(YmMachine* m, int emit) {
     if (encode_tick(m)) return -1;
-    run_tick(m);
-    if (!(m->ram[YMM_STATUS] & 0x40)) return -1; /* the driver stopped playing: a fault */
+    run_tick(m, emit);
+    if (!(m->ram[YMM_STATUS] & YMM_STAT_PLAY)) return -1; /* the driver stopped playing: a fault */
+    if (m->encoded - executed(m) > YMM_MAX_LAG) return -1; /* the rings would overwrite frames still queued */
+    return 0;
+}
+
+/* Released auditions end once silent past the key-off (or after YMM_RELEASE_SECONDS): 1 = ended. */
+static int release_done(YmMachine* m) {
+    if (!m->released) return 0;
+    const int limit = YMM_RELEASE_SECONDS * (m->region == YM_PAL ? 50 : 60);
+    if ((executed(m) > m->keyoff_tick && audition_silent(m)) || m->release_ticks >= limit) {
+        m->loaded = 0;
+        return 1;
+    }
+    ++m->release_ticks;
     return 0;
 }
 
 int ymm_tick(YmMachine* m, float* out) {
-    if (!m->loaded) return 0;
-    if (m->released) {
-        const int limit = YMM_RELEASE_SECONDS * (m->region == YM_PAL ? 50 : 60);
-        if ((executed(m) > m->keyoff_tick && audition_silent(m)) || m->release_ticks >= limit) {
-            m->loaded = 0;
-            return 0;
-        }
-        ++m->release_ticks;
-    }
-    if (stream_tick(m) < 0) {
+    if (!m->loaded || release_done(m)) return 0;
+    if (stream_tick(m, 1) < 0) {
         m->loaded = 0;
         return YMM_ERR_FAULT;
     }
@@ -963,11 +713,25 @@ int ymm_tick(YmMachine* m, float* out) {
     return frames;
 }
 
+int ymm_tick_silent(YmMachine* m) {
+    if (!m->loaded) return YMM_ERR_FAULT;
+    if (stream_tick(m, 0) < 0) {
+        m->loaded = 0;
+        return YMM_ERR_FAULT;
+    }
+    ++m->ticks;
+    return YMM_OK;
+}
+
 const YmPlayer* ymm_player(const YmMachine* m) { return &m->player; }
 uint32_t ymm_ticks(const YmMachine* m) { return m->ticks; }
-const uint8_t* ymm_last_frames(const YmMachine* m, int* size) {
-    *size = m->last_frames_size;
-    return m->ring + m->last_frames_at;
+const uint8_t* ymm_last_fm(const YmMachine* m, int* size) {
+    *size = m->fm_last_size;
+    return m->fm_ring + m->fm_last_at;
+}
+const uint8_t* ymm_last_psg(const YmMachine* m, int* size) {
+    *size = m->psg_last_size;
+    return m->psg_ring + m->psg_last_at;
 }
 void ymm_set_log(YmMachine* m, int enabled) { m->log_on = enabled != 0; }
 const YmmLogEntry* ymm_log(const YmMachine* m, int* count) {
@@ -976,17 +740,11 @@ const YmmLogEntry* ymm_log(const YmMachine* m, int* count) {
 }
 const uint8_t* ymm_z80_ram(const YmMachine* m) { return m->ram; }
 uint32_t ymm_z80_cycles_per_tick(const YmMachine* m) { return m->last_tick_cycles; }
-int ymm_lag(const YmMachine* m) { return m->ram[YMM_PENDING_FRM]; }
-void ymm_set_replay(YmMachine* m, int enabled) {
-    m->rp_enabled = enabled != 0;
-    if (!enabled) m->rec.on = 0;
+int ymm_lag(const YmMachine* m) {
+    const uint32_t behind = m->encoded - executed(m);
+    return behind > 1 ? (int)(behind - 1) : 0;
 }
-void ymm_replay_stats(const YmMachine* m, YmmReplayStats* s) {
-    s->entries = m->nrp;
-    s->arena_bytes = m->arena_used;
-    s->recorded = m->rp_recorded;
-    s->hits = m->rp_hits;
-    s->cycles = m->rp_cycles;
-}
-int ymm_replaying(const YmMachine* m) { return m->play.active; }
+unsigned ymm_pcm_playing(const YmMachine* m) { return m->ram[YMM_STATUS] & 7u; }
+int ymm_dac_enabled(const YmMachine* m) { return ymo_dac_enabled(m->opn); }
+int ymm_swap_pending(const YmMachine* m) { return m->swap_pending; }
 const void* ymm_z80(const YmMachine* m) { return &m->cpu; }

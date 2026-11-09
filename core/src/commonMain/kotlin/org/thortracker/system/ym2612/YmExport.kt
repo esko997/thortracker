@@ -11,11 +11,11 @@ import org.thortracker.model.Song
 data class YmExportTags(val title: String, val author: String, val date: String = "")
 
 /**
- * Renders an export from a Mega Drive image with the native player and xgmtool's conversion (`ym_export`,
- * `ym/ym_export.h`): one player implementation for playback and export, proven against the Python reference and
- * xgmtool by the native host test. [image] is [YmPlayerImage.IMAGE_SIZE] bytes from [YmSystem.engine]; [format] is
- * one of [YmPlayerImage.EXPORT_VGM], [YmPlayerImage.EXPORT_XGM], [YmPlayerImage.EXPORT_XGC]; rendering stops at the
- * second arrival at the loop point or after [maxTicks] ticks (then without a loop).
+ * Renders an export from a Mega Drive image with the native player and SGDK's XGM2 driver (`ym_export`,
+ * `ym/ym_export.h`): one player implementation for playback and export, PCM included. [image] is
+ * [YmPlayerImage.IMAGE_SIZE] bytes from [YmSystem.engine]; [format] is one of [YmPlayerImage.EXPORT_VGM],
+ * [YmPlayerImage.EXPORT_XGM], [YmPlayerImage.EXPORT_XGC]; rendering stops at the second arrival at the loop point or
+ * after [maxTicks] ticks (then without a loop).
  * @throws IllegalArgumentException with the loader's problem when the image is rejected.
  */
 fun interface YmExportRenderer {
@@ -28,11 +28,15 @@ fun interface YmExportRenderer {
  * covers the bytes; `tools/audio/render_ym_image.sh --vgm|--xgm|--xgc` renders an image from the command line).
  */
 object YmExport {
-    /** The three files: VGM 1.71 (players, archives), XGM (SGDK's `rescomp` `XGM` resource), XGC (`XGM_startPlay`). */
+    /**
+     * The three files: VGM 1.71 (players, archives; the DAC's actual PCM output included), XGM2 `.xgm` (SGDK's
+     * `rescomp` `XGM2` resource) and the compiled XGM2 `.xgc` (`XGM2_play`). Both XGM files are version 2 (XGM2):
+     * games built for SGDK's original XGM driver must switch to the XGM2 driver to play them.
+     */
     enum class Format(val code: Int, val label: String) {
         VGM(YmPlayerImage.EXPORT_VGM, "VGM"),
-        XGM(YmPlayerImage.EXPORT_XGM, "XGM"),
-        XGC(YmPlayerImage.EXPORT_XGC, "XGC"),
+        XGM(YmPlayerImage.EXPORT_XGM, "XGM2"),
+        XGC(YmPlayerImage.EXPORT_XGC, "XGM2 compiled (.xgc)"),
     }
 
     /** Set by the host before the first export; null where no native player is linked. */
