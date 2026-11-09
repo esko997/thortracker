@@ -6228,6 +6228,19 @@ on the owner lane, or the owner's note stopping, ends ownership (owner −1). Th
 `max(0, env + M − MAX)` while there is an owner (env = its envelope value, MAX = 15 VIC / 8 TED), else *M*. So one
 envelope shapes every voice, as on the hardware; Kotlin shows the owner in the lane tags (`SharedState`).
 
+The Pattern shared-state walk reports row tick 0, after its row events and before timer interrupts at that cycle.
+Owner descriptions and OFF use the slot latched by the playing note, not a later instrument-only selection or a
+portamento target's selected slot. A released volume/wave envelope holds its terminal value in song playback,
+including zero; it does not automatically free ownership (audition completion has a separate rule).
+For TED D/A tags, the walk follows tick-by-tick fine pitch, arpeggio, slides, vibrato, portamento and sample pitch/
+arpeggio envelopes. It batches timer interrupts arithmetically, preserving the pending interrupt through `Txx`
+and through silence; reloads use the new timer. One-shots stop on the interrupt that finds the position past the
+length, not the preceding interrupt that advanced it there. Coincident tick/interrupt events run the player first.
+The note rail remains a fixed-header-rate/pitch estimate; it now includes that final stop interrupt.
+Five focused `CbmModelTest` regressions fail against the old walk and pass corrected. Independent native
+scheduler checks cover 18 scenarios (88 assertions); the full JVM suite and real Nova/DMG/Konkr
+controller/audio scenarios pass. See `docs/VERIFICATION.md` for counts, measurements and reference limits.
+
 ### Image layout (what the Kotlin lowering produces)
 
 `image_size` = **131072** bytes, little-endian, one layout for both chips (header byte 5 = chip). Every pattern and

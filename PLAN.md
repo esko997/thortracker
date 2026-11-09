@@ -13,9 +13,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-VIC/TED integration targets **0.33.0/code 46** on locally verified TIA, retaining all earlier systems
-and the format-10 tuning library. Deterministic fixtures and 6,704 focused headroom checks pass;
-full integration, independent references and frontends remain pending. See `docs/VERIFICATION.md`.
+VIC/TED integration targets **0.33.0/code 46** on published TIA, retaining all earlier systems
+and the format-10 tuning library. Native/reference, JVM and all three Android frontends pass;
+Linux/SDL verification and publication remain in progress. See `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -82,13 +82,13 @@ full integration, independent references and frontends remain pending. See `docs
      Native/reference comparisons, 831 JVM tests, 32 unchanged Game Boy views, all three reserved
      Android handhelds and SDL playback/audition pass, including the official APK/AppImage artifacts.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
-     Integration **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
-     WAV-only, Cartridge Dawn demos. All 1,812 native TIA checks, independent references, Android
-     controller/edit/export scenarios and SDL playback/audition pass; publication remains pending.
+     Released **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
+     WAV-only, Cartridge Dawn demos. Native/reference, Android controller/edit/export and SDL
+     playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
    - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
-     shared master volume, TED D/A samples; project + WAV only. Focused headroom checks pass;
-     full integration and frontend verification remain pending.
+     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM and all three
+     Android frontends pass; Linux/SDL verification and publication remain in progress.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).

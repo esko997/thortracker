@@ -25,16 +25,53 @@ A separate intentional 128 MiB allocation in a **64 MiB** scope is killed locall
 `Result=oom-kill`, `MemoryPeak=67108864`, `MemorySwapPeak=0`; the workstation remains responsive.
 This demonstrates containment, not that unrelated desktop workloads cannot exhaust the host.
 
-## Current integration: VIC-20 VIC and C16/Plus4 TED 0.33.0/code 46
+The subsequent bounded **debug Linux test link** still caused file-cache churn: the owned scope recorded
+**511,098,163,200 bytes read**, over one million memory-high events, about **2 GiB/s** current reads,
+and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux test/desktop-build pass
+is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
+All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
 
-Integrates locally verified TIA and all earlier systems. The reference fixture is deterministic across two runs.
+## 0.33.0 VIC-20 VIC and C16/Plus4 TED — integration verification
+
+Integrates published TIA and all earlier systems. The reference fixture is deterministic across two runs.
 Focused headroom verification passes **6,704 checks**: the saved original VIC gain produces 14 failures,
 including both 96 kHz adversaries clipping at 32767. The 11/16 pre-resampler gain preserves raw chip levels
 and passes the quiet oracle. Fixed the oracle's unequal starting phase and explicitly exercised TED noise
-with distinct tone reloads; no threshold was relaxed. Full native/Kotlin integration, independent reference
-comparisons and actual frontend scenarios remain pending.
+with distinct tone reloads; no audio threshold was relaxed.
 
-## 0.32.0 Atari 2600 TIA — local verification complete; publication pending
+- **888 JVM and 6 Android host tests** pass; the production-signed release APK builds within the new
+  4 GiB/no-swap scope. Five shared-state regressions fail against the preserved old implementation and
+  pass corrected: selected versus playing instrument identity, DAC portamento, per-tick pitch/envelopes,
+  timer changes, and interrupt phase/stop timing. The inspector now follows the actual native scheduler.
+- Native integration passes every other engine and **2,393 WAV checks**. Its two CBM failures were
+  test defects: reading the end-of-tick register to assert the initial DAC frame, and an arbitrary
+  host worst/mean timing ratio. The first now checks the key-on trace before interrupts; host CPU
+  timings remain diagnostics, not machine-dependent assertions. The corrected CBM run passes
+  **7,131 checks**. No engine behavior was changed to satisfy either assertion.
+- All **eight** fixture/export player traces match the separate Python reference. Measured shortest-song
+  fundamentals are **444.07 Hz VIC / 439.84 Hz TED**, including both actual renderer CLI outputs.
+  The documented renderer builds and runs both systems.
+- Independent pinned-upstream comparison passes **82,388,935 field comparisons**, **3,814,784 single
+  clocks**, and **67,621 native-level transitions**; **88 scheduler assertions** cover 18 scenarios.
+  Six local reference files match the pinned upstream bytes. VIC cold noise reset differs between
+  the two models; strict comparison starts after natural convergence over 16,384 disabled clocks.
+  This is raw chip/scheduler evidence, not cold-start equivalence, resampled-PCM equality or analog
+  hardware validation.
+- The clean production-targeted Android suite passes **21 tests in 48.078 s**, zero observed xruns
+  and faults. Both real controller scenarios pass on **Nova, DMG and Konkr**, covering New/demo,
+  tone/noise/master-volume instruments, envelopes, TED DAC/root/loop/rate and actual WAV import,
+  playback plus audition, live edits, undo/redo, exact restart, seek, settings and project/WAV pickers.
+  All measured scenarios have **zero xruns and driver faults**. Worst callbacks for VIC/TED:
+  Nova **1.229/3.216 ms**, DMG **7.004/5.127 ms**, Konkr **1.097/2.472 ms**; all below their actual
+  4 ms (Nova) or 20 ms (DMG/Konkr) burst period. These are observations, not future-load guarantees.
+- All **32 Game Boy views** match the recovered verified baseline in full RGBA, and factory `.uge`
+  bytes remain identical. Actual Android instrument/shared-control surfaces were visually inspected.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/{cbm-native,cbm-native-oracle,cbm-frontend}`.
+Optional private YM2608 ROM checks were not run after reboot: that private `/tmp` input was lost.
+Linux/SDL verification and official publication remain in progress.
+
+## 0.32.0 Atari 2600 TIA
 
 Integrates verified POKEY `c8a7d46` and published OPN/OPNA. **Cartridge Dawn** has NTSC and PAL variants,
 both TIA voices, all 16 AUDC modes, tonal/raw instruments, honest divider quantization and WAV export.
@@ -80,7 +117,26 @@ VGM has no TIA command; no substitute register format or cartridge export is adv
 - Temporary instrumentation sources are removed and retained only with local evidence. Private-ROM
   and distinctive-chunk exclusion passes for the candidate APK; no private audio is published.
 
-Official CI artifacts and artifact-only Thor/Deck delivery remain pending.
+### Official release
+
+Published from `93510f7be39974f5e8e2f04c5bd431130abc15a6` after all four jobs in workflow
+`42708368638` passed. The signed APK is **0.32.0/code 45**, non-debuggable, arm64/x86_64,
+with the established production certificate.
+
+- The **official APK** passes both regional scenarios on Nova, DMG and Konkr: **two tests each**,
+  zero xruns and driver faults. Worst callbacks are **2.927 / 5.019 / 1.877 ms**, respectively;
+  all below the devices' burst periods.
+- The **official optimized AppImage** runs locally with each region's exported project, playback,
+  held instrument audition and return to Pattern: final rows **43 NTSC / 41 PAL**, one audition each,
+  released-audition peaks **0.2305603 / 0.2303772**. Both final surfaces were visually inspected.
+  Offscreen/dummy output verifies PCM generation and UI, not physical speaker output.
+- Thor receives the byte-verified APK in `Download`; Deck receives the byte-verified AppImage and
+  its existing `~/thortracker-deck/thor-tracker` symlink points to 0.32.0. Neither device was woken,
+  installed to or launched; no `/ThorTunez` data was touched.
+
+APK SHA-256: `2455a9803b8d8c2322404f27992a5aaced93a2d968662845433770f0be1b0c61`.
+AppImage SHA-256: `07a438e0387308078a207b463a6c39e700b475964db8725bc2c827fdd0cc6107`.
+Retained official artifacts and evidence: `~/.local/state/thortracker/recovery-20261109/`.
 
 ## 0.31.0 Atari 8-bit POKEY
 
@@ -1046,64 +1102,6 @@ AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` sym
 The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
-
-## Unreleased: VIC-20 (VIC) and C16 / Plus/4 (TED) — source slice, NOT verified
-
-Branch `vic-ted-systems` adds two systems on Thor Tracker's own player (one image layout, `cbm/`): **VIC-20 (VIC)**
-(`"vic20-vic"`: bass/alto/soprano squares and noise, one master volume, VICE's VIC sound adapted) and **C16 / Plus/4
-(TED)** (`"c16-ted"`: two squares, voice 2 noise, one volume, D/A samples on a DAC lane, plus4emu's TED sound adapted),
-PAL or NTSC per song; project and WAV export; demos **Kernal Lights** and **Plus Four Parade**.
-This source checklist predates the integration. Deterministic fixture generation and focused headroom checks
-have now passed as recorded above; the remaining full integration and frontend checks are still pending.
-
-1. Constants and fixture (pure Python 3; a second run must be byte-identical), then commit
-   `app/src/test/cpp/cbm_test_song.h`:
-
-   ```sh
-   python3 tools/audio/prepare_cbm.py
-   python3 tools/audio/prepare_cbm.py && git status --short   # no new changes
-   ```
-
-   It fails before writing if `cbm_tables.c`, `cbm_image.h` or `CbmImage.kt` disagree with the reference
-   (`tools/audio/cbm/cbm_ref.py`) on a table entry, a constant or a lane range.
-2. Builds, tests and evidence:
-
-   ```sh
-   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
-   tools/build.sh :deck:linkDebugExecutableLinuxX64
-   tools/audio/run_native_host_test.sh /tmp/thor-evidence
-   python3 tools/audio/cbm/cbm_reference_check.py /tmp/thor-evidence --images app/build/samples \
-     --pitch /tmp/thor-evidence/cbm_vic_shortest.wav=444.07 /tmp/thor-evidence/cbm_ted_shortest.wav=439.84
-   tools/audio/render_cbm_image.sh app/build/samples/vic-demo.cbimg /tmp/kernal-lights.wav 90
-   tools/audio/render_cbm_image.sh app/build/samples/ted-demo.cbimg /tmp/plus-four-parade.wav 90
-   ```
-
-   Kotlin: `CbmModelTest`, `CbmEditorTest` and every existing test. Native: `cbm_machine_test.c` (loader rejects at
-   their bytes; batches equal to the reference's for every tick and interrupt of the four fixture songs; A-4 by zero
-   crossings; per-lane pitch spot checks; shared volume and owner envelope across lanes; TED noise vs square; D/A
-   playback, timer rate and level steps; the `$3FE` decay driven on the unit; mute silence with the other lanes
-   sounding and unmute continuity against an unmuted run's chip state; seek bit-identical to straight play and the
-   order fallback; live edits incl. a PAL→NTSC switch; audition release ends; tick cost) and `wav_render_test.c`
-   (both demos, both shortest songs).
-   Expected from the specification (not observed): VIC PAL soprano A-4 = period 39 = 444.07 Hz (+15.9 cents), NTSC 36 =
-   443.89 Hz; TED PAL A-4 = reload 252 = 439.84 Hz (−0.6 cents), NTSC 254 = 440.40 Hz; ticks 50.036 / 60.285 Hz (VIC),
-   49.861 / 59.923 Hz (TED) × multispeed. Thresholds in the native test (pitch tolerance, mute rms, level ratios, release
-   timing, tick cost) were set without running and may need tuning. Release-standard checks: Game Boy views
-   pixel-identical to the baseline, every existing golden and sample export unchanged, the other `render_*_image.sh`
-   scripts still link (they now compile the `cbm` sources because `chip_engine.c` lists their ops).
-3. Listen: both demos and the fixture songs; watch the VIC's output level (VICE's voltage table, 1.6 kHz board
-   low-pass), the TED's D/A level against the squares, clicks at master-volume steps (a VIC volume change steps the
-   DC level, as on the hardware) and the TED's square→noise drums.
-4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → VIC-20 and
-   C16 / Plus/4; demo playback without underruns (tick cost on the Konkr: the VIC unit steps every φ2 counter expiry,
-   the TED unit 221 k sound cycles per second plus ~8 k timer interrupts while D/A plays), seeks up to 3600 ticks, the
-   Instrument pages, the TED sample menu (starter kit, `.wav` import through the document picker), audition on every
-   lane, the Song view's Machine/Multispeed/Master volume/DAC rate rows, lane tags (`VOL`, `D/A`) and WAV export.
-
-Known approximations to review: the Kotlin shared-state walk (lane tags, inspector) steps ticks without following
-jumps and ends one-shot samples per tick, not per interrupt; notes 120-127 (VIC noise rates, TED voice 2) are named
-with octave "A" because the shared note names stop at B-9. Reference material fetched for this slice lies untracked in
-`victed-ref-src/` (VICE and plus4emu sources, read only) for the parent to remove.
 
 ## 0.16.0 NES + Konami VRC7
 

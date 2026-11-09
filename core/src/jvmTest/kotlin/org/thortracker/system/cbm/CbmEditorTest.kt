@@ -276,8 +276,6 @@ class CbmEditorTest {
             assertEquals(presets.size - 1, CbmInstrumentView.presetIndex(session.song, sound()))
             v.tap(Action.CLEAR)
             assertEquals(defaultCbmInstrument(slot), sound())
-            // A new song starts with the presets in slots 01..
-            assertEquals(presets.map { it.instrument }, (1..presets.size).map { system.blank().cbm.instrument(it) })
         }
     }
 

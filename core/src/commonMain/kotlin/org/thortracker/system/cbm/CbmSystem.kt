@@ -415,9 +415,10 @@ object CbmSongSettings {
  * resources"): the master volume level M (header, `Vxx`, `Axy` slides tick by tick), the lane that owns the master
  * volume envelope (a key-on of a tone sound with a volume envelope takes it; a key-on without one on the owner lane or
  * the owner's note stopping ends it), and on the TED the DAC timer (`Txx`) and whether D/A mode holds both voices (a
- * DAC note sounding: until OFF, or a one-shot's last frame at the timer rate). Orders that play before the position are
- * walked in order (a parked order only on its own), rows by their ticks: delayed rows (`Gxx`) at their tick, `Sxx` at
- * theirs, effect columns in order, jumps not followed. The state is the one the position's tick 0 plays with.
+ * DAC note sounding: until OFF, or the interrupt after a one-shot reaches its end). Orders that play before the
+ * position are walked in order (a parked order only on its own), rows by their ticks: delayed rows (`Gxx`) at their
+ * tick, `Sxx` at theirs, effect columns in order, jumps not followed. The state is the one the position's tick 0 plays
+ * with, before any timer interrupt on that same cycle. DAC progress follows the machine's timer phase and pitch.
  */
 object CbmSharedState {
     /** [level] = M, [owner] the owning lane (-1 none) and its sound [ownerSlot], [dacActive], [timer] = T. */
@@ -429,13 +430,13 @@ object CbmSharedState {
     private var cacheState: SharedState? = null
 
     /**
-     * Ticks a one-shot sample of [frames] frames lasts on [note] with root [root] at [sound]'s header DAC rate: the
-     * player stops at the first interrupt k whose position 65536 + k · step reaches the end, k = ⌈(frames − 1) · 65536 /
-     * step⌉ interrupts of 64 + 4 T clocks, at F / N clocks per tick.
+     * Estimated rail length at a fixed header rate and pitch, starting with a full timer period. The first frame is
+     * written at key-on; the timer checks the position BEFORE advancing it, so stopping needs one more interrupt
+     * than reaching the end. The shared-state walk below instead follows the actual timer phase and pitch changes.
      */
     fun oneShotTicks(sound: CbmSound, frames: Int, note: Int, root: Int): Int {
         val step = CbmRules.sampleStep(note * 64, root)
-        val k = ((frames - 1).toLong() * 65536 + step - 1) / step
+        val k = ((frames - 1).toLong() * 65536 + step - 1) / step + 1
         val cycles = k * CbmRules.timerCycles(sound.dacTimer)
         val frame = CbmRules.frameCycles(sound.chip, sound.video).toLong()
         return ceil(cycles.toDouble() * sound.multispeed / frame).toInt()
@@ -454,12 +455,14 @@ object CbmSharedState {
         var owner = -1
         var timer = sound.dacTimer
         var dacActive = false
-        var dacEnd = Long.MAX_VALUE
         var tick = 0L
+        var nextIrq = CbmRules.timerCycles(timer).toLong()
+        val instrument = IntArray(lanes)
         val slot = IntArray(lanes)
         val sounding = BooleanArray(lanes)
-        val portamento = BooleanArray(lanes)
+        val slideMode = IntArray(lanes)
         val cut = IntArray(lanes) { -1 }
+        val dac = if (chip == CbmChip.TED) DacPitch() else null
         var speed = song.ticksPerRow
 
         fun state() = Shared(m8 shr 3, owner, if (owner >= 0) slot[owner] else 0, dacActive, timer)
@@ -487,9 +490,10 @@ object CbmSharedState {
                     for (t in 0 until speed) {
                         for (ch in 0 until lanes) if (delays[ch] == t) runCell(ch, p.tracks[ch][r])
                         for (ch in 0 until lanes) if (cut[ch] == t) off(ch)
-                        if (dacActive && tick >= dacEnd) { stopDac() }
+                        if (dacActive) sound.instrument(slot[CbmImage.TED_DAC_CHANNEL])?.let { dac!!.update(it) }
                         if (o == order && r == last && t == 0) return state()
                         if (slide != 0) m8 = (m8 + slide).coerceIn(0, max8)
+                        advanceTimer()
                         tick++
                     }
                 }
@@ -498,34 +502,43 @@ object CbmSharedState {
         }
 
         fun runCell(ch: Int, c: Cell) {
-            if (c.instrument > 0) slot[ch] = c.instrument
+            if (c.instrument > 0) instrument[ch] = c.instrument
+            val isDac = CbmRules.isDac(chip, ch)
+            if (isDac && c.note >= 0) dac!!.note()
             for (col in 0..c.more.size) {
                 val code = c.effectCode(col)
                 val param = c.effectParam(col)
+                if (code == 0 && param == 0) continue // Empty effect column: lowering emits no 000 command.
+                if (isDac) dac!!.effect(code, param)
                 when (code) {
                     CbmRules.FX_VOLUME -> if (param <= chip.maxVolume) m8 = param * 8
                     CbmRules.FX_VOLUME_SLIDE -> slide = (param shr 4) - (param and 15)
                     CbmRules.FX_TIMER -> if (chip == CbmChip.TED) timer = param
-                    CbmRules.FX_PORTAMENTO -> portamento[ch] = param > 0
+                    CbmRules.FX_PORTAMENTO, CbmRules.FX_SLIDE_UP, CbmRules.FX_SLIDE_DOWN ->
+                        slideMode[ch] = if (param > 0) code else 0
                     CbmRules.FX_CUT -> cut[ch] = param
                 }
             }
             when {
                 c.note == Cell.CUT -> off(ch)
-                c.note >= 0 -> if (!(portamento[ch] && sounding[ch] && !CbmRules.isVicNoise(chip, ch))) keyOn(ch, c.note)
+                c.note >= 0 -> {
+                    if (slideMode[ch] == CbmRules.FX_PORTAMENTO && sounding[ch] && !CbmRules.isVicNoise(chip, ch)) {
+                        if (isDac) dac!!.target = c.note * 64
+                    } else keyOn(ch, c.note)
+                }
             }
         }
 
         fun keyOn(ch: Int, note: Int) {
-            val ins = sound.instrument(slot[ch]) ?: return
+            val ins = sound.instrument(instrument[ch]) ?: return
             if (CbmRules.placementProblem(chip, ch, ins) != null) return
+            slot[ch] = instrument[ch]
             sounding[ch] = true
             if (ins.kind == CbmKind.TONE && !ins.volume.isEmpty) owner = ch
             else if (owner == ch) owner = -1
             if (CbmRules.isDac(chip, ch)) {
                 dacActive = true
-                val frames = sound.samples.getOrNull(ins.sample)?.data?.size
-                dacEnd = if (ins.loop || frames == null) Long.MAX_VALUE else tick + oneShotTicks(sound.copy(dacTimer = timer), frames, note, ins.root)
+                dac!!.keyOn(note)
             }
         }
 
@@ -535,16 +548,116 @@ object CbmSharedState {
             if (ins != null && ins.kind == CbmKind.TONE && ins.releases) return
             sounding[ch] = false
             if (owner == ch) owner = -1
-            if (CbmRules.isDac(chip, ch)) { dacActive = false; dacEnd = Long.MAX_VALUE }
+            if (CbmRules.isDac(chip, ch)) dacActive = false
         }
 
-        fun stopDac() {
-            val ch = CbmImage.TED_DAC_CHANNEL
-            sounding[ch] = false
-            dacActive = false
-            dacEnd = Long.MAX_VALUE
+        /** cbm_machine.run_tick: keep the pending IRQ through Txx; reload with T only after it fires. */
+        fun advanceTimer() {
+            if (chip != CbmChip.TED) return
+            val end = (tick + 1) * CbmRules.frameCycles(chip, sound.video) / sound.multispeed
+            if (nextIrq >= end) return
+            val period = CbmRules.timerCycles(timer)
+            val count = (end - 1 - nextIrq) / period + 1
+            nextIrq += count * period
+            if (!dacActive) return
+            val ins = sound.instrument(slot[CbmImage.TED_DAC_CHANNEL]) ?: return
+            if (ins.loop) return // No live edits in a straight-play walk: a looping sample cannot expire.
+            val length = sound.samples.getOrNull(ins.sample)?.data?.size ?: return
+            // cbp_timer tests pos before adding step. The last IRQ's starting position decides whether it stops.
+            if (dac!!.position + (count - 1) * dac.step >= length.toLong() * 65536) {
+                sounding[CbmImage.TED_DAC_CHANNEL] = false
+                dacActive = false
+            } else dac.position += count * dac.step
         }
     }
+
+    /** Only the DAC needs pitch/envelope progression; tone ownership survives terminal zero/released envelopes. */
+    private class DacPitch {
+        var position = 65536L
+        var step = 65536L
+        var base = 0
+        var target = 0
+        var fine = 0
+        var slide = 0
+        var mode = 0
+        var speed = 0
+        var arp = 0
+        var arpStep = 0
+        var vibSpeed = 0
+        var vibDepth = 0
+        var phase = 0
+        var arpIndex = 0
+        var pitchIndex = 0
+        var relative = 0
+        var lastPitch = -1
+        var lastRoot = -1
+
+        fun note() { arp = 0; fine = 0 }
+
+        fun effect(code: Int, param: Int) {
+            when (code) {
+                CbmRules.FX_ARPEGGIO -> { arp = param; arpStep = 0 }
+                CbmRules.FX_FINE -> fine = param - 128
+                CbmRules.FX_SLIDE_UP, CbmRules.FX_SLIDE_DOWN, CbmRules.FX_PORTAMENTO -> {
+                    mode = if (param > 0) code else 0
+                    speed = param
+                }
+                CbmRules.FX_VIBRATO -> { vibSpeed = param shr 4; vibDepth = param and 15 }
+            }
+        }
+
+        fun keyOn(note: Int) {
+            position = 65536L
+            base = note * 64
+            target = base
+            slide = 0
+            arpStep = 0
+            phase = 0
+            arpIndex = 0
+            pitchIndex = 0
+            relative = 0
+        }
+
+        fun update(ins: CbmInstrument) {
+            val arpValue = when (arpStep) { 1 -> arp shr 4; 2 -> arp and 15; else -> 0 }
+            val semitones = arpValue + (ins.arpeggio.values.getOrNull(arpIndex) ?: 0)
+            var pitchValue = ins.pitch.values.getOrNull(pitchIndex) ?: 0
+            if (ins.pitchRelative && !ins.pitch.isEmpty) {
+                relative = (relative + pitchValue).coerceIn(-8192, 8192)
+                pitchValue = relative
+            }
+            val pitch = (base + 64 * semitones + fine + slide + ((SINE[phase] * vibDepth) shr 4) + pitchValue)
+                .coerceIn(0, 8191)
+            if (pitch != lastPitch || ins.root != lastRoot) {
+                step = CbmRules.sampleStep(pitch, ins.root)
+                lastPitch = pitch
+                lastRoot = ins.root
+            }
+            arpIndex = next(ins.arpeggio, arpIndex)
+            pitchIndex = next(ins.pitch, pitchIndex)
+            if (arp != 0) arpStep = (arpStep + 1) % 3
+            when (mode) {
+                CbmRules.FX_SLIDE_UP -> slide = (slide + speed).coerceIn(-8192, 8192)
+                CbmRules.FX_SLIDE_DOWN -> slide = (slide - speed).coerceIn(-8192, 8192)
+                CbmRules.FX_PORTAMENTO -> base += (target - base).coerceIn(-speed, speed)
+            }
+            if (vibDepth != 0 && vibSpeed != 0) phase = (phase + vibSpeed) and 63
+        }
+
+        private fun next(env: CbmEnvelope, index: Int): Int {
+            if (env.isEmpty) return 0
+            val held = if (env.release >= 0) env.release else env.values.size
+            return if (index + 1 < held) index + 1 else if (env.loop >= 0) env.loop else held - 1
+        }
+    }
+
+    // cbm_tables.c CBP_SINE: the native player's signed, rounded 64-step vibrato.
+    private val SINE = intArrayOf(
+        0, 12, 25, 37, 49, 60, 71, 81, 90, 98, 106, 112, 117, 122, 125, 126,
+        127, 126, 125, 122, 117, 112, 106, 98, 90, 81, 71, 60, 49, 37, 25, 12,
+        0, -12, -25, -37, -49, -60, -71, -81, -90, -98, -106, -112, -117, -122, -125, -126,
+        -127, -126, -125, -122, -117, -112, -106, -98, -90, -81, -71, -60, -49, -37, -25, -12,
+    )
 
     /**
      * [at] as the Pattern view shows it: "VOL" on the lane owning the master volume, on the TED "DAC" on the DAC lane

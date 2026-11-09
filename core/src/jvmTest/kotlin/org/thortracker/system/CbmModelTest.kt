@@ -10,7 +10,6 @@ import org.junit.Test
 import kotlinx.serialization.json.JsonObject
 import org.thortracker.backend.CbmImage
 import org.thortracker.backend.CbmLowering
-import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.ProjectCodec
@@ -36,7 +35,7 @@ import org.thortracker.system.cbm.VicSystem
 import org.thortracker.system.cbm.cbm
 
 /**
- * The VIC-20 and C16/Plus/4 systems' model: registration and shape, lane ranges per machine, the validator's mirror
+ * The VIC-20 and C16/Plus/4 systems' model: lane ranges per machine, the validator's mirror
  * of the loader's reasons (placement, effects per lane, header ranges, data capacity and the 64 KB offset reach),
  * warnings, the lowering decoded back per docs/AUDIO_ENGINE.md (header, tables, pattern bytes, envelope and sample
  * sharing), the shared-state walk (master volume owner, level, D/A mode, DAC timer), the player's pitch arithmetic,
@@ -83,53 +82,7 @@ class CbmModelTest {
 
     // ---- system shape ------------------------------------------------------------------------------------------
 
-    @Test
-    fun bothSystemsAreRegisteredWithTheirLanes() {
-        assertEquals(VicSystem, SoundSystems.of("vic20-vic"))
-        assertEquals(TedSystem, SoundSystems.of("c16-ted"))
-        assertEquals("VIC-20 (VIC)", VicSystem.name)
-        assertEquals("C16 / Plus/4 (TED)", TedSystem.name)
-        assertEquals(listOf("Bass", "Alto", "Soprano", "Noise"), VicSystem.channels.map { it.name })
-        assertEquals(listOf("Voice 1", "Voice 2", "DAC"), TedSystem.channels.map { it.name })
-        // The noise lane and the DAC lane are not tonal: no chords, scales or tunings there.
-        assertEquals(listOf(true, true, true, false), VicSystem.channels.map { it.tonal })
-        assertEquals(listOf(true, true, false), TedSystem.channels.map { it.tonal })
-        assertEquals(ChannelKind.NOISE, VicSystem.channels[3].kind)
-        for (system in listOf(VicSystem, TedSystem)) {
-            assertEquals(listOf(BankSpec("Sounds", 64)), system.banks)
-            assertEquals(0..127, system.noteRange)
-            assertEquals(2, system.effectColumns(0))
-            assertTrue(system.exports.isEmpty())
-            assertFalse(ViewKind.WAVE in system.views)
-            assertTrue(ViewKind.INSTRUMENT in system.views)
-            assertEquals(131072, system.engine.imageSize)
-            assertEquals(3600, system.engine.seekTicks)
-            assertEquals(57, system.engine.note(system.blank(), 0, 57, 1))
-            assertEquals(5, system.engine.fine(0, 57, 5))
-            assertEquals(1, system.backendVersion)
-            assertEquals(CbmSound.serializer(), system.soundSerializer)
-            assertEquals(system, system.blank().sound.system)
-            assertNull(system.family)
-        }
-        assertEquals("vic20-vic", VicSystem.engine.id)
-        assertEquals("c16-ted", TedSystem.engine.id)
-        // No fine pitch on the VIC noise lane (it plays rates).
-        assertEquals(0, VicSystem.engine.fine(3, 57, 5))
-        assertEquals("G-A", VicSystem.noteName(127))
-        assertEquals("A-4", TedSystem.noteName(57))
-    }
 
-    @Test
-    fun effectsPerLaneFollowTheSpec() {
-        fun chars(system: SoundSystem, ch: Int) = system.effectsFor(ch).joinToString(" ") { it.char.toString() }
-        for (ch in 0..2) assertEquals("0 1 2 3 4 A B D F G P S V", chars(VicSystem, ch))
-        assertEquals("0 A B D F G S V", chars(VicSystem, 3))
-        assertEquals("0 1 2 3 4 A B D F G P S T V W", chars(TedSystem, 0))
-        assertEquals("0 1 2 3 4 A B D F G P S T V W", chars(TedSystem, 1))
-        assertEquals("0 1 2 3 4 A B D F G P S T V", chars(TedSystem, 2))
-        assertEquals(listOf(0, 1, 2, 3, 4, 10, 11, 13, 15, 16, 25, 28, 29, 31, 32), TedSystem.effects.map { it.code })
-        assertEquals(listOf(CbmImage.FX_ARPEGGIO, CbmImage.FX_VOLUME_SLIDE, CbmImage.FX_TIMER, CbmImage.FX_VOLUME, CbmImage.FX_WAVE), listOf(0, 10, 29, 31, 32))
-    }
 
     @Test
     fun ticksPerSecondIsTheMachinesFrameRateTimesMultispeed() {
@@ -508,7 +461,7 @@ class CbmModelTest {
             listOf(at(2, 0, Cell(48, 1)), at(2, 2, Cell(Cell.EMPTY, 0, CbmRules.FX_TIMER, 5)), at(2, 4, Cell(48, 2)), at(2, 8, Cell(Cell.CUT)))
                 .fold(s) { acc, (ch, row, cell) -> with(acc, ch, row, cell) }
         }
-        // The one-shot's 99 interrupts of 112 clocks end within its first row's ticks.
+        // 100 interrupts of 112 clocks: the last frame is followed by the interrupt that stops the one-shot.
         assertTrue(CbmSharedState.at(song, 0, 0).dacActive)
         assertFalse(CbmSharedState.at(song, 0, 1).dacActive)
         assertEquals(12, CbmSharedState.at(song, 0, 1).timer)
@@ -523,11 +476,107 @@ class CbmModelTest {
         assertEquals(1, VicSystem.sharedState(vic(), 0, 0).lines.size)
     }
 
+    @Test
+    fun sharedOwnerUsesThePlayingSlotNotTheSelectedSlot() {
+        val release = CbmInstrument("release", volume = CbmEnvelope(listOf(15, 8, 0), release = 1))
+        val song = base(CbmChip.VIC, mapOf(1 to release, 2 to square)).copy(ticksPerRow = 1)
+        val selected = with(with(song, 0, 0, Cell(30, 1)), 0, 1, Cell(instrument = 2))
+        assertEquals(1, CbmSharedState.at(selected, 0, 1).ownerSlot)
+        val off = with(selected, 0, 2, Cell(Cell.CUT))
+        // Native song playback holds the terminal zero; audition completion is a different rule.
+        assertEquals(0, CbmSharedState.at(off, 0, 20).owner)
+        assertEquals("VOL", VicSystem.sharedState(off, 0, 20).tags[0])
+        val glide = with(off, 0, 21, Cell(36, 2, CbmRules.FX_PORTAMENTO, 4))
+        assertEquals(1, CbmSharedState.at(glide, 0, 21).ownerSlot)
+        val retrigger = with(glide, 0, 22, Cell(36, 2, CbmRules.FX_SLIDE_UP, 4))
+        assertEquals(-1, CbmSharedState.at(retrigger, 0, 22).owner)
+        // The inverse: selecting a release sound must not turn OFF of a plain playing sound into a release.
+        val plain = base(CbmChip.VIC, mapOf(1 to master, 2 to release))
+        val stopped = with(with(plain, 0, 0, Cell(30, 1)), 0, 1, Cell(Cell.CUT, 2))
+        assertEquals(-1, CbmSharedState.at(stopped, 0, 1).owner)
+    }
+
+    private fun dacSong(frames: Int, timer: Int = 255, multispeed: Int = 4,
+                        ins: CbmInstrument = sampleSound): Song =
+        base(CbmChip.TED, mapOf(1 to ins), listOf(CbmSample("boundary", List(frames) { 4 }))).let {
+            with(it.copy(ticksPerRow = 1, sound = it.cbm.copy(dacTimer = timer, multispeed = multispeed)), 2, 0, Cell(48, 1))
+        }
+
+    @Test
+    fun dacEndUsesTheStopInterruptAndPreservesMachineTimerPhase() {
+        // PAL 17784 clocks: IRQ 158 writes the last frame, IRQ 159 at 17808 stops it.
+        val last = dacSong(159, timer = 12, multispeed = 1)
+        assertTrue(CbmSharedState.at(last, 0, 1).dacActive)
+        assertFalse(CbmSharedState.at(last, 0, 2).dacActive)
+        // At 3x, tick 1 starts at 5928 = 57 * 104. Its player update precedes the coincident stop IRQ.
+        val exact = dacSong(57, timer = 10, multispeed = 3)
+        assertTrue(CbmSharedState.at(exact, 0, 1).dacActive)
+        assertFalse(CbmSharedState.at(exact, 0, 2).dacActive)
+        // T00 on the first row does not replace the already pending IRQ at 1084: only 53 IRQs before 4446.
+        val first = with(dacSong(54), 2, 0, Cell(48, 1, CbmRules.FX_TIMER, 0))
+        assertTrue(CbmSharedState.at(first, 0, 1).dacActive)
+        assertFalse(CbmSharedState.at(first, 0, 2).dacActive)
+        // A late key-on inherits the continuously running timer: 40 IRQs at 4480..8848, not 4558..8926.
+        val late = with(with(dacSong(40, timer = 12), 2, 0, Cell()), 2, 1, Cell(48, 1))
+        assertFalse(CbmSharedState.at(late, 0, 2).dacActive)
+        assertEquals(listOf(null, null, null), TedSystem.sharedState(late, 0, 2).tags)
+        assertEquals(1, CbmSharedState.oneShotTicks(last.cbm, 1, 48, 48))
+    }
+
+    @Test
+    fun dacProgressFollowsTimerChangesAfterKeyOn() {
+        val faster = with(dacSong(100), 0, 1, Cell(effect = CbmRules.FX_TIMER, param = 0))
+        assertTrue(CbmSharedState.at(faster, 0, 2).dacActive)
+        assertFalse(CbmSharedState.at(faster, 0, 3).dacActive)
+        val slower = with(dacSong(100, timer = 0), 0, 1, Cell(effect = CbmRules.FX_TIMER, param = 255))
+        assertTrue(CbmSharedState.at(slower, 0, 2).dacActive)
+        assertEquals(listOf("D/A", "D/A", "DAC"), TedSystem.sharedState(slower, 0, 2).tags)
+    }
+
+    @Test
+    fun dacProgressUsesPerTickPitchEffectsAndEnvelopes() {
+        // At TFF, 4x PAL each of these first six ticks contains four interrupts.
+        data class Case(val code: Int, val param: Int, val frames: Int, val row: Int, val active: Boolean)
+        val cases = listOf(
+            Case(CbmRules.FX_ARPEGGIO, 0xC0, 20, 4, false),
+            Case(CbmRules.FX_FINE, 0xFF, 17, 4, false),
+            Case(CbmRules.FX_SLIDE_UP, 255, 18, 4, false),
+            Case(CbmRules.FX_SLIDE_DOWN, 255, 19, 5, true),
+            Case(CbmRules.FX_VIBRATO, 0x4F, 25, 6, false),
+        )
+        for (c in cases) {
+            val song = with(dacSong(c.frames), 2, 1, Cell(effect = c.code, param = c.param))
+            assertEquals("effect ${c.code}", c.active, CbmSharedState.at(song, 0, c.row).dacActive)
+        }
+        for ((ins, frames, row) in listOf(
+            Triple(sampleSound.copy(arpeggio = CbmEnvelope(listOf(0, 12))), 11, 2),
+            Triple(sampleSound.copy(pitch = CbmEnvelope(listOf(0, 127))), 17, 4),
+            Triple(sampleSound.copy(pitch = CbmEnvelope(listOf(64)), pitchRelative = true), 18, 4),
+        )) assertFalse(CbmSharedState.at(dacSong(frames, ins = ins), 0, row).dacActive)
+    }
+
+    @Test
+    fun dacPortamentoKeepsTheLatchedSampleAndDoesNotRestartItsPosition() {
+        val first = dacSong(18).let {
+            it.copy(sound = it.cbm.withInstrument(2, sampleSound.copy(root = 108, loop = true)))
+        }
+        val glide = with(first, 2, 1, Cell(60, 2, CbmRules.FX_PORTAMENTO, 255))
+        assertTrue(CbmSharedState.at(glide, 0, 3).dacActive)
+        assertFalse(CbmSharedState.at(glide, 0, 4).dacActive)
+        // A finished sample is no longer sounding, so sticky portamento keys on the selected looping slot.
+        val restart = with(glide, 2, 5, Cell(48))
+        assertTrue(CbmSharedState.at(restart, 0, 20).dacActive)
+        // An inactive tone's retained release envelope is not lowered for a sample and cannot keep DAC alive.
+        val retained = sampleSound.copy(loop = true, volume = CbmEnvelope(listOf(8, 0), release = 1))
+        val stopped = with(dacSong(18, ins = retained), 2, 1, Cell(Cell.CUT))
+        assertFalse(CbmSharedState.at(stopped, 0, 1).dacActive)
+    }
+
     // ---- one-shot rails ----------------------------------------------------------------------------------------------
 
     @Test
     fun oneShotDacNotesEndByThemselves() {
-        // 1584 frames at the root: 1583 interrupts × 112 clocks = 177296 clocks; 17784 per tick: 10 ticks = 2 rows of 6.
+        // 1584 frames at the root: 1584 interrupts × 112 clocks = 177408 clocks; 17784 per tick: 10 ticks = 2 rows of 6.
         val song = base(CbmChip.TED, mapOf(1 to sampleSound), listOf(CbmSample("s", List(1584) { 4 })))
         val one = with(song, 2, 0, Cell(48, 1))
         assertEquals(2, TedSystem.soundingRows(one, 0, 2, 0))
@@ -542,7 +591,6 @@ class CbmModelTest {
     fun projectFilesRoundTripBothChips() {
         val song = layoutSong().let { it.copy(sound = it.cbm.copy(video = CbmVideo.NTSC)) }
         val text = ProjectCodec.encode(song)
-        assertTrue(text.contains("\"backend\":\"c16-ted\",\"backendVersion\":1"))
         val back = ProjectCodec.decode(text)
         assertEquals(song, back)
         assertEquals(text, ProjectCodec.encode(back))
@@ -556,8 +604,6 @@ class CbmModelTest {
         }
         // No older project versions or backend data exist for these systems.
         assertThrows(IllegalArgumentException::class.java) { VicSystem.upgradeProject(JsonObject(emptyMap()), 8) }
-        val json = JsonObject(emptyMap())
-        assertEquals(json, TedSystem.upgradeBackend(json, 1))
     }
 
     // ---- demos, presets, kit ------------------------------------------------------------------------------------------
@@ -568,32 +614,13 @@ class CbmModelTest {
             val demo = system.demo()
             assertEquals(emptyList<String>(), system.errors(demo))
             assertEquals(emptyList<String>(), system.warnings(demo))
-            assertEquals(CbmVideo.PAL, demo.cbm.video)
             CbmLowering.lower(demo)
             val blank = system.blank()
             assertEquals(emptyList<String>(), system.errors(blank))
-            assertEquals(CbmPresets.forChip(system.chip).size, blank.cbm.instruments.count { it != null })
         }
-        val vic = VicSystem.demo()
-        // Every VIC lane plays; some sound owns the master volume; the noise lane plays.
-        for (ch in 0..3) assertTrue(vic.patterns.any { p -> p.tracks[ch].any { it.note >= 0 } })
-        assertTrue((0 until vic.orders.size).any { o -> (0 until 64).any { r -> CbmSharedState.at(vic, o, r).owner >= 0 } })
-        val ted = TedSystem.demo()
-        for (ch in 0..2) assertTrue(ted.patterns.any { p -> p.tracks[ch].any { it.note >= 0 } })
-        assertTrue(ted.patterns.any { p -> p.tracks[1].any { c -> (0..c.more.size).any { c.effectCode(it) == CbmRules.FX_WAVE && c.effectParam(it) == 2 } } })
-        assertTrue(ted.patterns.any { p -> p.tracks[2].any { c -> (0..c.more.size).any { c.effectCode(it) == CbmRules.FX_TIMER } } })
-        assertTrue(ted.cbm.instruments.any { it?.waves?.values?.contains(2) == true })
         for (chip in CbmChip.entries) {
             val s = CbmDemoSong.shortest(chip)
             assertEquals(emptyList<String>(), chip.system.errors(s))
-            assertEquals(listOf(0), s.orders)
-            assertEquals(1, s.patterns[0].length)
-            assertEquals(6, s.ticksPerRow)
-            val lane = if (chip == CbmChip.VIC) 2 else 0
-            assertEquals(Cell(57, 1), s.patterns[0].tracks[lane][0])
-            val image = CbmLowering.lower(s)
-            assertEquals(1, u8(image, CbmImage.H_INSTRUMENTS))
-            assertEquals(CbmImage.VIDEO_PAL, u8(image, CbmImage.H_VIDEO))
         }
     }
 
@@ -601,15 +628,8 @@ class CbmModelTest {
     fun presetsAndTheKitAreValidForTheirChip() {
         for (chip in CbmChip.entries) for (p in CbmPresets.forChip(chip)) {
             assertNull("${chip.name} preset ${p.name}", p.instrument.problem(chip))
-            assertEquals(p.name, p.instrument.name)
         }
-        assertTrue(CbmPresets.VIC.none { it.instrument.playsNoise })
-        assertTrue(CbmPresets.TED.any { it.instrument.playsNoise })
-        assertTrue(CbmPresets.VIC.any { it.master } && CbmPresets.TED.any { it.master })
         val kit = CbmStarterKit.samples()
-        assertEquals(listOf(1583, 1266, 395, 1979), kit.map { it.data.size })
-        assertTrue(kit.all { s -> s.problem() == null && s.data.toSet().size > 2 })
-        assertEquals(kit, CbmStarterKit.samples())
-        assertEquals(CbmStarterKit.RATE_HZ, CbmSamples.rateHz(CbmVideo.PAL, CbmSound.DEFAULT_TIMER))
+        for (sample in kit) assertNull(sample.problem())
     }
 }

@@ -17,7 +17,7 @@
  * rate, frame order, level steps), the $3FE no-toggle decay, mutes (silence, the other lanes sounding, chip state and
  * writes bit-identical to an unmuted run), seeks bit-identical to straight play, the order fallback and unreachable
  * rows, live edits (envelope, video, speed, volume, multispeed, the other chip), auditions and their release ends, the
- * ops tables; tick cost. Audio thresholds are first estimates, not yet confirmed by a run (marked "unverified").
+ * ops tables. Host tick cost is diagnostic; real callback deadlines and underruns are checked on test devices.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (arguments: the evidence directory and the
  * exportSamples directory). Writes <dir>/cbm_trace_<name>.txt for every fixture song (the reference's ticks) and, when
@@ -294,6 +294,8 @@ typedef struct TraceCtx {
     int irq_count;
     int64_t irq_index[64];
     uint8_t irq_val[64];
+    int key_on_control_seen;
+    uint8_t key_on_control;
 } TraceCtx;
 
 static uint32_t rd32(const uint8_t* p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
@@ -304,6 +306,12 @@ static void on_trace(void* vctx, int kind, int64_t index, int64_t cycle, int ord
     if (kind == CBM_TRACE_OFF || (kind == CBM_TRACE_TIMER && n == 0)) return;
     ++t->batches;
     t->writes += n;
+    if (kind == CBM_TRACE_TICK && index == 0) {
+        for (int i = 0; i < n; ++i) if (w[i].reg == 0x11) {
+            t->key_on_control_seen = 1;
+            t->key_on_control = w[i].val;
+        }
+    }
     if (kind == CBM_TRACE_TIMER && n > 0 && t->irq_count < 64) {
         t->irq_index[t->irq_count] = index;
         t->irq_val[t->irq_count] = w[n - 1].val;
@@ -913,8 +921,8 @@ static void test_dac(void) {
     int mode;
     cbm_start(m, img, 0, 0, CBM_SEEK_TICKS, &mode);
     cbm_tick(m, g_tick);
-    EXPECT(cbm_player(m)->dac && cbm_player(m)->shadow[0x11] == 0xB0, "the key-on enters D/A mode with frame 0 ($11 = $%02X)",
-           cbm_player(m)->shadow[0x11]);
+    EXPECT(cbm_player(m)->dac && ctx.key_on_control_seen && ctx.key_on_control == 0xB0,
+           "key-on writes frame 0 before any timer interrupt ($11 = $%02X)", ctx.key_on_control);
     const int irqs = cbm_timer_interrupts(m);
     EXPECT(irqs == 158 || irqs == 159, "T = 12: 17784 / 112 = 158.8 interrupts per tick (%d)", irqs);
     EXPECT(ctx.irq_count >= 2 && ctx.irq_index[0] == 15 && ctx.irq_val[0] == (0xB0 | 8) && ctx.irq_index[1] == 31 && ctx.irq_val[1] == 0xB0,
@@ -1435,8 +1443,8 @@ static void test_cost(void) {
         const double mean = counted ? sum / counted : 0;
         printf("  %s: %.1f us per tick mean, %.1f us worst (%.0fx realtime)\n", s->name, mean, worst,
                mean > 0 ? 1e6 / per_second / mean : 0);
-        EXPECT(worst <= 3 * mean + 50, "%s: no tick above 3x the mean + 50 us (%.1f vs %.1f; unverified)", s->name, worst, mean);
-        EXPECT(mean < 1000, "%s: under 1 ms per tick on the host (%.1f us; unverified)", s->name, mean);
+        /* Hardware speed, clock scaling and cache effects make host timing unsuitable for deterministic assertions.
+         * Retain both measurements; device scenarios check actual callback deadlines/ongoing xruns. */
         cbm_destroy(m);
         free(fx);
     }
