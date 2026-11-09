@@ -83,7 +83,8 @@ object PceDemoSong {
     fun song(): Song {
         val blank = PceSystem.blank()
         val waves = PcePresets.WAVES.map { it.second }
-        val kit = PceStarterKit.samples()
+        // The demo's sound below keeps the default DDA timer (reload 0), so its kit is made at that rate.
+        val kit = PceStarterKit.samples(PceSamples.rateHz(0))
         val own = listOf(lead(), arp(), bass(), lfoSource(), driftPad(),
             PceStarterKit.instrument(PceStarterKit.KICK, "D/A kick"),
             PceStarterKit.instrument(PceStarterKit.SNARE, "D/A snare"),

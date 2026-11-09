@@ -584,8 +584,8 @@ class PceModelTest {
 
     @Test
     fun starterKitIsDeterministicFiveBitAudio() {
-        val kit = PceStarterKit.samples()
-        assertEquals(kit, PceStarterKit.samples())
+        val kit = PceStarterKit.samples(PceSamples.rateHz(0))
+        assertEquals(kit, PceStarterKit.samples(6991))
         assertEquals(listOf("Kick", "Snare", "Hat", "Tom"), kit.map { it.name })
         assertEquals(listOf(1747, 1398, 419, 2097), kit.map { it.data.size })
         assertTrue(kit.all { s -> s.problem() == null })
@@ -594,7 +594,6 @@ class PceModelTest {
         assertEquals(listOf(19, 21, 23, 25), kit[PceStarterKit.KICK].data.take(4))
         val ins = PceStarterKit.instrument(2, "Hat")
         assertEquals(PceInstrument(name = "Hat", kind = PceKind.SAMPLE, sample = 2, root = 48), ins)
-        assertEquals(6991, PceStarterKit.RATE_HZ)
         // A one-shot kick at its root lasts 15 ticks at the default rate: three rows at speed 6.
         val song = base().let { s ->
             val sound = s.pce.copy(samples = kit).withInstrument(6, PceStarterKit.instrument(PceStarterKit.KICK, "Kick"))
@@ -603,6 +602,34 @@ class PceModelTest {
         assertEquals(3, PceSystem.soundingRows(song, 0, 3, 0))
         assertNull(PceSystem.soundingRows(with(song, 0, 3, 0, Cell(48, 3)), 0, 3, 0))
         assertNull(PceSystem.soundingRows(with(song, 0, 3, 0, Cell(48, 1)), 0, 3, 0))
+    }
+
+    @Test
+    fun starterKitKeepsItsLengthsAndPitchAtEveryDdaRate() {
+        // Rising crossings of the centre with hysteresis (from ≤ 15 to ≥ 17), so quantisation flicker is not counted.
+        fun cycles(data: List<Int>): Int {
+            var low = false
+            var n = 0
+            for (f in data) {
+                if (f <= 15) low = true
+                else if (f >= 17 && low) { n++; low = false }
+            }
+            return n
+        }
+        val lengths = listOf(0.25, 0.2, 0.06, 0.3)
+        for (timer in listOf(0, 1, 3)) {
+            val rate = PceSamples.rateHz(timer)
+            val kit = PceStarterKit.samples(rate)
+            assertTrue(kit.all { s -> s.problem() == null })
+            // Each drum lasts as long at the song's rate (within one frame) as at the default one.
+            kit.forEachIndexed { i, s ->
+                assertEquals("${s.name} at timer $timer", lengths[i], PceSamples.seconds(s.data.size, timer), 1.0 / rate)
+            }
+            // The tom (140 Hz settling to 95 Hz, about 30.7 cycles in 0.3 s) keeps its pitch: about 102 Hz on average.
+            val tom = kit[PceStarterKit.TOM].data
+            val hz = cycles(tom) / PceSamples.seconds(tom.size, timer)
+            assertTrue("tom at timer $timer: $hz Hz", hz in 95.0..106.0)
+        }
     }
 
     // ---- effects, exports and demo ---------------------------------------------------------------------------
@@ -650,7 +677,7 @@ class PceModelTest {
         assertEquals(emptyList<String>(), PceSystem.errors(demo))
         assertEquals(emptyList<String>(), PceSystem.warnings(demo))
         val sound = demo.pce
-        assertEquals(PceStarterKit.samples(), sound.samples)
+        assertEquals(PceStarterKit.samples(PceSamples.rateHz(sound.timerReload)), sound.samples)
         val played = demo.orders.toSet().map { demo.patterns[it] }
         val cells = played.flatMap { it.tracks.flatten() }
         fun uses(code: Int) = cells.any { c -> (0..c.more.size).any { c.effectCode(it) == code && (code != 0 || c.effectParam(it) != 0) } }

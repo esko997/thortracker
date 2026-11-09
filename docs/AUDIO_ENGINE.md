@@ -2691,8 +2691,12 @@ HuC6280 (`tools/audio/pce/pce_ref.py IMAGE --vgm OUT` writes the same bytes from
   &problem)`, as `o3_export_vgm` with GD3 system "PC Engine (Thor Tracker)", converter "Thor Tracker" (`vgm_gd3.c`).
 - Kotlin (`system/pce/PceVgm.kt`): `PceVgm.export(song)` = lower + `PceVgm.renderer.render(image, maxTicks,
   PceVgmTags(title, author))`; Android registers JNI `ChipAudio.nativePceVgm`, the Deck `DeckPceVgm` (cinterop).
-  `maxTicks` = 60 × multispeed × 600 (ten minutes). DDA streams are written one R6 per interrupt (about 7 KB/s per
-  sample channel at the default rate), not as VGM DAC-stream commands (those cannot express the per-note step).
+  `maxTicks` = 60 × multispeed × 600 (ten minutes). DDA streams are written one R6 per interrupt, not as VGM
+  DAC-stream commands (those cannot express the per-note step). With one sample channel an interrupt costs its wait
+  (one byte, `0x70`-`0x7F`, while interrupts are at most 16 samples apart: reload 0 or 1) and `0xB9 06 vv`: 4 bytes,
+  about 28 KB/s at 6991 Hz (27964 bytes/s), plus a 3-byte R0 when the tick's writes moved the select. With *k* ≥ 2
+  sample channels every R6 also needs its `0xB9 00 c` channel select: 1 + 6*k* bytes per interrupt, about 91 KB/s
+  for two channels at 6991 Hz.
 - WAV: the generic `chip_wav.c` over the `"pce-huc6280"` ops (no system code).
 
 ### Preparing the fixtures and constants

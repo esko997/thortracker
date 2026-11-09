@@ -889,8 +889,9 @@ chip roadmap autonomously and asked for every onboard feature, including the dir
   (`L`, `M`; channel 2's waveform modulates channel 1's period, channel 2 keeps sounding as on the chip) and the DDA
   timer rate (`T`, 6991 Hz / (R + 1)). Per channel: volume (`C`, `A`), balance (`8xy`), wave (`W`).
 - **Samples** are user data: imported `.wav` files (resampled to the song's DDA rate and quantised to 5 bits on the
-  device) or the built-in starter kit synthesised in integer arithmetic (no third-party audio). Samples, patterns and
-  envelopes share the image's 120 KB data region.
+  device) or the built-in starter kit synthesised in integer arithmetic at the song's DDA rate when it is added (no
+  third-party audio; samples already in a song keep their frames). Samples, patterns and envelopes share the image's
+  120 KB data region.
 - **Model** (`system/pce/PceSound.kt`): `PceSound` = 64 slots of `PceInstrument?` (null = empty), up to 64 waves (32
   values 0..31 each), up to 64 `PceSample`s (5-bit frames, 1..65535), multispeed and the shared state at the song start
   (master, LFO frequency and control, timer reload). `PceInstrument`: name, `PceKind` (TONE, NOISE, SAMPLE), wave,
@@ -908,9 +909,12 @@ chip roadmap autonomously and asked for every onboard feature, including the dir
   `PceWaveView`/`Painter`; `PceSampleMenu`; `PceEdits`): rows Slot, Name, Listen on, Kind, Preset, Wave; pages per kind
   (tone: Volume, Arpeggio, Pitch, Wave seq; noise: Volume, Arpeggio; sample: Sample, Volume, Arpeggio, Pitch). A noise
   sound listens on PSG 5. The Wave view draws and reshapes waves and renumbers sounds, wave sequences and `Wxx` when
-  waves are inserted or deleted; deleting a sample renumbers the sounds that play later samples. The Song view rows are
-  Multispeed, Master left/right, LFO frequency, LFO control and DDA rate; the Pattern inspector and lane tags show the
-  shared state at the cursor (`PceSharedState`).
+  waves are inserted or deleted; deleting a sample renumbers the sounds that play later samples. Copying a sample
+  sound carries its sample's frames: pasting it (in any song, even after the sample was deleted) plays the song's
+  sample with the same frames or adds them as a new sample, as one undo step; with no room for a 65th sample the
+  paste is refused and the song is unchanged. The Song view rows are Multispeed, Master left/right, LFO frequency,
+  LFO control and DDA rate; the Pattern inspector and lane tags show the shared state at the cursor
+  (`PceSharedState`).
 - Demo: "Turbo Lanterns" (original, D minor): a pulse-width-cycling lead (wave sequence), `Wxx` glass arpeggios with
   pans, bass, starter-kit D/A drums with a `T01` half-rate fill, noise hats and snares on PSG 5-6, an LFO passage
   (PSG 2 silent with `C00`, `L`/`M` bending PSG 1) and a master fade-in (`X88`..`XFF`).
@@ -983,8 +987,9 @@ chip roadmap autonomously and asked for every onboard feature, including the dir
 - PC Engine noise: the note picks the rate (note mod 32, as Deflemask/Furnace map it) on a noise sound, rather than a
   noise-rate envelope; arpeggios step through rates. Review.
 - PC Engine DDA: samples play from the CPU timer at one shared rate with a per-note step (nearest frame), as drivers
-  do on hardware; the VGM writes one register per interrupt (about 7 KB/s per sample channel) instead of VGM DAC-stream
-  commands. CD-ROM² ADPCM (a separate chip on the CD unit) is not part of the HuC6280 and is not modelled.
+  do on hardware; the VGM writes registers per interrupt (about 28 KB/s for one sample channel at 6991 Hz: the R6
+  write plus a wait; with more channels every R6 also needs a channel select, about 91 KB/s for two) instead of VGM
+  DAC-stream commands. CD-ROM² ADPCM (a separate chip on the CD unit) is not part of the HuC6280 and is not modelled.
 - PC Engine LFO: exposed raw (channel 2's note, wave and volume are the modulator's rate, shape and audibility) rather
   than hidden behind a vibrato abstraction, because that is what the chip does. Review once listened to.
 - PC Engine output gain: Mednafen's level ÷ 2 so six full unipolar channels do not clip after the high-pass; no

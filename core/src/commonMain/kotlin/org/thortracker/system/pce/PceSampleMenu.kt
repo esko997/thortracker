@@ -8,18 +8,19 @@ import org.thortracker.model.Song
 
 /**
  * Adding DDA samples from the Sample page's Add row: the [PceStarterKit] (one sound per drum: the shown slot, then the
- * next empty slots) or a `.wav` file converted on the device by [PceSamples.fromWav] at the song's DDA rate (the CPU
- * timer, Song view or `Txx`), so its root note plays it at its own pitch. The shown sound plays the first new sample.
+ * next empty slots) synthesized, or a `.wav` file converted on the device by [PceSamples.fromWav], at the song's DDA
+ * rate (the CPU timer, Song view or `Txx`), so its root note plays it at its own pitch. The shown sound plays the first
+ * new sample.
  */
 internal object PceSampleMenu {
     /** Largest file offered for import: minutes of CD audio, far more than a sample can hold. */
     private const val MAX_FILE = 32 * 1024 * 1024
 
     fun open(session: EditorSession, slot: Int) = session.requestMenu { menu ->
-        val kit = PceStarterKit.samples()
         val rate = PceSamples.rateHz(session.song.pce.timerReload)
+        val kit = PceStarterKit.samples(rate)
         menu.menu("Add samples to sound ${hex2(slot)} (${kb(PceSamples.free(session.song))} free)", listOf(
-            "Starter kit: ${kit.joinToString(", ") { it.name.lowercase() }}" to { addKit(session, menu, slot, kit) },
+            "Starter kit at $rate Hz: ${kit.joinToString(", ") { it.name.lowercase() }}" to { addKit(session, menu, slot, kit) },
             "Import .wav file… (converted at $rate Hz, the song's DDA rate)" to {
                 menu.pickFile("Import sample", listOf(".wav"), MAX_FILE) { name, _, bytes -> importWav(session, menu, slot, name, bytes) }
             },

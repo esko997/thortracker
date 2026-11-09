@@ -413,7 +413,7 @@ class PceEditorTest {
         v.tap(Action.EDIT)
         assertEquals(2, menus.single().size)
         menus.single()[0].second()
-        val kit = PceStarterKit.samples()
+        val kit = PceStarterKit.samples(PceSamples.rateHz(session.song.pce.timerReload))
         assertEquals(kit.map { it.name }, session.song.pce.samples.map { it.name })
         // The shown sample sound plays the first; the others get the next empty slots.
         assertEquals(0, sound(slot - 8)!!.sample)
@@ -430,6 +430,20 @@ class PceEditorTest {
         // Listening plays the sample sound.
         v.tap(Action.AUDITION)
         assertEquals(Triple(v.state.listenChannel, v.defaultNote(), slot - 8), auditions.last())
+    }
+
+    @Test
+    fun theStarterKitIsMadeAtTheSongsDdaRate() {
+        installMenus()
+        session.replaceSong(session.song.let { s -> s.copy(sound = s.pce.copy(timerReload = 1)) })
+        session.setPceInstrument(slot - 8, defaultPceInstrument(slot - 8, PceKind.SAMPLE), "test")
+        val v = view { instrument = slot - 8 }
+        v.goTo(Row.ADD)
+        v.tap(Action.EDIT)
+        menus.single()[0].second()
+        // At 3496 Hz the kick still lasts 0.25 s on its root note (not twice as long, an octave down).
+        val kick = session.song.pce.samples[PceStarterKit.KICK]
+        assertEquals(0.25, PceSamples.seconds(kick.data.size, 1), 1.0 / PceSamples.rateHz(1))
     }
 
     @Test
@@ -502,6 +516,77 @@ class PceEditorTest {
         v.tap(Action.EDIT)
         assertEquals(0, sound()!!.sample)
         assertEquals(39, sound()!!.loopStart)
+    }
+
+    /** Sound 63 plays A, sound 64 plays B looping from frame 50; then the clipboard holds sound 64. */
+    private fun copyLoopingSampleSound(): PceInstrument {
+        session.addPceSamples(slot - 1, listOf(sample("A", 40, 3), sample("B", 60, 5)), "test") { i, name -> PceStarterKit.instrument(i, name) }
+        session.editPceInstrument(slot, "test") { it.copy(loop = true, loopStart = 50) }
+        session.copyPceInstrument(slot)
+        return sound()!!
+    }
+
+    private fun songWithSamples(samples: List<PceSample>) = PceSystem.blank().let { s -> s.copy(sound = s.pce.copy(samples = samples)) }
+
+    @Test
+    fun aPastedSampleSoundBringsItsFramesAndLoopToAnotherSong() {
+        val copied = copyLoopingSampleSound()
+        val b = session.song.pce.samples[1]
+        val other = songWithSamples(listOf(sample("Z", 10, 7), sample("Y", 20, 9)))
+        session.replaceSong(other)
+        assertTrue(session.pastePce(slot, null))
+        // B is added after the other song's samples; the sound plays it with its loop unchanged.
+        assertEquals(other.pce.samples + b, session.song.pce.samples)
+        assertEquals(copied.copy(sample = 2), sound())
+        // One undo step restores the other song exactly.
+        session.undo()
+        assertEquals(other, session.song)
+        assertFalse(session.canUndo)
+    }
+
+    @Test
+    fun aPastedSampleSoundOutlivesItsDeletedSample() {
+        val copied = copyLoopingSampleSound()
+        session.deletePceSample(1)
+        val deleted = session.song
+        assertTrue(session.pastePce(slot, null))
+        assertEquals(listOf("A", "B"), session.song.pce.samples.map { it.name })
+        assertEquals(copied, sound())
+        session.undo()
+        assertEquals(deleted, session.song)
+    }
+
+    @Test
+    fun aPastedSampleSoundReusesTheSameFramesAndRespectsTheSampleLimit() {
+        val copied = copyLoopingSampleSound()
+        val b = session.song.pce.samples[1]
+        // The other song already holds B's frames (under another name): nothing is added.
+        val holding = songWithSamples(listOf(sample("Z", 10, 7), b.copy(name = "Same frames")))
+        session.replaceSong(holding)
+        assertTrue(session.pastePce(slot, null))
+        assertEquals(holding.pce.samples, session.song.pce.samples)
+        assertEquals(copied.copy(sample = 1), sound())
+        // A full song without B's frames refuses the paste and stays as it was, with nothing to undo.
+        val full = songWithSamples(List(PceSound.MAX_SAMPLES) { i -> PceSample("S$i", listOf(i % 32, i / 32)) })
+        session.replaceSong(full)
+        assertFalse(session.pastePce(slot, null))
+        assertTrue(session.song === full)
+        assertFalse(session.canUndo)
+        // A full song holding B's frames plays them.
+        val fullHolding = songWithSamples(full.pce.samples.dropLast(1) + b)
+        session.replaceSong(fullHolding)
+        assertTrue(session.pastePce(slot, null))
+        assertEquals(fullHolding.pce.samples, session.song.pce.samples)
+        assertEquals(copied.copy(sample = PceSound.MAX_SAMPLES - 1), sound())
+    }
+
+    @Test
+    fun aClampedSampleIndexKeepsTheLoopStartInsideTheSampleItNowPlays() {
+        // A sound naming a sample the song does not have plays its last one; the loop start fits that sample.
+        val song = songWithSamples(listOf(sample("Z", 10, 7), sample("Y", 100, 9))).pce
+        val ins = PceInstrument("x", PceKind.SAMPLE, sample = 5, loop = true, loopStart = 50)
+        assertEquals(ins.copy(sample = 1), pceInstrumentFor(song, ins))
+        assertEquals(ins.copy(sample = 1, loopStart = 99), pceInstrumentFor(song, ins.copy(loopStart = 200)))
     }
 
     @Test

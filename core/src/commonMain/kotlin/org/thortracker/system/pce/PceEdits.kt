@@ -131,7 +131,8 @@ object PceEnvelopes {
 
 /** A copied PC Engine sound, one of its envelopes, or a wave. */
 sealed interface PceClip : Clip {
-    data class Sound(val instrument: PceInstrument) : PceClip
+    /** A sound; a sample sound carries the [sample] it played (null when it played none), so its frames paste with it. */
+    data class Sound(val instrument: PceInstrument, val sample: PceSample?) : PceClip
     data class Envelope(val kind: PceEnvelopeKind, val envelope: PceEnvelope, val relative: Boolean) : PceClip
     data class Wave(val samples: List<Int>) : PceClip
 }
@@ -179,14 +180,18 @@ fun EditorSession.setPceKind(slot: Int, kind: PceKind): Boolean {
     return setPceInstrument(slot, cur?.copy(kind = kind) ?: defaultPceInstrument(slot, kind), label)
 }
 
-/** [instrument] with its wave and sample references kept inside [sound]'s waves and samples (pasted across songs). */
+/**
+ * [instrument] with its wave and sample references kept inside [sound]'s waves and samples: the sample index is
+ * clamped to the song's samples, then the loop start to the frames of the sample it now plays.
+ */
 fun pceInstrumentFor(sound: PceSound, instrument: PceInstrument): PceInstrument {
     val range = PceEnvelopeKind.WAVE.range(sound.waves.size)
+    val sample = instrument.sample.coerceIn(0, maxOf(0, sound.samples.size - 1))
     return instrument.copy(
         wave = instrument.wave.coerceIn(range),
         waves = PceEnvelopeKind.WAVE.fixed(instrument.waves, range),
-        sample = instrument.sample.coerceIn(0, maxOf(0, sound.samples.size - 1)),
-        loopStart = instrument.loopStart.coerceIn(0, maxOf(0, (sound.samples.getOrNull(instrument.sample)?.data?.size ?: 1) - 1)),
+        sample = sample,
+        loopStart = instrument.loopStart.coerceIn(0, maxOf(0, (sound.samples.getOrNull(sample)?.data?.size ?: 1) - 1)),
     )
 }
 
@@ -213,9 +218,10 @@ fun EditorSession.applyPcePreset(slot: Int, preset: PcePresets.Preset): Boolean 
     }
 }
 
+/** Copies sound [slot] and its sample frames; pasted frames play at the destination song's DDA timer rate. */
 fun EditorSession.copyPceInstrument(slot: Int) {
     val i = song.pceInstrument(slot) ?: run { note("Sound ${hex2(slot)} is empty"); return }
-    hold(PceClip.Sound(i))
+    hold(PceClip.Sound(i, if (i.kind == PceKind.SAMPLE) song.pce.samples.getOrNull(i.sample) else null))
     note("Copied sound ${hex2(slot)} ${i.name}")
 }
 
@@ -226,17 +232,55 @@ fun EditorSession.copyPceEnvelope(slot: Int, kind: PceEnvelopeKind) {
 }
 
 /**
- * Pastes the clipboard into [slot]: a sound replaces it (its wave and sample kept inside the song's); an envelope goes
- * into [kind] (values clamped to its range, so a shape can move between envelopes), when [kind] is not null.
+ * Pastes the clipboard into [slot]: a sound replaces it ([pastePceSound]); an envelope goes into [kind] (values clamped
+ * to its range, so a shape can move between envelopes), when [kind] is not null.
  */
 fun EditorSession.pastePce(slot: Int, kind: PceEnvelopeKind?): Boolean = when (val clip = clipboard) {
-    is PceClip.Sound -> setPceInstrument(slot, pceInstrumentFor(song.pce, clip.instrument), "Paste sound").also { note("Pasted into sound ${hex2(slot)}") }
+    is PceClip.Sound -> pastePceSound(slot, clip)
     is PceClip.Envelope -> if (kind == null) { note("Choose an envelope page to paste the ${clip.kind.label.lowercase()} envelope into"); false }
         else editPceInstrument(slot, "Paste ${kind.label.lowercase()} envelope") {
             val with = kind.set(it, kind.fixed(clip.envelope, kind.range(song.pce.waves.size)))
             if (kind == PceEnvelopeKind.PITCH && clip.kind == PceEnvelopeKind.PITCH) with.copy(pitchRelative = clip.relative) else with
         }.also { note("Pasted the ${clip.kind.label.lowercase()} envelope into ${kind.label.lowercase()}") }
     else -> { note("Clipboard holds no PC Engine sound or envelope"); false }
+}
+
+/**
+ * Pastes copied sound [clip] into [slot] as one undo step, its wave kept inside the song's waves. A sample sound plays
+ * the frames it was copied with, in this song or another, even after its sample was deleted: the song's first sample
+ * with the same frames, else a new sample added after the others. Refused, the song unchanged, when that would pass
+ * [PceSound.MAX_SAMPLES]; a paste that takes the song past the player's data space is made and warned about (as adding
+ * samples is). The loop start is kept inside the sample it plays.
+ */
+private fun EditorSession.pastePceSound(slot: Int, clip: PceClip.Sound): Boolean {
+    if (slot !in 1..PceSystem.SLOTS) return false
+    val before = song
+    var sound = before.pce
+    var instrument = clip.instrument
+    var added: PceSample? = null
+    val sample = clip.sample
+    if (sample != null) {
+        var index = sound.samples.indexOfFirst { it.data == sample.data }
+        if (index < 0) {
+            if (sound.samples.size >= PceSound.MAX_SAMPLES) {
+                note("Not pasted: sample ${sample.name} needs room, and the song has ${PceSound.MAX_SAMPLES} samples")
+                return false
+            }
+            sound = sound.copy(samples = sound.samples + sample)
+            index = sound.samples.lastIndex
+            added = sample
+        }
+        instrument = instrument.copy(sample = index)
+    }
+    val ins = pceInstrumentFor(sound, instrument)
+    val changed = apply("Paste sound") { s ->
+        if (s.pce.instrument(slot) == ins && sound === s.pce) s else s.copy(sound = sound.withWaveFor(ins).withInstrument(slot, ins))
+    }
+    val free = if (changed) PceSamples.free(song) else 0
+    note("Pasted into sound ${hex2(slot)}" + (added?.let { " with sample ${hex2(ins.sample)} ${it.name}" } ?: "") +
+        (if (free < 0 && free < PceSamples.free(before)) " · the song now needs ${PceSampleMenu.kb(-free)} more than the " +
+            "player's data space" else ""))
+    return changed
 }
 
 // ---- waves ----------------------------------------------------------------------------------------------------------
