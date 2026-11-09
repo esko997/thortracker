@@ -40,7 +40,7 @@ c_engines=(
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
   "$cpp/sms/sms_chip.c" "$cpp/sms/sms_machine.c" "$cpp/sms/sms_image.c" "$cpp/sms/sms_vgm.c"
-  "$cpp/third_party/emu2413/emu2413.c"
+  "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c"
 )
 cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
@@ -58,7 +58,7 @@ for src in "${cxx_engines[@]}"; do
 done
 for t in huge_machine_test nes_machine_test sid_machine_test opl3_machine_test ym_machine_test sms_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
-  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -o "$build/$t"
+  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
 status=0
 "$build/huge_machine_test" "$out" || status=1

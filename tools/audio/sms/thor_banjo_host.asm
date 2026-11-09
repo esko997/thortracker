@@ -13,6 +13,8 @@
 ; routines themselves (docs/AUDIO_ENGINE.md, "Master System: image layout").
 
 .include "music_driver/banjo_defines_wladx.inc"
+; Publish WLA's actual structure sizes so the generator can check its image ABI against the assembled driver.
+.EXPORT _sizeof_channel, _sizeof_music_state, _sizeof_instrument
 
 .define THOR_CHANNELS CHAN_COUNT_SN + CHAN_COUNT_OPLL_DRUMS
 

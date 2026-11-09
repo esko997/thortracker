@@ -171,7 +171,7 @@ def header(rom, labels, defs):
         raise SystemExit("prepare_sms: labels missing from the link: " + ", ".join(missing))
     for name, size in SIZES.items():
         if name not in defs:
-            log("%s is not in the symbol file's [definitions]; the struct size is not checked" % name)
+            raise SystemExit("prepare_sms: required structure size %s is missing from the link definitions" % name)
         elif defs[name] != size:
             raise SystemExit("prepare_sms: %s is %d, the engine assumes %d" % (name, defs[name], size))
     if len(rom) != BANK_SIZE:

@@ -88,6 +88,7 @@ add_library(chip_engines STATIC
     ${SMS_DIR}/sms_image.c
     ${SMS_DIR}/sms_vgm.c
     ${EMU2413_DIR}/emu2413.c
+    chip_opll.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${SMS_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)

@@ -53,6 +53,7 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("sms/sms_image.c").asFile,
         engineSrc.file("sms/sms_vgm.c").asFile,
         engineSrc.file("third_party/emu2413/emu2413.c").asFile,
+        engineSrc.file("chip_opll.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )

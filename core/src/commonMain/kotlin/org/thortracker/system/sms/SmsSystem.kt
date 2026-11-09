@@ -190,6 +190,7 @@ class SmsSystem private constructor(val layout: SmsLayout) : SoundSystem {
 
     private class Engine(private val system: SmsSystem) : PlaybackEngine {
         override val id = SmsImageLayout.ENGINE_ID
+        override val driver = "Banjo (7aaf837) on z80.h (chips 9e88298), Thor Tracker's SN76489; FM: emu2413 1.6.4 (a1d5120)"
         override val imageSize = SmsImageLayout.IMAGE_SIZE
         override val seekTicks = SmsImageLayout.SEEK_TICKS
 

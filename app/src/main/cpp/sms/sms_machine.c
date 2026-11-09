@@ -7,7 +7,7 @@
 
 #include "blip_buf.h"
 #include "generated/banjo_driver_image.h"
-#include "third_party/emu2413/emu2413.h"
+#include "chip_opll.h"
 #include "z80.h"
 
 #define PSG_DIV 16u               /* Z80 cycles per SN76489 counter step (clock / 16) */
@@ -253,7 +253,7 @@ SmsMachine* smsm_create(uint32_t sample_rate) {
         if (!m->blip[k]) goto fail;
         blip_set_rates(m->blip[k], (double)SMSM_CLOCK, (double)sample_rate);
     }
-    m->opll = OPLL_new(SMSM_CLOCK, OPLL_RATE);
+    m->opll = chip_opll_new(SMSM_CLOCK, OPLL_RATE);
     if (!m->opll) goto fail;
     const float dt = 1.0f / (float)sample_rate;
     const float rc = 1.0f / (2.0f * 3.14159265f * HIGHPASS_HZ);
