@@ -51,6 +51,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * PC Engine (`pce-huc6280`) 1. SCC (`msx-scc`) 1; SCC+ (`msx-scc-plus`) 1; OPM (`ym2151-opm`) 1.
  * PC-88/98 OPN (`ym2203-opn`) and OPNA (`ym2608-opna`) 1 (OPNA ADPCM-B sample data is one Base64 string per sample).
  * Atari 2600 (`atari2600-tia-ntsc`, `atari2600-tia-pal`) 1.
+ * Atari POKEY (`atari-pokey`) 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

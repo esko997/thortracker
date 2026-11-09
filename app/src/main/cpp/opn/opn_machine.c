@@ -1,15 +1,21 @@
 /* OPN / OPNA music machine (opn_machine.h): player + ymfm's YM2203 / YM2608 (opn_ymfm.h) + blip_buf.
  *
- * Mix (MAME's routing, pc8801.cpp; levels in 16-bit units, 32768 = 1.0 at the host), at the chip's own DAC range as
- * the OPL3 machine plays Nuked-OPL3's (a full-level FM carrier peaks at 0.125 on both chips, as on the OPL3):
- *  - YM2203: FM (ymfm's 14-bit DAC value, a full carrier +-8191) and the three SSG channels (ymfm's ssg_engine levels,
- *    0..16382 each) at equal weight, halved: a full carrier peaks at 0.125, a full-volume SSG channel swings 0..0.25
- *    (+-0.125 once blip_buf's high-pass has taken its DC off); everything at full is 1.125. Mono: left = right.
- *  - YM2608: FM + rhythm + ADPCM-B summed and clamped to 16 bits as ymfm's ym2608::clock_fm_and_adpcm does (FM right
- *    shift 1, a full carrier +-4095 = 0.125; ADPCM-B right shift 1, a full sample at level 255 = 0.5); the SSG mixed to
- *    mono as ymfm does ((a + b + c) x 2/3) at half the FM route's weight (MAME: SSG 0.25, FM 0.5), added to both
- *    sides: a full SSG channel swings 0..0.167.
- *  Levels are clamped to 16 bits before blip_buf (its integrator's range; the host clamps to [-1, 1] anyway).
+ * Mix (MAME's relative routing, pc8801.cpp; 32768 = 1.0 before the final output gain):
+ *  - YM2203: (FM + SSG a + b + c) / 2, mono. The FM DAC saturates/rounds to -32768..32767
+ *    in the wrapper; each SSG channel is 0..16382. The route is therefore -16384..40956,
+ *    not merely three single-carrier sine waves (algorithm 7 has four carriers per channel).
+ *  - YM2608: clamp16(FM + rhythm + ADPCM-B) + (SSG a + b + c) / 3 on each side. The INNER
+ *    clamp is the real chip DAC and must stay BEFORE adding SSG; the route is -32768..49149.
+ *  Apply 3/16 to the complete route BEFORE blip_buf, without an outer mix clamp. The largest
+ *  legal excursion, including a DC baseline followed by the opposite rail, is the YM2608's
+ *  full span, 81917 (< 2.5 host units), not its 49149 positive peak. The integrated bl_step
+ *  table's total variation is below two, including its linear phase interpolation: use two
+ *  as a conservative reconstruction span bound, including ringing of arbitrary held levels.
+ *  The high-pass subtracts a running DC estimate, so budget that full reconstructed span:
+ *  2.5 * 2 * 3/16 = 0.9375, leaving over 2048 PCM units for integer rounding. YM2203's
+ *  span is smaller (< 1.75 host units).
+ *  This fixed gain preserves all part balances and chip saturation, and budgets the DC step
+ *  as well as periodic sound; a gain chosen only from demo peaks or OPM's DAC span does not.
  *
  * Seek (opnm_start): the player runs alone once to find how many ticks reach the target (within max_ticks from the
  * song start, else from the order start). Then the machine is reset exactly as a fresh one (chip power-on state and
@@ -30,6 +36,8 @@
 
 #define OPNM_MIX_DIVISOR_YM2203 2 /* (FM + SSG a + b + c) / 2 */
 #define OPNM_SSG_DIVISOR_YM2608 3 /* (a + b + c) x 2/3, then / 2 */
+#define OPNM_OUTPUT_GAIN_NUM 3
+#define OPNM_OUTPUT_GAIN_DEN 16
 
 struct OpnMachine {
     int kind; /* OPN_CHIP_* */
@@ -77,12 +85,13 @@ static void generate(OpnMachine* m, int from, int to) {
         opn_chip_generate(m->chip, m->mute, &o);
         int32_t level[2];
         if (m->kind == OPN_CHIP_YM2203) {
-            level[0] = level[1] = clamp16((o.fm[0] + o.ssg[0] + o.ssg[1] + o.ssg[2]) / OPNM_MIX_DIVISOR_YM2203);
+            level[0] = level[1] = (o.fm[0] + o.ssg[0] + o.ssg[1] + o.ssg[2]) / OPNM_MIX_DIVISOR_YM2203;
         } else {
             const int32_t ssg = (o.ssg[0] + o.ssg[1] + o.ssg[2]) / OPNM_SSG_DIVISOR_YM2608;
-            for (int k = 0; k < 2; ++k) level[k] = clamp16(clamp16(o.fm[k] + o.rhythm[k] + o.adpcm[k]) + ssg);
+            for (int k = 0; k < 2; ++k) level[k] = clamp16(o.fm[k] + o.rhythm[k] + o.adpcm[k]) + ssg;
         }
         for (int k = 0; k < 2; ++k) {
+            level[k] = level[k] * OPNM_OUTPUT_GAIN_NUM / OPNM_OUTPUT_GAIN_DEN;
             if (level[k] != m->last[k]) {
                 blip_add_delta(m->blip[k], (unsigned)i, level[k] - m->last[k]);
                 m->last[k] = level[k];

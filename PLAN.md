@@ -13,6 +13,10 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
+TIA integration targets **0.32.0/code 45** on verified POKEY `c8a7d46`, retaining all earlier systems and
+the format-10 tuning library. Generated inputs and focused native/headroom checks pass; integrated
+builds, references and frontends remain pending. Evidence is in `docs/VERIFICATION.md`.
+
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
@@ -61,18 +65,26 @@ Order below is the current intent; design notes for the chip work live in `docs/
      VGM/WAV, wave/envelope editors and shared-wave inspector. Verified on Nova, DMG, Konkr and the SDL frontend.
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
    - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, one shared LFO, noise on channel 8, CSM.
-     Exists as an **unverified source slice** on branch `opm-systems` ("OPM FM (YM2151)", `"ym2151-opm"`, demo "Sharp
-     Corners"): Thor Tracker's own player on ymfm's YM2151 at the X68000's 4 MHz, VGM and WAV export; not yet built,
-     generated, tested or listened to; `docs/VERIFICATION.md` lists what the parent must run.
+     Integrated for **0.29.0** ("OPM FM (YM2151)", `"ym2151-opm"`, demo "Sharp Corners"):
+     Thor Tracker's own player on ymfm at the X68000's 4 MHz, VGM/WAV export, native and independent-core
+     comparison, Nova/DMG/Konkr and SDL verification complete. No human listening or original-hardware
+     measurement claimed; `docs/VERIFICATION.md` records the evidence.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG; the YM2608 adds stereo, the LFO, six
-     rhythm drums and ADPCM-B samples. An **unverified source slice** on branch `opna-systems` ("PC-88/98 OPN" and
-     "PC-88/98 OPNA", demos "Night Express" and "Paper Lanterns"; Thor Tracker's own player on ymfm, VGM export; the
-     EPSM's rhythm-ROM import generalised to one shared YM2608 rhythm ROM): integration UNVERIFIED except the focused FM 3 regression;
-     `docs/VERIFICATION.md` lists what the parent must run.
+     rhythm drums and ADPCM-B samples.
+     Released as **0.30.0/code 43** ("PC-88/98 OPN" and "PC-88/98 OPNA", demos "Night Express" and
+     "Paper Lanterns"; Thor Tracker's own player on ymfm, VGM/WAV export, shared EPSM/OPNA rhythm firmware).
+     Native/headroom/reference checks, integration suites, 32 unchanged Game Boy views, desktop playback,
+     Nova/DMG/Konkr activity smokes, actual Android import/export pickers and legacy firmware reuse pass.
+     Independent VGM playback also verifies the exported FM/SSG mix; evidence and limits are in `docs/VERIFICATION.md`.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
-   - TIA — Atari 2600: two voices with odd, tuning-limited pitches: UNVERIFIED 0.32.0/code 45 source integration
-     on `tia-system`, merged with exact `d417843` (OPNA/OPM/scales). NTSC and PAL, Stella 7.0's TIA audio channel,
-     honest AUDF quantization, WAV-only, Cartridge Dawn demos. Parent generation, build and runtime proof pending.
+     Implemented for **0.31.0/code 44**, demo **Scanline Cruise**, with native volume-DAC samples,
+     NTSC/PAL timing, four effect columns, VGM/WAV export and channel-ownership inspection.
+     Native/reference comparisons, 831 JVM tests, 32 unchanged Game Boy views, all three reserved
+     Android handhelds and SDL playback/audition pass; release publication remains pending.
+   - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
+     Integration **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
+     WAV-only, Cartridge Dawn demos. Generated inputs and focused 1,806-check native preflight pass;
+     integrated and frontend verification remain pending.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
@@ -104,6 +116,9 @@ Order below is the current intent; design notes for the chip work live in `docs/
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
+- **Korg DS-10 / DS-10+ interface discussion:** revisit the Nintendo DS instruments together and discuss
+  interface ideas that could suit Thor Tracker. Discussion only for now; no research or implementation
+  requested, and no specific interaction or feature selected yet.
 - **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
   hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
   display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence

@@ -18,6 +18,7 @@ extern const ChipEngineOps opl3_chip_ops;
 extern const ChipEngineOps ym_chip_ops;
 extern const ChipEngineOps tia_ntsc_chip_ops;
 extern const ChipEngineOps tia_pal_chip_ops;
+extern const ChipEngineOps pokey_chip_ops;
 extern const ChipEngineOps opn_chip_ops;
 extern const ChipEngineOps opna_chip_ops;
 extern const ChipEngineOps opm_chip_ops;
@@ -39,7 +40,7 @@ static const ChipEngineOps* const systems[] = {&huge_chip_ops,       &nes_chip_o
                                                &ym_chip_ops,        &sms_chip_ops,        &ay_zx128_chip_ops,
                                                &ay_msx_chip_ops,     &ay_atari_st_chip_ops, &ay_cpc_chip_ops,
                                                &pce_chip_ops,        &scc_chip_ops,        &scc_plus_chip_ops,   &opm_chip_ops, &opn_chip_ops, &opna_chip_ops,
-                                               &tia_ntsc_chip_ops, &tia_pal_chip_ops};
+                                               &tia_ntsc_chip_ops, &tia_pal_chip_ops, &pokey_chip_ops};
 
 const ChipEngineOps* chip_engine_ops(const char* system_id) {
     if (!system_id) return NULL;

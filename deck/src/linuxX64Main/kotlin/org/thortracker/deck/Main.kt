@@ -23,6 +23,7 @@ import org.thortracker.model.Songs
 import org.thortracker.audio.WavExport
 import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.opl3.Opl3Vgm
+import org.thortracker.system.pokey.PokeyVgm
 import org.thortracker.system.opn.OpnVgm
 import org.thortracker.system.pce.PceVgm
 import org.thortracker.system.scc.SccVgm
@@ -67,6 +68,7 @@ fun main(args: Array<String>) {
     check(dd_init(renderer, "$appDir/fonts") == 0) { "fonts missing next to the executable" }
 
     Opl3Vgm.renderer = DeckOpl3Vgm
+    PokeyVgm.renderer = DeckPokeyVgm
     OpnVgm.renderer = DeckOpnVgm
     SccVgm.renderer = DeckSccVgm
     PceVgm.renderer = DeckPceVgm
@@ -164,8 +166,6 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }
             pane.playback = transport.position() ?: PlaybackPosition()
-            // Desktop play commands finish synchronously; a rejected start must not leave the next press acting as Stop.
-            if (!pane.playback.playing) transport.requested = false
             pane.heldModifiers = if (popups.isOpen) emptySet() else input.heldModifiers
             pane.draw(output.width, output.height)
             popup.draw(pane.surface, output.width.toFloat(), output.height.toFloat())

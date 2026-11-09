@@ -104,6 +104,16 @@ device (src/devices/sound/k051649.cpp, license BSD-3-Clause, copyright-holders
 Bryan McPhail, MAME commit 20d4667cdf485066a113f1ef24bae0887cd7134c; notice below;
 app/src/main/cpp/scc/scc_k051649.c), resampled with the same blip_buf.
 
+Atari 8-bit POKEY playback uses Thor Tracker's own player and POKEY model
+(GPL-3.0-or-later), resampled with the same blip_buf. The POKEY model's
+polynomial generator formulas, its nonlinear output mix table and the output
+stage (AC coupling time constant and amplifier clamp) are ported from Altirra
+4.40 by Avery Lee (src/ATAudio/source/pokeytables.cpp, pokey.cpp and
+pokeyrenderer.cpp; GNU General Public License 2 or later, notice below). The
+chip's behaviour follows the Altirra Hardware Reference Manual by Avery Lee;
+MAME's src/devices/sound/pokey.cpp (BSD-3-Clause) was consulted as a reference
+only, no MAME code is included.
+
 Atari 2600 (TIA) playback uses Thor Tracker's own player (GPL-3.0-or-later) on
 the TIA audio channel of Stella 7.0 by Christian Speckner and the Stella Team
 (GNU General Public License 2 or later, notice below; src/emucore/tia/
@@ -356,6 +366,18 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+Altirra (POKEY generator formulas, mix table and output stage)
+https://www.virtualdub.org/altirra.html (Altirra 4.40 source, src/ATAudio)
+
+Copyright (C) 2008-2011 Avery Lee
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version. This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+details.
 The Master System and Game Gear systems run the Banjo sound driver by Joe
 Kennedy (MIT, joffb/banjo commit 7aaf837ebbe67e567e019b5819b5467bf62253ad,
 unmodified sources in third_party/banjo) on the same Z80 core, assembled with

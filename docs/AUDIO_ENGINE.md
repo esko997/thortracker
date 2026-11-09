@@ -44,11 +44,11 @@ the Sound Cartridge in SCC+ mode; unverified source slice) play songs with Thor 
 here, mirrored by an independent Python reference) on a K051649/K052539 sound core ported from MAME, at the MSX's
 3579545 Hz, and export VGM. See [SCC](#scc-and-scc-thor-trackers-own-player-on-a-konami-k051649--k052539-msx-scc-msx-scc-plus).
 
-The OPM system (`"ym2151-opm"`, unverified source slice) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
+The OPM system (`"ym2151-opm"`, 0.29.0) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
 own player (specified here, mirrored by an independent Python reference) on ymfm's YM2151, with the chip's LFO,
 noise and CSM as shared song state, and exports VGM. See [OPM](#opm-thor-trackers-own-player-on-a-ym2151-ym2151-opm).
 
-The PC-88/98 systems (`"ym2203-opn"` and `"ym2608-opna"`, full 0.30 integration UNVERIFIED; focused FM 3 regression passed) play songs with Thor
+The PC-88/98 systems (`"ym2203-opn"` and `"ym2608-opna"`, 0.30.0) play songs with Thor
 Tracker's own OPN player (C) on ymfm's YM2203 (3 FM + SSG) and YM2608 (6 stereo FM + SSG + six rhythm drums from the
 user's rhythm ROM + ADPCM-B with the song's own samples) at the PC-88/98 clocks, and export VGM. See
 [OPN and OPNA](#opn-and-opna-thor-trackers-own-player-on-ymfms-ym2203--ym2608-ym2203-opn-ym2608-opna) and
@@ -58,6 +58,12 @@ The Atari 2600 systems (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`, unverifie
 audio channels with Thor Tracker's own player (specified here, mirrored by an independent Python reference) on Stella
 7.0's TIA audio channel, every AUDC waveform with honest AUDF pitch quantization; they export WAV only (VGM has no
 TIA). See [Atari 2600](#atari-2600-thor-trackers-own-player-on-the-tia-atari2600-tia-ntsc-atari2600-tia-pal).
+
+The Atari 8-bit system (`"atari-pokey"`) has no console driver to run either: Thor Tracker's own player (C, mirrored
+by an independent Python reference) drives an own cycle-exact, event-driven POKEY model written from the Altirra
+Hardware Reference Manual (NTSC or PAL clock, every distortion, 16-bit linking, 1.79 MHz clocks, high-pass, STIMER,
+two-tone, volume-only samples through timer interrupts, Altirra's nonlinear mix and output coupling); it exports VGM.
+See [POKEY](#pokey-thor-trackers-own-player-on-the-atari-8-bit-pokey-atari-pokey).
 
 ## Chip engine interface (what a new sound system implements)
 
@@ -160,11 +166,10 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 | Nuked-OPL3 1.8 | `app/src/main/cpp/third_party/nuked-opl3/` (`opl3.c`, `opl3.h`, `LICENSE`), unmodified | github.com/nukeykt/Nuked-OPL3 commit `765ec962e473aeb767e4cba74ffdc8f588ffbfe8` (2026-08-24, "remove NEW bit checks for 4-op channels", after "fix 4-op channel frequency latching"; the header still says version 1.8); `opl3.c` sha256 `59eb873f…1bfe03`, `opl3.h` `a84266b8…763679`, `LICENSE` `20c17d8b…aec96e331` | LGPL-2.1-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | emu2413 1.6.4 | `app/src/main/cpp/third_party/emu2413/` (`emu2413.c`, `emu2413.h`, `LICENSE`), unmodified; the VRC7's FM synthesis (VRC7 mode, its `OPLL_VRC7_TONE` patch ROM) | github.com/digital-sound-antiques/emu2413 commit `a1d5120903b75f93d3eb7690e34a29c0b4add903` (develop; the file banner says v1.6.4); `emu2413.c` sha256 `35d492c1…40abe5`, `emu2413.h` `24d132a3…4a637e3`, `LICENSE` `8fb093f2…2355f` (identical to upstream's raw files at that commit) | MIT — notice in `NOTICE.txt` |
 | FamiStudio VRC7 note tables | `third_party/famistudio-4.5.3/NoteTables/famistudio_vrc7_note_table_{lsb,msb}.bin`, assembled into the VRC7 build | the FamiStudio pin (`SoundEngine/NoteTables/` at `c09dca64`); sha256 `933d38bf…55eb3d` / `1f70b8b9…e87210` | FamiStudio's MIT licence (its notice in `NOTICE.txt`) |
+| Altirra 4.40 (POKEY generator formulas, mix table, output stage) | ported, not vendored: `pokey/pokey_chip.c` (`pk_init`'s generator steps from `pokeytables.cpp`, `pk_mix_init` from `pokey.cpp` UpdateMixTable) and `pokey/pokey_machine.c` (the AC coupling and clamp of `pokeyrenderer.cpp` PostFilter, constants in `pokey_chip.h`) | virtualdub.org/downloads/Altirra-4.40-src.7z (read 2026-11-08); behaviour from the Altirra Hardware Reference Manual 2026-01-02; MAME `pokey.cpp` consulted only, no code | GPL-2.0-or-later (GPL-3.0-compatible) — notice in `NOTICE.txt` |
 | ayumi | `third_party/ayumi/` (`ayumi.c`, `ayumi.h`, `LICENSE`, our `README.md`), unmodified; its measured `AY_dac_table`/`YM_dac_table` copied as data into `ay/ay_psg.c`; the file itself linked only by the native host test (independent comparison) | github.com/true-grue/ayumi commit `07c08b4874c359169e4a028edf73f046d8b763e2` (2021-11-24); `ayumi.c` sha256 `8824bc34…f19401d`, `ayumi.h` `506e3b75…f17099`, `LICENSE` `20bb6439…a66da` | MIT — notice in `NOTICE.txt` |
 | Mednafen 1.32.1 PSG | `app/src/main/cpp/third_party/mednafen-pce-psg/` (`pce_psg.cpp`, `pce_psg.h`, `COPYING`), unmodified, compiled through `pce/pce_psg.cpp` against our shim (`shim/mednafen/mednafen.h`, `shim/trio/trio.h`) | `mednafen-1.32.1.tar.xz` (mednafen.github.io/releases/files/) sha256 `de7eb94ab66212ae7758376524368a8ab208234b33796625ca630547dbc83832`; `src/hw_sound/pce_psg/pce_psg.cpp` sha256 `e6a029e33e0c1fe9330b358b0610c146eec481b5a2e7b804324b10f87d55f8c5`, `pce_psg.h` `5307959029251c8f85e43f1231215f0add2e59d12ce15ec486053f1fe31f796c`, `COPYING` `8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643` | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 | MAME k051649 (port) | `app/src/main/cpp/scc/scc_k051649.c/.h`: our C port of the Konami 051649/052539 sound logic (counter, latch, halting, period-write restart, test bits 5-7, `>> 4` output), restructured as an analytic advance and an event renderer; test bits 0-1 added from openMSX's documented model (no openMSX code) | github.com/mamedev/mame `src/devices/sound/k051649.cpp` at commit `20d4667cdf485066a113f1ef24bae0887cd7134c` (2025-07-17, its last change), sha256 `003db1a4…07122`; `k051649.h` `3d3031cc…f87ef87` | BSD-3-Clause (copyright-holders Bryan McPhail) — the port keeps that licence and notice in its header; notice in `NOTICE.txt` |
-
-| Stella 7.0 TIA audio channel | `app/src/main/cpp/third_party/stella-tia/` (`AudioChannel.cxx`, `AudioChannel.hxx`, `License.txt`, `Copyright.txt`), unmodified, compiled through `tia/tia_stella.cpp` against our shim (`shim/bspf.hxx`, `shim/Serializable.hxx`) | github.com/stella-emu/stella tag `7.0`, commit `d55b1aec0d067a4c901a6dcdf81cb8f579685659`; `AudioChannel.cxx` sha256 `348a1269…be847d74`, `AudioChannel.hxx` `1f9e25bc…92c718c0`, `License.txt` `58530d09…a5e75455`, `Copyright.txt` `e2a32d2f…0174b0e1` (full digests in the Atari 2600 section) | GPL-2.0-or-later (GPL-3.0-compatible); source ships in the repo, notice in `NOTICE.txt` |
 
 binjgb was chosen over a hand-written core because it passes blargg `cpu_instrs`,
 `instr_timing`, `mem_timing`, `dmg_sound` and `cgb_sound` and most mooneye timing tests
@@ -202,7 +207,8 @@ library `chip_engines` (`chip_engine.c`, `cpu6502.c` (the one `m6502.h` implemen
 GD3 tags); the YM2612 files `cpuz80.c`, `ym/ym_chip.c`, `ym/ym_machine.c`, `ym/ym_player.c`, `ym/ym_image.c`,
 `ym/ym_xgm.c`, `ym/ym_vgm.c`, `ym/ym_psg.c`; the OPN files `opn/opn_chip.c`, `opn/opn_machine.c`, `opn/opn_player.c`,
 `opn/opn_image.c`, `opn/opn_vgm.c`; the AY files `ay/ay_chip.c`, `ay/ay_machine.c`, `ay/ay_player.c`,
-`ay/ay_psg.c`, `ay/ay_image.c`, `ay/ay_vgm.c`; always with `NDEBUG`), static C++17 libraries `resid` (reSID 1.0 and
+`ay/ay_psg.c`, `ay/ay_image.c`, `ay/ay_vgm.c`; the POKEY files `pokey/pokey_engine.c`, `pokey/pokey_machine.c`,
+`pokey/pokey_player.c`, `pokey/pokey_chip.c`, `pokey/pokey_image.c`, `pokey/pokey_vgm.c`; always with `NDEBUG`), static C++17 libraries `resid` (reSID 1.0 and
 `sid/sid_resid.cpp`, its C interface; `-O2 -w`) and `ymfm` (`ym/ym_ymfm.cpp`, which compiles ymfm's `ymfm_opn.cpp`
 itself and instantiates the OPN and OPNA engine templates, `nes/nes_epsm_ymfm.cpp`, `opn/opn_ymfm.cpp`, `opm/opm_ymfm.cpp`,
 `ym2608_rhythm_rom.c`, plus `ymfm_adpcm.cpp`, `ymfm_ssg.cpp`) that `chip_engines` links, and the shared `thortracker_audio` (`audio_engine.cpp`, `audio_jni.cpp`) linked with
@@ -269,6 +275,23 @@ is unreachable through jumps), it restarts from driver-init state, positions the
 order start and silently replays that order's earlier rows. The ready machine is swapped in
 by the callback; the result mode is reported in `diagnostics()["lastSeekMode"]` (0 = from song
 start, 1 = from order start).
+
+Android transport intent has no seek timeout. `PlaybackPosition.pending` covers queued
+Play/Stop work and start preparation, then the native published-start sequence remains pending
+until the callback acknowledges that exact sequence **after** publishing its playing/ended
+state. Returning from `nativePlay` is not acknowledgement. Idle stream suspension also respects
+this handoff. A newer start cannot be acknowledged by an older callback, and a start that ends
+on its first callback settles without requiring the UI to have observed `playing=true`.
+`Transport.position()` clears requested intent only for a stopped, non-pending snapshot; it
+never restores intent from an old playing snapshot after Stop/focus loss. Failed commands
+finish their queued phase, closed audio reports stopped, and Stop/device loss cancels the native
+pending state. Desktop remains synchronous (`pending=false`); Game Boy driver playback,
+seek reconstruction, and synthesis are unchanged.
+
+Verified with five deterministic transport-transition regressions in both JVM and Linux suites,
+the actual Konkr final-row seek/Stop regression, and a 14.5-second order-local seek whose UI
+round trips stayed at or below 20 ms. Nova/DMG playback, audition, editing, recovery and Stop
+also passed, as did the clean 21-test Android suite and all 32 unchanged Game Boy renders.
 
 ## Audition
 
@@ -4518,8 +4541,8 @@ See `docs/VERIFICATION.md` for timings, exports and limits. The optional libvgm 
 
 ## OPM: Thor Tracker's own player on a YM2151 (`"ym2151-opm"`)
 
-**Status: integration in progress** (branch `opm-systems`): native and independent-reference checks pass;
-final frontend/device verification is pending in `docs/VERIFICATION.md`.
+**Status: integrated for 0.29.0**, with native/reference, Android and SDL evidence recorded
+in `docs/VERIFICATION.md`.
 The YM2151 (OPM) is the Sharp X68000's sound chip (also many arcade boards); like the OPL3 it plays through **our own
 player** (`opm/opm_player.c`, pure integer C without a chip) whose behaviour is the specification in this section;
 `tools/audio/opm/opm_ref.py` implements the same specification separately in Python and the host test requires
@@ -4854,7 +4877,8 @@ system's fine pitch in 1/64 semitones, `ticksPerSecond` = 60 × multispeed.
 - WAV: the generic `chip_wav.c` over the `"ym2151-opm"` ops (no system code).
 - VGM players' CSM: the VGM holds the `$10`/`$11`/`$14` writes only; whether and how long a player keys on at timer A
   overflows depends on its YM2151 core (stock ymfm, also inside MAME, keeps the CSM key-on until its next register
-  write re-prepares the operators, so it may sound different from the engine). Not checked against any player.
+  write re-prepares the operators, so it may sound different from the engine). The independent MAME/Nuked
+  looped-song comparisons are recorded in `docs/VERIFICATION.md`; they do not establish CSM equivalence.
 
 ### Preparing the fixtures and constants
 
@@ -4867,7 +4891,7 @@ ticks; the reference VGM's size, FNV-1a hash and loop; byte offsets for corrupti
 tools/audio/opm/opm_golden.py` writes `core/src/jvmTest/resources/opm-golden/*.bin.gz` for `OpmGoldenTest`. No
 generated table header: the vibrato sine is written out in both implementations.
 
-### Verification (to be run by the parent; nothing here has been run)
+### Verification
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opm_machine_test.c`: key code mapping
   for every note, A-4 measured on a sine instrument at 439.88 Hz (± 0.5 Hz), every loader reason by single-byte
@@ -4887,14 +4911,18 @@ generated table header: the vibrato sine is written out in both implementations.
   derived from ymfm's phase-step table; optionally libvgm's vgm2wav against the engine's WAV.
 - `tools/audio/render_opm_image.sh image out.wav [seconds] [mute=...] [--vgm out.vgm]`.
 - Kotlin: `OpmGoldenTest` (the lowering against the reference builder), `OpmModelTest`, `OpmEditorTest`.
-- Not done: any build or run; listening; a real YM2151 or X68000; the device cost (ymfm's OPM is expected near its
-  OPN2 cost, 235 µs per tick on the dev PC for the YM2612).
+- Executed: 261 focused native checks, 1,896 WAV-export checks, 739 JVM / 19 Linux / six Android-host tests,
+  the clean 21-test Android suite, Nova/DMG/Konkr activity exercises, SDL playback and all 32 unchanged Game Boy
+  renders. Device timings, export evidence and comparison limits belong in `docs/VERIFICATION.md`.
+- Not done: human listening or a real YM2151 / X68000 measurement.
 
 ## OPN and OPNA: Thor Tracker's own player on ymfm's YM2203 / YM2608 (`"ym2203-opn"`, `"ym2608-opna"`)
 
-**Status: integration pending.** The focused FM 3 live-mode regression passes 264/264 checks on both native
-`OpnMachine` configurations backed by ymfm (72 failures with the preserved old player). Full builds, suite, device and listening checks
-remain pending; see `docs/VERIFICATION.md`.
+**Integration verified:** 1,806 native checks, 420 independent Python checks, 2,006 WAV checks,
+783 JVM / 19 Linux / six Android-host tests, 21 permanent Android tests and 32 unchanged Game Boy
+renders. Nova/DMG/Konkr activity smokes, real document pickers, preserved EPSM firmware, desktop
+playback and artifact privacy scans pass. Human listening and physical-board comparison remain
+unperformed; `docs/VERIFICATION.md` records the measured costs, isolated Nova underruns and limits.
 
 ### Hardware, clocks and sources
 
@@ -4908,9 +4936,15 @@ remain pending; see `docs/VERIFICATION.md`.
   `pc9801_86.cpp` (YM2608 at 7.987 MHz). These are an emulator's board descriptions, not datasheets or a measured
   board; no hardware measurement backs them here.
 - **Rates**: at the power-on prescaler (FM ÷6, SSG ÷4) one FM sample takes 72 master clocks on the YM2203 and 144 on
-  the YM2608: **55 466.67 Hz on both** ("native samples"). The SSG's effective clock is 1 996 800 Hz on both (ymfm:
-  YM2203 fM × 2 / 4, YM2608 fM / 4), so a tone period TP sounds 124 800 / TP Hz (YM2203 fM / (32 TP), YM2608
-  fM / (64 TP)).
+  the YM2608: **55 466.67 Hz on both** ("native samples"). The effective AY-compatible SSG clock is **1 996 800 Hz**
+  on both, distinct from the **249 600 Hz counter-update rate** (YM2203 fM/16, YM2608 fM/32). Each tone period
+  toggles the output; two toggles complete a cycle, giving **124 800 / TP Hz** (YM2203 fM/(32 TP), YM2608 fM/(64 TP)).
+  The wrapper clocks nine SSG updates per two native samples. This agrees with
+  [upstream ymfm](https://github.com/aaronsgiles/ymfm/blob/main/src/ymfm_opn.h) and the independent
+  [MAME-derived OPN prescaler](https://github.com/ValleyBell/libvgm/blob/master/emu/cores/fmopn.c)
+  (`SSG clock = master × 2 / (4 × pre_divider)`, with pre_divider 1 for YM2203 and 2 for YM2608).
+  The [YM2608 application manual §3-1](https://manualmachine.com/yamaha/ym2608/5410883-user-manual/#35) gives the
+  latter tone formula explicitly; no conflicting YM2203 manual passage or original-hardware measurement is established here.
 - **ADPCM-B memory**: 256 KiB, the size of the PC-9801-86's and Sound Board II's DRAM as commonly documented (MAME
   maps 2 MiB and marks the size unconfirmed); the chip runs in 8-bit DRAM mode (`$101` bit 1), so start/end registers
   count 32 bytes.
@@ -5044,15 +5078,29 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
   its end) or 10 s. A drum audition without the rhythm ROM is refused in Kotlin (`Ym2608RhythmRom.MISSING`).
 - **Mute** leaves a tracker channel's part out of the sums only (`OPN_MUTE_*`); the chip keeps computing it, so
   unmuting continues exactly as if never muted.
-- **Mix** (MAME's routing in `pc8801.cpp`, at the chips' own DAC range as the OPL3 plays Nuked's): YM2203 (FM +
-  SSG A + B + C) / 2, mono (a full FM carrier 0.125, a full SSG channel 0..0.25); YM2608 clamp16(FM + rhythm +
-  ADPCM-B, ymfm's own sum: FM >> 1, ADPCM-B >> 1) + (SSG A + B + C) / 3 on both sides (MAME: SSG 0.25 against FM
-  0.5; a full FM carrier 0.125, ADPCM-B at level 255 0.5, a full SSG channel 0..0.167). Clamped to 16 bits before
-  blip_buf. The balance between FM and SSG on real boards differs by model and is not measured here.
+- **Mix** (MAME's relative routing in `pc8801.cpp`): YM2203 (FM + SSG A + B + C) / 2, mono;
+  YM2608 clamp16(FM + rhythm + ADPCM-B, ymfm's own sum: FM >> 1, ADPCM-B >> 1) +
+  (SSG A + B + C) / 3 on both sides (MAME: SSG 0.25 against FM 0.5). Apply a fixed **3/16 output
+  gain before blip_buf**, without clipping the combined route. Preserve the YM2203 floating-point DAC
+  and YM2608's inner DAC saturation before adding SSG. The unscaled legal route ranges are
+  −16384..40956 and −32768..49149 respectively; additive FM algorithms can reach the DAC limits.
+  Budget the full DC-to-opposite-rail span, not just the positive peak: the larger span is below
+  2.5 host units. The integrated `bl_step` table's total variation is below two, including linear
+  phase interpolation; use two as a conservative reconstruction span bound for arbitrary held
+  levels. The high-pass subtracts a running DC estimate, so budget that entire reconstructed span:
+  2.5 × 2 × 3/16 = 0.9375, with more than 2048 PCM units left for integer rounding.
+  This gain does not change relative part levels or register writes; it is not a limiter or automatic gain.
+  The native headroom regression covers both chips at 8, 44.1, 48 and 96 kHz with full additive FM,
+  full-volume SSG, held DC, DC-to-square and simultaneous cuts, comparing against an independently
+  routed chip plus blip path (including DAC saturation). The final native run passes 1,806 checks; the old
+  production mixer fails 58 against that regression. External observation of 16 loud/demo/rate cases
+  (32 sides) finds no outer-clamp loss, resampler clipping, observer mismatch or integrator overflow;
+  the maximum preclip peak is 0.317718506.
+  The balance between FM and SSG on real boards differs by model and is not measured here.
 
 ### VGM export (`opn/opn_vgm.c`, `opn_export.h`)
 
-VGM 1.71, data offset `$34` = `$CC`. YM2203: clock at `$44` = 3 993 600, writes as command `$55`. YM2608: clock at
+VGM 1.71, command data at `$114` (relative data offset `$34` = `$E0`). YM2203: clock at `$44` = 3 993 600, writes as command `$55`. YM2608: clock at
 `$48` = 7 987 200, port 0 / 1 writes `$56` / `$57`, and first a data block `$67 $66 $81` ("YM2608 DELTA-T ROM data":
 u32 memory size 262 144, u32 start 0, the used ADPCM-B bytes) when the song has samples. The SSG flags `$7A` / `$7B`
 are `$01`: the VGM 1.71 specification (vgmrips `vgmspec171.txt`) gives `$79` "AY8910 Flags … Default is 0x01" (bit 0
@@ -5061,6 +5109,14 @@ Legacy Output) and `$7A` / `$7B` as the same flags for the AY8910 "connected wit
 tick's writes with the key-off phase one 44.1 kHz sample earlier, waits from the native sample count (exact: 44 100 ×
 72 per native sample over 3 993 600), `$66`, then the GD3 tag (system "PC-88/98 OPN (Thor Tracker)" / "PC-88/98 OPNA
 (Thor Tracker)").
+
+**Board mix metadata.** The [VGM 1.71 extended header](https://github.com/vgmrips/vgmplay-legacy/blob/master/VGMPlay/vgmspec171.txt)
+at `$100` has size 12 and one volume entry: first-chip paired SSG `$86` / `$87`,
+relative volume `$8600` / `$8200` (YM2203 ×6 / YM2608 ×2). VGMPlay's default normalized
+SSG/FM routing is not the preview's board mix. Independent MAME renders of isolated
+FM and SSG tones agree in their reference-to-engine gains within 0.83% after this
+metadata; without it the SSG is too quiet. Overall output gain remains the VGM
+player's choice. No register writes, waits, sample data or native PCM change.
 
 **Loop without injected writes.** The file contains only writes the player makes in native playback, never a register
 dump. The renderer runs the player to its arrivals at (loop order, row 0, tick 0), A1, A2, …, and takes the first pair
@@ -5076,7 +5132,7 @@ one VGM sample of native timing). A song whose state never repeats within `max_t
 `ChipAudio.nativeOpnVgm`, Deck `DeckOpnVgm` over `opn_export_vgm`). The rhythm ROM is never in a file: VGM players
 supply their own copy. Whether a given VGM player emulates CSM (timer A) is that player's matter; not checked.
 
-### Tools and verification (full integration still to be run)
+### Tools and verification
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opn_machine_test.c` (both chips,
   images built in C, no fixtures, no ROM): loader rejections; pitch measured from rendered audio (FM, SSG, ADPCM-B);
@@ -5093,8 +5149,8 @@ supply their own copy. Whether a given VGM player emulates CSM (timer A) is that
   so has no loop); the ops tables; per-tick cost. Evidence WAVs, VGMs, write traces and images go to the directory.
 - `python3 tools/audio/opn_reference_check.py [dir]` (standard library only, independent of the C code): parses the
   VGMs, recomputes frequencies from the logged registers with the datasheet formulas and the clocks above, decodes
-  ADPCM-B itself, measures the evidence WAVs' pitch against them, and expands each loop VGM itself to compare it with
-  the player's straight write trace.
+  ADPCM-B itself, measures the evidence WAVs' pitch against them, expands each loop VGM itself to compare it with
+  the player's straight write trace, and validates the relative extended-header offsets and paired-SSG mix.
 - `wav_render_test.c` renders the demos `night-express.opnimg` and `paper-lanterns.opnaimg` and the shortest songs
   `opn-shortest.opnimg` and `opna-shortest.opnaimg` (from `exportSamples`).
 - `tools/audio/render_opn_image.sh image out.wav [seconds] [rom.bin | rom=path] [mute=1,7,16] [--vgm out.vgm]
@@ -5104,8 +5160,12 @@ supply their own copy. Whether a given VGM player emulates CSM (timer A) is that
   checked) also runs the audible-rhythm checks; without it they are reported as skipped. Keep the ROM and its
   evidence outside the repository.
 - The focused held/idle FM 3 mode check passed 264/264 on 2026-11-09; the preserved pre-fix player failed 72 checks.
-  Not done: full application/integration build and suite, listening, Konkr/Thor costs, or comparison with real
-  PC-88/98 hardware or another emulator's audio.
+  The final focused native suite passes 1,806 checks, independent Python reference 420 checks and WAV export
+  2,006 checks. All 14 independent MAME tone checks pass unchanged 0.2% FM/SSG and 0.5% ADPCM tolerances;
+  maximum error is 0.1621% for the ADPCM octave, with FM 3 at 880.208 versus 880.198 Hz.
+  Full demo exports also pass independent envelope/spectrum/pitch-class comparison after the board-mix
+  metadata fix. Reserved-device UI, actual WAV import and VGM/WAV save pickers, firmware reuse and artifact
+  privacy were exercised; see `docs/VERIFICATION.md`. No human listening or real PC-88/98 measurement is claimed.
 
 ## The YM2608 rhythm ROM (shared firmware)
 
@@ -5130,9 +5190,465 @@ Yamaha's and is not distributed with Thor Tracker in any form.
   refuses a drum, with `Ym2608RhythmRom.MISSING`; FM, SSG and ADPCM-B play without it, and NSF, FamiStudio text and
   VGM exports never contain or need it (a WAV export plays the song, so a rhythm song needs it there too).
 
+## POKEY: Thor Tracker's own player on the Atari 8-bit POKEY (`"atari-pokey"`)
+
+**Integration status:** 0.31.0/code 44 integrates verified OPN/OPNA `c3c054f`. Native/reference checks,
+831 JVM / 19 Linux / six Android-host tests, 21 permanent Android tests, all three reserved handhelds
+and four local SDL playback/audition scenes pass. See `VERIFICATION.md` for measurements and fidelity limits.
+
+The Atari 400/800/XL/XE's POKEY (C012294) has no console driver to run: songs play through Thor Tracker's **own
+player** (`pokey/pokey_player.c`, pure integer C without a chip, apart from the pitch search's doubles below), whose
+behaviour is the specification in this section, on an **own cycle-exact POKEY model** (`pokey/pokey_chip.c`). The
+player is what an Atari music driver is: a routine the video frame interrupt calls (the tick) and a timer interrupt
+routine (sample playback). `tools/audio/pokey/pokey_ref.py` implements the player separately in Python and
+`tools/audio/pokey_reference_check.py` requires identical register writes. Songs export as VGM (POKEY, VGM 1.71). No Atari executable (XEX/SAP) is
+exported: that would need a 6502 driver this system does not have. One POKEY only: stereo (dual-POKEY) boards are an
+add-on, not part of the machine. Kotlin side: `core` `system/pokey`, `backend/PokeyLowering.kt`, the hand-kept mirror
+of the engine numbers `backend/PokeyPlayerImage.kt`.
+
+### Sources
+
+- **Altirra Hardware Reference Manual**, Avery Lee, 2026-01-02 edition (virtualdub.org), chapter 5 "POKEY": timer
+  periods (N + 4 at 1.79 MHz, N + 7 linked, (N + 1) × 28 / × 114), linked-timer fire timing, the distortion table,
+  noise sampling, the generators (polynomials, patterns, reset state, one-cycle delay per channel), high-pass
+  flip-flops and the inversion of channels 1/2, volume only, STIMER, initialization mode and the base clocks' phase,
+  two-tone resync (2-cycle delay, force break), the nonlinear output. Measured on hardware.
+- **Atari 400/800 Hardware Manual** (Atari, 1982), POKEY register descriptions; the machine clocks (NTSC
+  3.579545 MHz / 2, PAL 17.734475 MHz / 10) and frame lengths (114 cycles per line, 262 / 312 lines).
+- **MAME `src/devices/sound/pokey.cpp` 4.9** (BSD-3-Clause, Brad Oliver, Eric Smith, Juergen Buchmueller; read at
+  github.com/mamedev/mame master, 2026-11-08): the per-cycle structure (counting, then the fires of channels 3, 4, 1,
+  2; counters keep counting through the fire delay; linked low counters wrap). Where MAME and Altirra differ, Altirra
+  (hardware measurements) wins: STIMER sets the output flip-flops to 1, fast counters keep counting in initialization
+  mode, the two-tone resync is 2 cycles after the triggering fire.
+- **Altirra 4.40 source** (`src/ATAudio/source/pokeytables.cpp`, `pokey.cpp` UpdateMixTable, `pokeyrenderer.cpp`
+  PostFilter; GPL-2.0-or-later, Avery Lee; virtualdub.org/downloads/Altirra-4.40-src.7z, 2026-11-08): the generator
+  formulas, the per-bit DAC levels and saturation curve, the output's AC coupling (τ = 2.597 ms) and amplifier clamp.
+  Ported to C in `pokey_chip.c` and `pokey_machine.c` (GPL-3.0-or-later is compatible; notice in `NOTICE.txt`).
+
+### The chip (`pokey/pokey_chip.c`)
+
+- **Clocks**: NTSC 315 MHz / 176 = 1789772.73 Hz, PAL 1773447.5 Hz; the 64 kHz and 15 kHz base clocks are the machine
+  clock / 28 and / 114, pulsing first 19 and 78 cycles after initialization mode ends (both run; AUDCTL bit 0 picks
+  one for every base-clocked counter).
+- **Counters**: a counter counts its clock (channel 1 / 3: the machine clock when AUDCTL bit 6 / 5; channel 2 / 4:
+  channel 1's / 3's fires when linked by AUDCTL bit 4 / 3; else the base clock). Reloaded with AUDF + 1 counts left;
+  the count that reaches 0 is the underflow; the counter **fires `PK_FIRE_DELAY` = 3 cycles later** and reloads then
+  (a fire already pending ignores the underflow). Periods: AUDF + 4 cycles at 1.79 MHz, (AUDF + 1) × 28 / × 114 on a
+  base clock. Linked: the low counter is not reloaded by its own fires (it wraps and keeps counting), the high one
+  counts them, and the high one's fire reloads both: N + 7 cycles at 1.79 MHz (N = AUDF low + 256 × AUDF high), (N + 1)
+  × 28 / × 114 on a base clock; the low channel still fires on every wrap (audio and IRQ). An AUDF write takes effect
+  at the next reload. A reload leaves a pending fire pending; only STIMER and two-tone resyncs drop pending fires.
+- **Per cycle** (`step`): counting; then the fires of channel 3 (linked: count channel 4, else reload; audio; the
+  channel 1 high-pass flip-flop samples channel 1's output if AUDCTL bit 2, else is 1), channel 4 (linked: reload 3;
+  reload 4; audio; flip-flop of channel 2 by bit 1; IRQ 4), the two-tone resyncs due, channel 1 (linked: count 2,
+  else reload and, in two-tone mode without force break, a resync 2 cycles later; audio; IRQ 1), channel 2 (linked:
+  reload 1; reload 2; audio; two-tone resync; IRQ 2). The model runs `step` only in cycles where something happens
+  and skips the others arithmetically; `pk_run_reference` steps every cycle and the host test requires identical
+  output.
+- **Audio circuit** at a fire: unless AUDC bit 7 is clear and the 5-bit generator's bit is 0, a pure tone (bit 5)
+  toggles the output flip-flop, else it takes the 4-bit generator's bit (bit 6) or the 9/17-bit one (AUDCTL bit 7
+  selects 9). **Generators**: XNOR shift registers from the all-zero state at the end of initialization mode, one shift
+  per cycle (4-bit 1+x³+x⁴, 5-bit 1+x³+x⁵, 9-bit 1+x⁴+x⁹, 17-bit 1+x¹²+x¹⁷ tapped after bit 8; Altirra's formulas);
+  POKEY channel *c* (1-4) sees the bit *c* cycles late (index t − end of initialization mode − *c*); in initialization
+  mode (and before a channel's first delayed bit) the 5-bit reads 1, the others 0.
+- **Output**: channel *c* is on when AUDC bit 4 (volume only, after the high-pass XOR) or its flip-flop (channels 1
+  and 2: XOR their high-pass flip-flop, forced to 1 when off: inverted against 3 and 4) is 1; its level is then AUDC
+  bits 0-3. **STIMER** reloads every counter (pending fires dropped, no pulses), sets every output flip-flop and both
+  high-pass flip-flops to 1 and drops pending resyncs. **SKCTL** bits 0-1 = 0: initialization mode (generators and
+  base clocks reset and held; 1.79 MHz counters keep counting); leaving it starts them. Bit 3 two-tone: a resync
+  reloads counters 1 and 2 (pending fires dropped) 2 cycles after a fire of timer 2, or of timer 1 — only while 1+2
+  are not linked, as in MAME (a linked low timer's fires are not known to resync; unverified on hardware) — while the
+  serial output bit is 1 — the idle line (no serial transfers here), 0 with force break (bit 7). **IRQEN** bits 0, 1, 2 =
+  timers 1, 2, 4: `pk_run` returns after a cycle in which an enabled timer fired.
+- **Mix and output** (`pokey_machine.c`): the four levels index Altirra's nonlinear table (`pk_mix_init`: per-bit DAC
+  drops 0.12/0.26/0.56/1.12 of 8.24, linear to 0.14 then 1 − e^(−2.85 x) saturation, × −2.1); each change is a step
+  into blip_buf 1.1.0 at its cycle (machine clock → host rate, ×16384), then per host sample the AC coupling
+  y = c·y + (x − x′), c = e^(−1/(rate·τ)), τ = 2.5968511 ms, clamped to [−0.65, 0.5] (Altirra's amplifier), output
+  mono → both host channels. blip_buf's own ~15 Hz leak is in series.
+- **Not modelled**: the serial port (shift registers; SKCTL bits 4-6 clock modes, whose asynchronous receive mode
+  holds timers 3/4), keyboard and paddle scans (no sound), Altirra's 1.5-cycle high-pass delay and first-period offsets
+  right after STIMER (sub-period phase), the 9/17-bit register's partial reset when initialization mode lasts under
+  18 cycles (it resets at once here, as in MAME), a second POKEY, the XL/XE console speaker (GTIA).
+
+### Channels, sounds and the channels they take
+
+Four tracker channels, POKEY channels 1-4. A **sound** (instrument) is one of five kinds; a note takes every POKEY
+channel its kind needs, **cutting whatever sound held them** (the most recent note wins; the Kotlin song check warns
+where a note cuts a sound that has not been released, and the Pattern lanes show which channel holds which):
+
+| Kind (flags) | Channels it plays on | POKEY channels it takes | AUDCTL bits it sets |
+|---|---|---|---|
+| 8-bit tone | any | its own | fast: 1.79 MHz on channel 1 (bit 6) or 3 (bit 5) only |
+| 16-bit (`JOINED`) | 2, 4 | 2 + 1 or 4 + 3 (1 / 3 = low byte) | link 1+2 (4) / 3+4 (3); fast: the low counter at 1.79 MHz (6 / 5) |
+| High-pass (`FILTERED`) | 1, 2 | 1 + 3 or 2 + 4 (3 / 4 = the high-pass clock) | high-pass 1 by 3 (2) / 2 by 4 (1); fast (channel 1 only): 1 and 3 at 1.79 MHz (6, 5) |
+| 16-bit high-pass (`JOINED + FILTERED`) | 2 | all four: 1+2 the sound, 3+4 its clock | 4, 3, 1; fast: 6 and 5 |
+| Samples (`SAMPLE`) | 1, 2, 4 (timer 3 has no interrupt) | its own | fast (channel 1 only): 6; its timer's IRQEN bit |
+
+A sound on a channel its kind cannot use (a 16-bit sound on channel 1, fast on channel 2 or 4, samples on channel
+3, ...) does not key on (the lane's old voice keeps sounding; the Kotlin song check reports it as an error). Channels a sound takes besides its
+own get AUDC = the sound's partner byte (0 = silent; anything else makes them audible with their counters' own
+waveforms). A channel whose sound was cut, or never played, has AUDC 0 until a note takes it again. The shared AUDCTL
+bits 7 (9-bit noise) and 0 (15 kHz base clock) and SKCTL's two-tone mode are global effects (`N`, `K`, `W`), STIMER
+(`T`) and an initialization-mode pulse (`R`) act on the whole chip.
+
+### Image layout (what the Kotlin lowering produces)
+
+`image_size` = 65536 bytes, little-endian; constants in `pokey/pokey_image.h` (`PK_*`), mirrored in
+`backend/PokeyPlayerImage.kt`. The loader (`pk_load_image`, `pokey/pokey_image.c`) rejects anything off-contract with
+a reason and the byte (`PkInfo.problem`, `problem_offset`); the Kotlin validator reports the same conditions in words.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `"TTPK"` |
+| 4 | 1 | layout: 1 |
+| 5 | 1 | machine: 0 NTSC, 1 PAL |
+| 6 | 1 | multispeed N, 1..4 (player ticks per video frame) |
+| 7 | 1 | speed (ticks per row) at the song start, 1..255 |
+| 8 | 2 | order count, 1..256 |
+| 10 | 2 | loop order (< count) |
+| 12 | 1 | instrument count I = highest slot present, 0..64 |
+| 13 | 1 | shared AUDCTL bits at the start: 0x80 (9-bit noise) and 0x01 (15 kHz) only |
+| 14 | 2 | data size D, ≤ 44608 |
+| 16 | 2 | sample bytes S, ≤ 16384 |
+| 18 | 1 | sample count, 0..32 |
+| 19 | 45 | 0 |
+| 64 | 256 | rows of order *o*: 1..255, 0 = 256 (Thor Tracker: ≤ 64); entries ≥ count 0 |
+| 320 | 2048 | pattern of (order *o*, channel *c*) = u16 data offset at 320 + 2 (4 *o* + *c*); entries ≥ count 0 |
+| 2368 | 2048 | instrument slot *n* (1..64) at 2368 + 32 (*n* − 1) |
+| 4416 | 128 | sample *k* (0..31) at 4416 + 4 *k*: u16 byte offset into the sample region, u16 length in levels 1..32768; entries ≥ count 0 |
+| 4544 | 44608 | data region: patterns and envelopes, `[0, D)` |
+| 49152 | 16384 | sample region: 4-bit levels, two per byte (earlier level in the low nibble), `[0, S)`; a sample lies inside it |
+
+**Instrument** (32 bytes; all-zero = no instrument; records above I zero): byte 0 flags — 0x80 defined (required),
+0x01 joined, 0x02 filtered, 0x04 sample (not with joined/filtered), 0x08 fast, 0x10 pitch envelope relative, 0x20
+difference (filtered only); byte 1 filter offset s8 (filtered; difference: 1..127; else 0); byte 2 partner AUDC
+(joined/filtered; else 0); byte 3 sample index (< count; sample sounds, else 0); byte 4 root note 0..107 (samples, else
+0); byte 5 0; bytes 6-7 rate 1000..32000 levels per second at the root (samples, else 0); bytes 8-9 loop start < the
+sample's length or 0xFFFF (samples; else 0xFFFF); bytes 10-17 data offsets of the volume (0..15), arpeggio (s8
+−64..63 semitones), pitch (s8 −64..63 sixteenths of a semitone) and distortion (0..8) envelopes, 0xFFFF = none; bytes
+18-31 0. Sample sounds use the arpeggio and pitch envelopes only (the others must be 0xFFFF).
+
+**Envelope** (in the data region, may be shared): u16 length 1..256, u16 loop (< length, or 0xFFFF), u16 release
+(1..length − 1, greater than the loop, or 0xFFFF), then `length` bytes inside `[0, D)`, each in its envelope's range.
+
+**Distortion values** (envelopes, `Vxx`): 0..7 = AUDC bits 7-5 (`0` poly5+poly17/9, `2` poly5-gated tone, `4`
+poly5+poly4, `6` = `2`, `8` poly17/9, `A` pure tone, `C` poly4, `E` = `A`), 8 = volume only (the level is a DC
+step: the DAC). No distortion envelope = `A`.
+
+**Patterns**: as the OPL3's (`0x80 | k` = k + 1 empty rows; mask `0x01..0x13`: bit 0 note, bit 1 instrument, bits 2-4
+effect count 0..4; note 0..107 or `0xFE` OFF; instrument 1..64, defined; effect code, parameter per column), decoded
+for exactly rows(*o*) rows inside `[0, D)`. Load-time parameter checks: `Bxx` < order count, `Cxx` ≤ 0F, `F00`
+rejected, `Hxx` any (a difference sound clamps to 1..127), `Kxx` ≤ 1, `Nxx` ≤ 1, `R00`, `T00` only, `Vxx` ≤ 8, `Wxx`
+≤ 2. `pk_load_image` derives `PkInfo`: order count, loop, machine, multispeed, speed, rows per order, and per order the
+speed, shared AUDCTL bits and two-tone state sequential straight play starts it with (header values, then each order's
+last `F`, `K`/`N`, `W` in rows, channels, columns order; jumps ignored).
+
+### Player
+
+Units: **pitch** in 1/64 semitone, 0 = C-0, at most 108 · 64 − 1; note *n* = 64 *n*; frequency f(p) =
+440 · 2^((p − 3648) / 768) Hz (A-4 = 57 · 64 = 3648 = 440 Hz).
+
+**Pitch to counter** (per tick for every sounding voice; doubles, the Python reference does the same operations):
+the distortion gives a divisor *D* (fires per waveform period) and a modulus *M*: pure tone `A`/`E`, noise `8` and
+volume only: D 2, M 1; `0`: D 2, M 31; `C` (the 15-step poly4 pattern): D 15, M 15; `2`/`6` (the 31-step poly5 gate
+with 15 toggles): D 62, M 31; `4` (poly5 and poly4, 465 steps): D 465, M 465. Noise distortions `0`/`8` are not
+periodic tones: their note picks the rate a square wave of that pitch would fire at. Target period Pt = C / (f · D)
+cycles (C the machine clock). The voice's counter has periods P(N): 28 (N + 1) or 114 (N + 1) (base clock, the
+current shared choice), N + 4 (fast 8-bit), N + 7 (fast 16-bit); N 0..255 (8-bit) or 0..65535 (16-bit). Candidates:
+every 8-bit N; for 16-bit, N0 = round(Pt) − 7 (fast) or round(Pt / 28 or 114) − 1 (round = half away from zero, C's
+`llround`), clamped to 0..65535, and the 49 values N0 − 24 .. N0 + 24 inside 0..65535 (clipped at the ends, not
+shifted). The chosen N minimises |P(N) − Pt| (doubles) among candidates whose period is coprime to M (so the sampled
+pattern has its full length and the note its pitch), or among all if none is; ties take the smaller N. (On the 15 kHz
+clock every period is a multiple of 3, so `C` and `4` cannot play their full patterns there; the song check warns.)
+The search depends only on (pitch, distortion, base clock, machine, filter offset) and the voice's kind: the player
+keeps the last result per voice and reuses it while those are unchanged (a cache, not a rule).
+
+**High-pass sounds**: the clock channel's counter N′ = N + filter offset (clamped to the counter's range): the
+offset sweeps the high-pass sampling against the tone (a phasing pulse wave at |offset| small). **Difference** sounds
+(the "POKEY saw"): the note is the difference of the two counters' fire rates, C/P(N) − C/P(N + d), d = offset 1..127:
+N minimises |C/P(N) − C/P(N + d) − f| (8-bit: every N with N + d ≤ 255; 16-bit: N0 from x = (√(Δ² + 4 C Δ / f) − Δ) /
+2 cycles, Δ = d (fast) or 28 d / 114 d cycles, as above, and the 49 around it clipped to 0..65535 − d; ties the
+smaller N); the clock channel's N′ = N + d; the distortion's D is not used. `Hxx` overrides d (clamped to 1..127).
+
+**Samples**: rate r = rate · 2^((p − 64 root) / 768); the counter is chosen as above for Pt = C / r, D 1, M 1, among
+periods ≥ `PK_PCM_MIN_PERIOD` = 114 cycles (one level per scan line at most: what a 6502 interrupt routine sustains
+beside the display's DMA).
+
+**Envelopes** (FamiStudio's semantics): at the key-on every envelope of the sound starts at step 0; each tick reads
+the step, then advances: the step after the last loops to `loop` (when there is a loop and no release) or holds the
+last; reaching `release` before the note is released loops to `loop` (or holds `release − 1` without a loop). OFF moves
+every envelope with a release to its release step (and on from there to the end, which holds); a second OFF does
+nothing. Values: volume 0..15 (none: 15), arpeggio semitones (none: 0), pitch sixteenths: absolute offset, or added to
+an accumulator each tick and the sum used in the same tick (relative; the accumulator is clamped to ±1728, the pitch
+range), distortion 0..8 (none: 5). Edits apply live: envelopes are read from the current image every tick by (slot,
+envelope, step); a step beyond a shortened envelope is clamped to its last; a slot no longer defined reads as no
+envelopes.
+
+**Writes**: through a shadow of the 16 registers — a write equal to the shadow is not emitted, except the reset batch,
+STIMER and the `R` pair. A tick's batch, in order: SKCTL (`R`: SKCTL with bits 0-1 cleared, then SKCTL), AUDCTL, AUDF1,
+AUDC1, AUDF2, AUDC2, AUDF3, AUDC3, AUDF4, AUDC4, IRQEN, STIMER (`T`, value 0). SKCTL = 3 | 0x08 (two-tone on) | 0x80
+(`W02`). The machine writes a batch at the tick's first cycle. **Reset** (start, audition): all state cleared; lanes:
+instrument 0, volume 15, no effects, no voice; speed = header speed; shared AUDCTL bits = header byte 13; two-tone
+off; the reset batch, **emitted in full whatever the shadow holds** (a defined start for the chip and for every VGM
+player), then held by the shadow: SKCTL 0, AUDCTL = header byte 13, AUDF1, AUDC1 .. AUDF4, AUDC4 = 0, IRQEN 0, SKCTL 3
+(initialization mode ends: the generators and base clocks start at the first cycle). It and the first tick's batch
+are both written at cycle 0.
+
+**Tick** (positions (order, row, tick-in-row); the host's position is the tick about to run): sequencing exactly as the
+OPL3 player (row reads at tick 0, `F` last wins, `B`/`D` jumps, `G` delays, `S` cuts at their tick), plus: the global
+effects `K`, `N`, `W`, `R`, `T` act at the row's tick 0 like `F` (channel then column order, the last wins; not delayed
+by `G`); **every arrival at row 0 of the loop order** (the wrap, a jump, the first pass) sets the speed, the shared
+AUDCTL bits and the two-tone state to what sequential straight play starts that order with (`PkInfo.start_speed`,
+`start_audctl`, `start_two_tone`), so every pass of the loop plays alike without the lowering emitting anything. Then
+each voice is updated (below), the shared AUDCTL, SKCTL and IRQEN values are assembled and the batch written.
+
+**Running a row** of a lane: a note 0..107 clears the lane's arpeggio effect, fine pitch and `V`/`H` overrides; an
+instrument byte sets the lane's instrument; effects run in column order (table); then the note: OFF releases the voice
+(envelopes with a release point jump to it; a voice whose volume envelope has no release point, or that has no volume
+envelope, is **silent at once**: level 0, its channels kept until a note takes them, its envelopes stop stepping, pitch
+still updates; samples stop: AUDC 0, interrupt off); a note with portamento active (`3xx` > 0) on a lane whose voice
+is **held** only sets the glide target; any other note keys on. Held = keyed on and neither released nor silenced by
+OFF/`Sxx`, and for a sample voice still playing: a one-shot sample whose timer interrupt has run past its last level
+(or that stopped because a live edit shrank it) is no longer held, so the next note keys on and restarts it even
+under a sticky `3xx`. A looping sample stays held until OFF or `Sxx`; a synthesized voice stays held after its
+envelopes end (even at level 0) until OFF or `Sxx`. A voice cut by another lane's key-on has ended and is not held.
+
+**Key-on** (note *n*, lane *l*): if the lane's instrument is not a defined slot or its kind cannot play on this lane,
+nothing happens (the lane's old voice keeps sounding). Else the old voice of this lane ends; every POKEY channel the
+new voice takes is taken from its holder (that voice is **cut**: it ends and releases all its channels); channels the
+old voice held that the new one does not get AUDC 0. The voice copies its instrument's flags, filter offset, partner
+AUDC and, for samples, the sample index, rate, root and loop; base = target = 64 *n*; slide 0, arpeggio step 0,
+vibrato phase 0, relative pitch accumulator 0, envelopes at step 0; samples start at level 0 (AUDC = 0x10 | level).
+
+**Update** (per tick, after the rows; voices in lane order): pitch = clamp(base + 64 · (arpeggio envelope + `0xy`
+step) + fine + slide + vibrato + pitch envelope · 4, 0, 6911), vibrato = floor(SINE[phase] · depth / 16) with the
+OPL3's 64-entry sine; level = ⌈env · vol / 15⌉ (env the volume envelope, vol the lane volume 0..15); distortion =
+`Vxx` if set, else the envelope's. Registers of the voice's channels per kind (AUDC of its own channel = distortion
+<< 5 | level, or 0x10 | level for volume only; 16-bit: low AUDF = N & 0xFF, high AUDF = N >> 8; the partner channels
+AUDC = partner byte). AUDCTL = shared bits | the bits of every voice (table above). IRQEN = the timer bits of sample
+voices still playing. Then the effects advance as the OPL3's (arpeggio step mod 3, slides ±speed clamped to ±6912,
+portamento, vibrato phase + speed mod 64, volume · 8 + x − y clamped 0..120 for `Axy`) and the envelopes step (not for
+a silenced voice). Lanes without a voice (never keyed, ended or cut) neither update nor advance their effects. A sample
+voice whose index lies beyond its sample in the current image stops (live edits).
+
+**Timer interrupt** (`pkp_irq`, the machine calls it with the timers that fired): for each fired timer 1, 2, 4 in that
+order whose channel holds a playing sample voice: the next level (index + 1; past the end: the loop start, or the voice
+stops: AUDC 0, then IRQEN with its bit cleared); else AUDC = 0x10 | ⌈level · vol / 15⌉. The writes go out through the
+same shadow at the interrupt's cycle (an interrupt in the tick's last cycle comes before the next tick's batch). A
+level's length depends on the counter's phase at the key-on (the first level lasts up to one period; STIMER `T00` on
+the note's row aligns it, but resets every channel).
+
+### Effects
+
+Names are one character; up to 4 columns per channel. "Note" = shapes the note keyed on this row (on a row without
+a note: the sounding voice, until the next note); "now" = from this row on; "global" = the whole chip, at tick 0.
+
+| Effect | Parameter | Meaning |
+|---|---|---|
+| `0xy` arpeggio | x, y semitones | note, plus x, plus y each tick |
+| `1xx` / `2xx` slide | 1/64 semitones per tick | now: up / down until `100`/`200`/`300`; a note restarts the offset |
+| `3xx` portamento | 1/64 semitones per tick | now: a note on a held voice (see Running a row) glides there |
+| `4xy` vibrato | speed x, depth y | now: ±floor(SINE · y / 16) sixty-fourths (y F: ±1.86 semitones) |
+| `Axy` volume slide | x up, y down, 1/8 step per tick | now |
+| `Bxx` jump | order | global: after this row play order xx |
+| `Cxx` volume | 00-0F | now: the lane volume (start 0F); scales envelopes and sample levels |
+| `Dxx` break | row | global: after this row play row xx of the next order |
+| `Fxx` speed | 01-FF | global, this row included |
+| `Gxx` delay | ticks | the lane's row runs at tick xx (not its global effects) |
+| `Hxx` high-pass offset | s8 (difference: 01-7F) | note: the clock channel's counter offset of high-pass sounds |
+| `Kxx` base clock | 00 64 kHz, 01 15 kHz | global: AUDCTL bit 0 (every base-clocked voice is recomputed: same pitches, coarser) |
+| `Nxx` noise generator | 00 17-bit, 01 9-bit | global: AUDCTL bit 7 |
+| `Pxx` fine pitch | 80 = none | xx − 80 sixty-fourths (±2 semitones) until the next note |
+| `R00` generator restart | — | global: SKCTL initialization-mode pulse: generators and base clocks restart (noise and base-clock phase repeat) |
+| `Sxx` note off | tick | release at tick xx of this row |
+| `T00` timer restart | — | global: STIMER: every counter reloads, outputs to 1 (aligns high-pass and sample phases) |
+| `Vxx` distortion | 00-08 | note: overrides the distortion envelope (08 = volume only) |
+| `Wxx` two-tone | 00 off, 01 on, 02 on + force break | global: SKCTL bits 3, 7: timers 1 and 2 resync each other (02: timer 2 only) |
+
+### Position, seek, live edits, audition, mute
+
+- `position()` is the player's (order, row, tick).
+- `start(order, row, max_ticks)`: the player runs alone from the song start to find the tick count *n* (bounded by
+  `max_ticks`; else the order fallback: the player placed at the order's row 0 with that order's start speed, shared
+  AUDCTL bits and two-tone state, `CHIP_SEEK_FROM_ORDER`). Then the machine is reset exactly as a fresh one and **every
+  one of the *n* ticks runs as `tick` runs it** — player, interrupts, the whole chip clocked, mixer, blip_buf and the
+  coupling filter — with the frames discarded. After a seek from the start the output is sample-identical to straight
+  play reaching that row. Cost: the event-driven chip's cost for the skipped stretch (suggested `seekTicks` 12000).
+- `apply_image`: the OPL3's rules (1)-(3) and (5) (clamping, speed, re-read jumps and delays, multispeed and machine
+  from the next tick); (4) becomes: voices keep their kind, channels and sample choice from their key-on and read
+  envelopes and sample bounds from the new image by slot and index (a sample index or level beyond the new data stops
+  the sample). A machine change (NTSC ↔ PAL) applies at the next tick (clock and frame length).
+- `audition(channel 0..3, note 0..107, slot 1..64, fine −128..127)`: reset; the player keys the note on that lane
+  (taking its channels; `fine` added like `Pxx`); ticks update the voice (envelopes, samples) without rows. A sound
+  that cannot play on that lane, an undefined slot or arguments out of range: `CHIP_ERR_IMAGE`. `release()`: 0 before
+  any tick or when the voice is silent; else OFF from the next tick (state only: the next tick's batch carries it) and
+  `tick` returns 0 once the voice is silent for good — a silenced voice (no volume release point: at once), level 0
+  with every envelope held at its end, or a sample stopped — or after 10 s (600 / 500 ticks × N).
+- `mute(lane)`: the mix leaves out the POKEY channels the lane's voice holds (its own and the taken ones) while it
+  holds them; the chip, the player and the VGM are unchanged; unmuting resumes mid-note. `start`/`audition` clear mutes.
+- `tick`: one player tick and its interrupts: frame cycles / N (NTSC 29868, PAL 35568 at N = 1; exact accumulation),
+  ≤ 1928 frames at 96 kHz.
+
+### VGM export
+
+`pk_vgm_render` (`pokey/pokey_vgm.c`) runs the player and the chip's timers (the interrupts' times) headless and logs
+the writes as VGM 1.71 for one POKEY: header 0x08 = 0x171, 0x24 = 60 (NTSC) / 50 (PAL), 0x34 = 0xCC, **0xB0 = POKEY
+clock** (1789773 NTSC, 1773448 PAL: the format's integer Hz), 0x18 total samples, 0x1C loop offset − 0x1C and 0x20 loop
+samples (both 0 without a loop), others 0 (data at 0x100; `pk_vgm_render` writes no GD3, 0x14 = 0). Writes `0xBB reg
+val` (reg 0x00-0x0F; IRQEN is not logged: it only routes interrupts to the player; the chip of the render receives it).
+Waits from cycle times: samples(c) = floor(c · 44100 / C), exact integers (NTSC c · 77 / 3125, PAL c · 88200 /
+3546895), emitted before a write as samples(its cycle) minus the samples waited so far (a write lands at most one
+44.1 kHz sample, 23 µs, before its cycle), encoded `0x62` (735), `0x63` (882), `0x70`-`0x7F` (1-16), else `0x61 nn nn`
+chunks of at most 65535. The data starts with the reset batch at cycle 0. At the first arrival at (loop order, row 0,
+tick 0): the wait up to that tick's cycle, the loop point, then a dump of SKCTL, AUDCTL, AUDF1, AUDC1 .. AUDF4, AUDC4
+(the shadow's values, all written) before that tick's batch. The song ends at the second arrival (or the tick limit,
+then without a loop): the wait up to that tick's cycle, then `0x66`. Hosts' entry point `pokey/pokey_export.h`
+(self-contained for cinterop): `pk_export_vgm(image, 65536, max_ticks, title, author, date, &size, &problem)`
+validates the image (`problem` = the loader's reason, or "image size", "out of memory"), renders the file (measured
+first, then rendered into one allocation) and appends a GD3 1.00 tag as the OPL3's (system "Atari 8-bit POKEY (Thor
+Tracker)"), freed with `pk_export_free`; control thread only. Kotlin `PokeyVgm.renderer` is registered by `ChipAudio`
+(JNI `nativePokeyVgm(image, maxTicks, title, author, date)`, UTF-8 byte arrays, `IllegalArgumentException(problem)` on
+rejection) and the Deck (`DeckPokeyVgm` over cinterop `decknative`).
+
+### Ops behaviour
+
+| Op | Behaviour |
+|---|---|
+| `load_image` | copy, then `pk_load_image`; `image_storage` = `sizeof(PokeyImage)` |
+| `start(order, row)` | above; `seek_mode` from start or order |
+| `apply_image` | above; ignored while auditioning |
+| `audition`, `release` | above (`channel` = the lane, POKEY channel 1-4 = 0-3) |
+| `mute(channel 0-3)` | above |
+| `position` | the player's |
+| `tick` | one tick: NTSC 801-802 frames at 48 kHz (PAL 962-963; multispeed N: / N), ≤ 1928 at 96 kHz; 0 after a released audition ended; never `CHIP_ERR_FAULT` |
+
+The machine (`pokey/pokey_machine.c`) owns one `PokeyChip` (whose generator tables `pk_init` builds once at creation:
+131071 steps), the player, a copy of the image, Altirra's mix table scaled to integers (× 16384, `PKM_MIX_SCALE`), one
+blip_buf (machine clock → host rate, its rates reset when the image's machine changes) and the coupling filter's state
+(doubles). The chip's output callback adds a step to blip_buf at the cycle of every change of the audible levels;
+mutes mask the levels of the channels a muted lane's voice holds (re-mixed after every tick's batch, since voices take
+channels there, and on every `mute`). Nothing in `tick`, `apply_image`, `mute` or `release` allocates or locks.
+
+### Native build and sources
+
+`pokey/pokey_engine.c` (the ops table `pokey_chip_ops`, registered in `chip_engine.c`), `pokey_machine.c`,
+`pokey_player.c`, `pokey_chip.c`, `pokey_image.c` and `pokey_vgm.c` are C11 in the `chip_engines` library
+(`CMakeLists.txt`, `POKEY_DIR`), the Deck's native build (`deck/build.gradle.kts`; `pokey_export.h` in the cinterop
+`decknative.def`), the host test script and every render script that links `chip_engine.c`
+(`tools/audio/render_{nes,sid,opl3,ym,pokey}_image.sh`). They use blip_buf and `vgm_gd3.c`, nothing else; no
+generated files.
+
+### Preparing
+
+Nothing to prepare: the POKEY system has no driver binary, no generated tables (the vibrato sine is copied into
+`pokey_player.c` from `generated/opl3_tables.h`'s `O3_SINE`) and no fixtures. The host test builds its test song in C
+(`app/src/test/cpp/pokey_test_song.h`) and writes the images and traces the Python reference reads.
+`core/.../backend/PokeyPlayerImage.kt` mirrors `pokey_image.h`, `pokey_player.h` (`PKP_*`, `PK_PCM_MIN_PERIOD`),
+`pokey_machine.h` and `pokey_vgm.h` by hand: change them together.
+
+### Verification
+
+**356 native checks pass.** `tools/audio/run_native_host_test.sh [dir]` builds and runs
+`app/src/test/cpp/pokey_machine_test.c` on the test song (`pokey_test_song.h`: 4 orders of 16/32/16/24 rows,
+speed 6, loop order 1, 13 instruments covering every kind, 2 samples; NTSC, and a PAL copy). It checks:
+
+- **The chip** against the Altirra manual's hardware numbers: the 4- and 5-bit generators' patterns
+  `000011101100101` / `0000011100100010101111011010011` from the reset state, channel *c* *c* cycles late; maximal
+  sequences (2^(n−1) − 1 ones per period; the 9-bit one not periodic in 7 or 73); initialization mode reading 1 / 0;
+  periods N + 4, N + 7 (linked), (N + 1) × 28 and × 114 from the output edges; 64 kHz AUDF 72 = 437.8 Hz (NTSC);
+  equal tones on channels 1 and 3 cancelling (constant mix) while 1 and 2 add; STIMER leaving channels 3 and 4 on and
+  1 and 2 off (also with the high-pass flip-flops on); two-tone with force break: timer 2 at 84 cycles lets timer 1
+  set to 85 cycles fire once after STIMER and pre-empts it at 86. 13 chip cases (fast, 64 kHz, 15 kHz, linked,
+  high-pass, STIMER, initialization mode, two-tone with and without break, volume only, timer interrupts with IRQEN
+  changes, 9- vs 17-bit noise, PAL distortions): **`pk_run` = `pk_run_reference`** (identical edges and interrupts),
+  written to `pokey_chip_cases.txt`.
+- **Images**: the derived `PkInfo` (rows, start speed / AUDCTL bits / two-tone per order); 57 single-byte corruptions
+  each rejected with its reason; loading is a pure function.
+- **The song**: 1500 ticks NTSC and PAL into `pokey_trace.txt` / `pokey_trace_pal.txt` (`T tick order row tickInRow
+  cycle:` and `I cycle timers:` lines with ` R=VV` writes, the format the reference reads); every kind sounding,
+  samples on timers 1, 2 and 4, every distortion and volume only written, every AUDCTL bit used, two-tone, force break,
+  the `R` pair and STIMER written; a second chip fed the same writes with `pk_run` and with `pk_run_reference` produces
+  identical edges and interrupts over all 1500 ticks, and its interrupts are exactly the ones the player received;
+  every tick exactly one frame of cycles; 30 s (`pokey_song.wav`) non-silent in every second, within the amplifier
+  clamp, mono on both channels, bit-identical on a second start; loop passes stepping through identical positions,
+  each arrival with the first pass's speed, AUDCTL bits and two-tone state, equal to the VGM's loop.
+- **Seek**: eight targets landing on their row with **60 ticks of output sample-identical to straight play**; the order
+  fallback for rows only reached through `D02` and for a small budget, then the order's start speed and its `F05`;
+  targets outside the song rejected.
+- **Live edits** (per-tick hashes of every batch and its cycle): the same image and a re-laid-out one before every
+  tick = straight play; a note edit applied at five ticks up to its row = the edited song's straight play; a tempo edit
+  ahead of the playhead = the tempo song, behind it rows of 9 then (undone) 6 ticks; the song cut under order 3 clamps
+  and continues in the loop order; ×2 multispeed and then PAL applied live change the next tick's cycles.
+- **Audition**, pitch measured from the chip's output edges: A-4 on 8-bit 64 kHz AUDF 72 = 437.81 Hz; `fine` +64 =
+  AUDF 68; A-4 on the fast 16-bit counter within its resolution (N 2027, ±0.22 Hz); A-7 on fast 8-bit; distortion C
+  on C-4 periodic in exactly 15 fires; the difference saw on C-3 beating at C/P(N) − C/P(N + 3) (pulse widths wrap
+  once per beat); a once sample giving exactly 600 timer-4 interrupts for its 600 levels then stopping (AUDC4 0, IRQEN
+  cleared), each level one period; a looping sample at the 114-cycle minimum period still playing; release ending with
+  the volume envelope's tail (4-10 ticks), a voice without a release point silent at the next tick, a cut before any
+  tick; argument and lane limits (`pokey_tone.wav`).
+- **Mute**: writes unchanged; lanes holding no channel leave the output bit-identical, the lane holding them silences
+  it; all lanes silent after 100 ms, unmuting resumes, a mute before the first tick holds.
+- **Sticky portamento over samples** (`pokey_porta.bin`, 24 rows at speed 6, every lane C-4 `310` then E-4 on row 8
+  and G-4 on row 16, into `pokey_trace_porta.txt`): a 200-level one-shot at 7990 Hz, over long before row 8, keys on
+  afresh on each note — the row's tick-0 batch writes AUDC1 at its first level and IRQEN with timer 1, then 199 timer 1
+  levels and the stop; nothing between notes; base = target (no glide); audible on rows 0, 8 and 16 alone and silent
+  on rows 7 and 15. An 8000-level one-shot still playing at row 8 glides on (index kept) and, over by row 16,
+  restarts; a looping sample and a tone whose one-shot volume envelope ended at 0 stay held and glide.
+- **Multispeed** ×2: 120 ticks = 60 frames of cycles and host frames, 20 rows.
+- **VGM**: header fields, the file parsed from the format alone (waits sum to the header's total = samples of the
+  end cycle) and its 0xBB writes equal, sample for sample, to the machine's writes (IRQEN left out) with the reset
+  batch first and the loop dump at the loop offset; PAL header and length; `pokey_song.vgm`, `pokey_song.bin`,
+  `pokey_song_pal.bin` written. The entry point: GD3 fields decoded back, rejected images, tick limit without loop,
+  today's date by default. The ops table as the hosts drive it; tick cost without a slow path (POKEY ticks are not
+  flat: the chip's work follows the counters' fire rates and sample interrupts; after warm-up no tick above 3× the
+  99th percentile of thread CPU time, none above a quarter of the tick's 16.7 ms).
+
+`tools/audio/run_native_host_test.sh` also runs `wav_render_test.c` on the demo `scanline-cruise.pkimg` and the
+shortest song `pokey-shortest.pkimg` (written by `tools/build.sh exportSamples`). `tools/audio/render_pokey_image.sh
+image.pkimg out.wav [seconds] [mute=14] [--vgm out.vgm] [title=..] [author=..] [date=..]` renders an image through the
+ops table as the hosts do (`tools/audio/pokey_render.c`), and its VGM through `pk_export_vgm`. **Bench**:
+`tools/audio/build_pokey_bench.sh [dir]` builds `tools/audio/pokey_bench.c` for the host and with the NDK (static
+arm64, `-O2` and `-O3`): cold ticks, warm ticks against the chip alone fed the same writes, paced ticks, the player
+alone, `apply_image`, audition setup, seeks and 12000 clocked ticks.
+
+- `tools/audio/pokey_reference_check.py <dir> [--vgm2wav PATH]` passes, including the independent MAME render:
+  envelope correlation **0.834**, log-spectrum **0.869**, pitch-class agreement **76%** of 300 windows,
+  level ratio **0.45** with the reference renderer at 25% master volume. `tools/audio/pokey/pokey_ref.py`
+  implements the player separately on `tools/audio/pokey/pokey_chip_ref.py`, a per-cycle POKEY model (from
+  Altirra's manual and generator formulas and MAME's cycle order). The script requires: the host test's
+  `pokey_trace.txt` (NTSC), `pokey_trace_pal.txt` (PAL) and `pokey_trace_porta.txt` (sticky portamento over samples)
+  reproduced line for line (every tick's batch at its cycle, every timer interrupt with its writes); `pokey_song.vgm`
+  reproduced byte for byte (36000-tick limit) and parsed from the format alone (1.71 header, POKEY clock at 0xB0,
+  frame rate, data at 0x100, no GD3, waits summing to the header's total, the loop point on a command boundary
+  followed by the SKCTL/AUDCTL/AUDF/AUDC dump equal to the registers the
+  trace reaches before the loop order's first tick, writes and their 44.1 kHz times = the reset batch and trace writes
+  without IRQEN); every case of `pokey_chip_cases.txt` replayed through the reference chip (stepping every cycle, and
+  event-driven: both agree) giving exactly the engine's output changes; the reference generators' 4- and 5-bit
+  patterns equal to the manual's. With `--vgm2wav`, libvgm's player and its POKEY core (MAME's, a separate emulation)
+  render the VGM, compared with the engine's 30 s `pokey_song.wav`, DC removed (MAME's core is not AC-coupled):
+  20 ms loudness-envelope correlation > 0.8, 60 Hz-4 kHz log-spectrum correlation > 0.75, dominant pitch class equal
+  in > 60 % of 100 ms windows, level ratio within 0.25-4 (thresholds chosen before any render).
+
+### Hosts: threads and costs
+
+Production callback/seek costs were measured on Nova, DMG and Konkr; the standalone cold/warm bench
+has not been run. By construction: the callback runs `tick` (the player's tick, its pitch searches
+only when a voice's inputs change, the event-driven chip — work proportional to counter underflows and fires, i.e. to
+the pitches and sample rates playing, up to ~262 timer interrupts per tick for a sample at the 114-cycle minimum — the
+mix, blip_buf and one filter step per host sample), `apply_image` (a 64 KB copy plus a few row decodes) and `mute`;
+the control thread runs `start` (machine reset and every tick up to the target fully clocked: the cost of playing
+that stretch, without the audio output; `seekTicks` 12000 ≈ 200 s of song) and `audition` (reset only) on spare
+machines, and creation (allocation and the generator tables). Konkr's observed maximum callback was
+3.745 ms with no xruns or driver faults; a 16,065-tick order-local seek took 266.539 ms off the UI thread,
+with a maximum observed UI round trip of 32 ms. These are bounded software observations, not
+physical-button latency or human-listening measurements.
+
 ## Atari 2600: Thor Tracker's own player on the TIA (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`)
 
-**Status: UNVERIFIED 0.32.0/code45 source integration** (branch `tia-system`), merged with `d417843` (OPNA/OPM/scales). No TIA generation, build, test, device or listening verification has run; historical evidence for other systems does not verify this integration.
+**Status: 0.32.0/code 45 integration** with verified POKEY `c8a7d46`. Generated constants and fixtures are
+deterministic; the focused native preflight passes 1,806 checks, including pre-resampler headroom.
+Integrated Kotlin/native builds, independent pitch comparisons and frontend verification remain pending;
+earlier-system evidence is not a TIA frontend pass. See `VERIFICATION.md`.
 The Atari 2600's sound is the TIA's two audio channels (Television Interface Adaptor, CO10444): per channel a 4-bit
 control register (AUDC: which of the counters' feedback and division modes), a 5-bit frequency divider (AUDF) and a
 4-bit volume (AUDV), clocked twice per scanline from the video timing, the two outputs tied together into one mono
