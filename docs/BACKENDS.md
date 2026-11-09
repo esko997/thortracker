@@ -1250,7 +1250,7 @@ Decisions (made on the user's behalf; see Open questions):
 - **Help**: the effects page from `SccRules`, the Instrument, Envelopes and Waves sections and an "SCC and SCC+ wave
   RAM" section.
 
-### YM2151 (OPM): decisions, model, lowering and editor (branch `opm-systems`, unverified source slice)
+### YM2151 (OPM): decisions, model, lowering and editor
 
 Full contract: `docs/AUDIO_ENGINE.md`, "OPM". Decided on the user's behalf (the user approved working through the chip
 roadmap autonomously):
@@ -1461,7 +1461,7 @@ VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
   columns and the channel-holder tags; Song lists Machine, Multispeed, Noise and Base clock; Help's effects page uses
   `PokeyRules` and the system help.
 
-## Atari 2600 (TIA): decisions (0.32.0/code 45 locally verified; publication pending)
+## Atari 2600 (TIA): decisions (0.32.0/code 45)
 
 Full contract: `docs/AUDIO_ENGINE.md`, "Atari 2600". Decided on the user's behalf (roadmap item 7, "TIA"; every
 onboard sound feature, nothing invented):
@@ -1525,7 +1525,7 @@ onboard sound feature, nothing invented):
   and a portamento that step through the dividers, and `W01` turning held notes into the 4-bit buzz at the same pitch.
   NTSC at 7 frames per row, PAL the same composition at 6.
 
-## VIC-20 (VIC) and C16 / Plus/4 (TED): decisions (0.33.0/code 46 integration; full verification pending)
+## VIC-20 (VIC) and C16 / Plus/4 (TED): decisions (0.33.0/code 46)
 
 Full contract: `docs/AUDIO_ENGINE.md`, "VIC-20 and C16/Plus/4". Decided on the user's behalf (approved autonomous
 work through the chip roadmap; every onboard sound feature, stock NTSC/PAL variants, no invented per-voice volume):
@@ -1619,6 +1619,65 @@ the chip roadmap autonomously and asked for the onboard PCM/DMA facilities and a
 - Model, editor, presets, starter kit, demos and tests: the Kotlin slice (`core` `system/ws`, `backend/WsLowering.kt`;
   README "WonderSwan").
 
+## Virtual Boy VSU (`vb-vsu`, 0.35.0/code 48 candidate; frontend acceptance pending)
+
+The full engine contract is `docs/AUDIO_ENGINE.md`, "Virtual Boy VSU". Decisions made on the user's behalf:
+
+VSU candidate `9464a80` includes SAA candidate `c27a60b` and the released VIC/TED ancestry.
+It is now source-integrated with WonderSwan/SAA head `38026f1` for **0.36.0/code 49**.
+The prepared pre-resampler scale 8, physical raw diagnostics and float divisor 24576 are retained,
+as are the SAA/VSU `blip_skip_silence` fixes. Seven-rate headroom and independent-reference bounds
+are unchanged. No guessed 5–10 ms note-on gate is introduced: Mednafen 1.32.1 does not implement
+that observation. The VSU candidate's 956 JVM tests and exact seven-rate seek probe do not verify
+this combined source or WonderSwan; see `docs/VERIFICATION.md` for evidence and remaining gates.
+
+- **One machine, no variants.** The Virtual Boy has one sound configuration (VSU-VUE, 5 MHz); no regional clock
+  differences, so the system is not a family. No ROM export: we have no V810 driver, so songs export as VGM 1.71 (the
+  format supports the VSU: header 0xC4, command 0xC7) and WAV, plus the project file.
+- **Own player, accurate core.** Like the OPL3 and POKEY: our player in C, a Mednafen 1.32.1-derived core
+  (GPL-2.0-or-later, compatible with the app's GPL-3.0-or-later) amended to the Sacred Tech Scroll's hardware-tested
+  behaviour (wave RAM write lock, envelope repeat reload, sweep overflow bug, modulation without repeat, noise reset to
+  zero), and an independent Python reference written from the Tech Scroll.
+- **Lanes are the six channels**: Wave 1-4, Wave 5 (the only channel with hardware sweep/modulation), Noise. No
+  invented voices and no chord allocation.
+- **Shared things stay shared and visible.** The five 32-sample waves (6-bit) and the 32-value modulation table are
+  song-wide (`VsuSound.waves`, `.modulation`), edited in the Wave view and loaded once at the song start, because the
+  hardware accepts wave RAM writes only while every channel is silent (modulation RAM: while Wave 5 is silent). An
+  instrument names a wave by number; several lanes can play one wave. Changing waves mid-song is not offered: it would
+  need all six channels stopped. Live edits in the editor poke the RAM directly (an editor convenience a console cannot
+  do while sound plays; documented in the engine contract), so wave edits are heard at once.
+- **Volume is what the chip has**: per-lane stereo levels (`8xy`, 4 bits each side) and the per-channel envelope
+  (start level, grow/decay, step interval, repeat). There is no separate volume register, so there is no volume slide;
+  fades are envelope settings. `Cxx` sets the envelope level of a note.
+- **Pitch is honest.** True absolute notes through the 11-bit period: A-4 = 440.14 Hz, error up to ~20 cents at B-7;
+  wave lanes cannot go below D#2 (77.8 Hz, period 2009 of 2048). The editor shows the real frequency and cents error.
+  Noise notes select shift-register rates (32 × the named note's frequency, the wave lanes' step rate) and are untonal;
+  short taps give buzzy pitched noise whose pitch depends on the tap.
+- **Tick = 50 Hz** (the Virtual Boy's display frame); speed counts these ticks.
+- **Locks**: `C`, `L`, `M`, `N`, `W` apply to the row's note (or at once to a sounding note on a row without one);
+  `8xy` stereo persists. Two effect columns per lane.
+- **OFF stops the channel** (the VSU has no release phase); an instrument's auto length stops it by itself.
+
+### VSU model, lowering and exports
+
+- Songs save backend `vb-vsu`, data version 1, in project format 10: six tracks with up to two effect columns per cell;
+  `sound` = 64 instrument slots (`null` = empty; otherwise `name`, `wave`, `level`, `envelope`, `grow`, `interval`,
+  `repeat`, `autoLength`, `length`, `noiseTap`, `freqMod` {`on`, `modulation`, `repeat`, `slowClock`, `interval`, `up`,
+  `shift`}, and the software pitch `sweep` {`start`, `end`, `speed`}), `waves` (5 × 32 values 0-63) and `modulation`
+  (32 values −128..127).
+- `backend/VsuLowering.kt` writes the 65536-byte `TTVB` image; `backend/VsuPlayerImage.kt` mirrors the C constants and
+  the loader's reasons by hand (change them together with `vsu/vsu_image.h`).
+- VGM export through the native player (`VsuVgm.renderer`, registered by Android's `ChipAudio` and the Deck); WAV
+  export through the shared `chip_wav` path.
+
+### VSU editor
+
+- Instrument view: every instrument field as a controller row (wave, envelope, length, noise tap, Wave 5
+  sweep/modulation, software pitch sweep), fields a lane ignores marked as such, presets, audition.
+- Wave view: the five shared waves and the modulation table (sixth page), drawn with the D-pad, presets, audition,
+  and which instruments use each wave.
+- Pattern view: six lanes, Noise untonal; the lane headers show the shared wave each lane plays (`sharedState`).
+
 ## Open questions
 
 - OPM clock (decided on the user's behalf, per the brief): 4 MHz (X68000) only; a 3.579545 MHz (arcade) variant would
@@ -1658,6 +1717,14 @@ the chip roadmap autonomously and asked for the onboard PCM/DMA facilities and a
 - YM2612 editor (decided on the user's behalf): one Instrument view for both kinds, with a Type row that swaps a slot
   between FM voice and PSG sound (the old sound is lost except through undo); an empty slot takes the Listen channel's
   kind. Alternative: separate FM and PSG slot ranges. Review.
+- VSU waves are song-wide and fixed for the song (the hardware only accepts wave RAM writes with every channel
+  silent). A "reload waves" effect that stops all channels first would be possible later. Proposed: not unless asked.
+- VSU noise notes: the shift register steps at 32 × the note's frequency (the same step rate as a wave lane on that
+  note); notes above ~A-5 share rates. Alternative: a 2048-step raw rate field. Review.
+- VSU tick rate: 50 Hz (the display frame), no multispeed. Review if songs need finer slides.
+- VSU behaviours from the Tech Scroll that are not modelled (5-10 ms of zero output after enabling a channel with the
+  envelope on; `SxRAM` possibly restarting the sample position; libvgm's modulation lock): listed in the engine
+  contract; a real Virtual Boy recording would settle them.
 - YM2612 envelope sketch times are approximations from the OPN2's rate tables at the NTSC clock (attack ≈ 7 % of the
   same rate's full decay, key scaling ignored), like the OPL3's; listening may suggest adjustments.
 - NES expansions (decided on the user's behalf): one system variant per expansion chip ("NES + VRC6") grouped under

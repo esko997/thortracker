@@ -76,6 +76,9 @@
 # player's), ws_song.vgm, wsc_vgm.vgm, ws_tone.vgm (VGM exports without GD3) and the images ws_song.bin, wsc_song.bin,
 # wsc_vgm.bin, ws_tone.bin: the inputs of tools/audio/ws/ws_reference_check.py. It also plays the exported
 # ws-demo/wsc-demo/ws-shortest/wsc-shortest images (app/build/samples, or $THOR_SAMPLES).
+# VSU: <dir>/vsu_song.bin (the test image), vsu_trace.txt (per-tick player writes), vsu_out.txt (the 10-bit digital
+# output of the first 300 ticks, changes only), vsu_chip_cases.txt (chip scenarios: writes, outputs, active channels),
+# vsu_song.vgm, vsu_song.wav and vsu_tone.wav: the inputs of tools/audio/vsu_reference_check.py.
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # POKEY: <dir>/pokey_song.bin, pokey_song_pal.bin (the test images), pokey_trace.txt, pokey_trace_pal.txt (per-tick and
@@ -105,9 +108,7 @@ includes+=(-I "$cpp/opm")
 includes+=(-I "$cpp/opn")
 includes+=(-I "$cpp/tia" -I "$cpp/third_party/stella-tia" -I "$cpp/third_party/stella-tia/shim")
 includes+=(-I "$cpp/pokey")
-includes+=(-I "$cpp/cbm")
-includes+=(-I "$cpp/ws")
-includes+=(-I "$cpp/saa")
+includes+=(-I "$cpp/cbm" -I "$cpp/ws" -I "$cpp/vsu" -I "$cpp/saa")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -122,6 +123,8 @@ c_engines=(
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
   "$cpp/ws/ws_chip.c" "$cpp/ws/ws_machine.c" "$cpp/ws/ws_player.c" "$cpp/ws/ws_image.c" "$cpp/ws/ws_apu.c" "$cpp/ws/ws_vgm.c"
+  "$cpp/vsu/vsu_engine.c" "$cpp/vsu/vsu_machine.c" "$cpp/vsu/vsu_player.c" "$cpp/vsu/vsu_chip.c" "$cpp/vsu/vsu_image.c"
+  "$cpp/vsu/vsu_vgm.c"
   "$cpp/saa/saa_chip.c" "$cpp/saa/saa_machine.c" "$cpp/saa/saa_player.c" "$cpp/saa/saa_image.c" "$cpp/saa/saa_vgm.c"
   "$cpp/saa/saa_core.c"
   "$cpp/cbm/cbm_chip.c" "$cpp/cbm/cbm_machine.c" "$cpp/cbm/cbm_player.c" "$cpp/cbm/cbm_tables.c" "$cpp/cbm/cbm_image.c"
@@ -154,7 +157,7 @@ for src in "${cxx_engines[@]}"; do
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
-  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test pokey_machine_test tia_machine_test cbm_machine_test ws_machine_test saa_machine_test wav_render_test; do
+  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test pokey_machine_test tia_machine_test cbm_machine_test ws_machine_test vsu_machine_test saa_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -185,6 +188,7 @@ status=0
 "$build/pce_machine_test" "$out" || status=1
 "$build/scc_machine_test" "$out" || status=1
 "$build/opm_machine_test" "$out" || status=1
+"$build/vsu_machine_test" "$out" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 echo "OPN / OPNA independent reference check of the evidence: python3 tools/audio/opn_reference_check.py $out"
 exit $status

@@ -16,6 +16,8 @@ import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
 import org.thortracker.system.ws.WsVgm
 import org.thortracker.system.ws.WsVgmRenderer
+import org.thortracker.system.vsu.VsuVgm
+import org.thortracker.system.vsu.VsuVgmRenderer
 import org.thortracker.system.saa.SaaVgm
 import org.thortracker.system.saa.SaaVgmRenderer
 import org.thortracker.system.pokey.PokeyVgm
@@ -334,6 +336,9 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             WsVgm.renderer = WsVgmRenderer { image, maxTicks, tags ->
                 nativeWsVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
+            VsuVgm.renderer = VsuVgmRenderer { image, maxTicks, tags ->
+                nativeVsuVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
@@ -385,6 +390,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** WonderSwan / WonderSwan Color VGM (`ws/ws_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeWsVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** Virtual Boy VGM (`vsu/vsu_export.h`); UTF-8 tag strings; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativeVsuVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** SAM Coupe or CMS (the image's variant); UTF-8 tag strings; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeSaaVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** POKEY VGM (`pokey/pokey_export.h`); UTF-8 tag strings; throws IllegalArgumentException(loader problem). */

@@ -13,13 +13,20 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-SAA1099 integration targets **0.34.0/code 47**, retaining the VIC/TED candidate and all earlier systems.
-The analytical headroom bound and 960 pre-clamp stress/public-machine cases pass without changing gains.
-Full integration, frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
+SAA1099 candidate `c27a60b` targets **0.34.0/code 47**, retaining VIC/TED and all earlier systems.
+Its analytical headroom bound, 960 pre-clamp cases, 925 JVM tests, corrected native checks and
+independent references pass. Frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
 
-WonderSwan source integration targets **0.36.0/code 49** atop VIC/TED candidate `4b1c95e4`.
-Its pre-resampler headroom correction is preserved; build, native/reference, Android and CI/SDL
-verification remain pending. SAA 0.34 and VSU 0.35 are separate parent-owned integrations.
+VSU candidate `9464a80` targets **0.35.0/code 48**, including SAA candidate `c27a60b` and the
+released VIC/TED ancestry. Its 956 JVM tests and seven-rate fractional-seek probe pass; full
+native/reference and frontend acceptance remain pending in that candidate's verification record.
+
+The current source integration combines WonderSwan/SAA head `38026f1` with VSU/SAA candidate
+`9464a80`, targeting **0.36.0/code 49**. Both WonderSwan variants, VSU, both SAA variants and
+all earlier engines remain present. WonderSwan's pre-resampler headroom correction and the incoming
+SAA/VSU fractional-seek fixes are retained. No build, test, generator or device run is claimed for
+this combined source; WonderSwan runtime acceptance remains pending. All local Kotlin/Native
+linking, including debug/test links, remains prohibited: use CI and exercise its downloaded AppImage.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -89,17 +96,20 @@ verification remain pending. SAA 0.34 and VSU 0.35 are separate parent-owned int
      Released **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
      WAV-only, Cartridge Dawn demos. Native/reference, Android controller/edit/export and SDL
      playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
-   - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
+   - VIC-20 VIC and Commodore 16/Plus4 TED — released **0.33.0/code 46**: "VIC-20 (VIC)" and
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
-     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM and all three
-     Android frontends pass; Linux/SDL verification and publication remain in progress.
+     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
+     Android frontends and the CI-built optimized AppImage pass in the recorded VIC/TED candidate.
    - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
-     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Pre-clamp headroom checks pass;
-     full integration and frontend verification remain pending.
-   - Virtual Boy VSU — wavetable handheld.
+     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Candidate `c27a60b`'s
+     headroom, JVM and corrected native/reference checks pass; frontend verification remains pending.
+   - Virtual Boy VSU — source-integrated for **0.35.0/code 48** (`vb-vsu`: own player on a
+     Mednafen-derived core with the Sacred Tech Scroll's amendments, VGM + WAV export).
+     Candidate `9464a80` records 956 JVM tests and exact seven-rate seek output; remaining native/reference
+     and frontend gates are not claimed complete (docs/VERIFICATION.md, "0.35.0 Virtual Boy VSU").
    - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
      DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
-     APU, VGM/WAV export), not yet built or verified.
+     APU, VGM/WAV export), integrated for **0.36.0/code 49**, not yet built or runtime-verified.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from

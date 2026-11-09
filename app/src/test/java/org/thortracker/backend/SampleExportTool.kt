@@ -55,6 +55,8 @@ import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ws.WsDemoSong
 import org.thortracker.system.ws.WsSystem
 import org.thortracker.system.ws.WscSystem
+import org.thortracker.system.vsu.VsuDemoSong
+import org.thortracker.system.vsu.VsuSystem
 import org.thortracker.system.tia.TiaDemoSong
 import org.thortracker.system.tia.TiaNtscSystem
 import org.thortracker.system.tia.TiaPalSystem
@@ -370,6 +372,15 @@ object SampleExportTool {
             File(directory, "$image-shortest.wsimg").writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
             println("Exported ${demo.title} and the shortest ${system.name} song to ${directory.absolutePath}")
         }
+        // The Virtual Boy demo and the shortest valid VSU song: project and engine images for the native renderers
+        // (wav_render_test.c; VGM needs the native player: tools/audio/render_vsu_image.sh crimson-stereoscope.vbimg
+        // out.wav --vgm crimson-stereoscope.vgm).
+        val vsu = VsuSystem.demo()
+        File(directory, "crimson-stereoscope.thor").writeText(ProjectCodec.encode(vsu), Charsets.UTF_8)
+        File(directory, "crimson-stereoscope.vbimg").writeBytes(ByteArray(VsuSystem.engine.imageSize).also { VsuSystem.engine.lower(vsu, it) })
+        val vsuShortest = VsuDemoSong.shortest()
+        File(directory, "vsu-shortest.vbimg").writeBytes(ByteArray(VsuSystem.engine.imageSize).also { VsuSystem.engine.lower(vsuShortest, it) })
+        println("Exported ${vsu.title} and ${vsuShortest.title} to ${directory.absolutePath}")
         // The SAM Coupé and CMS demos: projects and engine images (their VGMs need the native player:
         // tools/audio/render_saa_image.sh saa-sam-demo.saaimg out.wav --vgm coupe-lights.vgm renders both), and the
         // shortest valid song of each (one one-row order at speed 1, A-4 held on lane 1) whose images the native WAV

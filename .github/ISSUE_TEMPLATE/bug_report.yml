@@ -41,18 +41,22 @@ body:
         - Mega Drive (YM2612 + PSG)
         - WonderSwan
         - WonderSwan Color
+        - Virtual Boy (VSU)
         - SAM Coupé (SAA1099)
         - Creative Music System (2x SAA1099)
         - VIC-20 (VIC)
         - C16 / Plus/4 (TED)
         - Atari 2600 NTSC (TIA)
         - Atari 2600 PAL (TIA)
+        - Atari POKEY
         - Sega 8-bit (SN76489 / YM2413)
         - AY-3-8910 / YM2149
         - PC Engine (HuC6280)
         - MSX SCC
         - MSX SCC+
         - OPM FM (YM2151)
+        - PC-88/98 OPN (YM2203)
+        - PC-88/98 OPNA (YM2608)
         - Not song-related
     validations:
       required: true

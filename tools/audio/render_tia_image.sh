@@ -17,6 +17,7 @@ includes+=(-I "$cpp/sms" -I "$cpp/ay" -I "$cpp/pce" -I "$cpp/scc" -I "$cpp/opm" 
 includes+=(-I "$cpp/pokey")
 includes+=(-I "$cpp/cbm")
 includes+=(-I "$cpp/ws")
+includes+=(-I "$cpp/vsu")
 includes+=(-I "$cpp/saa")
 objs=()
 for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
@@ -39,6 +40,8 @@ for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/hug
   "$cpp/scc/scc_chip.c" "$cpp/scc/scc_machine.c" "$cpp/scc/scc_player.c" "$cpp/scc/scc_image.c" "$cpp/scc/scc_vgm.c" \
   "$cpp/scc/scc_k051649.c" \
   "$cpp/opm/opm_chip.c" "$cpp/opm/opm_machine.c" "$cpp/opm/opm_player.c" "$cpp/opm/opm_image.c" "$cpp/opm/opm_vgm.c" \
+  "$cpp/vsu/vsu_engine.c" "$cpp/vsu/vsu_machine.c" "$cpp/vsu/vsu_player.c" "$cpp/vsu/vsu_chip.c" "$cpp/vsu/vsu_image.c" \
+  "$cpp/vsu/vsu_vgm.c" \
   "$cpp/cbm/cbm_chip.c" "$cpp/cbm/cbm_machine.c" "$cpp/cbm/cbm_player.c" "$cpp/cbm/cbm_tables.c" "$cpp/cbm/cbm_image.c" \
   "$cpp/cbm/cbm_vic.c" "$cpp/cbm/cbm_ted.c" \
   "$cpp/saa/saa_chip.c" "$cpp/saa/saa_machine.c" "$cpp/saa/saa_player.c" "$cpp/saa/saa_image.c" "$cpp/saa/saa_vgm.c" \

@@ -117,6 +117,7 @@ static const Demo kDemos[] = {
     {"neon-causeway.ymimg", "ym2612-fm"},
     {"ws-demo.wsimg", "ws-wonderswan"},
     {"wsc-demo.wsimg", "ws-wonderswan-color"},
+    {"crimson-stereoscope.vbimg", "vb-vsu"},
     {"saa-sam-demo.saaimg", "sam-saa1099"},
     {"saa-cms-demo.saaimg", "cms-saa1099"},
     {"vic-demo.cbimg", "vic20-vic"},
@@ -144,6 +145,7 @@ static const Demo kDemos[] = {
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; a held expansion note,
  * a looping MMC5 PCM note, a Square 1 tone in each Sega layout, YM2612 FM 1, an XGM2 PCM retrigger or FM 3 chord. */
 static const Demo kShortest[] = {
+    {"vsu-shortest.vbimg", "vb-vsu"},
     {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
     {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
     {"n163-shortest-3ch.nesimg", "nes-famistudio-n163-3"},
