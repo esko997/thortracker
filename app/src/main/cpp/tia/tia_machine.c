@@ -15,6 +15,18 @@ const int16_t TIM_MIX[31] = {
     22794, 23703, 24575, 25411, 26213, 26984, 27725, 28439, 29126, 29788, 30426, 31042, 31637, 32211, 32767,
 };
 
+/* Fixed pre-resampler gain, not a change to Stella's nonlinear DAC mix.
+ * The full unipolar range is 0..32767, including DC -> mute -> DC steps.
+ * blip_buf 1.1.0's interpolated 16-tap step kernel has total variation
+ * 1.2520751953125 (< 1.3); its first-order high-pass has L1 norm 2.
+ * Thus 1/4 gain bounds ideal output by 2 * 1.3 * 8191 < 21297.
+ * Reserve another 32 PCM units for integer interpolation/filter rounding:
+ * at >=8 kHz there are <8 events/sample, each interpolation error has
+ * zero DC and L1 <0.06, supported on 16 samples (2*8*16*0.06+1 <32).
+ * This is below either int16 rail for every supported rate, not merely
+ * the demo's peak. See AUDIO_ENGINE.md for the kernel-bound derivation. */
+enum { BLIP_HEADROOM_DIVISOR = 4 };
+
 struct TiaMachine {
     uint32_t rate;
     int region;
@@ -29,7 +41,7 @@ struct TiaMachine {
     int64_t tick_index;        /* ticks since the reset (seek included): tick k starts at clock k frame_clocks */
     uint32_t ticks;            /* ticks since start/audition, seek excluded */
     int frames;                /* host frames of the last tick */
-    int level;                 /* mono level as last fed to blip */
+    int level;                 /* unscaled Stella mono level (before resampler headroom) */
     unsigned mute;             /* bit c: channel c counts as 0 in the mix */
     int audition, audition_channel, released, release_ticks, ended;
     TimTraceFn trace;
@@ -55,13 +67,13 @@ static void send(TiaMachine* m, int64_t clock, int kind) {
     }
 }
 
-/* The mono level from the channels' present output (muted channels 0), as a blip delta at `t` clocks into the tick. */
+/* Keep the chip mix intact; scale absolute levels BEFORE differencing into blip. */
 static void mix(TiaMachine* m, unsigned t) {
     const int v0 = (m->mute & 1) ? 0 : tis_actual_volume(&m->stella, 0);
     const int v1 = (m->mute & 2) ? 0 : tis_actual_volume(&m->stella, 1);
     const int level = TIM_MIX[v0 + v1];
     if (level != m->level) {
-        blip_add_delta(m->blip, t, level - m->level);
+        blip_add_delta(m->blip, t, level / BLIP_HEADROOM_DIVISOR - m->level / BLIP_HEADROOM_DIVISOR);
         m->level = level;
     }
 }

@@ -5220,9 +5220,34 @@ only in a reported AUDC 0/B "background sound" that no source pins down; not mod
   muted), `TIM_MIX[s]` = floor(32767 · 60 · s / (30 · (30 + s))) (exact rational floor) for s = 0..30: 0, 2114, 4095,
   …, 21844 (s = 15), …, 32767 — Stella's `mixingTableEntry(s, 0x1e)` with R_MAX 30, R 1, whose double evaluation
   order gives the same integers: the console's two audio pins drive one node, so two channels at full volume give 1.5× one
-  channel, not 2×. L changes are fed to blip_buf 1.1.0 as deltas at their colour clock (clock rate *C*, the host
-  rate out), read once per tick; its ~15 Hz high-pass removes the unipolar output's DC. Float = sample / 32768, the
-  same on both stereo sides.
+  channel, not 2×. **Fixed headroom before resampling:** feed changes of `floor(L / 4)` to blip_buf 1.1.0 at their
+  colour clock (clock rate *C*, the host rate out), read once per tick. This preserves the nonlinear chip mix and
+  relative volume (apart from <1 resampler-input LSB of quantization), while leaving room for reconstruction and
+  high-pass transients. `TIM_MIX` and the `tim_level` diagnostic remain unscaled. The blip high-pass has pole
+  `511/512` (~15 Hz at 48 kHz, proportional to output rate); it removes the unipolar output's DC.
+  Float = sample / 32768, identical on both stereo sides, with no compensating gain or new output clamp.
+  - **Conservative bound, not a fixture peak:** the full legal input range is 0..32767, including two constant
+    full-volume channels, mute after DC settles, and unmute. For the pinned blip_buf 1.1.0 table, form each
+    16-tap phase kernel `K[p] = bl_step[p] ++ reverse(bl_step[32-p])`, p = 0..32. Each sums to 32768.
+    The continuous step response is the cumulative sums `S[n,p] = sum(K[p][0:n]) / 32768`, n = 0..16,
+    in increasing n and decreasing p (adjacent endpoint values coincide). Its total variation, the L1 norm
+    of the interpolated reconstruction kernel, is **1.2520751953125 < 1.3**. This includes fractional-phase
+    FIR overshoot, not just a sample-aligned step. The high-pass has L1 norm 2, so even the deliberately
+    loose product bound is `2 × 1.3 × 8191 < 21297` PCM units with 1/4 gain.
+  - Integer interpolation splits a delta with <1-unit error; adjacent phase kernels differ in L1 by at most
+    `0.0596923828125 < 0.06`, with zero DC error. Events occur twice per 228 colour clocks plus once per
+    tick, hence fewer than 8 per output sample throughout 8..96 kHz. At most 16 samples of these errors
+    overlap; allowing high-pass gain 2 and its <1-unit quantization error gives
+    `2 × 8 × 16 × 0.06 + 1 < 32` extra PCM units. The resulting bound is **<21329 (<0.651)**, safely
+    inside either int16 rail. Scaling after `blip_read_samples` cannot supply this protection: clipping
+    has already occurred there and also affected its high-pass feedback.
+  - The permanent consumer regression covers NTSC/PAL × 8/44.1/48/96 kHz × AUDC 0/4/8/C/F, two full-level
+    A-4 channels over 60 ticks, mute at 15/45 and unmute at 30. It checks rails, retained sound and mute-tail
+    decay, mono PCM/frame continuity, unchanged chip state and nonlinear mix, and compares with a separate
+    1/16-level blip driven from raw level probes and the rational mix formula (scaled back ×4, ≤16 PCM units
+    for independent quantization). This is an independent signal-path oracle, not an independent blip
+    implementation; existing independent chip/register-trace comparisons are retained. Runtime results
+    remain for the parent's verification record.
 - **Mute** (`tim_mute`): the mix takes a muted channel's level as 0; the chip, its registers and the player are
   untouched (AUDV gates only the output on the TIA, so the counters run on exactly as unmuted). A toggle between ticks
   takes effect at the next tick's clock 0 (the level is recomputed after that tick's batch).

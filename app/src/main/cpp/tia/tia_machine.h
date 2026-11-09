@@ -93,7 +93,7 @@ const TiPlayer* tim_player(const TiaMachine* m); /* write[] = the last batch sen
 uint32_t tim_ticks(const TiaMachine* m);         /* ticks since start/audition, seek excluded */
 int tim_frames(const TiaMachine* m);             /* host frames of the last tick */
 int64_t tim_clock(const TiaMachine* m);          /* colour clock of the next tick's start, from the reset */
-int tim_level(const TiaMachine* m);              /* the mono level L as last fed to blip_buf (0..32767) */
+int tim_level(const TiaMachine* m);              /* unscaled Stella mono level L (0..32767), before 1/4 blip headroom */
 void tim_set_trace(TiaMachine* m, TimTraceFn fn, void* ctx);       /* NULL = off; kept across start/audition */
 void tim_set_level_probe(TiaMachine* m, TimLevelFn fn, void* ctx); /* NULL = off; kept across start/audition */
 /* Channel c's ten state bytes (tia_stella.h tis_state order). */

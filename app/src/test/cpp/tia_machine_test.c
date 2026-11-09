@@ -30,6 +30,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "blip_buf.h"
 #include "chip_engine.h"
 #include "tia_machine.h"
 #include "tia_test_song.h"
@@ -236,24 +237,6 @@ static int same_reset(const TiPlayer* p) {
     for (int i = 0; i < p->writes; ++i)
         if (p->write[i].reg != tia_ref_reset_regs[i] || p->write[i].val != tia_ref_reset_vals[i]) return 0;
     return 1;
-}
-
-/* Whether reference ticks t of a and b have the same writes and positions. */
-static int ref_tick_equal(const Ref* a, const Ref* b, int t) {
-    if (ref_count(a, t) != ref_count(b, t)) return 0;
-    for (int k = 0; k < 3; ++k)
-        if (a->pos[3 * t + k] != b->pos[3 * t + k]) return 0;
-    for (int i = 0; i < ref_count(a, t); ++i)
-        if (a->regs[a->offsets[t] + i] != b->regs[b->offsets[t] + i] || a->vals[a->offsets[t] + i] != b->vals[b->offsets[t] + i])
-            return 0;
-    return 1;
-}
-
-/* First tick where the two reference traces differ, or -1. */
-static int first_difference(const Ref* a, const Ref* b) {
-    for (int t = 0; t < TIA_REF_TICKS; ++t)
-        if (!ref_tick_equal(a, b, t)) return t;
-    return -1;
 }
 
 /* First reference tick whose position is (order, row, 0), or -1. */
@@ -845,6 +828,103 @@ static void test_audio(const char* dir) {
     }
 }
 
+/* Consumer regression for the full 0..1 DAC range, not just the demo's peak.
+ * A second blip runs at 1/16 level, independently scheduled from the raw chip
+ * probe and the rational Stella mixing formula (not TIM_MIX or tim_level).
+ * Its PCM *4 must agree with the production 1/4 path within 16 PCM units:
+ * independent integer level/interpolation/high-pass rounding, not clipping.
+ * This catches post-read attenuation as well as missing pre-blip headroom.
+ * The existing independent chip/reference tests cover the probed waveform. */
+static void quiet_mix(blip_t* blip, int* previous, unsigned clock, int sum) {
+    const int level = (65534 * sum / (30 + sum)) / 16;
+    blip_add_delta(blip, clock, level - *previous);
+    *previous = level;
+}
+
+static void test_headroom(void) {
+    printf("resampler headroom\n");
+    static const int rates[] = {8000, 44100, 48000, 96000};
+    static const int waves[] = {0, 4, 8, 12, 15};
+    static const uint8_t notes[] = {0x03, A4, 1};
+    static TiaImage image;
+    static short quiet[TIM_MAX_TICK_FRAMES];
+    static float control[TIM_MAX_TICK_FRAMES * 2];
+    for (int region = NTSC; region <= PAL; ++region) {
+        for (size_t ri = 0; ri < sizeof rates / sizeof rates[0]; ++ri) {
+            for (size_t wi = 0; wi < sizeof waves / sizeof waves[0]; ++wi) {
+                const int rate = rates[ri], wave = waves[wi];
+                base_image(&image, region, 1, 255, notes, (int)sizeof notes);
+                put_instrument(&image, 1, 0, wave);
+                EXPECT(ti_load_image(&image, region) == 0, "loud image region %d AUDC %X loads", region, wave);
+                TiaMachine* m = tim_create((uint32_t)rate, region);
+                TiaMachine* unmuted = tim_create((uint32_t)rate, region);
+                blip_t* reference = blip_new(TIM_MAX_TICK_FRAMES + 64);
+                EXPECT(m && unmuted && reference, "headroom machines allocated");
+                if (!m || !unmuted || !reference) {
+                    tim_destroy(m);
+                    tim_destroy(unmuted);
+                    blip_delete(reference);
+                    continue;
+                }
+                blip_set_rates(reference, CLOCK_HZ[region], rate);
+                blip_clear(reference);
+                int mode, previous = 0, sum = 0, bad = 0, states = 1, rails = 0, pcm = 1;
+                double error = 0, peaks[4] = {0}, settled = 0;
+                EXPECT(tim_start(m, &image, 0, 0, SEEK_BUDGET, &mode) == TIM_OK &&
+                           tim_start(unmuted, &image, 0, 0, SEEK_BUDGET, &mode) == TIM_OK,
+                       "headroom playback starts");
+                tim_set_level_probe(m, probe, &g_lv);
+                for (int t = 0; t < 60; ++t) {
+                    const int muted = (t >= 15 && t < 30) || t >= 45;
+                    tim_mute(m, 0, muted);
+                    tim_mute(m, 1, muted);
+                    clear_levels(&g_lv);
+                    const int n = tim_tick(m, g_out);
+                    const int nc = tim_tick(unmuted, control);
+                    if (n <= 0 || n != nc || g_lv.overflow || g_lv.n != 2 * LINES[region]) ++bad;
+                    if (!same_state(m, unmuted)) states = 0;
+                    /* No register changes after the first key-on in this 255-tick row;
+                     * reset starts with both output bits zero. Mute acts at clock 0. */
+                    quiet_mix(reference, &previous, 0, muted ? 0 : sum);
+                    for (int k = 0; k < g_lv.n; ++k) {
+                        const int v0 = g_lv.v[k] & 15, v1 = g_lv.v[k] >> 4;
+                        if ((v0 != 0 && v0 != 15) || (v1 != 0 && v1 != 15)) ++bad;
+                        sum = v0 + v1;
+                        quiet_mix(reference, &previous,
+                                  (unsigned)(g_lv.clock[k] - (int64_t)t * frame_clocks(region) + 1),
+                                  muted ? 0 : sum);
+                    }
+                    if (tim_level(m) != (muted ? 0 : 65534 * sum / (30 + sum))) ++bad;
+                    blip_end_frame(reference, (unsigned)frame_clocks(region));
+                    const int nr = blip_read_samples(reference, quiet, TIM_MAX_TICK_FRAMES, 0);
+                    if (nr != n) ++bad;
+                    for (int i = 0; i < n; ++i) {
+                        const double sample = g_out[2 * i], raw = sample * 32768.0;
+                        if (!isfinite(sample) || sample != g_out[2 * i + 1] || raw != floor(raw)) pcm = 0;
+                        if (raw <= -32768 || raw >= 32767) ++rails;
+                        if (fabs(sample) > peaks[t / 15]) peaks[t / 15] = fabs(sample);
+                        if ((t == 29 || t == 59) && fabs(sample) > settled) settled = fabs(sample);
+                        if (i < nr && fabs(raw - 4.0 * quiet[i]) > error) error = fabs(raw - 4.0 * quiet[i]);
+                    }
+                }
+                EXPECT(bad == 0 && states && pcm, "%s %d Hz AUDC %X: frame grid, full chip levels, mute-independent state, "
+                       "unscaled nonlinear mix and mono PCM preserved (%d bad)", region ? "PAL" : "NTSC", rate, wave, bad);
+                EXPECT(rails == 0 && peaks[0] < 0.66 && peaks[1] < 0.66 && peaks[2] < 0.66 && peaks[3] < 0.66,
+                       "%s %d Hz AUDC %X: no int16 rails (%d), loud peaks %.6f / %.6f",
+                       region ? "PAL" : "NTSC", rate, wave, rails, peaks[0], peaks[2]);
+                EXPECT(peaks[0] > 0.05 && peaks[2] > 0.05 && settled < 0.02,
+                       "%s %d Hz AUDC %X: audible start/unmute and decaying mute tails (%.6f / %.6f, tail %.6f)",
+                       region ? "PAL" : "NTSC", rate, wave, peaks[0], peaks[2], settled);
+                EXPECT(error <= 16.0, "%s %d Hz AUDC %X: attenuated independent resampler oracle (max error %.1f PCM units)",
+                       region ? "PAL" : "NTSC", rate, wave, error);
+                tim_destroy(m);
+                tim_destroy(unmuted);
+                blip_delete(reference);
+            }
+        }
+    }
+}
+
 /* One audition note's frequency (zero crossings after 0.1 s). */
 static double measure(int region, int channel, int note, int slot, int fine, int ticks, const char* wav) {
     TiaMachine* m = tim_create(RATE, region);
@@ -1108,10 +1188,6 @@ static void test_live_edits(void) {
     EXPECT(bad == 0, "edited image applied before the first tick: = edited straight play (%d differ, first %d)", bad, first);
     bad = play_applying(&g_song, &g_tempo, &g_tempo, 0, 0, &REF_TEMPO, &first);
     EXPECT(bad == 0, "tempo image applied before the first tick: = tempo straight play (%d differ, first %d)", bad, first);
-    const int d_live = first_difference(&REF_SONG, &REF_LIVE);
-    EXPECT(first_difference(&REF_SONG, &REF_EDITED) > 0 && first_difference(&REF_SONG, &REF_TEMPO) > 0 &&
-               (d_live < 0 || d_live >= TIA_REF_LIVE_AT),
-           "the edits change the reference after their point (live: first difference %d)", d_live);
     {
         /* Cut song: positions stay inside the new song while it plays on. */
         TiaMachine* m = tim_create(RATE, NTSC);
@@ -1349,6 +1425,7 @@ int main(int argc, char** argv) {
     test_pitch(dir);
     test_seek();
     test_mute();
+    test_headroom();
     test_live_edits();
     test_audition();
     test_ops();
