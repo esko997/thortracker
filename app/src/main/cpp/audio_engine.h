@@ -73,7 +73,8 @@ public:
     bool suspend_if_idle();
     bool has_image() const { return has_image_; }
 
-    // Any thread. Packed: bit 40 = playing, bits 16..23 order, bits 0..7 row; -1 = never played.
+    // Any thread. Packed: bit 41 = start pending callback acknowledgement, bit 40 = playing,
+    // bits 16..23 order, bits 0..7 row; -1 = never played and no start pending.
     int64_t position();
     void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
 
@@ -87,6 +88,7 @@ private:
     void close_stream_locked();
     void record_row(uint64_t frame, int order, int row);
     int64_t presented_frame_locked();
+    bool start_pending() const;
 
     const ChipEngineOps* const ops_;
 
@@ -106,6 +108,8 @@ private:
     MachineSlot slot_storage_[6];
     std::atomic<uint32_t> stop_seq_{0};
     std::atomic<uint32_t> release_seq_{0};
+    std::atomic<uint32_t> published_play_seq_{0};
+    std::atomic<uint32_t> acknowledged_play_seq_{0};
     std::atomic<bool> stream_dead_{false};
 
     // Audio-thread state.

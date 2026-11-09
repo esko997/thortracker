@@ -255,6 +255,23 @@ order start and silently replays that order's earlier rows. The ready machine is
 by the callback; the result mode is reported in `diagnostics()["lastSeekMode"]` (0 = from song
 start, 1 = from order start).
 
+Android transport intent has no seek timeout. `PlaybackPosition.pending` covers queued
+Play/Stop work and start preparation, then the native published-start sequence remains pending
+until the callback acknowledges that exact sequence **after** publishing its playing/ended
+state. Returning from `nativePlay` is not acknowledgement. Idle stream suspension also respects
+this handoff. A newer start cannot be acknowledged by an older callback, and a start that ends
+on its first callback settles without requiring the UI to have observed `playing=true`.
+`Transport.position()` clears requested intent only for a stopped, non-pending snapshot; it
+never restores intent from an old playing snapshot after Stop/focus loss. Failed commands
+finish their queued phase, closed audio reports stopped, and Stop/device loss cancels the native
+pending state. Desktop remains synchronous (`pending=false`); Game Boy driver playback,
+seek reconstruction, and synthesis are unchanged.
+
+Verified with five deterministic transport-transition regressions in both JVM and Linux suites,
+the actual Konkr final-row seek/Stop regression, and a 14.5-second order-local seek whose UI
+round trips stayed at or below 20 ms. Nova/DMG playback, audition, editing, recovery and Stop
+also passed, as did the clean 21-test Android suite and all 32 unchanged Game Boy renders.
+
 ## Audition
 
 A second machine plays a one-row song (`ticks per row = 256`, so the note sustains) using the
@@ -4503,8 +4520,8 @@ See `docs/VERIFICATION.md` for timings, exports and limits. The optional libvgm 
 
 ## OPM: Thor Tracker's own player on a YM2151 (`"ym2151-opm"`)
 
-**Status: integration in progress** (branch `opm-systems`): native and independent-reference checks pass;
-final frontend/device verification is pending in `docs/VERIFICATION.md`.
+**Status: integrated for 0.29.0**, with native/reference, Android and SDL evidence recorded
+in `docs/VERIFICATION.md`.
 The YM2151 (OPM) is the Sharp X68000's sound chip (also many arcade boards); like the OPL3 it plays through **our own
 player** (`opm/opm_player.c`, pure integer C without a chip) whose behaviour is the specification in this section;
 `tools/audio/opm/opm_ref.py` implements the same specification separately in Python and the host test requires
@@ -4852,7 +4869,7 @@ ticks; the reference VGM's size, FNV-1a hash and loop; byte offsets for corrupti
 tools/audio/opm/opm_golden.py` writes `core/src/jvmTest/resources/opm-golden/*.bin.gz` for `OpmGoldenTest`. No
 generated table header: the vibrato sine is written out in both implementations.
 
-### Verification (to be run by the parent; nothing here has been run)
+### Verification
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opm_machine_test.c`: key code mapping
   for every note, A-4 measured on a sine instrument at 439.88 Hz (± 0.5 Hz), every loader reason by single-byte
@@ -4872,5 +4889,7 @@ generated table header: the vibrato sine is written out in both implementations.
   derived from ymfm's phase-step table; optionally libvgm's vgm2wav against the engine's WAV.
 - `tools/audio/render_opm_image.sh image out.wav [seconds] [mute=...] [--vgm out.vgm]`.
 - Kotlin: `OpmGoldenTest` (the lowering against the reference builder), `OpmModelTest`, `OpmEditorTest`.
-- Not done: any build or run; listening; a real YM2151 or X68000; the device cost (ymfm's OPM is expected near its
-  OPN2 cost, 235 µs per tick on the dev PC for the YM2612).
+- Executed: 261 focused native checks, 1,896 WAV-export checks, 739 JVM / 19 Linux / six Android-host tests,
+  the clean 21-test Android suite, Nova/DMG/Konkr activity exercises, SDL playback and all 32 unchanged Game Boy
+  renders. Device timings, export evidence and comparison limits belong in `docs/VERIFICATION.md`.
+- Not done: human listening or a real YM2151 / X68000 measurement.

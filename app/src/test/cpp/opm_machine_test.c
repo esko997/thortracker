@@ -884,6 +884,18 @@ static void test_live_edits(void) {
         const int b = rest_of_row(m);
         EXPECT(a == new_len && b == old_len, "tempo edit behind the playhead (%d/%d): row of %d ticks (want %d), undo %d (want %d)",
                o, r, a, new_len, b, old_len);
+        /* Editing Fxx on the row already playing must include that row's own effect, not only earlier rows. */
+        EXPECT(omm_start(m, &g_song, 1, 4, SEEK_BUDGET, &mode) == OMM_OK, "start the F09 edit's own row");
+        omm_tick(m, g_out);
+        omm_apply_image(m, &g_tempo);
+        const int current_changed = rest_of_row(m);
+        EXPECT(omm_start(m, &g_song, 1, 4, SEEK_BUDGET, &mode) == OMM_OK, "restart the F09 edit's own row");
+        omm_tick(m, g_out);
+        omm_apply_image(m, &g_tempo);
+        omm_apply_image(m, &g_song);
+        const int current_undone = rest_of_row(m);
+        EXPECT(current_changed == 9 && current_undone == 6,
+               "tempo edit on the playing row: %d ticks (want 9), undo %d (want 6)", current_changed, current_undone);
         omm_destroy(m);
     }
     {

@@ -1,42 +1,67 @@
 # Thor Tracker verification — 2026-11-09
 
-## Unreleased: 0.29.0 OPM integration
+## 0.29.0 OPM FM and reliable asynchronous transport
 
 **OPM FM (YM2151)** (`ym2151-opm`) adds eight four-operator FM channels at
 the X68000's 4 MHz clock, shared LFO, FM 8 noise, CSM, VGM/WAV export and
-the **Sharp Corners** demo. Target: 0.29.0/code 42, after the tuning-library release.
+the **Sharp Corners** demo. Version 0.29.0/code 42.
 
-Observed integration evidence so far:
+Observed integration evidence:
 
 - Generated constants, native fixtures and both compressed golden images
   reproduced byte-for-byte on a second generation.
-- JVM/Linux/app-host suites, signed Android and native desktop builds passed
-  before the output-headroom correction below; the final frontend rebuild and
-  device exercises remain pending.
-- The first full native run passed the prior engines and **1,896 WAV-export
-  checks**, but exposed OPM resampler clipping and a misaligned tempo-test oracle.
-  The latter compared the same absolute tick across diverged tempo timelines;
-  it now locates the same order/row in each reference.
+- Final production-signed Android and native desktop builds passed, together with
+  **739 JVM, 19 Linux and six Android-host tests**. Builds were serialized with one
+  Gradle worker and in-process Kotlin. During the build the host remained 88–90%
+  idle with no swap-in/out; occupied swap alone was not treated as memory pressure.
+- The full native run passed the prior engines and **1,896 WAV-export checks**.
+  The final focused OPM run passed **261 checks**, including current-row F09 tempo
+  edits and undo, audition, LFO, noise, CSM, mute, loops and export.
 - Corrected OPM gain **before** blip's int16 stage, preserving the YM3012's own
-  DAC saturation. The focused native regression went from **3 failures out of
-  258 checks** to **zero**; the failures were clipping at 44.1, 48 and 96 kHz.
-  The 8 kHz boundary also passes. At 48 kHz the test song peaks at **0.4452**,
-  RMS **0.0830**, with seek output bit-identical to straight playback.
-- Tick thread-CPU cost is a benchmark, not a nondeterministic worst/mean gate:
-  **310.7 µs mean / 428.3 µs worst** in the focused run. Audition, live edits,
-  LFO, noise, CSM, mute, loop and export assertions pass without relaxing their
-  behavioral tolerances.
+  DAC saturation. The focused clipping regression went from **3 failures out of
+  258 checks** to **zero** at 44.1, 48 and 96 kHz; the 8 kHz boundary also passes.
+  At 48 kHz the test song peaks at **0.4452**, RMS **0.0830**, with seek output
+  bit-identical to straight playback. Tick thread-CPU cost in the final run was
+  **311.6 µs mean / 677.8 µs worst**: benchmark evidence, not a timing pass/fail gate.
+- Fixed VGM loop retriggering: the loop-state key-off now receives a chip sample
+  before the next key-on. Actual repeated playback on ymfm reproduced the stale
+  envelope before the fix and restores the first-pass attack afterwards.
 - Independent Python reference: **1,500 ticks**, byte-identical **7,168-byte
   VGM**, 455 ticks / 334,425 samples, loop 263,865 samples. Header, command
   boundaries, register state dump and key-off waits pass separate parsing.
   A-4 measures **439.882 Hz**; all playable notes are within **4.4 cents** of
   ideal equal temperament using the chip's measured phase-step table.
+- Independent libvgm **MAME and Nuked OPM** cores rendered the complete looped
+  VGM against the 30-second engine WAV. Envelope correlations were **0.874 / 0.850**,
+  averaged log-spectrum correlations **0.900 / 0.902**, and dominant pitch-class
+  agreement **90% / 79%**. The reference renderer used 25% host gain to avoid its
+  own PCM clipping. No production gain or comparison threshold was changed for this.
+  The original single-periodogram comparison measured **0.790** for both cores:
+  it compared phase-dependent noise peaks. The checker now averages five 100 ms
+  Hann periodograms, retaining every frequency bin and the final shorter group;
+  it still reports the original diagnostic and retains the 0.8 spectral threshold.
+  A frequency-inverted negative control preserved the envelope but failed the
+  spectral check (**−0.666**) and pitch-class check (**2%**).
+- Actual activity exercises passed on **Nova, DMG and Konkr**: controller-driven
+  playback, FM/noise editing and audition, undo/redo, LFO/CSM settings, restart,
+  VGM/WAV export and seek/Stop. Every sampled xrun counter was zero.
+  Normal final-row native seeks measured **494 / 1,018 / 1,733 ms**, respectively.
+- Reproduced Konkr's slow-seek transport bug: the former 1,500 ms UI timeout
+  expired before preparation, so Start did not stop subsequent playback.
+  Explicit queued/native-published pending state replaces that timeout.
+  The fixed **14.5-second, 16,065-tick** deep seek completed and stopped correctly;
+  **648 UI round trips**, maximum **20 ms**, stayed responsive during preparation.
+  Five permanent transition tests cover queued handoff, stop/restart ordering,
+  failure, immediate/natural end and synchronous playback.
+- All **32 Game Boy screenshots remain pixel-identical**. After removing the
+  temporary device/screenshot harnesses and rebuilding the test APK, the clean
+  **21-test Android suite passed** on Nova (48.138 s).
+- The actual final SDL executable passed isolated playback, held audition and Stop
+  scenarios with inspected surfaces. The standalone eight-second render produced
+  peak **0.445**, RMS **0.0868**, and a **7,316-byte VGM** with a 5.98-second loop.
 
-Remaining before release: final Android/desktop builds and actual surfaces,
-Nova/DMG/Konkr playback/edit/audition/export and seek timing, Game Boy visual
-parity, standalone renderer, clean permanent instrumentation suite and official
-artifact delivery. No human listening, original-hardware or independent-core
-audio comparison is claimed.
+This records candidate verification; published-artifact smoke and delivery follow CI publication.
+No human listening or original-hardware measurement is claimed.
 
 ## 0.28.0 Licensed tuning library and optional local packs
 
