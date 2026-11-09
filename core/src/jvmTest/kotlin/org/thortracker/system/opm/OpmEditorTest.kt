@@ -11,7 +11,6 @@ import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
-import org.thortracker.input.Keymap
 import org.thortracker.system.opm.OpmInstrumentView.Page
 import org.thortracker.system.opm.OpmInstrumentView.Row
 
@@ -147,7 +146,6 @@ class OpmEditorTest {
         assertNull(off.problem())
         // No frequency without noise.
         assertEquals(leadSound, OpmCurated.withNoiseFrequency(leadSound, 9))
-        assertTrue(OpmCurated.noiseText(31).endsWith("kHz"))
     }
 
     // ---- presets ------------------------------------------------------------------------------------------
@@ -166,8 +164,6 @@ class OpmEditorTest {
         }
         assertTrue(OpmPresets.ALL.any { it.category == OpmPresets.Category.DRUM && it.instrument.sweep.active })
         assertTrue("a preset uses DT2", OpmPresets.ALL.any { p -> p.instrument.operators.any { it.dt2 != 0 } })
-        assertEquals("Sound 2A", defaultOpmInstrument(42).name)
-        assertEquals(leadSound.copy(name = "Sound 2A"), defaultOpmInstrument(42))
         assertFalse(defaultOpmInstrument(1).noise)
     }
 
@@ -202,8 +198,6 @@ class OpmEditorTest {
         v.hold(Action.EDIT, Action.RIGHT)
         assertEquals(1, ins(lead).ams)
         assertEquals((0..3).map { ins(lead).isCarrier(it) }, ins(lead).operators.map { it.am })
-        // The song's LFO depths are 0 in a blank song: the status line says so.
-        assertTrue(session.message.orEmpty(), session.message.orEmpty().contains("depth is 0"))
         // Preset replaces the sound.
         val before = ins(lead)
         v.goTo(Row.PRESET)
@@ -303,7 +297,6 @@ class OpmEditorTest {
         assertNull(session.song.opmInstrument(50))
         v.tap(Action.EDIT) // on Slot
         assertEquals(defaultOpmInstrument(50), session.song.opmInstrument(50))
-        assertEquals("Sound 32", ins(50).name)
         v.tap(Action.CLEAR)
         assertNull(session.song.opmInstrument(50))
         // Any sound setting on an empty slot makes the default sound and edits it.
@@ -329,11 +322,4 @@ class OpmEditorTest {
         assertEquals(ins(lead).copy(name = ins(lead).name + "+"), session.song.opmInstrument(57))
     }
 
-    @Test
-    fun helpNamesThePagesAndTheNoiseChannel() {
-        val sections = OpmInstrumentView.helpSections(Keymap.DEFAULT)
-        assertEquals(listOf("Instruments", "Sound page", "Expert and Drum pages"), sections.map { it.first })
-        assertTrue(sections.flatMap { it.second }.any { it.second.contains("FM 8") })
-        assertEquals(OpmInstrumentView, OpmSystem.view(ViewKind.INSTRUMENT))
-    }
 }

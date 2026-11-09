@@ -11,14 +11,14 @@ android {
     compileSdk = 35
     ndkVersion = "27.0.12077973"
     externalNativeBuild {
-        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
     defaultConfig {
         applicationId = "org.thortracker"
         minSdk = 26
         targetSdk = 32
-        versionCode = 28
-        versionName = "0.15.0"
+        versionCode = 41
+        versionName = "0.28.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {

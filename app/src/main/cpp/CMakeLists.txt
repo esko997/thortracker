@@ -20,6 +20,12 @@ set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
 set(OPM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opm)
+set(SMS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sms)
+set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
+set(AY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ay)
+set(PCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pce)
+set(MEDNAFEN_PSG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mednafen-pce-psg)
+set(SCC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/scc)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -38,9 +44,9 @@ target_compile_definitions(resid PRIVATE NDEBUG=1)
 target_compile_options(resid PRIVATE -O2 -fPIC -w)
 set_target_properties(resid PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# ymfm (C++): the YM2612, the EPSM's YMF288 and the YM2151. ym/ym_ymfm.cpp (the YM2612's C interface) compiles
-# ymfm_opn.cpp itself and instantiates the OPNA templates that nes/nes_epsm_ymfm.cpp (the YMF288's C interface) uses;
-# opm/opm_ymfm.cpp (the YM2151's C interface) compiles ymfm_opm.cpp itself; link all three.
+# ymfm (C++): the YM2612, the EPSM's YMF288 and the YM2151. ym/ym_ymfm.cpp (the YM2612's C interface) compiles ymfm_opn.cpp itself
+# and instantiates the OPNA templates that nes/nes_epsm_ymfm.cpp (the YMF288's C interface) uses.
+# opm/opm_ymfm.cpp compiles ymfm_opm.cpp; link all three wrappers.
 add_library(ymfm STATIC
     ${YM_DIR}/ym_ymfm.cpp
     ${NES_DIR}/nes_epsm_ymfm.cpp
@@ -55,7 +61,8 @@ set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The chip machines behind chip_engine.h. huge_machine.c includes binjgb's emulator.c; the NES and
 # SID machines share chips' m6502.h (header-only, implemented once in cpu6502.c); the YM2612 machine's Z80 is
-# chips' z80.h (implemented once in cpuz80.c).
+# chips' z80.h (implemented once in cpuz80.c); the NES VRC7 build's FM chip is emu2413 (C, MIT); the SCC machine's
+# K051649 / K052539 is our port of MAME's k051649 (scc/scc_k051649.c, BSD-3-Clause).
 add_library(chip_engines STATIC
     chip_engine.c
     chip_wav.c
@@ -68,7 +75,15 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_image.c
     ${NES_DIR}/nes_apu.c
     ${NES_DIR}/nes_vrc6.c
+    ${NES_DIR}/nes_vrc7.c
+    ${NES_DIR}/nes_n163.c
+    ${NES_DIR}/nes_fds.c
+    ${NES_DIR}/nes_s5b.c
+    ${NES_DIR}/nes_mmc5.c
+    ${NES_DIR}/nes_mmc5_pcm.c
     ${NES_DIR}/nes_epsm_unit.c
+    ${EMU2413_DIR}/emu2413.c
+    chip_opll.c
     ${NES_DIR}/nes_players.c
     ${BLIP_DIR}/blip_buf.c
     ${SID_DIR}/sid_chip.c
@@ -94,12 +109,37 @@ add_library(chip_engines STATIC
     ${OPM_DIR}/opm_player.c
     ${OPM_DIR}/opm_image.c
     ${OPM_DIR}/opm_vgm.c
+    ${SMS_DIR}/sms_chip.c
+    ${SMS_DIR}/sms_machine.c
+    ${SMS_DIR}/sms_image.c
+    ${SMS_DIR}/sms_vgm.c
+    ${AY_DIR}/ay_chip.c
+    ${AY_DIR}/ay_machine.c
+    ${AY_DIR}/ay_player.c
+    ${AY_DIR}/ay_psg.c
+    ${AY_DIR}/ay_image.c
+    ${AY_DIR}/ay_vgm.c
+    ${PCE_DIR}/pce_chip.c
+    ${PCE_DIR}/pce_machine.c
+    ${PCE_DIR}/pce_player.c
+    ${PCE_DIR}/pce_image.c
+    ${PCE_DIR}/pce_vgm.c
+    ${PCE_DIR}/pce_psg.cpp
+    ${SCC_DIR}/scc_chip.c
+    ${SCC_DIR}/scc_machine.c
+    ${SCC_DIR}/scc_player.c
+    ${SCC_DIR}/scc_image.c
+    ${SCC_DIR}/scc_vgm.c
+    ${SCC_DIR}/scc_k051649.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPM_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)
+# pce/pce_psg.cpp (C++) compiles Mednafen's PSG, unmodified, against its shim: vendored code, warnings off.
+set_source_files_properties(${PCE_DIR}/pce_psg.cpp PROPERTIES COMPILE_OPTIONS "-w")
 set_target_properties(chip_engines PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(chip_engines PUBLIC resid ymfm)
 

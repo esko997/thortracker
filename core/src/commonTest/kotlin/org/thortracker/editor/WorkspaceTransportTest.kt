@@ -36,6 +36,23 @@ class WorkspaceTransportTest {
         assertFalse(w.showView(ViewKind.KEYBOARD, ViewKind.entries.toSet()))
     }
 
+    @Test fun anOtherDisplayChordShowsTheViewThereAndKeepsFocusHere() {
+        val w = workspace()
+        val all = ViewKind.entries.toSet()
+        assertTrue(w.showView(ViewKind.SONG, all, pane = 1))
+        assertEquals(0, w.focus)
+        assertEquals(ViewKind.PATTERN, w.panes[0].kind)
+        assertEquals(ViewKind.SONG, w.panes[1].kind)
+        // Each pane remembers what its own chord replaced.
+        assertTrue(w.showView(ViewKind.INSTRUMENT, all))
+        assertTrue(w.showView(ViewKind.SONG, all, pane = 1))
+        assertEquals(ViewKind.KEYBOARD, w.panes[1].kind)
+        assertEquals(ViewKind.INSTRUMENT, w.panes[0].kind)
+        assertTrue(w.showView(ViewKind.INSTRUMENT, all))
+        assertEquals(ViewKind.PATTERN, w.panes[0].kind)
+        assertFalse(w.showView(ViewKind.SONG, all, pane = 2), "no such pane")
+    }
+
     @Test fun focusStaysInsideThePanes() {
         val w = workspace()
         w.focus = 5

@@ -148,8 +148,16 @@ class DeckShell(
     }
 
     override fun export(song: Song, format: ExportFormat) =
-        FileBrowser(popups, "Export .${format.extension}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
-            if (Files.write(path, format.export(song))) status("${format.extension.uppercase()} exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
+        FileBrowser(popups, "Export ${format.label}", listOf(".${format.extension}"), saveName = Files.safeName(song.title) + ".${format.extension}") { path ->
+            // An export can refuse a song that its file format cannot represent.
+            try {
+                val bytes = format.export(song)
+                if (Files.write(path, bytes)) status("${format.extension.uppercase()} exported to ${Files.pretty(path)}") else error("Could not write ${Files.pretty(path)}")
+            } catch (e: IllegalArgumentException) {
+                error("${format.extension.uppercase()} export failed: ${e.message}")
+            } catch (e: IllegalStateException) {
+                error("${format.extension.uppercase()} export failed: ${e.message}")
+            }
         }.show(documents)
 
     override fun exportWav(song: Song, options: WavOptions) =

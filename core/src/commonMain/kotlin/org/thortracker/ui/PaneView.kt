@@ -133,17 +133,18 @@ class PaneView(
 
     init { controller.normalise() }
 
-    /** Current controller hints (key label, meaning); while one chord modifier is held, its chords. */
+    /** Current controller hints (key label, meaning); while chord modifiers are held, the chords of exactly that layer. */
     val hints: List<Pair<String, String>> get() = currentHints().map { it.keys to it.text }
 
     fun currentHints(): List<Hint> {
         val mods = heldModifiers
         if (mods.isEmpty()) return controller.hints()
-        if (mods.size > 1) return listOf(Hint(mods.joinToString("+") { Keymap.buttonName(it) }, "No chord: release one"))
-        return keymap.chords(mods.first(), state.kind)
+        val chords = keymap.chords(mods, state.kind)
             .filter { (c, _) -> c.shows == null || c.shows in session.song.system.views }
             .sortedBy { (c, _) -> if (c.host) 0 else 1 }
             .map { (c, b) -> Hint(Keymap.label(b), c.short) }
+        if (chords.isEmpty() && mods.size > 1) return listOf(Hint(Keymap.modifiersLabel(mods), "No chord: release one"))
+        return chords
     }
 
     /** Re-reads the session: applies selection following and repaints. Call from the session callbacks. */

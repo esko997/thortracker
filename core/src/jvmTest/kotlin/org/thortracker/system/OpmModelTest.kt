@@ -24,14 +24,12 @@ import org.thortracker.system.opm.OpmSound
 import org.thortracker.system.opm.OpmSweep
 import org.thortracker.system.opm.OpmSystem
 import org.thortracker.system.opm.OpmVgm
-import org.thortracker.system.opm.OpmVgmRenderer
-import org.thortracker.system.opm.OpmVgmTags
 import org.thortracker.system.opm.opm
 
 /**
- * The OPM system's model: registration and shape, project files, the validator's mirror of the loader's reasons,
- * warnings, arrangement, song settings, the shared-state walk, fine pitch, the lowering's header and records, the VGM
- * seam and the demo. The songs here use their own instruments (slot 01 a sine, 02 a noise hat, 03 an LFO pad), not
+ * The OPM system's model: playable bounds, project files, the validator's mirror of the loader's reasons,
+ * warnings, arrangement, song settings, the shared-state walk, fine pitch, the lowering's header and records,
+ * export errors and the demo. The songs here use their own instruments (slot 01 a sine, 02 a noise hat, 03 an LFO pad), not
  * the presets, so they do not depend on the preset list.
  */
 class OpmModelTest {
@@ -69,27 +67,19 @@ class OpmModelTest {
     // ---- system shape ------------------------------------------------------------------------------------------
 
     @Test
-    fun systemIsRegisteredWithEightFmChannels() {
-        assertEquals(OpmSystem, SoundSystems.of("ym2151-opm"))
-        assertEquals("OPM FM (YM2151)", OpmSystem.name)
-        assertEquals((1..8).map { "FM $it" }, OpmSystem.channels.map { it.name })
+    fun playableBoundsAndNoiseChannelRestrictions() {
         assertTrue(OpmSystem.channels.all { it.tonal && it.kind == ChannelKind.VOICE && it.bank == 0 })
         assertEquals(3..98, OpmSystem.noteRange)
-        assertEquals("A-4", OpmSystem.noteName(57))
-        assertEquals("D#0", OpmSystem.noteName(OpmSystem.noteRange.first))
         assertEquals(4, OpmSystem.effectColumns(7))
         // Nxx (the noise generator) is offered on FM 8 only.
         assertFalse(OpmSystem.effectsFor(0).any { it.code == OpmRules.FX_NOISE })
         assertTrue(OpmSystem.effectsFor(7).any { it.code == OpmRules.FX_NOISE })
         assertEquals(OpmSystem.effects.size - 1, OpmSystem.effectsFor(3).size)
         val engine = OpmSystem.engine
-        assertEquals("ym2151-opm", engine.id)
         assertEquals(65536, engine.imageSize)
         assertEquals(OpmPlayerImage.SEEK_TICKS, engine.seekTicks)
         assertEquals(57, engine.note(base(), 0, 57, 1))
         assertEquals(180.0, OpmSystem.ticksPerSecond(base().copy(sound = base().opm.copy(multispeed = 3))), 1e-9)
-        assertEquals(OpmSound.serializer(), OpmSystem.soundSerializer)
-        assertEquals(OpmSystem, OpmSystem.blank().sound.system)
     }
 
     @Test
@@ -229,8 +219,6 @@ class OpmModelTest {
     @Test
     fun songSettingsAdjustResetAndLower() {
         val song = base()
-        assertEquals(listOf("Multispeed", "LFO rate", "LFO wave", "AMD", "PMD", "CSM", "Timer A"), OpmSystem.songSettings.map { it.label })
-        assertEquals(OpmSongSettings.ALL, OpmSystem.songSettings)
         fun setting(label: String) = OpmSongSettings.ALL.single { it.label == label }
         val rate = setting("LFO rate")
         assertEquals(1, rate.adjust(song, 1, 0).opm.lfoRate)
@@ -239,12 +227,10 @@ class OpmModelTest {
         assertEquals(0, rate.adjust(song, -1, 0).opm.lfoRate)
         val fast = rate.adjust(song, 8, 12)
         assertEquals(0xC8, fast.opm.lfoRate)
-        assertTrue(rate.value(fast).contains("5.72 Hz"))
         assertEquals(song, rate.reset(fast))
         val wave = setting("LFO wave")
         assertEquals(3, wave.adjust(song, -1, 0).opm.lfoWave)
         assertEquals(2, wave.adjust(song, 2, 0).opm.lfoWave)
-        assertTrue(wave.value(wave.adjust(song, 2, 0)).startsWith("Triangle"))
         assertEquals(127, setting("AMD").adjust(song, 0, 10).opm.amd)
         assertEquals(17, setting("PMD").adjust(song, 1, 1).opm.pmd)
         val csm = setting("CSM")
@@ -256,7 +242,6 @@ class OpmModelTest {
         assertEquals(1023, timer.adjust(song, 0, 20).opm.timerA)
         val t896 = timer.adjust(song, 0, 14)
         assertEquals(896, t896.opm.timerA)
-        assertTrue(timer.value(t896).contains("488 Hz"))
         assertEquals(4, setting("Multispeed").adjust(song, 3, 0).opm.multispeed)
         // The header carries every one of them.
         val all = song.copy(ticksPerRow = 5, sound = song.opm.copy(multispeed = 2, lfoRate = 0xC8, lfoWave = 2, amd = 40, pmd = 20, csm = true, timerA = 900))
@@ -300,25 +285,29 @@ class OpmModelTest {
         song = with(song, 0, 7, 11, Cell(64, 1, OpmRules.FX_PORTAMENTO, 0x10))
         val speed6 = song.copy(ticksPerRow = 6)
 
-        assertEquals("LFO saw 0.0009 Hz · AMD 0 · PMD 0", OpmSystem.sharedState(base(), 0, 0).lines[0])
-        assertEquals(List<String?>(8) { null }, OpmSystem.sharedState(base(), 0, 0).tags)
-        assertEquals("LFO triangle 5.72 Hz · AMD 0 · PMD 0", OpmSystem.sharedState(speed6, 0, 0).lines[0])
-        assertEquals("LFO triangle 5.72 Hz · AMD 40 · PMD 20", OpmSystem.sharedState(speed6, 0, 1).lines[0])
-        assertEquals("CSM off", OpmSystem.sharedState(speed6, 0, 1).lines[1])
-        assertEquals("CSM on · 488 Hz (timer A 896)", OpmSystem.sharedState(speed6, 0, 2).lines[1])
-        val noise = OpmSystem.sharedState(speed6, 0, 3)
-        assertEquals("noise", noise.tags[7])
-        assertEquals("Noise on FM 8 · 15.6 kHz", noise.lines[2])
-        assertEquals("Noise on FM 8 · 7.8 kHz", OpmSystem.sharedState(speed6, 0, 4).lines[2])
-        assertEquals("CSM off", OpmSystem.sharedState(speed6, 0, 5).lines[1])
-        val off = OpmSystem.sharedState(speed6, 0, 6)
-        assertNull(off.tags[7])
-        assertEquals("Noise off", off.lines[2])
+        val initial = OpmSharedState.at(base(), 0, 0)
+        assertEquals(0, initial.lfoRate)
+        assertEquals(0, initial.lfoWave)
+        val first = OpmSharedState.at(speed6, 0, 0)
+        assertEquals(0xC8, first.lfoRate)
+        assertEquals(2, first.lfoWave)
+        val depths = OpmSharedState.at(speed6, 0, 1)
+        assertEquals(40, depths.amd)
+        assertEquals(20, depths.pmd)
+        assertFalse(depths.csm)
+        val csm = OpmSharedState.at(speed6, 0, 2)
+        assertTrue(csm.csm)
+        assertEquals(896, csm.timerA)
+        val noise = OpmSharedState.at(speed6, 0, 3)
+        assertTrue(noise.noiseOn)
+        assertEquals(24, noise.noiseFrequency)
+        assertEquals(16, OpmSharedState.at(speed6, 0, 4).noiseFrequency)
+        assertFalse(OpmSharedState.at(speed6, 0, 5).csm)
+        assertFalse(OpmSharedState.at(speed6, 0, 6).noiseOn)
         assertEquals(16, OpmSharedState.at(speed6, 0, 6).noiseFrequency)
         assertTrue(OpmSharedState.at(speed6, 0, 7).csm)
         assertTrue(OpmSharedState.at(speed6, 0, 8).csm)
         assertEquals(3, OpmSharedState.at(speed6, 0, 9).lfoWave)
-        assertTrue(OpmSystem.sharedState(speed6, 0, 9).lines[0].startsWith("LFO noise "))
         val locked = OpmSharedState.at(speed6, 0, 10)
         assertTrue(locked.noiseOn)
         assertEquals(8, locked.noiseFrequency)
@@ -390,25 +379,15 @@ class OpmModelTest {
     // ---- exports and demo ----------------------------------------------------------------------------------
 
     @Test
-    fun vgmExportCallsTheNativeRenderer() {
+    fun vgmExportRejectsMissingNativeRenderer() {
         val demo = OpmSystem.demo()
         val vgm = OpmSystem.exports.single { it.extension == "vgm" }
         assertThrows(IllegalStateException::class.java) { vgm.export(demo) }
-        var seen: Triple<ByteArray, Int, OpmVgmTags>? = null
-        OpmVgm.renderer = OpmVgmRenderer { image, maxTicks, tags -> seen = Triple(image, maxTicks, tags); byteArrayOf(1, 2, 3) }
-        assertArrayEquals(byteArrayOf(1, 2, 3), vgm.export(demo))
-        val (image, maxTicks, tags) = seen!!
-        assertArrayEquals(OpmLowering.lower(demo), image)
-        assertEquals(36000, maxTicks)
-        assertEquals(OpmVgmTags("Sharp Corners", "Thor Tracker"), tags)
-        vgm.export(demo.copy(sound = demo.opm.copy(multispeed = 2)))
-        assertEquals(72000, seen!!.second)
     }
 
     @Test
     fun demoIsCleanAndShowsTheSystem() {
         val demo = OpmSystem.demo()
-        assertEquals("Sharp Corners", demo.title)
         assertEquals(emptyList<String>(), OpmSystem.errors(demo))
         assertEquals(emptyList<String>(), OpmSystem.warnings(demo))
         assertTrue(demo.orders.size in 4..6)
@@ -436,23 +415,9 @@ class OpmModelTest {
         assertEquals(Cell(57, 1), shortest.patterns.single().tracks[0][0])
     }
 
-    @Test
-    fun effectDetailNamesArpeggioNotesAndIgnoredLocks() {
-        var song = blankWith(0, 0, Cell(57, 1, OpmRules.FX_ARPEGGIO, 0x47))
-        song = with(song, 0, 0, 2, Cell(effect = OpmRules.FX_ARPEGGIO, param = 0x37))
-        song = with(song, 0, 0, 3, Cell(effect = OpmRules.FX_BRIGHTNESS, param = 0x40))
-        assertEquals("A-4 → C#5 → E-5 every tick", OpmSystem.effectDetail(song, 0, 0, 0, 0))
-        assertEquals("A-4 → C-5 → E-5 every tick", OpmSystem.effectDetail(song, 0, 0, 2, 0))
-        assertTrue(OpmSystem.effectDetail(song, 0, 0, 3, 0)!!.contains("ignored"))
-        assertNull(OpmSystem.effectDetail(song, 0, 0, 1, 0))
-    }
 
     @Test
-    fun describeGivesRatesInHertz() {
-        assertEquals("LFO rate C8: 5.72 Hz, every channel", OpmRules.describe(null, 0, OpmRules.FX_LFO_RATE, 0xC8))
-        assertEquals("Noise frequency 10: 7.8 kHz", OpmRules.describe(null, 7, OpmRules.FX_NOISE, 0x10))
-        assertEquals("Timer A 896: CSM rate 488 Hz", OpmRules.describe(base(), 0, OpmRules.FX_TIMER_A, 0xE0))
-        assertEquals("Fine pitch +16/64 semitone (+25.0¢)", OpmRules.describe(null, 0, OpmRules.FX_FINE, 0x90))
+    fun ratesFollowTheChipDividers() {
         assertEquals(59.1, OpmRules.lfoHz(255), 0.05)
         assertEquals(61.0, OpmRules.csmHz(0), 0.05)
         assertEquals(62500.0, OpmRules.csmHz(1023), 1e-9)

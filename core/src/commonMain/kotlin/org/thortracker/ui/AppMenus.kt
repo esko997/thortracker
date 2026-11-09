@@ -10,6 +10,7 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
 import org.thortracker.input.Binding
+import org.thortracker.input.BindingCapture
 import org.thortracker.input.Control
 import org.thortracker.input.ControlGroup
 import org.thortracker.input.Keymap
@@ -128,7 +129,11 @@ class AppMenus(
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
-        override fun installEpsmRhythmRom(bytes: ByteArray): String? = host.installEpsmRhythmRom(bytes)
+        override fun installEpsmRhythmRom(bytes: ByteArray): String? {
+            val problem = host.installEpsmRhythmRom(bytes)
+            if (problem == null) transport.songChanged(session.song)
+            return problem
+        }
         override fun about() = this@AppMenus.about()
     }
 
@@ -228,16 +233,16 @@ class AppMenus(
                 }, PopupItem.dismiss()), selected = 1), host.modalDisplay)
         }
         items += PopupItem.dismiss()
-        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3 " +
-            "and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
+        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3, " +
+            "or two of them such as L2+R2, and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
             items = items, selected = 1)
     }
 
     fun showControls() = popups.show(controlsSpec(), host.modalDisplay)
 
-    /** Waits for one button or one modifier+button chord for [control]; Back, Escape or Menu leaves it unchanged. */
+    /** Waits for one button or one chord of up to two modifiers for [control]; Back, Escape or Menu leaves it unchanged. */
     fun captureBinding(control: Control) {
-        val held = LinkedHashSet<Int>()
+        val capture = BindingCapture()
         var finished = false
         val default = Keymap.DEFAULT.binding(control)
         fun finish(binding: Binding?) {
@@ -249,7 +254,8 @@ class AppMenus(
         popups.show(PopupSpec(control.label,
             message = "Press the new button now. Current: ${keymap.label(control)}." +
                 (if (control.hold) " It is held with the D-pad, so it takes a single button."
-                else " For a chord, hold Select, L2, R2 or L3, then press the button.") + " Back or Menu cancels.",
+                else " For a chord, hold Select, L2, R2 or L3 (or two, such as L2+R2 in either order), then press the button.") +
+                " Back or Menu cancels.",
             items = listOfNotNull(
                 default?.let { PopupItem("Use default (${Keymap.label(it)})") { finish(it) } },
                 PopupItem.dismiss(),
@@ -259,10 +265,7 @@ class AppMenus(
                     finished -> Unit
                     // Back and Menu can never be bound, so either cancels (the Deck has no Back button).
                     code == Keys.BACK || code == Keys.ESCAPE || code == Keys.MENU || code == Keys.BUTTON_MODE -> if (down) finish(null)
-                    code in Keymap.MODIFIERS -> if (down) held += code else held -= code
-                    !down -> Unit
-                    held.size > 1 -> { finish(null); host.error("Hold one of Select, L2, R2 or L3 for a chord, not several") }
-                    else -> finish(Binding(code, held.firstOrNull()))
+                    else -> capture.key(code, down)?.let { finish(it) }
                 }
             }), host.modalDisplay)
     }
@@ -350,7 +353,7 @@ class AppMenus(
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
-        ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
+        ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
             "Export .wav…" to ::exportWav,
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
@@ -360,29 +363,48 @@ class AppMenus(
 
     /**
      * Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows
-     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants.
+     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants; within
+     * it, variants of one group (the NES + N163's channel counts) are one entry that opens the group.
      */
     private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
         val systems = SoundSystems.ALL
         val current = session.song.system
         if (systems.size == 1) return chosen(current)
-        val entries = ArrayList<Pair<String, () -> Unit>>()
-        var selected = 0
-        val families = HashSet<String>()
-        for (system in systems) {
-            val family = system.family
-            if (family == null) {
-                if (system == current) selected = entries.size
-                entries += system.name to { chosen(system) }
-            } else if (families.add(family)) {
-                val variants = systems.filter { it.family == family }
-                if (current in variants) selected = entries.size
-                entries += "$family…" to {
-                    menu("$title $family", variants.map { it.name to { chosen(it) } }, selected = variants.indexOf(current).coerceAtLeast(0))
-                }
+        val (entries, selected) = grouped(systems, current, { it.family }, chosen) { family, variants ->
+            val (inner, innerSelected) = grouped(variants, current, { it.familyGroup }, chosen) { group, members ->
+                menu("$title $group", members.map { it.name to { chosen(it) } }, selected = members.indexOf(current).coerceAtLeast(0))
             }
+            menu("$title $family", inner, innerSelected)
         }
         menu(title, entries, selected)
+    }
+
+    /**
+     * Menu entries for [systems]: each system on its own ([chosen] picks it), except systems [key] puts in one group,
+     * listed once as "group…", which [open]s with the group's members; and the index of the entry holding [current].
+     */
+    private fun grouped(
+        systems: List<SoundSystem>,
+        current: SoundSystem,
+        key: (SoundSystem) -> String?,
+        chosen: (SoundSystem) -> Unit,
+        open: (String, List<SoundSystem>) -> Unit,
+    ): Pair<List<Pair<String, () -> Unit>>, Int> {
+        val entries = ArrayList<Pair<String, () -> Unit>>()
+        var selected = 0
+        val seen = HashSet<String>()
+        for (system in systems) {
+            val k = key(system)
+            if (k == null) {
+                if (system == current) selected = entries.size
+                entries += system.name to { chosen(system) }
+            } else if (seen.add(k)) {
+                val members = systems.filter { key(it) == k }
+                if (current in members) selected = entries.size
+                entries += "$k…" to { open(k, members) }
+            }
+        }
+        return entries to selected
     }
 
     private fun export(format: ExportFormat) {

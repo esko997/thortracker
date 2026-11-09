@@ -159,7 +159,7 @@ class DrawnPopup(private val ink: Ink) : PopupView {
         val keys = owner?.keys ?: org.thortracker.input.Keymap.DEFAULT
         val onField = s.text != null && cursor == 0
         val leave = if (s.items.any { it.action == null }) "Back" else "Close"
-        val hints = if (s.capture != null) listOf("Button" to "Bind it", "Sel L2 R2 L3 +" to "Chord", "Back" to "Cancel") else buildList {
+        val hints = if (s.capture != null) listOf("Button" to "Bind it", "Sel L2 R2 L3 +" to "Chord", "L2+R2 +" to "Both", "Back" to "Cancel") else buildList {
             add(keys.pair(Action.UP, Action.DOWN) to "Move")
             add(keys.label(Action.EDIT) to if (onField) (if (fieldFocused) "Done" else "Type") else "Choose")
             add(keys.label(Action.CLEAR) to leave)
