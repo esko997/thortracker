@@ -1171,8 +1171,8 @@ Decisions (made on the user's behalf; see "Open questions"):
 - AY output summing: the three channels add linearly; the real machines tie the outputs through resistors (MAME's
   resistor model; Hatari uses a measured 3-D table for the ST), which compresses loud chords a little. Proposed: keep
   linear until a listening comparison asks otherwise.
-- AY envelope period 0 is played as period 1 (ayumi, emu2149; MAME treats the AY's 0 as half of 1). The manuals are
-  silent. Review against hardware captures if one appears.
+- AY envelope period 0 follows MAME's counter model: twice period 1's ramp rate on AY, the same rate as period 1
+  on YM2149. Native boundary tests and editor frequency readings agree; no physical-chip capture is claimed.
 - AY shared noise/envelope arbitration (decided on the user's behalf): the most recent key-on among the channels
   using a resource owns it; an owner change re-writes R13 only when the shape differs, so a held buzzer bass is not
   retriggered when a short note that borrowed the envelope ends (its envelope phase continues). Alternatives: a fixed

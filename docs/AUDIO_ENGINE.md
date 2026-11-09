@@ -3572,7 +3572,7 @@ per variant; byte offsets for the corruption checks). `python3 tools/audio/ay/ay
 images (`core/src/jvmTest/resources/ay-golden/`). Rerun both after changing the player specification, the engine
 headers, the reference or the test songs.
 
-### Verification (to be run by the integrator; nothing here has been run)
+### Verification
 
 - `tools/audio/run_native_host_test.sh [dir]` adds `app/src/test/cpp/ay_machine_test.c`: the tables (A-4 per
   variant, every note in range within the period quantisation), corruption checks, the player's writes and positions
@@ -3597,4 +3597,6 @@ headers, the reference or the test songs.
   parsed from the format alone; optionally played by libvgm.
 - `tools/audio/render_ay_image.sh image out.wav [seconds] [mute=mask] [--vgm out.vgm]` renders an image through the
   ops table (the variant from the image) and its VGM through `ay_export_vgm`.
-- Not done: listening on hardware; any measurement.
+- Executed results: `docs/VERIFICATION.md`, 0.25.0 — native/reference comparisons, Android device timings,
+  SDL playback, export parity and Game Boy regression proof. No human listening or vintage-hardware measurement
+  is claimed.
