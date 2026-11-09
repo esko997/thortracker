@@ -109,8 +109,9 @@ void nes_apu_reset(NesApu* a);
 /* CPU memory $8000-$FFFF for DMC sample reads (not copied; must outlive the APU's use). */
 void nes_apu_set_memory(NesApu* a, const uint8_t* prg);
 /* Blip amplitude of a mixer level of 1.0 for this instance (0: NES_APU_AMP_SCALE). The machine's MMC5 and N163 builds
- * scale every unit of the machine alike so their larger mixer span fits the buffer's int16 stage (nes_machine.c); set
- * it before attaching the output. */
+ * scale every unit of the machine alike so their larger mixer span fits the buffer's int16 stage; the EPSM build lowers
+ * it by the same rule so the 2A03's own buffer has the same int16-stage headroom as the chip's (nes_machine.c). Set it
+ * before attaching the output. */
 void nes_apu_set_amp_scale(NesApu* a, float scale);
 
 /* Attach the band-limited output (NULL = silent). */

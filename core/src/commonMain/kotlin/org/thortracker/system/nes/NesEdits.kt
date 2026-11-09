@@ -11,7 +11,8 @@ import org.thortracker.model.Song
 /**
  * The envelopes of a [NesInstrument], with the values each holds ([NesEnvelope] ranges; duty depends on the sound's
  * [NesChip]) and the value a new step starts from: the four every sound has (volume, arpeggio, pitch, duty), then the
- * 5B's [MIXER] and [NOISE], which only 5B sounds hold ([belongsTo]). Only volume has a release point (FamiStudio's rule).
+ * SSG's [MIXER] and [NOISE], which only 5B and EPSM sounds hold ([belongsTo]). Only volume has a release point
+ * (FamiStudio's rule).
  */
 enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback: Int) {
     VOLUME("Volume", NesEnvelope.VOLUME, 15),
@@ -26,10 +27,10 @@ enum class NesEnvelopeKind(val label: String, val range: IntRange, val fallback:
     /** The values this envelope holds on a [chip] sound: the VRC6 has eight duties. */
     fun range(chip: NesChip): IntRange = if (this == DUTY) chip.duty else range
 
-    /** Whether a [chip] sound has this envelope: duty only where the chip has duties, mixer and noise only on the 5B. */
+    /** Whether a [chip] sound has this envelope: duty only where the chip has duties, mixer and noise only on the 5B and the EPSM. */
     fun belongsTo(chip: NesChip): Boolean = when (this) {
         DUTY -> chip.hasDuty
-        MIXER, NOISE -> chip == NesChip.S5B
+        MIXER, NOISE -> chip.hasSsg
         else -> true
     }
 
@@ -133,11 +134,10 @@ fun Song.nesInstrument(slot: Int): NesInstrument? = nes.instruments.getOrNull(sl
 fun defaultNesInstrument(slot: Int) = NesInstrument(name = "Sound ${hex2(slot)}")
 
 /**
- * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7, N163, FDS and 5B sounds have none), the saw
- * volume, the FM patch, the N163 waves, the FDS waves and modulation and the 5B's mixer, noise and hardware envelope back
- * to their defaults when it leaves that chip. Refused (with a note) when the chip is not the song's or the sound still
- * maps DPCM samples, which only 2A03 sounds play.
- * only 2A03 sounds play.
+ * Sound [slot] made a [chip] sound: duty values clamped to that chip's (VRC7, N163, FDS, 5B and EPSM sounds have none),
+ * the saw volume, the VRC7 FM patch, the N163 waves, the FDS waves and modulation, the SSG's mixer, noise and hardware
+ * envelope and the EPSM's FM patch back to their defaults when it leaves that chip. Refused (with a note) when the chip
+ * is not the song's or the sound still maps DPCM samples, which only 2A03 sounds play.
  */
 fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
     val ins = song.nesInstrument(slot) ?: return false
@@ -151,7 +151,7 @@ fun EditorSession.setNesChip(slot: Int, chip: NesChip): Boolean {
 }
 
 /**
- * This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7, the N163, the FDS and the 5B), other
+ * This sound as a [chip] sound: its envelopes kept (duty clamped, none on the VRC7, the N163, the FDS, the 5B and the EPSM), other
  * chips' settings reset. A sound becoming an N163 sound starts from FamiStudio's default wave (a 16-sample sine at RAM 0,
  * legal with any channel count); one becoming an FDS sound from FamiStudio's default FDS instrument (one sine wave, 100%
  * master volume, no modulation).
@@ -165,7 +165,8 @@ fun NesInstrument.forChip(chip: NesChip): NesInstrument = copy(
     fds = if (chip == NesChip.FDS) fds else FdsSound.DEFAULT,
     mixer = NesEnvelopeKind.MIXER.fixed(mixer, chip),
     noise = NesEnvelopeKind.NOISE.fixed(noise, chip),
-    s5b = if (chip == NesChip.S5B) s5b else S5bEnvelope.DEFAULT,
+    s5b = if (!chip.hasSsg) S5bEnvelope.DEFAULT else if (this.chip.hasSsg) s5b else S5bEnvelope.defaultFor(chip),
+    epsm = if (chip == NesChip.EPSM) epsm else EpsmPatch.DEFAULT,
 )
 
 /**
@@ -463,12 +464,18 @@ fun EditorSession.editNesFds(slot: Int, label: String, f: (FdsSound) -> FdsSound
 fun EditorSession.editNesFm(slot: Int, label: String, f: (Vrc7Patch) -> Vrc7Patch): Boolean =
     editNesInstrument(slot, label) { if (it.chip == NesChip.VRC7) it.copy(fm = f(it.fm)) else it }
 
-/** Edits the hardware envelope settings of 5B sound [slot], kept in range (octave -8..8, period 0..65535). */
+/**
+ * Edits the hardware envelope settings of 5B or EPSM SSG sound [slot], kept in range (octave -8..8, period 0..65535).
+ */
 fun EditorSession.editNesS5b(slot: Int, label: String, f: (S5bEnvelope) -> S5bEnvelope): Boolean =
     editNesInstrument(slot, label) {
-        if (it.chip != NesChip.S5B) it
+        if (!it.chip.hasSsg) it
         else f(it.s5b).let { e -> it.copy(s5b = e.copy(octave = e.octave.coerceIn(S5bEnvelope.OCTAVES), period = e.period.coerceIn(S5bEnvelope.PERIODS))) }
     }
+
+/** Edits the FM patch (and the rhythm pan it shares) of EPSM sound [slot]. */
+fun EditorSession.editNesEpsm(slot: Int, label: String, f: (EpsmPatch) -> EpsmPatch): Boolean =
+    editNesInstrument(slot, label) { if (it.chip == NesChip.EPSM) it.copy(epsm = f(it.epsm)) else it }
 
 /** Edits the VRC7 song's release/stop sustain overrides, which every VRC7 sound plays with ([Vrc7Sustain]). */
 fun EditorSession.editVrc7Sustain(label: String, f: (Vrc7Sustain) -> Vrc7Sustain): Boolean {

@@ -20,7 +20,7 @@ object NesRules {
     /**
      * The lowest note the channels with an 11-bit period can play (the 2A03's pulses and triangle, the MMC5's pulses):
      * FamiStudio note 10 (A-1), the longest period in its note table (the triangle sounds it an octave lower). The VRC6
-     * reaches C-1..B-8; VRC7 and the 5B reach C-1..B-7.
+     * reaches C-1..B-8; VRC7, the 5B and the EPSM's SSG and FM channels reach C-1..B-7.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
@@ -176,6 +176,23 @@ object NesRules {
     /** The 5B's squares (5B Square 1..3 are channels 5..7); FamiStudio's engine reads envelope periods on the first. */
     const val S5B_SQUARE1 = 5
 
+    /** The EPSM's SSG squares (SSG 1..3 are channels 5..7); FamiStudio's engine reads envelope periods on the first. */
+    const val EPSM_SSG1 = 5
+
+    /** The EPSM's first FM channel (FM 1..6 are channels 8..13). */
+    const val EPSM_FM1 = 8
+
+    /** The EPSM's first rhythm channel (Kick, Snare, Cymbal, Hi-hat, Tom, Rim are channels 14..19). */
+    const val EPSM_RHYTHM1 = 14
+
+    /**
+     * FamiStudio's EPSM note tables (`famistudio_epsm_s_note_table` for the SSG: 8 MHz / 64 / f; `famistudio_epsm_note_table`
+     * for FM at the chip's 8 MHz) sound FamiStudio note 58 at 440 Hz, where the 2A03's table sounds note 46 there, so the
+     * EPSM's SSG and FM channels take FamiStudio's note this many semitones higher for true pitch ([engineNoteShift]).
+     * The rhythm drums ignore the note.
+     */
+    const val EPSM_OCTAVE = 12
+
     /**
      * The MMC5's pulses (MMC5 Pulse 1 and 2 are channels 5 and 6): 2A03-style pulses that play 2A03 sounds from the 2A03
      * pulses' note table (no [engineNoteShift]), without a sweep unit.
@@ -209,6 +226,49 @@ object NesRules {
 
     /** True for the three 5B squares of a 5B song. */
     fun isS5b(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.S5B && ch >= S5B_SQUARE1
+
+    /** True for the three SSG squares of an EPSM song. */
+    fun isEpsmSsg(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.EPSM && ch in EPSM_SSG1 until EPSM_FM1
+
+    /** True for the six FM channels of an EPSM song. */
+    fun isEpsmFm(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.EPSM && ch in EPSM_FM1 until EPSM_RHYTHM1
+
+    /** True for the six rhythm (fixed drum) channels of an EPSM song. */
+    fun isEpsmRhythm(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.EPSM && ch >= EPSM_RHYTHM1
+
+    /**
+     * True for a YM2149-style SSG square (the 5B's squares, the EPSM's SSG 1-3): they share one noise and one envelope
+     * generator, and FamiStudio's engine drives both chips' squares with the same code.
+     */
+    fun isSsg(expansion: NesExpansion, ch: Int): Boolean = isS5b(expansion, ch) || isEpsmSsg(expansion, ch)
+
+    /** The SSG squares of a song with [expansion] (channels 5..7 on the 5B and the EPSM), empty elsewhere. */
+    fun ssgChannels(expansion: NesExpansion): IntRange = when (expansion) {
+        NesExpansion.S5B -> S5B_SQUARE1 until S5B_SQUARE1 + 3
+        NesExpansion.EPSM -> EPSM_SSG1 until EPSM_FM1
+        else -> IntRange.EMPTY
+    }
+
+    /** "5B" or "SSG": how messages name the SSG squares' chip in a song with [expansion]. */
+    fun ssgLabel(expansion: NesExpansion): String = if (expansion == NesExpansion.EPSM) "SSG" else "5B"
+
+    /**
+     * True when [song] is an EPSM song whose played orders (parked ones excluded) hold a note on a rhythm channel: the
+     * song then needs the rhythm ROM to play ([EpsmRhythmRom]).
+     */
+    fun playsRhythm(song: Song): Boolean {
+        val sound = song.sound as? NesSound ?: return false
+        if (sound.expansion != NesExpansion.EPSM) return false
+        val arranged = NesSystem.arranged(song)
+        for (p in arranged.orders.toSet()) {
+            val pattern = arranged.patterns.getOrNull(p) ?: continue
+            for (ch in EPSM_RHYTHM1 until pattern.tracks.size) {
+                val track = pattern.tracks[ch]
+                for (row in 0 until minOf(pattern.length, track.size)) if (track[row].note >= 0) return true
+            }
+        }
+        return false
+    }
 
     /** True for the two pulses of an MMC5 song. */
     fun isMmc5(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.MMC5 && (ch == MMC5_PULSE1 || ch == MMC5_PULSE2)
@@ -244,7 +304,10 @@ object NesRules {
     const val FX_PHASE_RESET = 33 // X
     const val FX_DELTA_COUNTER = 35 // Z
 
-    /** 5B: the shared envelope generator's period, high byte (`Ixx`) and low byte (`Jxx`), FamiTracker's letters. */
+    /**
+     * 5B and EPSM SSG: the shared envelope generator's period, high byte (`Ixx`) and low byte (`Jxx`), FamiTracker's
+     * letters (FamiStudio's `EnvelopePeriod`, opcode `$5E` on the 5B, `$5D` on the EPSM).
+     */
     const val FX_ENV_PERIOD_HI = 18 // I
     const val FX_ENV_PERIOD_LO = 19 // J
 
@@ -353,6 +416,29 @@ object NesRules {
             "raises it); the 5B's shorter periods take about half as many steps. Tuned notes use it.", true)
 
     /**
+     * Fine pitch on the EPSM's FM channels: the engine adds FamiStudio's fine pitch × 8 to the note's frequency number
+     * (`FAMISTUDIO_EPSM_PITCH_SHIFT`), so a cell's Pxx is converted ([epsmFmFinePitch]) to the step nearest the detune the
+     * same Pxx gives a 2A03 pulse on that note, as on the VRC7.
+     */
+    private val EPSM_FM_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
+        "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
+            "raises it); FM plays the nearest of its frequency steps (fine high up, coarse in the lowest octaves). Tuned notes use it.", true)
+
+    /** Fine pitch on the EPSM's SSG squares: converted per note ([epsmSsgFinePitch]) to the SSG's own periods. */
+    private val EPSM_SSG_FINE = EffectSpec(FX_FINE_PITCH, "Fine pitch", "xx: 80 = none, 81-FF up, 01-7F down",
+        "Detune the playing note until the next note by the pitch xx-80 period units give a pulse on that note (above 80 " +
+            "raises it), in the SSG's own periods. Tuned notes use it.", true)
+
+    /** The envelope period effects on the EPSM's SSG squares (the same opcode semantics as the 5B's, `$5D`). */
+    private val EPSM_ENV_PERIOD_HI = EffectSpec(FX_ENV_PERIOD_HI, "SSG env period high", "xx: period xx00 (with Jyy on the row: xxyy)",
+        "EPSM SSG squares only. Sets the SSG's shared envelope period (FamiStudio's EnvelopePeriod) to xx × 256, or to xxyy " +
+            "with a Jyy on another SSG square in the same row; it drives sounds with a manual period until a note reloads " +
+            "its sound's own. One step lasts 32 cycles of the EPSM's 8 MHz clock × the period, a ramp 32 steps.", true)
+    private val EPSM_ENV_PERIOD_LO = EffectSpec(FX_ENV_PERIOD_LO, "SSG env period low", "yy: period 00yy (with Ixx on the row: xxyy)",
+        "EPSM SSG squares only. Sets the SSG's shared envelope period to yy (00-FF: fast envelopes, audible buzzes), or to " +
+            "xxyy with an Ixx on another SSG square in the same row.", true)
+
+    /**
      * The FDS's own effects (FamiStudio's `Channel.SupportsEffect`: `FdsModDepth`, `FdsModSpeed` and `PhaseReset` on
      * `FdsWave`), FDS channel only. The engine keeps an H/I/J value until the next attacked note without one: FamiStudio's
      * exporter then sends the instrument again (`FamitoneMusicFile.GetSongData`, the `OverrideFlags.FdsModSpeed/Depth`
@@ -393,16 +479,32 @@ object NesRules {
     private val BY_CODE = EFFECTS.associateBy { it.code }
     private val FDS_BY_CODE = FDS_ALL.associateBy { it.code }
 
+    /** The EPSM's effects: the 5B's set (envelope period, no phase reset) with the SSG's own I and J. */
+    private val EFFECTS_EPSM = EFFECTS.filter { it.code != FX_PHASE_RESET }.map {
+        when (it.code) {
+            FX_ENV_PERIOD_HI -> EPSM_ENV_PERIOD_HI
+            FX_ENV_PERIOD_LO -> EPSM_ENV_PERIOD_LO
+            else -> it
+        }
+    }
+    private val EPSM_BY_CODE = EFFECTS_EPSM.associateBy { it.code }
+
     /** The effect [code] names in songs with [expansion], or null when it names none there. */
-    fun effect(expansion: NesExpansion, code: Int): EffectSpec? = (if (expansion == NesExpansion.FDS) FDS_BY_CODE else BY_CODE)[code]
+    fun effect(expansion: NesExpansion, code: Int): EffectSpec? = when (expansion) {
+        NesExpansion.FDS -> FDS_BY_CODE
+        NesExpansion.EPSM -> EPSM_BY_CODE
+        else -> BY_CODE
+    }[code]
 
     /**
      * The effects songs with [expansion] may use: the phase reset exists only with the N163 (its own opcode `$5B`) and
-     * the FDS (`$53`), the envelope period (`Ixx`/`Jxx`) only with the 5B, H and the FDS's own I and J only with the FDS.
+     * the FDS (`$53`), the envelope period (`Ixx`/`Jxx`) only with the 5B and the EPSM, H and the FDS's own I and J only
+     * with the FDS.
      */
     fun effects(expansion: NesExpansion): List<EffectSpec> = when (expansion.chip) {
         NesChip.N163 -> EFFECTS_N163
         NesChip.S5B -> EFFECTS_S5B
+        NesChip.EPSM -> EFFECTS_EPSM
         NesChip.FDS -> FDS_ALL
         else -> EFFECTS_2A03
     }
@@ -410,6 +512,12 @@ object NesRules {
     private val EFFECTS_N163 = EFFECTS.filter { it.code != FX_ENV_PERIOD_HI && it.code != FX_ENV_PERIOD_LO }
     private val EFFECTS_S5B = EFFECTS.filter { it.code != FX_PHASE_RESET }
     private val EFFECTS_2A03 = EFFECTS_N163.filter { it.code != FX_PHASE_RESET }
+
+    /**
+     * What FamiStudio's `Channel.SupportsEffect` allows on the EPSM rhythm drums that changes their sound: volume, its
+     * slide, speed, delay and cut (their pitch is fixed, so arpeggios, slides, vibrato and fine pitch do nothing).
+     */
+    private val RHYTHM_EFFECTS = setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_SPEED, FX_NOTE_DELAY, FX_NOTE_CUT)
 
     /** The chip whose instruments [channel] plays in a song with [expansion]. */
     fun chip(expansion: NesExpansion, channel: Int): NesChip = if (channel < APU_CHANNELS) NesChip.APU else expansion.chip
@@ -464,11 +572,13 @@ object NesRules {
      * saw, the VRC7's FM channels, the N163's channels, the FDS and the 5B squares, everything but speed, delay, cut and
      * the DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, the phase reset off the
      * N163's channels and the FDS (the only channels whose phase reset FamiStudio's text and this player share: opcodes
-     * `$5B`, `$53`), the 5B envelope period off its squares and H, I and J off the FDS channel (in an FDS song I and J
-     * are the FDS's mod speed, elsewhere the 5B's envelope period).
+     * `$5B`, `$53`), the 5B/EPSM envelope period off their SSG squares and H, I and J off the FDS channel (in an FDS song I
+     * and J are the FDS's mod speed, elsewhere the SSG envelope period), on the EPSM's rhythm drums everything but
+     * [RHYTHM_EFFECTS] and on the MMC5 PCM lane everything but [PCM_EFFECTS].
      */
     private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when {
-        isS5b(expansion, channel) -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
+        isEpsmRhythm(expansion, channel) -> EFFECTS_EPSM.map { it.code }.toSet() - RHYTHM_EFFECTS
+        isSsg(expansion, channel) -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
         // The MMC5 PCM lane is Thor Tracker's sample player: only volume, speed, delay and cut mean something there.
         isMmc5Pcm(expansion, channel) -> EFFECTS.map { it.code }.toSet() - PCM_EFFECTS
         else -> when (kind(expansion, channel)) {
@@ -494,6 +604,8 @@ object NesRules {
                 it.code == FX_FINE_PITCH && chip == NesChip.N163 -> N163_FINE
                 it.code == FX_FINE_PITCH && chip == NesChip.FDS -> FDS_FINE
                 it.code == FX_FINE_PITCH && chip == NesChip.S5B -> S5B_FINE
+                it.code == FX_FINE_PITCH && isEpsmFm(expansion, channel) -> EPSM_FM_FINE
+                it.code == FX_FINE_PITCH && isEpsmSsg(expansion, channel) -> EPSM_SSG_FINE
                 else -> it
             }
         }
@@ -515,6 +627,7 @@ object NesRules {
     fun engineNoteShift(expansion: NesExpansion, channel: Int): Int = when {
         isVrc7(expansion, channel) -> VRC7_OCTAVE
         isS5b(expansion, channel) -> S5B_OCTAVE
+        isEpsmSsg(expansion, channel) || isEpsmFm(expansion, channel) -> EPSM_OCTAVE
         isFds(expansion, channel) -> FDS_TRANSPOSE
         else -> 0
     }
@@ -538,6 +651,36 @@ object NesRules {
         val ratio = p / (p - fine)
         val f = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE_VRC7[n].toDouble()
         return kotlin.math.round(f * (ratio - 1.0) / 8.0).toInt().coerceIn(-127, 127)
+    }
+
+    /**
+     * FamiStudio's fine pitch on an EPSM FM channel for a Pxx of [fine] (xx - 80, positive = up) on engine note
+     * [engineNote] (the FM table's note, [EPSM_OCTAVE] above the pulse's for the same pitch): the step (the engine adds it
+     * × 8 to the note's frequency number, `FAMISTUDIO_EPSM_PITCH_SHIFT` = 3, so positive is up there) nearest to the pitch
+     * [fine] period units give a pulse on that pitch (period p + 1: ratio (p + 1) / (p + 1 - fine)), within FamiStudio's
+     * -127..127, as for the VRC7. Bends beyond the pulse's period (high notes) take the largest step up.
+     */
+    fun epsmFmFinePitch(engineNote: Int, fine: Int): Int {
+        if (fine == 0) return 0
+        val n = engineNote.coerceIn(1, NOTE_COUNT)
+        val p = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[(n - EPSM_OCTAVE).coerceIn(1, NOTE_COUNT)] + 1.0
+        if (fine >= p) return 127
+        val ratio = p / (p - fine)
+        val f = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE_EPSM_FM[n].toDouble()
+        return kotlin.math.round(f * (ratio - 1.0) / 8.0).toInt().coerceIn(-127, 127)
+    }
+
+    /**
+     * A Pxx of [fine] (xx - 80, positive = up) on an EPSM SSG square playing engine note [engineNote] (the SSG table's
+     * note, [EPSM_OCTAVE] above the pulse's for the same pitch): the period units, positive = up, that bend the SSG's
+     * tone period (`famistudio_epsm_s_note_table`, used as is) by the ratio [fine] units give a pulse on that pitch
+     * (period p + 1). The engine adds FamiStudio's fine pitch to the period, so the stored value is this negated.
+     */
+    fun epsmSsgFinePitch(engineNote: Int, fine: Int): Int {
+        if (fine == 0) return 0
+        val pulse = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE[(engineNote - EPSM_OCTAVE).coerceIn(1, NOTE_COUNT)] + 1.0
+        val square = org.thortracker.backend.FamiStudioLowering.NOTE_TABLE_EPSM_SSG[engineNote.coerceIn(1, NOTE_COUNT)].toDouble()
+        return kotlin.math.round(square * fine / pulse).toInt().coerceIn(-127, 127)
     }
 
     /** Range problem of a single cell of a song with [expansion] independent of context, or null. */
@@ -596,6 +739,8 @@ object NesRules {
                     else "phase reset ($fx) is for the N163's channels; $channelName has none here"
                 expansion == NesExpansion.FDS && cell.effect in FDS_EFFECT_CODES ->
                     "${spec.name.lowercase()} ($fx) is for the FDS channel; $channelName has no modulation"
+                isEpsmRhythm(expansion, channel) ->
+                    "${spec.name.lowercase()} ($fx) has no effect on $channelName (a fixed-pitch drum: volume, speed, delay and cut only)"
                 else -> "${spec.name.lowercase()} ($fx) has no effect on $channelName"
             }
         }
@@ -653,7 +798,8 @@ object NesRules {
             FX_DELTA_COUNTER -> if (p > DELTA_COUNTER_MAX) "$fx: DMC levels are Z00-Z7F" else null
             FX_PHASE_RESET -> if (p != 0) "$fx: the phase reset takes no value; write X00" else null
             FX_FDS_MOD_DEPTH -> if (p > FdsSound.MOD_DEPTH.last) "$fx: mod depths are H00-H3F" else null
-            // I and J: checked here only as the FDS's mod speed (on the 5B squares they are its envelope period, any value).
+            // I and J: checked here only as the FDS's mod speed (on the 5B and EPSM SSG squares they are the envelope
+            // period, any value).
             FX_FDS_MOD_SPEED_HI, FX_FDS_MOD_SPEED_LO -> if (!isFds(expansion, channel)) null else {
                 val ins = if (cell.note >= 0 && cell.instrument != 0) song.nes.instruments.getOrNull(cell.instrument - 1) else null
                 when {
@@ -722,7 +868,9 @@ object NesRules {
             FX_FINE_PITCH -> (param - FINE_CENTRE).let {
                 when {
                     it == 0 -> "Fine pitch: none"
-                    chip(expansion, channel).let { c -> c == NesChip.VRC7 || c == NesChip.N163 || c == NesChip.FDS || c == NesChip.S5B } ->
+                    chip(expansion, channel).let { c ->
+                        c == NesChip.VRC7 || c == NesChip.N163 || c == NesChip.FDS || c == NesChip.S5B || c == NesChip.EPSM
+                    } ->
                         "Fine pitch ${if (it > 0) "+" else ""}$it units (as on a pulse)"
                     else -> "Fine pitch ${if (it > 0) "+" else ""}$it units"
                 }
@@ -738,32 +886,33 @@ object NesRules {
             FX_DELTA_COUNTER -> "DMC level $param"
             FX_PHASE_RESET -> "Restart the wave from its first sample"
             FX_FDS_MOD_DEPTH -> if (param == 0) "Modulation off (mod depth 0)" else "Mod depth $param/63"
-            // I and J: the FDS's mod speed in FDS songs, the 5B's envelope period elsewhere (FX_ENV_PERIOD_HI/LO).
+            // I and J: the FDS's mod speed in FDS songs, the 5B's or the EPSM SSG's envelope period elsewhere
+            // (FX_ENV_PERIOD_HI/LO).
             FX_FDS_MOD_SPEED_HI -> if (expansion == NesExpansion.FDS) {
                 "Mod speed ${NumberText.hex(param and 0xF, 1)}xx: high digit, low byte as playing (no effect while an auto-mod sound plays)"
             } else {
-                "5B envelope period ${NumberText.hex(param, 2)}00 (${param shl 8}; a Jyy in the row sets the low byte)"
+                "${ssgLabel(expansion)} envelope period ${NumberText.hex(param, 2)}00 (${param shl 8}; a Jyy in the row sets the low byte)"
             }
             FX_FDS_MOD_SPEED_LO -> if (expansion == NesExpansion.FDS) {
                 "Mod speed x${hex2(param)}: low byte, high digit as playing (no effect while an auto-mod sound plays)"
             } else {
-                "5B envelope period 00${NumberText.hex(param, 2)} ($param; an Ixx in the row sets the high byte)"
+                "${ssgLabel(expansion)} envelope period 00${NumberText.hex(param, 2)} ($param; an Ixx in the row sets the high byte)"
             }
             else -> "Unknown effect"
         }
     }
 
-    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7, N163, FDS and 5B sounds have none. */
+    /** A pulse duty as the editor shows it: 2A03 "12.5%"..; VRC6 "1/16".."8/16"; VRC7, N163, FDS, 5B and EPSM sounds have none. */
     fun dutyText(chip: NesChip, value: Int): String = when (chip) {
         NesChip.APU -> listOf("12.5%", "25%", "50%", "75%").getOrElse(value) { "?" }
         NesChip.VRC6 -> if (value in NesChip.VRC6.duty) "${value + 1}/16" else "?"
-        NesChip.VRC7, NesChip.N163, NesChip.FDS, NesChip.S5B -> "none"
+        NesChip.VRC7, NesChip.N163, NesChip.FDS, NesChip.S5B, NesChip.EPSM -> "none"
     }
 
     /**
-     * The 5B envelope period each row of [cells] (one row of every 5B square, in channel order) sets, or -1: `Ixx` gives
-     * the high byte and `Jyy` the low byte, on any squares of the row; a byte without its effect is 0. Null when two
-     * squares give one byte different values (the row is ambiguous; [envPeriodConflict] says why).
+     * The 5B or EPSM SSG envelope period each row of [cells] (one row of every SSG square, in channel order) sets, or
+     * -1: `Ixx` gives the high byte and `Jyy` the low byte, on any squares of the row; a byte without its effect is 0.
+     * Null when two squares give one byte different values (the row is ambiguous; [envPeriodConflict] says why).
      */
     fun envPeriod(cells: List<Cell>): Int? {
         var hi = -1
@@ -778,12 +927,12 @@ object NesRules {
         return if (hi < 0 && lo < 0) -1 else (maxOf(hi, 0) shl 8) or maxOf(lo, 0)
     }
 
-    /** Why one row's 5B cells set the envelope period ambiguously, or null. */
-    fun envPeriodConflict(cells: List<Cell>): String? {
+    /** Why one row's SSG cells set the envelope period ambiguously, or null; [chip] names the squares' chip ("5B", "SSG"). */
+    fun envPeriodConflict(cells: List<Cell>, chip: String = "5B"): String? {
         if (envPeriod(cells) != null) return null
         val hi = cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_HI }.map { it.param }.distinct()
         val which = if (hi.size > 1) hi.map { effectText(FX_ENV_PERIOD_HI, it) } else
             cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_LO }.map { it.param }.distinct().map { effectText(FX_ENV_PERIOD_LO, it) }
-        return "${which.joinToString(" and ")} set the 5B's one envelope period twice in one row; keep one"
+        return "${which.joinToString(" and ")} set the $chip's one envelope period twice in one row; keep one"
     }
 }

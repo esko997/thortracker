@@ -18,12 +18,17 @@
  *   "nes-famistudio-mmc5"  the same engine built with Nintendo MMC5 support on a 6502 + 2A03 + MMC5 audio, plus
  *                     Thor Tracker's software PCM lane on the MMC5 DAC (channel 7; its image is the FamiStudio
  *                     image followed by the lane's extension) (nes/nes_chip.c, nes/nes_mmc5.c, nes/nes_mmc5_pcm.c)
+ *   "nes-famistudio-epsm"  the same engine built with EPSM support on a 6502 + 2A03 + YMF288 (ymfm), true stereo;
+ *                     its rhythm drums play the user-installed rhythm ROM (nes/nes_chip.c, nes/nes_epsm_unit.c,
+ *                     nes/nes_epsm_ymfm.cpp; nes/nes_epsm.h: nes_epsm_install_rhythm_rom)
  *   "c64-sid"         GoatTracker 2.77 playroutine on a 6510 + reSID 1.0 (PAL C64)
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "sms-banjo"       the Banjo sound driver (joffb/banjo) on a Z80 + SN76489 (+ Game Gear stereo) + YM2413
+ *                     (emu2413), every Master System layout (sms/sms_chip.c over sms/sms_machine.c, sms_image.c)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

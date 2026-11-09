@@ -1,5 +1,149 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.22.0 Sega Master System, Game Gear and FM Sound Unit
+
+**New blank song / Load demo → Sega 8-bit…** offers four layouts: SMS PSG,
+Game Gear stereo PSG, SMS FM (four PSG plus nine FM channels), and SMS FM rhythm
+(four PSG, six FM and five hardware drums). The real unmodified Banjo driver runs
+on an emulated Z80, with SN76489 and emu2413 synthesis. Each layout has its own
+Harbour Lights demo, instrument editor and WLA-DX/SDAS/VGM/WAV exports.
+
+The integrated build passed 538 JVM core tests, 13 Linux core tests and six
+Android-host unit tests. The full native run passed, including 120 Sega checks
+and 1,219 WAV-export checks.
+Each layout's demo and shortest-song fixture rendered through the real Banjo driver.
+
+Independent assembly verification compiled every exported song with both WLA-DX
+and SDAS/GBDK, using the pinned upstream Banjo driver. For each layout, the exported
+ROMs and the application's `SmsMachine` executed 3,457 ticks, 577 row starts and two
+loops with identical transport and driver state. All chip writes matched in order
+and CPU cycle: SMS PSG 26,130; Game Gear 26,149 (including 19 stereo writes);
+SMS FM 20,516; SMS FM rhythm 19,114. Relocated song data also matched byte-for-byte.
+This exercises the exported initialization stub, including the first-row tick,
+rather than asserting assembly-source spelling.
+
+Actual desktop playback advanced for all four layouts with nonzero PCM. The
+grouped system picker and creation of a new rhythm-mode song were inspected,
+along with PSG envelopes, custom two-operator FM voices and fixed-pitch drum kits.
+Held Listen produced audio for all three instrument kinds.
+
+On Nova, all four layouts passed real-activity song playback, playback plus held
+audition, and audition-only observation (ten seconds per phase). All reported zero
+underruns and driver faults at 48 kHz, 192-frame bursts and a 384-frame buffer.
+Maximum observed callbacks: PSG 3.316 ms, Game Gear 1.797 ms, FM 6.665 ms,
+FM rhythm 7.491 ms. DMG and Konkr passed the same three phases for the rhythm
+layout with zero underruns/faults, 960-frame bursts and a 1,920-frame buffer;
+maximum callbacks were 25.239 ms and 8.594 ms respectively. DMG's first probe
+could not acquire focus because Sortie's switcher overlay was open; dismissing
+that overlay and confirming Tracker focus resolved the prerequisite. No launcher
+configuration changed.
+
+Through the actual Android and desktop file menus, all sixteen exports (four
+layouts × WLA-DX ASM, SDAS, VGM and WAV) were byte-identical across platforms.
+Every WAV contains 1,537,980 frames of 48 kHz, 16-bit stereo PCM (32.04125 seconds).
+Peaks are 16,112 / 15,796 / 15,234 / 17,282 respectively, without rail samples.
+Game Gear has 1,537,833 frames with different left/right samples; the other
+layouts are mono. VGM headers, clocks, loop offsets and parsed stereo/FM writes
+were checked. Android custom FM feedback editing (5→6), undo (→5), Save As and
+cold recovery passed; the saved project was byte-identical to the original.
+
+The clean permanent Android suite passed all 19 tests on the production-signed
+candidate. All 32 Game Boy views were RGBA-identical to the 0.21/0.20 baseline,
+and the factory `.uge` was unchanged. Temporary probe source/test packages,
+21 owned Android fixture/export files and 32 captures were removed. Device
+timeouts were restored, reserved handhelds returned Home/asleep and all leases
+released. `/ThorTunez` was untouched.
+
+No physical Sega cartridge comparison or human listening review is claimed.
+Hardware limits remain visible: one shared custom OPLL patch, shared rhythm
+pitches and pitched-noise/Square 3 coupling. NTSC timing only; Banjo cannot
+represent fine-pitch tunings or independent FM pitch envelopes at this pin.
+
+## 0.21.0 NES + EPSM
+
+**New blank song / Load demo → NES… → NES + EPSM** adds the YMF288 expansion module:
+three SSG voices, six four-operator FM voices and six rhythm drums after the NES's
+five channels. **Expansion Port** demonstrates the tonal voices. Instruments expose
+the SSG's shared noise/envelope, curated FM controls, the full FM patch and rhythm
+level/panning. Playback, audition, NSF and FamiStudio text retain the real
+FamiStudio 4.5.3 driver; WAV renders the same emulated output.
+
+The rhythm drums require a user-supplied, hash-verified 8 KB YM2608 rhythm ROM.
+Missing or invalid firmware refuses rhythm playback explicitly. Importing a valid
+ROM recovers playback without restarting, and the private import survives a cold
+restart. No rhythm ROM or derived drum audio is included in source or releases.
+
+The combined MMC5/EPSM integration passed 515 JVM core tests, 13 Linux core tests and
+six Android-host unit tests. Regeneration preserved all 32 generated NES outputs
+byte-for-byte; the EPSM player is 5,048 bytes and the factory Game Boy UGE is unchanged.
+Native EPSM coverage passed 332 checks with a privately supplied rhythm ROM,
+including SSG attack preservation of drum pan, live patch edits and unreachable-row
+seek fallback with identical instrument copies. Other native engine checks passed:
+Game Boy 145, NES 336, VRC6 105, VRC7 115, N163 225, FDS 227, Sunsoft 5B 204 plus
+10 seek-fallback checks, MMC5 130, PCM 95, mixer budget 13, SID 151, OPL3 282 and
+Mega Drive 501.
+
+WAV coverage passed 999 checks: samples equal straight engine ticking, loop boundaries
+and chunk-size independence remain checked. The old generic `peak > 1000` assertion
+was removed, not repinned: master volume is not a WAV-format contract. EPSM's raw-range
+headroom deliberately makes its demo quiet (test-song RMS 0.0064, peak 0.0400;
+exported demo peak 923). It preserves relative balance without claiming unverified
+hardware DAC clipping; the gain policy is documented in `docs/AUDIO_ENGINE.md`.
+
+The permanent Android suite passed all 19 tests against the production-signed,
+non-debuggable candidate on Nova. Thirty-two Game Boy views are pixel-identical
+to 0.20.0's same-device baseline in full RGBA bytes. Twenty-channel Pattern rendering,
+editing and undo now work; the last Rim lane survives a cold process restart.
+Restoration waits for the actual song instead of clamping its channel against the
+temporary Game Boy demo. Following playback also clamps a stale channel when
+switching back to a smaller system.
+
+Actual Android and desktop export dialogs produced byte-identical tonal NSF
+(32,832 bytes) and FamiStudio text (49,003 bytes). Their private rhythm WAV exports
+contain identical PCM: 38,336 frames of 48 kHz, 16-bit stereo audio, peak 475.
+An SSG manual period unsupported by FamiStudio text is refused with an actionable
+message on both platforms; neither leaves an empty export. Desktop now catches
+that error rather than aborting. Desktop also recovers from a rejected Play request
+after importing the ROM with one subsequent Play action.
+
+Nova exercised the curated and Expert FM pages, a brightness edit and undo,
+missing/invalid/valid firmware, invalid replacement and cold-restart rhythm playback.
+A 14.87-second Android output capture contains nonzero tonal PCM; it is an output
+capture, not microphone recording or human listening. Desktop held FM audition
+also produced nonzero output. Physical-cartridge comparison and human listening
+remain unverified.
+
+Production MainActivity timing exposed Nova underruns with EPSM at its original
+384-frame / 8 ms buffer. AAudio now adds one burst after a measured xrun, capped by
+the device's capacity; a newly opened stream still starts at two bursts. In the
+bounded playback-plus-audition check Nova settled at 768 frames / 16 ms after two
+xruns, with no further increase through held audition and audition-only playback.
+Its Game Boy check retained 384 frames with zero xruns. Konkr kept its existing
+1,920-frame buffer with zero xruns throughout Game Boy, EPSM, simultaneous playback
+and FM audition, and audition-only checks (10 seconds each); its maximum callback
+was 12.76 ms. All observed driver-fault counts were zero. This is measured buffer
+adaptation, not a claim of universally underrun-free playback.
+
+DMG passed the same four 10-second scenarios at its existing 1,920-frame buffer,
+with zero xruns and driver faults; maximum callback time was 24.43 ms. Its initial
+controller-driven probe was blocked by a focused Sortie switcher overlay. After
+dismissing that overlay and confirming Tracker's window focus, the probe used the
+actual toolbar Play action and passed. No launcher settings were changed.
+
+Temporary timing/capture sources and test packages were removed, along with the
+32 owned device captures and eight owned Downloads fixtures. Reserved-device display
+timeouts were restored and the devices returned Home/asleep; `/ThorTunez` was untouched.
+
+The published 0.21.0 APK and AppImage passed their checksum manifests; the APK has
+the production certificate and version code 34. The published standalone AppImage
+played Expansion Port for five seconds, reaching order 0/row 39 with nonzero PCM
+(peak 0.011538708), and its actual Pattern surface was inspected.
+The official APK was installed over the existing app and cold-launch checked on
+Nova, DMG and Konkr. Thor received only the APK in `Download/Thor Tracker`; the Deck
+received the executable AppImage and an updated stable `thor-tracker` symlink.
+Remote digests matched. Neither daily device was woken or launched; `/ThorTunez`
+was untouched and all device leases were released.
+
 ## 0.20.0 NES + MMC5
 
 **New blank song / Load demo → NES… → NES + MMC5** adds two pulse voices and an
@@ -44,6 +188,15 @@ both devices returned Home/asleep.
 The versioned desktop frontend exported the same edited PCM project through its
 actual WAV dialog. Both platform exports contain the same 1,175,663 stereo frames;
 only six of 2,351,326 samples differ, each by one least-significant bit.
+
+The published 0.20.0 APK and AppImage passed their checksum manifests; the APK is
+production-signed, version code 33. The published AppImage played the imported PCM
+project for five seconds (order 0/row 40, peak 0.25267678), with the actual Pattern
+surface inspected. The official APK was installed over the existing app and
+cold-launch checked on Nova, DMG and Konkr. The Thor received only the APK in
+`Download/Thor Tracker`; the Deck received the executable AppImage and an updated
+stable `thor-tracker` symlink. No Thor/Deck wake, installation or launch occurred;
+`/ThorTunez` was untouched and all device leases were released.
 
 ### N163 output clipping
 
@@ -209,6 +362,7 @@ The published 0.16.0 APK and AppImage passed their checksum manifests; the APK h
 Lantern Point (peak 0.19839096). The official APK was installed and cold-launch checked on Nova, DMG and Konkr;
 the Thor received only the APK in Downloads, and the Deck's stable `thor-tracker` symlink was updated without
 launching or changing Steam settings.
+
 ## 0.15.0 NES + Konami VRC6
 
 - **New blank song / Load demo → NES… → NES + VRC6** adds two eight-duty pulse channels and a sawtooth to the NES's five channels. The demo is **Saw Sunrise**.

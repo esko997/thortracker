@@ -1,8 +1,8 @@
 /* "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds",
- * "nes-famistudio-s5b" and "nes-famistudio-mmc5": the FamiStudio sound engine (FamiTracker tempo), the 2A03 build, the
- * Konami VRC6 build, the Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels), the Famicom Disk System
- * build, the Sunsoft 5B build and the Nintendo MMC5 build, on the NES machine (nes_machine.h) behind the chip engine
- * interface.
+ * "nes-famistudio-s5b", "nes-famistudio-mmc5" and "nes-famistudio-epsm": the FamiStudio sound engine (FamiTracker
+ * tempo), the 2A03 build, the Konami VRC6 build, the Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels),
+ * the Famicom Disk System build, the Sunsoft 5B build, the Nintendo MMC5 build and the EPSM build, on the NES machine
+ * (nes_machine.h) behind the chip engine interface.
  * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
  * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
@@ -244,6 +244,32 @@ const ChipEngineOps nes_mmc5_chip_ops = {
     .start = mmc5_start,
     .apply_image = mmc5_apply_image,
     .audition = mmc5_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};
+
+/* "nes-famistudio-epsm": channels 0-4 as "nes-famistudio", then EPSM SSG 1-3 (5..7), FM 1-6 (8..13) and the rhythm drums
+ * bass drum, snare, top cymbal, hi-hat, tom, rim shot (14..19). On an EPSM channel the instrument slot addresses the
+ * image's expansion instrument table (the same index as the 2A03 table). The rhythm drums sound only with the rhythm ROM
+ * installed (nes_epsm.h); the frontend refuses to play or audition them without it. Output is true stereo. */
+static ChipMachine* epsm_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_epsm); }
+
+static int epsm_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    return load_for(&nes_player_epsm, storage, bytes, size);
+}
+
+const ChipEngineOps nes_epsm_chip_ops = {
+    .system_id = "nes-famistudio-epsm",
+    .image_size = NES_EPSM_IMAGE_SIZE,
+    .image_storage = sizeof(NesImage),
+    .create = epsm_create,
+    .destroy = nes_destroy,
+    .load_image = epsm_load_image,
+    .start = nes_start,
+    .apply_image = nes_apply_image,
+    .audition = nes_audition,
     .release = nes_release,
     .mute = nes_mute,
     .position = nes_position,

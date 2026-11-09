@@ -124,8 +124,8 @@ muted in the song) stay in the hosts and work for every chip.
 
 - **Driver:** FamiStudio sound engine 4.5.3 (all-permissive licence, notice kept). Used in NES homebrew; supports
   volume and fine-pitch tracks, slides, vibrato, arpeggios, release notes, duty changes and note delays. It also
-  drives the VRC6, VRC7 (2-operator FM), N163, S5B, FDS, MMC5 and EPSM (YM2608) expansion chips, which can become
-  later systems on the same driver.
+  drives the VRC6, VRC7 (2-operator FM), N163, S5B, FDS, MMC5 and EPSM (a YMF288, OPN3-L) expansion chips, which can
+  become later systems on the same driver.
 - **Engine:** `m6502.h` (floooh/chips, zlib) and a 2A03 APU written here (`nes/nes_apu.c`: pulse ×2, triangle,
   noise and the DMC with sample playback), band-limited through blip_buf (LGPL-2.1+). The player image is assembled
   once (`tools/audio/prepare_nes_player.py`, committed like hUGEDriver's, with DPCM and the delta counter enabled);
@@ -426,6 +426,71 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
   (auto-mod, an H sweep), a vibrato lead (mod delay, J and I speed sweeps, OFF), a PWM morph pad with a release, an FM
   bell (auto-mod 7/2, X00), the 2A03 and the DPCM kit alongside; once through 25.6 s, loop 19.2 s.
 
+- **EPSM** (`NesEpsmSystem`, `"nes-famistudio-epsm"`, "NES + EPSM (FamiStudio)"): Perkka's Expansion Port Sound Module, a
+  Yamaha **YMF288 (OPN3-L)** on the Famicom expansion port at 8 MHz — the YM2608's FM, SSG and rhythm units without its
+  ADPCM-B — which FamiStudio's driver writes through `$401C/$401D` (address/data, A1 = 0) and `$401E/$401F` (A1 = 1).
+  Channels in FamiStudio's engine order (`NesExpansion.EPSM`, 20 in all): **SSG 1-3** (5-7, `ChannelKind.PULSE`), **FM
+  1-6** (8-13, `ChannelKind.VOICE`) and the rhythm unit's **Kick, Snare, Cymbal, Hi-hat, Tom, Rim** (14-19,
+  `ChannelKind.SAMPLE`: the YM2608's BD, SD, TOP, HH, TOM, RIM); `NesRules.EPSM_SSG1` / `EPSM_FM1` / `EPSM_RHYTHM1`.
+  - *Pitch.* True pitch on every pitched channel (A-4 = 57 = 440 Hz). FamiStudio's EPSM note tables (pinned
+    `NoteTables/famistudio_epsm_note_table_*` for FM, `famistudio_epsm_s_note_table_*` for the SSG) play note byte n
+    at absolute n − 1, an octave below the name FamiStudio shows: SSG tone period TP = table[n], f = 8 MHz / 64 / TP
+    (n = 58 → 440.1 Hz); FM: the driver normalises the table value to an F-number and block, f = F · (8 MHz / 144) /
+    2^(21 − B) (n = 58 → 439.1 Hz). So `NesRules.engineNoteShift` is 12 on SSG and FM (`engineNote = note −
+    NOTE_OFFSET + shift`; 0 on the 2A03 and the rhythm), FamiStudio's text shows EPSM notes an octave above Thor
+    Tracker's (sounding the same), and SSG and FM reach C-1..B-7 (absolute 12..95). The rhythm drums have **fixed
+    pitch**: any note 12..107 triggers the channel's drum; the Pattern view names the drum, never a pitch.
+  - *Instruments.* `NesChip.EPSM` (no duty envelope): one EPSM sound plays on all 15 EPSM channels, as FamiStudio's one
+    EPSM instrument type does. FM channels play its `EpsmPatch` (algorithm, feedback, left/right, AMS, PMS and four
+    `YmOperator`s in algorithm-diagram order, the Mega Drive's operator model; `registers(lfo)` gives FamiStudio's 31
+    `EpsmPatchRegs`) shaped by the volume, arpeggio and pitch envelopes (the driver turns volume into the carriers'
+    total-level attenuation); SSG channels play the volume, arpeggio and pitch envelopes plus a **mixer** envelope (0
+    tone + noise, 1 noise, 2 tone, 3 neither; empty = tone), a **noise** envelope (period 0-31) and the hardware
+    envelope `s5b` (the shared `S5bEnvelope`: shape, auto period with octave −8..8 or a manual period; switching a
+    sound to EPSM selects period 4000); the rhythm channels use only the volume envelope's **first** value
+    (0-15, empty = 15: the driver writes level = value × 2 | pan into `$18-$1D`, scaled by `Cxx`) and the patch's
+    left/right bits. 2A03 channels take 2A03 sounds only.
+  - *Shared hardware, shared in the model.* The chip has **one LFO** (`$22`): `NesSound.epsmLfo` is a song setting
+    (0 = off, else bit 3 + rate 0-7), because FamiStudio's driver writes `$22` with every FM sound it loads — a
+    per-sound value would be a false promise; exports write it into every EPSM instrument's register 30. The SSG has
+    one noise and one envelope generator, shared as on the 5B: the highest SSG square sounding a noise / envelope sound
+    sets the noise period / envelope shape and period each frame, any SSG attack with a shape restarts the envelope,
+    and `Ixx`/`Jyy` (envelope period high/low, FamiStudio `EnvelopePeriod`) are lowered on SSG 1 as `$5D lo hi`
+    (FamiStudio's exporter moves them there). The model does not pretend there are three of either.
+  - *Effects and OFF.* FM: `0 4 A C F G P Q R S` (no `Vxx`); OFF on a sounding FM note is always a key-off into the
+    patch's release (`$5C`; FamiStudio's `CanRelease` for EPSM sounds on FM), a second OFF stops it. SSG: the same
+    effects plus `Ixx`/`Jyy`; OFF releases only a sound whose volume envelope has a loop and release, else stops.
+    Rhythm: `A C F G S` only (FamiStudio's `Channel.SupportsEffect`: no pitch effects on a fixed-pitch drum); OFF is
+    always a stop (the engine keeps no envelope for drums).
+  - *Editor.* EPSM sounds' Instrument pages: Volume, Arpeggio, Pitch, Mixer, Noise, **SSG env** (shape, auto/manual
+    period, octave, manual period), **FM** (the shared curated FM editor with the Mega Drive presets), **FM Expert**
+    (every register field) and **Rhythm** (level = the first volume step, pan = the patch's left/right, shared with FM;
+    the rhythm ROM's status and import). On EPSM songs the Chip row offers 2A03 and EPSM; the song's LFO is a Song-view
+    setting. **EPSM rhythm ROM…** is in the main menu while an EPSM song is open and on the Rhythm page.
+  - *Rhythm ROM (never bundled).* The rhythm unit plays Yamaha's 8 KB ADPCM-A drum ROM (MAME's `ym2608_adpcm_rom.bin`).
+    It is not in the repository, APK, AppImage, demos or any export: the user imports their own copy (**EPSM rhythm
+    ROM…**), which `EpsmRhythmRom.problem()` checks (exactly 8192 bytes, SHA-256
+    `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`) before the host stores it as device firmware —
+    Android `filesDir/firmware/ym2608_adpcm_rom.bin`, Deck `~/.local/share/thortracker/firmware/ym2608_adpcm_rom.bin`
+    — and installs it into the native engine (`nes_epsm_install_rhythm_rom`) at every start. FM/SSG-only songs play
+    without it. A song whose played orders contain a rhythm note, or a rhythm audition, fails with an actionable
+    message while it is missing; nothing substitutes another sound. `.nsf` and text exports never need or contain it
+    (NSF players bring their own copy).
+  - *Engine.* A player build of the same pinned engine with `FAMISTUDIO_EXP_EPSM = 1` (`NesEpsmPlayerImage`,
+    `nes_epsm_player_image.h`, native NSF flag `NES_EXPANSION_EPSM` = `$80`) and the YMF288 emulated by
+    the vendored ymfm's `ymf288` (BSD-3, the Mega Drive's ymfm pin), as Mesen2 does. The machine outputs true stereo
+    (FM and rhythm pans; the 2A03 centred); seeks clock the chip. Contract: `docs/AUDIO_ENGINE.md`, "EPSM".
+  - *Exports.* `.nsf` with header byte `$7B` bit 7 (EPSM); FamiStudio text with `Expansions="EPSM"`, EPSM instruments
+    as `EpsmPatch="0"` (custom) with `EpsmReg0`-`EpsmReg30`, `EPSMSquareEnvelopeShape` / `AutoPitch` /
+    `AutoPitchOctave` and `MixerSettings` / `NoiseFreq` envelopes, channels `EPSMSquare1-3`, `EPSMFM1-6`,
+    `EPSMRythm1-6`, effect `EnvelopePeriod`. FamiStudio 4.5.3's text format has no attribute for the SSG's manual
+    envelope period (it always reads back 4000), so the text export refuses, with the sound and a fix, an EPSM sound
+    with a manual period other than 4000; `.nsf`, WAV and playback are unaffected. WAV through the generic path.
+  - *Demo.* "Expansion Port" (`NesEpsmDemoSong`), A minor: an FM lead (algorithm 4, the song LFO as vibrato), slap
+    bass (algorithm 0), chorused pad (algorithm 5), organ (algorithm 7), bell and brass on FM; an SSG arpeggio shimmer,
+    a hardware-envelope buzz bass (auto period, tone and noise off) and tone+noise drums on the SSG; the 2A03 echo,
+    plucks, triangle bass, noise hats and the DPCM kick. It has **no rhythm notes**, so it plays without the ROM.
+
 - **MMC5** (Nintendo's MMC5 mapper: two more pulses and an 8-bit PCM DAC): channels MMC5 Pulse 1 (5) and MMC5
   Pulse 2 (6), `ChannelKind.PULSE`. FamiStudio 4.5.3 has no MMC5 instrument type: MMC5 squares play 2A03 instruments
   (its `Channel.SupportsInstrument`), so `NesExpansion.MMC5.chip` is `NesChip.APU`, the song holds only 2A03 sounds
@@ -454,7 +519,7 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
   with `Expansions="MMC5"` and the `MMC5Square1/MMC5Square2` channels (instruments without an `Expansion`). Golden
   test songs `mmc5_demo` and `mmc5_effects`. Contract: `docs/AUDIO_ENGINE.md`, "MMC5".
 
-**Adding the next expansion** (EPSM) follows the same path:
+**Adding another expansion** follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
    base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
    FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
@@ -1108,6 +1173,37 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- Master System (decided on the user's behalf): four systems over one Banjo engine — `sms-psg`,
+  `gg-psg`, `sms-fm`, `sms-fm-drums` — rather than one system with a layout setting (channel layouts are fixed per
+  system). Review.
+- Banjo plays 12-TET only (no fine-pitch command): tunings sound at their nearest notes. Absolute (fixed-note)
+  arpeggio steps, Banjo's master volume/fades and its sound-effect queue are not exposed. NTSC only: Banjo's tables are
+  for 3.58 MHz and a PAL game lowers speeds by one itself.
+- Banjo 7aaf837's OPLL volume write tests the extra macro's type inverted (`volume_change.inc`): an FM instrument
+  with a pitch or patch macro would corrupt its voice register, so FM voices offer volume and arpeggio envelopes only.
+  Proposed: report upstream; enable FM pitch envelopes when fixed.
+
+- EPSM FamiStudio text and the SSG's manual envelope period (decided on the user's behalf): FamiStudio 4.5.3's text
+  export and import have no `EPSMSquareEnvelopePitch` attribute, so a manual period always reads back as 4000. The
+  text export refuses an EPSM sound with a manual period other than 4000 (naming the sound) rather than writing a file
+  that plays differently in FamiStudio; `.nsf`, WAV and playback keep the period. Alternatives: export anyway with a
+  warning, or write the period as `EnvelopePeriod` effects on the notes. Review.
+- EPSM LFO as one song setting (decided on the user's behalf): the YMF288 has one LFO register (`$22`) and FamiStudio's
+  driver writes each FM instrument's register 30 there at every instrument load, so per-sound LFO values would fight
+  (the last sound loaded wins for all six FM channels). Thor Tracker keeps it as a song setting and writes it into
+  every exported EPSM instrument; FamiStudio projects whose instruments disagree cannot be represented exactly. Review.
+- EPSM SSG noise and hardware envelope are shared by SSG 1-3, as on the 5B: the highest square sounding such a sound
+  drives them. The shared `NesS5b` inspector reports ENV/NOISE ownership in Pattern lane tags and inspector lines
+  for both systems, and validation warns when sounds compete for the shared generators. Review their clarity.
+- EPSM rhythm drums have fixed pitch (the ROM's samples at the chip's rate): a note only triggers the channel's drum,
+  so transposing a rhythm lane changes nothing audible. Proposed: keep FamiStudio's model (any note triggers); a
+  dedicated "hit" note is the alternative.
+- EPSM rhythm ROM: never bundled (Yamaha's data); users must obtain and import their own copy, checked by SHA-256.
+  FamiStudio's own desktop emulator embeds it; Thor Tracker deliberately does not. Songs with rhythm notes do not play
+  until it is imported, with a message saying how. Review the message and the import's placement after device testing.
+- EPSM mixing level and stereo: the machine outputs true stereo (FM and rhythm pans, 2A03 centred). The YMF288's level
+  against the 2A03 follows the evidence in `docs/AUDIO_ENGINE.md`, "EPSM"; no hardware comparison yet. Listening may
+  ask for a different balance.
 - MMC5 PCM is played by Thor Tracker's software lane, not by the pinned engine and not by an invented hardware timer:
   open questions are the 256 KiB / 64-sample budget, the −48..+24 pitch range, a delay longer than its row being forced
   at the next row, and the lower MMC5/N163 output level from the full-span, two-filter budget (about 14.1/10.5 dB
@@ -1116,3 +1212,38 @@ Decisions:
 - MMC5 mixing: the two pulses at the 2A03 pulses' level (NESdev: "equivalent in volume") with inverted polarity, the
   240 Hz envelope/length clock at CPU ÷ 7424 (NESdev: from die images, not bench-confirmed). No hardware or
   reference-emulator comparison yet; listening may ask for a different balance.
+
+## Master System / Game Gear (Banjo)
+
+Driver: the Banjo sound driver (joffb/banjo `7aaf837`, MIT, `third_party/banjo` unmodified; checked against upstream
+by `tools/audio/prepare_sms.py`), a real tracker-format SMS driver with SN76489, Game Gear stereo and YM2413
+(including rhythm mode) support, used by homebrew through WLA-DX and devkitSMS/GBDK. Upstream's README and
+`format_spec.md` disagree with the assembly; the assembly (`banjo_defines_wladx.inc`, `process_new_line.inc`, the
+macro routines) is the authority and json2sms.py the independent export reference.
+
+- **Systems** (`system/sms`): `SmsSystem` per `SmsLayout` — PSG (Square 1-3, Noise), Game Gear (same + `8xy` pan),
+  FM (+ FM 1-9), FM rhythm (+ FM 1-6, Bass drum, Snare, Tom, Cymbal, Hi-hat), channels in Banjo's order. One engine
+  id `sms-banjo`; the image says the layout. 64 slots over one numbering, one bank per kind (PSG sounds, FM voices,
+  drum kits). Ticks: 59.92 Hz. Notes: PSG layouts A-2..B-8, FM layouts C-0..B-8 (FM and drums up to B-7).
+- **Instruments** (`SmsSound`): PSG sounds = Banjo macros (volume with loop/release, arpeggio, and one extra macro:
+  pitch in 1/128 semitone or the noise mode per tick); FM voices = built-in instrument 1-15 or the one custom voice
+  (OPLL registers as fields, ROM voices as emu2413 measured them for starting points) + volume/arpeggio; drum kits =
+  pitched by notes or three fixed pitches. Presets per layout fill new songs.
+- **Effects** (up to 4 columns): `0xy 1xx 2xx 3xx 4xy 8xy(GG) Bxx Cxx D00 Fxx Gxx Lxx Nxy Oxx Sxx`, mapped to Banjo
+  commands; arpeggio/slides/vibrato share Banjo's one slot; speeds apply from the next row; `Oxx` sets odd rows.
+- **Lowering** (`backend/SmsLowering`, `BanjoSong`): Banjo song data; pattern length = longest order rounded to even;
+  explicit order jumps for short orders and the loop; per (order, channel) tracks deduplicated; OFF = macro release or
+  note off by the instrument in effect; `0xy` per note (auto `ARPEGGIO_OFF`); instrument rows without a note load with
+  the next note. Differences from json2sms 7aaf837 (documented in AUDIO_ENGINE.md): arpeggio/extra macro loop index + 2,
+  first row's tic = speed + 1 via a channel-init callback (the driver overwrites the header counter).
+- **Exports**: WLA-DX `.asm` and SDAS `.s` Banjo song sources (genuine driver data, first-row initialization and two-chip call stubs), VGM 1.51
+  through the native machine (`SmsExport.renderer`, JNI `ChipAudio.nativeSmsVgm`, Deck `DeckSmsVgm`).
+- **Engine**: `sms/sms_machine.c` — Banjo on z80.h, our SN76489 (`ym/ym_psg.c`, plus Game Gear stereo), emu2413
+  1.6.4 (MIT, chosen over ymfm's OPLL: plain C like the machine, per-rhythm-drum masks, proven OPLL accuracy).
+- **Validation**: Banjo's limits as errors (note delay/cut within the row, D00 only, kinds per channel, FM ≤ B-7, data
+  ≤ 32 KB, ≤ 255 orders); warnings for two custom FM voices at once, Square 3 under pitched noise, low PSG/noise notes,
+  two pitch effects on a row, songs over one 16 KB bank.
+- **Editor**: `SmsInstrumentView`/`SmsInstrumentPainter` on the shared FM painter and NES envelope plot: PSG pages
+  Volume/Arpeggio/Pitch/Noise; FM pages Voice (instrument, modulator/carrier grid, routing and envelope sketch),
+  Volume, Arpeggio; Kit page. Demo "Harbour Lights" arranged per layout.
+- **Tests**: `SmsLoweringTest`, `SmsModelTest`, `SmsEditorTest`, native `sms_machine_test.c` (hand-built images).

@@ -11,6 +11,8 @@ import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
+import org.thortracker.system.sms.SmsExport
+import org.thortracker.system.sms.SmsVgmRenderer
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.system.ym2612.YmExportRenderer
 
@@ -280,13 +282,15 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
         init {
             System.loadLibrary("thortracker_audio")
-            // VGM export of OPL3 songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of every system through
-            // the native players (core has no native code).
+            // Native VGM/XGM/XGC exports and WAV rendering (core has no native code).
             Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
                 nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            SmsExport.renderer = SmsVgmRenderer { image, maxTicks, tags ->
+                nativeSmsVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             WavExport.renderer = WavRenderer { engineId, image, options, spool ->
                 NativeWavJob(nativeWavOpen(engineId, image, options.loops, options.fadeSeconds * 1000, options.maxSeconds, spool))
@@ -330,10 +334,19 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** Master System VGM 1.51 (`sms_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativeSmsVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** `chip_wav.h`: a job rendering into [spool]; throws IllegalArgumentException(problem) when it cannot start. */
         @JvmStatic private external fun nativeWavOpen(systemId: String, image: ByteArray, loops: Int, fadeMs: Int, maxSeconds: Int, spool: String): Long
         @JvmStatic private external fun nativeWavRun(handle: Long, ticks: Int): Int
         @JvmStatic private external fun nativeWavStatus(handle: Long, out: LongArray)
         @JvmStatic private external fun nativeWavClose(handle: Long)
+
+        /**
+         * Installs the YMF288 rhythm ROM (`nes_epsm_install_rhythm_rom`): process-wide firmware every EPSM engine plays
+         * its six rhythm drums from. 0 = installed (identical bytes again: no change), -1 = not 8192 bytes. Callers
+         * validate the bytes first ([org.thortracker.system.nes.EpsmRhythmRom.problem]); never called concurrently.
+         */
+        @JvmStatic external fun nativeInstallRhythmRom(rom: ByteArray): Int
     }
 }
