@@ -28,6 +28,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "blip_buf.h"
 #include "chip_engine.h"
 #include "vsu_chip.h"
 #include "vsu_export.h"
@@ -830,11 +831,11 @@ static void test_audio(const char* dir) {
         if (pass == 0) {
             const double r = rms(buf, frames), pk = peak(buf, frames);
             EXPECT(frames == (long)ticks * TICK_FRAMES, "1500 ticks = 30 s = %ld frames", frames);
-            EXPECT(r > 0.01, "non-silent (rms %.4f)", r);
+            EXPECT(r > 0.00125, "non-silent (rms %.4f; includes 1/8 host headroom gain)", r);
             EXPECT(pk < 1.0, "below full scale (peak %.4f; unverified)", pk);
             int quiet = 0;
             for (long s = 0; s + RATE <= frames; s += RATE)
-                if (rms(buf + 2 * s, RATE) < 0.002) ++quiet;
+                if (rms(buf + 2 * s, RATE) < 0.00025) ++quiet;
             EXPECT(quiet == 0, "every second non-silent (%d quiet)", quiet);
             int stereo = 0;
             for (long i = 0; i < frames; ++i) stereo |= buf[2 * i] != buf[2 * i + 1];
@@ -846,6 +847,124 @@ static void test_audio(const char* dir) {
         vbm_destroy(m);
     }
     EXPECT(hash[0] == hash[1], "bit-identical on a second start");
+}
+
+/* Representation oracle, not an independent chip model: consume the untouched raw diagnostic samples at scale 1.
+ * Its worst-case signal is <2740, so neither its FIR history nor int16 conversion can hide production clipping. */
+typedef struct HeadroomReference {
+    blip_t* blip[2];
+    double y[2], x[2];
+    int last[2], maximum, valid;
+    uint64_t start;
+} HeadroomReference;
+
+static void headroom_sample(void* ctx, uint64_t clock, int left, int right) {
+    HeadroomReference* r = (HeadroomReference*)ctx;
+    const int sample[2] = {left, right};
+    const double alpha = VBM_RC / (VBM_RC + (double)VSU_SAMPLE_CLOCKS / VSU_CLOCK);
+    for (int k = 0; k < 2; ++k) {
+        r->valid &= sample[k] >= 0 && sample[k] <= 685;
+        if (sample[k] > r->maximum) r->maximum = sample[k];
+        r->y[k] = alpha * (r->y[k] + sample[k] - r->x[k]);
+        r->x[k] = sample[k];
+        const int v = (int)lround(r->y[k]);
+        blip_add_delta(r->blip[k], (unsigned)(clock - r->start), v - r->last[k]);
+        r->last[k] = v;
+    }
+}
+
+/* Legal image: six max-level channels, sustained DC or arbitrary wave/noise plus hardware modulation; OFF and
+ * re-key after long filter history. All lanes share a pattern; the noise lane accepts the same note as wave lanes. */
+static void headroom_image(VsuImage* image, int shaped) {
+    uint8_t* b = image->bytes;
+    memset(image, 0, sizeof *image);
+    memcpy(b, "TTVB", 4);
+    b[VB_H_LAYOUT] = VB_LAYOUT;
+    b[VB_H_SPEED] = 1;
+    vbt_u16(b + VB_H_ORDERS, 1);
+    b[VB_H_INSTRUMENTS] = 1;
+    b[VB_OFF_ROWS] = 64;
+    vbt_instrument(b, 1, 0, 15, 0, 0, 0, 0,
+                   shaped ? VB_FM_ON | VB_FM_MODULATION | VB_FM_REPEAT : 0,
+                   shaped ? 0x10 : 0, 0, 0, 0);
+    for (int i = 0; i < 32; ++i) {
+        b[VB_OFF_WAVES + i] = (uint8_t)(shaped ? ((i * 37 + 19) & 63) : 63);
+        b[VB_OFF_MOD + i] = (uint8_t)(i & 1 ? 127 : 128);
+    }
+    VbtOut o = {.b = b};
+    vbt_put(&o, 3); vbt_put(&o, 27); vbt_put(&o, 1); /* row 0 */
+    vbt_put(&o, 0x80 | 30);                         /* rows 1..31 */
+    vbt_put(&o, 1); vbt_put(&o, VB_NOTE_OFF);        /* row 32 */
+    vbt_put(&o, 0x80 | 2);                          /* rows 33..35 */
+    vbt_put(&o, 3); vbt_put(&o, 95); vbt_put(&o, 1); /* row 36 */
+    vbt_put(&o, 0x80 | 26);                         /* rows 37..63 */
+    vbt_u16(b + VB_H_DATA_SIZE, o.at);
+    EXPECT(vb_load_image(image) == 0, "headroom image loads");
+}
+
+static void test_headroom(void) {
+    printf("headroom (raw trace -> low-gain representation oracle)\n");
+    static const unsigned rates[] = {8000, 11025, 22050, 32000, 44100, 48000, 96000};
+    static VsuImage image, edited;
+    for (unsigned ri = 0; ri < sizeof rates / sizeof rates[0]; ++ri)
+        for (int shaped = 0; shaped < 2; ++shaped) {
+            headroom_image(&image, shaped);
+            edited = image;
+            memset(edited.bytes + VB_OFF_WAVES, 0, 32);
+            EXPECT(vb_load_image(&edited) == 0, "DC-to-zero edit loads");
+            VsuMachine* m = vbm_create(rates[ri]);
+            HeadroomReference ref = {.valid = 1};
+            for (int k = 0; k < 2; ++k) {
+                ref.blip[k] = blip_new(VBM_MAX_TICK_FRAMES + 64);
+                blip_set_rates(ref.blip[k], VSU_CLOCK, rates[ri]);
+            }
+            int mode, frames_ok = 1;
+            EXPECT(vbm_start(m, &image, 0, 0, SEEK_BUDGET, &mode) == VBM_OK, "headroom starts");
+            vbm_set_trace(m, NULL, headroom_sample, &ref);
+            double worst = 0, maximum = 0;
+            for (int tick = 0; tick < 64; ++tick) {
+                if (tick == 12 || tick == 16)
+                    for (int c = 0; c < 6; ++c) vbm_mute(m, c, tick == 12);
+                if (tick == 20 || tick == 24) vbm_apply_image(m, tick == 20 ? &edited : &image);
+                ref.start = vbm_clock(m);
+                const int frames = vbm_tick(m, g_out);
+                short low[2 * VBM_MAX_TICK_FRAMES];
+                for (int k = 0; k < 2; ++k) {
+                    blip_end_frame(ref.blip[k], TICK);
+                    frames_ok &= blip_read_samples(ref.blip[k], low + k, VBM_MAX_TICK_FRAMES, 1) == frames;
+                }
+                for (int i = 0; i < frames * 2; ++i) {
+                    const double expected = low[i] * (VBM_STEP_SCALE / (double)VBM_FLOAT_SCALE);
+                    const double error = fabs(g_out[i] - expected);
+                    if (error > worst) worst = error;
+                    if (fabs(g_out[i]) > maximum) maximum = fabs(g_out[i]);
+                }
+            }
+            EXPECT(frames_ok && ref.valid, "%u Hz shape %d: sample/frame contracts", rates[ri], shaped);
+            EXPECT(worst < 0.003, "%u Hz shape %d: no hidden blip clipping (error %.6f)", rates[ri], shaped, worst);
+            EXPECT(maximum < 0.976, "%u Hz shape %d: host output headroom (peak %.6f)", rates[ri], shaped, maximum);
+            if (!shaped) EXPECT(ref.maximum == 685, "%u Hz: all-six maximum reached (%d)", rates[ri], ref.maximum);
+            for (int k = 0; k < 2; ++k) blip_delete(ref.blip[k]);
+            vbm_destroy(m);
+        }
+}
+
+/* Pin the supported software timing, not the unresolved hardware editor's note about a 5-10 ms zero gate. */
+static void test_note_on_timing(void) {
+    VsuChip chip;
+    vsu_reset(&chip);
+    for (int i = 0; i < 32; ++i) vsu_write(&chip, (uint16_t)i, 63);
+    vsu_write(&chip, VSU_REG(0, VSU_LRV), 0xFF);
+    vsu_write(&chip, VSU_REG(0, VSU_EV0), 0xF0);
+    vsu_write(&chip, VSU_REG(0, VSU_EV1), 1);
+    vsu_write(&chip, VSU_REG(0, VSU_INT), 0x80);
+    int l, r;
+    vsu_sample(&chip, 0, &l, &r);
+    EXPECT(l == 114 && r == 114, "envelope-enabled wave audible immediately in raw core (no guessed zero gate)");
+    vsu_run(&chip, 76799);
+    EXPECT(chip.ch[0].env == 15, "first envelope interval holds initial value through clock 76799");
+    vsu_run(&chip, 1);
+    EXPECT(chip.ch[0].env == 14, "first envelope step exactly at clock 76800 (15.36 ms)");
 }
 
 /* ---- seek ------------------------------------------------------------------------------------------------------ */
@@ -1244,7 +1363,7 @@ static void test_audition(const char* dir) {
     vbm_mute(m, 1, 1);
     vbm_audition(m, &g_song, 1, A4, VBT_TONE, 0);
     const long fr = render(m, 10, &buf);
-    EXPECT(rms(buf, fr) > 0.01, "audition clears mutes (rms %.4f)", rms(buf, fr));
+    EXPECT(rms(buf, fr) > 0.00125, "audition clears mutes (rms %.4f)", rms(buf, fr));
     free(buf);
     vbm_apply_image(m, &g_wave);
     EXPECT(vbm_chip(m)->wave[0][0] == g_song.bytes[VB_OFF_WAVES], "apply_image ignored while auditioning");
@@ -1322,7 +1441,7 @@ static void test_mute(void) {
     vbm_start(m, &g_song, 1, 0, SEEK_BUDGET, &mode);
     float* buf;
     long frames = render(m, 30, &buf);
-    EXPECT(rms(buf, frames) > 0.01, "start clears mutes (rms %.4f)", rms(buf, frames));
+    EXPECT(rms(buf, frames) > 0.00125, "start clears mutes (rms %.4f)", rms(buf, frames));
     free(buf);
     EXPECT(vbm_mute(m, 6, 1) == VBM_ERR_IMAGE && vbm_mute(m, -1, 1) == VBM_ERR_IMAGE, "lane 6 rejected");
     free(a.samples), free(b.samples), free(c.samples), free(d.samples), free(e.samples);
@@ -1619,6 +1738,8 @@ int main(int argc, char** argv) {
     test_pitch_table();
     test_trace(dir);
     test_audio(dir);
+    test_headroom();
+    test_note_on_timing();
     test_seek();
     test_live_edits();
     test_audition(dir);

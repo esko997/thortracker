@@ -3,7 +3,7 @@
  * then the chip runs the tick and its 10-bit mixer output is sampled at every multiple of 120 clocks of the machine's
  * clock count (sample k at clock 120 k, k >= 1, after that clock's events: 833 or 834 per tick), each through the
  * analog RC high-pass (100 ohm, 220 uF) discretised at that rate and into blip_buf (VSU clock -> host rate) as integer
- * steps of round(y x 64); float output = blip sample / (64 x 384). Behaviour (seek, live edits, audition, mute) is
+ * steps of round(y x 8); float output = blip sample / (64 x 384). Behaviour (seek, live edits, audition, mute) is
  * specified in docs/AUDIO_ENGINE.md, "Virtual Boy VSU". No allocation after vbm_create. One thread at a time. */
 #ifndef THORTRACKER_VSU_MACHINE_H_
 #define THORTRACKER_VSU_MACHINE_H_
@@ -21,7 +21,11 @@ extern "C" {
 #define VBM_MAX_SAMPLE_RATE 96000u
 #define VBM_MAX_TICK_FRAMES 1921u /* 96000 / 50 + 1 */
 #define VBM_OUTPUT_TICKS 50       /* a seek runs the output path for its last min(n, 50) ticks (1 s, 45 RC time constants) */
-#define VBM_STEP_SCALE 64         /* blip_buf units per mixer unit */
+/* Mixer 0..685; the RC output is bounded by 685 (not twice that: its input is unipolar). Reserve a conservative
+ * factor 2 for blip's FIR and 2 for its high-pass history: 685 * 8 * 4 = 21920, plus <2048 rounding allowance,
+ * below both int16 and FLOAT_SCALE. Do not compensate this attenuation after blip: that would clip host floats.
+ * Full derivation and supported-rate assumptions: docs/AUDIO_ENGINE.md, VSU "Headroom". */
+#define VBM_STEP_SCALE 8          /* blip_buf units per mixer unit; previously 64 could clip before float conversion */
 #define VBM_FLOAT_SCALE (64.0f * 384.0f)
 #define VBM_RC 0.022              /* seconds: 100 ohm x 220 uF */
 

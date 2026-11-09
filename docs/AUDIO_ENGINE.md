@@ -2385,6 +2385,35 @@ executable (ROM) is exported**: that would need a V810 driver this system does n
   an inactive channel's counters do not run. The core is chunk-invariant: running *a* then *b* clocks equals running
   *a* + *b* (the host test checks it), which is what makes fully clocked seeking exact.
 
+#### Note-on timing: supported contract, not a guessed hardware delay
+
+The pinned Tech Scroll's **Envelope Procedure** says sound runs for the initial interval before modification.
+Its adjacent editor's note reports zero samples for **5–10 ms when enabling a channel with `Enb` set**, explicitly
+adding that the cause and consistency are unknown. It specifies neither an exact clock count nor a trigger/retrigger,
+wave/noise or register-write rule for such a gate. This observation is not the normal envelope interval:
+`(Interval + 1) * 76800` clocks, i.e. 15.36–122.88 ms.
+
+The pinned Mednafen 1.32.1 `src/vb/vsu.cpp` does **not** implement that gate: `Write` case 4 immediately loads
+`Envelope` from EV0, case 0 enables the channel and restarts its dividers, and `CalcCurrentOutput` gates on channel
+enable but not envelope enable or a note-on timer. `Update` emits that output before advancing the dividers.
+Its 120-clock latcher counters are output scheduling, not a 25,000–50,000-clock startup gate.
+
+Our explicit software contract remains the same on this point: `vsu_write(EV0)` immediately loads `env`;
+`start_channel` activates and resets wave position/counters without clearing `env`; `vsu_sample` can therefore
+return the initial waveform value immediately, even with envelope modification enabled. The first envelope
+modification is exactly `(EV0.Interval + 1) * 76800` clocks after key-on. `vsu_machine.c::run_tick` applies the
+player's entire write batch at tick start, then samples after events at the next global multiple of 120 clocks
+(at most 24 µs later), followed by RC/blip processing. This does not promise nonzero audio for a zero waveform,
+zero envelope/volume, noise before its first shift, an inactive/overflow-stopped channel, or every sampling phase.
+The host FIR delay is also distinct from a chip startup gate.
+
+Affected implementations are `vsu_chip.c::{vsu_write,start_channel,effects_tick,vsu_sample}`,
+`vsu_machine.c::run_tick`, `vsu_player.c`'s EV0-before-INT key-on batch and the Python reference's channel write/effects
+logic. The source-only regression pins immediate raw output for a constant-63 wave with an enabled level-15
+envelope, and the first decay at clock 76800. The Python model mirrors the chosen contract; Mednafen/libvgm ancestry
+does not independently establish hardware timing. **No 5–10 ms delay is added.** Resolving it needs hardware
+recordings with timestamped register writes, not a guessed midpoint or a relaxed comparison threshold.
+
 ### What runs
 
 - **Tick** = one Virtual Boy display frame, 20 ms (the VIP's 50.0 Hz): exactly 100000 VSU clocks. The player runs
@@ -2393,12 +2422,52 @@ executable (ROM) is exported**: that would need a V810 driver this system does n
 - **Output**: each 10-bit sample (left, right) goes through the RC high-pass (double state, α = RC / (RC + 120 /
   5000000), RC = 0.022; its output is flushed to 0 below 1e-20 at a tick's end, against denormals in long silences)
   and into blip_buf 1.1.0 (as the NES, clocked at the 5 MHz VSU clock, each step placed at its sample's clock) as
-  integer steps of round(y · 64), resampled to the host rate; float output = blip sample / (64 · 384), so six
-  full-level channels peak near ±0.9 (expected). blip_buf adds its own fixed ~15 Hz DC removal on top of the RC
-  filter (as on every system using it).
+  integer steps of round(y · 8), resampled to the host rate; float output = blip sample / (64 · 384).
+  This is a deliberate **1/8 host gain** relative to the original scale-64 path, applied before the first int16
+  clipping stage, not undone in float conversion. blip_buf adds its own host-rate-dependent DC removal
+  (pole 511/512 per output sample) on top of the RC filter (as on every system using it).
 - **Muting** leaves a channel out of the mixer sum only; the chip, its phases, envelopes and noise run unchanged.
 - **Size** (expected): `VsuImage` = 65536 bytes + `VbInfo`; a machine ≈ 100 KB (image copy, chip < 1 KB, player,
   two blip buffers). Nothing is allocated after `create`.
+
+#### Headroom
+
+Source audit (regressions authored, **not executed**): the old `VBM_STEP_SCALE=64` was unsafe. Each channel's
+maximum stereo/envelope amplitude is `(15*15 >> 3)+1 = 29`; six 6-bit samples sum to at most
+`(6*63*29) >> 4 = 685`. Even five constant-63 wave channels alone produce 570, whose startup RC step times 64
+exceeds int16. Noise, modulation, sweep, cuts, live wave edits and mute/unmute cannot increase the raw range
+`0 <= x <= 685`, but can create its full transitions. The digital mixer and its raw diagnostics are unchanged.
+
+The pre-blip high-pass recurrence is `y[n]=alpha*(y[n-1]+x[n]-x[n-1])`, reset with `x=y=0`.
+Equivalently it subtracts a convex exponentially weighted history of earlier unipolar inputs from the current
+input and multiplies by alpha. Thus `|y| <= alpha*685 < 685`, including a long DC hold followed by a cut/opposite
+transition. Using twice the maximum for this stage is unnecessary; ignoring the history is unsafe.
+
+For the pinned `third_party/blip_buf/blip_buf.c` 16-tap/32-phase kernel, the continuous interpolated step's total
+variation bounds reconstruction at **arbitrary event phases**, not just one phase's impulse response. The
+phase-prefix variations for taps 0..7 are `[51,123,350,498,1166,1432,6383,21022]`; taps 8..14 mirror 6..0 and
+tap 15 is constant 32768. Hence total variation is `(2*10003+21022)/32768 = 1.2520751953125 < 2`.
+This conservative factor 2 includes FIR overshoot; blip's following high-pass has L1 gain at most 2, including
+its complete prior history. At scale 8 the signal bound is therefore `685*8*2*2 = 21920` PCM units.
+
+Rounding has separate margin: rounding the RC step contributes at most `0.5*2*2 = 2` PCM units. Blip's fractional
+delta split differs from ideal interpolation by less than one delta unit; its error has zero completed-step sum
+and lasts at most 16 host frames. At the minimum supported 8000 Hz, fewer than 86 regularly spaced 120-clock
+events can overlap that support (higher rates reduce this count). Bounding a difference of two phase prefixes
+by 4 gives less than `86*4*2 = 688` PCM units including high-pass history; integer high-pass truncation adds less
+than 1. A deliberately generous **2048-unit total allowance** covers these errors and floating-point RC rounding.
+Thus `|PCM| < 23968 < 32767` and `|float| < 23968/24576 < 0.976`, at every supported 8000–96000 Hz rate.
+The bounded split products, FIR increments and integrator also fit int32; no limiter, saturation, per-voice gain,
+chip timing change, allocation or added per-sample work is introduced.
+
+`test_headroom` uses actual legal six-channel images and a scale-1 representation oracle fed by raw diagnostics:
+constant full waves/noise, arbitrary waves/modulation, startup, sustained history, all-channel mute/unmute,
+live DC-to-zero-to-DC edits, OFF and low/high-note retrigger at 8/11.025/22.05/32/44.1/48/96 kHz.
+The oracle tests hidden resampler clipping, **not independent chip fidelity**. Parent verification must demonstrate
+failure with the original header and success with the new one, run the complete native/seek/mute suite, and
+compare raw register/sample/VGM traces unchanged. Existing non-silence thresholds are scaled by exactly 1/8;
+the optional libvgm diagnostic multiplies engine audio by 8 only for comparison, retaining its original thresholds.
+Independent-reference/hardware caveats above still apply; no waveform or hardware timing claim is verified here.
 
 ### Channels and register addressing
 

@@ -142,6 +142,9 @@ def read_wav(path):
 def compare_audio(engine_wav, vgm_path, vgm2wav):
     import numpy as np
     a, rate = read_wav(engine_wav)
+    # Undo only the documented 1/8 host headroom gain for this diagnostic comparison. Raw chip/VGM traces are
+    # unchanged; production output is never amplified here. Keep the original correlation and level thresholds.
+    a *= 8.0
     with tempfile.TemporaryDirectory() as tmp:
         out = os.path.join(tmp, "vgm.wav")
         subprocess.run([vgm2wav, "--samplerate", str(rate), "--loops", "5", "--fade", "0", vgm_path, out],
@@ -178,10 +181,10 @@ def compare_audio(engine_wav, vgm_path, vgm2wav):
         same_pc += round(12 * np.log2(pa / pb)) % 12 == 0
     level = (b[:n] - b[:n].mean()).std() / (a[:n] - a[:n].mean()).std()
     print("  libvgm (Mednafen-derived VSU) vs engine: envelope correlation %.3f (lag %d ms), log-spectrum correlation "
-          "%.3f, same pitch class %.0f%% of %d windows, level ratio %.2f"
+          "%.3f, same pitch class %.0f%% of %d windows, headroom-normalized level ratio %.2f"
           % (env, lag * 20, float(np.mean(spec)) if spec else 0.0, 100.0 * same_pc / max(1, counted), counted, level))
     print("  (expected differences: noise reset 1 vs 0, envelope repeat wrap, S5INT frequency copy, modulation lock, "
-          "no RC filter or 10-bit mixer; thresholds unverified)")
+          "no RC filter or 10-bit mixer; engine x8 for host headroom normalization; thresholds unverified)")
     check(env > 0.7, "loudness envelope correlation > 0.7")
     check(bool(spec) and np.mean(spec) > 0.7, "log-spectrum correlation > 0.7")
     check(counted > 0 and same_pc / counted > 0.6, "dominant pitch class agrees in > 60% of windows")
