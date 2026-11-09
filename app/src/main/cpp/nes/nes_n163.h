@@ -32,7 +32,7 @@
  * Time is counted in CPU cycles from the start of the current output frame, as nes_apu.c. Every channel slot
  * is computed exactly, with output attached or not (seeking), so phases and the round-robin position after a
  * silent seek equal those of audible play; with output the DAC level is sent as band-limited deltas (amplitude
- * NES_APU_AMP_SCALE = a level of 1.0) whenever it changes. Plain data, no allocation. */
+ * amp_scale, by default NES_APU_AMP_SCALE, = a level of 1.0) whenever it changes. Plain data, no allocation. */
 #ifndef THORTRACKER_NES_N163_H_
 #define THORTRACKER_NES_N163_H_
 
@@ -47,6 +47,8 @@ extern "C" {
 /* Mixer weight of one DAC unit: the 2A03 mixer's level of one pulse at volume 15, 12 dB up (10^(12/20)), over
  * the 225 units of a full-volume square. */
 #define NES_N163_STEP (95.88 / (8128.0 / 15.0 + 100.0) * 3.9810717055349722 / 225.0)
+/* The mixer span of the N163's one DAC: -120..105 units (sample 0..15 minus 8, times volume 15), 225 units. */
+#define NES_N163_SPAN (225.0 * NES_N163_STEP)
 #define NES_N163_CHANNELS 8
 #define NES_N163_RAM 128
 #define NES_N163_SLOT_CYCLES 15 /* CPU cycles per channel update */
@@ -63,11 +65,15 @@ typedef struct NesN163 {
     uint32_t time;             /* frame-relative CPU cycle reached */
     int32_t amp;               /* last amplitude sent to the buffer */
     blip_t* out;               /* NULL: silent (slots still computed, no synthesis) */
+    double amp_scale;          /* blip amplitude of a mixer level of 1.0; 0 = NES_APU_AMP_SCALE (nes_n163_set_amp_scale) */
 } NesN163;
 
-/* Power-on state (RAM 0, sound enabled, address 0, the next update channel 8 in 15 cycles). Keeps `out` and
- * `mute`. */
+/* Power-on state (RAM 0, sound enabled, address 0, the next update channel 8 in 15 cycles). Keeps `out`, `mute` and
+ * `amp_scale`. */
 void nes_n163_reset(NesN163* n);
+/* Blip amplitude of a mixer level of 1.0 (0: NES_APU_AMP_SCALE, as the 2A03's); the machine's N163 builds scale the APU
+ * and the N163 alike (nes_machine.c). Set it before attaching the output. */
+void nes_n163_set_amp_scale(NesN163* n, double scale);
 /* Attach the band-limited output (NULL = silent); starts from the current level without a step. */
 void nes_n163_set_output(NesN163* n, blip_t* out);
 /* Advances to frame-relative CPU cycle `t` (>= the time reached). */

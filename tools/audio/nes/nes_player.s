@@ -5,7 +5,7 @@
 ;
 ; CPU memory map (NTSC 2A03, no mapper):
 ;   $0000-$00FF  engine zero page            $0200-$07FF  engine RAM (BSS)
-;   $0100-$01FF  stack                       $4000-$4017  APU
+;   $0100-$01FF  stack                       $4000-$4017  APU ($401C-$401F: EPSM, EPSM build)
 ;   $8000-...    this player (code + tables) NES_SONG_BASE-$BFFF  song data (FamiStudio export format)
 ;   $C000-$FFF9  DPCM samples (FAMISTUDIO_DPCM_OFF; the song's DPCM list holds their $4012/$4013 values)
 ;   $FFFA-$FFFF  vectors, written by the native machine (not part of the song image)
@@ -31,7 +31,16 @@
 ; its own song base (measured likewise); its engine is a copy with prepare_nes_player.py FDS_ENGINE_PATCH
 ; (a manual mod speed whose low byte has bit 7 set, stored as low, high | $80). The Sunsoft 5B build
 ; (nes_s5b_player_image.h) adds -D FAMISTUDIO_EXP_S5B=1 (5B squares 1-3 as channels 5-7) and assembles a
-; copy with S5B_ENGINE_PATCH (Thor Tracker's `$5F i` opcode).
+; copy with S5B_ENGINE_PATCH (Thor Tracker's `$5F i` opcode). The EPSM build (nes_epsm_player_image.h)
+; adds -D FAMISTUDIO_EXP_EPSM=1 with the engine's default EPSM configuration (3 SSG, 6 FM, 6 rhythm channels
+; as channels 5-19; YMF288 registers through $401C-$401F) and assembles a copy with EPSM_ENGINE_PATCH (the
+; global LFO register and Thor Tracker's `$5F` SSG load).
+; The Nintendo MMC5 build (generated/nes_mmc5_player_image.h) adds -D FAMISTUDIO_EXP_MMC5=1 the same way
+; (the plain engine, no patch): MMC5 pulse 1/2 as channels 5-6, playing the 2A03 note table and
+; instruments; the engine writes $5010 = $00 and $5015 = $03 at init and $5000/$5002/$5003,
+; $5004/$5006/$5007 per frame (of $5000-$5007 never $5001/$5005, the sweep units MMC5 lacks; never
+; $5011: the pinned engine has no MMC5 PCM), and its own song base (the first page after the
+; player, measured).
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

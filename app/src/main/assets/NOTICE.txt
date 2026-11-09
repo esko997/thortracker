@@ -15,7 +15,7 @@ FamiStudio, MIT, notice below), the m6502.h 6502
 emulator from floooh/chips at commit 9e88298ce56319953ac7a43213a1120359f7a3a6
 (zlib, notice below) and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public
 License 2.1 or later; source in app/src/main/cpp/third_party/blip_buf with its
-license.txt). The 2A03 APU, VRC6, FDS, Namco 163 and Sunsoft 5B audio emulation are
+license.txt). The 2A03 APU, VRC6, FDS, MMC5, Namco 163 and Sunsoft 5B audio emulation are
 Thor Tracker's own code (GPL-3.0-or-later). The Namco 163 was written from the
 NESdev wiki page "Namco 163 audio"; the Sunsoft 5B from the NESdev wiki with
 emu2149's documented behaviour as a reference (no emu2149 code is included).
@@ -57,6 +57,20 @@ Weissflog (zlib, the chips notice above), with the YM2612 emulated by ymfm by
 Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
 commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
 xgmtool's conversion (MIT).
+
+NES + EPSM songs run the FamiStudio sound engine 4.5.3 built with its EPSM support
+(with FamiStudio's EPSM note tables, MIT, notice below) on the same m6502.h, and
+emulate the EPSM's Yamaha YMF288 (OPN3-L: FM, SSG and rhythm) with the same ymfm
+by Aaron Giles (BSD-3-Clause, notice below; its ymf288 class).
+Thor Tracker applies scoped corrections to a temporary copy of that driver:
+the FM patch loader writes LFO settings to global register $22, an SSG attack
+exits before it can overwrite rhythm pan state, and a $5F SSG instrument-load
+extension preserves legato envelope positions and runtime periods while
+retaining the actual instrument slot for live edits.
+The Yamaha YM2608 rhythm ROM (the 8 KB of ADPCM-A drum samples the rhythm channels
+play) is NOT included in Thor Tracker, its source, its builds, its demo songs or
+anything it exports. Users who own a copy import it themselves; Thor Tracker only
+checks it (size and SHA-256) and keeps it in its private storage on that device.
 
 binjgb
 https://github.com/binji/binjgb

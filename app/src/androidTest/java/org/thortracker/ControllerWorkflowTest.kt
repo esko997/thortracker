@@ -14,8 +14,12 @@ import android.view.View
 import android.view.ViewGroup
 import org.thortracker.editor.Selection
 import org.thortracker.editor.ViewKind
+import org.thortracker.model.Cell
 import org.thortracker.model.Songs
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesEpsmSystem
+import org.thortracker.system.nes.nes
 import org.thortracker.ui.TrackerView
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
@@ -41,7 +45,7 @@ class ControllerWorkflowTest {
     private lateinit var activity: MainActivity
     private lateinit var tracker: TrackerView
 
-    @Before fun setUp() {
+    private fun launchActivity() {
         activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
         instrumentation.waitForIdleSync()
@@ -49,13 +53,18 @@ class ControllerWorkflowTest {
         var ready = false
         while (SystemClock.uptimeMillis() < deadline) {
             instrumentation.runOnMainSync {
-                tracker = findTracker(activity.window.decorView) ?: error("Pattern view missing")
-                ready = findEnabledPlay(activity.window.decorView)
+                val view = findTracker(activity.window.decorView)
+                if (view != null) tracker = view
+                ready = view != null && findEnabledPlay(activity.window.decorView)
             }
             if (ready) break
             SystemClock.sleep(40)
         }
         assertTrue("Actual audio initialization must complete", ready)
+    }
+
+    @Before fun setUp() {
+        launchActivity()
         // Bindings and controller focus persist in the app's prefs; every test starts from the documented
         // defaults with the controller on the primary display's tracker.
         resetControls()
@@ -107,6 +116,50 @@ class ControllerWorkflowTest {
         assertEquals("Whole held adjustment must undo together", before, tracker.session.song)
         chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_B)
         assertEquals(changed, tracker.session.song)
+    }
+
+    @Test fun twentyChannelPatternNavigatesEditsAndRestoresItsLastLane() {
+        val demo = NesEpsmSystem.demo()
+        val last = demo.system.channels.lastIndex
+        val instrument = demo.nes.instruments.indexOfFirst { it.chip == NesChip.EPSM } + 1
+        val patterns = demo.patterns.toMutableList()
+        patterns[0] = patterns[0].copy(tracks = patterns[0].tracks.mapIndexed { channel, rows ->
+            if (channel == last) rows.mapIndexed { row, cell -> if (row == 0) Cell(instrument = instrument) else cell }
+            else rows
+        })
+        val before = demo.copy(patterns = patterns)
+        instrumentation.runOnMainSync {
+            tracker.session.replaceSong(before)
+            tracker.state.field = 1
+            tracker.refresh()
+        }
+        instrumentation.waitForIdleSync()
+        repeat(last) { tap(KeyEvent.KEYCODE_BUTTON_R1) }
+        instrumentation.runOnMainSync {
+            assertEquals(19, tracker.state.channel)
+            assertEquals(1, tracker.state.field)
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_B)
+        instrumentation.runOnMainSync {
+            assertEquals(0, tracker.session.song.patterns[0].tracks[last][0].instrument)
+            assertEquals(before.patterns[0].tracks.dropLast(1), tracker.session.song.patterns[0].tracks.dropLast(1))
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync { assertEquals(before, tracker.session.song) }
+        instrumentation.runOnMainSync { activity.finish() }
+        instrumentation.waitForIdleSync()
+        launchActivity()
+        instrumentation.runOnMainSync {
+            assertEquals(before, tracker.session.song)
+            assertEquals(19, tracker.state.channel)
+            assertEquals(1, tracker.state.field)
+        }
+        instrumentation.runOnMainSync {
+            val gb = Songs.demo()
+            tracker.session.replaceSong(gb)
+            assertEquals(gb, tracker.session.song)
+            assertEquals(gb.system.channels.lastIndex, tracker.state.channel)
+        }
     }
 
     /**

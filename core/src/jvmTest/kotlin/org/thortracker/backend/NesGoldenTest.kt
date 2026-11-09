@@ -27,6 +27,10 @@ import kotlin.test.fail
  *   Rewriting an unchanged VRC7 custom-patch register is idempotent, unlike key-on/envelope registers: those
  *   redundant patch writes are omitted on both sides. Loop restoration conservatively reloads custom patches
  *   because delayed notes can change the final writer; the real-driver loop regressions cover that correction.
+ *   Likewise on the EPSM: our streams load each note's own slot and re-send an FM channel's sound per order, so its
+ *   channel's patch registers (`$30-$9F`, `$B0-$B6`) and the LFO (`$22`) are rewritten with the values they hold;
+ *   unchanged writes to exactly those registers are omitted on both sides, key on/off (`$28`), frequencies, the SSG and
+ *   the drums are always compared.
  * - [NesGoldenSongs.CORRECTIONS] independently captures upstream export bugs: its VRC7 fixture must demonstrate
  *   both upstream's mid-song legato retrigger and missed loop patch, versus our held envelope and restored patch; its
  *   FDS witness expresses manual mod speeds with a low byte of $80-$FF through `Jxx`, which upstream exports
@@ -69,7 +73,7 @@ class NesGoldenTest {
                 val ins = fs.instruments[slot - 1]
                 ours += "slot $slot volume" to FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME)
                 ours += "slot $slot arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO)
-                // FamiStudio exports only the envelopes a sound's expansion has: no duty on the VRC7 or the 5B.
+                // FamiStudio exports only the envelopes a sound's expansion has: no duty on the VRC7, the 5B or the EPSM.
                 if (ins.chip.hasDuty) ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
                 ours += "slot $slot pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative)
                 if (ins.chip == NesChip.N163) {
@@ -88,7 +92,8 @@ class NesGoldenTest {
                     }
                     ours += "slot $slot mod table" to FamiStudioEnvelopes.fdsModBytes(ins.fds)
                 }
-                if (ins.chip == NesChip.S5B) {
+                // The 5B's and the EPSM SSG's mixer and noise envelopes.
+                if (ins.chip.hasSsg) {
                     ours += "slot $slot mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER)
                     ours += "slot $slot noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE)
                 }
@@ -128,11 +133,15 @@ class NesGoldenTest {
             var n163 = 0
             var fds = 0
             var s5b = 0
+            var mmc5 = 0
+            var epsm = 0
             val patchA = IntArray(8) { -1 }
             val patchB = IntArray(8) { -1 }
+            val epsmA = NesTracer.epsmPatchState()
+            val epsmB = NesTracer.epsmPatchState()
             for (f in 0 until frames) {
-                val ta = withoutUnchangedPatchWrites(a.frame(), patchA)
-                val tb = withoutUnchangedPatchWrites(b.frame(), patchB)
+                val ta = NesTracer.withoutUnchangedEpsmPatchWrites(withoutUnchangedPatchWrites(a.frame(), patchA), epsmA)
+                val tb = NesTracer.withoutUnchangedEpsmPatchWrites(withoutUnchangedPatchWrites(b.frame(), patchB), epsmB)
                 if (!ta.contentEquals(tb)) {
                     fail("$name: frame $f differs: FamiStudio ${trace(ta)} vs ours ${trace(tb)}")
                 }
@@ -142,6 +151,8 @@ class NesGoldenTest {
                 n163 += ta.count { (it shr 8) == 0x4800 }
                 fds += ta.count { (it shr 8) in 0x4080..0x408A }
                 s5b += ta.count { (it shr 8) >= 0xC000 }
+                mmc5 += ta.count { (it shr 8) in 0x5000..0x5015 }
+                epsm += ta.count { (it shr 8) in NesTracer.EPSM_PORTS }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
@@ -164,6 +175,15 @@ class NesGoldenTest {
             if (lowered.player == NesPlayer.S5B) {
                 // The trace covers the 5B: every frame its squares sound, register selects and data writes (compared).
                 assertTrue(s5b > frames, "$name: only $s5b Sunsoft 5B register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.MMC5) {
+                // The trace covers the MMC5: its pulses' registers are written (and compared) every frame.
+                assertTrue(mmc5 > frames, "$name: only $mmc5 MMC5 register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.EPSM) {
+                // The trace covers the YMF288: SSG and FM register selects and data (patch loads, LFO, key on/off, the
+                // drums' levels and key bits) are written and compared every frame they sound.
+                assertTrue(epsm > frames, "$name: only $epsm EPSM port writes in $frames frames")
             }
         }
     }

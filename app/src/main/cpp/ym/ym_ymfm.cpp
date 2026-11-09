@@ -5,7 +5,12 @@
 
 // ymfm's OPN family, compiled here (unmodified, as huge_machine.c includes binjgb's emulator.c): the muting output
 // sum below calls engine templates (fm_engine_base::output) that ymfm_opn.cpp only instantiates for its own use.
+// This is the program's one copy of ymfm_opn.cpp; the EPSM's YMF288 wrapper (nes/nes_epsm_ymfm.cpp) includes only
+// ymfm's headers and uses the OPNA templates instantiated explicitly below.
 #include "ymfm_opn.cpp"
+
+template class ymfm::opn_registers_base<true>;
+template class ymfm::fm_engine_base<ymfm::opna_registers>;
 
 namespace {
 

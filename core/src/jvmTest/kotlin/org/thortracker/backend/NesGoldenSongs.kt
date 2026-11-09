@@ -14,7 +14,10 @@ import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.WavePreset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
+import org.thortracker.system.nes.EpsmPatch
+import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesFdsSystem
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
@@ -27,6 +30,7 @@ import org.thortracker.system.nes.Vrc6SawVolume
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.nes.Vrc7Presets
 import org.thortracker.system.nes.Vrc7Sustain
+import org.thortracker.system.ym2612.YmOperator
 import org.thortracker.system.nes.nes
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -42,9 +46,11 @@ import org.thortracker.system.nes.DpcmStarterKit
  * release), wave sizes and positions, shared waves, the phase reset and 1, 2, 4 and 8 channels (each count has its own
  * note table, pitch shift and engine build); the FDS ones wave sequences, manual and auto-mod modulation, mod delay,
  * master volumes, H/I/J and FamiStudio's re-bind after them, the phase reset and the FDS's true-pitch range; the 5B ones
- * its mixer and noise envelopes, every hardware envelope mode and the envelope period effects. The copies songs (2A03,
- * VRC6, N163, 5B) hold identical sounds under different names, which FamiStudio's export merges into one instrument,
- * with a legato loop entry across the copies. Every trace covers the 2A03's registers as well as the expansion's.
+ * its mixer and noise envelopes, every hardware envelope mode and the envelope period effects; the MMC5 ones its pulses
+ * playing 2A03 sounds beside the 2A03's; the EPSM ones its SSG (mixer, noise, hardware envelopes, Ixx/Jyy), FM
+ * (algorithms, pans, the LFO, release, slides) and rhythm channels. The copies songs (2A03, VRC6, N163, 5B, EPSM) hold
+ * identical sounds under different names, which FamiStudio's export merges into one instrument, with a legato loop entry
+ * across the copies. Every trace covers the 2A03's registers as well as the expansion's.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -70,6 +76,12 @@ object NesGoldenSongs {
         "s5b_effects" to ::s5bEffects,
         "s5b_copies" to ::s5bCopies,
         "s5b_manual_copies" to ::s5bManualCopies,
+        "mmc5_demo" to NesMmc5System::demo,
+        "mmc5_effects" to ::mmc5Effects,
+        "epsm_demo" to NesEpsmSystem::demo,
+        "epsm_effects" to ::epsmEffects,
+        "epsm_rhythm" to ::epsmRhythm,
+        "epsm_copies" to ::epsmCopies,
     )
     /**
      * Independently exported witnesses for intentional corrections, not trace-equality fixtures. The FDS one is
@@ -672,6 +684,150 @@ object NesGoldenSongs {
         )
     }
 
+    private val EPSM = NesChip.EPSM
+    private const val SSG1 = NesRules.EPSM_SSG1
+    private const val SSG2 = NesRules.EPSM_SSG1 + 1
+    private const val SSG3 = NesRules.EPSM_SSG1 + 2
+    private const val FM1 = NesRules.EPSM_FM1
+    private const val EPSM_CHANNELS = NesRules.EPSM_RHYTHM1 + 6
+
+    private fun op(mul: Int, tl: Int, ar: Int = 31, d1r: Int = 0, sl: Int = 0, rr: Int = 7, dt: Int = 0, ks: Int = 0,
+                   d2r: Int = 0, am: Boolean = false, ssgEg: Int = 0) =
+        YmOperator(dt = dt, mul = mul, tl = tl, ks = ks, ar = ar, am = am, d1r = d1r, d2r = d2r, sl = sl, rr = rr, ssgEg = ssgEg)
+
+    /**
+     * EPSM SSG and FM: SSG tone, noise and tone+noise mixers with noise envelopes, hardware envelopes with auto period
+     * (saw) and manual period (4000: FamiStudio's text keeps no other), Ixx/Jyy on SSG 2 and 3 (moved to SSG 1), volume on
+     * an envelope sound, release and stop; FM algorithms 0, 2, 4, 5 and 7, feedback, left-only pan, SSG-EG, the LFO with
+     * AMS/PMS, FM release (key off) and stop, slides up and down, vibrato, fine pitch, 0xy and instrument arpeggios,
+     * pitch envelopes, volume and volume slides, delays, cuts, legato, the range ends C-1 and B-7, the speed on FM, and a
+     * 2A03 pulse alongside.
+     */
+    fun epsmEffects(): Song {
+        val base = NesEpsmSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("SSG lead", volume = NesEnvelope(listOf(15, 13, 12, 11), loop = 3), chip = EPSM)
+        bank[1] = NesInstrument("SSG hat", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)), mixer = NesEnvelope(listOf(1)),
+            noise = NesEnvelope(listOf(4, 8, 12)), chip = EPSM)
+        bank[2] = NesInstrument("SSG snare", volume = NesEnvelope(listOf(15, 12, 9, 6, 3, 0)), mixer = NesEnvelope(listOf(0, 0, 2), loop = 2),
+            noise = NesEnvelope(listOf(20)), chip = EPSM)
+        bank[3] = NesInstrument("SSG env auto", chip = EPSM, s5b = S5bEnvelope(shape = S5bShape.SAW_DOWN, autoPitch = true, octave = 4, period = 4000))
+        bank[4] = NesInstrument("SSG env manual", chip = EPSM, s5b = S5bEnvelope(shape = S5bShape.TRIANGLE, autoPitch = false, period = 4000))
+        bank[5] = NesInstrument("SSG release", volume = NesEnvelope(listOf(15, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), chip = EPSM)
+        bank[6] = NesInstrument("FM bass", chip = EPSM, epsm = EpsmPatch(algorithm = 0, feedback = 5, operators = listOf(
+            op(1, 30, d1r = 8, sl = 4), op(2, 38, d1r = 6, sl = 3), op(1, 28, d1r = 5, sl = 2), op(1, 0, d1r = 4, sl = 2, rr = 9))))
+        bank[7] = NesInstrument("FM bell", chip = EPSM, volume = NesEnvelope(listOf(15, 14, 13, 12, 11, 10, 6, 3, 0), loop = 4, release = 6),
+            epsm = EpsmPatch(algorithm = 4, feedback = 3, operators = listOf(
+            op(7, 36, d1r = 10, sl = 8, dt = 3), op(1, 0, d1r = 7, sl = 6, rr = 5), op(14, 40, d1r = 12, sl = 9), op(2, 4, d1r = 9, sl = 7, rr = 6))))
+        bank[8] = NesInstrument("FM organ left", chip = EPSM, epsm = EpsmPatch(algorithm = 7, right = false, operators = listOf(
+            op(1, 8), op(2, 14), op(4, 20), op(8, 26))))
+        bank[9] = NesInstrument("FM vibrato", chip = EPSM, epsm = EpsmPatch(algorithm = 2, feedback = 4, ams = 2, pms = 4, operators = listOf(
+            op(1, 34, am = true), op(3, 40), op(1, 30), op(1, 2, am = true, ssgEg = 0x0E))))
+        bank[10] = NesInstrument("FM arp", arpeggio = NesEnvelope(listOf(0, 0, 12, 12), loop = 0), chip = EPSM,
+            epsm = EpsmPatch(algorithm = 5, feedback = 6, operators = listOf(op(1, 28), op(1, 6), op(2, 8), op(1, 10))))
+        bank[11] = NesInstrument("FM pitch", pitch = NesEnvelope(listOf(-2, -1, 0, 1, 2), loop = 0), pitchRelative = true, chip = EPSM,
+            epsm = EpsmPatch(algorithm = 4, feedback = 1, left = true, right = true, operators = listOf(op(3, 32), op(1, 2), op(5, 44), op(1, 6))))
+        bank[12] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(2)))
+        val fm2 = FM1 + 1
+        val fm3 = FM1 + 2
+        val fm4 = FM1 + 3
+        val fm5 = FM1 + 4
+        val fm6 = FM1 + 5
+        val a = P("EPSM A", channels = EPSM_CHANNELS)
+        // SSG 1: a lead with legato, volume, release and stop.
+        a.note(SSG1, 0, "C-4", 1)
+        a.note(SSG1, 4, "E-4", 0) // legato
+        a.note(SSG1, 8, "G-4", 1, NesRules.FX_VOLUME, 0x09)
+        a.note(SSG1, 12, "A-4", 6) // release sound
+        a.off(SSG1, 16) // release
+        a.off(SSG1, 18) // already released: stop
+        a.note(SSG1, 20, "C-5", 1, NesRules.FX_SLIDE_UP, 0x05)
+        a.note(SSG1, 24, "B-7", 1) // the SSG's highest
+        a.note(SSG1, 28, "C-1", 1) // its lowest
+        a.note(SSG1, 32, "D-4", 1, NesRules.FX_FINE_PITCH, 0x90)
+        a.note(SSG1, 34, "D-4", 1) // fine pitch reset
+        a.note(SSG1, 36, "F-4", 1, NesRules.FX_VIBRATO, 0x46)
+        a.fx(SSG1, 40, NesRules.FX_VIBRATO, 0x00)
+        a.note(SSG1, 44, "G-4", 1, NesRules.FX_ARPEGGIO, 0x37)
+        a.note(SSG1, 48, "A-4", 1, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(SSG1, 52, "A-4", 1, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(SSG1, 56, "E-4", 1, NesRules.FX_VOLUME_SLIDE, 0xF4)
+        // SSG 2: noise hats with Ixx on some rows (they move to SSG 1); SSG 3: snare, then the envelope sounds.
+        for (r in 0 until 64 step 4) a.note(SSG2, r, "C-5", 2)
+        a.fx(SSG2, 8, NesRules.FX_ENV_PERIOD_HI, 0x0A)
+        a.note(SSG3, 0, "C-4", 3)
+        a.note(SSG3, 8, "C-3", 4) // auto-period saw
+        a.note(SSG3, 12, "G-3", 4, NesRules.FX_VOLUME, 0x08) // volume on an envelope sound
+        a.note(SSG3, 16, "C-3", 5) // manual period 4000
+        a.fx(SSG3, 20, NesRules.FX_ENV_PERIOD_LO, 0x40) // a lone Jyy: period 0040
+        a.note(SSG3, 24, "E-3", 5) // legato-free reload: the manual period again
+        a.fx(SSG3, 28, NesRules.FX_ENV_PERIOD_HI, 0x02)
+        a.fx(SSG2, 28, NesRules.FX_ENV_PERIOD_LO, 0x80) // one row, two squares: period 0280
+        a.note(SSG3, 32, "G-3", 0) // legato keeps the effect's period
+        a.note(SSG3, 40, "C-3", 5) // a new attack reloads 4000
+        a.off(SSG3, 48)
+        a.note(SSG3, 52, "C-4", 3)
+        // FM 1: bass with slides, release (key off), stop, the range ends.
+        a.note(FM1, 0, "C-2", 7)
+        a.note(FM1, 4, "C-2", 7, NesRules.FX_SLIDE_UP, 0x07)
+        a.note(FM1, 8, "G-2", 7, NesRules.FX_SLIDE_DOWN, 0x0C)
+        a.off(FM1, 12) // FM release: key off
+        a.off(FM1, 14) // already released: stop
+        a.note(FM1, 16, "C-1", 7) // FM's lowest
+        a.note(FM1, 20, "B-7", 7) // FM's highest
+        a.note(FM1, 24, "A-1", 7, NesRules.FX_SPEED, 0x05)
+        a.note(FM1, 32, "D-2", 0) // legato
+        a.note(FM1, 40, "F-2", 7, NesRules.FX_FINE_PITCH, 0x70)
+        a.fx(FM1, 42, NesRules.FX_FINE_PITCH, 0xA0) // bend on an empty row
+        a.note(FM1, 44, "F-2", 7)
+        a.fx(FM1, 48, NesRules.FX_SPEED, 0x06)
+        a.note(FM1, 52, "C-2", 7, NesRules.FX_NOTE_CUT, 0x02)
+        // FM 2: bell with a volume-release, vibrato, delays.
+        a.note(fm2, 0, "E-5", 8)
+        a.off(fm2, 6)
+        a.note(fm2, 8, "G-5", 8, NesRules.FX_VIBRATO, 0x3A)
+        a.note(fm2, 16, "C-6", 8, NesRules.FX_NOTE_DELAY, 0x03)
+        a.fx(fm2, 20, NesRules.FX_VIBRATO, 0x00)
+        a.off(fm2, 24, NesRules.FX_NOTE_DELAY, 0x01)
+        a.note(fm2, 32, "A-5", 8, NesRules.FX_VOLUME_SLIDE, 0xF2)
+        a.off(fm2, 44)
+        // FM 3: left-only organ, volume and a cut; FM 4: the LFO sound; FM 5: arpeggios; FM 6: pitch envelope.
+        a.note(fm3, 0, "C-4", 9, NesRules.FX_VOLUME, 0x0B)
+        a.note(fm3, 16, "E-4", 9, NesRules.FX_NOTE_CUT, 0x04)
+        a.note(fm3, 32, "G-4", 9)
+        a.fx(fm3, 36, NesRules.FX_VOLUME, 0x05)
+        a.off(fm3, 48)
+        a.note(fm4, 0, "A-3", 10)
+        a.note(fm4, 24, "D-4", 10, NesRules.FX_SLIDE_UP, 0x02)
+        a.off(fm4, 40)
+        a.note(fm5, 0, "C-4", 11)
+        a.note(fm5, 16, "C-4", 11, NesRules.FX_ARPEGGIO, 0x47)
+        a.note(fm5, 32, "C-4", 11) // back to the instrument's arpeggio
+        a.off(fm5, 48)
+        a.note(fm6, 8, "G-3", 12)
+        a.note(fm6, 24, "A-3", 12, NesRules.FX_SLIDE_DOWN, 0x03)
+        a.off(fm6, 40)
+        // 2A03 alongside.
+        a.note(0, 0, "C-5", 13)
+        a.note(0, 32, "G-4", 13)
+        a.off(0, 56)
+        val b = P("EPSM B", length = 32, channels = EPSM_CHANNELS)
+        b.note(SSG1, 0, "A-4", 0) // the loop enters legato on SSG 1's last sound
+        b.note(SSG2, 0, "C-5", 2)
+        b.note(SSG3, 0, "A-2", 4)
+        b.off(SSG3, 16)
+        b.note(FM1, 0, "A-1", 7)
+        b.note(FM1, 16, "E-2", 0)
+        b.note(fm2, 0, "C-6", 8)
+        b.note(fm4, 8, "E-4", 10)
+        b.note(0, 0, "A-4", 13)
+        return base.copy(
+            title = "EPSM effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank, epsmLfo = NesSound.EPSM_LFO_ON or 3),
+        )
+    }
+
     /**
      * N163 with 4 channels: a wave sequence with repeats, a loop and a release (OFF releases volume and waves: `$5A`), a
      * sound that releases through its waves only, 32- and 8-sample waves, two sounds sharing one identical wave at one
@@ -1054,6 +1210,187 @@ object NesGoldenSongs {
         return base.copy(
             title = "5B manual copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * EPSM rhythm: all six drums with both, left-only and right-only pans, first volumes of 15 down to 6, Cxx and Axy,
+     * delays, cuts, OFF (a stop: drums have no release), notes without an instrument and with another drum sound, the
+     * speed set on a drum channel, and FM and SSG notes around them.
+     */
+    fun epsmRhythm(): Song {
+        val base = NesEpsmSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Kick", chip = EPSM)
+        bank[1] = NesInstrument("Snare left", volume = NesEnvelope(listOf(13)), chip = EPSM, epsm = EpsmPatch(right = false))
+        bank[2] = NesInstrument("Hat right", volume = NesEnvelope(listOf(10)), chip = EPSM, epsm = EpsmPatch(left = false))
+        bank[3] = NesInstrument("Tom soft", volume = NesEnvelope(listOf(6)), chip = EPSM)
+        bank[4] = NesInstrument("Rim", volume = NesEnvelope(listOf(12)), chip = EPSM)
+        bank[5] = NesInstrument("Cymbal both", volume = NesEnvelope(listOf(14)), chip = EPSM)
+        bank[6] = NesInstrument("FM bass", chip = EPSM, epsm = EpsmPatch(algorithm = 1, feedback = 6, operators = listOf(
+            op(1, 34, d1r = 6, sl = 3), op(1, 36, d1r = 5, sl = 2), op(2, 30, d1r = 7, sl = 4), op(1, 0, d1r = 3, sl = 2, rr = 8))))
+        bank[7] = NesInstrument("SSG chord", volume = NesEnvelope(listOf(11, 10, 9, 8), loop = 3), chip = EPSM)
+        val kick = NesRules.EPSM_RHYTHM1
+        val snare = kick + 1
+        val cymbal = kick + 2
+        val hat = kick + 3
+        val tom = kick + 4
+        val rim = kick + 5
+        val a = P("Groove", channels = EPSM_CHANNELS)
+        for (r in 0 until 64 step 8) a.note(kick, r, "C-4", 1)
+        a.note(kick, 12, "C-4", 0) // no instrument: the same drum, no attack in FamiStudio's sense
+        for (r in 4 until 64 step 8) a.note(snare, r, "D-4", 2)
+        a.fx(snare, 20, NesRules.FX_VOLUME, 0x08)
+        a.note(snare, 28, "D-4", 2, NesRules.FX_NOTE_DELAY, 0x02)
+        for (r in 0 until 64 step 2) a.note(hat, r, "F#4", 3)
+        a.fx(hat, 16, NesRules.FX_VOLUME_SLIDE, 0xF4)
+        a.note(hat, 33, "F#4", 3, NesRules.FX_NOTE_CUT, 0x01)
+        a.note(tom, 30, "A-3", 4)
+        a.note(tom, 31, "E-3", 4, NesRules.FX_VOLUME, 0x0F)
+        a.off(tom, 40)
+        a.note(rim, 10, "C#4", 5)
+        a.note(rim, 26, "C#4", 4) // another drum sound on the rim channel
+        a.fx(rim, 32, NesRules.FX_SPEED, 0x05)
+        a.note(cymbal, 0, "C-5", 6)
+        a.note(cymbal, 48, "C-5", 6, NesRules.FX_VOLUME, 0x0A)
+        a.note(FM1, 0, "A-1", 7)
+        a.note(FM1, 16, "F-1", 7)
+        a.note(FM1, 32, "C-2", 7)
+        a.off(FM1, 60)
+        a.note(SSG1, 0, "A-4", 8)
+        a.note(SSG2, 0, "C-5", 8)
+        a.note(SSG3, 0, "E-5", 8)
+        a.off(SSG3, 32)
+        val b = P("Fill", length = 16, channels = EPSM_CHANNELS)
+        for (r in 0 until 16 step 2) b.note(tom, r, "A-3", 4, NesRules.FX_VOLUME, 15 - r / 2)
+        b.note(kick, 0, "C-4", 1)
+        b.note(cymbal, 15, "C-5", 6)
+        return base.copy(
+            title = "EPSM rhythm", artist = "Golden", ticksPerRow = 6, loopOrder = 0,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * EPSM copies: an FM sound, a manual-period SSG sound (period 4000, the only one FamiStudio's text keeps) and a drum
+     * sound, each with an identical copy under another name (one instrument each in FamiStudio's merged export). Order A
+     * switches to each copy with an attack (FamiStudio's export loads nothing there) and plays a legato note; order B (the
+     * loop) enters legato on the first copies while the second ones are held from the song's end (merged: no attack, no
+     * load in FamiStudio's export). Our streams load each note's own slot: the FM copy rewrites its channel's patch
+     * registers with the same values, the SSG copy goes through `$5F` with the keep-period bit. The trace comparison
+     * drops unchanged EPSM patch-register writes on both sides, so every other write must match FamiStudio's export.
+     */
+    fun epsmCopies(): Song {
+        val base = NesEpsmSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        val lead = NesInstrument("FM lead", volume = NesEnvelope(listOf(15, 13, 12), loop = 2), chip = EPSM,
+            epsm = EpsmPatch(algorithm = 4, feedback = 5, operators = listOf(op(2, 30, d1r = 6, sl = 3), op(1, 4, d1r = 4, sl = 2),
+                op(3, 36, d1r = 8, sl = 5), op(1, 6, d1r = 5, sl = 3, rr = 8))))
+        val tremolo = NesInstrument("SSG tremolo", volume = NesEnvelope(listOf(13)), chip = EPSM,
+            s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 4000))
+        val kick = NesInstrument("Kick", volume = NesEnvelope(listOf(14)), chip = EPSM)
+        bank[0] = lead
+        bank[1] = lead.copy(name = "FM lead, renamed")
+        bank[2] = tremolo
+        bank[3] = tremolo.copy(name = "SSG tremolo, renamed")
+        bank[4] = kick
+        bank[5] = kick.copy(name = "Kick, renamed")
+        bank[6] = NesInstrument("2A03 lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        val drum = NesRules.EPSM_RHYTHM1
+        val a = P("EPSM copies A", length = 16, channels = EPSM_CHANNELS)
+        a.note(FM1, 0, "C-4", 1)
+        a.note(FM1, 4, "E-4", 2) // the renamed FM copy with an attack: FamiStudio loads nothing
+        a.note(FM1, 8, "G-4") // legato
+        a.note(SSG1, 0, "C-4", 3)
+        a.note(SSG1, 4, "E-4", 4) // the renamed manual copy with an attack: FamiStudio loads nothing, the period stays
+        a.note(SSG1, 8, "G-4") // legato
+        a.note(drum, 0, "C-4", 5)
+        a.note(drum, 8, "C-4", 6) // the renamed drum copy
+        a.note(0, 0, "E-4", 7)
+        val b = P("EPSM copies B", length = 16, channels = EPSM_CHANNELS)
+        b.note(FM1, 0, "C-5") // legato; looping, the renamed copy is held (merged: still no attack)
+        b.note(FM1, 8, "E-5", 1) // back to the first copy
+        b.note(FM1, 12, "D-5") // legato; the loop's last instrument is the first copy
+        b.note(SSG1, 0, "C-5")
+        b.note(SSG1, 8, "E-5", 3)
+        b.note(SSG1, 12, "D-5")
+        b.note(drum, 4, "C-4", 5)
+        b.note(0, 0, "A-4", 7)
+        return base.copy(
+            title = "EPSM copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * MMC5: both pulses with 2A03 sounds (one shared with 2A03 Pulse 1), the duty envelope over all four duties and
+     * Vxx 00-03, absolute and relative pitch envelopes, slides (one across a period high-byte boundary, where the MMC5
+     * resets its phase), vibrato, fine pitch, volume and volume slides, arpeggio, delays, cuts, OFF release and stop,
+     * legato, the lowest (A-1) and highest (B-8) notes, and the speed set on an MMC5 pulse.
+     */
+    fun mmc5Effects(): Song {
+        val base = NesMmc5System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Duty walk", volume = NesEnvelope(listOf(13, 12, 11, 10), loop = 3), duty = NesEnvelope(listOf(0, 1, 2, 3), loop = 0))
+        bank[1] = NesInstrument("Release pulse", volume = NesEnvelope(listOf(15, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), duty = NesEnvelope(listOf(2)))
+        bank[2] = NesInstrument("Shared lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        bank[3] = NesInstrument("Pitch bend", volume = NesEnvelope(listOf(11)), pitch = NesEnvelope(listOf(0, 2, 4, 6, 4, 2), loop = 0))
+        bank[4] = NesInstrument("Pitch drift", volume = NesEnvelope(listOf(10)), pitch = NesEnvelope(listOf(1, -1), loop = 0), pitchRelative = true,
+            arpeggio = NesEnvelope(listOf(0, 7, 12), loop = 0))
+        bank[5] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val p1 = NesRules.MMC5_PULSE1
+        val p2 = NesRules.MMC5_PULSE2
+        val channels = NesMmc5System.channels.size
+        val a = P("MMC5 A", channels = channels)
+        // MMC5 Pulse 1: the duty envelope, Vxx over all four duties, slides, vibrato, fine pitch, the edges of the range.
+        a.note(p1, 0, "C-4", 1)
+        a.note(p1, 4, "E-4", 0) // legato
+        a.note(p1, 8, "G-4", 3, NesRules.FX_DUTY, 0x00)
+        for (d in 1..3) a.fx(p1, 8 + d, NesRules.FX_DUTY, d)
+        a.note(p1, 12, "B-4", 3, NesRules.FX_SLIDE_DOWN, 0x04) // B-4 (period $0E1) to G-4 ($11C): crosses the high byte
+        a.note(p1, 16, "A-4", 3, NesRules.FX_SLIDE_UP, 0x05)
+        a.note(p1, 20, "D-5", 3, NesRules.FX_SLIDE_DOWN, 0x07)
+        a.note(p1, 24, "A-4", 1, NesRules.FX_VIBRATO, 0x46) // period $0FD: vibrato across $0FF/$100
+        a.fx(p1, 28, NesRules.FX_VIBRATO, 0x00)
+        a.note(p1, 30, "C-5", 1, NesRules.FX_FINE_PITCH, 0x8C)
+        a.off(p1, 34) // release
+        a.off(p1, 36) // already released: stop
+        a.note(p1, 40, "A-1", 2) // the lowest note an 11-bit period reaches
+        a.note(p1, 44, "F-4", 3, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(p1, 48, "F-4", 3, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(p1, 52, "B-8", 3) // the highest
+        a.fx(p1, 56, NesRules.FX_SPEED, 0x05)
+        a.fx(p1, 60, NesRules.FX_SPEED, 0x04)
+        // MMC5 Pulse 2: volume and a volume slide, arpeggio, pitch envelopes, a release.
+        a.note(p2, 0, "G-3", 3, NesRules.FX_VOLUME, 0x09)
+        a.note(p2, 8, "B-3", 3, NesRules.FX_VOLUME_SLIDE, 0xF3)
+        a.fx(p2, 16, NesRules.FX_VOLUME, 0x0C)
+        a.note(p2, 20, "D-4", 3, NesRules.FX_ARPEGGIO, 0x47)
+        a.note(p2, 24, "E-4", 4)
+        a.note(p2, 32, "C-4", 5, NesRules.FX_DUTY, 0x03)
+        a.note(p2, 40, "A-1", 3) // the shared sound at the lowest note
+        a.note(p2, 44, "D-4", 2)
+        a.off(p2, 56)
+        // 2A03 alongside: Pulse 1 shares MMC5 Pulse 1's sound.
+        a.note(0, 0, "E-4", 3)
+        a.note(0, 32, "G-4", 3, NesRules.FX_DUTY, 0x03)
+        a.note(1, 16, "C-5", 2)
+        a.off(1, 40)
+        a.note(2, 0, "C-3", 3)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 6)
+        val b = P("MMC5 B", length = 32, channels = channels)
+        b.note(p1, 0, "E-5", 0) // legato into the loop
+        b.note(p1, 16, "E-5", 3, NesRules.FX_VOLUME_SLIDE, 0x2E)
+        b.note(p2, 0, "C-5", 2)
+        b.off(p2, 24)
+        b.note(0, 0, "A-4", 3)
+        return base.copy(
+            title = "MMC5 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
             sound = base.nes.copy(instruments = bank),
         )
     }

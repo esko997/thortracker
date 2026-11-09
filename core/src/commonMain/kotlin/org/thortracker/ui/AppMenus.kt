@@ -21,6 +21,10 @@ import org.thortracker.model.TuningMap
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SoundSystems
+import org.thortracker.system.nes.EpsmRhythmRom
+import org.thortracker.system.nes.EpsmRomMenu
+import org.thortracker.system.nes.NesExpansion
+import org.thortracker.system.nes.NesSound
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared
@@ -77,6 +81,13 @@ interface MenuHost {
      * extensions go through [error] instead.
      */
     fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (name: String, extension: String, bytes: ByteArray) -> Unit)
+    /**
+     * Keeps [bytes], a checked YMF288 rhythm ROM ([org.thortracker.system.nes.EpsmRhythmRom.problem] found nothing), as
+     * this device's firmware (`firmware/ym2608_adpcm_rom.bin` in the app's data, never in a project or export), installs
+     * it in the native engine and marks it installed ([org.thortracker.system.nes.EpsmRhythmRom.markInstalled]).
+     * Returns why it could not, or null.
+     */
+    fun installEpsmRhythmRom(bytes: ByteArray): String?
     /** Platform rows at the end of the main menu (e.g. Quit on the Deck). */
     fun extraMenuItems(): List<Pair<String, () -> Unit>> = emptyList()
 
@@ -117,6 +128,11 @@ class AppMenus(
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
+        override fun installEpsmRhythmRom(bytes: ByteArray): String? {
+            val problem = host.installEpsmRhythmRom(bytes)
+            if (problem == null) transport.songChanged(session.song)
+            return problem
+        }
         override fun about() = this@AppMenus.about()
     }
 
@@ -168,6 +184,10 @@ class AppMenus(
         menu("Thor Tracker", buildList {
             add("Files" to ::fileMenu)
             add("Song details / tempo" to host::showSongDetails)
+            // The EPSM's drum ROM is device firmware the user supplies; offered (with its state) while an EPSM song is open.
+            if ((session.song.sound as? NesSound)?.expansion == NesExpansion.EPSM) {
+                add(EpsmRomMenu.LABEL + (if (EpsmRhythmRom.installed) "  installed" else "  missing") to { open(EpsmRomMenu::open) })
+            }
             add("Views / layout" to { viewOptions(focus) })
             if (host.displayCount > 1) add("Switch controller focus" to host::switchFocus)
             add("Play from song start" to { transport.start(0, 0) })

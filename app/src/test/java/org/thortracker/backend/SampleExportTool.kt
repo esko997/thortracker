@@ -3,6 +3,8 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.EpsmPatch
+import org.thortracker.system.nes.EpsmRhythmRom
 import org.thortracker.system.nes.FdsPresets
 import org.thortracker.system.nes.FdsSound
 import org.thortracker.system.nes.WavePreset
@@ -10,8 +12,12 @@ import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEnvelope
+import org.thortracker.system.nes.NesEpsmDemoSong
+import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.NesMmc5DemoSong
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesS5bSystem
@@ -208,6 +214,101 @@ object SampleExportTool {
             patterns = listOf(mcA, mcB), orders = listOf(0, 1), sound = mcBase.nes.copy(instruments = mcBank))
         File(directory, "s5b-manual-copies.nesimg")
             .writeBytes(ByteArray(NesS5bSystem.engine.imageSize).also { NesS5bSystem.engine.lower(manualCopies, it) })
+        // The NES + MMC5 demo (its image plays on "nes-famistudio-mmc5"), and the shortest valid MMC5 song (one one-row
+        // order at speed 1, A-4 on MMC5 Pulse 1; mmc5-shortest, the one-row, one-tick edge case wav_render_test.c renders).
+        val mmc5 = NesMmc5System.demo()
+        File(directory, "tandem-skies.thor").writeText(ProjectCodec.encode(mmc5), Charsets.UTF_8)
+        for (format in NesMmc5System.exports) File(directory, "tandem-skies.${format.extension}").writeBytes(format.export(mmc5))
+        File(directory, "tandem-skies.nesimg").writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(mmc5, it) })
+        val mmc5Shortest = NesMmc5DemoSong.shortest()
+        check(NesMmc5System.errors(mmc5Shortest).isEmpty()) { "the shortest MMC5 song is invalid: ${NesMmc5System.errors(mmc5Shortest)}" }
+        File(directory, "mmc5-shortest.nesimg")
+            .writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(mmc5Shortest, it) })
+        println("Exported ${mmc5.title} and the shortest MMC5 song to ${directory.absolutePath}")
+        // The MMC5 PCM lane fixtures (the image extension of nes_mmc5_pcm.h after the seven-channel image): "Sample
+        // Courier" (project and engine image only: .nsf and FamiStudio text refuse a playing PCM lane) and the shortest PCM
+        // song (one one-row order at speed 1, the looping PCM bass on A-2; mmc5-pcm-shortest). The native tests
+        // (nes_mmc5_pcm_test.c) and wav_render_test.c render both.
+        val courier = NesMmc5DemoSong.pcmDemo()
+        check(NesMmc5System.errors(courier).isEmpty()) { "the PCM fixture is invalid: ${NesMmc5System.errors(courier)}" }
+        File(directory, "sample-courier.thor").writeText(ProjectCodec.encode(courier), Charsets.UTF_8)
+        File(directory, "sample-courier.nesimg").writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(courier, it) })
+        val pcmShortest = NesMmc5DemoSong.pcmShortest()
+        check(NesMmc5System.errors(pcmShortest).isEmpty()) { "the shortest PCM song is invalid: ${NesMmc5System.errors(pcmShortest)}" }
+        File(directory, "mmc5-pcm-shortest.nesimg")
+            .writeBytes(ByteArray(NesMmc5System.engine.imageSize).also { NesMmc5System.engine.lower(pcmShortest, it) })
+        println("Exported ${courier.title} and the shortest MMC5 PCM song to ${directory.absolutePath}")
+        // The NES + EPSM demo, the same way (its image plays on "nes-famistudio-epsm"; it has no drums, so it needs no
+        // rhythm ROM), and the shortest valid EPSM song (one one-row order at speed 1, FM 1 holding A-4, looping to order
+        // 0) whose image the native WAV export test renders through loops.
+        val epsm = NesEpsmSystem.demo()
+        File(directory, "expansion-port.thor").writeText(ProjectCodec.encode(epsm), Charsets.UTF_8)
+        for (format in NesEpsmSystem.exports) File(directory, "expansion-port.${format.extension}").writeBytes(format.export(epsm))
+        File(directory, "expansion-port.nesimg").writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(epsm, it) })
+        val shortest = NesEpsmDemoSong.shortest()
+        check(NesEpsmSystem.errors(shortest).isEmpty()) { "the shortest EPSM song is invalid: ${NesEpsmSystem.errors(shortest)}" }
+        File(directory, "epsm-shortest.nesimg").writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(shortest, it) })
+        println("Exported ${epsm.title} and the shortest EPSM song to ${directory.absolutePath}")
+        // Identical EPSM copies (core's golden epsm_copies): FM, manual-period SSG and drum copies with legato loop entries
+        // on the copies; FM and SSG only here (no drum notes), so the image plays without the rhythm ROM. The copy loads
+        // keep their own slots (FM: `$80`, SSG: `$5F` with the keep-period bit) for native live-edit checks.
+        val ecBase = NesEpsmSystem.blank()
+        val ecBank = ecBase.nes.instruments.toMutableList()
+        val ecLead = NesInstrument("FM lead", volume = NesEnvelope(listOf(15, 13, 12), loop = 2), chip = NesChip.EPSM,
+            epsm = EpsmPatch(algorithm = 4, feedback = 5))
+        val ecPad = NesInstrument("SSG tremolo", volume = NesEnvelope(listOf(13)), chip = NesChip.EPSM,
+            s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 4000))
+        ecBank[0] = ecLead
+        ecBank[1] = ecLead.copy(name = "FM lead, renamed")
+        ecBank[2] = ecPad
+        ecBank[3] = ecPad.copy(name = "SSG tremolo, renamed")
+        fun ecPattern(name: String, cells: Map<Pair<Int, Int>, Cell>) = ecBase.patterns[0].let { p ->
+            p.copy(name = name, length = 16, tracks = p.tracks.mapIndexed { ch, rows -> rows.mapIndexed { r, cell -> cells[ch to r] ?: cell } })
+        }
+        val fm1 = NesRules.EPSM_FM1
+        val ssg1 = NesRules.EPSM_SSG1
+        val ecA = ecPattern("EPSM copies A", mapOf(
+            (fm1 to 0) to Cell(48, 1), (fm1 to 4) to Cell(52, 2), (fm1 to 8) to Cell(55, 0),
+            (ssg1 to 0) to Cell(48, 3), (ssg1 to 4) to Cell(52, 4), (ssg1 to 8) to Cell(55, 0),
+        ))
+        val ecB = ecPattern("EPSM copies B", mapOf(
+            (fm1 to 0) to Cell(60, 0), (fm1 to 8) to Cell(64, 1), (fm1 to 12) to Cell(62, 0),
+            (ssg1 to 0) to Cell(60, 0), (ssg1 to 8) to Cell(64, 3), (ssg1 to 12) to Cell(62, 0),
+        ))
+        val epsmCopies = ecBase.copy(title = "EPSM copies", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(ecA, ecB), orders = listOf(0, 1), sound = ecBase.nes.copy(instruments = ecBank))
+        check(NesEpsmSystem.errors(epsmCopies).isEmpty()) { "the EPSM copies song is invalid: ${NesEpsmSystem.errors(epsmCopies)}" }
+        File(directory, "epsm-copies.nesimg")
+            .writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(epsmCopies, it) })
+        // EPSM drums only with the user's genuine YM2608 rhythm ROM (THOR_EPSM_RHYTHM_ROM, checked as the app checks an
+        // import; never bundled or copied): all six drums, left/right/both pans and their first volumes, one order of 16
+        // rows at speed 3 looping. Without the ROM nothing is written, as the app refuses to play drums without it.
+        val romPath = System.getenv("THOR_EPSM_RHYTHM_ROM")
+        if (romPath == null) {
+            println("THOR_EPSM_RHYTHM_ROM not set: epsm-rhythm.nesimg not exported (the drums need the YM2608 rhythm ROM)")
+        } else {
+            val problem = EpsmRhythmRom.problem(File(romPath).readBytes())
+            check(problem == null) { "THOR_EPSM_RHYTHM_ROM: $problem" }
+            EpsmRhythmRom.markInstalled() // the native renderer installs the same file before playing this image
+            val drBase = NesEpsmSystem.blank()
+            val drBank = drBase.nes.instruments.toMutableList()
+            drBank[0] = NesInstrument("Drum both", volume = NesEnvelope(listOf(15)), chip = NesChip.EPSM)
+            drBank[1] = NesInstrument("Drum left", volume = NesEnvelope(listOf(12)), chip = NesChip.EPSM, epsm = EpsmPatch(right = false))
+            drBank[2] = NesInstrument("Drum right", volume = NesEnvelope(listOf(9)), chip = NesChip.EPSM, epsm = EpsmPatch(left = false))
+            val drum = NesRules.EPSM_RHYTHM1
+            val drCells = HashMap<Pair<Int, Int>, Cell>()
+            for (d in 0 until 6) drCells[drum + d to 2 * d] = Cell(48, 1 + d % 3)
+            drCells[drum to 12] = Cell(48, 1)
+            drCells[drum + 3 to 14] = Cell(48, 2, NesRules.FX_VOLUME, 0x08)
+            val rhythm = drBase.copy(title = "EPSM rhythm", ticksPerRow = 3, loopOrder = 0,
+                patterns = listOf(drBase.patterns[0].let { p ->
+                    p.copy(length = 16, tracks = p.tracks.mapIndexed { ch, rows -> rows.mapIndexed { r, cell -> drCells[ch to r] ?: cell } })
+                }), orders = listOf(0), sound = drBase.nes.copy(instruments = drBank))
+            check(NesEpsmSystem.errors(rhythm).isEmpty()) { "the EPSM rhythm song is invalid: ${NesEpsmSystem.errors(rhythm)}" }
+            File(directory, "epsm-rhythm.nesimg")
+                .writeBytes(ByteArray(NesEpsmSystem.engine.imageSize).also { NesEpsmSystem.engine.lower(rhythm, it) })
+            println("Exported the EPSM rhythm image (the ROM itself stays at $romPath)")
+        }
         // The SID demo: project, .sid/.prg/.sng and the engine image (tools/audio/render_sid_image.sh renders it).
         val sid = SidSystem.demo()
         File(directory, "raster-run.thor").writeText(ProjectCodec.encode(sid), Charsets.UTF_8)

@@ -6,6 +6,7 @@
 
 #include "audio_engine.h"
 #include "chip_wav.h"
+#include "nes/nes_epsm.h"
 #include "opl3/opl3_export.h"
 #include "ym/ym_export.h"
 #include "sms/sms_export.h"
@@ -36,6 +37,19 @@ JNIEXPORT jlong JNICALL Java_org_thortracker_audio_ChipAudio_nativeCreate(JNIEnv
 
 JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeDestroy(JNIEnv*, jclass, jlong h) {
     delete engine(h);
+}
+
+// The EPSM rhythm ROM (nes/nes_epsm.h; any thread, never concurrently with itself). Kotlin: `@JvmStatic external fun
+// nativeInstallRhythmRom(rom: ByteArray): Int` — 0 installed (or the same bytes again), -1 wrong size or other bytes
+// than the installed ROM. The host checks the ROM's SHA-256 first (EpsmRhythmRom.problem).
+JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeInstallRhythmRom(JNIEnv* env, jclass, jbyteArray rom) {
+    if (!rom) return -1;
+    jbyte* bytes = env->GetByteArrayElements(rom, nullptr);
+    if (!bytes) return -1;  // OutOfMemoryError pending
+    const int result = nes_epsm_install_rhythm_rom(reinterpret_cast<const uint8_t*>(bytes),
+                                                   static_cast<size_t>(env->GetArrayLength(rom)));
+    env->ReleaseByteArrayElements(rom, bytes, JNI_ABORT);
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeSetImage(JNIEnv* env, jclass, jlong h,
