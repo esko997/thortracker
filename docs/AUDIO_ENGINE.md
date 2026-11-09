@@ -5645,10 +5645,10 @@ physical-button latency or human-listening measurements.
 
 ## Atari 2600: Thor Tracker's own player on the TIA (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`)
 
-**Status: 0.32.0/code 45 integration** with verified POKEY `c8a7d46`. Generated constants and fixtures are
-deterministic; the focused native preflight passes 1,806 checks, including pre-resampler headroom.
-Integrated Kotlin/native builds, independent pitch comparisons and frontend verification remain pending;
-earlier-system evidence is not a TIA frontend pass. See `VERIFICATION.md`.
+**Status: 0.32.0/code 45 locally verified; publication pending.** Integrated native checks pass
+(1,812 TIA / 2,220 WAV), with independent register, period, divider-edge and pitch comparisons.
+Both regions pass actual controller/edit/restart/export scenarios on Nova, DMG and Konkr, plus SDL
+playback and audition. Pre-resampler headroom is corrected; raw chip levels are unchanged. See `VERIFICATION.md`.
 The Atari 2600's sound is the TIA's two audio channels (Television Interface Adaptor, CO10444): per channel a 4-bit
 control register (AUDC: which of the counters' feedback and division modes), a 5-bit frequency divider (AUDF) and a
 4-bit volume (AUDV), clocked twice per scanline from the video timing, the two outputs tied together into one mono

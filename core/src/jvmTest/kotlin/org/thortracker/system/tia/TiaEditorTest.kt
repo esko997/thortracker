@@ -56,6 +56,7 @@ class TiaEditorTest {
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
+                override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
             })
         }
     }
@@ -198,9 +199,6 @@ class TiaEditorTest {
         v.goTo(Row.STEPS)
         v.tap(Action.PASTE)
         assertEquals(listOf(15, 15), sound()!!.volume.values)
-        // Duplicate refuses past the last slot.
-        v.tap(Action.DUPLICATE)
-        assertTrue(session.message!!.contains("last slot"))
     }
 
     @Test

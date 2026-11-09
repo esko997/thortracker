@@ -1461,7 +1461,7 @@ VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
   columns and the channel-holder tags; Song lists Machine, Multispeed, Noise and Base clock; Help's effects page uses
   `PokeyRules` and the system help.
 
-## Atari 2600 (TIA): decisions (0.32.0/code 45 integration; full verification pending)
+## Atari 2600 (TIA): decisions (0.32.0/code 45 locally verified; publication pending)
 
 Full contract: `docs/AUDIO_ENGINE.md`, "Atari 2600". Decided on the user's behalf (roadmap item 7, "TIA"; every
 onboard sound feature, nothing invented):

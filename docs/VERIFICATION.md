@@ -1,23 +1,78 @@
 # Thor Tracker verification — 2026-11-09
 
-## Current integration: Atari 2600 TIA 0.32.0/code 45 — full verification pending
+## 0.32.0 Atari 2600 TIA — local verification complete; publication pending
 
-Integrates verified POKEY `c8a7d46` and published OPN/OPNA, retaining both TIA regions and all earlier systems.
-Generated Kotlin constants, native fixtures and compressed goldens were produced twice byte-identically.
-The focused native preflight passes **1,806 checks** after fixing pre-resampler headroom: the preserved
-unattenuated path fails 81 checks, while quarter-gain absolute levels before differencing pass the
-40 NTSC/PAL × rate × AUDC cases and independent quiet-resampler oracle. Raw nonlinear chip levels and
-register traces remain unchanged. The independent 1,500-tick trace comparison passes; integrated sample
-exports, full native/Kotlin builds, independent pitch comparison and actual frontends remain pending.
-The original source-slice description below is historical, not a claim that current checks are complete.
+Integrates verified POKEY `c8a7d46` and published OPN/OPNA. **Cartridge Dawn** has NTSC and PAL variants,
+both TIA voices, all 16 AUDC modes, tonal/raw instruments, honest divider quantization and WAV export.
+VGM has no TIA command; no substitute register format or cartridge export is advertised.
 
-## 0.31.0 Atari 8-bit POKEY — local verification complete; publication pending
+### Engine, reference and build evidence
+
+- Generated Kotlin constants, native fixtures and compressed goldens are byte-identical across two runs.
+  Vendored Stella `AudioChannel.cxx/.hxx` match upstream commit `d55b1aec0d067a4c901a6dcdf81cb8f579685659`.
+- Corrected pre-resampler headroom: the preserved unattenuated path fails **81 checks**. Quarter-gain
+  absolute levels before differencing pass **40 NTSC/PAL × rate × AUDC cases** and a separate quiet
+  resampler oracle, without changing raw nonlinear chip levels or register traces.
+- The integrated native suite passes, including **1,812 TIA**, **356 POKEY**, **1,806 OPN/OPNA** and
+  **2,220 WAV** checks. Independent Python period/shape comparisons cover every AUDC at four dividers;
+  brute-force nearest-divider edges and the **1,500-tick** player trace pass unchanged tolerances.
+  Measured AUDC C/AUDF 11: **436.105 Hz NTSC** and **432.126 Hz PAL**, matching the hardware's deliberately
+  imperfect A-4 (**−15.4 / −31.3 cents**), not an artificially retuned 440 Hz.
+- **851 JVM, 19 Linux and 6 Android host tests** pass. The signed release APK and debug SDL executable
+  build with one worker. Both TIA renderer CLIs and the integrated POKEY renderer run successfully;
+  all shared-registry renderer source lists include every engine (SMS remains intentionally standalone).
+- Factory `.uge` is unchanged: **77,994 bytes**, SHA-256
+  `c6d91f1c02c34425d49ce19279f090fa309a500568462de6efc5c5a5f792bccb`.
+  All **32 Game Boy views** are pixel-identical to the verified POKEY baseline.
+
+### Actual frontend evidence
+
+- The clean permanent Android suite passes **21 tests in 48.299 s**, zero observed xruns or driver faults.
+  Rebuilt after temporary-harness removal, the final clean suite passes **21 in 47.993 s**; its general
+  audio regression reports **one xrun, zero driver faults**. The separate TIA scenarios below report zero.
+- Both regional scenarios pass on **Nova (123.302 s), DMG (127.878 s), Konkr (134.953 s)**: New/Load demo,
+  all five instrument pages, all AUDC choices, tonal/raw audition, presets, envelope/loop/release editing,
+  undo/redo, tuning-guide divider audition, playback with both audition channels, live edits, Stop,
+  exact project restart, seek, and actual project Save/Open and WAV document pickers.
+- All six project exports and six WAV exports match their retained source bytes and are identical across
+  devices within each region. NTSC WAV is **8,612,732 bytes**, PAL **8,872,112 bytes**.
+- Across those scenarios: **zero observed xruns and driver faults**. Maximum observed callbacks:
+  **2.323 / 5.809 / 1.766 ms** on Nova/DMG/Konkr. Konkr's **16,065-tick** order-fallback seeks complete
+  in **330.582 ms NTSC / 413.341 ms PAL**, with playback resumed and no pending seek.
+- Four actual SDL scenes exercise each region with playback alone and playback plus held audition.
+  Final rows are **26 NTSC / 25 PAL**, audition count is one in the latter scenes, and peaks are
+  **0.23056 / 0.23038**. Android compact/landscape instrument and tuning-guide surfaces and the SDL
+  instrument surface were visually inspected. This is automated PCM/UI evidence, not human listening.
+- Temporary instrumentation sources are removed and retained only with local evidence. Private-ROM
+  and distinctive-chunk exclusion passes for the candidate APK; no private audio is published.
+
+Official CI artifacts and artifact-only Thor/Deck delivery remain pending.
+
+## 0.31.0 Atari 8-bit POKEY
 
 **Atari 8-bit (POKEY)** (`atari-pokey`) adds four channels, NTSC/PAL timing, distortion polynomials,
 16-bit pairing, high-pass and shared-resource ownership, and platform-native volume-DAC samples.
 Thor Tracker's player and cycle model follow Altirra/MAME; the demo is **Scanline Cruise**, with VGM/WAV
 exports. Version **0.31.0/code 44** integrates verified OPN/OPNA `c3c054f`, retaining all earlier systems,
 project format 10, tuning provenance, 500 bundled scales and optional local packs.
+
+Published [v0.31.0](https://github.com/esko997/thortracker/releases/tag/v0.31.0) after PR #42 merged as
+`409a5bfb665ab086cc8741a03f904b23d324c013`. Workflow `42696269600` passed build, Deck, signed release
+and AppImage attachment. Official artifacts passed checksum, production-certificate, version and
+non-debuggable checks:
+
+- APK SHA-256: `3a4b18afe60511c4811df8aa228a802910f7debd5734b24d03694261ad5f84dd`.
+- AppImage SHA-256: `7f86086af72e7831d44e3bcfeb874b22c47631cccb4288ce52de14205c21aa9f`.
+- The official APK passed both full controller/import/restart/export scenarios on Nova (**80.264 s**),
+  DMG (**83.987 s**) and Konkr (**91.543 s**), with zero observed xruns or driver faults. Maximum observed
+  callbacks were **3.109 / 10.563 / 3.746 ms** respectively; Konkr's deep seek took **263.405 ms**.
+  All demo/edited VGM/WAV bytes equal the verified candidate, and all six actual document-picker exports match.
+- The actual optimized AppImage ran locally with playback plus held audition: row 30 after four seconds,
+  one active audition, PCM peak **0.65**, and a successfully drawn instrument surface.
+- The official APK passed private-ROM/chunk exclusion. Artifact-only delivery placed it in Thor Downloads
+  and the AppImage under `~/thortracker-deck/`, updating the existing `thor-tracker` symlink. Both remote
+  hashes match; neither daily device was woken, installed to or launched. Owned test packages/captures
+  were removed from the three reserved devices, and all leases were released.
 
 ### Sample ownership and native verification
 
@@ -957,70 +1012,6 @@ AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` sym
 The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
-
-## Unreleased: Atari 2600 (TIA) — UNVERIFIED 0.32.0/code 45 integration
-
-Branch `tia-system` adds the **Atari 2600** family with two systems, **Atari 2600 NTSC (TIA)** (`"atari2600-tia-ntsc"`)
-and **Atari 2600 PAL (TIA)** (`"atari2600-tia-pal"`): Thor Tracker's own player on Stella 7.0's TIA `AudioChannel`
-(vendored unmodified), both audio channels, all sixteen AUDC values, honest AUDF quantization (each note plays the
-nearest divider of its waveform), tonal and raw sounds, WAV export only (VGM has no TIA), and the demo **Cartridge
-Dawn** (NTSC and PAL). The source is integrated with `d417843`; **no TIA build, generation, test, device or
-listening verification has run**. The integration version is 0.32.0/code 45. The parent runs everything below
-before this integration is called verified; record observed results here separately from historical evidence.
-
-1. Generate the Kotlin constants, the native fixture and the golden images (pure Python 3), check a second run is
-   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/TiaPlayerImage.kt`,
-   `app/src/test/cpp/tia_test_song.h` (six images, the reference player's writes for 1500 ticks of five traces, the
-   reference chip's levels and counter states) and `core/src/jvmTest/resources/tia-golden/{spike,features}.bin.gz`:
-
-   ```sh
-   python3 tools/audio/prepare_tia.py
-   python3 tools/audio/tia/tia_golden.py
-   python3 tools/audio/prepare_tia.py && python3 tools/audio/tia/tia_golden.py && git status --short   # no new changes
-   python3 tools/audio/tia/tia_reference_check.py --periods --edges
-   ```
-
-   `prepare_tia.py` fails before writing if the C sources and the Python reference disagree on any shared number,
-   `TIP_CLASS`, `TIP_PERIOD`, `TIP_AUDF_EDGE`, `TIP_SINE` or `TIM_MIX`. `--periods` measures every AUDC's period at
-   AUDF 0, 1, 7 and 31 from the reference's independent port of the counter logic and matches each output against
-   Martin Korth's published pattern shapes (an inverted match is reported, not failed: same sound); `--edges` checks the
-   AUDF edge table against a brute-force nearest-divider search at all 7680 pitches, both regions, every class.
-2. The usual full run (Kotlin: `TiaGoldenTest`, `TiaModelTest`, `TiaEditorTest` and every existing test), the app and
-   Deck builds (CMake through Gradle with the Stella include dirs, `tia/tia_stella.cpp` as C++17 with exceptions; the
-   Deck's `buildEngine`), the sample exports (`cartridge-dawn.thor`, `cartridge-dawn-pal.thor`, `tia-demo.tiaimg`,
-   `tia-pal-demo.tiaimg`, `tia-shortest.tiaimg`) and the native host test (`tia_machine_test.c`, and `wav_render_test.c`
-   with the three TIA images):
-
-   ```sh
-   tools/build.sh --max-workers=1 :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
-   tools/build.sh --max-workers=1 :deck:linkDebugExecutableLinuxX64
-   tools/audio/run_native_host_test.sh /tmp/thor-evidence
-   python3 tools/audio/tia/tia_reference_check.py /tmp/thor-evidence --pitch
-   tools/audio/render_tia_image.sh app/build/samples/tia-demo.tiaimg /tmp/cartridge-dawn.wav 90
-   tools/audio/render_tia_image.sh app/build/samples/tia-pal-demo.tiaimg /tmp/cartridge-dawn-pal.wav 90
-   ```
-
-   Expected from the specification (not yet observed): A-4 on AUDC C = AUDF 11 = 436.10 Hz NTSC (−15.4 cents) and
-   432.13 Hz PAL (−31.3 cents); the engine's per-tick writes equal `tia_ref.py`'s for 1500 ticks of the test song and
-   its edited, tempo, PAL and live-edit traces (the relaid-out image identical to the song); the chip's per-phase-1
-   levels and counter states after 8 frames equal the reference port's (NTSC and PAL); seeks bit-identical to straight
-   play; 801/802 frames per tick at 48 kHz NTSC and 962/963 PAL. Thresholds the native test sets without having run
-   (pitch ±0.3 Hz, div-2/div-31 notes within 0.5 %, song rms above 0.01, muted rms below 1e-4, the 10 s release cap,
-   the six-tick shortest song's row under 1 s) remain unobserved. Preserve behavioral tolerances; investigate any
-   failures before changing them. Also check Game Boy views pixel-identical to the baseline, every existing golden
-   and sample export unchanged, and every `render_*_image.sh` entrypoint (the registry-linked renderers now include
-   TIA and all current engines; the standalone SMS renderer does not use the shared registry).
-3. Listen: the demo on both standards (the div 6 lead in tune, the div 2 sparkle, div 31 bass, raw noise drums, the
-   noise-then-div-93 kick, the stepped slide and portamento, `W01` turning held notes into the 4-bit buzz) and the test
-   song. Watch the output level (Stella's mixing; two full channels = 1.5 × one) and whether the stepped pitch effects
-   read as intended.
-4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → Atari 2600 →
-   NTSC and PAL; demo playback (no underruns; the tick cost on the Konkr, including a seek of up to 7200 clocked
-   frames), the Instrument pages (Waveform span, Pitch mode, the envelopes, the Pitch guide), audition on TIA 1-2 incl.
-   raw sounds, the Pattern inspector's key-on register lines and lane tags, WAV export through the document picker.
-
-Scratch is preserved untouched and untracked: `.tia-ref-tiasystem/` (fetched Stella 7.0 sources,
-Korth's specification page, working notes) and `.tia-kotlin-ref/` (a copy of the PC Engine template files).
 
 ## 0.16.0 NES + Konami VRC7
 

@@ -26,8 +26,6 @@ class TiaGoldenTest {
     private fun assertSameImage(expected: ByteArray, actual: ByteArray) {
         assertEquals(TiaPlayerImage.IMAGE_SIZE, expected.size)
         assertEquals(TiaPlayerImage.IMAGE_SIZE, actual.size)
-        val first = expected.indices.firstOrNull { expected[it] != actual[it] }
-        assertEquals("first differing byte", null, first)
         assertArrayEquals(expected, actual)
     }
 

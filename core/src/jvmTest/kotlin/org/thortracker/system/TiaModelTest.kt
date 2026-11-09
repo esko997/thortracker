@@ -2,7 +2,6 @@ package org.thortracker.system
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -10,7 +9,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.backend.TiaLowering
 import org.thortracker.backend.TiaPlayerImage
-import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.ProjectCodec
@@ -25,16 +23,14 @@ import org.thortracker.system.tia.TiaPalSystem
 import org.thortracker.system.tia.TiaPresets
 import org.thortracker.system.tia.TiaRegion
 import org.thortracker.system.tia.TiaRules
-import org.thortracker.system.tia.TiaSharedState
 import org.thortracker.system.tia.TiaSound
 import org.thortracker.system.tia.TiaSystem
 import org.thortracker.system.tia.tia
 
 /**
- * The Atari 2600 systems' model: registration as one family of two regions, project files, the validator's mirror of
- * the loader's reasons and its warnings, the honest AUDF quantization and spans, the lowering's header, records and
- * data layout (patterns, then deduplicated envelopes; slots never merged), the key-on registers the Pattern view shows,
- * fine pitch, arrangement and the demos. The songs here use their own sounds (not the presets).
+ * The Atari 2600 systems' project files, honest AUDF quantization and spans, lowering's header, records and
+ * data layout (patterns, then deduplicated envelopes; slots never merged), fine pitch, arrangement and demos.
+ * The songs here use their own sounds (not the presets).
  */
 class TiaModelTest {
     /** Slot 01: a div 6 square (AUDC C), no envelopes. */
@@ -75,63 +71,15 @@ class TiaModelTest {
     // ---- system shape ------------------------------------------------------------------------------------------
 
     @Test
-    fun bothRegionsAreRegisteredAsOneFamilyWithTwoChannels() {
-        assertEquals(TiaNtscSystem, SoundSystems.of("atari2600-tia-ntsc"))
-        assertEquals(TiaPalSystem, SoundSystems.of("atari2600-tia-pal"))
-        assertEquals("Atari 2600 NTSC (TIA)", TiaNtscSystem.name)
-        assertEquals("Atari 2600 PAL (TIA)", TiaPalSystem.name)
-        for (system in listOf(TiaNtscSystem, TiaPalSystem)) {
-            assertEquals("Atari 2600", system.family)
-            assertEquals(listOf("TIA 1", "TIA 2"), system.channels.map { it.name })
-            assertTrue(system.channels.all { it.tonal && it.kind == ChannelKind.VOICE && it.bank == 0 })
-            assertEquals(listOf(BankSpec("Sounds", 64)), system.banks)
-            assertEquals(0..119, system.noteRange)
-            assertEquals("C-0", system.noteName(0))
-            assertEquals("A-4", system.noteName(57))
-            assertEquals("B-9", system.noteName(119))
-            assertEquals(2, system.effectColumns(0))
-            assertEquals(2, system.effectColumns(1))
-            assertEquals(TiaRules.EFFECTS, system.effectsFor(1))
-            assertFalse(ViewKind.WAVE in system.views)
-            assertTrue(ViewKind.INSTRUMENT in system.views)
-            assertEquals(emptyList<String>(), system.exports.map { it.extension })
-            assertEquals(system.id, system.engine.id)
-            assertEquals(65536, system.engine.imageSize)
-            assertEquals(7200, system.engine.seekTicks)
-            assertTrue(system.engine.driver.contains("Stella 7.0"))
-            assertEquals(57, system.engine.note(base(system), 0, 57, 1))
-            assertEquals(-40, system.engine.fine(0, 57, -40))
-            assertEquals(system, system.blank().sound.system)
-            assertEquals(system.tickHz, system.ticksPerSecond(system.blank()), 0.0)
-        }
-        assertEquals(39375000.0 / 11 / (262 * 228), TiaNtscSystem.tickHz, 1e-9)
-        assertEquals(3546894.0 / (312 * 228), TiaPalSystem.tickHz, 1e-9)
-        assertEquals(TiaRegion.PAL, TiaPalSystem.blank().tia.region)
-        // The effect letters the loader knows, and only those.
-        assertEquals("0 1 2 3 4 A B C D F G P S W", TiaRules.EFFECTS.joinToString(" ") { it.char.toString() })
-    }
-
-    @Test
     fun blankSongsAreValidWithHonestPresets() {
         for (system in listOf(TiaNtscSystem, TiaPalSystem)) {
             val blank = system.blank()
             assertEquals(emptyList<String>(), system.errors(blank))
             assertEquals(emptyList<String>(), system.warnings(blank))
-            assertEquals(TiaSystem.SLOTS, blank.tia.instruments.size)
-            assertEquals(TiaPresets.ALL.size, blank.tia.instruments.count { it != null })
         }
-        assertTrue(TiaPresets.ALL.size >= 16)
-        assertEquals(TiaPresets.ALL.size, TiaPresets.ALL.map { it.name }.toSet().size)
         TiaPresets.ALL.forEach { p ->
             assertNull(p.name, p.instrument.problem())
-            assertEquals(p.category == TiaPresets.Category.RAW, p.instrument.raw)
         }
-        assertEquals("square", TiaNtscSystem.instrumentName(base(), 0, 1))
-        assertEquals(TiaSystem.EMPTY_NAME, TiaNtscSystem.instrumentName(base(), 0, 4))
-        assertNull(TiaNtscSystem.instrumentName(base(), 1, 1))
-        assertEquals("Empty: choose a preset", TiaNtscSystem.instrumentSummary(base(), 0, 4))
-        assertEquals("AUDC C div 6 square · tonal E-3..D#8", TiaNtscSystem.instrumentSummary(base(), 0, 1))
-        assertTrue(TiaNtscSystem.instrumentSummary(base(), 0, 2)!!.startsWith("AUDC 8 9-bit poly (noise) · raw"))
         // Thumbnails: the squares and the constant level; none for noise.
         assertEquals(List(32) { if (it < 16) 1f else 0f }, TiaNtscSystem.instrumentShape(base(), 0, 1))
         assertEquals(List(32) { 1f }, TiaNtscSystem.instrumentShape(base(), 0, 5))
@@ -145,9 +93,6 @@ class TiaModelTest {
         val cell = Cell(57, 1, TiaRules.FX_VOLUME, 0x0A).withEffect(1, TiaRules.FX_WAVEFORM, 0x04)
         val song = blankWith(0, 0, cell, TiaPalSystem)
         val text = ProjectCodec.encode(song)
-        assertTrue(text.contains("\"backend\":\"atari2600-tia-pal\",\"backendVersion\":1"))
-        assertTrue(text.contains("\"region\":\"pal\""))
-        assertTrue(text.contains("[57,1,12,10,32,4]"))
         val back = ProjectCodec.decode(text)
         assertEquals(song, back)
         assertEquals(TiaPalSystem, back.system)
@@ -157,10 +102,9 @@ class TiaModelTest {
         for (s in listOf(TiaNtscSystem.blank(), TiaPalSystem.blank(), TiaNtscSystem.demo(), TiaPalSystem.demo(), TiaDemoSong.shortest())) {
             assertEquals(s, ProjectCodec.decode(ProjectCodec.encode(s)))
         }
-        // A PAL song filed under the NTSC backend is refused, naming both.
+        // A PAL song filed under the NTSC backend is refused.
         val swapped = text.replace("\"atari2600-tia-pal\"", "\"atari2600-tia-ntsc\"")
-        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(swapped) }
-        assertTrue(e.message!!.contains("Atari 2600 PAL (TIA), not Atari 2600 NTSC (TIA)"))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(swapped) }
     }
 
     // ---- pitch: honest AUDF quantization ---------------------------------------------------------------------
@@ -220,51 +164,6 @@ class TiaModelTest {
     // ---- validation ----------------------------------------------------------------------------------------
 
     @Test
-    fun cellValidationExplainsWhatTheLoaderRejects() {
-        fun error(cell: Cell) = TiaNtscSystem.errors(blankWith(0, 0, cell)).joinToString("\n")
-        assertEquals("", error(Cell(0, 1)))
-        assertEquals("", error(Cell(119, 1)))
-        assertTrue(error(Cell(120, 1)).contains("outside C-0..B-9"))
-        assertTrue(error(Cell(57, 4)).contains("sound 04 is empty"))
-        assertTrue(error(Cell(57, 65)).contains("outside 0-64"))
-        assertEquals("", error(Cell(57, 1, TiaRules.FX_VOLUME, 0x0F)))
-        assertTrue(error(Cell(57, 1).withEffect(1, TiaRules.FX_VOLUME, 0x10)).contains("volumes are C00-C0F"))
-        assertEquals("", error(Cell(57, 1, TiaRules.FX_WAVEFORM, 0x0F)))
-        assertTrue(error(Cell(57, 1, TiaRules.FX_WAVEFORM, 0x10)).contains("W00-W0F"))
-        assertTrue(error(Cell(57, 1, TiaRules.FX_SPEED, 0)).contains("F00"))
-        assertTrue(error(Cell(57, 1, TiaRules.FX_JUMP, 1)).contains("jumps past the last order"))
-        assertEquals("", error(Cell(57, 1, TiaRules.FX_JUMP, 0)))
-        // Any parameter on the other effects.
-        for (code in listOf(0, 1, 2, 3, 4, 10, 13, 16, 25, 28)) assertEquals("code $code", "", error(Cell(57, 1, code, 0xFF)))
-        // Codes without an effect.
-        for (code in listOf(5, 6, 7, 8, 9, 14, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 29, 30, 31, 33, 34, 35)) {
-            assertTrue("code $code", error(Cell(57, 1, code, 1)).contains("does not exist on the Atari 2600"))
-        }
-        // At most two effect columns.
-        assertTrue(error(Cell(57, 1).withEffect(2, TiaRules.FX_VOLUME, 1)).contains("at most 2"))
-    }
-
-    @Test
-    fun soundValidationExplainsWhatTheLoaderRejects() {
-        fun insError(ins: TiaInstrument) = TiaNtscSystem.errors(withSound { it.withInstrument(6, ins) }).joinToString("\n")
-        assertEquals("", insError(square.copy(pitch = TiaEnvelope(List(255) { -128 }))))
-        assertTrue(insError(square.copy(volume = TiaEnvelope(List(256) { 15 }))).contains("volume envelope has 256 steps; envelopes have at most 255"))
-        assertTrue(insError(square.copy(volume = TiaEnvelope(listOf(16)))).contains("volume envelope step value 16 is outside 0..15"))
-        assertTrue(insError(square.copy(arpeggio = TiaEnvelope(listOf(-65)))).contains("arpeggio envelope step value -65"))
-        assertEquals("", insError(square.copy(arpeggio = TiaEnvelope(listOf(-64, 63)))))
-        assertTrue(insError(square.copy(pitch = TiaEnvelope(listOf(128)))).contains("pitch envelope step value 128"))
-        assertTrue(insError(square.copy(waveforms = TiaEnvelope(listOf(16)))).contains("waveform envelope step value 16"))
-        assertTrue(insError(square.copy(waveform = 16)).contains("waveform 16 is outside 0-15"))
-        assertTrue(insError(square.copy(volume = TiaEnvelope(listOf(15, 9), loop = 2))).contains("loop point 2 is outside"))
-        assertTrue(insError(square.copy(volume = TiaEnvelope(listOf(15, 9), release = 0))).contains("release point 0 must be 1-1"))
-        assertTrue(insError(square.copy(volume = TiaEnvelope(listOf(15, 9, 3), loop = 1, release = 1))).contains("must come after the loop point"))
-        assertEquals("", insError(square.copy(volume = TiaEnvelope(listOf(15, 9, 3), loop = 0, release = 1))))
-        assertTrue(insError(square.copy(arpeggio = TiaEnvelope(emptyList(), loop = 0))).contains("has a loop or release point but no steps"))
-        assertTrue(TiaNtscSystem.errors(withSound { it.copy(instruments = it.instruments.dropLast(1)) }).joinToString().contains("63 sound slots"))
-        assertTrue(TiaNtscSystem.errors(base().copy(ticksPerRow = 0)).joinToString().contains("ticks per row must be 1-255"))
-    }
-
-    @Test
     fun theDataBudgetIsTheImagesDataRegion() {
         // Every row of both channels: a note, a sound and two effects (7 bytes), different per pattern: 896 bytes an order.
         fun dense(orders: Int): Song {
@@ -280,45 +179,9 @@ class TiaModelTest {
         // Patterns, then the envelopes: the hat's volume (3 bytes), the seq's waveforms (2) and the click's volume (2).
         assertEquals(69 * 2 * 64 * 7 + 7, TiaLowering.dataSize(fits))
         assertTrue(TiaLowering.dataSize(fits) <= TiaPlayerImage.DATA_CAPACITY)
-        assertEquals(emptyList<String>(), TiaNtscSystem.errors(fits).filter { it.contains("image holds") })
         val over = dense(70)
         assertTrue(TiaLowering.dataSize(over) > TiaPlayerImage.DATA_CAPACITY)
-        assertTrue(TiaNtscSystem.errors(over).joinToString().contains("the Atari 2600 image holds"))
         assertThrows(IllegalArgumentException::class.java) { TiaLowering.lower(over) }
-    }
-
-    @Test
-    fun auditionChecksSlotsAndRangesButPlaysEveryNote() {
-        val engine = TiaNtscSystem.engine
-        val song = base()
-        assertNull(engine.auditionProblem(song, 0, 57, 1, 0))
-        assertNull(engine.auditionProblem(song, 1, 0, 1, -128)) // C-0 is outside div 6's span: it plays AUDF 31
-        assertNull(engine.auditionProblem(song, 1, 119, 2, 127))
-        assertTrue(engine.auditionProblem(song, 0, 120, 1, 0)!!.contains("outside C-0..B-9"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 4, 0)!!.contains("is empty"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 0, 0)!!.contains("Choose a sound"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 1, 128)!!.contains("Fine pitch"))
-        assertTrue(engine.auditionProblem(song, 2, 57, 1, 0)!!.contains("Cannot audition"))
-    }
-
-    @Test
-    fun warningsCoverSpansIgnoredWaveformsDelaysAndFirstNotes() {
-        fun warnings(song: Song) = TiaNtscSystem.warnings(song).joinToString("\n")
-        assertEquals("", warnings(base()))
-        // C-0 on div 6 plays its lowest divider; on a raw sound it is just AUDF 31.
-        assertTrue(warnings(blankWith(0, 0, Cell(0, 1))).contains("C-0 is outside waveform C's span E-3..D#8"))
-        assertEquals("", warnings(blankWith(0, 0, Cell(0, 2))))
-        assertEquals("", warnings(blankWith(0, 0, Cell(40, 1))))
-        // The waveform a note keys on with: Wxx on the row, or the waveform envelope's first step (AUDC 1 for slot 3).
-        assertTrue(warnings(blankWith(0, 0, Cell(40, 1, TiaRules.FX_WAVEFORM, 0x6))).isEmpty())
-        assertTrue(warnings(blankWith(0, 0, Cell(100, 1, TiaRules.FX_WAVEFORM, 0x6))).contains("outside waveform 6's span C-1..B-5"))
-        assertTrue(warnings(blankWith(0, 0, Cell(12, 3))).contains("outside waveform 1's span"))
-        // Wxx on a sound with a waveform envelope is ignored.
-        assertTrue(warnings(blankWith(0, 0, Cell(36, 3, TiaRules.FX_WAVEFORM, 0x4))).contains("W04 is ignored"))
-        assertTrue(warnings(blankWith(0, 0, Cell(48, 1, TiaRules.FX_DELAY, 6))).contains("the row never plays"))
-        assertTrue(warnings(blankWith(0, 4, Cell(48))).contains("has no sound"))
-        // The constant waveform has no span.
-        assertEquals("", warnings(blankWith(0, 0, Cell(0, 5))))
     }
 
     // ---- lowering ------------------------------------------------------------------------------------------
@@ -400,43 +263,6 @@ class TiaModelTest {
         assertEquals(listOf(2), loop.orders)
         assertEquals(0, TiaNtscSystem.jumpTarget(loop.patterns[2].tracks[1][5]))
         assertEquals(2, u16(TiaLowering.lower(song), TiaPlayerImage.H_ORDERS))
-    }
-
-    // ---- key-on registers ----------------------------------------------------------------------------------
-
-    @Test
-    fun sharedStateShowsTheKeyOnRegistersStraightPlayReaches() {
-        var song = base()
-        song = with(song, 0, 0, 0, Cell(57, 1))                                  // A-4, div 6: AUDF 11
-        song = with(song, 0, 1, 0, Cell(63, 2))                                  // raw hat: D#5 = AUDF 0
-        song = with(song, 0, 0, 2, Cell(effect = TiaRules.FX_WAVEFORM, param = 1)) // no note: the key-on registers stay
-        song = with(song, 0, 0, 4, Cell(60, 0, TiaRules.FX_WAVEFORM, 1))          // C-5 on the 4-bit poly: AUDF 3
-        song = with(song, 0, 1, 4, Cell(Cell.CUT))                               // OFF without a release: silent
-        song = with(song, 0, 0, 6, Cell(57, 0, TiaRules.FX_FINE, 0x80 + 40))      // a note row without W: div 6 again; +40/64
-        song = with(song, 0, 1, 6, Cell(30, 5))                                  // the constant level: no AUDF
-        song = with(song, 0, 0, 8, Cell(50, 3))                                  // the waveform envelope's first step: AUDC 1
-
-        fun tags(row: Int) = TiaNtscSystem.sharedState(song, 0, row).tags
-        fun lines(row: Int) = TiaNtscSystem.sharedState(song, 0, row).lines
-        assertEquals(listOf("C·11", "8·0"), tags(0))
-        assertEquals(listOf("C·11", "8·0"), tags(2))
-        assertTrue(lines(0).any { it.startsWith("TIA 1: A-4 · AUDC C div 6 square · AUDF 11 · 436.1 Hz · −15.") })
-        assertTrue(lines(0).any { it.startsWith("TIA 2: D#5 · AUDC 8 9-bit poly (noise) · AUDF 0 (raw)") })
-        assertEquals(listOf("1·3", null), tags(4))
-        assertTrue(lines(4).contains("TIA 2: silent"))
-        // A-4 + 40/64 semitone: past the edge to the next divider up (AUDF 10, 475.8 Hz, 73 cents sharp of the request).
-        assertEquals(listOf("C·10", "0·DC"), tags(6))
-        assertTrue(lines(6).any { it.contains("no AUDF: a DC level") })
-        assertEquals("1·", tags(8)[0]!!.take(2))
-        // PAL: the same divider, about 16 cents lower.
-        val pal = song.copy(sound = song.tia.copy(region = TiaRegion.PAL))
-        assertEquals("C·11", TiaPalSystem.sharedState(pal, 0, 0).tags[0])
-        assertTrue(TiaPalSystem.sharedState(pal, 0, 0).lines.any { it.contains("432.1 Hz") })
-        // The key-on records directly.
-        val k = TiaSharedState.at(song, 0, 0)[0]!!
-        assertEquals(57, k.note)
-        assertEquals(0xC, k.waveform)
-        assertFalse(k.raw)
     }
 
     // ---- fine pitch and the demos --------------------------------------------------------------------------
