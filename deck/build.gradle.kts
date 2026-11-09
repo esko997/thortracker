@@ -59,6 +59,10 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ym/ym_xgm.c").asFile,
         engineSrc.file("ym/ym_vgm.c").asFile,
         engineSrc.file("ym/ym_psg.c").asFile,
+        engineSrc.file("sms/sms_chip.c").asFile,
+        engineSrc.file("sms/sms_machine.c").asFile,
+        engineSrc.file("sms/sms_image.c").asFile,
+        engineSrc.file("sms/sms_vgm.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
@@ -69,7 +73,7 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "sms", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
             "third_party/nuked-opl3", "third_party/ymfm")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
@@ -85,7 +89,9 @@ val buildEngine by tasks.registering(Exec::class) {
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
-        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm_driver_image.h"),
+        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm_driver_image.h",
+        "sms/sms_image.h", "sms/sms_machine.h", "sms/sms_export.h", "generated/banjo_driver_image.h",
+        "third_party/emu2413/emu2413.h"),
         engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
@@ -128,7 +134,7 @@ kotlin {
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
                 // nes/nes_epsm.h: nes_epsm_install_rhythm_rom / nes_epsm_rhythm_rom_installed for the Deck's rhythm ROM.
-                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"))
+                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

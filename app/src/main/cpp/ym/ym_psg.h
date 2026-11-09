@@ -33,6 +33,9 @@ void ymps_write(YmPsg* p, uint8_t value);
 int ymps_step(YmPsg* p);
 /* The summed output now (no step). */
 int ymps_output(const YmPsg* p);
+/* The Game Gear's stereo output now (no step): [pan] as written to its port $06 (bits 0-3: channel 0-3 on the right,
+ * bits 4-7: on the left), each channel's level as ymps_output sums it. */
+void ymps_output_pan(const YmPsg* p, uint8_t pan, int* left, int* right);
 
 #ifdef __cplusplus
 }

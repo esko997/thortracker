@@ -30,6 +30,8 @@ import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.sid.SidSystem
+import org.thortracker.system.sms.SmsExport
+import org.thortracker.system.sms.SmsSystem
 import org.thortracker.system.ym2612.YmSystem
 import java.io.File
 
@@ -325,5 +327,26 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The Master System demos, one per layout: project, the Banjo sources (.asm WLA-DX, .s SDAS) and the engine
+        // image (its VGM needs the native machine: tools/audio/render_sms_image.sh harbour-lights-sms-psg.smsimg out.wav
+        // --vgm out.vgm renders both).
+        for (sms in SmsSystem.ALL) {
+            val song = sms.demo()
+            val base = "harbour-lights-${sms.id}"
+            File(directory, "$base.thor").writeText(ProjectCodec.encode(song), Charsets.UTF_8)
+            File(directory, "$base.asm").writeBytes(SmsExport.export(song, SmsExport.Format.WLA_DX))
+            File(directory, "$base.s").writeBytes(SmsExport.export(song, SmsExport.Format.SDAS))
+            File(directory, "$base.smsimg").writeBytes(ByteArray(sms.engine.imageSize).also { sms.engine.lower(song, it) })
+            val first = song.patterns.first()
+            val shortest = song.copy(
+                ticksPerRow = 1, orders = listOf(0), loopOrder = 0,
+                patterns = listOf(first.copy(length = 1, tracks = first.tracks.mapIndexed { ch, rows ->
+                    rows.mapIndexed { row, _ -> if (ch == 0 && row == 0) Cell(57, 1) else Cell() }
+                })),
+            )
+            File(directory, "sms-shortest-${sms.id}.smsimg")
+                .writeBytes(ByteArray(sms.engine.imageSize).also { sms.engine.lower(shortest, it) })
+            println("Exported ${song.title} (${sms.name}) to ${directory.absolutePath}")
+        }
     }
 }

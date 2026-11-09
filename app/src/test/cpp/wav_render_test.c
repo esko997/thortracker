@@ -73,11 +73,14 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"harbour-lights-sms-psg.smsimg", "sms-banjo"},
+    {"harbour-lights-gg-psg.smsimg", "sms-banjo"},
+    {"harbour-lights-sms-fm.smsimg", "sms-banjo"},
+    {"harbour-lights-sms-fm-drums.smsimg", "sms-banjo"},
 };
 
-/* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; an N163 note on N163 1, a 5B
- * tone on 5B square 1, a sine on FDS, a held note on MMC5 pulse 1 or a looping PCM note on its PCM lane, or an FM note on
- * EPSM FM 1. */
+/* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; a held expansion note,
+ * a looping PCM note on the MMC5 PCM lane, or a Square 1 tone in each Sega layout. */
 static const Demo kShortest[] = {
     {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
     {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
@@ -92,6 +95,10 @@ static const Demo kShortest[] = {
     {"mmc5-shortest.nesimg", "nes-famistudio-mmc5"},
     {"mmc5-pcm-shortest.nesimg", "nes-famistudio-mmc5"}, /* a looping PCM note on the MMC5 PCM lane */
     {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
+    {"sms-shortest-sms-psg.smsimg", "sms-banjo"},
+    {"sms-shortest-gg-psg.smsimg", "sms-banjo"},
+    {"sms-shortest-sms-fm.smsimg", "sms-banjo"},
+    {"sms-shortest-sms-fm-drums.smsimg", "sms-banjo"},
 };
 
 static char spool[512];

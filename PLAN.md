@@ -23,14 +23,16 @@ Order below is the current intent; design notes for the chip work live in `docs/
    0.19.0) are implemented, with driver/native, desktop and reserved-handheld checks recorded in
    `docs/VERIFICATION.md`. N163's eight channel-count variants are grouped under NES → NES + N163….
    MMC5's two pulse voices and software-driven PCM lane shipped in 0.20.0.
-   EPSM (YMF288/OPN3-L: three SSG voices, six FM voices and six rhythm drums) is integrated
-   for 0.21.0: core/native checks, 19 permanent Android tests, 32 unchanged Game Boy
+   EPSM (YMF288/OPN3-L: three SSG voices, six FM voices and six rhythm drums) shipped
+   in 0.21.0. Core/native checks, 19 permanent Android tests, 32 unchanged Game Boy
    views, Android/desktop export parity and Nova/DMG/Konkr production playback/audition
    checks passed. Its user-supplied rhythm ROM is never distributed.
    Next: Sega Master System / Game Gear and the SMS FM Sound Unit.
    Source-only worktrees do not count as verified releases.
-4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
-   GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
+4. **Sega Master System / Game Gear** — integrated for 0.22.0: the real Banjo driver on a Z80, SN76489
+   with Game Gear stereo, and the Japanese SMS FM Sound Unit (YM2413), with separate melodic/rhythm layouts.
+   Native/reference, Android/desktop export parity, reserved-device playback and unchanged Game Boy
+   checks passed; see `docs/VERIFICATION.md`. All four variants are grouped under **Sega 8-bit…**.
 5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
    (independent operator pitches), XGM2.
 6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
