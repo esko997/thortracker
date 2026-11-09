@@ -42,7 +42,20 @@ half-sample frame phase (**30/30 frame-count mismatches**, worst PCM difference 
 Advancing both cleared resamplers with `blip_skip_silence` fixes it: the same target now has exact frame
 counts and **bit-identical PCM at all seven rates, 8–96 kHz**, with identical raw chip state.
 The permanent regression keeps the existing 2e-3 bound. Evidence: `recovery-20261109/vsu-before/`
-under `~/.local/state/thortracker`. Full native/headroom/reference and frontend gates remain in progress.
+under `~/.local/state/thortracker`. Frontend and CI gates remain in progress.
+
+**594 VSU native checks pass**, including seek, mute, live edits and seven-rate headroom. The first integrated
+run passed all other engines and **2,622 WAV checks**, but exposed one stale VSU sweep assertion: S5INT
+retains the swept frequency, so 1500 immediately stops on the next-value overflow (2250), as specified by
+the pinned Tech Scroll. The corrected case also checks FQL does not restart a stopped channel and a later
+explicit restart stops at the first overflowing frame. No production sweep behavior changed.
+
+An isolated original-scale-64 run fails **29 checks** (hidden clipping error up to 0.505249; peak 1.333333);
+scale 8 passes the unchanged oracle bounds. Register, raw output, chip-case and VGM files are byte-identical
+across the gain comparison. The independent Python reference agrees on **1,500 player ticks**, **132,385
+raw output changes**, **30 chip cases** and the complete **6,661-byte VGM**. Pinned libvgm gives envelope
+correlation **0.980**, log-spectrum **0.897**, pitch-class agreement **95%** and gain-normalized level ratio
+**2.96** with the documented core differences; this is not hardware waveform equivalence.
 
 - Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
   and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.
@@ -54,7 +67,7 @@ under `~/.local/state/thortracker`. Full native/headroom/reference and frontend 
 - The recovered `~/.local/state/thortracker/recovery-20261109/harnesses/VsuDeviceHarness.kt` uses the
   current frontend, VSU editor, WAV and diagnostics APIs; no repository instrumentation scaffold is added.
 
-Parent verification (not executed here), serialized with SSD-backed evidence and scratch:
+Verification commands, serialized with SSD-backed evidence and scratch:
 
 ```sh
 nice -n 10 tools/build.sh --max-workers=1 :core:jvmTest :app:testDebugUnitTest :app:exportSamples

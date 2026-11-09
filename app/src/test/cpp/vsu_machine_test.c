@@ -20,8 +20,8 @@
  * `T tick order row tickInRow:` lines with ` RRR=VV` writes), vsu_out.txt (`clock left right` at every change of the
  * 10-bit digital output during the first 300 ticks), vsu_chip_cases.txt (`CASE name clocks`, `W clock reg val`,
  * `O clock left right activeMask` at every change of a 120-clock sample, `END`), vsu_song.vgm (no GD3), vsu_song.wav
- * (30 s) and vsu_tone.wav (A-4 + release): the inputs of tools/audio/vsu_reference_check.py. Thresholds marked
- * "unverified" are first guesses until the integrator runs this. */
+ * (30 s) and vsu_tone.wav (A-4 + release): the inputs of tools/audio/vsu_reference_check.py.
+ * Regression bounds and independent-reference results are recorded in docs/VERIFICATION.md. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -391,14 +391,18 @@ static void test_chip(const char* dir) {
     tone(&k, 0, 4, 1000, 0xF0, 0x40, 4, 0x80);
     cw(&k, 5000, VSU_REG(4, VSU_INT), 0x80);
     cw(&k, 6000, VSU_REG(4, VSU_FQL), 0x20);
+    cw(&k, 7000, VSU_REG(4, VSU_INT), 0x80); /* the reduced current frequency permits a restart */
     case_emit(f, &k);
     case_state(&k, 5000, &chip);
     EXPECT(chip.ch[4].cur == 1500 && chip.ch[4].freq == 1000, "S5INT keeps the swept current frequency (%d)", chip.ch[4].cur);
+    EXPECT(!chip.ch[4].active, "the retained 1500 immediately overflows its next sweep value (2250)");
     case_state(&k, 6000, &chip);
     EXPECT(chip.ch[4].cur == 0x520 && chip.ch[4].freq == 0x320, "S5FQL sets the low bits of both (%03X %03X)", chip.ch[4].cur,
            chip.ch[4].freq);
-    EXPECT(cur_at(&k, 9800, 4) == 1968 && active_at(&k, 14599, 4) && !active_at(&k, 14600, 4),
-           "the restarted frame: 1968 at 9800, stopped at 14600");
+    EXPECT(!chip.ch[4].active, "S5FQL changes frequency but does not restart a stopped channel");
+    EXPECT(cur_at(&k, 11799, 4) == 1312 && active_at(&k, 11799, 4) &&
+           cur_at(&k, 11800, 4) == 1968 && !active_at(&k, 11800, 4),
+           "S5INT restarts at 7000; 1968 at 11800 stops immediately because the next value (2952) overflows");
 
     /* Noise: sequence lengths per tap, reset to 0 on S6INT/S6EV1 (amendment 4). */
     static const long periods[8] = {32767, 1953, 254, 217, 73, 63, 42, 28};
@@ -797,7 +801,7 @@ static void test_trace(const char* dir) {
     if (t.f) fclose(t.f);
     if (t.out) fclose(t.out);
     EXPECT(clocks_ok && frames_ok, "every tick = 100000 VSU clocks = %d frames at 48 kHz", TICK_FRAMES);
-    EXPECT(t.max_writes < 80, "at most %d writes per tick (expected below 80; unverified)", t.max_writes);
+    EXPECT(t.max_writes < 80, "at most %d writes per tick (bound below 80)", t.max_writes);
     int regs = 1;
     for (int c = 0; c < 6; ++c)
         for (int r = 0; r <= VSU_SWP; ++r) {
@@ -832,7 +836,7 @@ static void test_audio(const char* dir) {
             const double r = rms(buf, frames), pk = peak(buf, frames);
             EXPECT(frames == (long)ticks * TICK_FRAMES, "1500 ticks = 30 s = %ld frames", frames);
             EXPECT(r > 0.00125, "non-silent (rms %.4f; includes 1/8 host headroom gain)", r);
-            EXPECT(pk < 1.0, "below full scale (peak %.4f; unverified)", pk);
+            EXPECT(pk < 1.0, "below full scale (peak %.4f)", pk);
             int quiet = 0;
             for (long s = 0; s + RATE <= frames; s += RATE)
                 if (rms(buf + 2 * s, RATE) < 0.00025) ++quiet;

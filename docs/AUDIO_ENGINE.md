@@ -6628,7 +6628,7 @@ recordings with timestamped register writes, not a guessed midpoint or a relaxed
 
 #### Headroom
 
-Source audit (regressions authored, **not executed**): the old `VBM_STEP_SCALE=64` was unsafe. Each channel's
+Source bound, exercised by seven-rate regressions: the old `VBM_STEP_SCALE=64` was unsafe. Each channel's
 maximum stereo/envelope amplitude is `(15*15 >> 3)+1 = 29`; six 6-bit samples sum to at most
 `(6*63*29) >> 4 = 685`. Even five constant-63 wave channels alone produce 570, whose startup RC step times 64
 exceeds int16. Noise, modulation, sweep, cuts, live wave edits and mute/unmute cannot increase the raw range
@@ -6659,11 +6659,11 @@ chip timing change, allocation or added per-sample work is introduced.
 `test_headroom` uses actual legal six-channel images and a scale-1 representation oracle fed by raw diagnostics:
 constant full waves/noise, arbitrary waves/modulation, startup, sustained history, all-channel mute/unmute,
 live DC-to-zero-to-DC edits, OFF and low/high-note retrigger at 8/11.025/22.05/32/44.1/48/96 kHz.
-The oracle tests hidden resampler clipping, **not independent chip fidelity**. Parent verification must demonstrate
-failure with the original header and success with the new one, run the complete native/seek/mute suite, and
-compare raw register/sample/VGM traces unchanged. Existing non-silence thresholds are scaled by exactly 1/8;
+The oracle tests hidden resampler clipping, **not independent chip fidelity**. An isolated original-scale-64
+run fails 29 checks; scale 8 passes all 594 VSU checks, including seek and mute, with raw register/sample,
+chip-case and VGM traces byte-identical across gains. Existing non-silence thresholds are scaled by exactly 1/8;
 the optional libvgm diagnostic multiplies engine audio by 8 only for comparison, retaining its original thresholds.
-Independent-reference/hardware caveats above still apply; no waveform or hardware timing claim is verified here.
+Independent-reference/hardware caveats above still apply; these headroom checks do not establish hardware fidelity.
 
 ### Channels and register addressing
 
