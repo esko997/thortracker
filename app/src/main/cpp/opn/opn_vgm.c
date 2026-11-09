@@ -8,6 +8,7 @@
 #include "vgm_gd3.h"
 
 #define VGM_HEADER 0x100
+#define VGM_DATA_START (VGM_HEADER + 20) /* extended header, one paired-SSG volume entry, padding */
 #define VGM_RATE 44100u
 /* 44.1 kHz samples per native sample = VGM_RATE x OPN_NATIVE_RATE_DEN / OPN_NATIVE_RATE_NUM (exact rational). */
 #define VGM_NUM ((uint64_t)VGM_RATE * OPN_NATIVE_RATE_DEN)
@@ -109,7 +110,7 @@ size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* play
     if (!looped) end_tick = max_ticks;
     OpnPlayer* player = &players[0];
     const int chip = image->info.chip, opna = chip == OPN_CHIP_YM2608;
-    Out o = {out, VGM_HEADER, capacity, capacity < VGM_HEADER, opna};
+    Out o = {out, VGM_DATA_START, capacity, capacity < VGM_DATA_START, opna};
     if (opna && image->info.adpcm_size) { /* data block: YM2608 DELTA-T (ADPCM-B) memory */
         put(&o, 0x67);
         put(&o, 0x66);
@@ -156,7 +157,7 @@ size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* play
         info->loop_samples = samples - loop_samples;
     }
     if (o.overflow) return 0;
-    memset(out, 0, VGM_HEADER);
+    memset(out, 0, VGM_DATA_START);
     memcpy(out, "Vgm ", 4);
     vgm_put32(out + 0x04, (uint32_t)(o.n - 4));
     vgm_put32(out + 0x08, 0x171);
@@ -165,7 +166,17 @@ size_t opn_vgm_render(const OpnImage* image, uint32_t max_ticks, OpnPlayer* play
         vgm_put32(out + 0x1C, (uint32_t)(loop_offset - 0x1C));
         vgm_put32(out + 0x20, samples - loop_samples);
     }
-    vgm_put32(out + 0x34, VGM_HEADER - 0x34);
+    vgm_put32(out + 0x34, VGM_DATA_START - 0x34);
+    /* VGMPlay's default FM/SSG balance differs from our PC-88 routes. Relative paired-chip
+     * volumes preserve those routes: YM2203 SSG x6, YM2608 SSG x2. Independent FM/SSG tone
+     * renders agree within 1% after one common gain; without these, the SSG is too quiet.
+     * VGM 1.71: $BC points to the extra header; its +8 offset points to a counted volume table. */
+    vgm_put32(out + 0xBC, VGM_HEADER - 0xBC);
+    vgm_put32(out + VGM_HEADER, 12);
+    vgm_put32(out + VGM_HEADER + 8, 4);
+    out[VGM_HEADER + 12] = 1;
+    out[VGM_HEADER + 13] = opna ? 0x87 : 0x86; /* paired SSG, first chip */
+    out[VGM_HEADER + 16] = opna ? 0x82 : 0x86; /* bit 15: relative, 8.8 multiplier */
     /* SSG (AY8910) flags. VGM 1.71 specification (vgmrips vgmspec171.txt): $79 "AY8910 Flags ... Default is 0x01"
      * (bit 0 Legacy Output), and $7A / $7B are the same flags for the AY8910 "connected with/part of" the YM2203 /
      * YM2608: the default. Bit 4 (YM2149 pin 26, an extra /2) stays 0: the SSG divider is the chip's own prescaler. */

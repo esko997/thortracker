@@ -2,10 +2,10 @@
 
 ## Unreleased: Atari 8-bit POKEY — UNVERIFIED 0.31.0/code 44 integration
 
-The POKEY source integrates the exact OPN/OPNA parent `d417843`, preserving OPM, all earlier systems, project
-format 10, tuning provenance, the 500 bundled scales and optional local packs. This is a **source-only merge**:
-no build, test, generator, device exercise or listening pass has run for this integration. Historical evidence
-below remains historical; it is not a pass for the merged candidate.
+The POKEY source integrates verified OPN/OPNA `c3c054f`, preserving OPM, all earlier systems, project
+format 10, tuning provenance, the 500 bundled scales and optional local packs. Before this upstream merge,
+48 targeted JVM model/lowering/editor/timer-oracle tests passed. Full integrated builds, native and device
+verification remain pending; the released-system evidence below is not a POKEY frontend pass.
 
 **Atari 8-bit (POKEY)** (`atari-pokey`) adds four channels, NTSC/PAL timing, distortion polynomials, 16-bit pairing,
 high-pass and shared-resource ownership, and platform-native volume-DAC sample playback. Thor Tracker's own player
@@ -15,13 +15,15 @@ alongside the current systems. The shared rhythm firmware API remains `THOR_RHYT
 filename and storage paths unchanged. Build locking, no-daemon/in-process Kotlin, one Gradle worker and the native
 two-slot compiler pool remain in force.
 
-The parent's uncommitted ended-PCM preflight changes were checkpointed as `0c94315` before merging: native and
-Python-reference portamento hold only an active, unreleased voice whose sample is still playing (synthesized
-voices remain held after their envelopes end). The Kotlin held-voice distinction, native/Kotlin regression
-sources, reference trace comparison and documentation are retained. **These changes have not been proved by a
-run.** Kotlin's sample lifetime still estimates length at an ideal note rate: it does not integrate actual
-rounded timer periods, the 114-cycle minimum, or time-varying pitch/glides. Near a sample-end boundary the inspector,
-warnings and modeled portamento ownership may therefore disagree with the native interrupt-driven voice.
+The native/Python ended-PCM distinction was checkpointed as `0c94315`: portamento holds an active,
+unreleased sample voice only while it is still playing; synthesized voices remain held after their envelopes
+end. Checkpoint `76112bf` replaces Kotlin's ideal-rate estimate with actual rounded counters, inherited
+timer phase, clock changes, two-tone synchronization and per-tick pitch effects/envelopes. A preserved
+pre-fix model fails the high-note lifetime regression (selects slot 61 while slot 60 is still playing).
+Verification also found that absent `000` effect cells incorrectly cleared a continuing arpeggio;
+the fixed inspector now skips them exactly as lowering does. All 48 targeted tests pass, including an
+independent cycle-stepped timer oracle; the 16,711,680-tick steady-row case took 0.103 s on this host.
+Native ownership cases and final frontend behavior still require execution after integration.
 
 Prerequisites and parent-run checks:
 
@@ -37,112 +39,154 @@ Prerequisites and parent-run checks:
 - Exercise the real Android and Deck frontends: New/demo selection, all POKEY sound/sample pages and shared-resource
   inspector, sample import, save/reload with tuning provenance, audition/live edits/seek/mute, and VGM/WAV exports.
   Measure production callback and seek costs on reserved hardware; do not infer performance from source.
-- Complete the pending OPM/OPNA and shared-rhythm-ROM checks below as well. Human listening, physical-chip behavior
+- Preserve the completed OPM/OPNA and shared-rhythm-ROM behavior below. Human listening, physical-chip behavior
   and POKEY's documented model omissions remain unverified.
 
-## Unreleased: PC-88/98 OPN (YM2203) and OPNA (YM2608) — UNVERIFIED 0.30.0/code 43 integration
+## 0.30.0 PC-88/98 OPN and OPNA
 
-Branch `opna-systems` (OPNA `df9b5a5` integrated with OPM `8ef7ff3`) adds two systems, **PC-88/98 OPN
-(YM2203)** (`"ym2203-opn"`, demo **Night Express**) and **PC-88/98 OPNA (YM2608)** (`"ym2608-opna"`, demo **Paper
-Lanterns**: FM, SSG, ADPCM-B samples, no rhythm notes): Thor Tracker's own player on ymfm at the PC-88/98 clocks,
-VGM export, ADPCM-B sample import/generation/editing, FM 3 special and CSM modes; and replaces the EPSM-only rhythm-ROM
-support by one shared YM2608 rhythm ROM (`ym2608_rhythm_rom.{h,c}`, `system/fm/Ym2608RhythmRom`, `RhythmRomMenu`,
-"YM2608 rhythm ROM…", `THOR_RHYTHM_ROM`). Full application, integration and device verification remain pending;
-no human listening is claimed. No generator exists or is needed (`OpnPlayerImage.kt` mirrors `opn_image.h` by hand),
-and the integration version is 0.30.0/code 43. Existing checked-in engine headers, fixtures and golden images are
-retained; no OPN generator should be invented or upstream driver regenerated for this merge.
-The merged source retains project format 10, tuning provenance, the 500 bundled scales and optional local packs,
-all current systems, the shared build lock, no-daemon/in-process Kotlin, and a one-worker Gradle default.
-No integration build, test, generator or device action has run. Run heavy commands serially; retain the Android
-two-slot native compiler pool and do not run an emulator concurrently with compilation.
+Adds **PC-88/98 OPN (YM2203)** (`ym2203-opn`, **Night Express**) and **PC-88/98 OPNA
+(YM2608)** (`ym2608-opna`, **Paper Lanterns**), using Thor Tracker's player on ymfm.
+Both have FM and SSG, FM 3 special/CSM modes and VGM/WAV export. OPNA adds stereo,
+LFO, six rhythm drums and ADPCM-B sample import, generation and editing. The rhythm
+drums require the user's private YM2608 ROM; both factory demos work without it.
+EPSM and OPNA now share the same validated firmware loader and existing storage path.
+Version **0.30.0/code 43**; project format 10 and all 500 bundled scales are retained.
 
-The focused FM 3 live-mode regression was executed on 2026-11-09 against both native `OpnMachine` configurations and ymfm:
-36 transitions cover both chips, every ordered pair of normal/special/CSM, held notes ending by OFF or retrigger,
-and mode edits after OFF while idle. The preserved pre-fix player fails **72 of 264 checks**; the fixed player
-passes **264/264**. This isolated run needs no NES player image or rhythm ROM; it is not a full-suite pass.
+Observed integration evidence:
 
-1. Builds and the full Kotlin run (also checks every renamed rhythm-ROM consumer):
+- **783 JVM, 19 Linux and six Android-host tests**, zero failures/errors/skips;
+  **21 permanent Android tests** passed after removing both temporary harness sources.
+  All **32 Game Boy view captures** and the factory `.uge` remain byte/pixel-identical.
+- **1,806 native checks**, zero failures, including FM/SSG/ADPCM pitch, FM 3/CSM,
+  mute continuity, live edits, fully clocked seeks and VGM loop traces. The old
+  mixer fails 58 of these checks; fixed **3/16 gain before blip_buf** preserves the
+  chip's inner DAC saturation without clipping the combined route.
+- **420 independent Python checks**, covering 14 tones, eight loop traces, 22 VGM
+  files and the extended volume headers; **2,006 WAV-export checks** passed.
+  External observation of 16 loud/demo/rate cases, 32 sides, found no outer-clamp
+  loss, resampler clips, observer mismatches or integrator overflows; maximum
+  preclip peak **0.317718506**.
+- All 14 independent MAME tone comparisons pass unchanged 0.2% FM/SSG and 0.5%
+  ADPCM tolerances. Maximum error is 0.1621% for the ADPCM octave; FM 3 measures
+  880.208 versus 880.198 Hz. The focused FM 3 live-mode regression separately
+  passes 264 checks; the old player fails 72.
+- The final independent mixed-song check caught VGMPlay's different default
+  FM/SSG balance. VGM 1.71 paired-SSG volume metadata now preserves the preview's
+  nominal balance: isolated FM/SSG reference gains differ by **0.80% OPN / 0.82%
+  OPNA**, rather than factors of about six/two. The new checker fails on all 24
+  pre-fix structure checks. After the export-only fix, all 19 native WAVs and
+  both Android demo WAVs are byte-identical.
+- Both final Android document-picker VGMs were rendered by independent MAME:
+  envelope correlations **0.815 / 0.983**, averaged log-spectrum correlations
+  **0.848 / 0.921**, dominant pitch-class agreement **81% / 94%** (OPN / OPNA).
+  These pass the existing 0.8/0.8/70% comparison gates; they are not bit-exact
+  emulator equivalence, original-hardware measurements or a human listening review.
+- **Nova, DMG and Konkr** passed actual activity/controller checks for playback,
+  held audition, FM Sound/Expert/Ch3/Drum, SSG envelopes/noise/hardware envelopes,
+  ADPCM generation/loop/trim/reverse, a real Android WAV import picker, exact
+  undo/redo, restart, Stop and both exports. New blank/demo family menus and
+  VGM/WAV save pickers were exercised on Nova, including after the metadata fix.
+- Konkr replayed **16,065 ticks** in **15.60 s OPNA / 7.55 s OPN** without freezing
+  the UI: 700/339 interaction rounds, maximum 14/22 ms, and Stop remained usable.
+  Konkr and DMG reported no underruns or driver faults in these checks. Nova had
+  isolated single settling underruns, including the legacy EPSM check; its buffer
+  expanded 384→576 frames and subsequent stable windows had no further growth.
+  No driver faults were observed.
+- Nova's **pre-existing EPSM firmware** loaded without re-importing, played all six
+  OPNA drums and all six EPSM drums, and appeared as installed in the real menu.
+  Konkr/DMG correctly refused all six rhythm auditions without firmware.
+  Private EPSM PCM was checked only in device cache and deleted there; neither
+  that recording nor the ROM was copied into repository or release artifacts.
+- Local desktop debug builds passed eight playback/audition/FM-3/Song/Stop scenes;
+  both demos were played and visually inspected again after the export fix.
+  The corrected signed APK's 28 entries, desktop executable and two picker VGMs
+  contain neither the whole private ROM nor any of 256 distinct aligned 32-byte
+  chunks. All 143 generated sample-export files passed the earlier same scan.
 
-   ```sh
-   tools/build.sh --max-workers=1 :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
-   tools/build.sh --max-workers=1 :deck:linkDebugExecutableLinuxX64
-   ```
+Local evidence is retained under `/tmp/thor-opna-final-frontend-e8ujjrin`,
+`/tmp/thor-opna-final-vgm-60soo3d8` and `/tmp/thor-opna-vgm-mix-sz0dupl5`.
+Native/private evidence also includes `/tmp/thor-opna-headroom-verified-trtorenl`
+and `/tmp/thor-opna-final-renders-4cybt44o`; do not publish these directories.
 
-   New tests: `OpnModelTest`, `OpnLoweringTest`, `OpnAdpcmTest`, `OpnEditorTest`, `Ym2608RhythmRomTest` (incl. "the repository holds no rhythm ROM"); updated `NesInstrumentViewTest`,
-   `NesLoweringTest`. `exportSamples` writes `night-express.thor/.opnimg`, `paper-lanterns.thor/.opnaimg`,
-   `opn-shortest.opnimg`, `opna-shortest.opnaimg`.
-2. Native host test and the independent check (both chips: loader, measured pitch, FM 3 special/CSM, SSG shared
-   resources, rhythm without the ROM, ADPCM-B, seeks sample-identical to straight play, live edits, mute continuity,
-   VGM structure, VGM loops expanded over three passes equal to the player's straight write trace (held SSG envelope,
-   CSM and ADPCM-B notes across the wrap; no loop for a never-repeating song); the WAV test renders the two demos and
-   the two shortest songs):
+Builds were serialized, one worker, in-process Kotlin. A combined optimized
+desktop link was cancelled when it caused heavy swapping; the successful local
+builds used a **1 GiB JVM, Serial GC, two active processors and debug desktop
+linking**. No unrelated process was killed. The optimized AppImage build and
+published-artifact smoke are publication gates. Thor/Deck receive artifacts only;
+`/ThorTunez` remains untouched. Human listening and physical PC-88/98 comparison
+remain unperformed.
 
-   ```sh
-   tools/audio/run_native_host_test.sh /tmp/thor-evidence
-   python3 tools/audio/opn_reference_check.py /tmp/thor-evidence
-   tools/audio/render_opn_image.sh app/build/samples/paper-lanterns.opnaimg /tmp/opna.wav 60 --vgm /tmp/opna.vgm
-   tools/audio/render_opn_image.sh app/build/samples/night-express.opnimg /tmp/opn.wav 60 --vgm /tmp/opn.vgm
-   ```
-
-   Also play `/tmp/opn.vgm` and `/tmp/opna.vgm` in an independent VGM player (e.g. libvgm's `vgm2wav` or VGMPlay) and
-   compare with the WAVs; the YM2608 file carries its ADPCM-B data block. Record whether that player emulates CSM.
-3. EPSM regression after the ROM cutover: `nes_epsm_test` and the private rhythm run of the EPSM section with
-   `THOR_RHYTHM_ROM`, plus a private OPNA rhythm check (the YM2608 rhythm ROM checks of `opn_machine_test` and a
-   rhythm song through `render_opn_image.sh … $HOME/private/ym2608_adpcm_rom.bin`). The ROM never enters the
-   repository, committed evidence, the APK, AppImage or `app/build/samples/`. Check the private dump
-   against the shared SHA-256, and scan artifacts and exported VGMs to ensure its bytes are absent.
-   Android and Deck keep the exact EPSM-era firmware directories and filename: the shared loader validates
-   and loads the existing file in place. Verify a previously installed EPSM import works for both systems
-   without re-importing; a filename assertion alone is not migration-behavior evidence.
-4. Costs, measured not assumed: the per-tick cost the host test prints, then on the Konkr (the CPU limit) the demo
-   playback (no underruns at 6 FM + ADPCM-B + SSG) and a seek deep into a song (seeks replay every tick through the
-   whole chip).
-5. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → PC-88/98… →
-   OPN and OPNA; demo playback (OPNA stereo); every Instrument page (FM Sound/Expert/Ch3/Drum, SSG pages and Hw env,
-   Rhythm with the ROM row, ADPCM Sample page: Add sample… importing a `.wav` and generating a starter, Tools…);
-   audition on each part (a drum refused with the import message while no ROM is installed); Song view tick rate, FM 3
-   mode, CSM rate, LFO, rhythm level; an existing EPSM ROM import still loads at start and the main-menu row reads
-   "YM2608 rhythm ROM…  installed" for both EPSM and OPNA songs; VGM and WAV exports through the document picker.
-6. Listening (not done by anyone yet): the demos' balance, FM 3 special-mode chords, CSM, the SSG buzz bass's octave
-   (hardware envelope auto period), ADPCM-B sample quality.
-
-## Unreleased: 0.29.0 OPM integration
+## 0.29.0 OPM FM and reliable asynchronous transport
 
 **OPM FM (YM2151)** (`ym2151-opm`) adds eight four-operator FM channels at
 the X68000's 4 MHz clock, shared LFO, FM 8 noise, CSM, VGM/WAV export and
-the **Sharp Corners** demo. Target: 0.29.0/code 42, after the tuning-library release.
+the **Sharp Corners** demo. Version 0.29.0/code 42.
 
-Observed integration evidence so far:
+Observed integration evidence:
 
 - Generated constants, native fixtures and both compressed golden images
   reproduced byte-for-byte on a second generation.
-- JVM/Linux/app-host suites, signed Android and native desktop builds passed
-  before the output-headroom correction below; the final frontend rebuild and
-  device exercises remain pending.
-- The first full native run passed the prior engines and **1,896 WAV-export
-  checks**, but exposed OPM resampler clipping and a misaligned tempo-test oracle.
-  The latter compared the same absolute tick across diverged tempo timelines;
-  it now locates the same order/row in each reference.
+- Final production-signed Android and native desktop builds passed, together with
+  **739 JVM, 19 Linux and six Android-host tests**. Builds were serialized with one
+  Gradle worker and in-process Kotlin. During the build the host remained 88–90%
+  idle with no swap-in/out; occupied swap alone was not treated as memory pressure.
+- The full native run passed the prior engines and **1,896 WAV-export checks**.
+  The final focused OPM run passed **261 checks**, including current-row F09 tempo
+  edits and undo, audition, LFO, noise, CSM, mute, loops and export.
 - Corrected OPM gain **before** blip's int16 stage, preserving the YM3012's own
-  DAC saturation. The focused native regression went from **3 failures out of
-  258 checks** to **zero**; the failures were clipping at 44.1, 48 and 96 kHz.
-  The 8 kHz boundary also passes. At 48 kHz the test song peaks at **0.4452**,
-  RMS **0.0830**, with seek output bit-identical to straight playback.
-- Tick thread-CPU cost is a benchmark, not a nondeterministic worst/mean gate:
-  **310.7 µs mean / 428.3 µs worst** in the focused run. Audition, live edits,
-  LFO, noise, CSM, mute, loop and export assertions pass without relaxing their
-  behavioral tolerances.
+  DAC saturation. The focused clipping regression went from **3 failures out of
+  258 checks** to **zero** at 44.1, 48 and 96 kHz; the 8 kHz boundary also passes.
+  At 48 kHz the test song peaks at **0.4452**, RMS **0.0830**, with seek output
+  bit-identical to straight playback. Tick thread-CPU cost in the final run was
+  **311.6 µs mean / 677.8 µs worst**: benchmark evidence, not a timing pass/fail gate.
+- Fixed VGM loop retriggering: the loop-state key-off now receives a chip sample
+  before the next key-on. Actual repeated playback on ymfm reproduced the stale
+  envelope before the fix and restores the first-pass attack afterwards.
 - Independent Python reference: **1,500 ticks**, byte-identical **7,168-byte
   VGM**, 455 ticks / 334,425 samples, loop 263,865 samples. Header, command
   boundaries, register state dump and key-off waits pass separate parsing.
   A-4 measures **439.882 Hz**; all playable notes are within **4.4 cents** of
   ideal equal temperament using the chip's measured phase-step table.
+- Independent libvgm **MAME and Nuked OPM** cores rendered the complete looped
+  VGM against the 30-second engine WAV. Envelope correlations were **0.874 / 0.850**,
+  averaged log-spectrum correlations **0.900 / 0.902**, and dominant pitch-class
+  agreement **90% / 79%**. The reference renderer used 25% host gain to avoid its
+  own PCM clipping. No production gain or comparison threshold was changed for this.
+  The original single-periodogram comparison measured **0.790** for both cores:
+  it compared phase-dependent noise peaks. The checker now averages five 100 ms
+  Hann periodograms, retaining every frequency bin and the final shorter group;
+  it still reports the original diagnostic and retains the 0.8 spectral threshold.
+  A frequency-inverted negative control preserved the envelope but failed the
+  spectral check (**−0.666**) and pitch-class check (**2%**).
+- Actual activity exercises passed on **Nova, DMG and Konkr**: controller-driven
+  playback, FM/noise editing and audition, undo/redo, LFO/CSM settings, restart,
+  VGM/WAV export and seek/Stop. Every sampled xrun counter was zero.
+  Normal final-row native seeks measured **494 / 1,018 / 1,733 ms**, respectively.
+- Reproduced Konkr's slow-seek transport bug: the former 1,500 ms UI timeout
+  expired before preparation, so Start did not stop subsequent playback.
+  Explicit queued/native-published pending state replaces that timeout.
+  The fixed **14.5-second, 16,065-tick** deep seek completed and stopped correctly;
+  **648 UI round trips**, maximum **20 ms**, stayed responsive during preparation.
+  Five permanent transition tests cover queued handoff, stop/restart ordering,
+  failure, immediate/natural end and synchronous playback.
+- All **32 Game Boy screenshots remain pixel-identical**. After removing the
+  temporary device/screenshot harnesses and rebuilding the test APK, the clean
+  **21-test Android suite passed** on Nova (48.138 s).
+- The actual final SDL executable passed isolated playback, held audition and Stop
+  scenarios with inspected surfaces. The standalone eight-second render produced
+  peak **0.445**, RMS **0.0868**, and a **7,316-byte VGM** with a 5.98-second loop.
 
-Remaining before release: final Android/desktop builds and actual surfaces,
-Nova/DMG/Konkr playback/edit/audition/export and seek timing, Game Boy visual
-parity, standalone renderer, clean permanent instrumentation suite and official
-artifact delivery. No human listening, original-hardware or independent-core
-audio comparison is claimed.
+Published as **v0.29.0**, PR #40 / main `8f7c0ad`. CI's build, Deck and signed-APK jobs
+passed; GitHub then marked the workflow failed without creating the AppImage attachment
+job, produced no failed-job logs, and refused a retry. The successful Deck job's original
+artifact was checksum-verified, exercised as an AppImage, and attached to the existing release.
+The official APK passed activity smoke on Nova, DMG and Konkr. Nova recorded **one underrun**
+before the first settled playback-plus-audition sample, with no subsequent growth; DMG/Konkr
+recorded zero and all three recorded zero driver faults. The official Konkr deep seek took
+**14.58 seconds native**, remained responsive (657 UI rounds, maximum 13 ms) and stopped correctly.
+Thor received the APK in Downloads without installation or wake; the Deck received the
+AppImage and updated stable `~/thortracker-deck/thor-tracker` symlink without launch or wake.
+No human listening or original-hardware measurement is claimed.
 
 ## 0.28.0 Licensed tuning library and optional local packs
 
