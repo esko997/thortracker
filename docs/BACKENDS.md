@@ -1173,7 +1173,7 @@ Decisions:
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
-- Master System (decided on the user's behalf, branch `sms`): four systems over one Banjo engine — `sms-psg`,
+- Master System (decided on the user's behalf): four systems over one Banjo engine — `sms-psg`,
   `gg-psg`, `sms-fm`, `sms-fm-drums` — rather than one system with a layout setting (channel layouts are fixed per
   system). Review.
 - Banjo plays 12-TET only (no fine-pitch command): tunings sound at their nearest notes. Absolute (fixed-note)
@@ -1213,10 +1213,10 @@ Decisions:
   240 Hz envelope/length clock at CPU ÷ 7424 (NESdev: from die images, not bench-confirmed). No hardware or
   reference-emulator comparison yet; listening may ask for a different balance.
 
-## Master System / Game Gear (Banjo, branch `sms`)
+## Master System / Game Gear (Banjo)
 
 Driver: the Banjo sound driver (joffb/banjo `7aaf837`, MIT, `third_party/banjo` unmodified; checked against upstream
-by `tools/audio/prepare_sms.py`), the one real tracker-format SMS driver with SN76489, Game Gear stereo and YM2413
+by `tools/audio/prepare_sms.py`), a real tracker-format SMS driver with SN76489, Game Gear stereo and YM2413
 (including rhythm mode) support, used by homebrew through WLA-DX and devkitSMS/GBDK. Upstream's README and
 `format_spec.md` disagree with the assembly; the assembly (`banjo_defines_wladx.inc`, `process_new_line.inc`, the
 macro routines) is the authority and json2sms.py the independent export reference.

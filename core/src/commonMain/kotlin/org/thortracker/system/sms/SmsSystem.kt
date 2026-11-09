@@ -34,6 +34,7 @@ import org.thortracker.system.SystemView
 class SmsSystem private constructor(val layout: SmsLayout) : SoundSystem {
     override val id = layout.id
     override val name = layout.displayName
+    override val family: String = "Sega 8-bit"
 
     override val channels: List<ChannelSpec> = layout.channelNames.mapIndexed { ch, n ->
         when (layout.kind(ch)) {
