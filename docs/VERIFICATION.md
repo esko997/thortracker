@@ -58,7 +58,6 @@ untouched. No human listening test, vintage-hardware comparison or physical
 Deck controller test is claimed. VGM's sample-granularity timing and external
 players' resamplers can alter the phase-sensitive buzzer timbre; WAV preserves
 the app's render.
-
 ## 0.24.0 Cumulative controller layers
 
 **L2 + R2 is a third, independent chord layer**, whichever trigger is pressed
