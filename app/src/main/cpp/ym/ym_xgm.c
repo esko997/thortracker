@@ -1,176 +1,14 @@
-/* XGM / XGC frame encoding (ym_xgm.h): SGDK xgmtool 1.76 (MIT, Stephane Dallongeville), the functions named below,
- * for songs without PCM. Every rule mirrors xgmtool's source; the host test checks the bytes against xgmtool. */
+/* XGM2 frame encoding and packing (ym_xgm.h). Command encodings and the driver behaviour they rely on are SGDK's
+ * (bin/xgm2.txt, src/snd/xgm2/drv_xgm2*.i80 of the pinned commit): the load-instrument data order is FM_loadInst's,
+ * TL is a $9x command because FM_updateAttCh rewrites TL and SL/RR from the driver's state on every algorithm write,
+ * and the special frequencies follow FM_setFreq0_CH2_SL ($38 + i writes $AC + i / $A8 + i). */
 #include "ym_xgm.h"
 
 #include <string.h>
 
-/* ---- YM2612 state (xgmtool ym2612.c) ----------------------------------------------------------- */
-
-static const uint8_t DUALS[7][2] = {{0x24, 0x25}, {0xA4, 0xA0}, {0xA5, 0xA1}, {0xA6, 0xA2},
-                                    {0xAC, 0xA8}, {0xAD, 0xA9}, {0xAE, 0xAA}};
-
-static void ym_clear(YmxYmState* s) {
-    for (int p = 0; p < 2; ++p)
-        for (int r = 0; r < 256; ++r) s->reg[p][r] = -1;
-    memset(s->init, 0, sizeof s->init);
-}
-
-/* YM2612_canIgnore */
-static int can_ignore(int port, int reg) {
-    switch (reg) {
-    case 0x22: case 0x24: case 0x25: case 0x26: case 0x27: case 0x28: case 0x2B:
-        return port == 1;
-    }
-    if (reg >= 0x30 && reg < 0xB8) return (reg & 3) == 3;
-    return 1;
-}
-
-static int is_dual(int reg) {
-    for (int i = 0; i < 7; ++i)
-        if (DUALS[i][0] == reg || DUALS[i][1] == reg) return 1;
-    return 0;
-}
-
-static int ym_get(const YmxYmState* s, int port, int reg) { return can_ignore(port, reg) ? 0 : s->reg[port][reg]; }
-
-/* YM2612_set */
-static void ym_set(YmxYmState* s, int port, int reg, int value) {
-    if (can_ignore(port, reg)) return;
-    int v = value;
-    if (port == 0) {
-        if (reg == 0x28) {
-            s->reg[0][value & 7] = (int16_t)(value & 0xF0);
-            return;
-        }
-        if (reg == 0x27) v &= 0xC0;
-    }
-    s->reg[port][reg] = (int16_t)v;
-    s->init[port][reg] = 1;
-}
-
-/* YM2612_isSame(source, state) */
-static int ym_same(const YmxYmState* source, const YmxYmState* state, int port, int reg) {
-    if (!source->init[port][reg] && !state->init[port][reg]) return 1;
-    return (source->init[port][reg] || can_ignore(port, reg)) && ym_get(source, port, reg) == ym_get(state, port, reg);
-}
-
-/* ---- PSG state (xgmtool psg.c) ------------------------------------------------------------------ */
-
-static void psg_clear(YmxPsgState* s) {
-    for (int i = 0; i < 4; ++i)
-        for (int t = 0; t < 2; ++t) s->reg[i][t] = -1;
-    memset(s->init, 0, sizeof s->init);
-    s->index = s->type = -1;
-}
-
-static int psg_get(const YmxPsgState* s, int ind, int typ) {
-    if (typ == 0) return ind == 3 ? s->reg[ind][typ] & 0x7 : s->reg[ind][typ] & 0x3FF;
-    return s->reg[ind][typ] & 0xF;
-}
-
-static void psg_write(YmxPsgState* s, int value) {
-    if (value & 0x80) {
-        s->index = (value >> 5) & 3;
-        s->type = (value >> 4) & 1;
-    } else if (s->index < 0) {
-        return; /* a data byte without a latch: the player never writes one */
-    }
-    int32_t* r = &s->reg[s->index][s->type];
-    if (s->type == 0 && s->index == 3) *r = (*r & ~0x7) | (value & 0x7);
-    else if ((value & 0x80) || s->type == 1) *r = (*r & ~0xF) | (value & 0xF);
-    else *r = (*r & ~0x3F0) | ((value & 0x3F) << 4);
-    s->init[s->index][s->type] = 1;
-}
-
-/* ---- the clean step (VGM_cleanCommands, one frame) ------------------------------------------------ */
-
-static void push(YmXgmEncoder* e, int kind, int reg, int val) {
-    if (e->ncleaned < YMX_MAX_CMDS) e->cleaned[e->ncleaned++] = (YmxCmd){(uint8_t)kind, (uint8_t)reg, (uint8_t)val};
-}
-
-/* YM2612_getDelta(source, state): the register pairs first, then each port's registers in order. */
-static void ym_delta(YmXgmEncoder* e, const YmxYmState* source, const YmxYmState* state) {
-    for (int i = 0; i < 7; ++i) {
-        const int r0 = DUALS[i][0], r1 = DUALS[i][1];
-        for (int port = 0; port < (r0 > 0x30 ? 2 : 1); ++port) {
-            if (!ym_same(source, state, port, r0) || !ym_same(source, state, port, r1)) {
-                push(e, port, r0, ym_get(state, port, r0));
-                push(e, port, r1, ym_get(state, port, r1));
-            }
-        }
-    }
-    for (int port = 0; port < 2; ++port)
-        for (int reg = 0; reg < 256; ++reg) {
-            if (can_ignore(port, reg) || (port == 0 && reg == 0x28) || is_dual(reg)) continue;
-            if (!ym_same(source, state, port, reg)) push(e, port, reg, ym_get(state, port, reg));
-        }
-}
-
-/* PSG_getDelta(psg, state) */
-static void psg_delta(YmXgmEncoder* e, const YmxPsgState* psg, const YmxPsgState* state) {
-    for (int ind = 0; ind < 4; ++ind)
-        for (int typ = 0; typ < 2; ++typ) {
-            const int unset = !psg->init[ind][typ] && !state->init[ind][typ];
-            const int v = psg_get(state, ind, typ), o = psg_get(psg, ind, typ);
-            if (typ == 0) {
-                const int low_same = unset || (psg->init[ind][typ] && (v & 0xF) == (o & 0xF));
-                const int high_same = unset || (psg->init[ind][typ] && (v & 0x3F0) == (o & 0x3F0));
-                if (!low_same && high_same) {
-                    push(e, YM_W_PSG, 0, 0x80 | ind << 5 | typ << 4 | (v & 0xF));
-                    continue;
-                }
-            }
-            if (!(unset || (psg->init[ind][typ] && v == o))) {
-                push(e, YM_W_PSG, 0, 0x80 | ind << 5 | typ << 4 | (v & 0xF));
-                if (typ == 0 && ind != 3) push(e, YM_W_PSG, 0, (v >> 4) & 0x3F);
-            }
-        }
-}
-
-static int is_key(const YmxCmd* c) { return c->kind == YM_W_PORT0 && c->reg == 0x28; }
-
-static void clean(YmXgmEncoder* e, const YmWrite* in, int n, int loop_at) {
-    YmxYmState* ym = &e->cur;
-    YmxPsgState* psg = &e->cur_psg;
-    *ym = e->clean_ym;
-    *psg = e->clean_psg;
-    psg->index = psg->type = -1;
-    e->ncleaned = 0;
-    int nkeys = 0;
-    for (int i = 0; i <= n; ++i) {
-        if (i == loop_at) { /* the loop-start command resets the previous state: the frame carries every register */
-            ym_clear(&e->clean_ym);
-            psg_clear(&e->clean_psg);
-        }
-        if (i == n) break;
-        const YmxCmd c = {in[i].kind, in[i].reg, in[i].val};
-        if (c.kind == YM_W_PSG) {
-            psg_write(psg, c.val);
-            continue;
-        }
-        if (is_key(&c)) {
-            if (nkeys < YMX_MAX_CMDS) e->keys[nkeys++] = c;
-        } else if (nkeys) { /* a register write after key writes: the delta so far, then those keys */
-            ym_delta(e, &e->clean_ym, ym);
-            for (int k = 0; k < nkeys; ++k) push(e, e->keys[k].kind, e->keys[k].reg, e->keys[k].val);
-            nkeys = 0;
-            e->clean_ym = *ym;
-        }
-        ym_set(ym, c.kind, c.reg, c.val);
-    }
-    ym_delta(e, &e->clean_ym, ym);
-    for (int k = 0; k < nkeys; ++k) push(e, e->keys[k].kind, e->keys[k].reg, e->keys[k].val);
-    psg_delta(e, &e->clean_psg, psg);
-    e->clean_ym = *ym;
-    e->clean_psg = *psg;
-}
-
-/* ---- byte lists ----------------------------------------------------------------------------------- */
-
 typedef struct Out {
     uint8_t* p;
-    size_t n, cap;
-    int overflow;
+    int n, cap, overflow;
 } Out;
 
 static void put(Out* o, int b) {
@@ -178,208 +16,193 @@ static void put(Out* o, int b) {
     else o->overflow = 1;
 }
 
-static void close_cmd(YmxList* list, const Out* o, size_t start) {
-    if (list->n >= YMX_MAX_CMDS) return;
-    list->start[list->n] = (int)start;
-    list->len[list->n++] = (int)(o->n - start);
-}
+/* Register offsets of operator slots in register order (+0, +4, +8, +12) as the load-instrument data has them. */
+static const uint8_t LOAD_BASE[7] = {0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90};
+#define LOAD_INST_BYTES 31
 
-/* ---- XGM (XGM_extractMusic, one frame) ------------------------------------------------------------ */
+static int is_tl(int reg) { return reg >= 0x40 && reg < 0x50; }
 
-/* XGMCommand_create{YMPort0,YMPort1,YMKey,PSG}Commands: chunks of at most 16 writes. */
-static void xgm_group(Out* o, YmxList* cmds, const YmxCmd* list, int n, int code, int pairs) {
-    for (int i = 0; i < n; i += 16) {
-        const int m = n - i < 16 ? n - i : 16;
-        const size_t start = o->n;
-        put(o, code | (m - 1));
-        for (int j = 0; j < m; ++j) {
-            if (pairs) put(o, list[i + j].reg);
-            put(o, list[i + j].val);
-        }
-        close_cmd(cmds, o, start);
+/* Writes of FM channel c (port, ch) the batch touched: op registers $30-$9F and $B4 (not $B0). */
+static void channel_writes(const uint8_t touched[2][256], int port, int ch, int* tl, int* other) {
+    *tl = *other = 0;
+    for (int reg = 0x30 + ch; reg < 0xA0; reg += 4) {
+        if (!touched[port][reg]) continue;
+        if (is_tl(reg)) ++*tl;
+        else ++*other;
     }
+    if (touched[port][0xB4 + ch]) ++*other;
 }
 
-static void extract_xgm(YmXgmEncoder* e, Out* o) {
-    enum { P0, P1, KEYS, PSG };
-    int count[4] = {0, 0, 0, 0}, has_key = 0;
-    e->xgm_cmds.n = 0;
-    for (int i = 0; i < e->ncleaned; ++i) {
-        const YmxCmd* c = &e->cleaned[i];
-        if (c->kind == YM_W_PSG) {
-            e->group[PSG][count[PSG]++] = *c;
-        } else if (is_key(c)) {
-            e->group[KEYS][count[KEYS]++] = *c;
-            has_key = 1;
-        } else {
-            if (has_key) { /* port 0, port 1, then the keys, before this write */
-                xgm_group(o, &e->xgm_cmds, e->group[P0], count[P0], 0x20, 1);
-                xgm_group(o, &e->xgm_cmds, e->group[P1], count[P1], 0x30, 1);
-                xgm_group(o, &e->xgm_cmds, e->group[KEYS], count[KEYS], 0x40, 0);
-                count[P0] = count[P1] = count[KEYS] = 0;
-                has_key = 0;
-            }
-            const int g = c->kind == YM_W_PORT0 ? P0 : P1;
-            e->group[g][count[g]++] = *c;
+static void load_instrument(Out* o, const YmPlayer* p, int port, int ch) {
+    const uint8_t* ym = p->ym[port];
+    put(o, 0x20 | port << 2 | ch);
+    for (int r = 0; r < 7; ++r)
+        for (int s = 0; s < 16; s += 4) put(o, ym[LOAD_BASE[r] + s + ch]);
+    put(o, ym[0xB0 + ch]);
+    put(o, ym[0xB4 + ch]);
+}
+
+static void individual(Out* o, const YmPlayer* p, const uint8_t touched[2][256], int port, int ch) {
+    const uint8_t* ym = p->ym[port];
+    for (int s = 0; s < 4; ++s) {
+        const int reg = 0x40 + 4 * s + ch;
+        if (touched[port][reg]) {
+            put(o, 0x90 | s << 2 | ch);
+            put(o, ym[reg] << 1 | port);
         }
     }
-    xgm_group(o, &e->xgm_cmds, e->group[P0], count[P0], 0x20, 1);
-    xgm_group(o, &e->xgm_cmds, e->group[P1], count[P1], 0x30, 1);
-    xgm_group(o, &e->xgm_cmds, e->group[KEYS], count[KEYS], 0x40, 0);
-    xgm_group(o, &e->xgm_cmds, e->group[PSG], count[PSG], 0x10, 0);
-}
-
-/* ---- XGC (XGC_extractMusic, one frame) ------------------------------------------------------------ */
-
-/* XGCCommand_convertSingle: PSG commands become envelope commands (chunks of 4) then tone commands (8), key
- * commands chunks of 6, others stay; command bytes are the XGM codes << 1 (XGC_asByteArray). */
-static void xgc_convert(const uint8_t* cmd, int len, Out* o, YmxList* out) {
-    const int code = cmd[0] & 0xF0;
-    if (code == 0x10 || code == 0x40) {
-        uint8_t env[16], tone[16];
-        int ne = 0, nt = 0;
-        for (int i = 1; i < len; ++i) {
-            if (code == 0x10 && (cmd[i] & 0x91) == 0x91) env[ne++] = cmd[i];
-            else tone[nt++] = cmd[i];
-        }
-        for (int pass = 0; pass < 2; ++pass) {
-            const uint8_t* list = pass ? tone : env;
-            const int count = pass ? nt : ne;
-            const int chunk = code == 0x40 ? 6 : pass ? 8 : 4;
-            const int base = code == 0x40 ? 0x40 : pass ? 0x10 : 0x18;
-            for (int i = 0; i < count; i += chunk) {
-                const int m = count - i < chunk ? count - i : chunk;
-                const size_t start = o->n;
-                put(o, (base | (m - 1)) << 1);
-                for (int j = 0; j < m; ++j) put(o, list[i + j]);
-                close_cmd(out, o, start);
-            }
-        }
-        return;
-    }
-    const size_t start = o->n;
-    put(o, cmd[0] << 1);
-    for (int i = 1; i < len; ++i) put(o, cmd[i]);
-    close_cmd(out, o, start);
-}
-
-/* A port command with its port-0 $2B writes removed (XGMCommand_removeYM2612RegWrite(command, 0, 0x2B); the DAC
- * enable is the driver's), converted; nothing if no write is left. */
-static void xgc_port(const uint8_t* c, Out* o, YmxList* out) {
-    uint8_t cmd[1 + 32];
+    uint8_t regs[32];
     int m = 0;
-    for (int w = 0; w < (c[0] & 15) + 1; ++w) {
-        if ((c[0] & 0xF0) == 0x20 && c[1 + 2 * w] == 0x2B) continue;
-        cmd[1 + 2 * m] = c[1 + 2 * w];
-        cmd[2 + 2 * m] = c[2 + 2 * w];
-        ++m;
-    }
-    if (!m) return;
-    cmd[0] = (uint8_t)((c[0] & 0xF0) | (m - 1));
-    xgc_convert(cmd, 1 + 2 * m, o, out);
-}
-
-static void extract_xgc(YmXgmEncoder* e, Out* xgc) {
-    const YmxList* in = &e->xgm_cmds;
-    YmxYmState* old = &e->cur; /* scratch: the clean step is done with it */
-    *old = e->xgc_ym;
-    Out t = {e->items, 0, sizeof e->items, 0};
-    YmxList* items = &e->xgc_cmds;
-    items->n = 0;
-    /* PSG commands first (they need the 68000 bus), then the YM commands */
-    for (int i = 0; i < in->n; ++i)
-        if ((e->xgm[in->start[i]] & 0xF0) == 0x10) xgc_convert(e->xgm + in->start[i], in->len[i], &t, items);
-    int npo = 0, npk = 0;
-    for (int i = 0; i < in->n; ++i) {
-        const uint8_t* c = e->xgm + in->start[i];
-        const int code = c[0] & 0xF0;
-        if (code == 0x40) {
-            e->pend_key[npk++] = i;
-        } else if (code == 0x20 || code == 0x30) {
-            if (npk) { /* the register writes before the keys, then the keys */
-                for (int k = 0; k < npo; ++k) xgc_port(e->xgm + in->start[e->pend_other[k]], &t, items);
-                for (int k = 0; k < npk; ++k) xgc_convert(e->xgm + in->start[e->pend_key[k]], in->len[e->pend_key[k]], &t, items);
-                npo = npk = 0;
-            }
-            for (int w = 0; w < (c[0] & 15) + 1; ++w) ym_set(&e->xgc_ym, code == 0x30, c[1 + 2 * w], c[2 + 2 * w]);
-            e->pend_other[npo++] = i;
+    for (int reg = 0x30 + ch; reg < 0xA0; reg += 4)
+        if (touched[port][reg] && !is_tl(reg)) regs[m++] = (uint8_t)reg;
+    if (touched[port][0xB4 + ch]) regs[m++] = (uint8_t)(0xB4 + ch);
+    for (int i = 0; i < m; i += 8) {
+        const int k = m - i < 8 ? m - i : 8;
+        put(o, 0xE0 | port << 3 | (k - 1));
+        for (int j = 0; j < k; ++j) {
+            put(o, regs[i + j]);
+            put(o, ym[regs[i + j]]);
         }
     }
-    for (int k = 0; k < npo; ++k) xgc_port(e->xgm + in->start[e->pend_other[k]], &t, items);
-    for (int k = 0; k < npk; ++k) xgc_convert(e->xgm + in->start[e->pend_key[k]], in->len[e->pend_key[k]], &t, items);
-
-    /* XGC_getStateChange(current, old): D1L/RR registers ($80-$8E, index $44 + slot), then the DAC enable. */
-    uint8_t pairs[2 * 26];
-    int np = 0, addr = 0x44;
-    for (int port = 0; port < 2; ++port)
-        for (int reg = 0x80; reg < 0x90; reg += (reg & 3) == 2 ? 2 : 1, ++addr) {
-            if (ym_same(&e->xgc_ym, old, port, reg)) continue;
-            pairs[2 * np] = (uint8_t)addr;
-            pairs[2 * np + 1] = (uint8_t)ym_get(&e->xgc_ym, port, reg);
-            ++np;
-        }
-    if (!ym_same(&e->xgc_ym, old, 0, 0x2B)) {
-        pairs[2 * np] = 0x44 + 0x1C;
-        pairs[2 * np + 1] = (uint8_t)ym_get(&e->xgc_ym, 0, 0x2B);
-        ++np;
-    }
-    for (int i = 0; i < np; i += 16) {
-        const int m = np - i < 16 ? np - i : 16;
-        const size_t start = t.n;
-        put(&t, (0x60 | (m - 1)) << 1);
-        for (int j = 0; j < 2 * m; ++j) put(&t, pairs[2 * i + j]);
-        close_cmd(items, &t, start);
-    }
-    if (t.overflow) {
-        xgc->overflow = 1;
-        return;
-    }
-    /* A size byte, then the commands; a frame that would reach 250 bytes ends with a frame skip. */
-    size_t size_at = xgc->n;
-    put(xgc, 0);
-    int size = 1;
-    for (int i = 0; i < items->n; ++i) {
-        if (size + items->len[i] >= YMX_XGC_SPLIT) {
-            put(xgc, YMX_XGC_FRAME_SKIP);
-            if (size_at < xgc->cap) xgc->p[size_at] = (uint8_t)(size + 1);
-            size_at = xgc->n;
-            put(xgc, 0);
-            size = 1;
-        }
-        for (int j = 0; j < items->len[i]; ++j) put(xgc, e->items[items->start[i] + j]);
-        size += items->len[i];
-    }
-    if (size_at < xgc->cap) xgc->p[size_at] = (uint8_t)size;
 }
 
-void ymx_reset(YmXgmEncoder* e) {
-    ym_clear(&e->clean_ym);
-    psg_clear(&e->clean_psg);
-    ym_clear(&e->xgc_ym);
-    e->ncleaned = 0;
+/* A frequency command ($30 | slot) with its 14-bit value, high byte first; `key_on` sets the post key-on flag. */
+static void frequency(Out* o, int cmd, int hi, int lo, int key_on) {
+    put(o, cmd);
+    put(o, (key_on ? 0x80 : 0) | (hi & 0x3F));
+    put(o, lo);
 }
 
-void ymx_absorb(YmXgmEncoder* e, const YmWrite* in, int n) {
-    e->clean_psg.index = e->clean_psg.type = -1;
+int ymx_encode(const YmImage* image, const YmPlayer* p, const YmWrite* w, int n, const int* pcm, int full, YmxFrame* f) {
+    uint8_t touched[2][256];
+    memset(touched, 0, sizeof touched);
+    uint8_t offs[16], late[16];
+    int noffs = 0, nlate = 0, keyon[YM_FM_CHANNELS] = {0};
+    unsigned psg_touch = 0; /* bits 0-2 tones, bit 3 noise, bits 4-7 attenuations */
+    int latch = -1;
     for (int i = 0; i < n; ++i) {
-        if (in[i].kind == YM_W_PSG) psg_write(&e->clean_psg, in[i].val);
-        else ym_set(&e->clean_ym, in[i].kind, in[i].reg, in[i].val);
+        const int v = w[i].val;
+        if (w[i].kind == YM_W_PSG) {
+            if (v & 0x80) {
+                latch = (v >> 4) & 7; /* channel << 1 | type */
+                psg_touch |= latch & 1 ? 0x10u << (latch >> 1) : (latch >> 1) == 3 ? 0x08u : 1u << (latch >> 1);
+            } else if (latch >= 0 && !(latch & 1) && (latch >> 1) < 3) {
+                psg_touch |= 1u << (latch >> 1);
+            }
+            continue;
+        }
+        if (w[i].kind == YM_W_PORT0 && w[i].reg == 0x28) {
+            if ((v & 3) == 3) continue;
+            const int c = (v & 3) + (v & 4 ? 3 : 0), mask = v & 0xF0;
+            if (mask == 0xF0 && nlate == 0) keyon[c] = 1;
+            else if (mask == 0 && !keyon[c] && nlate == 0 && noffs < 16) offs[noffs++] = (uint8_t)v;
+            else if (nlate < 16) late[nlate++] = (uint8_t)v;
+            continue;
+        }
+        touched[w[i].kind][w[i].reg] = 1;
     }
-    /* The XGC state receives the deltas of the clean state, so after every frame it holds the same registers (the
-     * key nibbles ym_set keeps for $28 are never compared). */
-    e->xgc_ym = e->clean_ym;
+
+    Out o = {f->fm, 0, YMX_CMDS_MAX, 0};
+    for (int i = 0; i < noffs; ++i) put(&o, 0x40 | (offs[i] & 7));
+    if (full || touched[0][0x27]) put(&o, p->ym[0][0x27] & 0x40 ? 0xFA : 0xFB);
+    if (full || touched[0][0x22]) {
+        put(&o, 0xF9);
+        put(&o, p->ym[0][0x22]);
+    }
+    for (int c = 0; c < YM_FM_CHANNELS; ++c) {
+        const int port = c / 3, ch = c % 3;
+        int tl, other;
+        channel_writes(touched, port, ch, &tl, &other);
+        const int cost = 2 * tl + (other ? (other + 7) / 8 + 2 * other : 0);
+        if (full || touched[port][0xB0 + ch] || cost >= LOAD_INST_BYTES) load_instrument(&o, p, port, ch);
+        else if (cost) individual(&o, p, touched, port, ch);
+        if (c == YM_CH_FM3) {
+            for (int i = 0; i < 3; ++i)
+                if (full || touched[0][0xAC + i] || touched[0][0xA8 + i]) frequency(&o, 0x38 + i, p->ym[0][0xAC + i], p->ym[0][0xA8 + i], 0);
+        }
+        if (full || touched[port][0xA4 + ch] || touched[port][0xA0 + ch]) {
+            frequency(&o, 0x30 | port << 2 | ch, p->ym[port][0xA4 + ch], p->ym[port][0xA0 + ch], keyon[c]);
+        } else if (keyon[c]) {
+            put(&o, 0x48 | port << 2 | ch);
+        }
+    }
+    for (int i = 0; i < nlate; ++i) {
+        put(&o, 0xF8);
+        put(&o, late[i]);
+    }
+    for (int k = 0; k < YM_PCM_CHANNELS; ++k) {
+        if (pcm[k] == YMP_PCM_NONE) continue;
+        int half = 0;
+        if (pcm[k] > 0) {
+            int start, pages, flags;
+            ym_pcm_region(image, pcm[k], &start, &pages, &flags);
+            half = flags & YM_PCM_HALF_RATE;
+        }
+        put(&o, 0x10 | (half ? 4 : 0) | k);
+        put(&o, pcm[k]);
+    }
+    f->fm_size = o.n;
+    if (o.overflow) return -1;
+
+    Out q = {f->psg, 0, YMX_CMDS_MAX, 0};
+    for (int i = 0; i < 3; ++i)
+        if (full || psg_touch >> i & 1) {
+            put(&q, 0x20 | i << 2 | (p->tone[i] >> 8 & 3));
+            put(&q, p->tone[i] & 0xFF);
+        }
+    if (full || psg_touch & 0x08) {
+        put(&q, 0x10);
+        put(&q, 0xE0 | p->noise_ctrl);
+    }
+    for (int i = 0; i < 4; ++i)
+        if (full || psg_touch >> (4 + i) & 1) put(&q, 0x80 + 0x10 * i + p->att[i]);
+    f->psg_size = q.n;
+    return q.overflow ? -1 : 0;
 }
 
-const uint8_t* ymx_frame(YmXgmEncoder* e, const YmWrite* in, int n, int loop_at, size_t* xgm_size, uint8_t* xgc,
-                         size_t xgc_cap, size_t* xgc_size) {
-    clean(e, in, n, loop_at);
-    Out ox = {e->xgm, 0, sizeof e->xgm, 0};
-    extract_xgm(e, &ox);
-    if (xgm_size) *xgm_size = ox.n;
-    uint8_t none[1];
-    Out oc = {xgc ? xgc : none, 0, xgc ? xgc_cap : 0, 0};
-    extract_xgc(e, &oc);
-    if (xgc_size) *xgc_size = oc.n;
-    if (ox.overflow || e->xgm_cmds.n >= YMX_MAX_CMDS || (xgc && oc.overflow)) return NULL;
-    return e->xgm;
+int ymx_wait(uint8_t* out, int psg, int frames) {
+    const int short_max = psg ? 14 : 15;
+    if (frames <= short_max) {
+        out[0] = (uint8_t)(frames - 1);
+        return 1;
+    }
+    out[0] = psg ? 0x0E : 0x0F;
+    out[1] = (uint8_t)(frames - short_max - 1);
+    return 2;
+}
+
+int ymx_loop(uint8_t* out, int psg, int32_t offset) {
+    const uint32_t v = offset < 0 ? 0xFFFFFFu : (uint32_t)offset;
+    out[0] = psg ? 0x0F : 0xFF;
+    out[1] = (uint8_t)v;
+    out[2] = (uint8_t)(v >> 8);
+    out[3] = (uint8_t)(v >> 16);
+    return 4;
+}
+
+size_t ymx_pack(const uint8_t* in, int n, uint32_t at, uint8_t* out) {
+    size_t o = 0;
+    uint32_t pos = at;
+    int i = 0;
+    while (i < n) {
+        int len = n - i < 7 ? n - i : 7;
+        const int remain = 0x100 - (int)(pos & 0xFF);
+        int header = len << 5;
+        if (1 + len > remain) { /* the block would cross a page: end this one at the page end */
+            if (remain < 2) {
+                out[o++] = 0x01; /* page-cross marker alone */
+                ++pos;
+                continue;
+            }
+            len = remain - 1;
+            header = len << 5 | 1;
+        }
+        out[o++] = (uint8_t)header;
+        memcpy(out + o, in + i, (size_t)len);
+        o += (size_t)len;
+        pos += 1u + (uint32_t)len;
+        i += len;
+    }
+    out[o++] = 0x00; /* end of block */
+    return o;
 }

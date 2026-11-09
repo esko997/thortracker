@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Renders a lowered YM2612 image through the native "ym2612-fm" engine (host gcc/g++, the same sources as the hosts).
-# Usage: tools/audio/render_ym_image.sh image.bin out.wav [seconds] [mute=190] [--vgm out.vgm] [--xgm out.xgm] [--xgc out.bin]
-#        [title=..] [author=..] [date=..]
-# The host test writes its test song's image as <dir>/ym_image.bin (tools/audio/run_native_host_test.sh <dir>).
+# Usage: tools/audio/render_ym_image.sh image.bin out.wav [seconds] [mute=0,5,10] [--vgm out.vgm] [--xgm out.xgm]
+#        [--xgc out.xgc] [title=..] [author=..] [date=..]
+# Images are layout 2 (1188864 bytes); mute takes tracker channel indices 0-12 (FM 1-6, PSG 1-3, Noise, PCM 1-3);
+# .xgm/.xgc are XGM2 (SGDK's XGM2 driver plays them, XGM1's cannot).
+# The host test writes its songs' images as <dir>/ym_image.bin and <dir>/ym_pcm_image.bin
+# (tools/audio/run_native_host_test.sh <dir>).
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 build="$root/build/host-audio/render-ym"

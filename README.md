@@ -107,9 +107,42 @@ The raw-range gain policy and its hardware-verification limits are in [AUDIO_ENG
 
 A C64 song (**Menu → Files → New blank song → C64 SID**) has three voices, all tonal, one filter for the whole chip and one bank of 63 GoatTracker instruments shared by the voices. The instrument view has six pages (**L1/R1**): **Envelope** (attack, decay, sustain, release with the envelope drawn, and **Preset**: **hold A + ←/→** starts the sound from a saw lead, PWM pad, filter bass, noise snare, wave-arpeggio kick, hi-hat, triangle bass or arpeggio chord); **Wave**, **Pulse** and **Filter**, the sound's programs, edited row by row (↑/↓ a row, ←/→ a column, **hold A + ←/→** changes it; the first column is what the step is: a waveform with gate/sync/ring/test bits, a silent row, a wait, a command or a jump; a pitch is relative to the note, an absolute note for drums, or kept; **A** on a bit switches it and past the last row adds one; **B** deletes a row and **Select + Y** duplicates it, jumps keeping their targets; pulse and filter programs show their width or cutoff over two seconds); **Vibrato·HR** (hard restart, gate timer, first-frame waveform and the instrument vibrato, drawn); and **Tables**, the song-wide wave, pulse, filter and speed tables the player reads, built from the programs (read-only: **A** on a row opens its program). Holding **A** on any sound setting plays the sound on the **Listen** voice and every change restarts it. The Filter page and the Pattern view (a **FILTER** tag on the voice and a line in the inspector) show which voice owns the filter where the song is heard: the last one to start a filter program (or `Axx`; `B00` turns it off). The Song view adds the chip model (8580 or 6581), multispeed (1-16 player calls per frame) and the hard-restart envelope. Effects are GoatTracker's 1-F (Help → Effects); in the Pattern view **B** on an OFF enters **ON** (key on). **Load demo → C64 SID** opens "Raster Run".
 
-### Mega Drive instruments: FM voices and PSG sounds
+### Mega Drive instruments: FM, PSG and PCM
 
-A Mega Drive song (**Menu → Files → New blank song → Mega Drive**) has ten channels — FM 1-6 (the YM2612), PSG 1-3 and Noise (the SN76489) — each with up to four effect columns; lanes scroll sideways when they do not all fit. One bank of 64 slots holds both kinds of sound: **FM voices** play on FM 1-6, **PSG sounds** on PSG 1-3 and Noise (new notes on each lane start with the first sound of its kind). The instrument view's **Type** row switches a slot between the two. An FM voice has three pages (**L1/R1**): **Sound** — curated controls (**Preset**, the eight YM2612 **Algorithms** drawn as operator diagrams, **Ratios** with detune, brightness, level, feedback, attack, decay, sustain, sustain rate, release, tone decay, key scaling, vibrato and tremolo depths, **SSG-EG** shapes drawn on the envelope), each **hold A + ←/→**; **Expert** — every operator register (DT, MUL, TL, KS, AR, AM, D1R, D2R, SL, RR, SSG-EG) as a grid; **Drum** — a pitch sweep for FM drums. A PSG sound has the NES envelope editor's **Volume**, **Arpeggio** and **Pitch** pages and a **Noise·Drum** page (white or periodic noise at a fixed rate or pitched by the note, and the sweep). The song's region (NTSC/PAL) and LFO rate are on the Song view. **Load demo → Mega Drive** opens "Neon Causeway".
+A Mega Drive song (**Menu → Files → New blank song → Mega Drive**) has thirteen lanes:
+FM 1-6 (YM2612), PSG 1-3 and Noise (SN76489), and PCM 1-3 mixed by SGDK's XGM2
+driver. Each lane has up to four effect columns. The 64 instrument slots hold
+**FM voices**, **PSG sounds** or **PCM kits**; the **Type** row changes the slot's kind.
+New notes select a sound of the lane's kind.
+
+FM pages (**L1/R1**) offer **Sound** (curated algorithms, ratios, envelopes, brightness,
+feedback, LFO depths and SSG-EG), **Expert** (every operator register), **Drum** (pitch
+sweep), and **Ch3** (four independent operator pitch offsets). **Song → FM 3 mode**
+enables the latter: each operator follows the note plus its offset, in semitones and
+1/64-semitone steps, up to ±4 octaves. Other FM lanes ignore these offsets.
+Normal mode keeps the original common pitch. Timer-A CSM mode is not available:
+XGM2 uses that timer for PCM playback.
+
+PSG sounds retain the NES-style **Volume**, **Arpeggio**, **Pitch** and **Noise·Drum**
+pages. Pitched noise shares PSG 3's period. Song settings also select NTSC/PAL and
+the FM LFO rate. **Load demo → Mega Drive** still opens **Neon Causeway**.
+
+PCM kits map notes to samples. On their **Add** row, import a WAV; choose the
+**Key**, **Sample** and **Pitch**, or use **Spread** to map the same sample over
+nearby keys. Stereo is downmixed, samples become signed 8-bit, and input above
+48 kHz is resampled; the import reports these conversions. Up to 64 source samples
+share 256 KiB. Pitched and level-adjusted sounds compile into at most 123 distinct
+variants sharing a 1 MiB driver bank; identical waveforms share storage.
+Kit **Level** is fixed at 0-15 (15 unchanged, 2 dB quieter per step, 0 silent).
+The driver plays one-shots, not sample loops. PCM lanes support `B`, `D`, `F`,
+`G`, `L`, `S` and OFF, not per-row volume or pitch effects.
+**FM 6 is inaudible while the DAC is playing PCM**; all three PCM lanes share its
+stereo routing. Muting a PCM lane stops its sample; unmuting waits for the next note.
+
+Exports are **VGM**, **WAV**, **XGM2 (.xgm)** and **packed XGM2 (.xgc)**.
+The two XGM files require an XGM2-capable consumer; they are not compatible with
+the old XGM1 driver or `XGM_startPlay`. VGM records the actual driver's writes,
+including PCM DAC output.
 
 ### Master System, Game Gear and the FM Sound Unit
 
@@ -381,7 +414,7 @@ Thor Tracker has no network access and no telemetry: nothing leaves the device u
 - NES + EPSM songs save backend `nes-famistudio-epsm` (NES data version 2): twenty pattern tracks (the 2A03's five, SSG 1-3, FM 1-6, the six rhythm drums), `sound.expansion` = `"epsm"` and `sound.epsmLfo` (register `$22`; left out at 0 = off); EPSM sounds have `chip` = `"epsm"` and, each left out at its default, the `mixer` and `noise` envelopes, `s5b` (`shape` such as `"saw-down"`, `autoPitch`, `octave`, `period`) and `epsm`, the FM patch (`algorithm`, `feedback`, `left`, `right`, `ams`, `pms`, four `operators` with the register fields `dt mul tl ks ar am d1r d2r sl rr ssgEg`). The rhythm ROM is device firmware, never part of a project. Releases before the EPSM cannot open NES + EPSM files; other files are unchanged.
 - C64 SID songs save backend `c64-sid`, SID data version 1 (`backendVersion` 1), in project format 9: three pattern tracks; `sound` holds the 63 instruments (ADSR nibbles, `restart` hard/gateOff/legato, gate timer, first wave, `vibrato`, and `wave`/`pulse`/`filter` programs as `[left, right]` GoatTracker table rows plus `at`, the table row the program is placed at so its rows stay put across edits), the `chip` (`8580` or `6581`), `multispeed` (1-16) and the hard-restart envelope. GoatTracker's song-wide tables are not stored: the instruments' programs and the effects' speeds build them when the song plays or exports. Key on is note -3 (SID only). Releases before the SID cannot open these files; Game Boy and NES files are unchanged.
 - OPL3 songs save backend `opl3-fm`, OPL3 data version 1 (`backendVersion` 1), in project format 9: nine pattern tracks whose cells may carry up to four effect columns — a cell is `[note, instrument, effect, param]` followed by `effect, param` for each further column it uses (trailing empty columns are not written, so one-column cells look exactly as before); `sound` holds the 64 instrument slots (`null` = empty; otherwise `name`, `fourOp`, `algorithm`, `feedback`, four `operators` with the chip's register fields `mult tl ar dr sl rr wave ksl am vib sustain ksr`, and the drum `sweep` start/end/speed), the chord-shape table `chords` (`name`, 1-4 `intervals`), `multispeed` (1-8) and the `deepTremolo`/`deepVibrato` depths. Releases before the OPL3 cannot open these files; Game Boy, NES and SID files are unchanged byte for byte.
-- Mega Drive songs save backend `ym2612-fm`, Mega Drive data version 1 (`backendVersion` 1), in project format 9: ten pattern tracks (FM 1-6, PSG 1-3, Noise) whose cells may carry up to four effect columns as OPL3 cells do; `sound` holds the 64 instrument slots (`null` = empty; otherwise `"type":"fm"` with `name`, `algorithm`, `feedback`, `ams`, `fms`, four `operators` with the YM2612's register fields `dt mul tl ks ar am d1r d2r sl rr ssgEg` and the drum `sweep`, or `"type":"psg"` with `name`, the `volume`/`arpeggio`/`pitch` envelopes (`values`, `loop`, `release`, as NES envelopes), `pitchRelative`, the Noise channel's `noise` mode and the `sweep`), `pal` (the region) and `lfo` (register $22 at the song start: 0 or 8-15). Releases before the Mega Drive cannot open these files; Game Boy, NES, SID and OPL3 files are unchanged byte for byte.
+- Mega Drive songs save backend `ym2612-fm`, data version 2 (`backendVersion` 2), in project format 9. The original ten FM/PSG tracks are followed by three PCM tracks. Version 1 songs migrate by appending empty PCM tracks to every pattern, including parked patterns; their notes, effects and tonal data capacity are preserved. `sound` retains the 64 slots, region and LFO, adds `fm3Mode` (`normal`/`special`) and `pcmSamples`, and accepts `"type":"pcm"` kits with a level and note-to-sample mappings. FM instruments add four `ch3` offsets in 1/64 semitones; the existing operator registers, sweep and PSG envelopes are unchanged. Earlier Mega Drive releases cannot open version 2 files. Other systems' project formats are unchanged.
 - Recovery writes use a separate queue from document-provider I/O, so a stalled external save cannot block recovery of newer edits. Both run off the UI thread.
 - Saving captures the version selected for that operation. If editing continues, the app reports that newer edits remain unsaved. Completing an older save cannot attach its destination to a different document.
 - Android document providers control the durability and atomicity of writes to their own destinations; the app-private recovery copy remains separate.
@@ -418,7 +451,7 @@ The C64 SID engine (in progress: a native engine without editor support yet) add
 
 The OPL3 (YMF262) FM engine (in progress: a native engine without editor support yet) is Thor Tracker's own player in C on Nuked-OPL3 1.8 by Nuke.YKT (LGPL-2.1-or-later, github.com/nukeykt/Nuked-OPL3 commit `765ec962`) under `app/src/main/cpp/third_party/nuked-opl3/`, resampled with the same blip_buf; it exports VGM. The notice is in `NOTICE.txt`.
 
-The Mega Drive (YM2612) engine streams Thor Tracker's own player through SGDK's XGM Z80 sound driver (MIT, Stephane Dallongeville; `third_party/sgdk-xgm/`, SGDK commit `9a78a441`, assembled into `app/src/main/cpp/generated/xgm_driver_image.h` by `tools/audio/prepare_ym.py`, byte-identical to SGDK's own build) on floooh's `z80.h` (zlib, the `m6502.h` pin), with the YM2612 emulated by ymfm (BSD-3-Clause, Aaron Giles, github.com/aaronsgiles/ymfm commit `81aec25c`, `app/src/main/cpp/third_party/ymfm/`) and Thor Tracker's own SN76489; its XGM/XGC export ports SGDK xgmtool's conversion (MIT). It exports VGM, XGM and XGC. The notices are in `NOTICE.txt`.
+The Mega Drive (YM2612) engine streams Thor Tracker's player through SGDK's unmodified XGM2 Z80 driver (MIT, Stephane Dallongeville; `third_party/sgdk-xgm2/`, SGDK commit `9a78a441`). `tools/audio/prepare_ym.py` assembles `app/src/main/cpp/generated/xgm2_driver_image.h` and checks it byte-for-byte against SGDK's `drv_xgm2`. The driver runs on floooh's `z80.h` (zlib, the `m6502.h` pin), with ymfm (BSD-3-Clause, Aaron Giles, commit `81aec25c`, `app/src/main/cpp/third_party/ymfm/`) and Thor Tracker's SN76489. The stream encoder follows SGDK's XGM2 driver/xgm2tool formats; exports are VGM and unpacked/packed XGM2. The notices are in `NOTICE.txt`.
 
 The NES + EPSM variant assembles the same FamiStudio engine with its EPSM support (FamiStudio's EPSM note tables, MIT, under `third_party/famistudio-4.5.3/NoteTables/`, into `nes_epsm_player_image.h`) and emulates the YMF288 with the same ymfm pin (its `ymf288` class). The YM2608 rhythm ROM that its rhythm channels play is Yamaha's data: it is **not** distributed with Thor Tracker in any form (source, APK, AppImage, demos, exports); users import their own copy (see "NES + EPSM" above), which stays in the app's private storage.
 

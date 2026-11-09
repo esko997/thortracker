@@ -16,8 +16,8 @@ import kotlin.math.pow
 import kotlin.math.roundToLong
 
 /**
- * Unsigned 8-bit PCM bytes (immutable, compared by content). Stored in project files as one base64 string, since a
- * sample may be hundreds of kilobytes.
+ * 8-bit PCM bytes (immutable, compared by content). Stored in project files as one base64 string, since a sample may be
+ * hundreds of kilobytes. The MMC5 PCM lane reads them unsigned ([get]); the Mega Drive's XGM2 PCM signed ([signed]).
  */
 @Serializable(with = PcmData.Serializer::class)
 class PcmData private constructor(private val bytes: ByteArray) {
@@ -26,6 +26,9 @@ class PcmData private constructor(private val bytes: ByteArray) {
     /** Sample [i] as 0..255. */
     operator fun get(i: Int): Int = bytes[i].toInt() and 0xFF
 
+    /** Sample [i] as two's complement −128..127. */
+    fun signed(i: Int): Int = bytes[i].toInt()
+
     fun toByteArray(): ByteArray = bytes.copyOf()
 
     internal fun copyInto(out: ByteArray, at: Int) {
@@ -33,7 +36,8 @@ class PcmData private constructor(private val bytes: ByteArray) {
     }
 
     private val hash by lazy { bytes.contentHashCode() }
-    override fun equals(other: Any?): Boolean = other is PcmData && other.size == size && bytes.contentEquals(other.bytes)
+    override fun equals(other: Any?): Boolean =
+        other === this || other is PcmData && other.size == size && other.hashCode() == hashCode() && bytes.contentEquals(other.bytes)
     override fun hashCode(): Int = hash
     override fun toString(): String = "PcmData($size bytes)"
 

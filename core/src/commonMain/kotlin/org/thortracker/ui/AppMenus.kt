@@ -354,7 +354,7 @@ class AppMenus(
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
-        ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
+        ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
             "Export .wav…" to ::exportWav,
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },

@@ -1,6 +1,7 @@
 package org.thortracker.system.ym2612
 
 import org.thortracker.backend.YmLowering
+import org.thortracker.backend.YmPcmLowering
 import org.thortracker.backend.YmPlayerImage
 import org.thortracker.backend.YmPlayerImage.CHANNELS
 import org.thortracker.model.Cell
@@ -10,26 +11,12 @@ import org.thortracker.model.Songs
 
 /**
  * Mega Drive song checks. [errors] mirror what `ym_load_image` (`ym/ym_image.c`, [YmPlayerImage.LOADER_PROBLEMS])
- * rejects, as user-facing messages; [warnings] are the specification's "Should"s and the XGM driver's frame budget
+ * rejects, plus what would play nothing (a PCM key no kit maps) or not fit (the PCM bank), as user-facing messages;
+ * [warnings] are the specification's "Should"s and the DAC's sharing of FM 6
  * (docs/AUDIO_ENGINE.md, "YM2612").
  */
 object YmValidator {
     private const val MAX_REPORTED = 40
-
-    /**
-     * YM register writes the XGM driver executes in one vertical interrupt (it measures ~70-100 beside its PCM
-     * mixing); a row estimated above it makes the driver run late ([heavyRows]).
-     */
-    const val FRAME_WRITE_BUDGET = 90
-
-    /** Estimated YM writes of an FM key-on that loads a different instrument: 7 registers × 4 operators + $B0/$B4. */
-    private const val INSTRUMENT_LOAD_WRITES = 30
-
-    /** An FM key-on of the instrument already loaded: the frequency pair, key off and on. */
-    private const val RETRIGGER_WRITES = 4
-
-    /** A retrigger whose locks differ from the last note's: a few operator registers change (or are restored). */
-    private const val LOCK_CHANGE_WRITES = 8
 
     fun structuralErrors(song: Song): List<String> {
         val out = Report()
@@ -68,6 +55,7 @@ object YmValidator {
             out += "The song has ${sound.instruments.size} instrument slots; Mega Drive songs have exactly ${YmSystem.SLOTS}"
         }
         sound.instruments.forEachIndexed { i, ins -> ins?.problem()?.let { out += "Instrument ${hex2(i + 1)}: $it" } }
+        sound.pcmProblem()?.let { out += it }
         if (sound.lfo != 0 && sound.lfo !in 0x08..0x0F) out += "LFO ${hex2(sound.lfo)} must be 00 (off) or 08-0F (rate 0-7)"
         song.tuning?.problems(YmSystem)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
@@ -96,14 +84,43 @@ object YmValidator {
                 }
             }
         }
+        if (out.isEmpty()) pcmKeys(song, out)
         if (out.isEmpty()) {
             val size = YmLowering.dataSize(song)
             if (size > YmPlayerImage.DATA_CAPACITY) {
                 out += "The song's pattern and envelope data need ${kb(size)}; the Mega Drive image holds " +
                     "${kb(YmPlayerImage.DATA_CAPACITY)}. Reuse patterns or shorten the song"
             }
+            val pcm = YmLowering.pcmDataSize(song)
+            if (pcm > YmPlayerImage.PCM_DATA_CAPACITY) {
+                out += "PCM 1-3's pattern data need ${kb(pcm)}; the Mega Drive image holds ${kb(YmPlayerImage.PCM_DATA_CAPACITY)} " +
+                    "for them. Reuse PCM patterns or shorten the song"
+            }
+            YmPcmLowering.problem(song.ym)?.let { out += it }
         }
         return out.list()
+    }
+
+    /**
+     * Walks the arrangement in order (jumps ignored) and reports PCM notes without an instrument of their own whose
+     * lane's kit at that point maps no sample for the key: the player ignores such a note, so it is an error to fix.
+     */
+    private fun pcmKeys(song: Song, out: Report) {
+        val kit = IntArray(YmRules.PCM_CHANNELS)
+        val seen = HashSet<Triple<Int, Int, Int>>()
+        for (p in song.orders) {
+            val pattern = song.patterns[p]
+            for (row in 0 until pattern.length) for (k in 0 until YmRules.PCM_CHANNELS) {
+                val ch = YmRules.PCM_FIRST + k
+                val c = pattern.tracks[ch][row]
+                if (c.instrument != 0) { kit[k] = c.instrument; continue } // cellProblem checked it
+                if (c.note < 0 || kit[k] == 0) continue
+                val ins = song.ym.instrument(kit[k]) as? YmPcmInstrument ?: continue
+                YmSystem.pcmKeyProblem(song, kit[k], ins, c.note)?.let {
+                    if (seen.add(Triple(p, row, k))) out += "${Songs.patternLabel(song, p).cap()}, ${YmRules.CHANNEL_NAMES[ch]} row $row: $it"
+                }
+            }
+        }
     }
 
     /** Why [cell] on [channel] cannot load, given the song (its order count as the player sees it and instruments), or null. */
@@ -113,6 +130,7 @@ object YmValidator {
             val ins = song.ym.instrument(cell.instrument)
                 ?: return "instrument ${hex2(cell.instrument)} is empty; choose a preset for it or another instrument"
             YmSystem.kindProblem(channel, cell.instrument, ins)?.let { return it }
+            if (ins is YmPcmInstrument && cell.note in YmRules.NOTES) YmSystem.pcmKeyProblem(song, cell.instrument, ins, cell.note)?.let { return it }
         }
         val orders = song.orders.size
         for (c in 0..cell.more.size) {
@@ -158,19 +176,20 @@ object YmValidator {
     /**
      * Walks the arrangement once in order (jumps, delays and cuts ignored) and reports note locks on rows without a
      * note, note delays the speed never reaches, PSG notes below the PSG's range, PSG 3 notes while pitched noise owns
-     * PSG 3, and rows whose register writes exceed the XGM driver's frame budget ([FRAME_WRITE_BUDGET]).
+     * PSG 3, FM 3 operator offsets the song's normal FM 3 mode ignores, and FM 6 notes and pan while PCM owns the DAC.
      */
     private fun straightPlay(song: Song, out: Report) {
         val sound = song.ym
         val instrument = IntArray(CHANNELS)
-        val loaded = IntArray(CHANNELS)
-        val loadedLocks = arrayOfNulls<List<Pair<Int, Int>>>(CHANNELS)
         var pitchedNoise = false
         var speed = song.ticksPerRow
         var warnedLow = 0
-        var warnedHeavy = 0
         var warnedPsg3 = 0
-        song.orders.forEachIndexed { o, p ->
+        var warnedCh3 = false
+        var pcmPlays = false
+        var fm6Note: String? = null
+        var fm6Pan: String? = null
+        song.orders.forEach { p ->
             val pattern = song.patterns[p]
             val label = Songs.patternLabel(song, p).cap()
             for (row in 0 until pattern.length) {
@@ -178,21 +197,17 @@ object YmValidator {
                     val c = pattern.tracks[ch][row]
                     for (col in 0..c.more.size) if (c.effectCode(col) == YmRules.FX_SPEED && c.effectParam(col) > 0) speed = c.effectParam(col)
                 }
-                var writes = 0
-                var loads = 0
                 for (ch in 0 until CHANNELS) {
                     val c = pattern.tracks[ch][row]
                     val where = "$label, ${YmRules.CHANNEL_NAMES[ch]} row $row"
                     if (c.instrument != 0) instrument[ch] = c.instrument
                     var noteFx: Char? = null
-                    val locks = ArrayList<Pair<Int, Int>>()
                     var noiseLock: Int? = null
                     for (col in 0..c.more.size) {
                         val code = c.effectCode(col)
                         val param = c.effectParam(col)
                         if (code == 0 && param == 0) continue
                         if (code in YmRules.NOTE_EFFECTS) {
-                            locks += code to param
                             if (noteFx == null) noteFx = YmRules.effectText(code, param)[0]
                         }
                         if (code == YmRules.FX_NOISE) noiseLock = ((param shr 4) shl 2) or (param and 3)
@@ -200,26 +215,28 @@ object YmValidator {
                             out += "$where: G${hex2(param)} waits $param ticks but rows are $speed ticks; the row never plays"
                         }
                     }
+                    if (ch == YmRules.FM6 && fm6Pan == null && (0..c.more.size).any { c.effectCode(it) == YmRules.FX_PAN }) fm6Pan = where
                     if (c.note < 0) {
                         if (noteFx != null) out += "$where: ${noteFx}xx applies when a note starts; this row has no note, so it is ignored"
                         if (c.note == Cell.CUT && ch == YmRules.NOISE) pitchedNoise = false
                         continue
                     }
                     val ins = sound.instrument(instrument[ch])
+                    if (YmRules.isPcm(ch)) {
+                        if (ins is YmPcmInstrument) pcmPlays = true
+                        continue
+                    }
                     if (YmRules.isFm(ch)) {
+                        if (ch == YmRules.FM6 && fm6Note == null) fm6Note = where
                         if (ins is YmFmInstrument) {
-                            // Registers are shadowed: only what differs from the last note is written.
-                            writes += when {
-                                loaded[ch] != instrument[ch] -> INSTRUMENT_LOAD_WRITES.also { loads++ }
-                                loadedLocks[ch] != locks -> LOCK_CHANGE_WRITES
-                                else -> RETRIGGER_WRITES
+                            if (ch == YmRules.FM3 && ins.hasCh3 && sound.fm3Mode == YmFm3Mode.NORMAL && !warnedCh3) {
+                                warnedCh3 = true
+                                out += "$where: sound ${hex2(instrument[ch])} \"${ins.name}\" has FM 3 operator pitches, which sound only " +
+                                    "in FM 3's special mode; the song's FM 3 mode is normal (Song view)"
                             }
-                            loaded[ch] = instrument[ch]
-                            loadedLocks[ch] = locks
                         }
                         continue
                     }
-                    // PSG writes go to the PSG port without the YM2612's busy waits: not counted.
                     if (ch == YmRules.NOISE) {
                         if (ins is YmPsgInstrument) pitchedNoise = ((noiseLock ?: ins.noise) and 3) == YmPsgInstrument.PITCHED
                         continue
@@ -233,13 +250,14 @@ object YmValidator {
                         out += "$where: pitched noise on the Noise channel uses PSG 3's period, so this note is silent; end the noise with OFF first"
                     }
                 }
-                if (writes > FRAME_WRITE_BUDGET && !(o == 0 && row == 0) && warnedHeavy < 3) {
-                    warnedHeavy++
-                    out += "Order ${hex2(o)} row $row: $loads FM instrument changes at once (about $writes register writes); the XGM driver " +
-                        "executes about $FRAME_WRITE_BUDGET per frame, so the row may sound up to ${(writes - 1) / FRAME_WRITE_BUDGET} ticks late. " +
-                        "Stagger the changes with Gxx or reuse instruments"
-                }
             }
+        }
+        if (pcmPlays && fm6Note != null) {
+            out += "$fm6Note: FM 6 plays while the song uses PCM 1-3. The PCM channels sound through the YM2612's DAC, which " +
+                "replaces FM 6's output: FM 6 is inaudible while the DAC is on. Move this part to another channel"
+        }
+        if (pcmPlays && fm6Pan != null) {
+            out += "$fm6Pan: FM 6's pan is also the DAC's: 8xy here pans every PCM channel together (PCM has no pan of its own)"
         }
     }
 
@@ -250,8 +268,12 @@ object YmValidator {
         val sound = song.ym
         val fm = sound.instruments.count { it is YmFmInstrument }
         val psg = sound.instruments.count { it is YmPsgInstrument }
-        add("Instruments" to "${used.size} used, ${fm + psg} of ${YmSystem.SLOTS} filled ($fm FM, $psg PSG)")
+        val pcm = sound.instruments.count { it is YmPcmInstrument }
+        add("Instruments" to "${used.size} used, ${fm + psg + pcm} of ${YmSystem.SLOTS} filled ($fm FM, $psg PSG, $pcm PCM)")
         add("Pattern data" to "${kb(YmLowering.dataSize(song))} of ${kb(YmPlayerImage.DATA_CAPACITY)}")
+        add("PCM pattern data" to "${kb(YmLowering.pcmDataSize(song))} of ${kb(YmPlayerImage.PCM_DATA_CAPACITY)}")
+        add("PCM samples" to "${sound.pcmSamples.size} of ${YmPcm.MAX_SAMPLES}, ${kb(YmPcm.stored(sound))} of ${kb(YmPcm.MEMORY)}")
+        add("PCM bank" to (YmPcmLowering.problem(sound) ?: YmPcmLowering.usage(YmPcmLowering.compile(sound))))
     }
 
     private fun kb(bytes: Int) = NumberText.fixed(bytes / 1024.0, 1) + " KB"

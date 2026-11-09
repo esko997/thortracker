@@ -50,13 +50,13 @@ below; source in app/src/main/cpp/third_party/nuked-opl3 with its LICENSE,
 github.com/nukeykt/Nuked-OPL3 at commit 765ec962e473aeb767e4cba74ffdc8f588ffbfe8),
 resampled with the same blip_buf.
 
-The Mega Drive (YM2612) system runs SGDK's XGM Z80 sound driver by Stephane
-Dallongeville (MIT, notice below; source in third_party/sgdk-xgm, SGDK commit
+The Mega Drive (YM2612) system runs SGDK's XGM2 Z80 sound driver by Stephane
+Dallongeville (MIT, notice below; source in third_party/sgdk-xgm2, SGDK commit
 9a78a44143a867cd8c5053b95cd061a21f0b73c2) on the Z80 emulator z80.h by Andre
 Weissflog (zlib, the chips notice above), with the YM2612 emulated by ymfm by
 Aaron Giles (BSD-3-Clause, notice below; app/src/main/cpp/third_party/ymfm at
-commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM export ports SGDK
-xgmtool's conversion (MIT).
+commit 81aec25ccbb98f4873a255f7551ac4dadac59b4a); its XGM2 stream encoding
+follows SGDK's XGM2 driver and xgm2tool formats (MIT).
 
 NES + EPSM songs run the FamiStudio sound engine 4.5.3 built with its EPSM support
 (with FamiStudio's EPSM note tables, MIT, notice below) on the same m6502.h, and
@@ -217,7 +217,7 @@ WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for
 more details (app/src/main/cpp/third_party/nuked-opl3/LICENSE).
 
-SGDK (XGM driver, xgmtool)
+SGDK (XGM2 driver, xgm2tool formats)
 https://github.com/Stephane-D/SGDK
 
 MIT License - Copyright (c) 2025 Stephane Dallongeville

@@ -134,11 +134,12 @@ object YmPresets {
     /** [name]'s instrument; fails loudly for an unknown name (demo and test songs use it). */
     fun instrument(name: String): YmInstrument = named(name)?.instrument ?: throw IllegalArgumentException("No Mega Drive preset \"$name\"")
 
-    /** Presets for [channel]: FM voices and drums on FM 1-6, PSG tones on PSG 1-3, every PSG sound on Noise. */
+    /** Presets for [channel]: FM voices and drums on FM 1-6, PSG tones on PSG 1-3, every PSG sound on Noise; none on PCM 1-3 (kits start empty). */
     fun forChannel(channel: Int): List<Preset> = ALL.filter {
         when {
             YmRules.isFm(channel) -> it.category == Category.FM || it.category == Category.DRUM
             channel == YmRules.NOISE -> it.category == Category.NOISE || it.category == Category.PSG
+            YmRules.isPcm(channel) -> false
             else -> it.category == Category.PSG
         }
     }

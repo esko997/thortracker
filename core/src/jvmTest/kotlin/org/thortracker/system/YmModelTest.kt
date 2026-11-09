@@ -51,31 +51,37 @@ class YmModelTest {
     // ---- system shape --------------------------------------------------------------------------------------
 
     @Test
-    fun systemIsRegisteredWithTenChannels() {
+    fun systemIsRegisteredWithThirteenChannels() {
         assertEquals(YmSystem, SoundSystems.of("ym2612-fm"))
-        assertEquals(listOf("FM 1", "FM 2", "FM 3", "FM 4", "FM 5", "FM 6", "PSG 1", "PSG 2", "PSG 3", "Noise"), YmSystem.channels.map { it.name })
+        assertEquals(listOf("FM 1", "FM 2", "FM 3", "FM 4", "FM 5", "FM 6", "PSG 1", "PSG 2", "PSG 3", "Noise", "PCM 1", "PCM 2", "PCM 3"),
+            YmSystem.channels.map { it.name })
         assertFalse(YmSystem.channels[9].tonal)
         assertTrue(YmSystem.channels.take(9).all { it.tonal })
+        assertTrue(YmSystem.channels.drop(10).none { it.tonal })
         assertEquals(4, YmSystem.effectColumns(9))
         assertEquals("A-4", YmSystem.noteName(57))
         assertEquals(0 until 96, YmSystem.noteRange)
-        // Effects per channel kind: pan and the FM locks on FM only, the noise lock on Noise only.
+        // Effects per channel kind: pan and the FM locks on FM only, the noise lock on Noise only, PCM the flow, G and S.
         val fx = { ch: Int -> YmSystem.effectsFor(ch).map { it.char }.joinToString("") }
         assertEquals("012348ABCDEFGILMPS", fx(0))
         assertEquals("01234ABCDFGLPS", fx(6))
         assertEquals("01234ABCDFGLNPS", fx(9))
+        for (ch in 10..12) assertEquals("BDFGLS", fx(ch))
         assertEquals(59.92, YmSystem.ticksPerSecond(YmSystem.blank()), 0.005)
         val pal = YmSystem.blank().let { it.copy(sound = it.ym.copy(pal = true)) }
         assertEquals(49.70, YmSystem.ticksPerSecond(pal), 0.005)
         assertEquals(listOf("vgm", "xgm", "xgc"), YmSystem.exports.map { it.extension })
-        // Two banks over one numbering: FM channels pick from FM voices, PSG and Noise from PSG sounds.
-        assertEquals(listOf(0, 0, 0, 0, 0, 0, 1, 1, 1, 1), YmSystem.channels.map { it.bank })
+        // The XGM files are XGM2: the Files menu says so.
+        assertEquals(listOf(".vgm", ".xgm (XGM2)", ".xgc (XGM2 compiled)"), YmSystem.exports.map { it.label })
+        // Three banks over one numbering: FM channels pick from FM voices, PSG and Noise from PSG sounds, PCM from kits.
+        assertEquals(listOf(0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2), YmSystem.channels.map { it.bank })
         val song = YmSystem.blank()
         assertEquals(slot("Slap bass"), YmSystem.defaultInstrument(song, 0))
         assertEquals(slot("PSG lead"), YmSystem.defaultInstrument(song, 1))
         assertEquals("PSG lead", YmSystem.instrumentName(song, 1, slot("PSG lead")))
         assertEquals("PSG lead", YmSystem.instrumentName(song, 0, slot("PSG lead")))
-        assertNull(YmSystem.instrumentName(song, 2, 1))
+        assertEquals("PSG lead", YmSystem.instrumentName(song, YmSystem.PCM_BANK, slot("PSG lead")))
+        assertNull(YmSystem.instrumentName(song, 3, 1))
     }
 
     // ---- project files -------------------------------------------------------------------------------------
@@ -93,7 +99,7 @@ class YmModelTest {
     @Test
     fun projectFilesNameTheBackendAndInstrumentKinds() {
         val text = ProjectCodec.encode(YmSystem.blank())
-        assertTrue(text.contains("\"backend\":\"ym2612-fm\",\"backendVersion\":1"))
+        assertTrue(text.contains("\"backend\":\"ym2612-fm\",\"backendVersion\":2"))
         assertTrue(text.contains("{\"type\":\"fm\",\"name\":\"Slap bass\""))
         assertTrue(text.contains("{\"type\":\"psg\",\"name\":\"PSG lead\""))
         assertTrue(text.contains("\"pal\":false,\"lfo\":0"))
@@ -288,7 +294,7 @@ class YmModelTest {
     }
 
     @Test
-    fun warningsCoverLocksDelaysPsgRangePitchedNoiseAndHeavyRows() {
+    fun warningsCoverLocksDelaysPsgRangeAndPitchedNoise() {
         val bass = slot("Slap bass")
         val psg = slot("PSG lead")
         fun warnings(song: Song) = YmSystem.warnings(song).joinToString("\n")
@@ -300,12 +306,6 @@ class YmModelTest {
         noise = with(noise, 0, 8, 2, Cell(60, psg))
         assertTrue(warnings(noise).contains("pitched noise on the Noise channel uses PSG 3's period"))
         assertFalse(warnings(with(noise, 0, 9, 1, Cell(Cell.CUT))).contains("pitched noise"))
-        // Six FM channels loading six different instruments on one row (not the song's first).
-        var heavy = YmSystem.blank()
-        val names = listOf("Slap bass", "Brass", "E-piano", "Bell", "Strings", "Lead")
-        for (ch in 0 until 6) heavy = with(heavy, 0, ch, 4, Cell(48, slot(names[ch])))
-        assertTrue(warnings(heavy).contains("6 FM instrument changes at once"))
-        assertFalse(warnings(with(YmSystem.blank(), 0, 0, 4, Cell(48, bass))).contains("instrument changes"))
     }
 
     @Test
@@ -320,8 +320,9 @@ class YmModelTest {
         assertTrue(cells.any { c -> (0..c.more.size).any { c.effectCode(it) == YmRules.FX_PAN } })
         assertTrue(cells.any { c -> (0..c.more.size).any { c.effectCode(it) == YmRules.FX_BRIGHTNESS } })
         assertTrue(cells.any { it.more.isNotEmpty() })
-        // Every channel plays.
-        for (ch in 0 until YmRules.CHANNELS) assertTrue("channel $ch", demo.patterns.any { p -> p.tracks[ch].any { it.note >= 0 } })
+        // Every FM, PSG and Noise channel plays; PCM 1-3 stay empty (FM 6 plays, so the DAC is not taken).
+        for (ch in 0 until YmRules.TONAL_CHANNELS) assertTrue("channel $ch", demo.patterns.any { p -> p.tracks[ch].any { it.note >= 0 } })
+        for (ch in YmRules.PCM_FIRST until YmRules.CHANNELS) assertTrue("channel $ch", demo.patterns.all { p -> p.tracks[ch].all { it.isBlank } })
         val image = YmLowering.lower(demo)
         val size = (image[YmPlayerImage.H_DATA_SIZE].toInt() and 0xFF) or ((image[YmPlayerImage.H_DATA_SIZE + 1].toInt() and 0xFF) shl 8)
         assertEquals(YmLowering.dataSize(demo), size)
@@ -368,7 +369,7 @@ class YmModelTest {
         assertTrue(engine.auditionProblem(song, 6, 57, slot("Lead"), 0)!!.contains("is an FM voice"))
         assertTrue(engine.auditionProblem(song, 0, 57, slot("PSG lead"), 0)!!.contains("is a PSG sound"))
         assertTrue(engine.auditionProblem(song, 0, 57, 60, 0)!!.contains("is empty"))
-        assertEquals(65536, engine.imageSize)
+        assertEquals(YmPlayerImage.IMAGE_SIZE, engine.imageSize)
         assertEquals("ym2612-fm", engine.id)
     }
 

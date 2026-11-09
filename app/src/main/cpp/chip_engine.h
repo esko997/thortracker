@@ -25,7 +25,7 @@
  *                     (sid/sid_chip.c over sid/sid_machine.c, sid/sid_image.c, sid/sid_resid.cpp)
  *   "opl3-fm"         Thor Tracker's own OPL3 player on a YMF262 (Nuked-OPL3 1.8)
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
- *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM driver on a Z80 + YM2612
+ *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM2 driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
  *   "sms-banjo"       the Banjo sound driver (joffb/banjo) on a Z80 + SN76489 (+ Game Gear stereo) + YM2413
  *                     (emu2413), every Master System layout (sms/sms_chip.c over sms/sms_machine.c, sms_image.c)
@@ -120,8 +120,8 @@ typedef struct ChipEngineOps {
     int (*tick)(ChipMachine* m, float* out);
 
     /* Optional (NULL: tick 0 marks row starts, above). For engines whose position follows a
-     * lagging driver (the Mega Drive's XGM: behind a heavy frame the position waits, so tick 0
-     * repeats without a new row, then catches up several rows in one tick): a counter of row
+     * lagging driver (the Mega Drive's XGM2 waits while refilling PCM, so tick 0 may
+     * repeat without a new row): a counter of row
      * starts, the value belonging to the row instance position() reports. It changes exactly
      * when position() moves into a newly started row instance (also a row re-entered by a jump
      * to itself). start() resets it. Used by the WAV export's loop detection (chip_wav.c). */

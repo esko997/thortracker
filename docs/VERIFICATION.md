@@ -1,5 +1,75 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.23.0 Mega Drive PCM kits, FM channel 3 and XGM2
+
+Mega Drive songs now have three PCM lanes alongside the six FM and four PSG
+lanes. PCM kit instruments map notes to imported WAV samples, with per-key
+pitch, a chromatic spread action and a static kit level. FM 6 is inaudible while
+the DAC plays PCM. The FM instrument editor's **Ch3** page enables independent
+operator pitches on FM 3, including semitone and 1/64-semitone offsets.
+Existing songs migrate without changing their tonal data; Neon Causeway remains
+the normal demo, with Night Ferry as a separate PCM/FM3 verification fixture.
+
+The real SGDK XGM2 Z80 driver replaces XGM1. VGM exports record its actual
+timestamped writes and mixed DAC output. `.xgm` is unpacked XGM2; `.xgc` is the
+already compiled form for `XGM2_play`. Import `.xgc` into SGDK with
+`BIN music "song.xgc" 256`, without further resource compression.
+
+**Upstream tool caveat:** pinned xgm2tool 1.08 corrupts its XGM2 re-import:
+it retains unpacked loop offsets in packed output and flips signed PCM bytes
+by `$80`. Its XGM→VGM path also throws a cast exception on its own output.
+Use the compiled `.xgc` directly, not its `XGM2` resource conversion.
+Unmodified SGDK ResComp 4.02 successfully imported both compiled fixtures as
+256-byte-aligned BIN resources, preserving their 32 KiB of combined data.
+
+Verification:
+
+- 559 JVM core tests, 13 Linux core tests, six Android-host unit tests and the
+  19-test permanent Android suite passed. The signed APK and desktop executable
+  built serially with one Gradle worker and in-process Kotlin compilation.
+- 807 Mega Drive native checks and 1,304 common WAV checks passed. Coverage
+  includes PCM pitch and bounds, FM3 register ordering, mute/DAC ownership,
+  held-note edits and bank replacement, exact machine-state seeking, stream
+  ring wraps, allocation-free tick/edit paths and shortest looping songs.
+  The PCM tone measured 424.62 Hz against 424.03 Hz expected (2.4 cents).
+- The independent Python player matched both 1,500-tick native traces.
+  Independent file parsing verified sample IDs/data, commands, loop targets,
+  packed blocks and musical frame counts. The PCM fixture has 360 musical
+  frames over 364 physical ticks: the real driver's refill delays are retained.
+- A separate direct-file consumer loaded exported sample banks, tables and
+  packed streams into the actual Z80 driver, without the live stream producer.
+  All 68 checks passed through at least two loop jumps. Tonal playback matched
+  the reference for 1,222 frames; PCM playback for 665 frames, with 79 triggers,
+  17 stops and 149,837 DAC writes. Exported waits can alter refill timing;
+  agreement is checked at executed musical frames, not assumed vint indices.
+- Desktop playback and held PCM audition produced nonzero audio. The actual
+  file picker imported a 96 kHz stereo WAV as 4,800 signed samples at 48 kHz,
+  reported resampling/downmixing, mapped it to C#3 and auditioned it. PCM kit
+  and FM3 editor surfaces were inspected on desktop and reserved handhelds.
+- Nova, Konkr and DMG passed real-activity playback, paired held audition,
+  audition alone, controller edits of PCM level and FM3 fine pitch, exact undo,
+  save/decode and a seek to order 3, row 48. All reported zero driver faults.
+  Seek preparation took 0.813 s / 2.976 s / 1.793 s respectively: replay is
+  cycle-exact and linear in the destination, not an instantaneous register dump.
+- Konkr and foreground DMG reported zero underruns, with 960-frame bursts and
+  1,920-frame buffers; maximum callbacks were 15.825 ms and 27.614 ms.
+  Nova's 192-frame low-latency stream needed adaptive buffering: observed runs
+  reported two to four underruns while growing from 384 to 768–1,152 frames.
+  In the extended run, the count stayed at two throughout 28 seconds of paired
+  playback/audition, at 768 frames and a maximum callback of 11.982 ms.
+  These are observed device costs, not a claim of glitch-free startup.
+- Android JNI VGM/XGM/XGC exports of Night Ferry were byte-identical to the
+  native host exports. Every sample in its 1,187,929-frame, 48 kHz stereo WAV
+  matched the host render before the latter's fade.
+- All 32 Game Boy view captures were RGBA-identical to the preceding release,
+  and the factory `.uge` was unchanged. Temporary harness source, device test
+  packages and owned captures were removed; timeouts were restored and the
+  reserved devices returned Home/asleep. `/ThorTunez` was untouched.
+
+No physical Mega Drive cartridge or human listening comparison was performed.
+The host still has substantial occupied swap, so verification remains serialized;
+the post-build sample showed no swap-out activity rather than memory saturation.
+
 ## 0.22.0 Sega Master System, Game Gear and FM Sound Unit
 
 **New blank song / Load demo → Sega 8-bit…** offers four layouts: SMS PSG,

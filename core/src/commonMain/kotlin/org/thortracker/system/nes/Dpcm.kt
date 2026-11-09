@@ -142,8 +142,8 @@ object Dpcm {
         }
     }
 
-    /** A decoded `.wav`: mono 16-bit samples and their rate. */
-    internal class Wav(val samples: ShortArray, val rate: Int) {
+    /** A decoded `.wav`: mono 16-bit samples and their rate; [channels] the file's own count (stereo was mixed to mono). */
+    internal class Wav(val samples: ShortArray, val rate: Int, val channels: Int = 1) {
         companion object {
             /** FamiStudio's `WaveFile.LoadInternal`, including how it walks chunks and converts formats. */
             fun read(b: ByteArray): Wav {
@@ -200,7 +200,7 @@ object Dpcm {
                     else -> throw IllegalArgumentException("Only 32- and 64-bit float .wav files can be imported")
                 }
                 val mono = if (channels == 2) ShortArray(values.size / 2) { i -> ((values[2 * i] + values[2 * i + 1]) / 2).toShort() } else values
-                return Wav(mono, rate)
+                return Wav(mono, rate, channels)
             }
 
             /**

@@ -10,7 +10,7 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
-Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive); VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
+Six sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive, Sega 8-bit); VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
@@ -33,8 +33,10 @@ Order below is the current intent; design notes for the chip work live in `docs/
    with Game Gear stereo, and the Japanese SMS FM Sound Unit (YM2413), with separate melodic/rhythm layouts.
    Native/reference, Android/desktop export parity, reserved-device playback and unchanged Game Boy
    checks passed; see `docs/VERIFICATION.md`. All four variants are grouped under **Sega 8-bit…**.
-5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
-   (independent operator pitches), XGM2.
+5. **Mega Drive extensions** — integrated for 0.23.0: three PCM lanes and sample kits, channel 3's independent
+   operator pitches, and the real XGM2 driver with unpacked/compiled exports. Native/reference, exported-file
+   driver playback, reserved-device edits/audition, WAV import and Game Boy parity passed; see `docs/VERIFICATION.md`
+   for measured seek latency, adaptive-buffer underruns and the upstream converter limitation.
 6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
    (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
 7. **More chips** (unordered):
