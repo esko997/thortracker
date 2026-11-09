@@ -63,7 +63,7 @@ static void derive(AyPsg* c, int reg) {
         c->noise_period = 2 * (p ? p : 1);
     } else if (reg == 11 || reg == 12) {
         const uint32_t p = c->reg[11] | (uint32_t)c->reg[12] << 8;
-        c->env_period = (p ? p : 1) * (c->ym ? 1u : 2u);
+        c->env_period = p ? p * (c->ym ? 1u : 2u) : 1u;
     }
 }
 

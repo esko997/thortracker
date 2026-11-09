@@ -160,8 +160,10 @@ def tone_hz(variant, period):
 
 
 def envelope_hz(variant, period, shape):
-    """Frequency of the envelope's audible cycle: 256 EP clocks per saw, 512 per triangle (period 0 acts as 1)."""
-    return clock_hz(variant) / ((512 if triangle(shape) else 256) * max(1, period))
+    """Audible cycle rate; EP 0 takes one clock/8 step per level (AY: 16 levels; YM: 32)."""
+    ym = YM_CHIP[variant]
+    clocks_per_step = 8 * max(1, period * (1 if ym else 2))
+    return clock_hz(variant) / (clocks_per_step * (32 if ym else 16) * (2 if triangle(shape) else 1))
 
 
 def lowest_note(variant):

@@ -311,8 +311,11 @@ object AyRules {
 
     /**
      * How often the envelope at [period] repeats with [shape]: a saw's ramp (256 · EP clocks), a triangle's two ramps
-     * (512 · EP); for the one-shot shapes, the rate of their single ramp.
+     * (512 · EP); for the one-shot shapes, the rate of their single ramp. EP 0 takes one clock/8 step per level:
+     * twice EP 1's rate on the 16-level AY, the same rate on the 32-level YM.
      */
-    fun envelopeHz(variant: AyVariant, period: Int, shape: Int): Double =
-        variant.clockHz / (256.0 * maxOf(1, period) * (if (triangle(shape)) 2 else 1))
+    fun envelopeHz(variant: AyVariant, period: Int, shape: Int): Double {
+        val clocksPerStep = 8 * maxOf(1, period * (if (variant.ym) 1 else 2))
+        return variant.clockHz / (clocksPerStep.toDouble() * (if (variant.ym) 32 else 16) * (if (triangle(shape)) 2 else 1))
+    }
 }

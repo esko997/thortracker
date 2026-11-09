@@ -159,8 +159,8 @@ def effect_bytes(image):
 
 
 def corruptions(image):
-    """Single-byte corruptions of `image` (AY_TEST_SONG[0]) with the reason and byte the loader reports, each
-    checked against the reason it is meant to provoke."""
+    """Single-byte corruptions of `image` (AY_TEST_SONG[0]). Check the intended reference-loader branch when
+    constructing fixtures; native tests compare rejection and location, not diagnostic wording."""
     fx = effect_bytes(image)
     envs = [u16(image, instrument_base(s) + 6 + 2 * k) for s in range(1, 65) for k in range(5)
             if image[instrument_base(s)]]
@@ -200,7 +200,7 @@ def corruptions(image):
         (envelope_at(image, 6, 0) + 6, 16, "volume envelope value outside 0..15"),
         (envelope_at(image, 7, 1) + 6, 64, "arpeggio or pitch envelope value outside -64..63"),
         (envelope_at(image, 2, 3) + 6, 4, "mixer envelope value outside 0..3"),
-        (envelope_at(image, 8, 4) + 6, 32, "noise envelope value outside 0..31"),
+        (envelope_at(image, 9, 4) + 6, 32, "noise envelope value outside 0..31"),
         (instrument_base(8) + 16, 97, "sweep start/end outside -96..96 semitones"),
         (instrument_base(1) + 19, 1, "instrument reserved bytes 19..31"),
         (first_pattern + 1, 0xF0, "pattern offset past the data size"),

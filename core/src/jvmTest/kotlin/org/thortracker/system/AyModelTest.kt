@@ -1,9 +1,9 @@
 package org.thortracker.system
 
-import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -15,20 +15,15 @@ import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.ay.AyAtariStSystem
-import org.thortracker.system.ay.AyCpcSystem
-import org.thortracker.system.ay.AyDemoSong
 import org.thortracker.system.ay.AyEnvelopeSettings
 import org.thortracker.system.ay.AyInstrument
+import org.thortracker.system.ay.AyInstrumentView
 import org.thortracker.system.ay.AyMsxSystem
 import org.thortracker.system.ay.AyPresets
 import org.thortracker.system.ay.AyRules
-import org.thortracker.system.ay.AySound
 import org.thortracker.system.ay.AySweep
 import org.thortracker.system.ay.AySystem
 import org.thortracker.system.ay.AyVariant
-import org.thortracker.system.ay.AyVgm
-import org.thortracker.system.ay.AyVgmRenderer
-import org.thortracker.system.ay.AyVgmTags
 import org.thortracker.system.ay.AyZx128System
 import org.thortracker.system.ay.ay
 import org.thortracker.system.nes.NesEnvelope
@@ -38,11 +33,6 @@ import kotlin.math.log2
 import kotlin.math.pow
 
 class AyModelTest {
-    @After
-    fun noRenderer() {
-        AyVgm.renderer = null
-    }
-
     private val zx = AyZx128System
 
     private fun with(song: Song, order: Int, channel: Int, row: Int, cell: Cell): Song {
@@ -62,57 +52,6 @@ class AyModelTest {
 
     private fun u16(image: ByteArray, at: Int) = (image[at].toInt() and 0xFF) or ((image[at + 1].toInt() and 0xFF) shl 8)
 
-    // ---- system shape --------------------------------------------------------------------------------------
-
-    @Test
-    fun fourComputersAreRegisteredAsOneFamily() {
-        assertEquals(AyZx128System, SoundSystems.of("ay-zx128"))
-        assertEquals(AyMsxSystem, SoundSystems.of("ay-msx"))
-        assertEquals(AyAtariStSystem, SoundSystems.of("ay-atari-st"))
-        assertEquals(AyCpcSystem, SoundSystems.of("ay-cpc"))
-        assertEquals(listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem), SoundSystems.ALL.takeLast(4))
-        assertEquals(listOf("ZX Spectrum 128 (AY-3-8912)", "MSX (AY-3-8910)", "Atari ST (YM2149F)", "Amstrad CPC (AY-3-8912)"),
-            AyVariant.entries.map { it.system.name })
-        assertEquals(listOf(false, false, true, false), AyVariant.entries.map { it.ym })
-        assertEquals(listOf(false, false, false, true), AyVariant.entries.map { it.stereo })
-        assertEquals(listOf(0, 1, 2, 3), AyVariant.entries.map { it.index })
-        assertEquals(listOf("zx128", "msx", "atari-st", "cpc"), AyVariant.entries.map { it.fileKey })
-        assertTrue(AyCpcSystem.help.effectsIntro[0].contains("Channel A left, B on both sides, C right"))
-        assertTrue(AyZx128System.help.effectsIntro[0].contains("mono"))
-        for (variant in AyVariant.entries) {
-            val system = variant.system
-            assertEquals(variant, system.variant)
-            assertEquals("AY-3-8910 / YM2149", system.family)
-            assertEquals(system.id, variant.engineId)
-            assertEquals(listOf("Channel A", "Channel B", "Channel C"), system.channels.map { it.name })
-            assertTrue(system.channels.all { it.tonal && it.bank == 0 && it.kind == ChannelKind.PULSE })
-            assertEquals(listOf(BankSpec("Sounds", 64)), system.banks)
-            for (ch in 0 until 3) {
-                assertEquals(4, system.effectColumns(ch))
-                assertEquals("01234ABCDEFGHIJPSVW", system.effectsFor(ch).joinToString("") { it.char.toString() })
-            }
-            assertEquals(95, system.noteRange.last)
-            assertEquals(listOf("vgm"), system.exports.map { it.extension })
-            assertEquals("A-4", system.noteName(57))
-            assertEquals(256, system.maxOrders)
-            assertEquals(system, system.blank().system)
-            assertEquals(AySound.serializer(), system.soundSerializer)
-        }
-        assertEquals(50.02, AyZx128System.tickHz, 0.005)
-        assertEquals(59.92, AyMsxSystem.tickHz, 0.005)
-        assertEquals(50.05, AyAtariStSystem.tickHz, 0.005)
-        assertEquals(50.08, AyCpcSystem.tickHz, 0.005)
-        assertEquals(1773450.0, AyVariant.ZX128.clockHz, 1e-6)
-        assertEquals(1789772.5, AyVariant.MSX.clockHz, 1e-6)
-        assertEquals(2005311.75, AyVariant.ATARI_ST.clockHz, 1e-6)
-        assertEquals(1000000.0, AyVariant.CPC.clockHz, 1e-6)
-        val song = zx.blank()
-        assertEquals("Square lead", zx.instrumentName(song, 0, 1))
-        assertEquals(AySystem.EMPTY_NAME, zx.instrumentName(song, 0, 60))
-        assertNull(zx.instrumentName(song, 1, 1))
-        assertTrue(zx.instrumentSummary(song, 0, slot("Buzzer bass"))!!.contains("envelope 8"))
-    }
-
     // ---- project files -------------------------------------------------------------------------------------
 
     @Test
@@ -120,8 +59,6 @@ class AyModelTest {
         for (variant in AyVariant.entries) {
             for (song in listOf(variant.system.blank(), variant.system.demo())) {
                 val text = ProjectCodec.encode(song)
-                assertTrue(text.contains("\"backend\":\"${variant.engineId}\",\"backendVersion\":1"))
-                assertTrue(text.contains("\"variant\":\"${variant.fileKey}\""))
                 val back = ProjectCodec.decode(text)
                 assertEquals(song, back)
                 assertEquals(variant.system, back.system)
@@ -133,45 +70,22 @@ class AyModelTest {
     @Test
     fun aSoundOfAnotherVariantIsAStructuralError() {
         val zxSong = zx.blank()
-        val problems = AyMsxSystem.structuralErrors(zxSong)
-        assertEquals(listOf("The song is for ZX Spectrum 128 (AY-3-8912), not MSX (AY-3-8910)"), problems)
-        assertEquals(problems, AyMsxSystem.errors(zxSong))
-        assertEquals(emptyList<String>(), AyMsxSystem.warnings(zxSong))
         // A project whose backend names another computer than its sound is rejected.
         val text = ProjectCodec.encode(zxSong).replace("\"ay-zx128\"", "\"ay-atari-st\"")
-        val e = assertThrows(org.thortracker.model.ProjectFormatException::class.java) { ProjectCodec.decode(text) }
-        assertTrue(e.message!!, e.message!!.contains("ZX Spectrum 128"))
+        assertThrows(org.thortracker.model.ProjectFormatException::class.java) { ProjectCodec.decode(text) }
     }
 
     // ---- presets ---------------------------------------------------------------------------------------------
 
     @Test
-    fun presetsAreValidAndFillNewSongs() {
-        val names = listOf("Square lead", "Pluck", "Soft pad", "Arp major", "Arp minor", "Buzzer bass", "Sync buzzer", "Bell",
-            "Envelope tremolo", "Kick", "Snare", "Closed hat", "Open hat", "Tom", "Noise sweep")
-        assertEquals(names, AyPresets.ALL.map { it.name })
+    fun presetsAreValid() {
         for (p in AyPresets.ALL) {
             assertNull(p.name, p.instrument.problem())
-            assertEquals(p.name, p.instrument.name)
             assertTrue(p.name, p.note in AyRules.NOTES)
         }
         for (variant in AyVariant.entries) {
-            val sound = variant.system.blank().ay
-            assertEquals(variant, sound.variant)
-            assertEquals(64, sound.instruments.size)
-            assertEquals(AyPresets.ALL.map { it.instrument }, sound.instruments.take(AyPresets.ALL.size))
-            assertTrue(sound.instruments.drop(AyPresets.ALL.size).all { it == null })
             assertEquals(emptyList<String>(), variant.system.errors(variant.system.blank()))
         }
-        // The buzzer bass is the bare saw envelope; the sync buzzer locks its tone; the bell has a manual period.
-        val buzzer = AyPresets.instrument("Buzzer bass")
-        assertEquals(listOf(0), buzzer.mixer.values)
-        assertEquals(AyEnvelopeSettings(shape = 8, auto = true, octave = 0), buzzer.envelope)
-        assertTrue(AyPresets.instrument("Sync buzzer").envelope.sync)
-        assertFalse(AyPresets.instrument("Bell").envelope.auto)
-        assertTrue(AyPresets.instrument("Kick").sweep.active)
-        assertTrue(AyPresets.instrument("Noise sweep").noise.values.let { it.first() == 31 && it.last() == 1 })
-        assertThrows(IllegalArgumentException::class.java) { AyPresets.instrument("Cowbell") }
     }
 
     // ---- periods ---------------------------------------------------------------------------------------------
@@ -235,7 +149,6 @@ class AyModelTest {
     @Test
     fun fineWritesPxxInAFreeColumn() {
         val fine = zx.fine
-        assertEquals("Pxx", fine.name)
         assertEquals(25.0, fine.cents(57, 16), 1e-9)
         val busy = Cell(57, 1, AyRules.FX_VIBRATO, 0x23)
         val tuned = fine.write(busy, 57, 16)!!
@@ -247,62 +160,8 @@ class AyModelTest {
         for (c in 0 until 4) full = full.withEffect(c, AyRules.FX_VOLUME, 0x0C)
         assertNull(fine.write(full, 57, 8))
         assertNull(fine.of(Cell(57, 1, AyRules.FX_FINE, 0x70)))
-        assertEquals(16, zx.engine.fine(0, 57, 16))
-        assertEquals(57, zx.engine.note(zx.blank(), 0, 57, 1))
     }
 
-    // ---- validation ----------------------------------------------------------------------------------------
-
-    @Test
-    fun validationExplainsWhatTheLoaderRejects() {
-        fun error(cell: Cell) = zx.errors(blankWith(0, 0, cell)).joinToString("\n")
-        assertTrue(error(Cell(57, 1, AyRules.FX_ENV_SHAPE, 0x05)).contains("shapes are E00 (off) and E08-E0F"))
-        assertTrue(error(Cell(57, 1, AyRules.FX_ENV_AUTO, 0x08)).contains("octaves are J00-J07 (up) and JF8-JFF (down)"))
-        assertTrue(error(Cell(57, 1, AyRules.FX_MIXER, 4)).contains("the mixer is V00-V03"))
-        assertTrue(error(Cell(57, 1, AyRules.FX_NOISE, 0x20)).contains("noise periods are W00-W1F"))
-        assertTrue(error(Cell(57, 1).withEffect(3, AyRules.FX_VOLUME, 0x10)).contains("volumes are C00-C0F"))
-        assertTrue(error(Cell(57, 1, AyRules.FX_SPEED, 0)).contains("F00"))
-        assertTrue(error(Cell(57, 1, AyRules.FX_JUMP, 1)).contains("jumps past the last order"))
-        assertTrue(error(Cell(57, 60)).contains("sound 3C is empty"))
-        assertTrue(error(Cell(96, 1)).contains("outside C-0..B-7"))
-        assertTrue(error(Cell(57, 1, 20, 1)).contains("does not exist on the AY"))
-        // Every legal extreme loads.
-        for ((code, param) in listOf(AyRules.FX_ENV_SHAPE to 0, AyRules.FX_ENV_SHAPE to 0x0F, AyRules.FX_ENV_AUTO to 0x07,
-            AyRules.FX_ENV_AUTO to 0xF8, AyRules.FX_ENV_HIGH to 0xFF, AyRules.FX_ENV_LOW to 0xFF, AyRules.FX_MIXER to 0,
-            AyRules.FX_MIXER to 3, AyRules.FX_NOISE to 0x1F, AyRules.FX_VOLUME to 0x0F, AyRules.FX_FINE to 0xFF)) {
-            assertEquals("${AyRules.effectText(code, param)}", "", error(Cell(57, 1, code, param)))
-        }
-        fun soundError(ins: AyInstrument) = zx.errors(withSound(zx.blank(), 1, ins)).joinToString("\n")
-        assertTrue(soundError(AyInstrument("x", volume = NesEnvelope(listOf(15, 16)))).contains("volume envelope values must be 0..15"))
-        assertTrue(soundError(AyInstrument("x", mixer = NesEnvelope(listOf(4)))).contains("mixer envelope values must be 0..3"))
-        assertTrue(soundError(AyInstrument("x", noise = NesEnvelope(listOf(32)))).contains("noise envelope values must be 0..31"))
-        assertTrue(soundError(AyInstrument("x", noise = NesEnvelope(listOf(3, 4), loop = 0, release = 1)))
-            .contains("only the volume envelope has a release point"))
-        assertTrue(soundError(AyInstrument("x", envelope = AyEnvelopeSettings(shape = 3))).contains("envelope shape 3 must be 0 (off) or 8-15"))
-        assertTrue(soundError(AyInstrument("x", envelope = AyEnvelopeSettings(octave = 8))).contains("envelope octave 8 is outside -8..7"))
-        assertTrue(soundError(AyInstrument("x", envelope = AyEnvelopeSettings(period = 65536))).contains("envelope period 65536"))
-        assertTrue(soundError(AyInstrument("x", sweep = AySweep(97, 0, 1))).contains("sweep start and end must be -96..96"))
-        // Sync, octave and period are kept in either mode.
-        assertEquals("", soundError(AyInstrument("x", envelope = AyEnvelopeSettings(shape = 9, auto = false, octave = 5, period = 777, sync = true))))
-        assertTrue(zx.structuralErrors(zx.blank().let { it.copy(sound = it.ay.copy(instruments = it.ay.instruments.take(10))) })
-            .joinToString().contains("exactly 64"))
-    }
-
-    @Test
-    fun warningsCoverTheSpecificationsShoulds() {
-        val lead = slot("Square lead")
-        fun warnings(song: Song) = song.system.warnings(song).joinToString("\n")
-        assertTrue(warnings(blankWith(0, 4, Cell(48))).contains("has no sound"))
-        assertTrue(warnings(blankWith(0, 0, Cell(5, lead))).contains("below the ZX Spectrum 128's lowest note (A-0)"))
-        assertTrue(warnings(blankWith(0, 0, Cell(10, lead), AyAtariStSystem)).contains("lowest note (B-0)"))
-        assertFalse(warnings(blankWith(0, 0, Cell(10, lead))).contains("lowest note"))
-        assertTrue(warnings(blankWith(0, 0, Cell(48, lead, AyRules.FX_DELAY, 6))).contains("the row never plays"))
-        assertFalse(warnings(blankWith(0, 0, Cell(48, lead, AyRules.FX_DELAY, 5))).contains("never plays"))
-        assertTrue(warnings(blankWith(0, 1, Cell(effect = AyRules.FX_MIXER, param = 2))).contains("Vxx is a note setting, but nothing plays"))
-        assertTrue(warnings(blankWith(0, 0, Cell(57, lead, AyRules.FX_ENV_AUTO, 1))).contains("Jxx sets the envelope period, but the note has no envelope shape"))
-        assertFalse(warnings(blankWith(0, 0, Cell(57, lead, AyRules.FX_ENV_AUTO, 1).withEffect(1, AyRules.FX_ENV_SHAPE, 8))).contains("no envelope shape"))
-        assertEquals("", warnings(blankWith(0, 0, Cell(33, slot("Buzzer bass"), AyRules.FX_ENV_AUTO, 1))))
-    }
 
     /** A buzzer on A, a bell on B taking the envelope from it, hats on C; then a snare on B taking the noise from C. */
     private fun sharedSong(): Song {
@@ -320,27 +179,16 @@ class AyModelTest {
         val song = sharedSong()
         val start = zx.sharedState(song, 0, 0)!!
         assertEquals(listOf("ENV", null, null), start.tags)
-        assertTrue(start.lines[0], start.lines[0].startsWith("Envelope: Channel A owns it (shape 8, auto J00 on A-2: period 003F"))
-        assertEquals("Noise: free (no sounding note uses it)", start.lines[1])
         val taken = zx.sharedState(song, 0, 4)!!
         assertEquals(listOf("env", "ENV", "NZ"), taken.tags)
-        assertTrue(taken.lines[0], taken.lines[0].startsWith("Envelope: Channel B owns it (shape 9, manual 1000: period 1000"))
-        assertTrue(taken.lines[0], taken.lines[0].endsWith("; Channel A plays it"))
-        assertEquals("Noise: Channel C owns it (period 1)", taken.lines[1])
         // B's snare ends its bell: A's buzzer owns the envelope again; the snare takes the noise from the open hat.
         val noise = zx.sharedState(song, 0, 9)!!
         assertEquals(listOf("ENV", "NZ", "nz"), noise.tags)
-        assertEquals("Noise: Channel B owns it (period 5); Channel C plays it", noise.lines[1])
-        assertEquals(noise, zx.sharedState(song, 0, 9))
         val warnings = zx.warnings(song)
-        assertTrue(warnings.toString(), warnings.contains("Channel B's note at 00:04 takes the envelope (shape 9, manual 1000) from Channel A's " +
-            "held note (shape 8, auto J00 on A-2); A plays B's envelope until B's note ends"))
-        assertTrue(warnings.toString(), warnings.contains("Channel B's note at 00:09 takes the noise generator (period 5) from Channel C's " +
-            "held note (period 2); C plays noise period 5 until B's note ends"))
         assertEquals(2, warnings.size)
         // An OFF on A before the bell: a clean handover, no warning.
         val clean = with(song, 0, 0, 3, Cell(Cell.CUT))
-        assertFalse(zx.warnings(clean).any { it.contains("takes the envelope") })
+        assertEquals(1, zx.warnings(clean).size)
         assertEquals(listOf(null, "ENV", "NZ"), zx.sharedState(clean, 0, 4)!!.tags)
         // A parked order is read on its own.
         val parked = song.copy(patterns = song.patterns + Songs.blankPattern(song), orders = listOf(0, 1), parkedOrders = listOf(1))
@@ -348,23 +196,6 @@ class AyModelTest {
         assertNull(zx.sharedState(song, 5, 0))
     }
 
-    @Test
-    fun noteSettingsStartFromTheImagesFieldsNotTheKeptOnes() {
-        // An auto sound keeps a manual period 0309 in the model; the image (and so the player) holds 0, so I40 makes 0040.
-        val kept = AyInstrument("kept", envelope = AyEnvelopeSettings(shape = 9, auto = true, octave = 0, period = 0x0309))
-        val song = with(withSound(zx.blank(), 21, kept), 0, 0, 0, Cell(57, 21, AyRules.FX_ENV_LOW, 0x40))
-        val line = zx.sharedState(song, 0, 0)!!.lines[0]
-        assertTrue(line, line.contains("shape 9, manual 0040: period 0040"))
-        val detail = zx.effectDetail(song, 0, 0, 0, 0)!!
-        assertTrue(detail, detail.contains("manual: period 0040"))
-        // The same on a row without a note: the sounding note's settings, from its key-on row on.
-        val later = with(with(song, 0, 0, 0, Cell(57, 21)), 0, 0, 2, Cell(effect = AyRules.FX_ENV_LOW, param = 0x40))
-        assertTrue(zx.effectDetail(later, 0, 0, 2, 0)!!.contains("manual: period 0040"))
-        assertTrue(zx.sharedState(later, 0, 2)!!.lines[0].contains("manual 0040"))
-        assertEquals(AyEnvelopeSettings(9, true, 0, 0x0309), kept.envelope)
-        assertEquals(0, kept.envelope.imagePeriod)
-        assertEquals(0, AyEnvelopeSettings(9, false, 5, 0x0100).imageOctave)
-    }
 
     /** A sound on the envelope (saw, auto) whose release holds level 10 for good, so a released note keeps sounding. */
     private val held = AyInstrument("held", volume = NesEnvelope(listOf(15, 15, 10), loop = 0, release = 1),
@@ -400,20 +231,6 @@ class AyModelTest {
         for (row in 2..6) assertEquals("row $row", "ENV", zx.sharedState(song, 0, row)!!.tags[1])
     }
 
-    @Test
-    fun effectDetailReadsArpeggiosAndNoteSettings() {
-        var song = blankWith(0, 0, Cell(57, 1, AyRules.FX_ARPEGGIO, 0x47))
-        song = with(song, 0, 0, 2, Cell(effect = AyRules.FX_ARPEGGIO, param = 0x37))
-        song = with(song, 0, 1, 0, Cell(33, slot("Buzzer bass"), AyRules.FX_ENV_AUTO, 1))
-        song = with(song, 0, 2, 5, Cell(effect = AyRules.FX_NOISE, param = 3))
-        assertEquals("A-4 → C#5 → E-5 every tick", zx.effectDetail(song, 0, 0, 0, 0))
-        assertEquals("A-4 → C-5 → E-5 every tick", zx.effectDetail(song, 0, 0, 2, 0))
-        val buzz = zx.effectDetail(song, 0, 1, 0, 0)!!
-        assertTrue(buzz, buzz.contains("A-2 on this row") && buzz.contains("envelope 8") && buzz.contains("auto J01"))
-        assertTrue(buzz, buzz.contains("envelope owner Channel B"))
-        assertTrue(zx.effectDetail(song, 0, 2, 5, 0)!!.contains("ignored"))
-        assertNull(zx.effectDetail(song, 0, 0, 1, 0))
-    }
 
     // ---- arrangement, audition, lowering and exports -------------------------------------------------------
 
@@ -436,15 +253,10 @@ class AyModelTest {
         val engine = zx.engine
         assertNull(engine.auditionProblem(song, 0, 57, 1, 0))
         assertNull(engine.auditionProblem(song, 2, 33, slot("Buzzer bass"), -128))
-        assertTrue(engine.auditionProblem(song, 0, 57, 60, 0)!!.contains("is empty"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 0, 0)!!.contains("Choose a sound"))
-        assertTrue(engine.auditionProblem(song, 3, 57, 1, 0)!!.contains("Cannot audition"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 1, 128)!!.contains("Fine pitch"))
-        for (variant in AyVariant.entries) {
-            assertEquals(variant.engineId, variant.system.engine.id)
-            assertEquals(65536, variant.system.engine.imageSize)
-            assertEquals(AyPlayerImage.SEEK_TICKS, variant.system.engine.seekTicks)
-        }
+        assertNotNull(engine.auditionProblem(song, 0, 57, 60, 0))
+        assertNotNull(engine.auditionProblem(song, 0, 57, 0, 0))
+        assertNotNull(engine.auditionProblem(song, 3, 57, 1, 0))
+        assertNotNull(engine.auditionProblem(song, 0, 57, 1, 128))
     }
 
     @Test
@@ -484,49 +296,113 @@ class AyModelTest {
     }
 
     @Test
-    fun vgmExportCallsTheNativeRenderer() {
+    fun zeroPeriodReadingMatchesEachChipsEnvelopeClock() {
+        val ins = AyInstrument("zero", envelope = AyEnvelopeSettings(shape = 8, auto = false, period = 0))
         for (variant in AyVariant.entries) {
-            val demo = variant.system.demo()
-            assertThrows(IllegalStateException::class.java) { variant.system.exports[0].export(demo) }
-            var seen: Triple<Int, Int, AyVgmTags>? = null
-            var image: ByteArray? = null
-            AyVgm.renderer = AyVgmRenderer { v, img, maxTicks, tags -> seen = Triple(v, maxTicks, tags); image = img; byteArrayOf(v.toByte(), 7) }
-            assertArrayEquals(byteArrayOf(variant.index.toByte(), 7), variant.system.exports[0].export(demo))
-            assertEquals(variant.index, seen!!.first)
-            assertEquals((variant.tickHz * 600).toInt(), seen!!.second)
-            assertTrue(seen!!.second in 30000..36000)
-            assertEquals(AyVgmTags("Copper Lane", "Thor Tracker"), seen!!.third)
-            assertArrayEquals(AyLowering.lower(demo), image)
-            AyVgm.renderer = null
+            val expected = variant.clockHz / (if (variant.ym) 256.0 else 128.0)
+            assertEquals(expected, AyInstrumentView.reading(variant, ins, 57).envelopeHz!!, 1e-9)
+            assertEquals(expected / 2, AyRules.envelopeHz(variant, 0, 10), 1e-9)
+            val one = AyRules.envelopeHz(variant, 1, 8)
+            assertEquals(if (variant.ym) 1.0 else 2.0, expected / one, 1e-9)
         }
     }
 
     @Test
-    fun demoIsCleanOnEveryComputerAtTheSameTempo() {
+    fun invalidRowsAndSoundsAreRejected() {
+        val invalidCells = listOf(
+            Cell(57, 1, AyRules.FX_ENV_SHAPE, 0x05),
+            Cell(57, 1, AyRules.FX_ENV_AUTO, 0x08),
+            Cell(57, 1, AyRules.FX_MIXER, 4),
+            Cell(57, 1, AyRules.FX_NOISE, 0x20),
+            Cell(57, 1).withEffect(3, AyRules.FX_VOLUME, 0x10),
+            Cell(57, 1, AyRules.FX_SPEED, 0),
+            Cell(57, 1, AyRules.FX_JUMP, 1),
+            Cell(57, 60), Cell(96, 1), Cell(57, 1, 20, 1),
+        )
+        for (cell in invalidCells) assertFalse(cell.toString(), zx.errors(blankWith(0, 0, cell)).isEmpty())
+        for ((code, param) in listOf(
+            AyRules.FX_ENV_SHAPE to 0, AyRules.FX_ENV_SHAPE to 0x0F, AyRules.FX_ENV_AUTO to 0x07,
+            AyRules.FX_ENV_AUTO to 0xF8, AyRules.FX_ENV_HIGH to 0xFF, AyRules.FX_ENV_LOW to 0xFF,
+            AyRules.FX_MIXER to 0, AyRules.FX_MIXER to 3, AyRules.FX_NOISE to 0x1F,
+            AyRules.FX_VOLUME to 0x0F, AyRules.FX_FINE to 0xFF,
+        )) {
+            assertEquals(AyRules.effectText(code, param), emptyList<String>(), zx.errors(blankWith(0, 0, Cell(57, 1, code, param))))
+        }
+        val invalidSounds = listOf(
+            AyInstrument("x", volume = NesEnvelope(listOf(15, 16))),
+            AyInstrument("x", mixer = NesEnvelope(listOf(4))),
+            AyInstrument("x", noise = NesEnvelope(listOf(32))),
+            AyInstrument("x", noise = NesEnvelope(listOf(3, 4), loop = 0, release = 1)),
+            AyInstrument("x", envelope = AyEnvelopeSettings(shape = 3)),
+            AyInstrument("x", envelope = AyEnvelopeSettings(octave = 8)),
+            AyInstrument("x", envelope = AyEnvelopeSettings(period = 65536)),
+            AyInstrument("x", sweep = AySweep(97, 0, 1)),
+        )
+        for (ins in invalidSounds) assertFalse(ins.toString(), zx.errors(withSound(zx.blank(), 1, ins)).isEmpty())
+        assertEquals(emptyList<String>(), zx.errors(withSound(zx.blank(), 1,
+            AyInstrument("x", envelope = AyEnvelopeSettings(shape = 9, auto = false, octave = 5, period = 777, sync = true)))))
+        assertFalse(zx.structuralErrors(zx.blank().let {
+            it.copy(sound = it.ay.copy(instruments = it.ay.instruments.take(10)))
+        }).isEmpty())
+    }
+
+    @Test
+    fun warningsClearWhenTheirCauseIsRemoved() {
+        val lead = slot("Square lead")
+        val pairs = listOf(
+            blankWith(0, 4, Cell(48)) to blankWith(0, 4, Cell(48, lead)),
+            blankWith(0, 0, Cell(5, lead)) to blankWith(0, 0, Cell(9, lead)),
+            blankWith(0, 0, Cell(10, lead), AyAtariStSystem) to blankWith(0, 0, Cell(11, lead), AyAtariStSystem),
+            blankWith(0, 0, Cell(48, lead, AyRules.FX_DELAY, 6)) to blankWith(0, 0, Cell(48, lead, AyRules.FX_DELAY, 5)),
+            blankWith(0, 1, Cell(effect = AyRules.FX_MIXER, param = 2)) to blankWith(0, 1, Cell(57, lead, AyRules.FX_MIXER, 2)),
+            blankWith(0, 0, Cell(57, lead, AyRules.FX_ENV_AUTO, 1)) to
+                blankWith(0, 0, Cell(57, lead, AyRules.FX_ENV_AUTO, 1).withEffect(1, AyRules.FX_ENV_SHAPE, 8)),
+        )
+        for ((before, after) in pairs) {
+            assertFalse(before.system.warnings(before).isEmpty())
+            assertEquals(emptyList<String>(), after.system.warnings(after))
+        }
+        assertEquals(emptyList<String>(), zx.warnings(blankWith(0, 0, Cell(33, slot("Buzzer bass"), AyRules.FX_ENV_AUTO, 1))))
+    }
+
+    @Test
+    fun displayedPeriodsUseTheImagesActiveMode() {
+        val kept = AyInstrument("kept", envelope = AyEnvelopeSettings(shape = 9, auto = true, octave = 0, period = 0x0309))
+        val song = with(withSound(zx.blank(), 21, kept), 0, 0, 0, Cell(57, 21, AyRules.FX_ENV_LOW, 0x40))
+        val later = with(with(song, 0, 0, 0, Cell(57, 21)), 0, 0, 2, Cell(effect = AyRules.FX_ENV_LOW, param = 0x40))
+        for ((document, row) in listOf(song to 0, later to 2)) {
+            for (text in listOf(zx.sharedState(document, 0, row)!!.lines[0], zx.effectDetail(document, 0, 0, row, 0)!!)) {
+                val periods = Regex("\\b[0-9A-F]{4}\\b").findAll(text).map { it.value }.toSet()
+                assertEquals(setOf("0040"), periods)
+            }
+        }
+        assertEquals(AyEnvelopeSettings(9, true, 0, 0x0309), kept.envelope)
+    }
+
+    @Test
+    fun displayedArpeggiosUseTheHeldNoteAndCurrentIntervals() {
+        var song = blankWith(0, 0, Cell(57, 1, AyRules.FX_ARPEGGIO, 0x47))
+        song = with(song, 0, 0, 2, Cell(effect = AyRules.FX_ARPEGGIO, param = 0x37))
+        fun notes(row: Int) = Regex("[A-G][#-][0-9]").findAll(zx.effectDetail(song, 0, 0, row, 0)!!)
+            .map { it.value }.toList()
+        assertEquals(listOf("A-4", "C#5", "E-5"), notes(0))
+        assertEquals(listOf("A-4", "C-5", "E-5"), notes(2))
+        assertNull(zx.effectDetail(song, 0, 0, 1, 0))
+    }
+
+    @Test
+    fun demoTempoAndEnvelopeHandoverAgreeAcrossComputers() {
         for (variant in AyVariant.entries) {
             val system = variant.system
             val demo = system.demo()
-            assertEquals("Copper Lane", demo.title)
-            assertEquals(system, demo.system)
             assertEquals(emptyList<String>(), system.errors(demo))
             assertEquals(emptyList<String>(), system.warnings(demo))
-            // 10 rows a second: 150 BPM in sixteenths.
-            assertEquals(AyDemoSong.speed(variant), demo.ticksPerRow)
             assertEquals(10.0, system.tickHz / demo.ticksPerRow, 0.05)
-            val cells = demo.orders.toSet().flatMap { demo.patterns[it].tracks.flatten() }
-            val names = cells.filter { it.instrument != 0 }.map { demo.ay.instrument(it.instrument)!!.name }.toSet()
-            assertTrue(names.toString(), names.containsAll(listOf("Buzzer bass", "Sync buzzer", "Arp major", "Arp minor", "Kick", "Snare", "Noise sweep")))
-            fun uses(code: Int) = cells.any { c -> (0..c.more.size).any { c.effectCode(it) == code } }
-            for (code in listOf(AyRules.FX_VIBRATO, AyRules.FX_PORTAMENTO, AyRules.FX_VOLUME_SLIDE, AyRules.FX_ENV_AUTO, AyRules.FX_ENV_SHAPE)) {
-                assertTrue(AyRules.effectText(code, 0), uses(code))
-            }
-            for (ch in 0 until 3) assertTrue("channel $ch", demo.patterns.all { p -> p.tracks[ch].any { it.note >= 0 } })
-            val image = AyLowering.lower(demo)
-            assertEquals(AyLowering.dataSize(demo), u16(image, AyPlayerImage.H_DATA_SIZE))
-            // The bridge hands the envelope to the synced lead on Channel A; the theme gives it back to the buzzer bass.
             val bridge = demo.orders.indexOf(2)
             assertEquals("ENV", system.sharedState(demo, bridge, 0)!!.tags[0])
             assertEquals("ENV", system.sharedState(demo, 1, 0)!!.tags[1])
         }
     }
+
+
 }

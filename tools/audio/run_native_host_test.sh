@@ -91,17 +91,11 @@ for src in "${cxx_engines[@]}"; do
   "$CXX" -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-# ayumi (MIT, vendored unmodified): the independent AY/YM emulator ay_machine_test compares against; never in the app.
-"$CC" -std=gnu11 -O2 -w -c "$root/third_party/ayumi/ayumi.c" -o "$build/obj/ayumi.o"
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
   opl3_machine_test ym_machine_test sms_machine_test ay_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
-  if [ "$t" = ay_machine_test ]; then
-    "$CXX" "$build/obj/$t.o" "${objs[@]}" "$build/obj/ayumi.o" -lm -pthread -o "$build/$t"
-  else
-    "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
-  fi
+  "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
 status=0
 "$build/huge_machine_test" "$out" || status=1

@@ -3216,15 +3216,18 @@ mixer (bits 0-2 tone **disable** A-C, bits 3-5 noise disable A-C, bits 6-7 I/O d
 (bit 4 M: the envelope's level, else the 4-bit level), R11/R12 envelope period (16 bits), R13 envelope shape
 (bits 0-3: hold, alternate, attack, continue).
 
-Per step (chip clock / 8; the state machine both models — AY and YM — share; MAME and ayumi agree on it):
+Per step (chip clock / 8; MAME's physical 16-level AY / 32-level YM envelope model):
 
 - **Tone** (per channel): counter + 1; when counter ≥ period (0 acts as 1) the output flips and the counter becomes
   0. So f = clock / (16 · TP), and a period shortened below the counter flips on the next step.
 - **Noise**: counter + 1; when counter ≥ 2 · period (0 acts as 1) the counter becomes 0 and the 17-bit LFSR steps:
   new bit 16 = bit 0 ⊕ bit 3, shift right (seed 1 at reset). Noise output = bit 0. f(noise clock) = clock / (16 · NP).
-- **Envelope**: when not holding, counter + 1; when counter ≥ period · `env_div` (period 0 acts as 1) the counter
+- **Envelope**: when not holding, counter + 1; when counter ≥ max(1, period · `env_div`) the counter
   becomes 0 and the envelope takes one step. **AY-3-8910/8912**: 16 levels, `env_div` 2; **YM2149**: 32 levels,
-  `env_div` 1 — the same cycle (256 · EP clocks per ramp), twice the resolution on the YM. Shapes (as MAME's
+  `env_div` 1 — for nonzero periods, the same cycle (256 · EP clocks per ramp), twice the resolution on the YM.
+  **EP = 0** advances one level per clock/8: a ramp takes 128 chip clocks on AY (twice EP=1's rate), 256 on YM
+  (the same rate as EP=1), following [MAME's envelope counter](https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp).
+  The instrument, effect and shared-envelope readings use this rate too. Shapes (as MAME's
   `set_shape` and the manuals' table): attack = bit 2; continue = 0 behaves as hold = 1 with alternate = attack (so
   0-3 = 9, 4-7 = 15); a ramp runs from the top (level max, falling) or bottom (0, rising) according to attack; at a
   ramp's end: hold → (alternate flips the direction once) and hold the last level of that direction; otherwise
@@ -3580,10 +3583,15 @@ headers, the reference or the test songs.
   LFSR sequence, all 16 shapes on both chip types against the manuals' tables, period-0 behaviour, R13 restart),
   silent advance = stepping (states after every tick of the test song), seek bit-identical to straight play, loop
   passes, live edits, audition (A-4 measured per variant, envelope buzzer pitch, release), mute, VGM bytes = the
-  reference's, the export entry point and the ops tables; **independent comparison**: the engine's register writes
-  replayed into the vendored ayumi (each channel soloed and mixed): loudness-envelope correlation and pitch per
-  window against the engine's render (on the CPC each side against an ayumi panned to give exactly that side's
-  channels: left A and B, right B and C). `wav_render_test.c` renders the four demos and the shortest valid song (one
+  reference's, the export entry point and the ops tables; **independent comparison**: 9.4 million chip steps
+  against vendored ayumi check exact tone counters/edges, noise counter/LFSR, envelope steps and gated DAC levels.
+  AY envelope phase is compared from nonzero-period R13 restarts until period changes (ayumi's duplicated
+  32-step AY model differs at those boundaries; period zero has its own MAME-derived regression). The song's
+  writes are replayed at exact chip-step timestamps through ayumi's resampler, not rounded to output samples:
+  that rounding measurably changes synced-buzzer timbre. Solo/mixed 20 ms RMS-envelope correlation must reach
+  0.95 and overall RMS must stay within 0.8–1.25 of the reference; no zero-crossing pitch estimate is made from
+  polyphony or noise. CPC sides are checked separately: left A + B, right B + C.
+  `wav_render_test.c` renders the four demos and the shortest valid song (one
   order of one row, speed 1) per variant.
 - `tools/audio/ay_reference_check.py <dir> [--vgm2wav PATH]`: the reference reproduces the trace and the VGM; the VGM
   parsed from the format alone; optionally played by libvgm.

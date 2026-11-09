@@ -4,8 +4,8 @@
  * ayumi's measured tables (MIT; see ay_psg.c).
  *
  * The chip runs in steps (chip clock / 8): three tone counters, the noise counter with its 17-bit LFSR and the
- * envelope generator (AY: 16 levels, counter period 2 EP; YM: 32 levels, period EP). The three channel outputs are
- * mixed mono (all three), or as the Amstrad CPC's stereo socket wires them (left A + B, right B + C), and every change
+ * envelope generator (AY: 16 levels, counter period 2 EP; YM: 32 levels, period EP; EP 0: one step on either chip).
+ * The channel outputs are mixed mono (all three), or as the Amstrad CPC's stereo socket wires them (left A + B, right B + C), and every change
  * of a mix goes to a blip_buf buffer as a band-limited delta at its step. With no buffer the chip advances
  * arithmetically to exactly the state stepping reaches (seeks). Registers R14/R15 (I/O) are not modelled. No
  * allocation; plain data (copyable with memcpy). */
@@ -30,7 +30,7 @@ typedef struct AyPsg {
     /* derived from the registers */
     uint32_t tone_period[3]; /* 1..4095 (0 acts as 1) */
     uint32_t noise_period;   /* 2 * (1..31): steps per LFSR step */
-    uint32_t env_period;     /* (1..65535) * divider: steps per envelope step */
+    uint32_t env_period;     /* max(1, register period * divider): steps per envelope step */
     uint8_t env_hold, env_alt; /* the shape's effective hold and alternate bits */
     /* generators */
     uint32_t tone_count[3];
