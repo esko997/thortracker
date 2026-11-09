@@ -5,7 +5,9 @@
  * Checks: the pitch tables (A-4 per variant, every note of the range within the period quantisation, the lowest
  * reachable note); image validation (each fixture corruption rejected with its exact reason and byte; variants
  * accepted only by their own engine); the player's writes and positions identical to the independent Python
- * reference player (tools/audio/ay/ay_ref.py) in every tick for every variant; chip unit checks (tone frequency by
+ * reference player (tools/audio/ay/ay_ref.py) in every tick for every variant; a note that starts silent restarting
+ * the envelope on its first audible tick (one-shot shape reused) and dropping the restart when keyed off; chip unit
+ * checks (tone frequency by
  * output transitions, the 17-bit noise LFSR sequence and its closed form, all 16 envelope shapes on the AY and the YM
  * against the manuals' table, period 0, R13 restarts, a period shortened below its counter, DAC scale, mute, the CPC's
  * stereo wiring left A + B / right B + C);
@@ -336,6 +338,131 @@ static void test_reference(const char* dir) {
         snprintf(path, sizeof path, "%s/ay_%s_image.bin", dir, KEY[v]);
         write_file(path, g_song[v].bytes, sizeof g_song[v].bytes);
         ay_machine_destroy(m);
+    }
+}
+
+/* A hardware-envelope note that starts silent (volume envelope [0, 15]; or C00, then C0F on a later row) and owns the
+ * envelope only from a later tick restarts it there, although the previous note left the same one-shot shape 9 (\___)
+ * in R13 and its ramp has ended (without the restart the note would play the held level 0); the restart is written
+ * once; a note keyed off before it sounds drops its pending restart. The player's writes go to a chip core, which shows
+ * the envelope's level before and after each tick's writes. */
+static void test_delayed_restart(void) {
+    printf("delayed envelope restart\n");
+    enum { SPEED = 2, ROWS = 8, NOTE = 48, PERIOD = 0x40, STEPS = 4000 }; /* one ramp = 16 * 0x40 * 2 = 2048 steps */
+    static const uint8_t vol_from_0[] = {2, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 15}; /* volume [0, 15], no loop or release */
+    static const uint8_t pattern[] = {
+        0x03, NOTE, 1,                    /* row 0: sound 1 (no volume envelope): R13 = 9 at once */
+        0x03, NOTE, 2,                    /* row 1: sound 2: silent tick 0, sounds from tick 1 */
+        AY_RUN | 0,                       /* row 2 */
+        0x07, NOTE, 1, AY_FX_VOLUME, 0x00, /* row 3: sound 1 at C00: silent */
+        0x04, AY_FX_VOLUME, 0x0F,         /* row 4: C0F: sounds */
+        0x07, NOTE, 2, AY_FX_CUT, 0x01,   /* row 5: sound 2 keyed off at tick 1, before it sounds */
+        AY_RUN | 1,                       /* rows 6-7 */
+    };
+    static const uint8_t rest[] = {AY_RUN | (ROWS - 1)};
+    static const int restart_tick[] = {0, 1 * SPEED + 1, 4 * SPEED}; /* the ticks that must write R13 */
+    const int at_pattern = (int)sizeof vol_from_0, at_rest = at_pattern + (int)sizeof pattern;
+    static AyImage image;
+    static AyPlayer p;
+    for (int v = 0; v < AY_VARIANTS; ++v) {
+        uint8_t* b = image.bytes;
+        memset(b, 0, sizeof image.bytes);
+        memcpy(b + AY_H_MAGIC, AY_MAGIC, 4);
+        b[AY_H_LAYOUT] = AY_LAYOUT;
+        b[AY_H_VARIANT] = (uint8_t)v;
+        b[AY_H_SPEED] = SPEED;
+        b[AY_H_ORDERS] = 1;
+        b[AY_H_INSTRUMENTS] = 2;
+        b[AY_H_DATA_SIZE] = (uint8_t)(at_rest + (int)sizeof rest);
+        b[AY_OFF_ROWS] = ROWS;
+        b[AY_OFF_ORDERS] = (uint8_t)at_pattern;
+        b[AY_OFF_ORDERS + 2] = b[AY_OFF_ORDERS + 4] = (uint8_t)at_rest;
+        for (int s = 1; s <= 2; ++s) {
+            uint8_t* rec = b + AY_OFF_INSTRUMENTS + AY_INSTRUMENT_SIZE * (s - 1);
+            rec[AY_I_FLAGS] = AY_FLAG_DEFINED; /* manual period */
+            rec[AY_I_SHAPE] = 9;
+            rec[AY_I_PERIOD] = PERIOD;
+            memset(rec + AY_I_ENV_VOLUME, 0xFF, 2 * AYP_ENVELOPES);
+        }
+        b[AY_OFF_INSTRUMENTS + AY_INSTRUMENT_SIZE + AY_I_ENV_VOLUME] = 0; /* sound 2: the volume envelope at 0 */
+        b[AY_OFF_INSTRUMENTS + AY_INSTRUMENT_SIZE + AY_I_ENV_VOLUME + 1] = 0;
+        memcpy(b + AY_OFF_DATA, vol_from_0, sizeof vol_from_0);
+        memcpy(b + AY_OFF_DATA + at_pattern, pattern, sizeof pattern);
+        memcpy(b + AY_OFF_DATA + at_rest, rest, sizeof rest);
+        if (ay_load_image(&image, v)) {
+            EXPECT(0, "%s: delayed-restart image loads: %s", KEY[v], image.info.problem);
+            continue;
+        }
+        AyPsg chip;
+        ay_psg_reset(&chip, ay_variants[v].ym, ay_variants[v].stereo);
+        ay_player_reset(&p, &image);
+        for (int i = 0; i < p.writes; ++i) ay_psg_write(&chip, p.write[i].reg, p.write[i].val);
+        int r13_bad = 0, r13_count = 0, pending_kept = 0, pending_dropped = 0;
+        for (int t = 0; t < ROWS * SPEED; ++t) {
+            const int level_before = ay_psg_env_level(&chip), held_before = chip.env_holding;
+            ay_player_tick(&p, &image);
+            int r13 = -1;
+            for (int i = 0; i < p.writes; ++i) {
+                ay_psg_write(&chip, p.write[i].reg, p.write[i].val);
+                if (p.write[i].reg == 13) r13 = p.write[i].val, ++r13_count;
+            }
+            int expected = 0;
+            for (size_t k = 0; k < sizeof restart_tick / sizeof restart_tick[0]; ++k) expected |= restart_tick[k] == t;
+            if (expected != (r13 >= 0) || (expected && r13 != 9)) ++r13_bad;
+            if (expected && t > 0) {
+                EXPECT(level_before == 0 && held_before, "%s: tick %d: the previous \\___ has ended (level %d, holding %d)",
+                       KEY[v], t, level_before, held_before);
+                EXPECT(chip.reg[8] == 0x10 && ay_psg_env_level(&chip) == chip.env_mask,
+                       "%s: tick %d: the first audible tick plays the restarted envelope (R8 %02X, level %d of %d)", KEY[v],
+                       t, chip.reg[8], ay_psg_env_level(&chip), chip.env_mask);
+            }
+            if (t == 5 * SPEED) pending_kept = p.ch[0].restart;     /* row 5 tick 0: keyed, silent */
+            if (t == 5 * SPEED + 1) pending_dropped = !p.ch[0].restart; /* row 5 tick 1: cut, phase off */
+            ay_psg_run(&chip, STEPS, NULL, NULL);
+        }
+        EXPECT(r13_bad == 0 && r13_count == 3,
+               "%s: R13 = 9 exactly at ticks 0 (key-on), 3 (volume envelope's first audible tick), 8 (C0F) (%d ticks "
+               "differ, %d R13 writes)", KEY[v], r13_bad, r13_count);
+        EXPECT(pending_kept && pending_dropped && p.ch[0].phase == AYP_OFF,
+               "%s: a silent note keeps its restart pending; keyed off it drops it (kept %d, dropped %d)", KEY[v],
+               pending_kept, pending_dropped);
+
+        /* A and C start together; C owns until row 4. A already heard that shared envelope, so the handoff must not
+         * replay its old key-on, for either a completed one-shot or a continuously cycling shape. */
+        static const uint8_t held[] = {0x03, NOTE, 1, AY_RUN | (ROWS - 2)};
+        static const uint8_t borrowed[] = {0x03, NOTE, 1, AY_RUN | 2, 0x01, AY_NOTE_OFF, AY_RUN | 2};
+        const int at_held = at_rest + (int)sizeof rest, at_borrowed = at_held + (int)sizeof held;
+        memcpy(b + AY_OFF_DATA + at_held, held, sizeof held);
+        memcpy(b + AY_OFF_DATA + at_borrowed, borrowed, sizeof borrowed);
+        b[AY_H_DATA_SIZE] = (uint8_t)(at_borrowed + (int)sizeof borrowed);
+        b[AY_OFF_ORDERS] = (uint8_t)at_held;
+        b[AY_OFF_ORDERS + 4] = (uint8_t)at_borrowed;
+        for (int shape = 9; shape <= 10; ++shape) {
+            b[AY_OFF_INSTRUMENTS + AY_I_SHAPE] = (uint8_t)shape;
+            if (ay_load_image(&image, v)) {
+                EXPECT(0, "%s: shared-envelope image loads: %s", KEY[v], image.info.problem);
+                continue;
+            }
+            ay_psg_reset(&chip, ay_variants[v].ym, ay_variants[v].stereo);
+            ay_player_reset(&p, &image);
+            for (int i = 0; i < p.writes; ++i) ay_psg_write(&chip, p.write[i].reg, p.write[i].val);
+            r13_count = 0;
+            for (int t = 0; t < ROWS * SPEED; ++t) {
+                const int before = ay_psg_env_level(&chip);
+                ay_player_tick(&p, &image);
+                for (int i = 0; i < p.writes; ++i) {
+                    ay_psg_write(&chip, p.write[i].reg, p.write[i].val);
+                    if (p.write[i].reg == 13) ++r13_count;
+                }
+                if (t == 4 * SPEED)
+                    EXPECT(chip.reg[8] == 0x10 && chip.reg[10] == 0 && ay_psg_env_level(&chip) == before,
+                           "%s: shape %d: cutting C leaves A on the uninterrupted envelope (%d -> %d)", KEY[v], shape,
+                           before, ay_psg_env_level(&chip));
+                ay_psg_run(&chip, 317, NULL, NULL);
+            }
+            EXPECT(r13_count == 1, "%s: shape %d: shared note onset writes R13 once, not again on handoff (%d writes)",
+                   KEY[v], shape, r13_count);
+        }
     }
 }
 
@@ -1525,6 +1652,7 @@ int main(int argc, char** argv) {
     test_tables();
     test_images();
     test_reference(dir);
+    test_delayed_restart();
     test_chip();
     test_silent_song();
     test_audio(dir);

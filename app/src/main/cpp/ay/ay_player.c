@@ -131,7 +131,7 @@ static int key_on(AyPlayer* p, const AyImage* image, int c, int note, const uint
     ch->sweep_end = speed ? (int8_t)rec[AY_I_SWEEP_END] * 64 : 0;
     ch->sweep_step = speed * 4;
     ch->stamp = ++p->stamps;
-    ch->restart = 1;
+    ch->restart = ch->set.shape != 0;
     ch->active = 1;
     return 1;
 }
@@ -248,7 +248,10 @@ static void emit_tick(AyPlayer* p) {
         }
     }
     p->owner = owner;
-    for (int c = 0; c < AY_CHANNELS; ++c) p->ch[c].restart = 0;
+    /* Silent notes retain their restart. Once audible, a channel hears the shared envelope even if another channel
+     * owns it; keeping its restart would spuriously retrigger that envelope on a later ownership handoff. */
+    for (int c = 0; c < AY_CHANNELS; ++c)
+        if (p->ch[c].uses_env || p->ch[c].phase == AYP_OFF) p->ch[c].restart = 0;
 }
 
 /* The position after `pos`: a held volume note loops before its release point; a released one plays its tail and

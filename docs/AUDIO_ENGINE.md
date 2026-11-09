@@ -2547,8 +2547,8 @@ state: all 0): a write equal to the shadow is not emitted. R13 is written only w
 
 **Reset** (start, audition): all player state cleared; channels: instrument 0, volume 15 (stored × 8 = 120), no
 effects, phase off, never keyed; stamp counter 0; envelope owner none; speed = header speed; position (0, 0, tick
-0). Writes: R7 = `io` | `0x3F` (`io` = the variant's bits 7-6: ZX/ST `0xC0`, MSX `0x80`), so every tone and noise
-is disabled before the first note.
+0). Writes: R7 = `io` | `0x3F` (`io` = the variant's bits 7-6: ZX/ST `0xC0`, MSX `0x80`, CPC `0x00`), so every tone
+and noise is disabled before the first note.
 
 **Tick** (positions are (order, row, tick-in-row); the host's position is the tick about to run):
 
@@ -2618,7 +2618,11 @@ The AY has one noise generator and one envelope generator for three channels; th
   `Exx` changing its shape) or when ownership moved to it from another channel (or from none) and its shape differs
   from the last R13 written (an unchanged shape keeps running: a held buzzer bass is not retriggered when a short note
   that borrowed the envelope ends). Every channel that uses the envelope sets M, so it plays the owner's envelope:
-  exactly what the hardware does. Restart pending is cleared every tick for every channel.
+  exactly what the hardware does. **Restart pending** stays set while a note is silent, then clears on its first tick
+  using the shared envelope (owner or not), or when its phase is off. A note that starts silent (a volume envelope
+  beginning at 0, `C00`) and first becomes audible as owner restarts the envelope then, even if the shape equals the
+  last R13 written. An audible non-owner has already heard the shared envelope; taking ownership later does not
+  replay its old key-on. This keeps a finished one-shot silent and a continuous envelope running through a handoff.
 - The stamp is the key-on counter, so a later note always wins; channels keyed on the same tick are ordered by
   channel (C wins over A).
 
@@ -2749,7 +2753,10 @@ headers, the reference or the test songs.
 
 - `tools/audio/run_native_host_test.sh [dir]` adds `app/src/test/cpp/ay_machine_test.c`: the tables (A-4 per
   variant, every note in range within the period quantisation), corruption checks, the player's writes and positions
-  equal to the reference in every tick for every variant, chip unit checks (tone frequency by zero crossings, noise
+  equal to the reference in every tick for every variant, the delayed envelope restart (a hardware-envelope note
+  starting silent through a volume envelope from 0 or `C00` writes R13 once on its first audible tick although the
+  previous note left the same one-shot shape, the chip then at the ramp's start; a note keyed off before it sounds
+  drops its pending restart), chip unit checks (tone frequency by zero crossings, noise
   LFSR sequence, all 16 shapes on both chip types against the manuals' tables, period-0 behaviour, R13 restart),
   silent advance = stepping (states after every tick of the test song), seek bit-identical to straight play, loop
   passes, live edits, audition (A-4 measured per variant, envelope buzzer pitch, release), mute, VGM bytes = the

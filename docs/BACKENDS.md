@@ -889,13 +889,13 @@ Decisions (made on the user's behalf; see "Open questions"):
 - **Exports**: VGM 1.71 (AY8910 family, with the variant's chip type and clock) and WAV. No `.ay`/`.sndh`/`.psg` or
   executable formats (they would need a machine-specific player we do not run).
 - **Channels** `Channel A`-`Channel C` (`ChannelKind.PULSE`, tonal, bank 0), four effect columns each, one bank of 64
-  sounds ("Sounds"), notes from the variant's lowest reachable note (ZX/MSX A-0, ST B-0: tone periods stop at 4095)
+  sounds ("Sounds"), notes from the variant's lowest reachable note (ZX/MSX A-0, ST B-0: tone periods stop at 4095; CPC C-0)
   to B-7, FamiTracker-style names (A-4 = 57 = 440 Hz), at most 256 orders, OFF = key off (the volume envelope's release
   or silence).
 
 ### AY model, lowering and exports (`core`)
 
-- **Model** (`system/ay`): `AyVariant` (enum, serialized `"zx128"`, `"msx"`, `"atari-st"`; image byte, chip name,
+- **Model** (`system/ay`): `AyVariant` (enum, serialized `"zx128"`, `"msx"`, `"atari-st"`, `"cpc"`; image byte, chip name,
   YM flag, its system, engine id, clock and tick rate from `AyPlayerImage`). `AySound(variant, instruments: 64 ×
   AyInstrument?)` (null = empty slot; a cell naming one is an error), `Song.ay`; a project's sound variant must match
   its backend (structural error otherwise, as the NES expansions). `AyInstrument(name, volume, arpeggio, pitch,

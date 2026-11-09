@@ -665,8 +665,11 @@ class Player:
                 self.out.append((13, t.shape))
                 self.last_r13 = t.shape
         self.owner = owner
+        # Silent notes retain their restart. Audible non-owners already hear the shared envelope, so an ownership
+        # handoff must not replay their old key-on.
         for t in tracks:
-            t.restart = False
+            if t.uses_env or t.phase == OFF:
+                t.restart = False
 
     @staticmethod
     def advance(t):

@@ -182,7 +182,7 @@ abstract class AySystem internal constructor(val variant: AyVariant) : SoundSyst
     override fun sharedState(song: Song, order: Int, row: Int): SharedState? = AySharedState.state(song, order, row)
 
     companion object {
-        /** New and Load demo list the three computers under this entry. */
+        /** New and Load demo list the four computers under this entry. */
         const val FAMILY = "AY-3-8910 / YM2149"
 
         const val SLOTS = AyPlayerImage.MAX_INSTRUMENTS

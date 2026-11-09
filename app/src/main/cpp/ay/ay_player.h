@@ -63,7 +63,7 @@ typedef struct AyChannel {
     int pos[AYP_ENVELOPES];
     int pitch_relative, pitch_acc;
     AySettings set;
-    int restart;         /* the envelope restarts if this channel owns it this tick */
+    int restart;         /* pending while silent; consumed when using the shared envelope (owner or not), or off */
     uint32_t stamp;      /* key-on order: the highest stamp owns the shared noise and envelope */
     int base, target;    /* pitch units */
     int fine;
