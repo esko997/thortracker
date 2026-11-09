@@ -7,8 +7,11 @@ import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.model.Cell
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
+import org.thortracker.system.ay.AyRules
+import org.thortracker.system.ay.AyVariant
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.pow
@@ -23,6 +26,24 @@ class TruePitchTest {
 
     /** NES (NTSC) pulse: CPU 1789773 Hz / (16 * (period + 1)). */
     private fun nesHz(note: Int) = 1789773.0 / (16.0 * (FamiStudioLowering.NOTE_TABLE[note - NesRules.NOTE_OFFSET] + 1))
+
+    /**
+     * EPSM SSG square (YMF288 at 8 MHz, the YM2608's SSG: tone = (8 MHz / 4) / (16 × period)): 8 MHz / 64 / tone
+     * period, the period from FamiStudio's SSG table.
+     */
+    private fun ssgHz(note: Int) =
+        8e6 / 64.0 / FamiStudioLowering.NOTE_TABLE_EPSM_SSG[NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_SSG1, note)]
+
+    /**
+     * EPSM FM channel: FamiStudio's engine halves the table value below `$200` to find the block B, then writes F-number
+     * F = value × 4 (11 bits); the OPN sounds F × 2^(B − 1) × (8 MHz / 144) / 2^20 = F × (8 MHz / 144) / 2^(21 − B).
+     */
+    private fun fmHz(note: Int): Double {
+        var v = FamiStudioLowering.NOTE_TABLE_EPSM_FM[NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_FM1, note)]
+        var block = 0
+        while (v >= 0x200) { v = v shr 1; block++ }
+        return v * 4 * (8e6 / 144.0) / 2.0.pow(21 - block)
+    }
 
     @Test fun a4IsFiftySevenAnd440HzOnBothSystems() {
         assertTrue(57 in GbSystem.noteRange && 57 in NesSystem.noteRange)
@@ -42,6 +63,51 @@ class TruePitchTest {
         }
     }
 
+    /**
+     * The 5B divides by 32 × period from the pulses' table: each square note sounds as the same note on a pulse, C-1..B-7,
+     * within one step of the 5B's (half as long) period, which is coarser at the top.
+     */
+    @Test fun s5bSquaresSoundTheSameNoteAsThePulses() {
+        val square = NesRules.S5B_SQUARE1
+        val expansion = org.thortracker.system.nes.NesExpansion.S5B
+        val top = NesRules.highestNote(expansion, square)
+        assertEquals("B-7", NesSystem.noteName(top))
+        for (note in NesRules.LOWEST_TONAL..top) {
+            val period = FamiStudioLowering.NOTE_TABLE[NesRules.engineNote(expansion, square, note)] + 1
+            val hz = 1789773.0 / (32.0 * period)
+            val step = 1200.0 * log2((period + 1.0) / period)
+            assertTrue("note $note: 5B $hz Hz vs pulse ${nesHz(note)} Hz", abs(cents(hz, nesHz(note))) <= maxOf(10.0, step))
+        }
+    }
+
+    /**
+     * FamiStudio's EPSM tables (8 MHz / 32 / f for the SSG, 144 f 2^20 / 8 MHz / 4 shifted by octave for FM) sound its
+     * note n an octave below its name on the YM2608's actual clocks, so true pitch takes n 12 higher; derived here from the
+     * chip's own frequency formulas, not from the shift constant.
+     */
+    @Test fun epsmSsgAndFmSoundTheirTrueNote() {
+        assertEquals(58, NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_SSG1, 57))
+        assertEquals(58, NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_FM1 + 5, 57))
+        assertEquals(46, NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_RHYTHM1, 57)) // drums: pitch ignored, no shift
+        assertEquals(46, NesRules.engineNote(NesExpansion.EPSM, 0, 57)) // the 2A03 stays as it was
+        assertTrue(abs(cents(ssgHz(57), 440.0)) < 1.0) // 440.1 Hz
+        assertTrue(abs(cents(fmHz(57), 440.0)) < 5.0) // 439.1 Hz
+        // Without the shift the same note would sound an octave low on both.
+        val unshifted = NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_SSG1, 57) - 12
+        assertTrue(abs(cents(8e6 / 64.0 / FamiStudioLowering.NOTE_TABLE_EPSM_SSG[unshifted], 220.0)) < 1.0)
+        // C-1..B-7 on both (B-8 would need FamiStudio's note 108).
+        for (ch in listOf(NesRules.EPSM_SSG1, NesRules.EPSM_FM1)) {
+            assertEquals(12, NesRules.lowestNote(NesExpansion.EPSM, ch))
+            assertEquals(95, NesRules.highestNote(NesExpansion.EPSM, ch))
+        }
+        assertEquals(107, NesRules.highestNote(NesExpansion.EPSM, NesRules.EPSM_RHYTHM1))
+        for (note in 12..95) {
+            // SSG periods round to whole steps (coarse at the top: 25 cents at B-7); FM frequency numbers to 9 bits.
+            assertTrue("SSG note $note: ${ssgHz(note)} Hz", abs(cents(ssgHz(note), twelveTet(note))) < 30.0)
+            assertTrue("FM note $note: ${fmHz(note)} Hz", abs(cents(fmHz(note), twelveTet(note))) < 10.0)
+        }
+    }
+
     @Test fun namesFollowEachTracker() {
         // hUGETracker: its C-3 is C2 (65.4 Hz), A-5 is A4.
         assertEquals("C-3", GbSystem.noteName(24))
@@ -55,5 +121,42 @@ class TruePitchTest {
             assertEquals("---", s.noteName(Cell.EMPTY))
             assertEquals("OFF", s.noteName(Cell.CUT))
         }
+    }
+
+    /** AY tone: chip clock / (16 · period), the period from the variant's table for the note's pitch. */
+    private fun ayHz(variant: AyVariant, note: Int) = AyRules.toneHz(variant, AyRules.tonePeriod(variant, note * 64))
+
+    @Test fun ayNotesAreTruePitchOnEveryComputer() {
+        // A-4 = 57 on each machine within its 12-bit period: ZX 252 (439.84 Hz), MSX 254 (440.40 Hz), ST 285 (439.76 Hz),
+        // CPC 142 (440.14 Hz).
+        assertEquals(252, AyRules.tonePeriod(AyVariant.ZX128, 57 * 64))
+        assertEquals(254, AyRules.tonePeriod(AyVariant.MSX, 57 * 64))
+        assertEquals(285, AyRules.tonePeriod(AyVariant.ATARI_ST, 57 * 64))
+        assertEquals(142, AyRules.tonePeriod(AyVariant.CPC, 57 * 64))
+        // A whole period is at most half a step from the exact one: its error in cents (plus the table's rounding).
+        fun bound(period: Int) = 1200.0 * log2((period + 0.5) / period) + 1.0
+        for (variant in AyVariant.entries) {
+            val system = variant.system
+            assertEquals("A-4", system.noteName(57))
+            assertEquals("B-7", system.noteName(system.noteRange.last))
+            assertTrue(abs(cents(ayHz(variant, 57), 440.0)) < 3.0)
+            for (note in system.noteRange) {
+                // Whole periods: within a few cents low down, coarser in the top octaves (the CPC's B-7 is period 16).
+                val tolerance = bound(AyRules.tonePeriod(variant, note * 64))
+                assertTrue("${variant.label} note $note", abs(cents(ayHz(variant, note), twelveTet(note))) < tolerance)
+                if (note in NesSystem.noteRange && note >= NesRules.LOWEST_TONAL && note < 84) {
+                    // Both chips round to whole periods: their errors add up (never a semitone apart).
+                    val nes = FamiStudioLowering.NOTE_TABLE[note - NesRules.NOTE_OFFSET] + 1
+                    val pair = tolerance + bound(nes) + 2.0
+                    assertTrue("${variant.label} vs NES note $note", abs(cents(ayHz(variant, note), nesHz(note))) < pair)
+                }
+            }
+        }
+        // The lowest note whose period fits 12 bits: A-0 on the ZX Spectrum 128 and MSX, B-0 on the Atari ST's faster
+        // clock, C-0 on the CPC's 1 MHz.
+        assertEquals("A-0", AyVariant.ZX128.system.noteName(AyVariant.ZX128.system.noteRange.first))
+        assertEquals("A-0", AyVariant.MSX.system.noteName(AyVariant.MSX.system.noteRange.first))
+        assertEquals("B-0", AyVariant.ATARI_ST.system.noteName(AyVariant.ATARI_ST.system.noteRange.first))
+        assertEquals("C-0", AyVariant.CPC.system.noteName(AyVariant.CPC.system.noteRange.first))
     }
 }

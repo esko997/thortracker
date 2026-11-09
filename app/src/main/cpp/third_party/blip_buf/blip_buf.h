@@ -29,6 +29,13 @@ blip_max_ratio = 1 << 20 };
 /** Clears entire buffer. Afterwards, blip_samples_avail() == 0. */
 void blip_clear( blip_t* );
 
+/** Advances the fractional sample phase of a cleared buffer without generating
+samples, in constant time. Since blip_clear(), only this function may have been
+called (no deltas, rendering or rate changes). Repeated calls are allowed.
+This preserves the phase of blip_end_frame() followed by reading all samples,
+but does not reconstruct any signal or high-pass history. */
+void blip_skip_silence( blip_t*, unsigned int clock_duration );
+
 /** Adds positive/negative delta into buffer at specified clock time. */
 void blip_add_delta( blip_t*, unsigned int clock_time, int delta );
 

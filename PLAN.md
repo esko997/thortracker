@@ -10,33 +10,89 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
-Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive), with VRC6 in 0.15.0 and VRC7 in 0.16.0 extending the NES family.
+Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
+
+VIC/TED integration targets **0.33.0/code 46** on published TIA, retaining all earlier systems
+and the format-10 tuning library. Native/reference, JVM and all three Android frontends pass;
+Linux/SDL verification and publication remain in progress. See `docs/VERIFICATION.md`.
+
+WonderSwan source integration targets **0.36.0/code 49** atop VIC/TED candidate `4b1c95e4`.
+Its pre-resampler headroom correction is preserved; build, native/reference, Android and CI/SDL
+verification remain pending. SAA 0.34 and VSU 0.35 are separate parent-owned integrations.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
    Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
-3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0)
-   and VRC7 (six two-operator FM voices, 0.16.0) are implemented, with driver/native, desktop and reserved-handheld
-   checks recorded in `docs/VERIFICATION.md`. Next: N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
-   EPSM (YMF288/OPN3-L). Source-only worktrees do not count as verified releases.
-4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
-   GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
-5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
-   (independent operator pitches), XGM2.
-6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
-   (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
+3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0),
+   VRC7 (six two-operator FM voices, 0.16.0), N163 (1-8 wavetable voices, 0.17.0), Sunsoft 5B
+   (three squares with shared noise/envelope, 0.18.0) and FDS (one 64-sample wavetable voice with modulation,
+   0.19.0) are implemented, with driver/native, desktop and reserved-handheld checks recorded in
+   `docs/VERIFICATION.md`. N163's eight channel-count variants are grouped under NES → NES + N163….
+   MMC5's two pulse voices and software-driven PCM lane shipped in 0.20.0.
+   EPSM (YMF288/OPN3-L: three SSG voices, six FM voices and six rhythm drums) shipped
+   in 0.21.0. Core/native checks, 19 permanent Android tests, 32 unchanged Game Boy
+   views, Android/desktop export parity and Nova/DMG/Konkr production playback/audition
+   checks passed. Its user-supplied rhythm ROM is never distributed.
+   Next: Sega Master System / Game Gear and the SMS FM Sound Unit.
+   Source-only worktrees do not count as verified releases.
+4. **Sega Master System / Game Gear** — integrated for 0.22.0: the real Banjo driver on a Z80, SN76489
+   with Game Gear stereo, and the Japanese SMS FM Sound Unit (YM2413), with separate melodic/rhythm layouts.
+   Native/reference, Android/desktop export parity, reserved-device playback and unchanged Game Boy
+   checks passed; see `docs/VERIFICATION.md`. All four variants are grouped under **Sega 8-bit…**.
+5. **Mega Drive extensions** — released in 0.23.0: three PCM lanes and sample kits, channel 3's independent
+   operator pitches, and the real XGM2 driver with unpacked/compiled exports. Native/reference, exported-file
+   driver playback, reserved-device edits/audition, WAV import and Game Boy parity passed; see `docs/VERIFICATION.md`
+   for measured seek latency, adaptive-buffer underruns and the upstream converter limitation.
+6. **L2+R2 third chord layer** — integrated and device-verified for 0.24.0 (keymap version 6).
+   A binding is a button plus a modifier *set* (at most two of Select/L2/R2/L3), so L2+R2+A
+   is one layer whichever trigger went down first. Routing: a press runs the chord of exactly the held set; failing
+   that, if any subset of the held set binds the button (L2+A, R2+A while both are held) the press does nothing;
+   otherwise the bare key acts. Presses keep the meaning of their DOWN through rolling releases; Android key-ups
+   flagged canceled do not trigger taps or cursor advance; edits already made on press remain. Captures track
+   held triggers correctly, including analog-trigger release on the Deck frontend. Older keymap files decode
+   unchanged and gain the new defaults. See `docs/VERIFICATION.md` for device and two-pane evidence.
+   - **Default choice for review:** L2+R2 + A/B/X/Y/↑/→/↓ show Song/Instrument/Sketch/Keyboard/Pattern/Wave/Help
+     on the *other* display, mirroring the R2 view chords, without moving controller focus (one R3 → R2+x → R3
+     sequence becomes one chord; e.g. Keyboard on the other screen beside the pattern being edited). With one
+     display (Deck, single-screen Android) they show on it. L2+R2+← stays free. No existing chord moved.
 7. **More chips** (unordered):
-   - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST, Amstrad CPC (the hardware envelope as a buzzer bass).
-   - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
-   - Konami SCC — MSX wavetable cartridge (five channels).
+   - **AY-3-8910 / YM2149 (0.25.0)** — ZX Spectrum 128, MSX, Atari ST and Amstrad CPC:
+     own player/core, shared noise and hardware-envelope ownership, buzzer/sync sounds, software envelopes,
+     VGM/WAV and Copper Lane demos. Verified on Nova, DMG, Konkr and the SDL frontend; CPC WAV retains stereo,
+     while standard AY VGM is mono.
+   - **PC Engine HuC6280 (0.26.0)** — six 32-step wavetable channels, shared LFO, noise, stereo balance and timer-driven
+     DDA samples; own player on Mednafen's PSG, controller wave/sample editors, VGM/WAV and Turbo Lanterns.
+   - **Konami SCC / SCC+ (0.27.0)** — MSX wavetable cartridges, five channels:
+     SCC (K051649, channels 4/5 share a wave) and SCC+ (K052539, five waves), own player on a port of MAME's k051649,
+     VGM/WAV, wave/envelope editors and shared-wave inspector. Verified on Nova, DMG, Konkr and the SDL frontend.
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
-   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, noise, two LFOs.
-   - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
+   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, one shared LFO, noise on channel 8, CSM.
+     Integrated for **0.29.0** ("OPM FM (YM2151)", `"ym2151-opm"`, demo "Sharp Corners"):
+     Thor Tracker's own player on ymfm at the X68000's 4 MHz, VGM/WAV export, native and independent-core
+     comparison, Nova/DMG/Konkr and SDL verification complete. No human listening or original-hardware
+     measurement claimed; `docs/VERIFICATION.md` records the evidence.
+   - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG; the YM2608 adds stereo, the LFO, six
+     rhythm drums and ADPCM-B samples.
+     Released as **0.30.0/code 43** ("PC-88/98 OPN" and "PC-88/98 OPNA", demos "Night Express" and
+     "Paper Lanterns"; Thor Tracker's own player on ymfm, VGM/WAV export, shared EPSM/OPNA rhythm firmware).
+     Native/headroom/reference checks, integration suites, 32 unchanged Game Boy views, desktop playback,
+     Nova/DMG/Konkr activity smokes, actual Android import/export pickers and legacy firmware reuse pass.
+     Independent VGM playback also verifies the exported FM/SSG mix; evidence and limits are in `docs/VERIFICATION.md`.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
+     Released as **0.31.0/code 44**, demo **Scanline Cruise**, with native volume-DAC samples,
+     NTSC/PAL timing, four effect columns, VGM/WAV export and channel-ownership inspection.
+     Native/reference comparisons, 831 JVM tests, 32 unchanged Game Boy views, all three reserved
+     Android handhelds and SDL playback/audition pass, including the official APK/AppImage artifacts.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
-   - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
+     Released **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
+     WAV-only, Cartridge Dawn demos. Native/reference, Android controller/edit/export and SDL
+     playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
+   - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
+     "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
+     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM and all three
+     Android frontends pass; Linux/SDL verification and publication remain in progress.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU — wavetable handheld.
    - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
@@ -44,12 +100,61 @@ Order below is the current intent; design notes for the chip work live in `docs/
      APU, VGM/WAV export), not yet built or verified.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
-9. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
+9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
+   [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md),
+   and independently generated 1–72 EDO (496 additions). Non-octave periods and attribution are preserved.
+   Controller paging/category/search, selected-tuning provenance and optional local `.thorscales` packs work on
+   Android and desktop; verified on Nova, DMG and Konkr, including a private 4,550-entry import.
+   No uncleared scale files in standard releases, no automatic downloads and no upstream licensing contact.
+   Project format 10 reads versions 1–9; older apps cannot read newly saved projects.
+10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
+   - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
+     and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
+     This is a roadmap target, not a working port or an established performance claim.
+   - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
+     (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
+     vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
+     No application was launched, installed or changed during this inspection.
+   - Packaging target: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects/settings outside the Pak
+     (proposed `/mnt/SDCARD/ThorTunez/`) so Pak Store replacement cannot remove user data.
+     Follow [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/), use its environment
+     and diagnostics locations, preserve global ALSA/display settings, and return cleanly to the launcher.
+     Prefer the device's vendor SDL2/GPU integration; linking and callback behavior still need an executable spike.
+   - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
+     Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
+     Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
+   - Then stress SID, OPL3, EPSM and Mega Drive with simultaneous audition, realistic projects/Undo history,
+     exports, SD-card save/recovery, suspend/resume and clean return to NextUI. Do not silently reduce chip fidelity
+     or remove systems to pass the port.
+   - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
+     stack. The installed Kotlin 2.1.0 compiler lists ARM32 hard-float, but marks it deprecated; the existing
+     16 MiB glyph atlas and full-chip CPU budget need measurement. Neither handheld port has been run yet.
+11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
+- **Korg DS-10 / DS-10+ interface discussion:** revisit the Nintendo DS instruments together and discuss
+  interface ideas that could suit Thor Tracker. Discussion only for now; no research or implementation
+  requested, and no specific interaction or feature selected yet.
+- **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
+  and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
+  - **Colour themes:** eight semantic palette roles, with independent background/text/focus contrast;
+    BRIXEQ ships DEFAULT, AMBER, DAISY, LAVENDER, LCD, LCD INV, NIGHT and DAY. For Thor Tracker,
+    discuss accessible dark/light palettes and persistent workspace selection without changing song data.
+  - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
+    and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
+    Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
+    readable, avoid flicker, and measure GPU/frame-time/power impact on Brick and Android.
+  - **Workflow:** persistent focused-parameter editing across steps; explicit step audition; bounded
+    selection randomization with one-step Undo; queued pattern/scene changes; trigless parameter locks.
+    These are research ideas, not approved implementations. Keep hardware-specific effect legality,
+    deterministic/native-export semantics and editable instrument-slot identity.
+  - BRIXEQ's complete per-step instrument snapshots are an interesting contrast to tracker instruments,
+    not a reason to replace Thor Tracker's model. Its repository has no declared project license;
+    availability of Lua in the release is not reuse permission. Discuss ideas and implement independently,
+    rather than copying its code, palettes, artwork or shaders into the GPL project.
 - **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
   hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
   display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence
@@ -64,8 +169,11 @@ Order below is the current intent; design notes for the chip work live in `docs/
   in the keymap; the L2+R2 layer is unaffected. Thresholds may need tuning on the Thor's sticks.
 - **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
   compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
-  Check available memory, swap activity and pressure before each heavy run; prefer the reserved Android hardware
-  for UI smoke tests. The host reset alone does not establish the crash cause.
+  Local Linux Gradle runs now require 8 GiB available memory and use an enforced 4 GiB/no-swap scope
+  (3 GiB reclaim threshold, two-CPU quota), created inside Distrobox around the real build.
+  Put compiler scratch and audio evidence on SSD, never RAM-backed `/tmp`; retain evidence across reboots.
+  Check available memory, swap activity and pressure before each heavy run; prefer reserved Android hardware.
+  The reset alone does not establish the cause of the latest lockup.
 
 ## Agreed MVP scope
 
@@ -190,7 +298,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - 0.11.0: C64 SID sound system (GoatTracker 2.77 playroutine + reSID), .sid/.prg/.sng export.
 - 0.12.0: OPL3 FM sound system (own player on Nuked-OPL3), up to 4 effect columns on OPL3, chord effect, curated FM editor, VGM export.
 - 0.13.0: Mega Drive sound system (YM2612 + PSG through SGDK's XGM Z80 driver), .vgm/.xgm/.xgc export.
-- L2+R2 third chord layer: scheduled, see Roadmap.
+- L2+R2 third chord layer: other-display view chords by default (keymap version 6), see Roadmap.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
 - Visible arpeggio-0 selection without inventing a parameter; OFF label retains immediate-cut semantics.

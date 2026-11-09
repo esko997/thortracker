@@ -52,10 +52,10 @@ object WsSamples {
      */
     fun fromWav(bytes: ByteArray, name: String, rateHz: Int, stereo: Boolean): WsSample {
         require(rateHz > 0) { "Sample rate $rateHz Hz is not positive" }
-        val wav = Dpcm.Wav.read(bytes)
+        val wav = Dpcm.Wav.read(bytes, preserveChannels = stereo)
         require(wav.samples.isNotEmpty()) { "The .wav file has no audio" }
-        val keep = stereo && wav.channels.size == 2
-        val sources = if (keep) wav.channels else listOf(wav.samples)
+        val keep = stereo && wav.channels == 2
+        val sources = if (keep) wav.channelSamples else listOf(wav.samples)
         val converted = sources.map { resample(it, wav.rate.toLong(), rateHz.toLong()) }
         val data = if (keep) List(converted[0].size * 2) { converted[it % 2][it / 2] } else converted[0]
         return WsSample(name.take(WsSample.MAX_NAME), data, keep, rateHz)

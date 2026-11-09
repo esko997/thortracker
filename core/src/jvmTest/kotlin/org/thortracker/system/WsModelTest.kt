@@ -523,6 +523,20 @@ class WsModelTest {
     }
 
     @Test
+    fun sharedWavReaderKeepsChannelCountWithoutAllocatingUnusedStereoCopies() {
+        val bytes = wav(6000, 2, intArrayOf(12000, -4000, -16000, 8000))
+        val mixed = org.thortracker.system.nes.Dpcm.Wav.read(bytes)
+        assertEquals(2, mixed.channels)
+        assertArrayEquals(shortArrayOf(4000, -4000), mixed.samples)
+        assertTrue(mixed.channelSamples.isEmpty())
+        val kept = org.thortracker.system.nes.Dpcm.Wav.read(bytes, preserveChannels = true)
+        assertEquals(2, kept.channels)
+        assertArrayEquals(mixed.samples, kept.samples)
+        assertArrayEquals(shortArrayOf(12000, -16000), kept.channelSamples[0])
+        assertArrayEquals(shortArrayOf(-4000, 8000), kept.channelSamples[1])
+    }
+
+    @Test
     fun starterKitIsDeterministicEightBitAudio() {
         val kit = WsStarterKit.samples()
         assertEquals(kit, WsStarterKit.samples())

@@ -6,13 +6,28 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
+import org.thortracker.system.ay.AyVgm
+import org.thortracker.system.ay.AyVgmRenderer
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
 import org.thortracker.system.ws.WsVgm
 import org.thortracker.system.ws.WsVgmRenderer
+import org.thortracker.system.pokey.PokeyVgm
+import org.thortracker.system.pokey.PokeyVgmRenderer
+import org.thortracker.system.opn.OpnVgm
+import org.thortracker.system.opn.OpnVgmRenderer
+import org.thortracker.system.opm.OpmVgm
+import org.thortracker.system.opm.OpmVgmRenderer
+import org.thortracker.system.pce.PceVgm
+import org.thortracker.system.pce.PceVgmRenderer
+import org.thortracker.system.scc.SccVgm
+import org.thortracker.system.scc.SccVgmRenderer
+import org.thortracker.system.sms.SmsExport
+import org.thortracker.system.sms.SmsVgmRenderer
 import org.thortracker.system.ym2612.YmExport
 import org.thortracker.system.ym2612.YmExportRenderer
 
@@ -47,6 +62,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     @Volatile private var closed = false
     private val pendingSong = AtomicReference<Song?>(null)
     @Volatile private var songError: String? = null
+    // Covers queueing and preparation. Native position covers publication through callback acknowledgement.
+    private val pendingTransport = AtomicInteger()
 
     /** The song the engine's current image was lowered from (audition note numbers depend on it, e.g. NES DPCM). */
     private var imageSong: Song? = null
@@ -65,7 +82,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         if (pendingSong.getAndSet(song) == null) post { applyPendingSong() }
     }
 
-    override fun play(order: Int, row: Int) = post {
+    override fun play(order: Int, row: Int) = post(transport = true) {
         applyPendingSong()
         val h = readyHandle() ?: return@post
         val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
@@ -74,7 +91,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         scheduleIdleCheck()
     }
 
-    override fun stop() = post {
+    override fun stop() = post(transport = true) {
         commandError = null   // a failed command is over once its sound is
         val h = handle
         if (h != 0L) nativeStop(h)
@@ -116,14 +133,18 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     override fun position(): PlaybackPosition = synchronized(handleLock) {
+        if (closed) return PlaybackPosition()
+        // Read before nativePosition: seeing the control task finish also sees its native publication.
+        val queued = pendingTransport.get() != 0
         val h = handle
-        if (h == 0L) return PlaybackPosition()
+        if (h == 0L) return PlaybackPosition(pending = queued)
         val packed = nativePosition(h)
-        if (packed < 0) return PlaybackPosition()
+        if (packed < 0) return PlaybackPosition(pending = queued)
         PlaybackPosition(
             playing = (packed shr 40) and 1L == 1L,
             order = ((packed shr 16) and 0xFF).toInt(),
             row = (packed and 0xFF).toInt(),
+            pending = queued || (packed shr 41) and 1L == 1L,
         )
     }
 
@@ -176,19 +197,23 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         }
     }
 
-    private fun post(block: () -> Unit) {
+    private fun post(transport: Boolean = false, block: () -> Unit) {
         if (closed) return
+        if (transport) pendingTransport.incrementAndGet()
         try {
             executor.execute {
                 try {
-                    block()
+                    if (!closed) block()
                 } catch (t: RuntimeException) {
                     // Never let a preview problem take down the host; report it instead.
                     Log.e(TAG, "audio command failed", t)
                     commandError = "Audio error: ${t.message ?: t.javaClass.simpleName}"
+                } finally {
+                    if (transport) pendingTransport.decrementAndGet()
                 }
             }
         } catch (_: RejectedExecutionException) {
+            if (transport) pendingTransport.decrementAndGet()
         }
     }
 
@@ -282,16 +307,36 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
 
         init {
             System.loadLibrary("thortracker_audio")
-            // VGM export of OPL3 and WonderSwan songs, VGM/XGM/XGC export of Mega Drive songs and WAV export of every
-            // system through the native players (core has no native code).
+            // Native VGM/XGM/XGC exports and WAV rendering (core has no native code).
             Opl3Vgm.renderer = Opl3VgmRenderer { image, maxTicks, tags ->
                 nativeOpl3Vgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            SccVgm.renderer = SccVgmRenderer { image, maxTicks, tags ->
+                nativeSccVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            PceVgm.renderer = PceVgmRenderer { image, maxTicks, tags ->
+                nativePceVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            OpmVgm.renderer = OpmVgmRenderer { image, maxTicks, tags ->
+                nativeOpmVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            OpnVgm.renderer = OpnVgmRenderer { image, maxTicks, tags ->
+                nativeOpnVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            PokeyVgm.renderer = PokeyVgmRenderer { image, maxTicks, tags ->
+                nativePokeyVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             WsVgm.renderer = WsVgmRenderer { image, maxTicks, tags ->
                 nativeWsVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            AyVgm.renderer = AyVgmRenderer { variant, image, maxTicks, tags ->
+                nativeAyVgm(variant, image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
+            SmsExport.renderer = SmsVgmRenderer { image, maxTicks, tags ->
+                nativeSmsVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
             WavExport.renderer = WavRenderer { engineId, image, options, spool ->
                 NativeWavJob(nativeWavOpen(engineId, image, options.loops, options.fadeSeconds * 1000, options.maxSeconds, spool))
@@ -335,12 +380,37 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** WonderSwan / WonderSwan Color VGM (`ws/ws_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeWsVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** POKEY VGM (`pokey/pokey_export.h`); UTF-8 tag strings; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativePokeyVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /**
+         * `opn_export_vgm` (`opn/opn_export.h`) for a YM2203 or YM2608 image (the chip is the header's); UTF-8 tags;
+         * throws IllegalArgumentException(loader problem) for a rejected image.
+         */
+        @JvmStatic private external fun nativeOpnVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** SCC or SCC+ (the image's variant); UTF-8 tag strings; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativeSccVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
+        @JvmStatic private external fun nativePceVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** UTF-8 tags; throws IllegalArgumentException(loader problem) for a rejected image. */
+        @JvmStatic private external fun nativeOpmVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** Format 0 VGM, 1 XGM, 2 XGC (`ym_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
         @JvmStatic private external fun nativeYmExport(image: ByteArray, format: Int, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** `ay_export.h`: [variant] 0 ZX Spectrum 128, 1 MSX, 2 Atari ST, 3 Amstrad CPC; UTF-8 tags; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativeAyVgm(variant: Int, image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** Master System VGM 1.51 (`sms_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativeSmsVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** `chip_wav.h`: a job rendering into [spool]; throws IllegalArgumentException(problem) when it cannot start. */
         @JvmStatic private external fun nativeWavOpen(systemId: String, image: ByteArray, loops: Int, fadeMs: Int, maxSeconds: Int, spool: String): Long
         @JvmStatic private external fun nativeWavRun(handle: Long, ticks: Int): Int
         @JvmStatic private external fun nativeWavStatus(handle: Long, out: LongArray)
         @JvmStatic private external fun nativeWavClose(handle: Long)
+
+        /**
+         * Installs the YM2608 rhythm ROM (`ym2608_rhythm_rom_install`, `ym2608_rhythm_rom.h`): process-wide firmware
+         * every chip with rhythm drums plays them from (the NES EPSM's YMF288 and the YM2608). 0 = installed (identical
+         * bytes again: no change), -1 = not 8192 bytes or other bytes than the installed ROM. Callers validate the
+         * bytes first ([org.thortracker.system.fm.Ym2608RhythmRom.problem]); never called concurrently.
+         */
+        @JvmStatic external fun nativeInstallRhythmRom(rom: ByteArray): Int
     }
 }

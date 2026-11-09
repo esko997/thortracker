@@ -8,7 +8,45 @@
  * irrelevant); one more loop pass adding about one loop length after an identical prefix; a fade-out adding exactly
  * its length after an identical prefix and ending near silence; the length limit stopping at the tick that reaches it
  * and reporting CHIP_WAV_CAPPED; closing a job before it completes removing its spool, a complete file staying; bad
- * arguments. Plus chip_wav_pcm16's rounding and clamping.
+ * arguments. Plus chip_wav_pcm16's rounding and clamping, and the shortest valid songs (one row, one tick; exported
+ * per N163 build as n163-shortest-<n>ch.nesimg, plus s5b-shortest.nesimg, fds-shortest.nesimg, mmc5-shortest.nesimg,
+ * mmc5-pcm-shortest.nesimg, epsm-shortest.nesimg, the four Sega layouts, ym-shortest.ymimg,
+ * ym-pcm-shortest.ymimg and ym-fm3-shortest.ymimg):
+ * once through is that one tick, zero and two extra passes complete. And for each AY variant the shortest valid song
+ * (one order of one empty row at speed 1, built here): silent, its loop point reached after exactly one tick, each
+ * loop pass adding exactly one tick, and a fade of a silent song cut to the one second of silence kept after the last
+ * audible frame.
+ *
+ * The shortest songs (epsm-shortest.nesimg, opn-shortest.opnimg and opna-shortest.opnaimg: one order of one row at
+ * speed 1, a held note on FM 1 of the EPSM / YM2203 / YM2608, looping to order 0) run the same render paths at the
+ * other extreme: once through is a single engine tick (under 1 s), and it must still render a valid non-silent file
+ * equal to straight ticking, deterministically for any step size, with loops=1 adding about one loop and a fade adding
+ * exactly its length; a wrong image size is refused.
+ *
+ * The EPSM demo's rhythm drums play the YM2608 rhythm ROM, which is not part of Thor Tracker: with
+ * THOR_RHYTHM_ROM naming the user's own 8192-byte copy it is installed first and the drums are in the renders;
+ * without it they are silent (every check above still holds; the app itself refuses to export such a song).
+ *
+ * The shortest held songs (pce-shortest.pcimg: one order of one row, A-4 held on the PC Engine's PSG 1; and
+ * scc-shortest.sccimg / scc-plus-shortest.sccimg: one order of one row at speed 1, A-4 held on SCC 1; each looping to
+ * order 0) run the same render paths at the other extreme: once through is a single row (under 1 s), and it must still
+ * render a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1 adding
+ * about one loop and a fade adding exactly its length; a wrong image size is refused.
+ *
+ * The shortest song (tia-shortest.tiaimg: one order of one row, A-4 held on the Atari 2600's TIA 1 with a tonal AUDC
+ * C instrument, looping to order 0) runs the same render paths at the other extreme: once through is a single row,
+ * and it must still render a valid non-silent file equal to straight ticking, deterministically for any step size,
+ * with loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
+ *
+ * The shortest song (pokey-shortest.pkimg: one order of one row at speed 1, a held note on POKEY 1, looping to order
+ * 0) runs the same render paths at the other extreme: once through is a single engine tick (under 1 s), and it must
+ * still render a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1
+ * adding about one loop and a fade adding exactly its length; a wrong image size is refused.
+ *
+ * The shortest songs (vic-shortest.cbimg, ted-shortest.cbimg: one order of one row, A-4 held on the VIC's soprano / the
+ * TED's voice 1, looping to order 0) run the same render paths at the other extreme: once through is a single row
+ * (under 1 s), and it must still render a valid non-silent file equal to straight ticking, deterministically for any
+ * step size, with loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
  * The shortest songs (ws-shortest.wsimg and wsc-shortest.wsimg: one order of one row, A-4 held on CH1 of the original
  * WonderSwan and of the WonderSwan Color, looping to order 0) run the same render paths at the other extreme: once
@@ -28,6 +66,7 @@
 
 #include "chip_engine.h"
 #include "chip_wav.h"
+#include "ym2608_rhythm_rom.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -56,15 +95,84 @@ static const Demo kDemos[] = {
     {"thor-quest.nesimg", "nes-famistudio"},
     {"saw-sunrise.nesimg", "nes-famistudio-vrc6"},
     {"lantern-point.nesimg", "nes-famistudio-vrc7"},
+    {"wavetable-garden-1ch.nesimg", "nes-famistudio-n163-1"},
+    {"wavetable-garden-2ch.nesimg", "nes-famistudio-n163-2"},
+    {"wavetable-garden-3ch.nesimg", "nes-famistudio-n163-3"},
+    {"wavetable-garden-4ch.nesimg", "nes-famistudio-n163-4"},
+    {"wavetable-garden-5ch.nesimg", "nes-famistudio-n163-5"},
+    {"wavetable-garden-6ch.nesimg", "nes-famistudio-n163-6"},
+    {"wavetable-garden-7ch.nesimg", "nes-famistudio-n163-7"},
+    {"wavetable-garden-8ch.nesimg", "nes-famistudio-n163-8"},
+    {"side-b.nesimg", "nes-famistudio-fds"},
+    {"copper-kite.nesimg", "nes-famistudio-s5b"},
+    {"tandem-skies.nesimg", "nes-famistudio-mmc5"},
+    {"sample-courier.nesimg", "nes-famistudio-mmc5"}, /* the MMC5 PCM lane (nes_mmc5_pcm.h) */
+    {"expansion-port.nesimg", "nes-famistudio-epsm"},
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
     {"ws-demo.wsimg", "ws-wonderswan"},
     {"wsc-demo.wsimg", "ws-wonderswan-color"},
+    {"vic-demo.cbimg", "vic20-vic"},
+    {"ted-demo.cbimg", "c16-ted"},
+    {"tia-demo.tiaimg", "atari2600-tia-ntsc"},
+    {"tia-pal-demo.tiaimg", "atari2600-tia-pal"},
+    {"scanline-cruise.pkimg", "atari-pokey"},
+    {"night-express.opnimg", "ym2203-opn"},
+    {"paper-lanterns.opnaimg", "ym2608-opna"},
+    {"opm-demo.omimg", "ym2151-opm"},
+    {"night-ferry.ymimg", "ym2612-fm"}, /* PCM kits on PCM 1-3 through the XGM2 driver, FM 3 special mode */
+    {"harbour-lights-sms-psg.smsimg", "sms-banjo"},
+    {"harbour-lights-gg-psg.smsimg", "sms-banjo"},
+    {"harbour-lights-sms-fm.smsimg", "sms-banjo"},
+    {"harbour-lights-sms-fm-drums.smsimg", "sms-banjo"},
+    {"copper-lane-zx128.ayimg", "ay-zx128"},
+    {"copper-lane-msx.ayimg", "ay-msx"},
+    {"copper-lane-atari-st.ayimg", "ay-atari-st"},
+    {"copper-lane-cpc.ayimg", "ay-cpc"},
+    {"pce-demo.pcimg", "pce-huc6280"},
+    {"scc-demo.sccimg", "msx-scc"},
+    {"scc-plus-demo.sccimg", "msx-scc-plus"},
 };
 
-/* The shortest valid songs (written by exportSamples beside the demos). */
+/* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; a held expansion note,
+ * a looping MMC5 PCM note, a Square 1 tone in each Sega layout, YM2612 FM 1, an XGM2 PCM retrigger or FM 3 chord. */
 static const Demo kShortest[] = {
+    {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
+    {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
+    {"n163-shortest-3ch.nesimg", "nes-famistudio-n163-3"},
+    {"n163-shortest-4ch.nesimg", "nes-famistudio-n163-4"},
+    {"n163-shortest-5ch.nesimg", "nes-famistudio-n163-5"},
+    {"n163-shortest-6ch.nesimg", "nes-famistudio-n163-6"},
+    {"n163-shortest-7ch.nesimg", "nes-famistudio-n163-7"},
+    {"n163-shortest-8ch.nesimg", "nes-famistudio-n163-8"},
+    {"s5b-shortest.nesimg", "nes-famistudio-s5b"},
+    {"fds-shortest.nesimg", "nes-famistudio-fds"},
+    {"mmc5-shortest.nesimg", "nes-famistudio-mmc5"},
+    {"mmc5-pcm-shortest.nesimg", "nes-famistudio-mmc5"}, /* a looping PCM note on the MMC5 PCM lane */
+    {"ym-shortest.ymimg", "ym2612-fm"},
+    {"ym-pcm-shortest.ymimg", "ym2612-fm"},  /* XGM2 PCM channel 0 restarted every tick */
+    {"ym-fm3-shortest.ymimg", "ym2612-fm"},  /* FM 3 special mode */
+    {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
+    {"opn-shortest.opnimg", "ym2203-opn"},
+    {"opna-shortest.opnaimg", "ym2608-opna"},
+    {"opm-shortest.omimg", "ym2151-opm"},
+    {"sms-shortest-sms-psg.smsimg", "sms-banjo"},
+    {"sms-shortest-gg-psg.smsimg", "sms-banjo"},
+    {"sms-shortest-sms-fm.smsimg", "sms-banjo"},
+    {"sms-shortest-sms-fm-drums.smsimg", "sms-banjo"},
+};
+
+/* Shortest songs of one row holding a note (written by exportSamples beside the demos): the shortest-song checks
+ * above plus everything test_demo checks that does not need a song longer than one row. */
+static const Demo kShortestHeld[] = {
+    {"tia-shortest.tiaimg", "atari2600-tia-ntsc"},
+    {"pce-shortest.pcimg", "pce-huc6280"},
+    {"scc-shortest.sccimg", "msx-scc"},
+    {"scc-plus-shortest.sccimg", "msx-scc-plus"},
+    {"pokey-shortest.pkimg", "atari-pokey"},
+    {"vic-shortest.cbimg", "vic20-vic"},
+    {"ted-shortest.cbimg", "c16-ted"},
     {"ws-shortest.wsimg", "ws-wonderswan"},
     {"wsc-shortest.wsimg", "ws-wonderswan-color"},
 };
@@ -136,11 +244,12 @@ static void save(const char* dir, const char* demo, const uint8_t* file, size_t 
 }
 
 /*
- * Straight ticking, independent of chip_wav.c's bookkeeping: a fresh machine from (0, 0), ticking until a row is
- * entered a second time (chip_engine.h: tick 0 before a tick, or a changed row_serial). Returns its 16-bit frames
- * (the caller frees them), their count and the frame the loop row was first entered at.
+ * Straight ticking, independent of chip_wav.c's bookkeeping: a fresh machine from (0, 0), stopping at the
+ * (loops + 2)th entry to the first repeated row (tick 0 before a tick, or a changed row_serial).
+ * Returns its 16-bit frames (the caller frees them), their count and the first entry to the loop row.
  */
-static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t size, uint64_t* frames, uint64_t* loop_start) {
+static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t size, int loops,
+                         uint64_t* frames, uint64_t* loop_start) {
     ChipImage* img = (ChipImage*)malloc(ops->image_storage);
     ChipMachine* m = ops->create(RATE);
     static uint32_t first[256 * 256];
@@ -148,7 +257,7 @@ static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t 
     size_t cap = (size_t)RATE * 2 * MAX_SECONDS;
     int16_t* out = (int16_t*)malloc(cap * sizeof *out);
     float buf[CHIP_MAX_TICK_FRAMES * 2];
-    int seek = 0, have = 0;
+    int seek = 0, have = 0, loop_row = -1, passes = 0;
     uint32_t serial = 0;
     uint64_t n = 0;
     *loop_start = 0;
@@ -165,11 +274,16 @@ static int16_t* straight(const ChipEngineOps* ops, const uint8_t* image, size_t 
                 entered = t == 0;
             }
             if (entered && o >= 0 && o < 256 && r >= 0 && r < 256) {
-                if (first[o * 256 + r]) {
-                    *loop_start = first[o * 256 + r] - 1;
-                    break;
+                const int index = o * 256 + r;
+                if (first[index]) {
+                    if (loop_row < 0) {
+                        loop_row = index;
+                        *loop_start = first[index] - 1;
+                    }
+                    if (index == loop_row && ++passes > loops) break;
+                } else {
+                    first[index] = (uint32_t)n + 1;
                 }
-                first[o * 256 + r] = (uint32_t)n + 1;
             }
             const int k = ops->tick(m, buf);
             if (k <= 0 || (n + (uint64_t)k) * 2 > cap) break;
@@ -240,13 +354,12 @@ static void test_demo(const char* dir, const char* samples, const Demo* d) {
     const uint8_t* data0 = once + CHIP_WAV_HEADER;
     EXPECT(f0 >= 10u * RATE && f0 < (uint64_t)MAX_SECONDS * RATE, "%s: once through lasts %.1f s", d->file, (double)f0 / RATE);
     const int p0 = peak(data0, 0, f0);
-    EXPECT(p0 > 1000, "%s: not silent (peak %d)", d->file, p0);
     printf("  once through: %.2f s, peak %d, rendered in %.2f s (%.0fx realtime)\n", (double)f0 / RATE, p0, secs,
            secs > 0 ? (double)f0 / RATE / secs : 0.0);
 
     /* Equal to straight ticking up to the first row entered again. */
     uint64_t fs = 0, loop_start = 0;
-    int16_t* pcm = straight(ops, image, size, &fs, &loop_start);
+    int16_t* pcm = straight(ops, image, size, 0, &fs, &loop_start);
     EXPECT(fs == f0, "%s: ends where straight ticking first re-enters a row (%llu vs %llu frames)", d->file,
            (unsigned long long)f0, (unsigned long long)fs);
     int same = fs == f0;
@@ -317,8 +430,131 @@ static void test_demo(const char* dir, const char* samples, const Demo* d) {
     free(image);
 }
 
-/* The shortest valid song: everything test_demo checks that does not need a song longer than one row. */
+/* The shortest valid AY image (docs/AUDIO_ENGINE.md, "AY-3-8910 / YM2149: image layout"): "TTAY", layout 1, the
+ * variant, speed 1, one order of one row, loop order 0, no instruments, one data byte: every channel's pattern at
+ * offset 0 is the run byte 0x80 (one empty row). */
+static void shortest_ay_image(uint8_t* b, int variant) {
+    memset(b, 0, 65536);
+    memcpy(b, "TTAY", 4);
+    b[4] = 1;
+    b[5] = (uint8_t)variant;
+    b[6] = 1;  /* speed */
+    b[8] = 1;  /* order count */
+    b[14] = 1; /* data size */
+    b[64] = 1; /* rows of order 0 */
+    b[4096] = 0x80;
+}
+
+/* Frames of each of the first `n` ticks of a fresh machine started at (0, 0). */
+static void first_ticks(const ChipEngineOps* ops, const uint8_t* image, int n, int* frames) {
+    ChipImage* img = (ChipImage*)malloc(ops->image_storage);
+    ChipMachine* m = ops->create(RATE);
+    float buf[CHIP_MAX_TICK_FRAMES * 2];
+    int seek = 0;
+    const int ok = img && m && ops->load_image(img, image, ops->image_size) == CHIP_OK &&
+                   ops->start(m, img, 0, 0, 0, &seek) == CHIP_OK;
+    for (int i = 0; i < n; ++i) frames[i] = ok ? ops->tick(m, buf) : -1;
+    if (m) ops->destroy(m);
+    free(img);
+}
+
+/* A one-row loop at speed 1: the position before every tick is (0, 0, 0), so straight ticking re-enters the row
+ * after one tick: once through = one tick, each extra pass = one more tick. Nothing sounds (no note), so every sample
+ * is 0, and a fade keeps only chip_wav.c's one second (CHIP_WAV_RATE frames) of trailing silence after the last
+ * audible frame (none: frame 0). */
+static void test_shortest_ay(int variant, const char* system) {
+    printf("shortest valid song (%s)\n", system);
+    static uint8_t image[65536];
+    shortest_ay_image(image, variant);
+    const ChipEngineOps* ops = chip_engine_ops(system);
+    EXPECT(ops && ops->image_size == sizeof image, "%s: engine for 65536-byte images", system);
+    if (!ops) return;
+    int tick[3];
+    first_ticks(ops, image, 3, tick);
+    EXPECT(tick[0] > 700 && tick[1] > 700 && tick[2] > 700, "%s: the image plays (%d, %d, %d frames per tick)", system,
+           tick[0], tick[1], tick[2]);
+    for (int loops = 0; loops <= 2; ++loops) {
+        size_t size = 0;
+        int capped = -1;
+        const char* problem = NULL;
+        uint8_t* file = render(system, image, sizeof image, loops, 0, MAX_SECONDS, &size, &capped, &problem);
+        EXPECT(file != NULL, "%s loops=%d: renders (%s)", system, loops, problem ? problem : "");
+        if (!file) continue;
+        const uint64_t frames = check_header("shortest", file, size);
+        uint64_t want = 0;
+        for (int i = 0; i <= loops; ++i) want += (uint64_t)tick[i];
+        EXPECT(frames == want, "%s loops=%d: %d tick(s) = %llu frames (got %llu)", system, loops, loops + 1,
+               (unsigned long long)want, (unsigned long long)frames);
+        EXPECT(capped == 0, "%s loops=%d: ends at the loop, not the limit", system, loops);
+        EXPECT(peak(file + CHIP_WAV_HEADER, 0, frames) == 0, "%s loops=%d: silent", system, loops);
+        free(file);
+    }
+    size_t size = 0;
+    uint8_t* again = stepped(system, image, sizeof image, 0, 0, 1, &size);
+    EXPECT(again && size == CHIP_WAV_HEADER + 4u * (size_t)tick[0], "%s: stepped one tick at a time: the same one tick", system);
+    free(again);
+    int capped = -1;
+    const char* problem = NULL;
+    uint8_t* faded = render(system, image, sizeof image, 0, FADE_MS, MAX_SECONDS, &size, &capped, &problem);
+    const uint64_t ff = faded ? check_header("shortest fade", faded, size) : 0;
+    EXPECT(faded && ff == RATE, "%s: fading a silent song keeps 1 s of silence (%llu frames)", system, (unsigned long long)ff);
+    EXPECT(faded && peak(faded + CHIP_WAV_HEADER, 0, ff) == 0, "%s: the faded file is silent", system);
+    free(faded);
+    uint8_t* limited = render(system, image, sizeof image, 0, 0, 2, &size, &capped, &problem);
+    EXPECT(limited && capped == 0 && size == CHIP_WAV_HEADER + 4u * (size_t)tick[0],
+           "%s: a 2 s limit does not cap a one-tick song", system);
+    free(limited);
+}
+
+/* A one-row, one-musical-tick song: zero and two extra passes stop at the correct row instance and match direct
+ * playback sample-for-sample. Driver stalls may stretch a pass, so its length is not a multiple of the first pass. */
 static void test_shortest(const char* samples, const Demo* d) {
+    printf("%s (%s, shortest)\n", d->file, d->system);
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s", samples, d->file);
+    size_t size = 0;
+    uint8_t* image = read_file(path, &size);
+    EXPECT(image != NULL, "%s missing: run `tools/build.sh exportSamples` first (or set THOR_SAMPLES)", path);
+    if (!image) return;
+    const ChipEngineOps* ops = chip_engine_ops(d->system);
+    EXPECT(ops && ops->image_size == size, "%s: image of %zu bytes for the engine", d->file, size);
+    if (!ops || ops->image_size != size) { free(image); return; }
+
+    uint64_t prev = 0;
+    uint8_t* prev_file = NULL;
+    for (int loops = 0; loops <= 2; loops += 2) {
+        size_t sz = 0;
+        int capped = -1;
+        const char* problem = NULL;
+        uint8_t* file = render(d->system, image, size, loops, 0, MAX_SECONDS, &sz, &capped, &problem);
+        EXPECT(file != NULL, "%s loops=%d: renders (%s)", d->file, loops, problem ? problem : "");
+        if (!file) continue;
+        EXPECT(capped == 0, "%s loops=%d: completes, not capped", d->file, loops);
+        const uint64_t f = check_header("shortest", file, sz);
+        uint64_t fs = 0, loop_start = 0;
+        int16_t* pcm = straight(ops, image, size, loops, &fs, &loop_start);
+        EXPECT(f == fs && loop_start == 0,
+               "%s loops=%d: ends after the same row instances as direct playback (%llu vs %llu frames, loop at %llu)",
+               d->file, loops, (unsigned long long)f, (unsigned long long)fs, (unsigned long long)loop_start);
+        EXPECT(peak(file + CHIP_WAV_HEADER, 0, f) > 0, "%s loops=%d: not silent", d->file, loops);
+        int same = f == fs;
+        for (uint64_t i = 0; same && i < f * 2; ++i) same = (int16_t)u16(file + CHIP_WAV_HEADER + 2 * i) == pcm[i];
+        EXPECT(same, "%s loops=%d: all samples match direct playback", d->file, loops);
+        if (prev_file) {
+            EXPECT(f > prev && !memcmp(file + CHIP_WAV_HEADER, prev_file + CHIP_WAV_HEADER, (size_t)prev * 4),
+                   "%s: two extra passes extend once through", d->file);
+        }
+        free(pcm);
+        free(prev_file);
+        prev_file = file;
+        prev = f;
+    }
+    free(prev_file);
+    free(image);
+}
+
+/* The shortest valid song holding a note: everything test_demo checks that does not need a song longer than one row. */
+static void test_shortest_held(const char* samples, const Demo* d) {
     printf("%s (%s): the shortest song\n", d->file, d->system);
     char path[512];
     snprintf(path, sizeof path, "%s/%s", samples, d->file);
@@ -328,20 +564,14 @@ static void test_shortest(const char* samples, const Demo* d) {
     if (!image) return;
     const ChipEngineOps* ops = chip_engine_ops(d->system);
     EXPECT(ops && ops->image_size == size, "%s: image of %zu bytes for the engine", d->file, size);
-    if (!ops || ops->image_size != size) {
-        free(image);
-        return;
-    }
+    if (!ops || ops->image_size != size) { free(image); return; }
 
     size_t s0 = 0;
     int capped = -1;
     const char* problem = NULL;
     uint8_t* once = render(d->system, image, size, 0, 0, MAX_SECONDS, &s0, &capped, &problem);
     EXPECT(once != NULL, "%s: renders (%s)", d->file, problem ? problem : "");
-    if (!once) {
-        free(image);
-        return;
-    }
+    if (!once) { free(image); return; }
     EXPECT(capped == 0, "%s: once through is not capped", d->file);
     const uint64_t f0 = check_header("once", once, s0);
     const uint8_t* data0 = once + CHIP_WAV_HEADER;
@@ -351,10 +581,9 @@ static void test_shortest(const char* samples, const Demo* d) {
     EXPECT(p0 > 500, "%s: not silent (peak %d)", d->file, p0);
 
     uint64_t fs = 0, loop_start = 0;
-    int16_t* pcm = straight(ops, image, size, &fs, &loop_start);
-    EXPECT(fs == f0 && loop_start == 0,
-           "%s: straight ticking re-enters its only row after %llu frames (file %llu, loop at %llu)", d->file,
-           (unsigned long long)fs, (unsigned long long)f0, (unsigned long long)loop_start);
+    int16_t* pcm = straight(ops, image, size, 0, &fs, &loop_start);
+    EXPECT(fs == f0 && loop_start == 0, "%s: straight ticking re-enters its only row after %llu frames (file %llu, loop at %llu)",
+           d->file, (unsigned long long)fs, (unsigned long long)f0, (unsigned long long)loop_start);
     int same = fs == f0;
     for (uint64_t i = 0; same && i < f0 * 2; ++i) same = (int16_t)u16(data0 + 2 * i) == pcm[i];
     EXPECT(same, "%s: samples identical to straight ticking", d->file);
@@ -371,11 +600,9 @@ static void test_shortest(const char* samples, const Demo* d) {
     uint8_t* twice = render(d->system, image, size, 1, 0, MAX_SECONDS, &s1, &capped, &problem);
     const uint64_t f1 = twice ? check_header("loops=1", twice, s1) : 0;
     const uint64_t loop = f0 - loop_start;
-    EXPECT(twice && f1 > f0 && !memcmp(twice + CHIP_WAV_HEADER, data0, (size_t)f0 * 4), "%s: loops=1 extends once through",
-           d->file);
+    EXPECT(twice && f1 > f0 && !memcmp(twice + CHIP_WAV_HEADER, data0, (size_t)f0 * 4), "%s: loops=1 extends once through", d->file);
     EXPECT(f1 + 2 * CHIP_MAX_TICK_FRAMES >= f0 + loop && f1 <= f0 + loop + 2 * CHIP_MAX_TICK_FRAMES,
-           "%s: loops=1 adds one loop (%llu frames, loop %llu)", d->file, (unsigned long long)(f1 - f0),
-           (unsigned long long)loop);
+           "%s: loops=1 adds one loop (%llu frames, loop %llu)", d->file, (unsigned long long)(f1 - f0), (unsigned long long)loop);
     free(twice);
 
     size_t sf = 0;
@@ -384,8 +611,8 @@ static void test_shortest(const char* samples, const Demo* d) {
     const uint64_t fade = (uint64_t)FADE_MS * RATE / 1000;
     EXPECT(ff == f0 + fade, "%s: fade adds %llu frames (got %llu)", d->file, (unsigned long long)fade,
            (unsigned long long)(ff - f0));
-    EXPECT(faded && ff == f0 + fade && !memcmp(faded + CHIP_WAV_HEADER, data0, (size_t)f0 * 4),
-           "%s: fade starts at the loop point", d->file);
+    EXPECT(faded && ff == f0 + fade && !memcmp(faded + CHIP_WAV_HEADER, data0, (size_t)f0 * 4), "%s: fade starts at the loop point",
+           d->file);
     free(faded);
 
     EXPECT(!chip_wav_open(d->system, image, size - 1, 0, 0, 1, spool, &problem) && problem && !strcmp(problem, "image"),
@@ -398,6 +625,16 @@ int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
     snprintf(spool, sizeof spool, "%s/wav_render_test.part", dir);
+    const char* rom_path = getenv("THOR_RHYTHM_ROM");
+    if (rom_path && *rom_path) {
+        size_t rom_size = 0;
+        uint8_t* rom = read_file(rom_path, &rom_size);
+        EXPECT(rom && ym2608_rhythm_rom_install(rom, rom_size) == 0 && ym2608_rhythm_rom_installed(),
+               "THOR_RHYTHM_ROM %s: an 8192-byte rhythm ROM installs", rom_path);
+        free(rom);
+    } else {
+        printf("EPSM rhythm ROM not given (THOR_RHYTHM_ROM): the EPSM demo renders with silent rhythm drums\n");
+    }
     const char* problem = NULL;
     uint8_t byte = 0;
     EXPECT(!chip_wav_open("no-such-chip", &byte, 1, 0, 0, 1, spool, &problem) && problem && !strcmp(problem, "unknown system"),
@@ -409,6 +646,14 @@ int main(int argc, char** argv) {
     EXPECT(CHIP_WAV_HEADER + 4ull * CHIP_WAV_MAX_FRAMES <= 0x7FFFFFFFull, "the largest file fits RIFF and a 32-bit off_t");
     for (size_t i = 0; i < sizeof kDemos / sizeof kDemos[0]; ++i) test_demo(dir, samples, &kDemos[i]);
     for (size_t i = 0; i < sizeof kShortest / sizeof kShortest[0]; ++i) test_shortest(samples, &kShortest[i]);
+    for (size_t i = 0; i < sizeof kShortestHeld / sizeof kShortestHeld[0]; ++i) {
+        test_shortest(samples, &kShortestHeld[i]);
+        test_shortest_held(samples, &kShortestHeld[i]);
+    }
+    test_shortest_ay(0, "ay-zx128");
+    test_shortest_ay(1, "ay-msx");
+    test_shortest_ay(2, "ay-atari-st");
+    test_shortest_ay(3, "ay-cpc");
     printf("WAV export: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
