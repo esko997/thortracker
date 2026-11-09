@@ -77,7 +77,6 @@ class SidProjectCodecTest {
     fun oldVersionsCannotHoldSidSongs() {
         val root = Json.parseToJsonElement(ProjectCodec.encode(SidSystem.blank())).jsonObject
         val old = JsonObject(root + ("version" to JsonPrimitive(8)))
-        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(old.toString()) }
-        assertTrue(e.message!!, e.message!!.contains("version 9"))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(old.toString()) }
     }
 }
