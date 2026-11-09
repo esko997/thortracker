@@ -60,6 +60,10 @@
 # tools/audio/opm/opm_reference_check.py.
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
+# POKEY: <dir>/pokey_song.bin, pokey_song_pal.bin (the test images), pokey_trace.txt, pokey_trace_pal.txt (per-tick and
+# per-interrupt player writes with their machine cycles), pokey_porta.bin and pokey_trace_porta.txt (sticky portamento
+# over samples), pokey_song.vgm, pokey_song.wav, pokey_tone.wav and pokey_chip_cases.txt (chip scenarios: writes and
+# every output change), the inputs of the Python reference checks.
 # The engines are C except reSID, ymfm and Mednafen's PC Engine PSG (C++): C sources (emu2413, the VRC7's FM chip,
 # included) build with $CC, reSID, ymfm, the PSG and their C wrappers with $CXX (the PSG through pce/pce_psg.cpp, which
 # includes the vendored pce_psg.cpp against its shim headers), and the tests link with $CXX (libstdc++), as the app
@@ -80,6 +84,7 @@ includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid"
   -I "$root/third_party/ayumi" -I "$root/app/src/test/cpp")
 includes+=(-I "$cpp/opm")
 includes+=(-I "$cpp/opn")
+includes+=(-I "$cpp/pokey")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -93,6 +98,8 @@ c_engines=(
   "$cpp/opl3/opl3_vgm.c" "$cpp/third_party/nuked-opl3/opl3.c" "$cpp/vgm_gd3.c"
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
+  "$cpp/pokey/pokey_engine.c" "$cpp/pokey/pokey_machine.c" "$cpp/pokey/pokey_player.c" "$cpp/pokey/pokey_chip.c"
+  "$cpp/pokey/pokey_image.c" "$cpp/pokey/pokey_vgm.c"
   "$cpp/ym2608_rhythm_rom.c" "$cpp/opn/opn_image.c" "$cpp/opn/opn_player.c" "$cpp/opn/opn_vgm.c" "$cpp/opn/opn_chip.c"
   "$cpp/opn/opn_machine.c"
   "$cpp/opm/opm_chip.c" "$cpp/opm/opm_machine.c" "$cpp/opm/opm_player.c" "$cpp/opm/opm_image.c" "$cpp/opm/opm_vgm.c"
@@ -118,7 +125,7 @@ for src in "${cxx_engines[@]}"; do
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
-  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test wav_render_test; do
+  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test pokey_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -137,6 +144,7 @@ status=0
 "$build/nes_mix_budget_test" || status=1
 "$build/sid_machine_test" "$out" || status=1
 "$build/opl3_machine_test" "$out" || status=1
+"$build/pokey_machine_test" "$out" || status=1
 "$build/ym_machine_test" "$out" || status=1
 "$build/opn_machine_test" "$out" || status=1
 "$build/sms_machine_test" "$out" || status=1

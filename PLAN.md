@@ -13,6 +13,10 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
+POKEY integration targets **0.31.0/code 44** on verified OPN/OPNA `c3c054f`, retaining OPM and the
+format-10 tuning library. Native/reference, Kotlin, Android and SDL checks pass; publication is pending.
+Human listening and physical-chip fidelity remain unverified; evidence is in `docs/VERIFICATION.md`.
+
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
@@ -67,12 +71,16 @@ Order below is the current intent; design notes for the chip work live in `docs/
      measurement claimed; `docs/VERIFICATION.md` records the evidence.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG; the YM2608 adds stereo, the LFO, six
      rhythm drums and ADPCM-B samples.
-     Implemented for **0.30.0/code 43** ("PC-88/98 OPN" and "PC-88/98 OPNA", demos "Night Express" and
+     Released as **0.30.0/code 43** ("PC-88/98 OPN" and "PC-88/98 OPNA", demos "Night Express" and
      "Paper Lanterns"; Thor Tracker's own player on ymfm, VGM/WAV export, shared EPSM/OPNA rhythm firmware).
      Native/headroom/reference checks, integration suites, 32 unchanged Game Boy views, desktop playback,
      Nova/DMG/Konkr activity smokes, actual Android import/export pickers and legacy firmware reuse pass.
      Independent VGM playback also verifies the exported FM/SSG mix; evidence and limits are in `docs/VERIFICATION.md`.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
+     Implemented for **0.31.0/code 44**, demo **Scanline Cruise**, with native volume-DAC samples,
+     NTSC/PAL timing, four effect columns, VGM/WAV export and channel-ownership inspection.
+     Native/reference comparisons, 831 JVM tests, 32 unchanged Game Boy views, all three reserved
+     Android handhelds and SDL playback/audition pass; release publication remains pending.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.

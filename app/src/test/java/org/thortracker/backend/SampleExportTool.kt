@@ -29,6 +29,8 @@ import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
 import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
+import org.thortracker.system.pokey.PokeyDemoSong
+import org.thortracker.system.pokey.PokeySystem
 import org.thortracker.system.opn.OpnChip
 import org.thortracker.system.opn.OpnDemoSong
 import org.thortracker.system.opn.OpnSystem
@@ -341,6 +343,14 @@ object SampleExportTool {
         File(directory, "neon-causeway.thor").writeText(ProjectCodec.encode(ym), Charsets.UTF_8)
         File(directory, "neon-causeway.ymimg").writeBytes(ByteArray(YmSystem.engine.imageSize).also { YmSystem.engine.lower(ym, it) })
         println("Exported ${ym.title} to ${directory.absolutePath}")
+        // The POKEY demo and the shortest valid POKEY song: project and engine images for the native renderers (VGM
+        // needs the native player).
+        val pokey = PokeySystem.demo()
+        File(directory, "scanline-cruise.thor").writeText(ProjectCodec.encode(pokey), Charsets.UTF_8)
+        File(directory, "scanline-cruise.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(pokey, it) })
+        val pokeyShortest = PokeyDemoSong.shortest()
+        File(directory, "pokey-shortest.pkimg").writeBytes(ByteArray(PokeySystem.engine.imageSize).also { PokeySystem.engine.lower(pokeyShortest, it) })
+        println("Exported ${pokey.title} and ${pokeyShortest.title} to ${directory.absolutePath}")
         // The PC-88/98 OPN (YM2203) and OPNA (YM2608) demos: projects and engine images (their VGMs need the native
         // player: tools/audio/render_opn_image.sh renders them). Neither demo has rhythm notes, so neither needs the
         // rhythm ROM. Then each chip's shortest valid song (one one-row order at speed 1, one held FM 1 note), whose

@@ -27,6 +27,8 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM2 driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "atari-pokey"     Thor Tracker's own player on the Atari 8-bit POKEY, an own cycle-exact model
+ *                     (pokey/pokey_engine.c over pokey/pokey_machine.c, pokey_player.c, pokey_chip.c, pokey_image.c)
  *   "ym2203-opn"      Thor Tracker's own OPN player on a YM2203 (ymfm): FM 1-3, SSG 1-3
  *   "ym2608-opna"     the same player on a YM2608 (ymfm): FM 1-6, SSG 1-3, the six rhythm drums (the user-installed
  *                     rhythm ROM, ym2608_rhythm_rom.h) and ADPCM-B from the image's sample memory

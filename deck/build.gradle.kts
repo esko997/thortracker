@@ -59,6 +59,12 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ym/ym_xgm.c").asFile,
         engineSrc.file("ym/ym_vgm.c").asFile,
         engineSrc.file("ym/ym_psg.c").asFile,
+        engineSrc.file("pokey/pokey_engine.c").asFile,
+        engineSrc.file("pokey/pokey_machine.c").asFile,
+        engineSrc.file("pokey/pokey_player.c").asFile,
+        engineSrc.file("pokey/pokey_chip.c").asFile,
+        engineSrc.file("pokey/pokey_image.c").asFile,
+        engineSrc.file("pokey/pokey_vgm.c").asFile,
         engineSrc.file("ym2608_rhythm_rom.c").asFile,
         engineSrc.file("opn/opn_chip.c").asFile,
         engineSrc.file("opn/opn_machine.c").asFile,
@@ -103,7 +109,7 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "opn", "opm", "sms", "ay", "pce", "scc", "third_party/chips", "third_party/blip_buf",
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "pokey", "opn", "opm", "sms", "ay", "pce", "scc", "third_party/chips", "third_party/blip_buf",
             "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
@@ -119,6 +125,8 @@ val buildEngine by tasks.registering(Exec::class) {
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
+        "pokey/pokey_chip.h", "pokey/pokey_image.h", "pokey/pokey_player.h", "pokey/pokey_machine.h", "pokey/pokey_vgm.h",
+        "pokey/pokey_export.h",
         "ym2608_rhythm_rom.h", "opn/opn_image.h", "opn/opn_player.h", "opn/opn_ymfm.h", "opn/opn_machine.h", "opn/opn_vgm.h",
         "opn/opn_export.h",
         "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm2_driver_image.h",
@@ -176,7 +184,7 @@ kotlin {
                 // ym2608_rhythm_rom.h: ym2608_rhythm_rom_install / ym2608_rhythm_rom_installed for the Deck's rhythm ROM;
                 // opn/opn_export.h: the OPN / OPNA VGM export.
                 includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"),
-                    engineSrc.dir("ay"), engineSrc.dir("pce"), engineSrc.dir("scc"), engineSrc.dir("opm"), engineSrc.dir("opn"))
+                    engineSrc.dir("ay"), engineSrc.dir("pce"), engineSrc.dir("scc"), engineSrc.dir("opm"), engineSrc.dir("opn"), engineSrc.dir("pokey"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

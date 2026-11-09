@@ -1340,6 +1340,126 @@ roadmap autonomously):
   ADPCM-B kick, snare and a looping voice from the starter kit, SSG; no rhythm notes, so it plays without the ROM).
   `OpnDemoSong.shortest(chip)` is the one-row song of the WAV export test.
 
+## POKEY backend (Atari 8-bit)
+
+Integrated for **0.31.0/code 44** with verified OPN/OPNA `c3c054f`. Native/reference, Kotlin, Android
+and SDL verification passes; see `VERIFICATION.md`. Human listening and original-hardware fidelity remain unverified.
+
+The Atari 400/800/XL/XE's POKEY has no console sound driver to run, so it follows the OPL3 precedent: Thor Tracker's
+own player (`pokey/pokey_player.c`) on its own cycle-exact POKEY model (`pokey/pokey_chip.c`, after the Altirra Hardware
+Reference Manual, Altirra 4.40 and MAME), exported as VGM. The contract (chip, image layout, player, effects, seek,
+VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
+
+### POKEY model, lowering and exports
+
+- **System** (`system/pokey`): `PokeySystem`, id `"atari-pokey"`, name "Atari 8-bit (POKEY)", four channels `POKEY 1`-
+  `POKEY 4` (`ChannelKind.VOICE`, tonal: noise distortions pick a rate from the note), four effect columns each, notes
+  C-0..B-8 (absolute 0..107 = the player's note; FamiTracker-style names, A-4 = 57 = 440 Hz), one bank of 64 slots,
+  one tick per video frame × multispeed (`ticksPerSecond` = the song machine's frame rate × multispeed: NTSC
+  59.92, PAL 49.86), at most 256 orders. OFF is a release: envelopes with a release step jump to it; a sound whose
+  volume envelope has no release step goes silent at once; a sample stops. Song settings (Song view): Machine
+  (NTSC/PAL), Multispeed 1-4, Noise (17- or 9-bit generator at the start) and Base clock (64 or 15 kHz at the start).
+  Fine pitch is `Pxx` (xx − 80 sixty-fourths of a semitone) in any free column, as on the OPL3. Constants come from
+  `backend/PokeyPlayerImage`, a hand-kept mirror of `pokey_image.h` and the machine constants (change both together).
+- **Chip data** (`PokeySound`): 64 slots (`null` = empty), up to 32 `PokeySample`s (4-bit levels 0..15, at most 32768
+  each, all of them sharing 32768 levels of memory), the machine, multispeed and the AUDCTL bits the song starts with
+  (`poly9`, `base15`). A `PokeyInstrument` has a **kind** (`PokeyKind`: 8-bit, 16-bit, high-pass, 16-bit high-pass,
+  samples), `fast` (the 1.79 MHz clock where the kind allows it), FamiStudio-style `NesEnvelope`s for volume (0..15),
+  arpeggio (semitones), pitch (sixteenths of a semitone, absolute or `pitchRelative`) and distortion
+  (`PokeyDistortion` 0..8: AUDC 0 2 4 6 8 A C E and volume only), the high-pass `filterOffset` and `difference` mode,
+  the partner channels' distortion and volume, and for samples the sample index, root note, rate (levels per second
+  at the root) and loop. Switching a kind in the editor keeps every field (a lossless switch back); only the fields the
+  kind uses are validated and lowered.
+- **Kinds and channel taking**: a note takes every POKEY channel its kind needs (8-bit: its own; 16-bit on 2/4: also
+  1/3, the low byte; high-pass on 1/2: also 3/4, the clock; 16-bit high-pass on 2: all four; samples on 1, 2 or 4),
+  cutting whatever voice held them. Envelope release steps may sit on any of the four envelopes, with or without a
+  loop (the image's rule: 1..length − 1, after the loop if there is one).
+- **Straight-play walk** (`PokeyStraightPlay`, `PokeySongState.kt`): runs rows in order (jumps and delays ignored) as
+  the player decides channel ownership — instruments, notes, OFF and `Sxx`, portamento (a `3xx` note only retargets a
+  held voice: unreleased, and for a sample still playing according to its actual counters; a
+  synthesized voice whose envelopes ended stays held), and global `F K N W R T` at tick 0. `PokeyChannelHolders` turns
+  it into the Pattern lane tags ("16-bit 1+2", "held by 2", "HP 1 by 3", "HP clock
+  of 1", "saw 1+3", "samples", "1.79 MHz") and inspector lines (the AUDCTL state; each lane's voice, what it takes,
+  sounding/released/silent and since when). The player restores the base clock, noise generator and two-tone mode
+  on loop entry; the inspector is a straight-play projection, not a simulation of jumps or subsequent loop passes.
+  `PokeyOwnershipPlayback` and `PokeySampleClock` advance rounded counters with inherited phase, prescalers,
+  pending fires, STIMER, generator restarts and two-tone synchronization. Pitch slides/glides, arpeggios,
+  vibrato, fine pitch and envelopes affect sample lifetime per tick; absent `000` cells leave continuing effects
+  intact. Timer advancement is arithmetic or memoized, not per sample level; stable rows advance in bulk.
+  Sample-free songs retain the cheap row-only walk. Native boundary cases and an independent cycle-stepped
+  Kotlin timer oracle pass; the former ideal-rate estimate fails the preserved high-note ownership regression.
+- **Pitch** (`PokeyPitch`): the player's pitch-to-counter search in Kotlin, the same double operations (target period
+  C / (f · D), coprimality with the distortion's pattern length, the 49-value 16-bit window clipped to the range, the
+  difference sound's search, samples' 114-cycle minimum period, ties to the smaller N, rounding half away from zero).
+  It gives the readouts ("A-4 on POKEY 1: 437.8 Hz (−9¢)"), the summaries and the song check's pitch warnings. The JVM's
+  `pow` may differ from the C library's in the last bit, so in a rare exact tie a readout or warning could name the
+  neighbouring counter from the one the C player picks; playback and export never use the Kotlin search.
+- **Pattern loop** (`PokeySystem.patternLoop`): the looped order starts with the state sequential straight play starts
+  it with (`startState`, the loader's `start_speed`/`start_audctl`/`start_two_tone` derivation: earlier played orders'
+  last `Fxx`, `Kxx`/`Nxx` and `Wxx`, jumps ignored): that speed as the song speed, those bits as the start bits, and a
+  non-zero two-tone mode as a `Wxx` in the first free effect column of row 0 (lanes, then columns). When row 0 sets
+  two-tone itself, its own `Wxx` stands; when row 0 has no free effect column at all, the loop plays with two-tone off.
+- **Lowering** (`backend/PokeyLowering`): the arrangement (parked orders out, `Bxx` and the loop renumbered), rows per
+  order = the pattern's length; the data region holds every (order, channel) track encoded as the OPL3's (runs, mask,
+  note/OFF, slot, non-blank columns), byte-identical tracks once in first-use order, then the envelopes of every filled
+  slot (slot order; volume, arpeggio, pitch, distortion), byte-identical envelopes once; an empty envelope is "none".
+  Records write only the kind's fields (filter offset for high-pass, partner AUDC for 16-bit and high-pass, sample,
+  root, rate and loop for samples, whose volume and distortion envelopes are "none"), the rest 0 / 0xFFFF. Samples are
+  packed in index order from byte 0, two levels per byte, low nibble first. Over-full data or sample memory throws an
+  `IllegalArgumentException` with what to do.
+- **Song check** (`PokeyValidator`): structural errors (shapes and ranges, the kind's fields only); errors that block
+  playback or the loader (empty slots named in cells, a sound on a channel its kind cannot use or fast where the
+  channel has no 1.79 MHz clock — also for notes inheriting the lane's sound —, samples missing or looping past their
+  end, sample memory, effect parameters as `pk_load_image` checks them: `Bxx` < orders, `Cxx` ≤ 0F, `F00`, `Kxx`/`Nxx`
+  ≤ 1, `R00`/`T00` only, `Vxx` ≤ 8, `Wxx` ≤ 2, data size); warnings (a note cutting another lane's unreleased voice,
+  distortions 4 and C on a 15 kHz base-clocked counter, notes more than 50 cents off because the counter is out of
+  range or coarse there, `Hxx` on sounds without high-pass or clamped on difference sounds, `Vxx` on samples, `Gxx`
+  the speed never reaches, an order's first note without a sound). Limits: instruments, samples and sample memory,
+  pattern and envelope data.
+- **Samples** (`PokeySamples`): `.wav` import through the NES importer's parser (`Dpcm.Wav`: PCM 8-32-bit or float,
+  stereo mixed), linear resampling to the chosen rate (offered: 3995, 5327, 6392, 7990, 10653, 12784 Hz — the NTSC
+  64 kHz clock's exact rates; 12784 Hz is the fastest a 64 kHz sample channel plays within the 114-cycle minimum, and
+  faster rates, exact only on POKEY 1 at 1.79 MHz or on the 15 kHz clock, are set by hand), then a **linear, envelope-biased** mapping to
+  0..15: each value plus a peak-following envelope (instant attack, ~5 ms half-life), scaled so the loudest peak
+  reaches 15; silence maps to 0, the level a channel rests at, so samples start and end without a DC click. The
+  DAC's nonlinearity is not pre-compensated. The starter kit (kick, snare, hat, tom at 7990 Hz) is synthesised with
+  integer arithmetic (deterministic on every platform), one-sided and faded to 0. Memory counts levels in whole bytes
+  (an odd-length sample uses one level more).
+- **Presets** (`PokeyPresets`): pure lead, soft square, major/minor arpeggio chords, distortion C bass, 16-bit bass,
+  phasing lead (high-pass), POKEY saw and 16-bit saw (difference), noise snare and hat, tone kick, volume-only thump,
+  sync lead and the silent sync clock for two-tone `W02`. Blank songs have no samples, so sample sounds are not
+  presets: `drumKit(firstSample)` makes the four digi drum sounds once the editor's kit import has added the samples.
+- **Exports**: VGM 1.71 through the native player (`PokeyVgm.renderer`, registered by `ChipAudio.nativePokeyVgm` and
+  the Deck's `DeckPokeyVgm`; ten minutes at most when a song never returns to its loop). WAV through the shared path.
+  No Atari executable (XEX/SAP): that would need a 6502 driver.
+- **Project files**: backend `atari-pokey`, POKEY data version 1, project format 10; `sound` holds the 64 slots
+  (`null` or `name`, `kind` `tone`/`joined`/`filtered`/`joined-filtered`/`sample`, `fast`, the four envelopes as NES
+  envelopes, `pitchRelative`, and when not at their defaults `filterOffset`, `difference`, `partnerDistortion`,
+  `partnerVolume`, `sample`, `root`, `rate`, `loop`), `samples` (`name`, `levels`), `machine` `ntsc`/`pal`,
+  `multispeed`, `poly9`, `base15`.
+- **Demo** "Scanline Cruise" (NTSC, D minor, 6 ticks per row): Intro (pure lead, distortion C bass, arpeggio-envelope
+  chords, noise snares over volume-only thumps), Drive (digi drums from the starter kit, a 16-bit bass taking POKEY 3,
+  `K00 N00 W00 T00`), Glow (a high-pass phasing lead with `Hxx`, `0xy` square chords), Saw (the difference saw at
+  1.79 MHz), Static (`K01 N01 R00` and two-tone sync `W02`: the silent sync clock sets the pitch on POKEY 2, the
+  1.79 MHz sync lead sweeps the timbre on POKEY 1), Drive again, looping to Drive. `PokeyDemoSong.shortest()` is one
+  order of one row at speed 1 with a held A-4 on POKEY 1. Both have no errors or warnings.
+- Tests: `PokeyModelTest` (registry, project round trips, presets, demo and shortest song checks, the pitch search's
+  known values and true pitch across kinds, kind/lane and effect-parameter errors, unused fields, warnings, audition,
+  lane ownership, sample lifetime under pitch effects, samples and WAV import, arrangement), `PokeyLoweringTest` (exact bytes of the shortest song,
+  kind-specific records, sample packing, shared envelopes, and every `pk_load_image` condition re-checked on the demo,
+  the shortest song and a song with every kind).
+  `PokeySampleClockTest` compares the accelerated counters with an independent cycle-stepped oracle.
+
+### POKEY editor
+
+- **Instrument view** (`PokeyInstrumentView`, UI slice): head rows slot, name, Listen channel, kind, page. Pages:
+  *Sound* (preset, clock, high-pass offset and difference mode, partner channels, pitch mode, with which channels a
+  note takes and how in tune it plays from `PokeyPitch`), the envelopes *Volume*, *Arpeggio*, *Pitch*, *Distortion*,
+  and for sample sounds *Sample* (sample, root, rate, loop, the song's samples, `.wav` import and the starter kit).
+- **Shared views**: New and Load demo list the POKEY through `SoundSystems`; Pattern shows four lanes with four effect
+  columns and the channel-holder tags; Song lists Machine, Multispeed, Noise and Base clock; Help's effects page uses
+  `PokeyRules` and the system help.
+
 ## Open questions
 
 - OPM clock (decided on the user's behalf, per the brief): 4 MHz (X68000) only; a 3.579545 MHz (arcade) variant would
@@ -1416,6 +1536,16 @@ roadmap autonomously):
 - VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
   +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
   listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- POKEY channel taking (decided on the user's behalf): a note takes every channel its kind needs and the most recent
+  note wins, with a song-check warning where an unreleased sound is cut and lane tags showing the holders, rather
+  than reserving channels per pattern or forbidding notes on taken lanes. Review.
+- POKEY sample import (decided on the user's behalf): linear amplitude mapping with an envelope bias (silence = level
+  0, no click at the start and end) rather than mid-level-centred levels or pre-compensating the DAC's nonlinearity.
+  Listening may prefer centred levels for sustained (looping) samples.
+- POKEY pitch warnings flag notes more than 50 cents off at their key-on (the note, `Pxx` and the starting
+  distortion); arpeggios, slides and envelopes moving into coarse ranges are not checked. Proposed: keep.
+- POKEY presets are a first proposal (15 sounds plus the 4-sound digi kit); the 16-bit high-pass kind's preset uses
+  difference offset 4 at 1.79 MHz.
 - SCC shared wave (decided on the user's behalf): on the K051649 the latest claim by SCC 4 or SCC 5 wins RAM 3 and the
   song check warns about overlaps, rather than forbidding different waves on the two channels or silently giving SCC 5
   priority. Review.

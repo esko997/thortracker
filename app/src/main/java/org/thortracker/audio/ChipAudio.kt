@@ -14,6 +14,8 @@ import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.ay.AyVgmRenderer
 import org.thortracker.system.opl3.Opl3Vgm
 import org.thortracker.system.opl3.Opl3VgmRenderer
+import org.thortracker.system.pokey.PokeyVgm
+import org.thortracker.system.pokey.PokeyVgmRenderer
 import org.thortracker.system.opn.OpnVgm
 import org.thortracker.system.opn.OpnVgmRenderer
 import org.thortracker.system.opm.OpmVgm
@@ -319,6 +321,9 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             OpnVgm.renderer = OpnVgmRenderer { image, maxTicks, tags ->
                 nativeOpnVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
+            PokeyVgm.renderer = PokeyVgmRenderer { image, maxTicks, tags ->
+                nativePokeyVgm(image, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
+            }
             YmExport.renderer = YmExportRenderer { image, format, maxTicks, tags ->
                 nativeYmExport(image, format, maxTicks, tags.title.encodeToByteArray(), tags.author.encodeToByteArray(), tags.date.encodeToByteArray())
             }
@@ -368,6 +373,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
+        /** POKEY VGM (`pokey/pokey_export.h`); UTF-8 tag strings; throws IllegalArgumentException(loader problem). */
+        @JvmStatic private external fun nativePokeyVgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /**
          * `opn_export_vgm` (`opn/opn_export.h`) for a YM2203 or YM2608 image (the chip is the header's); UTF-8 tags;
          * throws IllegalArgumentException(loader problem) for a rejected image.
