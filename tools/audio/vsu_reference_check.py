@@ -20,7 +20,7 @@
      resets the noise register to 1 (we: 0), wraps the envelope 0 <-> 15 on repeat (we: one frame at the limit, then
      the written value), copies the written frequency on S5INT (we: keep the current one), applies a "modulation lock"
      on S5FQ writes, models no RC high-pass and mixes per channel without the 10-bit truncation; its sample timing
-     differs. Hence loose thresholds (first guesses, unverified).
+     differs. These loose regression bounds do not establish hardware waveform equivalence.
 
     python3 tools/audio/vsu_reference_check.py EVIDENCE_DIR [--vgm2wav PATH]
 Prints PASS/FAIL per check, then PASS or FAIL; exit status 1 on any failure."""
@@ -184,7 +184,7 @@ def compare_audio(engine_wav, vgm_path, vgm2wav):
           "%.3f, same pitch class %.0f%% of %d windows, headroom-normalized level ratio %.2f"
           % (env, lag * 20, float(np.mean(spec)) if spec else 0.0, 100.0 * same_pc / max(1, counted), counted, level))
     print("  (expected differences: noise reset 1 vs 0, envelope repeat wrap, S5INT frequency copy, modulation lock, "
-          "no RC filter or 10-bit mixer; engine x8 for host headroom normalization; thresholds unverified)")
+          "no RC filter or 10-bit mixer; engine x8 for host headroom normalization; regression bounds only)")
     check(env > 0.7, "loudness envelope correlation > 0.7")
     check(bool(spec) and np.mean(spec) > 0.7, "log-spectrum correlation > 0.7")
     check(counted > 0 and same_pc / counted > 0.6, "dominant pitch class agrees in > 60% of windows")
