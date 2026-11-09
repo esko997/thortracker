@@ -46,6 +46,10 @@
 # PC Engine: <dir>/pce_song.wav, pce_tone.wav, pce_trace.txt (per-tick player writes and every timer interrupt's
 # writes with their CPU cycles, = the Python reference player's), pce_song.vgm (the VGM export of the test song) and
 # pce_song.bin (the image), the inputs of tools/audio/pce/pce_reference_check.py.
+# SCC / SCC+: <dir>/scc_song.wav, scc_plus_song.wav (30 s), scc_tone.wav (A-4 + release), scc_trace.txt (per tick:
+# position, then the player writes port:reg=val; = the Python reference player's), scc_chip_trace.txt (a scripted
+# register sequence and the core's level events), scc_song.vgm, scc_plus_song.vgm (the VGM exports) and scc_song.bin,
+# scc_plus_song.bin (the images), the inputs of tools/audio/scc_reference_check.py.
 # WAV export (chip_wav.c): renders every demo image exportSamples wrote (app/build/samples, or $THOR_SAMPLES; run
 # `tools/build.sh exportSamples` first) and writes <dir>/wav_<demo>.wav (once through and a 5 s fade).
 # The engines are C except reSID, ymfm and Mednafen's PC Engine PSG (C++): C sources (emu2413, the VRC7's FM chip,
@@ -63,7 +67,7 @@ CXX="${CXX:-g++}"
 warn=(-Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare
   -Wno-missing-field-initializers -Wno-enum-compare)
 includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid" -I "$cpp/opl3" -I "$cpp/ym" -I "$cpp/sms" -I "$cpp/ay"
-  -I "$cpp/pce" -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0"
+  -I "$cpp/pce" -I "$cpp/scc" -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0"
   -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm" -I "$cpp/third_party/mednafen-pce-psg/shim"
   -I "$root/third_party/ayumi" -I "$root/app/src/test/cpp")
 c_engines=(
@@ -82,6 +86,8 @@ c_engines=(
   "$cpp/sms/sms_chip.c" "$cpp/sms/sms_machine.c" "$cpp/sms/sms_image.c" "$cpp/sms/sms_vgm.c"
   "$cpp/ay/ay_chip.c" "$cpp/ay/ay_machine.c" "$cpp/ay/ay_player.c" "$cpp/ay/ay_psg.c" "$cpp/ay/ay_image.c" "$cpp/ay/ay_vgm.c"
   "$cpp/pce/pce_chip.c" "$cpp/pce/pce_machine.c" "$cpp/pce/pce_player.c" "$cpp/pce/pce_image.c" "$cpp/pce/pce_vgm.c"
+  "$cpp/scc/scc_chip.c" "$cpp/scc/scc_machine.c" "$cpp/scc/scc_player.c" "$cpp/scc/scc_image.c" "$cpp/scc/scc_vgm.c"
+  "$cpp/scc/scc_k051649.c"
 )
 cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/pce/pce_psg.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
@@ -99,7 +105,7 @@ for src in "${cxx_engines[@]}"; do
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
-  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test wav_render_test; do
+  opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -122,5 +128,6 @@ status=0
 "$build/sms_machine_test" "$out" || status=1
 "$build/ay_machine_test" "$out" || status=1
 "$build/pce_machine_test" "$out" || status=1
+"$build/scc_machine_test" "$out" || status=1
 "$build/wav_render_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 exit $status

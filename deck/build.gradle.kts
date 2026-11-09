@@ -74,6 +74,12 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("pce/pce_player.c").asFile,
         engineSrc.file("pce/pce_image.c").asFile,
         engineSrc.file("pce/pce_vgm.c").asFile,
+        engineSrc.file("scc/scc_chip.c").asFile,
+        engineSrc.file("scc/scc_machine.c").asFile,
+        engineSrc.file("scc/scc_player.c").asFile,
+        engineSrc.file("scc/scc_image.c").asFile,
+        engineSrc.file("scc/scc_vgm.c").asFile,
+        engineSrc.file("scc/scc_k051649.c").asFile,
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
@@ -85,7 +91,7 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "sms", "ay", "pce", "third_party/chips", "third_party/blip_buf",
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "sms", "ay", "pce", "scc", "third_party/chips", "third_party/blip_buf",
             "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
@@ -105,7 +111,9 @@ val buildEngine by tasks.registering(Exec::class) {
         "sms/sms_image.h", "sms/sms_machine.h", "sms/sms_export.h", "generated/banjo_driver_image.h",
         "third_party/emu2413/emu2413.h",
         "ay/ay_image.h", "ay/ay_player.h", "ay/ay_psg.h", "ay/ay_machine.h", "ay/ay_vgm.h", "ay/ay_export.h", "generated/ay_tables.h",
-        "pce/pce_image.h", "pce/pce_player.h", "pce/pce_machine.h", "pce/pce_psg.h", "pce/pce_vgm.h", "pce/pce_export.h"),
+        "pce/pce_image.h", "pce/pce_player.h", "pce/pce_machine.h", "pce/pce_psg.h", "pce/pce_vgm.h", "pce/pce_export.h",
+        "scc/scc_k051649.h", "scc/scc_image.h", "scc/scc_player.h", "scc/scc_machine.h", "scc/scc_vgm.h", "scc/scc_export.h",
+        "generated/scc_tables.h"),
         engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         engineSrc.dir("third_party/mednafen-pce-psg").asFileTree,
@@ -136,7 +144,9 @@ val buildEngine by tasks.registering(Exec::class) {
         append("rm -f '${out}/libdeck_native.a'\n")
         append("if [ -x \"\$AR\" ]; then \"\$AR\" rcs '${out}/libdeck_native.a' '${out}'/*.o; else ar rcs '${out}/libdeck_native.a' '${out}'/*.o; fi\n")
     }
-    commandLine("bash", "-c", script)
+    // Feed the script through stdin: the growing engine list exceeds Linux's per-argument limit with bash -c.
+    commandLine("bash", "-s")
+    standardInput = script.byteInputStream()
 }
 
 kotlin {
@@ -150,7 +160,7 @@ kotlin {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
                 // nes/nes_epsm.h: nes_epsm_install_rhythm_rom / nes_epsm_rhythm_rom_installed for the Deck's rhythm ROM.
                 includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"),
-                    engineSrc.dir("ay"), engineSrc.dir("pce"))
+                    engineSrc.dir("ay"), engineSrc.dir("pce"), engineSrc.dir("scc"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

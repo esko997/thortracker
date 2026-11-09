@@ -9,10 +9,10 @@ import org.thortracker.ui.Rect
 import org.thortracker.ui.Surface
 
 /**
- * The step editor of a [NesEnvelope] (FamiStudio-style software envelopes: the NES instruments and the Mega Drive's
- * PSG sounds): its steps as bars on the value scale of [NesEnvelopeKind.range], the loop region and release point, the
- * append position, the cursor and step numbers, scrolled to keep the cursor in view. Remembers where it drew so a touch
- * can be turned into a step and value ([stepAt], [valueAt]).
+ * The step editor of a [NesEnvelope] (FamiStudio-style software envelopes: the NES instruments, the Mega Drive's
+ * PSG sounds and the SCC's instruments): its steps as bars on a value scale ([NesEnvelopeKind.range], or any range a
+ * caller passes), the loop region and release point, the append position, the cursor and step numbers, scrolled to
+ * keep the cursor in view. Remembers where it drew so a touch can be turned into a step and value ([stepAt], [valueAt]).
  */
 internal class EnvelopePlot(private val ink: Ink) {
     /** Where the bars were drawn (empty when they were not). */
@@ -35,6 +35,16 @@ internal class EnvelopePlot(private val ink: Ink) {
     fun draw(c: Surface, r: Rect, title: String, kind: NesEnvelopeKind, env: NesEnvelope, step: Int, valueText: (Int) -> String,
              muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean, range: IntRange = kind.range,
              maxLength: Int = NesEnvelope.MAX_LENGTH) {
+        draw(c, r, title, range, env, step, valueText, muted, col, focused, cursor, editing, maxLength)
+    }
+
+    /**
+     * Draws [env] on the value scale [range] (an envelope that is not one of [NesEnvelopeKind]'s: the SCC's wave
+     * numbers); otherwise as the [NesEnvelopeKind] form. A range below 0 is drawn around 0, spanning the largest
+     * written magnitude (at least 12); a range from 0 or above spans it exactly.
+     */
+    fun draw(c: Surface, r: Rect, title: String, range: IntRange, env: NesEnvelope, step: Int, valueText: (Int) -> String,
+             muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean, maxLength: Int = NesEnvelope.MAX_LENGTH) {
         val values = env.values
         ink.round(c, r, ink.dp(4f), Palette.LANE)
         ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, if (focused) Palette.DIM else Palette.FAINT, size = ink.unit * 0.8f)

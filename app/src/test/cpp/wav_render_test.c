@@ -21,10 +21,11 @@
  * THOR_EPSM_RHYTHM_ROM naming the user's own 8192-byte copy it is installed first and the drums are in the renders;
  * without it they are silent (every check above still holds; the app itself refuses to export such a song).
  *
- * The shortest song (pce-shortest.pcimg: one order of one row, A-4 held on the PC Engine's PSG 1, looping to order 0)
- * runs the same render paths at the other extreme: once through is a single row (under 1 s), and it must still render
- * a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1 adding about
- * one loop and a fade adding exactly its length; a wrong image size is refused.
+ * The shortest held songs (pce-shortest.pcimg: one order of one row, A-4 held on the PC Engine's PSG 1; and
+ * scc-shortest.sccimg / scc-plus-shortest.sccimg: one order of one row at speed 1, A-4 held on SCC 1; each looping to
+ * order 0) run the same render paths at the other extreme: once through is a single row (under 1 s), and it must still
+ * render a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1 adding
+ * about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
  * Build and run: tools/audio/run_native_host_test.sh [evidence-dir] (after `tools/build.sh exportSamples`; the demo
  * images are read from app/build/samples, or the directory THOR_SAMPLES names). Writes <dir>/wav_<demo>.wav (once
@@ -93,6 +94,8 @@ static const Demo kDemos[] = {
     {"copper-lane-atari-st.ayimg", "ay-atari-st"},
     {"copper-lane-cpc.ayimg", "ay-cpc"},
     {"pce-demo.pcimg", "pce-huc6280"},
+    {"scc-demo.sccimg", "msx-scc"},
+    {"scc-plus-demo.sccimg", "msx-scc-plus"},
 };
 
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; a held expansion note,
@@ -124,6 +127,8 @@ static const Demo kShortest[] = {
  * above plus everything test_demo checks that does not need a song longer than one row. */
 static const Demo kShortestHeld[] = {
     {"pce-shortest.pcimg", "pce-huc6280"},
+    {"scc-shortest.sccimg", "msx-scc"},
+    {"scc-plus-shortest.sccimg", "msx-scc-plus"},
 };
 
 static char spool[512];
