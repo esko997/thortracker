@@ -2995,7 +2995,7 @@ contract); `tools/audio/render_sms_image.sh` renders an image (SampleExportTool 
 
 ## EPSM: the same engine with a YMF288 (`"nes-famistudio-epsm"`)
 
-**Status: integration verification in progress.** `prepare_nes_player.py` generated the player: 5048 bytes at
+**Status: verified for 0.21.0.** `prepare_nes_player.py` generated the player: 5048 bytes at
 `$8000`, song base `$9400`, SHA-256 `46215fde7f7ed01b36167e955ec1436fc48a9e8193bea28e6656f8501dbec758`.
 All 32 previous NES generated outputs stayed byte-identical. Runtime verification is recorded separately in
 `docs/VERIFICATION.md`. Everything in the NES section holds; this section lists what differs.
@@ -3187,7 +3187,8 @@ the LFO, SSG-EG, releases, slides, vibrato, fine pitch, stop, the range ends C-1
   our text vs our lowering, register traces with the EPSM writes compared every frame; generate them as in
   `docs/VERIFICATION.md`); `NesLoweringTest`, `TruePitchTest` and `NesInstrumentViewTest` cover the image contract,
   pitch and editor.
-- Completed: 495 JVM core, 13 Linux core and six Android-host unit tests; 332 native EPSM checks with a private
-  rhythm ROM; 889 WAV checks after removing the incidental per-demo loudness threshold. Other engine checks passed.
-  See `docs/VERIFICATION.md` for evidence and remaining frontend checks.
+- Completed: 515 JVM core, 13 Linux core and six Android-host unit tests; 332 native EPSM checks with a private
+  rhythm ROM; 999 WAV checks after removing the incidental per-demo loudness threshold. Other engine checks passed.
+  The production APK passed 19 permanent Android tests and 32 unchanged Game Boy renders; actual Android/desktop
+  exports match and Nova/DMG/Konkr playback/audition checks passed. See `docs/VERIFICATION.md` for evidence and limits.
 - Not done: human listening; a hardware EPSM; a comparison with Mesen2's or FamiStudio's audio; Thor measurements.
