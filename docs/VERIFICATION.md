@@ -54,6 +54,18 @@ and the factory `.uge` was unchanged. Temporary probe source/test packages,
 timeouts were restored, reserved handhelds returned Home/asleep and all leases
 released. `/ThorTunez` was untouched.
 
+The clean signing job twice hit Gradle's default ten-second distribution-download
+timeout before compilation. The wrapper now allows sixty seconds per network
+operation; signing still neither restores nor saves a Gradle cache. An isolated,
+empty `GRADLE_USER_HOME` downloaded Gradle 8.9 and completed `--version` in 13.83 s.
+
+A subsequent CI run passed the audio/reference checks but failed an OPL3 timing
+ratio: 1.419 ms worst versus 0.373 ms mean. Thread CPU time still varies with
+frequency and cache contention, so the benchmark now reports its measurements
+without an arbitrary 3× pass/fail threshold. The unchanged OPL3 engine passed
+281 functional checks; its rendered WAV, VGM and register trace remained
+byte-identical. Paced target-device playback remains the realtime check.
+
 No physical Sega cartridge comparison or human listening review is claimed.
 Hardware limits remain visible: one shared custom OPLL patch, shared rhythm
 pitches and pitched-noise/Square 3 coupling. NTSC timing only; Banjo cannot
