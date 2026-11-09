@@ -9,8 +9,12 @@ import kotlinx.serialization.json.intOrNull
 import org.thortracker.editor.Action
 import org.thortracker.editor.ViewKind
 
-/** A physical binding: [button] alone, or [button] pressed while [modifier] is held. Android key codes. */
-data class Binding(val button: Int, val modifier: Int? = null)
+/**
+ * A physical binding: [button] alone, or a chord: [button] pressed while every one of [modifiers] is held. The
+ * modifiers are a set, so the order they went down in never matters (L2 then R2, or R2 then L2, is the one L2+R2
+ * layer). Android key codes.
+ */
+data class Binding(val button: Int, val modifiers: Set<Int> = emptySet())
 
 /** Areas of the Controls screen. */
 enum class ControlGroup(val label: String) {
@@ -42,8 +46,10 @@ enum class Control(
     val views: Set<ViewKind>? = null,
     /** Keymap file version that introduced the control; older files may already use its default. */
     val since: Int = 1,
-    /** For view controls: the view this control shows on the controller-focused display. */
+    /** For view controls: the view this control shows on the controller-focused display (or the other one, [toOther]). */
     val shows: ViewKind? = null,
+    /** A view control that shows [shows] on the other display, leaving controller focus here; with one display, on it. */
+    val toOther: Boolean = false,
 ) {
     UP(ControlGroup.MOVE, "Up", "Up", Action.UP, hold = true, essential = true),
     DOWN(ControlGroup.MOVE, "Down", "Down", Action.DOWN, hold = true, essential = true),
@@ -80,7 +86,14 @@ enum class Control(
     SHOW_SKETCH(ControlGroup.VIEWS, "Show Sketch here (again: previous view)", "Sketch", null, since = 3, shows = ViewKind.SKETCH),
     SHOW_KEYBOARD(ControlGroup.VIEWS, "Show Keyboard here (again: previous view)", "Keyboard", null, since = 3, shows = ViewKind.KEYBOARD),
     SHOW_WAVE(ControlGroup.VIEWS, "Show Wave here (again: previous view)", "Wave", null, since = 3, shows = ViewKind.WAVE),
-    SHOW_HELP(ControlGroup.VIEWS, "Show Help here (again: previous view)", "Help", null, since = 3, shows = ViewKind.HELP);
+    SHOW_HELP(ControlGroup.VIEWS, "Show Help here (again: previous view)", "Help", null, since = 3, shows = ViewKind.HELP),
+    OTHER_PATTERN(ControlGroup.VIEWS, "Show Pattern on the other display (again: previous view)", "Pattern on other", null, since = 6, shows = ViewKind.PATTERN, toOther = true),
+    OTHER_SONG(ControlGroup.VIEWS, "Show Song on the other display (again: previous view)", "Song on other", null, since = 6, shows = ViewKind.SONG, toOther = true),
+    OTHER_INSTRUMENT(ControlGroup.VIEWS, "Show Instrument on the other display (again: previous view)", "Instrument on other", null, since = 6, shows = ViewKind.INSTRUMENT, toOther = true),
+    OTHER_SKETCH(ControlGroup.VIEWS, "Show Sketch on the other display (again: previous view)", "Sketch on other", null, since = 6, shows = ViewKind.SKETCH, toOther = true),
+    OTHER_KEYBOARD(ControlGroup.VIEWS, "Show Keyboard on the other display (again: previous view)", "Keyboard on other", null, since = 6, shows = ViewKind.KEYBOARD, toOther = true),
+    OTHER_WAVE(ControlGroup.VIEWS, "Show Wave on the other display (again: previous view)", "Wave on other", null, since = 6, shows = ViewKind.WAVE, toOther = true),
+    OTHER_HELP(ControlGroup.VIEWS, "Show Help on the other display (again: previous view)", "Help on other", null, since = 6, shows = ViewKind.HELP, toOther = true);
 
     /** Run by the activity (history, transport, displays) rather than delivered to the focused view. */
     val host: Boolean get() = action == null || this == UNDO || this == REDO
@@ -133,9 +146,19 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
         return Control.entries.firstOrNull { it.action == action }
     }
 
-    /** Bound chords using [modifier] that act in [view], in control order. */
-    fun chords(modifier: Int, view: ViewKind): List<Pair<Control, Binding>> =
-        Control.entries.mapNotNull { c -> table[c]?.takeIf { it.modifier == modifier && c.appliesIn(view) }?.let { c to it } }
+    /** Bound chords of exactly the [modifiers] layer that act in [view], in control order. */
+    fun chords(modifiers: Set<Int>, view: ViewKind): List<Pair<Control, Binding>> =
+        Control.entries.mapNotNull { c -> table[c]?.takeIf { it.modifiers == modifiers && c.appliesIn(view) }?.let { c to it } }
+
+    /**
+     * A control acting in [view] that [button] triggers with only some of the [held] modifiers (L2+A while L2 and
+     * R2 are both held), or null. While a layer of several modifiers is held, such a chord belongs to a layer
+     * below it, so the press must not run it.
+     */
+    fun partialChord(button: Int, held: Set<Int>, view: ViewKind): Control? = byBinding.entries.firstNotNullOfOrNull { (b, controls) ->
+        if (b.button != button || b.modifiers.isEmpty() || b.modifiers == held || !held.containsAll(b.modifiers)) null
+        else controls.firstOrNull { it.appliesIn(view) }
+    }
 
     fun with(control: Control, binding: Binding?): Keymap = Keymap(table + (control to binding))
 
@@ -146,18 +169,19 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
 
     fun label(action: Action, view: ViewKind? = null): String = control(action, view)?.let(::label) ?: UNBOUND
 
-    /** Two related actions in one hint: "←→", "L1 R1", "Sel+X/A" when they share a modifier. */
+    /** Two related actions in one hint: "←→", "L1 R1", "Sel+X/A" when they share their modifiers. */
     fun pair(a: Action, b: Action, view: ViewKind? = null): String = pair(control(a, view), control(b, view))
 
     private fun pair(a: Control?, b: Control?): String {
         val ba = a?.let { table[it] }
         val bb = b?.let { table[it] }
         if (ba == null || bb == null) return listOf(a?.let(::label) ?: UNBOUND, b?.let(::label) ?: UNBOUND).joinToString(" ")
-        if (ba.modifier != bb.modifier) return "${label(ba)} ${label(bb)}"
-        val prefix = ba.modifier?.let { buttonName(it) + "+" } ?: ""
+        if (ba.modifiers != bb.modifiers) return "${label(ba)} ${label(bb)}"
+        val chord = ba.modifiers.isNotEmpty()
+        val prefix = if (chord) modifiersLabel(ba.modifiers) + "+" else ""
         val na = buttonName(ba.button)
         val nb = buttonName(bb.button)
-        return prefix + if (na in ARROWS && nb in ARROWS) na + nb else if (ba.modifier != null) "$na/$nb" else "$na $nb"
+        return prefix + if (na in ARROWS && nb in ARROWS) na + nb else if (chord) "$na/$nb" else "$na $nb"
     }
 
     /** All four directions: "✛" on the D-pad, otherwise their names. */
@@ -177,8 +201,9 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
     fun problem(control: Control, binding: Binding): String? = when {
         binding.button in RESERVED -> "Menu and Back are reserved so the menu can always be reached"
         binding.button in MODIFIERS -> "${buttonName(binding.button)} only starts chords: hold it and press another button"
-        binding.modifier != null && binding.modifier !in MODIFIERS -> "Chords start with Select, L2, R2 or L3"
-        control.hold && binding.modifier != null -> "${control.short} is held with the D-pad, so it needs a single button"
+        binding.modifiers.any { it !in MODIFIERS } -> "Chords start with Select, L2, R2 or L3"
+        binding.modifiers.size > MAX_CHORD_MODIFIERS -> "A chord holds at most two of Select, L2, R2 and L3"
+        control.hold && binding.modifiers.isNotEmpty() -> "${control.short} is held with the D-pad, so it needs a single button"
         else -> null
     }
 
@@ -199,13 +224,16 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
 
     companion object {
         const val FORMAT = "thor-tracker-keymap"
-        const val VERSION = 5
+        const val VERSION = 6
         const val UNBOUND = "—"
 
-        /** Buttons that do nothing alone and start chords. */
+        /** Buttons that do nothing alone and start chords, in the order chord labels name them. */
         val MODIFIERS = setOf(
             Keys.BUTTON_SELECT, Keys.BUTTON_L2, Keys.BUTTON_R2, Keys.BUTTON_THUMBL,
         )
+
+        /** A chord holds one modifier, or two at once (L2+R2+A); never three. */
+        const val MAX_CHORD_MODIFIERS = 2
 
         /** Fixed system keys: they always open/leave the menu and are never bound. */
         val RESERVED = setOf(Keys.BACK, Keys.ESCAPE, Keys.MENU, Keys.BUTTON_MODE)
@@ -220,9 +248,11 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             Control.PREV_CHANNEL to Keys.BUTTON_L1, Control.NEXT_CHANNEL to Keys.BUTTON_R1,
         )
 
-        private const val SEL = Keys.BUTTON_SELECT
-        private const val L2 = Keys.BUTTON_L2
-        private const val R2 = Keys.BUTTON_R2
+        private val SEL = setOf(Keys.BUTTON_SELECT)
+        private val L2 = setOf(Keys.BUTTON_L2)
+        private val R2 = setOf(Keys.BUTTON_R2)
+        /** The third layer: both triggers held. */
+        private val L2R2 = setOf(Keys.BUTTON_L2, Keys.BUTTON_R2)
 
         val DEFAULT = Keymap(mapOf(
             Control.UP to Binding(Keys.DPAD_UP),
@@ -261,6 +291,14 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             Control.SHOW_PATTERN to Binding(Keys.DPAD_UP, R2),
             Control.SHOW_WAVE to Binding(Keys.DPAD_RIGHT, R2),
             Control.SHOW_HELP to Binding(Keys.DPAD_DOWN, R2),
+            // Both triggers: the same buttons as the R2 view chords, for the other display.
+            Control.OTHER_SONG to Binding(Keys.BUTTON_A, L2R2),
+            Control.OTHER_INSTRUMENT to Binding(Keys.BUTTON_B, L2R2),
+            Control.OTHER_SKETCH to Binding(Keys.BUTTON_X, L2R2),
+            Control.OTHER_KEYBOARD to Binding(Keys.BUTTON_Y, L2R2),
+            Control.OTHER_PATTERN to Binding(Keys.DPAD_UP, L2R2),
+            Control.OTHER_WAVE to Binding(Keys.DPAD_RIGHT, L2R2),
+            Control.OTHER_HELP to Binding(Keys.DPAD_DOWN, L2R2),
         ))
 
         private val NAMES = linkedMapOf(
@@ -285,22 +323,30 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             else -> "Key $code"
         }
 
-        fun label(binding: Binding): String =
-            (binding.modifier?.let { buttonName(it) + "+" } ?: "") + buttonName(binding.button)
+        /** Held [modifiers] in a fixed order (Select, L2, R2, L3), whatever order they went down in: "L2+R2". */
+        fun modifiersLabel(modifiers: Set<Int>): String = ordered(modifiers).joinToString("+") { buttonName(it) }
+
+        /** "A", "L2+A", "L2+R2+A". */
+        fun label(binding: Binding): String = (ordered(binding.modifiers) + binding.button).joinToString("+") { buttonName(it) }
+
+        private fun ordered(modifiers: Set<Int>): List<Int> =
+            MODIFIERS.filter { it in modifiers } + modifiers.filter { it !in MODIFIERS }.sorted()
 
         private fun tokenOf(code: Int) = NAMES[code]?.first ?: "KEY_$code"
 
         private fun codeOf(token: String): Int? = BY_TOKEN[token] ?: token.removePrefix("KEY_").takeIf { token.startsWith("KEY_") }?.toIntOrNull()
 
-        private fun token(b: Binding) = (b.modifier?.let { tokenOf(it) + "+" } ?: "") + tokenOf(b.button)
+        private fun token(b: Binding) = (ordered(b.modifiers) + b.button).joinToString("+") { tokenOf(it) }
 
+        /**
+         * "A", "L2+A" (every file version) or "L2+R2+A" (version 6 on): the last key is the button, the ones
+         * before it the modifiers, in any order. A key named twice is not a chord.
+         */
         private fun parse(text: String): Binding? {
-            val parts = text.split('+')
-            return when (parts.size) {
-                1 -> codeOf(parts[0])?.let { Binding(it) }
-                2 -> { val m = codeOf(parts[0]); val b = codeOf(parts[1]); if (m != null && b != null) Binding(b, m) else null }
-                else -> null
-            }
+            val codes = text.split('+').map { codeOf(it) ?: return null }
+            val modifiers = codes.dropLast(1).toSet()
+            if (modifiers.size != codes.size - 1 || codes.last() in modifiers) return null
+            return Binding(codes.last(), modifiers)
         }
 
         private val JSON = Json { prettyPrint = true }
@@ -311,7 +357,9 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
          * unbound; unknown controls are ignored (files from newer versions). Invalid or duplicate bindings
          * among the file's own entries are rejected. A file that never changed a binding from the defaults of
          * its own version reads as today's defaults, so moved defaults (Redo to L2+B in version 3) reach users
-         * who never rebound anything.
+         * who never rebound anything. Version 6 added two-modifier chords (the L2+R2 layer); older files read
+         * unchanged, since a one-modifier token means the same, and they gain the other-display view chords,
+         * which no older file could have used.
          */
         fun fromJson(text: String): Keymap {
             val root = try { JSON.parseToJsonElement(text) as? JsonObject } catch (e: Exception) { null }
@@ -378,8 +426,8 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             for (c in Control.entries) {
                 val d = DEFAULT.binding(c) ?: continue
                 val button = physical(d.button)
-                val modifier = d.modifier?.let { physical(it)?.takeIf { p -> p in MODIFIERS } ?: it }
-                val moved = button?.let { Binding(it, modifier) }
+                val modifiers = d.modifiers.map { m -> physical(m)?.takeIf { it in MODIFIERS } ?: m }.toSet()
+                val moved = button?.let { Binding(it, modifiers) }
                 map = map.with(c, moved?.takeIf { map.problem(c, it) == null })
             }
             return if (map.validationError() == null) map else DEFAULT

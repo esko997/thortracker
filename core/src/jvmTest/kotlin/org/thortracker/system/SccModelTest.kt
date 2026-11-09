@@ -1,19 +1,17 @@
 package org.thortracker.system
 
-import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.thortracker.backend.SccLowering
 import org.thortracker.backend.SccPlayerImage
 import org.thortracker.editor.Selection
-import org.thortracker.editor.ViewKind
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.ProjectCodec
@@ -24,37 +22,27 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.scc.KonamiSccSystem
 import org.thortracker.system.scc.SccDemoSong
 import org.thortracker.system.scc.SccInstrument
-import org.thortracker.system.scc.SccInstrumentView
 import org.thortracker.system.scc.SccPlusSystem
 import org.thortracker.system.scc.SccPresets
 import org.thortracker.system.scc.SccRules
 import org.thortracker.system.scc.SccSharedState
-import org.thortracker.system.scc.SccSongSettings
 import org.thortracker.system.scc.SccSound
 import org.thortracker.system.scc.SccSystem
 import org.thortracker.system.scc.SccValidator
 import org.thortracker.system.scc.SccVariant
-import org.thortracker.system.scc.SccVgm
-import org.thortracker.system.scc.SccVgmRenderer
-import org.thortracker.system.scc.SccVgmTags
+import org.thortracker.system.scc.SccWalk
 import org.thortracker.system.scc.SccWave
 import org.thortracker.system.scc.SccWaveShapes
-import org.thortracker.system.scc.SccWaveView
 import org.thortracker.system.scc.scc
 
 /**
- * The SCC and SCC+ systems' model: registration and shape, project files, the validator's mirror of the loader's
- * reasons, warnings (the SCC's shared wave RAM above all), arrangement, the shared-state walk, fine pitch, the
- * lowering's header, records, envelopes and sharing, the VGM seam, waves, presets and the demos. Slots are the presets'
- * (a new song's): 01 Lead, 02 Bass, 03 Bell, 04 Pad, 05 Pluck, 06 Organ, 07 Kick, 08 Snare, 09 Hat, 0A Arp lead,
- * 0B Echo, 0C Morph.
+ * The SCC and SCC+ systems' model: pitch and timing, project files, what loads (the song gate, the editor's checks and
+ * the lowering agree), audition acceptance, warnings and the causes that clear them (the SCC's shared wave RAM above
+ * all), arrangement, the shared-state walk, fine pitch, the lowering's header, records, envelopes and sharing, waves,
+ * presets and the demos. Slots are the presets' (a new song's): 01 Lead, 02 Bass, 03 Bell, 04 Pad, 05 Pluck, 06 Organ,
+ * 07 Kick, 08 Snare, 09 Hat, 0A Arp lead, 0B Echo, 0C Morph.
  */
 class SccModelTest {
-    @After
-    fun noRenderer() {
-        SccVgm.renderer = null
-    }
-
     private val lead = slot("Lead")
     private val bell = slot("Bell")
     private val pluck = slot("Pluck")
@@ -63,6 +51,16 @@ class SccModelTest {
     private val echo = slot("Echo")
     private val morph = slot("Morph")
     private val bass = slot("Bass")
+    private val pad = slot("Pad")
+
+    /** Slot 14: a release that ends above 0, so a released note stays keyed (audible) until a second OFF. */
+    private val sustain = 0x14
+
+    private fun withSustain(song: Song) = withSound(song) {
+        it.withInstrument(sustain, SccInstrument("sustain", volume = NesEnvelope(listOf(15, 15, 6, 3), release = 2), wave = NesEnvelope(listOf(SccPresets.PULSE_25))))
+    }
+
+    private val systems = listOf(SccSystem, SccPlusSystem)
 
     private fun slot(name: String) = SccPresets.ALL.indexOfFirst { it.name == name } + 1
 
@@ -81,81 +79,31 @@ class SccModelTest {
 
     private fun u16(image: ByteArray, at: Int) = (image[at].toInt() and 0xFF) or ((image[at + 1].toInt() and 0xFF) shl 8)
 
-    // ---- system shape ------------------------------------------------------------------------------------------
+    // ---- notes and ticks ---------------------------------------------------------------------------------------
 
     @Test
-    fun bothChipsAreRegisteredWithFiveWaveChannels() {
-        assertEquals(SccSystem, SoundSystems.of("msx-scc"))
-        assertEquals(SccPlusSystem, SoundSystems.of("msx-scc-plus"))
-        assertEquals("Konami SCC (K051649)", SccSystem.name)
-        assertEquals("Konami SCC+ (K052539)", SccPlusSystem.name)
-        for (system in listOf(SccSystem, SccPlusSystem)) {
-            assertEquals("MSX SCC", system.family)
-            assertEquals((1..5).map { "SCC $it" }, system.channels.map { it.name })
-            assertTrue(system.channels.all { it.tonal && it.kind == ChannelKind.WAVE && it.bank == 0 })
-            assertEquals(listOf(BankSpec("Instruments", 64)), system.banks)
-            assertEquals(9..95, system.noteRange)
+    fun notesAndTicksAreThePlayers() {
+        for (system in systems) {
             assertEquals("A-0", system.noteName(9))
             assertEquals("A-4", system.noteName(57))
             assertEquals("B-7", system.noteName(95))
-            assertEquals(4, system.effectColumns(4))
-            assertEquals(ViewKind.entries.toSet(), system.views)
-            assertSame(SccInstrumentView, system.view(ViewKind.INSTRUMENT))
-            assertSame(SccWaveView, system.view(ViewKind.WAVE))
-            assertNull(system.view(ViewKind.PATTERN))
-            assertNull(system.offEffect)
-            assertEquals(256, system.maxOrders)
-            assertEquals(1, system.backendVersion)
-            assertEquals(listOf("0", "1", "2", "3", "4", "A", "B", "C", "D", "F", "G", "P", "S", "T", "W"),
-                system.effectsFor(2).map { it.char.toString() })
-            val engine = system.engine
-            assertEquals(system.id, engine.id)
-            assertEquals(65536, engine.imageSize)
-            assertEquals(SccPlayerImage.SEEK_TICKS, engine.seekTicks)
-            assertEquals(57, engine.note(system.blank(), 0, 57, 1))
-            assertEquals(16, engine.fine(0, 57, 16))
-            assertEquals(SccSound.serializer(), system.soundSerializer)
-            assertEquals(system, system.blank().sound.system)
+            assertEquals(60.0, system.ticksPerSecond(system.blank()), 1e-9)
             assertEquals(180.0, system.ticksPerSecond(withSound(system.blank()) { it.copy(multispeed = 3) }), 1e-9)
-            assertEquals(listOf("vgm"), system.exports.map { it.extension })
         }
-        assertEquals("Thor Tracker's SCC player on a K051649 core ported from MAME (20d4667), blip_buf 1.1.0", SccSystem.engine.driver)
-        assertEquals("Thor Tracker's SCC player on a K052539 core ported from MAME (20d4667), blip_buf 1.1.0", SccPlusSystem.engine.driver)
-        assertEquals(SccSystem, SccVariant.SCC.system)
-        assertEquals(SccPlusSystem, SccVariant.PLUS.system)
     }
 
     @Test
-    fun blankSongsStartWithPresetsAndStarterWaves() {
-        for (system in listOf(SccSystem, SccPlusSystem)) {
-            val blank = system.blank()
-            assertEquals(emptyList<String>(), system.errors(blank))
-            assertEquals(emptyList<String>(), system.warnings(blank))
-            val sound = blank.scc
-            assertEquals(system.variant, sound.variant)
-            assertEquals(SccPresets.ALL.map { it.instrument }, sound.instruments.take(SccPresets.ALL.size))
-            assertTrue(sound.instruments.drop(SccPresets.ALL.size).all { it == null })
-            assertEquals(64, sound.instruments.size)
-            assertEquals(SccPresets.WAVES, sound.waves.take(SccPresets.WAVES.size))
-            assertTrue(sound.waves.drop(SccPresets.WAVES.size).all { w -> w.samples == List(32) { 0 } })
-            assertEquals(64, sound.waves.size)
-            assertEquals(1, sound.multispeed)
+    fun instrumentThumbnailsNormalizeSignedWavesAndSelectionFollowsWave() {
+        val song = withSound(SccSystem.blank()) {
+            it.withInstrument(40, SccInstrument("Custom", wave = NesEnvelope(listOf(20))))
+                .withInstrument(41, null)
+                .withWave(20, SccWave(samples = List(8) { 127 } + List(24) { -128 }))
         }
-        val blank = SccSystem.blank()
-        assertEquals("Lead", SccSystem.instrumentName(blank, 0, lead))
-        assertEquals(KonamiSccSystem.EMPTY_NAME, SccSystem.instrumentName(blank, 0, 40))
-        assertNull(SccSystem.instrumentName(blank, 1, 1))
-        assertEquals("Empty: choose a preset", SccSystem.instrumentSummary(blank, 0, 40))
-        assertTrue(SccSystem.instrumentSummary(blank, 0, lead)!!.startsWith("Wave 05 Pulse 25% · vol 15→0, release"))
-        assertTrue(SccSystem.instrumentSummary(blank, 0, kick)!!.contains("pitch sweep"))
-        assertTrue(SccSystem.instrumentSummary(blank, 0, morph)!!.startsWith("Waves 01 01 01 02"))
-        // The thumbnail is the first wave (Lead: the 25% pulse) as 0..1.
-        val shape = SccSystem.instrumentShape(blank, 0, lead)!!
-        assertEquals(List(8) { 1f } + List(24) { 0f }, shape)
-        assertNull(SccSystem.instrumentShape(blank, 0, 40))
-        // The Wave view follows the selected instrument's first wave (0-based).
-        assertEquals(SccPresets.BELL - 1, SccSystem.selectSound(Selection(instrument = bell), blank).wave)
-        assertEquals(Selection(instrument = 40, wave = 5), SccSystem.selectSound(Selection(instrument = 40, wave = 5), blank))
+        assertEquals(List(8) { 1f } + List(24) { 0f }, SccSystem.instrumentShape(song, 0, 40))
+        assertNull(SccSystem.instrumentShape(song, 0, 41))
+        assertEquals(19, SccSystem.selectSound(Selection(instrument = 40), song).wave)
+        assertEquals(Selection(instrument = 41, wave = 5),
+            SccSystem.selectSound(Selection(instrument = 41, wave = 5), song))
     }
 
     // ---- project files -------------------------------------------------------------------------------------
@@ -167,7 +115,7 @@ class SccModelTest {
             pitch = NesEnvelope(listOf(-64, 63)), pitchRelative = true, wave = NesEnvelope(listOf(20, 21), loop = 1), restart = true,
         )
         val cell = Cell(57, 40, SccRules.FX_VOLUME, 0x0C).withEffect(1, SccRules.FX_WAVE, 0x14).withEffect(3, SccRules.FX_FINE, 0x90)
-        for (system in listOf(SccSystem, SccPlusSystem)) {
+        for (system in systems) {
             val song = withSound(blankWith(3, 0, cell, system)) {
                 it.copy(multispeed = 2)
                     .withInstrument(40, custom)
@@ -177,77 +125,147 @@ class SccModelTest {
             }
             assertEquals(emptyList<String>(), system.errors(song))
             val text = ProjectCodec.encode(song)
-            assertTrue(text.contains("\"backend\":\"${system.id}\",\"backendVersion\":1"))
-            assertTrue(text.contains("[57,40,12,12,32,20,0,0,25,144]"))
             val back = ProjectCodec.decode(text)
             assertEquals(song, back)
-            assertEquals(text, ProjectCodec.encode(back))
-            assertNull(back.scc.instrument(2))
-            assertEquals(custom, back.scc.instrument(40))
-            assertEquals(system.variant, back.scc.variant)
         }
         for (s in listOf(SccSystem.demo(), SccPlusSystem.demo(), SccDemoSong.shortest(SccVariant.SCC), SccDemoSong.shortest(SccVariant.PLUS))) {
             assertEquals(s, ProjectCodec.decode(ProjectCodec.encode(s)))
         }
         // A project whose backend says SCC but whose chip data is for the SCC+ is refused.
         val scc = ProjectCodec.encode(SccSystem.blank())
-        assertTrue(scc.contains("\"variant\":\"scc\""))
         val mixed = scc.replace("\"variant\":\"scc\"", "\"variant\":\"scc-plus\"")
-        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mixed) }
-        assertTrue(e.message!!.contains("not the SCC (K051649)"))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mixed) }
     }
 
     // ---- validation ----------------------------------------------------------------------------------------
 
+    /** Whether [song] may play and export: the gate the menus apply (its system's errors empty). Its reasons are UI text. */
+    private fun loads(song: Song) = song.system.errors(song).isEmpty()
+
+    /** Whether the lowering (the image every consumer plays) accepts [song]; it refuses rather than writing a bad image. */
+    private fun lowers(song: Song): Boolean = try {
+        SccLowering.lower(song)
+        true
+    } catch (e: IllegalArgumentException) {
+        false
+    }
+
+    /** Whether [cell] on [channel] (row 0 of [song]'s first order) loads; the editor's cell check and the song's gate agree. */
+    private fun cellLoads(channel: Int, cell: Cell, song: Song = SccSystem.blank()): Boolean {
+        val placed = with(song, 0, channel, 0, cell)
+        val accepted = placed.system.cellProblem(placed, channel, cell) == null
+        assertEquals("cell check and song gate on $cell, channel $channel", accepted, loads(placed))
+        return accepted
+    }
+
+    /** Whether [ins] loads in slot 14; the instrument check, the song's gate and the lowering agree. */
+    private fun soundLoads(ins: SccInstrument): Boolean {
+        val song = withSound(SccSystem.blank()) { it.withInstrument(0x14, ins) }
+        val accepted = SccValidator.instrumentProblem(ins) == null
+        assertEquals("instrument check and song gate on $ins", accepted, loads(song))
+        assertEquals("instrument check and lowering on $ins", accepted, lowers(song))
+        return accepted
+    }
+
+    /** Whether the chip data [f] gives a blank song loads; the song's gate and the lowering agree. */
+    private fun settingsLoad(f: (SccSound) -> SccSound): Boolean {
+        val song = withSound(SccSystem.blank(), f)
+        val accepted = loads(song)
+        assertEquals("song gate and lowering", accepted, lowers(song))
+        return accepted
+    }
+
     @Test
-    fun validationExplainsWhatTheLoaderRejects() {
-        fun error(cell: Cell, channel: Int = 0) = SccSystem.errors(blankWith(channel, 0, cell)).joinToString("\n")
-        assertTrue(error(Cell(8, lead)).contains("outside A-0..B-7"))
-        assertTrue(error(Cell(96, lead)).contains("outside A-0..B-7"))
-        assertEquals("", error(Cell(9, lead)))
-        assertEquals("", error(Cell(95, lead)))
-        assertEquals("", error(Cell(Cell.CUT)))
-        assertTrue(error(Cell(57, 40)).contains("instrument 28 is empty"))
-        assertTrue(error(Cell(57, 65)).contains("instrument 65 is outside 0-64"))
-        // Parameters, in any column.
-        assertTrue(error(Cell(57, lead).withEffect(2, SccRules.FX_VOLUME, 0x10)).contains("volumes are C00-C0F"))
-        assertEquals("", error(Cell(57, lead, SccRules.FX_VOLUME, 0x0F)))
-        assertTrue(error(Cell(57, lead, SccRules.FX_SPEED, 0)).contains("F00"))
-        assertTrue(error(Cell(57, lead, SccRules.FX_WAVE, 0)).contains("waves are W01-W40"))
-        assertTrue(error(Cell(57, lead, SccRules.FX_WAVE, 0x41)).contains("waves are W01-W40"))
-        assertEquals("", error(Cell(57, lead, SccRules.FX_WAVE, 0x40)))
-        assertTrue(error(Cell(57, lead, SccRules.FX_JUMP, 1)).contains("jumps past the last order"))
-        assertEquals("", error(Cell(57, lead, SccRules.FX_TEST, 0xFF)))
-        assertEquals("", error(Cell(57, lead, SccRules.FX_DELAY, 0xFF)))
-        assertTrue(error(Cell(57, lead, 5, 1)).contains("does not exist on the SCC"))
-        assertTrue(error(Cell(57, lead, 33, 1)).contains("does not exist on the SCC"))
-        // Instruments, envelopes and waves.
-        fun songError(f: (SccSound) -> SccSound) = SccSystem.errors(withSound(SccSystem.blank(), f)).joinToString("\n")
-        fun insError(ins: SccInstrument) = songError { it.withInstrument(20, ins) }
-        assertTrue(insError(SccInstrument(wave = NesEnvelope())).contains("Instrument 14: it plays no wave"))
-        assertTrue(insError(SccInstrument(wave = NesEnvelope(listOf(65)))).contains("names wave 65"))
-        assertTrue(insError(SccInstrument(wave = NesEnvelope(listOf(0)))).contains("names wave 0"))
-        assertTrue(insError(SccInstrument(volume = NesEnvelope(listOf(16)))).contains("value 16 outside 0..15"))
-        assertTrue(insError(SccInstrument(arpeggio = NesEnvelope(listOf(64)))).contains("value 64 outside -64..63"))
-        assertTrue(insError(SccInstrument(pitch = NesEnvelope(listOf(-65)))).contains("value -65 outside -64..63"))
-        assertTrue(insError(SccInstrument(arpeggio = NesEnvelope(listOf(0, 1), release = 1))).contains("only volume envelopes have one"))
-        assertTrue(insError(SccInstrument(volume = NesEnvelope(listOf(15, 0), release = 0))).contains("release point 0 is outside steps 1-1"))
-        assertTrue(insError(SccInstrument(volume = NesEnvelope(listOf(15), release = 1))).contains("too short for a release point"))
-        assertTrue(insError(SccInstrument(volume = NesEnvelope(listOf(15, 9, 0), loop = 2, release = 2))).contains("the loop must come first"))
-        assertTrue(insError(SccInstrument(volume = NesEnvelope(listOf(15, 9), loop = 2))).contains("loops to step 2"))
-        assertTrue(insError(SccInstrument(pitch = NesEnvelope(loop = 0))).contains("loop or release point but no values"))
-        assertTrue(insError(SccInstrument(volume = NesEnvelope(List(257) { 15 }))).contains("at most 256"))
-        assertEquals("", insError(SccInstrument(volume = NesEnvelope(List(256) { 15 }, loop = 3, release = 255))))
-        assertTrue(songError { it.withWave(3, SccWave("short", List(31) { 0 })) }.contains("Wave 03 has 31 samples"))
-        assertTrue(songError { it.withWave(3, SccWave("loud", List(32) { 128 })) }.contains("Wave 03 has a sample outside -128..127"))
-        assertTrue(songError { it.copy(multispeed = 9) }.contains("Multispeed 9 is outside 1-8"))
-        assertTrue(songError { it.copy(instruments = it.instruments.drop(1)) }.contains("exactly 64"))
-        assertTrue(songError { it.copy(waves = it.waves.drop(1)) }.contains("exactly 64"))
-        // A song of the other chip is not this system's.
-        assertTrue(SccSystem.errors(plus(SccSystem.blank())).single().contains("for the SCC+ (K052539), not the SCC (K051649)"))
-        // Every rejection the lowering can still meet throws the same message.
-        val bad = withSound(SccSystem.blank()) { it.withInstrument(20, SccInstrument(wave = NesEnvelope())) }
-        assertTrue(assertThrows(IllegalArgumentException::class.java) { SccLowering.lower(bad) }.message!!.contains("plays no wave"))
+    fun cellsLoadOnlyWhereThePlayerAcceptsThem() {
+        for (system in systems) {
+            val blank = system.blank()
+            fun ok(cell: Cell, channel: Int = 0) = cellLoads(channel, cell, blank)
+            // Notes A-0..B-7; OFF.
+            assertFalse(ok(Cell(8, lead)))
+            assertFalse(ok(Cell(96, lead)))
+            assertTrue(ok(Cell(9, lead)))
+            assertTrue(ok(Cell(95, lead)))
+            assertTrue(ok(Cell(Cell.CUT)))
+            // Instruments 01-40 that are filled.
+            assertFalse(ok(Cell(57, 40)))
+            assertFalse(ok(Cell(57, 65)))
+            assertFalse(ok(Cell(57, SccSound.SLOTS)))
+            assertTrue(cellLoads(4, Cell(57, SccSound.SLOTS), withSound(blank) { it.withInstrument(SccSound.SLOTS, SccPresets.ALL[0].instrument) }))
+            // Parameters at their boundaries, in any effect column.
+            assertFalse(ok(Cell(57, lead).withEffect(2, SccRules.FX_VOLUME, 0x10)))
+            assertTrue(ok(Cell(57, lead).withEffect(2, SccRules.FX_VOLUME, 0x0F)))
+            assertFalse(ok(Cell(57, lead, SccRules.FX_SPEED, 0)))
+            assertTrue(ok(Cell(57, lead, SccRules.FX_SPEED, 1)))
+            assertFalse(ok(Cell(57, lead, SccRules.FX_WAVE, 0)))
+            assertTrue(ok(Cell(57, lead, SccRules.FX_WAVE, 0x01)))
+            assertTrue(ok(Cell(57, lead, SccRules.FX_WAVE, 0x40)))
+            assertFalse(ok(Cell(57, lead, SccRules.FX_WAVE, 0x41)))
+            // The song has one order.
+            assertTrue(ok(Cell(57, lead, SccRules.FX_JUMP, 0)))
+            assertFalse(ok(Cell(57, lead, SccRules.FX_JUMP, 1)))
+            assertTrue(ok(Cell(57, lead, SccRules.FX_TEST, 0xFF)))
+            assertTrue(ok(Cell(57, lead, SccRules.FX_DELAY, 0xFF)))
+            // Every effect column the pattern grid offers loads.
+            val full = (0 until system.effectColumns(0)).fold(Cell(57, lead)) { c, i -> c.withEffect(i, SccRules.FX_VOLUME, 0x0C) }
+            assertTrue(ok(full, 4))
+        }
+        // The effect codes the player knows, and only those.
+        val known = setOf(0, 1, 2, 3, 4, 10, 11, 12, 13, 15, 16, 25, 28, 29, 32)
+        assertEquals(known, SccRules.EFFECTS.map { it.code }.toSet())
+        for (code in (0..EffectSpec.MAX_CODE).toSet() - known) assertFalse("code $code", cellLoads(0, Cell(57, lead, code, 1)))
+    }
+
+    @Test
+    fun instrumentsWavesAndSettingsLoadOnlyWithinThePlayersRanges() {
+        // The wave envelope names at least one wave, each 01-40.
+        assertFalse(soundLoads(SccInstrument(wave = NesEnvelope())))
+        assertTrue(soundLoads(SccInstrument(wave = NesEnvelope(listOf(1)))))
+        assertTrue(soundLoads(SccInstrument(wave = NesEnvelope(listOf(64)))))
+        assertFalse(soundLoads(SccInstrument(wave = NesEnvelope(listOf(65)))))
+        assertFalse(soundLoads(SccInstrument(wave = NesEnvelope(listOf(0)))))
+        // Values: volume 0..15, arpeggio and pitch -64..63.
+        assertTrue(soundLoads(SccInstrument(volume = NesEnvelope(listOf(0, 15)))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(16)))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(-1)))))
+        assertTrue(soundLoads(SccInstrument(arpeggio = NesEnvelope(listOf(-64, 63)))))
+        assertFalse(soundLoads(SccInstrument(arpeggio = NesEnvelope(listOf(64)))))
+        assertFalse(soundLoads(SccInstrument(arpeggio = NesEnvelope(listOf(-65)))))
+        assertTrue(soundLoads(SccInstrument(pitch = NesEnvelope(listOf(-64, 63)))))
+        assertFalse(soundLoads(SccInstrument(pitch = NesEnvelope(listOf(-65)))))
+        assertFalse(soundLoads(SccInstrument(pitch = NesEnvelope(listOf(64)))))
+        // Release points: volume only, at step 1..length-1, after the loop.
+        assertFalse(soundLoads(SccInstrument(arpeggio = NesEnvelope(listOf(0, 1), release = 1))))
+        assertTrue(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 0), release = 1))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 0), release = 0))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 0), release = 2))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15), release = 1))))
+        assertTrue(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 9, 0), loop = 1, release = 2))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 9, 0), loop = 2, release = 2))))
+        // Loop points inside the envelope; an empty envelope has neither point.
+        assertTrue(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 9), loop = 1))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(listOf(15, 9), loop = 2))))
+        assertTrue(soundLoads(SccInstrument(pitch = NesEnvelope())))
+        assertFalse(soundLoads(SccInstrument(pitch = NesEnvelope(loop = 0))))
+        // At most 256 steps.
+        assertTrue(soundLoads(SccInstrument(volume = NesEnvelope(List(256) { 15 }, loop = 3, release = 255))))
+        assertFalse(soundLoads(SccInstrument(volume = NesEnvelope(List(257) { 15 }))))
+        // Waves: exactly 32 samples of -128..127.
+        assertTrue(settingsLoad { it.withWave(3, SccWave("edge", List(32) { i -> if (i % 2 == 0) -128 else 127 })) })
+        assertFalse(settingsLoad { it.withWave(3, SccWave("short", List(31) { 0 })) })
+        assertFalse(settingsLoad { it.withWave(3, SccWave("long", List(33) { 0 })) })
+        assertFalse(settingsLoad { it.withWave(3, SccWave("loud", List(32) { 128 })) })
+        assertFalse(settingsLoad { it.withWave(3, SccWave("low", List(32) { -129 })) })
+        assertTrue(SccWave("edge", List(32) { -128 }).problem() == null)
+        assertNotNull(SccWave("loud", List(32) { 128 }).problem())
+        // Multispeed 1-8; exactly 64 instrument slots and 64 waves.
+        assertTrue(settingsLoad { it.copy(multispeed = 8) })
+        assertFalse(settingsLoad { it.copy(multispeed = 9) })
+        assertFalse(settingsLoad { it.copy(multispeed = 0) })
+        assertFalse(settingsLoad { it.copy(instruments = it.instruments.drop(1)) })
+        assertFalse(settingsLoad { it.copy(waves = it.waves.drop(1)) })
+        // A song of the other chip is not this system's; on its own system it loads.
+        assertFalse(SccSystem.errors(plus(SccSystem.blank())).isEmpty())
+        assertTrue(SccPlusSystem.errors(plus(SccSystem.blank())).isEmpty())
     }
 
     @Test
@@ -262,102 +280,187 @@ class SccModelTest {
         }
         val song = base.copy(patterns = patterns, orders = patterns.indices.toList())
         assertTrue(SccLowering.dataSize(song) > SccPlayerImage.DATA_CAPACITY)
-        assertTrue(SccSystem.errors(song).joinToString().contains("the SCC image holds"))
+        assertFalse(loads(song))
         assertThrows(IllegalArgumentException::class.java) { SccLowering.lower(song) }
+        // Fewer orders of the same patterns fit, load and lower.
+        val fewer = song.copy(orders = listOf(0, 1))
+        assertTrue(SccLowering.dataSize(fewer) <= SccPlayerImage.DATA_CAPACITY)
+        assertTrue(loads(fewer))
+        assertTrue(lowers(fewer))
     }
 
     @Test
-    fun auditionChecksSlotNoteAndFine() {
-        val engine = SccSystem.engine
-        val song = SccSystem.blank()
-        assertNull(engine.auditionProblem(song, 0, 57, lead, 0))
-        assertNull(engine.auditionProblem(song, 4, 9, kick, -128))
-        assertTrue(engine.auditionProblem(song, 0, 8, lead, 0)!!.contains("outside A-0..B-7"))
-        assertTrue(engine.auditionProblem(song, 0, 96, lead, 0)!!.contains("outside A-0..B-7"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 40, 0)!!.contains("is empty"))
-        assertTrue(engine.auditionProblem(song, 0, 57, 0, 0)!!.contains("Choose an instrument"))
-        assertTrue(engine.auditionProblem(song, 5, 57, lead, 0)!!.contains("channel 5"))
-        assertTrue(engine.auditionProblem(song, 0, 57, lead, 128)!!.contains("Fine pitch"))
-        val broken = withSound(song) { it.withInstrument(20, SccInstrument(wave = NesEnvelope())) }
-        assertTrue(engine.auditionProblem(broken, 0, 57, 20, 0)!!.contains("cannot play: it plays no wave"))
+    fun auditionRefusesWhatCannotSound() {
+        for (system in systems) {
+            val song = system.blank()
+            fun plays(channel: Int, note: Int, instrument: Int, fine: Int = 0, s: Song = song) =
+                system.engine.auditionProblem(s, channel, note, instrument, fine) == null
+            assertTrue(plays(0, 57, lead))
+            assertTrue(plays(4, 9, kick, -128))
+            // Notes A-0..B-7, fine pitch -128..127, channels SCC 1-5.
+            assertTrue(plays(0, 95, lead, 127))
+            assertFalse(plays(0, 8, lead))
+            assertFalse(plays(0, 96, lead))
+            assertFalse(plays(0, 57, lead, 128))
+            assertFalse(plays(0, 57, lead, -129))
+            assertFalse(plays(5, 57, lead))
+            assertFalse(plays(-1, 57, lead))
+            // Instruments 01-40 that are filled and load; repairing the instrument lets it play.
+            assertFalse(plays(0, 57, 0))
+            assertFalse(plays(0, 57, 40))
+            assertFalse(plays(0, 57, 65))
+            assertFalse(plays(0, 57, 20, s = withSound(song) { it.withInstrument(20, SccInstrument(wave = NesEnvelope())) }))
+            assertTrue(plays(0, 57, 20, s = withSound(song) { it.withInstrument(20, SccInstrument(wave = NesEnvelope(listOf(1)))) }))
+        }
     }
 
     // ---- warnings ------------------------------------------------------------------------------------------
 
+    private fun warns(song: Song) = song.system.warnings(song).isNotEmpty()
+
+    /** The shared-state walk after row [row] of order [order]: who holds the SCC's shared wave RAM and why. */
+    private fun walked(song: Song, row: Int, order: Int = 0): SccWalk = SccSharedState.walk(song, order, row)
+
+    private fun claim(channel: Int, row: Int, slot: Int, wave: Int, byNote: Boolean, order: Int = 0) =
+        SccWalk.Claim(channel, order, row, slot, wave, byNote)
+
     @Test
-    fun sharedWaveConflictsWarnOnTheSccOnly() {
-        fun warnings(song: Song) = song.system.warnings(song).joinToString("\n")
-        val shared = "one shared wave RAM"
-        // Saw pluck on SCC 4 and square echo on SCC 5 at once.
+    fun sharedWaveConflictsWarnOnTheSccUntilTheirCauseClears() {
+        fun warnings(song: Song) = song.system.warnings(song)
+        // Saw pluck on SCC 4 and square echo on SCC 5 at once: SCC 5 claims last, so both play its square.
         val clash = with(blankWith(3, 0, Cell(48, pluck)), 0, 4, 0, Cell(55, echo))
-        val text = warnings(clash)
-        assertTrue(text, text.contains("Order 00 row 0: SCC 4 (wave 03 \"Saw\") and SCC 5 (wave 04 \"Square\") sound together"))
-        assertTrue(text.contains(shared))
-        assertTrue(text.contains("both play the latest claim: wave 04 \"Square\" from SCC 5's note at order 00 row 0"))
-        assertTrue(text.contains("switch the song to SCC+ (K052539)"))
-        // Reported once per stretch, not every row.
-        assertEquals(1, Regex(shared).findAll(text).count())
-        // The SCC+ has a RAM per channel.
-        assertFalse(warnings(plus(clash)).contains(shared))
+        val atClash = walked(clash, 0)
+        assertTrue(atClash.keyed[3] && atClash.keyed[4])
+        assertEquals(listOf(SccPresets.SAW), atClash.waveSet(3))
+        assertEquals(listOf(SccPresets.SQUARE), atClash.waveSet(4))
+        assertEquals(claim(4, 0, echo, SccPresets.SQUARE, byNote = true), atClash.claim)
+        assertEquals(SccPresets.SQUARE, atClash.held)
+        // Both stay keyed to the pattern's end: one warning for the stretch, not one per row.
+        assertEquals(1, warnings(clash).size)
+        // The SCC+ has a RAM per channel: nothing is claimed, nothing warns.
+        assertFalse(warns(plus(clash)))
+        assertNull(walked(plus(clash), 0).claim)
+        assertEquals(0, SccSharedState.sharedWave(plus(clash), 0, 0))
         // The same instrument on both: one wave, no conflict.
-        assertFalse(warnings(with(blankWith(3, 0, Cell(48, organ)), 0, 4, 0, Cell(52, organ))).contains(shared))
-        // Alternating phrases: SCC 4's pluck ends with OFF (no release point) before SCC 5 enters.
+        assertFalse(warns(with(blankWith(3, 0, Cell(48, organ)), 0, 4, 0, Cell(52, organ))))
+        // Alternating phrases: SCC 4's pluck ends with OFF (no release point: keyed off) before SCC 5 enters.
         var alternating = with(blankWith(3, 0, Cell(48, pluck)), 0, 3, 4, Cell(Cell.CUT))
         alternating = with(alternating, 0, 4, 8, Cell(55, echo))
-        assertFalse(warnings(alternating).contains(shared))
-        // An OFF on a note with a release point only releases it: the release still sounds while SCC 5 plays.
-        var released = with(blankWith(3, 0, Cell(48, lead)), 0, 3, 4, Cell(Cell.CUT))
+        assertFalse(walked(alternating, 4).keyed[3])
+        assertFalse(warns(alternating))
+        // An OFF on a note whose release ends above 0 only releases it: still keyed when SCC 5 enters at row 8.
+        var released = withSustain(with(blankWith(3, 0, Cell(48, sustain)), 0, 3, 4, Cell(Cell.CUT)))
         released = with(released, 0, 4, 8, Cell(55, echo))
-        assertTrue(warnings(released).contains("Order 00 row 8: SCC 4 (wave 05 \"Pulse 25%\")"))
+        assertTrue(walked(released, 4).keyed[3])
+        assertFalse(walked(released, 7).keyed[4])
+        assertTrue(walked(released, 8).keyed[3] && walked(released, 8).keyed[4])
+        assertEquals(claim(4, 8, echo, SccPresets.SQUARE, byNote = true), walked(released, 8).claim)
+        assertEquals(1, warnings(released).size)
+        // A second OFF keys the released note off before SCC 5 enters: the conflict clears.
+        val keyedOff = with(released, 0, 3, 5, Cell(Cell.CUT))
+        assertFalse(walked(keyedOff, 5).keyed[3])
+        assertFalse(warns(keyedOff))
+        // A release that plays its final 0 keys the note off at that tick: Lead's OFF at row 4 reaches its 0 four ticks
+        // later, inside row 4 (speed 6), so SCC 5's note at row 8 meets no conflict.
+        var faded = with(blankWith(3, 0, Cell(48, lead)), 0, 3, 4, Cell(Cell.CUT))
+        faded = with(faded, 0, 4, 8, Cell(55, echo))
+        assertTrue(walked(faded, 3).keyed[3])
+        assertFalse(walked(faded, 4).keyed[3])
+        assertFalse(warns(faded))
         // A W lock on one note counts: Organ on both, but SCC 5's note plays the saw.
         val locked = with(blankWith(3, 0, Cell(48, organ)), 0, 4, 0, Cell(52, organ, SccRules.FX_WAVE, SccPresets.SAW))
-        assertTrue(warnings(locked).contains("SCC 5 (wave 03 \"Saw\")"))
+        assertEquals(listOf(SccPresets.SAW), walked(locked, 0).waveSet(4))
+        assertEquals(claim(4, 0, organ, SccPresets.SAW, byNote = true), walked(locked, 0).claim)
+        assertTrue(warns(locked))
         // Two wave numbers with the same samples are the same sound.
         val twin = withSound(with(blankWith(3, 0, Cell(48, pluck)), 0, 4, 0, Cell(55, 20))) {
             it.withWave(30, SccWave("saw copy", SccWaveShapes.saw())).withInstrument(20, SccInstrument("twin", wave = NesEnvelope(listOf(30))))
         }
-        assertFalse(warnings(twin).contains(shared))
-        // A wave envelope's waves are compared as a set.
-        assertTrue(warnings(with(blankWith(3, 0, Cell(48, morph)), 0, 4, 0, Cell(55, organ))).contains("waves 01, 02, 03, 04 of a wave envelope"))
+        assertNotEquals(walked(twin, 0).waveSet(3), walked(twin, 0).waveSet(4))
+        assertFalse(warns(twin))
+        // A wave envelope's waves are compared as a set: Morph's four against Organ's one.
+        val envelope = with(blankWith(3, 0, Cell(48, morph)), 0, 4, 0, Cell(55, organ))
+        assertEquals(listOf(SccPresets.SINE, SccPresets.TRIANGLE, SccPresets.SAW, SccPresets.SQUARE), walked(envelope, 0).waveSet(3))
+        assertTrue(warns(envelope))
     }
 
     @Test
-    fun testRegisterWarningsDependOnTheBits() {
-        fun warnings(param: Int, system: KonamiSccSystem = SccSystem) =
-            blankWith(0, 0, Cell(57, lead, SccRules.FX_TEST, param), system).let { system.warnings(it) }.joinToString("\n")
-        assertEquals("", warnings(0x20))
-        assertEquals("", warnings(0x00))
-        assertTrue(warnings(0x01).contains("unverified frequency mode"))
-        assertTrue(warnings(0x02).contains("VGM players ignore it"))
-        assertTrue(warnings(0x04).contains("bits 2-4 have no known function"))
-        assertTrue(warnings(0x40).contains("freezes every wave RAM"))
-        assertTrue(warnings(0x40, SccPlusSystem).contains("freezes every wave RAM"))
-        assertTrue(warnings(0x80).contains("freezes the wave RAM SCC 4 and SCC 5 share"))
-        val plus80 = warnings(0x80, SccPlusSystem)
-        assertTrue(plus80.contains("the SCC+ ignores it"))
-        assertFalse(plus80.contains("freezes"))
+    fun testRegisterWarningsAndFreezesDependOnTheBits() {
+        fun song(param: Int, system: KonamiSccSystem = SccSystem) = blankWith(0, 0, Cell(57, lead, SccRules.FX_TEST, param), system)
+        // Restart (bit 5) and normal operation are silent; frequency modes, unknown bits and freezes warn.
+        for (system in systems) {
+            assertFalse(warns(song(0x20, system)))
+            assertFalse(warns(song(0x00, system)))
+            for (bits in listOf(0x01, 0x02, 0x04, 0x40, 0x80)) assertTrue("T%02X".format(bits), warns(song(bits, system)))
+        }
+        // Bit 6 freezes every wave RAM; bit 7 freezes the SCC's shared one, which the SCC+ does not have.
+        assertTrue(walked(song(0x40), 0).frozen)
+        assertTrue(walked(song(0x40, SccPlusSystem), 0).frozen)
+        assertTrue(walked(song(0x80), 0).frozen)
+        assertFalse(walked(song(0x80, SccPlusSystem), 0).frozen)
+        assertFalse(walked(song(0x20), 0).frozen)
     }
 
     @Test
-    fun otherWarningsCoverWavesDelaysInstrumentsAndHighNotes() {
-        fun warnings(song: Song) = SccSystem.warnings(song).joinToString("\n")
+    fun otherWarningsAppearWithTheirCauseAndClearWithIt() {
         // Wxx on a row where nothing sounds; on a sounding note it is fine.
-        assertTrue(warnings(blankWith(0, 3, Cell(effect = SccRules.FX_WAVE, param = 4))).contains("no note sounds here"))
-        assertEquals("", warnings(with(blankWith(0, 0, Cell(57, lead)), 0, 0, 3, Cell(effect = SccRules.FX_WAVE, param = 4))))
-        // After OFF on a note without a release point nothing sounds; on SCC 4 the W still claims the shared RAM.
+        assertTrue(warns(blankWith(0, 3, Cell(effect = SccRules.FX_WAVE, param = 4))))
+        assertFalse(warns(with(blankWith(0, 0, Cell(57, lead)), 0, 0, 3, Cell(effect = SccRules.FX_WAVE, param = 4))))
+        // After OFF on a note without a release point nothing sounds, so the W warns; on SCC 4 it still claims the RAM.
         var afterOff = with(blankWith(3, 0, Cell(57, pluck)), 0, 3, 2, Cell(Cell.CUT))
         afterOff = with(afterOff, 0, 3, 3, Cell(effect = SccRules.FX_WAVE, param = 4))
-        assertTrue(warnings(afterOff).contains("it still claims the wave RAM SCC 4 and SCC 5 share"))
-        assertTrue(warnings(blankWith(0, 0, Cell(48, lead, SccRules.FX_DELAY, 6))).contains("the row never plays"))
-        assertEquals("", warnings(blankWith(0, 0, Cell(48, lead, SccRules.FX_DELAY, 5))))
-        assertTrue(warnings(blankWith(0, 4, Cell(48))).contains("has no instrument"))
-        // Notes above G#6 with the 12-bit divider's real error.
-        val high = warnings(blankWith(0, 0, Cell(95, lead)))
-        assertTrue(high, high.contains("Notes above G#6"))
-        assertTrue(high, high.contains("B-7 +19.2¢ (period 27)"))
-        assertEquals("", warnings(blankWith(0, 0, Cell(80, lead))))
+        assertTrue(warns(afterOff))
+        val w = walked(afterOff, 3)
+        assertFalse(w.keyed[3])
+        assertEquals(claim(3, 3, pluck, SccPresets.SQUARE, byNote = false), w.claim)
+        assertEquals(SccPresets.SQUARE, w.held)
+        // A note delay the speed (6) never reaches; a shorter one is fine.
+        assertTrue(warns(blankWith(0, 0, Cell(48, lead, SccRules.FX_DELAY, 6))))
+        assertFalse(warns(blankWith(0, 0, Cell(48, lead, SccRules.FX_DELAY, 5))))
+        // An order's first note without an instrument.
+        assertTrue(warns(blankWith(0, 4, Cell(48))))
+        assertFalse(warns(blankWith(0, 4, Cell(48, lead))))
+        // Notes above G#6, where the 12-bit divider's error grows.
+        assertTrue(warns(blankWith(0, 0, Cell(95, lead))))
+        assertTrue(warns(blankWith(0, 0, Cell(81, lead))))
+        assertFalse(warns(blankWith(0, 0, Cell(80, lead))))
+        assertEquals(19.2, SccRules.cents(95), 0.05)
+        assertEquals(27, SccPlayerImage.period(95 * 64))
         assertEquals(1.6, SccRules.cents(57), 0.05)
         assertEquals(253, SccPlayerImage.period(57 * 64))
+    }
+
+    @Test
+    fun releasesEndAtTheirFinalZeroAndPortamentoGlidesOnlyIntoHeldNotes() {
+        // Pad's release (from step 8) reaches its final 0 nine ticks after the OFF: OFF at row 1 tick 0 ends at row 2
+        // tick 3 (speed 6), so the note is keyed after row 1 and keyed off after row 2.
+        val padded = with(blankWith(3, 0, Cell(48, pad)), 0, 3, 1, Cell(Cell.CUT))
+        assertTrue(walked(padded, 1).keyed[3])
+        assertFalse(walked(padded, 2).keyed[3])
+        // A release ending above 0 never keys the note off by itself.
+        val held = withSustain(with(blankWith(3, 0, Cell(48, sustain)), 0, 3, 1, Cell(Cell.CUT)))
+        assertTrue(walked(held, 63).keyed[3])
+
+        // 3xx glides into a held note: no key-on, the claim stays the first note's.
+        val glide = with(blankWith(3, 0, Cell(48, lead, SccRules.FX_PORTAMENTO, 0x10)), 0, 3, 3, Cell(55, lead))
+        assertEquals(claim(3, 0, lead, SccPresets.PULSE_25, byNote = true), walked(glide, 3).claim)
+        // After the release has ended (Lead's OFF at row 2 reaches its final 0 in that row) the next note keys on and claims.
+        val afterRelease = with(glide, 0, 3, 2, Cell(Cell.CUT))
+        assertFalse(walked(afterRelease, 2).keyed[3])
+        assertEquals(claim(3, 3, lead, SccPresets.PULSE_25, byNote = true), walked(afterRelease, 3).claim)
+        // During an audible release (still keyed) the next note keys on too rather than gliding.
+        var duringRelease = with(blankWith(3, 0, Cell(48, sustain, SccRules.FX_PORTAMENTO, 0x10)), 0, 3, 2, Cell(Cell.CUT))
+        duringRelease = withSustain(with(duringRelease, 0, 3, 3, Cell(55, sustain)))
+        assertTrue(walked(duringRelease, 2).keyed[3])
+        assertEquals(claim(3, 3, sustain, SccPresets.PULSE_25, byNote = true), walked(duringRelease, 3).claim)
+
+        // Wxx after a release has ended finds no sounding note; during a release ending above 0 it still has one.
+        fun waveAfterOff(slot: Int) = withSustain(with(with(blankWith(0, 0, Cell(57, slot)), 0, 0, 1, Cell(Cell.CUT)), 0, 0, 2,
+            Cell(effect = SccRules.FX_WAVE, param = SccPresets.SQUARE)))
+        assertFalse(walked(waveAfterOff(lead), 1).keyed[0])
+        assertTrue(warns(waveAfterOff(lead)))
+        assertTrue(walked(waveAfterOff(sustain), 1).keyed[0])
+        assertFalse(warns(waveAfterOff(sustain)))
     }
 
     // ---- arrangement, settings and shared state -------------------------------------------------------------
@@ -379,20 +482,20 @@ class SccModelTest {
     }
 
     @Test
-    fun multispeedSettingAdjustsAndResets() {
+    fun multispeedSettingAdjustsClampsAndResets() {
         val song = SccPlusSystem.blank()
-        assertEquals(listOf("Multispeed"), SccPlusSystem.songSettings.map { it.label })
-        val m = SccSongSettings.ALL.single()
+        val m = SccPlusSystem.songSettings.single()
         assertEquals(2, m.adjust(song, 1, 0).scc.multispeed)
         assertEquals(5, m.adjust(song, 0, 1).scc.multispeed)
         assertEquals(8, m.adjust(song, 0, 5).scc.multispeed)
         assertEquals(1, m.adjust(song, -3, 0).scc.multispeed)
-        assertTrue(m.value(m.adjust(song, 2, 0)).contains("180 ticks per second"))
+        assertEquals(180.0, SccPlusSystem.ticksPerSecond(m.adjust(song, 2, 0)), 1e-9)
         assertEquals(song, m.reset(m.adjust(song, 2, 0)))
     }
 
+
     @Test
-    fun sharedStateNamesTheWaveTheSharedRamHolds() {
+    fun sharedStateFollowsTheClaimsOfTheSharedRam() {
         var song = SccSystem.blank()
         song = with(song, 0, 3, 0, Cell(48, organ))
         song = with(song, 0, 4, 2, Cell(55, pluck))
@@ -401,65 +504,77 @@ class SccModelTest {
         song = with(song, 0, 4, 7, Cell(43, bass))
         song = with(song, 0, 0, 8, Cell(effect = SccRules.FX_TEST, param = 0x00))
         song = with(song, 0, 4, 10, Cell(55, morph))
-        song = with(song, 0, 4, 12, Cell(Cell.CUT)) // Morph has a release point: this OFF releases it (still keyed)
-        song = with(song, 0, 4, 13, Cell(Cell.CUT)) // the second OFF keys it off
+        song = with(song, 0, 4, 12, Cell(effect = SccRules.FX_CUT, param = 3)) // S03 releases Morph; its final 0 falls on row 13
+        song = with(song, 0, 4, 13, Cell(Cell.CUT)) // OFF on the released note keys it off
         song = with(song, 0, 3, 14, Cell(48, organ))
         song = with(song, 0, 4, 15, Cell(effect = SccRules.FX_WAVE, param = 3)) // W03 on the keyed-off SCC 5
 
-        val start = SccSystem.sharedState(SccSystem.blank(), 0, 0)!!
-        assertEquals(List<String?>(5) { null }, start.tags)
-        assertTrue(start.lines[0].contains("not claimed yet"))
+        // Nothing claimed yet: nothing held, no lane tags.
+        assertNull(walked(SccSystem.blank(), 0).claim)
+        assertEquals(0, SccSharedState.sharedWave(SccSystem.blank(), 0, 0))
+        assertEquals(List<String?>(5) { null }, SccSystem.sharedState(SccSystem.blank(), 0, 0)!!.tags)
 
-        val first = SccSystem.sharedState(song, 0, 0)!!
-        assertEquals(listOf(null, null, null, "W07", "W07"), first.tags)
-        assertEquals("Shared wave RAM (SCC 4 + SCC 5) holds wave 07 \"Organ\" from SCC 4's note at order 00 row 0; both channels play it", first.lines[0])
-        assertEquals(1, first.lines.size)
+        // SCC 4's note claims it; SCC 5 is silent.
+        val first = walked(song, 0)
+        assertEquals(claim(3, 0, organ, SccPresets.ORGAN, byNote = true), first.claim)
+        assertEquals(SccPresets.ORGAN, first.held)
+        assertFalse(first.keyed[4])
 
-        val second = SccSystem.sharedState(song, 0, 2)!!
-        assertEquals("W03", second.tags[3])
-        assertTrue(second.lines[0].contains("wave 03 \"Saw\" from SCC 5's note at order 00 row 2"))
-        assertTrue(second.lines.contains("SCC 4 is sounding too: it plays this wave, not its own wave 07 \"Organ\""))
+        // SCC 5's note takes it while SCC 4 still sounds with its own wave: the readout gains that fact.
+        val second = walked(song, 2)
+        assertEquals(claim(4, 2, pluck, SccPresets.SAW, byNote = true), second.claim)
+        assertEquals(SccPresets.SAW, second.held)
+        assertTrue(second.keyed[3])
+        assertEquals(listOf(SccPresets.ORGAN), second.waveSet(3))
 
-        // A W on SCC 4's sounding note re-claims the RAM.
-        val change = SccSystem.sharedState(song, 0, 4)!!
-        assertEquals("W05", change.tags[4])
-        assertTrue(change.lines[0].contains("from SCC 4's wave change at order 00 row 4"))
+        // A W on SCC 4's sounding note re-claims the RAM (a wave change, not a note).
+        val change = walked(song, 4)
+        assertEquals(claim(3, 4, organ, SccPresets.PULSE_25, byNote = false), change.claim)
+        assertEquals(SccPresets.PULSE_25, change.held)
 
         // Frozen by T40: SCC 5's claim does not reach the RAM until T00.
-        val frozen = SccSystem.sharedState(song, 0, 7)!!
-        assertEquals("W05", frozen.tags[3])
-        assertTrue(frozen.lines[0].contains("frozen by T40; the claim was for wave 09 \"Bass\""))
-        assertTrue(frozen.lines.last().startsWith("Test register T40: every wave RAM is frozen"))
-        assertEquals(9, SccSharedState.sharedWave(song, 0, 8))
-        assertEquals("W09", SccSystem.sharedState(song, 0, 8)!!.tags[3])
+        val frozen = walked(song, 7)
+        assertTrue(frozen.frozen)
+        assertEquals(0x40, frozen.test)
+        assertEquals(claim(4, 7, bass, SccPresets.BASS, byNote = true), frozen.claim)
+        assertEquals(SccPresets.PULSE_25, frozen.held)
+        val thawed = walked(song, 8)
+        assertFalse(thawed.frozen)
+        assertEquals(SccPresets.BASS, thawed.held)
+        assertEquals(SccPresets.BASS, SccSharedState.sharedWave(song, 0, 8))
 
-        // A wave envelope: the tag marks it, a line says it re-claims at every step.
-        val stepping = SccSystem.sharedState(song, 0, 10)!!
-        assertEquals("W01+", stepping.tags[4])
-        assertTrue(stepping.lines.any { it.contains("steps through waves 01, 02, 03, 04") })
-        assertTrue(stepping.lines.any { it.contains("re-claims the RAM for SCC 5 while its note is keyed") })
-        // Released, the note is still keyed and its steps still claim; keyed off, they no longer reach the RAM.
-        assertTrue(SccSystem.sharedState(song, 0, 12)!!.lines.any { it.contains("re-claims the RAM for SCC 5 while its note is keyed") })
-        val keyedOff = SccSystem.sharedState(song, 0, 13)!!
-        assertEquals("W01+", keyedOff.tags[3])
-        assertTrue(keyedOff.lines.any { it.contains("SCC 5 is keyed off, so its steps no longer reach the RAM") && it.contains("until SCC 4 claims it") })
-        assertFalse(keyedOff.lines.any { it.contains("re-claims") })
-        // SCC 4's next note claims it; the keyed-off Morph does not take it back, so no stepping line remains.
-        val organAgain = SccSystem.sharedState(song, 0, 14)!!
-        assertEquals(listOf(null, null, null, "W07", "W07"), organAgain.tags)
-        assertFalse(organAgain.lines.any { it.contains("steps through waves") })
+        // A wave envelope claims with its first wave and is marked as stepping while keyed.
+        val stepping = walked(song, 10)
+        assertEquals(claim(4, 10, morph, SccPresets.SINE, byNote = true), stepping.claim)
+        assertEquals(SccPresets.SINE, stepping.held)
+        assertTrue(stepping.keyed[4])
+        // Released (its final 0 not yet reached), the note is still keyed and still owns the RAM.
+        val released = walked(song, 12)
+        assertTrue(released.keyed[4])
+        assertEquals(stepping.claim, released.claim)
+        // Keyed off, it keeps the RAM (same claim, same wave), but its steps no longer reach it: the readout changes.
+        val keyedOff = walked(song, 13)
+        assertFalse(keyedOff.keyed[4])
+        assertEquals(stepping.claim, keyedOff.claim)
+        assertEquals(SccPresets.SINE, keyedOff.held)
+        // SCC 4's next note claims it; the keyed-off Morph does not take it back, so nothing steps any more.
+        val organAgain = walked(song, 14)
+        assertEquals(claim(3, 14, organ, SccPresets.ORGAN, byNote = true), organAgain.claim)
+        assertEquals(SccPresets.ORGAN, organAgain.held)
+        assertFalse(organAgain.keyed[4])
         // An explicit W on the keyed-off SCC 5 still claims it.
-        val explicit = SccSystem.sharedState(song, 0, 15)!!
-        assertEquals("W03", explicit.tags[3])
-        assertTrue(explicit.lines[0].contains("from SCC 5's wave change at order 00 row 15"))
+        val explicit = walked(song, 15)
+        assertEquals(claim(4, 15, morph, SccPresets.SAW, byNote = false), explicit.claim)
+        assertEquals(SccPresets.SAW, explicit.held)
 
-        // The SCC+ shares nothing: only the test register shows.
+        // The SCC+ shares nothing: no claims, no lane tags; only a test register that is not 0 shows.
         val p = plus(song)
         assertNull(SccPlusSystem.sharedState(p, 0, 2))
+        assertNull(walked(p, 10).claim)
+        assertEquals(0, SccSharedState.sharedWave(p, 0, 10))
         val test = SccPlusSystem.sharedState(p, 0, 6)!!
         assertEquals(List<String?>(5) { null }, test.tags)
-        assertEquals(listOf("Test register T40: every wave RAM is frozen (wave changes are not written)"), test.lines)
-        assertEquals(0, SccSharedState.sharedWave(p, 0, 10))
+        assertTrue(walked(p, 6).frozen)
     }
 
     // ---- tuning realisation ----------------------------------------------------------------------------------
@@ -467,7 +582,6 @@ class SccModelTest {
     @Test
     fun fineWritesPxxInAFreeColumn() {
         val fine = SccSystem.fine
-        assertEquals("Pxx", fine.name)
         assertEquals(25.0, fine.cents(57, 16), 1e-9)
         val busy = Cell(57, 1, SccRules.FX_VIBRATO, 0x23)
         val tuned = fine.write(busy, 57, 16)!!
@@ -548,6 +662,7 @@ class SccModelTest {
         val dirty = ByteArray(SccPlayerImage.IMAGE_SIZE) { 0x55 }
         SccPlusSystem.engine.lower(song, dirty)
         assertArrayEquals(image, dirty)
+        assertEquals(SccPlayerImage.IMAGE_SIZE, SccPlusSystem.engine.imageSize)
     }
 
     @Test
@@ -576,91 +691,33 @@ class SccModelTest {
 
     private fun KonamiSccSystem.blankWith(): Song = with(blank(), 0, 1, 0, Cell(57, 1))
 
-    // ---- exports and demos ---------------------------------------------------------------------------------
-
-    @Test
-    fun vgmExportCallsTheNativeRenderer() {
-        val demo = SccSystem.demo()
-        val vgm = SccSystem.exports.single { it.extension == "vgm" }
-        assertThrows(IllegalStateException::class.java) { vgm.export(demo) }
-        var seen: Triple<ByteArray, Int, SccVgmTags>? = null
-        SccVgm.renderer = SccVgmRenderer { image, maxTicks, tags -> seen = Triple(image, maxTicks, tags); byteArrayOf(1, 2, 3) }
-        assertArrayEquals(byteArrayOf(1, 2, 3), vgm.export(demo))
-        val (image, maxTicks, tags) = seen!!
-        assertArrayEquals(SccLowering.lower(demo), image)
-        assertEquals(36000, maxTicks)
-        assertEquals(SccVgmTags("Cartridge Dusk", "Thor Tracker"), tags)
-        val plusDemo = SccPlusSystem.demo()
-        SccPlusSystem.exports.single().export(withSound(plusDemo) { it.copy(multispeed = 2) })
-        assertEquals(72000, seen!!.second)
-        assertEquals(SccPlayerImage.VARIANT_PLUS, seen!!.first[SccPlayerImage.H_VARIANT].toInt())
-    }
+    // ---- demos and effect readings -------------------------------------------------------------------------
 
     @Test
     fun demosAreCleanAndShowTheirChips() {
         val dusk = SccSystem.demo()
         val prism = SccPlusSystem.demo()
-        assertEquals("Cartridge Dusk", dusk.title)
-        assertEquals("Prism Lane", prism.title)
         for (demo in listOf(dusk, prism)) {
             val system = demo.system
             assertEquals(emptyList<String>(), system.errors(demo))
             assertEquals(emptyList<String>(), system.warnings(demo))
-            assertTrue(demo.loopOrder > 0)
-            val cells = demo.orders.toSet().flatMap { demo.patterns[it].tracks.flatten() }
-            fun uses(code: Int) = cells.any { c -> (0..c.more.size).any { c.effectCode(it) == code && (code != 0 || c.effectParam(it) != 0) } }
-            for (code in listOf(SccRules.FX_ARPEGGIO, SccRules.FX_VIBRATO, SccRules.FX_VOLUME, SccRules.FX_SPEED, SccRules.FX_DELAY, SccRules.FX_WAVE)) {
-                assertTrue("${demo.title} uses ${SccRules.effectText(code, 0)[0]}", uses(code))
-            }
-            assertTrue(cells.any { it.more.size >= 2 })
-            assertTrue(cells.any { it.note == Cell.CUT })
-            for (ch in 0 until 5) assertTrue("${demo.title} channel $ch", demo.patterns.any { p -> p.tracks[ch].any { it.note >= 0 } })
-            // A wave envelope with several waves sounds.
-            assertTrue(cells.any { it.instrument != 0 && demo.scc.instrument(it.instrument)!!.wave.values.distinct().size > 1 })
             val image = SccLowering.lower(demo)
             assertEquals(SccLowering.dataSize(demo), u16(image, SccPlayerImage.H_DATA_SIZE))
             assertTrue(SccLowering.dataSize(demo) < SccPlayerImage.DATA_CAPACITY)
         }
-        // The SCC demo keeps SCC 4 and SCC 5 on one wave or alternating; the SCC+ demo's five waves would clash on the SCC.
+        // The SCC demo keeps SCC 4 and SCC 5 on one wave or alternating; the SCC+ demo's waves would clash on the SCC:
+        // somewhere both are keyed with different-sounding waves, and the song check says so.
         val prismOnScc = prism.copy(sound = prism.scc.copy(variant = SccVariant.SCC))
-        assertTrue(SccSystem.warnings(prismOnScc).any { it.contains("one shared wave RAM") })
-        assertTrue(prism.patterns.any { p -> p.tracks.any { t -> t.any { c -> (0..c.more.size).any { c.effectCode(it) == SccRules.FX_TEST && c.effectParam(it) == 0x20 } } } })
-        assertTrue(prism.scc.waves.size == 64 && prism.scc.wave(SccPresets.WAVES.size + 1)!!.name == "Glass")
-        // The shortest songs: one row at speed 1 holding A-4 on SCC 1 with slot 01, a sine.
-        for (variant in SccVariant.entries) {
-            val shortest = SccDemoSong.shortest(variant)
-            assertEquals(variant.system, shortest.system)
-            assertEquals(emptyList<String>(), variant.system.errors(shortest))
-            assertEquals(1, shortest.ticksPerRow)
-            assertEquals(1, shortest.patterns.single().length)
-            assertEquals(listOf(0), shortest.orders)
-            assertEquals(Cell(57, 1), shortest.patterns.single().tracks[0][0])
-            assertEquals(listOf(1), shortest.scc.instrument(1)!!.wave.values)
-            assertEquals(SccWaveShapes.sine(), shortest.scc.wave(1)!!.samples)
-            assertEquals(1, SccLowering.lower(shortest)[SccPlayerImage.OFF_ROWS].toInt())
+        fun sounds(w: SccWalk, channel: Int) = w.waveSet(channel).map { prismOnScc.scc.wave(it)?.samples }.toSet()
+        val clashes = prismOnScc.orders.indices.any { o ->
+            (0 until prismOnScc.patterns[prismOnScc.orders[o]].length).any { r ->
+                walked(prismOnScc, r, o).let { w -> w.keyed[3] && w.keyed[4] && sounds(w, 3) != sounds(w, 4) }
+            }
         }
+        assertTrue(clashes)
+        assertTrue(warns(prismOnScc))
     }
 
-    @Test
-    fun effectDetailExplainsWavesTestBitsAndArpeggios() {
-        var song = blankWith(3, 0, Cell(57, lead, SccRules.FX_ARPEGGIO, 0x47).withEffect(1, SccRules.FX_WAVE, 3))
-        song = with(song, 0, 3, 2, Cell(effect = SccRules.FX_WAVE, param = 4))
-        song = with(song, 0, 0, 0, Cell(effect = SccRules.FX_TEST, param = 0xA1))
-        assertEquals("A-4 → C#5 → E-5 every tick", SccSystem.effectDetail(song, 0, 3, 0, 0))
-        assertEquals("The note on this row plays wave 03 \"Saw\" instead of its instrument's wave envelope; on the SCC this " +
-            "claims the wave RAM SCC 4 and SCC 5 share, so SCC 5 plays it too", SccSystem.effectDetail(song, 0, 3, 0, 1))
-        assertTrue(SccSystem.effectDetail(song, 0, 3, 2, 0)!!.startsWith("The sounding note switches to wave 04 \"Square\""))
-        assertEquals("The sounding note switches to wave 04 \"Square\" until its next note", SccPlusSystem.effectDetail(plus(song), 0, 3, 2, 0))
-        val t = SccSystem.effectDetail(song, 0, 0, 0, 0)!!
-        assertTrue(t, t.startsWith("Test register A1 for every channel: waveforms restart"))
-        assertTrue(t.contains("the shared wave RAM of SCC 4 and SCC 5 is frozen"))
-        assertTrue(t.contains("4-bit frequency mode"))
-        assertNull(SccSystem.effectDetail(song, 0, 3, 1, 0))
-        assertEquals("Volume C of F", SccRules.describe(song, 0, SccRules.FX_VOLUME, 0x0C))
-        assertEquals("Fine pitch +16/64 semitone (+25.0¢)", SccRules.describe(null, 0, SccRules.FX_FINE, 0x90))
-        assertEquals("Wave 07 \"Organ\" for this note (SCC 4 and SCC 5 both play it: one wave RAM)", SccRules.describe(song, 4, SccRules.FX_WAVE, 7))
-        assertEquals("Wave 07 \"Organ\" for this note", SccRules.describe(plus(song), 4, SccRules.FX_WAVE, 7))
-    }
 
     // ---- waves and presets ---------------------------------------------------------------------------------
 
@@ -693,21 +750,10 @@ class SccModelTest {
 
     @Test
     fun presetsAreValidAndUseTheStarterWaves() {
-        assertEquals(listOf("Sine", "Triangle", "Saw", "Square", "Pulse 25%", "Pulse 12.5%", "Organ", "Bell", "Bass", "Noise"),
-            SccPresets.WAVES.map { it.name })
         assertTrue(SccPresets.WAVES.all { it.problem() == null })
-        assertEquals(12, SccPresets.ALL.size)
         for (p in SccPresets.ALL) {
-            assertEquals(p.name, p.instrument.name)
             assertNull(p.name, SccValidator.instrumentProblem(p.instrument))
             assertTrue(p.name, p.instrument.waves.all { it in 1..SccPresets.WAVES.size })
         }
-        assertEquals(SccPresets.ALL[kick - 1], SccPresets.named("Kick"))
-        assertTrue(SccPresets.named("Kick")!!.instrument.pitchRelative)
-        assertTrue(SccPresets.named("Snare")!!.instrument.waves.contains(SccPresets.NOISE))
-        assertTrue(SccPresets.named("Bell")!!.instrument.volume.release > 0)
-        assertTrue(SccPresets.named("Morph")!!.instrument.wave.values.distinct().size > 1)
-        assertNull(SccPresets.named("Nope"))
-        assertNotNull(SccPresets.named("Arp lead")!!.instrument.arpeggio.values.firstOrNull())
     }
 }

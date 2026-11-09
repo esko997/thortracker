@@ -64,7 +64,7 @@ object SccRules {
         EffectSpec(FX_SLIDE_DOWN, "Slide down", "xx: 1/64 semitone per tick",
             "Lower the pitch every tick from this row until 100, 200 or 300.", true),
         EffectSpec(FX_PORTAMENTO, "Portamento", "xx: 1/64 semitone per tick, 00 = off",
-            "While on, a note on a sounding channel glides there without a new attack; 300 ends it.", true),
+            "While on, a note on a held note glides there without a new attack; after OFF it starts a new attack. 300 ends it.", true),
         EffectSpec(FX_VIBRATO, "Vibrato", "xy: x speed 0-F, y depth 0-F",
             "Wobble the pitch from this row on (depth F: ±1.86 semitones); 4x0 stops it; the phase restarts with each note.", true),
         EffectSpec(FX_VOLUME_SLIDE, "Volume slide", "xy: x up, y down (1/16 step per tick)",

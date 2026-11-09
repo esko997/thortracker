@@ -39,6 +39,9 @@ body:
         - C64 SID (GoatTracker)
         - OPL3 FM
         - Mega Drive (YM2612 + PSG)
+        - Sega 8-bit (SN76489 / YM2413)
+        - AY-3-8910 / YM2149
+        - PC Engine (HuC6280)
         - MSX SCC
         - MSX SCC+
         - Not song-related

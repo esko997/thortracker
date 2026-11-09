@@ -1,9 +1,9 @@
 package org.thortracker.backend
 
-import org.thortracker.backend.YmPlayerImage.CHANNELS
 import org.thortracker.backend.YmPlayerImage.DATA_CAPACITY
 import org.thortracker.backend.YmPlayerImage.ENV_HEADER
 import org.thortracker.backend.YmPlayerImage.FLAG_DEFINED
+import org.thortracker.backend.YmPlayerImage.FLAG_PCM
 import org.thortracker.backend.YmPlayerImage.FLAG_PSG
 import org.thortracker.backend.YmPlayerImage.IMAGE_SIZE
 import org.thortracker.backend.YmPlayerImage.INSTRUMENT_SIZE
@@ -13,17 +13,24 @@ import org.thortracker.backend.YmPlayerImage.MASK_NOTE
 import org.thortracker.backend.YmPlayerImage.MAX_RUN
 import org.thortracker.backend.YmPlayerImage.NOTE_OFF
 import org.thortracker.backend.YmPlayerImage.NO_ENVELOPE
+import org.thortracker.backend.YmPlayerImage.OFF_CH3
 import org.thortracker.backend.YmPlayerImage.OFF_DATA
 import org.thortracker.backend.YmPlayerImage.OFF_INSTRUMENTS
 import org.thortracker.backend.YmPlayerImage.OFF_ORDERS
+import org.thortracker.backend.YmPlayerImage.OFF_PCM_DATA
+import org.thortracker.backend.YmPlayerImage.OFF_PCM_ORDERS
 import org.thortracker.backend.YmPlayerImage.OFF_ROWS
 import org.thortracker.backend.YmPlayerImage.OP_BYTES
+import org.thortracker.backend.YmPlayerImage.PCM_CHANNELS
+import org.thortracker.backend.YmPlayerImage.PCM_DATA_CAPACITY
 import org.thortracker.backend.YmPlayerImage.RUN
+import org.thortracker.backend.YmPlayerImage.TONAL_CHANNELS
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.ym2612.YmFmInstrument
 import org.thortracker.system.ym2612.YmInstrument
+import org.thortracker.system.ym2612.YmPcmInstrument
 import org.thortracker.system.ym2612.YmPsgInstrument
 import org.thortracker.system.ym2612.YmSound
 import org.thortracker.system.ym2612.YmSystem
@@ -31,15 +38,22 @@ import org.thortracker.system.ym2612.ym
 
 /**
  * Lowers a Mega Drive song into the image Thor Tracker's YM2612 player (native `"ym2612-fm"`, `ym/ym_player.c`) plays
- * through the XGM driver and exports: the layout of docs/AUDIO_ENGINE.md "YM2612: Image layout" (constants:
+ * through SGDK's XGM2 driver and exports: the layout of docs/AUDIO_ENGINE.md "YM2612: Image layout" (constants:
  * [YmPlayerImage], generated from the C headers), byte for byte what the reference builder `tools/audio/ym/ym_song.py`
  * (`build()`) writes for the same song (`YmGoldenTest`).
  *
+ * The first 65536 bytes are the ten tonal channels' image exactly as layout 1 had it (header, rows, the order table of
+ * [TONAL_CHANNELS] lanes, instruments, [DATA_CAPACITY] bytes of pattern and envelope data), so no released song loses
+ * room. After it: FM 3's operator offsets per slot ([OFF_CH3]), PCM 1-3's order table and their own pattern data region
+ * ([OFF_PCM_ORDERS], [OFF_PCM_DATA]), the PCM kits' key table, the compiled variants and the sample bank
+ * ([YmPcmLowering]).
+ *
  * Orders are the song's arrangement ([YmSystem.arranged]); each order's rows = its pattern's length; each
  * (order, channel) is that track's rows encoded as the player reads them, byte-identical encodings stored once in
- * first-use order (orders, then channels). The PSG envelopes follow the patterns in the data region: slots ascending,
- * each slot's volume, arpeggio and pitch envelope, byte-identical envelopes stored once. Instruments are written for
- * every filled slot (the image's instrument count is the highest), so the editor can audition any of them.
+ * first-use order (orders, then channels; PCM lanes in their own region). The PSG envelopes follow the tonal patterns
+ * in the data region: slots ascending, each slot's volume, arpeggio and pitch envelope, byte-identical envelopes stored
+ * once. Instruments are written for every filled slot (the image's instrument count is the highest), so the editor can
+ * audition any of them; every mapped key of every PCM kit is compiled for the same reason.
  */
 object YmLowering {
     /** The lowered image of [document] (as played: parked orders left out). */
@@ -47,13 +61,14 @@ object YmLowering {
 
     /**
      * Writes [document]'s image into [out] ([IMAGE_SIZE] bytes, overwritten entirely).
-     * @throws IllegalArgumentException when the song's pattern and envelope data do not fit the image.
+     * @throws IllegalArgumentException when the song's pattern and envelope data or its PCM kits do not fit the image.
      */
     fun lower(document: Song, out: ByteArray) {
         require(out.size >= IMAGE_SIZE) { "The Mega Drive image needs $IMAGE_SIZE bytes" }
-        out.fill(0, 0, IMAGE_SIZE)
         val song = YmSystem.arranged(document)
         val sound = song.ym
+        val bank = YmPcmLowering.compile(sound) // before touching [out]: a refused bank leaves it as it was
+        out.fill(0, 0, IMAGE_SIZE)
         YmPlayerImage.MAGIC.forEachIndexed { i, ch -> out[YmPlayerImage.H_MAGIC + i] = ch.code.toByte() }
         out[YmPlayerImage.H_LAYOUT] = YmPlayerImage.LAYOUT.toByte()
         out[YmPlayerImage.H_REGION] = (if (sound.pal) YmPlayerImage.PAL else YmPlayerImage.NTSC).toByte()
@@ -61,23 +76,36 @@ object YmLowering {
         out[YmPlayerImage.H_LFO] = sound.lfo.toByte()
         u16(out, YmPlayerImage.H_ORDERS, song.orders.size)
         u16(out, YmPlayerImage.H_LOOP, song.loopOrder)
-        out[YmPlayerImage.H_INSTRUMENTS] = highestSlot(sound).toByte()
+        out[YmPlayerImage.H_INSTRUMENTS] = (sound.instruments.indexOfLast { it != null } + 1).toByte()
+        out[YmPlayerImage.H_FM3] = sound.fm3Mode.code.toByte()
+        out[YmPlayerImage.H_PCM_VARIANTS] = bank.variants.size.toByte()
+        u16(out, YmPlayerImage.H_PCM_BANK_SIZE, bank.pages)
 
         val data = Data(out, song)
         song.orders.forEachIndexed { o, p ->
             val pattern = song.patterns[p]
             out[OFF_ROWS + o] = (pattern.length and 0xFF).toByte()
-            for (c in 0 until CHANNELS) {
-                u16(out, OFF_ORDERS + 2 * (CHANNELS * o + c), data.patterns.put(encode(pattern.tracks[c], pattern.length)))
+            for (c in 0 until TONAL_CHANNELS) {
+                u16(out, OFF_ORDERS + 2 * (TONAL_CHANNELS * o + c), data.patterns.put(encode(pattern.tracks[c], pattern.length)))
+            }
+        }
+        song.orders.forEachIndexed { o, p ->
+            val pattern = song.patterns[p]
+            for (k in 0 until PCM_CHANNELS) {
+                u16(out, OFF_PCM_ORDERS + 2 * (PCM_CHANNELS * o + k), data.pcm.put(encode(pattern.tracks[YmPlayerImage.CH_PCM + k], pattern.length)))
             }
         }
         sound.instruments.forEachIndexed { i, ins ->
-            if (ins != null) record(ins, data::envelope).copyInto(out, OFF_INSTRUMENTS + INSTRUMENT_SIZE * i)
+            if (ins == null) return@forEachIndexed
+            record(ins, data::envelope).copyInto(out, OFF_INSTRUMENTS + INSTRUMENT_SIZE * i)
+            if (ins is YmFmInstrument) ins.ch3.forEachIndexed { k, offset -> u16(out, OFF_CH3 + 8 * i + 2 * k, offset and 0xFFFF) }
         }
         u16(out, YmPlayerImage.H_DATA_SIZE, data.size)
+        u32(out, YmPlayerImage.H_PCM_DATA_SIZE, data.pcmSize)
+        YmPcmLowering.write(bank, out)
     }
 
-    /** Bytes of pattern and envelope data [document] lowers to (after sharing identical tracks and envelopes). */
+    /** Bytes of tonal pattern and envelope data [document] lowers to (after sharing identical tracks and envelopes). */
     fun dataSize(document: Song): Int {
         val song = YmSystem.arranged(document)
         val patterns = HashSet<Blob>()
@@ -85,7 +113,7 @@ object YmLowering {
         var size = 0
         for (p in song.orders) {
             val pattern = song.patterns[p]
-            for (c in 0 until CHANNELS) {
+            for (c in 0 until TONAL_CHANNELS) {
                 val blob = Blob(encode(pattern.tracks[c], pattern.length))
                 if (patterns.add(blob)) size += blob.bytes.size
             }
@@ -101,12 +129,25 @@ object YmLowering {
         return size
     }
 
-    /** The image's instrument count: the highest filled slot (0 when none). */
-    fun highestSlot(sound: YmSound): Int = sound.instruments.indexOfLast { it != null } + 1
+    /** Bytes of PCM 1-3 pattern data [document] lowers to (identical tracks shared), in their own region. */
+    fun pcmDataSize(document: Song): Int {
+        val song = YmSystem.arranged(document)
+        val patterns = HashSet<Blob>()
+        var size = 0
+        for (p in song.orders) {
+            val pattern = song.patterns[p]
+            for (k in 0 until PCM_CHANNELS) {
+                val blob = Blob(encode(pattern.tracks[YmPlayerImage.CH_PCM + k], pattern.length))
+                if (patterns.add(blob)) size += blob.bytes.size
+            }
+        }
+        return size
+    }
 
     /**
      * The 40-byte instrument record; a PSG record's envelope fields are the offsets [place] returns for each
-     * non-empty envelope's bytes ([NO_ENVELOPE] for an empty one).
+     * non-empty envelope's bytes ([NO_ENVELOPE] for an empty one). A PCM kit's record is its flags alone: the kit's
+     * level and keys live in the compiled bank ([YmPcmLowering]).
      */
     fun record(ins: YmInstrument, place: (NesEnvelope) -> Int): ByteArray {
         val r = ByteArray(INSTRUMENT_SIZE)
@@ -130,6 +171,10 @@ object YmLowering {
                 env(YmPlayerImage.I_ENV_VOLUME, ins.volume)
                 env(YmPlayerImage.I_ENV_ARPEGGIO, ins.arpeggio)
                 env(YmPlayerImage.I_ENV_PITCH, ins.pitch)
+            }
+            is YmPcmInstrument -> {
+                r[YmPlayerImage.I_FLAGS] = (FLAG_DEFINED or FLAG_PCM).toByte()
+                return r
             }
         }
         r[YmPlayerImage.I_SWEEP_START] = ins.sweep.start.toByte()
@@ -191,16 +236,31 @@ object YmLowering {
         out[at + 1] = (value shr 8 and 0xFF).toByte()
     }
 
+    private fun u32(out: ByteArray, at: Int, value: Int) {
+        u16(out, at, value and 0xFFFF)
+        u16(out, at + 2, value ushr 16)
+    }
+
     private fun dataTooLarge(song: Song): String =
         "The song's pattern and envelope data need ${(dataSize(song) + 1023) / 1024} KB; the Mega Drive image holds " +
             "${DATA_CAPACITY / 1024} KB. Reuse patterns or shorten the song"
 
-    /** The data region being filled: patterns first, then envelopes, each kind sharing identical bytes. */
+    private fun pcmTooLarge(song: Song): String =
+        "PCM 1-3's pattern data need ${(pcmDataSize(song) + 1023) / 1024} KB; the Mega Drive image holds " +
+            "${PCM_DATA_CAPACITY / 1024} KB for them. Reuse PCM patterns or shorten the song"
+
+    /**
+     * The data regions being filled: tonal patterns first, then envelopes, each kind sharing identical bytes, in the
+     * tonal region; PCM 1-3's patterns in their own region.
+     */
     private class Data(private val out: ByteArray, private val song: Song) {
         var size = 0
             private set
+        var pcmSize = 0
+            private set
         val patterns = Pool()
         private val envelopes = Pool()
+        val pcm = PcmPool()
 
         fun envelope(env: NesEnvelope): Int = envelopes.put(YmLowering.envelope(env))
 
@@ -213,6 +273,19 @@ object YmLowering {
                 require(start + bytes.size <= DATA_CAPACITY) { dataTooLarge(song) }
                 bytes.copyInto(out, OFF_DATA + start)
                 size += bytes.size
+                start
+            }
+        }
+
+        inner class PcmPool {
+            private val at = HashMap<Blob, Int>()
+
+            /** [bytes]' offset in the PCM pattern region, appended when not stored yet. */
+            fun put(bytes: ByteArray): Int = at.getOrPut(Blob(bytes)) {
+                val start = pcmSize
+                require(start + bytes.size <= PCM_DATA_CAPACITY) { pcmTooLarge(song) }
+                bytes.copyInto(out, OFF_PCM_DATA + start)
+                pcmSize += bytes.size
                 start
             }
         }

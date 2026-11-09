@@ -540,7 +540,8 @@ class Player:
         if note == NOTE_OFF:
             self.key_off(c)
         elif playing:
-            if ch.slide_mode == 3 and ch.keyed:
+            # only a held note glides: a released one (its release tail audible or silent) is followed by a key-on
+            if ch.slide_mode == 3 and ch.keyed and not ch.released:
                 ch.target = note * UNITS_PER_SEMITONE
             else:
                 self.key_on(c, note)
@@ -560,6 +561,10 @@ class Player:
         a = envs[1].values[ch.env[1]] if envs[1] else 0
         v = envs[2].values[ch.env[2]] if envs[2] else 0
         w = envs[3].values[ch.env[3]]
+        # a release at its final value 0 is over: keyed off in this tick (volume 0 still written; its wave step no
+        # longer reaches a RAM); a 0 inside the release, a release ending above 0 and held silence stay keyed
+        if ch.released and envs[0] is not None and ch.env[0] == envs[0].length - 1 and e == 0:
+            ch.keyed = False
         if ch.wave_lock:
             w = ch.wave_lock
         if flags & FLAG_PITCH_RELATIVE:

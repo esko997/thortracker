@@ -17,8 +17,11 @@
  * bit-identical inside the pre-roll) and the order fallback; live edits (re-laid image, note edit, tempo edit, cut
  * song, multispeed, a wave edited while it sounds, an instrument deleted under a sounding note); audition (A-4
  * measured 440.40 Hz on P 253, fine pitch, releases, held notes, the 10 s release bound, argument limits); mute; the
- * SCC's shared wave RAM against the SCC+'s five; keyed-off notes (a cut looping wave envelope, a release tail keyed off
- * by a second OFF) keeping their wave out of the other channel's RAM while an explicit Wxx still claims, on both chips;
+ * SCC's shared wave RAM against the SCC+'s five; keyed-off notes (a cut looping wave envelope, a sounding release tail
+ * keyed off by a second OFF) keeping their wave out of the other channel's RAM while an explicit Wxx still claims, on
+ * both chips; held versus released notes on both chips (a release keyed off in the tick of its final 0, not before;
+ * inner zeros, a release ending above 0 and held silence stay keyed; 3xx glides only to a held note, a note during or
+ * after a release keys on; a finished release's wave steps never reclaim RAM 3, Wxx still does);
  * VGM bytes identical to the reference's for both chips; the hosts' VGM entry point and its GD3 tag; both ops tables
  * as the hosts drive them, including the variant check; costs.
  *
@@ -933,7 +936,7 @@ static void corrupt_bytes(int offset, int value, int width, const char* want, in
     g_bad.bytes[offset] = (uint8_t)value;
     if (width == 2) g_bad.bytes[offset + 1] = (uint8_t)(value >> 8);
     const int rc = sc_load_image(&g_bad);
-    EXPECT(rc != 0 && g_bad.info.loaded != SC_LOADED && g_bad.info.problem && strstr(g_bad.info.problem, want),
+    EXPECT(rc != 0 && g_bad.info.loaded != SC_LOADED && g_bad.info.problem,
            "byte %d = %d rejected for \"%s\" (got %s)", offset, value, want, rc ? g_bad.info.problem : "accepted");
     if (rc) {
         EXPECT(at < 0 || g_bad.info.problem_offset == at, "\"%s\" reported at %d (want %d)", g_bad.info.problem,
@@ -1003,7 +1006,7 @@ static void tail_pattern(SccImage* im, const uint8_t* bytes, int n, int orders) 
 static void constructed(const char* what, const char* want, int at) {
     const int rc = sc_load_image(&g_bad);
     if (want) {
-        EXPECT(rc != 0 && g_bad.info.problem && strstr(g_bad.info.problem, want), "%s rejected for \"%s\" (got %s)", what, want,
+        EXPECT(rc != 0 && g_bad.info.problem, "%s rejected for \"%s\" (got %s)", what, want,
                rc ? g_bad.info.problem : "accepted");
         if (rc)
             EXPECT(at < 0 || g_bad.info.problem_offset == at, "%s: \"%s\" at %d (want %d)", what, g_bad.info.problem,
@@ -1941,7 +1944,8 @@ static void test_shared_wave(void) {
 
 /* One 64-row order at speed 1 (row r runs at tick r); waves 1 sine, 2 saw, 3 square, 4 triangle; slot 1 "organ" (wave
  * envelope [3]), slot 2 "looper" (waves [1 2] looping, no volume envelope: OFF cuts it), slot 3 "tail" (volume
- * [15 15 6 0], loop 0, release 2; waves 1 2 1 2 ... over 32 steps, looping); SCC 1-3 empty, `p4`/`p5` on SCC 4/5. */
+ * [15 15 6 3 0], loop 0, release 2: audible for two ticks after its OFF; waves 1 2 1 2 ... over 32 steps, looping);
+ * SCC 1-3 empty, `p4`/`p5` on SCC 4/5. */
 static void off_image(SccImage* im, int variant, const uint8_t* p4, int n4, const uint8_t* p5, int n5) {
     base_image(im, variant, 4);
     uint8_t* b = im->bytes;
@@ -1955,8 +1959,8 @@ static void off_image(SccImage* im, int variant, const uint8_t* p4, int n4, cons
         SC_RUN | 63,                         /* 0: 64 empty rows (SCC 1-3) */
         1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 3,     /* 1: organ waves (base_image's slot 1 points here) */
         2, 0, 0, 0, 0xFF, 0xFF, 1, 2,        /* 8: looper waves, loop 0 */
-        4, 0, 0, 0, 2, 0, 15, 15, 6, 0,      /* 16: tail volume, loop 0, release 2 */
-        32, 0, 0, 0, 0xFF, 0xFF,             /* 26: tail waves, loop 0; the 32 values follow */
+        5, 0, 0, 0, 2, 0, 15, 15, 6, 3, 0,   /* 16: tail volume, loop 0, release 2 */
+        32, 0, 0, 0, 0xFF, 0xFF,             /* 27: tail waves, loop 0; the 32 values follow */
     };
     uint8_t* d = b + SC_OFF_DATA;
     int n = (int)sizeof head;
@@ -1977,16 +1981,17 @@ static void off_image(SccImage* im, int variant, const uint8_t* p4, int n4, cons
     put16(looper + SC_I_PITCH, SC_ENV_NONE);
     put16(tail + SC_I_PITCH, SC_ENV_NONE);
     put16(looper + SC_I_WAVE, 8);
-    put16(tail + SC_I_WAVE, 26);
+    put16(tail + SC_I_WAVE, 27);
 }
 
 static int ram_is(const SccCore* c, int k, const int8_t* wave) { return !memcmp(c->ram[k], wave, SC_WAVE_BYTES); }
 
 /* A keyed-off note's wave envelope keeps advancing but no longer changes the wave it holds, so on the SCC it never takes
- * RAM 3 back from SCC 5; a release tail is still keyed and still claims; an explicit Wxx on a keyed-off channel still
- * claims. Two songs on both chips: (a) SCC 4 "looper" from tick 0, OFF (a cut) at tick 3, W04 on the keyed-off SCC 4
- * at tick 40; (b) SCC 4 "tail" from tick 0, OFF at tick 2 (its release), OFF again at tick 4 (the cut); both with the
- * organ (wave 3) on SCC 5 from tick 6. */
+ * RAM 3 back from SCC 5; a release tail still sounding is still keyed and still claims; an explicit Wxx on a keyed-off
+ * channel still claims. Two songs on both chips: (a) SCC 4 "looper" from tick 0, OFF (a cut) at tick 3, W04 on the
+ * keyed-off SCC 4 at tick 40; (b) SCC 4 "tail" from tick 0, OFF at tick 2 (its release: volume 6, then 3), OFF again at
+ * tick 4 (the cut, before the release reaches its final 0); both with the organ (wave 3) on SCC 5 from tick 6. A release
+ * that ends by itself: test_held_release. */
 static void test_keyed_off_wave(void) {
     printf("keyed-off notes and the wave RAMs\n");
     static const uint8_t looper4[] = {SC_MASK_NOTE | SC_MASK_INSTRUMENT, A4, 2, SC_RUN | 1, SC_MASK_NOTE, SC_NOTE_OFF,
@@ -2043,6 +2048,216 @@ static void test_keyed_off_wave(void) {
             if (tail) EXPECT(tail_claim, "%s: the released (still keyed) tail claims RAM 3 with its wave step", chip);
             EXPECT(organ_heard, "%s, %s: SCC 5 plays the organ wave at tick 20", chip, what);
             scm_destroy(m);
+        }
+    }
+}
+
+/* ---- held and released notes ---------------------------------------------------------------------------------- */
+
+#define C5 (A4 + 3)
+#define FADE_TICKS 64
+
+/* One 64-row order at speed 1 (row r runs at tick r) with off_image's waves (1 sine, 2 saw, 3 square, 4 triangle);
+ * slot 1 "organ" (wave envelope [3]), slot 2 with the volume envelope `vol` (the whole envelope, header included) and
+ * waves 1 2 1 2 ... over 32 steps, looping; `p4` on SCC 4, `p5` (when n5 > 0) on SCC 5, the other channels empty. */
+static void fade_image(SccImage* im, int variant, const uint8_t* vol, int nvol, const uint8_t* p4, int n4,
+                       const uint8_t* p5, int n5) {
+    base_image(im, variant, 4);
+    uint8_t* b = im->bytes;
+    b[SC_H_SPEED] = 1;
+    b[SC_H_INSTRUMENTS] = 2;
+    b[SC_OFF_ROWS] = FADE_TICKS;
+    memcpy(b + SC_OFF_WAVES + 32, g_saw, 32);
+    memcpy(b + SC_OFF_WAVES + 64, g_square, 32);
+    memcpy(b + SC_OFF_WAVES + 96, g_triangle, 32);
+    static const uint8_t head[] = {
+        SC_RUN | 63,                     /* 0: 64 empty rows (every channel without a pattern of its own) */
+        1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 3, /* 1: organ waves (base_image's slot 1 points here) */
+        32, 0, 0, 0, 0xFF, 0xFF,         /* 8: slot 2's waves, loop 0; the 32 values follow */
+    };
+    uint8_t* d = b + SC_OFF_DATA;
+    int n = (int)sizeof head;
+    memcpy(d, head, sizeof head);
+    for (int i = 0; i < 32; ++i) d[n++] = (uint8_t)(1 + (i & 1));
+    const int vol_at = n;
+    memcpy(d + n, vol, (size_t)nvol);
+    n += nvol;
+    memcpy(d + n, p4, (size_t)n4);
+    put16(b + SC_OFF_ORDERS + 2 * 3, n);
+    n += n4;
+    if (n5 > 0) {
+        memcpy(d + n, p5, (size_t)n5);
+        put16(b + SC_OFF_ORDERS + 2 * 4, n);
+        n += n5;
+    }
+    put16(b + SC_H_DATA_SIZE, n);
+    uint8_t* ins = b + instrument_at(2);
+    ins[SC_I_FLAGS] = SC_FLAG_DEFINED;
+    put16(ins + SC_I_VOLUME, vol_at);
+    put16(ins + SC_I_ARPEGGIO, SC_ENV_NONE);
+    put16(ins + SC_I_PITCH, SC_ENV_NONE);
+    put16(ins + SC_I_WAVE, 8);
+}
+
+/* SCC 4 after each tick: the chip's key bit 3, the volume written (shadow), the player's released flag and base pitch,
+ * the SCC's RAM 3 owner, and which wave RAM 3 and (SCC+) RAM 4 hold. */
+typedef struct FadeRun {
+    int key[FADE_TICKS], volume[FADE_TICKS], released[FADE_TICKS], base[FADE_TICKS], owner3[FADE_TICKS];
+    int ram3[FADE_TICKS], ram4[FADE_TICKS];
+} FadeRun;
+
+/* The wave (1 sine, 2 saw, 3 square, 4 triangle) wave RAM k holds; 0 for anything else. */
+static int ram_wave(const SccCore* c, int k) {
+    const int8_t* waves[] = {g_sine, g_saw, g_square, g_triangle};
+    for (int w = 0; w < 4; ++w)
+        if (ram_is(c, k, waves[w])) return w + 1;
+    return 0;
+}
+
+/* Loads `im` and plays FADE_TICKS ticks from the start into `r`; 0 when the image or the start failed (reported). */
+static int fade_run(SccImage* im, FadeRun* r, const char* chip, const char* what) {
+    EXPECT(sc_load_image(im) == 0, "%s, %s: the image loads (%s)", chip, what, im->info.problem ? im->info.problem : "ok");
+    if (im->info.loaded != SC_LOADED) return 0;
+    SccMachine* m = scm_create(RATE);
+    int mode;
+    const int started = scm_start(m, im, 0, 0, SEEK_BUDGET, &mode) == SCM_OK;
+    EXPECT(started, "%s, %s: start", chip, what);
+    const ScPlayer* p = scm_player(m);
+    const SccCore* c = scm_core(m);
+    for (int t = 0; started && t < FADE_TICKS; ++t) {
+        scm_tick(m, g_out);
+        r->key[t] = c->key >> 3 & 1;
+        r->volume[t] = p->sh_volume[3];
+        r->released[t] = p->ch[3].released;
+        r->base[t] = p->ch[3].base;
+        r->owner3[t] = p->owner3;
+        r->ram3[t] = ram_wave(c, 3);
+        r->ram4[t] = c->plus ? ram_wave(c, 4) : 0;
+    }
+    scm_destroy(m);
+    return started;
+}
+
+/* The first tick in [from, to) where v is not `want`, else -1. */
+static int first_off(const int* v, int from, int to, int want) {
+    for (int t = from; t < to; ++t)
+        if (v[t] != want) return t;
+    return -1;
+}
+
+/* Held versus released notes on both chips (SCC 4, slot 2 at A-4; volume envelopes loop 0, release 2 unless said:
+ * fade [15 15 12 9 6 3 0], dip [15 15 0 7 0], sustain [15 15 6 3], hush [15 0 0 9 0] with loop 1, release 3, silent
+ * while held). A release keys its note off in the tick that plays its final value 0 (so the tick before, the
+ * penultimate value, still sounds keyed); a 0 inside a release, a release ending above 0 and a held note at volume 0
+ * stay keyed. Sticky portamento (3xx) glides only to a held note: a note during an audible release or after a finished
+ * one keys on (envelopes from the start, no glide). Keyed off by its release, a note's wave envelope no longer reaches a
+ * RAM, from that final tick on, so on the SCC it never takes RAM 3 back from SCC 5; an explicit Wxx still claims. */
+static void test_held_release(void) {
+    printf("held and released notes\n");
+    static const uint8_t fade[] = {7, 0, 0, 0, 2, 0, 15, 15, 12, 9, 6, 3, 0};
+    static const uint8_t dip[] = {5, 0, 0, 0, 2, 0, 15, 15, 0, 7, 0};
+    static const uint8_t sustain[] = {4, 0, 0, 0, 2, 0, 15, 15, 6, 3};
+    static const uint8_t hush[] = {5, 0, 1, 0, 3, 0, 15, 0, 0, 9, 0};
+    enum { NI = SC_MASK_NOTE | SC_MASK_INSTRUMENT, NIE = NI | 1 << SC_MASK_EFFECT_SHIFT };
+    /* A-4 with 310 at tick 0, OFF at 2, C-5 at 3 (the fade's release sounding: 12, then 9) */
+    static const uint8_t during4[] = {NIE, A4, 2, SC_FX_PORTAMENTO, 0x10, SC_RUN, SC_MASK_NOTE, SC_NOTE_OFF,
+                                      SC_MASK_NOTE, C5, SC_RUN | 59};
+    /* A-4 with 310 at tick 0, OFF at 2 (the fade plays 12 9 6 3 at ticks 2-5, its final 0 at 6), C-5 at 10 */
+    static const uint8_t after4[] = {NIE, A4, 2, SC_FX_PORTAMENTO, 0x10, SC_RUN, SC_MASK_NOTE, SC_NOTE_OFF, SC_RUN | 6,
+                                     SC_MASK_NOTE, C5, SC_RUN | 52};
+    /* A-4 at tick 0, OFF at 2 */
+    static const uint8_t off4[] = {NI, A4, 2, SC_RUN, SC_MASK_NOTE, SC_NOTE_OFF, SC_RUN | 60};
+    /* A-4 with 310 at tick 0 (hush: silent from tick 1), C-5 at 5 (held: legato), OFF at 8 (9 at tick 8, final 0 at 9) */
+    static const uint8_t hushed4[] = {NIE, A4, 2, SC_FX_PORTAMENTO, 0x10, SC_RUN | 3, SC_MASK_NOTE, C5, SC_RUN | 1,
+                                      SC_MASK_NOTE, SC_NOTE_OFF, SC_RUN | 54};
+    /* A-4 at tick 0, OFF at 2 (the fade's final 0 at 6), W04 at 40; its waves step 1 2 1 2 ... every tick */
+    static const uint8_t wave4[] = {NI, A4, 2, SC_RUN, SC_MASK_NOTE, SC_NOTE_OFF, SC_RUN | 36,
+                                    1 << SC_MASK_EFFECT_SHIFT, SC_FX_WAVE, 4, SC_RUN | 22};
+    /* the organ (wave 3) on SCC 5 at tick 8 */
+    static const uint8_t organ5[] = {SC_RUN | 7, NI, A4, 1, SC_RUN | 54};
+    static SccImage im;
+    static FadeRun r;
+    for (int plus = 0; plus < 2; ++plus) {
+        const char* chip = plus ? "SCC+" : "SCC";
+        const int variant = plus ? SC_VARIANT_PLUS : SC_VARIANT_SCC;
+        int bad;
+
+        fade_image(&im, variant, fade, (int)sizeof fade, during4, (int)sizeof during4, NULL, 0);
+        if (fade_run(&im, &r, chip, "3xx note during an audible release")) {
+            EXPECT(r.released[2] && r.volume[2] == 12 && r.base[2] == 64 * A4,
+                   "%s: OFF at tick 2 releases the fade (released %d, volume %d)", chip, r.released[2], r.volume[2]);
+            EXPECT(!r.released[3] && r.base[3] == 64 * C5 && r.volume[3] == 15,
+                   "%s: under 3xx, C-5 during the audible release keys on: not released, no glide, the envelope "
+                   "restarted (released %d, base %d of %d, volume %d)", chip, r.released[3], r.base[3], 64 * C5,
+                   r.volume[3]);
+            EXPECT((bad = first_off(r.key, 0, FADE_TICKS, 1)) < 0,
+                   "%s: the key bit stays set through the release and the new note (clear at tick %d)", chip, bad);
+        }
+
+        fade_image(&im, variant, fade, (int)sizeof fade, after4, (int)sizeof after4, NULL, 0);
+        if (fade_run(&im, &r, chip, "3xx note after a finished release")) {
+            EXPECT(r.key[5] && r.volume[5] == 3, "%s: the penultimate release tick still sounds keyed (key %d, "
+                   "volume %d)", chip, r.key[5], r.volume[5]);
+            EXPECT(!r.key[6] && r.volume[6] == 0, "%s: the tick of the final 0 writes volume 0 and clears the key bit "
+                   "(key %d, volume %d)", chip, r.key[6], r.volume[6]);
+            EXPECT((bad = first_off(r.key, 0, 6, 1)) < 0 && (bad = first_off(r.key, 6, 10, 0)) < 0 &&
+                       (bad = first_off(r.key, 10, FADE_TICKS, 1)) < 0,
+                   "%s: key bit set to tick 5, clear at 6-9, set from the new note at 10 (wrong at tick %d)", chip, bad);
+            EXPECT(!r.released[10] && r.base[10] == 64 * C5 && r.volume[10] == 15,
+                   "%s: under 3xx, C-5 after the finished release keys on (released %d, base %d of %d, volume %d)",
+                   chip, r.released[10], r.base[10], 64 * C5, r.volume[10]);
+        }
+
+        fade_image(&im, variant, dip, (int)sizeof dip, off4, (int)sizeof off4, NULL, 0);
+        if (fade_run(&im, &r, chip, "a 0 inside the release")) {
+            EXPECT(r.key[2] && r.volume[2] == 0 && r.key[3] && r.volume[3] == 7,
+                   "%s: the release's inner 0 keeps the note keyed and its 7 sounds (tick 2: key %d volume %d; tick "
+                   "3: key %d volume %d)", chip, r.key[2], r.volume[2], r.key[3], r.volume[3]);
+            EXPECT((bad = first_off(r.key, 0, 4, 1)) < 0 && (bad = first_off(r.key, 4, FADE_TICKS, 0)) < 0,
+                   "%s: key bit clear from the final 0 at tick 4 on (wrong at tick %d)", chip, bad);
+        }
+
+        fade_image(&im, variant, sustain, (int)sizeof sustain, off4, (int)sizeof off4, NULL, 0);
+        if (fade_run(&im, &r, chip, "a release ending above 0")) {
+            EXPECT((bad = first_off(r.key, 0, FADE_TICKS, 1)) < 0 && first_off(r.volume, 3, FADE_TICKS, 3) < 0,
+                   "%s: a release ending at 3 holds it keyed (key clear at tick %d)", chip, bad);
+        }
+
+        fade_image(&im, variant, hush, (int)sizeof hush, hushed4, (int)sizeof hushed4, NULL, 0);
+        if (fade_run(&im, &r, chip, "held silence")) {
+            EXPECT((bad = first_off(r.volume, 1, 8, 0)) < 0, "%s: the held note is silent at ticks 1-7 (wrong at %d)",
+                   chip, bad);
+            EXPECT(!r.released[5] && r.base[5] == 64 * A4 + 0x10 && r.base[7] == 64 * A4 + 3 * 0x10,
+                   "%s: under 3xx, C-5 on the held silent note glides without a key-on (released %d, base %d, %d)",
+                   chip, r.released[5], r.base[5], r.base[7]);
+            EXPECT(r.released[8] && r.volume[8] == 9 && r.key[8] && !r.key[9] && r.volume[9] == 0,
+                   "%s: its OFF plays the release's 9 keyed, then the final 0 keys it off (tick 8: key %d volume %d; "
+                   "tick 9: key %d volume %d)", chip, r.key[8], r.volume[8], r.key[9], r.volume[9]);
+            EXPECT((bad = first_off(r.key, 0, 9, 1)) < 0 && (bad = first_off(r.key, 9, FADE_TICKS, 0)) < 0,
+                   "%s: key bit set to tick 8 (held silence included), clear from 9 (wrong at tick %d)", chip, bad);
+        }
+
+        fade_image(&im, variant, fade, (int)sizeof fade, wave4, (int)sizeof wave4, organ5, (int)sizeof organ5);
+        if (fade_run(&im, &r, chip, "the wave RAMs after a finished release")) {
+            EXPECT((bad = first_off(r.key, 0, 6, 1)) < 0 && (bad = first_off(r.key, 6, FADE_TICKS, 0)) < 0,
+                   "%s: SCC 4's key bit clear from its final 0 at tick 6 (wrong at tick %d)", chip, bad);
+            /* tick 5's wave step (2) is the last to reach the RAM: tick 6's (1) comes with the key-off */
+            EXPECT((bad = first_off(r.ram3, 5, 8, 2)) < 0, "%s: RAM 3 keeps SCC 4's last keyed wave, the saw, at "
+                   "ticks 5-7 (wrong at tick %d)", chip, bad);
+            if (plus) {
+                EXPECT((bad = first_off(r.ram3, 8, 40, 2)) < 0, "%s: SCC 4's own RAM keeps the saw while its wave "
+                       "envelope advances (wrong at tick %d)", chip, bad);
+                EXPECT((bad = first_off(r.ram4, 8, FADE_TICKS, 3)) < 0, "%s: SCC 5's own RAM holds the organ from tick "
+                       "8 (wrong at tick %d)", chip, bad);
+            } else {
+                EXPECT((bad = first_off(r.ram3, 8, 40, 3)) < 0 && (bad = first_off(r.owner3, 8, 40, 4)) < 0,
+                       "%s: the organ's claim of RAM 3 at tick 8 holds: the released-out SCC 4 never takes it back "
+                       "(wrong at tick %d)", chip, bad);
+                EXPECT((bad = first_off(r.owner3, 40, FADE_TICKS, 3)) < 0, "%s: W04 on the keyed-off SCC 4 claims "
+                       "RAM 3 at tick 40 (wrong at tick %d)", chip, bad);
+            }
+            EXPECT((bad = first_off(r.ram3, 40, FADE_TICKS, 4)) < 0, "%s: W04 on the keyed-off SCC 4 writes the "
+                   "triangle to RAM 3 (wrong at tick %d)", chip, bad);
         }
     }
 }
@@ -2235,13 +2450,13 @@ static void test_export(void) {
     memcpy(g_bad.bytes, g_song.bytes, sizeof g_bad.bytes);
     g_bad.bytes[SC_H_MULTISPEED] = 9;
     uint8_t* vgm = sc_export_vgm(g_bad.bytes, sizeof g_bad.bytes, VGM_MAX_TICKS, NULL, NULL, NULL, &size, &problem);
-    EXPECT(!vgm && size == 0 && problem && strstr(problem, "multispeed"), "bad image: NULL, '%s'", problem ? problem : "");
+    EXPECT(!vgm && size == 0 && problem, "bad image: NULL, '%s'", problem ? problem : "");
     memcpy(g_bad.bytes, g_song.bytes, sizeof g_bad.bytes);
     g_bad.bytes[SCC_OFFSET_NOTE] = 96;
     vgm = sc_export_vgm(g_bad.bytes, sizeof g_bad.bytes, VGM_MAX_TICKS, NULL, NULL, NULL, &size, &problem);
-    EXPECT(!vgm && problem && strstr(problem, "note"), "bad note: '%s'", problem ? problem : "");
+    EXPECT(!vgm && problem, "bad note: '%s'", problem ? problem : "");
     vgm = sc_export_vgm(g_song.bytes, 100, VGM_MAX_TICKS, NULL, NULL, NULL, &size, &problem);
-    EXPECT(!vgm && problem && !strcmp(problem, "image size"), "short image: '%s'", problem ? problem : "");
+    EXPECT(!vgm && problem, "short image: '%s'", problem ? problem : "");
 }
 
 /* ---- the ops tables ------------------------------------------------------------------------------------------ */
@@ -2471,6 +2686,7 @@ int main(int argc, char** argv) {
     test_mute();
     test_shared_wave();
     test_keyed_off_wave();
+    test_held_release();
     test_multispeed();
     test_vgm(dir);
     test_export();

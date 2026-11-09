@@ -173,7 +173,8 @@ static void process_row(ScPlayer* p, const SccImage* image, int c, Claims* claim
     if (row->note == SC_NOTE_OFF) {
         key_off(p, image, c);
     } else if (has_note) {
-        if (ch->slide_mode == 3 && ch->keyed) ch->target = 64 * row->note;
+        /* only a held note glides: a released one (its release tail audible or silent) is followed by a key-on */
+        if (ch->slide_mode == 3 && ch->keyed && !ch->released) ch->target = 64 * row->note;
         else key_on(p, image, c, row->note, claims);
     }
 }
@@ -213,6 +214,13 @@ static void update(ScPlayer* p, const SccImage* image, int c, Claims* claims) {
         const int raw = env[k].values[env_index(ch, k, &env[k])];
         value[k] = k == ENV_ARPEGGIO || k == ENV_PITCH ? (int8_t)raw : raw;
     }
+    /* A release that has reached its final value 0 is over: the note is keyed off in this tick, as an OFF would key it
+     * off here (this tick still writes its volume 0; its key bit clears in this tick's batch; its wave steps no longer
+     * reach a RAM). Only the final value counts, at the index being played, not the one advanced to: a 0 inside the
+     * release, a release ending above 0 and a held (unreleased) note at volume 0 stay keyed. */
+    if (ch->released && env[ENV_VOLUME].length && ch->env[ENV_VOLUME] == env[ENV_VOLUME].length - 1 &&
+        value[ENV_VOLUME] == 0)
+        ch->keyed = 0;
     const int w = ch->wave_lock ? ch->wave_lock : value[ENV_WAVE];
     int q = 4 * value[ENV_PITCH];
     if (flags & SC_FLAG_PITCH_RELATIVE) q = ch->accumulator = clamp(ch->accumulator + q, -PITCH_SPAN, PITCH_SPAN);

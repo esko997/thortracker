@@ -219,9 +219,9 @@ object SccValidator {
                 out += "Order ${hex2(o)} row $row: ${NAMES[a]} (${setText(song, key!!.first)}) and ${NAMES[b]} (${setText(song, key.second)}) " +
                     "sound together, but the SCC (K051649) gives them one shared wave RAM, so both play the latest claim: " +
                     "${walk.heldText(song)}. Give both the same wave, end one note with OFF before the other starts (a note " +
-                    "counts as sounding until it is keyed off, even after its volume has faded: OFF releases a note with a " +
-                    "release point, a second OFF keys it off), or switch the song to SCC+ (K052539), which has a wave RAM " +
-                    "per channel"
+                    "counts as sounding until it is keyed off, even while silent: OFF releases a note with a release point, " +
+                    "which keys itself off only when its release ends at volume 0; a second OFF keys it off at once), or " +
+                    "switch the song to SCC+ (K052539), which has a wave RAM per channel"
             }
         }
         if (sharedMore > 0) out += "...and $sharedMore more places where SCC 4 and SCC 5 sound together with different waves"
@@ -321,15 +321,17 @@ object SccValidator {
  * the player's row rules (docs/AUDIO_ENGINE.md, "SCC and SCC+: Player") at row resolution. Within a row, channels 0..4
  * run at tick 0 and delayed rows (`Gxx`) at their tick (never when the speed does not reach it); a row's effects run in
  * column order before its note. A note keys on unless its slot is empty or portamento (`3xx`) glides to it while the
- * channel is keyed; OFF and `Sxx` release a note whose volume envelope has a release point, else (or when released)
- * key it off. On the SCC a key-on on SCC 4 or SCC 5, or a change of the wave such a channel holds, is a wave claim: the
- * claiming channel's wave fills the shared RAM unless the test register freezes it. A channel's held wave follows its
- * note while keyed (a released note included: `Wxx`, a note that ends a lock, the wave envelope); keyed off, only an
- * explicit `Wxx` changes it (the player keeps advancing the envelope but no longer lets it reach a RAM), so after OFF
- * the channel keeps RAM 3 only until the other channel claims it. A note's wave is its lock, else the first value of
- * its instrument's wave envelope: the envelope's later steps re-claim the RAM tick by tick while the note is keyed,
- * which this row model does not follow (it says so where it matters). Jumps and breaks are not followed (the walk is
- * sequential, as the validator's).
+ * channel holds a note (keyed, not released); OFF and `Sxx` release a note whose volume envelope has a release point,
+ * else (or when released) key it off. A released note plays its volume envelope from the release point one value per
+ * tick and is keyed off in the tick that plays a final value 0 (a release ending above 0 holds keyed); the walk counts
+ * ticks for that (rows of [speed] ticks, `Gxx` rows and `Sxx` at their tick). On the SCC a key-on on SCC 4 or SCC 5, or
+ * a change of the wave such a channel holds, is a wave claim: the claiming channel's wave fills the shared RAM unless
+ * the test register freezes it. A channel's held wave follows its note while keyed (a released note included: `Wxx`, a
+ * note that ends a lock, the wave envelope); keyed off, only an explicit `Wxx` changes it (the player keeps advancing
+ * the envelope but no longer lets it reach a RAM), so after its key-off the channel keeps RAM 3 only until the other
+ * channel claims it. A note's wave is its lock, else the first value of its instrument's wave envelope: the envelope's
+ * later steps re-claim the RAM tick by tick while the note is keyed, which this row model does not follow (it says so
+ * where it matters). Jumps and breaks are not followed (the walk is sequential, as the validator's).
  */
 internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
     /** The latest claim of the SCC's shared wave RAM: by [channel] at ([order], [row]), its note's [slot] and [wave]. */
@@ -352,7 +354,10 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
     val noteSlot = IntArray(channels)
     val lock = IntArray(channels)
 
-    /** Keyed (a note held, released or not), and active (keyed a note since the start: the player updates it). */
+    /**
+     * Keyed (a note held, or released with its release still running), and active (keyed a note since the start: the
+     * player updates it). After [row], as the player leaves the row's last tick.
+     */
     val keyed = BooleanArray(channels)
     val active = BooleanArray(channels)
 
@@ -360,6 +365,13 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
     val current = IntArray(channels)
 
     private val released = BooleanArray(channels)
+
+    /** The walk tick in which a released note's release plays its final value 0 and keys it off; -1 never. */
+    private val releaseEnd = LongArray(channels) { -1L }
+
+    /** The walk tick (counted from the walk's start) of the current row's tick 0. */
+    private var rowTick = 0L
+
     private val portamento = IntArray(channels)
     private val delays = IntArray(channels)
 
@@ -410,8 +422,19 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
                 else -> delayed = true
             }
         }
-        if (!delayed) return
-        for (tick in 1 until speed) for (ch in 0 until channels) if (delays[ch] == tick) run(tracks[ch][r], ch, tick)
+        if (delayed) {
+            for (tick in 1 until speed) {
+                endReleases(rowTick + tick - 1)
+                for (ch in 0 until channels) if (delays[ch] == tick) run(tracks[ch][r], ch, tick)
+            }
+        }
+        endReleases(rowTick + speed - 1)
+        rowTick += speed
+    }
+
+    /** Keys off every released note whose final 0 has played by walk tick [last]. */
+    private fun endReleases(last: Long) {
+        for (ch in 0 until channels) if (keyed[ch] && released[ch] && releaseEnd[ch] in 0..last) keyed[ch] = false
     }
 
     private fun run(c: Cell, ch: Int, tick: Int) {
@@ -442,11 +465,11 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
         }
         var keyedOn = false
         when {
-            c.note == Cell.CUT -> keyOff(ch)
-            hasNote && portamento[ch] > 0 && keyed[ch] -> Unit
+            c.note == Cell.CUT -> keyOff(ch, tick)
+            hasNote && portamento[ch] > 0 && keyed[ch] && !released[ch] -> Unit
             hasNote -> keyedOn = keyOn(ch)
         }
-        if (cut in tick until speed) keyOff(ch)
+        if (cut in tick until speed) keyOff(ch, cut)
         // Keyed off, the held wave changes only through an explicit Wxx (the lock), as in the player; a key-on claims
         // even when an Sxx on its row keys it off again.
         if (active[ch] && (keyedOn || keyed[ch] || lock[ch] > 0)) {
@@ -469,11 +492,18 @@ internal class SccWalk(private val sound: SccSound, startSpeed: Int) {
         return true
     }
 
-    private fun keyOff(ch: Int) {
+    /** OFF or `Sxx` at [tick] of the current row. */
+    private fun keyOff(ch: Int, tick: Int) {
         if (!keyed[ch]) return
         val volume = sound.instrument(noteSlot[ch])?.volume
-        if (volume != null && volume.values.isNotEmpty() && volume.release >= 0 && !released[ch]) released[ch] = true
-        else keyed[ch] = false
+        if (volume != null && volume.values.isNotEmpty() && volume.release >= 0 && !released[ch]) {
+            released[ch] = true
+            // the release plays from its point, one value per tick from this one; a final 0 keys the note off
+            val last = volume.values.size - 1
+            releaseEnd[ch] = if (volume.values[last] == 0) rowTick + tick + (last - volume.release) else -1L
+        } else {
+            keyed[ch] = false
+        }
     }
 
     /** What the shared RAM holds and who claimed it, for messages: "wave 05 "Pulse 25%" from SCC 5's note at order 01 row 8". */

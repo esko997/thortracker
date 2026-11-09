@@ -235,6 +235,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
         hints.set(if (spec.capture != null) listOf(
             "Button" to "Bind it",
             "Sel L2 R2 L3 +" to "Chord",
+            "L2+R2 +" to "Both",
             "Back" to "Cancel",
         ) else buildList {
             add(keys.pair(org.thortracker.editor.Action.UP, org.thortracker.editor.Action.DOWN) to "Move")
