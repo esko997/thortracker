@@ -391,5 +391,33 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+Tuning catalogue
+
+DaMuSc: Database of Musical Scales
+https://github.com/jomimc/DaMuSc
+Data revision 9a4589b99d229691fbefd99b4174e39814789a16
+Database compilation, annotations and metadata:
+Copyright (c) 2022-2026 John M. McBride and contributors.
+Licensed under Creative Commons Attribution 4.0 International:
+https://creativecommons.org/licenses/by/4.0/
+
+McBride JM, Passmore S, Tlusty T (2023), Convergent evolution in a large
+cross-cultural database of musical scales. PLoS ONE 18(12): e0284851.
+https://doi.org/10.1371/journal.pone.0284851
+
+Thor Tracker independently regenerated 424 measured tunings by summing adjacent
+intervals, adding a terminal octave only when the upstream record explicitly
+marks Octave_modified=Y, and preserving other periods. Labels and region
+categories come from licensed metadata. No underlying publications, evidence
+images or audio are included. Per-entry citations and transformation details
+are available in the tuning library and retained with selected song tunings.
+The full licence, upstream statement and source notice accompany the packs in
+tunings/LICENSE-CC-BY-4.0.txt, tunings/DaMuSc-LICENSE.txt and tunings/NOTICE.
+No endorsement is implied; supplied without warranties.
+
+The 1-72 EDO collection and stock 22-EDO source were generated independently
+from equal-division arithmetic. Other uncleared scale-library collections are
+not redistributed; optional local import does not grant redistribution rights.
+
 Android/Kotlin libraries are distributed under their respective Apache 2.0
 licenses; see https://www.apache.org/licenses/LICENSE-2.0 and upstream sources.

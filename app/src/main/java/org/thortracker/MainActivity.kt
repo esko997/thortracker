@@ -53,6 +53,8 @@ import org.thortracker.system.ExportFormat
 import org.thortracker.system.SoundSystems
 import org.thortracker.model.Scl
 import org.thortracker.model.Tuning
+import org.thortracker.model.InstalledTuningPack
+import org.thortracker.model.TuningPackCodec
 import org.thortracker.storage.ProjectStore
 import org.thortracker.storage.WorkspaceStore
 import org.thortracker.ui.AppMenus
@@ -117,12 +119,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         override fun recoverPrevious() = projectStore.previous { song -> this@MainActivity.replace(song) }
         override fun exportKeymap() = launchKeymapPicker(KEYMAP_EXPORT)
         override fun importKeymap() = launchKeymapPicker(KEYMAP_IMPORT)
-        override fun builtInTunings(): List<Tuning> =
-            (assets.list(TUNING_ASSETS) ?: emptyArray()).filter { it.endsWith(".scl") }.sorted().mapNotNull { file ->
-                runCatching {
-                    Scl.parse(assets.open("$TUNING_ASSETS/$file").use { it.readBytes() }.toString(Charsets.UTF_8), file.removeSuffix(".scl"))
-                }.getOrNull()
-            }
+        override fun loadTuningPacks(loaded: (List<InstalledTuningPack>) -> Unit) = this@MainActivity.loadTuningPacks(loaded)
+        override fun importTuningPack(done: () -> Unit) = this@MainActivity.importTuningPack(done)
+        override fun removeTuningPack(id: String, done: () -> Unit) = this@MainActivity.removeTuningPack(id, done)
         override fun loadTuningFile(loaded: (Tuning) -> Unit) { tuningLoaded = loaded; launchTuningPicker() }
         override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) {
             fileLoad = FileLoad(extensions, maxBytes, loaded)
@@ -777,6 +776,126 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     // ---- tuning ---------------------------------------------------------------------------------
+    private val tuningPackDirectory: File get() = File(filesDir, "tuning-packs")
+    private var tuningPacks: List<InstalledTuningPack>? = null
+    private var tuningPackRevision = -1L
+    private var tuningPackBusy = false
+
+    /** One bounded file operation at a time; no pitch parsing or map building on the UI thread. */
+    private fun <T> tuningPackWork(work: () -> T, done: (T) -> Unit) {
+        if (tuningPackBusy) { showError("A tuning library operation is already running"); return }
+        tuningPackBusy = true
+        Thread({
+            val result = runCatching { synchronized(TUNING_PACK_LOCK) { work() } }
+            main.post {
+                tuningPackBusy = false
+                if (isDestroyed) return@post
+                result.fold(done) { showError("Tuning library: ${it.message}") }
+            }
+        }, "tuning-packs").start()
+    }
+
+    private fun readTuningPack(stream: java.io.InputStream): ByteArray = stream.use {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val n = it.read(buffer)
+            if (n < 0) break
+            check(out.size() + n <= TuningPackCodec.MAX_BYTES) { "pack exceeds 16 MiB" }
+            out.write(buffer, 0, n)
+        }
+        out.toByteArray()
+    }
+
+    /** Called only on the file thread, under the process-wide storage lock. A broken pack is never hidden. */
+    private fun readTuningPacks(): List<InstalledTuningPack> {
+        val result = ArrayList<InstalledTuningPack>()
+        val ids = HashSet<String>()
+        fun add(file: String, bundled: Boolean, bytes: () -> ByteArray) {
+            try {
+                val pack = TuningPackCodec.decode(bytes())
+                check(bundled || file == "${pack.id}.thorscales") { "filename does not match pack id" }
+                check(ids.add(pack.id)) { "duplicate or protected bundled pack id: ${pack.id}" }
+                result += InstalledTuningPack(pack, bundled)
+            } catch (e: Exception) {
+                throw IOException("${TuningPackCodec.display(file)}: ${e.message}", e)
+            }
+        }
+        val bundled = checkNotNull(assets.list(TUNING_ASSETS)) { "bundled tunings directory could not be read" }
+            .filter { it.endsWith(".thorscales") }.sorted()
+        check(bundled.isNotEmpty()) { "no bundled tuning packs were found" }
+        for (file in bundled) add(file, true) { readTuningPack(assets.open("$TUNING_ASSETS/$file")) }
+        val directory = tuningPackDirectory
+        if (directory.exists()) {
+            val files = checkNotNull(directory.list()) { "private tuning-packs directory could not be read" }
+                .map { it.removeSuffix(".bak") }.filter { it.endsWith(".thorscales") }.distinct().sorted()
+            for (file in files) add(file, false) { readTuningPack(AtomicFile(File(directory, file)).openRead()) }
+        }
+        return result
+    }
+
+    private fun loadTuningPacks(loaded: (List<InstalledTuningPack>) -> Unit) {
+        tuningPacks?.takeIf { tuningPackRevision == packStorageRevision }?.let { loaded(it); return }
+        tuningPackWork({ readTuningPacks() to packStorageRevision }) { (packs, revision) ->
+            tuningPacks = packs
+            tuningPackRevision = revision
+            loaded(packs)
+        }
+    }
+
+    private fun importTuningPack(done: () -> Unit) {
+        menuHost.loadFile("Import .thorscales", listOf(".thorscales"), TuningPackCodec.MAX_BYTES) { _, _, bytes ->
+            tuningPackWork({
+                val pack = TuningPackCodec.decode(bytes)
+                val existing = readTuningPacks().firstOrNull { it.pack.id == pack.id }
+                check(existing?.bundled != true) { "bundled pack ${pack.id} cannot be replaced" }
+                pack to (existing != null)
+            }) { (pack, replacing) ->
+                fun save() {
+                    tuningPackWork({
+                        val directory = tuningPackDirectory
+                        check(directory.isDirectory || directory.mkdirs()) { "private tuning-packs directory could not be created" }
+                        val target = File(directory, "${pack.id}.thorscales")
+                        check(replacing || !target.exists()) { "this pack was installed meanwhile; import it again to confirm replacement" }
+                        val file = AtomicFile(target)
+                        val out = file.startWrite()
+                        try {
+                            out.write(bytes)
+                            file.finishWrite(out)
+                        } catch (e: Exception) {
+                            file.failWrite(out)
+                            throw e
+                        }
+                        packStorageRevision++
+                    }) {
+                        tuningPacks = null
+                        done()
+                    }
+                }
+                if (replacing) popups.show(PopupSpec("Replace tuning pack?",
+                    message = "Replace ${TuningPackCodec.display(pack.id)}? Songs already using it keep their tuning.",
+                    items = listOf(PopupItem("Replace", PopupItem.Tone.DANGER) { save() }, PopupItem.dismiss()),
+                    selected = 1), modalDisplay)
+                else save()
+            }
+        }
+    }
+
+    private fun removeTuningPack(id: String, done: () -> Unit) {
+        tuningPackWork({
+            val installed = readTuningPacks().firstOrNull { it.pack.id == id }
+                ?: error("pack is no longer installed")
+            check(!installed.bundled) { "bundled packs cannot be removed" }
+            val target = File(tuningPackDirectory, "${installed.pack.id}.thorscales")
+            AtomicFile(target).delete()
+            check(!target.exists() && !File("$target.bak").exists()) { "pack could not be removed" }
+            packStorageRevision++
+        }) {
+            tuningPacks = null
+            done()
+        }
+    }
+
 
     private fun launchTuningPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }
@@ -1347,6 +1466,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         private const val WAV_SPOOL_PREFIX = "wav-export-"
         private var wavSpoolsCleaned = false // Activity lifecycle callbacks run on the main thread.
         private const val COPY_BUFFER = 64 * 1024
+        private val TUNING_PACK_LOCK = Any()
+        @Volatile private var packStorageRevision = 0L
         private const val TUNING_ASSETS = "tunings"
                 private const val MAX_KEYMAP_BYTES = 64 * 1024
         private const val WORKING = "Working copy"
