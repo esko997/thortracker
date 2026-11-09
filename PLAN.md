@@ -10,7 +10,7 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
-Six sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive, Sega 8-bit); VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
+Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
@@ -54,8 +54,8 @@ Order below is the current intent; design notes for the chip work live in `docs/
      own player/core, shared noise and hardware-envelope ownership, buzzer/sync sounds, software envelopes,
      VGM/WAV and Copper Lane demos. Verified on Nova, DMG, Konkr and the SDL frontend; CPC WAV retains stereo,
      while standard AY VGM is mono.
-   - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise, DDA samples: source slice on branch
-     `huc6280-system` (own player on Mednafen's PSG, VGM/WAV export), not yet built or verified.
+   - **PC Engine HuC6280 (0.26.0)** — six 32-step wavetable channels, shared LFO, noise, stereo balance and timer-driven
+     DDA samples; own player on Mednafen's PSG, controller wave/sample editors, VGM/WAV and Turbo Lanterns.
    - Konami SCC — MSX wavetable cartridge (five channels). Source-only branch `scc-systems`: two systems, SCC
      (K051649, channels 4/5 share a wave) and SCC+ (K052539, five waves), own player on a port of MAME's k051649,
      VGM/WAV export, wave and envelope editors (`docs/BACKENDS.md`, "Konami SCC and SCC+"); not yet built or verified.

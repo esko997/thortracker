@@ -1,5 +1,65 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.26.0 PC Engine HuC6280
+
+The PC Engine adds six 32-step, 5-bit wavetable channels, noise on PSG 5–6,
+the shared PSG 2 → PSG 1 LFO, stereo balance and timer-driven D/A samples.
+The controller editors cover waves, software envelopes, sample import,
+pitched/looped samples and a synthesized starter kit. **Turbo Lanterns**
+demonstrates the system. Exports are VGM and WAV, not HuCard/HES executables.
+
+Verification:
+
+- **657 JVM core tests, 14 Linux core tests and six Android-host tests passed**.
+  Android release, Android instrumentation and desktop release builds succeeded;
+  the candidate APK was signed with the production key. Heavy jobs ran serially,
+  with one Gradle worker and in-process Kotlin; no emulator.
+- The full native suite passed: **380 PC Engine checks and 1,667 WAV checks**,
+  alongside every existing engine. The independent Python player matches all
+  **1,500 ticks**, including timer interrupts and CPU-cycle timestamps. Its VGM
+  is byte-identical; independent parsing checks clocks, writes, waits and loops.
+- Fixed released-note portamento: notes after OFF now start fresh attacks,
+  including during a release tail. A final zero stops the voice and its DDA
+  writes, without truncating the preceding audible tick or ending an
+  intermediate zero. Held-but-silent notes remain legato. The focused native
+  regression failed **20 of 52 checks before** and passes all 52 afterward.
+- Fixed sample clipboard lifetime across documents and deleted source samples,
+  with atomic Undo and full-bank refusal/reuse. An isolated original-source
+  regression pasted another document's `[4,3,2]` frames instead of the copied
+  `[31,23,19,11,5,0]`; the identical regression passes on the integrated source.
+  The starter kit is generated at the song's DDA rate, preserving its pitch and duration.
+- Nova passed **22 Android tests** (21 permanent plus the temporary PC Engine
+  harness). Real-activity smokes on **Nova, DMG and Konkr** exercised playback,
+  simultaneous audition, envelope/wave edits, sample root/loop edits,
+  cross-document sample paste and Undo, project roundtrip and deep seek.
+  PC Engine scenarios reported **zero xruns and zero driver faults**. The
+  separate existing GB audio test recorded one startup xrun and passed.
+  After removing the temporary harnesses, a freshly built test APK passed
+  **all 21 permanent Android tests** again on Nova (zero xruns or driver faults).
+- Demo seek to order 4/row 48 took **134 / 283 / 428 ms** natively on
+  Nova/DMG/Konkr. Maximum callback times were **2.71 / 11.47 / 4.89 ms**
+  against 4 / 20 / 20 ms bursts. A worst-speed order seek on Konkr (16,065
+  ticks, five high tones plus looped DDA) took **14.87 s**, with a maximum
+  UI round trip of **17 ms** and no audio faults. Exact-phase long seeks remain
+  a documented performance tradeoff, not a claim of instant access.
+- Nova's 32-second WAV is 48 kHz stereo, peak **0.6112**, RMS **0.0431**,
+  without clipping. Its VGM command stream and normalized header exactly match
+  the independent factory-image export (**482,027 bytes** before GD3); metadata
+  decodes correctly.
+- The actual SDL frontend opened the Android-saved project, played for six
+  seconds and switched to the sound editor: transport reached row 50, audio
+  peak **0.3383**. Desktop and real-device wave/sample surfaces were inspected.
+- Factory Game Boy `.uge` bytes and **all 32 Game Boy view renders** are
+  identical to verified 0.25.0 (RGBA comparison).
+- The documented standalone renderer also built and ran: three seconds of
+  WAV reached order 0/row 30; its complete-song VGM is 32.00 seconds with
+  a 25.60-second loop.
+
+No human listening test, original-hardware capture or libvgm audio comparison
+is claimed. The VGM loop-state dump can reset waveform phase; WAV retains the
+app's continuous render. `/ThorTunez` was untouched.
+
+
 ## 0.25.0 AY / YM2149 computers
 
 Four computer variants join the sound-system chooser: **ZX Spectrum 128, MSX,
