@@ -66,11 +66,12 @@ Order below is the current intent; design notes for the chip work live in `docs/
      comparison, Nova/DMG/Konkr and SDL verification complete. No human listening or original-hardware
      measurement claimed; `docs/VERIFICATION.md` records the evidence.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG; the YM2608 adds stereo, the LFO, six
-     rhythm drums and ADPCM-B samples. Integrated source for **0.30.0/code 43** on branch `opna-systems`
-     ("PC-88/98 OPN" and "PC-88/98 OPNA", demos "Night Express" and "Paper Lanterns"; Thor Tracker's own player
-     on ymfm, VGM export; the EPSM's rhythm-ROM import generalised to one shared YM2608 rhythm ROM).
-     Focused native, headroom, WAV and independent-reference checks pass; final frontend rebuild and device smoke
-     remain pending. `docs/VERIFICATION.md` separates the observed evidence from the remaining release gates.
+     rhythm drums and ADPCM-B samples.
+     Implemented for **0.30.0/code 43** ("PC-88/98 OPN" and "PC-88/98 OPNA", demos "Night Express" and
+     "Paper Lanterns"; Thor Tracker's own player on ymfm, VGM/WAV export, shared EPSM/OPNA rhythm firmware).
+     Native/headroom/reference checks, integration suites, 32 unchanged Game Boy views, desktop playback,
+     Nova/DMG/Konkr activity smokes, actual Android import/export pickers and legacy firmware reuse pass.
+     Independent VGM playback also verifies the exported FM/SSG mix; evidence and limits are in `docs/VERIFICATION.md`.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.

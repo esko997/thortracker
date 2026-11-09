@@ -155,6 +155,28 @@ class Vgm:
             if after:
                 self.loop_samples += wait
 
+    def mixer(self, name):
+        """VGM 1.71 relative offsets and paired-chip volumes, not command-stream bytes."""
+        extra = 0xBC + u32(self.data, 0xBC)
+        if not expect(u32(self.data, 0xBC) != 0 and 0x100 <= extra <= self.first_command - 12,
+                      "%s: extended mixer header before the commands" % name):
+            return False
+        size = u32(self.data, extra)
+        offset = u32(self.data, extra + 8)
+        table = extra + 8 + offset
+        if not expect(size >= 12 and offset != 0 and extra + size <= table < self.first_command,
+                      "%s: chip-volume table follows its header" % name):
+            return False
+        count = self.data[table]
+        if not expect(table + 1 + count * 4 <= self.first_command,
+                      "%s: complete volume entries before the commands" % name):
+            return False
+        entries = [struct.unpack_from("<BBH", self.data, table + 1 + i * 4) for i in range(count)]
+        paired = 0x86 if self.chip == "YM2203" else 0x87
+        wanted = 0x8600 if self.chip == "YM2203" else 0x8200
+        return expect(entries == [(paired, 0, wanted)],
+                      "%s: paired SSG volume preserves the preview's FM/SSG balance (%s)" % (name, entries))
+
     def structure(self, name):
         """Header and command stream checks common to every file."""
         ok = expect(not self.problems, "%s: commands parse (%s)" % (name, "; ".join(self.problems)))
@@ -180,6 +202,7 @@ class Vgm:
             name, self.chip, ", ".join("%d:$%02X" % b for b in bad[:8])))
         types = {t for _, t, _ in self.blocks}
         ok &= expect(types <= {0x81}, "%s: no data block other than $81 (%s)" % (name, sorted(types)))
+        ok &= self.mixer(name)
         return ok
 
 

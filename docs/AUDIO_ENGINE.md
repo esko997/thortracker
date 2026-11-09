@@ -44,11 +44,11 @@ the Sound Cartridge in SCC+ mode; unverified source slice) play songs with Thor 
 here, mirrored by an independent Python reference) on a K051649/K052539 sound core ported from MAME, at the MSX's
 3579545 Hz, and export VGM. See [SCC](#scc-and-scc-thor-trackers-own-player-on-a-konami-k051649--k052539-msx-scc-msx-scc-plus).
 
-The OPM system (`"ym2151-opm"`, unverified source slice) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
+The OPM system (`"ym2151-opm"`, 0.29.0) plays a YM2151 at the X68000's 4 MHz with Thor Tracker's
 own player (specified here, mirrored by an independent Python reference) on ymfm's YM2151, with the chip's LFO,
 noise and CSM as shared song state, and exports VGM. See [OPM](#opm-thor-trackers-own-player-on-a-ym2151-ym2151-opm).
 
-The PC-88/98 systems (`"ym2203-opn"` and `"ym2608-opna"`, full 0.30 integration UNVERIFIED; focused FM 3 regression passed) play songs with Thor
+The PC-88/98 systems (`"ym2203-opn"` and `"ym2608-opna"`, 0.30.0) play songs with Thor
 Tracker's own OPN player (C) on ymfm's YM2203 (3 FM + SSG) and YM2608 (6 stereo FM + SSG + six rhythm drums from the
 user's rhythm ROM + ADPCM-B with the song's own samples) at the PC-88/98 clocks, and export VGM. See
 [OPN and OPNA](#opn-and-opna-thor-trackers-own-player-on-ymfms-ym2203--ym2608-ym2203-opn-ym2608-opna) and
@@ -4905,10 +4905,11 @@ generated table header: the vibrato sine is written out in both implementations.
 
 ## OPN and OPNA: Thor Tracker's own player on ymfm's YM2203 / YM2608 (`"ym2203-opn"`, `"ym2608-opna"`)
 
-**Status: final frontend integration pending.** Focused native checks pass 1,806/1,806, with 58 failures
-against the old production mixer. Independent Python (324 checks), WAV (2,006 checks), external headroom
-observation and 14 independent MAME tone comparisons pass. Final frontend rebuild, device smoke, artifact
-privacy scan and listening remain pending; see `docs/VERIFICATION.md` for evidence and limits.
+**Integration verified:** 1,806 native checks, 420 independent Python checks, 2,006 WAV checks,
+783 JVM / 19 Linux / six Android-host tests, 21 permanent Android tests and 32 unchanged Game Boy
+renders. Nova/DMG/Konkr activity smokes, real document pickers, preserved EPSM firmware, desktop
+playback and artifact privacy scans pass. Human listening and physical-board comparison remain
+unperformed; `docs/VERIFICATION.md` records the measured costs, isolated Nova underruns and limits.
 
 ### Hardware, clocks and sources
 
@@ -5075,7 +5076,7 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
   phase interpolation; use two as a conservative reconstruction span bound for arbitrary held
   levels. The high-pass subtracts a running DC estimate, so budget that entire reconstructed span:
   2.5 × 2 × 3/16 = 0.9375, with more than 2048 PCM units left for integer rounding.
-  Relative part levels and register/VGM output are unchanged; this is not a limiter or automatic gain.
+  This gain does not change relative part levels or register writes; it is not a limiter or automatic gain.
   The native headroom regression covers both chips at 8, 44.1, 48 and 96 kHz with full additive FM,
   full-volume SSG, held DC, DC-to-square and simultaneous cuts, comparing against an independently
   routed chip plus blip path (including DAC saturation). The final native run passes 1,806 checks; the old
@@ -5086,7 +5087,7 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
 
 ### VGM export (`opn/opn_vgm.c`, `opn_export.h`)
 
-VGM 1.71, data offset `$34` = `$CC`. YM2203: clock at `$44` = 3 993 600, writes as command `$55`. YM2608: clock at
+VGM 1.71, command data at `$114` (relative data offset `$34` = `$E0`). YM2203: clock at `$44` = 3 993 600, writes as command `$55`. YM2608: clock at
 `$48` = 7 987 200, port 0 / 1 writes `$56` / `$57`, and first a data block `$67 $66 $81` ("YM2608 DELTA-T ROM data":
 u32 memory size 262 144, u32 start 0, the used ADPCM-B bytes) when the song has samples. The SSG flags `$7A` / `$7B`
 are `$01`: the VGM 1.71 specification (vgmrips `vgmspec171.txt`) gives `$79` "AY8910 Flags … Default is 0x01" (bit 0
@@ -5095,6 +5096,14 @@ Legacy Output) and `$7A` / `$7B` as the same flags for the AY8910 "connected wit
 tick's writes with the key-off phase one 44.1 kHz sample earlier, waits from the native sample count (exact: 44 100 ×
 72 per native sample over 3 993 600), `$66`, then the GD3 tag (system "PC-88/98 OPN (Thor Tracker)" / "PC-88/98 OPNA
 (Thor Tracker)").
+
+**Board mix metadata.** The [VGM 1.71 extended header](https://github.com/vgmrips/vgmplay-legacy/blob/master/VGMPlay/vgmspec171.txt)
+at `$100` has size 12 and one volume entry: first-chip paired SSG `$86` / `$87`,
+relative volume `$8600` / `$8200` (YM2203 ×6 / YM2608 ×2). VGMPlay's default normalized
+SSG/FM routing is not the preview's board mix. Independent MAME renders of isolated
+FM and SSG tones agree in their reference-to-engine gains within 0.83% after this
+metadata; without it the SSG is too quiet. Overall output gain remains the VGM
+player's choice. No register writes, waits, sample data or native PCM change.
 
 **Loop without injected writes.** The file contains only writes the player makes in native playback, never a register
 dump. The renderer runs the player to its arrivals at (loop order, row 0, tick 0), A1, A2, …, and takes the first pair
@@ -5110,7 +5119,7 @@ one VGM sample of native timing). A song whose state never repeats within `max_t
 `ChipAudio.nativeOpnVgm`, Deck `DeckOpnVgm` over `opn_export_vgm`). The rhythm ROM is never in a file: VGM players
 supply their own copy. Whether a given VGM player emulates CSM (timer A) is that player's matter; not checked.
 
-### Tools and verification (final frontend integration pending)
+### Tools and verification
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opn_machine_test.c` (both chips,
   images built in C, no fixtures, no ROM): loader rejections; pitch measured from rendered audio (FM, SSG, ADPCM-B);
@@ -5127,8 +5136,8 @@ supply their own copy. Whether a given VGM player emulates CSM (timer A) is that
   so has no loop); the ops tables; per-tick cost. Evidence WAVs, VGMs, write traces and images go to the directory.
 - `python3 tools/audio/opn_reference_check.py [dir]` (standard library only, independent of the C code): parses the
   VGMs, recomputes frequencies from the logged registers with the datasheet formulas and the clocks above, decodes
-  ADPCM-B itself, measures the evidence WAVs' pitch against them, and expands each loop VGM itself to compare it with
-  the player's straight write trace.
+  ADPCM-B itself, measures the evidence WAVs' pitch against them, expands each loop VGM itself to compare it with
+  the player's straight write trace, and validates the relative extended-header offsets and paired-SSG mix.
 - `wav_render_test.c` renders the demos `night-express.opnimg` and `paper-lanterns.opnaimg` and the shortest songs
   `opn-shortest.opnimg` and `opna-shortest.opnaimg` (from `exportSamples`).
 - `tools/audio/render_opn_image.sh image out.wav [seconds] [rom.bin | rom=path] [mute=1,7,16] [--vgm out.vgm]
@@ -5138,11 +5147,12 @@ supply their own copy. Whether a given VGM player emulates CSM (timer A) is that
   checked) also runs the audible-rhythm checks; without it they are reported as skipped. Keep the ROM and its
   evidence outside the repository.
 - The focused held/idle FM 3 mode check passed 264/264 on 2026-11-09; the preserved pre-fix player failed 72 checks.
-  The final focused native suite passes 1,806 checks, independent Python reference 324 checks and WAV export
+  The final focused native suite passes 1,806 checks, independent Python reference 420 checks and WAV export
   2,006 checks. All 14 independent MAME tone checks pass unchanged 0.2% FM/SSG and 0.5% ADPCM tolerances;
   maximum error is 0.1621% for the ADPCM octave, with FM 3 at 880.208 versus 880.198 Hz.
-  Still pending: final frontend rebuild and integration suites, reserved-device smoke and costs, artifact
-  privacy scan and listening. No real PC-88/98 hardware measurement is claimed.
+  Full demo exports also pass independent envelope/spectrum/pitch-class comparison after the board-mix
+  metadata fix. Reserved-device UI, actual WAV import and VGM/WAV save pickers, firmware reuse and artifact
+  privacy were exercised; see `docs/VERIFICATION.md`. No human listening or real PC-88/98 measurement is claimed.
 
 ## The YM2608 rhythm ROM (shared firmware)
 
