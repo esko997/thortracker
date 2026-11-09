@@ -137,7 +137,8 @@ static void end_batch(OpnPlayer* p) {
     p->pending_offs = 0;
 }
 
-/* $27: FM 3's mode; in CSM mode $81 (CSM, timer A loaded) while FM 3 holds a note, else $40. */
+/* $27: FM 3's mode; in CSM mode $81 (CSM, timer A loaded) while FM 3 holds a note, else $40. p->fm3_mode is the mode
+ * of FM 3's current (or last) note, so a held note keeps its mode until its key-off. */
 static int mode_reg(const OpnPlayer* p) {
     if (p->fm3_mode == OPN_FM3_NORMAL) return 0x00;
     if (p->fm3_mode == OPN_FM3_CSM && p->ch[OPN_CH_FM3].keyed) return 0x81;
@@ -278,7 +279,10 @@ static void key_on(OpnPlayer* p, const OpnImage* image, int c, int note, const O
     const uint8_t* rec = opn_instrument(image, ch->instrument, part);
     if (!rec) return;
     switch (part) {
-    case OPN_PART_FM: key_on_fm(p, ch, c, rec, row); break;
+    case OPN_PART_FM:
+        key_on_fm(p, ch, c, rec, row); /* releases FM 3's previous note in that note's mode */
+        if (c == OPN_CH_FM3) p->fm3_mode = image->info.fm3_mode; /* the new note takes the song's current mode */
+        break;
     case OPN_PART_SSG: key_on_ssg(p, image, ch, c, rec, row); break;
     case OPN_PART_RHYTHM: /* a note re-triggers the drum: no dump first */
         ch->ins_level = rec[OPN_I_RHYTHM_LEVEL];
@@ -818,7 +822,6 @@ void opnp_relocate(OpnPlayer* p, const OpnImage* old, const OpnImage* next) {
     if (info->lfo != old->info.lfo) p->lfo = info->lfo;
     if (info->timer_a != old->info.timer_a) p->timer_a = info->timer_a;
     if (info->rhythm_level != old->info.rhythm_level) p->rhythm_level = info->rhythm_level;
-    if (info->fm3_mode != old->info.fm3_mode) p->fm3_mode = info->fm3_mode;
     const int started = p->tick > 0;
     const int old_speed = speed_at(old, p->order, p->row, started);
     int clamped = 0;

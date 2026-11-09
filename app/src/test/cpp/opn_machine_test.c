@@ -13,7 +13,10 @@
  *    ADPCM-B: a 500 Hz sine recorded at 16 kHz played at its root and +12;
  *  - FM 3 special mode: the four operators' frequency pairs (note + per-operator offsets, high byte first), operator 4
  *    alone heard an octave up; CSM: timer A expiries every (1024 - NA) native samples while an FM 3 note sounds, none
- *    after its OFF, and never a $28 key-on of FM 3;
+ *    after its OFF, and never a $28 key-on of FM 3; FM 3's mode switched by a live image under a held A-4 or after
+ *    OFF while idle (every ordered pair of normal / special / CSM): writes and samples = the unedited song's until
+ *    the next note, OFF keying off in the note's own mode then quiet, the next note in the new mode
+ *    (its $28 / $27, timer A, frequencies = a seek of the edited song to it);
  *  - SSG: the mixer composed per channel, the noise period from the highest channel with a noise envelope (else Nxx),
  *    the hardware envelope period from the highest channel with a hardware envelope (auto and manual), $0D at key-on,
  *    the level and Cxx;
@@ -1044,6 +1047,151 @@ static void test_fm3(const char* dir) {
         printf("  %s CSM: %u expiries in %d samples (%.2f per 400)\n", chip_name(chip), e1 - e0, native, (e1 - e0) * 400.0 / native);
         opnm_destroy(m);
     }
+}
+
+/* ---- FM 3's mode changed live under a held note -------------------------------------------------------------------- */
+
+#define FM3_EDIT_TICK 10 /* the live edit lands before this tick (row 3, tick 1), while the first note is held */
+#define FM3_OFF_ROW 12
+#define FM3_NEXT_ROW 24
+#define FM3_NEXT_TICK (FM3_NEXT_ROW * 3)
+static OpnImage g_fm3[2]; /* the song in the mode it starts with, and the live edit's copy in another mode */
+static float g_out2[OPNM_MAX_TICK_FRAMES * 2];
+
+/* FM 3 plays A-4 from 0/0 with operator 4 alone audible and sustained (ins_fm_sine: D2R 0, SL 0, RR 15), operator
+ * offsets {+1, +12, -12, +12} semitones (special and CSM sound operator 4 an octave up), NA 624; OFF at row 12 when
+ * `off`, then A-4 again at row 24. One order of 32 rows at speed 3: images of different modes differ in
+ * OPN_H_FM3_MODE only. */
+static int build_fm3_mode(OpnImage* im, int chip, int mode, int off) {
+    static const int ofs[4] = {64, 768, -768, 768};
+    B s;
+    b_init(&s, im, chip, 1, 32, 3);
+    s.b[OPN_H_FM3_MODE] = (uint8_t)mode;
+    put16(s.b + OPN_H_TIMER_A, 624);
+    uint8_t* r = ins_fm_sine(&s, 1, 3);
+    for (int k = 0; k < 4; ++k) put16(r + OPN_I_CH3 + 2 * k, (uint16_t)(int16_t)ofs[k]);
+    Ev ev[3];
+    int n = 0;
+    ev[n++] = (Ev){0, 0, OPN_CH_FM3, A4, 1, 0, {0}};
+    if (off) ev[n++] = (Ev){0, FM3_OFF_ROW, OPN_CH_FM3, OFF, 0, 0, {0}};
+    ev[n++] = (Ev){0, FM3_NEXT_ROW, OPN_CH_FM3, A4, 1, 0, {0}};
+    return b_finish(&s, ev, n);
+}
+
+/* $27 while an FM 3 note of `mode` is held. */
+static int fm3_mode_reg(int mode) { return mode == OPN_FM3_NORMAL ? 0x00 : mode == OPN_FM3_SPECIAL ? 0x40 : 0x81; }
+
+/* A live image switches FM 3's mode while FM 3 holds a note or after OFF during its idle release tail.
+ * Until the next note, writes and samples match the unedited song (the note keeps its frequencies, $27 and timer A; its OFF releases it in its
+ * own mode, then it falls quiet); the next note releases it in its own mode when no OFF came, then plays in the new
+ * mode exactly as a seek of the edited song to that note sets it. Every ordered pair of modes, both chips. */
+static void test_fm3_live(void) {
+    printf("FM 3 mode live edits under held notes and idle release tails\n");
+    static const char* names[3] = {"normal", "special", "CSM"};
+    static const uint8_t fm3_regs[8] = {0xAD, 0xA9, 0xAE, 0xAA, 0xAC, 0xA8, 0xA6, 0xA2};
+    for (int chip = 0; chip < 2; ++chip)
+        for (int scenario = 0; scenario < 3; ++scenario)
+            for (int from = OPN_FM3_NORMAL; from <= OPN_FM3_CSM; ++from)
+                for (int to = OPN_FM3_NORMAL; to <= OPN_FM3_CSM; ++to) {
+                    if (from == to) continue;
+                    const int off = scenario != 0;
+                    const int edit_tick = scenario == 2 ? FM3_OFF_ROW * 3 + 1 : FM3_EDIT_TICK;
+                    char what[128];
+                    snprintf(what, sizeof what, "%s %s -> %s %s", chip_name(chip), names[from], names[to],
+                             scenario == 2 ? "(idle edit after OFF)" : off ? "(OFF, then a note)" : "(the next note retriggers)");
+                    if (build_fm3_mode(&g_fm3[0], chip, from, off) != 0 || build_fm3_mode(&g_fm3[1], chip, to, off) != 0) {
+                        EXPECT(0, "%s: images load (%s / %s)", what, g_fm3[0].info.problem ? g_fm3[0].info.problem : "",
+                               g_fm3[1].info.problem ? g_fm3[1].info.problem : "");
+                        continue;
+                    }
+                    double pk;
+                    RefTick* ref = record(chip, &g_fm3[0], FM3_NEXT_TICK, &pk);
+                    OpnMachine* m = opnm_create(chip, RATE);
+                    OpnMachine* f = opnm_create(chip, RATE);
+                    int mode;
+                    if (!ref || !m || !f || opnm_start(m, &g_fm3[0], 0, 0, SEEK_BUDGET, &mode) != OPNM_OK ||
+                        opnm_start(f, &g_fm3[1], 0, FM3_NEXT_ROW, SEEK_BUDGET, &mode) != OPNM_OK) {
+                        EXPECT(0, "%s: machines start", what);
+                        free(ref);
+                        if (m) opnm_destroy(m);
+                        if (f) opnm_destroy(f);
+                        continue;
+                    }
+                    const OpnPlayer* p = opnm_player(m);
+                    const OpnChip* c = opnm_chip(m);
+                    int bad = 0, first = -1, held_frames = 0, quiet_frames = 0;
+                    double held_sq = 0, quiet_sq = 0;
+                    uint32_t held_expiries = 0;
+                    for (int k = 0; k < FM3_NEXT_TICK; ++k) {
+                        if (k == edit_tick) opnm_apply_image(m, &g_fm3[1]);
+                        const uint32_t e = opn_chip_timer_a_expiries(c);
+                        const int n = opnm_tick(m, g_out);
+                        const int b = !same_tick(p, &ref[k]) || n != ref[k].frames ||
+                                      fnv(0xCBF29CE484222325ull, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0)) != ref[k].hash;
+                        if (b && first < 0) first = k;
+                        bad += b;
+                        if (k >= FM3_EDIT_TICK && k < FM3_OFF_ROW * 3) {
+                            for (int i = 0; i < 2 * n; ++i) held_sq += (double)g_out[i] * g_out[i];
+                            held_frames += n;
+                            held_expiries += opn_chip_timer_a_expiries(c) - e;
+                        }
+                        if (off && k == FM3_OFF_ROW * 3) {
+                            if (from == OPN_FM3_CSM)
+                                EXPECT(find_write(p, 0, p->writes, 0, 0x28, -1) < 0 && p->reg[0][0x27] == 0x40,
+                                       "%s: the OFF stops CSM (no $28, $27 = %02X)", what, p->reg[0][0x27]);
+                            else
+                                EXPECT(find_write(p, 0, p->offs, 0, 0x28, 0x02) >= 0 && p->reg[0][0x27] == fm3_mode_reg(from),
+                                       "%s: the OFF keys FM 3 off ($28 = $02 in the key-off phase: %d) with $27 still %02X (%02X)",
+                                       what, find_write(p, 0, p->offs, 0, 0x28, 0x02), fm3_mode_reg(from), p->reg[0][0x27]);
+                        }
+                        if (off && k >= FM3_NEXT_TICK - 12) {
+                            for (int i = 0; i < 2 * n; ++i) quiet_sq += (double)g_out[i] * g_out[i];
+                            quiet_frames += n;
+                        }
+                    }
+                    EXPECT(bad == 0, "%s: until the next note, writes and samples = straight play of the unedited song "
+                           "(%d of %d ticks differ, first at %d)", what, bad, FM3_NEXT_TICK, first);
+                    const double held_rms = held_frames ? sqrt(held_sq / (2.0 * held_frames)) : 0;
+                    EXPECT(held_rms > 0.002 && (from == OPN_FM3_CSM ? held_expiries > 0 : held_expiries == 0),
+                           "%s: the held phase sounds in its own mode (rms %.4f, %u timer A expiries)", what,
+                           held_rms, held_expiries);
+                    if (off) {
+                        const double quiet_rms = quiet_frames ? sqrt(quiet_sq / (2.0 * quiet_frames)) : 1;
+                        EXPECT(quiet_rms < 1e-4, "%s: quiet after the OFF (rms %.6f over the last 12 ticks)", what, quiet_rms);
+                    }
+                    /* the next note */
+                    opnm_tick(m, g_out);
+                    const int released = find_write(p, 0, p->offs, 0, 0x28, 0x02);
+                    if (off || from == OPN_FM3_CSM)
+                        EXPECT(find_write(p, 0, p->offs, 0, 0x28, -1) < 0, "%s: no $28 in the next note's key-off phase", what);
+                    else
+                        EXPECT(released >= 0, "%s: the next note's key-off phase releases the held note in its own mode ($28 = $02)", what);
+                    const int keyon = find_write(p, p->offs, p->writes, 0, 0x28, 0xF2);
+                    EXPECT(p->fm3_mode == to && p->reg[0][0x27] == fm3_mode_reg(to) && (to == OPN_FM3_CSM ? keyon < 0 : keyon >= 0),
+                           "%s: the next note plays in the new mode (mode %d, $27 = %02X, $28 = $F2 at %d)", what, p->fm3_mode,
+                           p->reg[0][0x27], keyon);
+                    opnm_tick(f, g_out2);
+                    const OpnPlayer* fp = opnm_player(f);
+                    int differ = fp->fm3_mode != p->fm3_mode || fp->reg[0][0x27] != p->reg[0][0x27];
+                    for (int i = to == OPN_FM3_NORMAL ? 6 : 0; i < 8; ++i) differ += fp->reg[0][fm3_regs[i]] != p->reg[0][fm3_regs[i]];
+                    EXPECT(differ == 0, "%s: the next note's mode and FM 3 frequencies = a seek of the edited song to it "
+                           "(%d differ)", what, differ);
+                    const uint32_t e0 = opn_chip_timer_a_expiries(c);
+                    double sq = 0;
+                    int frames = 0;
+                    for (int k = 0; k < 20; ++k) { /* rows 24-30: before the song wraps to row 0's note */
+                        const int n = opnm_tick(m, g_out);
+                        for (int i = 0; i < 2 * n; ++i) sq += (double)g_out[i] * g_out[i];
+                        frames += n;
+                    }
+                    const uint32_t e1 = opn_chip_timer_a_expiries(c);
+                    const double next_rms = frames ? sqrt(sq / (2.0 * frames)) : 0;
+                    EXPECT(next_rms > 0.002 && (to == OPN_FM3_CSM ? e1 > e0 : e1 == e0),
+                           "%s: the next note sounds (rms %.4f) with %u timer A expiries", what, next_rms, e1 - e0);
+                    free(ref);
+                    opnm_destroy(m);
+                    opnm_destroy(f);
+                }
 }
 
 /* ---- SSG shared registers ------------------------------------------------------------------------------------------ */
@@ -2250,6 +2398,7 @@ int main(int argc, char** argv) {
     test_images();
     test_pitch(dir);
     test_fm3(dir);
+    test_fm3_live();
     test_ssg();
     test_rhythm_without_rom();
     test_adpcm();

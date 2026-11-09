@@ -1,15 +1,20 @@
 # Thor Tracker verification — 2026-11-08
 
-## Unreleased: PC-88/98 OPN (YM2203) and OPNA (YM2608) — source slice, NOT verified
+## Unreleased: PC-88/98 OPN (YM2203) and OPNA (YM2608) — integration pending
 
 Branch `opna-systems` (base `c96697e`, the unverified NES + EPSM slice below) adds two systems, **PC-88/98 OPN
 (YM2203)** (`"ym2203-opn"`, demo **Night Express**) and **PC-88/98 OPNA (YM2608)** (`"ym2608-opna"`, demo **Paper
 Lanterns**: FM, SSG, ADPCM-B samples, no rhythm notes): Thor Tracker's own player on ymfm at the PC-88/98 clocks,
 VGM export, ADPCM-B sample import/generation/editing, FM 3 special and CSM modes; and replaces the EPSM-only rhythm-ROM
 support by one shared YM2608 rhythm ROM (`ym2608_rhythm_rom.{h,c}`, `system/fm/Ym2608RhythmRom`, `RhythmRomMenu`,
-"YM2608 rhythm ROM…", `THOR_RHYTHM_ROM`) for the EPSM and the YM2608. Written source-only: **nothing has been built,
-tested, run on a device or listened to**, no generator exists or was needed (`OpnPlayerImage.kt` mirrors
-`opn_image.h` by hand), and no version was bumped. The EPSM section's generation steps below still apply first.
+"YM2608 rhythm ROM…", `THOR_RHYTHM_ROM`). Full application, integration and device verification remain pending;
+no human listening is claimed. No generator exists or is needed (`OpnPlayerImage.kt` mirrors `opn_image.h` by hand),
+and no version was bumped. The EPSM section's generation steps below still apply first.
+
+The focused FM 3 live-mode regression was executed on 2026-11-09 against both native `OpnMachine` configurations and ymfm:
+36 transitions cover both chips, every ordered pair of normal/special/CSM, held notes ending by OFF or retrigger,
+and mode edits after OFF while idle. The preserved pre-fix player fails **72 of 264 checks**; the fixed player
+passes **264/264**. This isolated run needs no NES player image or rhythm ROM; it is not a full-suite pass.
 
 1. Builds and the full Kotlin run (also checks every renamed rhythm-ROM consumer):
 

@@ -2393,8 +2393,9 @@ replay bookkeeping, about 0.8 ms per warm tick (~5 % of a core) and a seek of ~4
 
 ## OPN and OPNA: Thor Tracker's own player on ymfm's YM2203 / YM2608 (`"ym2203-opn"`, `"ym2608-opna"`)
 
-**Status: source slice, not built, not run, not listened to.** Everything below is the specification the code was
-written to; the parent's build, host test and device checks (`docs/VERIFICATION.md`) are what verify it.
+**Status: integration pending.** The focused FM 3 live-mode regression passes 264/264 checks on both native
+`OpnMachine` configurations backed by ymfm (72 failures with the preserved old player). Full builds, suite, device and listening checks
+remain pending; see `docs/VERIFICATION.md`.
 
 ### Hardware, clocks and sources
 
@@ -2530,9 +2531,12 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
   that keeps the samples reads them once and writes none. The host's own hand-over of loaded images is unchanged
   (Android copies `image_storage` on its control thread); the player keeps (order,
   row, tick), clamps them to the new song and re-reads the current rows (the Mega Drive's relocation), and takes the
-  header's LFO, timer A, rhythm level and FM 3 mode when they changed. A sample under way continues from its address
-  in the new bytes; new start/end addresses apply at the next note. Switching FM 3's mode while FM 3 holds a note
-  takes effect at its next note.
+  header's LFO, timer A and rhythm level when they changed. A sample under way continues from its address in the new
+  bytes; new start/end addresses apply at the next note. FM 3's mode is not taken at the edit: the player reads it
+  from the image only at FM 3's key-ons (and at reset). An FM 3 note and its release tail keep the mode they started
+  with: their frequency registers and `$27`; normal/special key off with `$28`, and CSM uses `$27 = $40` at OFF or
+  `Sxx`. At a new FM 3 note, `$27` changes directly to that note's current image mode; CSM has no `$28` key-off phase.
+  With FM 3 idle, an edited mode likewise takes effect only at FM 3's next note.
 
 ### Audition, mute, mix
 
@@ -2573,14 +2577,17 @@ one VGM sample of native timing). A song whose state never repeats within `max_t
 `ChipAudio.nativeOpnVgm`, Deck `DeckOpnVgm` over `opn_export_vgm`). The rhythm ROM is never in a file: VGM players
 supply their own copy. Whether a given VGM player emulates CSM (timer A) is that player's matter; not checked.
 
-### Tools and verification (to be run by the parent; nothing here has been run)
+### Tools and verification (full integration still to be run)
 
 - `tools/audio/run_native_host_test.sh [dir]` builds and runs `app/src/test/cpp/opn_machine_test.c` (both chips,
   images built in C, no fixtures, no ROM): loader rejections; pitch measured from rendered audio (FM, SSG, ADPCM-B);
-  FM 3 special-mode writes and pitch; CSM timer A expiry rate and stop; SSG mixer / noise / hardware-envelope
-  ownership; rhythm writes and silence plus the missing flag without the ROM; ADPCM-B sequence, end, loop, pan and
-  level; positions; seeks sample-identical to straight play (an ADPCM-B sample keyed long before the target, FM
-  release tails, the SSG envelope, CSM) and the order fallback; live edits before every tick; mute continuity at the
+  FM 3 special-mode writes and pitch; CSM timer A expiry rate and stop; FM 3's mode switched live under a held note
+  (every ordered pair of modes, released by OFF or by a retriggering note: writes and samples = the unedited song's
+  until the next note, the release in the old mode, then the new mode as a seek to that note sets it); SSG mixer /
+  noise / hardware-envelope ownership; rhythm writes and silence plus the missing flag without the ROM; ADPCM-B
+  sequence, end, loop, pan and level; positions; seeks sample-identical to straight play (an ADPCM-B sample keyed
+  long before the target, FM release tails, the SSG envelope, CSM) and the order fallback; live edits before every
+  tick; mute continuity at the
   chip level (exact) and machine level; VGM structure and loops (each file expanded to three passes must equal a
   fresh player's write trace exactly — songs with an SSG hardware-envelope note, a CSM note and a looping ADPCM-B
   sample held across the wrap, a volume slide that settles only after some passes, and a song that never repeats and
@@ -2597,8 +2604,9 @@ supply their own copy. Whether a given VGM player emulates CSM (timer A) is that
 - **Private rhythm checks**: `THOR_RHYTHM_ROM=/path/to/ym2608_adpcm_rom.bin` (the user's own copy, size and SHA-256
   checked) also runs the audible-rhythm checks; without it they are reported as skipped. Keep the ROM and its
   evidence outside the repository.
-- Not done: any build or run, listening, Konkr/Thor costs, a comparison with real PC-88/98 hardware or another
-  emulator's audio.
+- The focused held/idle FM 3 mode check passed 264/264 on 2026-11-09; the preserved pre-fix player failed 72 checks.
+  Not done: full application/integration build and suite, listening, Konkr/Thor costs, or comparison with real
+  PC-88/98 hardware or another emulator's audio.
 
 ## The YM2608 rhythm ROM (shared firmware)
 

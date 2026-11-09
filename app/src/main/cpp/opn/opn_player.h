@@ -21,7 +21,11 @@
  * FM 3 modes (OPN_H_FM3_MODE): special = FM 3's four operators each play the note plus their instrument's
  * OPN_I_CH3 offset ($A9/$AD op 1, $AA/$AE op 2, $A8/$AC op 3, $A2/$A6 op 4; $27 bits 7-6 = 01); CSM = the same
  * frequencies, and an FM 3 note does not key on: it sets $27 to $81 (CSM, timer A loaded) so the chip's timer A keys
- * all four operators on every (1024 - NA) native samples until its OFF / Sxx sets $27 back to $40.
+ * all four operators on every (1024 - NA) native samples until its OFF / Sxx sets $27 back to $40. The mode is the
+ * image's at reset and is read again from the image only at each FM 3 key-on: an FM 3 note keeps the mode it started
+ * with (its frequency registers, $27, and its OFF / Sxx or the next note's key-off phase) whatever later live images
+ * say, and so does its release tail; the next FM 3 note releases it in that mode, then takes the image's mode. With
+ * FM 3 idle, a changed mode likewise reaches $27 at FM 3's next note.
  *
  * The player keeps no pointer to an image; every call takes the (copied, loaded) image it should read. No
  * allocation. */
@@ -101,7 +105,7 @@ typedef struct OpnPlayer {
     int lfo;                     /* YM2608 register $22 */
     int timer_a;                 /* NA 0..1023 */
     int rhythm_level;            /* YM2608 $11 */
-    int fm3_mode;                /* OPN_FM3_* (the image's) */
+    int fm3_mode;                /* OPN_FM3_* of FM 3's current or last note (the image's at reset and FM 3 key-on) */
     int noise_period;            /* Nxx / the image default 0 */
     OpnChannel ch[OPN_MAX_CHANNELS];
     OpnCursor cursor[OPN_MAX_CHANNELS];
@@ -126,7 +130,8 @@ void opnp_tick(OpnPlayer* p, const OpnImage* image);
 /* Start playing from (order, row 0) with the speed straight play starts that order with (seek fallback). */
 void opnp_place(OpnPlayer* p, const OpnImage* image, int order);
 /* Live edit at a tick boundary: positions kept (clamped), rows re-read from `next`; song-wide settings (LFO, timer A,
- * rhythm level, FM 3 mode) follow `next` from the next tick when they changed in the image header. */
+ * rhythm level) follow `next` from the next tick when they changed in the image header. The FM 3 mode is not taken
+ * here: FM 3's next key-on reads it from the image it is given (a held FM 3 note keeps its own mode). */
 void opnp_relocate(OpnPlayer* p, const OpnImage* old, const OpnImage* next);
 /* Audition: reset, then key on `note` (0..95) on `channel` with instrument `slot` (of the channel's kind) and fine
  * pitch `fine` (pitch units, -128..127); ticks only update. Returns 0 or -1 (bad arguments). */
