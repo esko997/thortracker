@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Golden images for the Kotlin YM2612 lowering (core YmGoldenTest): the reference builder (ym_song.build) applied
-to songs the Kotlin test rebuilds from Thor Tracker's model, written gzip-compressed to
-core/src/jvmTest/resources/ym-golden/.
+"""Golden images for the Kotlin YM2612 lowering (core YmGoldenTest): the reference builder (ym_song.build, image
+layout 2) applied to songs the Kotlin test rebuilds from Thor Tracker's model (YmGoldenSongs), written
+gzip-compressed to core/src/jvmTest/resources/ym-golden/.
 
 - spike.bin.gz: the native host test's song (ym_song.test_song), unchanged (it has no explicit "000", the one cell
-  Thor Tracker cannot store).
+  Thor Tracker cannot store); PCM 1-3 empty, FM 3 normal, no FM 3 offsets.
 - features.bin.gz: what the spike's song does not reach: PAL, the LFO at rate 7, notes C-0 and B-7, FM slot 64 and
   PSG slot 63 behind empty slots, every operator field at its extremes (DT 7, MUL 0/15, TL 127, KS 3, AR 0, D1R/D2R
   31, SSG-EG 8-15), AMS 3 / FMS 7, algorithm 7 and feedback 7, negative and extreme sweeps; PSG envelopes: a volume
@@ -12,16 +12,21 @@ core/src/jvmTest/resources/ym-golden/.
   an instrument without envelopes and one sharing another's volume envelope (stored once); noise modes periodic and
   white at every rate incl. pitched, and Nxy locks; four effect columns on one row and blank columns before used ones,
   an instrument without a note, orders of 64, 20 and 1 rows, Bxx/Dxx (the Kotlin song parks an order, so its jumps
-  and loop are renumbered by the arrangement before lowering).
+  and loop are renumbered by the arrangement before lowering). PCM 1-3 empty, FM 3 normal.
+- xgm2.bin.gz: FM 3 special mode with operator offsets on two voices (one also on FM 1, which ignores them), three
+  PCM kits over three formula samples (a duplicate source and a repeated (sample, pitch, level) sharing variant 1,
+  pitches -48..+12, levels 15, 7 and 0: seven variants, the last silent), notes without an instrument, OFF, Gxx,
+  Sxx, Fxx and Lxx on PCM lanes, and one PCM track shared by two lanes (its row 9 past the second order's length).
 
-    python3 tools/audio/ym/ym_golden.py      # rewrites the two fixtures
+    python3 tools/audio/ym/ym_golden.py      # rewrites the three fixtures
 """
 import gzip
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ym_song import Cell as C, Env, FmInstrument, FmOp, NOTE_OFF, Order, PsgInstrument, Song, build, test_song  # noqa: E402
+from ym_song import (Cell as C, Env, FM3_SPECIAL, FmInstrument, FmOp, NOTE_OFF, Order, PcmInstrument,  # noqa: E402
+                     PsgInstrument, Song, build, s8, test_song)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 OUT = os.path.join(ROOT, "core", "src", "jvmTest", "resources", "ym-golden")
@@ -68,9 +73,42 @@ def features_song():
     return Song(speed=5, orders=orders, patterns=P, instruments=I, region=1, lfo=0x0F, loop=1)
 
 
+def xgm2_song():
+    """Samples: "ramp" 8000 Hz, 300 bytes, (7 i) mod 256 as a signed byte; "ramp copy" the same bytes; "square"
+    22050 Hz, 1000 bytes, +100 for 25 bytes then -100 for 25. Expected variants: 1 ramp p0 L15 (key 37 shares it
+    by its bytes, key 42 by its (sample, pitch, level)), 2 square p0 L15, 3 square -12, 4 square +12, 5 square p0
+    L7, 6 ramp -48 L7, 7 zeros (L0); the bank contiguous in that order."""
+    ramp = s8(7 * i for i in range(300))  # (7 i) & 0xFF: the two's-complement byte
+    square = s8(100 if (i // 25) % 2 == 0 else -100 for i in range(1000))
+    samples = [("ramp", 8000, ramp), ("ramp copy", 8000, ramp), ("square", 22050, square)]
+    voice = [FmOp(tl=30), FmOp(tl=32, mul=2), FmOp(tl=34), FmOp(tl=36, mul=3)]
+    I = {
+        1: FmInstrument(voice, alg=7, ch3=[0, 448, -64, 3072]),
+        2: PcmInstrument(15, {36: (0, 0), 37: (1, 0), 38: (2, 0), 40: (2, -12), 41: (2, 12), 42: (0, 0)}),
+        3: PcmInstrument(7, {36: (2, 0), 48: (0, -48)}),
+        4: FmInstrument(voice, alg=4, fb=3, ch3=[-3072, 0, 1, -1]),
+        5: PcmInstrument(0, {50: (2, 3)}),
+    }
+    OFF = NOTE_OFF
+    P = {
+        "fm1": {0: C(60, 1), 8: C(OFF)},
+        "fm3": {0: C(45, 1), 4: C(48, None, [("1", 0x10)]), 8: C(52, 4, [("0", 0x37)]), 12: C(OFF)},
+        "pcm1": {0: C(36, 2), 2: C(37), 4: C(OFF), 5: C(38, 2, [("G", 0x02)]), 8: C(40, 2, [("S", 0x02)]), 10: C(41),
+                 12: C(42)},
+        "pcm2": {0: C(36, 3), 3: C(48, 3), 6: C(OFF), 9: C(None, None, [("L", 0x08)])},
+        "pcm3": {1: C(50, 5), 7: C(None, None, [("F", 0x04)])},
+    }
+    orders = [
+        Order(16, ["fm1", None, "fm3", None, None, None, None, None, None, None, "pcm1", "pcm2", "pcm3"]),
+        Order(8, [None] * 10 + ["pcm2", "pcm2", None]),
+    ]
+    return Song(speed=3, orders=orders, patterns=P, instruments=I, region=0, lfo=0, loop=0, fm3=FM3_SPECIAL,
+                samples=samples)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
-    for name, song in (("spike", test_song()), ("features", features_song())):
+    for name, song in (("spike", test_song()), ("features", features_song()), ("xgm2", xgm2_song())):
         path = os.path.join(OUT, name + ".bin.gz")
         with gzip.GzipFile(path, "wb", mtime=0) as f:
             f.write(build(song))

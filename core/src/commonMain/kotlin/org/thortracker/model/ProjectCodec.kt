@@ -19,7 +19,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
 
 /**
  * Thor Tracker's own project format: UTF-8 JSON
- * `{"format":"thor-tracker-project","version":9,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
+ * `{"format":"thor-tracker-project","version":10,"backend":"gb-huge","backendVersion":1,"song":{...}}`.
  * Cells are `[note, instrument, effect, param]` arrays, followed by `effect, param` per further effect column on
  * systems with several ([Cell.more], the OPL3). Decoding is strict: unknown keys, wrong types,
  * unknown versions/backends and structurally invalid songs are rejected with [ProjectFormatException];
@@ -37,17 +37,26 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * 8 (development builds only) nested the chip data in `sound` and counted notes from C-0 in each system's own
  * naming. 9 makes every note (and the tuning root) scientific pitch: 0 = C0 (16.35 Hz), 57 = A4 = 440 Hz, so the same
  * number is the same pitch on every system. Older files are upgraded by their system
- * ([org.thortracker.system.SoundSystem.upgradeProject]; versions 1-7 are Game Boy songs). Every save writes the
- * current version.
+ * ([org.thortracker.system.SoundSystem.upgradeProject]; versions 1-7 are Game Boy songs).
+ * 10 adds optional source attribution in `tuning.provenance`; older tunings have empty provenance. Only the chosen
+ * tuning's identity and credit are saved, never its catalogue. Every save writes the current version.
  *
  * `backendVersion` is the version of the system's own song data ([org.thortracker.system.SoundSystem.backendVersion]),
  * upgraded by [org.thortracker.system.SoundSystem.upgradeBackend]: Game Boy 1; NES 2 adds the DPCM channel (a fifth
- * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings; SID 1; OPL3 (`opl3-fm`) 1; Mega Drive (`ym2612-fm`) 1;
+ * track; NES 1 songs gain an empty one), DPCM samples and instruments' DPCM mappings; NES + MMC5 3 adds the MMC5 PCM
+ * lane (an eighth track; version 2 MMC5 songs gain an empty one), PCM samples and instruments' PCM mappings; SID 1;
+ * OPL3 (`opl3-fm`) 1; Mega Drive (`ym2612-fm`) 2 adds PCM 1-3 (tracks 10-12; version 1 songs gain three empty ones),
+ * PCM kits and samples, FM 3's mode and voices' FM 3 operator offsets.
+ * AY-3-8910 / YM2149 (`ay-zx128`, `ay-msx`, `ay-atari-st`, `ay-cpc`; the sound names its `variant`, which must be the backend's) 1.
+ * PC Engine (`pce-huc6280`) 1. SCC (`msx-scc`) 1; SCC+ (`msx-scc-plus`) 1; OPM (`ym2151-opm`) 1.
+ * PC-88/98 OPN (`ym2203-opn`) and OPNA (`ym2608-opna`) 1 (OPNA ADPCM-B sample data is one Base64 string per sample).
+ * Atari 2600 (`atari2600-tia-ntsc`, `atari2600-tia-pal`) 1.
+ * Atari POKEY (`atari-pokey`) 1.
  * VIC-20 (`vic20-vic`) 1 and C16/Plus/4 (`c16-ted`) 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"
-    const val VERSION = 9
+    const val VERSION = 10
 
     private val json = Json {
         encodeDefaults = true
@@ -131,6 +140,10 @@ object ProjectCodec {
         }
         if (version < TUNING_VERSION && hasTuning(root)) {
             throw ProjectFormatException("Project version $version cannot contain a song tuning (added in version $TUNING_VERSION)")
+        }
+        val provenance = ((root["song"] as? JsonObject)?.get("tuning") as? JsonObject)?.get("provenance")
+        if (version < 10 && provenance != null) {
+            throw ProjectFormatException("Project version $version cannot contain tuning provenance (added in version 10)")
         }
         if (version < NEW_PATTERN_SCALE_VERSION && hasNewPatternScale(root)) {
             throw ProjectFormatException("Project version $version cannot contain a new-pattern scale (added in version $NEW_PATTERN_SCALE_VERSION)")

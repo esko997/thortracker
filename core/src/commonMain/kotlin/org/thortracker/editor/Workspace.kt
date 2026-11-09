@@ -24,20 +24,21 @@ class Workspace(panes: List<ViewState>, focus: Int = 0) {
     private val beforeChord = HashMap<Int, Pair<ViewKind, Boolean>>()
 
     /**
-     * A view chord: shows [kind] in the focused pane and pins it there, like choosing it from a view menu. Pressed
-     * again while that view is showing, it returns to the view it replaced, pinned or following the selection as it
-     * was. Returns false when nothing changed (the view is showing and no earlier view is remembered) or the song's
+     * A view chord: shows [kind] in [pane] (the focused one, or the other display's for an other-display chord) and
+     * pins it there, like choosing it from a view menu. Pressed again while that view is showing there, it returns
+     * to the view it replaced, pinned or following the selection as it was. Controller focus stays where it is.
+     * Returns false when nothing changed (the view is showing and no earlier view is remembered) or the song's
      * system has no such view ([available]).
      */
-    fun showView(kind: ViewKind, available: Set<ViewKind>): Boolean {
-        if (kind !in available) return false
-        val state = focused
+    fun showView(kind: ViewKind, available: Set<ViewKind>, pane: Int = focus): Boolean {
+        if (kind !in available || pane !in panes.indices) return false
+        val state = panes[pane]
         if (state.kind == kind) {
-            val (previous, pinned) = beforeChord.remove(focus) ?: return false
+            val (previous, pinned) = beforeChord.remove(pane) ?: return false
             state.switchKind(previous)
             state.pinned = pinned
         } else {
-            beforeChord[focus] = state.kind to state.pinned
+            beforeChord[pane] = state.kind to state.pinned
             state.switchKind(kind)
             state.pinned = true
         }

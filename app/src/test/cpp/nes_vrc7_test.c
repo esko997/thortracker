@@ -722,6 +722,49 @@ static void test_live_apply(NesMachine* m) {
     trace_free(&t);
 }
 
+/* These images are lowered by the Kotlin compiler, not assembled by the independent fixture generator:
+ * identical bank entries must remain independently editable even though FamiStudio merges them on export. */
+static void test_held_copies(NesMachine* m, const char* samples) {
+    char path[1024];
+    snprintf(path, sizeof path, "%s/vrc7-held-copies.nesimg", samples);
+    static NesImage original, edited;
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        printf("  FAIL: missing %s; run exportSamples\n", path);
+        ++failures;
+        return;
+    }
+    const size_t bytes = fread(original.bytes, 1, nes_player_vrc7.image_size, f);
+    fclose(f);
+    if (bytes != nes_player_vrc7.image_size || nm_load_image(&original, &nes_player_vrc7)) {
+        printf("  FAIL: invalid held-copies fixture %s\n", path);
+        ++failures;
+        return;
+    }
+    int mode;
+    const NesVrc7* v = nm_vrc7(m);
+    nm_start(m, &original, 0, 0, 12000, &mode);
+    for (int i = 0; i < 6; ++i) nm_tick_silent(m);
+    edited = original;
+    exp_entry(&edited, 2)[15] = 0x2F; /* Edit the unused original, not the held custom copy. */
+    nm_apply_image(m, &edited);
+    EXPECT(v->reg[7] == 0x26, "editing an unused identical custom original leaves its held copy unchanged ($07=$%02X)", v->reg[7]);
+
+    nm_start(m, &original, 0, 0, 12000, &mode);
+    for (int i = 0; i < 6; ++i) nm_tick_silent(m);
+    edited = original;
+    exp_entry(&edited, 1)[7] = 0x30; /* Preset copy becomes piano; original stays bell. */
+    exp_entry(&edited, 3)[15] = 0x2B; /* The held custom copy's own release changes. */
+    nm_apply_image(m, &edited);
+    nm_tick_silent(m);
+    EXPECT(v->reg[0x30] >> 4 == 1 && v->reg[0x31] >> 4 == 3,
+           "held preset copies follow their own slots ($30=$%02X, $31=$%02X)", v->reg[0x30], v->reg[0x31]);
+    EXPECT(v->reg[7] == 0x2B, "held custom copy follows its own edited patch ($07=$%02X)", v->reg[7]);
+    EXPECT((v->reg[0x30] & 15) == 9 && (v->reg[0x31] & 15) == 9 && (v->reg[0x32] & 15) == 9,
+           "editing held copies preserves their settled volume envelopes ($30..32=$%02X,$%02X,$%02X)",
+           v->reg[0x30], v->reg[0x31], v->reg[0x32]);
+}
+
 static double energy(NesMachine* m, int ticks) {
     double e = 0;
     for (int i = 0; i < ticks; ++i) {
@@ -893,6 +936,7 @@ int main(int argc, char** argv) {
     test_playback(m, dir);
     test_seek(m);
     test_live_apply(m);
+    test_held_copies(m, argc > 2 ? argv[2] : "app/build/samples");
     test_audition(m);
     test_mute(m);
     nm_destroy(m);

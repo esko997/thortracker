@@ -150,8 +150,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Drops any held state, e.g. when the display loses controller focus. */
     fun cancelHolds() {
-        // In Sketch a tap A can write (Insert) or change the key; a cancelled hold is never such a tap.
-        if (editHeld && state.kind == ViewKind.SKETCH) editUsed = true
+        // Keep edits already made on press, but never turn cancellation into a tap or cursor advance.
+        if (editHeld) editUsed = true
         if (editHeld) release(Action.EDIT)
         clearHeld = false; clearUsed = true
         markHeld = false
@@ -1163,6 +1163,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     fun follow(): Boolean {
         if (holding) return false // applied by the host once the held control is released
         val sel = session.selection
+        // The document may have fewer channels than this view's previous system.
+        state.channel = state.channel.coerceIn(0, song.channelCount() - 1)
         setPen(sel.bank, sel.instrument)
         if (state.kind == ViewKind.PATTERN && bankOf(state.channel) == sel.bank) state.instrument = sel.instrument
         return Follow.apply(state, session)
@@ -1215,7 +1217,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Plays [key]; in write mode also writes it at the shared pattern cursor and advances by the step. */
     fun keyDown(key: Int) {
         state.kbKey = key.coerceIn(0, KEYS - 1)
-        if (!keyPlayable(state.kbKey)) { session.note("Above ${system.noteName(system.noteRange.last)}, the highest note"); return }
+        if (!keyPlayable(state.kbKey)) {
+            if (keyNote(state.kbKey) < system.noteRange.first) session.note("Below ${system.noteName(system.noteRange.first)}, the lowest note")
+            else session.note("Above ${system.noteName(system.noteRange.last)}, the highest note")
+            return
+        }
         val note = keyNote(state.kbKey)
         keyHeld = true
         playKey(note)

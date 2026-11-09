@@ -23,6 +23,8 @@ data class Tuning(
     val cents: List<Double>,
     val root: Int = 48,
     val tolerance: Int = 5,
+    /** Selected source identity and credit; no catalogue or Scala source is embedded in a project. */
+    val provenance: String = "",
 ) {
     /** Number of degrees per period. */
     val steps: Int get() = cents.size
@@ -95,7 +97,7 @@ data class Tuning(
  * Scala scale file (`.scl`) reader, per https://www.huygens-fokker.org/scala/scl_format.html: lines starting with
  * `!` are comments; the first other line is the description, the next the number of degrees, then one pitch per line.
  * A pitch containing `.` is in cents, otherwise it is a ratio `a/b` or an integer `a` (= a/1). Text after the value
- * (separated by whitespace) is ignored. 1/1 is implicit; the last pitch is the period.
+ * is ignored, even without separating whitespace. 1/1 is implicit; the last pitch is the period.
  */
 object Scl {
     private val CENTS = Regex("""[+-]?(\d+\.\d*|\.\d+)""")
@@ -125,7 +127,7 @@ object Scl {
             fail("line ${pitchLines[n].first}: the file declares $n degrees but lists more (\"${token(pitchLines[n].second)}\")")
         }
         val cents = pitchLines.mapIndexed { i, (line, value) ->
-            val c = pitchCents(line, token(value))
+            val c = pitchCents(line, pitchToken(value))
             if (c <= 0.0) fail("line $line: degree ${i + 1} (${Tuning.fmt(c)} cents) is not above 1/1")
             c
         }
@@ -141,6 +143,18 @@ object Scl {
     }
 
     private fun token(line: String): String = line.trim().split(Regex("\\s+"), limit = 2)[0]
+
+    private fun pitchToken(line: String): String {
+        var start = 0
+        while (start < line.length && line[start].isWhitespace()) start++
+        var end = start
+        while (end < line.length) {
+            val c = line[end]
+            if (c !in '0'..'9' && c != '+' && c != '-' && c != '.' && c != '/') break
+            end++
+        }
+        return if (end == start) token(line) else line.substring(start, end)
+    }
 
     private fun pitchCents(line: Int, value: String): Double {
         if (value.contains('.')) {

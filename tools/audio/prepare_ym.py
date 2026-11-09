@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Prepares the YM2612 engine ("ym2612-fm"): the XGM driver image, tables, the Kotlin contract and the host test's
-fixtures (Python 3, no dependencies; SGDK's sjasm and xgmtool from tools/audio/fetch_sgdk.sh):
+"""Prepares the YM2612 engine ("ym2612-fm"): the XGM2 driver image, tables, the Kotlin contract and the host test's
+fixtures (Python 3, no dependencies; SGDK's sjasm and prebuilt lib/libmd.a from tools/audio/fetch_sgdk.sh):
 
-  app/src/main/cpp/generated/xgm_driver_image.h  SGDK's XGM Z80 driver (third_party/sgdk-xgm/drv_xgm.s80, unmodified)
-                                                 assembled with SGDK's sjasm; checked byte for byte against the
-                                                 driver in SGDK's prebuilt lib/libmd.a
+  app/src/main/cpp/generated/xgm2_driver_image.h SGDK's XGM2 Z80 driver (third_party/sgdk-xgm2/drv_xgm2.s80 and its
+                                                 includes, unmodified) assembled with SGDK's sjasm; checked byte for
+                                                 byte against the drv_xgm2 in SGDK's prebuilt lib/libmd.a
   app/src/main/cpp/generated/ym_tables.h         pitch (F-number, PSG period) and vibrato tables per region
-  app/src/test/cpp/ym_test_song.h                test images (tools/audio/ym/ym_song.py), the reference player's
-                                                 writes and VGM (tools/audio/ym/ym_ref.py), and xgmtool's XGM/XGC
-                                                 of that VGM
+  app/src/test/cpp/ym_test_song.h                test images (tools/audio/ym/ym_song.py) and the reference player's
+                                                 writes and PCM commands (tools/audio/ym/ym_ref.py)
   core/.../backend/YmPlayerImage.kt              the image layout, limits, effect codes and loader messages for the
                                                  Kotlin lowering and validator, parsed from the engine's C headers
 
     python3 tools/audio/prepare_ym.py [--sgdk DIR]
-Rerun after changing the driver pin, the player specification, the reference player or the test song."""
+Rerun after changing the driver pin, the player specification, the reference player or the test songs."""
 import argparse
 import hashlib
 import os
@@ -31,15 +30,22 @@ import ym_ref  # noqa: E402
 import ym_song  # noqa: E402
 
 TICKS = 1500
-VGM_MAX_TICKS = 36000
 CPP = os.path.join(ROOT, "app/src/main/cpp")
-VENDORED = os.path.join(ROOT, "third_party/sgdk-xgm")
+VENDORED = os.path.join(ROOT, "third_party/sgdk-xgm2")
 DRIVER_FILES = {  # vendored name -> path in the SGDK checkout
-    "drv_xgm.s80": "src/snd/drv_xgm.s80",
+    "drv_xgm2.s80": "src/snd/xgm2/drv_xgm2.s80",
+    "drv_xgm2_fct.i80": "src/snd/xgm2/drv_xgm2_fct.i80",
+    "drv_xgm2_mac.i80": "src/snd/xgm2/drv_xgm2_mac.i80",
+    "drv_xgm2_pcm_fct.i80": "src/snd/xgm2/drv_xgm2_pcm_fct.i80",
+    "drv_xgm2_pcm_mac.i80": "src/snd/xgm2/drv_xgm2_pcm_mac.i80",
+    "drv_xgm2_psg_fct.i80": "src/snd/xgm2/drv_xgm2_psg_fct.i80",
+    "drv_xgm2_psg_mac.i80": "src/snd/xgm2/drv_xgm2_psg_mac.i80",
+    "drv_xgm2_ym_fct.i80": "src/snd/xgm2/drv_xgm2_ym_fct.i80",
+    "drv_xgm2_ym_mac.i80": "src/snd/xgm2/drv_xgm2_ym_mac.i80",
     "z80_def.i80": "inc/snd/z80_def.i80",
     "z80_mac.i80": "inc/snd/z80_mac.i80",
     "z80_fct.i80": "inc/snd/z80_fct.i80",
-    "xgm.txt": "bin/xgm.txt",
+    "xgm2.txt": "bin/xgm2.txt",
     "LICENSE.txt": "license.txt",
 }
 SGDK_COMMIT = "9a78a44143a867cd8c5053b95cd061a21f0b73c2"
@@ -53,13 +59,6 @@ def sha256(data):
 def read(path):
     with open(path, "rb") as f:
         return f.read()
-
-
-def fnv64(data):
-    h = 0xCBF29CE484222325
-    for b in data:
-        h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
-    return h
 
 
 def c_bytes(name, data):
@@ -79,8 +78,8 @@ def sgdk_dir(given):
     return out.strip().splitlines()[-1]
 
 
-def libmd_driver(libmd):
-    """The bytes of symbol drv_xgm in drv_xgm.o inside SGDK's lib/libmd.a (an ar archive of ELF32 m68k objects)."""
+def libmd_driver(libmd, member, symbol):
+    """The bytes of `symbol` in `member` inside SGDK's lib/libmd.a (an ar archive of ELF32 m68k objects)."""
     data = read(libmd)
     assert data[:8] == b"!<arch>\n"
     at, names = 8, None
@@ -91,10 +90,10 @@ def libmd_driver(libmd):
             names = body
         elif name.startswith("/") and name[1:].isdigit() and names is not None:
             name = names[int(name[1:]):].split(b"/\n")[0].decode() + "/"
-        if name.rstrip("/") == "drv_xgm.o":
-            return elf_symbol(body, "drv_xgm")
+        if name.rstrip("/") == member:
+            return elf_symbol(body, symbol)
         at += 60 + size + (size & 1)
-    raise SystemExit("drv_xgm.o not found in %s" % libmd)
+    raise SystemExit("%s not found in %s" % (member, libmd))
 
 
 def elf_symbol(elf, symbol):
@@ -131,38 +130,40 @@ def write_driver(sgdk):
     src = os.path.join(sgdk, "src")
     for name, rel in DRIVER_FILES.items():
         if read(os.path.join(VENDORED, name)) != read(os.path.join(src, rel)):
-            raise SystemExit("third_party/sgdk-xgm/%s differs from SGDK %s %s" % (name, SGDK_COMMIT[:8], rel))
+            raise SystemExit("third_party/sgdk-xgm2/%s differs from SGDK %s %s" % (name, SGDK_COMMIT[:8], rel))
     with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run([os.path.join(sgdk, "bin/sjasm"), "-i" + VENDORED, os.path.join(VENDORED, "drv_xgm.s80"),
-                        os.path.join(tmp, "drv_xgm.o80"), os.path.join(tmp, "out.lst")], check=True,
+        subprocess.run([os.path.join(sgdk, "bin/sjasm"), "-i" + VENDORED, os.path.join(VENDORED, "drv_xgm2.s80"),
+                        os.path.join(tmp, "drv_xgm2.o80"), os.path.join(tmp, "out.lst")], check=True,
                        capture_output=True)
-        image = read(os.path.join(tmp, "drv_xgm.o80"))
+        image = read(os.path.join(tmp, "drv_xgm2.o80"))
         with open(os.path.join(tmp, "out.lst"), encoding="latin-1") as f:
-            labels = listing_labels(f.read(), ("pcm_mix", "sync_frame_loop"))
-    shipped = libmd_driver(os.path.join(src, "lib/libmd.a"))
+            labels = listing_labels(f.read(), ("main_loop",))
+    if len(image) > 0x2000:
+        raise SystemExit("the XGM2 driver (%d bytes) does not fit the Z80's 8 KiB" % len(image))
+    shipped = libmd_driver(os.path.join(src, "lib/libmd.a"), "drv_xgm2.o", "drv_xgm2")
     if shipped.rstrip(b"\0") != image.rstrip(b"\0") or len(shipped) != len(image):
-        raise SystemExit("assembled driver differs from drv_xgm in SGDK's lib/libmd.a")
+        raise SystemExit("assembled driver differs from drv_xgm2 in SGDK's lib/libmd.a")
     lines = [
         "// GENERATED by tools/audio/prepare_ym.py -- do not edit.",
-        "// SGDK's XGM Z80 driver (Stephane Dallongeville, MIT; github.com/Stephane-D/SGDK commit %s):" % SGDK_COMMIT,
-        "// third_party/sgdk-xgm/drv_xgm.s80 (sha256 %s), unmodified, assembled with SGDK's" % sha256(read(os.path.join(VENDORED, "drv_xgm.s80"))),
-        "// sjasm (tools/sjasm, SjASM 0.39j) at $0000; identical to the drv_xgm the same commit ships in lib/libmd.a.",
+        "// SGDK's XGM2 Z80 driver (Stephane Dallongeville, MIT; github.com/Stephane-D/SGDK commit %s):" % SGDK_COMMIT,
+        "// third_party/sgdk-xgm2/drv_xgm2.s80 (sha256 %s) and its includes, unmodified," % sha256(read(os.path.join(VENDORED, "drv_xgm2.s80"))),
+        "// assembled with SGDK's sjasm (SjASM 0.39j) at $0000; identical to the drv_xgm2 the same commit ships in",
+        "// lib/libmd.a.",
         "// image sha256 %s" % sha256(image),
-        "#ifndef XGM_DRIVER_IMAGE_H_",
-        "#define XGM_DRIVER_IMAGE_H_",
+        "#ifndef XGM2_DRIVER_IMAGE_H_",
+        "#define XGM2_DRIVER_IMAGE_H_",
         "#include <stdint.h>",
         "",
-        "#define XGM_DRIVER_SIZE %d" % len(image),
-        "// Entry points of the driver's PCM mixer and its frame-wait loop (sjasm listing): where the machine's pass",
-        "// replay starts (ym/ym_machine.c).",
-        "#define XGM_DRIVER_PCM_MIX 0x%04X" % labels["pcm_mix"],
-        "#define XGM_DRIVER_SYNC_FRAME_LOOP 0x%04X" % labels["sync_frame_loop"],
-        "static const uint8_t XGM_DRIVER[%d] = {" % len(image),
+        "#define XGM2_DRIVER_SIZE %d" % len(image),
+        "// The start of the driver's PCM fill round (sjasm listing): where the machine maps a live edit's sample bank",
+        "// (ym/ym_machine.c).",
+        "#define XGM2_DRIVER_MAIN_LOOP 0x%04X" % labels["main_loop"],
+        "static const uint8_t XGM2_DRIVER[%d] = {" % len(image),
     ]
     for i in range(0, len(image), 24):
         lines.append("    " + ",".join("0x%02X" % b for b in image[i:i + 24]) + ",")
-    lines += ["};", "", "#endif /* XGM_DRIVER_IMAGE_H_ */", ""]
-    path = os.path.join(CPP, "generated/xgm_driver_image.h")
+    lines += ["};", "", "#endif /* XGM2_DRIVER_IMAGE_H_ */", ""]
+    path = os.path.join(CPP, "generated/xgm2_driver_image.h")
     with open(path, "w") as f:
         f.write("\n".join(lines))
     print("%s (%d bytes, sha256 %s)" % (path, len(image), sha256(image)))
@@ -202,18 +203,47 @@ def write_tables():
 
 # ---- fixtures ---------------------------------------------------------------------------------------------------
 
-def used(image):
-    """Bytes up to the end of the pattern data (the rest of an image is zero)."""
-    size = image[14] | image[15] << 8
-    end = ym_song.OFF_DATA + size
-    assert not any(image[end:])
-    return image[:end]
+def runs(image, gap=64):
+    """The image as (offset, bytes) runs of its non-zero content (zero gaps of `gap` bytes or more left out): the
+    test zero-fills an image and copies them in."""
+    out, at, n = [], 0, len(image)
+    while at < n:
+        while at < n and image[at] == 0:
+            at += 1
+        if at >= n:
+            break
+        end = at
+        zeros = 0
+        while end + zeros < n and zeros < gap:
+            if image[end + zeros]:
+                end += zeros + 1
+                zeros = 0
+            else:
+                zeros += 1
+        out.append((at, image[at:end]))
+        at = end
+    return out
+
+
+def image_arrays(name, image):
+    assert len(image) == ym_song.IMAGE_SIZE
+    parts, data = [], bytearray()
+    table = []
+    for at, chunk in runs(image):
+        table += [at, len(chunk)]
+        data += chunk
+    parts.append("static const unsigned ym_%s_runs[%d] = {%s};" % (name, len(table), ",".join(map(str, table))))
+    parts.append("#define YM_%s_RUNS %d" % (name.upper(), len(table) // 2))
+    parts.append(c_bytes("ym_%s_bytes" % name, bytes(data) or b"\0"))
+    return "\n".join(parts)
 
 
 def trace_arrays(prefix, image_bytes):
+    """Per trace entry (0 = the reset batch, then one per tick): the writes (offsets/kinds/regs/vals), the position
+    (-1 -1 -1 for the reset batch), the key-off phase length and the three PCM commands (-1 none, 0 stop, variant)."""
     tr = ym_ref.trace(ym_ref.Image(image_bytes), TICKS)
-    offsets, kinds, regs, vals, pos, splits = [0], [], [], [], [], []
-    for p, writes, split in tr:
+    offsets, kinds, regs, vals, pos, splits, pcm = [0], [], [], [], [], [], []
+    for p, writes, split, cmds in tr:
         for kind, reg, val in writes:
             kinds.append(kind)
             regs.append(reg)
@@ -221,42 +251,52 @@ def trace_arrays(prefix, image_bytes):
         offsets.append(len(regs))
         splits.append(split)
         pos.extend(p if p is not None else (-1, -1, -1))
+        pcm.extend(cmds)
     out = ["static const int %s_offsets[%d] = {%s};" % (prefix, len(offsets), ",".join(map(str, offsets))),
            "static const unsigned char %s_kinds[%d] = {%s};" % (prefix, max(1, len(kinds)), ",".join(map(str, kinds)) or "0"),
            "static const unsigned char %s_regs[%d] = {%s};" % (prefix, max(1, len(regs)), ",".join(map(str, regs)) or "0"),
            "static const unsigned char %s_vals[%d] = {%s};" % (prefix, max(1, len(vals)), ",".join(map(str, vals)) or "0"),
            "static const short %s_pos[%d] = {%s};" % (prefix, len(pos), ",".join(map(str, pos))),
-           "static const unsigned char %s_offs[%d] = {%s};" % (prefix, len(splits), ",".join(map(str, splits)))]
+           "static const unsigned char %s_offs[%d] = {%s};" % (prefix, len(splits), ",".join(map(str, splits))),
+           "static const short %s_pcm[%d] = {%s};" % (prefix, len(pcm), ",".join(map(str, pcm)))]
     return "\n".join(out), len(regs)
 
 
 def byte_offsets(image):
     """Image offsets of the first mask, note, instrument and effect bytes and of the first parameter of some effects,
-    for the host test's single-byte corruptions (channel kind: the first FM, PSG and Noise use)."""
-    img = ym_ref.Image(image)
+    for the host test's single-byte corruptions (channel kind: the first FM, PSG, Noise and PCM use)."""
+    u16 = lambda at: image[at] | image[at + 1] << 8  # noqa: E731
+    orders = u16(8)
+    sizes = (u16(14), int.from_bytes(image[20:24], "little"))
     found = {}
-    size = image[14] | image[15] << 8
-    for o in range(img.orders):
-        for c in range(10):
-            at = ym_song.OFF_DATA + img.patterns[o][c]
+    for o in range(orders):
+        rows_o = image[ym_song.OFF_ROWS + o] or 256
+        for c in range(13):
+            pcm = c >= 10
+            base = ym_song.OFF_PCM_DATA if pcm else ym_song.OFF_DATA
+            entry = ym_song.OFF_PCM_ORDERS + 2 * (3 * o + c - 10) if pcm else ym_song.OFF_ORDERS + 2 * (10 * o + c)
+            at, end = base + u16(entry), base + sizes[pcm]
             rows = 0
-            while rows < img.rows[o] and at < ym_song.OFF_DATA + size:
+            while rows < rows_o and at < end:
                 m = image[at]
                 if m & 0x80:
                     rows += (m & 0x7F) + 1
                     at += 1
                     continue
-                kind = "FM" if c < 6 else "NOISE" if c == 9 else "PSG"
+                kind = "FM" if c < 6 else "PSG" if c < 9 else "NOISE" if c == 9 else "PCM"
                 found.setdefault("MASK", at)
+                found.setdefault("MASK_" + kind, at)
                 at += 1
                 if m & 1:
                     found.setdefault("NOTE", at)
+                    found.setdefault("NOTE_" + kind, at)
                     at += 1
                 if m & 2:
                     found.setdefault("INST_" + kind, at)
                     at += 1
                 for _ in range((m >> 2) & 7):
                     found.setdefault("EFFECT", at)
+                    found.setdefault("EFFECT_" + kind, at)
                     letter = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[image[at]]
                     found.setdefault("PARAM_%s_%s" % (letter, kind), at + 1)
                     at += 2
@@ -264,16 +304,7 @@ def byte_offsets(image):
     return found
 
 
-def xgmtool(sgdk, vgm, ext):
-    with tempfile.TemporaryDirectory() as tmp:
-        src, dst = os.path.join(tmp, "song.vgm"), os.path.join(tmp, "song." + ext)
-        with open(src, "wb") as f:
-            f.write(vgm)
-        subprocess.run([os.path.join(sgdk, "bin/xgmtool"), src, dst, "-s"], check=True, capture_output=True, cwd=tmp)
-        return read(dst)
-
-
-def write_fixture(sgdk):
+def write_fixture():
     images = {
         "song": ym_song.build(ym_song.test_song()),
         "moved": ym_song.build(ym_song.test_song(), relayout=True),
@@ -281,39 +312,26 @@ def write_fixture(sgdk):
         "tempo": ym_song.build(ym_song.tempo_song()),
         "short": ym_song.build(ym_song.short_song()),
         "pal": ym_song.build(ym_song.pal_song()),
+        "pcm": ym_song.build(ym_song.pcm_song()),
+        "pcm_moved": ym_song.build(ym_song.pcm_moved_song()),
+        "pcm_edited": ym_song.build(ym_song.pcm_edited_song()),
     }
-    assert images["moved"] != images["song"]
-    parts = ["/* Generated by tools/audio/prepare_ym.py - do not edit. YM2612 host-test fixtures: the test song",
-             " * (tools/audio/ym/ym_song.py) as images, the reference player's (ym_ref.py) writes and VGM, and SGDK",
-             " * xgmtool's XGM and XGC of that VGM (commit %s). */" % SGDK_COMMIT[:8],
+    assert images["moved"] != images["song"] and images["pcm_moved"] != images["pcm"]
+    parts = ["/* Generated by tools/audio/prepare_ym.py - do not edit. YM2612 host-test fixtures: the test songs",
+             " * (tools/audio/ym/ym_song.py) as images (non-zero runs; zero-fill, then copy) and the reference player's",
+             " * (ym_ref.py) writes and PCM commands. */",
              "#define YM_REF_TICKS %d" % TICKS]
     for name, data in images.items():
-        parts.append(c_bytes("ym_%s_image" % name, used(data)))
+        parts.append(image_arrays(name, data))
     total = 0
-    for name in ("song", "edited", "tempo", "pal"):
+    for name in ("song", "edited", "tempo", "pal", "pcm"):
         text, n = trace_arrays("ym_ref_" + name, images[name])
         parts.append(text)
         total += n
-    for name in ("song", "pal"):
-        data, info = ym_ref.vgm(ym_ref.Image(images[name]), VGM_MAX_TICKS)
-        key = name.upper()
-        parts.append("#define YM_REF_%s_VGM_SIZE %du" % (key, len(data)))
-        parts.append("#define YM_REF_%s_VGM_FNV 0x%016XULL" % (key, fnv64(data)))
-        parts.append("#define YM_REF_%s_VGM_TICKS %du" % (key, info["ticks"]))
-        parts.append("#define YM_REF_%s_VGM_LOOP_OFFSET %du" % (key, info["loop_offset"]))
-        parts.append("#define YM_REF_%s_VGM_LOOP_SAMPLES %du" % (key, info["loop_samples"]))
-        parts.append("#define YM_REF_%s_VGM_SAMPLES %du" % (key, info["samples"]))
-        xgm, xgc = xgmtool(sgdk, data, "xgm"), xgmtool(sgdk, data, "bin")
-        parts.append("#define YM_XGMTOOL_%s_XGM_SIZE %du" % (key, len(xgm)))
-        parts.append("#define YM_XGMTOOL_%s_XGM_FNV 0x%016XULL" % (key, fnv64(xgm)))
-        parts.append("#define YM_XGMTOOL_%s_XGC_SIZE %du" % (key, len(xgc)))
-        parts.append("#define YM_XGMTOOL_%s_XGC_FNV 0x%016XULL" % (key, fnv64(xgc)))
-        if name == "song":
-            parts.append(c_bytes("ym_xgmtool_song_xgc", xgc))
-            print("song: VGM %d bytes, %d ticks, loop %d samples; xgmtool XGM %d bytes, XGC %d bytes" % (
-                len(data), info["ticks"], info["loop_samples"], len(xgm), len(xgc)))
     for key, offset in sorted(byte_offsets(images["song"]).items()):
         parts.append("#define YM_OFFSET_%s %d" % (key, offset))
+    for key, offset in sorted(byte_offsets(images["pcm"]).items()):
+        parts.append("#define YM_PCM_OFFSET_%s %d" % (key, offset))
     path = os.path.join(ROOT, "app/src/test/cpp/ym_test_song.h")
     with open(path, "w") as f:
         f.write("\n".join(parts) + "\n")
@@ -380,24 +398,30 @@ def write_kotlin():
         "package org.thortracker.backend",
         "",
         "/**",
-        " * The YM2612 (Mega Drive) system's native contract: Thor Tracker's own player streamed through SGDK's XGM",
-        " * driver on a Z80 + YM2612 + SN76489, engine `\"ym2612-fm\"`. The image layout the lowering writes, its limits,",
-        " * the effect codes and the loader's rejection messages, as `ym_image.h`, `ym_player.h` and `ym_machine.h`",
-        " * define them (`docs/AUDIO_ENGINE.md`, \"YM2612\": the specification). All multi-byte fields are little-endian.",
+        " * The YM2612 (Mega Drive) system's native contract: Thor Tracker's own player streamed through SGDK's XGM2",
+        " * driver on a Z80 + YM2612 + SN76489 (the driver mixing three PCM channels into the YM2612's DAC), engine",
+        " * `\"ym2612-fm\"`. The image layout the lowering writes, its limits, the effect codes and the loader's rejection",
+        " * messages, as `ym_image.h`, `ym_player.h` and `ym_machine.h` define them (`docs/AUDIO_ENGINE.md`, \"YM2612\": the",
+        " * specification). All multi-byte fields are little-endian.",
         " */",
         "object YmPlayerImage {",
         "    /** Native engine id ([org.thortracker.system.PlaybackEngine.id]). */",
         '    const val ENGINE_ID = "ym2612-fm"',
         "",
-        "    /** One fixed-size image per song. */",
+        "    /** One fixed-size image per song (layout 2): the layout-1 tonal prefix of [TONAL_SIZE] bytes, then the",
+        "     * extensions (FM 3 offsets, PCM orders, key maps, variants, PCM patterns, the PCM bank). */",
         kt("IMAGE_SIZE"),
         '    const val MAGIC = "TTYM"',
         kt("LAYOUT"),
+        kt("TONAL_SIZE"),
         "",
-        "    /** Header field offsets (64-byte header; byte 13 and bytes 16..63 zero). */",
+        "    /** Header field offsets (64-byte header; byte 13 and bytes 24..63 zero). [H_FM3]: [FM3_NORMAL] or",
+        "     * [FM3_SPECIAL]; [H_PCM_VARIANTS]: compiled variants; [H_PCM_BANK_SIZE]: u16 bank pages used; [H_PCM_DATA_SIZE]:",
+        "     * u32 PCM pattern bytes used. */",
     ]
     for name in ("H_MAGIC", "H_LAYOUT", "H_REGION", "H_SPEED", "H_LFO", "H_ORDERS", "H_LOOP", "H_INSTRUMENTS",
-                 "H_DATA_SIZE", "HEADER_SIZE"):
+                 "H_DATA_SIZE", "H_FM3", "FM3_NORMAL", "FM3_SPECIAL", "H_PCM_VARIANTS", "H_PCM_BANK_SIZE",
+                 "H_PCM_DATA_SIZE", "HEADER_SIZE"):
         lines.append(kt(name))
     lines += [
         "",
@@ -408,9 +432,10 @@ def write_kotlin():
         "    const val LFO_ON = 0x08",
         "",
         "    /**",
-        "     * Fixed tables: rows of order o at [OFF_ROWS] + o (1..255, 0 = 256); the pattern of (order o, channel c) as a",
-        "     * u16 offset into the data region at [OFF_ORDERS] + 2 (10 o + c); instrument slot n (1..64) at",
-        "     * [OFF_INSTRUMENTS] + [INSTRUMENT_SIZE] (n - 1); pattern data from [OFF_DATA], [DATA_CAPACITY] bytes.",
+        "     * Fixed tables: rows of order o at [OFF_ROWS] + o (1..255, 0 = 256); the pattern of (order o, tonal channel c)",
+        "     * as a u16 offset into the tonal data region at [OFF_ORDERS] + 2 ([TONAL_CHANNELS] o + c); instrument slot n",
+        "     * (1..64) at [OFF_INSTRUMENTS] + [INSTRUMENT_SIZE] (n - 1); tonal pattern and envelope data from [OFF_DATA],",
+        "     * [DATA_CAPACITY] bytes.",
         "     */",
     ]
     for name in ("OFF_ROWS", "OFF_ORDERS", "OFF_INSTRUMENTS", "INSTRUMENT_SIZE", "OFF_DATA"):
@@ -419,17 +444,35 @@ def write_kotlin():
     lines += [
         "",
         "    /**",
-        "     * Instrument record: flags ([FLAG_DEFINED], [FLAG_PSG]; all-zero = no instrument). FM: algorithm 0..7,",
+        "     * Extensions. FM 3 special-mode offsets: slot n's four s16 (operators 1..4 in algorithm-diagram order, 1/64",
+        "     * semitone, -[CH3_LIMIT]..[CH3_LIMIT]) at [OFF_CH3] + 8 (n - 1), FM records only. PCM orders: the pattern of",
+        "     * (order o, PCM channel k) as a u16 offset into the PCM data region at [OFF_PCM_ORDERS] + 2 (3 o + k). PCM key",
+        "     * maps: slot n's variant for note x at [OFF_PCM_KEYS] + [PCM_KEYS] (n - 1) + x (0 = unmapped), PCM records",
+        "     * only. Variants (= XGM2 sample ids 1..[PCM_MAX_VARIANTS]) at [OFF_PCM_VARIANTS] + [PCM_VARIANT_SIZE] (id - 1):",
+        "     * u16 start page, u16 length in pages, u8 flags ([PCM_HALF_RATE]: the driver plays its first half at half",
+        "     * rate, the second half zero), 3 bytes zero; contiguous in id order from page 0. PCM patterns from",
+        "     * [OFF_PCM_DATA], [PCM_DATA_CAPACITY] bytes; the signed 8-bit bank from [OFF_PCM_BANK] in [PCM_ALIGN]-byte",
+        "     * pages. Output rate: master clocks per sample [PCM_FULL_DIVIDER] (full) / [PCM_HALF_DIVIDER] (half).",
+        "     */",
+    ]
+    for name in ("OFF_CH3", "CH3_LIMIT", "OFF_PCM_ORDERS", "OFF_PCM_KEYS", "PCM_KEYS", "OFF_PCM_VARIANTS",
+                 "PCM_VARIANT_SIZE", "PCM_MAX_VARIANTS", "PCM_HALF_RATE", "OFF_PCM_DATA", "PCM_DATA_CAPACITY",
+                 "OFF_PCM_BANK", "PCM_BANK_SIZE", "PCM_ALIGN", "PCM_BANK_PAGES", "PCM_FULL_DIVIDER", "PCM_HALF_DIVIDER"):
+        lines.append(kt(name))
+    lines += [
+        "",
+        "    /**",
+        "     * Instrument record: flags ([FLAG_DEFINED], [FLAG_PSG], [FLAG_PCM]; all-zero = no instrument). FM: algorithm 0..7,",
         "     * operator-1 feedback 0..7, AMS/FMS (register $B4 without pan), operator k (0..3 = operators 1..4) at [I_OPS] +",
         "     * 7 k = registers $30 $40 $50 $60 $70 $80 $90 (reserved bits 0). PSG: noise mode at [I_PSG_NOISE] (bit 2 white,",
         "     * bits 0-1 source; 3 = PSG 3's period), [PSG_PITCH_RELATIVE] at [I_PSG_FLAGS], byte 3 zero, the u16 data-region",
         "     * offsets of the volume, arpeggio and pitch envelopes at [I_ENV_VOLUME], [I_ENV_ARPEGGIO], [I_ENV_PITCH]",
         "     * ([NO_ENVELOPE] = none: volume 15, no arpeggio, no pitch offset), bytes 10..31 zero. Both: drum sweep start/end",
         "     * (s8 semitones -96..96 from the note) and speed (1/16 semitone per tick, 0 = none) at [I_SWEEP_START]..",
-        "     * [I_SWEEP_SPEED], bytes 35..39 zero.",
+        "     * [I_SWEEP_SPEED], bytes 35..39 zero. PCM: flags only (its key map is an extension).",
         "     */",
     ]
-    for name in ("I_FLAGS", "FLAG_DEFINED", "FLAG_PSG", "I_ALG", "I_FEEDBACK", "I_AMS_FMS", "I_OPS", "OP_BYTES",
+    for name in ("I_FLAGS", "FLAG_DEFINED", "FLAG_PSG", "FLAG_PCM", "I_ALG", "I_FEEDBACK", "I_AMS_FMS", "I_OPS", "OP_BYTES",
                  "I_PSG_NOISE", "I_PSG_FLAGS", "PSG_PITCH_RELATIVE", "I_ENV_VOLUME", "I_ENV_ARPEGGIO", "I_ENV_PITCH"):
         lines.append(kt(name))
     lines += [
@@ -467,11 +510,17 @@ def write_kotlin():
         kt("NOTE_OFF"),
         kt("NOTES"),
         "",
-        "    /** Limits. Channels 0..5 FM 1-6 (FM slots), 6..8 PSG 1-3 and 9 Noise (PSG slots). */",
+        "    /** Limits. Channels 0..5 FM 1-6 (FM slots; [CH_FM3] has the special mode, [CH_FM6] gives way to the DAC), 6..8",
+        "     * PSG 1-3 and 9 Noise (PSG slots), 10..12 PCM 1-3 (PCM slots; XGM2 PCM channels 0..2). */",
         kt("CHANNELS"),
+        kt("TONAL_CHANNELS"),
         kt("FM_CHANNELS"),
+        kt("CH_FM3"),
+        kt("CH_FM6"),
         kt("CH_PSG"),
         kt("CH_NOISE"),
+        kt("CH_PCM"),
+        kt("PCM_CHANNELS"),
         kt("MAX_ORDERS"),
         kt("MAX_INSTRUMENTS"),
         kt("MAX_EFFECTS"),
@@ -493,11 +542,10 @@ def write_kotlin():
         kt("MCLK_PER_LINE", "YMM_MCLK_PER_LINE"),
         kt("LINES_NTSC", "YMM_LINES_NTSC"),
         kt("LINES_PAL", "YMM_LINES_PAL"),
-        "    /** Seek: [org.thortracker.system.PlaybackEngine.seekTicks] budget; the last [PREROLL_TICKS] ticks stream through the driver. */",
+        "    /** Seek: [org.thortracker.system.PlaybackEngine.seekTicks] budget (the whole machine runs to the target). */",
         "    const val SEEK_TICKS = 12000",
-        kt("PREROLL_TICKS", "YMM_PREROLL_TICKS"),
         "",
-        "    /** Exports (native `ym_export`): formats and the GD3 system and converter names the files carry. */",
+        "    /** Exports (native `ym_export`): VGM, XGM2 (.xgm) and compiled XGM2 (.xgc), and the GD3 names the files carry. */",
         "    const val EXPORT_VGM = 0",
         "    const val EXPORT_XGM = 1",
         "    const val EXPORT_XGC = 2",
@@ -530,12 +578,12 @@ def write_kotlin():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--sgdk", help="cache directory of tools/audio/fetch_sgdk.sh (src/, bin/sjasm, bin/xgmtool)")
+    ap.add_argument("--sgdk", help="cache directory of tools/audio/fetch_sgdk.sh (src/ with lib/libmd.a, bin/sjasm)")
     args = ap.parse_args(argv)
     sgdk = sgdk_dir(args.sgdk)
     write_driver(sgdk)
     write_tables()
-    write_fixture(sgdk)
+    write_fixture()
     write_kotlin()
     return 0
 

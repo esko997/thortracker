@@ -29,8 +29,9 @@ class Transport(private val session: EditorSession, private val host: Host = obj
             value?.update(heard(session.song))
         }
 
-    /** Playback was requested and not stopped. The frontend clears it when the engine reports it is no longer playing. */
+    /** Playback intent; [position] clears it only after the engine has settled stopped. */
     var requested = false
+        private set
 
     /** Order whose pattern playback loops, or -1. Editor-only; Play moves it to the order played. */
     var loopOrder = -1
@@ -50,6 +51,7 @@ class Transport(private val session: EditorSession, private val host: Host = obj
      * played orders only, so parked ones are skipped when mapping back ([Songs.playedOrders]).
      */
     fun position(): PlaybackPosition? = audio?.position()?.let {
+        if (!it.playing && !it.pending) requested = false
         if (loopOrder >= 0) it.copy(order = loopOrder, looping = true)
         else it.copy(order = Songs.playedOrders(session.song).getOrElse(it.order) { _ -> it.order })
     }

@@ -4,9 +4,17 @@ import org.thortracker.model.Song
 
 /**
  * Row the listener hears now (output latency compensated while playing). [looping] marks the editor's pattern loop:
- * [order] is then the looped order, which is the only one heard.
+ * [order] is then the looped order, which is the only one heard. [pending] means a transport command
+ * is queued/preparing or a successful start has not yet been acknowledged by the audio callback.
+ * It is not audible playback; a stopped position is final only when [pending] is false.
  */
-data class PlaybackPosition(val playing: Boolean = false, val order: Int = 0, val row: Int = 0, val looping: Boolean = false)
+data class PlaybackPosition(
+    val playing: Boolean = false,
+    val order: Int = 0,
+    val row: Int = 0,
+    val looping: Boolean = false,
+    val pending: Boolean = false,
+)
 
 /**
  * Backend playback boundary. Every method returns immediately and never throws for song or

@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
+import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.nes
 import kotlin.test.fail
@@ -26,8 +27,14 @@ import kotlin.test.fail
  *   Rewriting an unchanged VRC7 custom-patch register is idempotent, unlike key-on/envelope registers: those
  *   redundant patch writes are omitted on both sides. Loop restoration conservatively reloads custom patches
  *   because delayed notes can change the final writer; the real-driver loop regressions cover that correction.
+ *   Likewise on the EPSM: our streams load each note's own slot and re-send an FM channel's sound per order, so its
+ *   channel's patch registers (`$30-$9F`, `$B0-$B6`) and the LFO (`$22`) are rewritten with the values they hold;
+ *   unchanged writes to exactly those registers are omitted on both sides, key on/off (`$28`), frequencies, the SSG and
+ *   the drums are always compared.
  * - [NesGoldenSongs.CORRECTIONS] independently captures upstream export bugs: its VRC7 fixture must demonstrate
- *   both upstream's mid-song legato retrigger and missed loop patch, versus our held envelope and restored patch.
+ *   both upstream's mid-song legato retrigger and missed loop patch, versus our held envelope and restored patch; its
+ *   FDS witness expresses manual mod speeds with a low byte of $80-$FF through `Jxx`, which upstream exports
+ *   correctly, and must play exactly what our lowering plays for the same speeds held in the sounds.
  *
  * Run with `THOR_UPDATE_NES_GOLDEN=1` to rewrite the `.txt` fixtures, then `python3 tools/audio/nes_golden.py`.
  */
@@ -66,8 +73,30 @@ class NesGoldenTest {
                 val ins = fs.instruments[slot - 1]
                 ours += "slot $slot volume" to FamiStudioEnvelopes.encode(ins.volume, Kind.VOLUME)
                 ours += "slot $slot arpeggio" to FamiStudioEnvelopes.encode(ins.arpeggio, Kind.ARPEGGIO)
-                ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
+                // FamiStudio exports only the envelopes a sound's expansion has: no duty on the VRC7, the 5B or the EPSM.
+                if (ins.chip.hasDuty) ours += "slot $slot duty" to FamiStudioEnvelopes.encode(ins.duty, Kind.DUTY)
                 ours += "slot $slot pitch" to FamiStudioEnvelopes.encode(ins.pitch, Kind.PITCH, ins.pitchRelative)
+                if (ins.chip == NesChip.N163) {
+                    // FamiStudio stores an N163 sound's wave-index envelope and each distinct wave among its envelopes.
+                    ours += "slot $slot wave index" to FamiStudioEnvelopes.waveIndex(ins.wave)
+                    for ((i, w) in FamiStudioEnvelopes.n163Waves(ins.wave).stored.withIndex()) {
+                        ours += "slot $slot wave $i" to FamiStudioEnvelopes.n163WaveBytes(w)
+                    }
+                }
+                if (ins.chip == NesChip.FDS) {
+                    // FamiStudio stores an FDS sound's wave-index envelope, each distinct wave and its modulation table
+                    // among its envelopes (`FamitoneMusicFile.OutputInstruments`).
+                    ours += "slot $slot wave index" to FamiStudioEnvelopes.waveIndex(ins.fds)
+                    for ((i, w) in FamiStudioEnvelopes.fdsWaves(ins.fds).stored.withIndex()) {
+                        ours += "slot $slot wave $i" to FamiStudioEnvelopes.fdsWaveBytes(w)
+                    }
+                    ours += "slot $slot mod table" to FamiStudioEnvelopes.fdsModBytes(ins.fds)
+                }
+                // The 5B's and the EPSM SSG's mixer and noise envelopes.
+                if (ins.chip.hasSsg) {
+                    ours += "slot $slot mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER)
+                    ours += "slot $slot noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE)
+                }
             }
             for (ch in fs.notes) for (n in ch) {
                 if (n == null) continue
@@ -101,29 +130,93 @@ class NesGoldenTest {
             var writes = 0
             var dpcmStarts = 0
             var expansionWrites = 0
+            var n163 = 0
+            var fds = 0
+            var s5b = 0
+            var mmc5 = 0
+            var epsm = 0
             val patchA = IntArray(8) { -1 }
             val patchB = IntArray(8) { -1 }
+            val epsmA = NesTracer.epsmPatchState()
+            val epsmB = NesTracer.epsmPatchState()
             for (f in 0 until frames) {
-                val ta = withoutUnchangedPatchWrites(a.frame(), patchA)
-                val tb = withoutUnchangedPatchWrites(b.frame(), patchB)
+                val ta = NesTracer.withoutUnchangedEpsmPatchWrites(withoutUnchangedPatchWrites(a.frame(), patchA), epsmA)
+                val tb = NesTracer.withoutUnchangedEpsmPatchWrites(withoutUnchangedPatchWrites(b.frame(), patchB), epsmB)
                 if (!ta.contentEquals(tb)) {
                     fail("$name: frame $f differs: FamiStudio ${trace(ta)} vs ours ${trace(tb)}")
                 }
                 writes += ta.size
                 dpcmStarts += ta.count { it == (0x4015 shl 8 or 0x1f) }
                 expansionWrites += ta.count { (it shr 8) >= 0x9000 }
+                n163 += ta.count { (it shr 8) == 0x4800 }
+                fds += ta.count { (it shr 8) in 0x4080..0x408A }
+                s5b += ta.count { (it shr 8) >= 0xC000 }
+                mmc5 += ta.count { (it shr 8) in 0x5000..0x5015 }
+                epsm += ta.count { (it shr 8) in NesTracer.EPSM_PORTS }
             }
             assertTrue(writes > frames, "$name: the player wrote only $writes APU registers in $frames frames")
             if (dmc.isNotEmpty()) {
                 // The trace covers DPCM: sample starts write $4012/$4013/$4010 and start the DMC through $4015.
                 assertTrue(dpcmStarts > 0, "$name: no DPCM sample started")
             }
-            if (lowered.player != NesPlayer.APU) {
+            if (lowered.player == NesPlayer.VRC6 || lowered.player == NesPlayer.VRC7) {
                 // The trace covers the expansion chip: the VRC6's pulses and saw, the VRC7's FM channels (a select and a
                 // data write per register, patch loads included) are written and compared every frame they sound.
                 assertTrue(expansionWrites > frames, "$name: only $expansionWrites expansion register writes in $frames frames")
             }
+            if (lowered.player in NesPlayer.N163) {
+                // The trace covers the N163: frequencies, volumes and wave uploads through its data port, every frame.
+                assertTrue(n163 > frames, "$name: only $n163 N163 data writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.FDS) {
+                // The trace covers the FDS: volume, frequency and modulation registers every frame, wave and table uploads.
+                assertTrue(fds > frames, "$name: only $fds FDS register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.S5B) {
+                // The trace covers the 5B: every frame its squares sound, register selects and data writes (compared).
+                assertTrue(s5b > frames, "$name: only $s5b Sunsoft 5B register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.MMC5) {
+                // The trace covers the MMC5: its pulses' registers are written (and compared) every frame.
+                assertTrue(mmc5 > frames, "$name: only $mmc5 MMC5 register writes in $frames frames")
+            }
+            if (lowered.player == NesPlayer.EPSM) {
+                // The trace covers the YMF288: SSG and FM register selects and data (patch loads, LFO, key on/off, the
+                // drums' levels and key bits) are written and compared every frame they sound.
+                assertTrue(epsm > frames, "$name: only $epsm EPSM port writes in $frames frames")
+            }
         }
+    }
+
+    /**
+     * Manual FDS mod speeds with a low byte of $80-$FF play as themselves: our lowering of
+     * [NesGoldenSongs.fdsManualSpeeds] (the speeds in its sounds) writes, frame by frame, the registers FamiStudio's own
+     * export of [NesGoldenSongs.fdsManualSpeedWitness] writes (sounds with upstream-safe speeds, the intended ones set by
+     * `Jxx` on every attack), through two loop passes; and that witness does play $080, $181 and $FFF.
+     */
+    @Test
+    fun fdsManualSpeedsPlayAsTheUpstreamSafeWitness() {
+        if (update) return
+        val song = NesGoldenSongs.fdsManualSpeeds()
+        assertEquals(emptyList(), org.thortracker.system.nes.NesFdsSystem.errors(song))
+        val fs = FsSong.of(song)
+        val lowered = FamiStudioLowering.lower(song)
+        val upstream = NesTracer(bytes("fds_manual_speed_witness.bin") ?: fail("missing correction fixture"), lowered.player)
+        val ours = NesTracer(lowered.data, lowered.player)
+        val frames = (fs.totalRows + 2 * (fs.totalRows - fs.orderStart[fs.loopOrder])) * fs.speed + 60
+        // $4086 holds the speed's low byte, $4087 its high nibble (bit 7: modulation halted).
+        val speeds = HashSet<Int>()
+        var low = -1
+        for (f in 0 until frames) {
+            val a = upstream.frame()
+            val b = ours.frame()
+            if (!a.contentEquals(b)) fail("frame $f differs: FamiStudio ${trace(a)} vs ours ${trace(b)}")
+            for (w in a) when (w ushr 8) {
+                0x4086 -> low = w and 0xff
+                0x4087 -> if (low >= 0 && w and 0x80 == 0) speeds += (w and 0x0f) shl 8 or low
+            }
+        }
+        for (s in listOf(0x080, 0x181, 0xFFF)) assertTrue(s in speeds, "the witness plays mod speed $s: $speeds")
     }
 
     /** Pin both intentional differences using FamiStudio's actual exported bytes, not a second sequencer model. */
