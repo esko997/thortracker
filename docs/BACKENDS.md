@@ -194,24 +194,27 @@ muted in the song) stay in the hosts and work for every chip.
 ## NES expansion chips
 
 FamiStudio's engine also drives the Famicom cartridge sound chips; roadmap step 3 adds them one at a time,
-VRC6 first. Decisions (made on the user's behalf; see Open questions):
+VRC6 first, then VRC7. Decisions (made on the user's behalf; see Open questions):
 
 - **One system per expansion, one family.** FamiStudio assembles its engine for one expansion (its project picks
   one in practice for NSF/ROM export), and a Thor Tracker system has fixed channels, so each expansion is its own
   `SoundSystem` variant beside the plain NES: `NesSystem` (`"nes-famistudio"`, 5 channels), `NesVrc6System`
-  (`"nes-famistudio-vrc6"`, 8 channels) and `NesEpsmSystem` (`"nes-famistudio-epsm"`, 20 channels). All are
+  (`"nes-famistudio-vrc6"`, 8 channels) and `NesVrc7System` (`"nes-famistudio-vrc7"`, 11 channels). All are
   `NesFamiStudioSystem`s sharing every rule, view, lowering and export; they differ only in `NesExpansion` (`NONE`,
-  `VRC6`, `EPSM`). `SoundSystem.family` (`"NES"`) groups them: **New blank song** and **Load demo** list "NES…" once,
-  which opens the variants ("NES (FamiStudio)", "NES + VRC6 (FamiStudio)", "NES + EPSM (FamiStudio)"). The plain NES
-  is unchanged: same id, channels, files, lowering bytes, image and `.nsf`.
-- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"`, left out when none) names the chip; the
-  song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is rejected.
-  Channels keep FamiStudio's engine order: the 2A03's five, then the expansion's (`NesRules.CHANNEL_NAMES` lists them
-  all; a song has the first `expansion.channels`). The one bank of 64 sounds stays shared; each sound has a `chip`
-  (`NesChip.APU` = 2A03, `VRC6`; FamiStudio's instrument expansion; omitted in files for 2A03), because the same
-  envelope means different things on each chip (VRC6 duties 0-7). A channel plays only its chip's sounds
-  (validation, audition); only 2A03 sounds map DPCM samples. NES data version stays 2: VRC6 songs are new files,
-  2A03 files are byte-identical.
+  `VRC6`, `VRC7`). `SoundSystem.family` (`"NES"`) groups them: **New blank song** and **Load demo** list "NES…" once,
+  which opens the variants ("NES (FamiStudio)", "NES + VRC6 (FamiStudio)", "NES + VRC7 (FamiStudio)"). The plain NES
+  is unchanged: same id, channels, files, lowering bytes, image and `.nsf`. Each variant's engine refuses another
+  variant's song (its image would be laid out for another player build).
+- **Model.** `NesSound.expansion` (project files: `"expansion":"vrc6"` / `"vrc7"`, left out when none) names the chip;
+  the song's system follows from it (`NesSound.system`), and a project whose backend and expansion disagree is
+  rejected. Channels keep FamiStudio's engine order: the 2A03's five (`NesRules.APU_NAMES`), then the expansion's
+  (`NesExpansion.channelNames` / `channelKinds`; `NesRules.channelName` and `NesRules.kind` take the expansion). The
+  one bank of 64 sounds stays shared; each sound has a `chip` (`NesChip.APU` = 2A03, `VRC6`, `VRC7`; FamiStudio's
+  instrument expansion; omitted in files for 2A03), because the same envelope means different things on each chip
+  (VRC6 duties 0-7, no duty on the VRC7). A channel plays only its chip's sounds (validation, audition); only 2A03
+  sounds map DPCM samples. A sound pasted into a song without its chip becomes a 2A03 sound (`forChip`: duty clamped,
+  saw volume and FM patch reset). NES data version stays 2: expansion songs are new files, 2A03 files are
+  byte-identical.
 - **VRC6** (two pulses with eight duties and 12-bit periods, a sawtooth): channels VRC6 Pulse 1 (5), VRC6 Pulse 2 (6),
   VRC6 Saw (7, `ChannelKind.SAW`). VRC6 sounds have duty 0-7 (1/16 to 8/16) and the saw's master volume
   (`Vrc6SawVolume` Full / Half / Quarter = volume × 4 / × 2 / × 1 into the 6-bit accumulator rate; Full distorts
@@ -233,6 +236,196 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
   cartridge with a VRC6). FamiStudio text with `Expansions="VRC6"`, `Expansion="VRC6"` and `Vrc6SawMasterVolume` on
   VRC6 instruments, and the `VRC6Square1/VRC6Square2/VRC6Saw` channels. Golden test songs `vrc6_demo` and
   `vrc6_effects` (FamiStudio's export of our text vs our lowering, VRC6 writes compared every frame).
+- **VRC7** (a YM2413 derivative: six 2-operator FM channels, 15 patches in ROM and one programmable patch): channels
+  VRC7 FM 1-6 (5-10, `ChannelKind.VOICE`), reaching every note C-1..B-7. A VRC7 sound (`NesChip.VRC7`) has volume,
+  arpeggio and pitch envelopes (no duty) and its patch (`Vrc7Patch`: FamiStudio's `Vrc7Patch` 0-15, 0 = custom, and
+  `Vrc7PatchRegs`, the 8 registers `$00-$07`; a built-in patch holds its ROM values, as FamiStudio's setter copies
+  them, so switching to Custom starts from that sound; `Vrc7Presets` = FamiStudio's table = emu2413's VRC7 ROM set).
+  Sounding pitch is channel-aware: `NesRules.engineNote` adds 12 on VRC7, so absolute 57 (A-4) is engine note 58
+  (about 440 Hz), not the 2A03's engine note 46 (which would sound 220 Hz on VRC7). Pattern lowering, text export,
+  audition and Pxx use this same mapping; notes and slide targets above B-7 are rejected on FM channels.
+  Volume is the chip's 4-bit level (the engine writes `patch << 4 | 15 − volume` to `$30+`, so 0 is −45 dB, not
+  silent); pitch envelopes, Pxx and slides work on the FM frequency number (FamiStudio's pitch shift 3: × 8,
+  + raises). Effects: everything but `Vxx` (no duty) and `Zxx`. `Pxx` keeps one meaning on every channel: the cell's
+  detune is the pitch the same Pxx gives a 2A03 pulse on that note, converted to the nearest FM step
+  (`NesRules.vrc7FinePitch`; FamiStudio's own fine pitch is raw FM steps), so tunings work on FM within the chip's
+  step size. OFF on a sounding FM note is FamiStudio's release (`CanRelease` is always true on VRC7 channels): opcode
+  `$56` keys off (the patch's release, or the sustain rate 5) and the volume envelope continues from its release
+  point; OFF on a released note, or `Sxx`, is a stop (key off without the release override). Two shared settings
+  are the chip's, not a sound's:
+  - **One custom patch.** The chip has one set of custom registers for all six channels; loading a custom sound writes
+    them. The lowering follows FamiStudio's exporter (`OtherVrc7ChannelUsesCustomPatch`: a channel whose custom sound
+    another FM channel's different custom sound may have replaced sends its instrument again with its next note),
+    never re-sends a custom sound per order (Thor Tracker's per-order re-send is skipped for it: it would rewrite the
+    registers under another channel), with **two intentional export corrections**: loop entries reload a custom patch
+    another channel may have replaced (including delayed final writers), and mid-song restoration keeps a no-attack
+    note's held envelope instead of forcing a new attack. FamiStudio's editor preserves both behaviors; its 4.5.3
+    exporter misses loop restoration and retriggers that mid-song legato case. The independent `vrc7_patch_restore`
+    golden demonstrates both differences (`AUDIO_ENGINE.md`). A custom sound starting while another FM channel holds a note of
+    a different custom sound (different registers) changes that note's timbre on the chip itself: the song check warns
+    where. VRC7 sounds identical but for their names are musically equivalent, so a copied custom sound shares the
+    patch without reloading it. Runtime bank identities remain distinct: a held note follows edits to its actual
+    slot, not an identical original or copy.
+  - **Sustain overrides** (`NesSound.vrc7Sustain`: `release`, `stop`; FamiStudio's `Vrc7OverrideRelease` /
+    `Vrc7OverrideStop`). FamiStudio stores them per instrument, but its engine keeps one copy
+    (`famistudio_chn_vrc7_sustain`, the last VRC7 instrument loaded on any channel), so per-sound values would apply
+    to the wrong notes. Thor Tracker makes them one song setting, written into every VRC7 instrument of the exports, so
+    FamiStudio's player, its exporter and our engine agree.
+  Editor: the Chip row offers 2A03 / VRC7; a VRC7 sound's fourth page (Duty's place) is **FM patch**: Patch (Custom or
+  the 15 built-ins), Release and Stop sustain (the song's setting, shown on every VRC7 sound), then each register
+  field per operator (`Vrc7Param`: multiplier, half-sine, modulation level, feedback, AR, DR, SL, RR, sustained, KSL,
+  KSR, tremolo, vibrato; ←/→ picks modulator or carrier). Editing a built-in patch's field makes it Custom from that
+  patch's registers. Demo: "Lantern Point" (`NesVrc7DemoSong`): a custom-patch lead with vibrato and key-off releases,
+  built-in Bass guitar, Brass pads, Piano arpeggio chords and Bell sparkles, a 2A03 echo, triangle, noise drums and
+  the DPCM starter kit. `exportSamples` writes `lantern-point.{thor,nsf,txt,nesimg}`.
+  Engine: the `FAMISTUDIO_EXP_VRC7 = 1` player build (`NesVrc7PlayerImage`, `nes_vrc7_player_image.h`, song base the
+  first page after it) with FamiStudio's VRC7 note tables, its header gaining the expansion instrument pointer (16-byte
+  instruments after the 2A03 table, one per slot), on emu2413 1.6.4 in VRC7 mode. Contract: `docs/AUDIO_ENGINE.md`,
+  "VRC7". Exports: `.nsf` with header byte `$7B` = 2; FamiStudio text with `Expansions="VRC7"`, `Expansion="VRC7"`,
+  `Vrc7Patch`, `Vrc7Reg0-7` (custom only) and both overrides, and the `VRC7FM1-6` channels; `.wav`. Golden songs
+  `vrc7_demo` and `vrc7_effects` (VRC7 register writes, `$9010`/`$9030`, compared every frame).
+- **Sunsoft 5B** (`NesS5bSystem`, `"nes-famistudio-s5b"`, "NES + Sunsoft 5B (FamiStudio)"; a YM2149F): channels 5B Square
+  1-3 (5-7, `ChannelKind.PULSE`, no duty). Notes are true pitch, as everywhere (A-4 = 57 = 440 Hz): FamiStudio's engine
+  plays the 5B from the pulses' note table + 1, where the 5B (CPU / 32 period; NESdev, FamiStudio's emu2149 with its
+  clock divider) sounds an octave below a pulse, so a 5B square plays FamiStudio's note + 12 (`NesRules.S5B_OCTAVE`;
+  FamiStudio's text shows those notes an octave above Thor Tracker's, sounding the same) and reaches C-1..B-7; `Pxx`
+  converts to the 5B's periods for the same pitch (`NesRules.s5bFinePitch`). 5B sounds (`NesChip.S5B`) have volume, arpeggio and pitch envelopes, a
+  **mixer** envelope (`NesInstrument.mixer`: 0 tone+noise, 1 noise, 2 tone, 3 off; empty = tone, FamiStudio's
+  default), a **noise** envelope (0-31) and a hardware envelope (`S5bEnvelope`: shape off or `$08-$0F`, auto period
+  with octave -8..8 or a manual period 0-65535). Shared hardware, as FamiStudio's engine 4.5.3 drives it: the highest
+  square sounding an envelope sound sets the envelope's shape and period every frame, any attack restarts it, its
+  level replaces the volume envelope and `Cxx`; the highest sounding square sets the noise period (Square 1 only with
+  noise in its mixer, Squares 2-3 always: the engine's mask table is meant for shifted mixer values; FamiStudio's
+  editor preview differs, the exported engine and this app play this). `NesS5b` warns where squares fight over them and
+  feeds the Pattern view's shared state (lane tags ENV / NOISE, inspector lines). Effects: `Ixx` / `Jyy` = the
+  envelope period's high / low byte (FamiStudio `EnvelopePeriod`), combined when both are on one row (on any squares;
+  alone the other byte is 0; two different values of one byte in a row are an error), lowered as `$5E lo hi` on Square
+  1 as FamiStudio's exporter moves them; the next note with attack on a square that played since reloads its sound
+  (FamiStudio's override rule). Each order's first note re-sends its sound (seek, loop, live edits), except a manual-
+  period sound the square already holds: its load would set the shared period, which FamiStudio's export leaves at
+  another square's or an `Ixx`/`Jyy`'s value there, so those orders are FamiStudio's stream for any delay, legato or
+  loop (`s5b_effects` orders C-E). The seek fallback restores the held instruments through the real driver's
+  instrument loader, so these squares no longer start silent. It remains an approximate seek: channel-order
+  loads need not recover an earlier shared-period effect or the original generator phases.
+  Identical, renamed manual-period instruments use a 5B-only `$5F` load extension: keep the global period, as
+  FamiStudio's merged export does, but retain the actual slot for live edits. The Pattern inspector follows
+  the same equivalence and override rules rather than assuming every instrument number rewrites the period.
+  Lowering: the 16-byte
+  `instruments_exp` entries (vol, arp, pitch, mixer, noise words, shape, octave or `$80`, period, 0, 0) for every slot;
+  mixer/noise envelopes at directory `256 + 2 slot (+1)`, kinds 5/6, mixer values as FamiStudio's processed bits
+  (`ProcessMixerEnvelope`); effect envelopes from 384 (`NesPlayer.effectEnvelopes`). Editor: pages volume, arpeggio,
+  pitch, mixer, noise and **5B envelope** (shape drawing, auto/manual, octave in musical terms, period as rate/ramp time).
+  Exports: `.nsf` with `$7B` bit 5; FamiStudio text `Expansions="S5B"`, `S5BEnvelopeShape/AutoPitch/AutoPitchOctave/
+  Pitch`, `MixerSettings`/`NoiseFreq` envelopes, `S5BSquare1-3`, `EnvelopePeriod`. Demo "Copper Kite"
+  (`NesS5bDemoSong`); golden songs `s5b_demo`, `s5b_effects`. Native: `nes/nes_s5b.c` (NESdev + emu2149 behaviour;
+  mix level per FamiStudio's 5B/VRC6 ratio; the 5B amplifier's nonlinearity is not modelled), see AUDIO_ENGINE.md.
+
+**N163** (Namco 163: up to eight 4-bit wavetable channels; sources: FamiStudio 4.5.3 `famistudio_ca65.s`,
+`Instrument.cs`, `Envelope.cs`, `FamitoneMusicFile.cs`, `FamistudioTextFile.cs`, `ChannelStateN163.cs`, `NesApu.cs`
+at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions:
+
+- **One variant per channel count.** The chip's channel count is a register, but it sets each channel's update rate
+  (one channel every 15 CPU cycles in turn, so f = CPU × freq / (15 × 65536 × L × n)), FamiStudio's note table and pitch
+  shift (`FAMISTUDIO_N163_PITCH_SHIFT`: 2, 3, 4, 4, 5, 5, 5, 5) and the RAM left for waves (128 bytes minus 8 per
+  channel), and FamiStudio assembles its engine for one count (`FAMISTUDIO_EXP_N163_CHN_CNT`). So every legal count 1-8
+  is its own system, `NesN163System.of(n)`: id and engine `"nes-famistudio-n163-<n>"`, "NES + N163, n channels
+  (FamiStudio)", `NesExpansion.N163_<n>` (files: `"expansion":"n163-<n>"`), channels N163 1..n (`ChannelKind.WAVE`) after
+  DPCM. `SoundSystem.familyGroup` ("NES + N163") nests the eight under the NES family in New / Load demo.
+- **Sounds** (`NesChip.N163`): volume, arpeggio and pitch envelopes (no duty) plus `N163Wave` — FamiStudio's model:
+  `size` (multiple of 4, ≥ 4), `position` (even 4-bit sample address; FamiStudio uploads whole bytes), 1..min(64,
+  1024 / size) `waves` of `size` samples 0-15, `repeat` frames per wave 1-15 (FamiStudio's `WaveformRepeat`), a `loop`
+  and a `release` wave (release needs a loop before it). FamiStudio's presets are ported with its float arithmetic
+  (`N163Presets`). The validator requires position + size ≤ 256 − 16 n (waves stay below the channel registers, as
+  FamiStudio's `N163MaxWaveSize` does) and refuses notes whose note-table entry saturates at $FFFF (4 channels from
+  A#8, 8 channels from A#7). It warns where two channels sound at once with overlapping RAM ranges and different
+  waves (each upload overwrites the other: FamiStudio's documented "user's responsibility"; identical single waves at
+  one place share safely), about wave sizes that are not powers of two (FamiStudio tunes its tables for 16 samples:
+  12 log2(16 / size) semitones away, off-key) and about all-zero waves. Explicit positions only: FamiStudio's
+  auto-position is an export-time heuristic its text import does not even read; the Wave page shows every sound's range.
+- **Effects**: all of FamiStudio's for N163 channels — arpeggio, vibrato, volume and slides, speed, delay, cut, fine
+  pitch (`Pxx` converted to the nearest N163 frequency step for the same pitch, `NesRules.n163FinePitch`, as on the
+  VRC7), glides (N163 note table, delta >> pitch shift), and `X00`, the phase reset (opcode `$5B`, N163 only; the
+  plain NES's effect list is unchanged). No duty. OFF releases (opcode `$5A`: the volume and the wave-index envelopes
+  jump to their releases) when the sound's volume or wave sequence has a release point (FamiStudio's `CanRelease`), else
+  stops. A note without instrument after another sound attacks anyway (`CanDisableAttack` is false on N163 channels).
+- **Lowering**: the expansion instrument table (16 bytes per slot, every slot): volume, arpeggio, pitch envelopes, the
+  wave-index envelope (`CreateWaveIndexEnvelope` + `ProcessEnvelope`, directory 256 + slot − 1, kind 4), position, size,
+  a wave table of pointers to the slot's distinct waves (deduplicated as FamiStudio does; identical waves and tables
+  stored once), 4 zero bytes; effect envelopes from 320. Contract: `docs/AUDIO_ENGINE.md`, "N163".
+- **Engine**: eight builds (`NesN163PlayerImage1..8`, `nes_n163_<n>_player_image.h`), `nes/nes_n163.c` from NESdev:
+  128-byte RAM with the auto-incrementing address port, channels updated in turn every 15 cycles, the DAC output
+  time-multiplexed as on the chip (so 7-8 channels whine at 17 / 15 kHz, as on hardware), 12 dB above an APU pulse
+  (NESdev's mixing table: 11-19.5 dB depending on the board). Mute silences a channel's slots without touching the chip;
+  a silent seek advances phases exactly; a live edit re-uploads a playing sound's wave only when its waves changed.
+- **Exports**: `.nsf` with header `$7B` bit 4 ($10); FamiStudio text with `Expansions="N163" NumN163Channels`,
+  `Expansion="N163" N163WavePreset="Custom" N163WaveSize N163WavePos N163WaveCount`, `N163Wave` and `Repeat` envelopes,
+  `PhaseReset="1"` and channels `N163Wave1..n`. Golden songs `n163_demo` (8 channels), `n163_demo_1` and `n163_effects`
+  (4 channels); FamiStudio's export of our text and our lowering must write the same APU and `$4800`/`$F800` sequence.
+- **Editor and demo**: the Instrument view's Wave page (draw samples, size, position, waves, repeats, loop and release,
+  presets, the song's RAM map); demo "Wavetable Garden" (`NesN163DemoSong.build(n)`), whose parts grow with the count.
+
+**FDS** (the Famicom Disk System's 2C33: one wavetable channel with a modulation unit; sources: FamiStudio 4.5.3
+`famistudio_ca65.s` (FDS update 2276-2402, attack 4595-4626, instrument load and wave upload 5235-5435, opcodes
+`$57`/`$58`/`$59`), `FamitoneMusicFile.cs` (`OutputInstruments`, `GetSongData`'s FDS override flags), `Instrument.cs`,
+`Envelope.cs` (`BuildFdsModulationTable`), `Channel.cs`, `FamistudioTextFile.cs`, `NesApu.cs`, `NsfFile.cs`,
+`RegisterInterpreter.cs` at tag 4.5.3 / commit c09dca6, the NESdev wiki "FDS audio" and Disch's FDS.txt). Decisions:
+
+- **One variant**, `NesFdsSystem`: id and engine `"nes-famistudio-fds"`, "NES + FDS (FamiStudio)", `NesExpansion.FDS`
+  (files: `"expansion":"fds"`), channel `FDS` (`ChannelKind.WAVE`, channel 5) after DPCM. The engine is `nes_player.s`
+  with `FAMISTUDIO_EXP_FDS` and `FAMISTUDIO_USE_FDS_AUTOMOD` (as FamiStudio's own NSF kernel).
+- **True pitch**: FamiStudio's FDS note table is f × 2^20 / CPU, while the chip plays its 64-step wave CPU × frequency /
+  2^22 times a second (NESdev; FamiStudio's register viewer agrees), so FamiStudio's note n sounds two octaves below the
+  2A03's note n with a one-cycle wave. Thor Tracker's notes are true pitch: the FDS channel plays FamiStudio's engine note
+  24 higher (`NesRules.FDS_TRANSPOSE`, `engineNoteShift`, `engineNote`; A-4 = engine note 70, frequency 1031, 439.9 Hz).
+  One cycle per wave sounds as named, 2 cycles an octave up, 4 two octaves up. The range is C-1..G#6: from engine note
+  94 (4125) on, FamiStudio's frequency passes the chip's 12 bits (`$4083` keeps bits 8-11), so higher notes, slides
+  and `0xy` targets are refused. The `.txt` export writes FamiStudio's own (engine) note numbers, so FamiStudio plays
+  the same bytes and names them two octaves higher.
+- **Sounds** (`NesChip.FDS`, `FdsSound`): volume, arpeggio and pitch envelopes (no duty), 1-16 waves of 64 samples
+  0-63 with a repeat of 1-15 frames each, a loop and a release wave (as the N163's), master volume (100/66/50/40%), 32
+  modulation targets −64..63 encoded with FamiStudio's greedy `BuildFdsModulationTable` (entry 0 resets; `FdsSound.modTable`),
+  mod speed 0-4095, depth 0-63, delay 0-255 frames, and auto-mod (the engine sets the mod speed every frame to the
+  frequency × numerator / denominator, 1-32 each, written reduced). Presets are FamiStudio's (`FdsPresets`).
+- **Driver behavior**: a scoped patch disambiguates manual speeds whose low byte is `$80-$FF` from auto modulation,
+  preserving the complete manual range 0-4095. Such manual words use a high-byte tag (`hi | $80`); other manual
+  words and automatic fractions keep their original bytes. FamiStudio text retains the exact speed; its editor
+  preview is correct, but its own 4.5.3 assembly/NSF exporter has the ambiguity. Auto-mod multiplies the frequency
+  by the numerator in 16 bits (`famistudio_mul`), so the validator warns when the product reaches 65536. A mod
+  delay d keeps modulation reset d − 1 frames. Warnings also cover constant waves, zero depth, a flat mod table
+  or zero speed, and I/J while an auto-mod sound plays.
+- **Effects**: all of FamiStudio's for the FDS channel — arpeggio, vibrato, volume and slides, speed, delay, cut, fine
+  pitch (`Pxx` converted to the nearest FDS frequency step at the engine note for the pitch the same Pxx gives a pulse,
+  `NesRules.fdsFinePitch`), glides (FDS table, one fraction bit), `X00` (FamiStudio's generic phase reset `$53`) and
+  FamiTracker's FDS letters: `Hxx` mod depth 00-3F (`FdsModDepth`, `$58`), `Ixx` the mod speed's high digit 00-0F and
+  `Jxx` its low byte (`FdsModSpeed`, `$57` with the whole 12-bit word: the other half is the speed the channel has at that
+  row along the played order — the sound's own after an attack that loads it, else the last I/J). These effect codes
+  are looked up per expansion (`NesRules.effect(expansion, code)`); S5B has its own I/J meanings. FamiStudio's
+  re-bind rule is kept: an attacked note without H (or I/J) after one with it sends its instrument again, restoring the
+  sound's depth and speed. OFF releases (`$59`: volume and wave-index envelopes) when the volume envelope or the wave
+  sequence has a release point, else stops; legato across sounds needs identical envelopes, waves and mod table included
+  (`CanDisableAttack`).
+- **Lowering**: the expansion table (16 bytes per slot, every slot): volume, arpeggio, pitch envelopes, the wave-index
+  envelope (directory 256 + slot − 1, kind 4, the N163 code path), `(depth << 2) | master volume`, a wave table of
+  pointers to the slot's distinct 64-byte waves, the 32-byte mod table, the tagged manual speed or auto-mod fraction,
+  the delay; waves, tables and mod tables stored once; effect envelopes from 320. A legato instrument re-send or switch
+  between identical copies uses the scoped `$5F i` load: select the actual bank slot and envelope pointers, retaining
+  runtime modulation. It works whether the loop arrives with the intro's overrides or different end-of-song values,
+  without losing the live-edit target. Contract: `docs/AUDIO_ENGINE.md`, "FDS".
+- **Exports**: `.nsf` with header `$7B` bit 2 ($04); FamiStudio text with `Expansions="FDS"`, `Expansion="FDS"
+  FdsWaveCount FdsWavePreset FdsModPreset [FdsMasterVolume FdsModSpeed FdsModDepth FdsModDelay FdsAutoMod
+  FdsAutoModDenom FdsAutoModNumer]`, `FDSWave`, `FDSMod` and `Repeat` envelopes, channel `FDS` and note attributes
+  `FdsModSpeed`, `FdsModDepth`, `PhaseReset`. Golden songs cover the demo, effects and manual/auto-mod copy loops;
+  FamiStudio's export of our text and our lowering write the same `$4040-$408A` sequences. A separate upstream-safe
+  `$57` witness checks manual speeds whose low bytes are `$80-$FF`.
+- **Editor and demo**: on FDS songs the Instrument view's Chip row offers 2A03 / FDS; FDS sounds have a **Waves** page
+  (draw 64 samples 0-63, 1-16 waves with duplicate/delete, repeat, loop, release, FamiStudio's presets incl. the PWM
+  sweeps, master volume) and a **Modulation** page (the 32 targets drawn as bars with the counter the chip reaches drawn
+  over them, mod presets, speed stepping ±1/±16 through 0-4095 with its rate in Hz, depth,
+  delay, auto-mod on/off with numerator/denominator and the first note whose 16-bit product overflows); edits through
+  `FdsEdits`, waves copy/paste between N163 and FDS sounds rescaled. Demo "Side B" (`NesFdsDemoSong`): an FM bass
+  (auto-mod, an H sweep), a vibrato lead (mod delay, J and I speed sweeps, OFF), a PWM morph pad with a release, an FM
+  bell (auto-mod 7/2, X00), the 2A03 and the DPCM kit alongside; once through 25.6 s, loop 19.2 s.
+
 - **EPSM** (`NesEpsmSystem`, `"nes-famistudio-epsm"`, "NES + EPSM (FamiStudio)"): Perkka's Expansion Port Sound Module, a
   Yamaha **YMF288 (OPN3-L)** on the Famicom expansion port at 8 MHz — the YM2608's FM, SSG and rhythm units without its
   ADPCM-B — which FamiStudio's driver writes through `$401C/$401D` (address/data, A1 = 0) and `$401E/$401F` (A1 = 1).
@@ -253,8 +446,8 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
     `EpsmPatchRegs`) shaped by the volume, arpeggio and pitch envelopes (the driver turns volume into the carriers'
     total-level attenuation); SSG channels play the volume, arpeggio and pitch envelopes plus a **mixer** envelope (0
     tone + noise, 1 noise, 2 tone, 3 neither; empty = tone), a **noise** envelope (period 0-31) and the hardware
-    envelope `epsmEnvelope` (`S5bEnvelope`: shape, auto period with octave −8..8 or a manual period; FamiStudio's EPSM
-    defaults off / auto / octave 3 / period 4000); the rhythm channels use only the volume envelope's **first** value
+    envelope `s5b` (the shared `S5bEnvelope`: shape, auto period with octave −8..8 or a manual period; switching a
+    sound to EPSM selects period 4000); the rhythm channels use only the volume envelope's **first** value
     (0-15, empty = 15: the driver writes level = value × 2 | pan into `$18-$1D`, scaled by `Cxx`) and the patch's
     left/right bits. 2A03 channels take 2A03 sounds only.
   - *Shared hardware, shared in the model.* The chip has **one LFO** (`$22`): `NesSound.epsmLfo` is a song setting
@@ -285,7 +478,7 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
     message while it is missing; nothing substitutes another sound. `.nsf` and text exports never need or contain it
     (NSF players bring their own copy).
   - *Engine.* A player build of the same pinned engine with `FAMISTUDIO_EXP_EPSM = 1` (`NesEpsmPlayerImage`,
-    `nes_epsm_player_image.h`, `NES_EXPANSION_EPSM` = 7 as FamiStudio's `ExpansionType`) and the YMF288 emulated by
+    `nes_epsm_player_image.h`, native NSF flag `NES_EXPANSION_EPSM` = `$80`) and the YMF288 emulated by
     the vendored ymfm's `ymf288` (BSD-3, the Mega Drive's ymfm pin), as Mesen2 does. The machine outputs true stereo
     (FM and rhythm pans; the 2A03 centred); seeks clock the chip. Contract: `docs/AUDIO_ENGINE.md`, "EPSM".
   - *Exports.* `.nsf` with header byte `$7B` bit 7 (EPSM); FamiStudio text with `Expansions="EPSM"`, EPSM instruments
@@ -299,7 +492,35 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
     a hardware-envelope buzz bass (auto period, tone and noise off) and tone+noise drums on the SSG; the 2A03 echo,
     plucks, triangle bass, noise hats and the DPCM kick. It has **no rhythm notes**, so it plays without the ROM.
 
-**Adding the next expansion** (VRC7, N163, S5B, FDS, MMC5, EPSM) follows the same path:
+- **MMC5** (Nintendo's MMC5 mapper: two more pulses and an 8-bit PCM DAC): channels MMC5 Pulse 1 (5) and MMC5
+  Pulse 2 (6), `ChannelKind.PULSE`. FamiStudio 4.5.3 has no MMC5 instrument type: MMC5 squares play 2A03 instruments
+  (its `Channel.SupportsInstrument`), so `NesExpansion.MMC5.chip` is `NesChip.APU`, the song holds only 2A03 sounds
+  and the Instrument view has no Chip row. Duties 0-3 (`Vxx` 00-03), every 2A03-pulse effect, notes A-1..B-8 (the
+  same 11-bit periods and note table as the 2A03 pulses: absolute 57 is engine note 46 and 440 Hz on every pulse).
+  Differences the musician hears, both from the hardware and the pinned driver: no sweep unit; the driver writes the
+  period-high register only when it changes, without the 2A03 pulses' smooth-vibrato trick, so a pitch crossing a
+  period-high boundary restarts the waveform (FamiStudio's documentation: "the reset bug cannot be worked
+  around"); periods below 8 are not silenced. **PCM is Thor Tracker's software lane**: the pinned engine's header says
+  "Nintendo MMC5 (2 extra squares, extra DPCM not supported)" (`famistudio_ca65.s` line 107), its MMC5 init writes
+  `$5010 = $00` and `$5015 = $03` only and nothing writes `$5011`; FamiStudio 4.5.3 never activates `Mmc5Dpcm`. So the
+  engine stays seven channels and MMC5 songs get an eighth lane, **MMC5 PCM**, played by a software player on the real
+  DAC (AUDIO_ENGINE.md, "MMC5 PCM lane"): 2A03 sounds map keys to PCM samples on their PCM page (sample, pitch
+  −48..+24 semitones, loop, chromatic spread; beside, not instead of, their DPCM mappings); `.wav` import to unsigned
+  8-bit mono (Dpcm's reader; rates to 48 kHz kept, higher converted and disclosed; minima raised to 1 for the DAC's
+  `$00` rule; nothing cut: a file that does not fit 256 KiB / 64 samples is refused); `Cxx`, `Gxx`, `Sxx`, OFF and
+  `Fxx` on the lane, other effects refused; playback, audition, live edits, seeks and WAV export. `.nsf` and FamiStudio
+  text refuse songs whose PCM lane plays. Demo: "Tandem Skies"
+  (`NesMmc5DemoSong`): the MMC5 pulses as a lead/harmony pair over the 2A03's echo, triangle bass, noise drums and
+  the DPCM starter kit (its PCM lane is silent, so its `.nsf`/text stay complete); `exportSamples` writes
+  `tandem-skies.{thor,nsf,txt,nesimg}`, the shortest valid MMC5 song `mmc5-shortest.nesimg`, and the PCM fixtures
+  `sample-courier.{thor,nesimg}` (`NesMmc5DemoSong.pcmDemo`: synthesized kit `NesPcmKit`) and `mmc5-pcm-shortest.nesimg`
+  for the WAV test. Engine: a third player build (`FAMISTUDIO_EXP_MMC5 = 1`,
+  `NesMmc5PlayerImage`, `nes_mmc5_player_image.h`) whose song base is measured by `prepare_nes_player.py` (the first
+  page after the player), the MMC5 audio unit `nes/nes_mmc5.c`; exports `.nsf` with `$7B` = `$08` and FamiStudio text
+  with `Expansions="MMC5"` and the `MMC5Square1/MMC5Square2` channels (instruments without an `Expansion`). Golden
+  test songs `mmc5_demo` and `mmc5_effects`. Contract: `docs/AUDIO_ENGINE.md`, "MMC5".
+
+**Adding another expansion** follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
    base = the page after it; generate `nes_<chip>_player_image.h`, `Nes<Chip>PlayerImage.kt` and fixtures from a
    FamiStudio-exported test text; check the existing builds' outputs stay byte-identical.
@@ -307,14 +528,15 @@ VRC6 first. Decisions (made on the user's behalf; see Open questions):
    `NesPlayer` entry in `nes_players.c` (`NES_EXPANSION_<CHIP>`, channels, duty range, symbols), its opcode and
    duty rules in `nm_walk_entry`, an ops table in `nes_chip.c` registered in `chip_engine.c`, a host test.
    `NM_MAX_*` grow to the largest build.
-3. Kotlin: a `NesExpansion` entry (chip, extra channels), a `NesChip` (label, duty range, its instrument fields), a
-   `NesPlayer` entry, channel names/kinds appended to `NesRules`, its effects/opcodes in `FamiStudioLowering`, its
-   text attributes in `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the
-   "NES" family shows it under New/Load demo), Instrument view rows for chip-specific fields, help, golden songs.
+3. Kotlin: a `NesExpansion` entry (chip, channel names and kinds), a `NesChip` (label, duty range, its instrument
+   fields), a `NesPlayer` entry, its effects/opcodes in `NesRules` and `FamiStudioLowering`, its text attributes in
+   `FamiStudioText`, a `Nes<Chip>System` object (id, name, demo) in `SoundSystems.ALL` (the "NES" family shows it
+   under New/Load demo), Instrument view rows or pages for chip-specific fields, help, golden songs.
 4. Docs: a section here and in `docs/AUDIO_ENGINE.md`.
-Chips with instruments unlike envelopes (VRC7 patches, N163 waves, FDS waves and modulation) need their own
-instrument fields and editor pages; songs combining several expansions would need FamiStudio's multi-expansion
-engine build and a system per combination, so they are left out unless asked.
+Chips with instruments unlike envelopes need their own instrument fields and editor pages (the VRC7's patch page; N163
+waves, FDS waves and modulation next); chip state the engine keeps once (the VRC7's sustain overrides) is a song
+setting. Songs combining several expansions would need FamiStudio's multi-expansion engine build and a system per
+combination, so they are left out unless asked.
 
 ## SID backend (C64)
 
@@ -669,218 +891,408 @@ Twisted Electrons' BlastBeats, which all present OPL3 with few controls:
 - Tests: `Opl3EditorTest` (columns, cursor walk, per-column edits, copy/paste, OFF, chord text, every instrument
   page, empty slots, 4-op listening; one-column systems keep four fields).
 
-### YM2612 (Mega Drive): driver investigation and decisions (2026-11-08, branch `ym2612-spike`)
+### YM2612 (Mega Drive): XGM2, PCM and FM3
 
-Decision rule (the integrator's, on the user's behalf): if SGDK's XGM driver can run in the loop, build that; else
-fall back to the OPL3 approach (own player, chips driven directly, VGM export). **Result: XGM in the loop is
-feasible and is what `"ym2612-fm"` does.** The full contract is `docs/AUDIO_ENGINE.md`, "YM2612".
+The engine keeps a real Mega Drive driver in the loop: Thor Tracker's row player
+→ separate packed FM/PSG streams → SGDK's unmodified XGM2 driver on `z80.h`
+→ ymfm YM2612 and the SN76489. SGDK commit `9a78a441` is MIT; its assembler
+is an offline tool. The assembled 8192-byte driver is checked against SGDK's
+`drv_xgm2`, not replaced by a host-side approximation.
 
-Evidence (SGDK `github.com/Stephane-D/SGDK` commit `9a78a441`, 2026-10-20; spike tools in `/tmp/ym_bench/`):
-
-- **Licence**: the whole SGDK repository is MIT (`license.txt`: "MIT License - Copyright (c) 2025 Stephane
-  Dallongeville"); neither the driver source `src/snd/drv_xgm.s80` (and its includes `inc/snd/z80_def.i80`,
-  `z80_mac.i80`, `z80_fct.i80`) nor `tools/xgmtool` carry other terms. Games link the assembled driver from
-  `lib/libmd.a`. SGDK's assembler `tools/sjasm` (SjASM 0.39j, Konamiman 2021 after Sjoerd Mastijn) is zlib.
-- **Provenance**: `drv_xgm.s80` assembled with SGDK's own sjasm (built from `tools/sjasm/src` on Linux) is
-  byte-identical to the `drv_xgm` symbol in SGDK's prebuilt `lib/libmd.a` (5888 bytes, sha256 `557fe542…cf31e`).
-- **What the driver needs from the 68000**: nothing at play time but a few writes into Z80 RAM, all in
-  `src/snd/xgm.c`: load the driver, the sample id table (`$1C00`), the music address (`PARAMS+$00`), the play
-  command (`COMMAND` bit 6), and per vertical interrupt `PENDING_FRM` += 1 (`PARAMS+$0F`, after `MODIFYING_F` at
-  `+$0E` reads 0: `setNextXFrame`). The Z80 does everything else (prefetches a frame of music data through the
-  bank window `$8000`, executes it, mixes PCM in cycle-counted 254-cycle slots). So the engine emulates the Z80
-  (floooh `z80.h`, cycle-stepped, the `m6502.h` pin), the YM2612, the PSG and the 68000's pokes; no 68000 emulation.
-- **Format**: XGM is a register stream, not a tracker format. `xgmtool` (1.76) turns a VGM into XGM (per frame:
-  YM registers diffed against a state and re-emitted in a canonical order, A4/A0 pairs together, key writes kept
-  between the register writes before and after them, PSG diffed; `VGM_cleanCommands`, `XGM_extractMusic`) and XGM
-  into the compiled **XGC** the driver reads (frames prefixed by their size, PSG split into envelope/tone
-  commands, at most 6 key writes per command, D1L/RR "state" commands for pause, frames above 250 bytes split with
-  a frame-skip command, 3 empty frames in front for PCM alignment, `$2B` writes removed). SGDK's `rescomp`
-  accepts a `.vgm` or `.xgm` resource and runs `xgmtool` to get the XGC. So Thor Tracker still needs **its own
-  player** (rows and effects to register writes, as for the OPL3); its per-tick writes are the VGM, and the XGM/XGC
-  come from them by xgmtool's algorithm (ported to C, `ym/ym_xgm.c`; the host test proves it byte-equal to xgmtool).
-- **Spike** (`/tmp/ym_bench/bench/xgm_feas.cpp`): the driver on `z80.h` with SGDK's 68000 pokes boots in 20415
-  Z80 cycles and plays XGCs that xgmtool made from SGDK's sample VGMs (`sonic1`, `midnight`, `toy_story`): about
-  15000 YM writes per second (mostly the DAC byte it rewrites every PCM slot). Z80 + driver alone cost 317 µs per
-  60 Hz frame on the dev PC (59659 Z80 cycles).
-- **Driver behaviour that matters for a tracker**: (1) it prefetches frame *n*+1 right after executing frame *n*, so
-  the engine produces frames one tick ahead (a live edit is heard one tick later, ≤ 20 ms); (2) it waits for the
-  YM2612's busy flag between writes (32 internal cycles ≈ 90 Z80 cycles, 1.3 YM samples), so a key-off and key-on
-  of one channel in one frame do retrigger; (3) its `initDAC` enables the DAC, but its PCM mixer rewrites `$2B`
-  from a saved value (0, as xgmtool strips `$2B`) whenever no PCM has played for 4 frames, so **FM 6 is a normal FM
-  channel** in songs without PCM; (4) XGM v1 advances one frame per vertical interrupt (60 Hz NTSC, 50 Hz PAL):
-  no multispeed.
-- **Cores** (`/tmp/ym_bench/bench/core_bench.cpp`: the driver's writes for 20 s of `midnight`/`toy_story`
-  captured with Z80-cycle timing and replayed into each core, dev PC): **Nuked-OPN2 1.0.9** (`335747d7`,
-  LGPL-2.1-or-later, die-accurate, clocked per internal cycle) 886-902 µs per 60 Hz tick; **ymfm** (`81aec25c`,
-  BSD-3-Clause, per sample) 165-204 µs. Against Nuked: sample correlation 0.66 / 0.91, 20 ms loudness-envelope
-  correlation 0.994 / 1.000 (output scale ×7.0); both model the YM2612's 9-bit DAC discontinuity. Interleaved
-  with the cycle-stepped Z80 Nuked cost 1.64 ms per tick. With the OPL3's measured device ratios (Konkr ≈ 2.6× the
-  dev PC for Nuked, 3.3× for ymfm) the Nuked machine would need ~3.5-4 ms per 16.7 ms tick on the Konkr, twice the
-  SID 8580 (the heaviest system so far, 1.8 ms); ymfm ~1.6 ms. **Chosen: ymfm** (not affordable on the weakest
-  device with the Z80 in the loop). The busy flag the driver polls is modelled through ymfm's interface (32 × 6
-  YM clocks after each data write, ymfm's own figure) on the Z80's clock.
-- **PSG**: our own SN76489 (`ym/ym_psg.c`, the Sega VDP variant: 16-bit LFSR, white-noise taps 0x0009, 2 dB
-  steps), written from the SMS Power documentation; no third-party core.
-- **Not chosen**: XGM2 (SGDK 2.x, also MIT, Z80) — XGM v1 is what `rescomp`'s `XGM` resource and xgmtool ship
-  and its format is a plain register stream; XGM2 is a later option. Echo (zlib) and MDSDRV (zlib) sequence on the
-  68000 (would need a 68000 emulator in the engine). GEMS is proprietary.
+XGM2 replaces XGM1 completely. Its three PCM channels mix signed 8-bit samples
+into the DAC that replaces FM 6's output; there is no extra software mixer
+outside the driver. The SN76489 remains the Sega VDP variant with white-noise
+taps `$0009`. ymfm (`81aec25c`, BSD-3-Clause) supplies FM synthesis, timer
+and busy behavior. Runtime/layout details are in `AUDIO_ENGINE.md`, "YM2612".
 
 Decisions:
 
-- **Engine** (`"ym2612-fm"`): our player (`ym/ym_player.c`, specified in `docs/AUDIO_ENGINE.md`, mirrored by an
-  independent Python reference) → per-tick writes → XGC frames (`ym/ym_xgm.c`, xgmtool's algorithm) streamed into
-  the emulated cartridge → SGDK's XGM Z80 driver on `z80.h` → ymfm YM2612 + our SN76489, resampled with blip_buf.
-  What the engine plays is what `XGM_startPlay` plays in a game.
-- **Exports**: VGM 1.71 (the player's writes, YM2612 + SN76489) and XGM 1.01 (`.xgm`, the `rescomp` resource;
-  `XGM song "song.xgm"` in a game's `.res`), plus the compiled XGC (`.bin`, what `XGM_startPlay` takes directly).
-- **Channels**: FM 1-6, PSG 1-3, Noise (10 tracker channels). Channel 3 special mode and the DAC/PCM (which the
-  driver supports on FM 6, up to 4 mixed channels) are left out of this release. No chord effect (6 voices, none
-  spare): chords are notes across channels.
-- **Region**: NTSC (60 Hz, YM2612 7670453 Hz, PSG 3579545 Hz) by default, PAL (50 Hz, 7600489 / 3546895 Hz) per
-  song; pitch tables per region so A-4 = 440 Hz on both. A PAL song in a game needs `XGM_setMusicTempo(50)` on a
-  PAL console (SGDK's tempo is NTSC-based by default).
-- **Instruments**: 64 slots (shown as two banks, FM voices and PSG sounds, over the one numbering), each empty, an FM instrument (the chip's operator registers: DT/MUL, TL,
-  RS/AR, AM/D1R, D2R, D1L/RR, SSG-EG per operator; algorithm, feedback, AMS/FMS; drum sweep) or a PSG instrument
-  (software envelopes as on the NES: volume, arpeggio and pitch, one value per tick; noise mode; drum sweep — the
-  spike's attack/decay/sustain/release record was replaced, see below). FM slots play on FM channels, PSG slots on PSG
-  and Noise. Drums are pitched instruments with the sweep, as on the OPL3.
-- **Effects** (FamiTracker/OPL3 letters where meanings match, up to 4 columns): `0xy` `1xx` `2xx` `3xx` `4xy` `8xy`
-  (FM pan) `Axy` `Bxx` `Cxx` (FM 00-7F, PSG 00-0F) `Dxx` `Exx` (feedback lock) `Fxx` `Gxx` `Ixx` (brightness lock,
-  00-7F) `Lxx` (LFO: 00 off, 08-0F on at rate 0-7) `Mxy` (ratio lock) `Nxy` (noise mode lock) `Pxx` `Sxx`.
-- **Noise**: fixed rates (clock/512, /1024, /2048) or PSG 3's period ("pitched": the note sets it, periodic noise
-  sounds at the note); while pitched noise sounds it owns PSG 3, which is silent.
-- **Cost: exact pass replay** (2026-11-08, after the Konkr measured 1.9 ms per warm tick, 1.3 ms of it the Z80 and
-  driver): without PCM the driver spends ~92 % of its cycles in fixed code that reads nothing the music changes
-  (its PCM mixer and its frame-wait loop). The machine records such a pass once and replays it whenever it starts
-  with the same inputs (chips run alone and get its writes at the same cycles; the Z80 resumes in the recorded
-  state), so the driver and its timing stay exactly the spike's: the host test runs replayed and fully stepped
-  machines side by side and compares samples, chip writes, positions, Z80 state and RAM. Dev PC 695 → 352 µs per
-  tick, ymfm now two thirds of it. Rejected: running the Z80 only until the frame is done (or skipping the mixer)
-  — cheaper to write but it changes when the driver executes frames and how far it lags behind heavy ones, which
-  a game with the same XGC would not do.
-- **PSG instruments as envelopes** (the user's NES-like editor): the spike's ADSR record became references to
-  FamiStudio-style volume/arpeggio/pitch sequences in the image's data region (`docs/AUDIO_ENGINE.md`, "Image
-  layout"); OFF plays the volume envelope's release tail, or silences a note without one.
+- Preserve the original ten FM/PSG lanes and their 57536-byte data capacity.
+  Append PCM 1-3 rather than repurposing existing lanes.
+- Keep one shared bank of 64 typed instruments: FM voice, PSG sound or PCM kit.
+  Notes select a kit key; the instrument column selects the kit. This permits
+  pitched drums and chromatic sampled sounds without encoding drum type as pitch.
+- PCM sources: at most 64, sharing 256 KiB; signed 8-bit at 1..48000 Hz.
+  WAV import reports stereo downmix and conversion above 48 kHz. Per-key pitch
+  is −48..24 semitones, kit level 0..15. Lowering compiles every mapped key,
+  including keys used only for audition, into at most 123 distinct variants and
+  a 1 MiB bank. Identical waveforms share storage. No truncation or silent fallback.
+- PCM plays one-shots. No runtime PCM pitch/volume effects or sample loops;
+  level and pitch are compiled. OFF/`Sxx` stop a sample, `Gxx` delays it, and
+  global `B`/`D`/`F`/`L` remain available.
+- FM3 special mode uses four instrument pitch offsets, ±4 octaves in
+  1/64-semitone units, relative to the channel's note/effects. Other FM channels
+  ignore them. This is one four-operator voice, not four extra tracker lanes.
+  No Timer-A CSM: XGM2 needs that timer for PCM.
+- FM 6 and PCM share the DAC/output path and stereo routing. PCM mute stops
+  that driver's voice; unmute admits future notes rather than restarting an
+  old sample. Muting FM 6 does not mute the shared DAC.
+- No chord effect: FM voices are still scarce, so chords use separate lanes.
+  PSG envelopes and its noise/tone-3 coupling are unchanged.
+- NTSC/PAL select real console clocks and frame timing. Notes are absolute
+  C-0..B-7, A-4 = 57; tonal tuning is lowered to `Pxx`, never onto PCM lanes.
+- Export VGM from actual driver writes (DAC included), WAV from playback,
+  and unpacked/packed XGM2. `.xgm`/`.xgc` now require XGM2-capable consumers;
+  old XGM1 files/drivers are not a compatibility target.
 
 ### YM2612 model, lowering and exports
 
-- **System** (`system/ym2612`): `YmSystem`, id `"ym2612-fm"`, "Mega Drive (YM2612 + PSG)", ten channels `FM 1`-`FM 6`
-  (`ChannelKind.VOICE`), `PSG 1`-`PSG 3` (`PULSE`) and `Noise` (`NOISE`, not tonal: its notes only matter in pitched
-  mode), four effect columns each, notes C-0..B-7 (absolute 0..95 = the player's note; FamiTracker-style names, A-4 = 57
-  = 440 Hz), 64 instrument slots shown as two banks over the one numbering — `FM voices` (FM 1-6) and `PSG sounds` (PSG
-  1-3, Noise), so the editor keeps a current sound per kind (`SoundSystem.defaultInstrument`: the first slot of the
-  bank's kind) — at most 256 orders. Ticks per second follow the region: 59.92 (NTSC, MCLK / (3420 ×
-  262)) or 49.70 (PAL). OFF is key off (FM release; a PSG sound jumps to its volume envelope's release point, or is
-  silent at once without one). Song settings (Song view): Region (NTSC/PAL) and LFO (off or rate 0-7, register $22 at
-  the song start). Constants come from `backend/YmPlayerImage` (generated from the C headers).
-- **Chip data** (`YmSound`): 64 slots, each `null` (empty: an error when a cell names it) or a `YmInstrument`, stored
-  with `"type"`: `YmFmInstrument` (`"fm"`: `algorithm` 0-7, operator 1 `feedback`, the LFO depths `ams` 0-3 and `fms`
-  0-7, four `YmOperator`s holding exactly the chip's register fields `dt mul tl ks ar am d1r d2r sl rr ssgEg`, and
-  the drum `YmSweep`) or `YmPsgInstrument` (`"psg"`: FamiStudio-style `volume` 0..15, `arpeggio` −64..63 semitones and
-  `pitch` −64..63 sixteenths of a semitone envelopes, one value per tick, as `NesEnvelope` (loop, and a release point
-  on the volume envelope only), `pitchRelative`, the Noise channel's `noise` mode — white/periodic and clock/512,
-  /1024, /2048 or pitched by PSG 3 — and the sweep); `pal` and `lfo`. FM slots play on FM 1-6, PSG slots on PSG 1-3
-  and Noise; a slot on the wrong kind of channel is an error. **PSG envelopes instead of the spike's ADSR** (decided
-  on the user's behalf): the NES editor's envelopes are what chiptune users know, arpeggio envelopes give PSG chords
-  without spare voices, and the editor reuses the NES envelope editor.
-- **Curated controls** (`YmCurated`, the OPL3's rule: the operator registers are the instrument; each control reads the
-  fields it owns, shows the nearest entry "≈" after hand edits and writes only its own fields): the 8 algorithms
-  (name, one-line diagram and routing edges/carriers for drawing: Chain, Two into chain, 1 and chain into 4, Pair and
-  3 into 4, Two pairs, One into three, Pair and two sines, Additive), 26 ratio sets of four multipliers with detune
-  patterns ("chorus": operators 1-2 up, 3-4 down; "shimmer") including the E-piano tine 14:1:1:1 and bells, 11 SSG-EG
-  presets (off; saw/bounce/rise shapes on the modulators — the tone cycles — or the carriers — the volume cycles or
-  holds), brightness and level 0-127 (127 − the lowest modulator/carrier TL, shifting the group together), attack
-  (every AR), decay (carriers' D1R), tone decay (modulators' D1R), sustain 0-15 (every SL), sustain rate (every D2R),
-  release (every RR), feedback, key scaling Off/Soft/Medium/Strong (KS 0-3 on every operator), vibrato depth (FMS) and
-  tremolo depth (AMS, with AM on the carriers). Changing the algorithm moves operators between roles and keeps level
-  and brightness as before.
-- **Presets** (`YmPresets`, 24, categories FM/DRUM/PSG/NOISE): Slap bass, Finger bass, Brass, E-piano, Bell, Strings,
-  Lead, Organ (additive), Pluck, Pad; FM drums Kick (sweep +30 → 0), Snare (feedback noise over a +12 → 0 body), Tom
-  (+12 → −2), Hi-hat and Crash; PSG lead (volume loop with a release tail and a delayed pitch vibrato), PSG pluck, PSG
-  arp major/minor (arpeggio envelopes); Noise snare, hat, open hat, a pitched white-noise tom with a sweep and the
-  pitched periodic Buzz bass. New songs have them in slots 01-24.
-- **Lowering** (`backend/YmLowering`): the arrangement (`YmSystem.arranged`: parked orders removed; the loop order and
-  every `Bxx` in any column renumbered) into the layout of `docs/AUDIO_ENGINE.md`: each order's rows = its pattern's
-  length; each (order, channel) track encoded as the player reads it, byte-identical tracks stored once in first-use
-  order; then the PSG envelopes (slots ascending; volume, arpeggio, pitch; byte-identical envelopes stored once; an empty
-  envelope is `$FFFF`); every filled slot is written (instrument count = the highest).
-- **Tunings** (`FinePitch` `Pxx`, as the OPL3): `P80+n` in the first free effect column; every degree within 0.8 cents.
-- **Validation** (`YmValidator`): structural (shapes, ranges, 64 slots, the LFO byte, every operator and envelope
-  field) and what `ym_load_image` rejects, as messages naming pattern, channel and row: an empty slot, an FM/PSG
-  instrument on the other kind of channel, effects a channel does not play (`8`, `E`, `I`, `M` FM only; `N` Noise
-  only), `Bxx` past the last order, `Cxx` above 7F (FM) or 0F (PSG), `Exx` above 7, `F00`, `Ixx` above 7F, `Lxx` not
-  00/08-0F, `Mxy` operator not 1-4, `Nxy` out of range, unknown effects, data beyond the image's 56.2 KB. Warnings (one
-  straight pass): a first note of an order without instrument, locks on rows without a note, `Gxx` at or beyond the
-  speed, PSG notes below A-2 (the 10-bit period's floor), PSG 3 notes while pitched noise owns PSG 3, and **heavy rows**:
-  the YM writes a row's key-ons need, estimated from the shadowed registers (a different instrument ≈ 30, changed locks
-  8, a retrigger 4), above the XGM driver's ~90 per frame (the song's first row, which the reset makes heavy anyway, is
-  not reported).
-- **Exports** (`YmExport`): `.vgm` (VGM 1.71 + GD3), `.xgm` (SGDK's `rescomp` `XGM` resource, with the GD3) and `.xgc`
-  (the compiled stream `XGM_startPlay` takes; the audio document calls it `.bin`, xgmtool's default; `.xgc` keeps it
-  apart from other binaries) through `YmExport.renderer`, which each host registers (Android JNI
-  `ChipAudio.nativeYmExport`, Deck cinterop over `ym/ym_export.h`). Ten minutes of ticks at the region's rate end
-  songs that never return to their loop point.
-- **Project files**: backend `"ym2612-fm"`, Mega Drive data version 1 (README, "Project format").
-- **Golden tests** (`YmGoldenTest`, `tools/audio/ym/ym_golden.py`): the native host test's song (`ym_song.test_song`)
-  and a features song (PAL, LFO rate 7, notes C-0 and B-7, FM slot 64 and PSG slot 63 behind empty slots, every
-  operator field at its extremes and every SSG-EG shape, AMS 3/FMS 7, algorithm 7, extreme sweeps, a volume loop with a
-  release point, negative arpeggio values, a relative pitch envelope, a 256-value envelope, an instrument without
-  envelopes and one sharing another's (stored once), noise periodic and white at every rate incl. pitched, `Nxy`
-  locks, four effect columns and blank columns before used ones, an instrument without a note, orders of 64, 20 and 1
-  rows, `Bxx`/`Dxx` across a parked order) rebuilt from Thor Tracker's model lower to exactly the bytes the reference
-  builder writes. `YmModelTest`: channels and effects per channel kind, project round trips, presets, curated controls
-  read back what they write and approximate readings, tunings, validation and warning messages, song settings,
-  arrangement, audition checks, the export seam, the demo.
-- **Demo**: "Neon Causeway" (`YmDemoSong`, A minor with a major dominant, Am-F-G-E and a Dm-G-C-E bridge, speed 6 =
-  150 BPM): a square FM lead with vibrato, two portamento glides and a falling slide with a fade; a slap bass with
-  brightness-locked octave pops; brass stabs on two channels panned left and right (strings in the bridge); swept FM
-  kick, FM snare, toms and a crash; PSG chord arpeggios from arpeggio envelopes (doubled an octave up in the bridge), a
-  PSG echo of the lead three rows late, noise hats and pitched-noise toms in the fill. Intro, theme A, bridge, theme
-  A, fill; loops to theme A; LFO rate 2. No errors or warnings; `exportSamples` writes `neon-causeway.{thor,ymimg}` and
-  `tools/audio/render_ym_image.sh` renders the image and its exports.
+`YmSystem` retains id `"ym2612-fm"` with thirteen channels, four effect columns
+and at most 256 orders. The banks are views over the same slot numbering:
+FM voices on 0-5, PSG sounds on 6-9, PCM kits on 10-12.
+Song settings are Region, LFO and FM 3 mode.
+
+`YmSound` contains the slots, `pal`, `lfo`, `fm3Mode` and `pcmSamples`:
+
+- `YmFmInstrument`: algorithm, feedback, AMS/FMS, four operator register sets
+  (`dt mul tl ks ar am d1r d2r sl rr ssgEg`), drum sweep, and four `ch3` offsets.
+- `YmPsgInstrument`: volume/arpeggio/pitch envelopes, relative-pitch flag,
+  white/periodic noise source and drum sweep.
+- `YmPcmInstrument`: name, fixed level and note-to-sample/pitch mappings.
+
+Backend data version 2 migrates version 1 by adding three empty tracks to every
+pattern, including parked/unplayed patterns. Orders, tuning, notes and effects
+are retained. Other backends' formats are unchanged.
+
+`YmLowering` first compiles the PCM bank, refusing overflow before changing the
+output image. Tonal tracks/envelopes keep their original prefix and capacity.
+The appended area holds FM3 offsets, PCM order/key/variant tables, PCM patterns
+and bank. Pattern/envelope and waveform deduplication are deterministic.
+Arrangement still removes parked orders and renumbers every `Bxx` column.
+`YmValidator` and the native loader enforce channel kinds, effect support,
+sample references and bounds; an unmapped PCM key is reported.
+
+The curated FM controls still operate on the chip registers rather than a
+second patch representation. Algorithms, ratio/detune groups, brightness,
+carrier level, envelopes, SSG-EG, key scaling and LFO depths retain the OPL3
+editor's "≈" convention for hand-edited values. Presets and the musical content
+of **Neon Causeway** are unchanged. **Night Ferry** is a separate PCM/FM3
+verification project exported by `exportSamples`.
+
+`YmExport.renderer` is registered by Android JNI and Deck cinterop over the
+same `ym_export` entry point. Menus use explicit **XGM2 (.xgm)** and
+**packed XGM2 (.xgc)** labels; VGM and unpacked XGM2 carry GD3, packed XGM2 does
+not. The bounded export duration is ten minutes when no declared loop is reached.
+The shared WAV renderer runs the same chip engine.
+
+Behavior tests cover version migration (including parked patterns), tonal
+capacity, PCM compilation limits and deduplication, mapping, import conversion,
+FM3 lowering, editor interactions and clipboard identity. Golden fixtures
+compare Kotlin lowering to the independent Python builder.
 
 ### YM2612 editor
 
-- **Shared FM editor** (`system/fm`): the OPL3 instrument painter's pieces moved into `FmInstrumentPainter` — the bank
-  column, page tabs, setting rows with the name cursor, the Expert register grid (one column per operator, carriers
-  marked ♪), the algorithm diagram (a routing of operator boxes on a grid: `FmRouting.chains` for the OPL3's chains,
-  explicit positions with elbow arrows between rows for the OPN2's eight algorithms), the envelope sketch in dB
-  (`FmEnvelopeSketch`: attack, decay, held level with an optional fall — the YM2612's sustain rate — release, the
-  modulators' tone decay, and SSG-EG shapes drawn from the attack's end to OFF) and the drum sweep's pitch curve — and
-  `FmControls` (most-used channel, the sweep's default speed, preset stepping). The OPL3 screens are drawn by the same
-  code as before: all 17 Deck renders of its Sound/Expert/Drum/Chords pages, Thor sizes, Pattern and Help were
-  pixel-identical before and after. The NES envelope step plot moved into `EnvelopePlot` (the NES and the Mega Drive's
-  PSG sounds draw and touch-draw with it; NES renders pixel-identical too).
-- **Instrument view** (`YmInstrumentView`, `YmInstrumentPainter`): head rows Slot, Name, Listen on, **Type** (FM voice /
-  PSG sound: Edit switches, giving the slot the other kind's starting sound with its name kept, one undo step), Page.
-  *FM voices*: *Sound* — the curated controls of `YmCurated` (preset, algorithm, ratios with detune, brightness,
-  level, feedback, attack, decay, sustain, sustain rate, release, tone decay, key scaling, vibrato/FMS,
-  tremolo/AMS, SSG-EG; "≈" for hand-edited readings; vibrato and tremolo dimmed while the song's LFO is off) beside the
-  drawn algorithm and the first carrier's envelope; *Expert* — algorithm, feedback, AMS, FMS as stored, then DT, MUL,
-  TL, KS, AR, AM, D1R, D2R, SL, RR and SSG-EG per operator (←→ or L1/R1 between operators; AM switches on tap; SSG-EG
-  steps off, 8-15); *Drum* — drum presets and the sweep. *PSG sounds*: *Volume*, *Arpeggio*, *Pitch* — the NES envelope
-  editor (length, loop, release on volume, relative/absolute pitch, steps drawn with Edit+↑↓/←→ or by touch, the
-  same `NesEnvelopes` edits) — and *Noise·Drum* (white/periodic, rate /512, /1024, /2048 or pitched, dimmed unless Listen
-  is Noise; the sweep). Presets list the slot's kind (FM voices and drums, or PSG and noise sounds); a noise preset
-  moves Listen to Noise. An empty slot shows the pages of the Listen channel's kind and Edit on Slot (or any setting)
-  makes that kind's starting sound (Lead or PSG lead). Listen plays FM voices on FM 1 when Listen is a PSG channel, PSG
-  sounds on PSG 1 when it is an FM channel. Every edit is one undo step (`YmEdits`: `setYmInstrument`, `editYmFm`,
-  `editYmPsg`, `editYmEnvelope`; copy/paste a sound, or one PSG envelope into another envelope page).
-- **Entry sounds per kind**: the editor's entry sound is per bank, so the system declares two banks over the one slot
-  numbering — FM voices (FM 1-6) and PSG sounds (PSG 1-3, Noise) — and `SoundSystem.defaultInstrument` gives each
-  bank's first entry sound (the first FM slot, the first PSG slot): notes entered on PSG lanes of a new song get a PSG
-  sound without choosing one. Choosing a slot in the instrument view selects it in its kind's bank.
-- **Shared views**: New and Load demo list the Mega Drive through `SoundSystems`; the Pattern view shows ten lanes
-  (FM 1-6, PSG 1-3, Noise, which has its own lane colour) with up to four effect columns each and sideways lane
-  scrolling (the OPL3's mechanism, unchanged); Song lists Region and LFO; Keyboard and Sketch play every channel,
-  Noise as a non-tonal channel (no scale or chord reference). Help: the effects page and the three instrument pages.
-- Tests: `YmEditorTest` (ten channels and columns, notes on FM and PSG lanes getting their kind's sound with two effect
-  columns, every FM page, PSG envelopes and noise, empty slots and the type switch, noise presets and copy/paste, Help
-  and song settings).
+The shared FM painter supplies routing diagrams, envelopes, operator grids and
+pitch sweeps; PSG continues to reuse the NES envelope editor.
+
+- **Type** selects FM voice, PSG sound or PCM kit in the same slot, retaining
+  the name and making one undoable edit. Entry instruments are remembered per
+  bank, so a PSG or PCM lane does not inherit an incompatible FM slot.
+- FM pages: **Sound**, **Expert**, **Drum**, **Ch3**. The Ch3 page exposes the
+  song-wide mode and each operator's coarse/fine offset, marks offsets inactive
+  in normal mode, and auditions on FM 3.
+- PSG pages: **Volume**, **Arpeggio**, **Pitch**, **Noise·Drum**; noise controls
+  are meaningful on the Noise lane and pitched noise owns PSG 3's period.
+- PCM controls: kit **Level**, **Key**, **Sample**, **Pitch**, **Spread** and
+  the song's sample list with **Name** and **Add**. Add imports a WAV and maps
+  it at the selected or next free key; deleting a sample removes its bindings
+  in every kit and is undoable. Spread fills free nearby keys chromatically.
+- Pattern entry starts on a mapped PCM key; held horizontal editing moves
+  between mapped keys. Keyboard and inspector show the mapped sample name and
+  rate/pitch detail. One-shot rails use compiled duration and local row speeds;
+  as on NES, they are a local pattern estimate, not arrangement simulation.
+- Copying a PCM kit snapshots its referenced immutable samples, not just their
+  indices. Paste reuses matching destination samples by bytes/rate, appends
+  missing ones within the shared limits, and remaps keys atomically. Refusal
+  leaves the document unchanged; one undo reverses the whole paste.
+- Pattern shows all thirteen lanes with sideways scrolling. Song exposes the
+  three settings above. PCM and Noise are not scale/chord-reference lanes.
+  Help derives the channel-specific effects and mapped-sample controls.
+
+## AY-3-8910 / YM2149 (ZX Spectrum 128, MSX, Atari ST, Amstrad CPC)
+
+Roadmap step 7, released in 0.25.0 with native/reference, Android and SDL verification recorded in `VERIFICATION.md`. The
+engine contract (clocks and their sources, chip core, image, player, shared noise/envelope arbitration, effects, seek,
+VGM) is `docs/AUDIO_ENGINE.md`, "AY-3-8910 / YM2149".
+
+Decisions (made on the user's behalf; see "Open questions"):
+
+- **Four variants, one per stock computer**, grouped as the family "AY-3-8910 / YM2149" in New and Load demo, as the
+  NES expansions are: `AyZx128System` (`"ay-zx128"`, "ZX Spectrum 128 (AY-3-8912)", 1773450 Hz, 50.02 Hz frames),
+  `AyMsxSystem` (`"ay-msx"`, "MSX (AY-3-8910)", 1789772.5 Hz, 59.92 Hz), `AyAtariStSystem` (`"ay-atari-st"`,
+  "Atari ST (YM2149F)", 2005311.75 Hz, 50.05 Hz) and `AyCpcSystem` (`"ay-cpc"`, "Amstrad CPC (AY-3-8912)", 1000000 Hz,
+  50.08 Hz). The chip type decides the amplitude behaviour (AY: 16 levels and a 16-step envelope; YM: 32-level DAC and
+  a 32-step envelope, fixed volumes at the odd levels); the clock decides the period tables, so every note is true
+  pitch on every machine. Each machine's stock wiring: the ZX 128, MSX and ST mix to mono (no panning); the CPC's
+  stock stereo socket carries A left, C right and B on both sides, which its engine outputs (the internal speaker's
+  mono is not modelled). No stereo modifications (ABC/ACB boards) on the mono machines.
+- **Own player and own chip core**, as the OPL3: none of these machines has one standard music driver to put in the
+  loop, and none of them is emulated (no Z80/68000). Our core (`ay/ay_psg.c`) is written from the GI and Yamaha
+  manuals with MAME's `ay8910.cpp` and ayumi read for details, ayumi's measured DAC tables (MIT) and blip_buf output;
+  it can advance its exact state without synthesis, so play-from-position clocks the chip through the whole way from
+  the song start (no pre-roll approximation). ayumi itself is vendored for the host test's independent comparison.
+- **Exports**: VGM 1.71 (AY8910 family, with the variant's chip type and clock) and WAV. No `.ay`/`.sndh`/`.psg` or
+  executable formats (they would need a machine-specific player we do not run).
+- **Channels** `Channel A`-`Channel C` (`ChannelKind.PULSE`, tonal, bank 0), four effect columns each, one bank of 64
+  sounds ("Sounds"), notes from the variant's lowest reachable note (ZX/MSX A-0, ST B-0: tone periods stop at 4095; CPC C-0)
+  to B-7, FamiTracker-style names (A-4 = 57 = 440 Hz), at most 256 orders, OFF = key off (the volume envelope's release
+  or silence).
+
+### AY model, lowering and exports (`core`)
+
+- **Model** (`system/ay`): `AyVariant` (enum, serialized `"zx128"`, `"msx"`, `"atari-st"`, `"cpc"`; image byte, chip name,
+  YM flag, its system, engine id, clock and tick rate from `AyPlayerImage`). `AySound(variant, instruments: 64 ×
+  AyInstrument?)` (null = empty slot; a cell naming one is an error), `Song.ay`; a project's sound variant must match
+  its backend (structural error otherwise, as the NES expansions). `AyInstrument(name, volume, arpeggio, pitch,
+  pitchRelative, mixer, noise, envelope, sweep)`: five FamiStudio-style `NesEnvelope`s (volume 0..15 with loop and
+  release, arpeggio −64..63 semitones, pitch −64..63 sixteenths, mixer 0..3 = tone bit 0 / noise bit 1, noise period
+  0..31 — empty: 15 / 0 / 0 / tone only / no noise claim); `AyEnvelopeSettings(shape 0|8..15, auto, octave −8..7,
+  period 0..65535, sync)` — both the auto octave and the manual period are kept while the other mode is chosen
+  (lowering writes only the active one); `AySweep(start, end, speed)` as the Mega Drive's. Project files: backend =
+  the variant's id, AY data version 1.
+- **Shared resources, honestly**: the noise period and the hardware envelope are one per chip. Cells and instruments
+  only *ask* for them; the player gives each to the most recent key-on among the channels using it (AUDIO_ENGINE,
+  "Shared noise and envelope"). `AySystem.sharedState` simulates straight play row by row with the same rule and
+  tags the Pattern lanes (`ENV` owner, `env` playing another channel's envelope, `NZ` owner, `nz` using another's
+  noise period) and lists the owners with their shape/period in the inspector. Warnings name rows where a key-on
+  takes the envelope or noise from a channel still using it with different settings ("Channel B's note at 02:14 takes
+  the envelope (shape C, auto J00) from Channel A's held note (shape A, manual 0400); A plays B's envelope until B's
+  note ends").
+- **Lowering** (`backend/AyLowering.kt`): the arrangement (parked orders removed; loop order and every `Bxx`
+  renumbered) into the image, track encoding, sharing and envelope placement exactly as the Mega Drive's
+  (`YmLowering`, five envelopes per sound in slot order: volume, arpeggio, pitch, mixer, noise); byte-identical to the
+  reference builder `tools/audio/ay/ay_song.py` (golden test). Tunings: `P80+n` as the Mega Drive.
+- **Validation** (`AyValidator`): structural (shapes, ranges, 64 slots, variant, every instrument field and envelope)
+  and every `ay_load_image` reason (`AyPlayerImage.LOADER_PROBLEMS`) as messages naming pattern, channel and row;
+  warnings: a first note of an order without instrument, notes below the variant's lowest note, `Gxx` at or beyond the
+  speed, note settings on rows where nothing sounds, envelope/noise conflicts (above), `Jxx`/`Hxx`/`Ixx` on a note
+  whose sound has no hardware envelope shape and no `Exx`.
+- **Export** (`AyVgm`): `.vgm` through `AyVgm.renderer` (Android JNI `ChipAudio.nativeAyVgm`, Deck `DeckAyVgm`),
+  ten minutes of ticks at the variant's rate at most.
+- **Presets** (`AyPresets`, new songs fill slots 01..): Square lead (volume decay to a held level, delayed vibrato in
+  the pitch envelope), Pluck, Soft pad (slow volume swell), Arp major / Arp minor (arpeggio envelopes, the classic
+  one-channel chords), Buzzer bass (shape 8 saw, auto J00, tone off), Sync buzzer (shape 10 triangle with tone, sync),
+  Bell (shape 9 decay at a manual period, tone on), Envelope tremolo (shape 14, manual slow period, tone on), Kick
+  (tone + noise for two ticks, pitch sweep down), Snare (noise period envelope with a tone body), Closed hat / Open
+  hat (noise 1-2, short/long volume), Tom (sweep), Noise sweep (riser: noise period envelope 31 → 1).
+- **Demo** (`AyDemoSong.build(variant)`): one original composition for all four variants ("Copper Lane"), tempo
+  set per variant's tick rate so it has the same BPM: buzzer bass that hands the envelope to a synced lead in the
+  bridge (the shared envelope audible on purpose), arpeggio-envelope chords, noise drums sharing the noise generator
+  with a riser, vibrato and portamento, volume slides; no errors or warnings except the intentional, documented
+  shared-resource handovers (none on its default rows).
+
+### AY editor
+
+- **Instrument view** (`AyInstrumentView`, `AyInstrumentPainter`, `AyEdits`), controller-first, head rows Slot, Name,
+  Listen on, Page. *Sound* (curated): preset, gates (Tone / Noise / Tone + noise / Neither: a one-value mixer
+  envelope; "≈" when the mixer envelope varies), noise period (none = shared / 0-31: a one-value noise envelope;
+  "≈" when it varies), hardware envelope (Off or one of the eight shapes, drawn), period (Auto with octave / Manual
+  with value), sync tone, the drum sweep, with a reading of what the Listen note writes (TP, EP, the envelope's
+  frequency) and a line saying the noise and envelope are shared. *Volume*, *Arpeggio*, *Pitch*, *Mixer*, *Noise*:
+  the NES envelope editor (`EnvelopePlot`, `NesEnvelopes` edits) with each kind's range. *Envelope* (expert): the
+  raw R13 shape (all 16 values, the 8 aliases marked), auto/manual, octave, the 16-bit period (fine ←→, coarse
+  ↑↓), sync, and the chip's ramp drawn at the variant's resolution (16 or 32 steps). Every edit is one undo step;
+  empty slots take the Square lead on their first edit; Clear on Slot empties one; copy/paste a sound or an
+  envelope.
+- **Shared views**: Song, Keyboard, Sketch and Pattern as for the Mega Drive's PSG channels (three lanes, up to four
+  effect columns); Help: effects, the shared resources and the instrument pages; lane tags from `sharedState`.
+
+## PC Engine (HuC6280 PSG): decisions (0.26.0)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "PC Engine". Decided on the user's behalf (the user approved working through the
+chip roadmap autonomously and asked for every onboard feature, including the direct-DAC sample mode):
+
+- **Standalone system** `"pce-huc6280"`, "PC Engine (HuC6280)", no family. PC Engine games ship their own sound
+  drivers (no standard one with a GPL-compatible licence to run), so it follows the OPL3 and OPM: **our own player**
+  (C, mirrored by an independent Python reference) on an emulated PSG, exporting VGM and WAV; no HuCard/HES export.
+- **Core**: Mednafen 1.32.1's PSG (GPL-2.0-or-later), vendored unmodified behind a small shim: cycle-timed, the
+  hardware's sequential volume latching, the LFO and DDA as the author measured them on hardware. MAME's `c6280`
+  (BSD-3) was used only to cross-check register semantics. The **original HuC6280** revision (PC Engine; uncentred
+  amplitudes), not the HuC6280A.
+- **Clock**: NTSC, the CPU's 7.16 MHz (master 21.48 MHz / 3); periods are 12-bit at 3.58 MHz, so notes are A-0..B-7
+  (A-4 = period 254 = 440.40 Hz; the 12-bit period limits accuracy at the top, 19 cents at B-7). Tick: 60 Hz ×
+  multispeed from the host timer, like the OPL3/OPM.
+- **Six channels, no chords**, three sound kinds in one 64-slot bank: **tone** (a song wave: 32 steps × 5 bits, up to
+  64 waves per song, plus an optional per-tick wave sequence), **noise** (channels 5-6 only, as on the chip; the note
+  picks one of the 32 noise rates, note mod 32) and **sample** (the DDA: 5-bit frames streamed by the player from the
+  HuC6280's timer interrupt, as PC Engine drivers do; any channel; pitched by stepping through the frames relative to a
+  root note; loop or one-shot). Every kind has volume, arpeggio and pitch envelopes (loop and release points,
+  FamiStudio-style); there is no hardware envelope.
+- **Shared resources are song state**, changed by global effects: master balance (`X`), the LFO frequency and control
+  (`L`, `M`; channel 2's waveform modulates channel 1's period, channel 2 keeps sounding as on the chip) and the DDA
+  timer rate (`T`, 6991 Hz / (R + 1)). Per channel: volume (`C`, `A`), balance (`8xy`), wave (`W`).
+- **Samples** are user data: imported `.wav` files (resampled to the song's DDA rate and quantised to 5 bits on the
+  device) or the built-in starter kit synthesised in integer arithmetic at the song's DDA rate when it is added (no
+  third-party audio; samples already in a song keep their frames). Samples, patterns and envelopes share the image's
+  120 KB data region.
+- **Model** (`system/pce/PceSound.kt`): `PceSound` = 64 slots of `PceInstrument?` (null = empty), up to 64 waves (32
+  values 0..31 each), up to 64 `PceSample`s (5-bit frames, 1..65535), multispeed and the shared state at the song start
+  (master, LFO frequency and control, timer reload). `PceInstrument`: name, `PceKind` (TONE, NOISE, SAMPLE), wave,
+  four `PceEnvelope`s (volume 0..31, arpeggio −64..63, pitch −128..127 in 1/64 semitone, absolute or relative, and the
+  tone-only wave sequence; up to 255 steps, loop and release points), and the sample fields (sample, root note, loop,
+  loop start). Switching a sound's kind keeps the other kinds' fields. New songs get 12 built-in waves and 20 presets
+  (15 tone, 5 noise) in slots 01-20; samples come from the Sample page. Project files store `"pce-huc6280"`, backend
+  version 1.
+- **Lowering** (`backend/PceLowering.kt`): the layout of `docs/AUDIO_ENGINE.md` — patterns, then envelopes (identical
+  bytes stored once), then samples (identical data stored once); `PceGoldenTest` compares it with the independent
+  Python builder (`tools/audio/pce/pce_song.py`). `PceValidator` mirrors every loader check with a user-facing message
+  (noise sounds named on PSG 1-4, wave and sample indices, envelope shapes, the 64 KB reach of pattern and envelope
+  offsets, the shared data budget with sample bytes).
+- **Editor** (`PceInstrumentView`/`Painter`, reusing the shared FM painter base and the NES envelope plot;
+  `PceWaveView`/`Painter`; `PceSampleMenu`; `PceEdits`): rows Slot, Name, Listen on, Kind, Preset, Wave; pages per kind
+  (tone: Volume, Arpeggio, Pitch, Wave seq; noise: Volume, Arpeggio; sample: Sample, Volume, Arpeggio, Pitch). A noise
+  sound listens on PSG 5. The Wave view draws and reshapes waves and renumbers sounds, wave sequences and `Wxx` when
+  waves are inserted or deleted; deleting a sample renumbers the sounds that play later samples. Copying a sample
+  sound carries its sample's frames: pasting it (in any song, even after the sample was deleted) plays the song's
+  sample with the same frames or adds them as a new sample, as one undo step; with no room for a 65th sample the
+  paste is refused and the song is unchanged. The Song view rows are Multispeed, Master left/right, LFO frequency,
+  LFO control and DDA rate; the Pattern inspector and lane tags show the shared state at the cursor
+  (`PceSharedState`).
+- Demo: "Turbo Lanterns" (original, D minor): a pulse-width-cycling lead (wave sequence), `Wxx` glass arpeggios with
+  pans, bass, starter-kit D/A drums with a `T01` half-rate fill, noise hats and snares on PSG 5-6, an LFO passage
+  (PSG 2 silent with `C00`, `L`/`M` bending PSG 1) and a master fade-in (`X88`..`XFF`).
+
+## Konami SCC and SCC+ (MSX)
+
+Roadmap step 7 (more chips): the Konami SCC wavetable chip of MSX megaROM cartridges and its SCC+ variant, as two
+systems of one family ("MSX SCC…" in New and Load demo). The contract is `docs/AUDIO_ENGINE.md`, "SCC and SCC+".
+Decisions (made on the user's behalf; see Open questions):
+
+- **The chip alone, two variants.** `"msx-scc"` = K051649 (megaROM SCC: channels 4 and 5 share one wave RAM),
+  `"msx-scc-plus"` = K052539 in SCC+ mode (Sound Cartridge: five wave RAMs). Not an MSX: no PSG, no AY + SCC
+  combination, no machine emulation. Everything else is identical, so one image layout, player and machine serve both;
+  the image's variant byte picks the chip and each engine id loads only its own.
+- **Own player + chip core + VGM**, the OPL3 precedent: Konami's drivers are not free and no free MSX SCC driver is a
+  de-facto standard to run in the loop. Songs export as VGM (K051649 / K052539, which VGM 1.70 added) and WAV; no MSX
+  executable is claimed.
+- **Core: our C port of MAME's k051649** (BSD-3-Clause, notice kept), the emulator whose counter/latch model agrees
+  with openMSX's hardware notes and with libvgm (the VGM players' core). Rejected: emu2212 (MIT, plain C) — its key
+  enables change only at waveform wrap, its test-register rotation moves playback and it point-samples without band
+  limiting, all contrary to the measured hardware notes. The port renders level-change events into blip_buf (no
+  3.58 MHz loop) and advances silently in O(1), with identical state, so seeking is chip-exact.
+- **Clock**: 3579545 Hz (the MSX bus clock: BiFi's "fclock = 3,579,545 Hz"); f = 3579545 / (32 (P + 1)). The VGM header
+  carries 1789773 (the format's halved convention its players use; checked against libvgm's formula).
+- **Shared wave, honestly**: on the SCC the player gives RAM 3 to whichever of SCC 4 / SCC 5 made the latest wave claim
+  (a key-on, or a change of the wave it holds: `Wxx`, or a wave envelope step while its note is keyed, release tail
+  included); both channels always play it. Once a note is keyed off — OFF without a release point, a second OFF, or
+  its release reaching a final volume 0, which keys it off in that tick — its envelope no longer reaches the RAM (it
+  keeps the last wave there until the other channel claims it); only an explicit `Wxx` on that keyed-off channel
+  still claims.
+  The song check warns where the two overlap with different waves, the Pattern lane headers and inspector show what
+  RAM 3 holds (`sharedState`), and Help and the editors say so. SCC+ songs have no such rule.
+- **Instruments** are FamiStudio-style envelopes run by the player (the chip has none): volume (with loop and release),
+  arpeggio, pitch (absolute or relative) and a **wave envelope** (wave numbers per tick: wave sequences/morphs), plus
+  a `restart` flag (the waveform restarts at each note through the test register's bit 5). Envelopes reuse
+  `NesEnvelope` (same values, loop and release fields and ranges); the release rule differs from FamiStudio's for
+  arpeggio, pitch and wave (open questions). 64 slots, `null` = empty, like the OPL3.
+- **Waves**: 64 per song, 32 signed 8-bit samples each, always all present (an unused wave is silent), drawn in the
+  Wave view. Live edits of a sounding wave or instrument are heard from the next tick (the player reads the image every
+  tick), which suits wavetable editing; this differs from the OPL3 (sounding notes keep their registers).
+- **Effects**: the OPL3's movement/sequencing set (`0 1 2 3 4 A B C D F G P S`) with `Cxx` 00-0F, plus `Wxx` (wave lock)
+  and `Txx` (the chip's test register, exposed as hardware: restart, freeze, the unverified frequency modes). No chord
+  effect: five fixed voices.
+- **Pitch**: true pitch through a 768-step-per-octave period table (A-4 = P 253 = 440.40 Hz); the 12-bit divider limits
+  accuracy at the top (≤ 4.2 cents to G#5, ≤ 12 cents to G#6, +19 cents at B-7). Notes A-0..B-7.
+
+### SCC model, lowering and exports
+
+- **Systems** (`system/scc`): `KonamiSccSystem(variant)` with `SccSystem` (`"msx-scc"`, "Konami SCC (K051649)") and
+  `SccPlusSystem` (`"msx-scc-plus"`, "Konami SCC+ (K052539)"), family "MSX SCC"; five channels `SCC 1`-`SCC 5`
+  (`ChannelKind.WAVE`, tonal), four effect columns, notes A-0..B-7 (9..95; FamiTracker names), one bank of 64 slots,
+  60 ticks per second × multispeed (Song view: Multispeed 1-8), at most 256 orders, OFF = release (or cut without a
+  release point; a release ending at volume 0 keys the note off itself), `3xx` glides only into a held (unreleased)
+  note, fine pitch `Pxx` like the OPL3's. Constants come from `backend/SccPlayerImage` (generated).
+- **Chip data** (`SccSound`): `variant`, 64 nullable `SccInstrument`s (`volume`, `arpeggio`, `pitch`, `wave`
+  `NesEnvelope`s, `pitchRelative`, `restart`), 64 `SccWave`s, `multispeed`. A project whose backend and `variant`
+  disagree is a structural error. New songs get ten starter waves (Sine, Triangle, Saw, Square, Pulse 25 %, Pulse
+  12.5 %, Organ, Bell, Bass, Noise; the rest silent) and twelve presets in slots 01-12 (Lead, Bass, Bell, Pad, Pluck,
+  Organ, Kick, Snare, Hat, Arp lead, Echo, Morph: a wave-envelope sequence); `SccWaveShapes` makes the shapes.
+- **Lowering** (`backend/SccLowering`): the arranged song in the canonical layout (`docs/AUDIO_ENGINE.md`): tracks then
+  envelopes, one dedup map, W = 64, I = the highest filled slot; `dataSize` for the validator.
+- **Validation** (`SccValidator`): every `sc_load_image` check as a message naming pattern, channel and row (empty
+  slots, envelope lengths/loop/release/values, wave numbers, `Bxx`, `Cxx` above 0F, `F00`, `W00`/`Wxx` beyond 64,
+  unknown effects, data capacity), plus an empty envelope that still carries a loop or release point. Warnings (a
+  row-level walk of straight play, `SccWalk`, shared with the shared-state display; it counts ticks so a release ending
+  at volume 0 keys its note off at the player's tick): on the SCC, SCC 4 and SCC 5
+  sounding together with waves whose samples differ (once per stretch: order, row, both waves and who claimed last);
+  `Txx` bits 0-1 (unverified, VGM players ignore them), 2-4 (no effect), 7 on the SCC+ (ignored) and 6-7 (later wave
+  changes are lost until cleared); `Wxx` where nothing sounds; `Gxx` beyond the speed; an order's first note without
+  an instrument; notes above G#6 with their actual cents and period.
+- **Shared state** (`sharedState`): on the SCC the lane tags of SCC 4 and SCC 5 name the wave RAM 3 holds (`W05`, `W05+`
+  when the claiming instrument's wave envelope has several waves) and the inspector says who claimed it and where, and
+  whether the claiming note still steps (keyed) or left the wave reached at its key-off (keyed off); a non-zero test
+  register is listed on both variants.
+- **Exports**: `.vgm` (`SccVgm`, the native renderer registered by each host, like the OPL3's) and `.wav` (the generic
+  path). No MSX executable export: no MSX driver is in the loop.
+- **Demos**: "Cartridge Dusk" (SCC; D minor, 150 BPM): SCC 4 and SCC 5 play one organ instrument together or alternate
+  phrases ended by OFF, as the shared RAM allows; "Prism Lane" (SCC+; A major, 180 BPM): five waves at once, two waves
+  of its own and a `T20` bridge (waveform restart at every period write: vibrato buzzes like hard sync). Both without
+  errors or warnings; `SccDemoSong.shortest(variant)` is the one-row song the WAV test renders. `exportSamples` writes
+  `cartridge-dusk.thor`, `prism-lane.thor`, `scc-demo.sccimg`, `scc-plus-demo.sccimg`, `scc-shortest.sccimg` and
+  `scc-plus-shortest.sccimg`.
+- **Tests**: `SccModelTest` (round trips of both variants, validation and warnings, the shared-wave warning on the SCC
+  only, lowering bytes and dedup, arrangement, fine pitch, audition problems, shared state, demos), `SccGoldenTest`
+  (the reference builder's test, features and SCC+ songs rebuilt from the model lower to the same 65536 bytes) and
+  `SccEditorTest`.
+
+### SCC editor
+
+- **Instrument view** (`SccInstrumentView`, `SccInstrumentPainter`): the 64-slot bank (empty slots say how to start),
+  then rows Slot, Name, Preset, Listen on, Restart, Page, Length, Loop, Release (volume), Mode (pitch), Steps; L1/R1
+  switch the Volume, Arpeggio, Pitch and Wave pages, edited step by step like the NES envelope editor (`EnvelopePlot`,
+  given a value-range overload that leaves NES and Mega Drive drawing unchanged); the Wave page shows the waves it
+  steps through and points a following Wave view at the one under the cursor. Listening on SCC 4 or 5 of an SCC song
+  notes the shared RAM. Unlike the NES editor, a release point without a loop is allowed (the player defines it).
+- **Wave view** (`SccWaveView`, `SccWavePainter`): 64 waves of 32 signed samples; a name row, a thumbnail strip, tools
+  (Sine, Triangle, Saw, Square, Pulse with Edit+←→ width, Noise with Edit+←→ reseed, Invert, Shift left/right, Smooth,
+  Normalise, Use in sound) and the drawing grid (↑↓ pen by 8, Clear held + ↑↓ by 1, Edit held draws). Listen plays the
+  wave through a sound that uses it. On the SCC a wave SCC 4 or 5 plays carries the shared-RAM note.
+- **Help**: the effects page from `SccRules`, the Instrument, Envelopes and Waves sections and an "SCC and SCC+ wave
+  RAM" section.
+
+### YM2151 (OPM): decisions, model, lowering and editor (branch `opm-systems`, unverified source slice)
+
+Full contract: `docs/AUDIO_ENGINE.md`, "OPM". Decided on the user's behalf (the user approved working through the chip
+roadmap autonomously):
+
+- **Standalone system** `"ym2151-opm"`, "OPM FM (YM2151)", no family: the X68000's and arcade boards' chip has no
+  standard sound driver to run, so it follows the OPL3: **our own player** (C, mirrored by an independent Python
+  reference) on **ymfm's `ym2151`** (the vendored pin; `ymfm_opm.h/.cpp` fetched at that commit), exporting VGM and WAV.
+  ymfm rather than a die-accurate core: none with a GPL-compatible licence is vendored, ymfm's OPM uses David Viens'
+  chip-verified pitch table, and it shares the YM2612's code path already in the app.
+- **Clock: 4 MHz**, the X68000's (16 MHz / 4; MAME's `x68k.cpp`). Key codes are defined for 3.579545 MHz, so the
+  player subtracts 123/64 semitone (192.27 cents) to keep Thor Tracker's absolute pitch; the playable range is then
+  D#0..D-8. Arcade boards at 3.58 MHz are not a separate variant (a song plays at true pitch either way; only the
+  range ends and envelope/LFO speeds would differ by 11.7 %).
+- **Tick**: 60 Hz × multispeed from the host (as the OPL3), not the chip's timer B (on the X68000 drivers such as
+  MXDRV take their tempo from timer B; it makes no sound, so Thor Tracker's own tick keeps tempo semantics identical
+  across systems).
+- **Eight channels, no chords** (each channel is one hardware channel; no voice allocation).
+- **Shared resources are song state**, not per-voice settings: the LFO (rate, waveform, AMD, PMD), the noise
+  generator (exists only on FM 8's operator 4) and CSM/timer A are header fields (Song view rows) and global effects
+  (`L`, `W`, `T`, `V`, `N`, `Q`, `X`); instruments hold only what is per channel (PMS, AMS, AM enables) and the noise
+  flag/frequency of their FM 8 note. A noise sound named on FM 1-7 is an error, not silently ignored. The Pattern
+  inspector and lane tags show the shared state at the cursor (`SoundSystem.sharedState`).
+- **CSM** is the YM2151's real feature (timer A keys on all eight channels' operators at each overflow), modelled in the
+  ymfm wrapper by running ymfm's timers on the sample clock; auditions run without it (it would retrigger a released
+  note forever).
+- **Not exposed**: CT1/CT2 (X68000 ADPCM clock and floppy pins, not sound), timer B (no sound), the test register's
+  undocumented LFO reset, the X68000's separate MSM6258 ADPCM chip.
+- **Model** (`system/opm/OpmSound.kt`): `OpmInstrument` (algorithm, feedback, PMS, AMS, four `OpmOperator`s with the
+  register fields DT1, MUL, TL, KS, AR, AM, D1R, DT2, D2R, D1L, RR, `noise` + `noiseFrequency`, the drum sweep),
+  `OpmSound` (64 slots, multispeed and the shared state at the song start). Operators are numbered as in the
+  algorithm diagrams (1 = M1, 2 = C1, 3 = M2, 4 = C2); the lowering writes each to its register slot.
+- **Lowering** (`backend/OpmLowering.kt`) mirrors the OPL3's (`OpmGoldenTest` against `tools/audio/opm/opm_song.py`).
+- **Editor** (`OpmInstrumentView`, `OpmInstrumentPainter`, reusing the shared FM pieces unchanged): head rows Slot,
+  Name, Listen on, Page; *Sound* — the curated controls of `OpmCurated` (preset, algorithm, ratios with DT1 and DT2,
+  brightness, level, feedback, attack, decay, sustain, sustain rate, release, tone decay, key scaling, vibrato = PMS,
+  tremolo = AMS); *Expert* — algorithm, feedback, PMS, AMS, then DT1, MUL, TL, KS, AR, AM, D1R, DT2, D2R, D1L, RR per
+  operator; *Drum* — drum and noise presets, noise on/off and frequency, the sweep. A noise sound listens on FM 8.
+- Demo: "Sharp Corners" (original), all eight channels, the LFO, DT2 bells, noise drums on FM 8 and a CSM passage.
 
 ## OPN and OPNA (PC-88/98): YM2203 and YM2608
 
-**Status: source slice on branch `opna-systems`, not built, tested or listened to** (`docs/VERIFICATION.md`).
+**Status: 0.30.0/code 43 source integration on `opna-systems`, UNVERIFIED.** The focused native FM 3 regression passed 264/264 before integration; full builds, suites, device checks and listening remain pending (`docs/VERIFICATION.md`).
 
 - *Systems.* Two standalone systems in the family "PC-88/98" (New and Load demo list them together):
   `OpnSystem` = **PC-88/98 OPN (YM2203)** (`"ym2203-opn"`: FM 1-3, SSG 1-3) and `OpnaSystem` = **PC-88/98 OPNA
@@ -930,6 +1342,16 @@ Decisions:
 
 ## Open questions
 
+- OPM clock (decided on the user's behalf, per the brief): 4 MHz (X68000) only; a 3.579545 MHz (arcade) variant would
+  be a second system id with its own pitch offset (0) and range. Review if arcade-accurate envelope/LFO speeds matter.
+- OPM tempo source: the player's own 60 Hz × multispeed tick rather than the chip's timer B (which X68000 drivers use).
+  Timer B makes no sound, so nothing audible is lost; tempos are not expressed in timer B units. Review.
+- OPM noise: modelled as an FM 8-only instrument flag plus `Nxx` (the hardware has one noise generator on FM 8's
+  operator 4). Alternative: a song-level noise setting with FM 8 instruments ignoring it. Review.
+- OPM CSM in VGM players: the VGM carries the `$10`/`$11`/`$14` writes; whether a player emulates CSM key-ons
+  depends on its YM2151 core (ymfm and MAME do). Not checked against other players.
+- OPM curated lists and presets are a first proposal, like the OPL3's and YM2612's.
+
 - Should the system be switchable inside a song later (conversion), or only chosen with New? Proposed: New only for
   now.
 - NES instruments: one shared bank for all four channels (FamiStudio's way) rather than per-channel banks. Proposed:
@@ -941,27 +1363,19 @@ Decisions:
 - OPL3 `000` cannot be stored, so an arpeggio cannot be switched off on a row without a note (the next note without
   `0xy` plays plain; the player and reference treat an explicit `000` as "arpeggio off"). Proposed: accept, as on the
   Game Boy; a dedicated "arpeggio off" letter would be the alternative.
-- YM2612 channel 3 special mode and the DAC/PCM (SGDK's XGM driver mixes up to 4 PCM channels on FM 6): left out
-  of this release. PCM drums would need sample banks in the image and the XGM's PCM table. Proposed: a later step.
-- YM2612 driver: XGM v1 (`drv_xgm`) chosen; XGM2 (SGDK 2.00's newer driver and format) is not ported. Proposed:
-  revisit if games standardise on XGM2.
-- YM2612 heavy frames: XGM executes ~70-100 YM writes per frame; heavier frames (song start, the loop frame's full
-  dump, many simultaneous instrument changes) lag up to 3 ticks, faithfully. A lighter loop frame (only the registers
-  that differ) would shorten the loop lag but breaks byte equality with xgmtool. Proposed: keep xgmtool's frame and
-  warn about heavy rows in the validator.
-- YM2612 core: ymfm (BSD-3, ~2.4× cheaper per tick); Nuked-OPN2 (LGPL-2.1+, die-accurate) remains an option if
-  listening finds ymfm lacking. The Z80's bus wait states while accessing the 68000's ROM window are not modelled
-  (the driver reads the stream slightly faster than on hardware).
+- YM2612 performance: XGM2 must be measured with active PCM and paced hardware
+  playback. The old XGM1 silent-mixer pass-replay timings no longer apply.
+- YM2612 core: ymfm (BSD-3); Nuked-OPN2 (LGPL-2.1+, die-accurate) remains an option if
+  listening finds ymfm lacking. XGM2 now models three Z80 wait cycles for accesses
+  to the 68000 bus, including the ROM window and PSG port; chip clocks keep running.
 - OPL3 curated lists (algorithms, 22 ratio sets, 20 waveform combinations per operator count, key scaling, LFO) and
   the 17 presets are a first proposal; the user's own FM simplification ideas may replace them (they only read and
   write operator registers, so songs are unaffected).
 - YM2612 curated lists (8 algorithms, 26 ratio sets with detune, 11 SSG-EG presets, key scaling, LFO depths) and the
   24 presets are a first proposal, like the OPL3's; they only read and write operator registers and envelopes.
-- YM2612 heavy-row warning: the write estimate (≈30 per FM instrument change, 8 for changed locks, 4 per retrigger)
-  against a budget of 90 per frame is a heuristic from the spike's measurement (70-100 writes per frame), not a
-  simulation of the driver. Proposed: keep until device listening shows audible lag elsewhere.
-- YM2612 XGC export extension: `.xgc` (the audio document and xgmtool use `.bin`). Proposed: `.xgc`, which SGDK's
-  `rescomp` accepts as a `BIN` resource under any name.
+- YM2612 compiled export uses `.xgc`: import it into SGDK as a 256-byte-aligned, uncompressed `BIN` resource and call
+  `XGM2_play`. Do not recompile it with the pinned xgm2tool 1.08, whose XGM2 re-import corrupts loop offsets and PCM
+  signedness (see `AUDIO_ENGINE.md`). The unpacked `.xgm` is retained for format-aware tooling.
 - YM2612 editor (decided on the user's behalf): one Instrument view for both kinds, with a Type row that swaps a slot
   between FM voice and PSG sound (the old sound is lost except through undo); an empty slot takes the Listen channel's
   kind. Alternative: separate FM and PSG slot ranges. Review.
@@ -976,6 +1390,96 @@ Decisions:
   Half (FamiStudio's default). Review.
 - VRC6 mixing level: one DAC step = the 2A03's full pulse ÷ 15 (NESdev's "roughly equal" full pulses); no
   hardware or reference-emulator comparison yet. Listening may ask for a different balance.
+- FDS (decided on the user's behalf): true pitch with FamiStudio's note table shifted 24 notes on the FDS channel (a
+  one-cycle wave sounds as named: A-4 = 440 Hz on every chip); the FamiStudio text keeps FamiStudio's note numbers, which
+  FamiStudio names two octaves higher. Review.
+- FDS engine build: auto-mod remains enabled. A tagged manual-speed encoding and scoped loader correction support
+  all 0-4095 values instead of dropping the ambiguous low-byte range. FamiStudio text preserves the exact value;
+  its editor preview works, but upstream 4.5.3 assembly/NSF exports can reintroduce the bug. Review interoperability.
+- FDS `Ixx`/`Jxx` in one effect column: each sets half of the 12-bit speed, the other half taken from the channel's
+  speed at that row along the played order (FamiTracker's letters; FamiStudio's own FamiTracker import zeroes the other
+  half instead). Review with use.
+- FDS output: FamiStudio's measured DAC curve, a 1-pole 2 kHz low-pass and 2.4 × a full 2A03 pulse (NESdev); no hardware or
+  reference-emulator comparison yet. Listening may ask for a different balance or filter.
+- VRC7 sustain overrides (decided on the user's behalf): one song setting (`NesSound.vrc7Sustain`) instead of
+  FamiStudio's per-instrument checkboxes, because FamiStudio's engine applies the last loaded VRC7 instrument's to all
+  six channels; the exports write it into every VRC7 instrument. Review.
+- VRC7 custom patches stay per sound (FamiStudio's model, several custom sounds may take turns) rather than one song
+  patch; holding notes of two different custom sounds at once is a warning, not an error, since the chip itself plays
+  it (both sound like the one loaded last). Two deliberate corrections to FamiStudio's exporter preserve the editor's
+  musical behavior: restoring the shared patch at loop entries, and restoring it mid-song without retriggering an
+  explicitly no-attack note. The adversarial upstream-export golden covers both; FamiStudio 4.5.3 re-exports of our
+  text can reintroduce them. Review.
+- VRC7 `Pxx` means the pulse's detune converted to FM steps (one meaning on every channel, tunings work) rather than
+  FamiStudio's raw FM steps; the FamiStudio text carries the converted steps. Pitch envelopes stay raw (FamiStudio's
+  meaning: frequency steps × 8, + raises). Review.
+- VRC7 mixing level: one emu2413 output unit against the 2A03 pulse from rainwarrior's VRC7 level survey (FM about
+  +11 dB over a full 2A03 square), the VRC7 build's output gain lowered so six full FM channels do not clip; no
+  listening comparison with a VRC7 cartridge or NSFPlay yet. Listening may ask for a different balance.
+- SCC shared wave (decided on the user's behalf): on the K051649 the latest claim by SCC 4 or SCC 5 wins RAM 3 and the
+  song check warns about overlaps, rather than forbidding different waves on the two channels or silently giving SCC 5
+  priority. Review.
+- SCC envelope loops at a release (decided in the source spec, unreviewed): a released note stops every loop — volume,
+  arpeggio, pitch and wave — and runs each envelope to its end. FamiStudio (and the Mega Drive's PSG envelopes) move
+  only an envelope with a release point and keep looping the rest, so here Arp lead's looping arpeggio settles on its
+  last step and Morph's wave cycle stops during their release tails. A released note stays keyed (and its wave steps
+  keep claiming RAM 3) only while its release sounds: the tick that plays a final volume 0 keys it off. Review.
+- SCC test register bits 0-1 ("4-bit"/"8-bit frequency"): modelled as openMSX documents Manuel Pazos's measurements
+  (applied at period writes); BiFi's early tests reported other multipliers, MAME and libvgm ignore the bits. Exposed
+  through `Txx` with a warning; unverified on hardware.
+- SCC test register bit 7 on the SCC (freezes the shared RAM) and bit 6 (freezes all): the read-side rotation they also
+  cause is not modelled (the player never reads), and the bus-conflict spikes MAME lists for simultaneous CPU and chip
+  wave RAM access are not emulated.
+- SCC mixing: one channel at full volume and full-scale wave = 120 output units of the chip's 11-bit sum, × 48 into the
+  resampler (five full channels reach 0.88). No comparison with a recorded cartridge yet; listening may ask for
+  another level or the cartridge's analog filtering.
+- SCC 50 Hz (European MSX) timing is not offered: ticks are 60 Hz × multispeed, as Konami's Japanese releases ran.
+- PC Engine revision (decided on the user's behalf): the original HuC6280 (Mednafen's PC Engine default). The HuC6280A
+  (SuperGrafx, CoreGrafx I) centres channel amplitudes and clicks less; it would be a song setting. Review.
+- PC Engine noise: the note picks the rate (note mod 32, as Deflemask/Furnace map it) on a noise sound, rather than a
+  noise-rate envelope; arpeggios step through rates. Review.
+- PC Engine DDA: samples play from the CPU timer at one shared rate with a per-note step (nearest frame), as drivers
+  do on hardware; the VGM writes registers per interrupt (about 28 KB/s for one sample channel at 6991 Hz: the R6
+  write plus a wait; with more channels every R6 also needs a channel select, about 91 KB/s for two) instead of VGM
+  DAC-stream commands. CD-ROM² ADPCM (a separate chip on the CD unit) is not part of the HuC6280 and is not modelled.
+- PC Engine LFO: exposed raw (channel 2's note, wave and volume are the modulator's rate, shape and audibility) rather
+  than hidden behind a vibrato abstraction, because that is what the chip does. Review once listened to.
+- PC Engine output gain: Mednafen's level ÷ 2 so six full unipolar channels do not clip after the high-pass; no
+  hardware comparison yet.
+- PC Engine phase-exact seeking: the demo's order 4/row 48 took 134/283/428 ms on Nova/DMG/Konkr.
+  A deliberately extreme valid order (speed 255, five B-7 tones and one looped DDA sample, seek to row 63:
+  16,065 replayed ticks) took 14.87 s on Konkr. The UI remained responsive (maximum measured UI round trip 17 ms)
+  and audio reported no xruns or driver faults. Keep exact chip/filter state rather than silently changing the
+  sound; this long-seek case remains a performance tradeoff to revisit.
+- AY variants (decided on the user's behalf): four stock machines — ZX Spectrum 128 (AY-3-8912), MSX (AY-3-8910,
+  NTSC 60 Hz frames), Atari ST (YM2149F, PAL 50 Hz VBL) and Amstrad CPC (AY-3-8912 at 1 MHz, 50.08 Hz frames, the
+  stereo socket) — each with its own clock, chip type and wiring. Not modelled: PAL MSX (50 Hz), MSX-ENGINE machines
+  whose YM2149 has the YM's 32-step envelope, the NTSC ST, the CPC's 300 Hz interrupt rate as a tick, the CPC's mono
+  internal speaker, ABC/ACB stereo modifications of the mono machines. The CPC socket's B weight (equal on both
+  sides) is an inference from its resistive mixing, not a measured value. Review.
+- AY output summing: the three channels add linearly; the real machines tie the outputs through resistors (MAME's
+  resistor model; Hatari uses a measured 3-D table for the ST), which compresses loud chords a little. Proposed: keep
+  linear until a listening comparison asks otherwise.
+- AY envelope period 0 follows MAME's counter model: twice period 1's ramp rate on AY, the same rate as period 1
+  on YM2149. Native boundary tests and editor frequency readings agree; no physical-chip capture is claimed.
+- AY shared noise/envelope arbitration (decided on the user's behalf): the most recent key-on among the channels
+  using a resource owns it; an owner change re-writes R13 only when the shape differs, so a held buzzer bass is not
+  retriggered when a short note that borrowed the envelope ends (its envelope phase continues). Alternatives: a fixed
+  channel priority (FamiStudio's 5B: the highest channel) or per-song ownership. Review.
+- AY VGM loops do not dump R13 (a write restarts the envelope): a loop entered with a held hardware-envelope note
+  continues the envelope as the previous pass left it.
+- AY hardware envelope with volume: the chip cannot scale an envelope's level, so on such notes the volume envelope
+  and `Cxx` only gate it (any level above 0 plays the full envelope; 0 silences). Review.
+- Master System (decided on the user's behalf): four systems over one Banjo engine — `sms-psg`,
+  `gg-psg`, `sms-fm`, `sms-fm-drums` — rather than one system with a layout setting (channel layouts are fixed per
+  system). Review.
+- Banjo plays 12-TET only (no fine-pitch command): tunings sound at their nearest notes. Absolute (fixed-note)
+  arpeggio steps, Banjo's master volume/fades and its sound-effect queue are not exposed. NTSC only: Banjo's tables are
+  for 3.58 MHz and a PAL game lowers speeds by one itself.
+- Banjo 7aaf837's OPLL volume write tests the extra macro's type inverted (`volume_change.inc`): an FM instrument
+  with a pitch or patch macro would corrupt its voice register, so FM voices offer volume and arpeggio envelopes only.
+  Proposed: report upstream; enable FM pitch envelopes when fixed.
+
 - EPSM FamiStudio text and the SSG's manual envelope period (decided on the user's behalf): FamiStudio 4.5.3's text
   export and import have no `EPSMSquareEnvelopePitch` attribute, so a manual period always reads back as 4000. The
   text export refuses an EPSM sound with a manual period other than 4000 (naming the sound) rather than writing a file
@@ -986,8 +1490,8 @@ Decisions:
   (the last sound loaded wins for all six FM channels). Thor Tracker keeps it as a song setting and writes it into
   every exported EPSM instrument; FamiStudio projects whose instruments disagree cannot be represented exactly. Review.
 - EPSM SSG noise and hardware envelope are shared by SSG 1-3, as on the 5B: the highest square sounding such a sound
-  drives them. Unlike the 5B branch, this slice shows no Pattern lane tags or inspector lines for who drives them.
-  Proposed: add them when the 5B and EPSM branches merge (one shared implementation).
+  drives them. The shared `NesS5b` inspector reports ENV/NOISE ownership in Pattern lane tags and inspector lines
+  for both systems, and validation warns when sounds compete for the shared generators. Review their clarity.
 - EPSM rhythm drums have fixed pitch (the ROM's samples at the chip's rate): a note only triggers the channel's drum,
   so transposing a rhythm lane changes nothing audible. Proposed: keep FamiStudio's model (any note triggers); a
   dedicated "hit" note is the alternative.
@@ -1009,3 +1513,46 @@ Decisions:
   double the project size. Review.
 - OPN/OPNA seeks replay every tick through the whole chip (exact, as OPM's); the cost on the Konkr for a long song is
   not measured.
+- MMC5 PCM is played by Thor Tracker's software lane, not by the pinned engine and not by an invented hardware timer:
+  open questions are the 256 KiB / 64-sample budget, the −48..+24 pitch range, a delay longer than its row being forced
+  at the next row, and the lower MMC5/N163 output level from the full-span, two-filter budget (about 14.1/10.5 dB
+  below plain NES at equal 2A03 content). Cuts continue across rows unless a new note/OFF cancels them.
+  Native/JVM verification and human listening are tracked separately; no listening pass is claimed.
+- MMC5 mixing: the two pulses at the 2A03 pulses' level (NESdev: "equivalent in volume") with inverted polarity, the
+  240 Hz envelope/length clock at CPU ÷ 7424 (NESdev: from die images, not bench-confirmed). No hardware or
+  reference-emulator comparison yet; listening may ask for a different balance.
+
+## Master System / Game Gear (Banjo)
+
+Driver: the Banjo sound driver (joffb/banjo `7aaf837`, MIT, `third_party/banjo` unmodified; checked against upstream
+by `tools/audio/prepare_sms.py`), a real tracker-format SMS driver with SN76489, Game Gear stereo and YM2413
+(including rhythm mode) support, used by homebrew through WLA-DX and devkitSMS/GBDK. Upstream's README and
+`format_spec.md` disagree with the assembly; the assembly (`banjo_defines_wladx.inc`, `process_new_line.inc`, the
+macro routines) is the authority and json2sms.py the independent export reference.
+
+- **Systems** (`system/sms`): `SmsSystem` per `SmsLayout` — PSG (Square 1-3, Noise), Game Gear (same + `8xy` pan),
+  FM (+ FM 1-9), FM rhythm (+ FM 1-6, Bass drum, Snare, Tom, Cymbal, Hi-hat), channels in Banjo's order. One engine
+  id `sms-banjo`; the image says the layout. 64 slots over one numbering, one bank per kind (PSG sounds, FM voices,
+  drum kits). Ticks: 59.92 Hz. Notes: PSG layouts A-2..B-8, FM layouts C-0..B-8 (FM and drums up to B-7).
+- **Instruments** (`SmsSound`): PSG sounds = Banjo macros (volume with loop/release, arpeggio, and one extra macro:
+  pitch in 1/128 semitone or the noise mode per tick); FM voices = built-in instrument 1-15 or the one custom voice
+  (OPLL registers as fields, ROM voices as emu2413 measured them for starting points) + volume/arpeggio; drum kits =
+  pitched by notes or three fixed pitches. Presets per layout fill new songs.
+- **Effects** (up to 4 columns): `0xy 1xx 2xx 3xx 4xy 8xy(GG) Bxx Cxx D00 Fxx Gxx Lxx Nxy Oxx Sxx`, mapped to Banjo
+  commands; arpeggio/slides/vibrato share Banjo's one slot; speeds apply from the next row; `Oxx` sets odd rows.
+- **Lowering** (`backend/SmsLowering`, `BanjoSong`): Banjo song data; pattern length = longest order rounded to even;
+  explicit order jumps for short orders and the loop; per (order, channel) tracks deduplicated; OFF = macro release or
+  note off by the instrument in effect; `0xy` per note (auto `ARPEGGIO_OFF`); instrument rows without a note load with
+  the next note. Differences from json2sms 7aaf837 (documented in AUDIO_ENGINE.md): arpeggio/extra macro loop index + 2,
+  first row's tic = speed + 1 via a channel-init callback (the driver overwrites the header counter).
+- **Exports**: WLA-DX `.asm` and SDAS `.s` Banjo song sources (genuine driver data, first-row initialization and two-chip call stubs), VGM 1.51
+  through the native machine (`SmsExport.renderer`, JNI `ChipAudio.nativeSmsVgm`, Deck `DeckSmsVgm`).
+- **Engine**: `sms/sms_machine.c` — Banjo on z80.h, our SN76489 (`ym/ym_psg.c`, plus Game Gear stereo), emu2413
+  1.6.4 (MIT, chosen over ymfm's OPLL: plain C like the machine, per-rhythm-drum masks, proven OPLL accuracy).
+- **Validation**: Banjo's limits as errors (note delay/cut within the row, D00 only, kinds per channel, FM ≤ B-7, data
+  ≤ 32 KB, ≤ 255 orders); warnings for two custom FM voices at once, Square 3 under pitched noise, low PSG/noise notes,
+  two pitch effects on a row, songs over one 16 KB bank.
+- **Editor**: `SmsInstrumentView`/`SmsInstrumentPainter` on the shared FM painter and NES envelope plot: PSG pages
+  Volume/Arpeggio/Pitch/Noise; FM pages Voice (instrument, modulator/carrier grid, routing and envelope sketch),
+  Volume, Arpeggio; Kit page. Demo "Harbour Lights" arranged per layout.
+- **Tests**: `SmsLoweringTest`, `SmsModelTest`, `SmsEditorTest`, native `sms_machine_test.c` (hand-built images).

@@ -103,9 +103,8 @@ class ProjectCodecTest {
         assertEquals(57, song.patterns[0].tracks[0][0].note) // hUGETracker's A-5 is A4 = 440 Hz
         val examples = listOf(java.io.File("../examples/thor-groove.uge"), java.io.File("examples/thor-groove.uge")).first { it.isFile }
         assertTrue(examples.readBytes().contentEquals(org.thortracker.backend.UgeExporter.export(song)))
-        // Saving writes version 9: the chip data nested in "sound", notes in scientific pitch.
-        val saved = ProjectCodec.encode(song)
-        assertTrue(saved.contains("\"version\":9,") && saved.contains("\"sound\":{\"pulse\":") && saved.contains("[57,1,0,55]"))
+        // Saving and reopening retains the upgraded scientific-pitch song.
+        assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
     }
 
     @Test
@@ -188,7 +187,6 @@ class ProjectCodecTest {
         val just = Scl.parse("Just\n3\n5/4\n3/2\n2/1\n", "f")
         val song = blank.copy(tuning = just.copy(root = 36, tolerance = 10))
         val text = ProjectCodec.encode(song)
-        assertTrue(text.contains("\"tuning\":{\"name\":\"Just\""))
         assertEquals(song, ProjectCodec.decode(text))
         val root = Json.parseToJsonElement(text).jsonObject
         val claimingFour = JsonObject(root.toMutableMap().also { it["version"] = JsonPrimitive(4) }).toString()
@@ -203,6 +201,35 @@ class ProjectCodecTest {
             assertThrows(ProjectFormatException::class.java) { ProjectCodec.encode(blank.copy(tuning = bad)) }
         }
         assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text.replaceFirst("\"tolerance\":10", "\"tolerance\":7")) }
+    }
+
+    @Test
+    fun selectedTuningCreditRoundTripsWithoutItsCatalogue() {
+        val source = "Measured [collection]\nmeasured/original.scl\nCredit © author; CC BY 4.0\nhttps://example.org/source"
+        val tuning = Scl.parse("Non-octave\n2\n5/4\n3/1\n", "fallback").copy(root = 40, tolerance = 20, provenance = source)
+        val song = Songs.demo().copy(tuning = tuning)
+        val text = ProjectCodec.encode(song)
+        val decoded = ProjectCodec.decode(text)
+        assertEquals(song, decoded)
+        assertEquals(source, decoded.tuning!!.provenance)
+        val stored = Json.parseToJsonElement(text).jsonObject.getValue("song").jsonObject.getValue("tuning").jsonObject
+        assertEquals(setOf("name", "cents", "root", "tolerance", "provenance"), stored.keys)
+    }
+
+    @Test
+    fun olderProjectsWithoutProvenanceRetainTheirNumericTuning() {
+        val song = Songs.blank().copy(tuning = Scl.parse("Non-octave\n2\n5/4\n3/1\n", "fallback").copy(root = 40, tolerance = 20))
+        val current = Json.parseToJsonElement(ProjectCodec.encode(song)).jsonObject
+        val data = current.getValue("song").jsonObject
+        val oldTuning = JsonObject(data.getValue("tuning").jsonObject - "provenance")
+        val versionNine = JsonObject(current + ("version" to JsonPrimitive(9)) +
+            ("song" to JsonObject(data + ("tuning" to oldTuning))))
+        assertEquals(song, ProjectCodec.decode(versionNine.toString()))
+        for (version in 5..7) assertEquals(song, ProjectCodec.decode(TestSongs.legacy(ProjectCodec.encode(song), version)))
+        assertEquals(song, ProjectCodec.decode(TestSongs.devVersion8(ProjectCodec.encode(song))))
+        assertEquals(song, ProjectCodec.decode(JsonObject(current + ("song" to JsonObject(data + ("tuning" to oldTuning)))).toString()))
+        val mislabelled = JsonObject(current + ("version" to JsonPrimitive(9)))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mislabelled.toString()) }
     }
 
     @Test

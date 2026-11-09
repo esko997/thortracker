@@ -41,6 +41,19 @@ int ymps_output(const YmPsg* p) {
     return out;
 }
 
+void ymps_output_pan(const YmPsg* p, uint8_t pan, int* left, int* right) {
+    int l = 0, r = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (p->mute >> i & 1) continue;
+        const int high = i < 3 ? p->flip[i] : (p->lfsr & 1);
+        const int v = high ? LEVEL[p->att[i]] : -LEVEL[p->att[i]];
+        if (pan >> (i + 4) & 1) l += v;
+        if (pan >> i & 1) r += v;
+    }
+    *left = l;
+    *right = r;
+}
+
 int ymps_step(YmPsg* p) {
     int flipped = 0;
     for (int i = 0; i < 3; ++i) {

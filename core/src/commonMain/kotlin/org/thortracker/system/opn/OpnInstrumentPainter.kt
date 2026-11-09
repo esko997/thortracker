@@ -14,7 +14,7 @@ import org.thortracker.system.fm.OpnTiming
 import org.thortracker.system.fm.RhythmRomMenu
 import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.EnvelopePlot
-import org.thortracker.system.nes.EpsmSsg
+import org.thortracker.system.nes.NesS5b
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesEnvelopeKind
 import org.thortracker.system.nes.NesEnvelopes
@@ -313,7 +313,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             Row.ENV_SHAPE -> if (e.shape == S5bShape.OFF) "Off: the volume envelope sets the level" else
                 "${e.shape.label} ${e.shape.picture}: ${if (e.shape.repeats) "repeats while the note holds" else "once per note"}; each note restarts it"
             Row.ENV_AUTO -> if (e.autoPitch) "Auto: the period follows the note" else "Manual: a fixed period (Jxx changes it for a row)"
-            Row.ENV_OCTAVE -> if (e.autoPitch) "${e.octave}: ${EpsmSsg.octaveText(e.shape, e.octave)}" else "${e.octave} (auto only)"
+            Row.ENV_OCTAVE -> if (e.autoPitch) "${e.octave}: ${NesS5b.octaveText(e.shape, e.octave)}" else "${e.octave} (auto only)"
             Row.ENV_PERIOD -> if (e.autoPitch) "${e.period} (manual only)" else "${e.period}: ${periodText(e.shape, e.period)}"
             Row.SWEEP_START, Row.SWEEP_END, Row.SWEEP_SPEED -> sweepValue(ins.sweep, r)
             else -> ""
@@ -409,9 +409,9 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private fun periodText(shape: S5bShape, period: Int): String {
         val ramp = 256.0 * maxOf(1, period) / OpnPlayerImage.SSG_CLOCK
         return when {
-            shape == S5bShape.OFF -> "${EpsmSsg.duration(ramp)} per ramp (no shape chosen)"
-            shape.repeats -> "${EpsmSsg.frequency(1.0 / (ramp * if (shape.triangle) 2 else 1))} (${EpsmSsg.duration(ramp)} per ramp)"
-            else -> "${EpsmSsg.duration(ramp)} ramp"
+            shape == S5bShape.OFF -> "${NesS5b.duration(ramp)} per ramp (no shape chosen)"
+            shape.repeats -> "${NesS5b.frequency(1.0 / (ramp * if (shape.triangle) 2 else 1))} (${NesS5b.duration(ramp)} per ramp)"
+            else -> "${NesS5b.duration(ramp)} ramp"
         }
     }
 
@@ -510,7 +510,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val titleH = ink.unit * 1.3f
         val title = when {
             e.shape == S5bShape.OFF -> "No hardware envelope: the volume envelope sets the level"
-            e.autoPitch -> "${e.shape.label}: ${EpsmSsg.octaveText(e.shape, e.octave)}"
+            e.autoPitch -> "${e.shape.label}: ${NesS5b.octaveText(e.shape, e.octave)}"
             else -> "${e.shape.label}: ${periodText(e.shape, e.period)}"
         }
         ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.DIM, size = small)

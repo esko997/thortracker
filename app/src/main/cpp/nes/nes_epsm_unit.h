@@ -21,12 +21,28 @@
  *     65536 output steps as the 2A03's (mix_squares / nonlinearize): NES_EPSM_FS_UNIT = 10.59857 / 163430.
  *   - FM: per 24-cycle chip sample FamiStudio sums 6 x the YM3438-mode 9-bit channel output, present on 3 of each
  *     channel's 4 cycles: 18 x (14-bit operator sum >> 5); ymfm's OPNA output is that sum >> 1, so one ymfm unit is
- *     18 / 16 FamiStudio units.
+ *     18 / 16 FamiStudio units. (The step is exact for a channel's sum within the 9-bit range; FamiStudio's YM3438
+ *     model clips a channel there, the YMF288 as ymfm models it does not, so several loud carriers on one channel
+ *     sound louder here than in FamiStudio.)
  *   - Rhythm: each drum's (ADPCM x level >> shift) & ~3 (ymfm's and FamiStudio's MAME-derived formula) appears on
  *     4 of 24 cycles as value >> 1, summed x 11/20: 1.1 FamiStudio units per ymfm unit.
  *   - SSG: FamiStudio's emu2149 (YM2149 table, top 0xFF << 4 = 4080) x 10 / 18; ymfm's amplitude table tops at 16382
  *     and its 3-channel mix is x 2/3: (4080 x 10 / 18) / (16382 x 2 / 3) FamiStudio units per ymfm mix unit.
  * Muted channels are left out of the chip's sums; the chip keeps running (unmuting resumes mid-note).
+ * Headroom: the buffers' amplitude is the level x NES_EPSM_AMP_SCALE (the machine multiplies by NES_APU_AMP_SCALE /
+ * NES_EPSM_AMP_SCALE after reading, which restores FamiStudio's balance against its 2A03 buffer exactly). Every level
+ * a side can take, for any register sequence and any mutes (a muted part adds 0, inside its range), lies in an
+ * interval of width NES_EPSM_SPAN: the chip's per-side ranges (nes_epsm.h: FM +-NES_EPSM_FM_PEAK, rhythm
+ * NES_EPSM_RHYTHM_LOW..HIGH, SSG 0..NES_EPSM_SSG_HIGH) at their steps, about 14.30 + 13.15 + 0.44 = 27.89 2A03 full
+ * scales. blip_buf is linear and time-invariant in the level and its leaky integrator removes DC, so a sample is the
+ * response to the level minus the interval's midpoint (|that| <= NES_EPSM_SPAN / 2), and |sample| <= NES_EPSM_SPAN / 2
+ * x the total variation of blip's step response over all step positions: 2 x 1.1188 at every output rate (computed
+ * offline from blip_buf's kernel table and its leaky integrator, step positions every 1/1024 sample: its kernels ring
+ * 0.093 past a step, its high-pass gives back the rest). With NES_EPSM_BLIP_PEAK = 1.12 covering that, a buffer stays
+ * within +-31966 of blip's +-32767 clamp (the rest absorbs the amplitude rounding): the chip never clips inside the
+ * unit, whatever it plays. The machine writes its 2A03 buffer with the same headroom and budgets the output stage over
+ * the whole side, 1.0 (the 2A03) + NES_EPSM_SPAN (nes_machine.c, EPSM_* and OUTPUT_GAIN_EPSM): about 35.6 dB below the
+ * 2A03 build per mixer level, the price of keeping ymfm's raw linear range unclipped.
  *
  * Time is counted in CPU cycles from the start of the current output frame, as nes_apu.c. Plain data except the
  * chip nes_epsm_init allocates; nothing else allocates. */
@@ -42,13 +58,21 @@
 extern "C" {
 #endif
 
-#define NES_EPSM_CHANNELS 15                         /* SSG 1-3, FM 1-6, rhythm 1-6 (machine channels 5..19) */
+#define NES_EPSM_VOICES 15                           /* SSG 1-3, FM 1-6, rhythm 1-6 (machine channels 5..19) */
 #define NES_EPSM_CYCLE_UNITS NES_EPSM_CLOCK           /* fixed-point units per CPU cycle */
 #define NES_EPSM_SAMPLE_UNITS (NES_EPSM_CLOCKS_PER_SAMPLE * 1789773u) /* ... per native sample (NTSC CPU clock) */
 #define NES_EPSM_FS_UNIT (10.59857 / 163430.0)
 #define NES_EPSM_FM_STEP (NES_EPSM_FS_UNIT * 18.0 / 16.0)
 #define NES_EPSM_RHYTHM_STEP (NES_EPSM_FS_UNIT * 1.1)
 #define NES_EPSM_SSG_STEP (NES_EPSM_FS_UNIT * (4080.0 * 10.0 / 18.0) / (16382.0 * 2.0 / 3.0))
+/* Width of the interval every level of one side lies in (2A03 mixer scale; about 27.89). */
+#define NES_EPSM_SPAN                                                                                              \
+    (2.0 * NES_EPSM_FM_PEAK * NES_EPSM_FM_STEP + (NES_EPSM_RHYTHM_HIGH - NES_EPSM_RHYTHM_LOW) * NES_EPSM_RHYTHM_STEP + \
+     NES_EPSM_SSG_HIGH * NES_EPSM_SSG_STEP)
+#define NES_EPSM_BLIP_PEAK 1.12        /* >= blip_buf's int16-stage peak per unit of span (1.1188, every rate) */
+#define NES_EPSM_BUFFER_PEAK 32000.0   /* the buffers' bound, inside blip's +-32767 clamp */
+/* Buffer amplitude of a level of 1.0 (about 1024.5). */
+#define NES_EPSM_AMP_SCALE (NES_EPSM_BUFFER_PEAK / (NES_EPSM_BLIP_PEAK * NES_EPSM_SPAN))
 
 typedef struct NesEpsm {
     NesEpsmChip* chip;    /* nes_epsm_init */

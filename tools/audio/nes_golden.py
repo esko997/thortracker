@@ -7,15 +7,17 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
    `dotnet FamiStudio.dll <name>.txt famistudio-asm-export <name>_ca65.s -famistudio-asm-format:ca65`
    (a failed import or export fails this script, so it also proves FamiStudio opens our text).
 2. cc65's ca65/ld65 assemble that export alone at the song base of the player build the song needs ($8C00 for the 2A03
-   build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"` or `"EPSM"` (e.g. the golden songs epsm_demo,
-   epsm_effects and epsm_rhythm) at NES_<CHIP>_SONG_BASE from app/src/main/cpp/generated/nes_<chip>_player_image.h)
-   into <name>.bin, with FAMISTUDIO_DPCM_PTR at the sample block Thor Tracker uses (the top of $C000-$FFF9, 64-aligned).
-   A song with DPCM samples also gets FamiStudio's sample bank, <name>_ca65.dmc. FamiStudio 4.5.3 prints a few negative
-   operands as 32-bit hex (a VRC6 Quarter saw volume, an EPSM instrument's negative auto-period octave: `$ffffffXX`),
-   which ca65 rejects; the copy that is assembled reads them as their low byte, as FamiStudio's binary export does. An
-   EPSM export wraps each EPSM channel's header word in `.if FAMISTUDIO_EXP_EPSM_...`: the assembly defines the
-   configuration the EPSM player is built with (3 SSG, 6 FM, 6 rhythm channels). Its expansion instruments point to
-   31-byte patch blocks (`instrument_epsm_extra_patchN`) that are part of <name>.bin like every other label.
+   build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"`, `"VRC7"`, `"FDS"`, `"S5B"`, `"MMC5"` or `"EPSM"`
+   (including the MMC5 and EPSM golden songs) at NES_<CHIP>_SONG_BASE from
+   app/src/main/cpp/generated/nes_<chip>_player_image.h; a text with `Expansions="N163" NumN163Channels="n"` at
+   NES_N163_<n>_SONG_BASE from nes_n163_<n>_player_image.h) into <name>.bin, with FAMISTUDIO_DPCM_PTR at the sample block
+   Thor Tracker uses (the top of $C000-$FFF9, 64-aligned). A song with DPCM samples also gets FamiStudio's sample bank,
+   <name>_ca65.dmc. FamiStudio 4.5.3 prints a few negative operands as 32-bit hex (a VRC6 Quarter saw volume, an S5B or
+   EPSM instrument's negative auto-period octave: `$ffffffXX`), which ca65 rejects; the copy that is assembled reads them
+   as their low byte, as FamiStudio's binary export does. An EPSM export wraps each EPSM channel's header word in
+   `.if FAMISTUDIO_EXP_EPSM_...`: the assembly defines the configuration the EPSM player is built with (3 SSG, 6 FM,
+   6 rhythm channels). Its expansion instruments point to 31-byte patch blocks (`instrument_epsm_extra_patchN`) that are
+   part of <name>.bin like every other label.
 
 NesGoldenTest then compares the APU register traces of <name>.bin and our lowering through the embedded player, and
 our sample memory with <name>_ca65.dmc.
@@ -41,6 +43,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "core" / "src" / "jvmTest" / "resources" / "nes-golden"
 SONG_CFG = ROOT / "tools" / "audio" / "nes" / "nes_song.cfg"
+GENERATED = ROOT / "app" / "src" / "main" / "cpp" / "generated"
 FETCH_FAMISTUDIO = ROOT / "tools" / "audio" / "fetch_famistudio.sh"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 REGION_END = 0xFFFA
@@ -50,12 +53,16 @@ EPSM_CONFIG = {"FAMISTUDIO_EXP_EPSM_SSG_CHN_CNT": 3, "FAMISTUDIO_EXP_EPSM_FM_CHN
 
 
 def song_cfg(text: str, tmp: Path) -> Path:
-    """The ld65 layout for a song text: the 2A03 build's, or one at the VRC6 / EPSM build's song base."""
-    m = re.search(r'^Project [^\n]*Expansions="(VRC6|EPSM)"', text, re.M)
+    """The ld65 layout for a song text: the 2A03 build's, or one at the song base of the VRC6 / VRC7 / FDS / S5B / MMC5 / EPSM
+    build, or of the N163 build with the text's NumN163Channels (FamiStudio's default without it: 1)."""
+    m = re.search(r'^Project [^\n]*Expansions="(VRC6|VRC7|N163|FDS|S5B|MMC5|EPSM)"', text, re.M)
     if not m:
         return SONG_CFG
     chip = m.group(1)
-    header = ROOT / "app" / "src" / "main" / "cpp" / "generated" / f"nes_{chip.lower()}_player_image.h"
+    if chip == "N163":
+        count = re.search(r'^Project [^\n]*NumN163Channels="([1-8])"', text, re.M)
+        chip = f"N163_{count.group(1) if count else 1}"
+    header = GENERATED / f"nes_{chip.lower()}_player_image.h"
     base = int(re.search(rf"#define NES_{chip}_SONG_BASE 0x([0-9A-F]{{4}})", header.read_text()).group(1), 16)
     cfg = tmp / f"nes_{chip.lower()}_song.cfg"
     cfg.write_text(f"MEMORY {{\n    SONG: start = ${base:04X}, size = ${REGION_END - base:04X}, type = ro, file = %O, fill = no;\n}}\n"
@@ -110,12 +117,14 @@ def main() -> int:
             size = dmc.stat().st_size if dmc.exists() else 0
             start = (0xFFFA - size) // 64 * 64 if size else 0xC000
             # FamiStudio 4.5.3 prints a VRC6 Quarter saw volume (`$55` operand 1 - 2 = -1) as `$ffffffff`, and a negative
-            # EPSM auto-period octave (the second byte of the instrument's `.byte shape, octave` row) as `$ffffffXX`, which
-            # ca65 rejects; its binary export writes the low byte. Assemble a copy with these fixed (the fixture keeps the
-            # export).
+            # S5B or EPSM auto-period octave (the second byte of the instrument's `.byte shape, octave` row) as
+            # `$ffffffXX`, which ca65 rejects; its binary export writes the low byte. It also ends each VRC7 instrument's
+            # patch `.byte` row with a comma. Assemble a copy with these fixed (the fixture keeps the export).
             fixed = t / f"{name}_ca65_fixed.s"
             text = re.sub(r"(\$55,\s*)\$ffffffff\b", r"\1$ff", asm.read_text())
-            fixed.write_text(re.sub(r"^(\t\.byte \$[0-9a-f]{2},\s*)\$ffffff(f[89a-f])[ \t]*$", r"\1$\2", text, flags=re.M))
+            text = re.sub(r"^(\t\.byte \$[0-9a-f]{2},\s*)\$ffffff(f[89a-f])[ \t]*$", r"\1$\2", text, flags=re.M)
+            fixed.write_text(re.sub(r"^(\t\.byte .*?),[ \t]*$", r"\1", text, flags=re.M))
+            # An EPSM export's header words sit inside `.if` on the player's configuration: define it.
             epsm = re.search(r'^Project [^\n]*Expansions="EPSM"', txt.read_text(), re.M)
             config = "".join(f"{k} = {v}\n" for k, v in EPSM_CONFIG.items()) if epsm else ""
             (t / f"{name}_song.s").write_text(

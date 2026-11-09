@@ -1,9 +1,13 @@
-/* Renders a lowered NES image (the bytes NesSystem.engine.lower, NesVrc6System.engine.lower or
- * NesEpsmSystem.engine.lower write, e.g. app/build/samples/thor-quest.nesimg or saw-sunrise.nesimg) through the native
- * engine of the player build named in its header (bytes 4..7: "nes-famistudio", "nes-famistudio-vrc6" or
- * "nes-famistudio-epsm") exactly as the audio hosts run it: chip_engine_ops lookup, load_image (the full image
- * validation; its problem is printed when it fails), start at order 0 row 0, then one tick per engine frame. Writes a
- * 48 kHz stereo 16-bit WAV and prints peak/rms and any driver fault. Built and run by tools/audio/render_nes_image.sh.
+/* Renders a lowered NES image (the bytes NesSystem.engine.lower, NesVrc6System.engine.lower, NesVrc7System.engine.lower,
+ * an N163 system's engine.lower, NesFdsSystem.engine.lower, NesS5bSystem.engine.lower, NesMmc5System.engine.lower or
+ * NesEpsmSystem.engine.lower write, e.g. app/build/samples/thor-quest.nesimg, saw-sunrise.nesimg, lantern-point.nesimg,
+ * wavetable-garden-8ch.nesimg, side-b.nesimg, copper-kite.nesimg, tandem-skies.nesimg or expansion-port.nesimg) through the
+ * native engine named in its header (bytes 4..7: "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7",
+ * "nes-famistudio-n163-1".."-8", "nes-famistudio-fds", "nes-famistudio-s5b", "nes-famistudio-mmc5" or
+ * "nes-famistudio-epsm") exactly as the audio hosts run it:
+ * chip_engine_ops lookup, load_image (the full image validation; its problem is printed when it fails), start at
+ * order 0 row 0, then one tick per engine frame. Writes a 48 kHz stereo 16-bit WAV and prints peak/rms and any
+ * driver fault. Built and run by tools/audio/render_nes_image.sh.
  *
  * EPSM rhythm drums need the YM2608 rhythm ROM, which is not part of Thor Tracker: for private local checks pass the
  * user's own copy (8192 bytes) as the 4th argument or in $THOR_RHYTHM_ROM. Without it the drums are silent and the
@@ -17,6 +21,7 @@
 #include "nes_image.h"
 #include "nes_machine.h"
 #include "ym2608_rhythm_rom.h"
+#include "nes_mmc5_pcm.h"
 
 #define RATE 48000
 
@@ -46,13 +51,24 @@ int main(int argc, char** argv) {
     const char* rom_path = argc > 4 ? argv[4] : getenv("THOR_RHYTHM_ROM");
     FILE* f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 1; }
-    static uint8_t bytes[NES_IMAGE_SIZE + 1];
+    /* The largest image: the MMC5 engine's (its FamiStudio image plus the PCM lane's extension). */
+    static uint8_t bytes[NES_MMC5_IMAGE_SIZE + NES_PCM_EXT_SIZE + 1];
     size_t size = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
     const uint32_t id = size >= 8 ? (uint32_t)bytes[4] | (uint32_t)bytes[5] << 8 | (uint32_t)bytes[6] << 16 | (uint32_t)bytes[7] << 24 : 0;
+    static const char* const n163_engines[NM_N163_BUILDS] = {"nes-famistudio-n163-1", "nes-famistudio-n163-2", "nes-famistudio-n163-3",
+                                                             "nes-famistudio-n163-4", "nes-famistudio-n163-5", "nes-famistudio-n163-6",
+                                                             "nes-famistudio-n163-7", "nes-famistudio-n163-8"};
     const char* engine = id == NES_VRC6_PLAYER_ID   ? "nes-famistudio-vrc6"
+                         : id == NES_VRC7_PLAYER_ID ? "nes-famistudio-vrc7"
+                         : id == NES_FDS_PLAYER_ID  ? "nes-famistudio-fds"
+                         : id == NES_S5B_PLAYER_ID  ? "nes-famistudio-s5b"
+                         : id == NES_MMC5_PLAYER_ID ? "nes-famistudio-mmc5"
                          : id == NES_EPSM_PLAYER_ID ? "nes-famistudio-epsm"
                                                     : "nes-famistudio";
+    for (int n = 0; n < NM_N163_BUILDS; ++n) {
+        if (id == nes_player_n163[n].id) engine = n163_engines[n];
+    }
     const ChipEngineOps* ops = chip_engine_ops(engine);
     if (!ops) { fprintf(stderr, "no %s engine in this build\n", engine); return 1; }
     if (size != ops->image_size) {
@@ -63,7 +79,14 @@ int main(int argc, char** argv) {
     ChipImage* image = aligned_alloc(64, (ops->image_storage + 63) / 64 * 64);
     if (ops->load_image(image, bytes, size) != CHIP_OK) {
         const NesImage* bad = (const NesImage*)image;
-        fprintf(stderr, "image rejected: %s (at byte %u)\n", bad->info.problem ? bad->info.problem : "?", (unsigned)bad->info.problem_at);
+        const char* problem = bad->info.problem;
+        unsigned at = (unsigned)bad->info.problem_at;
+        if (!problem && id == NES_MMC5_PLAYER_ID) { /* the PCM lane's extension (nes_mmc5_pcm.h) */
+            const NesMmc5Image* mmc5 = (const NesMmc5Image*)image;
+            problem = mmc5->pcm.info.problem;
+            at = (unsigned)(mmc5->pcm.info.problem_at + NES_MMC5_IMAGE_SIZE);
+        }
+        fprintf(stderr, "image rejected: %s (at byte %u)\n", problem ? problem : "?", at);
         return 1;
     }
     ChipMachine* m = ops->create(RATE);

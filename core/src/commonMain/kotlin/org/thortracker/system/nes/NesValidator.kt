@@ -39,7 +39,7 @@ object NesValidator {
             if (pattern.scale.root !in 0..11) out += "$label has scale root ${pattern.scale.root}; roots are 0-11 (C-B)"
             if (pattern.length !in 1..Songs.ROWS) out += "$label is ${pattern.length} rows long; lengths are 1-${Songs.ROWS}"
             if (pattern.tracks.size != channels) {
-                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.chip.label}"} patterns have $channels"
+                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.label}"} patterns have $channels"
                 return@forEachIndexed
             }
             pattern.tracks.forEachIndexed { ch, track ->
@@ -48,7 +48,7 @@ object NesValidator {
                     return@forEachIndexed
                 }
                 track.forEachIndexed { row, cell ->
-                    NesRules.cellRangeProblem(cell)?.let { out += "$label, ${NesRules.channelName(expansion, ch)} row $row: $it" }
+                    NesRules.cellRangeProblem(expansion, cell)?.let { out += "$label, ${NesRules.channelName(expansion, ch)} row $row: $it" }
                 }
             }
         }
@@ -59,21 +59,50 @@ object NesValidator {
         }
         val bank = song.nes.instruments
         if (bank.size != NesSystem.SLOTS) out += "The song has ${bank.size} instruments; NES songs have exactly ${NesSystem.SLOTS}"
+        if (expansion != NesExpansion.VRC7 && song.nes.vrc7Sustain != Vrc7Sustain()) out += "Only VRC7 songs have the FM sustain settings"
+        val lfo = song.nes.epsmLfo
+        when {
+            expansion != NesExpansion.EPSM && lfo != 0 -> out += "Only EPSM songs have an LFO setting; this song's is $lfo"
+            lfo != 0 && lfo !in NesSound.EPSM_LFO_ON..NesSound.EPSM_LFO_ON + 7 ->
+                out += "The EPSM LFO register value $lfo is not off (0) or on with a rate (8-15)"
+        }
         bank.forEachIndexed { i, ins ->
             val where = "Instrument ${NesRules.hex2(i + 1)}"
             if (ins.chip !in expansion.chips) out += "$where is a ${ins.chip.label} sound; this song has no ${ins.chip.label} chip"
             if (ins.chip != NesChip.VRC6 && ins.sawVolume != Vrc6SawVolume.HALF) out += "$where: only VRC6 sounds have a saw volume"
+            if (ins.chip != NesChip.VRC7 && ins.fm != Vrc7Patch.DEFAULT) out += "$where: only VRC7 sounds have an FM patch"
+            if (ins.chip != NesChip.N163 && ins.wave != N163Wave.DEFAULT) out += "$where: only N163 sounds have waves"
+            if (ins.chip != NesChip.FDS && ins.fds != FdsSound.DEFAULT) out += "$where: only FDS sounds have FDS waves and modulation"
             if (ins.chip != NesChip.APU && ins.dpcm.isNotEmpty()) out += "$where: only 2A03 sounds map DPCM samples"
-            if (ins.chip == NesChip.EPSM) {
-                if (ins.duty.values.isNotEmpty()) out += "$where: EPSM sounds have no duty envelope; clear it"
-                if (ins.epsmEnvelope.octave !in S5bEnvelope.OCTAVES) out += "$where: SSG envelope octave ${ins.epsmEnvelope.octave} is outside -8..8"
-                if (ins.epsmEnvelope.period !in S5bEnvelope.PERIODS) out += "$where: SSG envelope period ${ins.epsmEnvelope.period} is outside 0-65535"
-                ins.epsm.problem()?.let { out += "$where: the FM patch $it" }
-            } else {
-                if (ins.mixer.values.isNotEmpty() || ins.noise.values.isNotEmpty()) out += "$where: only EPSM sounds have mixer and noise envelopes"
-                if (ins.epsmEnvelope != S5bEnvelope.EPSM_DEFAULT) out += "$where: only EPSM sounds have an SSG hardware envelope"
-                if (ins.epsm != EpsmPatch.DEFAULT) out += "$where: only EPSM sounds have an FM patch"
+            if (ins.chip == NesChip.VRC7) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: VRC7 sounds have no duty envelope; clear it"
+                if (ins.fm.preset !in 0..Vrc7Presets.PRESETS.last) out += "$where: VRC7 patch ${ins.fm.preset} is outside 0-15 (0 = custom)"
+                if (ins.fm.regs.size != Vrc7Patch.REGS) out += "$where: the VRC7 custom patch has ${ins.fm.regs.size} registers; it has ${Vrc7Patch.REGS}"
+                ins.fm.regs.firstOrNull { it !in 0..255 }?.let { out += "$where: VRC7 patch register value $it is outside 0-255" }
+                if (ins.fm.preset in Vrc7Presets.PRESETS && ins.fm.regs != Vrc7Presets.data(ins.fm.preset)) {
+                    out += "$where: built-in VRC7 patch ${ins.fm.preset} keeps its ROM registers (as FamiStudio does); only Custom (0) has its own"
+                }
             }
+            if (ins.chip == NesChip.N163) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: N163 sounds have no duty envelope; clear it"
+                n163Shape(out, where, ins.wave)
+            }
+            if (ins.chip == NesChip.FDS) {
+                if (ins.duty.values.isNotEmpty()) out += "$where: FDS sounds have no duty envelope; clear it"
+                fdsShape(out, where, ins.fds)
+            }
+            if (ins.chip.hasSsg) {
+                val chip = if (ins.chip == NesChip.EPSM) "EPSM" else "5B"
+                if (ins.duty.values.isNotEmpty()) out += "$where: $chip sounds have no duty envelope; clear it"
+                val env = if (ins.chip == NesChip.EPSM) "SSG" else "5B"
+                if (ins.s5b.octave !in S5bEnvelope.OCTAVES) out += "$where: $env envelope octave ${ins.s5b.octave} is outside -8..8"
+                if (ins.s5b.period !in S5bEnvelope.PERIODS) out += "$where: $env envelope period ${ins.s5b.period} is outside 0-65535"
+            } else {
+                if (ins.mixer.values.isNotEmpty() || ins.noise.values.isNotEmpty()) out += "$where: only 5B and EPSM sounds have mixer and noise envelopes"
+                if (ins.s5b != S5bEnvelope.DEFAULT) out += "$where: only 5B and EPSM sounds have a hardware envelope"
+            }
+            if (ins.chip == NesChip.EPSM) ins.epsm.problem()?.let { out += "$where: the FM patch $it" }
+            else if (ins.epsm != EpsmPatch.DEFAULT) out += "$where: only EPSM sounds have an EPSM FM patch"
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
@@ -89,6 +118,16 @@ object NesValidator {
                     m.dmcInitial !in -1..DpcmSample.DMC_INITIAL.last -> out += "$at: initial value ${m.dmcInitial} is outside 0-63 (or -1 for the sample's)"
                 }
             }
+            if (ins.pcm.isNotEmpty() && !expansion.hasPcmLane) out += "$where: only NES + MMC5 songs map PCM samples (the MMC5 PCM lane)"
+            if (ins.pcm.isNotEmpty() && ins.chip != NesChip.APU) out += "$where: only 2A03 sounds map PCM samples"
+            for ((note, m) in ins.pcm) {
+                val at = "$where, PCM ${if (note in NesSystem.noteRange) NesSystem.noteName(note) else "note $note"}"
+                when {
+                    note !in NesSystem.noteRange -> out += "$at: notes are C-1..B-8 (${NesSystem.noteRange.first}-${NesSystem.noteRange.last})"
+                    m.sample !in song.nes.pcmSamples.indices -> out += "$at: PCM sample ${m.sample + 1} does not exist; the song has ${song.nes.pcmSamples.size}"
+                    m.pitch !in Pcm.PITCH -> out += "$at: pitch ${m.pitch} is outside ${Pcm.PITCH.first}..+${Pcm.PITCH.last} semitones"
+                }
+            }
         }
         song.nes.samples.forEachIndexed { i, s ->
             val where = "DPCM sample ${i + 1} \"${s.name}\""
@@ -96,11 +135,15 @@ object NesValidator {
             s.data.firstOrNull { it !in 0..255 }?.let { out += "$where: byte $it is outside 0-255" }
             if (s.dmcInitial !in DpcmSample.DMC_INITIAL) out += "$where: initial value ${s.dmcInitial} is outside 0-63"
         }
-        val lfo = song.nes.epsmLfo
-        when {
-            expansion != NesExpansion.EPSM && lfo != 0 -> out += "Only EPSM songs have an LFO setting; this song's is $lfo"
-            lfo != 0 && lfo !in NesSound.EPSM_LFO_ON..NesSound.EPSM_LFO_ON + 7 ->
-                out += "The EPSM LFO register value $lfo is not off (0) or on with a rate (8-15)"
+        if (song.nes.pcmSamples.isNotEmpty() && !expansion.hasPcmLane) out += "Only NES + MMC5 songs have PCM samples (the MMC5 PCM lane)"
+        song.nes.pcmSamples.forEachIndexed { i, s ->
+            val where = "PCM sample ${i + 1} \"${s.name}\""
+            if (s.data.size !in 1..Pcm.MEMORY) out += "$where has ${s.data.size} bytes; PCM samples are 1-${Pcm.MEMORY} bytes"
+            (0 until s.data.size).firstOrNull { s.data[it] == 0 }?.let {
+                out += "$where: byte $it is \$00, which the MMC5's DAC ignores (it holds its value and trips the IRQ); bytes are 1-255"
+            }
+            if (s.rate !in Pcm.MIN_RATE..Pcm.MAX_RATE) out += "$where: rate ${s.rate} Hz is outside ${Pcm.MIN_RATE}-${Pcm.MAX_RATE}"
+            if (s.loopStart !in 0 until maxOf(1, s.data.size)) out += "$where: loop start ${s.loopStart} is outside the sample (0-${s.data.size - 1})"
         }
         song.tuning?.problems(NesSystem)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
@@ -108,6 +151,54 @@ object NesValidator {
             out += "Parked orders ${song.parkedOrders} must be ascending, distinct orders 0-${song.orders.size - 1}"
         }
         return out.list()
+    }
+
+    /** The shape of an N163 sound's waves: what every consumer relies on (sizes, ranges, one repeat per wave). */
+    private fun n163Shape(out: Report, where: String, w: N163Wave) {
+        if (w.size < N163Wave.MIN_SIZE || w.size % 4 != 0 || w.size > NesRules.N163_RAM_SAMPLES) {
+            out += "$where: the N163 wave size ${w.size} is not a multiple of 4 from ${N163Wave.MIN_SIZE} to ${NesRules.N163_RAM_SAMPLES}"
+            return
+        }
+        if (w.position < 0 || w.position % 2 != 0 || w.position >= NesRules.N163_RAM_SAMPLES) {
+            out += "$where: the N163 wave position ${w.position} is not an even sample 0-${NesRules.N163_RAM_SAMPLES - 2} (waves start on a byte)"
+        }
+        if (w.waves.size !in 1..N163Wave.maxWaves(w.size)) {
+            out += "$where: ${w.waves.size} N163 waves; a sound holds 1-${N163Wave.maxWaves(w.size)} of ${w.size} samples " +
+                "(FamiStudio keeps at most ${N163Wave.MAX_SAMPLES} samples and ${N163Wave.MAX_WAVES} waves)"
+        }
+        w.waves.forEachIndexed { i, wave ->
+            if (wave.size != w.size) out += "$where: N163 wave ${i + 1} has ${wave.size} samples; the sound's waves have ${w.size}"
+            wave.firstOrNull { it !in N163Wave.SAMPLE }?.let { out += "$where: N163 wave ${i + 1} sample $it is outside 0-15" }
+        }
+        if (w.repeat.size != w.waves.size) out += "$where: ${w.repeat.size} N163 wave repeats for ${w.waves.size} waves; each wave has one"
+        w.repeat.firstOrNull { it !in N163Wave.REPEAT }?.let { out += "$where: an N163 wave plays for $it frames; 1-15 frames per wave" }
+        if (w.loop !in -1 until w.waves.size) out += "$where: the N163 wave loop ${w.loop} is outside the sequence"
+        if (w.release !in -1 until w.waves.size) out += "$where: the N163 wave release ${w.release} is outside the sequence"
+    }
+
+    /**
+     * The shape of an FDS sound: what every consumer relies on (FamiStudio 4.5.3's limits, `Envelope.cs` and
+     * `ParamProviders.cs`: 1-16 waves of 64 samples 0..63, a repeat of 1-15 frames per wave, 32 modulation targets
+     * −64..63, mod speed 0-4095, depth 0-63, delay 0-255, auto-mod numerator and denominator 1-32).
+     */
+    private fun fdsShape(out: Report, where: String, f: FdsSound) {
+        if (f.waves.size !in 1..FdsSound.MAX_WAVES) out += "$where: ${f.waves.size} FDS waves; a sound holds 1-${FdsSound.MAX_WAVES} (FamiStudio's limit)"
+        f.waves.forEachIndexed { i, wave ->
+            if (wave.size != FdsSound.WAVE_SIZE) out += "$where: FDS wave ${i + 1} has ${wave.size} samples; FDS waves have ${FdsSound.WAVE_SIZE}"
+            wave.firstOrNull { it !in FdsSound.SAMPLE }?.let { out += "$where: FDS wave ${i + 1} sample $it is outside 0-63" }
+        }
+        if (f.repeat.size != f.waves.size) out += "$where: ${f.repeat.size} FDS wave repeats for ${f.waves.size} waves; each wave has one"
+        f.repeat.firstOrNull { it !in FdsSound.REPEAT }?.let { out += "$where: an FDS wave plays for $it frames; 1-15 frames per wave" }
+        if (f.loop !in -1 until f.waves.size) out += "$where: the FDS wave loop ${f.loop} is outside the sequence"
+        if (f.release !in -1 until f.waves.size) out += "$where: the FDS wave release ${f.release} is outside the sequence"
+        if (f.modulation.size != FdsSound.MOD_SIZE) out += "$where: the FDS modulation table has ${f.modulation.size} entries; it has ${FdsSound.MOD_SIZE}"
+        f.modulation.firstOrNull { it !in FdsSound.MOD_TARGET }?.let { out += "$where: FDS modulation value $it is outside -64..63" }
+        if (f.modSpeed !in FdsSound.MOD_SPEED) out += "$where: FDS mod speed ${f.modSpeed} is outside 0-4095"
+        if (f.modDepth !in FdsSound.MOD_DEPTH) out += "$where: FDS mod depth ${f.modDepth} is outside 0-63"
+        if (f.modDelay !in FdsSound.MOD_DELAY) out += "$where: FDS mod delay ${f.modDelay} is outside 0-255 frames"
+        if (f.autoModNumer !in FdsSound.AUTO_MOD || f.autoModDenom !in FdsSound.AUTO_MOD) {
+            out += "$where: the FDS auto-mod ratio ${f.autoModNumer}/${f.autoModDenom} is outside 1-32 / 1-32"
+        }
     }
 
     private fun envelopeShape(out: Report, where: String, name: String, e: NesEnvelope, valid: IntRange) {
@@ -146,9 +237,12 @@ object NesValidator {
                 "mixer" to FamiStudioEnvelopes.encode(ins.mixer, Kind.MIXER).size,
                 "noise" to FamiStudioEnvelopes.encode(ins.noise, Kind.NOISE).size,
             )) if (size > 255) out += "$where: the $name envelope takes $size bytes once encoded; FamiStudio's limit is 255. Shorten it or repeat fewer changes"
+            if (ins.chip == NesChip.N163) n163Rules(out, where, ins.wave, song.nes.expansion.n163Channels)
+            if (ins.chip == NesChip.FDS) fdsRules(out, where, ins.fds)
         }
         val played = song.orders.toSet()
-        val squares = if (song.nes.expansion == NesExpansion.EPSM) NesRules.EPSM_SSG1 until NesRules.EPSM_FM1 else IntRange.EMPTY
+        val squares = NesRules.ssgChannels(song.nes.expansion)
+        val ssg = NesRules.ssgLabel(song.nes.expansion)
         document.patterns.forEachIndexed { p, pattern ->
             if (p !in played) return@forEachIndexed
             val label = Songs.patternLabel(song, p).cap()
@@ -158,10 +252,11 @@ object NesValidator {
                 }
             }
             if (!squares.isEmpty()) for (row in 0 until pattern.length) {
-                NesRules.envPeriodConflict(squares.map { pattern.tracks[it][row] })?.let { out += "$label, row $row: $it" }
+                NesRules.envPeriodConflict(squares.map { pattern.tracks[it][row] }, ssg)?.let { out += "$label, row $row: $it" }
             }
         }
         if (out.isEmpty()) dpcmErrors(song, out)
+        if (out.isEmpty() && song.nes.expansion.hasPcmLane) pcmErrors(song, out)
         if (out.isEmpty()) {
             try {
                 FamiStudioLowering.lower(FsSong.of(song))
@@ -170,6 +265,36 @@ object NesValidator {
             }
         }
         return out.list()
+    }
+
+    /**
+     * MMC5 PCM lane problems of the arrangement [song]: notes without a mapping (also legato ones, which play the lane's
+     * current instrument) and the player's sample memory and sample count.
+     */
+    private fun pcmErrors(song: Song, out: Report) {
+        val stored = Pcm.stored(song.nes)
+        if (stored > Pcm.MEMORY) {
+            out += "The PCM samples take ${Pcm.kb(stored)}; the MMC5 PCM player holds ${Pcm.kb(Pcm.MEMORY)}. Delete or shorten samples"
+        }
+        if (song.nes.pcmSamples.size > Pcm.MAX_SAMPLES) {
+            out += "The song has ${song.nes.pcmSamples.size} PCM samples; the MMC5 PCM player holds ${Pcm.MAX_SAMPLES}"
+        }
+        var current = 0
+        for (p in song.orders) {
+            val pattern = song.patterns[p]
+            for (r in 0 until pattern.length) {
+                val cell = pattern.tracks[NesRules.MMC5_PCM][r]
+                if (cell.note < 0) continue
+                val where = "${Songs.patternLabel(song, p).cap()}, MMC5 PCM row $r"
+                val slot = if (cell.instrument != 0) cell.instrument else current
+                if (slot == 0) {
+                    out += "$where: ${NesSystem.noteName(cell.note)} has no instrument and none has played on MMC5 PCM yet; enter the instrument whose PCM samples it plays"
+                } else {
+                    NesRules.pcmMappingProblem(song, slot, cell.note)?.let { out += "$where: $it" }
+                    current = slot
+                }
+            }
+        }
     }
 
     /**
@@ -256,6 +381,14 @@ object NesValidator {
             }
         }
         firstNotesWithoutInstrument(song).forEach { out += it }
+        org.thortracker.backend.NesPcmLowering.firstNote(song)?.let {
+            out += "The MMC5 PCM lane plays ($it): playback and WAV export include it, but .nsf and FamiStudio text cannot " +
+                "(FamiStudio's engine has no MMC5 PCM), so those exports are refused"
+        }
+        if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
+        if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
+        if (song.nes.expansion == NesExpansion.FDS) fdsWarnings(song).forEach { out += it }
+        if (!NesRules.ssgChannels(song.nes.expansion).isEmpty()) NesS5b.warnings(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.EPSM) epsmWarnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
@@ -271,7 +404,8 @@ object NesValidator {
     private fun firstNotesWithoutInstrument(song: Song): List<String> {
         val out = ArrayList<String>()
         for (ch in 0 until song.nes.expansion.channels) {
-            if (ch == NesRules.DPCM) continue // an error there: a DPCM note needs an instrument's sample mapping
+            // Errors there: a DPCM or MMC5 PCM note needs an instrument's sample mapping.
+            if (ch == NesRules.DPCM || NesRules.isMmc5Pcm(song.nes.expansion, ch)) continue
             loop@ for (p in song.orders) {
                 val pattern = song.patterns[p]
                 for (row in 0 until pattern.length) {
@@ -288,78 +422,20 @@ object NesValidator {
         return out
     }
 
-    /** Whether [ins]'s SSG mixer lets noise through on some frame (an empty mixer is tone only). */
-    private fun usesNoise(ins: NesInstrument): Boolean = FamiStudioEnvelopes.effective(ins.mixer, Kind.MIXER).values.any { it == 0 || it == 1 }
-
     /**
-     * The EPSM's shared hardware as FamiStudio's sound engine 4.5.3 drives it, where one sound plays another's settings:
-     * - SSG envelope generator: every frame the highest SSG square sounding a sound with a hardware envelope sets the
-     *   generator's shape and period for all (`famistudio_update_epsm_square_channel_sound`); while it plays, the volume
-     *   envelope, Cxx and Axy do not change that square's level.
-     * - SSG noise generator: the highest sounding square sets the noise period; SSG 1 only when its mixer lets noise
-     *   through, SSG 2 and 3 always (the engine tests their unshifted mixer value against `famistudio_epsm_square_noise_mask`
-     *   bits meant for shifted values, so the test never skips them).
+     * The EPSM's shared FM LFO and its rhythm drums, as FamiStudio's sound engine 4.5.3 plays them (the SSG's shared
+     * generators: [NesS5b.warnings]):
      * - FM LFO: one for the chip, the song's; FM sounds with AMS/PMS depths while it is off do not wobble.
-     * - Drums: only the first volume value of a sound counts (the engine reads it once at the note).
+     * - Drums: only the first volume value of a sound counts (the engine reads it once at the load), and a drum note
+     *   without an instrument is legato like any other note: without an attack the engine does not key the drum again.
+     * - FamiStudio's text format cannot carry a manual SSG envelope period other than 4000 ([FamiStudioText.manualPeriodProblem]).
      * [song] is the arrangement of a structurally valid EPSM song.
      */
     private fun epsmWarnings(song: Song): List<String> {
         val out = ArrayList<String>()
         val fs = FsSong.of(song)
         val expansion = song.nes.expansion
-        val squares = NesRules.EPSM_SSG1 until NesRules.EPSM_FM1
         fun ins(slot: Int) = fs.instruments[slot - 1]
-        fun envOn(slot: Int) = slot != 0 && ins(slot).let { it.chip == NesChip.EPSM && it.epsmEnvelope.shape != S5bShape.OFF }
-        fun where(ch: Int, row: Int): String {
-            val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
-            return "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(expansion, ch)} row ${row - fs.orderStart[o]}"
-        }
-        val sounding = IntArray(fs.channels)
-        val note = IntArray(fs.channels)
-        val reported = HashSet<String>()
-        for (row in 0 until fs.totalRows) {
-            for (ch in squares) {
-                val n = fs.notes[ch][row] ?: continue
-                if (n.isMusical) {
-                    if (n.instrument != 0) sounding[ch] = n.instrument
-                    note[ch] = n.value
-                } else if (n.value == FsNote.STOP) sounding[ch] = 0
-                if (n.hasVolume && envOn(sounding[ch]) && reported.add("volume $ch ${sounding[ch]}")) {
-                    out += "${where(ch, row)}: volume effects do not change sound ${NesRules.hex2(sounding[ch])}: its SSG hardware " +
-                        "envelope sets the level (the volume envelope, Cxx and Axy are ignored while it plays)"
-                }
-            }
-            val env = squares.filter { envOn(sounding[it]) }
-            if (env.size > 1) {
-                val owner = env.last()
-                val own = ins(sounding[owner]).epsmEnvelope
-                for (other in env.dropLast(1)) {
-                    val e = ins(sounding[other]).epsmEnvelope
-                    val differs = e.shape != own.shape || e.autoPitch != own.autoPitch ||
-                        (if (own.autoPitch) e.octave != own.octave || note[other] != note[owner] else e.period != own.period)
-                    if (differs && reported.add("env ${sounding[other]} ${sounding[owner]}")) {
-                        out += "${where(other, row)}: sound ${NesRules.hex2(sounding[other])} and ${NesRules.channelName(expansion, owner)}'s " +
-                            "sound ${NesRules.hex2(sounding[owner])} share the SSG's one envelope generator: while both sound, " +
-                            "${NesRules.channelName(expansion, owner)}'s shape and period play on both (the highest square sets " +
-                            "them); give them the same envelope and note, or keep them apart"
-                    }
-                }
-            }
-            val source = squares.lastOrNull { sounding[it] != 0 && (it != NesRules.EPSM_SSG1 || usesNoise(ins(sounding[it]))) }
-            if (source != null) {
-                val rate = FamiStudioEnvelopes.effective(ins(sounding[source]).noise, Kind.NOISE)
-                for (ch in squares) {
-                    if (ch == source || sounding[ch] == 0 || !usesNoise(ins(sounding[ch]))) continue
-                    if (FamiStudioEnvelopes.effective(ins(sounding[ch]).noise, Kind.NOISE) == rate) continue
-                    if (!reported.add("noise ${sounding[ch]} ${sounding[source]}")) continue
-                    val quirk = if (!usesNoise(ins(sounding[source]))) ", even without noise in its mixer (FamiStudio's engine counts SSG 2 and 3 always)" else ""
-                    out += "${where(ch, row)}: sound ${NesRules.hex2(sounding[ch])} plays noise, but ${NesRules.channelName(expansion, source)}'s " +
-                        "sound ${NesRules.hex2(sounding[source])} sets the SSG's one noise rate$quirk; give both the same noise envelope or " +
-                        "play the noise on the highest square"
-                }
-            }
-            for (ch in squares) if ((fs.notes[ch][row]?.cutDelay ?: -1) >= 0) sounding[ch] = 0
-        }
         val fmSlots = HashSet<Int>()
         val drumSlots = HashSet<Int>()
         for (ch in NesRules.EPSM_FM1 until fs.channels) for (n in fs.notes[ch]) {
@@ -378,9 +454,266 @@ object NesValidator {
             out += "Drum sound${if (stepped.size == 1) "" else "s"} ${stepped.joinToString(", ") { NesRules.hex2(it) }} have a changing " +
                 "volume envelope, but the EPSM drums play only its first value (times Cxx); use Cxx or Axy for accents"
         }
+        for (ch in NesRules.EPSM_RHYTHM1 until fs.channels) {
+            val row = (0 until fs.totalRows).firstOrNull { fs.notes[ch][it]?.let { n -> n.isMusical && !n.attack } == true } ?: continue
+            val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+            out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(expansion, ch)} row " +
+                "${row - fs.orderStart[o]}: a drum note without an instrument is legato and does not hit the drum again; enter " +
+                "the sound number on every hit"
+        }
         // The FamiStudio text export refuses such a sound (FamiStudioText.manualPeriodProblem); tell before the export does.
         FamiStudioText.manualPeriodProblem(fs)?.let { out += it }
         return out
+    }
+
+    /**
+     * The VRC7's one custom patch: a custom sound starting while another FM channel still holds a note of a different
+     * custom sound changes that note's patch too (the chip has one set of custom registers; built-in patches have no
+     * such limit). A released or stopped note no longer counts (its key-off tail may still change). [song] is the
+     * arrangement of a structurally valid song.
+     */
+    private fun vrc7Warnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val fm = NesRules.VRC7_FM1 until fs.channels
+        fun custom(slot: Int) = slot != 0 && fs.instruments[slot - 1].let { it.chip == NesChip.VRC7 && it.fm.preset == Vrc7Presets.CUSTOM }
+        val holding = IntArray(fs.channels) // custom slot each FM channel holds a note of (0: none)
+        val reported = HashSet<Pair<Int, Int>>()
+        for (row in 0 until fs.totalRows) {
+            for (ch in fm) {
+                val n = fs.notes[ch][row] ?: continue
+                when {
+                    n.isMusical -> {
+                        if (custom(n.instrument)) {
+                            for (other in fm) {
+                                val held = holding[other]
+                                // Sounds with the same registers (a copied sound) load the same patch: no change heard.
+                                if (other == ch || held == 0 || fs.instruments[held - 1].fm.regs == fs.instruments[n.instrument - 1].fm.regs ||
+                                    !reported.add(held to n.instrument)) continue
+                                val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+                                out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row " +
+                                    "${row - fs.orderStart[o]}: custom sound ${NesRules.hex2(n.instrument)} loads the VRC7's one custom patch while " +
+                                    "${NesRules.channelName(song.nes.expansion, other)} still holds custom sound ${NesRules.hex2(held)}, which then " +
+                                    "plays the new patch; make one of them a built-in patch or end that note first"
+                            }
+                        }
+                        holding[ch] = if (custom(n.instrument)) n.instrument else 0
+                    }
+                    n.value == FsNote.STOP || n.value == FsNote.RELEASE -> holding[ch] = 0
+                }
+                if (n.cutDelay >= 0) holding[ch] = 0
+            }
+        }
+        return out
+    }
+
+    /** What FamiStudio's engine and text import require of an N163 sound's waves with [channels] N163 channels enabled. */
+    private fun n163Rules(out: Report, where: String, w: N163Wave, channels: Int) {
+        val ram = NesRules.n163WaveRam(channels)
+        if (w.position + w.size > ram) {
+            out += "$where: its N163 wave (RAM samples ${w.position}-${w.position + w.size - 1}) runs into the channel registers: with " +
+                "$channels N163 channel${if (channels == 1) "" else "s"} waves fit samples 0-${ram - 1} (each channel's registers take 16 " +
+                "samples at the top). Move it to ${maxOf(0, ram - w.size)} or below, or shrink it"
+        }
+        if (w.release >= 0 && w.loop < 0) {
+            out += "$where: the N163 wave release needs a wave loop before it (FamiStudio sustains a note by looping until it is released); set a loop"
+        }
+        if (w.release >= 0 && w.loop >= 0 && w.loop >= w.release) {
+            out += "$where: the N163 wave loop (wave ${w.loop + 1}) must come before the release (wave ${w.release + 1})"
+        }
+        val size = FamiStudioEnvelopes.waveIndex(w).size
+        if (size > 255) out += "$where: the N163 wave sequence takes $size bytes once encoded; FamiStudio's limit is 255. Use fewer waves or repeats"
+    }
+
+    /**
+     * What FamiStudio's engine and text import require of an FDS sound: the wave sequence's loop and release rules (as an
+     * N163 sound's: `Envelope` loop/release setters) and its encoded size. Every manual mod speed 0..4095 plays as itself
+     * (the lowering tags those whose low byte is $80-$FF for Thor Tracker's FDS player).
+     */
+    private fun fdsRules(out: Report, where: String, f: FdsSound) {
+        if (f.release >= 0 && f.loop < 0) {
+            out += "$where: the FDS wave release needs a wave loop before it (FamiStudio sustains a note by looping until it is released); set a loop"
+        }
+        if (f.release >= 0 && f.loop >= 0 && f.loop >= f.release) {
+            out += "$where: the FDS wave loop (wave ${f.loop + 1}) must come before the release (wave ${f.release + 1})"
+        }
+        val size = FamiStudioEnvelopes.waveIndex(f).size
+        if (size > 255) out += "$where: the FDS wave sequence takes $size bytes once encoded; FamiStudio's limit is 255. Use fewer waves or repeats"
+    }
+
+    /**
+     * The N163's shared RAM as FamiStudio's engine uses it: each channel uploads its sound's current wave to that sound's
+     * RAM position whenever the sequence moves to another wave (on every attack and every wave change), so two channels
+     * sounding at once with overlapping RAM ranges overwrite each other's waves (identical single waves at the same place,
+     * or the same single-wave sound, share safely). Also off-key wave sizes and silent all-zero waves of played sounds.
+     * [song] is the arrangement of a structurally valid song.
+     */
+    private fun n163Warnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val expansion = song.nes.expansion
+        val n163 = NesRules.N163_FIRST until fs.channels
+        val playing = IntArray(fs.channels) // slot each N163 channel sounds (0: none)
+        val attack = IntArray(fs.channels) // row of its last attack
+        val reported = HashSet<Pair<Int, Int>>()
+        val used = HashSet<Int>()
+        // One pass, then the loop again: notes still sounding at the end overlap the loop's first rows.
+        val rows = (0 until fs.totalRows) + (fs.orderStart[fs.loopOrder] until fs.totalRows)
+        for (row in rows) {
+            for (ch in n163) {
+                val n = fs.notes[ch][row] ?: continue
+                when {
+                    n.isMusical && n.instrument != 0 -> {
+                        if (n.attack || playing[ch] != n.instrument) attack[ch] = row
+                        playing[ch] = n.instrument
+                        used += n.instrument
+                    }
+                    n.value == FsNote.STOP -> playing[ch] = 0
+                }
+                if (n.cutDelay >= 0) playing[ch] = 0
+            }
+            for (a in n163) for (b in n163) {
+                if (b <= a || playing[a] == 0 || playing[b] == 0) continue
+                val sa = playing[a]
+                val sb = playing[b]
+                val wa = fs.instruments[sa - 1].wave
+                val wb = fs.instruments[sb - 1].wave
+                val shared = maxOf(wa.position, wb.position)..minOf(wa.position + wa.size, wb.position + wb.size) - 1
+                if (shared.isEmpty() || sharesSafely(sa, wa, sb, wb, attack[a] == attack[b])) continue
+                if (!reported.add(minOf(sa, sb) to maxOf(sa, sb))) continue
+                val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+                out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()} row ${row - fs.orderStart[o]}: " +
+                    "${NesRules.channelName(expansion, a)} plays sound ${NesRules.hex2(sa)} (N163 RAM ${ramText(wa)}) while " +
+                    "${NesRules.channelName(expansion, b)} plays sound ${NesRules.hex2(sb)} (RAM ${ramText(wb)}): they share samples " +
+                    "${shared.first}-${shared.last}, so each overwrites the other's wave when it loads one. Give one of them another " +
+                    "wave position (Instrument view, Wave page) or play them apart"
+            }
+        }
+        for (slot in used.sorted()) {
+            val ins = fs.instruments[slot - 1]
+            val w = ins.wave
+            if (!NesRules.n163InTune(w.size)) {
+                val t = NesRules.n163Transpose(w.size)
+                out += "Sound ${NesRules.hex2(slot)} \"${ins.name}\": its ${w.size}-sample N163 wave sounds " +
+                    "${formatSemitones(kotlin.math.abs(t))} semitones ${if (t < 0) "below" else "above"} the notes (FamiStudio tunes the " +
+                    "N163 for 16-sample waves; 4, 8, 32, 64 or 128 samples stay in tune, whole octaves away)"
+            }
+            if (w.waves.all { wave -> wave.all { it == 0 } }) {
+                out += "Sound ${NesRules.hex2(slot)} \"${ins.name}\": all its N163 samples are 0, which is silent (a constant level " +
+                    "only clicks as the volume changes); draw a wave or pick a preset on the Wave page"
+            }
+        }
+        return out
+    }
+
+    /**
+     * The FDS channel as FamiStudio's engine plays it ([song] is the arrangement of a structurally valid song): auto-mod
+     * whose 16-bit multiply overflows on notes the song plays (`famistudio_mul`: frequency × numerator ≥ 65536 drops the
+     * carry, so the mod speed comes out far too low), Ixx/Jxx while an auto-mod sound plays (the engine then computes the
+     * speed from the pitch every frame and ignores them), silent waves, and modulation that cannot sound: a table, speed
+     * or auto-mod at Mod depth 0, a depth with a flat table or with speed 0 (the table stands still), unless effects set
+     * what is missing.
+     */
+    private fun fdsWarnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val ch = NesRules.FDS
+        val top = HashMap<Int, Int>() // auto-mod slot → the highest engine note it plays
+        val used = BooleanArray(fs.instruments.size + 1)
+        val ignored = HashSet<Int>()
+        var current = 0
+        var depthEffects = false
+        var speedEffects = false
+        fun where(row: Int): String {
+            val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+            return "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row ${row - fs.orderStart[o]}"
+        }
+        for (row in 0 until fs.totalRows) {
+            val n = fs.notes[ch][row] ?: continue
+            if (n.isMusical && n.instrument != 0) {
+                current = n.instrument
+                used[current] = true
+                val ins = fs.instruments[current - 1]
+                if (ins.fds.autoMod) {
+                    val arp = maxOf(0, ins.arpeggio.values.maxOrNull() ?: 0, if (n.arpeggio >= 0) maxOf(n.arpeggio shr 4, n.arpeggio and 0xF) else 0)
+                    top[current] = maxOf(top[current] ?: 0, maxOf(n.value, n.slideTarget) + arp)
+                }
+            }
+            if (n.fdsModDepth > 0) depthEffects = true
+            if (n.fdsModSpeed >= 0) {
+                speedEffects = true
+                // A row whose own sound is auto-mod is an error (NesRules.cellProblem); here the sound plays on.
+                val own = n.isMusical && n.attack
+                if (!own && current != 0 && fs.instruments[current - 1].fds.autoMod && ignored.add(current)) {
+                    out += "${where(row)}: I/J have no effect while an auto-mod sound plays: sound ${NesRules.hex2(current)} computes " +
+                        "its mod speed from the pitch every frame; remove the Ixx/Jxx or play a sound without Auto-mod"
+                }
+            }
+        }
+        for (slot in 1 until used.size) {
+            if (!used[slot]) continue
+            val ins = fs.instruments[slot - 1]
+            val f = ins.fds
+            val name = "Sound ${NesRules.hex2(slot)} \"${ins.name}\""
+            top[slot]?.let { high ->
+                val (numer, denom) = f.autoModFraction
+                val from = NesRules.fdsLowestOverflowingNote(numer)
+                if (from != null && NesRules.fdsAutoModOverflows(minOf(high, NesRules.FDS_HIGHEST_FS_NOTE), numer)) {
+                    val plays = minOf(high, NesRules.FDS_HIGHEST_FS_NOTE) - NesRules.FDS_TRANSPOSE + NesRules.NOTE_OFFSET
+                    out += "$name: auto-mod $numer/$denom overflows FamiStudio's 16-bit multiply (frequency × $numer ≥ 65536) from " +
+                        "${NesSystem.noteName(from)} up, and the song plays it up to ${NesSystem.noteName(plays)}: the mod speed there comes " +
+                        "out far too low. Use a smaller ratio (e.g. halve both numbers) or play it lower"
+                }
+            }
+            val firstSample = f.waves[0][0]
+            if (f.waves.all { wave -> wave.all { it == firstSample } }) {
+                out += "$name: all its FDS samples are $firstSample, which is silent (a constant level only clicks as the volume " +
+                    "changes); draw a wave or pick a preset"
+            }
+            val flat = f.modulation.all { it == 0 }
+            when {
+                f.modDepth == 0 && !depthEffects && (!flat || f.modSpeed > 0 || f.autoMod) ->
+                    out += "$name: its modulation (table, speed or auto-mod) does nothing at Mod depth 0; set a depth (or use Hxx) " +
+                        "or clear the modulation"
+                f.modDepth > 0 && flat ->
+                    out += "$name: Mod depth ${f.modDepth} with a flat modulation table bends nothing; draw the table or pick a preset"
+                f.modDepth > 0 && !f.autoMod && f.modSpeed == 0 && !speedEffects ->
+                    out += "$name: Mod depth ${f.modDepth} with mod speed 0: the modulation table stands still, so nothing is " +
+                        "modulated; set a speed, turn Auto-mod on or use Ixx/Jxx"
+            }
+        }
+        return out
+    }
+
+    /** Two sounds overlapping in N163 RAM that never disagree there: one single wave, the same place and the same samples. */
+    private fun sharesSafely(sa: Int, wa: N163Wave, sb: Int, wb: N163Wave, sameAttack: Boolean): Boolean = when {
+        sa == sb -> wa.waves.size == 1 || sameAttack
+        else -> wa.waves.size == 1 && wb.waves.size == 1 && wa.position == wb.position && wa.size == wb.size && wa.waves == wb.waves
+    }
+
+    private fun ramText(w: N163Wave) = "${w.position}-${w.position + w.size - 1}"
+
+    private fun formatSemitones(v: Double): String {
+        val tenths = kotlin.math.round(v * 10).toInt()
+        return "${tenths / 10}.${tenths % 10}"
+    }
+
+    /**
+     * N163 RAM samples the song's played N163 sounds occupy (the union of their wave ranges), for Help's limits. 0 for
+     * songs without the N163 or with errors in their structure.
+     */
+    fun n163RamUsed(document: Song): Int {
+        if (document.nes.expansion.chip != NesChip.N163 || structuralErrors(document).isNotEmpty()) return 0
+        val song = NesSystem.arranged(document)
+        val samples = HashSet<Int>()
+        for (p in song.orders.toSet()) for (ch in NesRules.N163_FIRST until song.nes.expansion.channels) {
+            for (cell in song.patterns[p].tracks[ch]) {
+                if (cell.note >= 0 && cell.instrument != 0) {
+                    song.nes.instruments.getOrNull(cell.instrument - 1)?.takeIf { it.chip == NesChip.N163 }?.let { samples += it.wave.ram }
+                }
+            }
+        }
+        return samples.size
     }
 
     /** Tonal notes of a tuned song that do not sound a tuned pitch (their Pxx missing, wrong or the slot taken). */

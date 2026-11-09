@@ -1,7 +1,5 @@
 package org.thortracker.system.nes
 
-import kotlin.math.log2
-import kotlin.math.roundToInt
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Hint
@@ -29,11 +27,12 @@ internal fun EpsmPatch.withYm(ym: YmFmInstrument): EpsmPatch =
     copy(algorithm = ym.algorithm, feedback = ym.feedback, ams = ym.ams, pms = ym.fms, operators = ym.operators)
 
 /**
- * The EPSM pages of [NesInstrumentView] (EPSM sounds only): the SSG hardware envelope ([NesInstrumentView.ENV_PAGE]),
- * the FM patch's curated controls ([NesInstrumentView.EPSM_FM_PAGE], the Mega Drive editor's [YmCurated] over the same
- * OPN registers) and every register ([NesInstrumentView.EPSM_EXPERT_PAGE]), and the rhythm page
- * ([NesInstrumentView.EPSM_RHYTHM_PAGE]): what the six fixed-pitch ROM drums take from a sound, and the rhythm ROM.
- * On the Expert grid [org.thortracker.editor.ViewState.programField] is the operator (0..3).
+ * The EPSM pages of [NesInstrumentView] (EPSM sounds only) after the SSG hardware envelope page they share with 5B sounds
+ * ([NesInstrumentView.S5B_ENV_PAGE], the same YM2149 generator in [NesInstrument.s5b]): the FM patch's curated controls
+ * ([NesInstrumentView.EPSM_FM_PAGE], the Mega Drive editor's [YmCurated] over the same OPN registers) and every register
+ * ([NesInstrumentView.EPSM_EXPERT_PAGE]), and the rhythm page ([NesInstrumentView.EPSM_RHYTHM_PAGE]): what the six
+ * fixed-pitch ROM drums take from a sound, and the rhythm ROM. On the Expert grid
+ * [org.thortracker.editor.ViewState.programField] is the operator (0..3).
  */
 object NesEpsmPage {
     /** The YMF288's envelope generator clock: 8 MHz / 144 (its FM sample rate) / 3. */
@@ -49,11 +48,10 @@ object NesEpsmPage {
         Row.OPN_ATTACK, Row.OPN_DECAY, Row.OPN_SUSTAIN, Row.OPN_SUSTAIN_RATE, Row.OPN_RELEASE, Row.OPN_TONE_DECAY, Row.OPN_KEY_SCALE,
         Row.OPN_VIBRATO, Row.OPN_TREMOLO, Row.OPN_SSG, Row.EPSM_PAN)
     val EXPERT_ROWS = listOf(Row.OPN_RAW_ALGORITHM, Row.OPN_RAW_FEEDBACK, Row.EPSM_PAN, Row.OPN_AMS, Row.OPN_FMS) + GRID
-    val ENV_ROWS = listOf(Row.ENV_SHAPE, Row.ENV_AUTO, Row.ENV_OCTAVE, Row.ENV_PERIOD)
     val RHYTHM_ROWS = listOf(Row.RHYTHM_LEVEL, Row.EPSM_PAN, Row.RHYTHM_ROM)
 
     /** Every row of the EPSM pages (all of them are about the whole sound, not one step envelope). */
-    val ALL_ROWS: Set<Row> = (SOUND_ROWS + EXPERT_ROWS + ENV_ROWS + RHYTHM_ROWS).toSet()
+    val ALL_ROWS: Set<Row> = (SOUND_ROWS + EXPERT_ROWS + RHYTHM_ROWS).toSet()
 
     /** The Mega Drive FM presets, as starting points for the patch (the same OPN registers; the YMF288's clock is 4% faster). */
     val PRESETS: List<YmPresets.Preset> = YmPresets.ALL.filter { it.category == YmPresets.Category.FM && it.instrument is YmFmInstrument }
@@ -62,7 +60,7 @@ object NesEpsmPage {
     private val PANS = listOf(true to true, true to false, false to true, false to false)
 
     /** The YMF288's LFO rates (register $22 bits 0-2) at 8 MHz. */
-    private val LFO_HZ = listOf("3.98", "5.56", "6.02", "6.37", "6.88", "9.63", "48.1", "72.2")
+    private val LFO_HZ = NesEpsmSongSettings.LFO_HZ
 
     /** The six rhythm drums, in channel order (YM2608 BD, SD, TOP, HH, TOM, RIM). */
     val DRUM_REGISTERS = listOf("BD", "SD", "TOP", "HH", "TOM", "RIM")
@@ -74,10 +72,6 @@ object NesEpsmPage {
         Row.EPSM_PAN -> "Pan"
         Row.RHYTHM_LEVEL -> "Level"
         Row.RHYTHM_ROM -> "Rhythm ROM"
-        Row.ENV_SHAPE -> "Shape"
-        Row.ENV_AUTO -> "Period"
-        Row.ENV_OCTAVE -> "Octave"
-        Row.ENV_PERIOD -> "Manual"
         else -> OPN[row]?.label ?: row.name
     }
 
@@ -104,16 +98,10 @@ object NesEpsmPage {
     /** A row of the EPSM pages as the editor shows it, for sound [ins] of [song]. */
     fun value(song: Song, ins: NesInstrument, row: Row): String {
         val p = ins.epsm
-        val e = ins.epsmEnvelope
         return when (row) {
             Row.EPSM_PAN -> panText(p)
             Row.RHYTHM_LEVEL -> rhythmLevel(ins).let { "$it   written as drum level ${it * 2} of 31 (Cxx scales it); the volume envelope's first step" }
             Row.RHYTHM_ROM -> romText()
-            Row.ENV_SHAPE -> if (e.shape == S5bShape.OFF) "Off: the volume envelope sets the level" else
-                "${e.shape.label} ${e.shape.picture}: ${if (e.shape.repeats) "repeats while the note holds" else "once per note"}; each attack restarts it"
-            Row.ENV_AUTO -> if (e.autoPitch) "Auto: the period follows the note" else "Manual: a fixed period (Ixx/Jyy change it)"
-            Row.ENV_OCTAVE -> if (e.autoPitch) "${e.octave}: ${EpsmSsg.octaveText(e.shape, e.octave)}" else "${e.octave} (auto only)"
-            Row.ENV_PERIOD -> if (e.autoPitch) "${e.period} (manual only)" else "${e.period}: ${EpsmSsg.periodText(e.shape, e.period)}"
             in OPN -> opnValue(song, p, row)
             else -> ""
         }
@@ -122,15 +110,11 @@ object NesEpsmPage {
     /** Rows shown dimmed: settings that do nothing as they stand. */
     fun dim(song: Song, ins: NesInstrument, row: Row): Boolean {
         val k = YmCurated.controls(ins.epsm.asYm())
-        val e = ins.epsmEnvelope
         return when (row) {
             Row.OPN_BRIGHTNESS, Row.OPN_TONE_DECAY -> k.brightness < 0
             Row.OPN_VIBRATO, Row.OPN_TREMOLO, Row.OPN_AMS, Row.OPN_FMS -> song.nes.epsmLfo and 8 == 0
             Row.EPSM_PAN -> !ins.epsm.left || !ins.epsm.right
             Row.RHYTHM_ROM -> !Ym2608RhythmRom.installed
-            Row.ENV_SHAPE -> e.shape == S5bShape.OFF
-            Row.ENV_OCTAVE -> !e.autoPitch
-            Row.ENV_PERIOD -> e.autoPitch
             else -> false
         }
     }
@@ -215,10 +199,6 @@ object NesEpsmPage {
             }
             Row.RHYTHM_LEVEL -> setRhythmLevel(v, rhythmLevel(session.song.nesInstrument(slot) ?: return true) + dx + 4 * dy)
             Row.RHYTHM_ROM -> Unit
-            Row.ENV_SHAPE -> stepShape(v, dx - dy)
-            Row.ENV_AUTO -> if (d != 0) session.editNesEpsmEnvelope(slot, "Set SSG envelope period mode") { it.copy(autoPitch = !it.autoPitch) }
-            Row.ENV_OCTAVE -> session.editNesEpsmEnvelope(slot, "Set SSG envelope octave") { it.copy(octave = it.octave + dx + 4 * dy) }
-            Row.ENV_PERIOD -> session.editNesEpsmEnvelope(slot, "Set SSG envelope period") { it.copy(period = octaveOf(it.period + dx, dy)) }
             else -> return false
         }
         return true
@@ -233,8 +213,6 @@ object NesEpsmPage {
             Row.OPN_OP_AM -> session.editNesEpsm(slot, "Set AM") { it.withYm(YmInstrumentView.step(it.asYm(), YmRow.OP_AM, operator(v.state), 1, 0)) }
             Row.EPSM_PAN -> session.editNesEpsm(slot, "Set pan") { stepPan(it, 1) }
             Row.RHYTHM_ROM -> session.requestMenu { RhythmRomMenu.open(it) }
-            Row.ENV_SHAPE -> stepShape(v, 1)
-            Row.ENV_AUTO -> session.editNesEpsmEnvelope(slot, "Set SSG envelope period mode") { it.copy(autoPitch = !it.autoPitch) }
             in ALL_ROWS -> Unit
             else -> return false
         }
@@ -248,7 +226,6 @@ object NesEpsmPage {
         val op = operator(v.state)
         val blank = EpsmPatch.DEFAULT.asYm()
         val reset = YmCurated.controls(blank)
-        val defaults = S5bEnvelope.EPSM_DEFAULT
         fun fm(label: String, f: (YmFmInstrument) -> YmFmInstrument) { session.editNesEpsm(slot, label) { it.withYm(f(it.asYm())) } }
         when (OPN[row]) {
             YmRow.PRESET -> session.editNesEpsm(slot, "Reset FM patch") { EpsmPatch.DEFAULT.copy(left = it.left, right = it.right) }
@@ -277,10 +254,6 @@ object NesEpsmPage {
                     if (it.values.size <= 1) NesEnvelope() else NesEnvelopes.withValue(NesEnvelopeKind.VOLUME, it, 0, 15, NesChip.EPSM)
                 }
                 Row.RHYTHM_ROM -> Unit
-                Row.ENV_SHAPE -> session.editNesEpsmEnvelope(slot, "Set SSG envelope shape") { it.copy(shape = defaults.shape) }
-                Row.ENV_AUTO -> session.editNesEpsmEnvelope(slot, "Set SSG envelope period mode") { it.copy(autoPitch = defaults.autoPitch) }
-                Row.ENV_OCTAVE -> session.editNesEpsmEnvelope(slot, "Set SSG envelope octave") { it.copy(octave = defaults.octave) }
-                Row.ENV_PERIOD -> session.editNesEpsmEnvelope(slot, "Set SSG envelope period") { it.copy(period = defaults.period) }
                 else -> return false
             }
         }
@@ -339,20 +312,6 @@ object NesEpsmPage {
         }
     }
 
-    /** Steps the SSG hardware envelope shape: off, then `$08-$0F`. */
-    private fun stepShape(v: ViewController, delta: Int) {
-        val shapes = S5bShape.entries
-        v.session.editNesEpsmEnvelope(v.state.instrument, "Set SSG envelope shape") {
-            it.copy(shape = shapes[(shapes.indexOf(it.shape) + delta).coerceIn(0, shapes.size - 1)])
-        }
-    }
-
-    /** Halves or doubles a manual period (an octave of envelope rate per step), at least 1. */
-    private fun octaveOf(period: Int, up: Int): Int = when {
-        up > 0 -> maxOf(1, period) * 2
-        up < 0 -> maxOf(1, period / 2)
-        else -> period
-    }
 
     /** Hints for an EPSM row; false when [row] is not one. */
     fun hints(v: ViewController, row: Row, h: MutableList<Hint>): Boolean {
@@ -369,10 +328,6 @@ object NesEpsmPage {
             row == Row.EPSM_PAN -> { h += Hint(v.editLr(), "Both / left / right / off"); h += Hint(v.k(Action.CLEAR), "Both") }
             row == Row.RHYTHM_LEVEL -> { h += Hint(v.editLr(), "Level ±1 (${v.ud()} ±4)"); h += Hint(v.k(Action.CLEAR), "15") }
             row == Row.RHYTHM_ROM -> h += Hint(v.k(Action.EDIT), if (Ym2608RhythmRom.installed) "Replace the rhythm ROM…" else "Import the rhythm ROM…")
-            row == Row.ENV_SHAPE -> { h += Hint(v.editLr(), "Shape"); h += Hint(v.k(Action.CLEAR), "Off") }
-            row == Row.ENV_AUTO -> { h += Hint(v.k(Action.EDIT), "Auto / manual period"); h += Hint(v.k(Action.CLEAR), "Auto") }
-            row == Row.ENV_OCTAVE -> { h += Hint(v.editLr(), "Octave ±1 (${v.ud()} ±4)"); h += Hint(v.k(Action.CLEAR), "${S5bEnvelope.EPSM_DEFAULT.octave}") }
-            row == Row.ENV_PERIOD -> { h += Hint(v.editLr(), "Period ±1 (${v.ud()} ×2 / ÷2)"); h += Hint(v.k(Action.CLEAR), "${S5bEnvelope.EPSM_DEFAULT.period}") }
             else -> return false
         }
         if (row !in GRID) h += Hint(v.lr(), "Sound slot")
@@ -399,10 +354,11 @@ object NesEpsmPage {
             "EPSM SSG" to listOf(
                 "Mixer" to "Per frame: tone+noise, noise, tone, or off (the channel holds a constant level). Empty: tone",
                 "Noise" to "The noise period per frame, 0-31 (higher is lower). The three SSG channels share one noise generator",
-                "SSG env page" to "The chip's one envelope generator: a shape (saw, triangle, or a one-shot attack/decay) that replaces " +
-                    "the volume envelope and Cxx; each note with attack restarts it. Auto: its period follows the note, shifted by the " +
-                    "octave (4 = a saw in unison, 5 = a triangle in unison, 3 an octave below: buzz basses). Manual: a fixed period " +
-                    "(one ramp = 128 µs × period), changed by Ixx/Jyy in the pattern",
+                "SSG env page" to "The chip's one envelope generator, shared with 5B sounds' page: a shape (saw, triangle, or a " +
+                    "one-shot attack/decay) that replaces the volume envelope and Cxx; each note with attack restarts it. Auto: its " +
+                    "period follows the note, shifted by the octave (4 = a saw in unison, 5 = a triangle in unison, 3 an octave " +
+                    "below: buzz basses). Manual: a fixed period (one ramp = 128 µs × period at the EPSM's 8 MHz), changed by " +
+                    "Ixx/Jyy in the pattern",
                 "Shared" to "SSG 1-3 share the envelope generator and the noise generator: each frame FamiStudio's engine takes the " +
                     "shape and period from the highest-numbered SSG channel sounding an envelope sound, and the noise rate from the " +
                     "highest-numbered one with noise on",
@@ -437,72 +393,3 @@ object NesEpsmPage {
     private val EPSM_PAGES = listOf(NesEnvelopeKind.VOLUME, NesEnvelopeKind.ARPEGGIO, NesEnvelopeKind.PITCH, NesEnvelopeKind.MIXER, NesEnvelopeKind.NOISE)
 }
 
-/**
- * The EPSM's SSG (YM2149-compatible; 8 MHz / 4 = 2 MHz SSG clock: a tone period P sounds 2 MHz / 16P, the envelope
- * steps 32 times per ramp at 8 SSG clocks × its period, so one ramp lasts 128 µs × period).
- */
-object EpsmSsg {
-    const val CLOCK_HZ = 2_000_000.0
-
-    /** Seconds one ramp (32 steps) lasts at [period] (period 0 acts as 1). */
-    fun rampSeconds(period: Int): Double = 256.0 * maxOf(1, period) / CLOCK_HZ
-
-    /** Repeating shapes: cycles per second at [period] (a triangle takes two ramps). */
-    fun cycleHz(shape: S5bShape, period: Int): Double = 1.0 / (rampSeconds(period) * if (shape.triangle) 2 else 1)
-
-    /** "286 ms", "4.6 s", "71 µs": a duration. */
-    fun duration(seconds: Double): String = when {
-        seconds >= 1.0 -> "${NumberText.fixed(seconds, 1)} s"
-        seconds >= 0.001 -> "${(seconds * 1000).roundToInt()} ms"
-        else -> "${(seconds * 1e6).roundToInt()} µs"
-    }
-
-    /** "3.5 Hz", or for audible rates "437 Hz ≈ A-4". */
-    fun frequency(hz: Double): String {
-        val text = if (hz >= 100) "${hz.roundToInt()} Hz" else "${NumberText.fixed(hz, 1)} Hz"
-        if (hz < 20.0) return text
-        val note = (12 * log2(hz / 440.0) + 57).roundToInt()
-        return if (note in 0..127) "$text ≈ ${NesSystem.noteName(note)}" else text
-    }
-
-    /** What a manual [period] does with [shape]: a repeating shape's rate, a one-shot shape's ramp time. */
-    fun periodText(shape: S5bShape, period: Int): String = when {
-        shape == S5bShape.OFF -> "${duration(rampSeconds(period))} per ramp (no shape chosen)"
-        shape.repeats -> "${frequency(cycleHz(shape, period))} (${duration(rampSeconds(period))} per ramp)"
-        else -> "${duration(rampSeconds(period))} ramp"
-    }
-
-    /**
-     * What auto-period [octave] makes of [shape] against the note: the envelope period is the note's tone period shifted
-     * right by [octave] (left when negative); a saw at period E repeats at 2 MHz / 256E, a tone at period P sounds
-     * 2 MHz / 16P, so octave 4 puts a saw in unison with the note and octave 5 a triangle.
-     */
-    fun octaveText(shape: S5bShape, octave: Int): String {
-        if (shape == S5bShape.OFF) return "period = note period ${shift(octave)} (no shape chosen)"
-        if (!shape.repeats) {
-            return "ramp = ${if (octave >= 0) "1/${1 shl octave.coerceAtMost(8)}" else "${1 shl (-octave).coerceAtMost(8)}×"} of 16 note cycles"
-        }
-        val rel = octave - if (shape.triangle) 5 else 4
-        val pitch = when {
-            rel == 0 -> "in unison with the note"
-            rel > 0 -> "$rel octave${if (rel == 1) "" else "s"} above the note"
-            else -> "${-rel} octave${if (rel == -1) "" else "s"} below the note"
-        }
-        return "a ${if (shape.triangle) "triangle" else "saw"} $pitch"
-    }
-
-    private fun shift(octave: Int) = when {
-        octave > 0 -> "÷ ${1 shl octave}"
-        octave < 0 -> "× ${1 shl -octave}"
-        else -> "itself"
-    }
-
-    /** A mixer value as the editor writes it. */
-    fun mixerText(value: Int): String = when (value) {
-        0 -> "tone+noise"
-        1 -> "noise"
-        2 -> "tone"
-        3 -> "off"
-        else -> "?"
-    }
-}

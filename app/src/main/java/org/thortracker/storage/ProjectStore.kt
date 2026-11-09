@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.util.AtomicFile
 import org.thortracker.system.ExportFormat
 import org.thortracker.model.ProjectCodec
@@ -97,6 +98,7 @@ class ProjectStore(context: Context) : AutoCloseable {
         }
     }
 
+    /** [uri] is a newly created export document, never the working project; remove it if generation or writing fails. */
     fun export(uri: Uri, song: Song, format: ExportFormat, callback: () -> Unit) {
         providerExecutor.execute {
             try {
@@ -106,7 +108,11 @@ class ProjectStore(context: Context) : AutoCloseable {
                     stream.flush()
                 } ?: error("The selected provider did not open the export destination")
                 deliver(callback)
-            } catch (e: Exception) { fail("${format.extension.uppercase()} export failed", e) }
+            } catch (e: Exception) {
+                val removed = runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }.getOrDefault(false)
+                val cleanup = if (removed) "" else "; the incomplete export destination could not be removed"
+                fail("${format.extension.uppercase()} export failed$cleanup", e)
+            }
         }
     }
 

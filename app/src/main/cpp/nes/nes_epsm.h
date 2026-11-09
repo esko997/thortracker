@@ -38,7 +38,21 @@ extern "C" {
 typedef struct NesEpsmChip NesEpsmChip;
 
 /* One native sample, by part (each in ymfm's own units): FM left/right (the OPNA's 13-bit sum, B4 pans applied),
- * rhythm left/right (ADPCM-A, pans applied) and the SSG (centred; ymfm's 2/3-scaled three-channel mix). */
+ * rhythm left/right (ADPCM-A, pans applied) and the SSG (centred; ymfm's 2/3-scaled three-channel mix).
+ *
+ * Ranges, for any register sequence (ymfm's arithmetic, which the mix headroom in nes_epsm_unit.h is derived from):
+ *   - FM: an operator's 14-bit value is at most attenuation_to_volume(0) = (0x3FA | 0x400) << 2 = 8168 in magnitude;
+ *     the OPNA adds each carrier >> 1 (+-4084) without clipping (ymf288 output: rshift 1, clip +-32767 never reached),
+ *     so algorithm 7's four carriers give +-16336 per channel and the six channels +-NES_EPSM_FM_PEAK per side.
+ *   - Rhythm: a drum adds ((int16)(12-bit accumulator << 4) x mul >> shift) & ~3 with mul <= 15 and shift >= 5:
+ *     -15360..15352 per drum, six drums NES_EPSM_RHYTHM_LOW..NES_EPSM_RHYTHM_HIGH per side, whatever the ROM holds.
+ *   - SSG: three channels of ymfm's amplitude table (0..16382) resampled 9:2 (weights summing to 9) and x 2/3:
+ *     0..NES_EPSM_SSG_HIGH. */
+#define NES_EPSM_FM_PEAK 98016          /* 6 channels x 4 carriers x (8168 >> 1) */
+#define NES_EPSM_RHYTHM_LOW (-92160)    /* 6 x ((-32768 x 15) >> 5) */
+#define NES_EPSM_RHYTHM_HIGH 92112      /* 6 x (((32752 x 15) >> 5) & ~3) */
+#define NES_EPSM_SSG_HIGH 32764         /* 3 x 9 x 16382 x 2 / 27 */
+
 typedef struct NesEpsmOutput {
     int32_t fm[2];
     int32_t rhythm[2];

@@ -132,7 +132,7 @@ object NesEpsmDemoSong {
             name = "SSG buzz bass (env)",
             chip = NesChip.EPSM,
             mixer = NesEnvelope(listOf(3)),
-            epsmEnvelope = S5bEnvelope.EPSM_DEFAULT.copy(shape = S5bShape.SAW_DOWN, autoPitch = true, octave = 4),
+            s5b = S5bEnvelope.EPSM_DEFAULT.copy(shape = S5bShape.SAW_DOWN, autoPitch = true, octave = 4),
         )
         // Two frames of tone+noise for the body, then noise alone, its period darkening.
         bank[SSG_SNARE - 1] = NesInstrument(

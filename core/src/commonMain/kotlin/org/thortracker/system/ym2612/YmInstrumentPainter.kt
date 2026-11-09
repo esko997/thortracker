@@ -1,6 +1,9 @@
 package org.thortracker.system.ym2612
 
 import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import org.thortracker.backend.YmPcmLowering
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession.Companion.hex2
 import org.thortracker.editor.GestureToken
@@ -16,17 +19,19 @@ import org.thortracker.system.nes.NesEnvelopes
 import org.thortracker.system.nes.NesInstrumentView
 import org.thortracker.system.ym2612.YmInstrumentView.Page
 import org.thortracker.system.ym2612.YmInstrumentView.Row
+import org.thortracker.ui.Align
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.Palette
 import org.thortracker.ui.Rect
 import org.thortracker.ui.Surface
 
 /**
- * Mega Drive instrument editor. Left: the 64 slots (FM voices, PSG sounds marked "ᴾ", empty "·") with how often each
- * is used. Right: name, Listen channel, type, page tabs, then the page — for an FM voice the curated controls beside
- * the drawn algorithm (the eight OPN2 routings) and envelope (with SSG-EG shapes), the Expert register grid, or the
- * drum sweep; for a PSG sound an envelope's steps (the NES editor's plot) or the noise settings with the sweep. The
- * bank, tabs, grid and drawings are the shared [FmInstrumentPainter]'s.
+ * Mega Drive instrument editor. Left: the 64 slots (FM voices, PSG sounds marked "ᴾ", PCM kits "ᴷ", empty "·") with
+ * how often each is used. Right: name, Listen channel, type, page tabs, then the page — for an FM voice the curated
+ * controls beside the drawn algorithm (the eight OPN2 routings) and envelope (with SSG-EG shapes), the Expert register
+ * grid, the Ch3 operator offsets, or the drum sweep; for a PSG sound an envelope's steps (the NES editor's plot) or the
+ * noise settings with the sweep; for a PCM kit its level and key rows above the mapped keys and the song's samples
+ * (the NES PCM page's box). The bank, tabs, grid and drawings are the shared [FmInstrumentPainter]'s.
  */
 internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private val plot = EnvelopePlot(ink)
@@ -35,12 +40,13 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val s = song
         val ins = YmInstrumentView.sound(s, st)
         val page = YmInstrumentView.page(s, st)
-        val listen = YmInstrumentView.listenChannel(st, ins)
+        val listen = YmInstrumentView.listenChannel(st, ins, page)
         val col = Palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when (ins) {
             is YmFmInstrument -> "FM · " + YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].name
             is YmPsgInstrument -> "PSG sound"
+            is YmPcmInstrument -> "PCM kit"
             null -> "empty slot"
         }
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "Mega Drive · $kind$locked  ${usageText(st.instrument)}")
@@ -51,21 +57,24 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         plot.hide()
 
         val left = drawBank(c, area, top, YmSystem.SLOTS, col, row == Row.SLOT) { i ->
-            s.ym.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it is YmPsgInstrument) " ᴾ" else "" }
+            s.ym.instrument(i)?.let {
+                it.name.ifEmpty { "(unnamed)" } + when (it) { is YmPsgInstrument -> " ᴾ"; is YmPcmInstrument -> " ᴷ"; else -> "" }
+            }
         }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
         val fullW = area.right - pad - rx
         val envelopePage = page.envelope != null
-        val side = fullW >= ink.unit * 50f && !envelopePage
+        val pcmPage = page == Page.PCM
+        val side = fullW >= ink.unit * 50f && !envelopePage && !pcmPage
         val rw = if (side) minOf(fullW * 0.5f, ink.unit * 30f) else fullW
         rightEdge = rx + rw
-        val rows = allRows.filter { it != Row.SLOT && it != Row.STEPS }
-        val gridRows = rows.count { it in YmInstrumentView.GRID }
+        val rows = allRows.filter { it != Row.SLOT && it != Row.STEPS && it !in YmPcmPage.BOX_ROWS }
+        val gridRows = rows.count { it in YmInstrumentView.GRID || it in YmInstrumentView.CH3_GRID }
         val plain = rows.size - gridRows
         // Rows shrink (down to 1.15 units) before the drawings below them lose their room.
-        val reserve = if (side) 0f else ink.unit * (if (envelopePage) 8f else 9f)
+        val reserve = if (side) 0f else ink.unit * (if (envelopePage) 8f else if (pcmPage) 11f else 9f)
         val fit = (area.bottom - top - ink.unit * 0.7f - reserve - ink.unit * 0.4f) / (plain + gridRows + (if (gridRows > 0) 1 else 0) + 0.4f)
         val rowH = fit.coerceIn(ink.unit * 1.15f, ink.unit * 1.5f)
         val vx = rx + ink.unit * 6.3f
@@ -74,9 +83,11 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         var gridHeaderDrawn = false
         for (r in rows) {
             val sel = r == row
-            if (r in YmInstrumentView.GRID && ins is YmFmInstrument) {
+            if ((r in YmInstrumentView.GRID || r in YmInstrumentView.CH3_GRID) && ins is YmFmInstrument) {
                 if (!gridHeaderDrawn) { y = drawGridHeader(c, rx, vx, rw, y, rowH, col, { true }, { ins.isCarrier(it) }); gridHeaderDrawn = true }
-                drawGridRow(c, r.label, allRows.indexOf(r), rx, vx, rw, y, rowH, sel, YmInstrumentView.operator(st), { true }) { op -> gridText(ins.operators[op], r) }
+                drawGridRow(c, r.label, allRows.indexOf(r), rx, vx, rw, y, rowH, sel, YmInstrumentView.operator(st), { true }) { op ->
+                    if (r in YmInstrumentView.CH3_GRID) ch3Text(ins, op, r) else gridText(ins.operators[op], r)
+                }
                 rowRects += Rect(rx, y, rx + rw, y + rowH) to allRows.indexOf(r)
                 y += rowH
                 continue
@@ -99,8 +110,14 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 r == Row.TYPE -> setting(c, "Type", when (ins) {
                     is YmFmInstrument -> "FM voice   plays on FM 1-6"
                     is YmPsgInstrument -> "PSG sound   plays on PSG 1-3 and Noise"
-                    null -> "empty   ${ctl.k(Action.EDIT)} makes ${if (YmInstrumentView.fmPages(s, st)) "an FM voice" else "a PSG sound"}"
+                    is YmPcmInstrument -> "PCM kit   plays on PCM 1-3"
+                    null -> "empty   ${ctl.k(Action.EDIT)} makes " + when (YmInstrumentView.kind(s, st)) {
+                        YmInstrumentView.Kind.FM -> "an FM voice"
+                        YmInstrumentView.Kind.PSG -> "a PSG sound"
+                        YmInstrumentView.Kind.PCM -> "a PCM kit"
+                    }
                 }, rx, vx, y, h, sel, ins == null)
+                r == Row.FM3_MODE -> setting(c, r.label, fm3Text(), rx, vx, y, h, sel, s.ym.fm3Mode == YmFm3Mode.NORMAL)
                 ins == null -> setting(c, r.label, "—", rx, vx, y, h, sel, true)
                 else -> setting(c, r.label, value(ins, r), rx, vx, y, h, sel, dim(ins, r))
             }
@@ -126,6 +143,11 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
             return
         }
+        if (pcmPage) {
+            val box = Rect(rx, y + ink.unit * 0.4f, rx + fullW, area.bottom - ink.unit * 0.4f)
+            if (box.height() > ink.unit * 6f) drawPcm(c, box, ins as? YmPcmInstrument ?: defaultYmPcm(st.instrument), row, col)
+            return
+        }
         val box = if (side) Rect(rightEdge + pad, top + ink.unit * 0.3f, area.right - pad, area.bottom - ink.unit * 0.4f)
             else Rect(rx, y + ink.unit * 0.4f, rx + fullW, area.bottom - ink.unit * 0.4f)
         if (box.height() < ink.unit * 4f || ins == null) return
@@ -142,12 +164,15 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 }
             }
             Page.EXPERT -> if (ins is YmFmInstrument) algorithm(c, box, ins, col, YmInstrumentView.operator(st))
+            Page.CH3 -> if (ins is YmFmInstrument) drawCh3(c, box, ins, col)
             else -> sweep(c, box, ins.sweep, col)
         }
     }
 
-    /** A page tab: PSG envelopes carry their length, as on the NES. */
+    /** A page tab: PSG envelopes carry their length, as on the NES; Ch3 is ticked when an operator has an offset. */
     private fun tabLabel(ins: YmInstrument?, p: Page): String {
+        if (p == Page.CH3) return if ((ins as? YmFmInstrument)?.hasCh3 == true) "${p.label} ✓" else p.label
+        if (p == Page.PCM) return (ins as? YmPcmInstrument)?.pcm?.size?.takeIf { it > 0 }?.let { "${p.label} ($it)" } ?: p.label
         val k = p.envelope ?: return p.label
         val n = (ins as? YmPsgInstrument)?.envelope(k)?.values?.size ?: 0
         return if (n == 0) p.label else "${p.label} ($n)"
@@ -158,6 +183,9 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         ins is YmPsgInstrument && ch == YmRules.NOISE ->
             if (ins.noise and 3 == YmPsgInstrument.PITCHED) "pitched noise: PSG 3 is silent while it sounds" else "fixed-rate noise: notes do not change it"
         ins is YmPsgInstrument -> "tone (the noise settings apply on Noise)"
+        ins is YmFmInstrument && YmInstrumentView.page(song, st) == Page.CH3 ->
+            if (song.ym.fm3Mode == YmFm3Mode.NORMAL) "offsets silent: FM 3 is in normal mode" else "operators at their offsets"
+        ins is YmPcmInstrument -> "key ${YmSystem.noteName(st.dpcmKey)}; FM 6 is silent while PCM plays"
         else -> null
     }
 
@@ -172,9 +200,41 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private fun value(ins: YmInstrument, r: Row): String = when (ins) {
         is YmFmInstrument -> fmValue(ins, r)
         is YmPsgInstrument -> psgValue(ins, r)
+        is YmPcmInstrument -> pcmValue(ins, r)
     }
 
-    private fun presetText(ins: YmInstrument): String = YmPresets.ALL.firstOrNull { it.instrument == ins }?.let { p ->
+    /** The PCM page's setting rows for the shown key ([org.thortracker.editor.ViewState.dpcmKey]). */
+    private fun pcmValue(kit: YmPcmInstrument, r: Row): String {
+        val key = st.dpcmKey
+        val m = kit.pcm[key]
+        val sample = m?.let { song.ym.pcmSamples.getOrNull(it.sample) }
+        return when (r) {
+            Row.PCM_LEVEL -> if (kit.level == 0) "0   silent" else "${kit.level}   ${bar(kit.level, YmPcm.LEVEL_MAX)}  −${2 * (YmPcm.LEVEL_MAX - kit.level)} dB"
+            Row.PCM_KEY -> YmSystem.noteName(key) + when {
+                kit.pcm.isEmpty() -> "   no keys mapped yet"
+                m == null -> "   not mapped (${kit.pcm.size} key${if (kit.pcm.size == 1) "" else "s"} are)"
+                else -> "   key ${kit.pcm.keys.count { it <= key }} of ${kit.pcm.size} mapped"
+            }
+            Row.PCM_SAMPLE -> when {
+                m == null -> "none"
+                sample == null -> "missing PCM sample ${m.sample + 1}"
+                else -> "${sample.name}  (${sample.data.size} bytes, ${YmPcm.seconds(sample)})"
+            }
+            Row.PCM_PITCH -> when {
+                m == null -> "—"
+                sample == null -> "${m.pitch} st"
+                else -> "${if (m.pitch > 0) "+" else ""}${m.pitch} st  plays ${YmPcm.seconds(sample, m.pitch)} " +
+                    "(${YmPcm.rateText(YmPcm.playRate(sample.rate, m.pitch))} → ${YmPcm.rateText(YmPcm.fullRate(song.ym.pal))})"
+            }
+            Row.PCM_SPREAD -> if (m == null) "—" else "map this sample an octave either way, a semitone per key"
+            else -> ""
+        }
+    }
+
+    /** The preset [ins] is (FM 3 offsets aside: no preset sets them), or "custom". */
+    private fun presetText(ins: YmInstrument): String = YmPresets.ALL.firstOrNull {
+        it.instrument == (if (ins is YmFmInstrument) ins.copy(ch3 = listOf(0, 0, 0, 0)) else ins)
+    }?.let { p ->
         p.name + (p.note?.let { "   drum, voiced at ${YmSystem.noteName(it)}" } ?: "")
     } ?: "custom   ${ctl.keys.held(Action.EDIT, ctl.lr())} picks a starting sound"
 
@@ -257,7 +317,23 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         Row.SWEEP_START, Row.SWEEP_END, Row.SWEEP_SPEED -> !ins.sweep.active
         Row.VIBRATO, Row.TREMOLO -> song.ym.lfo == 0
         Row.NOISE_TYPE, Row.NOISE_RATE -> YmInstrumentView.listenChannel(st, ins) != YmRules.NOISE
+        Row.PCM_KEY, Row.PCM_SAMPLE, Row.PCM_PITCH, Row.PCM_SPREAD -> (ins as? YmPcmInstrument)?.pcm?.get(st.dpcmKey) == null
+        Row.PCM_LEVEL -> (ins as? YmPcmInstrument)?.level == 0
         else -> false
+    }
+
+    /** The song's FM 3 mode as the Ch3 page's first row shows it. */
+    private fun fm3Text(): String = when (song.ym.fm3Mode) {
+        YmFm3Mode.NORMAL -> "normal   offsets silent; FM 3 plays like FM 1-6"
+        YmFm3Mode.SPECIAL -> "special   FM 3's operators sound at their offsets"
+    }
+
+    /** Operator [op]'s FM 3 offset as the Ch3 grid shows it: whole semitones, then sixty-fourths. */
+    private fun ch3Text(ins: YmFmInstrument, op: Int, r: Row): String {
+        val offset = ins.ch3.getOrElse(op) { 0 }
+        val semis = if (offset >= 0) offset / 64 else -((-offset) / 64)
+        val fine = offset - semis * 64
+        return if (r == Row.CH3_SEMI) "${signed(semis)} st" else "${signed(fine)}/64"
     }
 
     /** One register field of operator [o] as the Expert grid shows it. */
@@ -325,6 +401,181 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         drawSweep(c, r, title, sw.start, sw.end, sw.speed, sw.active, (tickHz() / 2).toInt(), col)
     }
 
+    /** FM 3's four operators: each one's offset as an interval and the note it sounds against the listening note; the mode. */
+    private fun drawCh3(c: Surface, r: Rect, ins: YmFmInstrument, col: Int) {
+        val small = ink.unit * 0.8f
+        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        val x = r.left + ink.unit * 0.5f
+        val w = r.width() - ink.unit
+        val lineH = ink.unit * 1.2f
+        var y = r.top
+        val mode = song.ym.fm3Mode
+        ink.label(c, ink.fit(when (mode) {
+            YmFm3Mode.NORMAL -> "FM 3 normal mode: these offsets are silent (set the FM 3 mode to special)"
+            YmFm3Mode.SPECIAL -> "FM 3 special mode: each operator sounds the note plus its offset"
+        }, w, small), x, y, ink.unit * 1.4f, if (mode == YmFm3Mode.NORMAL) Palette.ERROR else Palette.DIM, size = small)
+        y += ink.unit * 1.4f
+        val root = ctl.defaultNote()
+        for (op in 0 until 4) {
+            if (y + lineH > r.bottom) break
+            val offset = ins.ch3.getOrElse(op) { 0 }
+            val units = root * 64 + offset
+            val note = (units / 64.0).roundToInt().coerceIn(YmRules.NOTES)
+            val cents = ((units - note * 64) * 100.0 / 64).roundToInt()
+            val carrier = ins.isCarrier(op)
+            val on = op == YmInstrumentView.operator(st)
+            val text = "Op ${op + 1} ${if (carrier) "♪car" else "mod"}   ${NumberText.fixed(offset / 64.0, 2, plus = true)} st   " +
+                YmSystem.noteName(note) + if (cents != 0) " ${if (cents > 0) "+" else ""}${cents}¢" else ""
+            ink.label(c, ink.fit(text, w, small), x, y, lineH, if (on) col else if (carrier) Palette.TEXT else Palette.DIM, on, small)
+            y += lineH
+        }
+        val notes = listOf("Offsets play on FM 3 only; other channels and normal mode ignore them.",
+            "Against the listening note ${YmSystem.noteName(root)}; ${ctl.keys.pair(Action.OCTAVE_DOWN, Action.OCTAVE_UP)} moves it.")
+        var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f
+        if (ny < y) return
+        for (n in notes) {
+            ink.label(c, ink.fit(n, w, small), x, ny, lineH, Palette.FAINT, size = small * 0.95f)
+            ny += lineH
+        }
+    }
+
+    private var keyRect = Rect()
+    private var keyRowH = 0f
+    private var keyScroll = 0
+    private var keyList: List<Int> = emptyList()
+    private var sampleRect = Rect()
+    private var sampleRowH = 0f
+    private var sampleScroll = 0
+    private var addRect = Rect()
+
+    /**
+     * The PCM page's box (as the NES PCM page's): left, every key the kit maps (key, sample, pitch); right, the song's
+     * PCM samples with their sizes and the memory they share, the compiled bank's use, the selected sample's waveform
+     * (its signed values around the centre line), its name, and the Add row.
+     */
+    private fun drawPcm(c: Surface, r: Rect, kit: YmPcmInstrument, row: Row, col: Int) {
+        val s = song
+        val samples = s.ym.pcmSamples
+        val gap = ink.unit * 0.6f
+        val small = ink.unit * 0.8f
+        val titleH = ink.unit * 1.4f
+        val left = Rect(r.left, r.top, r.left + (r.width() - gap) * 0.42f, r.bottom)
+        val right = Rect(left.right + gap, r.top, r.right, r.bottom)
+
+        // mapped keys
+        ink.round(c, left, ink.dp(4f), Palette.LANE)
+        ink.label(c, ink.fit("Keys of kit ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, Palette.DIM, size = small)
+        keyList = kit.pcm.keys.sorted()
+        keyRowH = ink.unit * 1.25f
+        keyRect = Rect(left.left, left.top + titleH, left.right, left.bottom - ink.unit * 0.3f)
+        val keyRows = maxOf(1, (keyRect.height() / keyRowH).toInt())
+        val shown = keyList.indexOf(st.dpcmKey)
+        if (shown >= 0) keyScroll = keyScroll.coerceIn(maxOf(0, shown - keyRows + 1), shown)
+        keyScroll = keyScroll.coerceIn(0, maxOf(0, keyList.size - keyRows))
+        if (keyList.isEmpty()) {
+            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, Palette.FAINT, size = small)
+        }
+        val keyFocus = row in YmPcmPage.KEY_ROWS
+        for (i in keyScroll until minOf(keyList.size, keyScroll + keyRows)) {
+            val key = keyList[i]
+            val m = kit.pcm.getValue(key)
+            val y = keyRect.top + (i - keyScroll) * keyRowH
+            val on = key == st.dpcmKey
+            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 140))
+            if (on) ink.rect(c, left.left, y, left.left + ink.dp(3f), y + keyRowH, col)
+            ink.mono(c, YmSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else Palette.DIM, on, small)
+            val tail = if (m.pitch > 0) "+${m.pitch}" else m.pitch.toString()
+            val tailW = ink.labelWidth(tail, small) + ink.unit * 0.5f
+            val name = samples.getOrNull(m.sample)?.name ?: "missing"
+            ink.label(c, ink.fit(name, left.width() - ink.unit * 3.6f - tailW, small), left.left + ink.unit * 3.2f, y, keyRowH,
+                if (m.sample in samples.indices) (if (on) Palette.TEXT else Palette.DIM) else Palette.ERROR, size = small)
+            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+        }
+
+        // samples and the compiled bank
+        ink.round(c, right, ink.dp(4f), Palette.LANE)
+        val used = YmPcm.stored(s.ym)
+        val problem = YmPcmLowering.problem(s.ym)
+        val over = used > YmPcm.MEMORY || problem != null
+        val bank = if (problem == null) YmPcmLowering.compile(s.ym) else null
+        val title = "PCM · ${YmPcm.kb(used)} of ${YmPcm.kb(YmPcm.MEMORY)}" + (bank?.let { " · bank ${YmPcmLowering.usage(it)}" } ?: " · bank over its limits")
+        ink.label(c, ink.fit(title, right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH, if (over) Palette.ERROR else Palette.DIM, size = small)
+        val barL = right.left + right.width() * 0.64f
+        val barR = right.right - ink.unit * 0.5f
+        val barY = right.top + titleH * 0.42f
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / YmPcm.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+
+        val lineH = ink.unit * 1.35f
+        addRect = Rect(right.left, right.bottom - lineH - ink.unit * 0.2f, right.right, right.bottom - ink.unit * 0.2f)
+        val nameY = addRect.top - lineH
+        val waveH = minOf(ink.unit * 3.2f, (nameY - right.top - titleH) * 0.45f)
+        val waveRect = Rect(right.left + ink.unit * 0.5f, nameY - waveH - ink.unit * 0.2f, right.right - ink.unit * 0.5f, nameY - ink.unit * 0.2f)
+        sampleRowH = ink.unit * 1.2f
+        sampleRect = Rect(right.left, right.top + titleH, right.right, waveRect.top - ink.unit * 0.2f)
+        val sampleRows = maxOf(1, (sampleRect.height() / sampleRowH).toInt())
+        sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - sampleRows + 1), st.dpcmSample.coerceAtLeast(0))
+        sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - sampleRows))
+        val keyed = kit.pcm[st.dpcmKey]?.sample ?: -1
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        for (i in sampleScroll until minOf(samples.size, sampleScroll + sampleRows)) {
+            val sample = samples[i]
+            val y = sampleRect.top + (i - sampleScroll) * sampleRowH
+            val on = i == st.dpcmSample
+            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, Palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else Palette.FAINT, i == keyed, small)
+            val size = "${YmPcm.seconds(sample)} · ${YmPcm.rateText(sample.rate.toDouble())}"
+            ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, right.width() - ink.unit * 2.6f - ink.labelWidth(size, small) - ink.unit), right.left + ink.unit * 2.2f, y, sampleRowH,
+                if (on) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+            if (on && row == Row.PCM_SAMPLES) ink.outline(c, Rect(right.left + 2, y + 1, right.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+
+        // the selected sample: waveform around silence, name
+        val sample = samples.getOrNull(st.dpcmSample)
+        ink.rect(c, waveRect, Palette.BG)
+        if (sample != null && sample.data.size > 0 && waveRect.width() > 4f && waveRect.height() > 4f) {
+            val data = sample.data
+            val columns = maxOf(1, waveRect.width().toInt() / 2)
+            val per = data.size.toFloat() / columns
+            val cw = waveRect.width() / columns
+            val mid = waveRect.top + waveRect.height() / 2
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            for (k in 0 until columns) {
+                val a = (k * per).toInt().coerceIn(0, data.size - 1)
+                val b = ((k + 1) * per).toInt().coerceIn(a + 1, data.size)
+                // At most 64 reads per column: long samples are drawn from a stride of their bytes.
+                val stride = maxOf(1, (b - a) / 64)
+                var lo = 127
+                var hi = -128
+                var i = a
+                while (i < b) { val v = data.signed(i); if (v < lo) lo = v; if (v > hi) hi = v; i += stride }
+                val y0 = mid - waveRect.height() * hi / 256f
+                val y1 = mid - waveRect.height() * lo / 256f
+                ink.rect(c, waveRect.left + k * cw, y0, waveRect.left + k * cw + maxOf(1f, cw - 0.5f), maxOf(y1, y0 + ink.dp(1f)), Palette.alpha(col, 200))
+            }
+            ink.label(c, "${data.size} B", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+        }
+        val vx = right.left + ink.unit * 4.4f
+        fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
+            val sel = row == which
+            val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
+            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
+            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small, bold = sel), vx, y, lineH,
+                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+            if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+        boxRow(nameY, Row.PCM_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)
+        if (row == Row.PCM_NAME && sample != null) {
+            val before = sample.name.take(st.textPos).padEnd(st.textPos, ' ')
+            val cx = vx + ink.labelWidth(before, small, true)
+            val w = maxOf(ink.labelWidth(sample.name.getOrNull(st.textPos)?.toString() ?: " ", small, true), small * 0.5f)
+            ink.outline(c, Rect(cx - 1, nameY + 3, cx + w + 1, nameY + lineH - 3), cursorColor(), ink.dp(2f), ink.dp(2f))
+        }
+        boxRow(addRect.top, Row.PCM_ADD, "Add", "import a .wav file…", false)
+    }
+
     private fun tickHz(): Double = YmSystem.ticksPerSecond(song)
 
     private fun ticks(n: Int) = "${(n * 1000.0 / tickHz()).toInt()} ms"
@@ -339,6 +590,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     override fun down(x: Float, y: Float): Boolean {
         if (downShared(x, y, YmSystem.SLOTS, { YmInstrumentView.showPage(ctl, it) }, { YmInstrumentView.publish(ctl) })) return true
+        if (YmInstrumentView.page(song, st) == Page.PCM) pcmDown(x, y)?.let { return it }
         val kind = YmInstrumentView.envelopeKind(song, st)
         if (kind != null && plot.contains(x, y) && song.ymInstrument(st.instrument) is YmPsgInstrument) {
             st.instField = YmInstrumentView.rows(song, st).indexOf(Row.STEPS)
@@ -372,6 +624,31 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private fun finish() {
         drawing?.let { session.endGesture(it) }
         drawing = null
+    }
+
+    /** PCM page taps: a mapped key shows it, a sample selects it, Add opens the import. Null: not on them. */
+    private fun pcmDown(x: Float, y: Float): Boolean? {
+        val rows = YmInstrumentView.rows(song, st)
+        when {
+            keyRect.contains(x, y) && keyRowH > 0f -> {
+                val key = keyList.getOrNull(keyScroll + ((y - keyRect.top) / keyRowH).toInt()) ?: return true
+                st.dpcmKey = key
+                st.instField = rows.indexOf(Row.PCM_KEY)
+                song.ymPcmMapping(st.instrument, key)?.let { st.dpcmSample = it.sample }
+            }
+            sampleRect.contains(x, y) && sampleRowH > 0f -> {
+                val i = sampleScroll + ((y - sampleRect.top) / sampleRowH).toInt()
+                if (i !in song.ym.pcmSamples.indices) return true
+                st.dpcmSample = i
+                st.instField = rows.indexOf(Row.PCM_SAMPLES)
+            }
+            addRect.contains(x, y) -> {
+                st.instField = rows.indexOf(Row.PCM_ADD)
+                YmPcmSampleMenu.open(session, st.instrument, st.dpcmKey)
+            }
+            else -> return null
+        }
+        return true
     }
 
     private companion object {

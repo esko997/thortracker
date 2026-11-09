@@ -1,0 +1,5 @@
+[objects]
+thor_banjo_host.o
+
+[ramsections]
+bank 0 slot 3 "BANJO_RAM"

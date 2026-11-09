@@ -9,18 +9,35 @@ import org.thortracker.model.Song
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.nes.NesEpsmSystem
+import org.thortracker.system.nes.NesFdsSystem
+import org.thortracker.system.nes.NesMmc5System
+import org.thortracker.system.nes.NesN163System
+import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
+import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.opm.OpmSystem
+import org.thortracker.system.pce.PceSystem
+import org.thortracker.system.scc.SccPlusSystem
+import org.thortracker.system.scc.SccSystem
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.opn.OpnSystem
 import org.thortracker.system.opn.OpnaSystem
+import org.thortracker.system.sms.SmsSystem
 import org.thortracker.system.ym2612.YmSystem
+import org.thortracker.system.ay.AyAtariStSystem
+import org.thortracker.system.ay.AyCpcSystem
+import org.thortracker.system.ay.AyMsxSystem
+import org.thortracker.system.ay.AyZx128System
 
 /**
  * What a channel's hardware is, in chip-neutral terms, so shared code can ask without naming a chip. [SAMPLE] plays
  * recorded samples (the NES DPCM channel): its notes pick samples, not pitches.
  */
-/** What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels), [SAW] a sawtooth (the VRC6's). */
+/**
+ * What a channel's hardware is; [VOICE] plays any waveform (the SID's three voices, the OPL3's FM channels), [SAW] a
+ * sawtooth (the VRC6's), [WAVE] a wavetable (the Game Boy's wave channel, the N163's channels).
+ */
 enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE, SAW }
 
 /**
@@ -64,8 +81,11 @@ data class EffectSpec(
     }
 }
 
-/** A file format a song exports to, e.g. hUGETracker's `.uge`. [export] receives a song with no [SoundSystem.errors]. */
-class ExportFormat(val extension: String, val export: (Song) -> ByteArray)
+/**
+ * A file format a song exports to, e.g. hUGETracker's `.uge`; [label] is how the Files menu names it (".xgm (XGM2)" where
+ * the extension alone is ambiguous). [export] receives a song with no [SoundSystem.errors].
+ */
+class ExportFormat(val extension: String, val label: String = ".$extension", val export: (Song) -> ByteArray)
 
 /**
  * How a system plays a pitch between its note-table notes (tuning realisation): a note plus an upward "fine" value
@@ -178,7 +198,7 @@ interface PlaybackEngine {
 
     /**
      * The engine's fine-pitch argument for the system's fine value [fine] on [note] played on [channel] (Game Boy: the
-     * 40y detune; NES: the period offset, or on the EPSM's FM and SSG channels the step of the same pitch).
+     * 40y detune; NES: the period offset, or on the VRC7's FM channels the frequency step of the same pitch).
      */
     fun fine(channel: Int, note: Int, fine: Int): Int
 }
@@ -234,6 +254,12 @@ interface SoundSystem {
      * New and Load demo list a family as one entry with its variants under it. Null: a system of its own.
      */
     val family: String? get() = null
+
+    /**
+     * Variants of a [family] that differ only in a count (the NES + N163 with 1-8 channels) share a group: the family's
+     * list shows the group once ("NES + N163…") with its variants under it. Null: listed on its own.
+     */
+    val familyGroup: String? get() = null
     val channels: List<ChannelSpec>
     val banks: List<BankSpec>
 
@@ -399,7 +425,10 @@ interface SoundSystem {
 
 /** The systems this build knows, by id. */
 object SoundSystems {
-    val ALL: List<SoundSystem> = listOf(GbSystem, NesSystem, NesVrc6System, NesEpsmSystem, SidSystem, Opl3System, YmSystem, OpnSystem, OpnaSystem)
+    val ALL: List<SoundSystem> =
+        listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System) + NesN163System.ALL +
+            listOf(NesS5bSystem, NesFdsSystem, NesMmc5System, NesEpsmSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL +
+            listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem, SccSystem, SccPlusSystem, PceSystem, OpmSystem, OpnSystem, OpnaSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

@@ -1,6 +1,7 @@
-/* "ym2612-fm": Thor Tracker's own player streamed through SGDK's XGM driver on a Z80 + YM2612 (ymfm) + SN76489,
- * behind the chip engine interface. Images are validated by ym_load_image (ym_image.h); docs/AUDIO_ENGINE.md
- * ("YM2612") has the layout the lowering produces and the ops' behaviour. */
+/* "ym2612-fm": Thor Tracker's own player streamed through SGDK's XGM2 driver on a Z80 + YM2612 (ymfm) + SN76489, the
+ * driver mixing the song's PCM into the DAC, behind the chip engine interface. Images (layout 2, YM_IMAGE_SIZE bytes)
+ * are validated by ym_load_image (ym_image.h); docs/AUDIO_ENGINE.md ("YM2612") has the layout the lowering produces
+ * and the ops' behaviour. Channels 0-12: FM 1-6, PSG 1-3, Noise, PCM 1-3. */
 #include <string.h>
 
 #include "chip_engine.h"

@@ -10,6 +10,7 @@ import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
 import org.thortracker.input.Binding
+import org.thortracker.input.BindingCapture
 import org.thortracker.input.Control
 import org.thortracker.input.ControlGroup
 import org.thortracker.input.Keymap
@@ -18,6 +19,11 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
+import org.thortracker.model.InstalledTuningPack
+import org.thortracker.model.Scl
+import org.thortracker.model.TuningPack
+import org.thortracker.model.TuningPackCodec
+import org.thortracker.model.TuningPackEntry
 import org.thortracker.system.ExportFormat
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SoundSystems
@@ -69,8 +75,12 @@ interface MenuHost {
     fun recoverPrevious()
     fun exportKeymap()
     fun importKeymap()
-    /** The Scala tunings bundled with the app. */
-    fun builtInTunings(): List<Tuning>
+    /** Loads catalogues on demand, without parsing their Scala entries. Errors go through [error]. */
+    fun loadTuningPacks(loaded: (List<InstalledTuningPack>) -> Unit)
+    /** Imports a user-selected .thorscales pack; invokes [done] after successful persistence. */
+    fun importTuningPack(done: () -> Unit)
+    /** Removes a user pack after the shared menu has confirmed; bundled packs cannot be removed. */
+    fun removeTuningPack(id: String, done: () -> Unit)
     /** Lets the user choose a .scl file; [loaded] receives it parsed (errors go through [error]). */
     fun loadTuningFile(loaded: (Tuning) -> Unit)
     /**
@@ -126,7 +136,11 @@ class AppMenus(
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
-        override fun installRhythmRom(bytes: ByteArray): String? = host.installRhythmRom(bytes)
+        override fun installRhythmRom(bytes: ByteArray): String? {
+            val problem = host.installRhythmRom(bytes)
+            if (problem == null) transport.songChanged(session.song)
+            return problem
+        }
         override fun about() = this@AppMenus.about()
     }
 
@@ -227,16 +241,16 @@ class AppMenus(
                 }, PopupItem.dismiss()), selected = 1), host.modalDisplay)
         }
         items += PopupItem.dismiss()
-        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3 " +
-            "and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
+        return PopupSpec("Controls", message = "Choose a row, then press its new button — or hold Select, L2, R2 or L3, " +
+            "or two of them such as L2+R2, and press a button for a chord. Menu and Back are fixed, so this screen is always reachable.",
             items = items, selected = 1)
     }
 
     fun showControls() = popups.show(controlsSpec(), host.modalDisplay)
 
-    /** Waits for one button or one modifier+button chord for [control]; Back, Escape or Menu leaves it unchanged. */
+    /** Waits for one button or one chord of up to two modifiers for [control]; Back, Escape or Menu leaves it unchanged. */
     fun captureBinding(control: Control) {
-        val held = LinkedHashSet<Int>()
+        val capture = BindingCapture()
         var finished = false
         val default = Keymap.DEFAULT.binding(control)
         fun finish(binding: Binding?) {
@@ -248,7 +262,8 @@ class AppMenus(
         popups.show(PopupSpec(control.label,
             message = "Press the new button now. Current: ${keymap.label(control)}." +
                 (if (control.hold) " It is held with the D-pad, so it takes a single button."
-                else " For a chord, hold Select, L2, R2 or L3, then press the button.") + " Back or Menu cancels.",
+                else " For a chord, hold Select, L2, R2 or L3 (or two, such as L2+R2 in either order), then press the button.") +
+                " Back or Menu cancels.",
             items = listOfNotNull(
                 default?.let { PopupItem("Use default (${Keymap.label(it)})") { finish(it) } },
                 PopupItem.dismiss(),
@@ -258,10 +273,7 @@ class AppMenus(
                     finished -> Unit
                     // Back and Menu can never be bound, so either cancels (the Deck has no Back button).
                     code == Keys.BACK || code == Keys.ESCAPE || code == Keys.MENU || code == Keys.BUTTON_MODE -> if (down) finish(null)
-                    code in Keymap.MODIFIERS -> if (down) held += code else held -= code
-                    !down -> Unit
-                    held.size > 1 -> { finish(null); host.error("Hold one of Select, L2, R2 or L3 for a chord, not several") }
-                    else -> finish(Binding(code, held.firstOrNull()))
+                    else -> capture.key(code, down)?.let { finish(it) }
                 }
             }), host.modalDisplay)
     }
@@ -296,8 +308,8 @@ class AppMenus(
     fun tuningMenu() {
         val t = session.song.tuning
         val map = session.tuningMap
-        menu(if (t == null) "Tuning: 12-note (none)" else "Tuning: ${t.name}", buildList {
-            add("Built-in tunings…" to ::builtInTunings)
+        menu(if (t == null) "Tuning: 12-note (none)" else "Tuning: ${TuningPackCodec.display(t.name)}", buildList {
+            add("Tuning library…" to ::tuningLibrary)
             add("Load .scl file…" to {
                 val previous = session.song.tuning
                 host.loadTuningFile { parsed -> applyTuning(if (previous == null) parsed else parsed.copy(root = previous.root, tolerance = previous.tolerance)) }
@@ -310,6 +322,10 @@ class AppMenus(
                 add("Accuracy limit: ${t.tolerance}¢…" to {
                     choose("Accuracy limit", TOLERANCES.map { "$it cents" + if (it == 5) " (default)" else "" }) { applyTuning(t.copy(tolerance = TOLERANCES[it])) }
                 })
+                if (t.provenance.isNotEmpty()) add("Tuning source…" to {
+                    popups.show(PopupSpec("Tuning source", message = TuningPackCodec.display(t.provenance, multiline = true),
+                        items = listOf(PopupItem.dismiss())), host.modalDisplay)
+                })
                 add("Fit notes in this pattern" to { fitTuning(listOf(states[focus].let { session.song.orders[it.order.coerceIn(0, session.song.orders.size - 1)] })) })
                 add("Fit notes in whole song" to { fitTuning(session.song.patterns.indices.toList()) })
                 add("Remove tuning (back to 12-note)" to { session.setTuning(null); host.status("Tuning removed; written notes unchanged") })
@@ -317,12 +333,119 @@ class AppMenus(
         })
     }
 
-    /** The bundled Scala files, listed by their own descriptions; keeps the current 1/1 and accuracy limit. */
-    private fun builtInTunings() {
-        val previous = session.song.tuning
-        menu("Built-in tunings", host.builtInTunings().map { t ->
-            t.name to { applyTuning(if (previous == null) t else t.copy(root = previous.root, tolerance = previous.tolerance)) }
+    /** Opening the library is the only point at which hosts need to load their catalogues. */
+    fun tuningLibrary() {
+        host.loadTuningPacks { installed ->
+            cataloguePage("Tuning library", installed, label = {
+                "${TuningPackCodec.display(it.pack.name.ifEmpty { it.pack.id })} [${it.pack.id}] · " +
+                    if (it.bundled) "bundled" else "user"
+            }, extra = listOf("Import pack…" to { host.importTuningPack { popups.closeAll(); tuningLibrary() } })) {
+                tuningCollection(it)
+            }
+        }
+    }
+
+    private fun tuningCollection(installed: InstalledTuningPack) {
+        val pack = installed.pack
+        val title = TuningPackCodec.display(pack.name.ifEmpty { pack.id })
+        menu(title, buildList {
+            add("All (${pack.entries.size})" to { tuningResults(pack, pack.entries, "All") })
+            add("Categories…" to {
+                cataloguePage("Categories", pack.entries.map { it.category }.distinct().sorted(),
+                    label = { TuningPackCodec.display(it.ifEmpty { "Uncategorised" }) }) { category ->
+                    tuningResults(pack, pack.entries.filter { it.category == category },
+                        TuningPackCodec.display(category.ifEmpty { "Uncategorised" }))
+                }
+            })
+            add("Search…" to {
+                val query = PopupText("", 255)
+                popups.show(PopupSpec("Search $title", text = query, items = listOf(
+                    PopupItem("Search", PopupItem.Tone.PRIMARY) {
+                        val term = query.value.trim()
+                        tuningResults(pack, pack.entries.filter {
+                            it.name.contains(term, ignoreCase = true) || it.id.contains(term, ignoreCase = true) ||
+                                it.category.contains(term, ignoreCase = true) || it.attribution.contains(term, ignoreCase = true)
+                        }, "Search: ${TuningPackCodec.display(term)}")
+                    }, PopupItem.dismiss(),
+                )), host.modalDisplay)
+            })
+            add("Collection source…" to {
+                popups.show(PopupSpec(title,
+                    message = "${pack.id}\n${TuningPackCodec.display(pack.attribution, multiline = true)}",
+                    items = listOf(PopupItem.dismiss())), host.modalDisplay)
+            })
+            if (!installed.bundled) add("Remove collection…" to {
+                popups.show(PopupSpec("Remove $title?",
+                    message = "Remove this installed collection? The song's selected tuning and its source credit will be kept.",
+                    items = listOf(PopupItem("Remove", PopupItem.Tone.DANGER) {
+                        host.removeTuningPack(pack.id) { popups.closeAll(); tuningLibrary() }
+                    }, PopupItem.dismiss()), selected = 1), host.modalDisplay)
+            })
         })
+    }
+
+    private fun tuningResults(pack: TuningPack, entries: List<TuningPackEntry>, title: String) {
+        cataloguePage(title, entries,
+            label = { "${TuningPackCodec.display(it.name.ifEmpty { it.id })} · ${TuningPackCodec.display(it.id)}" }) {
+            tuningDetails(pack, it)
+        }
+    }
+
+    /** Pages replace one stack level so repeated next/previous navigation never grows the popup stack. */
+    private fun <T> cataloguePage(
+        title: String, values: List<T>, label: (T) -> String,
+        extra: List<Pair<String, () -> Unit>> = emptyList(), select: (T) -> Unit,
+    ) {
+        fun page(index: Int): PopupSpec {
+            val count = ((values.size + CATALOGUE_PAGE_SIZE - 1) / CATALOGUE_PAGE_SIZE).coerceAtLeast(1)
+            val start = index * CATALOGUE_PAGE_SIZE
+            return PopupSpec("$title · ${index + 1}/$count",
+                message = if (values.isEmpty()) "No entries found." else "${values.size} entries",
+                items = buildList {
+                    for (i in start until minOf(start + CATALOGUE_PAGE_SIZE, values.size)) {
+                        val value = values[i]
+                        add(PopupItem(label(value)) { select(value) })
+                    }
+                    if (index > 0) add(PopupItem("Previous page") { popups.replaceTop(page(index - 1)) })
+                    if (index + 1 < count) add(PopupItem("Next page") { popups.replaceTop(page(index + 1)) })
+                    for ((name, action) in extra) add(PopupItem(name, action = action))
+                    add(PopupItem.dismiss())
+                })
+        }
+        popups.show(page(0), host.modalDisplay)
+    }
+
+    private fun tuningDetails(pack: TuningPack, entry: TuningPackEntry) {
+        // Only the selected entry is parsed. Duplicate content with different ids remains distinct.
+        var problem: String? = null
+        val parsed = try { Scl.parse(entry.scl, entry.name.ifEmpty { entry.id }) }
+        catch (e: IllegalArgumentException) { problem = e.message ?: "Invalid Scala file"; null }
+        val provenance = buildString {
+            append(pack.name); append(" ["); append(pack.id); append("]\n")
+            append(entry.id)
+            if (pack.attribution.isNotEmpty()) { append("\n\n"); append(pack.attribution) }
+            if (entry.attribution.isNotEmpty()) { append("\n\n"); append(entry.attribution) }
+        }
+        val message = buildString {
+            if (parsed == null) append(TuningPackCodec.display(problem!!, multiline = true))
+            else {
+                append("${parsed.steps} degrees; period ${parsed.period} cents\n1/1: 0.0 cents\n")
+                parsed.cents.forEachIndexed { i, cents -> append("${i + 1}: $cents cents\n") }
+            }
+            append("\nSource and licence:\n")
+            append(TuningPackCodec.display(provenance, multiline = true))
+            append("\nScala source (ratios and annotations preserved):\n")
+            append(TuningPackCodec.display(entry.scl, multiline = true))
+        }
+        popups.show(PopupSpec(TuningPackCodec.display(entry.name.ifEmpty { entry.id }), message = message,
+            items = buildList {
+                if (parsed != null) add(PopupItem("Apply", PopupItem.Tone.PRIMARY) {
+                    val current = session.song.tuning
+                    applyTuning(parsed.copy(root = current?.root ?: parsed.root, tolerance = current?.tolerance ?: parsed.tolerance,
+                        provenance = provenance))
+                })
+                add(PopupItem.dismiss())
+            }), host.modalDisplay)
     }
 
     fun applyTuning(tuning: Tuning) {
@@ -332,7 +455,7 @@ class AppMenus(
 
     /** "24-TET: 118 of 144 degrees reachable within 5¢ (C-3..B-8)". */
     private fun tuningSummary(map: TuningMap) =
-        "${map.tuning.name}: ${map.pitches.size} of ${map.all.size} degrees reachable within ${map.tuning.tolerance}¢"
+        "${TuningPackCodec.display(map.tuning.name)}: ${map.pitches.size} of ${map.all.size} degrees reachable within ${map.tuning.tolerance}¢"
 
     private fun fitTuning(patterns: List<Int>) {
         val r = session.fitToTuning(patterns)
@@ -349,7 +472,7 @@ class AppMenus(
             "Open project" to host::openProject,
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
-        ) + system.exports.map { format -> "Export .${format.extension}" to { export(format) } } + listOf(
+        ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
             "Export .wav…" to ::exportWav,
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
@@ -359,29 +482,48 @@ class AppMenus(
 
     /**
      * Asks which sound chip a new song targets (the cursor starts on the current song's), skipped while the build knows
-     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants.
+     * one. A family of variants (the NES with and without expansion chips) is one entry that opens its variants; within
+     * it, variants of one group (the NES + N163's channel counts) are one entry that opens the group.
      */
     private fun chooseSystem(title: String, chosen: (SoundSystem) -> Unit) {
         val systems = SoundSystems.ALL
         val current = session.song.system
         if (systems.size == 1) return chosen(current)
-        val entries = ArrayList<Pair<String, () -> Unit>>()
-        var selected = 0
-        val families = HashSet<String>()
-        for (system in systems) {
-            val family = system.family
-            if (family == null) {
-                if (system == current) selected = entries.size
-                entries += system.name to { chosen(system) }
-            } else if (families.add(family)) {
-                val variants = systems.filter { it.family == family }
-                if (current in variants) selected = entries.size
-                entries += "$family…" to {
-                    menu("$title $family", variants.map { it.name to { chosen(it) } }, selected = variants.indexOf(current).coerceAtLeast(0))
-                }
+        val (entries, selected) = grouped(systems, current, { it.family }, chosen) { family, variants ->
+            val (inner, innerSelected) = grouped(variants, current, { it.familyGroup }, chosen) { group, members ->
+                menu("$title $group", members.map { it.name to { chosen(it) } }, selected = members.indexOf(current).coerceAtLeast(0))
             }
+            menu("$title $family", inner, innerSelected)
         }
         menu(title, entries, selected)
+    }
+
+    /**
+     * Menu entries for [systems]: each system on its own ([chosen] picks it), except systems [key] puts in one group,
+     * listed once as "group…", which [open]s with the group's members; and the index of the entry holding [current].
+     */
+    private fun grouped(
+        systems: List<SoundSystem>,
+        current: SoundSystem,
+        key: (SoundSystem) -> String?,
+        chosen: (SoundSystem) -> Unit,
+        open: (String, List<SoundSystem>) -> Unit,
+    ): Pair<List<Pair<String, () -> Unit>>, Int> {
+        val entries = ArrayList<Pair<String, () -> Unit>>()
+        var selected = 0
+        val seen = HashSet<String>()
+        for (system in systems) {
+            val k = key(system)
+            if (k == null) {
+                if (system == current) selected = entries.size
+                entries += system.name to { chosen(system) }
+            } else if (seen.add(k)) {
+                val members = systems.filter { key(it) == k }
+                if (current in members) selected = entries.size
+                entries += "$k…" to { open(k, members) }
+            }
+        }
+        return entries to selected
     }
 
     private fun export(format: ExportFormat) {
@@ -436,6 +578,7 @@ class AppMenus(
     }
 
     companion object {
+        private const val CATALOGUE_PAGE_SIZE = 24
         val TOLERANCES = listOf(5, 10, 20)
     }
 }
