@@ -13,9 +13,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-SAA1099 integration targets **0.34.0/code 47**, retaining the VIC/TED candidate and all earlier systems.
-The analytical headroom bound and 960 pre-clamp stress/public-machine cases pass without changing gains.
-Full integration, frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
+SAA1099 integration targets **0.34.0/code 47**, retaining the verified VIC/TED candidate and all earlier systems.
+The analytical headroom bound, 960 pre-clamp cases, 925 JVM tests and corrected native checks pass.
+Independent references, frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -87,11 +87,11 @@ Full integration, frontend verification and publication remain pending. See `doc
      playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
    - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
-     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM and all three
-     Android frontends pass; Linux/SDL verification and publication remain in progress.
+     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
+     Android frontends and the CI-built optimized AppImage pass; publication is the remaining gate.
    - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
-     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Pre-clamp headroom checks pass;
-     full integration and frontend verification remain pending.
+     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Headroom, JVM and corrected
+     native checks pass; independent references and frontend verification remain pending.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
