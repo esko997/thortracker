@@ -6,8 +6,9 @@
   2. The VGM, parsed here from the file format alone: header fields (VGM 1.71, YM2151 at 4000000 Hz, data at
      0x100), end-of-file offset, waits summing to the header's sample count, the loop point on a command boundary,
      the 0x54 command stream equal to the engine's trace (reset batch, then per tick the key-off phase, a one-sample
-     wait when that phase is not empty, the other writes and the rest of the tick), and the register dump at the
-     loop point equal to the register state the stream itself wrote before it.
+     wait when that phase is not empty or follows a loop-point dump that keyed a channel off, the other writes and
+     the rest of the tick), and the register dump at the loop point equal to the register state the stream itself
+     wrote before it.
   3. With --pitch: the 4 MHz pitch of every playable note, from ymfm's phase-step table (s_phase_step in
      third_party/ymfm/ymfm_fm.ipp, David Viens' chip-verified table) and the player's key-code formula, against
      12-TET A440: A-4's frequency, each note's error in cents, the worst error, and the clock relation behind
@@ -130,14 +131,17 @@ def check_vgm(image, trace, vgm, info):
     expected = [("w", r, v) for r, v in opm_ref.reset_writes(image)]
     acc, period, dump_at = 0, 60 * image.multispeed, None
     for k in range(info["ticks"]):
+        dump_off = False
         if dump_at is None and trace[k].startswith("%d 0 0:" % image.loop):
             dump_at = len(expected)
+            # the dump keys off every channel the stream left unkeyed: the loop tick's key-off phase then needs its gap
+            dump_off = not all(replay_state(expected)[2])
             expected += [None] * dump_len
         offs, rest = trace_writes(trace[k])
         acc += 44100
         n, acc = divmod(acc, period)
         expected += [("w", r, v) for r, v in offs]
-        if offs:
+        if offs or dump_off:
             expected.append(("t", 1))
             n -= 1
         expected += [("w", r, v) for r, v in rest]

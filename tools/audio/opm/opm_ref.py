@@ -671,19 +671,24 @@ def vgm(image, max_ticks):
     loop_at = loop_samples = None
     looped = False
     while ticks < max_ticks:
+        dump_off = False
         if p.position() == (image.loop, 0, 0):
             if loop_at is not None:
                 looped = True
                 break
             loop_at, loop_samples = 0x100 + len(body), samples
-            emit(dump_writes(p))
+            dump = dump_writes(p)
+            emit(dump)
+            # a dump key-off belongs to the loop tick's key-off phase: on later passes the channel may still sound
+            dump_off = any(reg == 0x08 and not val & KEY_ALL for reg, val in dump)
         writes = p.tick()
         acc += 44100
         n, acc = divmod(acc, period)
         samples += n
-        # the key-off phase, one sample, then the rest (the chip samples the key state once per sample)
+        # the key-off phase, one sample, then the rest (the chip samples the key state once per sample); the sample
+        # comes out of the tick's wait
         emit(writes[:p.split])
-        if p.split:
+        if p.split or dump_off:
             wait(1)
             n -= 1
         emit(writes[p.split:])

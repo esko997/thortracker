@@ -7,7 +7,8 @@
  * instrument (439.88 Hz); image validation (every loader reason, by single-byte corruption of the song or by small
  * constructed images); register writes, key-off phases and positions identical to the independent Python reference
  * player (tools/audio/opm/opm_ref.py) in each of 1500 ticks, and its reset batch; deterministic, non-silent output;
- * loop passes stepping through the same positions (= the VGM loop); seeks landing on exact rows with the reference's
+ * loop passes stepping through the same positions (= the VGM loop); the exported VGM's loop played twice on ymfm (a
+ * note on the loop row attacks again on the second pass); seeks landing on exact rows with the reference's
  * writes afterwards and sound bit-identical to straight play (fully clocked), the order fallback (deterministic); live
  * edits (a re-laid image alternating with the original before every
  * tick, a note edit, a tempo edit ahead of and behind the playhead, a cut song, multispeed x2, a header LFO/CSM edit
@@ -33,6 +34,7 @@
 #include "opm_machine.h"
 #include "opm_test_song.h"
 #include "opm_vgm.h"
+#include "opm_ymfm.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -60,7 +62,7 @@ static int checks = 0;
 #define T_UNDEFINED 4
 
 static float g_out[OMM_MAX_TICK_FRAMES * 2];
-static OpmImage g_song, g_moved, g_edited, g_tempo, g_short, g_x2, g_lfo, g_bad, g_tone, g_csm, g_csm_off;
+static OpmImage g_song, g_moved, g_edited, g_tempo, g_short, g_x2, g_lfo, g_bad, g_tone, g_csm, g_csm_off, g_loop;
 
 typedef struct Ref {
     const int* offsets;
@@ -327,6 +329,19 @@ static void build_csm(OpmImage* im, int csm) {
     im->bytes[OM_H_CSM] = (uint8_t)csm;
     put_voice(im, 1, 0, 0x00, 0, 0, 15);
     EXPECT(om_load_image(im) == 0, "CSM image loads: %s", im->info.problem);
+}
+
+/* A song for the VGM loop: one order of 16 rows at speed 6 (96 ticks), loop order 0. FM 1 keys A-4 at row 0 and holds
+ * it to the song's end: operator 4 AR 31 (an instant attack), D1R 12 toward D1L 15, so the held note is clearly decayed
+ * when the loop comes round. */
+static void build_loop(void) {
+    static const uint8_t data[] = {0x8F, 0x03, A4, 1, 0x8E};
+    OpmImage* im = &g_loop;
+    base_image(im, 16, data, (int)sizeof data);
+    set_pattern(im, 0, 1);
+    put_voice(im, 1, 0, 0x00, 0, 12, 15);
+    im->bytes[OM_OFF_INSTRUMENTS + OM_I_OPS + 3 * OM_OPERATOR_BYTES + 5] = 0xF0 | 15; /* operator 4: D1L 15, RR 15 */
+    EXPECT(om_load_image(im) == 0, "VGM loop image loads: %s", im->info.problem);
 }
 
 /* ---- tests ---------------------------------------------------------------------------------- */
@@ -1197,6 +1212,91 @@ static void test_vgm(const char* dir) {
     free(buf);
 }
 
+static uint32_t le32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+/* The exported VGM of build_loop played as a VGM player does, on ymfm's YM2151: from the data start to 0x66, then from
+ * the loop offset to 0x66 again (two passes of the loop), 44.1 kHz waits converted to the chip's 62.5 kHz samples by
+ * exact accumulation. FM 1's note is still keyed, decayed, at the song's end; the loop point's dump keys FM 1 off (it
+ * was not keyed at the first arrival) and the loop row keys it on. The chip samples the key state once per sample, so
+ * the second pass attacks again only if at least one sample separates the two: then its envelope K samples into the
+ * loop equals the first pass's. The header keeps 44100 / 60 samples per tick and the waits add up to it. */
+static void test_vgm_loop(void) {
+    printf("VGM loop passes on the chip\n");
+    enum { K = 32, TICKS = 96 };
+    const size_t cap = 1 << 16;
+    uint8_t* buf = (uint8_t*)malloc(cap);
+    static OmPlayer scratch;
+    OmVgmInfo info;
+    const size_t size = om_vgm_render(&g_loop, 36000, &scratch, buf, cap, &info);
+    const uint32_t samples = le32(buf + 0x18), loop_samples = le32(buf + 0x20);
+    const size_t data = 0x34 + (size_t)le32(buf + 0x34), loop = 0x1C + (size_t)le32(buf + 0x1C);
+    EXPECT(size && info.ticks == TICKS && samples == TICKS * 735u && loop_samples == samples && le32(buf + 0x1C) &&
+               data <= loop && loop < size,
+           "rendered, %u ticks, %u samples, loop %u samples (want %u each) at %zu", info.ticks, samples, loop_samples,
+           TICKS * 735u, loop);
+    if (!size || !le32(buf + 0x1C) || loop < data || loop >= size) {
+        free(buf);
+        return;
+    }
+    const size_t frames_cap = (size_t)(2ull * samples * 62500 / 44100) + 64;
+    int* env = (int*)malloc(frames_cap * sizeof *env);
+    YmOpm* chip = omc_create();
+    size_t at = data, native = 0, entry[2] = {0, 0};
+    uint64_t vgm_time = 0, waited = 0;
+    int pass = 0, bad = 0;
+    while (pass < 2) {
+        if (at == loop && entry[pass] == 0) entry[pass] = native;
+        if (at >= size) {
+            bad = 1;
+            break;
+        }
+        const int cmd = buf[at];
+        uint32_t n;
+        if (cmd == 0x54 && at + 2 < size) {
+            omc_write(chip, buf[at + 1], buf[at + 2]);
+            at += 3;
+            continue;
+        } else if (cmd == 0x61 && at + 2 < size) {
+            n = buf[at + 1] | buf[at + 2] << 8;
+            at += 3;
+        } else if (cmd == 0x62) {
+            n = 735;
+            ++at;
+        } else if ((cmd & 0xF0) == 0x70) {
+            n = (uint32_t)(cmd & 15) + 1;
+            ++at;
+        } else if (cmd == 0x66) {
+            ++pass;
+            at = loop;
+            continue;
+        } else {
+            bad = 1;
+            break;
+        }
+        if (pass == 0) waited += n;
+        vgm_time += n;
+        const uint64_t until = vgm_time * 62500 / 44100;
+        while (native < until && native < frames_cap) {
+            int32_t l, r;
+            omc_generate(chip, 0, &l, &r);
+            env[native++] = omc_envelope(chip, 0, 3);
+        }
+    }
+    omc_destroy(chip);
+    EXPECT(!bad && pass == 2 && entry[1] > entry[0] && entry[1] + K < native,
+           "the stream plays twice (command error %d at %zu, loop entered at samples %zu and %zu)", bad, at, entry[0], entry[1]);
+    EXPECT(waited == samples, "the waits add up to the header's %u samples (%llu)", samples, (unsigned long long)waited);
+    if (!bad && pass == 2 && entry[1] > entry[0] && entry[1] + K < native) {
+        const int end = env[entry[1] - 1], first = env[entry[0] + K], second = env[entry[1] + K];
+        EXPECT(end >= 0x100, "FM 1's held note has decayed by the song's end (attenuation %d of 1023)", end);
+        EXPECT(abs(second - first) <= 8,
+               "the loop row's note attacks again on pass 2: attenuation %d, %d samples into the loop (pass 1: %d, "
+               "song end: %d)", second, K, first, end);
+    }
+    free(env);
+    free(buf);
+}
+
 /* The hosts' entry point (opm_export.h): the reference VGM plus a GD3 tag. */
 static void test_export(void) {
     printf("VGM export entry point\n");
@@ -1343,6 +1443,7 @@ int main(int argc, char** argv) {
     build_tone();
     build_csm(&g_csm, 1);
     build_csm(&g_csm_off, 0);
+    build_loop();
     test_key_codes();
     test_images();
     test_reference(dir);
@@ -1358,6 +1459,7 @@ int main(int argc, char** argv) {
     test_mute();
     test_multispeed();
     test_vgm(dir);
+    test_vgm_loop();
     test_export();
     test_ops();
     test_costs();

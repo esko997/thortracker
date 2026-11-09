@@ -2711,10 +2711,13 @@ system's fine pitch in 1/64 semitones, `ticksPerSecond` = 60 × multispeed.
 - Data: the reset batch; then per tick: at the first arrival at (loop order, row 0, tick 0) the loop point and a dump
   of the whole register state as the player's shadow holds it: `$0F`, `$10`, `$11`, `$18`, `$19` (AMD), `$19` (`$80`
   \| PMD), `$1B`, `$14`, `$20`-`$3F`, `$40`-`$FF` (all values including zeros), then `$08` = `$78` \| *c* for keyed
-  channels and *c* for the others (*c* = 0..7); the key-off phase writes; if there were any, a one-sample wait (`0x70`);
-  the other writes; the rest of the tick's wait (44100 / (60 · N) by exact accumulation; `0x62` for 735, `0x70`-`0x7F`
-  for 1-16, `0x61 nn nn` otherwise). Writes are `0x54 reg val`. The song ends at the second arrival at the loop point
-  (or the tick limit, then without a loop), then `0x66`.
+  channels and *c* for the others (*c* = 0..7); the key-off phase writes; if there were any, or the dump keyed a
+  channel off, a one-sample wait (`0x70`); the other writes; the rest of the tick's wait (44100 / (60 · N) by exact
+  accumulation, less the one-sample wait; `0x62` for 735, `0x70`-`0x7F` for 1-16, `0x61 nn nn` otherwise). The dump's
+  key-offs belong to the loop tick's key-off phase: on later passes a channel the dump keys off may still sound from
+  the song's end, and the chip samples the key state once per sample, so without the gap a key-on on the loop row
+  would not retrigger it. Writes are `0x54 reg val`. The song ends at the second arrival at the loop point (or the
+  tick limit, then without a loop), then `0x66`.
 - Hosts' entry point (`opm/opm_export.h`): `om_export_vgm(image, 65536, max_ticks, title, author, date, &size,
   &problem)`, as `o3_export_vgm` with GD3 system "OPM (Thor Tracker)", converter "Thor Tracker" (`vgm_gd3.c`).
 - Kotlin (`system/opm/OpmVgm.kt`): `OpmVgm.export(song)` = lower + `OpmVgm.renderer.render(image, maxTicks,
@@ -2745,7 +2748,9 @@ generated table header: the vibrato sine is written out in both implementations.
   order fallback deterministic), mute then unmute equal to never muting, live edits (re-laid image, note and tempo edits, cut song, x2,
   header LFO edit), audition (pitch, `fine`, release, noise only on FM 8, CSM off), mute (silence, writes unchanged),
   LFO pitch modulation measured (PMD/PMS vibrato depth), noise on FM 8 (spectral flatness), CSM (retrigger rate =
-  62500 / (1024 − NA) Hz measured from envelope restarts), the VGM bytes against the reference and the export entry
+  62500 / (1024 − NA) Hz measured from envelope restarts), the VGM bytes against the reference, the exported VGM's
+  loop played twice on ymfm (a held, decayed note on the loop row attacks again on the second pass; the waits keep
+  735 samples per tick) and the export entry
   point's GD3 tag. Evidence: `opm_song.wav`, `opm_tone.wav`, `opm_trace.txt`, `opm_song.vgm`, `opm_song.bin`.
 - `wav_render_test.c` renders `opm-demo.omimg` (the demo) and `opm-shortest.omimg` (one row, A-4 held on FM 1) from
   `exportSamples`.

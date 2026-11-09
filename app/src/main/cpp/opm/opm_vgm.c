@@ -51,8 +51,10 @@ static void put_wait(Out* o, uint32_t n) {
 }
 
 /* The player's whole register state, written at the loop point so every pass of the loop starts from the same
- * registers (the player's writes are diffed, so the loop body alone would assume the first pass's). */
-static void put_state(Out* o, const OmPlayer* p) {
+ * registers (the player's writes are diffed, so the loop body alone would assume the first pass's). Returns whether
+ * it keyed any channel off: on later passes that channel may still sound from the song's end, and the chip samples
+ * the key state once per sample, so the loop tick's key-on must come at least one sample later (om_vgm_render). */
+static int put_state(Out* o, const OmPlayer* p) {
     const uint8_t* s = p->shadow;
     static const int shared[] = {0x0F, 0x10, 0x11, 0x18, 0x19};
     for (int i = 0; i < 5; ++i) put_reg(o, shared[i], s[shared[i]]);
@@ -60,7 +62,12 @@ static void put_state(Out* o, const OmPlayer* p) {
     put_reg(o, 0x1B, s[0x1B]);
     put_reg(o, 0x14, s[0x14]);
     for (int r = 0x20; r < 0x100; ++r) put_reg(o, r, s[r]);
-    for (int c = 0; c < OM_CHANNELS; ++c) put_reg(o, 0x08, p->ch[c].keyed ? OMP_KEY_ALL | c : c);
+    int offs = 0;
+    for (int c = 0; c < OM_CHANNELS; ++c) {
+        put_reg(o, 0x08, p->ch[c].keyed ? OMP_KEY_ALL | c : c);
+        if (!p->ch[c].keyed) offs = 1;
+    }
+    return offs;
 }
 
 size_t om_vgm_render(const OpmImage* image, uint32_t max_ticks, OmPlayer* player, uint8_t* out, size_t capacity,
@@ -73,7 +80,7 @@ size_t om_vgm_render(const OpmImage* image, uint32_t max_ticks, OmPlayer* player
     const uint32_t period = 60u * (uint32_t)image->info.multispeed;
     uint32_t acc = 0, samples = 0, loop_samples = 0;
     size_t loop_offset = 0;
-    int seen_loop = 0;
+    int seen_loop = 0, dump_offs = 0;
     uint32_t t = 0;
     for (; t < max_ticks; ++t) {
         if (player->order == image->info.loop && player->row == 0 && player->tick == 0) {
@@ -81,19 +88,21 @@ size_t om_vgm_render(const OpmImage* image, uint32_t max_ticks, OmPlayer* player
             seen_loop = 1;
             loop_offset = o.n;
             loop_samples = samples;
-            put_state(&o, player);
+            dump_offs = put_state(&o, player);
         }
         omp_tick(player, image);
         acc += 44100;
         uint32_t n = acc / period;
         acc -= n * period;
         samples += n;
-        /* the key-off phase, one sample, then the rest of the tick's writes (opm_player.h) */
+        /* the key-off phase (the loop dump's key-offs count as part of it), one sample, then the rest of the tick's
+         * writes (opm_player.h); the sample comes out of the tick's own wait, so the timing is unchanged */
         put_writes(&o, player, 0, player->offs);
-        if (player->offs) {
+        if (player->offs || dump_offs) {
             put_wait(&o, 1);
             --n;
         }
+        dump_offs = 0;
         put_writes(&o, player, player->offs, player->writes);
         put_wait(&o, n);
     }
