@@ -44,8 +44,9 @@ internal class FsNote {
     var deltaCounter = -1
 
     /**
-     * The 5B's envelope period (FamiStudio's `EnvelopePeriod`, 0..65535), -1 = none. Only on 5B Square 1: a row's
-     * `Ixx`/`Jyy` on any 5B square land here, as FamiStudio's exporter moves every period effect to its first square.
+     * The 5B's or the EPSM SSG's envelope period (FamiStudio's `EnvelopePeriod`, 0..65535), -1 = none. Only on the first
+     * SSG square: a row's `Ixx`/`Jyy` on any of its squares land here, as FamiStudio's exporter moves every period effect
+     * to the first square.
      */
     var envelopePeriod = -1
 
@@ -103,6 +104,8 @@ internal class FsSong(
     val expansion: NesExpansion = NesExpansion.NONE,
     /** VRC7 songs: the release/stop sustain overrides every VRC7 instrument carries. */
     val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
+    /** EPSM songs: the chip LFO register `$22` every EPSM instrument's patch carries ([org.thortracker.system.nes.NesSound.epsmLfo]). */
+    val epsmLfo: Int = 0,
 ) {
     val orderStart = IntArray(lengths.size + 1).also { for (i in lengths.indices) it[i + 1] = it[i] + lengths[i] }
     val totalRows get() = orderStart[lengths.size]
@@ -127,14 +130,17 @@ internal class FsSong(
          * the played order here, so both consumers agree:
          * - a note without an instrument is legato (no attack) on the channel's current instrument;
          * - OFF releases a sounding note whose instrument has a volume release point (on the N163's channels and the FDS
-         *   also one whose wave sequence has a release point), and on the VRC7's FM channels any sounding note (key off:
-         *   FamiStudio's `CanRelease`), otherwise (or when the note was already released) it stops the channel;
+         *   also one whose wave sequence has a release point), and on the VRC7's and the EPSM's FM channels any sounding
+         *   note (key off: FamiStudio's `CanRelease`), otherwise (or when the note was already released) it stops the
+         *   channel; on the EPSM's drums it always stops (FamiStudio's engine has no volume envelope slot for them, so its
+         *   release opcode there would act on another channel's envelope);
          * - fine pitch (Pxx) belongs to the playing note: the next note without its own Pxx resets it to none; on the
-         *   VRC7's FM, the N163's channels and the FDS it is converted to the frequency step nearest the same pitch
-         *   ([NesRules.vrc7FinePitch], [NesRules.n163FinePitch], [NesRules.fdsFinePitch]), on the 5B squares to their own
-         *   periods ([NesRules.s5bFinePitch]);
-         * - a row's 5B envelope period (`Ixx` high byte, `Jyy` low byte, on any 5B squares: [NesRules.envPeriod]) is one
-         *   `EnvelopePeriod` on 5B Square 1;
+         *   VRC7's and the EPSM's FM, the N163's channels and the FDS it is converted to the frequency step nearest the
+         *   same pitch ([NesRules.vrc7FinePitch], [NesRules.epsmFmFinePitch], [NesRules.n163FinePitch],
+         *   [NesRules.fdsFinePitch]), on the 5B and EPSM SSG squares to their own periods ([NesRules.s5bFinePitch],
+         *   [NesRules.epsmSsgFinePitch]);
+         * - a row's 5B or EPSM SSG envelope period (`Ixx` high byte, `Jyy` low byte, on any SSG squares:
+         *   [NesRules.envPeriod]) is one `EnvelopePeriod` on the first square;
          * - FDS `Ixx`/`Jxx` set one half of FamiStudio's 12-bit `FdsModSpeed`; the other half is the speed the channel has
          *   at that row: the sound's own Mod speed once a note with an attack loads it (an auto-mod sound leaves the
          *   engine's speed as it was: `famistudio_set_fds_instrument` skips it), else the last I/J value;
@@ -185,16 +191,16 @@ internal class FsSong(
                     }
                 }
             }
-            if (expansion == NesExpansion.S5B) {
-                // FamiStudio keeps every 5B envelope period effect on Square 1 (`MoveAllEnvelopePeriodsOnFirstChannel`).
-                val squares = NesRules.S5B_SQUARE1 until channels
+            val squares = NesRules.ssgChannels(expansion)
+            if (!squares.isEmpty()) {
+                // FamiStudio keeps every 5B/EPSM envelope period effect on the first square (`MoveAllEnvelopePeriodsOnFirstChannel`).
                 var row = 0
                 for (o in song.orders.indices) {
                     val pattern = song.patterns[song.orders[o]]
                     for (r in 0 until pattern.length) {
                         val period = NesRules.envPeriod(squares.map { pattern.tracks[it][r] }) ?: -1
                         if (period >= 0) {
-                            val ch = NesRules.S5B_SQUARE1
+                            val ch = squares.first
                             notes[ch][row] = (notes[ch][row] ?: FsNote()).also { it.envelopePeriod = period }
                         }
                         row++
@@ -221,7 +227,7 @@ internal class FsSong(
             }
             return FsSong(song.title, song.artist, song.ticksPerRow, song.loopOrder, lengths,
                 IntArray(song.orders.size) { song.orders[it] }, song.patterns.map { it.name }, notes, instruments, song.nes.samples,
-                song.nes.expansion, song.nes.vrc7Sustain)
+                song.nes.expansion, song.nes.vrc7Sustain, song.nes.epsmLfo)
         }
 
         private fun convert(cell: Cell, ch: Int, expansion: NesExpansion, current: Int, sounding: Boolean, bank: List<NesInstrument>, fine: Int,
@@ -231,11 +237,13 @@ internal class FsSong(
             val n163 = NesRules.isN163(expansion, ch)
             val s5b = NesRules.isS5b(expansion, ch)
             val fds = NesRules.isFds(expansion, ch)
+            val epsmFm = NesRules.isEpsmFm(expansion, ch)
+            val epsmSsg = NesRules.isEpsmSsg(expansion, ch)
             val n = FsNote()
             val p = cell.param
             when {
                 cell.note >= 0 -> {
-                    // FamiStudio's engine note for the true pitch ([NesRules.engineNoteShift]: VRC7, 5B, FDS).
+                    // FamiStudio's engine note for the true pitch ([NesRules.engineNoteShift]: VRC7, 5B, FDS, EPSM SSG/FM).
                     n.value = NesRules.engineNote(expansion, ch, cell.note)
                     if (cell.instrument != 0) n.instrument = cell.instrument
                     else if (current != 0) {
@@ -245,9 +253,9 @@ internal class FsSong(
                     if (fine != 0 && !(cell.effect == NesRules.FX_FINE_PITCH && cell.hasEffect)) n.finePitch = 0
                 }
                 cell.note == Cell.CUT -> {
-                    // DPCM has no release: OFF stops the sample.
-                    val releases = ch != NesRules.DPCM && sounding && current != 0 &&
-                        (vrc7 || bank[current - 1].let {
+                    // DPCM has no release: OFF stops the sample; nor have the EPSM drums (see above).
+                    val releases = ch != NesRules.DPCM && !NesRules.isEpsmRhythm(expansion, ch) && sounding && current != 0 &&
+                        (vrc7 || epsmFm || bank[current - 1].let {
                             it.volume.release >= 0 && it.volume.loop >= 0 || n163 && it.wave.release >= 0 && it.wave.loop >= 0 ||
                                 fds && it.fds.release >= 0 && it.fds.loop >= 0
                         })
@@ -270,6 +278,8 @@ internal class FsSong(
                     n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
                     fds -> NesRules.fdsFinePitch(playing, p - NesRules.FINE_CENTRE)
                     s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
+                    epsmFm -> NesRules.epsmFmFinePitch(playing, p - NesRules.FINE_CENTRE)
+                    epsmSsg -> -NesRules.epsmSsgFinePitch(playing, p - NesRules.FINE_CENTRE)
                     else -> NesRules.FINE_CENTRE - p
                 }
                 NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
@@ -278,7 +288,7 @@ internal class FsSong(
                 NesRules.FX_DUTY -> n.duty = p
                 NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
                 NesRules.FX_PHASE_RESET -> n.phaseReset = true
-                // I/J: the FDS's mod speed here; the 5B envelope period is gathered per row on 5B Square 1 by [of].
+                // I/J: the FDS's mod speed here; the 5B/EPSM envelope period is gathered per row on the first square by [of].
                 NesRules.FX_FDS_MOD_DEPTH -> if (fds) n.fdsModDepth = p
                 NesRules.FX_FDS_MOD_SPEED_HI -> if (fds) n.fdsModSpeed = ((p and 0xF) shl 8) or (modSpeed and 0xFF)
                 NesRules.FX_FDS_MOD_SPEED_LO -> if (fds) n.fdsModSpeed = (modSpeed and 0xF00) or p

@@ -1163,6 +1163,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     fun follow(): Boolean {
         if (holding) return false // applied by the host once the held control is released
         val sel = session.selection
+        // The document may have fewer channels than this view's previous system.
+        state.channel = state.channel.coerceIn(0, song.channelCount() - 1)
         setPen(sel.bank, sel.instrument)
         if (state.kind == ViewKind.PATTERN && bankOf(state.channel) == sel.bank) state.instrument = sel.instrument
         return Follow.apply(state, session)

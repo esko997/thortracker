@@ -15,6 +15,13 @@
 # Sunsoft 5B: <dir>/nes_s5b.wav, nes_s5b_trace.txt (per-frame APU + 5B writes) and nes_s5b.nsf (the 5B test song,
 # expansion byte $7B = $20); nes_s5b_fallback_test: the seek fallback keeps a square's held manual-period sound (reads
 # s5b-manual-copies.nesimg from the samples).
+# EPSM: <dir>/nes_epsm.wav (all channels), nes_epsm_tonal.wav (rhythm drums muted), nes_epsm_trace.txt (per-frame APU +
+# $401C-$401F writes) and nes_epsm.nsf (the EPSM test song, expansion byte $7B = $80). The YM2608 rhythm ROM is not
+# part of Thor Tracker: set THOR_EPSM_RHYTHM_ROM=/path/to/your/ym2608_adpcm_rom.bin (8192 bytes, SHA-256 checked) for
+# the private rhythm checks, which then also write nes_epsm_rhythm.wav (rhythm drums only) and put the drums into
+# nes_epsm.wav and the EPSM demo's WAV renders; without it those checks are skipped with a notice. Keep the ROM outside
+# the repository and give a ROM run an evidence directory outside it too (e.g. tools/audio/run_native_host_test.sh
+# /tmp/thor-evidence), so no drum render sits in the worktree.
 # MMC5: <dir>/nes_mmc5.wav, nes_mmc5_trace.txt (per-frame APU + MMC5 writes) and nes_mmc5.nsf (the MMC5 test song,
 # expansion byte $7B = $08).
 # MMC5 / N163 mix budget (nes_mix_budget_test): end-to-end swings of every voice at 8-96 kHz stay inside the output,
@@ -48,8 +55,8 @@ c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
   "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c" "$cpp/nes/nes_n163.c"
-  "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/nes/nes_mmc5.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c"
-  "$cpp/nes/nes_mmc5_pcm.c"
+  "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/nes/nes_epsm_unit.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c"
+  "$cpp/nes/nes_mmc5.c" "$cpp/nes/nes_mmc5_pcm.c"
   "$cpp/nes/nes_players.c"
   "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c"
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c"
@@ -58,7 +65,7 @@ c_engines=(
   "$cpp/cpuz80.c" "$cpp/ym/ym_chip.c" "$cpp/ym/ym_machine.c" "$cpp/ym/ym_player.c" "$cpp/ym/ym_image.c"
   "$cpp/ym/ym_xgm.c" "$cpp/ym/ym_vgm.c" "$cpp/ym/ym_psg.c"
 )
-cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp")
+cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
 for f in sid voice wave envelope filter dac extfilt pot; do cxx_engines+=("$cpp/third_party/resid-1.0/$f.cc"); done
 objs=()
@@ -73,8 +80,8 @@ for src in "${cxx_engines[@]}"; do
   objs+=("$o")
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
-  nes_s5b_fallback_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test opl3_machine_test \
-  ym_machine_test wav_render_test; do
+  nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
+  opl3_machine_test ym_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
@@ -87,6 +94,7 @@ status=0
 "$build/nes_fds_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/nes_s5b_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/nes_s5b_fallback_test" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
+"$build/nes_epsm_test" "$out" "${THOR_SAMPLES:-$root/app/build/samples}" || status=1
 "$build/nes_mmc5_test" "$out" || status=1
 "$build/nes_mmc5_pcm_test" || status=1
 "$build/nes_mix_budget_test" || status=1

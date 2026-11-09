@@ -6,9 +6,12 @@ import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.EpsmPatch
+import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesFdsSystem
 import org.thortracker.system.nes.NesMmc5DemoSong
 import org.thortracker.system.nes.NesMmc5System
+import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesS5bSystem
@@ -19,6 +22,7 @@ import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.nes.Vrc7Presets
 import org.thortracker.system.nes.Vrc7Sustain
 import org.thortracker.system.nes.nes
+import kotlin.test.assertFailsWith
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -367,6 +371,181 @@ class NesExportTest {
         assertTrue(errorsWith(NesInstrument("E", s5b = S5bEnvelope(S5bShape.DECAY))).isNotEmpty())
         assertTrue(errorsWith(NesInstrument("N", chip = NesChip.S5B, noise = NesEnvelope(listOf(32)))).isNotEmpty())
         assertEquals(emptyList(), errorsWith(NesInstrument("Ok", chip = NesChip.S5B, mixer = NesEnvelope(listOf(0, 1, 2, 3)), noise = NesEnvelope(listOf(31)))))
+    }
+
+    /** NES + EPSM: the `.nsf` carries the EPSM player and names the chip (`$7B` bit 7); the text names the expansion. */
+    @Test
+    fun epsmExportsNameTheChip() {
+        val song = NesEpsmSystem.demo()
+        assertEquals(emptyList(), NesEpsmSystem.errors(song))
+        assertEquals(emptyList(), NesEpsmSystem.warnings(song))
+        val nsf = NesEpsmSystem.exports.first { it.extension == "nsf" }.export(song)
+        assertEquals(NesEpsmPlayerImage.LOAD, u16(nsf, 8))
+        assertEquals(NesEpsmPlayerImage.INIT, u16(nsf, 10))
+        assertEquals(NesEpsmPlayerImage.PLAY, u16(nsf, 12))
+        assertEquals(0x80, nsf[0x7b].toInt() and 0xff) // expansion chips: EPSM
+        val body = nsf.copyOfRange(128, nsf.size)
+        assertContentEquals(NesEpsmPlayerImage.BYTES, body.copyOfRange(0, NesEpsmPlayerImage.BYTES.size))
+        val lowered = FamiStudioLowering.lower(song)
+        val songAt = NesEpsmPlayerImage.SONG_BASE - NesEpsmPlayerImage.LOAD
+        assertContentEquals(lowered.data, body.copyOfRange(songAt, songAt + lowered.data.size))
+        val end = if (lowered.samples.isEmpty()) songAt + lowered.data.size else lowered.sampleStart - NesEpsmPlayerImage.LOAD
+        // The NSF's song plays like the lowered data, YMF288 writes included.
+        val a = NesTracer(lowered.data, NesPlayer.EPSM)
+        val b = NesTracer(body.copyOfRange(songAt, end), NesPlayer.EPSM)
+        var epsm = 0
+        repeat(600) {
+            val f = a.frame()
+            assertContentEquals(f, b.frame())
+            epsm += f.count { (it shr 8) in NesTracer.EPSM_PORTS }
+        }
+        assertTrue(epsm > 600, "the demo writes the EPSM ($epsm writes in 600 frames)")
+        val lines = FamiStudioText.text(song).lines()
+        assertTrue(lines[0].endsWith("Expansions=\"EPSM\""), lines[0])
+        assertEquals(listOf("Square1", "Square2", "Triangle", "Noise", "DPCM") + (1..3).map { "EPSMSquare$it" } +
+            (1..6).map { "EPSMFM$it" } + (1..6).map { "EPSMRythm$it" },
+            lines.filter { it.trim().startsWith("Channel") }.map { it.substringAfter("Type=\"").substringBefore('"') })
+    }
+
+    /**
+     * The EPSM text: sounds as FamiStudio's Custom patch with all 31 registers (30 = the song's LFO), the SSG envelope
+     * settings, mixer and noise envelopes; SSG and FM notes an octave above the 2A03's byte for the same pitch; the SSG
+     * envelope period on SSG 1's notes. A manual period other than 4000 cannot be written (FamiStudio's text has no
+     * attribute for it): the text export refuses rather than silently playing 4000; `.nsf` keeps the period.
+     */
+    @Test
+    fun epsmTextCarriesSoundsAndRefusesManualPeriods() {
+        val song = NesGoldenSongs.epsmEffects()
+        val text = FamiStudioText.text(song)
+        val lfo = song.nes.epsmLfo
+        val bass = song.nes.instruments[6]
+        val regs = bass.epsm.registers(lfo).withIndex().joinToString("") { (i, r) -> " EpsmReg$i=\"$r\"" }
+        assertTrue(text.contains("Instrument Name=\"07 FM bass\" Expansion=\"EPSM\" EpsmPatch=\"0\"$regs EPSMSquareEnvelopeShape=\"0\" " +
+            "EPSMSquareEnvelopeAutoPitch=\"True\" EPSMSquareEnvelopeAutoPitchOctave=\"3\""), text)
+        assertTrue(text.contains("EpsmReg30=\"$lfo\""))
+        assertTrue(text.contains("Name=\"05 SSG env manual\" Expansion=\"EPSM\"") && text.contains("EPSMSquareEnvelopeShape=\"3\""))
+        assertTrue(text.contains("Envelope Type=\"MixerSettings\" Length=\"1\" Values=\"1\""), text)
+        assertTrue(text.contains("Envelope Type=\"NoiseFreq\" Length=\"3\" Values=\"4,8,12\""), text)
+        assertTrue(text.contains("EnvelopePeriod=\"64\"") && text.contains("EnvelopePeriod=\"640\"") && text.contains("EnvelopePeriod=\"2560\""))
+        // EPSM sounds carry no duty envelope (FamiStudio's EPSM instruments have none): only the 2A03 lead's.
+        assertEquals(1, text.lines().count { it.trim().startsWith("Envelope Type=\"DutyCycle\"") })
+        // SSG 1's first note C-4 is FamiStudio's 49 ("C4"); the 2A03's C-5 is 49 too.
+        val ssg1 = text.substringAfter("Channel Type=\"EPSMSquare1\"").substringBefore("Channel Type=")
+        assertTrue(ssg1.contains("Note Time=\"0\" Value=\"C4\""), ssg1)
+        val fs = FsSong.of(song)
+        assertEquals(49, fs.notes[NesRules.EPSM_SSG1][0]!!.value)
+        assertEquals(60 - NesRules.NOTE_OFFSET, fs.notes[0][0]!!.value)
+        // Drum OFF is a stop; FM OFF a release.
+        assertEquals(FsNote.RELEASE, fs.notes[NesRules.EPSM_FM1][12]!!.value)
+        assertEquals(FsNote.STOP, fs.notes[NesRules.EPSM_FM1][14]!!.value)
+        val rhythm = FsSong.of(NesGoldenSongs.epsmRhythm())
+        assertEquals(FsNote.STOP, rhythm.notes[NesRules.EPSM_RHYTHM1 + 4][40]!!.value)
+        // A manual period of 3000: no text (and the check warns first); the .nsf keeps the period in the sound's
+        // expansion instrument entry (bytes 12-13).
+        val bank = song.nes.instruments.toMutableList()
+        bank[4] = bank[4].copy(s5b = bank[4].s5b.copy(period = 3000))
+        val manual = song.copy(sound = song.nes.copy(instruments = bank))
+        assertEquals(emptyList(), NesEpsmSystem.errors(manual))
+        val e = assertFailsWith<IllegalArgumentException> { FamiStudioText.text(manual) }
+        assertTrue(e.message!!.contains("Sound 05") && e.message!!.contains("3000") && e.message!!.contains("4000"), e.message)
+        assertTrue(NesEpsmSystem.warnings(manual).any { "3000" in it && "4000" in it }, NesEpsmSystem.warnings(manual).toString())
+        val nsf = NsfExporter.export(manual)
+        val data = FamiStudioLowering.lower(manual).data
+        val songAt = 128 + NesEpsmPlayerImage.SONG_BASE - NesEpsmPlayerImage.LOAD
+        assertContentEquals(data, nsf.copyOfRange(songAt, songAt + data.size))
+        val expTable = u16(data, 3) - NesEpsmPlayerImage.SONG_BASE
+        assertEquals(3000, u16(data, expTable + 4 * FamiStudioLowering.EXP_INSTRUMENT_SIZE + 12))
+        assertEquals(0x80, data[expTable + 4 * FamiStudioLowering.EXP_INSTRUMENT_SIZE + 11].toInt() and 0xff) // manual period
+        // An auto-period sound's period does not matter there.
+        bank[4] = bank[4].copy(s5b = bank[4].s5b.copy(autoPitch = true))
+        FamiStudioText.text(song.copy(sound = song.nes.copy(instruments = bank)))
+    }
+
+    /** EPSM cell rules, per channel group: chips, ranges, effects (FamiStudio's `Channel.SupportsEffect`), envelope periods. */
+    @Test
+    fun epsmValidationKeepsSoundsAndEffectsOnTheirChannels() {
+        val base = NesEpsmSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[1] = NesInstrument("EPSM", chip = NesChip.EPSM)
+        val blank = base.copy(sound = base.nes.copy(instruments = bank))
+        fun errors(ch: Int, cell: Cell) = NesEpsmSystem.errors(withCell(blank, ch, 0, cell)).joinToString()
+        val ssg = NesRules.EPSM_SSG1
+        val fm = NesRules.EPSM_FM1
+        val kick = NesRules.EPSM_RHYTHM1
+        assertEquals("", errors(ssg, Cell(12, 2))) // C-1
+        assertEquals("", errors(fm, Cell(95, 2))) // B-7
+        assertTrue(errors(fm, Cell(96, 2)).contains("cannot play above B-7"))
+        assertTrue(errors(ssg + 2, Cell(107, 2)).contains("B-7"))
+        assertEquals("", errors(kick, Cell(107, 2))) // drums: any note
+        assertTrue(errors(fm, Cell(57, 1)).contains("2A03 sound"))
+        assertTrue(errors(0, Cell(57, 2)).contains("EPSM sound"))
+        assertTrue(errors(ssg, Cell(57, 2, NesRules.FX_DUTY, 0x01)).contains("no effect on SSG 1"))
+        assertTrue(errors(fm, Cell(57, 2, NesRules.FX_ENV_PERIOD_HI, 0x01)).contains("no effect on FM 1"))
+        assertEquals("", errors(ssg + 1, Cell(57, 2, NesRules.FX_ENV_PERIOD_LO, 0x20)))
+        assertEquals("", errors(fm, Cell(57, 2, NesRules.FX_FINE_PITCH, 0x90)))
+        for ((fx, param) in listOf(NesRules.FX_VOLUME to 0x08, NesRules.FX_VOLUME_SLIDE to 0xF2, NesRules.FX_SPEED to 0x04,
+            NesRules.FX_NOTE_DELAY to 0x02, NesRules.FX_NOTE_CUT to 0x02)) assertEquals("", errors(kick, Cell(57, 2, fx, param)), "drum ${NesRules.effectText(fx, param)}")
+        for ((fx, param) in listOf(NesRules.FX_ARPEGGIO to 0x37, NesRules.FX_VIBRATO to 0x44, NesRules.FX_FINE_PITCH to 0x90,
+            NesRules.FX_SLIDE_UP to 0x02, NesRules.FX_SLIDE_DOWN to 0x02, NesRules.FX_DUTY to 0x01, NesRules.FX_ENV_PERIOD_HI to 0x01)) {
+            assertTrue(errors(kick, Cell(57, 2, fx, param)).contains("fixed-pitch drum"), "drum ${NesRules.effectText(fx, param)}")
+        }
+        assertEquals(listOf("Volume slide", "Volume", "Speed", "Note delay", "Note cut"), NesEpsmSystem.effectsFor(kick).map { it.name })
+        assertTrue(NesEpsmSystem.effectsFor(ssg).any { it.code == NesRules.FX_ENV_PERIOD_HI } && NesEpsmSystem.effectsFor(fm).none { it.code == NesRules.FX_ENV_PERIOD_HI })
+        assertTrue(NesEpsmSystem.effectsFor(fm).none { it.code == NesRules.FX_DUTY })
+        // Two different high bytes on one row of two squares are ambiguous.
+        val p = blank.patterns[0]
+        val clash = blank.copy(patterns = listOf(p.copy(tracks = p.tracks.mapIndexed { c, t ->
+            when (c) {
+                ssg -> t.toMutableList().also { it[0] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_HI, 0x12) }
+                ssg + 2 -> t.toMutableList().also { it[0] = Cell(Cell.EMPTY, 0, NesRules.FX_ENV_PERIOD_HI, 0x13) }
+                else -> t
+            }
+        })))
+        assertTrue(NesEpsmSystem.errors(clash).any { "I12 and I13" in it }, NesEpsmSystem.errors(clash).toString())
+        // Structure: SSG and EPSM fields on other chips, a duty envelope on an EPSM sound, an impossible patch or LFO.
+        val sbank = bank.toMutableList()
+        sbank[2] = NesInstrument("Stray mixer", mixer = NesEnvelope(listOf(1)))
+        sbank[3] = NesInstrument("Stray patch", epsm = EpsmPatch(algorithm = 1))
+        sbank[4] = NesInstrument("Duty", chip = NesChip.EPSM, duty = NesEnvelope(listOf(1)))
+        sbank[5] = NesInstrument("Bad", chip = NesChip.EPSM, epsm = EpsmPatch(algorithm = 9), s5b = S5bEnvelope(S5bShape.DECAY, octave = 9))
+        val s = NesEpsmSystem.structuralErrors(blank.copy(sound = blank.nes.copy(instruments = sbank, epsmLfo = 5))).joinToString()
+        for (want in listOf("only 5B and EPSM sounds have mixer and noise", "only EPSM sounds have an EPSM FM patch",
+            "EPSM sounds have no duty envelope", "FM algorithm 9", "SSG envelope octave 9", "not off (0) or on with a rate")) {
+            assertTrue(s.contains(want), "$want: $s")
+        }
+        assertTrue(NesVrc6System.structuralErrors(NesVrc6System.blank().let { it.copy(sound = it.nes.copy(epsmLfo = 0x08)) }).joinToString().contains("Only EPSM songs"))
+        // An EPSM sound is not a plain NES song's.
+        assertTrue(NesSystem.structuralErrors(blank).single().contains("NES + EPSM"))
+    }
+
+    /** Shared EPSM hardware: the SSG's one envelope and noise generators, the one LFO, the drums' one volume. */
+    @Test
+    fun epsmWarningsPointAtSharedHardware() {
+        val base = NesEpsmSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Saw env", chip = NesChip.EPSM, s5b = S5bEnvelope(S5bShape.SAW_DOWN, autoPitch = false, period = 4000))
+        bank[1] = NesInstrument("Tri env", chip = NesChip.EPSM, s5b = S5bEnvelope(S5bShape.TRIANGLE, autoPitch = false, period = 900))
+        bank[2] = NesInstrument("Wobble", chip = NesChip.EPSM, epsm = EpsmPatch(pms = 3))
+        bank[3] = NesInstrument("Drum steps", chip = NesChip.EPSM, volume = NesEnvelope(listOf(15, 10, 5)))
+        val p = base.patterns[0]
+        val song = base.copy(patterns = listOf(p.copy(tracks = p.tracks.mapIndexed { c, t ->
+            when (c) {
+                NesRules.EPSM_SSG1 -> t.toMutableList().also { it[0] = Cell(48, 1) }
+                NesRules.EPSM_SSG1 + 1 -> t.toMutableList().also { it[0] = Cell(52, 2) }
+                NesRules.EPSM_FM1 -> t.toMutableList().also { it[0] = Cell(48, 3) }
+                NesRules.EPSM_RHYTHM1 -> t.toMutableList().also { it[0] = Cell(48, 4) }
+                else -> t
+            }
+        })), sound = base.nes.copy(instruments = bank))
+        assertEquals(emptyList(), NesEpsmSystem.errors(song))
+        val w = NesEpsmSystem.warnings(song).joinToString("\n")
+        assertTrue(w.contains("share the SSG's one envelope generator"), w)
+        assertTrue(w.contains("the song's LFO is off"), w)
+        assertTrue(w.contains("EPSM drums play only its first value"), w)
+        // "Tri env"'s manual period of 900 cannot be FamiStudio text: the check says so before the export refuses.
+        assertTrue(w.contains("manual SSG envelope period of 900"), w)
+        val on = song.copy(sound = song.nes.copy(epsmLfo = NesSound.EPSM_LFO_ON or 2))
+        assertFalse(NesEpsmSystem.warnings(on).joinToString().contains("LFO is off"))
     }
 
     /**
