@@ -506,7 +506,7 @@ object NesValidator {
         val fs = FsSong.of(song)
         val ch = NesRules.FDS
         val top = HashMap<Int, Int>() // auto-mod slot → the highest engine note it plays
-        val used = sortedSetOf<Int>()
+        val used = BooleanArray(fs.instruments.size + 1)
         val ignored = HashSet<Int>()
         var current = 0
         var depthEffects = false
@@ -519,7 +519,7 @@ object NesValidator {
             val n = fs.notes[ch][row] ?: continue
             if (n.isMusical && n.instrument != 0) {
                 current = n.instrument
-                used += current
+                used[current] = true
                 val ins = fs.instruments[current - 1]
                 if (ins.fds.autoMod) {
                     val arp = maxOf(0, ins.arpeggio.values.maxOrNull() ?: 0, if (n.arpeggio >= 0) maxOf(n.arpeggio shr 4, n.arpeggio and 0xF) else 0)
@@ -537,7 +537,8 @@ object NesValidator {
                 }
             }
         }
-        for (slot in used) {
+        for (slot in 1 until used.size) {
+            if (!used[slot]) continue
             val ins = fs.instruments[slot - 1]
             val f = ins.fds
             val name = "Sound ${NesRules.hex2(slot)} \"${ins.name}\""
@@ -551,9 +552,9 @@ object NesValidator {
                         "out far too low. Use a smaller ratio (e.g. halve both numbers) or play it lower"
                 }
             }
-            val samples = f.waves.flatten()
-            if (samples.isNotEmpty() && samples.all { it == samples[0] }) {
-                out += "$name: all its FDS samples are ${samples[0]}, which is silent (a constant level only clicks as the volume " +
+            val firstSample = f.waves[0][0]
+            if (f.waves.all { wave -> wave.all { it == firstSample } }) {
+                out += "$name: all its FDS samples are $firstSample, which is silent (a constant level only clicks as the volume " +
                     "changes); draw a wave or pick a preset"
             }
             val flat = f.modulation.all { it == 0 }

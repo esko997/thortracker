@@ -406,15 +406,17 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
   (`CanDisableAttack`).
 - **Lowering**: the expansion table (16 bytes per slot, every slot): volume, arpeggio, pitch envelopes, the wave-index
   envelope (directory 256 + slot − 1, kind 4, the N163 code path), `(depth << 2) | master volume`, a wave table of
-  pointers to the slot's distinct 64-byte waves, the 32-byte mod table, the speed word or `$80 | numerator, denominator`,
-  the delay; waves, tables and mod tables stored once; effect envelopes from 320. An order's own instrument re-send on a
-  legato first note repeats the H/I/J values in force first (`$57`/`$58`), except in the loop order when they differ from
-  those at the song's end (then it is left out). Contract: `docs/AUDIO_ENGINE.md`, "FDS".
+  pointers to the slot's distinct 64-byte waves, the 32-byte mod table, the tagged manual speed or auto-mod fraction,
+  the delay; waves, tables and mod tables stored once; effect envelopes from 320. A legato instrument re-send or switch
+  between identical copies uses the scoped `$5F i` load: select the actual bank slot and envelope pointers, retaining
+  runtime modulation. It works whether the loop arrives with the intro's overrides or different end-of-song values,
+  without losing the live-edit target. Contract: `docs/AUDIO_ENGINE.md`, "FDS".
 - **Exports**: `.nsf` with header `$7B` bit 2 ($04); FamiStudio text with `Expansions="FDS"`, `Expansion="FDS"
   FdsWaveCount FdsWavePreset FdsModPreset [FdsMasterVolume FdsModSpeed FdsModDepth FdsModDelay FdsAutoMod
   FdsAutoModDenom FdsAutoModNumer]`, `FDSWave`, `FDSMod` and `Repeat` envelopes, channel `FDS` and note attributes
-  `FdsModSpeed`, `FdsModDepth`, `PhaseReset`. Golden songs `fds_demo` and `fds_effects`; FamiStudio's export of our text
-  and our lowering must write the same `$4040-$408A` sequence.
+  `FdsModSpeed`, `FdsModDepth`, `PhaseReset`. Golden songs cover the demo, effects and manual/auto-mod copy loops;
+  FamiStudio's export of our text and our lowering write the same `$4040-$408A` sequences. A separate upstream-safe
+  `$57` witness checks manual speeds whose low bytes are `$80-$FF`.
 - **Editor and demo**: on FDS songs the Instrument view's Chip row offers 2A03 / FDS; FDS sounds have a **Waves** page
   (draw 64 samples 0-63, 1-16 waves with duplicate/delete, repeat, loop, release, FamiStudio's presets incl. the PWM
   sweeps, master volume) and a **Modulation** page (the 32 targets drawn as bars with the counter the chip reaches drawn

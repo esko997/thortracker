@@ -227,15 +227,18 @@ S5B_ENGINE_PATCH = [
       for c in "<>"),
 ]
 S5B_ENGINE_SHA256 = "8b666676f8050999dad7f146b474930db6abc564e1bcbe361fe239bd3da484d1"
-# The FDS build's one engine extension (Thor Tracker's, not FamiStudio's). FamiStudio 4.5.3's famistudio_set_fds_instrument
+# The FDS build's engine extensions (Thor Tracker's, not FamiStudio's). FamiStudio 4.5.3's famistudio_set_fds_instrument
 # (FAMISTUDIO_USE_FDS_AUTOMOD) reads bit 7 of an instrument's manual mod speed LOW byte as the auto-mod flag, so its own
 # export misplays manual speeds $x80-$xFF (FamitoneMusicFile.cs writes `dw FdsModSpeed`). Thor Tracker stores such a speed
 # as low, high | $80 (high <= $0F; FamiStudio's auto-mod denominators are 1..32, bit 7 clear), every other manual speed and
-# every auto-mod fraction as FamiStudio does. The patched loader reads byte 14 first: bit 7 set = a tagged manual speed,
+# every auto-mod fraction as FamiStudio does. At an ambiguous low byte the patched loader checks byte 14: bit 7 set = manual,
 # so it steps back to the low byte and takes the existing manual path (which clears the auto-mod numerator and honours the
 # `$57` override); the manual path stores the high byte masked to $0F. Override flags, depth, delay indexing and the
 # auto-mod fraction are unchanged, as is every byte FamiStudio itself emits correctly. Applied to a temporary copy of the
 # pinned famistudio_ca65.s like S5B_ENGINE_PATCH; inside famistudio_set_fds_instrument (FDS builds only).
+# `$5F i` loads the actual bank slot and envelope pointers, but skips modulation table/parameter loads. Bit 5 of the
+# override flags is unused upstream; set it only around this load, restoring the row's original flags afterward.
+# Thus legato order re-sends and renamed copies retain runtime H/I/J, auto-mod and phase even across different loop paths.
 FDS_ENGINE_PATCH = [
     ("            @auto_mod:\n"
      "                and #$7f ; Clear bit 7 before setting\n",
@@ -258,9 +261,42 @@ FDS_ENGINE_PATCH = [
      "                and #$0f ; Thor Tracker extension: drop the tag of a manual speed (low, high | $80)\n"
      "                sta famistudio_fds_mod_speed+1\n"
      "                jmp @check_mod_depth\n"),
+    ("    ; FDS Modulation\n    @write_fds_mod:        \n",
+     "    ; Thor Tracker extension: a legato slot re-send keeps all runtime modulation state.\n"
+     "    lda famistudio_fds_override_flags\n"
+     "    and #$20\n"
+     "    beq @write_fds_mod\n"
+     "    rts\n"
+     "\n"
+     "    ; FDS Modulation\n    @write_fds_mod:        \n"),
+    (".if FAMISTUDIO_EXP_FDS\n@opcode_fds_mod_depth:    \n",
+     ".if FAMISTUDIO_EXP_FDS\n"
+     "; Thor Tracker extension: load the actual slot without replacing held modulation.\n"
+     "@opcode_fds_hold_mod_instrument:\n"
+     "    lda famistudio_fds_override_flags\n"
+     "    pha\n"
+     "    ora #$20\n"
+     "    sta famistudio_fds_override_flags\n"
+     "    lda (@channel_data_ptr),y\n"
+     "    iny\n"
+     "    sty @temp_ptr_y\n"
+     "    jsr famistudio_set_instrument\n"
+     "    ldy @temp_ptr_y\n"
+     "    ldx @chan_idx\n"
+     "    pla\n"
+     "    sta famistudio_fds_override_flags\n"
+     "    jmp @read_byte\n"
+     "\n"
+     "@opcode_fds_mod_depth:    \n"),
+    *((f".if FAMISTUDIO_EXP_S5B\n    .byte {c}@opcode_s5b_manual_env_period        ; $5e\n.else\n"
+       f"    .byte {c}@opcode_invalid                      ; $5e\n.endif\n",
+       f".if FAMISTUDIO_EXP_S5B\n    .byte {c}@opcode_s5b_manual_env_period        ; $5e\n.else\n"
+       f"    .byte {c}@opcode_invalid                      ; $5e\n.endif\n"
+       f".if FAMISTUDIO_EXP_FDS\n    .byte {c}@opcode_fds_hold_mod_instrument      ; $5f (Thor Tracker extension)\n.endif\n")
+      for c in "<>"),
 ]
-# Measured and pinned by the first generator run after this change (patched_engine prints the sha256 it got).
-FDS_ENGINE_SHA256 = ""
+# Pinned patched source; vendored famistudio_ca65.s remains unchanged.
+FDS_ENGINE_SHA256 = "38e6372b43a4c0dc237755cfb3c4d3db81108bf1bcac9d454d33c632b742f46a"
 TEST_SONG_TXT = NES_DIR / "ft_test.txt"
 TEST_SONG_CA65 = NES_DIR / "ft_test_ca65.s"
 DPCM_SONG_TXT = NES_DIR / "dpcm_test.txt"
@@ -395,7 +431,7 @@ VRC7_OPCODES = {**OPCODES, 0x56: (0, True)}  # + VRC7 release note (key off, the
 N163_OPCODES = {**OPCODES, 0x5A: (0, True), 0x5B: (0, False)}
 # + FDS modulation speed (word), modulation depth, FDS release note (volume and wave-index envelopes jump to their release
 # points; famistudio_ca65.s 5835-5842, 5903-5924, jump table 6351-6362)
-FDS_OPCODES = {**OPCODES, 0x57: (2, False), 0x58: (1, False), 0x59: (0, True)}
+FDS_OPCODES = {**OPCODES, 0x57: (2, False), 0x58: (1, False), 0x59: (0, True), 0x5F: (1, False)}
 # + S5B manual envelope period: lo, hi; + Thor Tracker's `$5F i` (S5B_ENGINE_PATCH): instrument i, the shared period kept
 S5B_OPCODES = {**OPCODES, 0x5E: (2, False), 0x5F: (1, False)}
 
@@ -2417,10 +2453,10 @@ static const uint8_t nes_n163_speed[N163_TEST_ORDERS][N163_TEST_ROWS] = {{
     fds_image_size = HEADER_SIZE + DIRECTORY_SIZE + fds_region_size
     OUT_FDS_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
 // FamiStudio sound engine {FAMISTUDIO_TAG} (github.com/BleuBleu/FamiStudio commit {FAMISTUDIO_COMMIT}),
-// famistudio_ca65.s sha256 {PINNED[ENGINE_DIR / 'famistudio_ca65.s']} with Thor Tracker's FDS extension applied
-// (prepare_nes_player.py FDS_ENGINE_PATCH: an instrument's manual mod speed with low byte $80-$FF, stored as low,
-// high | $80, loads as that manual speed instead of FamiStudio's misread auto-mod; patched source sha256
-// {FDS_ENGINE_SHA256}), configured (FamiTracker tempo)
+// famistudio_ca65.s sha256 {PINNED[ENGINE_DIR / 'famistudio_ca65.s']} with Thor Tracker's FDS extensions applied
+// (prepare_nes_player.py FDS_ENGINE_PATCH: tagged manual mod speeds with low byte $80-$FF; `$5F i` loads the actual
+// instrument slot keeping runtime modulation state; patched source sha256 {FDS_ENGINE_SHA256}),
+// configured (FamiTracker tempo)
 // and wrapped by tools/audio/nes/nes_player.s like nes_player_image.h, assembled with FAMISTUDIO_EXP_FDS = 1 and
 // FAMISTUDIO_USE_FDS_AUTOMOD = 1 (Famicom Disk System: one wavetable channel with frequency modulation after the 2A03's
 // five, registers $4040-$408A; auto-modulation compiled in as in FamiStudio's own NSF kernel nsf.s); FDS note tables
@@ -2467,9 +2503,10 @@ package org.thortracker.backend
 
 /**
  * The NES + Famicom Disk System preview player: the [NesPlayerImage] player assembled with `FAMISTUDIO_EXP_FDS = 1` and
- * `FAMISTUDIO_USE_FDS_AUTOMOD = 1` (FamiStudio sound engine {FAMISTUDIO_TAG} with Thor Tracker's FDS extension: a manual
- * mod speed with low byte `$80`-`$FF` is stored as low, high | `$80`; FamiTracker tempo, the same NSF-style entry
- * table) by `tools/audio/prepare_nes_player.py`. Images use [NesPlayerImage]'s layout (header, envelope directory, limits,
+ * `FAMISTUDIO_USE_FDS_AUTOMOD = 1` (FamiStudio sound engine {FAMISTUDIO_TAG} with Thor Tracker's scoped FDS extensions:
+ * a manual mod speed with low byte `$80`-`$FF` is stored as low, high | `$80`; `$5F` loads the actual instrument slot
+ * while retaining runtime modulation; FamiTracker tempo, the same NSF-style entry table) by
+ * `tools/audio/prepare_nes_player.py`. Images use [NesPlayerImage]'s layout (header, envelope directory, limits,
  * samples, kinds) with this player's [PLAYER_ID], [SONG_BASE] and [CHANNELS] channel streams in the song header, which
  * also holds the expansion instrument pointer (`docs/AUDIO_ENGINE.md`, "FDS"). The same bytes play in the app (native
  * `app/src/main/cpp/generated/nes_fds_player_image.h`) and form an `.nsf` (expansion byte FDS) with the song region.

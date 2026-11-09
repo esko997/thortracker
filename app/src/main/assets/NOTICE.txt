@@ -33,7 +33,9 @@ in FamiStudio 4.5.3's ThirdParty/NesSndEmu/nes_apu/Nes_Fds.cpp (Nes_Snd_Emu,
 GNU Lesser General Public License 2.1 or later).
 Thor Tracker's FDS build corrects the instrument loader's ambiguity between
 manual modulation speeds and automatic modulation, using a tagged high byte.
-This scoped patch also applies only to a temporary copy of the pinned engine.
+It also adds a scoped $5F instrument-load opcode to retain runtime modulation
+while selecting the actual bank slot for legato notes and live edits.
+These patches apply only to a temporary copy of the pinned engine source.
 
 Commodore 64 SID playback uses the GoatTracker 2.77 playroutine by Lasse Oorni
 (Cadaver), which is not under the GPL and may be used freely (notice below), the

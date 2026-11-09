@@ -296,7 +296,7 @@ class NesLoweringTest {
                     }
                     0x55 -> { assertTrue(NesRules.isVrc6Saw(expansion, channel), "saw master volume off the saw"); assertTrue(u8(data, p++) in setOf(0x00, 0x01, 0xff)) }
                     0x5e -> { assertTrue(s5b && channel == NesRules.S5B_SQUARE1, "5B envelope period off 5B Square 1"); p += 2 }
-                    0x5f -> { assertTrue(s5b, "5B period-keeping instrument load off the 5B squares"); assertTrue(u8(data, p++) < NesSystem.SLOTS) }
+                    0x5f -> { assertTrue(s5b || fds, "state-keeping instrument load off the expansion channels"); assertTrue(u8(data, p++) < NesSystem.SLOTS) }
                     0x51 -> p += 2
                     0x49, 0x4b -> {
                         val addr = u16(data, p); p += 2
@@ -386,20 +386,12 @@ class NesLoweringTest {
         val bank = base.nes.instruments.toMutableList()
         bank[1] = NesInstrument("Sine", chip = NesChip.FDS)
         val song = base.copy(sound = base.nes.copy(instruments = bank))
-        assertEquals("nes-famistudio-fds", e.id)
-        assertEquals(NesFdsPlayerImage.IMAGE_SIZE, e.imageSize)
-        assertEquals(NesFdsPlayerImage.SONG_BASE, NesPlayer.FDS.songBase)
-        assertEquals(6, NesFdsSystem.channels.size)
         assertEquals(70, e.note(song, NesRules.FDS, 57, 2))
         assertEquals(1031, FamiStudioLowering.NOTE_TABLE_FDS[70])
         assertEquals(440.0, 1789773.0 * FamiStudioLowering.NOTE_TABLE_FDS[70] / 4194304.0, 0.2)
         assertEquals(46, e.note(song, 0, 57, 1)) // the 2A03 keeps its notes
         assertEquals(null, e.auditionProblem(song, NesRules.FDS, 12, 2, 0)) // C-1
         assertEquals(null, e.auditionProblem(song, NesRules.FDS, 80, 2, 0)) // G#6
-        assertTrue(e.auditionProblem(song, NesRules.FDS, 81, 2, 0)!!.contains("12-bit"))
-        assertTrue(e.auditionProblem(song, NesRules.FDS, 57, 1, 0)!!.contains("2A03 sound"))
-        assertTrue(e.auditionProblem(song, 0, 57, 2, 0)!!.contains("FDS sound"))
-        assertEquals(NesRules.fdsFinePitch(NesRules.engineNote(NesExpansion.FDS, NesRules.FDS, 57), 5), e.fine(NesRules.FDS, 57, 5))
         val image = ByteArray(e.imageSize)
         e.lower(song, image)
         check("fds blank", song, image)

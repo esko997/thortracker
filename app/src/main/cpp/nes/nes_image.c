@@ -274,9 +274,12 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             if (!s5b) return "5B envelope period off the 5B channels";
             size = 2;
             break;
-        case 0x5F: /* Thor Tracker's 5B extension: instrument i (zero-based), the shared manual envelope period kept */
-            if (player->expansion != NES_EXPANSION_S5B) return "opcode not allowed in a row";
-            if (!s5b) return "5B period-keeping instrument off the 5B channels";
+        case 0x5F: /* Thor Tracker: load the actual slot while keeping FDS modulation or the 5B shared period. */
+            if (player->expansion == NES_EXPANSION_FDS) {
+                if (!fds) return "FDS modulation-keeping instrument off the FDS channel";
+            } else if (player->expansion == NES_EXPANSION_S5B) {
+                if (!s5b) return "5B period-keeping instrument off the 5B channels";
+            } else return "opcode not allowed in a row";
             NEED(2);
             if (BYTE(1) >= (thor ? info->instruments : NES_IMAGE_MAX_INSTRUMENTS)) return "instrument beyond the table";
             out->instrument = BYTE(1);

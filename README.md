@@ -90,6 +90,7 @@ Notes use sounding pitch: A-4 is approximately 440 Hz on both the 2A03 pulses an
 Notes are true pitch for a one-cycle wave: A-4 = 440 Hz, two cycles sound an octave higher, four two octaves higher. The upper note is G#6, limited by the driver's 12-bit frequency table. FamiStudio text uses its own note numbers, 24 above its 2A03 numbers for the same pitch. Effects include the pulse effects except duty, plus **Hxx** (mod depth 00-3F), **Ixx/Jxx** (high four bits / low byte of mod speed, preserving the other half), and **X00** (restart the wave).
 
 Exports are NSF, FamiStudio text and WAV. A scoped driver correction supports manual speeds whose low byte is 80-FF while retaining auto-mod. FamiStudio 4.5.3 previews those exact text-exported speeds correctly, but its own assembly/NSF exporter misinterprets them; Thor Tracker's player and NSF/WAV exports use the correction.
+Legato loop entries retain modulation and the correct instrument slot for live edits, including renamed copies of identical sounds.
 
 ### C64 SID instruments: envelope and programs
 

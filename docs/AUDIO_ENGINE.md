@@ -1,4 +1,4 @@
-# Audio engine: hUGEDriver preview, the NES engines (2A03, VRC6, N163, FDS), the SID engine, the OPL3 engine and the YM2612 engine
+# Audio engines
 
 Preview playback runs the **actual pinned hUGEDriver 6.1.3 binary** on an embedded Game Boy
 Color emulator (binjgb) inside `libthortracker_audio.so`, output through AAudio (Android) or SDL3
@@ -1087,17 +1087,18 @@ one wave byte; `N163_TEST_EDIT_*`).
 
 The Famicom Disk System's 2C33 sound unit (design in `docs/BACKENDS.md`, "NES expansion chips"): one wavetable channel
 (64 samples of 6 bits) with frequency modulation from a 32-entry table. One build, one engine. Everything in the NES
-section above holds; this section lists only what differs. The 2A03, VRC6 and N163 engines, their player bytes, image
-sizes and song bases are unchanged.
+section above holds; this section lists only what differs. The 2A03, VRC6, VRC7, N163 and Sunsoft 5B engines, their player
+bytes, image sizes and song bases are unchanged.
 
 ### What runs
 
 - **Player** (`generated/nes_fds_player_image.h`, `NesFdsPlayerImage.kt`): `tools/audio/nes/nes_player.s` assembled with
   `-D FAMISTUDIO_EXP_FDS=1 -D FAMISTUDIO_USE_FDS_AUTOMOD=1` (auto-mod as FamiStudio's own NSF kernel `nsf.s` enables it)
-  and the pinned FDS note tables (`NoteTables/famistudio_fds_note_table_lsb/msb.bin`), nothing else changed: the same
-  entry table. Engine channels 6 (the FDS channel = 5), envelope slots 14 (`3+3+2+3+3`: the FDS channel's volume,
-  arpeggio and **wave index** from slot 11), pitch envelope slots 4 (FDS: 3). Song base: the first page after the
-  player; image = 32-byte header + directory + region (`NES_FDS_IMAGE_SIZE`).
+  and the pinned FDS note tables (`NoteTables/famistudio_fds_note_table_lsb/msb.bin`). Two scoped patches support the full
+  manual-speed range and preserve runtime modulation during legato instrument re-sends; the vendored source stays
+  unchanged. The player is 3868 bytes at `$8000`, with the same entry table and song data at `$9000`.
+  Engine channels 6 (FDS = 5), envelope slots 14 (`3+3+2+3+3`: FDS volume, arpeggio and **wave index** from slot 11),
+  pitch envelope slots 4 (FDS: 3). Image = 32-byte header + directory + region (`NES_FDS_IMAGE_SIZE`).
 - **FDS audio** (`nes/nes_fds.c`, written here from the NESdev wiki "FDS audio", raw wikitext, with Disch's
   `FDS.txt` "Unit Activity" where the wiki is silent):
   - registers `$4040-$407F` wave RAM (writes only while `$4089` bit 7 is set; reads `$40 |` the addressed sample while
@@ -1164,9 +1165,9 @@ sizes and song bases are unchanged.
   `famistudio_set_fds_instrument` / `famistudio_update_fds_wave` read it (`famistudio_ca65.s` 5235-5435): words volume
   (kind 0), arpeggio (kind 1), pitch (kind 3), the **wave-index envelope** (kind 4, directory **256 + slot − 1**);
   byte 8 = mod depth << 2 | master volume (any value); word 9 the wave table; word 11 the **mod table** (32 entries
-  0..7 inside the song data; may be shared); bytes 13-14 the manual mod speed word (≤ `$0FFF`, low byte < `$80`: with
-  auto-mod compiled in the engine reads bit 7 of byte 13 as the auto-mod flag) or auto-mod `$80 | numerator,
-  denominator` (1..32 each); byte 15 the mod delay (0..255).
+  0..7 inside the song data; may be shared); bytes 13-14 the manual mod speed word (0..4095), with `hi | $80` when the
+  low byte is `$80-$FF`. That high-byte tag distinguishes the manual word from auto-mod `$80 | numerator, denominator`
+  (1..32 each). Other manual words retain FamiStudio's bytes. Byte 15 is the mod delay (0..255).
 - **Wave table**: one pointer per distinct wave (FamiStudio's dedup order), each to 64 samples 0..63 inside the song
   data; a table entry for every index the wave-index envelope produces (largest value + 1).
 - **Directory kind 4 = WAVE** is valid on N163 and FDS images ("envelope kind outside 0..4"); effect envelopes start at
@@ -1176,12 +1177,17 @@ sizes and song bases are unchanged.
   until the next instrument load without override —, `$59` release (0 operands, ends the row: the wave-index and the
   volume envelopes jump to their release points), `$53` phase reset (`famistudio_process_phase_resets` writes
   `$4083` = prev_hi | `$80`, then prev_hi), `$4E f` fine pitch (frequency offset, + raises; pitch shift 0), vibrato,
-  arpeggio, volume, slides, instruments, delays, cut. Rejected: `$4F` and `$52` on the FDS channel, `$57`-`$59` off it
-  and on other builds, `$55`/`$56`/`$5A`/`$5B` on the FDS build.
-- **Engine behaviours kept** (FamiStudio's NSF plays the same): a manual speed with low byte ≥ `$80` would play as
-  auto-mod (rejected by the loader and Kotlin); auto-mod multiplies the 16-bit frequency by the numerator in 16 bits
-  (`famistudio_mul` wraps), then divides, and clamps the result to `$FFF`; mod delay d keeps modulation reset for d − 1
-  frames and enables it in frame d (`dec; bne`).
+  arpeggio, volume, slides, instruments, delays, cut. Thor Tracker's `$5F i` loads the actual zero-based instrument slot
+  and envelope pointers while retaining runtime modulation (table, speed, depth, auto ratio and delay). It temporarily
+  sets unused bit 5 of `famistudio_fds_override_flags` around that load and restores the row's original flags afterward.
+  This preserves both loop-held effects and the correct target for live instrument edits.
+  Rejected: `$4F` and `$52` on FDS, `$57`-`$59` off FDS, `$55`/`$56`/`$5A`/`$5B` on the FDS build.
+  `$5F` is valid only on FDS in this build (its separate Sunsoft 5B meaning is unchanged).
+- **Engine behaviours kept**: auto-mod multiplies the 16-bit frequency by the numerator in 16 bits (`famistudio_mul`
+  wraps), then divides and clamps the result to `$FFF`; mod delay d keeps modulation reset for d − 1 frames and
+  enables it in frame d (`dec; bne`). The tagged manual-speed correction avoids upstream's ambiguous low-byte flag;
+  the app and NSF/WAV exports support the full range. FamiStudio text preserves exact speeds, but upstream 4.5.3
+  assembly/NSF export can reintroduce that ambiguity.
 
 ### Live edits, audition, ops
 
@@ -1234,8 +1240,15 @@ lengths (`nes_fds_order_rows`) and each FDS instrument's waves, mod speed, depth
   unit state; the edited wave uploaded with the next frame; the edited mod table written as the engine loads one;
   the edited note; audition (the note table frequency, fine `+10`, `$59` reaching the wave release, cut); mute; the ops
   table. Evidence: `nes_fds.wav`, `nes_fds_trace.txt` (per-frame APU and FDS writes), `nes_fds.nsf` (`$7B` = `$04`).
+- Full 12-bit manual modulation speeds include the ambiguous low-byte range `$80`–`$FF`, checked against independent
+  `$57` speed-command witnesses. Manual and automatic instrument-copy fixtures exercise the second loop and live
+  master-volume edits; `$5F` keeps runtime modulation while retaining the actual bank slot. Their register traces
+  also match independent FamiStudio exports. The native FDS suite currently has 227 checks.
+- Production-signed Android and desktop smoke evidence, including same-device Game Boy pixel parity and the
+  Android/desktop FDS export comparison, is recorded in `docs/VERIFICATION.md`.
 - Not done: listening on a Famicom with a RAM adapter, comparison with a reference FDS emulator's audio (NSFPlay,
   Mesen), Thor measurements.
+
 ## Sunsoft 5B: the same engine with Sunsoft's 5B (`"nes-famistudio-s5b"`)
 
 A further NES expansion chip (design in `docs/BACKENDS.md`, "NES expansion chips"). Everything in the NES

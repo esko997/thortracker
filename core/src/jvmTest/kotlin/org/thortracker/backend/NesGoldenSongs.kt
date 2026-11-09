@@ -64,6 +64,8 @@ object NesGoldenSongs {
         "n163_copies" to ::n163Copies,
         "fds_demo" to NesFdsSystem::demo,
         "fds_effects" to ::fdsEffects,
+        "fds_copies" to { fdsCopies(false) },
+        "fds_auto_copies" to { fdsCopies(true) },
         "s5b_demo" to NesS5bSystem::demo,
         "s5b_effects" to ::s5bEffects,
         "s5b_copies" to ::s5bCopies,
@@ -183,6 +185,34 @@ object NesGoldenSongs {
         fun off(ch: Int, row: Int, fx: Int = 0, param: Int = 0) { tracks[ch][row] = Cell(Cell.CUT, 0, fx, param) }
         fun fx(ch: Int, row: Int, fx: Int, param: Int) { tracks[ch][row] = tracks[ch][row].copy(effect = fx, param = param) }
         fun build() = Pattern(name, tracks.map { it.toList() }, length = length)
+    }
+
+    /** A loop's first legato note uses the original slot, but inherits the previous pass's modulation overrides. */
+    fun fdsCopies(autoMod: Boolean): Song {
+        val base = NesFdsSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Original", chip = NesChip.FDS, volume = NesEnvelope(listOf(14)),
+            fds = FdsSound(modulation = FdsPresets.modulation(WavePreset.TRIANGLE),
+                modSpeed = 0x100, modDepth = 12, modDelay = 3, autoMod = autoMod, autoModNumer = 1, autoModDenom = 2))
+        bank[1] = bank[0].copy(name = "Renamed copy")
+        val f = NesRules.FDS
+        val a = P("Intro", length = 8, channels = NesFdsSystem.channels.size)
+        a.note(f, 0, "C-4", 1)
+        if (!autoMod) {
+            a.fx(f, 1, NesRules.FX_FDS_MOD_SPEED_HI, 1)
+            a.fx(f, 2, NesRules.FX_FDS_MOD_SPEED_LO, 0x20)
+        }
+        a.fx(f, 3, NesRules.FX_FDS_MOD_DEPTH, 8)
+        val b = P("Loop", length = 8, channels = NesFdsSystem.channels.size)
+        b.note(f, 0, "C-5")
+        b.note(f, 4, "E-5", 2)
+        if (!autoMod) {
+            b.fx(f, 5, NesRules.FX_FDS_MOD_SPEED_HI, 2)
+            b.fx(f, 6, NesRules.FX_FDS_MOD_SPEED_LO, 0x60)
+        }
+        b.fx(f, 7, NesRules.FX_FDS_MOD_DEPTH, 24)
+        return base.copy(title = if (autoMod) "FDS auto copies" else "FDS copies", ticksPerRow = 3, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1), sound = base.nes.copy(instruments = bank))
     }
 
     fun effects(): Song {
@@ -805,7 +835,7 @@ object NesGoldenSongs {
         a.off(2, 40)
         for (r in 0 until 64 step 8) a.note(3, r, "C-3", 8)
         val b = P("FDS B", length = 32, channels = channels)
-        b.note(f, 0, "A-4", 0) // legato under H10: the order's re-send sends $58 $10 again first
+        b.note(f, 0, "A-4", 0) // legato keeps the runtime H10 depth across the order boundary
         b.off(f, 4) // no release point anywhere: a stop
         b.note(f, 8, "E-5", 1, NesRules.FX_ARPEGGIO, 0x47)
         b.note(f, 12, "G-4", 5, NesRules.FX_FDS_MOD_SPEED_HI, 0x01) // $17F on the attack
@@ -818,6 +848,11 @@ object NesGoldenSongs {
         return base.copy(
             title = "FDS effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
      * N163 with 2 channels: two identical sounds under different names (FamiStudio's export merges them into one
      * instrument, `Project.MergeIdenticalInstruments`, which ignores names) and a third that differs only in its volume.
      * N163 1 switches between the copies with attacks and legato, and the loop's first note is legato on one copy while

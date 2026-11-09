@@ -3,6 +3,9 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.system.nes.FdsPresets
+import org.thortracker.system.nes.FdsSound
+import org.thortracker.system.nes.WavePreset
 import org.thortracker.system.nes.N163Presets
 import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.NesChip
@@ -74,6 +77,33 @@ object SampleExportTool {
         )
         File(directory, "fds-shortest.nesimg")
             .writeBytes(ByteArray(NesFdsSystem.engine.imageSize).also { NesFdsSystem.engine.lower(fdsShortest, it) })
+        // The golden FDS copy/loop cases as native images: the first legato note must select the original slot without
+        // replacing the loop's held modulation with the different intro values.
+        for (autoMod in listOf(false, true)) {
+            val bank = fdsBlank.nes.instruments.toMutableList()
+            bank[0] = NesInstrument("Original", chip = NesChip.FDS, volume = NesEnvelope(listOf(14)),
+                fds = FdsSound(modulation = FdsPresets.modulation(WavePreset.TRIANGLE),
+                    modSpeed = 0x100, modDepth = 12, modDelay = 3, autoMod = autoMod, autoModNumer = 1, autoModDenom = 2))
+            bank[1] = bank[0].copy(name = "Renamed copy")
+            fun pattern(name: String, cells: Map<Int, Cell>) = fdsFirst.copy(name = name, length = 8,
+                tracks = fdsFirst.tracks.mapIndexed { ch, rows ->
+                    if (ch == NesRules.FDS) rows.mapIndexed { r, cell -> cells[r] ?: cell } else rows
+                })
+            val intro = mutableMapOf(0 to Cell(48, 1), 3 to Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_DEPTH, 8))
+            val loop = mutableMapOf(0 to Cell(60), 4 to Cell(64, 2), 7 to Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_DEPTH, 24))
+            if (!autoMod) {
+                intro[1] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_HI, 1)
+                intro[2] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_LO, 0x20)
+                loop[5] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_HI, 2)
+                loop[6] = Cell(Cell.EMPTY, 0, NesRules.FX_FDS_MOD_SPEED_LO, 0x60)
+            }
+            val copies = fdsBlank.copy(title = if (autoMod) "FDS auto copies" else "FDS copies", ticksPerRow = 3, loopOrder = 1,
+                patterns = listOf(pattern("Intro", intro), pattern("Loop", loop)), orders = listOf(0, 1),
+                sound = fdsBlank.nes.copy(instruments = bank))
+            val name = if (autoMod) "fds-auto-copies" else "fds-copies"
+            File(directory, "$name.nesimg")
+                .writeBytes(ByteArray(NesFdsSystem.engine.imageSize).also { NesFdsSystem.engine.lower(copies, it) })
+        }
         // Held identical copies: native live edits must follow the played bank slot, not an equal earlier slot.
         val copyBase = NesVrc7System.blank()
         val copyBank = copyBase.nes.instruments.toMutableList()

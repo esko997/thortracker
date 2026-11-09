@@ -897,7 +897,12 @@ static void test_images(void) {
     expect_problem(&bad, P, "opcode not allowed in a row", "`$52` on the FDS channel");
     patch_entry(&bad, 2, op53, 1);
     expect_problem(&bad, P, "phase reset only on the pulses and the FDS channel", "`$53` on the triangle");
-    static const uint8_t kForeign[] = {0x55, 0x56, 0x5A, 0x5B, 0x5E, 0x5F};
+    const uint8_t op5f[] = {0x5F, 0}, bad_slot[] = {0x5F, FDS_TEST_INSTRUMENTS};
+    patch_entry(&bad, 0, op5f, 2);
+    EXPECT(nm_load_image(&bad, P) != NM_OK, "`$5F` cannot load an FDS instrument on pulse 1");
+    patch_entry(&bad, CH, bad_slot, 2);
+    EXPECT(nm_load_image(&bad, P) != NM_OK, "`$5F` rejects a slot beyond the instrument table");
+    static const uint8_t kForeign[] = {0x55, 0x56, 0x5A, 0x5B, 0x5E};
     for (size_t k = 0; k < sizeof kForeign; ++k) {
         patch_entry(&bad, CH, &kForeign[k], 1);
         expect_problem(&bad, P, "opcode not allowed in a row", "a VRC6/VRC7/N163/5B opcode on the FDS build");
@@ -1659,8 +1664,61 @@ static void test_chip_engine_ops(void) {
     free(img);
 }
 
+/* The Kotlin compiler's loop starts with a legato note on slot 0; its last attack uses an identical renamed slot 1.
+ * Intro and loop-end modulation differ. Re-entering the loop must retain that modulation and select slot 0, so a
+ * live edit reaches the sound the row actually names. The independent golden export also checks register traces. */
+static void test_loop_copies(NesMachine* m, const char* samples) {
+    printf("FDS identical copies: loop-held modulation, actual bank slot, live master-volume edit\n");
+    static NesImage original, edited;
+    for (int automatic = 0; automatic < 2; ++automatic) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/%s.nesimg", samples, automatic ? "fds-auto-copies" : "fds-copies");
+        FILE* f = fopen(path, "rb");
+        if (!f) {
+            printf("  FAIL: missing %s; run exportSamples\n", path);
+            ++failures;
+            continue;
+        }
+        memset(&original, 0, sizeof original);
+        const size_t bytes = fread(original.bytes, 1, P->image_size, f);
+        fclose(f);
+        const int loaded = bytes == P->image_size && nm_load_image(&original, P) == NM_OK;
+        EXPECT(loaded, "%s: the Kotlin-lowered copy fixture loads (%s)", path,
+               original.info.problem ? original.info.problem : "-");
+        if (!loaded) continue;
+        int mode, rendered = 0;
+        nm_start(m, &original, 0, 0, 12000, &mode);
+        for (int pass = 0; pass < 2; ++pass) {
+            const int frame = 24 + pass * 24;
+            while (rendered <= frame) {
+                nm_tick_silent(m);
+                ++rendered;
+            }
+            const int slot = fds_ram(m, P->fds.chn_fds_instrument);
+            const int depth = fds_ram(m, P->fds.fds_mod_depth);
+            const int speed = fds_ram16(m, P->fds.fds_mod_speed);
+            const int numer = fds_ram(m, P->fds.fds_automod_numer);
+            EXPECT(slot == 0, "%s loop pass %d: the legato note holds original slot 0, not the last copy (%d)", path, pass, slot);
+            EXPECT(depth == (pass ? 24 : 8), "%s loop pass %d: held depth %d, not the instrument's 12 (%d)",
+                   path, pass, pass ? 24 : 8, depth);
+            EXPECT(automatic ? numer == 1 && fds_ram(m, P->fds.fds_automod_denom) == 2
+                             : numer == 0 && speed == (pass ? 0x260 : 0x120),
+                   "%s loop pass %d: held auto ratio 1/2 or manual speed $%03X (numerator %d, speed $%03X)",
+                   path, pass, pass ? 0x260 : 0x120, numer, speed);
+        }
+        edited = original;
+        exp_entry_bytes(&edited, 0)[8] = (exp_entry_bytes(&edited, 0)[8] & 0xFC) | 3; /* Master volume only: 2/2 -> 2/5. */
+        EXPECT(nm_load_image(&edited, P) == NM_OK, "%s: the original slot's master-volume edit loads", path);
+        nm_apply_image(m, &edited);
+        nm_tick_silent(m);
+        EXPECT((nm_fds(m)->ctrl & 3) == 3, "%s: editing the loop's held original changes audible master volume to 2/5 (%d)",
+               path, nm_fds(m)->ctrl & 3);
+    }
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
+    const char* samples = argc > 2 ? argv[2] : "app/build/samples";
     test_unit_pitch();
     test_unit_mod();
     test_unit_wave();
@@ -1681,6 +1739,7 @@ int main(int argc, char** argv) {
     test_seek(m);
     test_live_apply(m);
     test_manual_speed_tag(m);
+    test_loop_copies(m, samples);
     test_audition(m);
     test_mute(m);
     test_chip_engine_ops();

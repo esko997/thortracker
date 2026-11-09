@@ -39,10 +39,9 @@ import kotlin.math.sign
  * FamiStudio's stream. Streams load each note's own bank slot even where FamiStudio's export merges identical copies into
  * one instrument; on a 5B square switching between merged manual-period copies (where FamiStudio loads nothing) that load
  * is `$5F i`, which keeps the shared period. On an N163 or FDS channel a re-sent instrument reloads its envelopes but
- * uploads no wave unless the note has an attack; on the FDS a legato load (an order's re-send, or a switch between merged
- * copies, where FamiStudio loads nothing) also reloads the sound's mod speed and depth, so while an H/I/J value is in
- * force the stream sends it again first, `$57`/`$58` in the same row, which the engine then keeps:
- * `famistudio_set_fds_instrument` skips the speed and depth a row overrides. Two deliberate corrections: loop entries
+ * uploads no wave unless the note has an attack. An FDS legato re-send or switch between merged copies uses `$5F i`
+ * to retain the runtime modulation state while loading the actual bank slot. This also handles a loop entered with
+ * different overrides from its intro: no guessed constants or omitted instrument loads. Two deliberate corrections: loop entries
  * restore a custom VRC7 patch if the loop uses another custom sound (delays can change the final writer); mid-song
  * restoration keeps instrument identity, so a no-attack note does not retrigger its held envelopes. FamiStudio's editor
  * preserves that legato, but its 4.5.3 exporter forces an attack after another custom patch. Its own byte layout
@@ -180,8 +179,8 @@ internal object FamiStudioLowering {
     private const val OP_FDS_RELEASE_NOTE = 0x59
     private const val OP_S5B_ENV_PERIOD = 0x5e
 
-    /** 5B squares: `$5F i` loads instrument i (zero-based) keeping the shared manual envelope period (Thor Tracker's opcode). */
-    private const val OP_S5B_KEEP_PERIOD_INSTRUMENT = 0x5f
+    /** `$5F i`: load the actual slot while keeping FDS modulation or the 5B shared period (Thor Tracker's opcode). */
+    private const val OP_KEEP_EXPANSION_STATE_INSTRUMENT = 0x5f
     private const val OP_VOLUME_BITS = 0x70
     private const val SINGLE_BYTE_NOTE_MIN = 12
     private const val SINGLE_BYTE_NOTE_MAX = SINGLE_BYTE_NOTE_MIN + 0x3f
@@ -570,22 +569,6 @@ internal object FamiStudioLowering {
         }
 
         fun channel(c: Int): List<Chunk> {
-            if (!NesRules.isFds(fs.expansion, c)) return channel(c, null).chunks
-            // The loop order is also entered from the song's end: the first pass finds the FDS mod overrides in force
-            // there, the second uses them (the end state does not depend on the loop order's re-send choice).
-            return channel(c, channel(c, null).end).chunks
-        }
-
-        /**
-         * FDS mod speed and depth overrides the engine holds (`$57`/`$58` values since the last instrument load; -1:
-         * the loaded sound's own).
-         */
-        private data class FdsHeld(val speed: Int, val depth: Int)
-
-        private class Pass(val chunks: List<Chunk>, val end: FdsHeld)
-
-        /** One pass over channel [c]; [loopEntry] = the FDS overrides in force when the song loops back, if known. */
-        private fun channel(c: Int, loopEntry: FdsHeld?): Pass {
             val isSpeedChannel = c == speedChannel
             val isSaw = NesRules.isVrc6Saw(fs.expansion, c)
             val isVrc7 = NesRules.isVrc7(fs.expansion, c)
@@ -603,9 +586,6 @@ internal object FamiStudioLowering {
             // FamiStudio's `OverrideFlags.FdsModSpeed/FdsModDepth`: set by an H/I/J row, cleared by the attack that re-binds.
             var speedOverride = false
             var depthOverride = false
-            // What the engine holds from the linear predecessor, and (in the loop order) from the song's end.
-            var held = FdsHeld(-1, -1)
-            var heldFromEnd: FdsHeld? = null
             // FamiStudio's `OverrideFlags.EnvPeriod`: a 5B envelope period effect played since this square last loaded
             // its instrument, so its next note with attack loads it again (restoring a manual period).
             var envOverride = false
@@ -626,7 +606,6 @@ internal object FamiStudioLowering {
                 val b = Bytes()
                 var notes = 0
                 var instrumentSent = false
-                heldFromEnd = if (o == fs.loopOrder) loopEntry else null
                 if (o == fs.loopOrder) {
                     // FamiStudio compares the merged instruments ([equivalent]): renamed copies keep a legato loop entry.
                     if (equivalent[lastInLoop] != equivalent[firstInLoop]) instrument = 0
@@ -716,14 +695,10 @@ internal object FamiStudioLowering {
                     if (note.fdsModSpeed >= 0) {
                         b.byte(OP_FDS_MOD_SPEED); b.word(note.fdsModSpeed)
                         speedOverride = true
-                        held = held.copy(speed = note.fdsModSpeed)
-                        heldFromEnd = heldFromEnd?.copy(speed = note.fdsModSpeed)
                     }
                     if (note.fdsModDepth >= 0) {
                         b.byte(OP_FDS_MOD_DEPTH); b.byte(note.fdsModDepth)
                         depthOverride = true
-                        held = held.copy(depth = note.fdsModDepth)
-                        heldFromEnd = heldFromEnd?.copy(depth = note.fdsModDepth)
                     }
                     if (note.envelopePeriod >= 0) {
                         b.byte(OP_S5B_ENV_PERIOD); b.word(note.envelopePeriod)
@@ -764,47 +739,28 @@ internal object FamiStudioLowering {
                             // square's or an `Ixx`/`Jyy`'s value there), so those orders play exactly FamiStudio's stream.
                             val resend = !instrumentSent && !(isVrc7 && isCustomVrc7(slot)) && !(isS5b && hasManualPeriod(slot))
                             if (slot != instrument || resend || reloadCustom && isCustomVrc7(slot)) {
-                                // An FDS load where FamiStudio loads nothing (this order's own re-send, or a legato switch
-                                // between copies its export merges): the load would restore the sound's mod speed and
-                                // depth, so the overrides in force go first and the engine keeps them. The loop order is
-                                // entered both from its predecessor and from the song's end; its own re-send is left out
-                                // when the overrides held there differ.
+                                // FamiStudio loads nothing for a legato re-send or a merged FDS copy. Keep the runtime
+                                // modulation, not constants from the intro: the loop may arrive with different H/I/J.
                                 val fdsLegato = isFds && !attack && equivalent[slot] == equivalent[instrument]
-                                val keep = fdsLegato && (held.speed >= 0 && note.fdsModSpeed < 0 || held.depth >= 0 && note.fdsModDepth < 0)
-                                if (fdsLegato && slot == instrument && heldFromEnd != null && heldFromEnd != held) {
-                                    instrumentSent = true
-                                } else {
-                                    if (keep) {
-                                        if (held.speed >= 0 && note.fdsModSpeed < 0) { b.byte(OP_FDS_MOD_SPEED); b.word(held.speed) }
-                                        if (held.depth >= 0 && note.fdsModDepth < 0) { b.byte(OP_FDS_MOD_DEPTH); b.byte(held.depth) }
-                                    } else if (isFds) {
-                                        // The load restores the sound's speed and depth where this row sets none.
-                                        held = FdsHeld(if (note.fdsModSpeed >= 0) held.speed else -1, if (note.fdsModDepth >= 0) held.depth else -1)
-                                        heldFromEnd = heldFromEnd?.let { held }
-                                    }
-                                    // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
-                                    // also sends it with its first instrument, so the order is self-contained.
-                                    val volume = fs.instruments[slot - 1].sawVolume
-                                    if (isSaw && (volume != sawVolume || !instrumentSent)) {
-                                        b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
-                                        sawVolume = volume
-                                    }
-                                    // A 5B square switching between copies FamiStudio's export merges into one manual-period
-                                    // instrument: FamiStudio loads nothing there, so the shared period stays (another
-                                    // square's, an `Ixx`/`Jyy`'s); `$5F i` loads this slot's own data (live edits follow the
-                                    // played slot) without setting the period. Any other change or forced reload is a
-                                    // normal load.
-                                    if (isS5b && instrument != 0 && slot != instrument && equivalent[slot] == equivalent[instrument] &&
-                                        hasManualPeriod(slot)
-                                    ) {
-                                        b.byte(OP_S5B_KEEP_PERIOD_INSTRUMENT); b.byte(slot - 1)
-                                    } else {
-                                        b.byte(0x80 or ((slot - 1) shl 1))
-                                    }
-                                    instrument = slot
-                                    instrumentSent = true
-                                    reloadCustom = false
+                                // FamiStudio sends `$55` before a saw instrument whose master volume differs; each order
+                                // also sends it with its first instrument, so the order is self-contained.
+                                val volume = fs.instruments[slot - 1].sawVolume
+                                if (isSaw && (volume != sawVolume || !instrumentSent)) {
+                                    b.byte(OP_VRC6_SAW_VOLUME); b.byte(volume.engine)
+                                    sawVolume = volume
                                 }
+                                // The same opcode keeps a 5B manual-period copy from overwriting another square's
+                                // shared period. Both paths retain the actual slot so live edits reach the played copy.
+                                val s5bCopy = isS5b && instrument != 0 && slot != instrument &&
+                                    equivalent[slot] == equivalent[instrument] && hasManualPeriod(slot)
+                                if (fdsLegato || s5bCopy) {
+                                    b.byte(OP_KEEP_EXPANSION_STATE_INSTRUMENT); b.byte(slot - 1)
+                                } else {
+                                    b.byte(0x80 or ((slot - 1) shl 1))
+                                }
+                                instrument = slot
+                                instrumentSent = true
+                                reloadCustom = false
                             }
                         }
                         var emittedSlide = false
@@ -850,7 +806,7 @@ internal object FamiStudioLowering {
                 }
                 chunks += Chunk(b.toByteArray(), notes)
             }
-            return Pass(chunks, held)
+            return chunks
         }
 
         /** A 5B sound whose hardware envelope takes the manual period (octave byte `$80`). */
