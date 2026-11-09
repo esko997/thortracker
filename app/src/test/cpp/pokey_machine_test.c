@@ -1339,6 +1339,85 @@ static void test_porta_samples(const char* dir) {
     pkm_destroy(m);
 }
 
+/* Consumer fixtures mirrored by PokeyModelTest: changing to sound 2 under portamento either keeps the sample
+ * (slot 1), or keys on the joined/filtered sound and takes its partner channel (slot 2). These run the real
+ * machine, including the partial first period and AUDF's next-reload latency, not pkp_tick alone. */
+static void test_sample_ownership(void) {
+    static const struct {
+        const char* name;
+        int length, speed, note, fx, param, row, expected, glide, loop, lane;
+    } cases[] = {
+        {"clamped high note held", 8000, 6, 96, PK_FX_PORTAMENTO, 16, 1, 1, 0, -1, 1},
+        {"clamped high note ended", 8000, 6, 96, PK_FX_PORTAMENTO, 16, 7, 2, 0, -1, 1},
+        {"slow glide held", 2000, 6, 48, PK_FX_PORTAMENTO, 1, 2, 1, 1, -1, 1},
+        {"slow glide ended", 2000, 6, 48, PK_FX_PORTAMENTO, 1, 3, 2, 1, -1, 1},
+        {"up slide", 8000, 6, 48, PK_FX_SLIDE_UP, 255, 8, 2, 0, -1, 1},
+        {"down slide", 8000, 6, 48, PK_FX_SLIDE_DOWN, 255, 12, 1, 0, -1, 1},
+        {"arpeggio", 8000, 6, 48, PK_FX_ARPEGGIO, 0xcc, 8, 2, 0, -1, 1},
+        {"fine pitch", 8000, 6, 48, PK_FX_FINE, 255, 9, 2, 0, -1, 1},
+        {"vibrato", 810, 6, 48, PK_FX_VIBRATO, 255, 1, 2, 0, -1, 1},
+        {"first short period ends", 134, 1, 48, PK_FX_PORTAMENTO, 1, 1, 2, 0, -1, 1},
+        {"first short period holds", 135, 1, 48, PK_FX_PORTAMENTO, 1, 1, 1, 0, -1, 1},
+        {"STIMER first period holds", 134, 1, 48, PK_FX_TIMERS, 0, 1, 1, 0, -1, 1},
+        {"64k high note holds", 1400, 6, 96, PK_FX_CLOCK, 0, 1, 1, 0, -1, 1},
+        {"15k high note ends", 1400, 6, 96, PK_FX_CLOCK, 1, 1, 2, 0, -1, 1},
+        {"loop cut tick zero", 200, 6, 48, PK_FX_CUT, 0, 1, 2, 0, 17, 1},
+        {"loop cut mid-row", 200, 6, 48, PK_FX_CUT, 3, 1, 2, 0, 17, 1},
+        {"loop cut outside row", 200, 6, 48, PK_FX_CUT, 6, 1, 1, 0, 17, 1},
+        {"two-tone timer starvation", 8000, 6, 48, PK_FX_TWO_TONE, 2, 15, 1, 0, -1, 0},
+    };
+    static PokeyImage image;
+    printf("sample ownership counter/effect boundaries\n");
+    for (size_t k = 0; k < sizeof cases / sizeof cases[0]; ++k) {
+        uint8_t* b = image.bytes;
+        memset(b, 0, PK_IMAGE_SIZE);
+        memcpy(b, "TTPK", 4);
+        b[PK_H_LAYOUT] = PK_LAYOUT;
+        b[PK_H_MACHINE] = PK_MACHINE_NTSC;
+        b[PK_H_MULTISPEED] = 1;
+        b[PK_H_SPEED] = (uint8_t)cases[k].speed;
+        pkt_u16(b + PK_H_ORDERS, 1);
+        b[PK_H_INSTRUMENTS] = 2;
+        b[PK_OFF_ROWS] = (uint8_t)(cases[k].row + 1);
+        PktOut o = {b, 0};
+        for (int lane = 0; lane < 4; ++lane) {
+            pkt_u16(b + PK_OFF_ORDERS + 2 * lane, o.at);
+            for (int row = 0; row <= cases[k].row; ++row) {
+                if (lane == cases[k].lane && (row == 0 || row == cases[k].row || (cases[k].glide && row == 1))) {
+                    pkt_put(&o, 0x01 | 0x02 | (1 << 2));
+                    pkt_put(&o, row && cases[k].glide ? 96 : cases[k].note);
+                    pkt_put(&o, row ? 2 : 1);
+                    pkt_put(&o, row ? PK_FX_PORTAMENTO : cases[k].fx);
+                    pkt_put(&o, row ? 1 : cases[k].param);
+                } else pkt_put(&o, 0x80);
+            }
+        }
+        pkt_u16(b + PK_H_DATA_SIZE, o.at);
+        const int size = (cases[k].length + 1) / 2;
+        pkt_u16(b + PK_H_SAMPLE_SIZE, size);
+        b[PK_H_SAMPLES] = 1;
+        pkt_u16(b + PK_OFF_SAMPLES + 2, cases[k].length);
+        memset(b + PK_OFF_SAMPLE_DATA, 0xcc, (size_t)size);
+        porta_instrument(b, 1, PK_FLAG_SAMPLE, 0, cases[k].loop < 0 ? PK_ENV_NONE : cases[k].loop, PK_ENV_NONE);
+        porta_instrument(b, 2, cases[k].lane ? PK_FLAG_JOINED : PK_FLAG_FILTERED, 0, PK_ENV_NONE, PK_ENV_NONE);
+        const int loaded = pk_load_image(&image);
+        EXPECT(loaded == 0, "%s: fixture loads", cases[k].name);
+        if (loaded != 0) continue;
+        PokeyMachine* m = pkm_create(RATE);
+        int seek;
+        EXPECT(pkm_start(m, &image, 0, 0, SEEK_BUDGET, &seek) == PKM_OK, "%s: starts", cases[k].name);
+        for (int t = 0; t <= cases[k].row * cases[k].speed; ++t) pkm_tick(m, g_out);
+        const PkPlayer* p = pkm_player(m);
+        const int lane = cases[k].lane;
+        EXPECT(p->lane[lane].voice.slot == cases[k].expected, "%s: slot %d, expected %d", cases[k].name,
+               p->lane[lane].voice.slot, cases[k].expected);
+        const int partner = lane ? 0 : 2;
+        EXPECT(p->holder[partner] == (cases[k].expected == 2 ? lane : -1),
+               "%s: partner channel %d holder %d", cases[k].name, partner, p->holder[partner]);
+        pkm_destroy(m);
+    }
+}
+
 static void test_multispeed(void) {
     printf("multispeed\n");
     PokeyMachine* m = pkm_create(RATE);
@@ -1663,6 +1742,7 @@ int main(int argc, char** argv) {
     test_audition(dir);
     test_mute();
     test_porta_samples(dir);
+    test_sample_ownership();
     test_multispeed();
     test_vgm(dir);
     test_export();

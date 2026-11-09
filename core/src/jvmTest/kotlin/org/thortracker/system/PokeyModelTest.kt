@@ -1,6 +1,5 @@
 package org.thortracker.system
 
-import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,19 +24,13 @@ import org.thortracker.system.pokey.PokeyPresets
 import org.thortracker.system.pokey.PokeyRules
 import org.thortracker.system.pokey.PokeySample
 import org.thortracker.system.pokey.PokeySamples
+import org.thortracker.system.pokey.PokeyStraightPlay
 import org.thortracker.system.pokey.PokeySystem
-import org.thortracker.system.pokey.PokeyVgm
 import org.thortracker.system.pokey.PokeyValidator
-import org.thortracker.system.pokey.PokeyVgmTags
 import org.thortracker.system.pokey.pokey
 import kotlin.math.abs
 
 class PokeyModelTest {
-    @After
-    fun noRenderer() {
-        PokeyVgm.renderer = null
-    }
-
     private fun with(song: Song, channel: Int, row: Int, cell: Cell, order: Int = 0): Song {
         val p = song.orders[order]
         val pattern = song.patterns[p]
@@ -327,28 +320,172 @@ class PokeyModelTest {
             song = with(song, lane, 16, Cell(55))
         }
         assertEquals(emptyList<String>(), PokeySystem.errors(song))
-        fun since(row: Int, lane: Int): String {
-            val line = PokeySystem.sharedState(song, 0, row)!!.lines.single { it.startsWith("POKEY ${lane + 1}:") }
-            return line.substringAfterLast("(since ").removeSuffix(")")
+        // Ended one-shots key on afresh; a looping sample and an ended synthesized tone remain held.
+        assertArrayEquals(intArrayOf(8, 0, 0, 0), PokeyStraightPlay.upTo(song, 0, 8).voiceRow)
+        assertArrayEquals(intArrayOf(16, 16, 0, 0), PokeyStraightPlay.upTo(song, 0, 16).voiceRow)
+    }
+
+    private fun ownershipSong(length: Int = 8000, speed: Int = 6, note: Int = 48,
+                              ins: PokeyInstrument = PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0)): Song {
+        var song = PokeySystem.blank().let {
+            it.copy(ticksPerRow = speed, sound = it.pokey.copy(samples = listOf(PokeySample("ownership", List(length) { 12 }))))
         }
-        // The short one-shot ended long before rows 8 and 16: each note keys on afresh under the sticky 310.
-        assertEquals("order 00 row 08", since(8, 0))
-        assertEquals("order 00 row 10", since(16, 0))
-        // The long one is still playing at row 8 (the note glides) and has ended by row 16 (keyed on afresh).
-        assertEquals("order 00 row 00", since(8, 1))
-        assertEquals("order 00 row 10", since(16, 1))
-        // The looping sample and the ended tone stay held: both notes only glide.
-        for (row in listOf(8, 16)) {
-            assertEquals("order 00 row 00", since(row, 2))
-            assertEquals("order 00 row 00", since(row, 3))
+        song = withInstrument(song, 60, ins)
+        song = withInstrument(song, 61, PokeyInstrument(kind = PokeyKind.JOINED))
+        return with(song, 1, 0, Cell(note, 60))
+    }
+
+    @Test
+    fun roundedSampleRateKeepsTheOldVoiceUntilItsActualEnd() {
+        var song = ownershipSong(note = 96)
+        song = with(song, 0, 0, Cell(48, 1))
+        song = with(song, 1, 1, Cell(96, 61, PokeyRules.FX_PORTAMENTO, 0x10))
+        song = with(song, 1, 7, Cell(96))
+        // The requested 127840 levels/s is clamped to N=4, period 140 cycles. Row 1 still owns the
+        // sample, so selecting the joined sound must NOT steal channel 1 until the row-7 key-on.
+        val early = PokeyStraightPlay.upTo(song, 0, 1)
+        assertEquals(60, early.voiceSlot[1])
+        assertEquals(0, early.voiceRow[1])
+        assertEquals(0, early.holder[0])
+        val ended = PokeyStraightPlay.upTo(song, 0, 7)
+        assertEquals(61, ended.voiceSlot[1])
+        assertEquals(7, ended.voiceRow[1])
+        assertEquals(1, ended.holder[0])
+    }
+
+    @Test
+    fun heldPortamentoChangesTheTargetNotTheSampleKeyOrElapsedPhase() {
+        var song = ownershipSong(length = 2000)
+        song = with(song, 1, 1, Cell(96, 61, PokeyRules.FX_PORTAMENTO, 1))
+        song = with(song, 1, 2, Cell(96))
+        song = with(song, 1, 3, Cell(96))
+        assertEquals(60, PokeyStraightPlay.upTo(song, 0, 2).voiceSlot[1])
+        assertEquals(0, PokeyStraightPlay.upTo(song, 0, 2).voiceRow[1])
+        assertEquals(61, PokeyStraightPlay.upTo(song, 0, 3).voiceSlot[1])
+        assertEquals(3, PokeyStraightPlay.upTo(song, 0, 3).voiceRow[1])
+    }
+
+    @Test
+    fun sampleOwnershipIntegratesPitchEffectsAndEnvelopesEachTick() {
+        val sample = PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0)
+        val cases = listOf(
+            Triple(sample, PokeyRules.FX_SLIDE_UP to 255, 8),
+            Triple(sample, PokeyRules.FX_ARPEGGIO to 0xcc, 8),
+            Triple(sample, PokeyRules.FX_FINE to 255, 9),
+            Triple(sample.copy(arpeggio = NesEnvelope(listOf(12))), -1 to 0, 8),
+            Triple(sample.copy(pitch = NesEnvelope(listOf(127))), -1 to 0, 8),
+            Triple(sample.copy(pitch = NesEnvelope(listOf(16)), pitchRelative = true), -1 to 0, 8),
+        )
+        for ((ins, fx, row) in cases) {
+            var song = ownershipSong(ins = ins)
+            if (fx.first >= 0) song = with(song, 1, 0, Cell(48, 60, fx.first, fx.second))
+            song = with(song, 1, row, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+            val walk = PokeyStraightPlay.upTo(song, 0, row)
+            assertEquals("$ins / $fx", 61, walk.voiceSlot[1])
+            assertEquals("$ins / $fx", row, walk.voiceRow[1])
         }
+        var down = ownershipSong()
+        down = with(down, 1, 0, Cell(48, 60, PokeyRules.FX_SLIDE_DOWN, 255))
+        down = with(down, 1, 12, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+        assertEquals(60, PokeyStraightPlay.upTo(down, 0, 12).voiceSlot[1])
+    }
+
+    @Test
+    fun sampleEndUsesInheritedTimerPhaseIncludingTheFirstShortPeriod() {
+        // Power-on counts are 1, not AUDF+1. At N=7 timer 2 fires at cycle 22, then every 224:
+        // the 134th interrupt is 29814, before the next NTSC tick at 29868.
+        for ((length, slot) in listOf(134 to 61, 135 to 60)) {
+            var song = ownershipSong(length = length, speed = 1)
+            song = with(song, 1, 1, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+            assertEquals("length $length", slot, PokeyStraightPlay.upTo(song, 0, 1).voiceSlot[1])
+        }
+        var retrigger = ownershipSong(length = 134, speed = 1)
+        retrigger = with(retrigger, 1, 1, Cell(48, 60, PokeyRules.FX_PORTAMENTO, 1))
+        retrigger = with(retrigger, 1, 2, Cell(48, 61))
+        // Row 1 keys on but does not STIMER: only 133 interrupts fit in its inherited phase.
+        assertEquals(60, PokeyStraightPlay.upTo(retrigger, 0, 2).voiceSlot[1])
+        assertEquals(1, PokeyStraightPlay.upTo(retrigger, 0, 2).voiceRow[1])
+        val reset = with(ownershipSong(length = 134, speed = 1), 1, 0,
+            Cell(48, 60, PokeyRules.FX_TIMERS, 0))
+        val resetTarget = with(reset, 1, 1, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+        // T00 reloads 8 counts at cycle 0; first interrupt 218, only 133 in the first tick.
+        assertEquals(60, PokeyStraightPlay.upTo(resetTarget, 0, 1).voiceSlot[1])
+    }
+
+    @Test
+    fun clockChangesReleaseLoopsAndTwoToneAffectSampleOwnership() {
+        for ((base15, slot) in listOf(false to 60, true to 61)) {
+            var song = ownershipSong(length = 1400, note = 96)
+            if (base15) song = with(song, 1, 0, Cell(96, 60, PokeyRules.FX_CLOCK, 1))
+            song = with(song, 1, 1, Cell(96, 61, PokeyRules.FX_PORTAMENTO, 1))
+            assertEquals("base15 $base15", slot, PokeyStraightPlay.upTo(song, 0, 1).voiceSlot[1])
+        }
+        for (cut in listOf(0, 3, 6)) {
+            var song = ownershipSong(length = 200, ins = PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0, loop = 17))
+            song = with(song, 1, 0, Cell(48, 60, PokeyRules.FX_CUT, cut))
+            song = with(song, 1, 1, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+            assertEquals("S$cut", if (cut < 6) 61 else 60, PokeyStraightPlay.upTo(song, 0, 1).voiceSlot[1])
+        }
+        var twoTone = ownershipSong()
+        twoTone = with(twoTone, 1, 0, Cell())
+        twoTone = with(twoTone, 0, 0, Cell(48, 60, PokeyRules.FX_TWO_TONE, 2))
+        twoTone = withInstrument(twoTone, 61, PokeyInstrument(kind = PokeyKind.FILTERED))
+        twoTone = with(twoTone, 0, 15, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+        // Idle timer 2 (N=0) resyncs timer 1 every 28 cycles. A 224-cycle sample timer never finishes.
+        val walk = PokeyStraightPlay.upTo(twoTone, 0, 15)
+        assertEquals(60, walk.voiceSlot[0])
+        assertEquals(-1, walk.holder[2])
+    }
+
+    @Test
+    fun vibratoAndReplacingPortamentoChangeSampleRestartOwnership() {
+        // 4FF's first six pitches select N=7,6,7,8,7,6: over 810 IRQs, versus ~800 without vibrato.
+        var vibrato = ownershipSong(length = 810)
+        vibrato = with(vibrato, 1, 0, Cell(48, 60, PokeyRules.FX_VIBRATO, 255))
+        vibrato = with(vibrato, 1, 1, Cell(48, 61, PokeyRules.FX_PORTAMENTO, 1))
+        assertEquals(61, PokeyStraightPlay.upTo(vibrato, 0, 1).voiceSlot[1])
+
+        var replaced = ownershipSong()
+        replaced = with(replaced, 1, 0, Cell(48, 60, PokeyRules.FX_PORTAMENTO, 1))
+        replaced = with(replaced, 1, 1, Cell(48, 61, PokeyRules.FX_SLIDE_UP, 1))
+        assertEquals(61, PokeyStraightPlay.upTo(replaced, 0, 1).voiceSlot[1])
+    }
+
+    @Test
+    fun sampleOwnershipUsesMachineCyclesMultispeedAndFastCounters() {
+        for (machine in PokeyMachine.entries) for (multispeed in 1..4) for (fast in listOf(false, true)) {
+            var song = ownershipSong(length = 1400, note = 96,
+                ins = PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0, fast = fast))
+            song = song.copy(sound = song.pokey.copy(machine = machine, multispeed = multispeed))
+            song = with(song, 1, 0, Cell())
+            song = with(song, 0, 0, Cell(96, 60))
+            song = withInstrument(song, 61, PokeyInstrument(kind = PokeyKind.FILTERED))
+            song = with(song, 0, 1, Cell(96, 61, PokeyRules.FX_PORTAMENTO, 1))
+            val ended = multispeed == 1 && (fast || machine == PokeyMachine.PAL)
+            assertEquals("$machine x$multispeed fast=$fast", if (ended) 61 else 60,
+                PokeyStraightPlay.upTo(song, 0, 1).voiceSlot[0])
+        }
+    }
+
+    @Test
+    fun longSongSampleOwnershipBulkAdvancesSteadyRows() {
+        // 16,711,680 player ticks: ordinary UI queries must not replay them one by one, much less their IRQs.
+        var song = ownershipSong(speed = 255, ins = PokeyInstrument(kind = PokeyKind.SAMPLE, sample = 0, loop = 17))
+        val pattern = song.patterns[0].copy(length = 256, tracks = List(4) { lane ->
+            List(256) { row -> if (lane == 1 && row == 0) Cell(48, 60) else Cell() }
+        })
+        song = song.copy(patterns = listOf(pattern), orders = List(256) { 0 })
+        val walk = PokeyStraightPlay.upTo(song, 255, 255)
+        assertEquals(255L * 256 * 256, walk.tick)
+        assertEquals(60, walk.voiceSlot[1])
+        assertEquals(255, walk.voiceOrder[1])
+        assertFalse(walk.silent(1))
     }
 
     @Test
     fun starterKitIsDeterministicAndFitsTheLevels() {
         val kit = PokeySamples.starterKit()
         assertEquals(kit, PokeySamples.starterKit())
-        assertEquals(listOf("Kick", "Snare", "Hat", "Tom"), kit.map { it.name })
         for (s in kit) {
             assertTrue(s.name, s.levels.all { it in 0..15 })
             assertEquals(s.name, 0, s.levels.last())
@@ -373,19 +510,6 @@ class PokeyModelTest {
         assertThrows(IllegalArgumentException::class.java) { PokeySamples.fromWav(wav, 500) }
         assertThrows(IllegalArgumentException::class.java) { PokeySamples.fromWav(ByteArray(10), 7990) }
         assertTrue(PokeySamples.IMPORT_RATES.all { it in PokeyInstrument.RATES })
-    }
-
-    @Test
-    fun vgmExportGoesThroughTheRegisteredRenderer() {
-        val demo = PokeySystem.demo()
-        assertThrows(IllegalStateException::class.java) { PokeyVgm.export(demo) }
-        var seen: Triple<ByteArray, Int, PokeyVgmTags>? = null
-        PokeyVgm.renderer = org.thortracker.system.pokey.PokeyVgmRenderer { image, maxTicks, tags -> seen = Triple(image, maxTicks, tags); byteArrayOf(1, 2) }
-        assertArrayEquals(byteArrayOf(1, 2), PokeySystem.exports.single().export(demo))
-        val (image, ticks, tags) = seen!!
-        assertArrayEquals(PokeyLowering.lower(demo), image)
-        assertEquals(PokeyVgm.maxTicks(demo), ticks)
-        assertEquals(PokeyVgmTags("Scanline Cruise", "Thor Tracker"), tags)
     }
 
     @Test

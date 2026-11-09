@@ -8,8 +8,6 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.SharedState
 import org.thortracker.system.SongSetting
-import kotlin.math.ceil
-import kotlin.math.pow
 
 /** The POKEY rows of the Song view: the machine, multispeed and the shared AUDCTL bits the song starts with. */
 object PokeySongSettings {
@@ -53,14 +51,16 @@ object PokeySongSettings {
 /**
  * A walk through a POKEY song in straight play (rows in order, jumps and note delays ignored), as the player runs the
  * parts that decide which lane's voice holds which POKEY channel: instruments, notes, OFF and `Sxx` releases,
- * portamento, and the global `F`, `K`, `N`, `W` effects at each row's tick 0 (docs/AUDIO_ENGINE.md, "POKEY: Player").
+ * portamento, and the global `F`, `K`, `N`, `W`, `R`, `T` effects at each row's tick 0 (docs/AUDIO_ENGINE.md,
+ * "POKEY: Player"). Samples advance with the actual counters and per-tick pitch effects/envelopes, including timer
+ * phase inherited from earlier voices; a glide retargets pitch without restarting their index. OFF/Sxx stops them,
+ * a valid loop wraps their index, and a one-shot ends on the IRQ after its last level. Ending does not free channels.
  * The song check and [PokeyChannelHolders] use it. Rows are fed with [row]; [onCut] hears every channel a key-on takes
  * from another lane's voice, before that voice ends; [onKeyOn] every key-on, [onUnplayable] every note whose sound cannot
  * play on its lane (the player keys nothing on).
  */
 internal class PokeyStraightPlay(private val song: Song) {
     private val sound = song.pokey
-    private val ticksPerSecond = PokeySystem.ticksPerSecond(song)
 
     var speed = song.ticksPerRow
         private set
@@ -96,6 +96,10 @@ internal class PokeyStraightPlay(private val song: Song) {
     private val releaseTick = LongArray(LANES) { -1L }
     private val silencedByRelease = BooleanArray(LANES)
     private val portamento = IntArray(LANES)
+    // Songs without samples retain the cheap row-only walk. Sample songs need actual timer phase, including
+    // earlier synthesized voices on those timers; the helper advances counters in bulk, never per PCM level.
+    private val playback = if (sound.samples.isEmpty()) null else PokeyOwnershipPlayback(sound, voiceSlot)
+    private val cuts = IntArray(LANES) { -1 }
 
     /** The lane's `Vxx` override (-1 none) and `Pxx` fine pitch, as the next key-on's row leaves them. */
     val distortionOverride = IntArray(LANES) { -1 }
@@ -110,6 +114,9 @@ internal class PokeyStraightPlay(private val song: Song) {
         currentOrder = order
         currentRow = row
         val lanes = minOf(LANES, pattern.tracks.size)
+        var restart = false
+        var stimer = false
+        cuts.fill(-1)
         for (lane in 0 until lanes) {
             val c = pattern.tracks[lane][row]
             for (col in 0..c.more.size) {
@@ -119,6 +126,8 @@ internal class PokeyStraightPlay(private val song: Song) {
                     PokeyRules.FX_CLOCK -> if (p <= 1) base15 = p == 1
                     PokeyRules.FX_POLY -> if (p <= 1) poly9 = p == 1
                     PokeyRules.FX_TWO_TONE -> if (p <= 2) twoTone = p
+                    PokeyRules.FX_RESTART -> restart = true
+                    PokeyRules.FX_TIMERS -> stimer = true
                 }
             }
         }
@@ -128,15 +137,19 @@ internal class PokeyStraightPlay(private val song: Song) {
             if (c.note >= 0) {
                 distortionOverride[lane] = -1
                 fine[lane] = 0
+                playback?.note(lane)
             }
-            var cut = -1
             for (col in 0..c.more.size) {
+                val code = c.effectCode(col)
                 val p = c.effectParam(col)
-                when (c.effectCode(col)) {
+                if (code == 0 && p == 0) continue
+                playback?.effect(lane, code, p)
+                when (code) {
                     PokeyRules.FX_PORTAMENTO -> portamento[lane] = p
+                    PokeyRules.FX_SLIDE_UP, PokeyRules.FX_SLIDE_DOWN -> portamento[lane] = 0
                     PokeyRules.FX_DISTORTION -> if (p <= 8) distortionOverride[lane] = p
                     PokeyRules.FX_FINE -> fine[lane] = p - PokeyRules.FINE_CENTRE
-                    PokeyRules.FX_CUT -> cut = p
+                    PokeyRules.FX_CUT -> cuts[lane] = p
                 }
             }
             when {
@@ -144,14 +157,30 @@ internal class PokeyStraightPlay(private val song: Song) {
                 c.note >= 0 -> {
                     if (portamento[lane] > 0 && held(lane)) {
                         voiceNote[lane] = c.note
+                        playback?.target(lane, c.note)
                     } else {
                         keyOn(lane, c, order, row)
                     }
                 }
             }
-            if (cut >= 0 && cut < speed) release(lane, tick + cut)
         }
-        tick += speed
+        if (playback == null) {
+            for (lane in 0 until lanes) if (cuts[lane] in 0 until speed) release(lane, tick + cuts[lane])
+            tick += speed
+        } else {
+            var t = 0
+            while (t < speed) {
+                var until = speed
+                for (lane in 0 until lanes) {
+                    if (cuts[lane] == t) release(lane, tick)
+                    else if (cuts[lane] > t) until = minOf(until, cuts[lane])
+                }
+                val count = if (playback.steady()) until - t else 1
+                playback.tick(fine, distortionOverride, base15, twoTone, restart && t == 0, stimer && t == 0, count)
+                tick += count
+                t += count
+            }
+        }
     }
 
     private fun keyOn(lane: Int, cell: Cell, order: Int, row: Int) {
@@ -178,6 +207,7 @@ internal class PokeyStraightPlay(private val song: Song) {
         keyTick[lane] = tick
         releaseTick[lane] = -1
         silencedByRelease[lane] = false
+        playback?.keyOn(lane, cell.note, ins)
         onKeyOn?.invoke(lane, slot, cell.note)
     }
 
@@ -193,6 +223,7 @@ internal class PokeyStraightPlay(private val song: Song) {
         val ins = sound.instrument(voiceSlot[lane]) ?: return
         if (releaseTick[lane] >= 0) return
         releaseTick[lane] = at
+        playback?.release(lane, ins)
         if (ins.kind == PokeyKind.SAMPLE || ins.volume.values.isEmpty() || ins.volume.release < 0) silencedByRelease[lane] = true
     }
 
@@ -226,12 +257,7 @@ internal class PokeyStraightPlay(private val song: Song) {
     private fun endedByItself(lane: Int): Boolean {
         val ins = sound.instrument(voiceSlot[lane]) ?: return true
         val elapsed = tick - keyTick[lane]
-        if (ins.kind == PokeyKind.SAMPLE) {
-            if (ins.loop >= 0) return false
-            val sample = sound.samples.getOrNull(ins.sample) ?: return true
-            val rate = ins.rate * 2.0.pow((voiceNote[lane] - ins.root) / 12.0)
-            return elapsed >= ceil(sample.levels.size / rate * ticksPerSecond)
-        }
+        if (ins.kind == PokeyKind.SAMPLE) return playback?.playing?.get(lane) != true
         val e = ins.volume
         if (e.values.isEmpty() || e.loop >= 0 || e.release >= 0) return false
         return e.values.last() == 0 && elapsed >= e.values.size

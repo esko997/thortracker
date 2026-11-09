@@ -369,6 +369,7 @@ class PokeyEditorTest {
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
+                override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
             })
         }
         session.setPokeyKind(50, PokeyKind.SAMPLE) // a sample sound with no sample yet
