@@ -4,7 +4,7 @@
  * audition reset) spans cycles 40704 k .. 40704 (k + 1): the player's batch is written at the tick's first cycle, each
  * timer interrupt inside the tick at its cycle (after the tick's batch when they share a cycle). The timer interrupts
  * every 256 R cycles, the first 256 R cycles after the reset; a new reload R applies from the next reload (after the
- * next interrupt). Every event falls on a 128-cycle block boundary; each block's frame, halved, is a level change at
+ * next interrupt). Every event falls on a 128-cycle block boundary; each block's frame, quartered, is a level change at
  * the block's last cycle. Behaviour (seek, live edits, audition, mute) is specified in docs/AUDIO_ENGINE.md,
  * "WonderSwan". A machine plays one model (wsm_create). No allocation after wsm_create. One thread at a time. */
 #ifndef THORTRACKER_WS_MACHINE_H_

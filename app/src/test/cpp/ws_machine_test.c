@@ -13,7 +13,9 @@
  * sample step's octaves. Image validation (every reference corruption rejected). Register writes, positions and timer
  * interrupts identical to the independent Python reference player (tools/audio/ws/ws_ref.py) in each of
  * WS_TEST_TICKS ticks of every reference song: the reset batch, tick batches and every timer interrupt batch with its
- * cycle. Deterministic, non-silent output; A-4 measured from the rendered audio. Seeks landing on exact rows with the
+ * cycle. Deterministic, non-silent output; full-scale Hyper Voice DC reversals retain linearity at the public float
+ * output (CPU, every DMA rate, mono/stereo, mute/unmute and host-rate endpoints); A-4 measured from the rendered audio.
+ * Seeks landing on exact rows with the
  * reference's writes afterwards and bit-identical sound from the target (a looping DMA sample and a CPU-fed sample
  * keyed long before the target included), and the order fallback. Live edits before every tick (the same image; a
  * re-laid image alternating with the original: DMA rebased onto the moved identical bytes), a DMA sample whose bytes
@@ -1155,6 +1157,107 @@ static void test_audio(const char* dir) {
     }
 }
 
+/* Legal full/half-amplitude samples with exact signed scaling: -128/+126 versus -64/+63.
+ * 2048-frame plateaus let the high-pass settle before each opposite edge, even at 8 kHz.
+ * Opposed stereo tests each side independently; the DMA stream alternates their bytes.
+ * This is an end-to-end clipping regression, not an independent hardware oracle. */
+static void build_headroom(WsImage* im, int half, int stereo, int transport) {
+    enum { OFFSET = 512, FRAMES = 4096 };
+    memcpy(im, &g_tone_color, sizeof *im);
+    uint8_t* b = im->bytes;
+    const int bytes = FRAMES * (stereo ? 2 : 1);
+    uint8_t* e = b + WS_OFF_SAMPLES;
+    put32(e + WS_S_OFFSET, OFFSET);
+    put32(e + WS_S_FRAMES, FRAMES);
+    put32(e + WS_S_SIGNED_OFFSET, OFFSET + bytes);
+    e[WS_S_FLAGS] = (uint8_t)(WS_SAMPLE_SIGNED | (stereo ? WS_SAMPLE_STEREO : 0));
+    for (int f = 0; f < FRAMES; ++f) {
+        for (int side = 0; side <= stereo; ++side) {
+            const int positive = (f >= FRAMES / 2) ^ side;
+            const int value = (positive ? 126 : -128) / (half ? 2 : 1);
+            const int at = f * (stereo ? 2 : 1) + side;
+            b[WS_OFF_DATA + OFFSET + at] = (uint8_t)(value + 128);
+            b[WS_OFF_DATA + OFFSET + bytes + at] = (uint8_t)value;
+        }
+    }
+    put32(b + WS_H_DATA_SIZE, OFFSET + 2 * bytes);
+    if (transport) {
+        uint8_t* r = b + WS_OFF_INSTRUMENTS + WS_INSTRUMENT_SIZE * (T_DMA_LOOP - 1);
+        r[WS_I_ROOT] = (uint8_t)(transport - 1);
+    }
+    EXPECT(ws_load_image(im) == WSM_OK, "headroom image loads: half=%d stereo=%d transport=%d: %s",
+           half, stereo, transport, im->info.problem ? im->info.problem : "ok");
+}
+
+static void test_output_headroom(void) {
+    printf("public float output: full-scale DC reversal headroom\n");
+    static const uint32_t rates[] = {8000, 11025, 24000, 44100, 48000, WSM_MAX_SAMPLE_RATE};
+    float half_out[WSM_MAX_TICK_FRAMES * 2];
+    for (int stereo = 0; stereo < 2; ++stereo) {
+        for (int transport = 0; transport <= 4; ++transport) {
+            build_headroom(&g_tmp, 0, stereo, transport);
+            build_headroom(&g_tmp2, 1, stereo, transport);
+            for (size_t r = 0; r < sizeof rates / sizeof rates[0]; ++r) {
+                WsMachine* full = wsm_create(rates[r], WS_MODEL_COLOR);
+                WsMachine* half = wsm_create(rates[r], WS_MODEL_COLOR);
+                EXPECT(full && half, "headroom machines at %u Hz", rates[r]);
+                if (!full || !half) {
+                    wsm_destroy(full);
+                    wsm_destroy(half);
+                    continue;
+                }
+                const int slot = transport ? T_DMA_LOOP : T_LOOP;
+                const int start_full = wsm_audition(full, &g_tmp, WS_HYPER_VOICE, A4, slot, 0);
+                const int start_half = wsm_audition(half, &g_tmp2, WS_HYPER_VOICE, A4, slot, 0);
+                EXPECT(start_full == WSM_OK && start_half == WSM_OK, "headroom auditions start");
+                double pk = 0, error = 0;
+                int bad_frames = 0, bad_raw = 0, rails = 0, raw_peak = 0;
+                if (start_full == WSM_OK && start_half == WSM_OK) {
+                    for (int t = 0; t < 192; ++t) {
+                        if (t == 110 || t == 130) {
+                            wsm_mute(full, WS_HYPER_VOICE, t == 110);
+                            wsm_mute(half, WS_HYPER_VOICE, t == 110);
+                        }
+                        const int n = wsm_tick(full, g_out);
+                        const int h = wsm_tick(half, half_out);
+                        if (n <= 0 || n != h) {
+                            ++bad_frames;
+                            break;
+                        }
+                        for (int i = 0; i < n * 2; ++i) {
+                            const double v = g_out[i], diff = fabs(v - 2.0 * half_out[i]);
+                            if (!isfinite(v) || !isfinite(half_out[i]) ||
+                                v <= -1.0 || v >= 32767.0 / 32768.0)
+                                ++rails;
+                            if (fabs(v) > pk) pk = fabs(v);
+                            if (diff > error) error = diff;
+                        }
+                        const WsApu* a = wsm_apu(full);
+                        const WsApu* b = wsm_apu(half);
+                        if (a->hv.out_l != 2 * b->hv.out_l || a->hv.out_r != 2 * b->hv.out_r ||
+                            a->cycle != b->cycle || a->hv.clock != b->hv.clock || a->hv.flip != b->hv.flip ||
+                            a->dma.source != b->dma.source || a->dma.length != b->dma.length)
+                            ++bad_raw;
+                        if (abs(a->hv.out_l) > raw_peak) raw_peak = abs(a->hv.out_l);
+                        if (abs(a->hv.out_r) > raw_peak) raw_peak = abs(a->hv.out_r);
+                    }
+                }
+                EXPECT(bad_frames == 0 && bad_raw == 0 && raw_peak == 32768,
+                       "%u Hz stereo=%d transport=%d: raw full-scale/phase unchanged (%d frames, %d raw, peak %d)",
+                       rates[r], stereo, transport, bad_frames, bad_raw, raw_peak);
+                EXPECT(rails == 0 && pk > 0.4 && pk < 0.666,
+                       "%u Hz stereo=%d transport=%d: audible reversal without host rails (peak %.6f, rails %d)",
+                       rates[r], stereo, transport, pk, rails);
+                EXPECT(error < 0.005,
+                       "%u Hz stereo=%d transport=%d: full output = 2 * half output within fixed-point error (%.6f)",
+                       rates[r], stereo, transport, error);
+                wsm_destroy(full);
+                wsm_destroy(half);
+            }
+        }
+    }
+}
+
 /* ws_tone: A-4 on CH1 sounds 96000 / 218 = 440.367 Hz (measured from the audio; tolerance unverified). */
 static void test_tone_pitch(void) {
     printf("A-4 from the audio\n");
@@ -1931,6 +2034,7 @@ int main(int argc, char** argv) {
     test_images();
     test_reference(dir);
     test_audio(dir);
+    test_output_headroom();
     test_tone_pitch();
     test_seek();
     test_live_edits();

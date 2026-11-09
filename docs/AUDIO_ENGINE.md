@@ -2496,9 +2496,48 @@ region at linear address `WS_DMA_BASE` = `$40000` (the cartridge ROM area): addr
 `$40000`; any other address reads 0. `ws_apu_dma_rebase(delta)` adds *delta* to `source` and `shadowSource` (a live
 edit that moved a byte-identical sample: an editor operation on the emulated cartridge, not a register write).
 
-**Machine output**: each block's frame (as s16) is halved (arithmetic `>> 1`, headroom for the unipolar sums) and fed
-as a level change to blip_buf 1.1.0 at clock rate 3072000 Hz, time = the block's last cycle within the tick; the
-tick ends with `blip_end_frame(40704)`; blip's high-pass (~15 Hz) removes the DC; float = sample / 32768.
+**Machine output**: each block's frame (as s16) is quartered (arithmetic `>> 2`) **after the hardware wraps but
+before** `blip_add_delta`, at clock rate 3072000 Hz, time = the block's last cycle within the tick. The tick ends
+with `blip_end_frame(40704)`; blip's high-pass removes DC; float = sample / 32768, with no compensating boost or
+outer limiter. This reduces preview/WAV gain by 6.02 dB from the former `>> 1`; it does not change raw APU frames,
+relative channel balance, register/DMA traces, phase, image data or VGM bytes/limitations.
+
+**Headroom audit (source-derived; new regressions unexecuted)**:
+
+- Each ordinary channel contributes 0..225 per side; voice replaces channel 2 with 0..255 (the full bit wins over
+  the half bit), so either side's ordinary sum is 0..930. Noise and sweep change timing, not these bounds. On the
+  original model headphones therefore span 0..29760. The speaker's documented 8-bit wrap and shift produce
+  0..32640 on both sides; Hyper Voice does not enter that path. These are chip operations, not host saturation.
+- Color headphone output **wraps** the ordinary sum plus signed-16 Hyper Voice to signed 16 bits. All four Hyper
+  Voice conversion modes, all shifts/eight update divisors, direct output registers, stereo/left/right/both latch
+  routing, CPU feeding and all DMA rates/directions/hold/loop/end cases stay inside -32768..32767. Per-lane mute can
+  change the wrapping result discontinuously, but cannot widen this interval; unmuting preserves running chip state.
+  The old halving left almost a full short-range step after a settled negative DC became positive: sinc ringing
+  then reached blip's avoidable `CLAMP`, despite each individual raw frame fitting. Hardware wrapping is retained.
+- For the pinned `blip_buf.c` table, let `S_p[j]` be the prefix through tap `j` of the 16 impulse coefficients at
+  phase `p` (0..32, including the reversed second half). Phase total variations for prefixes 0..7 are
+  `[51, 123, 350, 498, 1166, 1432, 6383, 21022]`; prefixes 8..14 mirror 6..0, and prefix 15 is constantly 32768.
+  Adjacent phase endpoints join across sample boundaries. Thus the continuous, linearly interpolated step has
+  total variation `(2 * 10003 + 21022) / 32768 = 1.2520751953125 < 1.3`. Summation by parts bounds reconstruction
+  of **any** bounded level sequence by 1.3 times its magnitude, including arbitrary edge phases; a single
+  fixed-phase coefficient sum or demo peak alone would not prove this.
+- blip's high-pass has pole `511/512` and impulse L1 at most 2. Quartering gives `|level| <= 8192`, hence ideal
+  output magnitude at most `8192 * 1.3 * 2 = 21299.2` PCM units, even after arbitrary DC history/opposite steps.
+  At every accepted host rate 8000..96000 Hz, the 24000 Hz block stream places at most 50 edges in the 16-sample
+  FIR support. Flooring the interpolated delta introduces less than one delta unit per edge; the cumulative
+  error is the difference of two neighboring step responses, bounded by `2 * 1.3` PCM units per edge. High-pass
+  doubles their aggregate bound to 260; feedback/output rounding contributes under 2 more. Reserving **512**
+  units therefore covers fixed-point rounding conservatively: `(21299.2 + 512) / 32768 < 0.666` at the public
+  float output, not merely inside blip. Integer impulse products, buffers and integrator remain below signed-32
+  range: reconstruction differences are bounded by twice the same FIR level bound, and adding those to the
+  high-pass state stays below 1.5 billion fixed-point units. No later gain undoes this headroom.
+- `test_output_headroom` exercises the real `wsm_tick` float consumer with long negative/positive DC plateaus,
+  mono/opposed stereo, CPU-fed Hyper Voice and each Sound DMA rate, plus mute/unmute, at endpoint and fractional
+  host rates. A half-amplitude legal sample is the unclipped linearity control; both copies use the real player,
+  APU and resampler. Existing raw conversion, routing, wrap, DMA, sweep/noise and phase-continuity tests remain
+  unchanged. These source changes and test cases still require the parent's serialized native/reference runs.
+  The linearity control is not an independent hardware reference; ares/wiki disagreements and the Hyper Voice
+  VGM refusal described elsewhere remain unchanged.
 
 ### Image layout (what the Kotlin lowering produces)
 

@@ -112,7 +112,11 @@ static void run_tick(WsMachine* m) {
         int16_t frame[2];
         ws_apu_block(&m->apu, frame);
         for (int k = 0; k < 2; ++k) {
-            const int v = frame[k] >> 1;
+            /* Keep the chip's signed-16 wrap, then reserve headroom for arbitrary DC reversals:
+             * blip step TV < 1.3, high-pass L1 <= 2; 8192 * 1.3 * 2 + rounding < 32767.
+             * Scaling after blip_read_samples would be too late (its short output clamps).
+             * See AUDIO_ENGINE.md, WonderSwan machine output, for the all-rate bound. */
+            const int v = frame[k] >> 2;
             if (v != m->last[k]) {
                 blip_add_delta(m->blip[k], (unsigned)(WS_BLOCK_CYCLES * b + WS_BLOCK_CYCLES - 1), v - m->last[k]);
                 m->last[k] = v;
