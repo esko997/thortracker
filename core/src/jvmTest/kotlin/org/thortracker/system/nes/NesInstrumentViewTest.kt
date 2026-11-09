@@ -109,6 +109,43 @@ class NesInstrumentViewTest {
     }
 
     /**
+     * On an MMC5 song every sound is a 2A03 sound: no Chip row, Listen reaches the MMC5 pulses, which play every
+     * envelope as the 2A03 pulses do, and then the PCM lane; auditions on the pulses keep their A-1 floor.
+     */
+    @Test
+    fun mmc5SongsKeepOneChip() {
+        val mmc5 = EditorSession(NesMmc5System.blank())
+        val heard = ArrayList<Triple<Int, Int, Int>>()
+        mmc5.onAudition = { ch, note, ins, _ -> heard += Triple(ch, note, ins) }
+        val v = ViewController(mmc5, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; listenChannel = NesRules.DPCM })
+        assertFalse(Row.CHIP in NesInstrumentView.rows(v.state, mmc5.song))
+        assertFalse(Row.SAW in NesInstrumentView.rows(v.state, mmc5.song))
+        // Listen steps from DPCM onto the MMC5 pulses, then the PCM lane.
+        v.state.instField = NesInstrumentView.rows(v.state, mmc5.song).indexOf(Row.LISTEN)
+        v.tap(Action.RIGHT)
+        assertEquals(NesRules.MMC5_PULSE1, v.state.listenChannel)
+        v.tap(Action.RIGHT)
+        assertEquals(NesRules.MMC5_PULSE2, v.state.listenChannel)
+        v.tap(Action.RIGHT)
+        assertEquals(NesRules.MMC5_PCM, v.state.listenChannel)
+        // Their envelopes all apply, like a 2A03 pulse's.
+        val chip = NesRules.chip(NesExpansion.MMC5, NesRules.MMC5_PULSE1)
+        assertEquals(NesChip.APU, chip)
+        for (kind in listOf(NesEnvelopeKind.VOLUME, NesEnvelopeKind.ARPEGGIO, NesEnvelopeKind.PITCH, NesEnvelopeKind.DUTY)) {
+            assertNull(NesInstrumentView.channelNote(kind, NesRules.kind(NesExpansion.MMC5, NesRules.MMC5_PULSE2), NesChip.APU, channelChip = chip))
+        }
+        // Auditions on an MMC5 pulse: a 2A03 sound plays, below A-1 is refused.
+        mmc5.audition(channel = NesRules.MMC5_PULSE1, note = 57, instrument = 1)
+        assertEquals(listOf(Triple(NesRules.MMC5_PULSE1, 57, 1)), heard)
+        mmc5.audition(channel = NesRules.MMC5_PULSE1, note = NesRules.LOWEST_TONAL - 1, instrument = 1)
+        assertEquals("MMC5 Pulse 1 cannot play below A-1", mmc5.message)
+        assertEquals(1, heard.size)
+        // The bank has one chip: no other chip can be chosen.
+        assertFalse(mmc5.setNesChip(1, NesChip.VRC6))
+        assertEquals(NesChip.APU, mmc5.song.nes.instruments[0].chip)
+    }
+
+    /**
      * A 5B sound: no duty and no DPCM page; its pages are volume, arpeggio, pitch, mixer, noise and the hardware envelope,
      * whose rows set the shape, the period mode, the octave (clamped to -8..8) and the period (×2 per coarse step, at
      * most 65535). Leaving the 5B drops its mixer, noise and envelope.

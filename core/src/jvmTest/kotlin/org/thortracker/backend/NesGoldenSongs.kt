@@ -17,6 +17,7 @@ import org.thortracker.system.nes.N163Wave
 import org.thortracker.system.nes.EpsmPatch
 import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesFdsSystem
+import org.thortracker.system.nes.NesMmc5System
 import org.thortracker.system.nes.NesN163System
 import org.thortracker.system.nes.NesSound
 import org.thortracker.system.nes.NesSystem
@@ -45,11 +46,11 @@ import org.thortracker.system.nes.DpcmStarterKit
  * release), wave sizes and positions, shared waves, the phase reset and 1, 2, 4 and 8 channels (each count has its own
  * note table, pitch shift and engine build); the FDS ones wave sequences, manual and auto-mod modulation, mod delay,
  * master volumes, H/I/J and FamiStudio's re-bind after them, the phase reset and the FDS's true-pitch range; the 5B ones
- * its mixer and noise envelopes, every hardware envelope mode and the envelope period effects; the EPSM ones its SSG
- * (mixer, noise, hardware envelopes, Ixx/Jyy), FM (algorithms, pans, the LFO, release, slides) and rhythm channels. The
- * copies songs (2A03, VRC6, N163, 5B, EPSM) hold identical sounds under different names, which FamiStudio's export
- * merges into one instrument, with a legato loop entry across the copies. Every trace covers the 2A03's registers as
- * well as the expansion's.
+ * its mixer and noise envelopes, every hardware envelope mode and the envelope period effects; the MMC5 ones its pulses
+ * playing 2A03 sounds beside the 2A03's; the EPSM ones its SSG (mixer, noise, hardware envelopes, Ixx/Jyy), FM
+ * (algorithms, pans, the LFO, release, slides) and rhythm channels. The copies songs (2A03, VRC6, N163, 5B, EPSM) hold
+ * identical sounds under different names, which FamiStudio's export merges into one instrument, with a legato loop entry
+ * across the copies. Every trace covers the 2A03's registers as well as the expansion's.
  */
 object NesGoldenSongs {
     val ALL: Map<String, () -> Song> = linkedMapOf(
@@ -75,6 +76,8 @@ object NesGoldenSongs {
         "s5b_effects" to ::s5bEffects,
         "s5b_copies" to ::s5bCopies,
         "s5b_manual_copies" to ::s5bManualCopies,
+        "mmc5_demo" to NesMmc5System::demo,
+        "mmc5_effects" to ::mmc5Effects,
         "epsm_demo" to NesEpsmSystem::demo,
         "epsm_effects" to ::epsmEffects,
         "epsm_rhythm" to ::epsmRhythm,
@@ -1318,6 +1321,76 @@ object NesGoldenSongs {
         return base.copy(
             title = "EPSM copies", artist = "Golden", ticksPerRow = 3, loopOrder = 1,
             patterns = listOf(a.build(), b.build()), orders = listOf(0, 1),
+            sound = base.nes.copy(instruments = bank),
+        )
+    }
+
+    /**
+     * MMC5: both pulses with 2A03 sounds (one shared with 2A03 Pulse 1), the duty envelope over all four duties and
+     * Vxx 00-03, absolute and relative pitch envelopes, slides (one across a period high-byte boundary, where the MMC5
+     * resets its phase), vibrato, fine pitch, volume and volume slides, arpeggio, delays, cuts, OFF release and stop,
+     * legato, the lowest (A-1) and highest (B-8) notes, and the speed set on an MMC5 pulse.
+     */
+    fun mmc5Effects(): Song {
+        val base = NesMmc5System.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Duty walk", volume = NesEnvelope(listOf(13, 12, 11, 10), loop = 3), duty = NesEnvelope(listOf(0, 1, 2, 3), loop = 0))
+        bank[1] = NesInstrument("Release pulse", volume = NesEnvelope(listOf(15, 12, 10, 9, 8, 6, 4, 2, 0), loop = 3, release = 5), duty = NesEnvelope(listOf(2)))
+        bank[2] = NesInstrument("Shared lead", volume = NesEnvelope(listOf(12, 10, 8), loop = 2), duty = NesEnvelope(listOf(1)))
+        bank[3] = NesInstrument("Pitch bend", volume = NesEnvelope(listOf(11)), pitch = NesEnvelope(listOf(0, 2, 4, 6, 4, 2), loop = 0))
+        bank[4] = NesInstrument("Pitch drift", volume = NesEnvelope(listOf(10)), pitch = NesEnvelope(listOf(1, -1), loop = 0), pitchRelative = true,
+            arpeggio = NesEnvelope(listOf(0, 7, 12), loop = 0))
+        bank[5] = NesInstrument("2A03 noise", volume = NesEnvelope(listOf(14, 9, 5, 2, 0)))
+        val p1 = NesRules.MMC5_PULSE1
+        val p2 = NesRules.MMC5_PULSE2
+        val channels = NesMmc5System.channels.size
+        val a = P("MMC5 A", channels = channels)
+        // MMC5 Pulse 1: the duty envelope, Vxx over all four duties, slides, vibrato, fine pitch, the edges of the range.
+        a.note(p1, 0, "C-4", 1)
+        a.note(p1, 4, "E-4", 0) // legato
+        a.note(p1, 8, "G-4", 3, NesRules.FX_DUTY, 0x00)
+        for (d in 1..3) a.fx(p1, 8 + d, NesRules.FX_DUTY, d)
+        a.note(p1, 12, "B-4", 3, NesRules.FX_SLIDE_DOWN, 0x04) // B-4 (period $0E1) to G-4 ($11C): crosses the high byte
+        a.note(p1, 16, "A-4", 3, NesRules.FX_SLIDE_UP, 0x05)
+        a.note(p1, 20, "D-5", 3, NesRules.FX_SLIDE_DOWN, 0x07)
+        a.note(p1, 24, "A-4", 1, NesRules.FX_VIBRATO, 0x46) // period $0FD: vibrato across $0FF/$100
+        a.fx(p1, 28, NesRules.FX_VIBRATO, 0x00)
+        a.note(p1, 30, "C-5", 1, NesRules.FX_FINE_PITCH, 0x8C)
+        a.off(p1, 34) // release
+        a.off(p1, 36) // already released: stop
+        a.note(p1, 40, "A-1", 2) // the lowest note an 11-bit period reaches
+        a.note(p1, 44, "F-4", 3, NesRules.FX_NOTE_DELAY, 0x02)
+        a.note(p1, 48, "F-4", 3, NesRules.FX_NOTE_CUT, 0x03)
+        a.note(p1, 52, "B-8", 3) // the highest
+        a.fx(p1, 56, NesRules.FX_SPEED, 0x05)
+        a.fx(p1, 60, NesRules.FX_SPEED, 0x04)
+        // MMC5 Pulse 2: volume and a volume slide, arpeggio, pitch envelopes, a release.
+        a.note(p2, 0, "G-3", 3, NesRules.FX_VOLUME, 0x09)
+        a.note(p2, 8, "B-3", 3, NesRules.FX_VOLUME_SLIDE, 0xF3)
+        a.fx(p2, 16, NesRules.FX_VOLUME, 0x0C)
+        a.note(p2, 20, "D-4", 3, NesRules.FX_ARPEGGIO, 0x47)
+        a.note(p2, 24, "E-4", 4)
+        a.note(p2, 32, "C-4", 5, NesRules.FX_DUTY, 0x03)
+        a.note(p2, 40, "A-1", 3) // the shared sound at the lowest note
+        a.note(p2, 44, "D-4", 2)
+        a.off(p2, 56)
+        // 2A03 alongside: Pulse 1 shares MMC5 Pulse 1's sound.
+        a.note(0, 0, "E-4", 3)
+        a.note(0, 32, "G-4", 3, NesRules.FX_DUTY, 0x03)
+        a.note(1, 16, "C-5", 2)
+        a.off(1, 40)
+        a.note(2, 0, "C-3", 3)
+        a.off(2, 40)
+        for (r in 0 until 64 step 8) a.note(3, r, "C-3", 6)
+        val b = P("MMC5 B", length = 32, channels = channels)
+        b.note(p1, 0, "E-5", 0) // legato into the loop
+        b.note(p1, 16, "E-5", 3, NesRules.FX_VOLUME_SLIDE, 0x2E)
+        b.note(p2, 0, "C-5", 2)
+        b.off(p2, 24)
+        b.note(0, 0, "A-4", 3)
+        return base.copy(
+            title = "MMC5 effects", artist = "Golden", ticksPerRow = 4, loopOrder = 1,
+            patterns = listOf(a.build(), b.build()), orders = listOf(0, 1, 0),
             sound = base.nes.copy(instruments = bank),
         )
     }

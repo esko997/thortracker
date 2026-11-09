@@ -1,23 +1,147 @@
 # Thor Tracker verification — 2026-11-09
 
-## Unreleased: EPSM integration
+## 0.21.0 NES + EPSM
 
-The corrected 5,048-byte player passed 495 JVM core tests, 13 Linux core tests and
-six Android-host unit tests. All 32 earlier generated NES outputs stayed byte-identical.
-Native EPSM coverage passed 332 checks with a privately supplied rhythm ROM, including
-SSG attack preservation of drum pan, live patch edits and unreachable-row seek fallback
-with identical instrument copies. The other native engine checks also passed.
+**New blank song / Load demo → NES… → NES + EPSM** adds the YMF288 expansion module:
+three SSG voices, six four-operator FM voices and six rhythm drums after the NES's
+five channels. **Expansion Port** demonstrates the tonal voices. Instruments expose
+the SSG's shared noise/envelope, curated FM controls, the full FM patch and rhythm
+level/panning. Playback, audition, NSF and FamiStudio text retain the real
+FamiStudio 4.5.3 driver; WAV renders the same emulated output.
 
-WAV coverage passed 889 checks: samples equal straight engine ticking, loop boundaries
+The rhythm drums require a user-supplied, hash-verified 8 KB YM2608 rhythm ROM.
+Missing or invalid firmware refuses rhythm playback explicitly. Importing a valid
+ROM recovers playback without restarting, and the private import survives a cold
+restart. No rhythm ROM or derived drum audio is included in source or releases.
+
+The combined MMC5/EPSM integration passed 515 JVM core tests, 13 Linux core tests and
+six Android-host unit tests. Regeneration preserved all 32 generated NES outputs
+byte-for-byte; the EPSM player is 5,048 bytes and the factory Game Boy UGE is unchanged.
+Native EPSM coverage passed 332 checks with a privately supplied rhythm ROM,
+including SSG attack preservation of drum pan, live patch edits and unreachable-row
+seek fallback with identical instrument copies. Other native engine checks passed:
+Game Boy 145, NES 336, VRC6 105, VRC7 115, N163 225, FDS 227, Sunsoft 5B 204 plus
+10 seek-fallback checks, MMC5 130, PCM 95, mixer budget 13, SID 151, OPL3 282 and
+Mega Drive 501.
+
+WAV coverage passed 999 checks: samples equal straight engine ticking, loop boundaries
 and chunk-size independence remain checked. The old generic `peak > 1000` assertion
 was removed, not repinned: master volume is not a WAV-format contract. EPSM's raw-range
 headroom deliberately makes its demo quiet (test-song RMS 0.0064, peak 0.0400;
 exported demo peak 923). It preserves relative balance without claiming unverified
 hardware DAC clipping; the gain policy is documented in `docs/AUDIO_ENGINE.md`.
 
-Android/desktop frontend checks and integration of the already-verified N163 mixer
-correction from the MMC5 branch remain pending. No rhythm ROM or derived drum audio
-is included in the source or release artifacts.
+The permanent Android suite passed all 19 tests against the production-signed,
+non-debuggable candidate on Nova. Thirty-two Game Boy views are pixel-identical
+to 0.20.0's same-device baseline in full RGBA bytes. Twenty-channel Pattern rendering,
+editing and undo now work; the last Rim lane survives a cold process restart.
+Restoration waits for the actual song instead of clamping its channel against the
+temporary Game Boy demo. Following playback also clamps a stale channel when
+switching back to a smaller system.
+
+Actual Android and desktop export dialogs produced byte-identical tonal NSF
+(32,832 bytes) and FamiStudio text (49,003 bytes). Their private rhythm WAV exports
+contain identical PCM: 38,336 frames of 48 kHz, 16-bit stereo audio, peak 475.
+An SSG manual period unsupported by FamiStudio text is refused with an actionable
+message on both platforms; neither leaves an empty export. Desktop now catches
+that error rather than aborting. Desktop also recovers from a rejected Play request
+after importing the ROM with one subsequent Play action.
+
+Nova exercised the curated and Expert FM pages, a brightness edit and undo,
+missing/invalid/valid firmware, invalid replacement and cold-restart rhythm playback.
+A 14.87-second Android output capture contains nonzero tonal PCM; it is an output
+capture, not microphone recording or human listening. Desktop held FM audition
+also produced nonzero output. Physical-cartridge comparison and human listening
+remain unverified.
+
+Production MainActivity timing exposed Nova underruns with EPSM at its original
+384-frame / 8 ms buffer. AAudio now adds one burst after a measured xrun, capped by
+the device's capacity; a newly opened stream still starts at two bursts. In the
+bounded playback-plus-audition check Nova settled at 768 frames / 16 ms after two
+xruns, with no further increase through held audition and audition-only playback.
+Its Game Boy check retained 384 frames with zero xruns. Konkr kept its existing
+1,920-frame buffer with zero xruns throughout Game Boy, EPSM, simultaneous playback
+and FM audition, and audition-only checks (10 seconds each); its maximum callback
+was 12.76 ms. All observed driver-fault counts were zero. This is measured buffer
+adaptation, not a claim of universally underrun-free playback.
+
+DMG passed the same four 10-second scenarios at its existing 1,920-frame buffer,
+with zero xruns and driver faults; maximum callback time was 24.43 ms. Its initial
+controller-driven probe was blocked by a focused Sortie switcher overlay. After
+dismissing that overlay and confirming Tracker's window focus, the probe used the
+actual toolbar Play action and passed. No launcher settings were changed.
+
+Temporary timing/capture sources and test packages were removed, along with the
+32 owned device captures and eight owned Downloads fixtures. Reserved-device display
+timeouts were restored and the devices returned Home/asleep; `/ThorTunez` was untouched.
+
+## 0.20.0 NES + MMC5
+
+**New blank song / Load demo → NES… → NES + MMC5** adds two pulse voices and an
+eight-bit PCM lane to the NES's five channels. **Tandem Skies** demonstrates the
+pulse voices; **Sample Courier** exercises pitched PCM mappings, loops and drums.
+The PCM editor imports WAV files, maps samples to notes and edits pitch and looping.
+Its clocked software player drives the MMC5 DAC; it does not model the 6502 cost
+of a game's sample-feeding routine. FamiStudio 4.5.3 still plays the seven other lanes.
+
+WAV exports include PCM. NSF and FamiStudio text exports retain the real seven-stream
+driver and reject songs that play the PCM lane rather than silently dropping it.
+Android now removes the newly created export document if generation or writing fails;
+the working project is not that document and is never deleted by this cleanup.
+
+Verification so far: 493 JVM core tests, 13 Linux core tests, six Android-host unit
+tests; native coverage includes 130 MMC5, 95 PCM, 13 mixer-budget and 962 WAV checks.
+The cleaned permanent Android suite passed all 18 tests on Nova. A temporary capture
+produced 32 Game Boy views, all identical to the same-device baseline in full RGBA bytes.
+The capture source, device capture files and temporary test package were removed.
+
+Nova exercised PCM audition, a pitch edit, project save/reload and WAV import.
+The saved pitch edit changed only the selected mapping. An imported 16 kHz fixture
+preserved every byte except its 256 zero values, which became 1 as reported by the UI
+because the MMC5 DAC ignores zero writes; the existing sample pool stayed unchanged.
+The imported project also played through the actual desktop frontend.
+
+Android's no-fade PCM WAV contains 1,175,663 frames of 48 kHz, 16-bit stereo audio,
+peak 8,494 and no rail samples. A separate 19.84-second REMOTE_SUBMIX capture confirms
+live Android output (peak 1,378, RMS 0.007669 at the device's existing volume), not a
+microphone recording or human listening. Valid tonal-demo NSF and text exports are
+byte-identical to the generated reference exports. Both rejected PCM formats display
+the actionable error and leave no empty document. Owned Download smoke files were
+removed; `/ThorTunez` was untouched.
+
+The final production-signed, non-debuggable 0.20.0/code 33 candidate passed actual
+tonal and PCM playback, mapped audition and editor inspection on DMG and Konkr.
+Both active app AudioFlinger tracks reported zero underruns. Konkr used 32.44 CPU
+seconds over 65.57 wall seconds: 49.5% of one core for the whole app, including UI,
+not an isolated callback measurement. Original display timeouts were restored and
+both devices returned Home/asleep.
+
+The versioned desktop frontend exported the same edited PCM project through its
+actual WAV dialog. Both platform exports contain the same 1,175,663 stereo frames;
+only six of 2,351,326 samples differ, each by one least-significant bit.
+
+The published 0.20.0 APK and AppImage passed their checksum manifests; the APK is
+production-signed, version code 33. The published AppImage played the imported PCM
+project for five seconds (order 0/row 40, peak 0.25267678), with the actual Pattern
+surface inspected. The official APK was installed over the existing app and
+cold-launch checked on Nova, DMG and Konkr. The Thor received only the APK in
+`Download/Thor Tracker`; the Deck received the executable AppImage and an updated
+stable `thor-tracker` symlink. No Thor/Deck wake, installation or launch occurred;
+`/ThorTunez` was untouched and all device leases were released.
+
+### N163 output clipping
+
+The N163 mixer now budgets the combined 2A03/N163 range before the int16 blip stage and the final output stage,
+including filter overshoot. This preserves the chip-to-APU balance, reduces master level by about 10.5 dB,
+and leaves the previous driver images and song exports unchanged.
+
+All 13 combined mixer-budget checks passed. The rendered N163 extreme peaked at 0.7680; the calculated bound
+over the supported sample rates is below 0.979. The eight demo WAV peaks were 12680, 10687, 9862, 8745, 8466,
+7825, 7964 and 7932, rather than the first three hitting the 32767 rail.
+
+The actual desktop frontend played the one-voice demo through its APU-only introduction into the N163 lead:
+11 seconds, order 1/row 36, peak 0.3869816, with the active N163 pattern visible. This was offscreen/dummy-audio
+execution with rendered output measurements, not human listening or a physical-cartridge comparison.
 
 ## 0.19.0 NES + FDS
 
@@ -51,6 +175,19 @@ snapshot, even when the working project changes. Owned Download smoke files were
 The actual desktop frontend also exercised held-note audition (peak 0.45099) and playback (peak 0.63122).
 Native WAV checks include the shortest valid one-row, one-tick FDS song. These checks are not human listening,
 physical Famicom/RAM-adapter testing, or comparison with a reference FDS emulator's audio. Thor was not used.
+
+Published as [v0.19.0](https://github.com/esko997/thortracker/releases/tag/v0.19.0) from main
+`9f8b9fa4741ae7bb0367bf49ecb96768c94bee25`; PR run 42540956821 and publication run 42541693480 passed.
+The downloaded release APK is version code 32, signed by the production certificate, and its SHA-256 is
+`84a30e55630bc24e35e106d956e3dc4f1417ed6881e7f7963d94749f004f2f23`.
+It was installed over the existing app on Nova, DMG and Konkr; each reported 0.19.0 and cold-launched to an
+observed app surface. Device timeouts were restored and the devices returned Home/asleep.
+Thor received that same verified APK in `Download/Thor Tracker/` only: no install, wake or launch.
+The published AppImage SHA-256 is `c07464ccb33f7cc4ec20ad83f8314f8e92d45e2c908304851478d9d58981fe02`;
+the Deck copy was verified and its stable `~/thortracker-deck/thor-tracker` symlink updated without launching it.
+Locally, the published AppImage opened *Side B* in an isolated home and advanced playback to row 30 with
+peak 0.63122; its actual Pattern surface was captured and inspected. Both artifacts matched their published
+checksum files. `/ThorTunez` was untouched.
 
 ## 0.18.0 NES + Sunsoft 5B
 
@@ -156,81 +293,6 @@ The published 0.16.0 APK and AppImage passed their checksum manifests; the APK h
 Lantern Point (peak 0.19839096). The official APK was installed and cold-launch checked on Nova, DMG and Konkr;
 the Thor received only the APK in Downloads, and the Deck's stable `thor-tracker` symlink was updated without
 launching or changing Steam settings.
-
-## In progress: NES + EPSM integration
-
-Branch `nes-epsm` adds the **NES + EPSM** variant (`"nes-famistudio-epsm"`: FamiStudio 4.5.3 built with
-`FAMISTUDIO_EXP_EPSM`, a YMF288 via ymfm; SSG 1-3, FM 1-6 and six rhythm drums) and the demo **Expansion Port**
-(FM + SSG + 2A03, no rhythm notes). The real FamiStudio export and player generation passed: player 5048 bytes at
-`$8000`, song base `$9400`, SHA-256 `0dcebb510f401b32d0914fba27adba531a9848d8228080fcff6343c9456ab462`.
-All 32 prior NES generated outputs remain byte-identical. Runtime, UI and audio checks below are still pending;
-no release or listening claim is made.
-
-1. Generate the EPSM player, its fixtures and FamiStudio's export of `tools/audio/nes/epsm_test.txt` (needs the
-   pinned FamiStudio 4.5.3 release, `dotnet` and cc65), check a second run is byte-identical and the 2A03 and VRC6
-   outputs did not change, then commit `app/src/main/cpp/generated/nes_epsm_player_image.h`,
-   `core/src/commonMain/kotlin/org/thortracker/backend/NesEpsmPlayerImage.kt`, `app/src/test/cpp/nes_epsm_song.h` and
-   `tools/audio/nes/epsm_test_ca65.s`:
-
-   ```sh
-   tools/audio/prepare_nes_player.py --famistudio "$(tools/audio/fetch_famistudio.sh)"
-   tools/audio/prepare_nes_player.py
-   git diff --exit-code -- app/src/main/cpp/generated/nes_player_image.h app/src/main/cpp/generated/nes_vrc6_player_image.h \
-       core/src/commonMain/kotlin/org/thortracker/backend/NesPlayerImage.kt \
-       core/src/commonMain/kotlin/org/thortracker/backend/NesVrc6PlayerImage.kt \
-       app/src/test/cpp/nes_ft_song.h app/src/test/cpp/nes_dpcm_song.h app/src/test/cpp/nes_vrc6_song.h
-   ```
-
-2. Golden songs `epsm_demo`, `epsm_effects`, `epsm_rhythm` (register traces only; none needs or contains the rhythm
-   ROM): write our texts, let FamiStudio export them, then compare:
-
-   ```sh
-   THOR_UPDATE_NES_GOLDEN=1 tools/build.sh :core:jvmTest --tests '*NesGoldenTest*'
-   tools/audio/nes_golden.py
-   tools/build.sh :core:jvmTest --tests '*NesGoldenTest*'
-   ```
-
-3. The usual full run, the native host test (`nes_epsm_test.c`, the WAV test's `expansion-port.nesimg` and
-   `epsm-shortest.nesimg` from `exportSamples`) and the independent references (FamiStudio's NSF in py65 and its
-   wav-export; libgme has no EPSM):
-
-   ```sh
-   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
-   tools/build.sh :deck:linkDebugExecutableLinuxX64
-   tools/audio/run_native_host_test.sh /tmp/thor-evidence
-   /tmp/nesref/bin/python3 tools/audio/nes_reference_check.py /tmp/thor-evidence
-   ```
-
-   Also the release-standard checks: Game Boy views pixel-identical to the 0.15.0 baseline, the Game Boy factory
-   `.uge` and every existing NES golden byte-identical, the plain NES and VRC6 sample exports unchanged.
-4. **Private local rhythm verification** (only on the parent's machine, with the user's own copy of the ROM; never
-   commit, copy into the repository or evidence, or ship it). Keep the ROM outside the repository, e.g.
-   `$HOME/private/ym2608_adpcm_rom.bin` (8192 bytes, SHA-256
-   `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`; the tools refuse anything else):
-
-   ```sh
-   THOR_EPSM_RHYTHM_ROM=$HOME/private/ym2608_adpcm_rom.bin tools/audio/run_native_host_test.sh /tmp/thor-evidence
-   /tmp/nesref/bin/python3 tools/audio/nes_reference_check.py /tmp/thor-evidence   # compares nes_epsm_rhythm.wav
-   tools/audio/render_nes_image.sh some-rhythm-song.nesimg /tmp/rhythm.wav 20 $HOME/private/ym2608_adpcm_rom.bin
-   ```
-
-   Without the variable the host test prints "rhythm ROM checks skipped (THOR_EPSM_RHYTHM_ROM unset)" and the
-   reference check reports the rhythm audio as not compared: that is a skipped check, not a pass.
-5. Prove the ROM is in nothing distributed (expect no output from each):
-
-   ```sh
-   git ls-files -z | xargs -0 sha256sum | grep 53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8
-   rm -rf /tmp/apk && unzip -q app/build/outputs/apk/debug/app-debug.apk -d /tmp/apk && find /tmp/apk -type f -size 8192c -exec sha256sum {} + | grep 53afd0fa
-   ```
-
-   and the same `find` over an extracted AppImage (`--appimage-extract`) and over `app/build/samples/`.
-6. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → NES… → NES +
-   EPSM; demo playback (stereo, no underruns), SSG/FM/Rhythm pages, X audition on SSG, FM and a drum (refused with
-   the import message while no ROM is installed), the main-menu row reading "EPSM rhythm ROM…  missing". For the
-   import, push the ROM to a temporary device path, import it through **EPSM rhythm ROM…**, check the row reads
-   "installed" and a rhythm song plays after an app restart, then delete the pushed copy (the app keeps its private
-   copy in `files/firmware/`). NSF, FamiStudio text (and its refusal of a manual SSG envelope period other than
-   4000) and WAV exports through the document picker.
 
 ## 0.15.0 NES + Konami VRC6
 

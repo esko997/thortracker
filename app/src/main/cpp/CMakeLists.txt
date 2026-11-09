@@ -70,6 +70,8 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_n163.c
     ${NES_DIR}/nes_fds.c
     ${NES_DIR}/nes_s5b.c
+    ${NES_DIR}/nes_mmc5.c
+    ${NES_DIR}/nes_mmc5_pcm.c
     ${NES_DIR}/nes_epsm_unit.c
     ${EMU2413_DIR}/emu2413.c
     chip_opll.c

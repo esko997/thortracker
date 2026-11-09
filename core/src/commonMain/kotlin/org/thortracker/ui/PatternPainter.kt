@@ -269,8 +269,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     /** Variable-width/scrollable layout also serves single-effect systems whose lanes cannot fit legibly. */
     private var variableLanes = false
     private var laneCount = 0
-    private val laneXs = FloatArray(MAX_LANES)
-    private val laneWs = FloatArray(MAX_LANES)
+    // PaneView recreates painters when the sound system changes.
+    private val laneXs = FloatArray(song.channelCount())
+    private val laneWs = FloatArray(song.channelCount())
     private var firstLane = 0
     private var lastLane = 0
     /** First lane shown while the lanes do not all fit. */
@@ -1005,8 +1006,6 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
     private companion object {
         const val LAMP_ROWS = 4
-        /** Most channels a system has room for in the lane arrays (the OPL3 has 9). */
-        const val MAX_LANES = 16
         /** Lanes that must still show beside the inspector when lanes scroll; fewer and the inspector gives way. */
         const val INSPECTOR_LANES = 6
         /** Pitch classes on black piano keys, C = 0. */

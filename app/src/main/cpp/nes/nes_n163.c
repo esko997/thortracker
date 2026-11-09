@@ -8,15 +8,20 @@
 
 #include "nes_apu.h"
 
-#define AMP_PER_STEP (NES_N163_STEP * NES_APU_AMP_SCALE)
+/* Blip amplitude per DAC unit of this instance. */
+static double amp_per_step(const NesN163* n) {
+    return NES_N163_STEP * (n->amp_scale > 0.0 ? n->amp_scale : (double)NES_APU_AMP_SCALE);
+}
 #define REGS(k) (0x78 - 8 * (k)) /* register base of channel index k (hardware channel 8 - k) */
 
 void nes_n163_reset(NesN163* n) {
     blip_t* out = n->out;
     const uint8_t mute = n->mute;
+    const double amp_scale = n->amp_scale;
     memset(n, 0, sizeof *n);
     n->out = out;
     n->mute = mute;
+    n->amp_scale = amp_scale;
     n->timer = NES_N163_SLOT_CYCLES;
 }
 
@@ -38,7 +43,9 @@ int nes_n163_dac_channel(const NesN163* n) { return n->last; }
 
 float nes_n163_mix_level(const NesN163* n) { return (float)(nes_n163_dac(n) * NES_N163_STEP); }
 
-static int32_t amplitude(const NesN163* n) { return (int32_t)lrint(nes_n163_dac(n) * AMP_PER_STEP); }
+static int32_t amplitude(const NesN163* n) { return (int32_t)lrint(nes_n163_dac(n) * amp_per_step(n)); }
+
+void nes_n163_set_amp_scale(NesN163* n, double scale) { n->amp_scale = scale; }
 
 static void update_output(NesN163* n) {
     const int32_t amp = amplitude(n);

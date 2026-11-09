@@ -35,6 +35,12 @@
 ; adds -D FAMISTUDIO_EXP_EPSM=1 with the engine's default EPSM configuration (3 SSG, 6 FM, 6 rhythm channels
 ; as channels 5-19; YMF288 registers through $401C-$401F) and assembles a copy with EPSM_ENGINE_PATCH (the
 ; global LFO register and Thor Tracker's `$5F` SSG load).
+; The Nintendo MMC5 build (generated/nes_mmc5_player_image.h) adds -D FAMISTUDIO_EXP_MMC5=1 the same way
+; (the plain engine, no patch): MMC5 pulse 1/2 as channels 5-6, playing the 2A03 note table and
+; instruments; the engine writes $5010 = $00 and $5015 = $03 at init and $5000/$5002/$5003,
+; $5004/$5006/$5007 per frame (of $5000-$5007 never $5001/$5005, the sweep units MMC5 lacks; never
+; $5011: the pinned engine has no MMC5 PCM), and its own song base (the first page after the
+; player, measured).
 
 FAMISTUDIO_CFG_EXTERNAL        = 1
 FAMISTUDIO_CFG_NTSC_SUPPORT    = 1

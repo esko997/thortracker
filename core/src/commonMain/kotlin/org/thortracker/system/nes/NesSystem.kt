@@ -9,6 +9,7 @@ import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.backend.FamiStudioText
 import org.thortracker.backend.FsSong
 import org.thortracker.backend.NesImageLayout
+import org.thortracker.backend.NesPcmLowering
 import org.thortracker.backend.NsfExporter
 import org.thortracker.backend.player
 import org.thortracker.editor.Selection
@@ -40,7 +41,8 @@ import kotlin.math.log2
  * Lowering ([FamiStudioLowering]) and both exports (`.nsf`, FamiStudio text) read the same [FsSong].
  * See docs/BACKENDS.md and docs/AUDIO_ENGINE.md. [NesVrc6System] adds the Konami VRC6's three channels, [NesVrc7System]
  * the Konami VRC7's six FM channels, [NesN163System] the Namco 163's 1-8 wavetable channels, [NesS5bSystem] the
- * Sunsoft 5B's three squares.
+ * Sunsoft 5B's three squares, [NesFdsSystem] the FDS's wavetable channel, [NesMmc5System] the Nintendo MMC5's two pulses,
+ * [NesEpsmSystem] the EPSM's SSG, FM and rhythm channels.
  */
 object NesSystem : NesFamiStudioSystem(NesExpansion.NONE) {
     override val id = "nes-famistudio"
@@ -135,6 +137,41 @@ object NesS5bSystem : NesFamiStudioSystem(NesExpansion.S5B) {
 }
 
 /**
+ * The NES with the Nintendo MMC5 cartridge chip (FamiStudio's MMC5 expansion): the 2A03's five channels, then MMC5
+ * Pulse 1 and 2, two more 2A03-style pulses (four duties, 4-bit volume, 11-bit periods, no sweep unit), and the MMC5 PCM
+ * lane on the chip's 8-bit DAC. The pulses play 2A03 sounds ([NesChip.APU]), so the bank has one chip; on the PCM lane a
+ * 2A03 sound plays the PCM samples it maps ([NesInstrument.pcm], the PCM page). The FamiStudio engine assembled with
+ * `FAMISTUDIO_EXP_MMC5` plays the seven FamiStudio channels (native `"nes-famistudio-mmc5"`); FamiStudio 4.5.3's engine
+ * does not drive the DAC, so the PCM lane is Thor Tracker's own software player writing it on the emulated CPU's
+ * timebase ([Pcm]): heard in playback, auditions and WAV export, refused by the `.nsf` and FamiStudio text exports.
+ */
+object NesMmc5System : NesFamiStudioSystem(NesExpansion.MMC5) {
+    override val id = "nes-famistudio-mmc5"
+    override val name = "NES + MMC5 (FamiStudio)"
+
+    override fun demo(): Song = NesMmc5DemoSong.build()
+
+    /** 3: the MMC5 PCM lane (an eighth track), PCM samples and instruments' PCM mappings. */
+    override val backendVersion = 3
+
+    /** NES + MMC5 data version 2 had seven lanes: every pattern gains an empty PCM lane as long as its others. */
+    override fun upgradeBackend(song: JsonObject, backendVersion: Int): JsonObject {
+        val older = super.upgradeBackend(song, backendVersion)
+        if (backendVersion >= 3) return older
+        val patterns = older["patterns"] as? JsonArray ?: return older
+        return JsonObject(older + ("patterns" to JsonArray(patterns.map { p ->
+            val tracks = (p as? JsonObject)?.get("tracks") as? JsonArray
+            if (tracks == null || tracks.size != NesRules.MMC5_PCM) p
+            else {
+                val rows = (tracks.firstOrNull() as? JsonArray)?.size ?: 0
+                val blank = JsonArray(listOf(JsonPrimitive(Cell.EMPTY), JsonPrimitive(0), JsonPrimitive(0), JsonPrimitive(0)))
+                JsonObject(p + ("tracks" to JsonArray(tracks + listOf(JsonArray(List(rows) { blank })))))
+            }
+        })))
+    }
+}
+
+/**
  * The NES with the EPSM (Perkka's Expansion Port Sound Module: a Yamaha YMF288, OPN3-L, at 8 MHz; FamiStudio's EPSM
  * expansion): the 2A03's five channels, then SSG 1-3 (YM2149-compatible squares sharing one noise and one envelope
  * generator, played as the 5B's: mixer and noise envelopes, a hardware envelope with auto or manual period, `Ixx`/`Jyy`),
@@ -180,6 +217,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         NesExpansion.VRC7 -> Vrc7Help
         NesExpansion.FDS -> FdsHelp
         NesExpansion.S5B -> S5bHelp
+        NesExpansion.MMC5 -> Mmc5Help
         NesExpansion.EPSM -> EpsmHelp
         else -> N163Help(expansion.n163Channels)
     }
@@ -280,28 +318,45 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
 
     override fun view(kind: ViewKind): SystemView? = if (kind == ViewKind.INSTRUMENT) NesInstrumentView else null
 
-    /** On DPCM, the keys instrument [instrument] maps to samples; other channels play every note. */
+    /** On DPCM and the MMC5 PCM lane, the keys instrument [instrument] maps to samples; other channels play every note. */
     override fun mappedNotes(song: Song, channel: Int, instrument: Int): List<Int>? {
-        if (channel != NesRules.DPCM) return null
+        val pcm = NesRules.isMmc5Pcm(expansion, channel)
+        if (channel != NesRules.DPCM && !pcm) return null
         val ins = instrument(song, 0, instrument) ?: return emptyList()
         // Views ask every frame; instruments are immutable, so the last one's sorted keys are reused.
-        if (ins !== mappedFor) { mappedFor = ins; mappedKeys = ins.dpcm.keys.sorted() }
+        if (ins !== mappedFor || pcm != mappedPcm) {
+            mappedFor = ins
+            mappedPcm = pcm
+            mappedKeys = (if (pcm) ins.pcm.keys else ins.dpcm.keys).sorted()
+        }
         return mappedKeys
     }
 
     private var mappedFor: NesInstrument? = null
+    private var mappedPcm = false
     private var mappedKeys: List<Int> = emptyList()
 
-    /** A one-shot DPCM sample ends by itself ([dpcmSoundingRows]); every other note sounds until the next note or OFF. */
-    override fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? =
-        if (channel == NesRules.DPCM) dpcmSoundingRows(song, pattern, row) else null
+    /**
+     * A one-shot DPCM sample ends by itself ([dpcmSoundingRows]), as does a one-shot PCM sample ([NesPcmRows]); every
+     * other note sounds until the next note or OFF.
+     */
+    override fun soundingRows(song: Song, pattern: Int, channel: Int, row: Int): Int? = when {
+        channel == NesRules.DPCM -> dpcmSoundingRows(song, pattern, row)
+        NesRules.isMmc5Pcm(expansion, channel) -> NesPcmRows.soundingRows(song, pattern, row)
+        else -> null
+    }
 
     /**
-     * On DPCM the sample the note plays; on an EPSM rhythm channel its fixed drum (every note triggers the same ROM
-     * sample: the note's pitch is not heard).
+     * On DPCM and the MMC5 PCM lane the sample the note plays; on an EPSM rhythm channel its fixed drum (every note
+     * triggers the same ROM sample: the note's pitch is not heard).
      */
     override fun noteSample(song: Song, channel: Int, note: Int, instrument: Int): NoteSample? {
         if (NesRules.isEpsmRhythm(expansion, channel)) return NoteSample(NesRules.channelName(expansion, channel), RHYTHM_DETAIL)
+        if (NesRules.isMmc5Pcm(expansion, channel)) {
+            val m = song.pcmMapping(instrument, note) ?: return null
+            val sample = song.nes.pcmSamples.getOrNull(m.sample) ?: return null
+            return NoteSample(sample.name, pcmDetail(sample, m))
+        }
         if (channel != NesRules.DPCM) return null
         val m = song.dpcmMapping(instrument, note) ?: return null
         val sample = song.nes.samples.getOrNull(m.sample) ?: return null
@@ -389,24 +444,30 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
      */
     private inner class Engine : PlaybackEngine {
         override val id = expansion.player.engineId
-        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo${when (expansion.chip) {
-            NesChip.APU -> ""
-            NesChip.VRC6 -> ", FAMISTUDIO_EXP_VRC6"
-            NesChip.VRC7 -> ", FAMISTUDIO_EXP_VRC7"
-            NesChip.N163 -> ", FAMISTUDIO_EXP_N163, FAMISTUDIO_EXP_N163_CHN_CNT = ${expansion.n163Channels}"
-            NesChip.FDS -> ", FAMISTUDIO_EXP_FDS, FAMISTUDIO_USE_FDS_AUTOMOD, Thor Tracker's manual mod speed patch"
-            NesChip.S5B -> ", FAMISTUDIO_EXP_S5B"
-            NesChip.EPSM -> ", FAMISTUDIO_EXP_EPSM, Thor Tracker's EPSM patch (global LFO register, legato-safe SSG loads)"
-        }}) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU${when (expansion.chip) {
-            NesChip.APU -> ""
-            NesChip.VRC6 -> " + VRC6"
-            NesChip.VRC7 -> ", emu2413 1.6.4 (commit a1d5120) in VRC7 mode"
-            NesChip.N163 -> " + Namco 163 (${expansion.n163Channels} channel${if (expansion.n163Channels == 1) "" else "s"})"
-            NesChip.FDS -> " + Thor Tracker's FDS 2C33 (NESdev \"FDS audio\", FamiStudio's measured DAC)"
-            NesChip.S5B -> " and Sunsoft 5B (YM2149F, after NESdev and emu2149)"
-            NesChip.EPSM -> " and EPSM (YMF288 / OPN3-L on ymfm, the user's YM2608 rhythm ROM)"
+        override val driver = "FamiStudio sound engine 4.5.3 (FamiTracker tempo${when {
+            expansion == NesExpansion.MMC5 -> ", FAMISTUDIO_EXP_MMC5"
+            else -> when (expansion.chip) {
+                NesChip.APU -> ""
+                NesChip.VRC6 -> ", FAMISTUDIO_EXP_VRC6"
+                NesChip.VRC7 -> ", FAMISTUDIO_EXP_VRC7"
+                NesChip.N163 -> ", FAMISTUDIO_EXP_N163, FAMISTUDIO_EXP_N163_CHN_CNT = ${expansion.n163Channels}"
+                NesChip.FDS -> ", FAMISTUDIO_EXP_FDS, FAMISTUDIO_USE_FDS_AUTOMOD, Thor Tracker's manual mod speed patch"
+                NesChip.S5B -> ", FAMISTUDIO_EXP_S5B"
+                NesChip.EPSM -> ", FAMISTUDIO_EXP_EPSM, Thor Tracker's EPSM patch (global LFO register, legato-safe SSG loads)"
+            }
+        }}) on m6502.h (chips 9e88298) and Thor Tracker's 2A03 APU${when {
+            expansion == NesExpansion.MMC5 -> " + MMC5 pulses and DAC (NESdev \"MMC5 audio\"), Thor Tracker's software PCM player on the DAC"
+            else -> when (expansion.chip) {
+                NesChip.APU -> ""
+                NesChip.VRC6 -> " + VRC6"
+                NesChip.VRC7 -> ", emu2413 1.6.4 (commit a1d5120) in VRC7 mode"
+                NesChip.N163 -> " + Namco 163 (${expansion.n163Channels} channel${if (expansion.n163Channels == 1) "" else "s"})"
+                NesChip.FDS -> " + Thor Tracker's FDS 2C33 (NESdev \"FDS audio\", FamiStudio's measured DAC)"
+                NesChip.S5B -> " and Sunsoft 5B (YM2149F, after NESdev and emu2149)"
+                NesChip.EPSM -> " and EPSM (YMF288 / OPN3-L on ymfm, the user's YM2608 rhythm ROM)"
+            }
         }}, blip_buf 1.1.0"
-        override val imageSize = expansion.player.imageSize
+        override val imageSize = NesPcmLowering.imageSize(expansion)
 
         /** At 60.1 frames per second, ~3.3 minutes of song. */
         override val seekTicks = 12000
@@ -420,7 +481,14 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             // Each variant's engine runs its own player build: another variant's song would be laid out for that player.
             require(song.nes.expansion == expansion) { "The song is for ${song.nes.expansion.system.name}, not ${this@NesFamiStudioSystem.name}" }
             require(expansion != NesExpansion.EPSM || EpsmRhythmRom.installed || !NesRules.playsRhythm(song)) { EpsmRhythmRom.MISSING }
-            NesImageLayout.build(FamiStudioLowering.lower(song, withUnplayed = true), out)
+            val lowered = FamiStudioLowering.lower(song, withUnplayed = true)
+            if (!expansion.hasPcmLane) return NesImageLayout.build(lowered, out)
+            // MMC5: the seven-channel FamiStudio image as it is, then the PCM lane's extension (NesPcmLowering).
+            require(out.size == imageSize) { "NES + MMC5 image buffer is ${out.size} bytes; the engine needs $imageSize" }
+            val base = ByteArray(expansion.player.imageSize)
+            NesImageLayout.build(lowered, base)
+            base.copyInto(out)
+            NesPcmLowering.build(song, out, base.size)
         }
 
         override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? = when {
@@ -437,6 +505,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
                     else -> ""
                 }
             fine !in 0..Fine.max -> "Cannot audition fine pitch $fine (0-${Fine.max})"
+            NesRules.isMmc5Pcm(expansion, channel) -> NesRules.pcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
             channel == NesRules.DPCM -> NesRules.dpcmMappingProblem(song, instrument, note)?.replaceFirstChar { it.uppercase() }
                 ?: if (dpcmEntry(song, note, instrument) == null) {
                     "Sample memory or the sample list is full: ${noteName(note)} of instrument ${NesRules.hex2(instrument)} cannot be auditioned"
@@ -448,9 +517,15 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             else -> null
         }
 
-        /** Chip-specific engine note number (true pitch: [NesRules.engineNote]); on DPCM the sample list entry (1..63). */
-        override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int =
-            if (channel == NesRules.DPCM) dpcmEntry(song, note, instrument) ?: 0 else NesRules.engineNote(expansion, channel, note)
+        /**
+         * Chip-specific engine note number (true pitch: [NesRules.engineNote]); on DPCM the sample list entry (1..63); on the
+         * MMC5 PCM lane the PCM mapping table entry + 1 ([NesPcmLowering.mappings]).
+         */
+        override fun note(song: Song, channel: Int, note: Int, instrument: Int): Int = when {
+            channel == NesRules.DPCM -> dpcmEntry(song, note, instrument) ?: 0
+            NesRules.isMmc5Pcm(expansion, channel) -> NesPcmLowering.mappings(song)[instrument to note]?.plus(1) ?: 0
+            else -> NesRules.engineNote(expansion, channel, note)
+        }
 
         private fun dpcmEntry(song: Song, note: Int, instrument: Int): Int? =
             FamiStudioLowering.lower(FsSong.of(song), withUnplayed = true).dpcm.index[instrument to note]
@@ -633,6 +708,32 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
         override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
             "Rhythm ROM" to if (EpsmRhythmRom.installed) "installed (YM2608 drums)" else "not imported: the drums need it; FM and SSG play",
         )
+    }
+
+    private object Mmc5Help : NesHelp() {
+        override val effectsIntro = super.effectsIntro + listOf(
+            "MMC5 Pulse 1/2 are two more pulses that play 2A03 sounds from the same bank, with every 2A03 pulse effect: " +
+                "Vxx takes duties 00-03, and there is no sweep (FamiStudio has none either).",
+            "The MMC5 pulses have no sweep unit to hide a period change, so their waveform restarts (a soft click) " +
+                "whenever a note, slide or vibrato moves the period across a high-byte boundary.",
+            "MMC5 PCM is Thor Tracker's own software sample player on the MMC5's 8-bit DAC (FamiStudio's engine does not " +
+                "drive it): a note plays the PCM sample its sound maps to that key (the sound's PCM page: sample, pitch in " +
+                "semitones, loop). Cxx sets the lane's volume, Gxx delays, Sxx cuts, OFF stops, Fxx sets the song speed; no " +
+                "other effect applies there. It plays in the app and in WAV exports; .nsf and FamiStudio text cannot hold it " +
+                "and refuse a song whose PCM lane plays.",
+        )
+        override val tonalChannels = "Pulse, Triangle and MMC5 Pulse"
+        override val tonalChannelsShort = "Pulse/Tri/MMC5"
+        override val sketchChannels = "Pulse 1, Pulse 2, Triangle or MMC5 Pulse 1/2; Noise, DPCM and MMC5 PCM have no tonal chord reference"
+
+        override fun limits(song: Song): List<Pair<String, String>> = super.limits(song) + listOf(
+            "PCM samples" to "${song.nes.pcmSamples.size} of ${Pcm.MAX_SAMPLES} taking ${Pcm.kb(Pcm.stored(song.nes))} of the " +
+                "${Pcm.kb(Pcm.MEMORY)} PCM memory (Thor Tracker's software player; 1-48 kHz samples, pitch " +
+                "${Pcm.PITCH.first}..+${Pcm.PITCH.last} semitones)",
+        )
+
+        override fun viewSections(keys: Keymap): List<Pair<String, List<Pair<String, String>>>> =
+            NesInstrumentView.helpSections(keys, NesExpansion.MMC5)
     }
 
     private class N163Help(private val n163Channels: Int) : NesHelp() {

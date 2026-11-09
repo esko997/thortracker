@@ -5,8 +5,10 @@ _Static_assert(NES_PLAYER_BASE + NES_PLAYER_SIZE <= NES_SONG_BASE, "2A03 player 
 _Static_assert(NES_VRC6_PLAYER_BASE + NES_VRC6_PLAYER_SIZE <= NES_VRC6_SONG_BASE, "VRC6 player below its song region");
 _Static_assert(NES_VRC7_PLAYER_BASE + NES_VRC7_PLAYER_SIZE <= NES_VRC7_SONG_BASE, "VRC7 player below its song region");
 _Static_assert(NES_S5B_PLAYER_BASE + NES_S5B_PLAYER_SIZE <= NES_S5B_SONG_BASE, "5B player below its song region");
+_Static_assert(NES_MMC5_PLAYER_BASE + NES_MMC5_PLAYER_SIZE <= NES_MMC5_SONG_BASE, "MMC5 player below its song region");
 _Static_assert(NES_SONG_BASE + NES_IMAGE_REGION_SIZE == 0xFFFA && NES_VRC6_SONG_BASE + NES_VRC6_IMAGE_REGION_SIZE == 0xFFFA &&
-                   NES_VRC7_SONG_BASE + NES_VRC7_IMAGE_REGION_SIZE == 0xFFFA && NES_S5B_SONG_BASE + NES_S5B_IMAGE_REGION_SIZE == 0xFFFA,
+                   NES_VRC7_SONG_BASE + NES_VRC7_IMAGE_REGION_SIZE == 0xFFFA && NES_S5B_SONG_BASE + NES_S5B_IMAGE_REGION_SIZE == 0xFFFA &&
+                   NES_MMC5_SONG_BASE + NES_MMC5_IMAGE_REGION_SIZE == 0xFFFA,
                "the regions end at the vectors");
 _Static_assert(NES_REGION_END == 0xFFFA, "the region ends at the vectors");
 _Static_assert(NES_VRC6_IMAGE_SIZE == NES_IMAGE_HEADER_SIZE + NES_IMAGE_DIRECTORY_SIZE + NES_VRC6_IMAGE_REGION_SIZE,
@@ -15,21 +17,28 @@ _Static_assert(NES_VRC7_IMAGE_SIZE == NES_IMAGE_HEADER_SIZE + NES_IMAGE_DIRECTOR
                "VRC7 image = the shared header + directory + its region");
 _Static_assert(NES_S5B_IMAGE_SIZE == NES_IMAGE_HEADER_SIZE + NES_IMAGE_DIRECTORY_SIZE + NES_S5B_IMAGE_REGION_SIZE,
                "5B image = the shared header + directory + its region");
+_Static_assert(NES_MMC5_IMAGE_SIZE == NES_IMAGE_HEADER_SIZE + NES_IMAGE_DIRECTORY_SIZE + NES_MMC5_IMAGE_REGION_SIZE,
+               "MMC5 image = the shared header + directory + its region");
 _Static_assert(NES_VRC6_IMAGE_SIZE <= NM_IMAGE_MAX_SIZE && NES_VRC7_IMAGE_SIZE <= NM_IMAGE_MAX_SIZE &&
-                   NES_S5B_IMAGE_SIZE <= NM_IMAGE_MAX_SIZE,
+                   NES_S5B_IMAGE_SIZE <= NM_IMAGE_MAX_SIZE && NES_MMC5_IMAGE_SIZE <= NM_IMAGE_MAX_SIZE,
                "image storage holds every build's images");
 _Static_assert(NES_RAM_BASE + NES_RAM_SIZE <= NES_AUDITION_RAM && NES_VRC6_RAM_BASE + NES_VRC6_RAM_SIZE <= NES_AUDITION_RAM &&
-                   NES_VRC7_RAM_BASE + NES_VRC7_RAM_SIZE <= NES_AUDITION_RAM && NES_S5B_RAM_BASE + NES_S5B_RAM_SIZE <= NES_AUDITION_RAM,
+                   NES_VRC7_RAM_BASE + NES_VRC7_RAM_SIZE <= NES_AUDITION_RAM && NES_S5B_RAM_BASE + NES_S5B_RAM_SIZE <= NES_AUDITION_RAM &&
+                   NES_MMC5_RAM_BASE + NES_MMC5_RAM_SIZE <= NES_AUDITION_RAM,
                "engine RAM below the audition streams");
 _Static_assert(NES_NUM_ENVELOPES <= NM_MAX_ENVELOPES && NES_VRC6_NUM_ENVELOPES <= NM_MAX_ENVELOPES &&
-                   NES_VRC7_NUM_ENVELOPES <= NM_MAX_ENVELOPES && NES_S5B_NUM_ENVELOPES <= NM_MAX_ENVELOPES,
+                   NES_VRC7_NUM_ENVELOPES <= NM_MAX_ENVELOPES && NES_S5B_NUM_ENVELOPES <= NM_MAX_ENVELOPES &&
+                   NES_MMC5_NUM_ENVELOPES <= NM_MAX_ENVELOPES,
                "envelope slots");
 _Static_assert(NES_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES && NES_VRC6_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES &&
-                   NES_VRC7_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES && NES_S5B_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES,
+                   NES_VRC7_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES && NES_S5B_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES &&
+                   NES_MMC5_NUM_PITCH_ENVELOPES <= NM_MAX_PITCH_ENVELOPES,
                "pitch envelope slots");
-_Static_assert(NES_VRC6_CHANNELS <= NM_MAX_CHANNELS && NES_VRC7_CHANNELS <= NM_MAX_CHANNELS && NES_S5B_CHANNELS <= NM_MAX_CHANNELS,
+_Static_assert(NES_VRC6_CHANNELS <= NM_MAX_CHANNELS && NES_VRC7_CHANNELS <= NM_MAX_CHANNELS && NES_S5B_CHANNELS <= NM_MAX_CHANNELS &&
+                   NES_MMC5_CHANNELS <= NM_MAX_CHANNELS,
                "channel arrays");
 _Static_assert(NES_S5B_CHANNELS == NM_FIRST_EXP + 3, "the 2A03's five channels, then 5B square 1-3");
+_Static_assert(NES_MMC5_CHANNELS == NM_FIRST_EXP + 2, "the 2A03's five channels, then MMC5 pulse 1 and 2");
 _Static_assert(NES_VRC7_EXP_INSTRUMENT_SIZE == NM_EXP_INSTRUMENT_SIZE && NES_S5B_EXP_INSTRUMENT_SIZE == NM_EXP_INSTRUMENT_SIZE,
                "FamiStudio's expansion instrument entries");
 _Static_assert(NES_S5B_EFFECT_ENVELOPES == 4 * NES_IMAGE_MAX_INSTRUMENTS + 2 * NES_IMAGE_MAX_INSTRUMENTS &&
@@ -37,7 +46,8 @@ _Static_assert(NES_S5B_EFFECT_ENVELOPES == 4 * NES_IMAGE_MAX_INSTRUMENTS + 2 * N
                "5B directory: 4 envelopes per slot, then a mixer and a noise envelope per slot, then effect envelopes");
 _Static_assert(NES_VRC6_PLAYER_INIT == NES_PLAYER_INIT && NES_VRC6_PLAYER_PLAY == NES_PLAYER_PLAY &&
                    NES_VRC7_PLAYER_INIT == NES_PLAYER_INIT && NES_VRC7_PLAYER_PLAY == NES_PLAYER_PLAY &&
-                   NES_S5B_PLAYER_INIT == NES_PLAYER_INIT && NES_S5B_PLAYER_PLAY == NES_PLAYER_PLAY,
+                   NES_S5B_PLAYER_INIT == NES_PLAYER_INIT && NES_S5B_PLAYER_PLAY == NES_PLAYER_PLAY &&
+                   NES_MMC5_PLAYER_INIT == NES_PLAYER_INIT && NES_MMC5_PLAYER_PLAY == NES_PLAYER_PLAY,
                "one entry table");
 
 /* Every N163 build: the shared layout, engine channels 5 + n, envelope slots 11 + 3n (N163 channel k: volume,
@@ -279,6 +289,29 @@ const NesPlayer nes_player_s5b = {
     .s5b = {NES_S5B_FAMISTUDIO_EXP_INSTRUMENT_LO, NES_S5B_FAMISTUDIO_EXP_INSTRUMENT_HI, NES_S5B_FAMISTUDIO_S5B_ENV_PERIOD_LO,
             NES_S5B_FAMISTUDIO_S5B_ENV_PERIOD_HI, NES_S5B_FAMISTUDIO_S5B_ENV_OVERRIDE, NES_S5B_FAMISTUDIO_S5B_CHN_ENV_SHAPE,
             NES_S5B_FAMISTUDIO_S5B_CHN_ENV_OCTAVE},
+};
+
+const NesPlayer nes_player_mmc5 = {
+    .id = NES_MMC5_PLAYER_ID,
+    .code = nes_mmc5_player_code,
+    .base = NES_MMC5_PLAYER_BASE,
+    .size = NES_MMC5_PLAYER_SIZE,
+    .init = NES_MMC5_PLAYER_INIT,
+    .play = NES_MMC5_PLAYER_PLAY,
+    .idle = NES_MMC5_PLAYER_IDLE,
+    .trap = NES_MMC5_PLAYER_TRAP,
+    .song_base = NES_MMC5_SONG_BASE,
+    .region_size = NES_MMC5_IMAGE_REGION_SIZE,
+    .image_size = NES_MMC5_IMAGE_SIZE,
+    .ram_end = NES_MMC5_RAM_BASE + NES_MMC5_RAM_SIZE,
+    .effect_envelopes = NM_EFFECT_ENVELOPES,
+    .channels = NES_MMC5_CHANNELS,
+    .envelope_channels = NES_MMC5_CHANNELS,
+    .envelopes = NES_MMC5_NUM_ENVELOPES,
+    .pitch_envelopes = NES_MMC5_NUM_PITCH_ENVELOPES,
+    .duty_max = 3, /* the MMC5 pulses use the 2A03 duty lookup */
+    .expansion = NES_EXPANSION_MMC5,
+    .sym = SYMBOLS(NES_MMC5_FAMISTUDIO_),
 };
 
 const NesPlayer nes_player_epsm = {

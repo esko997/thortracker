@@ -43,6 +43,11 @@ changes; the outputs are committed, so app/Deck/CI builds need no 6502 assembler
                                                   SSG, six FM and six rhythm channels; otherwise identical), its song
                                                   base and engine addresses
   app/src/test/cpp/nes_epsm_song.h                EPSM host-test fixtures (below)
+  app/src/main/cpp/generated/nes_mmc5_player_image.h
+  core/src/commonMain/kotlin/org/thortracker/backend/NesMmc5PlayerImage.kt
+                                                  the Nintendo MMC5 build (FAMISTUDIO_EXP_MMC5 = 1, otherwise
+                                                  identical), its song base and engine addresses
+  app/src/test/cpp/nes_mmc5_song.h                MMC5 host-test fixtures (below)
 
 Steps (all checked):
   1. Check the vendored engine files (third_party/famistudio-4.5.3, unmodified copies from
@@ -145,7 +150,13 @@ Steps (all checked):
      rhythm channels need the user's YM2608 rhythm ROM to sound; nothing here reads, needs or writes it. This build
      assembles a temporary copy of the engine with EPSM_ENGINE_PATCH applied (patched source sha256 pinned): the LFO
      register $22 written without the FM channel's offset, and Thor Tracker's `$5F o` SSG instrument load.
- 12. Write the twenty-nine outputs. Two runs produce identical files.
+ 12. MMC5: the player assembled again with -D FAMISTUDIO_EXP_MMC5=1 (7 channels: the 2A03's five, then MMC5 pulse 1
+     and pulse 2, which play the 2A03 note table and plain 2A03 instruments; no MMC5 PCM: "extra DPCM not supported",
+     famistudio_ca65.s line 107; the unpatched engine), its song base measured as in 7, and the MMC5 test song
+     tools/audio/nes/mmc5_test.txt exported by FamiStudio 4.5.3 to mmc5_test_ca65.s (`--famistudio DIR` writes it
+     when it is missing, else checks it is unchanged), linked, parsed and rearranged as in 4 (7 channel streams). The
+     MMC5 streams are checked to use only the 2A03 build's opcodes (the engine has no MMC5 opcode).
+ 13. Write every player and fixture output. Two runs produce identical files.
 
 Assembler: cc65's ca65/ld65 on PATH, else run through `distrobox enter ubuntu --` (install with
 `distrobox enter ubuntu -- sudo apt-get install -y cc65`). Pinned: Ubuntu 24.04 cc65 2.19-1
@@ -189,6 +200,9 @@ OUT_S5B_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_s5b_song.h"
 OUT_EPSM_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_epsm_player_image.h"
 OUT_EPSM_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesEpsmPlayerImage.kt"
 OUT_EPSM_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_epsm_song.h"
+OUT_MMC5_PLAYER = ROOT / "app" / "src" / "main" / "cpp" / "generated" / "nes_mmc5_player_image.h"
+OUT_MMC5_KOTLIN = ROOT / "core" / "src" / "commonMain" / "kotlin" / "org" / "thortracker" / "backend" / "NesMmc5PlayerImage.kt"
+OUT_MMC5_SONG = ROOT / "app" / "src" / "test" / "cpp" / "nes_mmc5_song.h"
 
 FAMISTUDIO_TAG = "4.5.3"
 FAMISTUDIO_COMMIT = "c09dca64788606c09fcb5e70db28b9dd1f34be78"
@@ -423,6 +437,8 @@ S5B_SONG_TXT = NES_DIR / "s5b_test.txt"
 S5B_SONG_CA65 = NES_DIR / "s5b_test_ca65.s"
 EPSM_SONG_TXT = NES_DIR / "epsm_test.txt"
 EPSM_SONG_CA65 = NES_DIR / "epsm_test_ca65.s"
+MMC5_SONG_TXT = NES_DIR / "mmc5_test.txt"
+MMC5_SONG_CA65 = NES_DIR / "mmc5_test_ca65.s"
 CC65_VERSION = "ca65 V2.18 - Ubuntu 2.19-1"
 
 PLAYER_BASE = 0x8000
@@ -524,6 +540,9 @@ EPSM_SYMBOLS = ["famistudio_exp_instrument_lo", "famistudio_exp_instrument_hi", 
                 "famistudio_chn_epsm_rhythm_volume", "famistudio_chn_epsm_rhythm_stereo", "famistudio_ptr1", "famistudio_r3",
                 "famistudio_epsm_note_table_lsb", "famistudio_epsm_note_table_msb",
                 "famistudio_epsm_s_note_table_lsb", "famistudio_epsm_s_note_table_msb"]
+# Of the MMC5 build only: the pulses' last period high byte written to $5003/$5007 (init $80; the engine rewrites the
+# high byte, restarting the pulse's sequencer, only when it changes). Its note tables are the 2A03's.
+MMC5_SYMBOLS = ["famistudio_mmc5_pulse1_prev", "famistudio_mmc5_pulse2_prev"]
 
 # Stream opcodes ($40-$6F) of this build: operand bytes, and whether the opcode ends a row entry.
 # Mirrors famistudio_advance_channel and the jump table for the configuration in nes_player.s.
@@ -562,6 +581,7 @@ S5B_OPCODES = {**OPCODES, 0x5E: (2, False), 0x5F: (1, False)}
 # + EPSM FM release note (key off, then the volume envelope's release), EPSM manual envelope period: lo, hi; + Thor
 # Tracker's `$5F o` (EPSM_ENGINE_PATCH): SSG instrument o & $3F, bit 7 keeping the shared period
 EPSM_OPCODES = {**OPCODES, 0x5C: (0, True), 0x5D: (2, False), 0x5F: (1, False)}
+# MMC5: OPCODES alone (the engine has no MMC5 opcode; the MMC5 pulses are in the `$53` phase reset mask)
 
 EXP_INSTRUMENT_SIZE = 16  # FamiStudio's expansion instruments: 3 envelope words, VRC7: overrides, patch << 4, 8 registers;
                           # N163: wave-index envelope word, wave position, wave size (samples), wave table word, 4 zeros;
@@ -590,7 +610,7 @@ MAX_FDS_WAVES = 16  # FamiStudio Instrument.FdsMaxWaveCount: min(64, 1024 / 64)
 FDS_MOD_SIZE = 32  # FDS modulation tables: 32 entries 0..7 (Envelope.BuildFdsModulationTable; $4088 takes 3 bits)
 FDS_MAX_AUTOMOD = 32  # FamiStudio Instrument.FdsAutoModNumer/Denom: 1..32
 
-# The builds: assembler defines, song base (VRC7, N163, FDS, S5B, EPSM: measured, see assemble_measured), engine channel
+# The builds: assembler defines, song base (VRC7, N163, FDS, S5B, MMC5, EPSM: measured, see assemble_measured), engine channel
 # count and the engine tables the native machine reads (first envelope slot per channel, pitch envelope slot per channel;
 # $FF = none; EPSM: channels 0-13 only, the rhythm channels have no envelope slots); "exp": the song header holds the
 # expansion instrument pointer, "exp_kinds": the envelope words of an expansion instrument; "exp_patch": its last word
@@ -629,6 +649,9 @@ PLAYERS = {
              "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4, 5, 6, 7, 8, 9, 10, 11],
              "exp_kinds": (KIND_VOLUME, KIND_ARPEGGIO, KIND_PITCH, KIND_MIXER, KIND_NOISE), "exp_patch": True,
              "effect_envelopes": S5B_EFFECT_ENVELOPES},
+    "mmc5": {"defines": ["FAMISTUDIO_EXP_MMC5=1"], "song_base": None, "channels": 7, "opcodes": OPCODES, "exp": False,
+             "symbols": MMC5_SYMBOLS, "envelopes": 17, "pitch_envelopes": 5, "channel_env": [0, 3, 6, 8, 0xFF, 11, 14],
+             "channel_pitch": [0, 1, 2, 0xFF, 0xFF, 3, 4], "effect_envelopes": EFFECT_ENVELOPES},
 }
 
 
@@ -703,7 +726,7 @@ def parse_famistudio_ca65(text: str, base: int, name: str = "ft_test_ca65.s"):
     """Assembles FamiStudio's ca65 music export (labels, .byte, .word, .lobyte/.hibyte, DPCM list entries
     `$nn+.lobyte(FAMISTUDIO_DPCM_PTR)` for samples at SAMPLE_BASE) at `base`, evaluating the EPSM export's
     `.if NAME > n` / `.if NAME` ... `.endif` with EPSM_CONFIG (no other export has a condition).
-    Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03, VRC6, VRC7, N163, FDS, S5B and EPSM
+    Returns (bytes, {label: address}). Only the constructs FamiStudio emits for 2A03, VRC6, VRC7, N163, FDS, S5B, MMC5 and EPSM
     songs (N163, FDS: the `@n163_inst<j>_waves:` / `@fds_inst<j>_waves:` tables of `.word @env<k>` entries after the
     envelopes; FDS: decimal `.byte` / `.word` operands in the expansion instruments, FamitoneMusicFile.cs 697-724)."""
     text = ca65_fixed(text)
@@ -1014,7 +1037,7 @@ def build_thor_image(song, order_count: int, loop: int, arrangement: str = "plai
                **{f"wtab{j}": 2 * len(t) for j, t in wave_tables.items()}, **{f"wave{w:04X}": len(d) for w, d in waves.items()},
                **{f"mod{m:04X}": len(d) for m, d in mods.items()}, **{n: EPSM_PATCH_SIZE for n in patch_names}}
     if arrangement == "moved":
-        shuffled = {5: (3, 1, 4, 0, 2), 6: (3, 5, 1, 4, 0, 2), 8: (3, 6, 1, 4, 7, 0, 5, 2),
+        shuffled = {5: (3, 1, 4, 0, 2), 6: (3, 5, 1, 4, 0, 2), 7: (3, 6, 1, 4, 0, 5, 2), 8: (3, 6, 1, 4, 7, 0, 5, 2),
                     11: (3, 9, 6, 1, 10, 4, 7, 0, 8, 5, 2), 13: (3, 9, 12, 6, 1, 10, 4, 7, 0, 11, 8, 5, 2),
                     20: (3, 17, 9, 1, 14, 6, 19, 11, 4, 16, 0, 8, 13, 2, 18, 10, 5, 15, 7, 12)}[channels]
         names = (["header"] + [f"mod{m:04X}" for m in sorted(mods, reverse=True)]
@@ -1501,7 +1524,7 @@ def kotlin_hex(data: bytes) -> str:
 
 def assemble_player(prefix: list, t: Path, name: str, info: dict):
     """Assembles and links nes_player.s as the PLAYERS entry `name` and checks the result: entry table, the
-    song base past the player (VRC6, VRC7, N163, S5B, EPSM: the first page after it), engine RAM below the audition area,
+    song base past the player (VRC6, VRC7, N163, S5B, MMC5, EPSM: the first page after it), engine RAM below the audition area,
     the engine symbols and the channel/envelope tables (EPSM: channels 0-13; the rhythm channels have no entries). The
     engine source is ENGINE_DIR's, or info["engine"]'s (the FDS, S5B and EPSM builds' patched copies, patched_engine);
     binary includes always come from ENGINE_DIR. Returns (player bytes, symbols, segments)."""
@@ -1542,7 +1565,7 @@ def assemble_player(prefix: list, t: Path, name: str, info: dict):
 
 
 def assemble_measured(prefix: list, t: Path, name: str, engine: Path = ENGINE_DIR):
-    """The PLAYERS entry `name` without a fixed song base (VRC7, N163, FDS, S5B, EPSM): assembled once at a provisional
+    """The PLAYERS entry `name` without a fixed song base (VRC7, N163, FDS, S5B, MMC5, EPSM): assembled once at a provisional
     song base to measure the player (the base is only an operand of init's famistudio_init call, so the code's size does
     not depend on it), then at the first page after it, from the engine source in `engine`. Returns (the PLAYERS entry
     with its song base and engine, player bytes, symbols, segments)."""
@@ -1573,7 +1596,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--famistudio", type=Path,
                     help="FamiStudio 4.5.3 Linux release dir: re-export the test songs and compare (a missing export, "
-                         "e.g. vrc7_test_ca65.s, n163_test_ca65.s, fds_test_ca65.s, s5b_test_ca65.s or epsm_test_ca65.s on "
+                         "e.g. mmc5_test_ca65.s or epsm_test_ca65.s on "
                          "first use, is written)")
     args = ap.parse_args()
 
@@ -1586,7 +1609,8 @@ def main() -> None:
             for txt, ca65, dmc in ((TEST_SONG_TXT, TEST_SONG_CA65, None), (DPCM_SONG_TXT, DPCM_SONG_CA65, DPCM_SONG_DMC),
                                    (VRC6_SONG_TXT, VRC6_SONG_CA65, None), (VRC7_SONG_TXT, VRC7_SONG_CA65, None),
                                    (N163_SONG_TXT, N163_SONG_CA65, None), (FDS_SONG_TXT, FDS_SONG_CA65, None),
-                                   (S5B_SONG_TXT, S5B_SONG_CA65, None), (EPSM_SONG_TXT, EPSM_SONG_CA65, None)):
+                                   (S5B_SONG_TXT, S5B_SONG_CA65, None), (MMC5_SONG_TXT, MMC5_SONG_CA65, None),
+                                   (EPSM_SONG_TXT, EPSM_SONG_CA65, None)):
                 fresh = Path(tmp) / ca65.name
                 famistudio_export(args.famistudio.resolve(), txt, fresh)
                 if not ca65.exists():
@@ -1598,7 +1622,7 @@ def main() -> None:
                 if dmc and fresh.with_suffix(".dmc").read_bytes() != dmc.read_bytes():
                     sys.exit(f"FamiStudio's samples of {txt.name} differ from {dmc.relative_to(ROOT)}")
                 print(f"FamiStudio re-export of {txt.name}: identical")
-    for ca65 in (VRC7_SONG_CA65, N163_SONG_CA65, FDS_SONG_CA65, S5B_SONG_CA65, EPSM_SONG_CA65):
+    for ca65 in (VRC7_SONG_CA65, N163_SONG_CA65, FDS_SONG_CA65, S5B_SONG_CA65, MMC5_SONG_CA65, EPSM_SONG_CA65):
         if not ca65.exists():
             sys.exit(f"{ca65.relative_to(ROOT)} is missing: run with --famistudio \"$(tools/audio/fetch_famistudio.sh)\" "
                      "once to export it")
@@ -1625,6 +1649,8 @@ def main() -> None:
         epsm_info, eplayer, esyms, esegs = assemble_measured(
             prefix, t, "epsm", patched_engine(t, "epsm", EPSM_ENGINE_PATCH, EPSM_ENGINE_SHA256))
         epsm_base = epsm_info["song_base"]
+        mmc5_info, mplayer, msyms, msegs = assemble_measured(prefix, t, "mmc5")
+        mmc5_base = mmc5_info["song_base"]
         song = link_song(prefix, t, "ft_test", TEST_SONG_CA65.read_text(), SONG_BASE)
         dpcm_song = link_song(prefix, t, "dpcm_test", DPCM_SONG_CA65.read_text(), SONG_BASE,
                               f"FAMISTUDIO_DPCM_PTR = ${DPCM_PTR:02X}\n")
@@ -1635,8 +1661,10 @@ def main() -> None:
         s5b_song = link_song(prefix, t, "s5b_test", S5B_SONG_CA65.read_text(), s5b_base)
         epsm_song = link_song(prefix, t, "epsm_test", EPSM_SONG_CA65.read_text(), epsm_base,
                               "".join(f"{k} = {v}\n" for k, v in EPSM_CONFIG.items()))
+        mmc5_song = link_song(prefix, t, "mmc5_test", MMC5_SONG_CA65.read_text(), mmc5_base)
     zp, bss = segs["ZEROPAGE"], segs["BSS"]
     vzp, vbss = vsegs["ZEROPAGE"], vsegs["BSS"]
+    mzp, mbss = msegs["ZEROPAGE"], msegs["BSS"]
     num_envelopes, num_pitch = PLAYERS["2a03"]["envelopes"], PLAYERS["2a03"]["pitch_envelopes"]
 
     # Test song: the ld65 link and the parser must agree byte for byte.
@@ -2141,6 +2169,50 @@ def main() -> None:
     eedited = build_thor_image(ethor, eorders, eloop, edits=[(2, 5, entry[0], 0x29, 0x2C)], env_edits=eenv_edit,
                                exp_edits=eexp_edits, patch_edits=epatch_edits)
 
+    # MMC5 test song: the same checks with the MMC5 player (7 channel streams, song base mmc5_base).
+    mplayer_sha = sha256(mplayer)
+    mplayer_id = int.from_bytes(bytes.fromhex(mplayer_sha)[:4], "little")
+    mmc5 = {**mmc5_info, "player_id": mplayer_id}
+    mmc5_text = MMC5_SONG_CA65.read_text()
+    mmc5_txt = MMC5_SONG_TXT.read_text()
+    parsed, mmc5_labels = parse_famistudio_ca65(mmc5_text, mmc5_base, MMC5_SONG_CA65.name)
+    if parsed != mmc5_song:
+        sys.exit("parser output differs from the ld65 link of mmc5_test_ca65.s")
+    if len(mmc5_song) > REGION_END - mmc5_base or "FAMISTUDIO_EXP_MMC5 = 1" not in mmc5_text \
+            or "FAMISTUDIO_USE_FAMITRACKER_TEMPO" not in mmc5_text:
+        sys.exit("MMC5 test song: a FamiTracker-tempo MMC5 export that fits the region expected")
+    mthor, mrows, morders, mloop = thor_song_from_export(mmc5_song, mmc5_labels, mmc5_txt, mmc5)
+    # The MMC5 pulses' streams hold only the 2A03 build's opcodes: thor_song_from_export walked every row with read_entry,
+    # which exits on any opcode outside mmc5["opcodes"] = OPCODES (FamiStudio's expansion opcodes $55-$5F included).
+    # They must also hold the effects the test song asks for there: extended notes (A0, B7), release, note delay, cut,
+    # vibrato, arpeggio, fine pitch, duty, slide and volume slide.
+    mops = {op for o in mthor["orders"] for c in (5, 6) for b, _, _ in o[c] for op, _ in entry_ops(b, mmc5)}
+    missing_ops = {0x40, 0x45, 0x47, 0x48, 0x49, 0x4B, 0x4E, 0x4F, 0x50, 0x51} - mops
+    if missing_ops:
+        sys.exit(f"MMC5 test song: the MMC5 pulses lack opcodes {[f'${op:02X}' for op in sorted(missing_ops)]}")
+    mnames = re.findall(r"^\t\.word @env\d+,@env\d+,@env\d+,@env\d+ ; ([0-9a-f]{2}) : (\w+)$", mmc5_text, re.M)
+    mindex = {n: int(i, 16) for i, n in mnames}
+    if len(mnames) != len(mthor["instruments"]) or "MPulse" not in mindex:
+        sys.exit("instrument names not found in the MMC5 export")
+    mspeeds = row_speeds(mmc5_txt)
+    mbase = build_thor_image(mthor, morders, mloop)
+    mmoved = build_thor_image(mthor, morders, mloop, "moved")
+    # Edit: order 2's MMC5 pulse 1 note at row 8 (E4 with the instrument change to MPulse, $80 + 2 × index, $29) becomes
+    # G4 ($2C); the "MPulse" volume envelope's sustain (12, 12) becomes (8, 8).
+    mpulse = mindex["MPulse"]
+    mpulse_vol = mthor["envelopes"][4 * mpulse][1]
+    if mpulse_vol[3:5] != b"\xcc\xcc":
+        sys.exit("unexpected MPulse volume envelope")
+    menv_edit = {4 * mpulse: (mpulse_vol, mpulse_vol[:3] + b"\xc8\xc8" + mpulse_vol[5:])}
+    starts, at = [], 0
+    for _, n, _ in mthor["orders"][2][5]:
+        starts.append(at)
+        at += n
+    entry = [i for i, s in enumerate(starts)
+             if s == 8 and mthor["orders"][2][5][i][0].endswith(bytes((0x80 | mpulse << 1, 0x29)))]
+    if len(entry) != 1:
+        sys.exit("MMC5 edit target row not found")
+    medited = build_thor_image(mthor, morders, mloop, edits=[(2, 5, entry[0], 0x29, 0x2C)], env_edits=menv_edit)
     sym_lines = "\n".join(f"#define NES_{s.upper()} 0x{syms[s]:04X}" for s in SYMBOLS)
     OUT_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
 // FamiStudio sound engine {FAMISTUDIO_TAG} (github.com/BleuBleu/FamiStudio commit {FAMISTUDIO_COMMIT}),
@@ -3380,6 +3452,133 @@ static const uint8_t nes_epsm_rhythm_events[EPSM_TEST_RHYTHM_EVENTS][4] = {{
 {c_array("nes_epsm_edited", eedited)}
 #endif /* NES_EPSM_SONG_H_ */
 """)
+    msym_lines = "\n".join(f"#define NES_MMC5_{s.upper()} 0x{msyms[s]:04X}" for s in SYMBOLS + MMC5_SYMBOLS)
+    mregion_size = REGION_END - mmc5_base
+    mimage_size = HEADER_SIZE + DIRECTORY_SIZE + mregion_size
+    OUT_MMC5_PLAYER.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// FamiStudio sound engine {FAMISTUDIO_TAG} (github.com/BleuBleu/FamiStudio commit {FAMISTUDIO_COMMIT}),
+// famistudio_ca65.s sha256 {PINNED[ENGINE_DIR / 'famistudio_ca65.s']}, unmodified, configured (FamiTracker tempo)
+// and wrapped by tools/audio/nes/nes_player.s like nes_player_image.h, assembled with FAMISTUDIO_EXP_MMC5 = 1
+// (Nintendo MMC5: two pulses after the 2A03's five channels, on the 2A03 note table; no MMC5 PCM, "extra DPCM not
+// supported", famistudio_ca65.s line 107); assembled with {CC65_VERSION}.
+// Engine licence: "Copying and distribution of this file, with or without modification, are permitted in any
+// medium without royalty provided the copyright notice and this notice are preserved" (c) 2019-2026 Mathieu Gauthier.
+// image sha256 {mplayer_sha}
+#ifndef NES_MMC5_PLAYER_IMAGE_H_
+#define NES_MMC5_PLAYER_IMAGE_H_
+#include <stdint.h>
+
+#define NES_MMC5_PLAYER_BASE 0x{PLAYER_BASE:04X}
+#define NES_MMC5_PLAYER_SIZE 0x{len(mplayer):04X}
+#define NES_MMC5_PLAYER_ID 0x{mplayer_id:08X}u /* first 4 bytes of the image sha256, little-endian */
+#define NES_MMC5_PLAYER_INIT 0x{ENTRY['nes_player_init']:04X} /* A = song index */
+#define NES_MMC5_PLAYER_PLAY 0x{ENTRY['nes_player_play']:04X} /* one 60 Hz engine frame */
+#define NES_MMC5_PLAYER_IDLE 0x{ENTRY['nes_player_idle']:04X} /* return address of host-called routines */
+#define NES_MMC5_PLAYER_TRAP 0x{ENTRY['nes_player_trap']:04X} /* BRK/IRQ/NMI vector target: a fault */
+#define NES_MMC5_SONG_BASE 0x{mmc5_base:04X} /* song data (FamiStudio format) from here upward: the page after the player (measured) */
+#define NES_MMC5_ZP_SIZE 0x{mzp[1]:04X}
+#define NES_MMC5_RAM_BASE 0x{mbss[0]:04X}
+#define NES_MMC5_RAM_SIZE 0x{mbss[1]:04X}
+#define NES_MMC5_NUM_ENVELOPES {PLAYERS['mmc5']['envelopes']}
+#define NES_MMC5_NUM_PITCH_ENVELOPES {PLAYERS['mmc5']['pitch_envelopes']}
+#define NES_MMC5_CHANNELS {PLAYERS['mmc5']['channels']} /* 2A03 pulse 1, pulse 2, triangle, noise, DPCM, MMC5 pulse 1, pulse 2 */
+
+/* Image layout: nes_player_image.h's (header, envelope directory, limits, samples from NES_SAMPLE_BASE, region end
+ * NES_REGION_END) with the region = CPU memory NES_MMC5_SONG_BASE..NES_REGION_END. */
+#define NES_MMC5_IMAGE_REGION_SIZE {mregion_size}
+#define NES_MMC5_IMAGE_SIZE {mimage_size}
+
+{msym_lines}
+
+static const uint8_t nes_mmc5_player_code[NES_MMC5_PLAYER_SIZE] = {{
+{c_bytes(mplayer)}
+}};
+
+#endif /* NES_MMC5_PLAYER_IMAGE_H_ */
+""")
+
+    OUT_MMC5_KOTLIN.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+package org.thortracker.backend
+
+/**
+ * The NES + Nintendo MMC5 preview player: the [NesPlayerImage] player assembled with `FAMISTUDIO_EXP_MMC5 = 1`
+ * (FamiStudio sound engine {FAMISTUDIO_TAG}, FamiTracker tempo, the same NSF-style entry table) by
+ * `tools/audio/prepare_nes_player.py`. Images use [NesPlayerImage]'s layout (header, envelope directory, limits,
+ * samples, kinds) with this player's [PLAYER_ID], [SONG_BASE] and [CHANNELS] channel streams in the song header
+ * (`docs/AUDIO_ENGINE.md`, "MMC5"). The MMC5 pulses play the 2A03 note table and 2A03 instruments; the engine has no
+ * MMC5 PCM. The same bytes play in the app (native `app/src/main/cpp/generated/nes_mmc5_player_image.h`) and form an
+ * `.nsf` (expansion byte MMC5) with the song region.
+ * Image sha256 `{mplayer_sha}`.
+ * Engine licence: all-permissive, notice in NOTICE.txt.
+ */
+object NesMmc5PlayerImage {{
+    /** Load, init (A = song index) and play addresses; the player starts at [LOAD]. */
+    const val LOAD = 0x{PLAYER_BASE:04X}
+    const val INIT = 0x{ENTRY['nes_player_init']:04X}
+    const val PLAY = 0x{ENTRY['nes_player_play']:04X}
+
+    /**
+     * Region: song data from [SONG_BASE] upward and the samples share CPU memory [SONG_BASE] until [REGION_END]
+     * (exclusive; vectors follow), [REGION_SIZE] bytes, as for [NesPlayerImage] but from the first page after this
+     * larger player.
+     */
+    const val SONG_BASE = 0x{mmc5_base:04X}
+    const val REGION_END = 0x{REGION_END:04X}
+    const val REGION_SIZE = {mregion_size}
+
+    /** Header bytes 4..7 (little-endian): an image only plays on the player build it was lowered for. */
+    const val PLAYER_ID = 0x{mplayer_id:08X}.toInt()
+
+    /** Bytes of a lowered image: header + envelope directory + region (address a at region offset a − [SONG_BASE]). */
+    const val IMAGE_SIZE = {mimage_size}
+
+    /**
+     * Channel streams in the song header, in engine order: 2A03 pulse 1, pulse 2, triangle, noise, DPCM, then MMC5
+     * pulse 1, pulse 2.
+     */
+    const val CHANNELS = {PLAYERS['mmc5']['channels']}
+
+    /** The player image ({len(mplayer)} bytes at [LOAD]); a fresh copy per call. */
+    val BYTES: ByteArray get() = ByteArray(HEX.length / 2) {{ HEX.substring(2 * it, 2 * it + 2).toInt(16).toByte() }}
+
+    private const val HEX =
+{kotlin_hex(mplayer)}
+}}
+""")
+
+    minstrument_defines = "\n".join(f"#define MMC5_TEST_INSTRUMENT_{n.upper()} {int(i, 16)}" for i, n in mnames)
+    mspeed_rows = ",\n".join("    {" + ", ".join(str(s) for s in line) + "}" for line in mspeeds)
+    OUT_MMC5_SONG.write_text(f"""// GENERATED by tools/audio/prepare_nes_player.py -- do not edit.
+// MMC5 test song tools/audio/nes/mmc5_test.txt (sha256 {sha256(MMC5_SONG_TXT.read_bytes())}, FamiTracker tempo),
+// as exported by FamiStudio {FAMISTUDIO_TAG} itself (tools/audio/nes/mmc5_test_ca65.s, sha256 {sha256(MMC5_SONG_CA65.read_bytes())}).
+//   nes_mmc5_raw:    that export linked at NES_MMC5_SONG_BASE (song region bytes; raw layout, 7 channel streams).
+//   nes_mmc5_thor:   the same rows rearranged into the Thor Tracker layout for the MMC5 player; every row's bytes
+//                    are FamiStudio's.
+//   nes_mmc5_moved:  nes_mmc5_thor with every block at another address (same directory indices).
+//   nes_mmc5_edited: nes_mmc5_thor with order 2 MMC5 pulse 1 row 8 E4 -> G4 and the MPulse volume sustain
+//                    12,12 -> 8,8.
+#ifndef NES_MMC5_SONG_H_
+#define NES_MMC5_SONG_H_
+#include <stdint.h>
+
+#define MMC5_TEST_ROWS {mrows}
+#define MMC5_TEST_ORDERS {morders}
+#define MMC5_TEST_LOOP {mloop}
+#define MMC5_TEST_INSTRUMENTS {len(mthor['instruments'])}
+#define MMC5_TEST_TEMPO_NTSC {u16(mmc5_song, 5 + 2 * PLAYERS['mmc5']['channels'] + 2)}
+{minstrument_defines}
+
+/* Speed in effect at each row of the first pass, read from mmc5_test.txt (not from the export). */
+static const uint8_t nes_mmc5_speed[MMC5_TEST_ORDERS][MMC5_TEST_ROWS] = {{
+{mspeed_rows}
+}};
+
+{c_array("nes_mmc5_raw", mmc5_song)}
+{c_array("nes_mmc5_thor", mbase)}
+{c_array("nes_mmc5_moved", mmoved)}
+{c_array("nes_mmc5_edited", medited)}
+#endif /* NES_MMC5_SONG_H_ */
+""")
     print(f"player: {len(player)} bytes at ${PLAYER_BASE:04X}, sha256 {player_sha}, id 0x{player_id:08X}")
     print(f"engine RAM: zp ${zp[0]:02X}+{zp[1]}, bss ${bss[0]:04X}+{bss[1]} (ends ${bss[0] + bss[1]:04X})")
     print(f"test song: {len(song)} bytes raw; Thor layout region {len(base) - HEADER_SIZE - DIRECTORY_SIZE} bytes, "
@@ -3412,11 +3611,15 @@ static const uint8_t nes_epsm_rhythm_events[EPSM_TEST_RHYTHM_EVENTS][4] = {{
     print(f"EPSM test song: {len(epsm_song)} bytes raw, {len(ethor['instruments'])} instruments per table, "
           f"{len(ethor['envelopes'])} envelopes, {len(eperiods)} envelope period rows, {fm_releases} FM release rows, "
           f"{len(rhythm)} rhythm keys")
+    print(f"MMC5 player: {len(mplayer)} bytes at ${PLAYER_BASE:04X} (song base ${mmc5_base:04X}), sha256 {mplayer_sha}, "
+          f"id 0x{mplayer_id:08X}; engine RAM zp ${mzp[0]:02X}+{mzp[1]}, bss ${mbss[0]:04X}+{mbss[1]}")
+    print(f"MMC5 test song: {len(mmc5_song)} bytes raw, {len(mthor['instruments'])} instruments, {len(mthor['envelopes'])} envelopes")
     print("wrote " + ", ".join(str(p.relative_to(ROOT)) for p in
                                (OUT_PLAYER, OUT_KOTLIN, OUT_SONG, OUT_DPCM, OUT_VRC6_PLAYER, OUT_VRC6_KOTLIN, OUT_VRC6_SONG,
                                 OUT_VRC7_PLAYER, OUT_VRC7_KOTLIN, OUT_VRC7_SONG, *OUT_N163_PLAYER.values(), OUT_N163_KOTLIN,
                                 OUT_N163_SONG, OUT_FDS_PLAYER, OUT_FDS_KOTLIN, OUT_FDS_SONG, OUT_S5B_PLAYER, OUT_S5B_KOTLIN,
-                                OUT_S5B_SONG, OUT_EPSM_PLAYER, OUT_EPSM_KOTLIN, OUT_EPSM_SONG)))
+                                OUT_S5B_SONG, OUT_MMC5_PLAYER, OUT_MMC5_KOTLIN, OUT_MMC5_SONG,
+                                OUT_EPSM_PLAYER, OUT_EPSM_KOTLIN, OUT_EPSM_SONG)))
 
 
 if __name__ == "__main__":

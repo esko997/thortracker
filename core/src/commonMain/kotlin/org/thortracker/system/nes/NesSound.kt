@@ -23,7 +23,10 @@ import org.thortracker.system.ym2612.YmOperator
 enum class NesExpansion(
     /** The chip whose instruments the expansion's channels play. */
     val chip: NesChip,
-    /** The channels after the 2A03's five, in FamiStudio's engine order: their names and kinds. */
+    /**
+     * The lanes after the 2A03's five, in FamiStudio's engine order (then, for the MMC5, Thor Tracker's software PCM
+     * lane, which the engine does not drive): their names and kinds.
+     */
     val channelNames: List<String>,
     val channelKinds: List<ChannelKind>,
 ) {
@@ -54,6 +57,14 @@ enum class NesExpansion(
     @SerialName("s5b") S5B(NesChip.S5B, List(3) { "5B Square ${it + 1}" }, List(3) { ChannelKind.PULSE }),
 
     /**
+     * The Nintendo MMC5's two pulse channels, which play 2A03 sounds (FamiStudio has no MMC5 instrument type, so the chip
+     * is the 2A03's), and the MMC5's 8-bit PCM DAC as an eighth lane: FamiStudio 4.5.3's engine does not drive the DAC, so
+     * Thor Tracker's own software player does ([Pcm]; the engine keeps its seven channels, [engineChannels]).
+     */
+    @SerialName("mmc5") MMC5(NesChip.APU, listOf("MMC5 Pulse 1", "MMC5 Pulse 2", "MMC5 PCM"),
+        listOf(ChannelKind.PULSE, ChannelKind.PULSE, ChannelKind.SAMPLE)),
+
+    /**
      * The EPSM (a Yamaha YMF288, OPN3-L): its SSG's three square tones (sharing one noise and one envelope generator, as
      * the 5B's), six 4-operator FM channels and the six fixed drums of its rhythm unit (the YM2608 rhythm ROM: bass drum,
      * snare, top cymbal, hi-hat, tom, rim shot), in FamiStudio's engine order.
@@ -62,11 +73,26 @@ enum class NesExpansion(
         List(3) { "SSG ${it + 1}" } + List(6) { "FM ${it + 1}" } + listOf("Kick", "Snare", "Cymbal", "Hi-hat", "Tom", "Rim"),
         List(3) { ChannelKind.PULSE } + List(6) { ChannelKind.VOICE } + List(6) { ChannelKind.SAMPLE });
 
-    /** Channels after the 2A03's five. */
+    /**
+     * The expansion as messages name it ("NES + 5B", "NES + MMC5"): its chip's label, except the MMC5's, whose pulses
+     * play 2A03 sounds.
+     */
+    val label: String get() = if (this == MMC5) "MMC5" else chip.label
+
+    /** Lanes after the 2A03's five. */
     val extraChannels: Int get() = channelNames.size
 
-    /** All channels of a song with this expansion. */
+    /** All lanes of a song with this expansion (patterns hold one track per lane). */
     val channels: Int get() = NesRules.APU_CHANNELS + extraChannels
+
+    /**
+     * The channel streams FamiStudio's engine plays: every lane but the MMC5's software PCM lane, which is not the
+     * engine's (the MMC5 build stays seven channels; [NesRules.MMC5_PCM] is lowered separately).
+     */
+    val engineChannels: Int get() = if (this == MMC5) channels - 1 else channels
+
+    /** True for the MMC5, whose last lane is the software PCM lane. */
+    val hasPcmLane: Boolean get() = this == MMC5
 
     /** The N163 channels a song with this expansion enables (1..8), 0 without the N163. */
     val n163Channels: Int get() = if (chip == NesChip.N163) extraChannels else 0
@@ -78,6 +104,7 @@ enum class NesExpansion(
         VRC7 -> NesVrc7System
         FDS -> NesFdsSystem
         S5B -> NesS5bSystem
+        MMC5 -> NesMmc5System
         EPSM -> NesEpsmSystem
         else -> NesN163System.of(n163Channels)
     }
@@ -619,7 +646,9 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
  * envelope [s5b]; [NesChip.EPSM]: every EPSM channel, no duty — the SSG squares play it as a 5B sound ([mixer], [noise],
  * [s5b]: the same YM2149 SSG), the FM channels play the FM patch [epsm] shaped by the volume, arpeggio and pitch
  * envelopes, the rhythm drums take only the volume envelope's first value (empty = 15) and [epsm]'s left/right pan).
- * These are left out of project files at their defaults, so 2A03 instruments are stored as before.
+ * In MMC5 songs a 2A03 sound also maps notes to the MMC5 PCM lane's samples ([pcm], beside its DPCM mappings: the same
+ * key may play a DPCM sample on DPCM and a PCM sample on the PCM lane). These are left out of project files at their
+ * defaults, so 2A03 instruments are stored as before.
  */
 @Serializable
 data class NesInstrument(
@@ -638,6 +667,7 @@ data class NesInstrument(
     @EncodeDefault(EncodeDefault.Mode.NEVER) val mixer: NesEnvelope = NesEnvelope(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val noise: NesEnvelope = NesEnvelope(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val s5b: S5bEnvelope = S5bEnvelope.DEFAULT,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val pcm: Map<Int, PcmMapping> = emptyMap(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val epsm: EpsmPatch = EpsmPatch.DEFAULT,
 ) {
     companion object {
@@ -683,10 +713,11 @@ data class DpcmMapping(val sample: Int, val pitch: Int = 15, val loop: Boolean =
 /**
  * An NES song's chip data: one bank of exactly [NesSystem.SLOTS] instruments shared by all channels (slot n =
  * index n-1), the song's DPCM [samples] (at most [NesSystem.MAX_SAMPLES], referenced by instruments' DPCM
- * mappings), its [expansion] chip, with the VRC7 how its FM notes fade ([vrc7Sustain]) and with the EPSM the chip's one
- * LFO ([epsmLfo]: register `$22`, 0 = off, bit 3 on with the rate 0-7 in bits 0-2, shared by all FM channels and written
- * with every FM sound the engine loads); those are left out of project files at their defaults, so 2A03 songs are stored
- * as before.
+ * mappings), its [expansion] chip, with the VRC7 how its FM notes fade ([vrc7Sustain]), with the MMC5 the PCM lane's
+ * samples ([pcmSamples], at most [Pcm.MAX_SAMPLES] in [Pcm.MEMORY] bytes, referenced by instruments' PCM mappings) and
+ * with the EPSM the chip's one LFO ([epsmLfo]: register `$22`, 0 = off, bit 3 on with the rate 0-7 in bits 0-2, shared
+ * by all FM channels and written with every FM sound the engine loads); those are left out of project files at their
+ * defaults, so 2A03 songs are stored as before.
  * Stored in project files as the song's `sound` object.
  */
 @Serializable
@@ -695,6 +726,7 @@ data class NesSound(
     val samples: List<DpcmSample> = emptyList(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val expansion: NesExpansion = NesExpansion.NONE,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val pcmSamples: List<PcmSample> = emptyList(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val epsmLfo: Int = 0,
 ) : SystemSound {
     override val system: SoundSystem get() = expansion.system

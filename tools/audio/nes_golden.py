@@ -7,8 +7,8 @@ For every core/src/jvmTest/resources/nes-golden/<name>.txt (written by NesGolden
    `dotnet FamiStudio.dll <name>.txt famistudio-asm-export <name>_ca65.s -famistudio-asm-format:ca65`
    (a failed import or export fails this script, so it also proves FamiStudio opens our text).
 2. cc65's ca65/ld65 assemble that export alone at the song base of the player build the song needs ($8C00 for the 2A03
-   build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"`, `"VRC7"`, `"FDS"`, `"S5B"` or `"EPSM"` (e.g. the
-   golden songs s5b_demo, s5b_effects, epsm_demo, epsm_effects and epsm_rhythm) at NES_<CHIP>_SONG_BASE from
+   build, tools/audio/nes/nes_song.cfg; a text with `Expansions="VRC6"`, `"VRC7"`, `"FDS"`, `"S5B"`, `"MMC5"` or `"EPSM"`
+   (including the MMC5 and EPSM golden songs) at NES_<CHIP>_SONG_BASE from
    app/src/main/cpp/generated/nes_<chip>_player_image.h; a text with `Expansions="N163" NumN163Channels="n"` at
    NES_N163_<n>_SONG_BASE from nes_n163_<n>_player_image.h) into <name>.bin, with FAMISTUDIO_DPCM_PTR at the sample block
    Thor Tracker uses (the top of $C000-$FFF9, 64-aligned). A song with DPCM samples also gets FamiStudio's sample bank,
@@ -53,9 +53,9 @@ EPSM_CONFIG = {"FAMISTUDIO_EXP_EPSM_SSG_CHN_CNT": 3, "FAMISTUDIO_EXP_EPSM_FM_CHN
 
 
 def song_cfg(text: str, tmp: Path) -> Path:
-    """The ld65 layout for a song text: the 2A03 build's, or one at the song base of the VRC6 / VRC7 / FDS / S5B / EPSM
+    """The ld65 layout for a song text: the 2A03 build's, or one at the song base of the VRC6 / VRC7 / FDS / S5B / MMC5 / EPSM
     build, or of the N163 build with the text's NumN163Channels (FamiStudio's default without it: 1)."""
-    m = re.search(r'^Project [^\n]*Expansions="(VRC6|VRC7|N163|FDS|S5B|EPSM)"', text, re.M)
+    m = re.search(r'^Project [^\n]*Expansions="(VRC6|VRC7|N163|FDS|S5B|MMC5|EPSM)"', text, re.M)
     if not m:
         return SONG_CFG
     chip = m.group(1)

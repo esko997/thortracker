@@ -39,7 +39,7 @@ object NesValidator {
             if (pattern.scale.root !in 0..11) out += "$label has scale root ${pattern.scale.root}; roots are 0-11 (C-B)"
             if (pattern.length !in 1..Songs.ROWS) out += "$label is ${pattern.length} rows long; lengths are 1-${Songs.ROWS}"
             if (pattern.tracks.size != channels) {
-                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.chip.label}"} patterns have $channels"
+                out += "$label has ${pattern.tracks.size} channels; NES${if (expansion == NesExpansion.NONE) "" else " + ${expansion.label}"} patterns have $channels"
                 return@forEachIndexed
             }
             pattern.tracks.forEachIndexed { ch, track ->
@@ -118,12 +118,32 @@ object NesValidator {
                     m.dmcInitial !in -1..DpcmSample.DMC_INITIAL.last -> out += "$at: initial value ${m.dmcInitial} is outside 0-63 (or -1 for the sample's)"
                 }
             }
+            if (ins.pcm.isNotEmpty() && !expansion.hasPcmLane) out += "$where: only NES + MMC5 songs map PCM samples (the MMC5 PCM lane)"
+            if (ins.pcm.isNotEmpty() && ins.chip != NesChip.APU) out += "$where: only 2A03 sounds map PCM samples"
+            for ((note, m) in ins.pcm) {
+                val at = "$where, PCM ${if (note in NesSystem.noteRange) NesSystem.noteName(note) else "note $note"}"
+                when {
+                    note !in NesSystem.noteRange -> out += "$at: notes are C-1..B-8 (${NesSystem.noteRange.first}-${NesSystem.noteRange.last})"
+                    m.sample !in song.nes.pcmSamples.indices -> out += "$at: PCM sample ${m.sample + 1} does not exist; the song has ${song.nes.pcmSamples.size}"
+                    m.pitch !in Pcm.PITCH -> out += "$at: pitch ${m.pitch} is outside ${Pcm.PITCH.first}..+${Pcm.PITCH.last} semitones"
+                }
+            }
         }
         song.nes.samples.forEachIndexed { i, s ->
             val where = "DPCM sample ${i + 1} \"${s.name}\""
             if (s.data.size !in 1..DpcmSample.MAX_BYTES) out += "$where has ${s.data.size} bytes; samples are 1-${DpcmSample.MAX_BYTES} bytes"
             s.data.firstOrNull { it !in 0..255 }?.let { out += "$where: byte $it is outside 0-255" }
             if (s.dmcInitial !in DpcmSample.DMC_INITIAL) out += "$where: initial value ${s.dmcInitial} is outside 0-63"
+        }
+        if (song.nes.pcmSamples.isNotEmpty() && !expansion.hasPcmLane) out += "Only NES + MMC5 songs have PCM samples (the MMC5 PCM lane)"
+        song.nes.pcmSamples.forEachIndexed { i, s ->
+            val where = "PCM sample ${i + 1} \"${s.name}\""
+            if (s.data.size !in 1..Pcm.MEMORY) out += "$where has ${s.data.size} bytes; PCM samples are 1-${Pcm.MEMORY} bytes"
+            (0 until s.data.size).firstOrNull { s.data[it] == 0 }?.let {
+                out += "$where: byte $it is \$00, which the MMC5's DAC ignores (it holds its value and trips the IRQ); bytes are 1-255"
+            }
+            if (s.rate !in Pcm.MIN_RATE..Pcm.MAX_RATE) out += "$where: rate ${s.rate} Hz is outside ${Pcm.MIN_RATE}-${Pcm.MAX_RATE}"
+            if (s.loopStart !in 0 until maxOf(1, s.data.size)) out += "$where: loop start ${s.loopStart} is outside the sample (0-${s.data.size - 1})"
         }
         song.tuning?.problems(NesSystem)?.forEach { out += it }
         if (song.newPatternScale.root !in 0..11) out += "The scale for new patterns has root ${song.newPatternScale.root}; roots are 0-11 (C-B)"
@@ -236,6 +256,7 @@ object NesValidator {
             }
         }
         if (out.isEmpty()) dpcmErrors(song, out)
+        if (out.isEmpty() && song.nes.expansion.hasPcmLane) pcmErrors(song, out)
         if (out.isEmpty()) {
             try {
                 FamiStudioLowering.lower(FsSong.of(song))
@@ -244,6 +265,36 @@ object NesValidator {
             }
         }
         return out.list()
+    }
+
+    /**
+     * MMC5 PCM lane problems of the arrangement [song]: notes without a mapping (also legato ones, which play the lane's
+     * current instrument) and the player's sample memory and sample count.
+     */
+    private fun pcmErrors(song: Song, out: Report) {
+        val stored = Pcm.stored(song.nes)
+        if (stored > Pcm.MEMORY) {
+            out += "The PCM samples take ${Pcm.kb(stored)}; the MMC5 PCM player holds ${Pcm.kb(Pcm.MEMORY)}. Delete or shorten samples"
+        }
+        if (song.nes.pcmSamples.size > Pcm.MAX_SAMPLES) {
+            out += "The song has ${song.nes.pcmSamples.size} PCM samples; the MMC5 PCM player holds ${Pcm.MAX_SAMPLES}"
+        }
+        var current = 0
+        for (p in song.orders) {
+            val pattern = song.patterns[p]
+            for (r in 0 until pattern.length) {
+                val cell = pattern.tracks[NesRules.MMC5_PCM][r]
+                if (cell.note < 0) continue
+                val where = "${Songs.patternLabel(song, p).cap()}, MMC5 PCM row $r"
+                val slot = if (cell.instrument != 0) cell.instrument else current
+                if (slot == 0) {
+                    out += "$where: ${NesSystem.noteName(cell.note)} has no instrument and none has played on MMC5 PCM yet; enter the instrument whose PCM samples it plays"
+                } else {
+                    NesRules.pcmMappingProblem(song, slot, cell.note)?.let { out += "$where: $it" }
+                    current = slot
+                }
+            }
+        }
     }
 
     /**
@@ -330,6 +381,10 @@ object NesValidator {
             }
         }
         firstNotesWithoutInstrument(song).forEach { out += it }
+        org.thortracker.backend.NesPcmLowering.firstNote(song)?.let {
+            out += "The MMC5 PCM lane plays ($it): playback and WAV export include it, but .nsf and FamiStudio text cannot " +
+                "(FamiStudio's engine has no MMC5 PCM), so those exports are refused"
+        }
         if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
         if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.FDS) fdsWarnings(song).forEach { out += it }
@@ -349,7 +404,8 @@ object NesValidator {
     private fun firstNotesWithoutInstrument(song: Song): List<String> {
         val out = ArrayList<String>()
         for (ch in 0 until song.nes.expansion.channels) {
-            if (ch == NesRules.DPCM) continue // an error there: a DPCM note needs an instrument's sample mapping
+            // Errors there: a DPCM or MMC5 PCM note needs an instrument's sample mapping.
+            if (ch == NesRules.DPCM || NesRules.isMmc5Pcm(song.nes.expansion, ch)) continue
             loop@ for (p in song.orders) {
                 val pattern = song.patterns[p]
                 for (row in 0 until pattern.length) {

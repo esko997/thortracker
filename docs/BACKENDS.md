@@ -477,7 +477,7 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
     message while it is missing; nothing substitutes another sound. `.nsf` and text exports never need or contain it
     (NSF players bring their own copy).
   - *Engine.* A player build of the same pinned engine with `FAMISTUDIO_EXP_EPSM = 1` (`NesEpsmPlayerImage`,
-    `nes_epsm_player_image.h`, `NES_EXPANSION_EPSM` = 7 as FamiStudio's `ExpansionType`) and the YMF288 emulated by
+    `nes_epsm_player_image.h`, native NSF flag `NES_EXPANSION_EPSM` = `$80`) and the YMF288 emulated by
     the vendored ymfm's `ymf288` (BSD-3, the Mega Drive's ymfm pin), as Mesen2 does. The machine outputs true stereo
     (FM and rhythm pans; the 2A03 centred); seeks clock the chip. Contract: `docs/AUDIO_ENGINE.md`, "EPSM".
   - *Exports.* `.nsf` with header byte `$7B` bit 7 (EPSM); FamiStudio text with `Expansions="EPSM"`, EPSM instruments
@@ -490,6 +490,34 @@ at tag 4.5.3 / commit c09dca6, and the NESdev wiki "Namco 163 audio"). Decisions
     bass (algorithm 0), chorused pad (algorithm 5), organ (algorithm 7), bell and brass on FM; an SSG arpeggio shimmer,
     a hardware-envelope buzz bass (auto period, tone and noise off) and tone+noise drums on the SSG; the 2A03 echo,
     plucks, triangle bass, noise hats and the DPCM kick. It has **no rhythm notes**, so it plays without the ROM.
+
+- **MMC5** (Nintendo's MMC5 mapper: two more pulses and an 8-bit PCM DAC): channels MMC5 Pulse 1 (5) and MMC5
+  Pulse 2 (6), `ChannelKind.PULSE`. FamiStudio 4.5.3 has no MMC5 instrument type: MMC5 squares play 2A03 instruments
+  (its `Channel.SupportsInstrument`), so `NesExpansion.MMC5.chip` is `NesChip.APU`, the song holds only 2A03 sounds
+  and the Instrument view has no Chip row. Duties 0-3 (`Vxx` 00-03), every 2A03-pulse effect, notes A-1..B-8 (the
+  same 11-bit periods and note table as the 2A03 pulses: absolute 57 is engine note 46 and 440 Hz on every pulse).
+  Differences the musician hears, both from the hardware and the pinned driver: no sweep unit; the driver writes the
+  period-high register only when it changes, without the 2A03 pulses' smooth-vibrato trick, so a pitch crossing a
+  period-high boundary restarts the waveform (FamiStudio's documentation: "the reset bug cannot be worked
+  around"); periods below 8 are not silenced. **PCM is Thor Tracker's software lane**: the pinned engine's header says
+  "Nintendo MMC5 (2 extra squares, extra DPCM not supported)" (`famistudio_ca65.s` line 107), its MMC5 init writes
+  `$5010 = $00` and `$5015 = $03` only and nothing writes `$5011`; FamiStudio 4.5.3 never activates `Mmc5Dpcm`. So the
+  engine stays seven channels and MMC5 songs get an eighth lane, **MMC5 PCM**, played by a software player on the real
+  DAC (AUDIO_ENGINE.md, "MMC5 PCM lane"): 2A03 sounds map keys to PCM samples on their PCM page (sample, pitch
+  −48..+24 semitones, loop, chromatic spread; beside, not instead of, their DPCM mappings); `.wav` import to unsigned
+  8-bit mono (Dpcm's reader; rates to 48 kHz kept, higher converted and disclosed; minima raised to 1 for the DAC's
+  `$00` rule; nothing cut: a file that does not fit 256 KiB / 64 samples is refused); `Cxx`, `Gxx`, `Sxx`, OFF and
+  `Fxx` on the lane, other effects refused; playback, audition, live edits, seeks and WAV export. `.nsf` and FamiStudio
+  text refuse songs whose PCM lane plays. Demo: "Tandem Skies"
+  (`NesMmc5DemoSong`): the MMC5 pulses as a lead/harmony pair over the 2A03's echo, triangle bass, noise drums and
+  the DPCM starter kit (its PCM lane is silent, so its `.nsf`/text stay complete); `exportSamples` writes
+  `tandem-skies.{thor,nsf,txt,nesimg}`, the shortest valid MMC5 song `mmc5-shortest.nesimg`, and the PCM fixtures
+  `sample-courier.{thor,nesimg}` (`NesMmc5DemoSong.pcmDemo`: synthesized kit `NesPcmKit`) and `mmc5-pcm-shortest.nesimg`
+  for the WAV test. Engine: a third player build (`FAMISTUDIO_EXP_MMC5 = 1`,
+  `NesMmc5PlayerImage`, `nes_mmc5_player_image.h`) whose song base is measured by `prepare_nes_player.py` (the first
+  page after the player), the MMC5 audio unit `nes/nes_mmc5.c`; exports `.nsf` with `$7B` = `$08` and FamiStudio text
+  with `Expansions="MMC5"` and the `MMC5Square1/MMC5Square2` channels (instruments without an `Expansion`). Golden
+  test songs `mmc5_demo` and `mmc5_effects`. Contract: `docs/AUDIO_ENGINE.md`, "MMC5".
 
 **Adding another expansion** follows the same path:
 1. `prepare_nes_player.py`: assemble `nes_player.s` with `-D FAMISTUDIO_EXP_<CHIP>=1` (and its note tables), song
@@ -1155,8 +1183,8 @@ Decisions:
   (the last sound loaded wins for all six FM channels). Thor Tracker keeps it as a song setting and writes it into
   every exported EPSM instrument; FamiStudio projects whose instruments disagree cannot be represented exactly. Review.
 - EPSM SSG noise and hardware envelope are shared by SSG 1-3, as on the 5B: the highest square sounding such a sound
-  drives them. Unlike the 5B branch, this slice shows no Pattern lane tags or inspector lines for who drives them.
-  Proposed: add them when the 5B and EPSM branches merge (one shared implementation).
+  drives them. The shared `NesS5b` inspector reports ENV/NOISE ownership in Pattern lane tags and inspector lines
+  for both systems, and validation warns when sounds compete for the shared generators. Review their clarity.
 - EPSM rhythm drums have fixed pitch (the ROM's samples at the chip's rate): a note only triggers the channel's drum,
   so transposing a rhythm lane changes nothing audible. Proposed: keep FamiStudio's model (any note triggers); a
   dedicated "hit" note is the alternative.
@@ -1166,3 +1194,11 @@ Decisions:
 - EPSM mixing level and stereo: the machine outputs true stereo (FM and rhythm pans, 2A03 centred). The YMF288's level
   against the 2A03 follows the evidence in `docs/AUDIO_ENGINE.md`, "EPSM"; no hardware comparison yet. Listening may
   ask for a different balance.
+- MMC5 PCM is played by Thor Tracker's software lane, not by the pinned engine and not by an invented hardware timer:
+  open questions are the 256 KiB / 64-sample budget, the −48..+24 pitch range, a delay longer than its row being forced
+  at the next row, and the lower MMC5/N163 output level from the full-span, two-filter budget (about 14.1/10.5 dB
+  below plain NES at equal 2A03 content). Cuts continue across rows unless a new note/OFF cancels them.
+  Native/JVM verification and human listening are tracked separately; no listening pass is claimed.
+- MMC5 mixing: the two pulses at the 2A03 pulses' level (NESdev: "equivalent in volume") with inverted polarity, the
+  240 Hz envelope/length clock at CPU ÷ 7424 (NESdev: from die images, not bench-confirmed). No hardware or
+  reference-emulator comparison yet; listening may ask for a different balance.

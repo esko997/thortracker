@@ -22,8 +22,8 @@ int64_t now_ns() {
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
-aaudio_data_callback_result_t data_callback(AAudioStream*, void* user, void* audio, int32_t frames) {
-    return static_cast<Engine*>(user)->render(static_cast<float*>(audio), frames);
+aaudio_data_callback_result_t data_callback(AAudioStream* stream, void* user, void* audio, int32_t frames) {
+    return static_cast<Engine*>(user)->render(stream, static_cast<float*>(audio), frames);
 }
 
 void error_callback(AAudioStream*, void* user, aaudio_result_t error) {
@@ -191,9 +191,9 @@ int Engine::ensure_stream() {
                 result = AAUDIO_ERROR_INVALID_FORMAT;
                 continue;
             }
-            // Two bursts, fixed: the usual low-latency setting. Not adapted on underrun;
-            // diagnostics() reports xruns so device evidence decides whether to grow it.
+            // Begin at two bursts; the callback grows only on observed underruns.
             AAudioStream_setBufferSizeInFrames(stream, AAudioStream_getFramesPerBurst(stream) * 2);
+            previous_xruns_ = std::max(0, AAudioStream_getXRunCount(stream));
             stream_ = stream;
         }
         if (!stream_) return result;
@@ -235,7 +235,7 @@ void Engine::record_row(uint64_t frame, int order, int row) {
     ring_head_.store(head + 1, std::memory_order_release);
 }
 
-aaudio_data_callback_result_t Engine::render(float* out, int32_t frames) {
+aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, int32_t frames) {
     const int64_t t0 = now_ns();
     std::memset(out, 0, sizeof(float) * 2 * static_cast<size_t>(frames));
 
@@ -324,6 +324,18 @@ aaudio_data_callback_result_t Engine::render(float* out, int32_t frames) {
     auditioning_.store(aud_ != nullptr, std::memory_order_relaxed);
     frames_rendered_ += static_cast<uint64_t>(frames);
     frames_written_.store(static_cast<int64_t>(frames_rendered_), std::memory_order_release);
+    // AAudio/Oboe support latency tuning at the end of the data callback. This changes the used
+    // portion of the existing buffer, not its allocation; no stream lock or control-thread wait.
+    const int32_t xruns = AAudioStream_getXRunCount(stream);
+    if (xruns > previous_xruns_) {
+        previous_xruns_ = xruns;
+        const int32_t size = AAudioStream_getBufferSizeInFrames(stream);
+        const int32_t capacity = AAudioStream_getBufferCapacityInFrames(stream);
+        const int32_t burst = AAudioStream_getFramesPerBurst(stream);
+        if (size >= 0 && capacity > size && burst > 0) {
+            AAudioStream_setBufferSizeInFrames(stream, size + std::min(burst, capacity - size));
+        }
+    }
     const int64_t spent = now_ns() - t0;
     if (spent > max_callback_ns_.load(std::memory_order_relaxed)) {
         max_callback_ns_.store(spent, std::memory_order_relaxed);

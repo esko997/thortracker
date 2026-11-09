@@ -18,9 +18,9 @@ object NesRules {
     const val NOTE_COUNT = 96
 
     /**
-     * The lowest note the 2A03's pulses and triangle can play: FamiStudio note 10 (A-1), the longest 11-bit period in
-     * its note table (the triangle sounds it an octave lower). The VRC6 reaches C-1..B-8; VRC7, the 5B and the EPSM's
-     * SSG and FM channels reach C-1..B-7.
+     * The lowest note the channels with an 11-bit period can play (the 2A03's pulses and triangle, the MMC5's pulses):
+     * FamiStudio note 10 (A-1), the longest period in its note table (the triangle sounds it an octave lower). The VRC6
+     * reaches C-1..B-8; VRC7, the 5B and the EPSM's SSG and FM channels reach C-1..B-7.
      */
     const val LOWEST_TONAL = 10 + NOTE_OFFSET
 
@@ -193,6 +193,23 @@ object NesRules {
      */
     const val EPSM_OCTAVE = 12
 
+    /**
+     * The MMC5's pulses (MMC5 Pulse 1 and 2 are channels 5 and 6): 2A03-style pulses that play 2A03 sounds from the 2A03
+     * pulses' note table (no [engineNoteShift]), without a sweep unit.
+     */
+    const val MMC5_PULSE1 = 5
+    const val MMC5_PULSE2 = 6
+
+    /**
+     * The MMC5 PCM lane (lane 7 of MMC5 songs): notes play the PCM samples their instrument maps to them
+     * ([NesInstrument.pcm]) through Thor Tracker's software player on the MMC5's DAC ([Pcm]); not one of FamiStudio's
+     * engine channels. Cxx sets its volume, Gxx delays, Sxx cuts, Fxx sets the song speed as on any lane.
+     */
+    const val MMC5_PCM = 7
+
+    /** The effects the PCM lane plays: volume, speed, note delay and note cut. */
+    private val PCM_EFFECTS = setOf(12, 15, 16, 28) // C, F, G, S
+
     /** Channel [ch]'s name in a song with [expansion]. */
     fun channelName(expansion: NesExpansion, ch: Int): String =
         if (ch < APU_CHANNELS) APU_NAMES[ch] else expansion.channelNames.getOrElse(ch - APU_CHANNELS) { "Channel $ch" }
@@ -252,6 +269,12 @@ object NesRules {
         }
         return false
     }
+
+    /** True for the two pulses of an MMC5 song. */
+    fun isMmc5(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.MMC5 && (ch == MMC5_PULSE1 || ch == MMC5_PULSE2)
+
+    /** True for the software PCM lane of an MMC5 song. */
+    fun isMmc5Pcm(expansion: NesExpansion, ch: Int): Boolean = expansion == NesExpansion.MMC5 && ch == MMC5_PCM
 
     /** Most orders: the player indexes orders with a byte (FamiStudio itself allows 256). */
     const val MAX_ORDERS = 255
@@ -347,6 +370,16 @@ object NesRules {
     private val VRC6_DUTY = EffectSpec(FX_DUTY, "Duty", "xx: 00-07 (1/16-8/16)",
         "VRC6 pulse duty from this row on: 00 = 1/16 (6.25%) up to 07 = 8/16 (50%) (an instrument duty envelope takes over " +
             "at its next step). Not on the saw.", true)
+
+    /**
+     * The duty effect on the MMC5 pulses: the 2A03's four duties. FamiStudio's engine hides the 2A03 pulses' phase reset
+     * with their sweep unit (`FAMISTUDIO_CFG_SMOOTH_VIBRATO`); the MMC5 has no sweep, so its waveform restarts audibly
+     * whenever the period's high byte changes.
+     */
+    private val MMC5_DUTY = EffectSpec(FX_DUTY, "Duty", "xx: 00-03",
+        "MMC5 pulse duty 12.5/25/50/75% from this row on (an instrument duty envelope takes over at its next step). The " +
+            "MMC5 has no sweep unit, so FamiStudio cannot smooth its pitch changes: when a note, slide or vibrato moves " +
+            "the period across a high-byte boundary the waveform restarts with a click (a phase reset).", true)
 
     /**
      * Fine pitch on the VRC7 FM channels: the engine adds FamiStudio's fine pitch × 8 to the FM frequency number, so a
@@ -498,9 +531,12 @@ object NesRules {
             it == ChannelKind.WAVE
     }
 
-    /** The lowest note [channel] plays: A-1 on the 2A03's pulses and triangle, every note elsewhere. */
+    /**
+     * The lowest note [channel] plays: A-1 on the channels with an 11-bit period (the 2A03's pulses and triangle, the
+     * MMC5's pulses), every note elsewhere.
+     */
     fun lowestNote(expansion: NesExpansion, channel: Int): Int =
-        if (channel < APU_CHANNELS && pitched(expansion, channel)) LOWEST_TONAL else 1 + NOTE_OFFSET
+        if (pitched(expansion, channel) && (channel < APU_CHANNELS || isMmc5(expansion, channel))) LOWEST_TONAL else 1 + NOTE_OFFSET
 
     /**
      * The 5B's tone divides the CPU clock by 32 × period where the 2A03 pulses divide by 16 × (period + 1), and
@@ -537,12 +573,14 @@ object NesRules {
      * the DMC level on DPCM (FamiStudio's `Channel.SupportsEffect`), the DMC level elsewhere, the phase reset off the
      * N163's channels and the FDS (the only channels whose phase reset FamiStudio's text and this player share: opcodes
      * `$5B`, `$53`), the 5B/EPSM envelope period off their SSG squares and H, I and J off the FDS channel (in an FDS song I
-     * and J are the FDS's mod speed, elsewhere the SSG envelope period), and on the EPSM's rhythm drums everything but
-     * [RHYTHM_EFFECTS].
+     * and J are the FDS's mod speed, elsewhere the SSG envelope period), on the EPSM's rhythm drums everything but
+     * [RHYTHM_EFFECTS] and on the MMC5 PCM lane everything but [PCM_EFFECTS].
      */
     private fun unusable(expansion: NesExpansion, channel: Int): Set<Int> = when {
         isEpsmRhythm(expansion, channel) -> EFFECTS_EPSM.map { it.code }.toSet() - RHYTHM_EFFECTS
         isSsg(expansion, channel) -> setOf(FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
+        // The MMC5 PCM lane is Thor Tracker's sample player: only volume, speed, delay and cut mean something there.
+        isMmc5Pcm(expansion, channel) -> EFFECTS.map { it.code }.toSet() - PCM_EFFECTS
         else -> when (kind(expansion, channel)) {
             ChannelKind.NOISE -> setOf(FX_ARPEGGIO, FX_VIBRATO, FX_FINE_PITCH, FX_DELTA_COUNTER, FX_PHASE_RESET)
             ChannelKind.TRIANGLE -> setOf(FX_VOLUME, FX_VOLUME_SLIDE, FX_DUTY, FX_DELTA_COUNTER, FX_PHASE_RESET)
@@ -561,6 +599,7 @@ object NesRules {
         effects(expansion).filter { it.code !in no }.map {
             when {
                 it.code == FX_DUTY && chip == NesChip.VRC6 -> VRC6_DUTY
+                it.code == FX_DUTY && isMmc5(expansion, channel) -> MMC5_DUTY
                 it.code == FX_FINE_PITCH && chip == NesChip.VRC7 -> VRC7_FINE
                 it.code == FX_FINE_PITCH && chip == NesChip.N163 -> N163_FINE
                 it.code == FX_FINE_PITCH && chip == NesChip.FDS -> FDS_FINE
@@ -684,6 +723,9 @@ object NesRules {
         if (cell.note >= 0 && channel == DPCM && cell.instrument != 0) {
             dpcmMappingProblem(song, cell.instrument, cell.note)?.let { return it }
         }
+        if (cell.note >= 0 && isMmc5Pcm(expansion, channel) && cell.instrument != 0) {
+            pcmMappingProblem(song, cell.instrument, cell.note)?.let { return it }
+        }
         if (!cell.hasEffect) return null
         val p = cell.param
         val x = p shr 4
@@ -783,6 +825,18 @@ object NesRules {
         val top = NesSystem.noteName(n163HighestFsNote(n) + NOTE_OFFSET)
         return "$channelName cannot play $note with $n N163 channels: FamiStudio's N163 note table tops out above $top " +
             "(the chip updates each of $n channels once every ${15 * n} CPU cycles); play it lower or use fewer N163 channels"
+    }
+
+    /**
+     * Why MMC5 PCM lane note [note] cannot play with instrument [slot] (1-based), or null: the instrument must map a PCM
+     * sample to the note, and the mapping must name an existing sample.
+     */
+    fun pcmMappingProblem(song: Song, slot: Int, note: Int): String? {
+        val name = NesSystem.noteName(note)
+        val mapping = song.nes.instruments.getOrNull(slot - 1)?.pcm?.get(note)
+            ?: return "instrument ${hex2(slot)} maps no PCM sample to $name; map one on its PCM page or play another note"
+        if (mapping.sample !in song.nes.pcmSamples.indices) return "instrument ${hex2(slot)} maps $name to PCM sample ${mapping.sample + 1}, which does not exist"
+        return null
     }
 
     /**

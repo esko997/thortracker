@@ -306,7 +306,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 ?.forEach { it.delete() }
             wavSpoolsCleaned = true
         }
-        buildPrimary()
         projectStore.restore { recovered, warning ->
             if (isDestroyed) return@restore
             if (recovered != null) session.replaceSong(recovered)
@@ -314,10 +313,15 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             recoveredWorkingSong = recovered != null
             recoveryWarning = warning
             documentReady = true
+            // Pane construction normalizes saved selections against the song's channel and instrument limits.
+            // Wait for recovery rather than clamping them against the temporary Game Boy demo.
+            buildPrimary()
+            updateSecondary()
             try {
-                audio = ChipAudio(applicationContext).also { transport.audio = it }
-                initialized = true
+                audio = ChipAudio(applicationContext)
                 loadRhythmRom()
+                transport.audio = audio
+                initialized = true
                 statusMessage = if (recovered != null) "Recovered working project"
                 else "Demo loaded. For a blank song choose Menu, Files, New blank song"
             } catch (e: Exception) {
@@ -416,7 +420,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     private fun updateSecondary() {
-        if (!active) return
+        if (!active || !documentReady) return
         val candidate = displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
             .firstOrNull { it.displayId != display?.displayId }
         if (candidate == null) {

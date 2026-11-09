@@ -13,6 +13,9 @@
  *                    ("nes-famistudio-fds"): the 2A03's 5 channels, then the FDS channel (engine channel 5)
  *   nes_player_s5b   generated/nes_s5b_player_image.h  FAMISTUDIO_EXP_S5B = 1 ("nes-famistudio-s5b"): the
  *                    2A03's 5 channels, then Sunsoft 5B square 1, 2 and 3 (engine channels 5, 6, 7)
+ *   nes_player_mmc5  generated/nes_mmc5_player_image.h FAMISTUDIO_EXP_MMC5 = 1 ("nes-famistudio-mmc5"): the
+ *                    2A03's 5 channels, then MMC5 pulse 1 and pulse 2 (engine channels 5, 6; the MMC5 PCM is not
+ *                    supported by the engine)
  *   nes_player_epsm  generated/nes_epsm_player_image.h FAMISTUDIO_EXP_EPSM = 1 ("nes-famistudio-epsm"): the
  *                    2A03's 5 channels, then EPSM SSG 1-3 (5..7), FM 1-6 (8..13) and the six rhythm drums (14..19:
  *                    bass drum, snare, top cymbal, hi-hat, tom, rim shot)
@@ -26,7 +29,8 @@
  * channel) and the `$5A` release / `$5B` phase reset opcodes, with FDS the same expansion instrument pointer and
  * wave-index envelope (the third envelope slot of the FDS channel) and the `$57` mod speed / `$58` mod depth / `$59`
  * release opcodes, with the 5B the same expansion instrument pointer, the mixer and noise envelope kinds
- * (envelope slots 2 and 3 of each 5B square) and the `$5E` envelope period opcode, and with the EPSM the same
+ * (envelope slots 2 and 3 of each 5B square) and the `$5E` envelope period opcode, with MMC5 the plain 2A03
+ * opcodes (duty 0..3, the `$53` phase reset also on the MMC5 pulses), and with the EPSM the same
  * expansion instrument pointer (each entry also pointing at a 31-byte FM patch block), the mixer and noise envelope
  * kinds (envelope slots 2 and 3 of each SSG), the `$5C` FM release and `$5D` envelope period opcodes. The FDS, 5B and
  * EPSM builds also play Thor Tracker's `$5F` (each its own scoped engine patch, prepare_nes_player.py). */
@@ -48,6 +52,7 @@
 #include "generated/nes_n163_7_player_image.h"
 #include "generated/nes_n163_8_player_image.h"
 #include "generated/nes_fds_player_image.h"
+#include "generated/nes_mmc5_player_image.h"
 #include "generated/nes_epsm_player_image.h"
 
 #ifdef __cplusplus
@@ -82,6 +87,7 @@ enum {
     NES_EXPANSION_VRC6 = 1,
     NES_EXPANSION_VRC7 = 2,
     NES_EXPANSION_FDS = 4,
+    NES_EXPANSION_MMC5 = 8,
     NES_EXPANSION_N163 = 0x10,
     NES_EXPANSION_S5B = 0x20,
     NES_EXPANSION_EPSM = 0x80
@@ -160,8 +166,8 @@ typedef struct NesPlayer {
                                        builds and the FDS build 320 (their wave-index envelopes take 256..319), the 5B
                                        and EPSM builds 384 (their mixer and noise envelopes take 256..383); indices below
                                        it belong to an instrument slot and keep it through live edits */
-    uint8_t channels;               /* channel streams in the song header: 5, 6 (FDS), 8 (VRC6, 5B), 11 (VRC7), 5 + n
-                                       (N163) or 20 (EPSM) */
+    uint8_t channels;               /* channel streams in the song header: 5, 6 (FDS), 7 (MMC5), 8 (VRC6, 5B), 11
+                                       (VRC7), 5 + n (N163) or 20 (EPSM) */
     uint8_t envelope_channels;      /* channels with engine envelopes (famistudio_channel_env and
                                        famistudio_channel_to_pitch_env entries): `channels`, except the EPSM build's 14
                                        (its rhythm drums have none) */
@@ -185,6 +191,7 @@ extern const NesPlayer nes_player_vrc7;
 extern const NesPlayer nes_player_n163[NM_N163_BUILDS];
 extern const NesPlayer nes_player_fds;
 extern const NesPlayer nes_player_s5b;
+extern const NesPlayer nes_player_mmc5;
 extern const NesPlayer nes_player_epsm;
 
 /* The N163 build with `channels` N163 channels (1..8), else NULL. */
@@ -199,8 +206,8 @@ static inline int nes_player_head(const NesPlayer* p) { return p->exp_instrument
 /* Channel roles of an engine channel index of `p`: carries notes and instruments (not DPCM), has a pitch
  * envelope (fine pitch, vibrato), is a VRC6 channel (5..7), is a VRC7 FM channel (5..10), is an N163 channel
  * (5..4+n), is the FDS channel (5), has a wave-index envelope (N163 and FDS channels: third envelope slot,
- * FAMISTUDIO_ENV_N163/FDS_WAVE_IDX_OFF = 2), is a 5B square (5..7), is an EPSM SSG (5..7), FM channel (8..13) or
- * rhythm drum (14..19). */
+ * FAMISTUDIO_ENV_N163/FDS_WAVE_IDX_OFF = 2), is a 5B square (5..7), is an MMC5 pulse (5, 6), is an EPSM SSG (5..7),
+ * FM channel (8..13) or rhythm drum (14..19). */
 static inline int nes_player_tonal(const NesPlayer* p, int c) { return c >= 0 && c < p->channels && c != NM_DPCM; }
 static inline int nes_player_pitched(const NesPlayer* p, int c) {
     return (c >= 0 && c <= 2) || (c >= NM_FIRST_EXP && c < p->envelope_channels);
@@ -215,6 +222,7 @@ static inline int nes_player_wave_channel(const NesPlayer* p, int c) {
     return nes_player_n163_channel(p, c) || nes_player_fds_channel(p, c);
 }
 static inline int nes_player_s5b_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_S5B && c >= 5 && c < 8; }
+static inline int nes_player_mmc5_channel(const NesPlayer* p, int c) { return p->expansion == NES_EXPANSION_MMC5 && c >= 5 && c < 7; }
 static inline int nes_player_epsm_ssg(const NesPlayer* p, int c) {
     return p->expansion == NES_EXPANSION_EPSM && c >= NM_EPSM_SSG1 && c < NM_EPSM_FM1;
 }

@@ -78,7 +78,7 @@ public:
     void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
 
     // AAudio callbacks.
-    aaudio_data_callback_result_t render(float* out, int32_t frames);
+    aaudio_data_callback_result_t render(AAudioStream* stream, float* out, int32_t frames);
     void on_error(aaudio_result_t error);
 
 private:
@@ -118,6 +118,7 @@ private:
     float aud_buf_[CHIP_MAX_TICK_FRAMES * 2];
     int play_len_ = 0, play_pos_ = 0, aud_len_ = 0, aud_pos_ = 0;
     uint64_t frames_rendered_ = 0;
+    int32_t previous_xruns_ = 0;  // callback-owned; reset before starting a newly opened stream
 
     // Shared (audio thread writes, others read).
     std::atomic<bool> playing_{false};

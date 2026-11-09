@@ -92,7 +92,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
     const int tonal = nes_player_tonal(player, channel), pitched = nes_player_pitched(player, channel);
     const int vrc6 = nes_player_vrc6_channel(player, channel), fm = nes_player_vrc7_channel(player, channel);
     const int n163 = nes_player_n163_channel(player, channel), s5b = nes_player_s5b_channel(player, channel);
-    const int fds = nes_player_fds_channel(player, channel);
+    const int fds = nes_player_fds_channel(player, channel), mmc5 = nes_player_mmc5_channel(player, channel);
     const int epsm = player->expansion == NES_EXPANSION_EPSM, ssg = nes_player_epsm_ssg(player, channel);
     const int epsm_fm = nes_player_epsm_fm(player, channel), rhythm = nes_player_epsm_rhythm(player, channel);
     uint32_t a = addr;
@@ -178,13 +178,14 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
         case 0x43: case 0x4C: size = 0; break;
         case 0x4D: if (rhythm) return "arpeggio opcode on an EPSM rhythm channel"; size = 0; break;
         case 0x4A: if (!pitched) return "vibrato opcode on a channel without pitch envelope"; size = 0; break;
-        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses, the VRC6 channels and the FDS channel (VRC7,
-                    * 5B: none) */
+        case 0x53: /* famistudio_channel_to_phase_reset_mask: the 2A03 pulses, the VRC6 channels, the FDS channel and the
+                    * MMC5 pulses (VRC7, 5B, EPSM: none) */
             if (n163) return "phase reset on an N163 channel is $5B";
-            if (channel > 1 && !vrc6 && !fds) {
-                return player->expansion == NES_EXPANSION_VRC6  ? "phase reset only on the pulses and the VRC6 channels"
-                       : player->expansion == NES_EXPANSION_FDS ? "phase reset only on the pulses and the FDS channel"
-                                                                : "phase reset only on the pulses";
+            if (channel > 1 && !vrc6 && !fds && !mmc5) {
+                return player->expansion == NES_EXPANSION_VRC6   ? "phase reset only on the pulses and the VRC6 channels"
+                       : player->expansion == NES_EXPANSION_FDS  ? "phase reset only on the pulses and the FDS channel"
+                       : player->expansion == NES_EXPANSION_MMC5 ? "phase reset only on the pulses and the MMC5 pulses"
+                                                                 : "phase reset only on the pulses";
             }
             size = 0;
             break;
@@ -260,7 +261,7 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             if (s5b) return "duty effect on a 5B channel"; /* FamiStudio: duty only on the 2A03 pulses and noise */
             if (epsm && channel >= NM_FIRST_EXP) return "duty effect on an EPSM channel"; /* likewise */
             if (channel == VRC6_SAW && vrc6) return "duty effect on the VRC6 saw";
-            if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : "duty outside 0..3";
+            if (vrc6 ? BYTE(1) > 7 : BYTE(1) > 3) return vrc6 ? "VRC6 duty outside 0..7" : mmc5 ? "MMC5 duty outside 0..3" : "duty outside 0..3";
             size = 1;
             break;
         case 0x51: size = 2; break;
@@ -271,7 +272,9 @@ const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* 
             size = 1;
             break;
         case 0x55: /* VRC6 saw master volume: 1 - Vrc6SawMasterVolume (Full $01, Half $00, Quarter $FF) */
-            if (player->expansion != NES_EXPANSION_VRC6) return "opcode not allowed in a row";
+            if (player->expansion != NES_EXPANSION_VRC6) {
+                return player->expansion == NES_EXPANSION_MMC5 ? "VRC6 saw volume opcode in an MMC5 song" : "opcode not allowed in a row";
+            }
             if (channel != VRC6_SAW) return "saw master volume off the VRC6 saw";
             NEED(2);
             if (BYTE(1) != 0x00 && BYTE(1) != 0x01 && BYTE(1) != 0xFF) return "saw master volume not $00, $01 or $FF";
@@ -345,6 +348,31 @@ int nm_speed_at(const NmView* v, int order, int row) {
         }
     }
     return speed;
+}
+
+void nm_row_speeds(const NmView* v, int order, uint8_t speeds[NES_IMAGE_MAX_ROWS]) {
+    const NesImageInfo* info = v->info;
+    const uint32_t base = info->player->song_base;
+    int16_t set[NES_IMAGE_MAX_ROWS];
+    for (int r = 0; r < NES_IMAGE_MAX_ROWS; ++r) set[r] = -1;
+    /* Channels in index order: a later channel's $46 in the same row wins, as the engine runs them. */
+    for (int c = 0; c < info->player->channels; ++c) {
+        const uint8_t* e = v->region + (info->streams[c] + 4u * (uint32_t)order - base);
+        uint16_t a = nm_rd16(e + 2);
+        int at = 0;
+        for (int k = 0; k < e[1] && at < NES_IMAGE_MAX_ROWS; ++k) {
+            NmEntry entry;
+            if (nm_walk_entry(v, a, c, &entry)) break;
+            if (entry.speed >= 0) set[at] = (int16_t)entry.speed;
+            at += entry.rows;
+            a = entry.end;
+        }
+    }
+    int speed = info->speed[order];
+    for (int r = 0; r < info->rows[order]; ++r) {
+        if (set[r] >= 0) speed = set[r];
+        speeds[r] = (uint8_t)speed;
+    }
 }
 
 int nm_n163_waves(const NmView* v, uint16_t entry) {

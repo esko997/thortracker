@@ -6,9 +6,10 @@ import org.thortracker.system.nes.NesRules
 /**
  * One build of the NES preview player (FamiStudio sound engine 4.5.3, FamiTracker tempo): the plain 2A03 build
  * ([NesPlayerImage]) or one assembled with an expansion chip ([NesVrc6PlayerImage], [NesVrc7PlayerImage], [NesFdsPlayerImage],
- * the eight N163 builds [NesN163PlayerImage1]..[NesN163PlayerImage8], [NesS5bPlayerImage], [NesEpsmPlayerImage]). Each has
- * its own native engine ([engineId]), player bytes and song region (the region starts on the page after the player, so a
- * larger player leaves less room); the image layout numbers all share stay in [NesPlayerImage].
+ * the eight N163 builds [NesN163PlayerImage1]..[NesN163PlayerImage8], [NesS5bPlayerImage], [NesMmc5PlayerImage],
+ * [NesEpsmPlayerImage]). Each has its own native engine ([engineId]), player bytes and song region (the region starts on
+ * the page after the player, so a larger player leaves less room); the image layout numbers all share stay in
+ * [NesPlayerImage].
  */
 class NesPlayer private constructor(
     /** The native `ChipEngineOps` id that plays this build's images. */
@@ -26,8 +27,8 @@ class NesPlayer private constructor(
     /** Channel streams in the song header: the 2A03's five plus the expansion's. */
     val channels: Int,
     /**
-     * NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 2 = FDS, bit 4 = Namco
-     * 163, bit 5 = Sunsoft 5B, bit 7 = EPSM; FamiStudio's `NsfFile`).
+     * NSF header byte `$7B`: the expansion chips the player drives (bit 0 = VRC6, bit 1 = VRC7, bit 2 = FDS, bit 3 = MMC5,
+     * bit 4 = Namco 163, bit 5 = Sunsoft 5B, bit 7 = EPSM; FamiStudio's `NsfFile`).
      */
     val nsfChips: Int,
     /**
@@ -123,6 +124,17 @@ class NesPlayer private constructor(
         ) { NesS5bPlayerImage.BYTES }
 
         /**
+         * The MMC5 build (`FAMISTUDIO_EXP_MMC5`): the 2A03's five channels, then MMC5 Pulse 1 and 2 as channels 5 and 6,
+         * which load 2A03 instruments from the 2A03 instrument table (no expansion instrument table).
+         */
+        val MMC5 = NesPlayer(
+            "nes-famistudio-mmc5", NesMmc5PlayerImage.LOAD, NesMmc5PlayerImage.INIT, NesMmc5PlayerImage.PLAY,
+            NesMmc5PlayerImage.SONG_BASE, NesMmc5PlayerImage.REGION_END, NesMmc5PlayerImage.REGION_SIZE,
+            NesMmc5PlayerImage.PLAYER_ID, NesMmc5PlayerImage.IMAGE_SIZE, NesMmc5PlayerImage.CHANNELS, nsfChips = 0x08,
+            expInstruments = false, effectEnvelopes = EFFECT_ENVELOPES,
+        ) { NesMmc5PlayerImage.BYTES }
+
+        /**
          * The EPSM build (`FAMISTUDIO_EXP_EPSM` with all 3 SSG, 6 FM and 6 rhythm channels, and Thor Tracker's EPSM engine
          * patch): the 2A03's five channels, then SSG 1-3, FM 1-6 and the six rhythm drums (20 streams).
          */
@@ -146,6 +158,7 @@ val NesExpansion.player: NesPlayer
         NesExpansion.VRC7 -> NesPlayer.VRC7
         NesExpansion.FDS -> NesPlayer.FDS
         NesExpansion.S5B -> NesPlayer.S5B
+        NesExpansion.MMC5 -> NesPlayer.MMC5
         NesExpansion.EPSM -> NesPlayer.EPSM
         else -> NesPlayer.N163[n163Channels - 1]
     }

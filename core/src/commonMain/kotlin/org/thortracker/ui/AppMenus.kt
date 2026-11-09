@@ -128,7 +128,11 @@ class AppMenus(
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
-        override fun installEpsmRhythmRom(bytes: ByteArray): String? = host.installEpsmRhythmRom(bytes)
+        override fun installEpsmRhythmRom(bytes: ByteArray): String? {
+            val problem = host.installEpsmRhythmRom(bytes)
+            if (problem == null) transport.songChanged(session.song)
+            return problem
+        }
         override fun about() = this@AppMenus.about()
     }
 

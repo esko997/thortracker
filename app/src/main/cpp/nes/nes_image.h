@@ -1,10 +1,11 @@
 /* NES song images: the bytes a lowering produces for the "nes-famistudio", "nes-famistudio-vrc6",
- * "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds", "nes-famistudio-s5b" and
- * "nes-famistudio-epsm" engines, their validation and the stream/envelope walkers the machine uses to seek and to
- * relocate a playing song onto a new image. Layout and contract: docs/AUDIO_ENGINE.md, "Image layout", "VRC6", "VRC7",
- * "N163", "FDS", "Sunsoft 5B" and "EPSM"; numbers in generated/nes_player_image.h, nes_vrc6_player_image.h,
- * nes_vrc7_player_image.h, nes_n163_<n>_player_image.h, nes_fds_player_image.h, nes_s5b_player_image.h and
- * nes_epsm_player_image.h (owned by tools/audio/prepare_nes_player.py), one NesPlayer per build (nes_player.h).
+ * "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds", "nes-famistudio-s5b",
+ * "nes-famistudio-mmc5" and "nes-famistudio-epsm" engines, their validation and the stream/envelope walkers the
+ * machine uses to seek and to relocate a playing song onto a new image. Layout and contract: docs/AUDIO_ENGINE.md,
+ * "Image layout", "VRC6", "VRC7", "N163", "FDS", "Sunsoft 5B", "MMC5" and "EPSM"; numbers in
+ * generated/nes_player_image.h, nes_vrc6_player_image.h, nes_vrc7_player_image.h, nes_n163_<n>_player_image.h,
+ * nes_fds_player_image.h, nes_s5b_player_image.h, nes_mmc5_player_image.h and nes_epsm_player_image.h (owned by
+ * tools/audio/prepare_nes_player.py), one NesPlayer per build (nes_player.h).
  *
  * An image is NES_IMAGE_HEADER_SIZE header bytes, the envelope directory (NES_IMAGE_MAX_ENVELOPES
  * entries of 4 bytes) and the region: CPU memory player->song_base..NES_REGION_END, shared by the song
@@ -20,9 +21,10 @@
  *   other bytes zero.
  * The song header holds player->channels stream words (5; 8 with VRC6: then VRC6 pulse 1, pulse 2, saw; 11 with
  * VRC7: then FM 1-6; 5 + n with N163: then N163 1..n; 6 with FDS: then the FDS channel; 8 with the 5B: then 5B square
- * 1-3; 20 with the EPSM: then SSG 1-3, FM 1-6, rhythm BD SD TOP HH TOM RIM). With VRC7, N163, FDS, the 5B and the EPSM
- * FamiStudio's expansion instrument pointer follows the instrument pointer (nes_player_head: 7 header bytes before the
- * stream words). The Thor layout of a VRC7 image holds one 16-byte
+ * 1-3; 7 with MMC5: then MMC5 pulse 1, pulse 2; 20 with the EPSM: then SSG 1-3, FM 1-6, rhythm BD SD TOP HH TOM RIM).
+ * With VRC7, N163, FDS, the 5B and the EPSM FamiStudio's expansion instrument pointer follows the instrument pointer
+ * (nes_player_head: 7 header bytes before the stream words; MMC5 has none: 5). The Thor layout of a VRC7 image holds
+ * one 16-byte
  * expansion instrument per instrument (nm_load_image checks their envelopes, override and patch bytes). The Thor layout
  * of an N163 image holds one 16-byte expansion instrument per instrument (volume, arpeggio, pitch and wave-index
  * envelope words, wave position and size in samples, wave table pointer, 4 zero bytes), the wave tables (a pointer per
@@ -34,8 +36,9 @@
  * 32-entry mod tables (0..7) and the same NM_KIND_WAVE directory entries. The Thor layout of a 5B image holds one
  * 16-byte expansion instrument per instrument (nm_load_image checks their envelopes, shape, octave and zero bytes) and
  * directory kinds NM_KIND_MIXER and NM_KIND_NOISE (instrument slot s's at 256 + 2 s and 257 + 2 s; effect envelopes
- * then start at 384). An EPSM image is laid out as a 5B image, except that bytes 14-15 of each expansion instrument
- * point at its NM_EPSM_PATCH_SIZE-byte FM patch block (song data, possibly shared, not a directory entry).
+ * then start at 384). An MMC5 image is the 2A03 layout with two more stream words (plain 2A03 instruments). An EPSM
+ * image is laid out as a 5B image, except that bytes 14-15 of each expansion instrument point at its
+ * NM_EPSM_PATCH_SIZE-byte FM patch block (song data, possibly shared, not a directory entry).
  * player->effect_envelopes is each build's first effect envelope index.
  * Pure functions; no allocation. */
 #ifndef THORTRACKER_NES_IMAGE_H_
@@ -135,13 +138,17 @@ typedef struct NmEntry {
 } NmEntry;
 
 /* Walks the entry of channel `channel` at song address `addr`; returns NULL or why it is invalid.
- * Checks every opcode against the channel (and the player's VRC6/VRC7/N163/FDS/5B/EPSM rules) and, with the Thor layout,
- * instrument, envelope and DPCM mapping operands against the table, directory and DPCM list. */
+ * Checks every opcode against the channel (and the player's VRC6/VRC7/N163/FDS/5B/MMC5/EPSM rules) and, with the Thor
+ * layout, instrument, envelope and DPCM mapping operands against the table, directory and DPCM list. */
 const char* nm_walk_entry(const NmView* v, uint16_t addr, int channel, NmEntry* out);
 
 /* Speed in effect after row `row` of `order` (-1: at the order start) when the order is entered
  * with the speed straight play gives it (Thor layout). */
 int nm_speed_at(const NmView* v, int order, int row);
+
+/* The speed in effect after each row of `order` (speeds[0..rows - 1]; the same rule as nm_speed_at, in one pass over the
+ * order's streams): at FamiTracker tempo 150 a row lasts that many frames (Thor layout). */
+void nm_row_speeds(const NmView* v, int order, uint8_t speeds[NES_IMAGE_MAX_ROWS]);
 
 /* Directory index of the used entry at song address `addr`, or -1. */
 int nm_find_envelope(const NesImageInfo* info, const uint8_t* directory, uint16_t addr);

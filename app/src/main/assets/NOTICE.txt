@@ -15,7 +15,7 @@ FamiStudio, MIT, notice below), the m6502.h 6502
 emulator from floooh/chips at commit 9e88298ce56319953ac7a43213a1120359f7a3a6
 (zlib, notice below) and blip_buf 1.1.0 by Shay Green (GNU Lesser General Public
 License 2.1 or later; source in app/src/main/cpp/third_party/blip_buf with its
-license.txt). The 2A03 APU, VRC6, FDS, Namco 163 and Sunsoft 5B audio emulation are
+license.txt). The 2A03 APU, VRC6, FDS, MMC5, Namco 163 and Sunsoft 5B audio emulation are
 Thor Tracker's own code (GPL-3.0-or-later). The Namco 163 was written from the
 NESdev wiki page "Namco 163 audio"; the Sunsoft 5B from the NESdev wiki with
 emu2149's documented behaviour as a reference (no emu2149 code is included).

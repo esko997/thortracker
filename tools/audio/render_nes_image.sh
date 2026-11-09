@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Renders a lowered NES image through the native engine of its player build: "nes-famistudio" or, for an image
-# lowered for the VRC6, VRC7, FDS, 5B or EPSM build, "nes-famistudio-vrc6" / "nes-famistudio-vrc7" / "nes-famistudio-fds" /
-# "nes-famistudio-s5b" / "nes-famistudio-epsm", for an N163 build "nes-famistudio-n163-1".."-8" (host gcc/g++, the same
-# sources as the hosts; chip_engine.c registers every engine, so all of them are linked).
+# lowered for the VRC6, VRC7, FDS, 5B, MMC5 or EPSM build, "nes-famistudio-vrc6" / "nes-famistudio-vrc7" /
+# "nes-famistudio-fds" / "nes-famistudio-s5b" / "nes-famistudio-mmc5" / "nes-famistudio-epsm", for an N163 build
+# "nes-famistudio-n163-1".."-8" (host gcc/g++, the same sources as the hosts; all engines are linked).
 # Usage: tools/audio/render_nes_image.sh image.nesimg out.wav [seconds] [rhythm-rom]
-# Images: `tools/build.sh exportSamples` writes app/build/samples/thor-quest.nesimg (the NES demo song),
-# saw-sunrise.nesimg (the NES + VRC6 demo song), lantern-point.nesimg (the NES + VRC7 demo song),
-# wavetable-garden-<n>ch.nesimg, n = 1..8 (the NES + N163 demo song for each N163 channel count), side-b.nesimg (the
-# NES + FDS demo song), copper-kite.nesimg (the NES + Sunsoft 5B demo song) and expansion-port.nesimg (the NES + EPSM
-# demo song). EPSM rhythm drums need your own YM2608 rhythm ROM (8192 bytes; never committed): the 4th argument or
+# Images: `tools/build.sh exportSamples` writes app/build/samples/thor-quest.nesimg (NES),
+# saw-sunrise.nesimg (VRC6), lantern-point.nesimg (VRC7), wavetable-garden-<n>ch.nesimg (N163, n = 1..8),
+# side-b.nesimg (FDS), copper-kite.nesimg (5B), tandem-skies.nesimg (MMC5) and expansion-port.nesimg (EPSM).
+# EPSM rhythm drums need your own YM2608 rhythm ROM (8192 bytes; never committed): the 4th argument or
 # $THOR_EPSM_RHYTHM_ROM. Without it they are silent.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -21,6 +20,7 @@ objs=()
 for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c" \
   "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c" "$cpp/nes/nes_n163.c" \
   "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/nes/nes_epsm_unit.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c" \
+  "$cpp/nes/nes_mmc5.c" "$cpp/nes/nes_mmc5_pcm.c" \
   "$cpp/nes/nes_players.c" "$cpp/nes/nes_chip.c" "$cpp/third_party/blip_buf/blip_buf.c" \
   "$cpp/sid/sid_machine.c" "$cpp/sid/sid_image.c" "$cpp/sid/sid_chip.c" \
   "$cpp/opl3/opl3_chip.c" "$cpp/opl3/opl3_machine.c" "$cpp/opl3/opl3_player.c" "$cpp/opl3/opl3_image.c" "$cpp/opl3/opl3_vgm.c" \

@@ -9,8 +9,8 @@
  * its length after an identical prefix and ending near silence; the length limit stopping at the tick that reaches it
  * and reporting CHIP_WAV_CAPPED; closing a job before it completes removing its spool, a complete file staying; bad
  * arguments. Plus chip_wav_pcm16's rounding and clamping, and the shortest valid songs (one row, one tick; exported
- * per N163 build as n163-shortest-<n>ch.nesimg, plus s5b-shortest.nesimg, fds-shortest.nesimg and epsm-shortest.nesimg):
- * once through is that one tick, zero and two extra passes complete.
+ * per N163 build as n163-shortest-<n>ch.nesimg, plus s5b-shortest.nesimg, fds-shortest.nesimg, mmc5-shortest.nesimg,
+ * mmc5-pcm-shortest.nesimg and epsm-shortest.nesimg): once through is that one tick, zero and two extra passes complete.
  *
  * The EPSM demo's rhythm drums play the YM2608 rhythm ROM, which is not part of Thor Tracker: with
  * THOR_EPSM_RHYTHM_ROM naming the user's own 8192-byte copy it is installed first and the drums are in the renders;
@@ -67,6 +67,8 @@ static const Demo kDemos[] = {
     {"wavetable-garden-8ch.nesimg", "nes-famistudio-n163-8"},
     {"side-b.nesimg", "nes-famistudio-fds"},
     {"copper-kite.nesimg", "nes-famistudio-s5b"},
+    {"tandem-skies.nesimg", "nes-famistudio-mmc5"},
+    {"sample-courier.nesimg", "nes-famistudio-mmc5"}, /* the MMC5 PCM lane (nes_mmc5_pcm.h) */
     {"expansion-port.nesimg", "nes-famistudio-epsm"},
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
@@ -74,7 +76,8 @@ static const Demo kDemos[] = {
 };
 
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; an N163 note on N163 1, a 5B
- * tone on 5B square 1, a sine on FDS, or an FM note on EPSM FM 1. */
+ * tone on 5B square 1, a sine on FDS, a held note on MMC5 pulse 1 or a looping PCM note on its PCM lane, or an FM note on
+ * EPSM FM 1. */
 static const Demo kShortest[] = {
     {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
     {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
@@ -86,6 +89,8 @@ static const Demo kShortest[] = {
     {"n163-shortest-8ch.nesimg", "nes-famistudio-n163-8"},
     {"s5b-shortest.nesimg", "nes-famistudio-s5b"},
     {"fds-shortest.nesimg", "nes-famistudio-fds"},
+    {"mmc5-shortest.nesimg", "nes-famistudio-mmc5"},
+    {"mmc5-pcm-shortest.nesimg", "nes-famistudio-mmc5"}, /* a looping PCM note on the MMC5 PCM lane */
     {"epsm-shortest.nesimg", "nes-famistudio-epsm"},
 };
 

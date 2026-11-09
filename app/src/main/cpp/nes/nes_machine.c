@@ -1,5 +1,5 @@
-/* NES machine: m6502 + nes_apu (+ nes_vrc6, nes_vrc7, nes_n163, nes_fds, nes_s5b or the EPSM unit) running a FamiStudio
- * player build (see nes_machine.h). */
+/* NES machine: m6502 + nes_apu (+ nes_vrc6, nes_vrc7, nes_n163, nes_fds, nes_s5b, nes_mmc5 or the EPSM unit) running a
+ * FamiStudio player build (see nes_machine.h). */
 #include "nes_machine.h"
 
 #include <math.h>
@@ -10,6 +10,8 @@
 #include "nes_apu.h"
 #include "nes_epsm_unit.h"
 #include "nes_fds.h"
+#include "nes_mmc5.h"
+#include "nes_mmc5_pcm.h"
 #include "nes_n163.h"
 #include "nes_s5b.h"
 #include "nes_vrc6.h"
@@ -27,25 +29,51 @@
 /* The 5B build, by the same rule: its full-scale mixer level is the 2A03's 1.0 plus three 5B channels at full
  * (NES_S5B_LEVEL each, nes_s5b.h), mapped to the same 2.0. */
 #define OUTPUT_GAIN_S5B ((float)(2.0 / (1.0 + NES_S5B_VOICES * NES_S5B_LEVEL)))
+/* The MMC5 and N163 builds budget their whole mixer span end to end. The span W is the 2A03's 1.0 plus the expansion's:
+ * the MMC5's NES_MMC5_SPAN (pulses and the full-range PCM DAC, about 1.41, inverted polarity; a muted DAC sits at its
+ * centre, inside) or the N163's NES_N163_SPAN (its DAC's -120..105 units at 12 dB over a 2A03 pulse, about 0.59). Every
+ * level the machine's units can produce, mutes included, lies in an interval of width W.
+ * Peak bound. The output is linear and time-invariant in that level: blip_buf's band-limited step kernels (16 taps, 32
+ * interpolated phases), its own high-pass (a leaky integrator losing 2^-9 per output sample: 2.5 Hz at 8 kHz, 14.9 Hz at
+ * 48 kHz, 29.8 Hz at 96 kHz), then the machine's HIGHPASS_HZ high-pass and LOWPASS_HZ low-pass. The high-passes remove
+ * DC, so the output equals that of the level minus the interval's midpoint (|that| <= W / 2), and |output| <= W / 2 times
+ * the total variation of the chain's response to a unit step over the step's position (as a function of how long before
+ * the sample the step happened, all sub-sample positions included). That variation, computed offline from blip_buf's
+ * kernel table and these filters (step positions every 1/1024 sample, converged): 2 x 1.1188 into blip_buf's int16 stage
+ * at every rate (the kernels ring 0.093 past each step, and the high-pass gives back the rest), and after the machine's
+ * filters 2 x 1.0378 at 8 kHz, 2 x 1.1111 at 48 kHz, 2 x 1.1184 at 96 kHz (two high-passes in a row undershoot, so the
+ * single high-pass's W does not hold). MIX_PEAK covers
+ * both stages at every supported rate (8..96 kHz). Every unit of the build therefore writes MIX_BUFFER_PEAK / (MIX_PEAK W)
+ * per mixer level 1.0, one scale for all (the chips' relative levels are unchanged): the int16 stage stays within
+ * +-31966 of its +-32767 clamp, the rest absorbing the units' amplitude rounding. OUTPUT_GAIN_BUDGET maps MIX_BUFFER_PEAK to
+ * MIX_OUTPUT_PEAK, so the output stays within +-0.979. That is a bound for any register sequence, not only for
+ * music. The rendered worst cases are in nes_mix_budget_test.c. Both builds are quieter than the 2A03 build (whose 2A03
+ * gain is 2.0 x 30000 / 32768) by 0.875 / (1.831 W): MMC5 about 14.1 dB, N163 about 10.5 dB at the same 2A03 content.
+ * The EPSM build applies the same bound per output side (below). Every other build keeps its scale and gain. */
+#define MIX_PEAK 1.12
+#define MIX_BUFFER_PEAK 32000.0
+#define MIX_OUTPUT_PEAK 0.98
+#define SPAN_MMC5 (1.0 + NES_MMC5_SPAN)
+#define SPAN_N163 (1.0 + NES_N163_SPAN)
+#define OUTPUT_GAIN_BUDGET ((float)(MIX_OUTPUT_PEAK * 32768.0 / MIX_BUFFER_PEAK))
 /* The EPSM build budgets each output side end to end, for any register sequence (the MMC5/N163 rule, per side). A side
  * is the centred 2A03 (its own buffer, level span 1.0) plus that side of the chip (the unit's buffer, level span
  * NES_EPSM_SPAN, about 27.89: ymfm's raw linear FM, rhythm and SSG ranges at FamiStudio 4.5.3's steps; nes_epsm_unit.h).
  * Int16 stage: blip_buf's peak per unit of span is 1.1188 at every rate, so the 2A03 buffer writes
- * NES_EPSM_BUFFER_PEAK / NES_EPSM_BLIP_PEAK per level 1.0 (|sample| <= 31966) as the unit does for its span. Reading,
- * the side buffer is multiplied by EPSM_APU_SCALE / NES_EPSM_AMP_SCALE, which puts both back on one scale (FamiStudio's
- * balance of the EPSM against the 2A03 unchanged). Output stage: the sum is the response of blip, HIGHPASS_HZ and
- * LOWPASS_HZ to a level of span 1.0 + NES_EPSM_SPAN; that chain's peak per unit of span is at most 1.1184 (8..96 kHz:
- * 1.0378 at 8 kHz, 1.1111 at 48 kHz, 1.1184 at 96 kHz), covered by EPSM_MIX_PEAK, and OUTPUT_GAIN_EPSM maps that bound
- * to EPSM_OUTPUT_PEAK: |output| <= 0.98 x 1.1184 / 1.12 = 0.979, whatever the song writes.
+ * NES_EPSM_BUFFER_PEAK / NES_EPSM_BLIP_PEAK per level 1.0 (|sample| <= 31966) as the unit does for its span: the
+ * unit's copies of MIX_BUFFER_PEAK and MIX_PEAK, so the 2A03 takes the MMC5/N163 nes_apu_set_amp_scale rule with W = 1.0.
+ * Reading, the side buffer is multiplied by EPSM_APU_SCALE / NES_EPSM_AMP_SCALE, which puts both back on one scale
+ * (FamiStudio's balance of the EPSM against the 2A03 unchanged). Output stage: the sum is the response of blip,
+ * HIGHPASS_HZ and LOWPASS_HZ to a level of span 1.0 + NES_EPSM_SPAN; that chain's peak per unit of span is at most
+ * 1.1184 (8..96 kHz: 1.0378 at 8 kHz, 1.1111 at 48 kHz, 1.1184 at 96 kHz), covered by MIX_PEAK, and OUTPUT_GAIN_EPSM
+ * maps that bound to MIX_OUTPUT_PEAK: |output| <= 0.98 x 1.1184 / 1.12 = 0.979, whatever the song writes.
  * The price is loudness: a 2A03 level of 1.0 comes out at 0.98 / (1.12 x 28.89) = 0.0303 against the 2A03 build's
  * 2.0 x 30000 / 32768 = 1.83, about 35.6 dB quieter. The budget preserves this emulator's raw linear range (ymfm adds
  * all carriers and drums without clipping), not a measured hardware loudness: the YMF288 datasheet gives a 16-bit
  * digital output but no overflow behaviour, so no chip clamp is modelled. */
-#define EPSM_MIX_PEAK 1.12
-#define EPSM_OUTPUT_PEAK 0.98
 #define EPSM_APU_SCALE (NES_EPSM_BUFFER_PEAK / NES_EPSM_BLIP_PEAK) /* the 2A03's blip amplitude per level, span 1.0 */
 #define EPSM_SIDE_SCALE ((float)(EPSM_APU_SCALE / NES_EPSM_AMP_SCALE))
-#define OUTPUT_GAIN_EPSM ((float)(EPSM_OUTPUT_PEAK * 32768.0 / (EPSM_MIX_PEAK * (1.0 + NES_EPSM_SPAN) * EPSM_APU_SCALE)))
+#define OUTPUT_GAIN_EPSM ((float)(MIX_OUTPUT_PEAK * 32768.0 / (MIX_PEAK * (1.0 + NES_EPSM_SPAN) * EPSM_APU_SCALE)))
 #define HIGHPASS_HZ 37.0f     /* Famicom-style output stage */
 #define LOWPASS_HZ 14000.0f
 
@@ -74,10 +102,13 @@ struct NesMachine {
     NesApu apu;
     NesVrc6 vrc6;         /* used only by the VRC6 build */
     NesVrc7 vrc7;         /* used only by the VRC7 build (its emu2413 instance allocated by nm_create) */
-    float gain;           /* OUTPUT_GAIN, OUTPUT_GAIN_VRC7 for the VRC7 build, OUTPUT_GAIN_S5B for the 5B build */
+    float gain;           /* OUTPUT_GAIN, OUTPUT_GAIN_VRC7 for the VRC7 build, OUTPUT_GAIN_S5B for the 5B build,
+                             OUTPUT_GAIN_BUDGET for the MMC5 and N163 builds, OUTPUT_GAIN_EPSM for the EPSM build */
     NesN163 n163;         /* used only by the N163 builds */
     NesFds fds;           /* used only by the FDS build */
     NesS5b s5b;           /* used only by the 5B build */
+    NesMmc5 mmc5;         /* used only by the MMC5 build */
+    NesPcm* pcm;          /* MMC5 build only (allocated by nm_create): the software PCM lane, NULL otherwise */
     NesEpsm epsm;         /* used only by the EPSM build (its chip allocated by nm_create) */
     blip_t* side[2];      /* EPSM build: the chip's left and right outputs (the 2A03 in `blip` is added to both) */
     blip_t* blip;
@@ -139,11 +170,18 @@ static uint8_t bus_read(NesMachine* m, uint16_t addr) {
     if (addr < 0x2000) return m->ram[addr & 0x7FF];
     if (addr >= 0x8000) { /* VRC6/VRC7/5B registers and the N163 address port are write-only: reads see the ROM */
         if (addr >= m->player->song_base) m->last_song_read = addr;
-        return m->prg[addr - 0x8000];
+        const uint8_t v = m->prg[addr - 0x8000];
+        /* MMC5 PCM read mode: every CPU read of $8000-$BFFF also feeds the DAC (nes_mmc5.h). */
+        if (m->player->expansion == NES_EXPANSION_MMC5 && m->mmc5.pcm_mode) nes_mmc5_rom_read(&m->mmc5, m->time, addr, v);
+        return v;
     }
     if (addr == 0x4015) return nes_apu_read_status(&m->apu, m->time);
     if (addr >= 0x4800 && addr <= 0x4FFF && m->player->expansion == NES_EXPANSION_N163) return nes_n163_read(&m->n163, m->time);
     if (m->player->expansion == NES_EXPANSION_FDS && nes_fds_readable(addr)) return nes_fds_read(&m->fds, m->time, addr);
+    if (m->player->expansion == NES_EXPANSION_MMC5 && (addr == 0x5010 || addr == 0x5015)) {
+        if (m->pcm) nes_pcm_run(m->pcm, &m->mmc5, m->time); /* the PCM lane's DAC writes up to now come first */
+        return nes_mmc5_read(&m->mmc5, m->time, addr);
+    }
     return 0;
 }
 
@@ -271,6 +309,12 @@ static void bus_write(NesMachine* m, uint16_t addr, uint8_t v) {
     } else if (m->player->expansion == NES_EXPANSION_S5B && nes_s5b_register(addr)) {
         log_write(m, addr, v);
         nes_s5b_write(&m->s5b, m->time, addr, v);
+    } else if (m->player->expansion == NES_EXPANSION_MMC5 && addr >= 0x5000 && addr <= 0x5FFF) {
+        log_write(m, addr, v); /* the whole MMC5 register page, so a non-audio write ($5104 ...) shows in the log */
+        if (!nes_mmc5_register(addr)) return;
+        /* The software PCM lane's $5011 writes up to this cycle first, so the unit sees every write in time order. */
+        if (m->pcm) nes_pcm_run(m->pcm, &m->mmc5, m->time);
+        nes_mmc5_write(&m->mmc5, m->time, addr, v);
     } else if (m->player->expansion == NES_EXPANSION_EPSM && nes_epsm_register(addr)) {
         log_write(m, addr, v);
         nes_epsm_write(&m->epsm, m->time, addr, v);
@@ -332,6 +376,7 @@ static void set_output(NesMachine* m, blip_t* out) {
     if (m->player->expansion == NES_EXPANSION_N163) nes_n163_set_output(&m->n163, out);
     if (m->player->expansion == NES_EXPANSION_FDS) nes_fds_set_output(&m->fds, out);
     if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_set_output(&m->s5b, out);
+    if (m->player->expansion == NES_EXPANSION_MMC5) nes_mmc5_set_output(&m->mmc5, out);
     if (m->player->expansion == NES_EXPANSION_EPSM) nes_epsm_set_output(&m->epsm, out ? m->side[0] : NULL, out ? m->side[1] : NULL);
 }
 
@@ -342,6 +387,10 @@ static void end_frame(NesMachine* m, uint32_t cycles) {
     if (m->player->expansion == NES_EXPANSION_N163) nes_n163_end_frame(&m->n163, cycles);
     if (m->player->expansion == NES_EXPANSION_FDS) nes_fds_end_frame(&m->fds, cycles);
     if (m->player->expansion == NES_EXPANSION_S5B) nes_s5b_end_frame(&m->s5b, cycles);
+    if (m->player->expansion == NES_EXPANSION_MMC5) {
+        if (m->pcm) nes_pcm_end_frame(m->pcm, &m->mmc5, cycles);
+        nes_mmc5_end_frame(&m->mmc5, cycles);
+    }
     if (m->player->expansion == NES_EXPANSION_EPSM) nes_epsm_end_frame(&m->epsm, cycles);
 }
 
@@ -367,6 +416,22 @@ NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player) {
             return NULL;
         }
         m->gain = OUTPUT_GAIN_VRC7;
+    }
+    if (player->expansion == NES_EXPANSION_MMC5 || player->expansion == NES_EXPANSION_N163) {
+        const double span = player->expansion == NES_EXPANSION_MMC5 ? SPAN_MMC5 : SPAN_N163;
+        const double scale = MIX_BUFFER_PEAK / (MIX_PEAK * span);
+        nes_apu_set_amp_scale(&m->apu, (float)scale);
+        if (player->expansion == NES_EXPANSION_MMC5) nes_mmc5_set_amp_scale(&m->mmc5, scale);
+        else nes_n163_set_amp_scale(&m->n163, scale);
+        m->gain = OUTPUT_GAIN_BUDGET;
+    }
+    if (player->expansion == NES_EXPANSION_MMC5) {
+        m->pcm = (NesPcm*)calloc(1, sizeof *m->pcm);
+        if (!m->pcm) {
+            blip_delete(m->blip);
+            free(m);
+            return NULL;
+        }
     }
     if (player->expansion == NES_EXPANSION_EPSM) {
         for (int s = 0; s < 2; ++s) {
@@ -430,6 +495,7 @@ void nm_destroy(NesMachine* m) {
     if (!m) return;
     blip_delete(m->blip);
     if (m->player->expansion == NES_EXPANSION_VRC7) nes_vrc7_free(&m->vrc7);
+    free(m->pcm);
     if (m->player->expansion == NES_EXPANSION_EPSM) {
         nes_epsm_free(&m->epsm);
         blip_delete(m->side[0]);
@@ -478,6 +544,11 @@ static int reset(NesMachine* m, const NesImage* image) {
     if (p->expansion == NES_EXPANSION_S5B) {
         nes_s5b_reset(&m->s5b);
         nes_s5b_set_mute(&m->s5b, 0);
+    }
+    if (p->expansion == NES_EXPANSION_MMC5) {
+        nes_mmc5_reset(&m->mmc5);
+        nes_mmc5_set_mute(&m->mmc5, 0);
+        if (m->pcm) nes_pcm_reset(m->pcm, &m->mmc5); /* the lane's image is set before (nm_start_pcm ...) */
     }
     if (p->expansion == NES_EXPANSION_EPSM) {
         nes_epsm_reset(&m->epsm);
@@ -697,12 +768,22 @@ static int restore_instruments(NesMachine* m, int order) {
 }
 
 int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_ticks, int* seek_mode) {
+    return nm_start_pcm(m, image, NULL, order, row, max_ticks, seek_mode);
+}
+
+/* A PCM extension loaded against `image` (or none). */
+static int pcm_matches(const NesImage* image, const NesPcmImage* pcm) {
+    return !pcm || (pcm->info.loaded == NM_LOADED && pcm->info.orders == (image->info.layout == NM_LAYOUT_THOR ? image->info.orders : 0));
+}
+
+int nm_start_pcm(NesMachine* m, const NesImage* image, const NesPcmImage* pcm, int order, int row, int max_ticks, int* seek_mode) {
     *seek_mode = NM_SEEK_FROM_START;
-    if (!loaded(m, image) || order < 0 || row < 0) return NM_ERR_IMAGE;
+    if (!loaded(m, image) || order < 0 || row < 0 || (pcm && !m->pcm) || !pcm_matches(image, pcm)) return NM_ERR_IMAGE;
     const NesImageInfo* info = &image->info;
     if (order || row) {
         if (!info->orders || order >= info->orders || row >= info->rows[order]) return NM_ERR_IMAGE;
     }
+    if (m->pcm) nes_pcm_set_image(m->pcm, pcm);
     if (reset(m, image) != NM_OK) return NM_ERR_FAULT;
     const int budget = max_ticks < 0 ? 0 : max_ticks;
     int r = fast_forward(m, order, row, budget);
@@ -711,6 +792,10 @@ int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_t
     if (reset(m, image) != NM_OK) return NM_ERR_FAULT;
     place_at_order(m, order);
     if (restore_instruments(m, order) != NM_OK) return NM_ERR_FAULT;
+    if (m->pcm) { /* the PCM lane's voice, volume and pending delay/cut as straight play has them at the order start */
+        const NmView v = {m->prg + (m->player->song_base - 0x8000), m->meta + NES_IMAGE_HEADER_SIZE, &m->info};
+        nes_pcm_carry(m->pcm, &m->mmc5, &v, order);
+    }
     *seek_mode = NM_SEEK_FROM_ORDER;
     r = fast_forward(m, order, row, budget);
     return r < 0 ? r : r ? NM_OK : NM_ERR_IMAGE;
@@ -1123,6 +1208,12 @@ static void epsm_follow_instruments(NesMachine* m, const EpsmPlan* plan) {
     }
 }
 
+void nm_apply_image_pcm(NesMachine* m, const NesImage* image, const NesPcmImage* pcm) {
+    if (m->faulted || m->audition || !loaded(m, image) || !m->pcm || !pcm || !pcm_matches(image, pcm)) return;
+    nm_apply_image(m, image);
+    nes_pcm_apply(m->pcm, &m->mmc5, pcm); /* by binding and sample bytes: independent of table and stream relocation */
+}
+
 void nm_apply_image(NesMachine* m, const NesImage* image) {
     if (m->faulted || m->audition || !loaded(m, image)) return;
     const NesPlayer* p = m->player;
@@ -1232,14 +1323,34 @@ _Static_assert(AUDITION_RELEASE + 4 <= 0x800, "audition streams fit RAM");
 static void put_stream(NesMachine* m, uint16_t at, const uint8_t* bytes, int n) { memcpy(m->ram + at, bytes, (size_t)n); }
 
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine) {
+    return nm_audition_pcm(m, image, NULL, channel, note, instrument, fine);
+}
+
+int nm_audition_pcm(NesMachine* m, const NesImage* image, const NesPcmImage* pcm, int channel, int note, int instrument, int fine) {
     const NesPlayer* p = m->player;
-    if (!loaded(m, image) || image->info.layout != NM_LAYOUT_THOR || channel < 0 || channel >= p->channels) return NM_ERR_IMAGE;
-    if (channel == NM_DPCM ? note < 1 || note > image->info.mappings
-                           : note < 1 || note > 96 || instrument < 0 || instrument >= image->info.instruments || fine < -128 ||
-                                 fine > 127) {
+    if (!loaded(m, image) || image->info.layout != NM_LAYOUT_THOR || (pcm && !m->pcm) || !pcm_matches(image, pcm)) return NM_ERR_IMAGE;
+    const int lane = m->pcm && channel == NM_MMC5_PCM;
+    if (channel < 0 || (channel >= p->channels && !lane)) return NM_ERR_IMAGE;
+    if (lane ? !pcm || note < 1 || note > pcm->info.mappings
+             : channel == NM_DPCM ? note < 1 || note > image->info.mappings
+                                  : note < 1 || note > 96 || instrument < 0 || instrument >= image->info.instruments || fine < -128 ||
+                                        fine > 127) {
         return NM_ERR_IMAGE;
     }
+    if (m->pcm) nes_pcm_set_image(m->pcm, pcm);
     if (reset(m, image) != NM_OK) return NM_ERR_FAULT;
+    if (lane) { /* every engine channel silent; the lane starts mapping `note` (1-based) and holds it */
+        const uint8_t silent[] = {0xFF, 0x42, (uint8_t)AUDITION_SILENT, (uint8_t)(AUDITION_SILENT >> 8)};
+        put_stream(m, AUDITION_SILENT, silent, sizeof silent);
+        for (int c = 0; c < p->channels; ++c) {
+            RAMX(chn_ptr_lo, c) = (uint8_t)AUDITION_SILENT;
+            RAMX(chn_ptr_hi, c) = (uint8_t)(AUDITION_SILENT >> 8);
+        }
+        nes_pcm_note(m->pcm, &m->mmc5, note - 1);
+        m->audition = 1;
+        m->aud_channel = channel;
+        return NM_OK;
+    }
     const uint8_t lo = (uint8_t)AUDITION_SILENT, hi = (uint8_t)(AUDITION_SILENT >> 8);
     const uint8_t silent[] = {0xFF, 0x42, lo, hi};
     uint8_t held[12];
@@ -1293,7 +1404,9 @@ static int release_point(const NesMachine* m, int slot) {
  * nes_epsm_chip_fm_quiet). EPSM rhythm drums: a one-shot of the ROM that plays on to its end address (nothing is sent:
  * famistudio_channel_to_volume_env has no rhythm entries); the audition ends there. */
 int nm_release(NesMachine* m) {
-    if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM) return 0; /* DPCM: stop */
+    /* DPCM and the MMC5 PCM lane: stop now (a sample has no release). */
+    if (!m->audition || m->released || m->faulted || !m->frames || m->aud_channel == NM_DPCM ||
+        (m->pcm && m->aud_channel == NM_MMC5_PCM)) return 0;
     const int c = m->aud_channel;
     if (nes_player_epsm_rhythm(m->player, c)) {
         m->released = 1;
@@ -1320,7 +1433,7 @@ int nm_release(NesMachine* m) {
 }
 
 int nm_mute_channel(NesMachine* m, int channel, int muted) {
-    if (channel < 0 || channel >= m->player->channels) return NM_ERR_IMAGE;
+    if (channel < 0 || channel >= m->player->channels + (m->pcm ? 1 : 0)) return NM_ERR_IMAGE;
     if (channel < NES_APU_CHANNELS) {
         uint8_t mask = m->apu.mute;
         mask = muted ? (uint8_t)(mask | (1 << channel)) : (uint8_t)(mask & ~(1 << channel));
@@ -1332,6 +1445,11 @@ int nm_mute_channel(NesMachine* m, int channel, int muted) {
         uint8_t mask = m->n163.mute;
         mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
         nes_n163_set_mute(&m->n163, mask);
+    } else if (m->player->expansion == NES_EXPANSION_MMC5) { /* MMC5 pulse 1, pulse 2, the PCM lane (NES_MMC5_PCM) */
+        const int bit = 1 << (channel - NM_FIRST_EXP);
+        uint8_t mask = m->mmc5.mute;
+        mask = muted ? (uint8_t)(mask | bit) : (uint8_t)(mask & ~bit);
+        nes_mmc5_set_mute(&m->mmc5, mask);
     } else if (m->player->expansion == NES_EXPANSION_VRC6) { /* VRC6 pulse 1, pulse 2, saw */
         const int bit = 1 << (channel - NES_APU_CHANNELS);
         uint8_t mask = m->vrc6.mute;
@@ -1362,6 +1480,11 @@ static int run_frame(NesMachine* m, int synth) {
     if (synth != (m->apu.out != NULL)) set_output(m, synth ? m->blip : NULL);
     const int starts = row_starts(m);
     m->time = 0;
+    if (m->pcm) { /* the PCM lane follows the engine's own row boundary: the row this frame starts, at cycle 0 */
+        int o = m->order, r = m->row;
+        if (starts) next_row(m, &o, &r);
+        nes_pcm_frame(m->pcm, &m->mmc5, starts, o, r);
+    }
     if (call(m, m->player->play, 0, frame_cycles) != NM_OK) return NM_ERR_FAULT;
     end_frame(m, frame_cycles);
     ++m->frame_index;
@@ -1519,4 +1642,7 @@ int nm_epsm_period_instrument(const NesMachine* m) {
 int nm_epsm_rhythm_missing(const NesMachine* m) {
     return m->player->expansion == NES_EXPANSION_EPSM && nes_epsm_chip_rhythm_missing(m->epsm.chip);
 }
+const NesMmc5* nm_mmc5(const NesMachine* m) { return &m->mmc5; }
+const NesPcm* nm_pcm(const NesMachine* m) { return m->pcm; }
+float nm_gain(const NesMachine* m) { return m->gain; }
 const NesPlayer* nm_player(const NesMachine* m) { return m->player; }

@@ -1,13 +1,15 @@
 /* "nes-famistudio", "nes-famistudio-vrc6", "nes-famistudio-vrc7", "nes-famistudio-n163-1".."-8", "nes-famistudio-fds",
- * "nes-famistudio-s5b" and "nes-famistudio-epsm": the FamiStudio sound engine (FamiTracker tempo), the 2A03 build, the
- * Konami VRC6 build, the Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels), the Famicom Disk System
- * build, the Sunsoft 5B build and the EPSM build, on the NES machine (nes_machine.h) behind the chip engine interface.
+ * "nes-famistudio-s5b", "nes-famistudio-mmc5" and "nes-famistudio-epsm": the FamiStudio sound engine (FamiTracker
+ * tempo), the 2A03 build, the Konami VRC6 build, the Konami VRC7 build, the eight Namco 163 builds (1..8 N163 channels),
+ * the Famicom Disk System build, the Sunsoft 5B build, the Nintendo MMC5 build and the EPSM build, on the NES machine
+ * (nes_machine.h) behind the chip engine interface.
  * Images are validated and indexed by nm_load_image (nes_image.h) for the engine's player; see
  * docs/AUDIO_ENGINE.md for the layout the Kotlin lowering produces and the ops' behaviour. */
 #include <string.h>
 
 #include "chip_engine.h"
 #include "nes_machine.h"
+#include "nes_mmc5_pcm.h"
 
 _Static_assert(CHIP_OK == NM_OK && CHIP_ERR_IMAGE == NM_ERR_IMAGE && CHIP_ERR_FAULT == NM_ERR_FAULT,
                "error codes pass through unchanged");
@@ -23,6 +25,7 @@ static ChipMachine* nes_create(uint32_t sample_rate) { return (ChipMachine*)nm_c
 static ChipMachine* vrc6_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_vrc6); }
 static ChipMachine* vrc7_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_vrc7); }
 static ChipMachine* s5b_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_s5b); }
+static ChipMachine* mmc5_create(uint32_t sample_rate) { return (ChipMachine*)nm_create(sample_rate, &nes_player_mmc5); }
 
 static void nes_destroy(ChipMachine* m) { nm_destroy(MACHINE(m)); }
 
@@ -49,6 +52,34 @@ static int vrc7_load_image(ChipImage* storage, const uint8_t* bytes, size_t size
 
 static int s5b_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
     return load_for(&nes_player_s5b, storage, bytes, size);
+}
+
+/* The MMC5 engine's image: the seven-channel FamiStudio image (NES_MMC5_IMAGE_SIZE bytes, unchanged) followed by the PCM
+ * lane's extension (NES_PCM_EXT_SIZE bytes, nes_mmc5_pcm.h), loaded into a NesMmc5Image. */
+#define MMC5_IMAGE_SIZE (NES_MMC5_IMAGE_SIZE + NES_PCM_EXT_SIZE)
+
+static int mmc5_load_image(ChipImage* storage, const uint8_t* bytes, size_t size) {
+    NesMmc5Image* image = (NesMmc5Image*)storage;
+    if (size != MMC5_IMAGE_SIZE) return CHIP_ERR_IMAGE;
+    if (load_for(&nes_player_mmc5, (ChipImage*)&image->base, bytes, NES_MMC5_IMAGE_SIZE) != CHIP_OK) return CHIP_ERR_IMAGE;
+    memcpy(image->pcm.bytes, bytes + NES_MMC5_IMAGE_SIZE, NES_PCM_EXT_SIZE);
+    return nes_pcm_load(&image->pcm, &image->base.info) ? CHIP_ERR_IMAGE : CHIP_OK;
+}
+
+#define MMC5_IMAGE(i) ((const NesMmc5Image*)(i))
+
+static int mmc5_start(ChipMachine* m, const ChipImage* image, int order, int row, int max_ticks, int* seek_mode) {
+    return nm_start_pcm(MACHINE(m), &MMC5_IMAGE(image)->base, &MMC5_IMAGE(image)->pcm, order, row, max_ticks, seek_mode);
+}
+
+static void mmc5_apply_image(ChipMachine* m, const ChipImage* image) {
+    nm_apply_image_pcm(MACHINE(m), &MMC5_IMAGE(image)->base, &MMC5_IMAGE(image)->pcm);
+}
+
+/* As nes_audition; on the PCM lane (NM_MMC5_PCM) `note` is the PCM mapping (1-based) and the slot only has to be real. */
+static int mmc5_audition(ChipMachine* m, const ChipImage* image, int channel, int note, int instrument, int fine) {
+    if (instrument < 1) return CHIP_ERR_IMAGE;
+    return nm_audition_pcm(MACHINE(m), &MMC5_IMAGE(image)->base, &MMC5_IMAGE(image)->pcm, channel, note, instrument - 1, fine);
 }
 
 static int nes_start(ChipMachine* m, const ChipImage* image, int order, int row, int max_ticks, int* seek_mode) {
@@ -196,6 +227,23 @@ const ChipEngineOps nes_fds_chip_ops = {
     .start = nes_start,
     .apply_image = nes_apply_image,
     .audition = nes_audition,
+    .release = nes_release,
+    .mute = nes_mute,
+    .position = nes_position,
+    .tick = nes_tick,
+};
+
+/* Channels 0-4 as "nes-famistudio", then MMC5 pulse 1 (5) and pulse 2 (6), and the software PCM lane (7). */
+const ChipEngineOps nes_mmc5_chip_ops = {
+    .system_id = "nes-famistudio-mmc5",
+    .image_size = MMC5_IMAGE_SIZE,
+    .image_storage = sizeof(NesMmc5Image),
+    .create = mmc5_create,
+    .destroy = nes_destroy,
+    .load_image = mmc5_load_image,
+    .start = mmc5_start,
+    .apply_image = mmc5_apply_image,
+    .audition = mmc5_audition,
     .release = nes_release,
     .mute = nes_mute,
     .position = nes_position,

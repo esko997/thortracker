@@ -8,17 +8,23 @@ import org.thortracker.model.Song
  * zeros up to its song base, the lowered FamiStudio data, and when the song plays DPCM samples, zeros up to the sample
  * block's start (the top of `$C000-$FFF9`, where the image puts it) and the samples (without bank switching the whole
  * image is loaded at once). Header byte `$7B` names the expansion chip the player drives (bit 0: VRC6, bit 1: VRC7,
- * bit 2: FDS, bit 4: Namco 163, bit 5: Sunsoft 5B, bit 7: EPSM; FamiStudio's `NsfFile`), so NSF players emulate it.
- * Plays in NSF players and on hardware through cartridges that load NSFs (with the chip; the FDS's sound through an
- * FDS-capable NSF player). An EPSM `.nsf` holds Thor Tracker's patched EPSM player (docs/AUDIO_ENGINE.md, "EPSM") and
- * never the YM2608 rhythm ROM: players supply their own.
+ * bit 2: FDS, bit 3: MMC5, bit 4: Namco 163, bit 5: Sunsoft 5B, bit 7: EPSM; FamiStudio's `NsfFile`), so NSF players
+ * emulate it. Plays in NSF players and on hardware through cartridges that load NSFs (with the chip; the FDS's sound
+ * through an FDS-capable NSF player). An MMC5 song whose PCM lane plays is refused ([NesPcmLowering.exportProblem]): the
+ * player here is FamiStudio's engine, which has no MMC5 PCM; one whose PCM lane is silent exports its seven channels. An
+ * EPSM `.nsf` holds Thor Tracker's patched EPSM player (docs/AUDIO_ENGINE.md, "EPSM") and never the YM2608 rhythm ROM:
+ * players supply their own.
  */
 object NsfExporter {
     /** NTSC play rate in microseconds (NSF convention for 60.1 Hz). */
     private const val NTSC_SPEED = 16639
 
-    /** @throws IllegalArgumentException when the song cannot be lowered. */
-    fun export(song: Song): ByteArray = FamiStudioLowering.lower(song).let { export(it.player, it.data, it.samples, it.sampleStart, song.title, song.artist) }
+    /** @throws IllegalArgumentException when the song cannot be lowered, or its MMC5 PCM lane plays. */
+    fun export(song: Song): ByteArray {
+        val lowered = FamiStudioLowering.lower(song) // the song's errors first
+        NesPcmLowering.exportProblem(song, ".nsf")?.let { throw IllegalArgumentException(it) }
+        return export(lowered.player, lowered.data, lowered.samples, lowered.sampleStart, song.title, song.artist)
+    }
 
     internal fun export(player: NesPlayer, data: ByteArray, samples: ByteArray, sampleStart: Int, title: String, artist: String): ByteArray {
         val code = player.bytes
