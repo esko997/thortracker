@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/jomimc/DaMuSc",
+  "revision": "9a4589b99d229691fbefd99b4174e39814789a16",
+  "files": {
+    "Data/measured_scales.csv": "b697a951f603283eb876a72efda308380c96a8be33cb738bfd79a053b3f4f755",
+    "Metadata/sources.csv": "eefe4598a5d73c07066a6f85736c25fed22b16bfde55f1e9390c005d3aaf2b4d",
+    "Metadata/column_key.csv": "00106846ce37308652b453b961221b25dbf634b97b91a4b82b8c2591c6599409",
+    "LICENSE.md": "88b5cbe9a26baa00a4cb998cdc1ae079fe3e1c62f5f02ea4cd09c23ef6987710",
+    "LICENSE-CC-BY-4.0.txt": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+    "LICENSE-MIT.txt": "68edb4ee66a3b422cb3c2411e240c70c78c7e842b61b70790463cff6a61d82ff"
+  }
+}

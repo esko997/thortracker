@@ -153,6 +153,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             auditionLoop.advance(now.toLong()) { ch, note, ins -> audio.audition(ch, note, ins) }
             audio.error().let { if (it != lastAudioError) { lastAudioError = it; if (it != null) { RecentMessages.record("audio", it); session.note(it) } } }
             shell.pumpExport()
+            shell.pumpTuningPacks()
             shell.autosave(now)
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }
@@ -174,7 +175,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         shell.autosave(SDL_GetTicks(), force = true)
     }
 
-    fun close() = audio.close()
+    fun close() { shell.close(); audio.close() }
 
     private fun handle(e: SDL_Event) {
         when (e.type) {
