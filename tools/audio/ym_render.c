@@ -1,9 +1,10 @@
-/* Renders a lowered YM2612 image (the 65536 bytes the "ym2612-fm" lowering writes) through the native engine exactly
- * as the audio hosts run it: chip_engine_ops lookup, load_image (the full validation; its problem and byte are printed
- * when it fails), start at order 0 row 0, one tick at a time. Writes a 48 kHz stereo 16-bit WAV and prints peak/rms.
- * `mute=19` mutes channels (1-9, 0 = channel 10 Noise) to hear others alone; `--vgm out.vgm`, `--xgm out.xgm` and
- * `--xgc out.bin` also write the exports through the hosts' entry point (ym_export, GD3 tag from `title=`/`author=`/
- * `date=`). Built and run by tools/audio/render_ym_image.sh. */
+/* Renders a lowered YM2612 image (the YM_IMAGE_SIZE = 1188864 bytes of layout 2 the "ym2612-fm" lowering writes)
+ * through the native engine exactly as the audio hosts run it: chip_engine_ops lookup, load_image (the full
+ * validation; its problem and byte are printed when it fails), start at order 0 row 0, one tick at a time. Writes a
+ * 48 kHz stereo 16-bit WAV and prints peak/rms. `mute=0,5,10` mutes tracker channels by index (0-5 FM 1-6, 6-8 PSG
+ * 1-3, 9 Noise, 10-12 PCM 1-3) to hear the others alone; `--vgm out.vgm`, `--xgm out.xgm` (XGM2, unpacked) and
+ * `--xgc out.xgc` (the compiled XGM2 XGM2_play() takes) also write the exports through the hosts' entry point
+ * (ym_export, GD3 tag from `title=`/`author=`/`date=`). Built and run by tools/audio/render_ym_image.sh. */
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -40,7 +41,7 @@ static int write_export(const uint8_t* bytes, size_t size, int format, const cha
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s image.bin out.wav [seconds] [mute=190] [--vgm out.vgm] [--xgm out.xgm] [--xgc out.bin] "
+        fprintf(stderr, "usage: %s image.bin out.wav [seconds] [mute=0,5,10] [--vgm out.vgm] [--xgm out.xgm] [--xgc out.xgc] "
                         "[title=..] [author=..] [date=..]\n", argv[0]);
         return 2;
     }
@@ -87,8 +88,15 @@ int main(int argc, char** argv) {
         fprintf(stderr, "start failed\n");
         return 1;
     }
-    for (const char* c = mutes; *c; ++c)
-        if (*c >= '0' && *c <= '9') ops->mute(m, *c == '0' ? 9 : *c - '1', 1);
+    for (const char* c = mutes; *c;) {
+        char* end;
+        const long channel = strtol(c, &end, 10);
+        if (end == c || channel < 0 || channel >= YM_CHANNELS || ops->mute(m, (int)channel, 1) != CHIP_OK) {
+            fprintf(stderr, "mute=%s: channels are 0..%d, comma-separated\n", mutes, YM_CHANNELS - 1);
+            return 2;
+        }
+        c = *end == ',' ? end + 1 : end;
+    }
     const long want = (long)(seconds * RATE);
     float* pcm = malloc(sizeof(float) * 2 * (size_t)(want + CHIP_MAX_TICK_FRAMES));
     long frames = 0;

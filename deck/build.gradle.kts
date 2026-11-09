@@ -31,6 +31,12 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("nes/nes_apu.c").asFile,
         engineSrc.file("nes/nes_vrc6.c").asFile,
         engineSrc.file("nes/nes_vrc7.c").asFile,
+        engineSrc.file("nes/nes_n163.c").asFile,
+        engineSrc.file("nes/nes_fds.c").asFile,
+        engineSrc.file("nes/nes_s5b.c").asFile,
+        engineSrc.file("nes/nes_epsm_unit.c").asFile,
+        engineSrc.file("nes/nes_mmc5.c").asFile,
+        engineSrc.file("nes/nes_mmc5_pcm.c").asFile,
         engineSrc.file("third_party/emu2413/emu2413.c").asFile,
         engineSrc.file("chip_opll.c").asFile,
         engineSrc.file("nes/nes_players.c").asFile,
@@ -53,6 +59,10 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ym/ym_xgm.c").asFile,
         engineSrc.file("ym/ym_vgm.c").asFile,
         engineSrc.file("ym/ym_psg.c").asFile,
+        engineSrc.file("sms/sms_chip.c").asFile,
+        engineSrc.file("sms/sms_machine.c").asFile,
+        engineSrc.file("sms/sms_image.c").asFile,
+        engineSrc.file("sms/sms_vgm.c").asFile,
         engineSrc.file("ay/ay_chip.c").asFile,
         engineSrc.file("ay/ay_machine.c").asFile,
         engineSrc.file("ay/ay_player.c").asFile,
@@ -62,23 +72,32 @@ val buildEngine by tasks.registering(Exec::class) {
         layout.projectDirectory.file("native/deck_audio.c").asFile,
         layout.projectDirectory.file("native/deck_draw.c").asFile,
     )
-    // ymfm (the YM2612): ym/ym_ymfm.cpp compiles ymfm_opn.cpp itself.
-    val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp", "third_party/ymfm/ymfm_ssg.cpp") +
+    // ymfm (the YM2612 and the EPSM's YMF288): ym/ym_ymfm.cpp compiles ymfm_opn.cpp itself and instantiates the OPNA
+    // templates nes/nes_epsm_ymfm.cpp uses.
+    val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "nes/nes_epsm_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp",
+        "third_party/ymfm/ymfm_ssg.cpp") +
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
-        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "ay", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
+        listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "sms", "ay", "third_party/chips", "third_party/blip_buf", "third_party/resid-1.0",
             "third_party/nuked-opl3", "third_party/ymfm")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
-        "nes/nes_apu.h", "nes/nes_vrc6.h", "nes/nes_vrc7.h", "nes/nes_player.h", "generated/nes_player_image.h",
-        "generated/nes_vrc6_player_image.h", "generated/nes_vrc7_player_image.h", "third_party/emu2413/emu2413.h",
-        "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
+        "nes/nes_apu.h", "nes/nes_vrc6.h", "nes/nes_vrc7.h", "nes/nes_n163.h", "nes/nes_fds.h", "nes/nes_s5b.h", "nes/nes_epsm.h",
+        "nes/nes_epsm_unit.h", "nes/nes_mmc5.h", "nes/nes_mmc5_pcm.h", "nes/nes_player.h",
+        "generated/nes_player_image.h", "generated/nes_vrc6_player_image.h", "generated/nes_vrc7_player_image.h",
+        "generated/nes_n163_1_player_image.h", "generated/nes_n163_2_player_image.h", "generated/nes_n163_3_player_image.h",
+        "generated/nes_n163_4_player_image.h", "generated/nes_n163_5_player_image.h", "generated/nes_n163_6_player_image.h",
+        "generated/nes_n163_7_player_image.h", "generated/nes_n163_8_player_image.h", "generated/nes_fds_player_image.h",
+        "generated/nes_s5b_player_image.h", "generated/nes_mmc5_player_image.h", "generated/nes_epsm_player_image.h",
+        "chip_opll.h", "third_party/emu2413/emu2413.h", "sid/sid_machine.h", "sid/sid_image.h", "sid/sid_resid.h",
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
-        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm_driver_image.h",
+        "ym/ym_psg.h", "ym/ym_ymfm.h", "ym/ym_vgm.h", "ym/ym_export.h", "generated/ym_tables.h", "generated/xgm2_driver_image.h",
+        "sms/sms_image.h", "sms/sms_machine.h", "sms/sms_export.h", "generated/banjo_driver_image.h",
+        "third_party/emu2413/emu2413.h",
         "ay/ay_image.h", "ay/ay_player.h", "ay/ay_psg.h", "ay/ay_machine.h", "ay/ay_vgm.h", "ay/ay_export.h", "generated/ay_tables.h"),
         engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
@@ -121,7 +140,9 @@ kotlin {
             }
             create("decknative") {
                 definitionFile.set(file("src/nativeInterop/cinterop/decknative.def"))
-                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("ay"))
+                // nes/nes_epsm.h: nes_epsm_install_rhythm_rom / nes_epsm_rhythm_rom_installed for the Deck's rhythm ROM.
+                includeDirs(layout.projectDirectory.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"),
+                    engineSrc.dir("ay"))
                 extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
             }
         }

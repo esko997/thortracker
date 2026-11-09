@@ -6,6 +6,8 @@ import decknative.ay_export_free
 import decknative.ay_export_vgm
 import decknative.o3_export_free
 import decknative.o3_export_vgm
+import decknative.sms_export_free
+import decknative.sms_export_vgm
 import decknative.ym_export
 import decknative.ym_export_free
 import kotlinx.cinterop.*
@@ -13,6 +15,8 @@ import org.thortracker.system.ay.AyVgmRenderer
 import org.thortracker.system.ay.AyVgmTags
 import org.thortracker.system.opl3.Opl3VgmRenderer
 import org.thortracker.system.opl3.Opl3VgmTags
+import org.thortracker.system.sms.SmsVgmRenderer
+import org.thortracker.system.sms.SmsVgmTags
 import org.thortracker.system.ym2612.YmExportRenderer
 import org.thortracker.system.ym2612.YmExportTags
 import platform.posix.size_tVar
@@ -67,6 +71,23 @@ internal object DeckAyVgm : AyVgmRenderer {
             vgm.readBytes(size.value.toInt())
         } finally {
             ay_export_free(vgm)
+        }
+    }
+}
+
+/** Master System VGM export through the Banjo machine linked into the Deck (`sms/sms_export.h`); registered by [main]. */
+internal object DeckSmsVgm : SmsVgmRenderer {
+    override fun render(image: ByteArray, maxTicks: Int, tags: SmsVgmTags): ByteArray = memScoped {
+        val size = alloc<size_tVar>()
+        val problem = alloc<CPointerVar<ByteVar>>()
+        val file = image.usePinned {
+            sms_export_vgm(it.addressOf(0).reinterpret(), image.size.convert(), maxTicks.coerceAtLeast(0).convert(),
+                tags.title, tags.author, tags.date, size.ptr, problem.ptr)
+        } ?: throw IllegalArgumentException(problem.value?.toKString() ?: "VGM export failed")
+        try {
+            file.readBytes(size.value.toInt())
+        } finally {
+            sms_export_free(file)
         }
     }
 }

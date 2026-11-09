@@ -19,6 +19,7 @@ set(OPL3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opl3)
 set(NUKED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nuked-opl3)
 set(YM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ym)
 set(YMFM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ymfm)
+set(SMS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sms)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
 set(AY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ay)
 
@@ -39,13 +40,15 @@ target_compile_definitions(resid PRIVATE NDEBUG=1)
 target_compile_options(resid PRIVATE -O2 -fPIC -w)
 set_target_properties(resid PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# ymfm (C++), the YM2612; only ym/ym_ymfm.cpp (a C interface, which compiles ymfm_opn.cpp itself) talks to it.
+# ymfm (C++): the YM2612 and the EPSM's YMF288. ym/ym_ymfm.cpp (the YM2612's C interface) compiles ymfm_opn.cpp itself
+# and instantiates the OPNA templates that nes/nes_epsm_ymfm.cpp (the YMF288's C interface) uses; link both.
 add_library(ymfm STATIC
     ${YM_DIR}/ym_ymfm.cpp
+    ${NES_DIR}/nes_epsm_ymfm.cpp
     ${YMFM_DIR}/ymfm_adpcm.cpp
     ${YMFM_DIR}/ymfm_ssg.cpp
 )
-target_include_directories(ymfm PRIVATE ${YMFM_DIR} ${YM_DIR})
+target_include_directories(ymfm PRIVATE ${YMFM_DIR} ${YM_DIR} ${NES_DIR})
 target_compile_definitions(ymfm PRIVATE NDEBUG=1)
 target_compile_options(ymfm PRIVATE -O2 -fPIC -w)
 set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -66,6 +69,12 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_apu.c
     ${NES_DIR}/nes_vrc6.c
     ${NES_DIR}/nes_vrc7.c
+    ${NES_DIR}/nes_n163.c
+    ${NES_DIR}/nes_fds.c
+    ${NES_DIR}/nes_s5b.c
+    ${NES_DIR}/nes_mmc5.c
+    ${NES_DIR}/nes_mmc5_pcm.c
+    ${NES_DIR}/nes_epsm_unit.c
     ${EMU2413_DIR}/emu2413.c
     chip_opll.c
     ${NES_DIR}/nes_players.c
@@ -88,6 +97,10 @@ add_library(chip_engines STATIC
     ${YM_DIR}/ym_xgm.c
     ${YM_DIR}/ym_vgm.c
     ${YM_DIR}/ym_psg.c
+    ${SMS_DIR}/sms_chip.c
+    ${SMS_DIR}/sms_machine.c
+    ${SMS_DIR}/sms_image.c
+    ${SMS_DIR}/sms_vgm.c
     ${AY_DIR}/ay_chip.c
     ${AY_DIR}/ay_machine.c
     ${AY_DIR}/ay_player.c
@@ -96,7 +109,7 @@ add_library(chip_engines STATIC
     ${AY_DIR}/ay_vgm.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${AY_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${SMS_DIR} ${AY_DIR} ${BLIP_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)

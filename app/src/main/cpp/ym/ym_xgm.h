@@ -1,80 +1,65 @@
-/* XGM / XGC encoding of the player's frames: xgmtool 1.76's VGM -> XGM -> XGC conversion (SGDK tools/xgmtool,
- * MIT; VGM_cleanCommands, XGM_extractMusic, XGC_extractMusic), ported to C one frame at a time so the machine can
- * stream XGC frames to SGDK's XGM Z80 driver while it plays, and the export can write the same .xgm / .xgc files
- * xgmtool writes from the exported VGM. Specified in docs/AUDIO_ENGINE.md ("YM2612: XGM / XGC encoding"); the host
- * test compares the bytes with xgmtool's. Songs here have no PCM, so sample handling is the empty case. No
- * allocation: every buffer is in the encoder. */
+/* XGM2 encoding of the player's batches (SGDK's XGM2 format, bin/xgm2.txt of the pinned SGDK): one tick becomes one
+ * frame of the FM stream and one frame of the PSG stream, which the machine streams to SGDK's XGM2 Z80 driver while it
+ * plays and the export writes as .xgm / .xgc. Specified in docs/AUDIO_ENGINE.md ("YM2612: XGM2 encoding"); the host
+ * test executes the frames on the real driver and compares its chip writes with the player's state.
+ *
+ * FM frame, in this order: the batch's key-offs ($4x); the FM 3 mode ($FA/$FB) and LFO ($F9) when written; per FM
+ * channel its registers - a load-instrument command ($2x, 30 bytes: what the driver's TL/SL-RR attenuation state
+ * needs before an algorithm write) when the batch writes the algorithm, when that is shorter, or in a full frame;
+ * else TL commands ($9x) and general register writes ($Ex) - then FM 3's special frequencies ($38-$3A) and the
+ * channel frequency ($3x, with the key-on flag) or a bare key-on ($4x); partial or late key writes ($F8); the PCM
+ * commands ($1x: channel k, low priority, half rate per variant; id 0 stops). PSG frame: tones ($2x), noise control
+ * ($10 direct write), attenuations ($8x-$Bx). Every value is the player's register shadow after the batch, so a
+ * frame leaves the chips exactly as the player's writes would. A full frame (the stream start and every arrival at
+ * the loop point) writes every register; its size bounds every frame below the driver's 256-byte command buffer.
+ *
+ * Frames end with a wait ($0x / $0F xx FM, $0x / $0E xx PSG) or, at a stream's end, its loop command ($FF / $0F
+ * dddddd, which also ends the frame). Packed streams are literal-only LZ blocks of one frame each (header LLL00000 or,
+ * at a 256-byte page end, LLL00001; end byte $00), so no block crosses a 32 KiB bank and no match reaches behind a
+ * loop. No allocation. */
 #ifndef THORTRACKER_YM_XGM_H_
 #define THORTRACKER_YM_XGM_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include "ym_image.h"
 #include "ym_player.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define YMX_MAX_CMDS (2 * YMP_MAX_WRITES + 512) /* cleaned writes of one frame (deltas, keys, PSG) */
-#define YMX_MAX_FRAME_BYTES 8192                /* XGM or XGC bytes of one frame */
-#define YMX_XGC_SPLIT 250        /* xgmtool closes an XGC frame before it reaches 250 bytes */
-#define YMX_XGC_FRAME_SKIP 0xFA  /* XGC command bytes are XGM codes << 1: frame skip $7D */
-#define YMX_XGC_LOOP 0xFC        /* loop $7E, then a 24-bit offset into the music data */
-#define YMX_XGC_END 0xFE         /* end $7F */
+#define YMX_BUFFER 256          /* the driver's FM and PSG command buffers (circular) */
+#define YMX_FRAME_MAX 255       /* unpacked bytes of one frame with its end (a full buffer would read as empty) */
+#define YMX_END_MAX 4           /* bytes of a frame end: a wait or a loop command */
+#define YMX_CMDS_MAX (YMX_FRAME_MAX - YMX_END_MAX)
+#define YMX_PACKED_MAX 320      /* packed bytes of one frame block (literal headers, page splits, end byte) */
+#define YMX_FM_WAIT_MAX 271     /* frames one FM wait command spans */
+#define YMX_PSG_WAIT_MAX 270
+#define YMX_NO_LOOP (-1)
 
-typedef struct YmxYmState {
-    int16_t reg[2][256]; /* -1 = never written */
-    uint8_t init[2][256];
-} YmxYmState;
+/* One tick's commands, without their frame end. */
+typedef struct YmxFrame {
+    uint8_t fm[YMX_CMDS_MAX];
+    int fm_size;
+    uint8_t psg[YMX_CMDS_MAX];
+    int psg_size;
+} YmxFrame;
 
-typedef struct YmxPsgState {
-    int32_t reg[4][2];   /* [index][0 tone/noise, 1 attenuation], -1 = never written */
-    uint8_t init[4][2];
-    int index, type;     /* latched register */
-} YmxPsgState;
-
-typedef struct YmxCmd {
-    uint8_t kind; /* YM_W_PORT0 / YM_W_PORT1 / YM_W_PSG */
-    uint8_t reg;
-    uint8_t val;
-} YmxCmd;
-
-typedef struct YmxList {
-    int start[YMX_MAX_CMDS], len[YMX_MAX_CMDS];
-    int n;
-} YmxList;
-
-typedef struct YmXgmEncoder {
-    YmxYmState clean_ym;   /* VGM_cleanCommands' previous YM state */
-    YmxPsgState clean_psg; /* and PSG state */
-    YmxYmState xgc_ym;     /* XGC_extractMusic's YM state (D1L/RR state commands) */
-    /* scratch of one frame */
-    YmxYmState cur;
-    YmxPsgState cur_psg;
-    YmxCmd cleaned[YMX_MAX_CMDS];
-    int ncleaned;
-    YmxCmd group[4][YMX_MAX_CMDS];   /* XGM grouping: port 0, port 1, keys, PSG */
-    YmxCmd keys[YMX_MAX_CMDS];
-    uint8_t xgm[YMX_MAX_FRAME_BYTES]; /* the frame's XGM commands */
-    YmxList xgm_cmds;
-    uint8_t items[YMX_MAX_FRAME_BYTES]; /* the frame's XGC commands before framing */
-    YmxList xgc_cmds;
-    int pend_other[YMX_MAX_CMDS], pend_key[YMX_MAX_CMDS];
-} YmXgmEncoder;
-
-void ymx_reset(YmXgmEncoder* e);
-
-/* One frame: the frame's writes in the player's order (`in`, n records; a VGM frame); `loop_at` = the index in
- * `in` where the loop point is (xgmtool's loop-start command: the clean step's previous state resets there), -1 none. Returns the frame's XGM commands (without
- * the frame/loop/end terminator; *xgm_size bytes, valid until the next call) and writes its XGC frames (size byte,
- * commands, frame skips where a frame reaches 250 bytes) to `xgc` (capacity `xgc_cap`, *xgc_size bytes). Returns
- * NULL on overflow (more than YMX_MAX_FRAME_BYTES or `xgc_cap`). */
-const uint8_t* ymx_frame(YmXgmEncoder* e, const YmWrite* in, int n, int loop_at, size_t* xgm_size, uint8_t* xgc,
-                         size_t xgc_cap, size_t* xgc_size);
-/* Seek fast-forward: the encoder state ymx_frame would leave after this frame, without encoding (the clean and XGC
- * states both hold every register written so far; a frame with a loop start must go through ymx_frame). */
-void ymx_absorb(YmXgmEncoder* e, const YmWrite* in, int n);
+/* Encodes one tick: `w` (n records) = the tick's writes in order (any prefix batch first, then the player's batch),
+ * `p` = the player after the tick (register shadow), `pcm` = the PCM commands (YMP_PCM_NONE / YMP_PCM_STOP / variant
+ * of `image`), `full` = every register (stream start, loop point). Returns 0 or -1 (a frame above YMX_CMDS_MAX, which
+ * the player's batches cannot make). */
+int ymx_encode(const YmImage* image, const YmPlayer* p, const YmWrite* w, int n, const int* pcm, int full, YmxFrame* out);
+/* A frame end: a wait of `frames` (1..YMX_FM_WAIT_MAX / YMX_PSG_WAIT_MAX) in the FM (psg 0) or PSG (psg 1) stream.
+ * Returns its bytes (1 or 2). */
+int ymx_wait(uint8_t* out, int psg, int frames);
+/* A frame end: the stream's loop command to `offset` from the stream start (YMX_NO_LOOP: the end). Returns 4. */
+int ymx_loop(uint8_t* out, int psg, int32_t offset);
+/* One packed block of `n` (1..YMX_FRAME_MAX) bytes at stream offset `at` (streams start 256-byte aligned). Returns
+ * its bytes (<= YMX_PACKED_MAX). */
+size_t ymx_pack(const uint8_t* in, int n, uint32_t at, uint8_t* out);
 
 #ifdef __cplusplus
 }

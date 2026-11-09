@@ -88,8 +88,9 @@ data class YmSweep(val start: Int = 0, val end: Int = 0, val speed: Int = 0) {
 }
 
 /**
- * A Mega Drive instrument slot's sound: an FM voice for FM 1-6 ([YmFmInstrument]) or a PSG sound for PSG 1-3 and the
- * Noise channel ([YmPsgInstrument]). Stored with a `"type"` of `"fm"` or `"psg"`.
+ * A Mega Drive instrument slot's sound: an FM voice for FM 1-6 ([YmFmInstrument]), a PSG sound for PSG 1-3 and the
+ * Noise channel ([YmPsgInstrument]) or a PCM drum kit for PCM 1-3 ([YmPcmInstrument]). Stored with a `"type"` of
+ * `"fm"`, `"psg"` or `"pcm"`.
  */
 @Serializable
 sealed interface YmInstrument {
@@ -106,7 +107,9 @@ sealed interface YmInstrument {
 /**
  * A YM2612 FM voice: [algorithm] 0..7 (the chip's routing; [YmCurated.ALGORITHMS]), operator 1's [feedback] 0..7, the
  * LFO depths [ams] 0..3 (amplitude, for operators with [YmOperator.am]) and [fms] 0..7 (vibrato), four [operators]
- * numbered as in the algorithm diagrams (operator 1 has the feedback) and the drum [sweep].
+ * numbered as in the algorithm diagrams (operator 1 has the feedback), the drum [sweep] and [ch3]: four per-operator
+ * pitch offsets in 1/64 semitones (−[YmPlayerImage.CH3_LIMIT]..[YmPlayerImage.CH3_LIMIT], ±4 octaves, diagram order)
+ * that FM 3 plays when the song's [YmSound.fm3Mode] is special; other channels and normal mode ignore them.
  */
 @Serializable
 @SerialName("fm")
@@ -118,7 +121,11 @@ data class YmFmInstrument(
     val fms: Int = 0,
     val operators: List<YmOperator> = List(4) { YmOperator() },
     override val sweep: YmSweep = YmSweep.NONE,
+    val ch3: List<Int> = listOf(0, 0, 0, 0),
 ) : YmInstrument {
+    /** True when any operator has an FM 3 pitch offset. */
+    val hasCh3: Boolean get() = ch3.any { it != 0 }
+
     /** True when operator [op] (0-based) is a carrier (heard; volume scales it) under the algorithm. */
     fun isCarrier(op: Int): Boolean = carriers(algorithm) shr op and 1 != 0
 
@@ -142,6 +149,12 @@ data class YmFmInstrument(
         if (fms !in 0..7) return "FMS $fms is outside 0-7"
         sweep.problem()?.let { return it }
         operators.forEachIndexed { i, op -> op.problem()?.let { return "operator ${i + 1}: $it" } }
+        if (ch3.size != 4) return "has ${ch3.size} FM 3 operator offsets; voices have 4"
+        ch3.forEachIndexed { k, v ->
+            if (v !in -YmPlayerImage.CH3_LIMIT..YmPlayerImage.CH3_LIMIT) {
+                return "operator ${k + 1}'s FM 3 pitch offset $v is outside ±${YmPlayerImage.CH3_LIMIT} (±4 octaves in 1/64 semitones)"
+            }
+        }
         return null
     }
 
@@ -209,15 +222,48 @@ data class YmPsgInstrument(
 }
 
 /**
+ * A PCM drum kit for PCM 1-3: which source sample each key plays ([pcm]: absolute note → [YmPcmMapping], the sample and
+ * its pitch in semitones) at the kit's static [level] 0..15 (15 = the sample as recorded, 2 dB quieter per step, 0 =
+ * silent). Every mapping is compiled ahead of time into a one-shot waveform at the XGM2 driver's own PCM rate
+ * ([YmPcm]); the driver cannot change a sample once it plays, so a kit has no envelopes, sweep or loop.
+ */
+@Serializable
+@SerialName("pcm")
+data class YmPcmInstrument(
+    override val name: String = "",
+    val level: Int = YmPcm.LEVEL_MAX,
+    val pcm: Map<Int, YmPcmMapping> = emptyMap(),
+) : YmInstrument {
+    override val sweep: YmSweep get() = YmSweep.NONE
+
+    override fun named(name: String): YmPcmInstrument = copy(name = name)
+
+    /** Range problems of the kit alone (the song checks that mapped samples exist: [YmSound.pcmProblem]). */
+    override fun problem(): String? {
+        if (level !in 0..YmPcm.LEVEL_MAX) return "PCM level $level is outside 0-${YmPcm.LEVEL_MAX}"
+        for ((key, m) in pcm) {
+            if (key !in YmRules.NOTES) return "PCM key $key is outside C-0..B-7 (0-95)"
+            if (m.pitch !in YmPcm.PITCH) return "${YmSystem.noteName(key)}: PCM pitch ${m.pitch} is outside ${YmPcm.PITCH.first}..+${YmPcm.PITCH.last} semitones"
+            if (m.sample < 0) return "${YmSystem.noteName(key)}: PCM sample index ${m.sample} is negative"
+        }
+        return null
+    }
+}
+
+/**
  * A Mega Drive song's chip data: [instruments] = exactly [YmSystem.SLOTS] slots (slot n = index n − 1; null = empty,
- * not playable), the [pal] region (50 Hz ticks and PAL clocks; NTSC 60 Hz by default) and the chip's [lfo] at the song
- * start as register $22 holds it: 0 = off, $08-$0F = on at rate 0-7 (`Lxx` changes it while playing).
+ * not playable), the [pal] region (50 Hz ticks and PAL clocks; NTSC 60 Hz by default), the chip's [lfo] at the song
+ * start as register $22 holds it (0 = off, $08-$0F = on at rate 0-7; `Lxx` changes it while playing), FM 3's
+ * [fm3Mode] and the song's PCM source samples ([pcmSamples], at most [YmPcm.MAX_SAMPLES] sharing [YmPcm.MEMORY] bytes)
+ * that PCM kits map.
  */
 @Serializable
 data class YmSound(
     val instruments: List<YmInstrument?>,
     val pal: Boolean = false,
     val lfo: Int = 0,
+    val fm3Mode: YmFm3Mode = YmFm3Mode.NORMAL,
+    val pcmSamples: List<YmPcmSample> = emptyList(),
 ) : SystemSound {
     override val system: SoundSystem get() = YmSystem
 
@@ -228,10 +274,32 @@ data class YmSound(
     fun withInstrument(slot: Int, instrument: YmInstrument?): YmSound =
         copy(instruments = instruments.toMutableList().also { it[slot - 1] = instrument })
 
+    /** The first problem of the PCM source pool and the kits' references into it, or null (structural: [YmValidator]). */
+    fun pcmProblem(): String? {
+        if (pcmSamples.size > YmPcm.MAX_SAMPLES) return "The song has ${pcmSamples.size} PCM samples; at most ${YmPcm.MAX_SAMPLES}"
+        pcmSamples.forEachIndexed { i, s -> s.problem()?.let { return "PCM sample ${i + 1} (${s.name}): $it" } }
+        val stored = YmPcm.stored(this)
+        if (stored > YmPcm.MEMORY) return "The PCM samples take ${YmPcm.kb(stored)}; they share ${YmPcm.kb(YmPcm.MEMORY)}"
+        instruments.forEachIndexed { i, ins ->
+            if (ins !is YmPcmInstrument) return@forEachIndexed
+            for ((key, m) in ins.pcm) if (m.sample !in pcmSamples.indices) {
+                return "Instrument ${org.thortracker.model.NumberText.hex(i + 1, 2)}: ${YmSystem.noteName(key)} maps missing PCM sample ${m.sample + 1}"
+            }
+        }
+        return null
+    }
+
     companion object {
         /** A new song's sound: the presets in slots 01.. ([YmPresets.ALL]), the rest empty. */
         fun blank(): YmSound = YmSound(List(YmSystem.SLOTS) { YmPresets.ALL.getOrNull(it)?.instrument })
     }
+}
+
+/** FM 3's mode (register $27 bit 6): one pitch for the channel, or each operator at the note plus its [YmFmInstrument.ch3]. */
+@Serializable
+enum class YmFm3Mode(val code: Int, val label: String) {
+    @SerialName("normal") NORMAL(YmPlayerImage.FM3_NORMAL, "Normal"),
+    @SerialName("special") SPECIAL(YmPlayerImage.FM3_SPECIAL, "Special: operator pitches"),
 }
 
 /** The Mega Drive data of a YM2612 song. */

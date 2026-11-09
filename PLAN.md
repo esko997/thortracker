@@ -10,23 +10,45 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
-Five sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive), with VRC6 in 0.15.0 and VRC7 in 0.16.0 extending the NES family.
+Six sound families (Game Boy, NES + DPCM, C64 SID, OPL3, Mega Drive, Sega 8-bit); VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
    Help → About adds opt-in diagnostics and a bug-report link; no automatic upload.
-3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0)
-   and VRC7 (six two-operator FM voices, 0.16.0) are implemented, with driver/native, desktop and reserved-handheld
-   checks recorded in `docs/VERIFICATION.md`. Next: N163 (wavetable), Sunsoft 5B (AY-style), FDS, MMC5,
-   EPSM (YMF288/OPN3-L). Source-only worktrees do not count as verified releases.
-4. **Sega Master System / Game Gear** — SN76489 (already emulated for the Mega Drive) with a real SMS driver if a
-   GPL-compatible one fits; Game Gear adds stereo panning. Pairs naturally with the Japanese SMS FM Sound Unit (YM2413).
-5. **Mega Drive extensions** — PCM drums through the XGM driver's sample channels, channel 3 special mode
-   (independent operator pitches), XGM2.
-6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
-   (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
+3. **NES expansion chips** through the FamiStudio engine already in the loop: VRC6 (2 pulses + sawtooth, 0.15.0),
+   VRC7 (six two-operator FM voices, 0.16.0), N163 (1-8 wavetable voices, 0.17.0), Sunsoft 5B
+   (three squares with shared noise/envelope, 0.18.0) and FDS (one 64-sample wavetable voice with modulation,
+   0.19.0) are implemented, with driver/native, desktop and reserved-handheld checks recorded in
+   `docs/VERIFICATION.md`. N163's eight channel-count variants are grouped under NES → NES + N163….
+   MMC5's two pulse voices and software-driven PCM lane shipped in 0.20.0.
+   EPSM (YMF288/OPN3-L: three SSG voices, six FM voices and six rhythm drums) shipped
+   in 0.21.0. Core/native checks, 19 permanent Android tests, 32 unchanged Game Boy
+   views, Android/desktop export parity and Nova/DMG/Konkr production playback/audition
+   checks passed. Its user-supplied rhythm ROM is never distributed.
+   Next: Sega Master System / Game Gear and the SMS FM Sound Unit.
+   Source-only worktrees do not count as verified releases.
+4. **Sega Master System / Game Gear** — integrated for 0.22.0: the real Banjo driver on a Z80, SN76489
+   with Game Gear stereo, and the Japanese SMS FM Sound Unit (YM2413), with separate melodic/rhythm layouts.
+   Native/reference, Android/desktop export parity, reserved-device playback and unchanged Game Boy
+   checks passed; see `docs/VERIFICATION.md`. All four variants are grouped under **Sega 8-bit…**.
+5. **Mega Drive extensions** — released in 0.23.0: three PCM lanes and sample kits, channel 3's independent
+   operator pitches, and the real XGM2 driver with unpacked/compiled exports. Native/reference, exported-file
+   driver playback, reserved-device edits/audition, WAV import and Game Boy parity passed; see `docs/VERIFICATION.md`
+   for measured seek latency, adaptive-buffer underruns and the upstream converter limitation.
+6. **L2+R2 third chord layer** — integrated and device-verified for 0.24.0 (keymap version 6).
+   A binding is a button plus a modifier *set* (at most two of Select/L2/R2/L3), so L2+R2+A
+   is one layer whichever trigger went down first. Routing: a press runs the chord of exactly the held set; failing
+   that, if any subset of the held set binds the button (L2+A, R2+A while both are held) the press does nothing;
+   otherwise the bare key acts. Presses keep the meaning of their DOWN through rolling releases; Android key-ups
+   flagged canceled do not trigger taps or cursor advance; edits already made on press remain. Captures track
+   held triggers correctly, including analog-trigger release on the Deck frontend. Older keymap files decode
+   unchanged and gain the new defaults. See `docs/VERIFICATION.md` for device and two-pane evidence.
+   - **Default choice for review:** L2+R2 + A/B/X/Y/↑/→/↓ show Song/Instrument/Sketch/Keyboard/Pattern/Wave/Help
+     on the *other* display, mirroring the R2 view chords, without moving controller focus (one R3 → R2+x → R3
+     sequence becomes one chord; e.g. Keyboard on the other screen beside the pattern being edited). With one
+     display (Deck, single-screen Android) they show on it. L2+R2+← stays free. No existing chord moved.
 7. **More chips** (unordered):
    - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST and Amstrad CPC variants (the hardware envelope as a buzzer
      bass, shared noise/envelope shown honestly, each machine's stock wiring: mono, the CPC's stereo socket): source
@@ -34,7 +56,7 @@ Order below is the current intent; design notes for the chip work live in `docs/
    - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
    - Konami SCC — MSX wavetable cartridge (five channels).
    - YM2413 / OPLL — MSX-Music and the SMS FM unit: nine 2-op voices, 15 fixed presets + one custom.
-   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, noise, two LFOs.
+   - YM2151 / OPM — arcade boards and the Sharp X68000: eight 4-op voices, FM 8 noise and a shared LFO.
    - YM2203 / YM2608 (OPN / OPNA) — PC-88 and PC-98: FM + an AY-style SSG.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
@@ -189,7 +211,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - 0.11.0: C64 SID sound system (GoatTracker 2.77 playroutine + reSID), .sid/.prg/.sng export.
 - 0.12.0: OPL3 FM sound system (own player on Nuked-OPL3), up to 4 effect columns on OPL3, chord effect, curated FM editor, VGM export.
 - 0.13.0: Mega Drive sound system (YM2612 + PSG through SGDK's XGM Z80 driver), .vgm/.xgm/.xgc export.
-- L2+R2 third chord layer: scheduled, see Roadmap.
+- L2+R2 third chord layer: other-display view chords by default (keymap version 6), see Roadmap.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
 - Visible arpeggio-0 selection without inventing a parameter; OFF label retains immediate-cut semantics.

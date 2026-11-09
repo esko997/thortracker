@@ -71,6 +71,10 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.TrackerView
 import org.thortracker.ui.hideFromAccessibility
 import java.io.File
+import java.io.IOException
+import android.util.AtomicFile
+import org.thortracker.system.nes.EpsmRhythmRom
+import org.thortracker.system.nes.EpsmRomMenu
 
 /** Two display hosts, one document. Musical edits and driver state never live here. */
 class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.InputDeviceListener {
@@ -124,6 +128,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             fileLoad = FileLoad(extensions, maxBytes, loaded)
             launchFilePicker()
         }
+        override fun installEpsmRhythmRom(bytes: ByteArray): String? = this@MainActivity.installRhythmRom(bytes)
         override fun openUrl(url: String): Boolean = try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             true
@@ -301,7 +306,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 ?.forEach { it.delete() }
             wavSpoolsCleaned = true
         }
-        buildPrimary()
         projectStore.restore { recovered, warning ->
             if (isDestroyed) return@restore
             if (recovered != null) session.replaceSong(recovered)
@@ -309,8 +313,14 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             recoveredWorkingSong = recovered != null
             recoveryWarning = warning
             documentReady = true
+            // Pane construction normalizes saved selections against the song's channel and instrument limits.
+            // Wait for recovery rather than clamping them against the temporary Game Boy demo.
+            buildPrimary()
+            updateSecondary()
             try {
-                audio = ChipAudio(applicationContext).also { transport.audio = it }
+                audio = ChipAudio(applicationContext)
+                loadRhythmRom()
+                transport.audio = audio
                 initialized = true
                 statusMessage = if (recovered != null) "Recovered working project"
                 else "Demo loaded. For a blank song choose Menu, Files, New blank song"
@@ -410,7 +420,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     private fun updateSecondary() {
-        if (!active) return
+        if (!active || !documentReady) return
         val candidate = displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
             .firstOrNull { it.displayId != display?.displayId }
         if (candidate == null) {
@@ -530,7 +540,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     /**
      * Every key from either window. Layers in order: binding capture, open popup, host chords and global
      * keys, the controller-focused toolbar, then the controller-focused editor. Returns false only for
-     * keys the window itself should handle (system keys, typing into a popup's text field).
+     * keys the window itself should handle (system keys, typing into a popup's text field). A key-up Android
+     * cancelled (another window took focus, the controller went away) is forgotten without acting.
      */
     private fun routeKey(original: KeyEvent): Boolean {
         if (!active) return true
@@ -540,12 +551,19 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val repeat = original.repeatCount
         val code = original.keyCode
         popups.top?.capture?.let { capture ->
+            // The capture takes the key, but a trigger still counts as held or let go, so none stays stuck after it.
+            input.trackModifier(code, down)
             if (repeat == 0) capture(code, down)
+            return true
+        }
+        if (!down && original.isCanceled) {
+            if (input.cancel(code)) hosts.values.forEach { it.tracker.cancelInteraction() }
+            showHeldModifiers()
             return true
         }
         if (!documentReady && !popups.isOpen) return true
         val route = input.route(code, down, repeat, popups.isOpen, toolbarFocused(), states[focus].kind)
-        hosts.forEach { (index, host) -> host.tracker.heldModifiers = if (index == focus) input.heldModifiers else emptySet() }
+        showHeldModifiers()
         return when (route) {
             is HostInput.Route.Run -> { run(route.control); true }
             HostInput.Route.Menu -> { if (documentReady) { modalDisplay = focus; menus.appMenu() }; true }
@@ -569,16 +587,22 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             Control.PLAY_CURSOR -> toggleTransport(fromCursor = true)
             Control.LOOP_PATTERN -> toggleLoop()
             Control.FOCUS -> switchFocus()
-            else -> control.shows?.let(::showView) ?: control.action?.let(::editAction)
+            // Other-display chords target the other display while two show; with one, the only display.
+            else -> control.shows?.let { showView(it, if (control.toOther && hosts.size > 1) 1 - focus else focus) }
+                ?: control.action?.let(::editAction)
         }
     }
 
-    /** A view chord on the controller-focused display ([Workspace.showView]). */
-    private fun showView(kind: ViewKind) {
+    /** A view chord on display [pane] ([Workspace.showView]); controller focus stays where it is. */
+    private fun showView(kind: ViewKind, pane: Int) {
         hosts.values.forEach { it.tracker.cancelInteraction() }
-        if (!panes.showView(kind, session.song.system.views)) { Workspace.missingView(kind, session.song.system)?.let(session::note); return }
+        if (!panes.showView(kind, session.song.system.views, pane)) { Workspace.missingView(kind, session.song.system)?.let(session::note); return }
         refresh(); workspace.save(states, focus)
     }
+
+    /** Only the controller-focused display shows held modifiers' chords. */
+    private fun showHeldModifiers() =
+        hosts.forEach { (index, host) -> host.tracker.heldModifiers = if (index == focus) input.heldModifiers else emptySet() }
 
     private fun toolbarFocused(): Boolean = hosts[focus]?.toolbar?.controllerFocused == true
 
@@ -1146,6 +1170,53 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         if (wavRun === run) wavRun = null
         if (run.popup != null && popups.top === run.popup) popups.back()
         run.popup = null
+    }
+
+    // ---- EPSM rhythm ROM: device firmware the user imports ----------------------------------------------
+
+    /** Where the imported YMF288 rhythm ROM is kept: app-private storage, outside every project and export. */
+    private val rhythmRomFile: File get() = File(File(filesDir, "firmware"), EpsmRhythmRom.FILE_NAME)
+
+    /** [MenuHost.installEpsmRhythmRom]: saves the checked [bytes] atomically, then installs them in the native engine. */
+    private fun installRhythmRom(bytes: ByteArray): String? {
+        try {
+            rhythmRomFile.parentFile?.mkdirs()
+            val file = AtomicFile(rhythmRomFile)
+            val out = file.startWrite()
+            try {
+                out.write(bytes)
+                file.finishWrite(out)
+            } catch (e: IOException) {
+                file.failWrite(out)
+                throw e
+            }
+        } catch (e: IOException) {
+            return "it could not be saved on this device (${e.message})"
+        }
+        return installRhythmRomNative(bytes)
+    }
+
+    /** Hands checked ROM [bytes] to the native engine and marks the ROM installed; returns why not, or null. */
+    private fun installRhythmRomNative(bytes: ByteArray): String? {
+        val result = try {
+            ChipAudio.nativeInstallRhythmRom(bytes)
+        } catch (e: UnsatisfiedLinkError) {
+            return "native audio is not available (${e.message})"
+        }
+        if (result != 0) return "the audio engine refused it (error $result)"
+        EpsmRhythmRom.markInstalled()
+        return null
+    }
+
+    /** At start: installs a ROM imported earlier after checking it again; a changed or damaged file is reported, not used. */
+    private fun loadRhythmRom() {
+        val file = rhythmRomFile
+        if (!file.exists()) return
+        val problem = if (file.length() > EpsmRomMenu.MAX_FILE) "it is ${file.length()} bytes, not ${EpsmRhythmRom.SIZE}" else {
+            val bytes = try { AtomicFile(file).readFully() } catch (e: IOException) { null }
+            if (bytes == null) "it could not be read" else EpsmRhythmRom.problem(bytes) ?: installRhythmRomNative(bytes)
+        }
+        if (problem != null) showError("The saved EPSM rhythm ROM was not installed: $problem. Import it again (${EpsmRomMenu.LABEL} in the menu)")
     }
 
     /** Device, Android, displays and ChipAudio's measurements for the diagnostics ([org.thortracker.ui.About]). */

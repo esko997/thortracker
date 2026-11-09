@@ -30,6 +30,11 @@ object Palette {
         0xFFE87AC4.toInt(),
         0xFFD8B48C.toInt(), // ninth lane (OPL3 channel 9): sand
         0xFFC4CCD4.toInt(), // tenth lane (Mega Drive Noise): silver
+        0xFF9FD89A.toInt(), // lanes 11-15 (Master System FM unit: FM, rhythm drums): sage
+        0xFFF0B07A.toInt(), // apricot
+        0xFFA6A0E8.toInt(), // lavender
+        0xFF7AD8D8.toInt(), // aqua
+        0xFFE8A0B8.toInt(), // rose
     )
 
     fun channel(i: Int): Int = CHANNELS[i.mod(CHANNELS.size)]
