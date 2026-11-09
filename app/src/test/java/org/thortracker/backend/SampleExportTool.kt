@@ -31,6 +31,10 @@ import org.thortracker.system.nes.Vrc7Patch
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.pce.PceDemoSong
 import org.thortracker.system.pce.PceSystem
+import org.thortracker.system.scc.SccDemoSong
+import org.thortracker.system.scc.SccPlusSystem
+import org.thortracker.system.scc.SccSystem
+import org.thortracker.system.scc.SccVariant
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.ym2612.YmDemoSong
 import org.thortracker.system.sms.SmsExport
@@ -385,5 +389,23 @@ object SampleExportTool {
         check(PceSystem.errors(pceShortest).isEmpty()) { "the shortest PC Engine song is invalid: ${PceSystem.errors(pceShortest)}" }
         File(directory, "pce-shortest.pcimg").writeBytes(ByteArray(PceSystem.engine.imageSize).also { PceSystem.engine.lower(pceShortest, it) })
         println("Exported ${pce.title} and the shortest PC Engine song to ${directory.absolutePath}")
+        // The SCC and SCC+ demos: projects and engine images (their VGMs need the native player:
+        // tools/audio/render_scc_image.sh scc-demo.sccimg out.wav --vgm cartridge-dusk.vgm renders both), and the
+        // shortest valid song of each (one one-row order at speed 1, A-4 held on SCC 1) whose images the native WAV
+        // export test renders through loops.
+        for ((system, file) in listOf(SccSystem to "cartridge-dusk", SccPlusSystem to "prism-lane")) {
+            val demo = system.demo()
+            val image = if (system == SccSystem) "scc-demo.sccimg" else "scc-plus-demo.sccimg"
+            File(directory, "$file.thor").writeText(ProjectCodec.encode(demo), Charsets.UTF_8)
+            File(directory, image).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(demo, it) })
+            println("Exported ${demo.title} to ${directory.absolutePath}")
+        }
+        for ((variant, file) in listOf(SccVariant.SCC to "scc-shortest.sccimg", SccVariant.PLUS to "scc-plus-shortest.sccimg")) {
+            val shortest = SccDemoSong.shortest(variant)
+            val system = variant.system
+            check(system.errors(shortest).isEmpty()) { "the shortest ${variant.label} song is invalid: ${system.errors(shortest)}" }
+            File(directory, file).writeBytes(ByteArray(system.engine.imageSize).also { system.engine.lower(shortest, it) })
+        }
+        println("Exported the shortest SCC and SCC+ songs to ${directory.absolutePath}")
     }
 }

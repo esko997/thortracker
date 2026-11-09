@@ -24,6 +24,7 @@ set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
 set(AY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ay)
 set(PCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pce)
 set(MEDNAFEN_PSG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mednafen-pce-psg)
+set(SCC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/scc)
 
 # reSID 1.0 (C++), the SID chip; only sid/sid_resid.cpp (a C interface) talks to it.
 add_library(resid STATIC
@@ -57,7 +58,8 @@ set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The chip machines behind chip_engine.h. huge_machine.c includes binjgb's emulator.c; the NES and
 # SID machines share chips' m6502.h (header-only, implemented once in cpu6502.c); the YM2612 machine's Z80 is
-# chips' z80.h (implemented once in cpuz80.c); the NES VRC7 build's FM chip is emu2413 (C, MIT).
+# chips' z80.h (implemented once in cpuz80.c); the NES VRC7 build's FM chip is emu2413 (C, MIT); the SCC machine's
+# K051649 / K052539 is our port of MAME's k051649 (scc/scc_k051649.c, BSD-3-Clause).
 add_library(chip_engines STATIC
     chip_engine.c
     chip_wav.c
@@ -115,9 +117,15 @@ add_library(chip_engines STATIC
     ${PCE_DIR}/pce_image.c
     ${PCE_DIR}/pce_vgm.c
     ${PCE_DIR}/pce_psg.cpp
+    ${SCC_DIR}/scc_chip.c
+    ${SCC_DIR}/scc_machine.c
+    ${SCC_DIR}/scc_player.c
+    ${SCC_DIR}/scc_image.c
+    ${SCC_DIR}/scc_vgm.c
+    ${SCC_DIR}/scc_k051649.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${BLIP_DIR}
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable

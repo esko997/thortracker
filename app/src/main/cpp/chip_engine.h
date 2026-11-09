@@ -35,6 +35,10 @@
  *                     ay_psg.c, ay_image.c)
  *   "pce-huc6280"     Thor Tracker's own PC Engine player on the HuC6280's PSG (Mednafen 1.32.1), DDA samples from
  *                     the CPU timer (pce/pce_chip.c over pce/pce_machine.c, pce_player.c, pce_image.c, pce_psg.cpp)
+ *   "msx-scc"         Thor Tracker's own SCC player on a Konami K051649 (our port of MAME's k051649) at the
+ *                     MSX's 3.58 MHz (scc/scc_chip.c over scc/scc_machine.c, scc_player.c, scc_image.c,
+ *                     scc_k051649.c)
+ *   "msx-scc-plus"    the same player and core as a K052539 in SCC+ mode (five wave RAMs; same files)
  *
  * A machine runs the system's real playback driver; the host owns threading, image hand-over,
  * mixing, channel borrowing and output latency. Contract for every implementation:

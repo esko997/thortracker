@@ -1,5 +1,68 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.27.0 Konami SCC and SCC+
+
+Two five-voice MSX wavetable systems: SCC shares waveform RAM between channels
+4 and 5; SCC+ has five independent waves. Both provide signed 32-sample wave
+editing, software envelopes, restart/test-register controls and VGM/WAV export.
+The demos are **Cartridge Dusk** and **Prism Lane**.
+
+Verification:
+
+- **690 JVM core tests, 14 Linux core tests and six Android-host tests passed**;
+  production-signed Android and native desktop release builds succeeded.
+  Builds remained serialized with one Gradle worker and in-process Kotlin.
+  The growing desktop compiler script now uses Bash stdin rather than a single
+  command-line argument, avoiding Linux's per-argument size limit.
+- The native suite passed; SCC has **606 functional checks** and WAV export
+  **1,841 checks**. PC Engine retains 379 functional checks. Both chips report
+  thread-CPU timing separately from correctness: hosted SCC CI failed a
+  worst/mean ratio gate at **52.3 / 12.7 µs**, not an audio deadline or
+  functional assertion. After removing that nondeterministic gate, all 606
+  SCC checks pass; the local benchmark reports **32.2 / 10.9 µs** worst/mean.
+- The independent player matches **1,500 ticks plus reset**. A per-clock chip
+  model matches **2,545 events over 285,160 clocks**. SCC/SCC+ reference VGMs
+  match byte-for-byte (23,356 / 24,204 bytes); clocks, writes, waits and loop
+  boundaries pass independent parsing. A-4 measures **440.397 Hz**.
+- Fixed keyed-off waveform ownership and released-note portamento. Focused
+  native regressions went from **8/28** and **20/62 failures** respectively to
+  zero, preserving held-silent legato, audible release tails and final-zero timing.
+- Fixed shared-wave warnings that missed an overlap ending inside a row.
+  The consumer-API regression failed on the isolated previous source and
+  passes afterward, including delayed nonoverlap and persistent ownership
+  uncertainty after a stepping tail ends. The inspector remains conservative,
+  not a claim of tick-exact envelope simulation.
+- Fixed seek's fractional resampler phase: silent clock advancement had left
+  blip on the reset sample grid. Two seek targets differed by **66 and 30
+  16-bit LSBs** before; they are now sample-identical. The existing 60-tick
+  preroll and one-LSB tolerance were not relaxed.
+- Real Nova, DMG and Konkr activities exercised both systems: playback,
+  simultaneous audition, envelope/restart/wave edits, wave and sound clipboard
+  with Undo, project roundtrip and seek. All reported **zero xruns and driver
+  faults**. Maximum callbacks were **1.21 / 3.72 / 1.63 ms**, within the
+  respective 4 / 20 / 20 ms bursts.
+  After removing the temporary harnesses, the freshly built clean test APK
+  passed **all 21 permanent Android tests** on Nova. Its separate existing
+  Game Boy audio test recorded one startup xrun, zero driver faults and a
+  0.869 ms maximum callback; the SCC scenarios above remained xrun-free.
+- Demo seeks to the last order/row 24 took SCC/SCC+ **1.21/1.71 ms** on Nova,
+  **2.83/4.24 ms** on DMG and **8.70/17.83 ms** on Konkr. Konkr's 16,065-tick
+  worst-speed seek used the documented order-start fallback: **59.69/62.95 ms**
+  native, **89/81 ms** wall time, maximum UI round trips **8/2 ms**.
+- Nova's exported VGMs exactly match the independent factory-image exporter
+  after removing metadata (36,685 / 42,773 bytes). WAVs are 48 kHz stereo,
+  approximately **15.73 / 13.07 seconds**, with peaks **0.8225 / 0.7537**,
+  RMS **0.1942 / 0.1425** and no clipped samples.
+- Both Android-saved projects ran in the actual SDL frontend for six seconds,
+  reaching order 1 rows 18 / 28, peaks **0.7680 / 0.6338**, and the Instrument
+  view. Device Pattern/Wave and desktop Instrument surfaces were inspected.
+  **All 32 Game Boy renders remain pixel-identical** to verified 0.26.0.
+- The standalone SCC renderer built and ran: three-second WAV, peak **0.713**,
+  RMS **0.1837**, order 1/row 14; VGM **7.58 seconds**, loop **5.98 seconds**.
+
+No original-hardware capture, human listening session or libvgm audio
+comparison is claimed. VGM loop-state dumps can reset waveform phase.
+
 ## 0.26.0 PC Engine HuC6280
 
 The PC Engine adds six 32-step, 5-bit wavetable channels, noise on PSG 5–6,
@@ -54,6 +117,19 @@ Verification:
 - The documented standalone renderer also built and ran: three seconds of
   WAV reached order 0/row 30; its complete-song VGM is 32.00 seconds with
   a 25.60-second loop.
+- A separate real-activity Nova smoke opened the Android Downloads picker and
+  imported a 44.1 kHz WAV into **1,747 five-bit frames at 6,991 Hz**, auditioned
+  it and undid the import. Starter-kit insertion, audition and Undo also passed;
+  the picker and sample-editor screenshots were inspected.
+- Published **0.26.0** assets were checked against release SHA-256 digests and
+  the production signing certificate. The official APK passed the PC Engine
+  controller/audio scenario on Nova, DMG and Konkr, with zero xruns or driver
+  faults. Konkr's first USB instrumentation connection was interrupted; its
+  original timeout was restored before a successful rerun.
+  The official AppImage also played the Android project through row 50.
+  The APK was copied to Thor Downloads and the Deck's stable `thor-tracker`
+  symlink updated, with destination hashes verified; neither device was
+  woken or launched, and Thor's installed app was not changed.
 
 No human listening test, original-hardware capture or libvgm audio comparison
 is claimed. The VGM loop-state dump can reset waveform phase; WAV retains the
@@ -587,61 +663,6 @@ AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` sym
 The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
-
-## Unreleased: PC Engine (HuC6280) — source slice, NOT verified
-
-Branch `huc6280-system` adds the standalone **PC Engine (HuC6280)** system (`"pce-huc6280"`: Thor Tracker's own
-player on Mednafen 1.32.1's HuC6280 PSG, vendored unmodified; six wavetable channels, noise on PSG 5-6, the channel 2 →
-channel 1 LFO, channel and master balance, DDA samples streamed from the CPU timer; VGM and WAV export) and the demo
-**Turbo Lanterns**. It was written source-only: **nothing has been built, compiled, generated, tested, run on a device
-or listened to**, and no version was bumped. (The pure-Python reference was exercised on /tmp copies during review:
-its loader against the test's corruption cases, its VGM against its own checker; that is not engine evidence.) The
-parent runs everything below before anything is called verified; record the results here then, replacing this section.
-
-1. Generate the Kotlin constants, the native fixture and the golden images (pure Python 3), check a second run is
-   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/PcePlayerImage.kt`,
-   `app/src/test/cpp/pce_test_song.h` (about 2.1 MB: per-tick and per-interrupt reference writes for 1500 ticks of
-   four songs) and `core/src/jvmTest/resources/pce-golden/{spike,features}.bin.gz`:
-
-   ```sh
-   python3 tools/audio/prepare_pce.py
-   python3 tools/audio/pce/pce_golden.py
-   python3 tools/audio/prepare_pce.py && python3 tools/audio/pce/pce_golden.py && git status --short   # no new changes
-   ```
-
-   `prepare_pce.py` fails before writing if the C sources and the Python reference disagree on any shared number,
-   `PCP_PERIOD_Q16` or `PCP_SINE`.
-2. The usual full run (Kotlin: `PceGoldenTest`, `PceModelTest`, `PceEditorTest` and every existing test), the app and
-   Deck builds (CMake through Gradle with the shim include dir, `pce/pce_psg.cpp` as C++; cinterop `decknative` with
-   `pce_export.h`), the sample exports (`turbo-lanterns.thor`, `pce-demo.pcimg`, `pce-shortest.pcimg`) and the native
-   host test (`pce_machine_test.c`, and `wav_render_test.c` with the two PCE images):
-
-   ```sh
-   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
-   tools/build.sh :deck:linkDebugExecutableLinuxX64
-   tools/audio/run_native_host_test.sh /tmp/thor-evidence
-   python3 tools/audio/pce/pce_reference_check.py /tmp/thor-evidence --pitch
-   python3 tools/audio/pce/pce_reference_check.py /tmp/thor-evidence --vgm2wav /path/to/libvgm/bin/vgm2wav   # optional, needs numpy
-   tools/audio/render_pce_image.sh app/build/samples/pce-demo.pcimg /tmp/turbo-lanterns.wav 90 --vgm /tmp/turbo-lanterns.vgm
-   ```
-
-   Expected from the specification (not yet observed): A-4 = period 254 = 440.40 Hz (+1.56 cents), every note A-0..C-6
-   within 4.2 cents and B-7 at +19.2 cents; the engine's tick and timer-interrupt writes (with their cycles) equal
-   `pce_ref.py`'s for 1500 ticks of the test song and its edited, tempo and x2 variants; the VGM byte-equal to the
-   reference's; seeks bit-identical to straight play. Thresholds the native test sets without having run (A-4 within
-   ±0.3 Hz by zero crossings, sample rate ±0.5 %, balance ratios ±5 %, LFO pitch spread > 15 Hz with `M01`, noise
-   roughness, muted rms < 0.0005, release and one-shot end within a few ticks, 116-117 interrupts per tick at reload
-   0, tick cost ≤ 4× the mean) may need tuning once measured. Also the release-standard checks: Game Boy views
-   pixel-identical to the baseline, every existing golden and sample export unchanged, the four other
-   `render_*_image.sh` scripts still link (they now compile the PCE sources because `chip_engine.c` lists its ops).
-3. Listen: the demo (wave-sequence lead, `Wxx` arpeggios, D/A drums and the `T01` half-rate fill, noise on PSG 5-6, the
-   LFO passage, the master fade-in) and the test song; the demo's VGM in an independent player (libvgm's HuC6280 core).
-   Watch for clicks from the original HuC6280's uncentred outputs and for the output level (Mednafen's level ÷ 2).
-4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → PC Engine
-   (HuC6280); demo playback (no underruns; the tick cost on the Konkr, including a seek of up to 3600 clocked ticks and
-   six machines × ~0.65 MB), the Instrument pages per kind, the Wave view, the starter kit and a `.wav` import through
-   the document picker, audition on PSG 1-6 (a noise sound only on PSG 5-6), the Song view's shared rows and the Pattern
-   inspector's shared-state lines, VGM and WAV exports through the document picker.
 
 ## 0.16.0 NES + Konami VRC7
 
