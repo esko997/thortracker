@@ -23,6 +23,8 @@ set(OPN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opn)
 set(OPM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/opm)
 set(SMS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sms)
 set(EMU2413_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/emu2413)
+set(TIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tia)
+set(STELLA_TIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stella-tia)
 set(POKEY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pokey)
 set(AY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ay)
 set(PCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pce)
@@ -109,6 +111,11 @@ add_library(chip_engines STATIC
     ${YM_DIR}/ym_xgm.c
     ${YM_DIR}/ym_vgm.c
     ${YM_DIR}/ym_psg.c
+    ${TIA_DIR}/tia_chip.c
+    ${TIA_DIR}/tia_machine.c
+    ${TIA_DIR}/tia_player.c
+    ${TIA_DIR}/tia_image.c
+    ${TIA_DIR}/tia_stella.cpp
     ${POKEY_DIR}/pokey_engine.c
     ${POKEY_DIR}/pokey_machine.c
     ${POKEY_DIR}/pokey_player.c
@@ -149,14 +156,15 @@ add_library(chip_engines STATIC
     ${SCC_DIR}/scc_k051649.c
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPN_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim)
-target_include_directories(chip_engines PRIVATE ${POKEY_DIR})
+    PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${OPN_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR} ${TIA_DIR} ${POKEY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim ${STELLA_TIA_DIR} ${STELLA_TIA_DIR}/shim)
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)
 # pce/pce_psg.cpp (C++) compiles Mednafen's PSG, unmodified, against its shim: vendored code, warnings off.
 set_source_files_properties(${PCE_DIR}/pce_psg.cpp PROPERTIES COMPILE_OPTIONS "-w")
+# Stella's unmodified save()/load() use try/catch.
+set_source_files_properties(${TIA_DIR}/tia_stella.cpp PROPERTIES COMPILE_OPTIONS "-w;-fexceptions")
 set_target_properties(chip_engines PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(chip_engines PUBLIC resid ymfm)
 

@@ -1,12 +1,78 @@
 # Thor Tracker verification — 2026-11-09
 
-## 0.31.0 Atari 8-bit POKEY — local verification complete; publication pending
+## 0.32.0 Atari 2600 TIA — local verification complete; publication pending
+
+Integrates verified POKEY `c8a7d46` and published OPN/OPNA. **Cartridge Dawn** has NTSC and PAL variants,
+both TIA voices, all 16 AUDC modes, tonal/raw instruments, honest divider quantization and WAV export.
+VGM has no TIA command; no substitute register format or cartridge export is advertised.
+
+### Engine, reference and build evidence
+
+- Generated Kotlin constants, native fixtures and compressed goldens are byte-identical across two runs.
+  Vendored Stella `AudioChannel.cxx/.hxx` match upstream commit `d55b1aec0d067a4c901a6dcdf81cb8f579685659`.
+- Corrected pre-resampler headroom: the preserved unattenuated path fails **81 checks**. Quarter-gain
+  absolute levels before differencing pass **40 NTSC/PAL × rate × AUDC cases** and a separate quiet
+  resampler oracle, without changing raw nonlinear chip levels or register traces.
+- The integrated native suite passes, including **1,812 TIA**, **356 POKEY**, **1,806 OPN/OPNA** and
+  **2,220 WAV** checks. Independent Python period/shape comparisons cover every AUDC at four dividers;
+  brute-force nearest-divider edges and the **1,500-tick** player trace pass unchanged tolerances.
+  Measured AUDC C/AUDF 11: **436.105 Hz NTSC** and **432.126 Hz PAL**, matching the hardware's deliberately
+  imperfect A-4 (**−15.4 / −31.3 cents**), not an artificially retuned 440 Hz.
+- **851 JVM, 19 Linux and 6 Android host tests** pass. The signed release APK and debug SDL executable
+  build with one worker. Both TIA renderer CLIs and the integrated POKEY renderer run successfully;
+  all shared-registry renderer source lists include every engine (SMS remains intentionally standalone).
+- Factory `.uge` is unchanged: **77,994 bytes**, SHA-256
+  `c6d91f1c02c34425d49ce19279f090fa309a500568462de6efc5c5a5f792bccb`.
+  All **32 Game Boy views** are pixel-identical to the verified POKEY baseline.
+
+### Actual frontend evidence
+
+- The clean permanent Android suite passes **21 tests in 48.299 s**, zero observed xruns or driver faults.
+  Rebuilt after temporary-harness removal, the final clean suite passes **21 in 47.993 s**; its general
+  audio regression reports **one xrun, zero driver faults**. The separate TIA scenarios below report zero.
+- Both regional scenarios pass on **Nova (123.302 s), DMG (127.878 s), Konkr (134.953 s)**: New/Load demo,
+  all five instrument pages, all AUDC choices, tonal/raw audition, presets, envelope/loop/release editing,
+  undo/redo, tuning-guide divider audition, playback with both audition channels, live edits, Stop,
+  exact project restart, seek, and actual project Save/Open and WAV document pickers.
+- All six project exports and six WAV exports match their retained source bytes and are identical across
+  devices within each region. NTSC WAV is **8,612,732 bytes**, PAL **8,872,112 bytes**.
+- Across those scenarios: **zero observed xruns and driver faults**. Maximum observed callbacks:
+  **2.323 / 5.809 / 1.766 ms** on Nova/DMG/Konkr. Konkr's **16,065-tick** order-fallback seeks complete
+  in **330.582 ms NTSC / 413.341 ms PAL**, with playback resumed and no pending seek.
+- Four actual SDL scenes exercise each region with playback alone and playback plus held audition.
+  Final rows are **26 NTSC / 25 PAL**, audition count is one in the latter scenes, and peaks are
+  **0.23056 / 0.23038**. Android compact/landscape instrument and tuning-guide surfaces and the SDL
+  instrument surface were visually inspected. This is automated PCM/UI evidence, not human listening.
+- Temporary instrumentation sources are removed and retained only with local evidence. Private-ROM
+  and distinctive-chunk exclusion passes for the candidate APK; no private audio is published.
+
+Official CI artifacts and artifact-only Thor/Deck delivery remain pending.
+
+## 0.31.0 Atari 8-bit POKEY
 
 **Atari 8-bit (POKEY)** (`atari-pokey`) adds four channels, NTSC/PAL timing, distortion polynomials,
 16-bit pairing, high-pass and shared-resource ownership, and platform-native volume-DAC samples.
 Thor Tracker's player and cycle model follow Altirra/MAME; the demo is **Scanline Cruise**, with VGM/WAV
 exports. Version **0.31.0/code 44** integrates verified OPN/OPNA `c3c054f`, retaining all earlier systems,
 project format 10, tuning provenance, 500 bundled scales and optional local packs.
+
+Published [v0.31.0](https://github.com/esko997/thortracker/releases/tag/v0.31.0) after PR #42 merged as
+`409a5bfb665ab086cc8741a03f904b23d324c013`. Workflow `42696269600` passed build, Deck, signed release
+and AppImage attachment. Official artifacts passed checksum, production-certificate, version and
+non-debuggable checks:
+
+- APK SHA-256: `3a4b18afe60511c4811df8aa228a802910f7debd5734b24d03694261ad5f84dd`.
+- AppImage SHA-256: `7f86086af72e7831d44e3bcfeb874b22c47631cccb4288ce52de14205c21aa9f`.
+- The official APK passed both full controller/import/restart/export scenarios on Nova (**80.264 s**),
+  DMG (**83.987 s**) and Konkr (**91.543 s**), with zero observed xruns or driver faults. Maximum observed
+  callbacks were **3.109 / 10.563 / 3.746 ms** respectively; Konkr's deep seek took **263.405 ms**.
+  All demo/edited VGM/WAV bytes equal the verified candidate, and all six actual document-picker exports match.
+- The actual optimized AppImage ran locally with playback plus held audition: row 30 after four seconds,
+  one active audition, PCM peak **0.65**, and a successfully drawn instrument surface.
+- The official APK passed private-ROM/chunk exclusion. Artifact-only delivery placed it in Thor Downloads
+  and the AppImage under `~/thortracker-deck/`, updating the existing `thor-tracker` symlink. Both remote
+  hashes match; neither daily device was woken, installed to or launched. Owned test packages/captures
+  were removed from the three reserved devices, and all leases were released.
 
 ### Sample ownership and native verification
 

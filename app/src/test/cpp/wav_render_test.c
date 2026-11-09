@@ -33,6 +33,11 @@
  * render a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1 adding
  * about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
+ * The shortest song (tia-shortest.tiaimg: one order of one row, A-4 held on the Atari 2600's TIA 1 with a tonal AUDC
+ * C instrument, looping to order 0) runs the same render paths at the other extreme: once through is a single row,
+ * and it must still render a valid non-silent file equal to straight ticking, deterministically for any step size,
+ * with loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
+ *
  * The shortest song (pokey-shortest.pkimg: one order of one row at speed 1, a held note on POKEY 1, looping to order
  * 0) runs the same render paths at the other extreme: once through is a single engine tick (under 1 s), and it must
  * still render a valid non-silent file equal to straight ticking, deterministically for any step size, with loops=1
@@ -95,6 +100,8 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"tia-demo.tiaimg", "atari2600-tia-ntsc"},
+    {"tia-pal-demo.tiaimg", "atari2600-tia-pal"},
     {"scanline-cruise.pkimg", "atari-pokey"},
     {"night-express.opnimg", "ym2203-opn"},
     {"paper-lanterns.opnaimg", "ym2608-opna"},
@@ -144,9 +151,11 @@ static const Demo kShortest[] = {
 /* Shortest songs of one row holding a note (written by exportSamples beside the demos): the shortest-song checks
  * above plus everything test_demo checks that does not need a song longer than one row. */
 static const Demo kShortestHeld[] = {
+    {"tia-shortest.tiaimg", "atari2600-tia-ntsc"},
     {"pce-shortest.pcimg", "pce-huc6280"},
     {"scc-shortest.sccimg", "msx-scc"},
-    {"scc-plus-shortest.sccimg", "msx-scc-plus"},    {"pokey-shortest.pkimg", "atari-pokey"},
+    {"scc-plus-shortest.sccimg", "msx-scc-plus"},
+    {"pokey-shortest.pkimg", "atari-pokey"},
 };
 
 static char spool[512];

@@ -59,6 +59,10 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.file("ym/ym_xgm.c").asFile,
         engineSrc.file("ym/ym_vgm.c").asFile,
         engineSrc.file("ym/ym_psg.c").asFile,
+        engineSrc.file("tia/tia_chip.c").asFile,
+        engineSrc.file("tia/tia_machine.c").asFile,
+        engineSrc.file("tia/tia_player.c").asFile,
+        engineSrc.file("tia/tia_image.c").asFile,
         engineSrc.file("pokey/pokey_engine.c").asFile,
         engineSrc.file("pokey/pokey_machine.c").asFile,
         engineSrc.file("pokey/pokey_player.c").asFile,
@@ -105,12 +109,13 @@ val buildEngine by tasks.registering(Exec::class) {
     // Mednafen's PSG (the PC Engine): pce/pce_psg.cpp compiles
     // third_party/mednafen-pce-psg/pce_psg.cpp itself against the shim.
     val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "nes/nes_epsm_ymfm.cpp", "opm/opm_ymfm.cpp", "opn/opn_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp",
-        "third_party/ymfm/ymfm_ssg.cpp", "pce/pce_psg.cpp") +
+        "third_party/ymfm/ymfm_ssg.cpp", "pce/pce_psg.cpp", "tia/tia_stella.cpp") +
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
         listOf("third_party/binjgb/src", "nes", "sid", "opl3", "ym", "pokey", "opn", "opm", "sms", "ay", "pce", "scc", "third_party/chips", "third_party/blip_buf",
-            "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim")
+            "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim",
+            "tia", "third_party/stella-tia", "third_party/stella-tia/shim")
             .map { engineSrc.dir(it).asFile } +
         listOf(sdlInclude.asFile, layout.projectDirectory.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
@@ -125,6 +130,7 @@ val buildEngine by tasks.registering(Exec::class) {
         "generated/sid_player_image.h", "opl3/opl3_machine.h", "opl3/opl3_player.h", "opl3/opl3_image.h", "opl3/opl3_vgm.h", "opl3/opl3_export.h",
         "generated/opl3_tables.h", "third_party/nuked-opl3/opl3.h", "third_party/chips/m6502.h", "third_party/blip_buf/blip_buf.h",
         "vgm_gd3.h", "third_party/chips/z80.h", "ym/ym_image.h", "ym/ym_player.h", "ym/ym_xgm.h", "ym/ym_machine.h",
+        "tia/tia_image.h", "tia/tia_player.h", "tia/tia_machine.h", "tia/tia_stella.h",
         "pokey/pokey_chip.h", "pokey/pokey_image.h", "pokey/pokey_player.h", "pokey/pokey_machine.h", "pokey/pokey_vgm.h",
         "pokey/pokey_export.h",
         "ym2608_rhythm_rom.h", "opn/opn_image.h", "opn/opn_player.h", "opn/opn_ymfm.h", "opn/opn_machine.h", "opn/opn_vgm.h",
@@ -140,6 +146,7 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.dir("third_party/ymfm").asFileTree,
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         engineSrc.dir("third_party/mednafen-pce-psg").asFileTree,
+        engineSrc.dir("third_party/stella-tia").asFileTree,
         layout.projectDirectory.files("native/deck_audio.h", "native/deck_draw.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
@@ -193,7 +200,7 @@ kotlin {
             entryPoint = "org.thortracker.deck.main"
             // Links against deps/lib/libSDL3.so. The AppImage bundles that library in lib/ beside the executable, found
             // through the rpath; without it the system's SDL3 is used (SteamOS ships one).
-            // libstdc++: reSID, ymfm and Mednafen's PSG (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
+            // libstdc++: reSID, ymfm, Mednafen's PSG and Stella's TIA (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
             linkerOpts("-L${deps.dir("lib").asFile}", "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
         }
     }

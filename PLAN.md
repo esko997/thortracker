@@ -13,9 +13,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-POKEY integration targets **0.31.0/code 44** on verified OPN/OPNA `c3c054f`, retaining OPM and the
-format-10 tuning library. Native/reference, Kotlin, Android and SDL checks pass; publication is pending.
-Human listening and physical-chip fidelity remain unverified; evidence is in `docs/VERIFICATION.md`.
+TIA integration targets **0.32.0/code 45** on verified POKEY `c8a7d46`, retaining all earlier systems and
+the format-10 tuning library. Integrated builds, independent references, three reserved Android
+handhelds and SDL playback/audition pass. Publication remains pending; evidence is in `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -77,11 +77,14 @@ Human listening and physical-chip fidelity remain unverified; evidence is in `do
      Nova/DMG/Konkr activity smokes, actual Android import/export pickers and legacy firmware reuse pass.
      Independent VGM playback also verifies the exported FM/SSG mix; evidence and limits are in `docs/VERIFICATION.md`.
    - POKEY — Atari 8-bit computers: 4 channels, distortion polynomials, high-pass, 16-bit pairing.
-     Implemented for **0.31.0/code 44**, demo **Scanline Cruise**, with native volume-DAC samples,
+     Released as **0.31.0/code 44**, demo **Scanline Cruise**, with native volume-DAC samples,
      NTSC/PAL timing, four effect columns, VGM/WAV export and channel-ownership inspection.
      Native/reference comparisons, 831 JVM tests, 32 unchanged Game Boy views, all three reserved
-     Android handhelds and SDL playback/audition pass; release publication remains pending.
+     Android handhelds and SDL playback/audition pass, including the official APK/AppImage artifacts.
    - TIA — Atari 2600: two voices with odd, tuning-limited pitches.
+     Integration **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
+     WAV-only, Cartridge Dawn demos. All 1,812 native TIA checks, independent references, Android
+     controller/edit/export scenarios and SDL playback/audition pass; publication remains pending.
    - VIC-20 VIC and Commodore 16/Plus4 TED — square-wave chips with C64 relatives.
    - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
