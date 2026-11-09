@@ -7385,8 +7385,9 @@ sweeps) and mixer envelopes.
 - `start(order, row, max_ticks)`: the SCC's policy: the cores and player are reset and the player runs alone from the
   song start to the target, counting *n* ticks (`CHIP_SEEK_FROM_START`); beyond `max_ticks` from the order's row 0 with
   its start speed (`CHIP_SEEK_FROM_ORDER`). Then from the reset again: the first *n* − P ticks apply the player's writes
-  to the cores with **`sac_advance`**, P = `SAAM_PREROLL_TICKS` = one second (50 or 60 × multispeed ticks), and the last
-  P ticks render (output discarded). Core state at the target is **bit-identical to straight play** (`memcmp`); output
+  to the cores with **`sac_advance`** while `blip_skip_silence` preserves both resamplers' fractional time.
+  P = `SAAM_PREROLL_SECONDS` × tick rate × multispeed = one second; the last P ticks render (output discarded).
+  Core state at the target is **bit-identical to straight play** (`memcmp`); output
   within 1/32768 of straight play's after the pre-roll; bit-identical when *n* ≤ P. Kotlin `seekTicks` = 12000
   (`SAAM_SEEK_TICKS`: 4 minutes at 50 Hz, 3:20 at 60 Hz × 1).
 - `apply_image`: the SCC's rules: positions clamped, speed, jumps and delays re-read, multispeed from the next tick;
@@ -7531,8 +7532,10 @@ the same features on other lanes and `Y` on one chip only.
   the ops table as the hosts do, and its VGM through `sa_export_vgm`.
 - Not done: listening on a SAM Coupé or a Game Blaster.
 
-**Nothing in this section has been built or run yet** (source-only branch `saa1099-systems`): the parent runs
-`python3 tools/audio/prepare_saa.py`, `python3 tools/audio/saa/saa_golden.py`, the Kotlin tests,
-`tools/build.sh exportSamples`, `tools/audio/run_native_host_test.sh` and `tools/audio/saa_reference_check.py`, then
-fills in the measured numbers.
+Integration evidence: deterministic generated fixtures; **925 JVM / 6 Android host tests**; corrected
+**618 native SAA checks**, with uninterrupted song WAVs, raw player/chip traces and VGM bytes unchanged.
+The CMS seek regression was 9 LSB before preserving fractional resampler time and is now bit-identical.
+The internal-envelope test observes eight actual clock edges, including the pending reset half-period,
+rather than assuming the new frequency latched before the first edge. No tolerance was relaxed.
+Full platform/release and independent-reference progress is recorded in `docs/VERIFICATION.md`.
 

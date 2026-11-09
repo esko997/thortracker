@@ -2038,7 +2038,9 @@ static void test_shared(void) {
         copy = *saam_core(m, chip);
         const int want_half = sac_half(sap_octave_offset(A4 * 64, cms) >> 8, sap_octave_offset(A4 * 64, cms) & 0xFF);
         int edges = 0, steps = 0, off_edge = 0;
-        for (int i = 0; i < 8 * want_half + 7; ++i) {
+        /* The first edge can still be waiting on the reset half-period; the new pitch latches at that edge. */
+        const int clocks = copy.tone[clk].count + 7 * want_half + 7;
+        for (int i = 0; i < clocks; ++i) {
             const int edge = copy.tone[clk].count == 1;
             const int pos = copy.env[e].pos + 16 * copy.env[e].phase;
             sac_render(&copy, 1, NULL, NULL);
@@ -2047,7 +2049,7 @@ static void test_shared(void) {
             steps += moved;
             off_edge += moved != edge;
         }
-        EXPECT(copy.tone[clk].half == want_half && copy.env[e].enabled && !copy.env[e].external && edges >= 8 && steps == edges &&
+        EXPECT(copy.tone[clk].half == want_half && copy.env[e].enabled && !copy.env[e].external && edges == 8 && steps == edges &&
                    off_edge == 0,
                "%s: envelope %d steps exactly at the edges of tone %d (H %d: %d edges, %d steps)", name, e, clk, want_half, edges,
                steps);

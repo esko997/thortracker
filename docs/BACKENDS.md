@@ -1250,7 +1250,7 @@ Decisions (made on the user's behalf; see Open questions):
 - **Help**: the effects page from `SccRules`, the Instrument, Envelopes and Waves sections and an "SCC and SCC+ wave
   RAM" section.
 
-### YM2151 (OPM): decisions, model, lowering and editor (branch `opm-systems`, unverified source slice)
+### YM2151 (OPM): decisions, model, lowering and editor
 
 Full contract: `docs/AUDIO_ENGINE.md`, "OPM". Decided on the user's behalf (the user approved working through the chip
 roadmap autonomously):
@@ -1461,7 +1461,7 @@ VGM) is `docs/AUDIO_ENGINE.md`, "POKEY"; this section is the Kotlin side.
   columns and the channel-holder tags; Song lists Machine, Multispeed, Noise and Base clock; Help's effects page uses
   `PokeyRules` and the system help.
 
-## Atari 2600 (TIA): decisions (0.32.0/code 45 locally verified; publication pending)
+## Atari 2600 (TIA): decisions (0.32.0/code 45)
 
 Full contract: `docs/AUDIO_ENGINE.md`, "Atari 2600". Decided on the user's behalf (roadmap item 7, "TIA"; every
 onboard sound feature, nothing invented):
@@ -1525,7 +1525,7 @@ onboard sound feature, nothing invented):
   and a portamento that step through the dividers, and `W01` turning held notes into the 4-bit buzz at the same pitch.
   NTSC at 7 frames per row, PAL the same composition at 6.
 
-## VIC-20 (VIC) and C16 / Plus/4 (TED): decisions (0.33.0/code 46 integration; full verification pending)
+## VIC-20 (VIC) and C16 / Plus/4 (TED): decisions (0.33.0/code 46)
 
 Full contract: `docs/AUDIO_ENGINE.md`, "VIC-20 and C16/Plus/4". Decided on the user's behalf (approved autonomous
 work through the chip roadmap; every onboard sound feature, stock NTSC/PAL variants, no invented per-voice volume):

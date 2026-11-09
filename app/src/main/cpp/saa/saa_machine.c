@@ -135,12 +135,15 @@ static void run_tick(SaaMachine* m) {
     blip_end_frame(m->blip[1], n);
 }
 
-/* One player tick with the cores advanced silently (seek). */
+/* One player tick with exact chip and fractional resampler time, but no signal history (seek). */
 static void run_silent_tick(SaaMachine* m) {
     sap_tick(&m->player, &m->image);
     send_writes(m);
     const uint32_t n = next_clocks(m);
     for (int chip = 0; chip < m->chips; ++chip) sac_advance(&m->core[chip], n);
+    /* Pre-roll settles the filter, not a fractional-sample timing error. */
+    blip_skip_silence(m->blip[0], n);
+    blip_skip_silence(m->blip[1], n);
 }
 
 /* The resampled frames of the last tick, interleaved into pcm; returns the frame count. */
