@@ -3,6 +3,7 @@ package org.thortracker.system.nes
 import org.thortracker.backend.FamiStudioEnvelopes
 import org.thortracker.backend.FamiStudioEnvelopes.Kind
 import org.thortracker.backend.FamiStudioLowering
+import org.thortracker.backend.FamiStudioText
 import org.thortracker.backend.FsNote
 import org.thortracker.backend.FsSong
 import org.thortracker.backend.NesDpcm
@@ -59,6 +60,12 @@ object NesValidator {
         val bank = song.nes.instruments
         if (bank.size != NesSystem.SLOTS) out += "The song has ${bank.size} instruments; NES songs have exactly ${NesSystem.SLOTS}"
         if (expansion != NesExpansion.VRC7 && song.nes.vrc7Sustain != Vrc7Sustain()) out += "Only VRC7 songs have the FM sustain settings"
+        val lfo = song.nes.epsmLfo
+        when {
+            expansion != NesExpansion.EPSM && lfo != 0 -> out += "Only EPSM songs have an LFO setting; this song's is $lfo"
+            lfo != 0 && lfo !in NesSound.EPSM_LFO_ON..NesSound.EPSM_LFO_ON + 7 ->
+                out += "The EPSM LFO register value $lfo is not off (0) or on with a rate (8-15)"
+        }
         bank.forEachIndexed { i, ins ->
             val where = "Instrument ${NesRules.hex2(i + 1)}"
             if (ins.chip !in expansion.chips) out += "$where is a ${ins.chip.label} sound; this song has no ${ins.chip.label} chip"
@@ -84,14 +91,18 @@ object NesValidator {
                 if (ins.duty.values.isNotEmpty()) out += "$where: FDS sounds have no duty envelope; clear it"
                 fdsShape(out, where, ins.fds)
             }
-            if (ins.chip == NesChip.S5B) {
-                if (ins.duty.values.isNotEmpty()) out += "$where: 5B sounds have no duty envelope; clear it"
-                if (ins.s5b.octave !in S5bEnvelope.OCTAVES) out += "$where: 5B envelope octave ${ins.s5b.octave} is outside -8..8"
-                if (ins.s5b.period !in S5bEnvelope.PERIODS) out += "$where: 5B envelope period ${ins.s5b.period} is outside 0-65535"
+            if (ins.chip.hasSsg) {
+                val chip = if (ins.chip == NesChip.EPSM) "EPSM" else "5B"
+                if (ins.duty.values.isNotEmpty()) out += "$where: $chip sounds have no duty envelope; clear it"
+                val env = if (ins.chip == NesChip.EPSM) "SSG" else "5B"
+                if (ins.s5b.octave !in S5bEnvelope.OCTAVES) out += "$where: $env envelope octave ${ins.s5b.octave} is outside -8..8"
+                if (ins.s5b.period !in S5bEnvelope.PERIODS) out += "$where: $env envelope period ${ins.s5b.period} is outside 0-65535"
             } else {
-                if (ins.mixer.values.isNotEmpty() || ins.noise.values.isNotEmpty()) out += "$where: only 5B sounds have mixer and noise envelopes"
-                if (ins.s5b != S5bEnvelope.DEFAULT) out += "$where: only 5B sounds have a hardware envelope"
+                if (ins.mixer.values.isNotEmpty() || ins.noise.values.isNotEmpty()) out += "$where: only 5B and EPSM sounds have mixer and noise envelopes"
+                if (ins.s5b != S5bEnvelope.DEFAULT) out += "$where: only 5B and EPSM sounds have a hardware envelope"
             }
+            if (ins.chip == NesChip.EPSM) ins.epsm.problem()?.let { out += "$where: the FM patch $it" }
+            else if (ins.epsm != EpsmPatch.DEFAULT) out += "$where: only EPSM sounds have an EPSM FM patch"
             envelopeShape(out, where, "volume", ins.volume, NesEnvelope.VOLUME)
             envelopeShape(out, where, "arpeggio", ins.arpeggio, NesEnvelope.ARPEGGIO)
             envelopeShape(out, where, "pitch", ins.pitch, NesEnvelope.PITCH)
@@ -210,7 +221,8 @@ object NesValidator {
             if (ins.chip == NesChip.FDS) fdsRules(out, where, ins.fds)
         }
         val played = song.orders.toSet()
-        val squares = if (song.nes.expansion == NesExpansion.S5B) NesRules.S5B_SQUARE1 until song.nes.expansion.channels else IntRange.EMPTY
+        val squares = NesRules.ssgChannels(song.nes.expansion)
+        val ssg = NesRules.ssgLabel(song.nes.expansion)
         document.patterns.forEachIndexed { p, pattern ->
             if (p !in played) return@forEachIndexed
             val label = Songs.patternLabel(song, p).cap()
@@ -220,7 +232,7 @@ object NesValidator {
                 }
             }
             if (!squares.isEmpty()) for (row in 0 until pattern.length) {
-                NesRules.envPeriodConflict(squares.map { pattern.tracks[it][row] })?.let { out += "$label, row $row: $it" }
+                NesRules.envPeriodConflict(squares.map { pattern.tracks[it][row] }, ssg)?.let { out += "$label, row $row: $it" }
             }
         }
         if (out.isEmpty()) dpcmErrors(song, out)
@@ -321,7 +333,8 @@ object NesValidator {
         if (song.nes.expansion == NesExpansion.VRC7) vrc7Warnings(song).forEach { out += it }
         if (song.nes.expansion.chip == NesChip.N163) n163Warnings(song).forEach { out += it }
         if (song.nes.expansion == NesExpansion.FDS) fdsWarnings(song).forEach { out += it }
-        if (song.nes.expansion == NesExpansion.S5B) NesS5b.warnings(song).forEach { out += it }
+        if (!NesRules.ssgChannels(song.nes.expansion).isEmpty()) NesS5b.warnings(song).forEach { out += it }
+        if (song.nes.expansion == NesExpansion.EPSM) epsmWarnings(song).forEach { out += it }
         if (song.title.length > NSF_TEXT || song.title.any { it.code !in 0x20..0x7e }) {
             out += "The .nsf title field holds $NSF_TEXT plain ASCII characters; the title will be shortened or changed there"
         }
@@ -350,6 +363,50 @@ object NesValidator {
                 }
             }
         }
+        return out
+    }
+
+    /**
+     * The EPSM's shared FM LFO and its rhythm drums, as FamiStudio's sound engine 4.5.3 plays them (the SSG's shared
+     * generators: [NesS5b.warnings]):
+     * - FM LFO: one for the chip, the song's; FM sounds with AMS/PMS depths while it is off do not wobble.
+     * - Drums: only the first volume value of a sound counts (the engine reads it once at the load), and a drum note
+     *   without an instrument is legato like any other note: without an attack the engine does not key the drum again.
+     * - FamiStudio's text format cannot carry a manual SSG envelope period other than 4000 ([FamiStudioText.manualPeriodProblem]).
+     * [song] is the arrangement of a structurally valid EPSM song.
+     */
+    private fun epsmWarnings(song: Song): List<String> {
+        val out = ArrayList<String>()
+        val fs = FsSong.of(song)
+        val expansion = song.nes.expansion
+        fun ins(slot: Int) = fs.instruments[slot - 1]
+        val fmSlots = HashSet<Int>()
+        val drumSlots = HashSet<Int>()
+        for (ch in NesRules.EPSM_FM1 until fs.channels) for (n in fs.notes[ch]) {
+            if (n == null || !n.isMusical || n.instrument == 0) continue
+            if (NesRules.isEpsmRhythm(expansion, ch)) drumSlots += n.instrument else fmSlots += n.instrument
+        }
+        if (fs.epsmLfo == 0) {
+            val wobbling = fmSlots.sorted().filter { ins(it).epsm.let { p -> p.ams > 0 || p.pms > 0 } }
+            if (wobbling.isNotEmpty()) {
+                out += "FM sound${if (wobbling.size == 1) "" else "s"} ${wobbling.joinToString(", ") { NesRules.hex2(it) }} set LFO depths " +
+                    "(AMS/PMS), but the song's LFO is off; turn it on in the Song view (LFO), which all FM channels share"
+            }
+        }
+        val stepped = drumSlots.sorted().filter { ins(it).volume.values.distinct().size > 1 }
+        if (stepped.isNotEmpty()) {
+            out += "Drum sound${if (stepped.size == 1) "" else "s"} ${stepped.joinToString(", ") { NesRules.hex2(it) }} have a changing " +
+                "volume envelope, but the EPSM drums play only its first value (times Cxx); use Cxx or Axy for accents"
+        }
+        for (ch in NesRules.EPSM_RHYTHM1 until fs.channels) {
+            val row = (0 until fs.totalRows).firstOrNull { fs.notes[ch][it]?.let { n -> n.isMusical && !n.attack } == true } ?: continue
+            val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
+            out += "${Songs.patternLabel(song, fs.patternOfOrder[o]).cap()}, ${NesRules.channelName(expansion, ch)} row " +
+                "${row - fs.orderStart[o]}: a drum note without an instrument is legato and does not hit the drum again; enter " +
+                "the sound number on every hit"
+        }
+        // The FamiStudio text export refuses such a sound (FamiStudioText.manualPeriodProblem); tell before the export does.
+        FamiStudioText.manualPeriodProblem(fs)?.let { out += it }
         return out
     }
 

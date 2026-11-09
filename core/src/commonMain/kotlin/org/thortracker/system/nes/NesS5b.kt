@@ -14,8 +14,9 @@ import kotlin.math.log2
 import kotlin.math.roundToInt
 
 /**
- * The Sunsoft 5B's shared hardware, as FamiStudio's sound engine 4.5.3 drives it (`famistudio_update_s5b_channel_sound`):
- * three squares with one envelope generator and one noise generator between them.
+ * The Sunsoft 5B's and the EPSM SSG's shared hardware, as FamiStudio's sound engine 4.5.3 drives them
+ * (`famistudio_update_s5b_channel_sound`; `famistudio_update_epsm_square_channel_sound` is the same code with the EPSM's
+ * own note table and registers): three squares with one envelope generator and one noise generator between them.
  * - Envelope: every frame the highest-numbered square that sounds (its note not cut) a sound with a [S5bEnvelope.shape]
  *   sets the generator's shape and period: auto (its note's period shifted by its octave) or manual (the period the last
  *   loaded manual sound or `Ixx`/`Jyy` left in the engine). Any such square's note with attack restarts the generator.
@@ -28,14 +29,23 @@ object NesS5b {
     /** The NES CPU clock that drives the 5B (NTSC). */
     const val CPU_HZ = 1789773.0
 
-    /** Seconds one envelope step lasts at [period] (16 CPU cycles per count; period 0 acts as 1). */
-    fun stepSeconds(period: Int): Double = 16.0 * maxOf(1, period) / CPU_HZ
+    /** The EPSM's oscillator: its SSG counts envelope steps every 32 of these cycles × the period. */
+    const val EPSM_HZ = 8_000_000.0
+
+    /**
+     * Seconds one envelope step lasts at [period] on a [chip] square (period 0 acts as 1): 16 CPU cycles per count on the
+     * 5B, 32 cycles of the EPSM's 8 MHz clock (its SSG divides tones by 64 where the 5B divides the CPU by 32, the same
+     * envelope-to-tone ratio).
+     */
+    fun stepSeconds(period: Int, chip: NesChip = NesChip.S5B): Double =
+        if (chip == NesChip.EPSM) 32.0 * maxOf(1, period) / EPSM_HZ else 16.0 * maxOf(1, period) / CPU_HZ
 
     /** Seconds one ramp (32 steps) lasts at [period]. */
-    fun rampSeconds(period: Int): Double = 32 * stepSeconds(period)
+    fun rampSeconds(period: Int, chip: NesChip = NesChip.S5B): Double = 32 * stepSeconds(period, chip)
 
     /** Repeating shapes: cycles per second at [period] (a triangle takes two ramps). */
-    fun cycleHz(shape: S5bShape, period: Int): Double = 1.0 / (rampSeconds(period) * if (shape.triangle) 2 else 1)
+    fun cycleHz(shape: S5bShape, period: Int, chip: NesChip = NesChip.S5B): Double =
+        1.0 / (rampSeconds(period, chip) * if (shape.triangle) 2 else 1)
 
     /** "286 ms", "4.6 s", "71 µs": a duration. */
     fun duration(seconds: Double): String = when {
@@ -53,13 +63,13 @@ object NesS5b {
     }
 
     /**
-     * What a manual [period] does with [shape]: a repeating shape's rate (an audible buzz at short periods), a one-shot
-     * shape's ramp time.
+     * What a manual [period] does with [shape] on a [chip] square: a repeating shape's rate (an audible buzz at short
+     * periods), a one-shot shape's ramp time.
      */
-    fun periodText(shape: S5bShape, period: Int): String = when {
-        shape == S5bShape.OFF -> "${duration(rampSeconds(period))} per ramp (no shape chosen)"
-        shape.repeats -> "${frequency(cycleHz(shape, period))} (${duration(rampSeconds(period))} per ramp)"
-        else -> "${duration(rampSeconds(period))} ramp"
+    fun periodText(shape: S5bShape, period: Int, chip: NesChip = NesChip.S5B): String = when {
+        shape == S5bShape.OFF -> "${duration(rampSeconds(period, chip))} per ramp (no shape chosen)"
+        shape.repeats -> "${frequency(cycleHz(shape, period, chip))} (${duration(rampSeconds(period, chip))} per ramp)"
+        else -> "${duration(rampSeconds(period, chip))} ramp"
     }
 
     /**
@@ -110,15 +120,16 @@ object NesS5b {
 
     /**
      * Where the squares' shared envelope and noise generators make one sound play another's settings, and volume
-     * effects that a hardware envelope ignores. [song] is the arrangement of a structurally valid 5B song.
+     * effects that a hardware envelope ignores. [song] is the arrangement of a structurally valid 5B or EPSM song.
      */
     fun warnings(song: Song): List<String> {
         val out = ArrayList<String>()
         val fs = FsSong.of(song)
         val expansion = song.nes.expansion
-        val squares = NesRules.S5B_SQUARE1 until fs.channels
+        val squares = NesRules.ssgChannels(expansion)
+        val chip = NesRules.ssgLabel(expansion)
         fun ins(slot: Int) = fs.instruments[slot - 1]
-        fun envOn(slot: Int) = slot != 0 && ins(slot).let { it.chip == NesChip.S5B && it.s5b.shape != S5bShape.OFF }
+        fun envOn(slot: Int) = slot != 0 && ins(slot).let { it.chip.hasSsg && it.s5b.shape != S5bShape.OFF }
         fun where(ch: Int, row: Int): String {
             val o = (0 until fs.orders).last { fs.orderStart[it] <= row }
             return "${Songs.patternLabel(song, fs.patternOfOrder[o]).replaceFirstChar { it.uppercase() }}, " +
@@ -135,7 +146,7 @@ object NesS5b {
                     note[ch] = n.value
                 } else if (n.value == FsNote.STOP) sounding[ch] = 0
                 if (n.hasVolume && envOn(sounding[ch]) && reported.add("volume $ch ${sounding[ch]}")) {
-                    out += "${where(ch, row)}: volume effects do not change sound ${hex2(sounding[ch])}: its 5B hardware envelope " +
+                    out += "${where(ch, row)}: volume effects do not change sound ${hex2(sounding[ch])}: its $chip hardware envelope " +
                         "sets the level (the volume envelope, Cxx and Axy are ignored while it plays)"
                 }
             }
@@ -150,14 +161,14 @@ object NesS5b {
                         (if (own.autoPitch) e.octave != own.octave || note[other] != note[owner] else e.period != own.period)
                     if (differs && reported.add("env ${sounding[other]} ${sounding[owner]}")) {
                         out += "${where(other, row)}: sound ${hex2(sounding[other])} and ${NesRules.channelName(expansion, owner)}'s sound " +
-                            "${hex2(sounding[owner])} share the 5B's one envelope generator: while both sound, " +
+                            "${hex2(sounding[owner])} share the $chip's one envelope generator: while both sound, " +
                             "${NesRules.channelName(expansion, owner)}'s shape and period play on both (the highest square sets " +
                             "them); give them the same envelope and note, or keep them apart"
                     }
                 }
             }
             // The noise generator: the highest sounding square sets the rate (Square 1 only with noise in its mixer).
-            val source = squares.lastOrNull { sounding[it] != 0 && (it != NesRules.S5B_SQUARE1 || usesNoise(ins(sounding[it]))) }
+            val source = squares.lastOrNull { sounding[it] != 0 && (it != squares.first || usesNoise(ins(sounding[it]))) }
             if (source != null) {
                 val rate = FamiStudioEnvelopes.effective(ins(sounding[source]).noise, Kind.NOISE)
                 for (ch in squares) {
@@ -166,7 +177,7 @@ object NesS5b {
                     if (!reported.add("noise ${sounding[ch]} ${sounding[source]}")) continue
                     val quirk = if (!usesNoise(ins(sounding[source]))) ", even without noise in its mixer (FamiStudio's engine counts Squares 2 and 3 always)" else ""
                     out += "${where(ch, row)}: sound ${hex2(sounding[ch])} plays noise, but ${NesRules.channelName(expansion, source)}'s " +
-                        "sound ${hex2(sounding[source])} sets the 5B's one noise rate$quirk; give both the same noise envelope or play " +
+                        "sound ${hex2(sounding[source])} sets the $chip's one noise rate$quirk; give both the same noise envelope or play " +
                         "the noise on the highest square"
                 }
             }
@@ -202,7 +213,7 @@ object NesS5b {
      * follow the lowering's load rules; held manual-period instruments are not resent at order boundaries.
      */
     fun state(song: Song, order: Int, row: Int): SharedState? {
-        if (song.sound !is NesSound || song.nes.expansion != NesExpansion.S5B || order !in song.orders.indices) return null
+        if (song.sound !is NesSound || NesRules.ssgChannels(song.nes.expansion).isEmpty() || order !in song.orders.indices) return null
         if (song === cacheSong && order == cacheOrder && row == cacheRow) cacheState?.let { return it }
         val state = compute(song, order, row)
         cacheSong = song; cacheOrder = order; cacheRow = row; cacheState = state
@@ -217,7 +228,8 @@ object NesS5b {
         val equivalent = arrangement.equivalent
         val expansion = song.nes.expansion
         val channels = expansion.channels
-        val squares = NesRules.S5B_SQUARE1 until channels
+        val squares = NesRules.ssgChannels(expansion)
+        val label = NesRules.ssgLabel(expansion)
         val bank = song.nes.instruments
         val slot = IntArray(channels)
         // The compiler may invalidate its held instrument at a loop entry or after an override; the sounding slot
@@ -247,7 +259,7 @@ object NesS5b {
             val last = if (o == target) minOf(row, fs.lengths[o] - 1) else fs.lengths[o] - 1
             for (r in 0..last) {
                 val at = fs.orderStart[o] + r
-                val effect = fs.notes[NesRules.S5B_SQUARE1][at]?.envelopePeriod ?: -1
+                val effect = fs.notes[squares.first][at]?.envelopePeriod ?: -1
                 if (effect >= 0) {
                     period = effect
                     periodFrom = "${hex2(arrangement.orders[o])}:${hex2(r)} (Ixx/Jyy)"
@@ -292,9 +304,9 @@ object NesS5b {
                 }
             }
         }
-        fun ins(ch: Int) = bank.getOrNull(slot[ch] - 1)?.takeIf { it.chip == NesChip.S5B }
+        fun ins(ch: Int) = bank.getOrNull(slot[ch] - 1)?.takeIf { it.chip.hasSsg }
         val owner = squares.lastOrNull { sounding[it] && ins(it)?.s5b?.shape?.let { s -> s != S5bShape.OFF } == true }
-        val source = squares.lastOrNull { sounding[it] && ins(it) != null && (it != NesRules.S5B_SQUARE1 || usesNoise(ins(it)!!)) }
+        val source = squares.lastOrNull { sounding[it] && ins(it) != null && (it != squares.first || usesNoise(ins(it)!!)) }
         val tags = List(channels) { ch ->
             when {
                 ch == owner && ch == source -> "ENV+NZ"
@@ -303,16 +315,16 @@ object NesS5b {
                 else -> null
             }
         }
-        val envLine = if (owner == null) "5B envelope: no square sounds an envelope sound" else {
+        val envLine = if (owner == null) "$label envelope: no square sounds an envelope sound" else {
             val e = ins(owner)!!.s5b
             val how = if (e.autoPitch) "auto, octave ${e.octave}: ${octaveText(e.shape, e.octave)}" else
-                "manual period $period from $periodFrom: ${periodText(e.shape, period)}"
-            "5B envelope: ${NesRules.channelName(expansion, owner)}'s sound ${hex2(slot[owner])} sets it for every envelope sound " +
+                "manual period $period from $periodFrom: ${periodText(e.shape, period, expansion.chip)}"
+            "$label envelope: ${NesRules.channelName(expansion, owner)}'s sound ${hex2(slot[owner])} sets it for every envelope sound " +
                 "(${e.shape.label.lowercase()}, $how)"
         }
-        val noiseLine = if (source == null) "5B noise: no square sets the noise rate" else {
+        val noiseLine = if (source == null) "$label noise: no square sets the noise rate" else {
             val quirk = if (!usesNoise(ins(source)!!)) " (though its mixer has no noise: FamiStudio's engine counts Squares 2 and 3 always)" else ""
-            "5B noise: the rate follows ${NesRules.channelName(expansion, source)}'s sound ${hex2(slot[source])} noise envelope$quirk"
+            "$label noise: the rate follows ${NesRules.channelName(expansion, source)}'s sound ${hex2(slot[source])} noise envelope$quirk"
         }
         return SharedState(tags, listOf(envLine, noiseLine))
     }

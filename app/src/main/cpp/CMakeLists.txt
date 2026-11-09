@@ -38,13 +38,15 @@ target_compile_definitions(resid PRIVATE NDEBUG=1)
 target_compile_options(resid PRIVATE -O2 -fPIC -w)
 set_target_properties(resid PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# ymfm (C++), the YM2612; only ym/ym_ymfm.cpp (a C interface, which compiles ymfm_opn.cpp itself) talks to it.
+# ymfm (C++): the YM2612 and the EPSM's YMF288. ym/ym_ymfm.cpp (the YM2612's C interface) compiles ymfm_opn.cpp itself
+# and instantiates the OPNA templates that nes/nes_epsm_ymfm.cpp (the YMF288's C interface) uses; link both.
 add_library(ymfm STATIC
     ${YM_DIR}/ym_ymfm.cpp
+    ${NES_DIR}/nes_epsm_ymfm.cpp
     ${YMFM_DIR}/ymfm_adpcm.cpp
     ${YMFM_DIR}/ymfm_ssg.cpp
 )
-target_include_directories(ymfm PRIVATE ${YMFM_DIR} ${YM_DIR})
+target_include_directories(ymfm PRIVATE ${YMFM_DIR} ${YM_DIR} ${NES_DIR})
 target_compile_definitions(ymfm PRIVATE NDEBUG=1)
 target_compile_options(ymfm PRIVATE -O2 -fPIC -w)
 set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -68,6 +70,7 @@ add_library(chip_engines STATIC
     ${NES_DIR}/nes_n163.c
     ${NES_DIR}/nes_fds.c
     ${NES_DIR}/nes_s5b.c
+    ${NES_DIR}/nes_epsm_unit.c
     ${EMU2413_DIR}/emu2413.c
     chip_opll.c
     ${NES_DIR}/nes_players.c

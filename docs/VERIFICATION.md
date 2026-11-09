@@ -1,5 +1,24 @@
 # Thor Tracker verification — 2026-11-09
 
+## Unreleased: EPSM integration
+
+The corrected 5,048-byte player passed 495 JVM core tests, 13 Linux core tests and
+six Android-host unit tests. All 32 earlier generated NES outputs stayed byte-identical.
+Native EPSM coverage passed 332 checks with a privately supplied rhythm ROM, including
+SSG attack preservation of drum pan, live patch edits and unreachable-row seek fallback
+with identical instrument copies. The other native engine checks also passed.
+
+WAV coverage passed 889 checks: samples equal straight engine ticking, loop boundaries
+and chunk-size independence remain checked. The old generic `peak > 1000` assertion
+was removed, not repinned: master volume is not a WAV-format contract. EPSM's raw-range
+headroom deliberately makes its demo quiet (test-song RMS 0.0064, peak 0.0400;
+exported demo peak 923). It preserves relative balance without claiming unverified
+hardware DAC clipping; the gain policy is documented in `docs/AUDIO_ENGINE.md`.
+
+Android/desktop frontend checks and integration of the already-verified N163 mixer
+correction from the MMC5 branch remain pending. No rhythm ROM or derived drum audio
+is included in the source or release artifacts.
+
 ## 0.19.0 NES + FDS
 
 - **New blank song / Load demo → NES… → NES + FDS** adds the Famicom Disk System's wavetable voice after the NES's five channels. The demo is **Side B**.
@@ -137,6 +156,81 @@ The published 0.16.0 APK and AppImage passed their checksum manifests; the APK h
 Lantern Point (peak 0.19839096). The official APK was installed and cold-launch checked on Nova, DMG and Konkr;
 the Thor received only the APK in Downloads, and the Deck's stable `thor-tracker` symlink was updated without
 launching or changing Steam settings.
+
+## In progress: NES + EPSM integration
+
+Branch `nes-epsm` adds the **NES + EPSM** variant (`"nes-famistudio-epsm"`: FamiStudio 4.5.3 built with
+`FAMISTUDIO_EXP_EPSM`, a YMF288 via ymfm; SSG 1-3, FM 1-6 and six rhythm drums) and the demo **Expansion Port**
+(FM + SSG + 2A03, no rhythm notes). The real FamiStudio export and player generation passed: player 5048 bytes at
+`$8000`, song base `$9400`, SHA-256 `0dcebb510f401b32d0914fba27adba531a9848d8228080fcff6343c9456ab462`.
+All 32 prior NES generated outputs remain byte-identical. Runtime, UI and audio checks below are still pending;
+no release or listening claim is made.
+
+1. Generate the EPSM player, its fixtures and FamiStudio's export of `tools/audio/nes/epsm_test.txt` (needs the
+   pinned FamiStudio 4.5.3 release, `dotnet` and cc65), check a second run is byte-identical and the 2A03 and VRC6
+   outputs did not change, then commit `app/src/main/cpp/generated/nes_epsm_player_image.h`,
+   `core/src/commonMain/kotlin/org/thortracker/backend/NesEpsmPlayerImage.kt`, `app/src/test/cpp/nes_epsm_song.h` and
+   `tools/audio/nes/epsm_test_ca65.s`:
+
+   ```sh
+   tools/audio/prepare_nes_player.py --famistudio "$(tools/audio/fetch_famistudio.sh)"
+   tools/audio/prepare_nes_player.py
+   git diff --exit-code -- app/src/main/cpp/generated/nes_player_image.h app/src/main/cpp/generated/nes_vrc6_player_image.h \
+       core/src/commonMain/kotlin/org/thortracker/backend/NesPlayerImage.kt \
+       core/src/commonMain/kotlin/org/thortracker/backend/NesVrc6PlayerImage.kt \
+       app/src/test/cpp/nes_ft_song.h app/src/test/cpp/nes_dpcm_song.h app/src/test/cpp/nes_vrc6_song.h
+   ```
+
+2. Golden songs `epsm_demo`, `epsm_effects`, `epsm_rhythm` (register traces only; none needs or contains the rhythm
+   ROM): write our texts, let FamiStudio export them, then compare:
+
+   ```sh
+   THOR_UPDATE_NES_GOLDEN=1 tools/build.sh :core:jvmTest --tests '*NesGoldenTest*'
+   tools/audio/nes_golden.py
+   tools/build.sh :core:jvmTest --tests '*NesGoldenTest*'
+   ```
+
+3. The usual full run, the native host test (`nes_epsm_test.c`, the WAV test's `expansion-port.nesimg` and
+   `epsm-shortest.nesimg` from `exportSamples`) and the independent references (FamiStudio's NSF in py65 and its
+   wav-export; libgme has no EPSM):
+
+   ```sh
+   tools/build.sh :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest exportSamples
+   tools/build.sh :deck:linkDebugExecutableLinuxX64
+   tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   /tmp/nesref/bin/python3 tools/audio/nes_reference_check.py /tmp/thor-evidence
+   ```
+
+   Also the release-standard checks: Game Boy views pixel-identical to the 0.15.0 baseline, the Game Boy factory
+   `.uge` and every existing NES golden byte-identical, the plain NES and VRC6 sample exports unchanged.
+4. **Private local rhythm verification** (only on the parent's machine, with the user's own copy of the ROM; never
+   commit, copy into the repository or evidence, or ship it). Keep the ROM outside the repository, e.g.
+   `$HOME/private/ym2608_adpcm_rom.bin` (8192 bytes, SHA-256
+   `53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8`; the tools refuse anything else):
+
+   ```sh
+   THOR_EPSM_RHYTHM_ROM=$HOME/private/ym2608_adpcm_rom.bin tools/audio/run_native_host_test.sh /tmp/thor-evidence
+   /tmp/nesref/bin/python3 tools/audio/nes_reference_check.py /tmp/thor-evidence   # compares nes_epsm_rhythm.wav
+   tools/audio/render_nes_image.sh some-rhythm-song.nesimg /tmp/rhythm.wav 20 $HOME/private/ym2608_adpcm_rom.bin
+   ```
+
+   Without the variable the host test prints "rhythm ROM checks skipped (THOR_EPSM_RHYTHM_ROM unset)" and the
+   reference check reports the rhythm audio as not compared: that is a skipped check, not a pass.
+5. Prove the ROM is in nothing distributed (expect no output from each):
+
+   ```sh
+   git ls-files -z | xargs -0 sha256sum | grep 53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8
+   rm -rf /tmp/apk && unzip -q app/build/outputs/apk/debug/app-debug.apk -d /tmp/apk && find /tmp/apk -type f -size 8192c -exec sha256sum {} + | grep 53afd0fa
+   ```
+
+   and the same `find` over an extracted AppImage (`--appimage-extract`) and over `app/build/samples/`.
+6. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → NES… → NES +
+   EPSM; demo playback (stereo, no underruns), SSG/FM/Rhythm pages, X audition on SSG, FM and a drum (refused with
+   the import message while no ROM is installed), the main-menu row reading "EPSM rhythm ROM…  missing". For the
+   import, push the ROM to a temporary device path, import it through **EPSM rhythm ROM…**, check the row reads
+   "installed" and a rhythm song plays after an app restart, then delete the pushed copy (the app keeps its private
+   copy in `files/firmware/`). NSF, FamiStudio text (and its refusal of a manual SSG envelope period other than
+   4000) and WAV exports through the document picker.
 
 ## 0.15.0 NES + Konami VRC6
 

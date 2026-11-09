@@ -7,6 +7,7 @@ import org.thortracker.backend.FamiStudioLowering
 import org.thortracker.model.Cell
 import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.gb.HugeRules
+import org.thortracker.system.nes.NesExpansion
 import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
 import kotlin.math.abs
@@ -23,6 +24,24 @@ class TruePitchTest {
 
     /** NES (NTSC) pulse: CPU 1789773 Hz / (16 * (period + 1)). */
     private fun nesHz(note: Int) = 1789773.0 / (16.0 * (FamiStudioLowering.NOTE_TABLE[note - NesRules.NOTE_OFFSET] + 1))
+
+    /**
+     * EPSM SSG square (YMF288 at 8 MHz, the YM2608's SSG: tone = (8 MHz / 4) / (16 × period)): 8 MHz / 64 / tone
+     * period, the period from FamiStudio's SSG table.
+     */
+    private fun ssgHz(note: Int) =
+        8e6 / 64.0 / FamiStudioLowering.NOTE_TABLE_EPSM_SSG[NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_SSG1, note)]
+
+    /**
+     * EPSM FM channel: FamiStudio's engine halves the table value below `$200` to find the block B, then writes F-number
+     * F = value × 4 (11 bits); the OPN sounds F × 2^(B − 1) × (8 MHz / 144) / 2^20 = F × (8 MHz / 144) / 2^(21 − B).
+     */
+    private fun fmHz(note: Int): Double {
+        var v = FamiStudioLowering.NOTE_TABLE_EPSM_FM[NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_FM1, note)]
+        var block = 0
+        while (v >= 0x200) { v = v shr 1; block++ }
+        return v * 4 * (8e6 / 144.0) / 2.0.pow(21 - block)
+    }
 
     @Test fun a4IsFiftySevenAnd440HzOnBothSystems() {
         assertTrue(57 in GbSystem.noteRange && 57 in NesSystem.noteRange)
@@ -56,6 +75,34 @@ class TruePitchTest {
             val hz = 1789773.0 / (32.0 * period)
             val step = 1200.0 * log2((period + 1.0) / period)
             assertTrue("note $note: 5B $hz Hz vs pulse ${nesHz(note)} Hz", abs(cents(hz, nesHz(note))) <= maxOf(10.0, step))
+        }
+    }
+
+    /**
+     * FamiStudio's EPSM tables (8 MHz / 32 / f for the SSG, 144 f 2^20 / 8 MHz / 4 shifted by octave for FM) sound its
+     * note n an octave below its name on the YM2608's actual clocks, so true pitch takes n 12 higher; derived here from the
+     * chip's own frequency formulas, not from the shift constant.
+     */
+    @Test fun epsmSsgAndFmSoundTheirTrueNote() {
+        assertEquals(58, NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_SSG1, 57))
+        assertEquals(58, NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_FM1 + 5, 57))
+        assertEquals(46, NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_RHYTHM1, 57)) // drums: pitch ignored, no shift
+        assertEquals(46, NesRules.engineNote(NesExpansion.EPSM, 0, 57)) // the 2A03 stays as it was
+        assertTrue(abs(cents(ssgHz(57), 440.0)) < 1.0) // 440.1 Hz
+        assertTrue(abs(cents(fmHz(57), 440.0)) < 5.0) // 439.1 Hz
+        // Without the shift the same note would sound an octave low on both.
+        val unshifted = NesRules.engineNote(NesExpansion.EPSM, NesRules.EPSM_SSG1, 57) - 12
+        assertTrue(abs(cents(8e6 / 64.0 / FamiStudioLowering.NOTE_TABLE_EPSM_SSG[unshifted], 220.0)) < 1.0)
+        // C-1..B-7 on both (B-8 would need FamiStudio's note 108).
+        for (ch in listOf(NesRules.EPSM_SSG1, NesRules.EPSM_FM1)) {
+            assertEquals(12, NesRules.lowestNote(NesExpansion.EPSM, ch))
+            assertEquals(95, NesRules.highestNote(NesExpansion.EPSM, ch))
+        }
+        assertEquals(107, NesRules.highestNote(NesExpansion.EPSM, NesRules.EPSM_RHYTHM1))
+        for (note in 12..95) {
+            // SSG periods round to whole steps (coarse at the top: 25 cents at B-7); FM frequency numbers to 9 bits.
+            assertTrue("SSG note $note: ${ssgHz(note)} Hz", abs(cents(ssgHz(note), twelveTet(note))) < 30.0)
+            assertTrue("FM note $note: ${fmHz(note)} Hz", abs(cents(fmHz(note), twelveTet(note))) < 10.0)
         }
     }
 

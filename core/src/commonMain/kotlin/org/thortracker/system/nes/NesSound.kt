@@ -11,6 +11,8 @@ import org.thortracker.model.Song
 import org.thortracker.system.ChannelKind
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.SystemSound
+import org.thortracker.system.ym2612.YmFmInstrument
+import org.thortracker.system.ym2612.YmOperator
 
 /**
  * The sound chip an NES song adds to the 2A03 (FamiStudio's project expansion): one per song and per [NesSystem]
@@ -49,7 +51,16 @@ enum class NesExpansion(
     @SerialName("n163-8") N163_8(NesChip.N163, n163Names(8), n163Kinds(8)),
 
     /** The Sunsoft 5B (a YM2149F): three square tone channels sharing one noise and one envelope generator. */
-    @SerialName("s5b") S5B(NesChip.S5B, List(3) { "5B Square ${it + 1}" }, List(3) { ChannelKind.PULSE });
+    @SerialName("s5b") S5B(NesChip.S5B, List(3) { "5B Square ${it + 1}" }, List(3) { ChannelKind.PULSE }),
+
+    /**
+     * The EPSM (a Yamaha YMF288, OPN3-L): its SSG's three square tones (sharing one noise and one envelope generator, as
+     * the 5B's), six 4-operator FM channels and the six fixed drums of its rhythm unit (the YM2608 rhythm ROM: bass drum,
+     * snare, top cymbal, hi-hat, tom, rim shot), in FamiStudio's engine order.
+     */
+    @SerialName("epsm") EPSM(NesChip.EPSM,
+        List(3) { "SSG ${it + 1}" } + List(6) { "FM ${it + 1}" } + listOf("Kick", "Snare", "Cymbal", "Hi-hat", "Tom", "Rim"),
+        List(3) { ChannelKind.PULSE } + List(6) { ChannelKind.VOICE } + List(6) { ChannelKind.SAMPLE });
 
     /** Channels after the 2A03's five. */
     val extraChannels: Int get() = channelNames.size
@@ -67,6 +78,7 @@ enum class NesExpansion(
         VRC7 -> NesVrc7System
         FDS -> NesFdsSystem
         S5B -> NesS5bSystem
+        EPSM -> NesEpsmSystem
         else -> NesN163System.of(n163Channels)
     }
 
@@ -88,8 +100,8 @@ private fun n163Kinds(n: Int): List<ChannelKind> = List(n) { ChannelKind.WAVE }
 /**
  * Which chip's channels an [NesInstrument] plays (FamiStudio's instrument expansion): the 2A03's, or an expansion's.
  * Instruments do not cross chips, as in FamiStudio: the same envelope means different things (the VRC6's 8 duty steps,
- * the VRC7's FM patch, the N163's and the FDS's waves, the 5B's mixer). [duty] is the duty envelope's range; VRC7, N163,
- * FDS and 5B sounds have no duty envelope (it stays empty, [hasDuty]).
+ * the VRC7's FM patch, the N163's and the FDS's waves, the 5B's and the EPSM's SSG mixer, the EPSM's FM patch). [duty] is
+ * the duty envelope's range; VRC7, N163, FDS, 5B and EPSM sounds have no duty envelope (it stays empty, [hasDuty]).
  */
 @Serializable
 enum class NesChip(val label: String, val duty: IntRange) {
@@ -98,10 +110,17 @@ enum class NesChip(val label: String, val duty: IntRange) {
     @SerialName("vrc7") VRC7("VRC7", 0..0),
     @SerialName("n163") N163("N163", 0..0),
     @SerialName("fds") FDS("FDS", 0..0),
-    @SerialName("s5b") S5B("5B", 0..0);
+    @SerialName("s5b") S5B("5B", 0..0),
+    @SerialName("epsm") EPSM("EPSM", 0..0);
 
     /** Whether this chip's sounds have a duty envelope (the 2A03's pulses and noise mode, the VRC6's pulses). */
     val hasDuty: Boolean get() = this == APU || this == VRC6
+
+    /**
+     * Whether this chip's sounds play a YM2149-style SSG square (the 5B's squares, the EPSM's SSG 1-3): they then have
+     * mixer and noise envelopes and a hardware envelope ([NesInstrument.s5b]).
+     */
+    val hasSsg: Boolean get() = this == S5B || this == EPSM
 }
 
 /**
@@ -132,13 +151,14 @@ enum class S5bShape(val label: String, val register: Int, val picture: String) {
 }
 
 /**
- * A 5B sound's use of the chip's one envelope generator (FamiStudio's `S5BEnvelopeShape`, `S5BEnvelopeAutoPitch`,
- * `S5BEnvelopeAutoPitchOctave`, `S5BEnvelopePitch`): with a [shape] the channel's level is the generator's (the volume
- * envelope and `Cxx` no longer matter) and every note with attack restarts it. Its period, 16 CPU cycles per step and
- * 32 steps per ramp, either follows the note ([autoPitch]: the note's tone period shifted right by [octave], left for a
- * negative one, as FamiStudio's engine does) or is [period] (manual; `Ixx`/`Jxx` change it until the next note that
- * reloads a sound). The three squares share the generator: the highest-numbered square sounding such a sound sets the
- * shape and period each frame. FamiStudio's defaults: off, auto, octave 3, period 1000.
+ * A 5B or EPSM SSG sound's use of the chip's one envelope generator (FamiStudio's `S5BEnvelopeShape`,
+ * `S5BEnvelopeAutoPitch`, `S5BEnvelopeAutoPitchOctave`, `S5BEnvelopePitch`; on the EPSM its `EPSMSquareEnvelope*`,
+ * the same YM2149 generator): with a [shape] the channel's level is the generator's (the volume envelope and `Cxx` no
+ * longer matter) and every note with attack restarts it. Its period, 16 tone-clock cycles per step and 32 steps per ramp,
+ * either follows the note ([autoPitch]: the note's tone period shifted right by [octave], left for a negative one, as
+ * FamiStudio's engine does) or is [period] (manual; `Ixx`/`Jxx` change it until the next note that reloads a sound).
+ * The three squares share the generator: the highest-numbered square sounding such a sound sets the shape and period
+ * each frame. FamiStudio's defaults: off, auto, octave 3, period 1000 (the EPSM's: period 4000, [EPSM_DEFAULT]).
  */
 @Serializable
 data class S5bEnvelope(
@@ -150,11 +170,97 @@ data class S5bEnvelope(
     companion object {
         val DEFAULT = S5bEnvelope()
 
+        /** FamiStudio's EPSM SSG envelope defaults: off, auto, octave 3, manual period 4000. */
+        val EPSM_DEFAULT = S5bEnvelope(period = 4000)
+
+        /** The default envelope of a [chip] sound (the EPSM's manual period is 4000, every other chip's 1000). */
+        fun defaultFor(chip: NesChip): S5bEnvelope = if (chip == NesChip.EPSM) EPSM_DEFAULT else DEFAULT
+
         /** FamiStudio's auto-period octave range. */
         val OCTAVES = -8..8
 
         /** The 16-bit period register (`$0B-$0C`). */
         val PERIODS = 0..0xFFFF
+    }
+}
+
+/**
+ * An EPSM sound's FM patch (FamiStudio's `EpsmPatchRegs`, always stored as its Custom patch 0): one 4-operator OPN
+ * voice — [algorithm] 0..7, operator 1's [feedback] 0..7, the [left]/[right] outputs, the LFO depths [ams] 0..3
+ * (amplitude, operators with [YmOperator.am]) and [pms] 0..7 (vibrato), four [operators] numbered as in the algorithm
+ * diagrams (operator 1 has the feedback). The chip's one LFO is the song's ([NesSound.epsmLfo]). On the rhythm
+ * channels only [left]/[right] matter (the drum's pan). The defaults are FamiStudio's "Default" preset.
+ */
+@Serializable
+data class EpsmPatch(
+    val algorithm: Int = 4,
+    val feedback: Int = 0,
+    val left: Boolean = true,
+    val right: Boolean = true,
+    val ams: Int = 0,
+    val pms: Int = 0,
+    val operators: List<YmOperator> = DEFAULT_OPERATORS,
+) {
+    /** True when operator [op] (0-based) is a carrier (heard; volume scales it) under the algorithm. */
+    fun isCarrier(op: Int): Boolean = YmFmInstrument.carriers(algorithm) shr op and 1 != 0
+
+    /**
+     * FamiStudio's 31 `EpsmPatchRegs`: [0] `$B0` (feedback, algorithm), [1] `$B4` (L, R, AMS, PMS), then operators 1-4 each
+     * `$30, $40, $50, $60, $70, $80, $90`, and [30] `$22`, the chip LFO: [lfo] (the song's, [NesSound.epsmLfo]).
+     */
+    fun registers(lfo: Int): List<Int> = buildList {
+        add((feedback shl 3) or algorithm)
+        add((if (left) 0x80 else 0) or (if (right) 0x40 else 0) or (ams shl 4) or pms)
+        for (op in operators) {
+            add(op.reg30); add(op.reg40); add(op.reg50); add(op.reg60); add(op.reg70); add(op.reg80); add(op.reg90)
+        }
+        add(lfo)
+    }
+
+    /** Why the patch cannot be played, or null. */
+    fun problem(): String? {
+        if (operators.size != 4) return "has ${operators.size} FM operators; EPSM patches have 4"
+        if (algorithm !in 0..7) return "FM algorithm $algorithm is outside 0-7"
+        if (feedback !in 0..7) return "FM feedback $feedback is outside 0-7"
+        if (ams !in 0..3) return "FM AMS $ams is outside 0-3"
+        if (pms !in 0..7) return "FM PMS $pms is outside 0-7"
+        operators.forEachIndexed { i, op -> op.problem()?.let { return "FM operator ${i + 1}: $it" } }
+        return null
+    }
+
+    companion object {
+        /** Bytes of FamiStudio's `EpsmPatchRegs`. */
+        const val REGS = 31
+
+        /** FamiStudio 4.5.3's "Default" EPSM preset (`EpsmInstrumentPatch.Infos[1]`). */
+        private val DEFAULT_REGS = listOf(
+            0x04, 0xc0,
+            0x00, 0x20, 0x1f, 0x00, 0x00, 0x07, 0x00,
+            0x00, 0x00, 0x1f, 0x00, 0x00, 0x07, 0x00,
+            0x00, 0x20, 0x1f, 0x00, 0x00, 0x07, 0x00,
+            0x00, 0x00, 0x1f, 0x00, 0x00, 0x07, 0x00,
+            0x00,
+        )
+
+        private val DEFAULT_OPERATORS: List<YmOperator> = List(4) { op ->
+            val r = DEFAULT_REGS.subList(2 + 7 * op, 9 + 7 * op)
+            YmOperator.ofRegisters(r[0], r[1], r[2], r[3], r[4], r[5], r[6])
+        }
+
+        /** A patch from FamiStudio's 31 `EpsmPatchRegs` (reserved bits ignored; [30], the LFO, is the song's). */
+        fun ofRegisters(regs: List<Int>): EpsmPatch {
+            require(regs.size >= REGS - 1) { "EPSM patches have $REGS registers, not ${regs.size}" }
+            return EpsmPatch(
+                algorithm = regs[0] and 7, feedback = regs[0] shr 3 and 7,
+                left = regs[1] and 0x80 != 0, right = regs[1] and 0x40 != 0, ams = regs[1] shr 4 and 3, pms = regs[1] and 7,
+                operators = List(4) { op ->
+                    val r = regs.subList(2 + 7 * op, 9 + 7 * op)
+                    YmOperator.ofRegisters(r[0], r[1], r[2], r[3], r[4], r[5], r[6])
+                },
+            )
+        }
+
+        val DEFAULT = EpsmPatch()
     }
 }
 
@@ -487,12 +593,12 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
         val DUTY = 0..3
 
         /**
-         * 5B mixer per frame (FamiStudio's `S5BMixer`): 0 tone and noise (the square gated by the noise), 1 noise only,
-         * 2 tone only (the default of an empty envelope), 3 neither (the channel holds its level: a constant).
+         * 5B and EPSM SSG mixer per frame (FamiStudio's `S5BMixer`): 0 tone and noise (the square gated by the noise), 1
+         * noise only, 2 tone only (the default of an empty envelope), 3 neither (the channel holds its level: a constant).
          */
         val MIXER = 0..3
 
-        /** 5B noise generator period per frame (FamiStudio's `S5BNoiseFreq`): 0-31, higher is lower. */
+        /** 5B and EPSM SSG noise generator period per frame (FamiStudio's `S5BNoiseFreq`): 0-31, higher is lower. */
         val NOISE = 0..31
     }
 }
@@ -510,7 +616,10 @@ data class NesEnvelope(val values: List<Int> = emptyList(), val loop: Int = -1, 
  * the waves and modulation [fds] shaped by the volume, arpeggio and pitch envelopes, no duty; [NesChip.S5B]: the 5B
  * squares, no duty but a [mixer] envelope (per frame 0 tone + noise, 1 noise, 2 tone, 3 neither; empty = tone,
  * FamiStudio's default), a [noise] envelope (the shared noise generator's period 0-31 per frame) and the hardware
- * envelope [s5b]). These are left out of project files at their defaults, so 2A03 instruments are stored as before.
+ * envelope [s5b]; [NesChip.EPSM]: every EPSM channel, no duty — the SSG squares play it as a 5B sound ([mixer], [noise],
+ * [s5b]: the same YM2149 SSG), the FM channels play the FM patch [epsm] shaped by the volume, arpeggio and pitch
+ * envelopes, the rhythm drums take only the volume envelope's first value (empty = 15) and [epsm]'s left/right pan).
+ * These are left out of project files at their defaults, so 2A03 instruments are stored as before.
  */
 @Serializable
 data class NesInstrument(
@@ -529,6 +638,7 @@ data class NesInstrument(
     @EncodeDefault(EncodeDefault.Mode.NEVER) val mixer: NesEnvelope = NesEnvelope(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val noise: NesEnvelope = NesEnvelope(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val s5b: S5bEnvelope = S5bEnvelope.DEFAULT,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val epsm: EpsmPatch = EpsmPatch.DEFAULT,
 ) {
     companion object {
         /** A new slot: flat full volume, nothing else. */
@@ -573,8 +683,10 @@ data class DpcmMapping(val sample: Int, val pitch: Int = 15, val loop: Boolean =
 /**
  * An NES song's chip data: one bank of exactly [NesSystem.SLOTS] instruments shared by all channels (slot n =
  * index n-1), the song's DPCM [samples] (at most [NesSystem.MAX_SAMPLES], referenced by instruments' DPCM
- * mappings), its [expansion] chip and, with the VRC7, how its FM notes fade ([vrc7Sustain]); the last two are left
- * out of project files at their defaults, so 2A03 songs are stored as before.
+ * mappings), its [expansion] chip, with the VRC7 how its FM notes fade ([vrc7Sustain]) and with the EPSM the chip's one
+ * LFO ([epsmLfo]: register `$22`, 0 = off, bit 3 on with the rate 0-7 in bits 0-2, shared by all FM channels and written
+ * with every FM sound the engine loads); those are left out of project files at their defaults, so 2A03 songs are stored
+ * as before.
  * Stored in project files as the song's `sound` object.
  */
 @Serializable
@@ -583,10 +695,14 @@ data class NesSound(
     val samples: List<DpcmSample> = emptyList(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val expansion: NesExpansion = NesExpansion.NONE,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val vrc7Sustain: Vrc7Sustain = Vrc7Sustain(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val epsmLfo: Int = 0,
 ) : SystemSound {
     override val system: SoundSystem get() = expansion.system
 
     companion object {
+        /** `$22` with the LFO on: bit 3, plus the rate 0-7 in bits 0-2. */
+        const val EPSM_LFO_ON = 0x08
+
         fun blank(expansion: NesExpansion = NesExpansion.NONE): NesSound =
             NesSound(List(NesSystem.SLOTS) { i -> NesInstrument(name = "Sound ${NumberText.hex(i + 1, 2)}") }, expansion = expansion)
     }

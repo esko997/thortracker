@@ -11,7 +11,7 @@ android {
     compileSdk = 35
     ndkVersion = "27.0.12077973"
     externalNativeBuild {
-        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
     defaultConfig {
         applicationId = "org.thortracker"

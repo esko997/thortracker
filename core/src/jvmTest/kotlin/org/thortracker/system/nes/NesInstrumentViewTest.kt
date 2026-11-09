@@ -443,6 +443,7 @@ class NesInstrumentViewTest {
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
                 override fun status(message: String) = Unit
                 override fun error(message: String) = throw AssertionError(message)
+                override fun installEpsmRhythmRom(bytes: ByteArray): String? = throw AssertionError("no ROM install expected")
             })
         }
         val v = dpcmView()
@@ -1249,5 +1250,203 @@ class NesInstrumentViewTest {
         assertEquals(3, v.state.instrument)
         assertEquals(0, v.state.envelope)
         assertFalse(NesInstrumentView.dpcmPage(v.session.song, v.state))
+    }
+
+    // ---- EPSM -----------------------------------------------------------------------------------------------
+
+    /**
+     * An EPSM sound on an EPSM song: no duty, no DPCM page; mixer and noise envelopes, the SSG hardware envelope, the FM
+     * patch through the Mega Drive editor's curated rows and the Expert grid (each edit lands in the exported registers),
+     * and the rhythm page, where the level is the volume envelope's first step and the pitch is fixed. Back to 2A03 the
+     * EPSM settings go.
+     */
+    @Test
+    fun epsmSoundsEditSsgFmAndRhythmPages() {
+        val epsm = EditorSession(NesEpsmSystem.blank())
+        val expansion = NesExpansion.EPSM
+        val v = ViewController(epsm, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        fun goTo(row: Row) {
+            v.state.instField = NesInstrumentView.rows(v.state, epsm.song).indexOf(row)
+            assertEquals(row, NesInstrumentView.row(v.state, epsm.song))
+        }
+        val ins = { epsm.song.nes.instruments[0] }
+        goTo(Row.CHIP)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(NesChip.EPSM, ins().chip)
+        assertEquals(NesChip.EPSM, NesRules.chip(expansion, v.state.listenChannel)) // Listen follows to an EPSM channel
+        assertEquals(NesInstrumentView.EPSM_RHYTHM_PAGE + 1, NesInstrumentView.pages(epsm.song, v.state))
+        assertTrue(ins().duty.values.isEmpty())
+
+        // Page 3 is the SSG mixer (0-3), page 4 the noise period (0-31): not duty and DPCM on an EPSM sound.
+        v.state.envelope = 3
+        assertEquals(NesEnvelopeKind.MIXER, NesInstrumentView.kind(epsm.song, v.state))
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(5) { Action.UP })
+        assertEquals(listOf(3), ins().mixer.values)
+        v.state.envelope = 4
+        assertFalse(NesInstrumentView.dpcmPage(epsm.song, v.state))
+        assertEquals(NesEnvelopeKind.NOISE, NesInstrumentView.kind(epsm.song, v.state))
+        goTo(Row.STEPS)
+        v.hold(Action.EDIT, *Array(40) { Action.UP })
+        assertEquals(listOf(31), ins().noise.values)
+
+        // Page 5: the SSG hardware envelope (the 5B's page, the shared `s5b` settings); Listen moves to an SSG channel.
+        v.tap(Action.NEXT_CHANNEL)
+        assertEquals(NesInstrumentView.S5B_ENV_PAGE, v.state.envelope)
+        assertTrue(NesInstrumentView.s5bEnvPage(epsm.song, v.state))
+        assertNull(NesInstrumentView.epsmPage(epsm.song, v.state))
+        assertNull(NesInstrumentView.envelope(epsm.song, v.state))
+        assertTrue(NesRules.isEpsmSsg(expansion, v.state.listenChannel))
+        goTo(Row.ENV_SHAPE)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(S5bShape.SAW_DOWN, ins().s5b.shape)
+        goTo(Row.ENV_AUTO)
+        v.tap(Action.EDIT)
+        assertFalse(ins().s5b.autoPitch)
+        // An EPSM sound starts from FamiStudio's EPSM default period, 4000 (the 5B's is 1000), and Clear returns to it.
+        goTo(Row.ENV_PERIOD)
+        v.hold(Action.EDIT, Action.UP)
+        assertEquals(2 * S5bEnvelope.EPSM_DEFAULT.period, ins().s5b.period)
+        v.tap(Action.CLEAR)
+        assertEquals(S5bEnvelope.EPSM_DEFAULT.period, ins().s5b.period)
+
+        // Page 6: the FM patch's curated rows; Listen moves to FM 1.
+        v.tap(Action.NEXT_CHANNEL)
+        assertEquals(NesInstrumentView.EPSM_FM_PAGE, NesInstrumentView.epsmPage(epsm.song, v.state))
+        assertEquals(NesRules.EPSM_FM1, v.state.listenChannel)
+        val before = ins().epsm
+        assertEquals(EpsmPatch.DEFAULT, before)
+        goTo(Row.OPN_ALGORITHM)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals((before.algorithm + 1) % 8, ins().epsm.algorithm)
+        assertEquals((ins().epsm.feedback shl 3) or ins().epsm.algorithm, ins().epsm.registers(0)[0])
+        goTo(Row.OPN_FEEDBACK)
+        v.hold(Action.EDIT, Action.RIGHT, Action.RIGHT)
+        assertEquals(2, ins().epsm.feedback)
+        assertEquals((2 shl 3) or ins().epsm.algorithm, ins().epsm.registers(0)[0])
+        goTo(Row.EPSM_PAN)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertTrue(ins().epsm.left && !ins().epsm.right)
+        assertEquals(0x80, ins().epsm.registers(0)[1] and 0xC0) // $B4: L on, R off
+        // A preset loads a Mega Drive FM voice's operators, keeping the pan.
+        goTo(Row.OPN_PRESET)
+        v.tap(Action.EDIT)
+        assertEquals(NesEpsmPage.PRESETS.first().name, NesEpsmPage.preset(ins().epsm)?.name)
+        assertTrue(ins().epsm.left && !ins().epsm.right)
+        v.tap(Action.CLEAR)
+        assertEquals(EpsmPatch.DEFAULT.copy(right = false), ins().epsm)
+
+        // Page 7: every register; the operator column moves with left/right, edits land in that operator's registers.
+        v.tap(Action.NEXT_CHANNEL)
+        assertEquals(NesInstrumentView.EPSM_EXPERT_PAGE, NesInstrumentView.epsmPage(epsm.song, v.state))
+        goTo(Row.OPN_OP_TL)
+        v.tap(Action.RIGHT)
+        v.tap(Action.RIGHT)
+        assertEquals(2, NesEpsmPage.operator(v.state))
+        val tl = ins().epsm.operators[2].tl
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(tl + 1, ins().epsm.operators[2].tl)
+        assertEquals(tl + 1, ins().epsm.registers(0)[2 + 7 * 2 + 1]) // operator 3's $40
+        assertEquals(EpsmPatch.DEFAULT.operators[1], ins().epsm.operators[1])
+        goTo(Row.OPN_OP_AM)
+        v.tap(Action.EDIT)
+        assertTrue(ins().epsm.operators[2].am)
+        assertEquals(0x80, ins().epsm.registers(0)[2 + 7 * 2 + 3] and 0x80) // operator 3's $60 AM bit
+        goTo(Row.OPN_OP_SSG)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(8, ins().epsm.operators[2].ssgEg)
+        assertEquals(8, ins().epsm.registers(0)[2 + 7 * 2 + 6]) // operator 3's $90
+        goTo(Row.OPN_FMS)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(1, ins().epsm.pms)
+        goTo(Row.OPN_OP_TL)
+        v.tap(Action.CLEAR)
+        assertEquals(EpsmPatch.DEFAULT.operators[2].tl, ins().epsm.operators[2].tl)
+
+        // Page 8: the rhythm drums play one fixed ROM sound each; the level is the volume envelope's first step.
+        v.tap(Action.NEXT_CHANNEL)
+        assertEquals(NesInstrumentView.EPSM_RHYTHM_PAGE, NesInstrumentView.epsmPage(epsm.song, v.state))
+        assertEquals(NesRules.EPSM_RHYTHM1, v.state.listenChannel)
+        goTo(Row.RHYTHM_LEVEL)
+        val level = NesEpsmPage.rhythmLevel(ins())
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(level - 1, ins().volume.values.first())
+        assertEquals(listOf("Kick", "Snare", "Cymbal", "Hi-hat", "Tom", "Rim"),
+            NesEpsmPage.DRUM_REGISTERS.indices.map { NesRules.channelName(expansion, NesRules.EPSM_RHYTHM1 + it) })
+        // The ROM row says whether the ROM is installed, and Edit there opens the ROM picker.
+        if (!EpsmRhythmRom.installed) assertTrue(NesEpsmPage.dim(epsm.song, ins(), Row.RHYTHM_ROM))
+        val picks = ArrayList<Pair<List<String>, Int>>()
+        epsm.onMenuRequest = { build ->
+            build(object : org.thortracker.editor.MenuContext {
+                override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = Unit
+                override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) {
+                    picks += extensions to maxBytes
+                }
+                override fun status(message: String) = Unit
+                override fun error(message: String) = throw AssertionError(message)
+                override fun installEpsmRhythmRom(bytes: ByteArray): String? = throw AssertionError("nothing was picked")
+            })
+        }
+        goTo(Row.RHYTHM_ROM)
+        v.tap(Action.EDIT)
+        assertEquals(listOf(EpsmRhythmRom.EXTENSIONS to 64 * 1024), picks)
+
+        // Back to 2A03: the EPSM's patch, mixer, noise and hardware envelope go, and so do its pages.
+        goTo(Row.CHIP)
+        v.tap(Action.CLEAR)
+        assertEquals(NesChip.APU, ins().chip)
+        assertEquals(0, v.state.envelope)
+        assertTrue(ins().mixer.values.isEmpty() && ins().noise.values.isEmpty())
+        assertEquals(EpsmPatch.DEFAULT, ins().epsm)
+        assertEquals(S5bEnvelope.DEFAULT, ins().s5b)
+    }
+
+    /** Selecting a rhythm channel in the pattern shows an EPSM sound's rhythm page; another channel leaves it. */
+    @Test
+    fun aRhythmChannelSelectionShowsTheRhythmPage() {
+        val epsm = EditorSession(NesEpsmSystem.blank())
+        epsm.setNesChip(1, NesChip.EPSM)
+        val st = ViewState(kind = ViewKind.INSTRUMENT)
+        NesInstrumentView.follow(st, epsm.selection.copy(instrument = 1, channel = NesRules.EPSM_RHYTHM1 + 2), epsm.song)
+        assertEquals(NesInstrumentView.EPSM_RHYTHM_PAGE, st.envelope)
+        NesInstrumentView.follow(st, epsm.selection.copy(instrument = 1, channel = NesRules.EPSM_FM1), epsm.song)
+        assertEquals(0, st.envelope)
+    }
+
+    /**
+     * The rhythm ROM import checks the file before the host sees it: a wrong size or a wrong SHA-256 is an error naming
+     * the file and the host keeps nothing. The accepted path needs the user's own ROM (never in the repository): set
+     * THOR_EPSM_RHYTHM_ROM to its path to run it.
+     */
+    @Test
+    fun theRhythmRomImportChecksSizeAndHashBeforeInstalling() {
+        val installed = ArrayList<ByteArray>()
+        val errors = ArrayList<String>()
+        val statuses = ArrayList<String>()
+        val menu = object : org.thortracker.editor.MenuContext {
+            override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = Unit
+            override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
+            override fun status(message: String) { statuses += message }
+            override fun error(message: String) { errors += message }
+            override fun installEpsmRhythmRom(bytes: ByteArray): String? { installed += bytes; return null }
+        }
+        EpsmRomMenu.import(menu, "short.bin", ByteArray(100))
+        assertTrue(installed.isEmpty())
+        assertTrue(errors.last(), errors.last().startsWith("short.bin was not installed: ") && errors.last().contains("${EpsmRhythmRom.SIZE}"))
+        EpsmRomMenu.import(menu, "zeros.rom", ByteArray(EpsmRhythmRom.SIZE))
+        assertTrue(installed.isEmpty())
+        assertTrue(errors.last(), errors.last().startsWith("zeros.rom was not installed: ") && errors.last().contains("SHA-256"))
+        assertTrue(statuses.isEmpty())
+        val path = System.getenv("THOR_EPSM_RHYTHM_ROM") ?: return
+        val rom = java.io.File(path).readBytes()
+        EpsmRomMenu.import(menu, "ym2608_adpcm_rom.bin", rom)
+        assertTrue(installed.single() === rom)
+        assertTrue(statuses.single().startsWith("EPSM rhythm ROM installed from ym2608_adpcm_rom.bin"))
+        // A host that cannot keep it reports why.
+        val failing = object : org.thortracker.editor.MenuContext by menu {
+            override fun installEpsmRhythmRom(bytes: ByteArray): String? = "the disk is full"
+        }
+        EpsmRomMenu.import(failing, "ym2608_adpcm_rom.bin", rom)
+        assertEquals("ym2608_adpcm_rom.bin was not installed: the disk is full", errors.last())
     }
 }

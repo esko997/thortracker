@@ -14,9 +14,15 @@ import org.thortracker.backend.NesGoldenSongs
 import org.thortracker.system.SoundSystems
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.nes.NesInstrument
+import org.thortracker.system.nes.EpsmPatch
+import org.thortracker.system.nes.NesChip
+import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.nes.S5bEnvelope
+import org.thortracker.system.nes.S5bShape
+import org.thortracker.system.ym2612.YmOperator
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.DpcmMapping
 import org.thortracker.system.nes.DpcmSample
@@ -29,7 +35,8 @@ import kotlinx.serialization.json.JsonArray
 class NesProjectCodecTest {
     @Test
     fun nesSongsRoundTripExactly() {
-        val songs = listOf(NesSystem.blank(), NesSystem.demo(), NesVrc6System.blank(), NesVrc6System.demo(), NesVrc7System.blank(), NesVrc7System.demo()) +
+        val songs = listOf(NesSystem.blank(), NesSystem.demo(), NesVrc6System.blank(), NesVrc6System.demo(), NesVrc7System.blank(), NesVrc7System.demo(),
+            NesEpsmSystem.blank(), NesEpsmSystem.demo()) +
             NesGoldenSongs.ALL.values.map { it() }
         for (song in songs) assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
     }
@@ -168,6 +175,51 @@ class NesProjectCodecTest {
             ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
         val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(other.toString()) }
         assertTrue(e.message!!, e.message!!.contains("NES + Sunsoft 5B"))
+    }
+
+    /**
+     * The EPSM variant is its own backend: its sound names the expansion and stores the song LFO; EPSM sounds store their
+     * chip, mixer and noise envelopes, SSG hardware envelope (the shared `s5b` key, as on the 5B) and FM patch only where
+     * they differ from the defaults, so 2A03 and VRC6 songs keep exactly their old files and a default EPSM sound stores
+     * just its chip.
+     */
+    @Test
+    fun epsmSongsNameTheirVariantAndStoreOnlyWhatDiffers() {
+        val base = NesEpsmSystem.blank()
+        val bank = base.nes.instruments.toMutableList()
+        bank[0] = NesInstrument("Plain EPSM", chip = NesChip.EPSM)
+        bank[1] = NesInstrument("Full", chip = NesChip.EPSM, mixer = NesEnvelope(listOf(0, 1), loop = 0), noise = NesEnvelope(listOf(3, 9)),
+            s5b = S5bEnvelope(S5bShape.ATTACK, autoPitch = false, octave = -2, period = 1234),
+            epsm = EpsmPatch(algorithm = 6, feedback = 7, left = false, right = true, ams = 3, pms = 7, operators = List(4) {
+                YmOperator(dt = it + 1, mul = 15 - it, tl = 100 + it, ks = 3, ar = 20, am = it % 2 == 0, d1r = 9, d2r = 4, sl = 11, rr = 3, ssgEg = 8 + it)
+            }))
+        val lfo = org.thortracker.system.nes.NesSound.EPSM_LFO_ON or 5
+        val song = base.copy(sound = base.nes.copy(instruments = bank, epsmLfo = lfo))
+        assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+        assertEquals(NesEpsmSystem, song.system)
+        val root = Json.parseToJsonElement(ProjectCodec.encode(song)).jsonObject
+        assertEquals("nes-famistudio-epsm", root["backend"]!!.jsonPrimitive.content)
+        assertEquals("2", root["backendVersion"]!!.jsonPrimitive.content)
+        val sound = root["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertEquals("epsm", sound["expansion"]!!.jsonPrimitive.content)
+        assertEquals(lfo.toString(), sound["epsmLfo"]!!.jsonPrimitive.content)
+        val instruments = sound["instruments"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(setOf("name", "volume", "arpeggio", "pitch", "pitchRelative", "duty", "dpcm", "chip"), instruments[0].keys)
+        assertEquals("epsm", instruments[0]["chip"]!!.jsonPrimitive.content)
+        assertTrue(instruments[1].keys.containsAll(listOf("mixer", "noise", "s5b", "epsm")))
+        assertEquals("1234", instruments[1]["s5b"]!!.jsonObject["period"]!!.jsonPrimitive.content)
+        // Without an LFO the key is left out; 2A03 and VRC6 songs carry none of the EPSM keys.
+        val off = Json.parseToJsonElement(ProjectCodec.encode(base)).jsonObject["song"]!!.jsonObject["sound"]!!.jsonObject
+        assertTrue("epsmLfo" !in off.keys)
+        for (other in listOf(NesSystem.demo(), NesVrc6System.demo())) {
+            val text = ProjectCodec.encode(other)
+            for (key in listOf("epsmLfo", "\"mixer\"", "\"noise\"", "\"s5b\"", "\"epsm\"")) assertTrue(key, key !in text)
+        }
+        // A file whose backend and sound disagree is rejected.
+        val mixed = JsonObject(root + ("backend" to JsonPrimitive("nes-famistudio")) +
+            ("song" to JsonObject(root["song"]!!.jsonObject + ("backend" to JsonPrimitive("nes-famistudio")))))
+        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(mixed.toString()) }
+        assertTrue(e.message!!, e.message!!.contains("NES + EPSM"))
     }
 
     @Test

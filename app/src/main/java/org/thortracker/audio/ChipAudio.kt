@@ -335,5 +335,12 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeWavRun(handle: Long, ticks: Int): Int
         @JvmStatic private external fun nativeWavStatus(handle: Long, out: LongArray)
         @JvmStatic private external fun nativeWavClose(handle: Long)
+
+        /**
+         * Installs the YMF288 rhythm ROM (`nes_epsm_install_rhythm_rom`): process-wide firmware every EPSM engine plays
+         * its six rhythm drums from. 0 = installed (identical bytes again: no change), -1 = not 8192 bytes. Callers
+         * validate the bytes first ([org.thortracker.system.nes.EpsmRhythmRom.problem]); never called concurrently.
+         */
+        @JvmStatic external fun nativeInstallRhythmRom(rom: ByteArray): Int
     }
 }

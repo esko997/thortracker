@@ -32,10 +32,12 @@ void nes_apu_reset(NesApu* a) {
     blip_t* out = a->out;
     uint8_t mute = a->mute;
     const uint8_t* prg = a->prg;
+    const float amp_scale = a->amp_scale;
     memset(a, 0, sizeof *a);
     a->out = out;
     a->mute = mute;
     a->prg = prg;
+    a->amp_scale = amp_scale;
     a->noise.lfsr = 1;
     a->fc_reset_at = -1;
     a->pulse[0].timer = a->pulse[1].timer = 2;
@@ -47,6 +49,11 @@ void nes_apu_reset(NesApu* a) {
 }
 
 void nes_apu_set_memory(NesApu* a, const uint8_t* prg) { a->prg = prg; }
+
+void nes_apu_set_amp_scale(NesApu* a, float scale) { a->amp_scale = scale; }
+
+/* The instance's blip amplitude per mixer level 1.0. */
+static float amp_scale(const NesApu* a) { return a->amp_scale > 0.0f ? a->amp_scale : (float)NES_APU_AMP_SCALE; }
 
 /* ---- channel outputs ---------------------------------------------------------------------- */
 
@@ -88,7 +95,7 @@ static float mix(const NesApu* a) {
 float nes_apu_mix_level(const NesApu* a) { return mix(a); }
 
 static void update_output(NesApu* a) {
-    int32_t amp = (int32_t)lrintf(mix(a) * (float)NES_APU_AMP_SCALE);
+    int32_t amp = (int32_t)lrintf(mix(a) * amp_scale(a));
     if (amp != a->amp) {
         blip_add_delta(a->out, a->time, amp - a->amp);
         a->amp = amp;
@@ -98,7 +105,7 @@ static void update_output(NesApu* a) {
 void nes_apu_set_output(NesApu* a, blip_t* out) {
     a->out = out;
     /* Start from the current level without a step: the buffer's output is DC-free anyway. */
-    a->amp = (int32_t)lrintf(mix(a) * (float)NES_APU_AMP_SCALE);
+    a->amp = (int32_t)lrintf(mix(a) * amp_scale(a));
 }
 
 void nes_apu_set_mute(NesApu* a, uint8_t mask) {

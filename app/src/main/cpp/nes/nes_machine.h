@@ -1,10 +1,10 @@
 /* One emulated NTSC NES (6502 core m6502.h with BCD disabled + the 2A03 APU in nes_apu.c, + the Konami
  * VRC6 audio in nes_vrc6.c for the VRC6 build, the Konami VRC7 FM audio in nes_vrc7.c (emu2413) for the VRC7
  * build, the Namco 163 audio in nes_n163.c for the N163 builds, the Famicom Disk System audio in nes_fds.c for the FDS
- * build, or the Sunsoft 5B audio in nes_s5b.c for the 5B build) running a pinned FamiStudio sound engine 4.5.3 player
- * build in FamiTracker tempo (nes_player.h: nes_player_2a03, nes_player_vrc6, nes_player_vrc7, nes_player_n163[n - 1],
- * nes_player_fds or nes_player_s5b, fixed at nm_create). Only the build's own expansion unit is reset, clocked, decoded
- * and mixed.
+ * build, the Sunsoft 5B audio in nes_s5b.c for the 5B build, or the EPSM's YMF288 in nes_epsm_unit.c for the EPSM
+ * build) running a pinned FamiStudio sound engine 4.5.3 player build in FamiTracker tempo (nes_player.h:
+ * nes_player_2a03, nes_player_vrc6, nes_player_vrc7, nes_player_n163[n - 1], nes_player_fds, nes_player_s5b or
+ * nes_player_epsm, fixed at nm_create). Only the build's own expansion unit is reset, clocked, decoded and mixed.
  *
  * CPU address space:
  *   $0000-$07FF  RAM (mirrored to $1FFF): engine zero page/variables, stack, audition streams at
@@ -23,6 +23,8 @@
  *   $9010, $9030, $E000  VRC7 build: VRC7 register select / write and the audio reset latch (timestamped)
  *   $C000-$DFFF, $E000-$FFFF  5B build: 5B audio register select / data writes (timestamped); reads there
  *                return the ROM (song data, samples) as on the cartridge
+ *   $401C-$401F  EPSM build: YMF288 address/data writes (A1 = 0, then A1 = 1), timestamped; the chip is clocked in
+ *                step with the CPU (one native sample per 32.216 CPU cycles), seeking included
  *   $FFFA-$FFFF  vectors -> the player's trap entry (an interrupt or BRK is a driver fault)
  * Everything else reads 0 and ignores writes.
  *
@@ -39,9 +41,10 @@
  *
  * Images are loaded with nm_load_image (nes_image.h) for the machine's player; everything here takes
  * loaded images of that player (others are NM_ERR_IMAGE / ignored). nm_create allocates (the VRC7 build also
- * its emu2413 instance); nothing after it does. Seeking runs the expansion chip silently (FM envelopes, phases
- * and LFOs; 5B tone phases, the noise LFSR and the envelope advance as in straight play). Threading: one thread at
- * a time. */
+ * its emu2413 instance, the EPSM build its ymfm chip and two more output buffers); nothing after it does. Seeking runs
+ * the expansion chip silently (FM envelopes, phases and LFOs; 5B tone phases, the noise LFSR and the envelope advance;
+ * EPSM FM, SSG and rhythm state as in straight play). The EPSM build's output is true stereo (FM and rhythm pans; the
+ * SSG and the 2A03 centred); the others' L = R. Threading: one thread at a time. */
 #ifndef THORTRACKER_NES_MACHINE_H_
 #define THORTRACKER_NES_MACHINE_H_
 
@@ -71,7 +74,7 @@ enum {
 };
 
 /* A machine for one player build (nes_player_2a03 / nes_player_vrc6 / nes_player_vrc7 / nes_player_n163[n - 1] /
- * nes_player_fds / nes_player_s5b); NULL for an unsupported rate or when out of memory. */
+ * nes_player_fds / nes_player_s5b / nes_player_epsm); NULL for an unsupported rate or when out of memory. */
 NesMachine* nm_create(uint32_t sample_rate, const NesPlayer* player);
 void nm_destroy(NesMachine* m);
 
@@ -80,7 +83,8 @@ void nm_destroy(NesMachine* m);
  * (*seek_mode = NM_SEEK_FROM_START); if that is not enough (Thor layout only) the channel streams
  * are placed at the order's start with the speed that order starts with, a channel whose order starts a
  * note before loading an instrument gets the instrument straight play holds there (famistudio_set_instrument,
- * channels in order: the last one loaded owns shared VRC7 custom patch and 5B manual period state), and the
+ * channels in order: the last one loaded owns shared VRC7 custom patch and 5B / EPSM manual period state; an EPSM FM
+ * channel's patch then loads at its first update, a rhythm drum takes its level and pan), and the
  * order's earlier rows are replayed silently, again within max_ticks (NM_SEEK_FROM_ORDER). The DMC runs through
  * the fast-forward, so a sample started before the target is heard from its position there. NM_ERR_IMAGE for
  * a target outside the song or not reached. */
@@ -102,9 +106,12 @@ int nm_start(NesMachine* m, const NesImage* image, int order, int row, int max_t
  * bytes changed is written to the chip now as the engine does on loading a sound ($4087 = $80, $4084 = $80,
  * $4085 = 0, 32 x $4088) and famistudio_fds_mod_envelope follows the new table (a moved but identical table only
  * moves the pointer); the mod speed (nm_fds_manual_speed) or auto-mod fraction, depth and delay take the new sound's
- * values where the engine's equal the old sound's own (no `$57` / `$58` override in effect). 5B: the squares'
- * hardware envelope settings follow their edited instruments at once (shape, auto-period octave, and the manual
- * period of the instrument it came from; nm_s5b_instrument). Otherwise the region is copied (correct only when no
+ * values where the engine's equal the old sound's own (no `$57` / `$58` override in effect). 5B and EPSM SSGs: the
+ * squares' hardware envelope settings follow their edited instruments at once (shape, auto-period octave, and the
+ * manual period of the instrument it came from; nm_s5b_instrument / nm_epsm_instrument). EPSM FM: a channel whose
+ * loaded instrument's 31-byte patch block changed (by content) reloads it at its next update (the engine's own load:
+ * registers, algorithm, pan, operator levels); EPSM rhythm: each drum's level and pan follow its instrument at once.
+ * Otherwise the region is copied (correct only when no
  * data moved). Either way a sample the DMC is playing continues if its bytes are unchanged in place, continues at
  * the same position of an identical sample of the new DPCM list if it moved, and stops otherwise. Ignored while
  * faulted or auditioning. */
@@ -112,10 +119,10 @@ void nm_apply_image(NesMachine* m, const NesImage* image);
 
 /* Resets the machine to sound one held note through the engine with a one-note stream in RAM, using
  * the image's instruments and DPCM list (Thor layout). Tonal channels (0..3; VRC6 and 5B builds also 5..7, VRC7
- * build 5..10, N163 builds 5..4+n, FDS build 5): engine note 1..96 (absolute - 11), instrument table index, fine
- * pitch -128..127 (period offset, +lowers; VRC7: FM frequency offset; N163 and FDS: frequency offset, +raises;
- * channels with a pitch envelope: 0..2 and the expansion channels). Channel 4 (DPCM): `note` = DPCM list entry
- * 1..mappings (the stream's note byte); instrument and fine are ignored. */
+ * build 5..10, N163 builds 5..4+n, FDS build 5, EPSM build 5..19): engine note 1..96 (absolute - 11), instrument table
+ * index, fine pitch -128..127 (period offset, +lowers; VRC7, EPSM FM: FM frequency offset; N163 and FDS: frequency
+ * offset, +raises; channels with a pitch envelope: 0..2 and the expansion channels but the EPSM rhythm drums).
+ * Channel 4 (DPCM): `note` = DPCM list entry 1..mappings (the stream's note byte); instrument and fine are ignored. */
 int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int instrument, int fine);
 
 /* Key-off of an audition: with a volume release point the engine releases the note (returns 1;
@@ -125,19 +132,21 @@ int nm_audition(NesMachine* m, const NesImage* image, int channel, int note, int
  * that tail is done and the channel's carrier is silent or can no longer change (release rate 0). N163 channels
  * release with `$5A`, the FDS channel with `$59` (the volume and wave-index envelopes jump to their release points):
  * with a volume release point the tail ends at the volume envelope's final loop, else with a wave-index release point
- * at that envelope's final loop. */
+ * at that envelope's final loop. EPSM FM channels always release (returns 1) with `$5C` like VRC7 FM; nm_tick returns
+ * 0 once the volume release tail is done and every carrier of the channel is quiet. An EPSM rhythm drum (returns 1)
+ * plays its one-shot on to its end address, where nm_tick returns 0. */
 int nm_release(NesMachine* m);
 
-/* Forces channel (0..4; VRC6 and 5B builds 0..7, VRC7 build 0..10, N163 builds 0..4+n, FDS build 0..5) silent in the
- * mixer (state keeps running, so unmuting resumes mid-note). */
+/* Forces channel (0..4; VRC6 and 5B builds 0..7, VRC7 build 0..10, N163 builds 0..4+n, FDS build 0..5, EPSM build
+ * 0..19) silent in the mixer (state keeps running, so unmuting resumes mid-note). */
 int nm_mute_channel(NesMachine* m, int channel, int muted);
 
 /* Order/row/frame-in-row the next tick plays, from engine state (tick 0 = the next tick starts the
  * row). Raw layout without timing: (0, rows since start, tick). */
 void nm_position(const NesMachine* m, int* order, int* row, int* tick);
 
-/* One NTSC frame: play routine + APU, 48 kHz-class float stereo (L = R) into out. Returns the
- * frame count (<= NM_MAX_TICK_FRAMES), 0 once a released audition has ended, or NM_ERR_FAULT. */
+/* One NTSC frame: play routine + sound units, 48 kHz-class float stereo into out (L = R except the EPSM build).
+ * Returns the frame count (<= NM_MAX_TICK_FRAMES), 0 once a released audition has ended, or NM_ERR_FAULT. */
 int nm_tick(NesMachine* m, float* out);
 /* Same without synthesis (APU frame counter only); used for seeking. */
 int nm_tick_silent(NesMachine* m);
@@ -150,8 +159,8 @@ void nm_set_apu_logging(NesMachine* m, int enabled);
 /* (address low byte, value) pairs of the APU ($4000-$4017) writes since the last log call, at most `capacity`
  * pairs. Both log calls drain the log. */
 int nm_apu_log(NesMachine* m, uint8_t* pairs, int capacity);
-/* (address low, address high, value) triples of every sound write (APU, VRC6, VRC7, N163 ports, FDS registers or 5B;
- * FDS including nm_apply_image's mod table writes) since the last log call, at most `capacity`. */
+/* (address low, address high, value) triples of every sound write (APU, VRC6, VRC7, N163 ports, FDS registers, 5B or
+ * EPSM $401C-$401F; FDS including nm_apply_image's mod table writes) since the last log call, at most `capacity`. */
 int nm_write_log(NesMachine* m, uint8_t* triples, int capacity);
 /* The same, with the frame-relative CPU cycle each write happened at in `cycles` (the sound units' timebase). */
 int nm_write_log_timed(NesMachine* m, uint8_t* triples, uint32_t* cycles, int capacity);
@@ -159,14 +168,15 @@ uint8_t nm_peek(NesMachine* m, uint16_t addr);
 void nm_poke(NesMachine* m, uint16_t addr, uint8_t value); /* RAM/PRG, for fault tests */
 /* Calls a routine with A, returning NM_OK or NM_ERR_FAULT (test hook). */
 int nm_call(NesMachine* m, uint16_t addr, uint8_t a);
-/* The APU, the VRC6, VRC7, N163, FDS and 5B units (tests read channel periods, levels, chip registers, N163 RAM and
- * phases, FDS state; only the machine's own build's unit is in use), and the machine's player. */
+/* The APU, the VRC6, VRC7, N163, FDS, 5B and EPSM units (tests read channel periods, levels, chip registers, N163 RAM
+ * and phases, FDS state; only the machine's own build's unit is in use), and the machine's player. */
 const struct NesApu* nm_apu(const NesMachine* m);
 const struct NesVrc6* nm_vrc6(const NesMachine* m);
 const struct NesVrc7* nm_vrc7(const NesMachine* m);
 const struct NesN163* nm_n163(const NesMachine* m);
 const struct NesFds* nm_fds(const NesMachine* m);
 const struct NesS5b* nm_s5b(const NesMachine* m);
+const struct NesEpsm* nm_epsm(const NesMachine* m);
 /* VRC7 build: the expansion instrument (table index) FM channel `channel` (5..10) loaded last, and the one the
  * chip's custom patch registers $00-$07 came from; -1: none (or not the VRC7 build). */
 int nm_vrc7_instrument(const NesMachine* m, int channel);
@@ -175,6 +185,13 @@ int nm_vrc7_custom_instrument(const NesMachine* m);
  * envelope period is the engine's (famistudio_s5b_env_period); -1: none (a `$5E` set it, or not the 5B build). */
 int nm_s5b_instrument(const NesMachine* m, int channel);
 int nm_s5b_period_instrument(const NesMachine* m);
+/* EPSM build: the expansion instrument (table index) channel `channel` (5..19) holds (SSG: loaded last; FM: whose patch
+ * it loaded last; rhythm drum: whose level and pan, identified from the loader's own entry pointer famistudio_ptr1 +
+ * famistudio_r3), the one whose manual envelope period the SSGs share (-1: a `$5D` set it), and whether a rhythm key-on
+ * found no rhythm ROM installed since start; -1 / 0: none (or not the EPSM build). */
+int nm_epsm_instrument(const NesMachine* m, int channel);
+int nm_epsm_period_instrument(const NesMachine* m);
+int nm_epsm_rhythm_missing(const NesMachine* m);
 const NesPlayer* nm_player(const NesMachine* m);
 
 #ifdef __cplusplus

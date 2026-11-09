@@ -93,16 +93,21 @@ typedef struct NesApu {
     int32_t amp;            /* last amplitude sent to the buffer */
     blip_t* out;            /* NULL: silent (no pulse/triangle/noise timer stepping, no synthesis) */
     const uint8_t* prg;     /* CPU memory $8000-$FFFF the DMC reads (32 KiB); NULL reads 0 */
+    float amp_scale;        /* blip amplitude of a mixer level of 1.0; 0 = NES_APU_AMP_SCALE (nes_apu_set_amp_scale) */
 } NesApu;
 
 /* NTSC DMC rate table: CPU cycles per output bit for $4010 rate index 0..15. */
 extern const uint16_t nes_dmc_rate[16];
 
-/* Power-on state ($4017 = 0, all channels off, noise LFSR = 1, DMC level 0). Keeps `out`, `mute`
- * and `prg`. */
+/* Power-on state ($4017 = 0, all channels off, noise LFSR = 1, DMC level 0). Keeps `out`, `mute`,
+ * `prg` and `amp_scale`. */
 void nes_apu_reset(NesApu* a);
 /* CPU memory $8000-$FFFF for DMC sample reads (not copied; must outlive the APU's use). */
 void nes_apu_set_memory(NesApu* a, const uint8_t* prg);
+/* Blip amplitude of a mixer level of 1.0 for this instance (0: NES_APU_AMP_SCALE). The machine's EPSM build lowers it
+ * so the 2A03's own buffer has the same int16-stage headroom as the chip's (nes_machine.c); set it before attaching
+ * the output. */
+void nes_apu_set_amp_scale(NesApu* a, float scale);
 
 /* Attach the band-limited output (NULL = silent). */
 void nes_apu_set_output(NesApu* a, blip_t* out);
