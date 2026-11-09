@@ -26,11 +26,14 @@ at the power-on prescaler):
   FM:     f = F-number x 2^(block - 1) x fM / (P x 2^20), P = 72 (YM2203: one FM sample per 72 clocks) or 144 (YM2608),
           F-number and block from $A0+c / $A4+c (port 1 for YM2608 FM 4-6); FM 3 operator 4 in special mode: $A2/$A6.
   SSG:    f = fM / (32 x TP) on the YM2203 and fM / (64 x TP) on the YM2608 (124800 / TP Hz on both PC clocks),
-          TP = 12-bit tone period ($00+2i, $01+2i). Derivation: the SSG is an AY-3-8910 core, tone = SSG clock /
-          (16 x TP), and at the power-on prescaler (/6 FM) its effective clock is 1996800 Hz on both chips: ymfm's
-          ssg_effective_clock gives fM x 2 / 4 = 3993600 x 2 / 4 on the YM2203 and fM / 4 = 7987200 / 4 on the YM2608,
-          so 1996800 / (16 x TP) = fM / (32 x TP) resp. fM / (64 x TP). (The YM2203 application manual's own
-          fM / (64 x TP) wording is not reconciled with hardware here; the PC-88 tuning follows the 1996800 Hz clock.)
+          TP = 12-bit tone period ($00+2i, $01+2i). At the default prescaler, SSG counters update at fM/16 on
+          YM2203 and fM/32 on YM2608. Each TP updates toggles the output: a complete cycle needs 2 x TP updates.
+          The effective AY-compatible clock is 1996800 Hz on both chips; the counter-update rate is 249600 Hz.
+          These rates agree with upstream ymfm and the independent MAME-derived OPN prescaler implementation:
+          https://github.com/aaronsgiles/ymfm/blob/main/src/ymfm_opn.h
+          https://github.com/ValleyBell/libvgm/blob/master/emu/cores/fmopn.c
+          The YM2608 application manual section 3-1 explicitly gives fM/(64 x TP):
+          https://manualmachine.com/yamaha/ym2608/5410883-user-manual/#35
   ADPCM-B: playback rate = delta-N / 65536 x fM / 144 ($109/$10A), the YM2608 manual's formula; the expected tone is
           the rate times the cycles per sample of the sample itself, decoded here from the VGM's data block ($67 $66
           $81: the ADPCM-B memory) between the start ($102/$103) and end ($104/$105) registers in 32-byte units (8-bit

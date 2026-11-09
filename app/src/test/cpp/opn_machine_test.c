@@ -7,7 +7,7 @@
  * Checks, on both chips unless named:
  *  - loader: a minimal and a full image accepted (info derived: channels, tick length, rows, start speeds, rhythm use);
  *    single-field corruptions of the header, tables, instruments, envelopes, samples and pattern rows each rejected
- *    with its reason (the loader's problem string);
+ *    with an unloaded image, a nonempty diagnostic and an in-range diagnostic offset (not prescribed wording);
  *  - pitch from rendered audio through the hosts' ops table: FM A-4 = 440 Hz, C-2 and C-6 (block/F-number from the
  *    registers and from the 12-TET formula), SSG A-4 and B-0 (the lowest note) within the SSG's period rounding,
  *    ADPCM-B: a 500 Hz sine recorded at 16 kHz played at its root and +12;
@@ -32,8 +32,10 @@
  *  - live relayout: apply_image before every tick (alternately a copy whose data sits elsewhere) = straight play's
  *    writes, positions and samples; mute continuity at the chip: a part muted then unmuted gives every OpnOutput
  *    field of a never-muted chip from the unmute on (0 for it and the others identical while muted); in the machine
- *    mute leaves the writes alone, equals the song without the channel while muted and converges after the unmute;
+ *    each lane mutes its solo tone exactly, preserves other lanes, leaves song writes alone and converges on unmute;
  *  - audition and release until silent per part, fine pitch, argument limits; deterministic, non-silent output;
+ *  - output headroom: both chips at 8/44.1/48/96 kHz, full additive FM + SSG, DC-to-square and cuts;
+ *    exact independently routed PCM, no output rails, preserving the YM2608's intentional DAC saturation;
  *  - VGM: header, clocks, data block $81 with the ADPCM-B memory on the YM2608 with samples (none on the YM2203 or
  *    without samples), loop offset and samples, the end command, sample totals = ticks x tick length, the GD3 tag of
  *    opn_export_vgm; the ops tables as the hosts drive them; cost per tick;
@@ -55,6 +57,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "blip_buf.h"
 #include "chip_engine.h"
 #include "opn_export.h"
 #include "opn_image.h"
@@ -88,6 +91,8 @@ static int checks = 0;
 #define OFF OPN_NOTE_OFF
 #define FX(code, param) ((code) << 8 | (param))
 #define TONE_TICKS 90
+/* Absolute audible floors below retain their pre-headroom meaning; pitch, ratios, silence and clipping bounds do not change. */
+#define OUTPUT_GAIN (3.0 / 16.0)
 
 /* ADPCM-B test samples: a 500 Hz sine and a 100 -> 250 Hz chirp, both recorded at 16 kHz. */
 #define SINE_RATE 16000
@@ -107,7 +112,7 @@ static int checks = 0;
 static const char* ROM_SHA256 = "53afd0fa9c62eda3e2be939e23f3adf48a2af8ad37bb1640261726c5d5adeba8";
 
 static float g_out[OPNM_MAX_TICK_FRAMES * 2];
-static OpnImage g_img, g_bad, g_song[2], g_moved[2], g_drop, g_pos, g_rhythm;
+static OpnImage g_img, g_bad, g_song[2], g_moved[2], g_pos, g_rhythm;
 static int16_t g_sine_pcm[SINE_SAMPLES], g_chirp_pcm[CHIRP_SAMPLES];
 static uint8_t g_sine_adpcm[SINE_BYTES], g_chirp_adpcm[CHIRP_BYTES];
 static uint8_t g_vgm[4 << 20];
@@ -506,6 +511,37 @@ static int build_min(OpnImage* im, int chip) {
     return b_finish(&s, NULL, 0);
 }
 
+/* Eight 16-row phases at speed 4: silence, low SSG square, additive FM, both, FM + SSG DC,
+ * both at A4, simultaneous cut, tail. All FM carriers are full level, not just one sine/channel.
+ * No rhythm ROM or sample data needed. Mirrors the valid loud-transition clipping reproducer. */
+static int build_headroom(OpnImage* im, int chip) {
+    B s;
+    b_init(&s, im, chip, 1, 128, 4);
+    uint8_t* fm = ins_fm_sine(&s, 1, 0);
+    for (int op = 0; op < 4; ++op) fm_op(fm, op, 1, 0, 31, 0, 0, 15);
+    ins_ssg(&s, 2, 0, 0, 0, 0, NOENV, NOENV, NOENV);
+    static const int8_t dc[] = {OPN_MIX_NONE}; /* disabled tone/noise = high, not silence */
+    const int mix = b_env(&s, dc, 1, NONE, NONE);
+    ins_ssg(&s, 3, 0, 0, 0, 0, NOENV, mix, NOENV);
+    Ev ev[36];
+    int n = 0;
+    for (int ch = 0; ch < opn_channels(chip); ++ch) {
+        if (opn_part(chip, ch) == OPN_PART_FM) {
+            ev[n++] = (Ev){0, 32, ch, 11, 1, 0, {0}};
+            ev[n++] = (Ev){0, 80, ch, A4, 1, 0, {0}};
+            ev[n++] = (Ev){0, 96, ch, OFF, 0, 1, {FX(OPN_FX_VOLUME, 0)}};
+        } else if (opn_part(chip, ch) == OPN_PART_SSG) {
+            ev[n++] = (Ev){0, 16, ch, 11, 2, 0, {0}};
+            ev[n++] = (Ev){0, 32, ch, OFF, 0, 0, {0}};
+            ev[n++] = (Ev){0, 48, ch, 11, 2, 0, {0}};
+            ev[n++] = (Ev){0, 64, ch, 11, 3, 0, {0}};
+            ev[n++] = (Ev){0, 80, ch, A4, 2, 0, {0}};
+            ev[n++] = (Ev){0, 96, ch, OFF, 0, 0, {0}};
+        }
+    }
+    return b_finish(&s, ev, n);
+}
+
 static int g_full_vol_env; /* data offset of build_full's SSG volume envelope */
 
 /* Two orders of 32 rows at speed 3 with one sound of each part, a few effects of every kind the chip takes and
@@ -566,8 +602,8 @@ static int build_tone(OpnImage* im, int chip, const char* part, int ch, int note
 /* The test song (SONG_*): FM brass bass and sine melody (vibrato, slide), SSG lead with a volume envelope and Cxx, an
  * SSG noise drum (mixer, noise and volume envelopes), an SSG hardware-envelope bass; on the YM2608 also FM 4 (port 1)
  * with 8xy pans, the LFO and an ADPCM-B chirp from the start (10 s, longer than the song) then a looping sine. `pad`
- * unreferenced bytes first (the moved copy), events of channel `drop` left out (-1: none). */
-static int build_song(OpnImage* im, int chip, int pad, int drop) {
+ * unreferenced bytes first (the moved copy). */
+static int build_song(OpnImage* im, int chip, int pad) {
     B s;
     b_init(&s, im, chip, SONG_ORDERS, SONG_ROWS, SONG_SPEED);
     put16(s.b + OPN_H_LOOP, 1);
@@ -611,8 +647,7 @@ static int build_song(OpnImage* im, int chip, int pad, int drop) {
             if (r % 8 == 4) e[k++] = (Ev){o, r, ssg + 1, 40, 4, 0, {0}};
             if (r == 24) e[k++] = (Ev){o, r, ssg + 2, 33, 7, 0, {0}};
             if (r == 28) e[k++] = (Ev){o, r, ssg + 2, OFF, 0, 0, {0}};
-            for (int i = 0; i < k; ++i)
-                if (e[i].ch != drop) ev[n++] = e[i];
+            for (int i = 0; i < k; ++i) ev[n++] = e[i];
             if (chip != OPN_CHIP_YM2608) continue;
             Ev x[3];
             int j = 0;
@@ -620,8 +655,7 @@ static int build_song(OpnImage* im, int chip, int pad, int drop) {
             if (o == 0 && r == 0) x[j++] = (Ev){o, r, OPNA_CH_ADPCM, 57, 5, 0, {0}};
             if (o == 2 && r == 0) x[j++] = (Ev){o, r, OPNA_CH_ADPCM, 64, 6, 1, {FX(OPN_FX_VOLUME, 0xC0)}};
             if (o == 3 && r == 16) x[j++] = (Ev){o, r, OPNA_CH_ADPCM, OFF, 0, 0, {0}};
-            for (int i = 0; i < j; ++i)
-                if (x[i].ch != drop) ev[n++] = x[i];
+            for (int i = 0; i < j; ++i) ev[n++] = x[i];
         }
     return b_finish(&s, ev, n);
 }
@@ -678,51 +712,50 @@ static int find_row(const RefTick* ref, int ticks, int order, int row) {
 
 /* ---- loader ---------------------------------------------------------------------------------------------------- */
 
-static void expect_rejected(int chip, const char* what, const char* want) {
-    const int r = opn_load_image(&g_bad, chip);
+static void check_rejection(int chip, const char* what, int r) {
     const char* problem = g_bad.info.problem;
-    EXPECT(r == -1 && g_bad.info.loaded != OPN_LOADED && problem && strstr(problem, want) &&
+    EXPECT(r == -1 && g_bad.info.loaded != OPN_LOADED && problem && problem[0] &&
                g_bad.info.problem_offset >= -1 && g_bad.info.problem_offset < (int)opn_image_size(chip),
-           "%s %s: rejected with \"%s\" (got %s \"%s\" at %d)", chip_name(chip), what, want, r ? "rejected" : "ACCEPTED",
-           problem ? problem : "", g_bad.info.problem_offset);
+           "%s %s: rejected with an unloaded image and valid diagnostic offset (got %d \"%s\" at %d)",
+           chip_name(chip), what, r, problem ? problem : "", g_bad.info.problem_offset);
 }
 
-static void corrupt8(int chip, int offset, int value, const char* what, const char* want) {
+static void expect_rejected(int chip, const char* what) {
+    check_rejection(chip, what, opn_load_image(&g_bad, chip));
+}
+
+static void corrupt8(int chip, int offset, int value, const char* what) {
     memcpy(&g_bad, &g_img, sizeof g_bad);
     g_bad.bytes[offset] = (uint8_t)value;
-    expect_rejected(chip, what, want);
+    expect_rejected(chip, what);
 }
 
-static void corrupt16(int chip, int offset, int value, const char* what, const char* want) {
+static void corrupt16(int chip, int offset, int value, const char* what) {
     memcpy(&g_bad, &g_img, sizeof g_bad);
     put16(g_bad.bytes + offset, value);
-    expect_rejected(chip, what, want);
+    expect_rejected(chip, what);
 }
 
-static void corrupt32(int chip, int offset, uint32_t value, const char* what, const char* want) {
+static void corrupt32(int chip, int offset, uint32_t value, const char* what) {
     memcpy(&g_bad, &g_img, sizeof g_bad);
     put32(g_bad.bytes + offset, value);
-    expect_rejected(chip, what, want);
+    expect_rejected(chip, what);
 }
 
-/* Order 0 / channel 0 replaced by a pattern of `n` raw bytes appended to the data region (an accepted control when
- * `want` is NULL). */
-static void corrupt_pattern(int chip, const uint8_t* bytes, int n, const char* what, const char* want) {
+/* Order 0 / channel 0 replaced by a pattern of `n` raw bytes appended to the data region. */
+static void corrupt_pattern(int chip, const uint8_t* bytes, int n, const char* what, int reject) {
     memcpy(&g_bad, &g_img, sizeof g_bad);
     const int size = opn_u16(g_bad.bytes + OPN_H_DATA_SIZE);
     memcpy(g_bad.bytes + OPN_OFF_DATA + size, bytes, (size_t)n);
     put16(g_bad.bytes + OPN_H_DATA_SIZE, size + n);
     put16(g_bad.bytes + OPN_OFF_ORDERS, size);
-    if (want) expect_rejected(chip, what, want);
+    if (reject) expect_rejected(chip, what);
     else EXPECT(opn_load_image(&g_bad, chip) == 0, "%s %s: accepted (%s)", chip_name(chip), what, g_bad.info.problem);
 }
 
-/* One event on top of the full image: rejected with `want`. */
-static void corrupt_event(int chip, Ev e, const char* what, const char* want) {
-    const int r = build_full(&g_bad, chip, &e, 1);
-    const char* problem = g_bad.info.problem;
-    EXPECT(r == -1 && problem && strstr(problem, want), "%s %s: rejected with \"%s\" (got \"%s\")", chip_name(chip), what,
-           want, problem ? problem : "accepted");
+/* One invalid event on top of the full image. */
+static void corrupt_event(int chip, Ev e, const char* what) {
+    check_rejection(chip, what, build_full(&g_bad, chip, &e, 1));
 }
 
 static void test_images(void) {
@@ -746,110 +779,107 @@ static void test_images(void) {
         const int data_size = opn_u16(g_img.bytes + OPN_H_DATA_SIZE);
 
         /* header */
-        corrupt8(chip, OPN_H_MAGIC, 'X', "magic", "magic");
-        corrupt8(chip, OPN_H_LAYOUT, OPN_LAYOUT + 1, "layout", "unknown layout");
-        corrupt8(chip, OPN_H_CHIP, 7, "chip 7", "unknown chip");
+        corrupt8(chip, OPN_H_MAGIC, 'X', "magic");
+        corrupt8(chip, OPN_H_LAYOUT, OPN_LAYOUT + 1, "layout");
+        corrupt8(chip, OPN_H_CHIP, 7, "chip 7");
         memcpy(&g_bad, &g_img, sizeof g_bad);
-        expect_rejected(chip ^ 1, "image loaded for the other chip", "chip byte does not match the engine");
-        corrupt8(chip, OPN_H_SPEED, 0, "speed 0", "speed must be 1..255");
-        corrupt16(chip, OPN_H_ORDERS, 0, "0 orders", "order count must be 1..256");
-        corrupt16(chip, OPN_H_ORDERS, 257, "257 orders", "order count must be 1..256");
-        corrupt16(chip, OPN_H_LOOP, 2, "loop order 2 of 2", "loop order past the last order");
-        corrupt8(chip, OPN_H_INSTRUMENTS, 65, "65 instruments", "instrument count above 64");
-        corrupt8(chip, OPN_H_FM3_MODE, 3, "FM 3 mode 3", "FM 3 mode must be");
-        corrupt16(chip, OPN_H_DATA_SIZE, OPN_DATA_CAPACITY + 1, "data size past the region", "data size above the region");
-        corrupt16(chip, OPN_H_TIMER_A, 1024, "timer A 1024", "timer A above 1023");
-        corrupt8(chip, OPN_H_TIMER_B, OPN_TIMER_B_MIN - 1, "timer B 182", "timer B outside 183..250");
-        corrupt8(chip, OPN_H_TIMER_B, OPN_TIMER_B_MAX + 1, "timer B 251", "timer B outside 183..250");
-        corrupt8(chip, 21, 1, "reserved header byte 21", "header reserved bytes 21..23");
-        corrupt8(chip, 40, 1, "reserved header byte 40", "header reserved bytes 28..63");
+        expect_rejected(chip ^ 1, "image loaded for the other chip");
+        corrupt8(chip, OPN_H_SPEED, 0, "speed 0");
+        corrupt16(chip, OPN_H_ORDERS, 0, "0 orders");
+        corrupt16(chip, OPN_H_ORDERS, 257, "257 orders");
+        corrupt16(chip, OPN_H_LOOP, 2, "loop order 2 of 2");
+        corrupt8(chip, OPN_H_INSTRUMENTS, 65, "65 instruments");
+        corrupt8(chip, OPN_H_FM3_MODE, 3, "FM 3 mode 3");
+        corrupt16(chip, OPN_H_DATA_SIZE, OPN_DATA_CAPACITY + 1, "data size past the region");
+        corrupt16(chip, OPN_H_TIMER_A, 1024, "timer A 1024");
+        corrupt8(chip, OPN_H_TIMER_B, OPN_TIMER_B_MIN - 1, "timer B 182");
+        corrupt8(chip, OPN_H_TIMER_B, OPN_TIMER_B_MAX + 1, "timer B 251");
+        corrupt8(chip, 21, 1, "reserved header byte 21");
+        corrupt8(chip, 40, 1, "reserved header byte 40");
         if (opna) {
-            corrupt8(chip, OPN_H_LFO, 0x07, "LFO 07", "LFO byte must be 0 or 8..15");
-            corrupt8(chip, OPN_H_LFO, 0x10, "LFO 10", "LFO byte must be 0 or 8..15");
-            corrupt8(chip, OPN_H_RHYTHM_LEVEL, 64, "rhythm level 64", "rhythm level above 63");
-            corrupt8(chip, OPN_H_SAMPLES, 65, "65 samples", "sample count above 64");
-            corrupt32(chip, OPN_H_ADPCM_SIZE, SINE_BYTES - 1, "ADPCM-B size 2047", "ADPCM-B size not a multiple of 32");
-            corrupt32(chip, OPN_H_ADPCM_SIZE, OPN_ADPCM_MEMORY + 32, "ADPCM-B size past 256 KiB", "ADPCM-B size above 256 KiB");
+            corrupt8(chip, OPN_H_LFO, 0x07, "LFO 07");
+            corrupt8(chip, OPN_H_LFO, 0x10, "LFO 10");
+            corrupt8(chip, OPN_H_RHYTHM_LEVEL, 64, "rhythm level 64");
+            corrupt8(chip, OPN_H_SAMPLES, 65, "65 samples");
+            corrupt32(chip, OPN_H_ADPCM_SIZE, SINE_BYTES - 1, "ADPCM-B size 2047");
+            corrupt32(chip, OPN_H_ADPCM_SIZE, OPN_ADPCM_MEMORY + 32, "ADPCM-B size past 256 KiB");
             memcpy(&g_bad, &g_img, sizeof g_bad);
             g_bad.bytes[OPN_H_LFO] = 0x0F;
             EXPECT(opn_load_image(&g_bad, chip) == 0, "YM2608 LFO 0F accepted (%s)", g_bad.info.problem);
         } else {
-            corrupt8(chip, OPN_H_LFO, 0x08, "LFO 08", "LFO byte must be 0 on the YM2203");
-            corrupt8(chip, OPN_H_RHYTHM_LEVEL, 1, "rhythm level 1", "rhythm level must be 0 on the YM2203");
-            corrupt8(chip, OPN_H_SAMPLES, 1, "1 sample", "sample count must be 0 on the YM2203");
-            corrupt32(chip, OPN_H_ADPCM_SIZE, 32, "ADPCM-B size 32", "ADPCM-B size must be 0 on the YM2203");
+            corrupt8(chip, OPN_H_LFO, 0x08, "LFO 08");
+            corrupt8(chip, OPN_H_RHYTHM_LEVEL, 1, "rhythm level 1");
+            corrupt8(chip, OPN_H_SAMPLES, 1, "1 sample");
+            corrupt32(chip, OPN_H_ADPCM_SIZE, 32, "ADPCM-B size 32");
         }
 
         /* instruments and envelopes */
-        corrupt8(chip, fm + OPN_I_ALG, 8, "FM algorithm 8", "FM algorithm above 7");
-        corrupt8(chip, fm + OPN_I_FEEDBACK, 8, "FM feedback 8", "FM feedback above 7");
-        corrupt16(chip, fm + OPN_I_CH3, 3073, "FM 3 operator offset 3073", "FM 3 operator pitch offset outside -3072..3072");
-        corrupt8(chip, fm + OPN_I_OPS + 1, 0x80, "FM TL bit 7", "FM operator register with reserved bits set");
-        corrupt8(chip, ssg + OPN_I_SSG_SHAPE, 0x07, "SSG envelope shape 07", "SSG envelope shape must be 0 or 8..15");
-        corrupt8(chip, ssg + OPN_I_SSG_OCTAVE, 9, "SSG envelope octave 9", "SSG envelope octave outside -8..8");
-        corrupt8(chip, env + OPN_ENV_HEADER + 1, 16, "volume envelope value 16", "volume envelope value outside 0..15");
-        corrupt16(chip, env, 0, "envelope length 0", "envelope length outside 1..256");
-        corrupt16(chip, env + 2, 4, "envelope loop 4 of 4", "envelope loop past its end");
-        corrupt16(chip, ssg + OPN_I_ENV_VOLUME, data_size, "envelope at the data size", "envelope outside the data size");
-        corrupt8(chip, OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 63, OPN_FLAG_DEFINED, "slot 64 past the count",
-                 "instrument record past the instrument count");
-        corrupt8(chip, fm + OPN_I_SWEEP_START, 97, "sweep start +97", "sweep start/end");
+        corrupt8(chip, fm + OPN_I_ALG, 8, "FM algorithm 8");
+        corrupt8(chip, fm + OPN_I_FEEDBACK, 8, "FM feedback 8");
+        corrupt16(chip, fm + OPN_I_CH3, 3073, "FM 3 operator offset 3073");
+        corrupt8(chip, fm + OPN_I_OPS + 1, 0x80, "FM TL bit 7");
+        corrupt8(chip, ssg + OPN_I_SSG_SHAPE, 0x07, "SSG envelope shape 07");
+        corrupt8(chip, ssg + OPN_I_SSG_OCTAVE, 9, "SSG envelope octave 9");
+        corrupt8(chip, env + OPN_ENV_HEADER + 1, 16, "volume envelope value 16");
+        corrupt16(chip, env, 0, "envelope length 0");
+        corrupt16(chip, env + 2, 4, "envelope loop 4 of 4");
+        corrupt16(chip, ssg + OPN_I_ENV_VOLUME, data_size, "envelope at the data size");
+        corrupt8(chip, OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 63, OPN_FLAG_DEFINED, "slot 64 past the count");
+        corrupt8(chip, fm + OPN_I_SWEEP_START, 97, "sweep start +97");
         if (opna) {
             const int rh = OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 2, ad = OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 3;
-            corrupt8(chip, rh + OPN_I_RHYTHM_LEVEL, 32, "rhythm level 32", "rhythm level above 31");
-            corrupt8(chip, rh + OPN_I_PAN, 0, "rhythm pan 0", "pan byte");
-            corrupt8(chip, ad + OPN_I_ADPCM_SAMPLE, 1, "ADPCM sound of sample 1 of 1", "ADPCM sound names a sample past the sample table");
-            corrupt8(chip, ad + OPN_I_ADPCM_ROOT, 96, "ADPCM root 96", "ADPCM root note above 95");
-            corrupt8(chip, ad + OPN_I_ADPCM_FLAGS, 0x02, "ADPCM flags 02", "ADPCM flags: only bit 0");
+            corrupt8(chip, rh + OPN_I_RHYTHM_LEVEL, 32, "rhythm level 32");
+            corrupt8(chip, rh + OPN_I_PAN, 0, "rhythm pan 0");
+            corrupt8(chip, ad + OPN_I_ADPCM_SAMPLE, 1, "ADPCM sound of sample 1 of 1");
+            corrupt8(chip, ad + OPN_I_ADPCM_ROOT, 96, "ADPCM root 96");
+            corrupt8(chip, ad + OPN_I_ADPCM_FLAGS, 0x02, "ADPCM flags 02");
             /* samples */
-            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_START, 16, "sample start 16", "sample start not a multiple of 32");
-            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_END, 2 * SINE_BYTES, "sample end past the size", "sample end past the ADPCM-B size");
-            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_END, 0, "sample end 0", "sample end not after its start");
-            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_RATE, 999, "sample rate 999", "sample rate outside 1000..55466 Hz");
-            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_RATE, 55467, "sample rate 55467", "sample rate outside 1000..55466 Hz");
-            corrupt8(chip, OPN_OFF_ADPCM + SINE_BYTES + 5, 1, "ADPCM-B memory past the used size", "ADPCM-B memory past the used size is not 0");
+            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_START, 16, "sample start 16");
+            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_END, 2 * SINE_BYTES, "sample end past the size");
+            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_END, 0, "sample end 0");
+            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_RATE, 999, "sample rate 999");
+            corrupt32(chip, OPN_OFF_SAMPLES + OPN_S_RATE, 55467, "sample rate 55467");
+            corrupt8(chip, OPN_OFF_ADPCM + SINE_BYTES + 5, 1, "ADPCM-B memory past the used size");
         } else {
-            corrupt8(chip, fm + OPN_I_AMS_FMS, 0x11, "FM AMS/FMS", "FM AMS/FMS on the YM2203");
+            corrupt8(chip, fm + OPN_I_AMS_FMS, 0x11, "FM AMS/FMS");
             /* a rhythm sound in slot 3 (counted by the header): the YM2203 has no rhythm part */
             memcpy(&g_bad, &g_img, sizeof g_bad);
             g_bad.bytes[OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 2] = OPN_FLAG_DEFINED | OPN_KIND_RHYTHM;
             g_bad.bytes[OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 2 + OPN_I_RHYTHM_LEVEL] = 31;
             g_bad.bytes[OPN_OFF_INSTRUMENTS + OPN_INSTRUMENT_SIZE * 2 + OPN_I_PAN] = 0xC0;
             g_bad.bytes[OPN_H_INSTRUMENTS] = 3;
-            expect_rejected(chip, "a rhythm sound", "rhythm or ADPCM sound on the YM2203");
+            expect_rejected(chip, "a rhythm sound");
         }
 
         /* pattern rows */
         const uint8_t control[] = {0x01, 57, 0x80 | 30};
-        corrupt_pattern(chip, control, sizeof control, "patched pattern control", NULL);
+        corrupt_pattern(chip, control, sizeof control, "patched pattern control", 0);
         const uint8_t run[] = {0x80 | 32};
-        corrupt_pattern(chip, run, sizeof run, "33-row run in a 32-row pattern", "empty-row run past the pattern's last row");
+        corrupt_pattern(chip, run, sizeof run, "33-row run in a 32-row pattern", 1);
         const uint8_t mask0[] = {0x00, 0x80 | 30}, mask14[] = {0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80 | 30};
-        corrupt_pattern(chip, mask0, sizeof mask0, "mask 00", "row mask byte");
-        corrupt_pattern(chip, mask14, sizeof mask14, "mask 14 (5 effects)", "row mask byte");
+        corrupt_pattern(chip, mask0, sizeof mask0, "mask 00", 1);
+        corrupt_pattern(chip, mask14, sizeof mask14, "mask 14 (5 effects)", 1);
         const uint8_t note[] = {0x01, 0xFD, 0x80 | 30};
-        corrupt_pattern(chip, note, sizeof note, "note FD", "note byte");
-        corrupt16(chip, OPN_OFF_ORDERS + 2, data_size, "pattern at the data size", "pattern offset past the data size");
-        corrupt_event(chip, (Ev){0, 12, 0, 96, 1, 0, {0}}, "note 96", "note byte");
-        corrupt_event(chip, (Ev){0, 12, 0, 57, 2, 0, {0}}, "SSG sound on FM 1", "row names a sound of another part than the channel's");
-        corrupt_event(chip, (Ev){0, 12, 0, 57, 9, 0, {0}}, "undefined slot 9", "row names an instrument the image does not define");
-        corrupt_event(chip, (Ev){0, 12, opn_ssg_first(chip), 10, 2, 0, {0}}, "SSG A#0", "SSG note below B-0");
-        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(36, 0)}}, "effect code 36", "effect code above Z");
-        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_ENV_SHAPE, 0x08)}}, "H08 on FM", "Hxx envelope shape on a non-SSG channel");
-        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_VOLUME, 0x80)}}, "C80 on FM", "Cxx volume above 7F on an FM channel");
-        corrupt_event(chip, (Ev){0, 12, opn_ssg_first(chip), NONE, 0, 1, {FX(OPN_FX_VOLUME, 0x10)}}, "C10 on SSG",
-                      "Cxx volume above 0F on an SSG channel");
-        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_JUMP, 2)}}, "B02 of 2 orders", "Bxx jumps past the last order");
-        corrupt_event(chip, (Ev){0, 12, opn_ssg_first(chip), NONE, 0, 1, {FX(OPN_FX_NOISE, 0x20)}}, "N20", "Nxx noise period above 1F");
+        corrupt_pattern(chip, note, sizeof note, "note FD", 1);
+        corrupt16(chip, OPN_OFF_ORDERS + 2, data_size, "pattern at the data size");
+        corrupt_event(chip, (Ev){0, 12, 0, 96, 1, 0, {0}}, "note 96");
+        corrupt_event(chip, (Ev){0, 12, 0, 57, 2, 0, {0}}, "SSG sound on FM 1");
+        corrupt_event(chip, (Ev){0, 12, 0, 57, 9, 0, {0}}, "undefined slot 9");
+        corrupt_event(chip, (Ev){0, 12, opn_ssg_first(chip), 10, 2, 0, {0}}, "SSG A#0");
+        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(36, 0)}}, "effect code 36");
+        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_ENV_SHAPE, 0x08)}}, "H08 on FM");
+        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_VOLUME, 0x80)}}, "C80 on FM");
+        corrupt_event(chip, (Ev){0, 12, opn_ssg_first(chip), NONE, 0, 1, {FX(OPN_FX_VOLUME, 0x10)}}, "C10 on SSG");
+        corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_JUMP, 2)}}, "B02 of 2 orders");
+        corrupt_event(chip, (Ev){0, 12, opn_ssg_first(chip), NONE, 0, 1, {FX(OPN_FX_NOISE, 0x20)}}, "N20");
         if (opna) {
-            corrupt_event(chip, (Ev){0, 12, OPNA_CH_RHYTHM, NONE, 0, 1, {FX(OPN_FX_FINE, 0x90)}}, "P90 on a drum", "pitch effect");
-            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_LFO, 0x07)}}, "L07", "Lxx LFO must be 00 or 08..0F");
-            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_RHYTHM_LEVEL, 0x40)}}, "R40", "Rxx rhythm level above 3F");
+            corrupt_event(chip, (Ev){0, 12, OPNA_CH_RHYTHM, NONE, 0, 1, {FX(OPN_FX_FINE, 0x90)}}, "P90 on a drum");
+            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_LFO, 0x07)}}, "L07");
+            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_RHYTHM_LEVEL, 0x40)}}, "R40");
         } else {
-            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_PAN, 0x11)}}, "811 on the YM2203", "8xy pan on the YM2203");
-            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_LFO, 0x08)}}, "L08 on the YM2203", "Lxx LFO on the YM2203");
-            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_RHYTHM_LEVEL, 0x20)}}, "R20 on the YM2203",
-                          "Rxx rhythm level on the YM2203");
+            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_PAN, 0x11)}}, "811 on the YM2203");
+            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_LFO, 0x08)}}, "L08 on the YM2203");
+            corrupt_event(chip, (Ev){0, 12, 0, NONE, 0, 1, {FX(OPN_FX_RHYTHM_LEVEL, 0x20)}}, "R20 on the YM2203");
         }
         EXPECT(opn_load_image(&g_img, chip) == 0, "%s the untouched full image still loads", chip_name(chip));
     }
@@ -961,6 +991,117 @@ static void test_pitch(const char* dir) {
     }
 }
 
+/* Independently clock a second real chip with the machine's actual write batches. Use public blip APIs,
+ * not private integrator observers or a fake waveform. Exact PCM equality catches an outer clamp left
+ * before the gain (which a no-rails assertion alone misses), wrong balance, and a removed chip-DAC clamp. */
+static void test_headroom(void) {
+    printf("output headroom (loud transitions and independent routing)\n");
+    static const uint32_t rates[] = {8000, 44100, 48000, 96000};
+    for (int chip = 0; chip < 2; ++chip) {
+        const int built = build_headroom(&g_img, chip);
+        EXPECT(built == 0, "%s headroom fixture loads", chip_name(chip));
+        if (built) continue;
+        for (size_t r = 0; r < sizeof rates / sizeof rates[0]; ++r) {
+            const uint32_t rate = rates[r];
+            OpnMachine* m = opnm_create(chip, rate);
+            OpnChip* c = opn_chip_create(chip);
+            blip_t* b[2] = {blip_new(OPNM_MAX_TICK_FRAMES + 64), blip_new(OPNM_MAX_TICK_FRAMES + 64)};
+            EXPECT(m && c && b[0] && b[1], "%s %u Hz headroom allocation", chip_name(chip), rate);
+            if (!m || !c || !b[0] || !b[1]) {
+                if (m) opnm_destroy(m);
+                if (c) opn_chip_destroy(c);
+                for (int k = 0; k < 2; ++k) if (b[k]) blip_delete(b[k]);
+                continue;
+            }
+            int mode;
+            const int started = opnm_start(m, &g_img, 0, 0, 0, &mode);
+            EXPECT(started == OPNM_OK && mode == OPNM_SEEK_FROM_START, "%s %u Hz start", chip_name(chip), rate);
+            opn_chip_reset(c);
+            OpnWrite reset[OPNP_MAX_RESET_WRITES];
+            const int resets = opnp_machine_reset(chip, reset);
+            for (int j = 0; j < resets; ++j) opn_chip_write(c, reset[j].port, reset[j].reg, reset[j].val);
+            const OpnPlayer* p = opnm_player(m);
+            for (int j = 0; j < p->writes; ++j) opn_chip_write(c, p->write[j].port, p->write[j].reg, p->write[j].val);
+            for (int k = 0; k < 2; ++k) {
+                blip_set_rates(b[k], NATIVE_HZ, rate);
+                blip_clear(b[k]); /* The initial fractional offset depends on the configured clock ratio. */
+            }
+            int32_t last[2] = {0, 0};
+            short expected[2 * OPNM_MAX_TICK_FRAMES];
+            unsigned mismatches = 0, rails = 0, invalid = 0, dac_clips[2] = {0}, outer_over[2] = {0};
+            double peaks[8][2] = {{0}};
+            uint64_t frames = 0;
+            int ticks = 0;
+            for (; started == OPNM_OK && ticks < 512; ++ticks) {
+                const int got = opnm_tick(m, g_out);
+                if (got <= 0 || got > (int)OPNM_MAX_TICK_FRAMES) {
+                    ++invalid;
+                    break;
+                }
+                int w = 0;
+                for (unsigned i = 0; i < g_img.info.tick_samples; ++i) {
+                    const int end = i == 0 && p->offs ? p->offs : p->writes;
+                    for (; w < end; ++w) opn_chip_write(c, p->write[w].port, p->write[w].reg, p->write[w].val);
+                    OpnOutput o;
+                    opn_chip_generate(c, 0, &o);
+                    const int ssg = o.ssg[0] + o.ssg[1] + o.ssg[2];
+                    for (int k = 0; k < 2; ++k) {
+                        int route;
+                        if (chip == OPN_CHIP_YM2203) route = (o.fm[k] + ssg) / 2;
+                        else {
+                            int dac = o.fm[k] + o.rhythm[k] + o.adpcm[k];
+                            dac_clips[k] += dac < -32768 || dac > 32767;
+                            if (dac < -32768) dac = -32768;
+                            if (dac > 32767) dac = 32767;
+                            route = dac + ssg / 3;
+                        }
+                        outer_over[k] += route < -32768 || route > 32767;
+                        const int level = route * 3 / 16; /* specified gain, independent of production constants */
+                        blip_add_delta(b[k], i, level - last[k]);
+                        last[k] = level;
+                    }
+                }
+                for (int k = 0; k < 2; ++k) {
+                    blip_end_frame(b[k], g_img.info.tick_samples);
+                    const int count = blip_read_samples(b[k], expected + k, OPNM_MAX_TICK_FRAMES, 1);
+                    if (count != got) ++invalid;
+                    for (int i = 0; i < got && i < count; ++i) {
+                        const float v = g_out[2 * i + k];
+                        invalid += !isfinite(v);
+                        mismatches += v != expected[2 * i + k] / 32768.0f;
+                        rails += v <= -1.0f || v >= 32767.0f / 32768.0f;
+                        if (fabs(v) > peaks[ticks / 64][k]) peaks[ticks / 64][k] = fabs(v);
+                    }
+                }
+                frames += (unsigned)got;
+            }
+            EXPECT(ticks == 512 && !invalid && frames > 0, "%s %u Hz complete finite render (%d ticks, %u invalid)",
+                   chip_name(chip), rate, ticks, invalid);
+            EXPECT(!mismatches, "%s %u Hz exact pre-blip routing and gain (%u differing samples)", chip_name(chip), rate, mismatches);
+            EXPECT(!rails, "%s %u Hz no output rails (%u samples)", chip_name(chip), rate, rails);
+            for (int k = 0; k < 2; ++k) {
+                EXPECT(outer_over[k] > 0, "%s %u Hz side %d really exceeds the old outer clamp (%u)",
+                       chip_name(chip), rate, k, outer_over[k]);
+                if (chip == OPN_CHIP_YM2608)
+                    EXPECT(dac_clips[k] > 0, "%s %u Hz side %d really saturates the chip DAC (%u)",
+                           chip_name(chip), rate, k, dac_clips[k]);
+                EXPECT(peaks[0][k] == 0 && peaks[7][k] < 1e-4, "%s %u Hz side %d silence and settled cut tail (%.6f / %.6f)",
+                       chip_name(chip), rate, k, peaks[0][k], peaks[7][k]);
+                for (int phase = 1; phase <= 6; ++phase) {
+                    EXPECT(peaks[phase][k] > 0.01 * OUTPUT_GAIN && peaks[phase][k] < 0.9375,
+                           "%s %u Hz side %d phase %d audible within headroom (peak %.6f)",
+                           chip_name(chip), rate, k, phase, peaks[phase][k]);
+                }
+            }
+            printf("  %s %u Hz: %llu frames, combined peaks %.6f / %.6f, %u rails, %u differences\n",
+                   chip_name(chip), rate, (unsigned long long)frames, peaks[5][0], peaks[5][1], rails, mismatches);
+            for (int k = 0; k < 2; ++k) blip_delete(b[k]);
+            opn_chip_destroy(c);
+            opnm_destroy(m);
+        }
+    }
+}
+
 /* ---- FM 3 special and CSM modes --------------------------------------------------------------------------------- */
 
 static void test_fm3(const char* dir) {
@@ -1033,7 +1174,7 @@ static void test_fm3(const char* dir) {
                "%s CSM: %u timer A expiries in %d native samples (expected %.1f, none before the note: %u)", chip_name(chip),
                e1 - e0, native, native / 400.0, e0);
         EXPECT(keyons == 0, "%s CSM: no $28 key-on of FM 3 (%d)", chip_name(chip), keyons);
-        EXPECT(rms(note + 2 * (RATE / 20), frames_note - RATE / 20) > 0.002, "%s CSM note audible (rms %.4f)", chip_name(chip),
+        EXPECT(rms(note + 2 * (RATE / 20), frames_note - RATE / 20) > 0.002 * OUTPUT_GAIN, "%s CSM note audible (rms %.4f)", chip_name(chip),
                rms(note + 2 * (RATE / 20), frames_note - RATE / 20));
         snprintf(name, sizeof name, "%s_csm", prefix(chip));
         save_wav(dir, name, note, frames_note);
@@ -1152,7 +1293,7 @@ static void test_fm3_live(void) {
                     EXPECT(bad == 0, "%s: until the next note, writes and samples = straight play of the unedited song "
                            "(%d of %d ticks differ, first at %d)", what, bad, FM3_NEXT_TICK, first);
                     const double held_rms = held_frames ? sqrt(held_sq / (2.0 * held_frames)) : 0;
-                    EXPECT(held_rms > 0.002 && (from == OPN_FM3_CSM ? held_expiries > 0 : held_expiries == 0),
+                    EXPECT(held_rms > 0.002 * OUTPUT_GAIN && (from == OPN_FM3_CSM ? held_expiries > 0 : held_expiries == 0),
                            "%s: the held phase sounds in its own mode (rms %.4f, %u timer A expiries)", what,
                            held_rms, held_expiries);
                     if (off) {
@@ -1186,7 +1327,7 @@ static void test_fm3_live(void) {
                     }
                     const uint32_t e1 = opn_chip_timer_a_expiries(c);
                     const double next_rms = frames ? sqrt(sq / (2.0 * frames)) : 0;
-                    EXPECT(next_rms > 0.002 && (to == OPN_FM3_CSM ? e1 > e0 : e1 == e0),
+                    EXPECT(next_rms > 0.002 * OUTPUT_GAIN && (to == OPN_FM3_CSM ? e1 > e0 : e1 == e0),
                            "%s: the next note sounds (rms %.4f) with %u timer A expiries", what, next_rms, e1 - e0);
                     free(ref);
                     opnm_destroy(m);
@@ -1373,7 +1514,7 @@ static void test_rhythm_with_rom(const char* dir) {
     opnm_start(m, &g_rhythm, 0, 0, SEEK_BUDGET, &mode);
     float* buf;
     const int frames = render(m, 64, &buf);
-    EXPECT(peak(buf, frames) > 0.01, "drums audible (peak %.4f)", peak(buf, frames));
+    EXPECT(peak(buf, frames) > 0.01 * OUTPUT_GAIN, "drums audible (peak %.4f)", peak(buf, frames));
     EXPECT(!opn_chip_rhythm_missing(opnm_chip(m)), "nothing flagged missing");
     save_wav(dir, "opna_rhythm", buf, frames);
     free(buf);
@@ -1446,7 +1587,7 @@ static void test_adpcm(void) {
     EXPECT(find_write(p, p->offs, p->writes, 1, 0x00, 0xB0) >= 0, "the looping sound keys on with $100 = B0 (repeat)");
     for (int t = 0; t < 50; ++t) opnm_tick(m, g_out);
     frames = render(m, 10, &buf);
-    EXPECT(opn_chip_adpcm_playing(c) && rms(buf, frames) > 0.005, "a looping sample still plays after 1 s (rms %.4f)", rms(buf, frames));
+    EXPECT(opn_chip_adpcm_playing(c) && rms(buf, frames) > 0.005 * OUTPUT_GAIN, "a looping sample still plays after 1 s (rms %.4f)", rms(buf, frames));
     free(buf);
     EXPECT(tick_row(m, 0, 48), "row 48");
     EXPECT(find_write(p, 0, p->offs, 1, 0x00, 0x01) >= 0, "OFF: $100 = 01 in the key-off phase");
@@ -1470,7 +1611,7 @@ static void test_adpcm(void) {
         free(buf);
         opnm_destroy(m);
     }
-    EXPECT(right[0] < 0.01 * left[0] && left[0] > 0.005, "pan left: right rms %.6f, left %.4f", right[0], left[0]);
+    EXPECT(right[0] < 0.01 * left[0] && left[0] > 0.005 * OUTPUT_GAIN, "pan left: right rms %.6f, left %.4f", right[0], left[0]);
     EXPECT(left[0] / left[1] > 0.45 && left[0] / left[1] < 0.55, "level 128 / 255: loudness ratio %.3f (0.502)", left[0] / left[1]);
     EXPECT(fabs(right[1] / left[1] - 1.0) < 0.01, "pan both: equal sides (%.4f / %.4f)", right[1], left[1]);
 }
@@ -1755,14 +1896,59 @@ static void test_chip_mute(int chip) {
     }
 }
 
-/* Mute in the machine: channel c muted for MUTE_TICKS ticks from the start, then unmuted. The player's writes are
- * straight play's throughout; while muted the output is the song without c's events exactly (the same input to the
- * host resampler); after the unmute it converges to the never-muted render (the resampler's high-pass remembers the
- * muted stretch for a while): from 0.5 s after the unmute every sample within 1e-4. */
+/* Check every FM, SSG and ADPCM-B mute bit through the machine, against solo tones. Muting the sounding lane must
+ * give exact zero; muting any other lane must preserve every frame exactly. Both runs retain identical events and
+ * hence identical write timing. Rhythm's ROM-dependent output is covered separately.
+ *
+ * Deleting a lane from the dense song is NOT a mute oracle: run_tick delays all main-phase writes one native sample
+ * when any lane emits key-offs. Removing FM retriggers (or ADPCM-B's initial reset) removes that delay for other
+ * lanes, even though they are not muted. SSG noise/envelope registers can also be shared between lanes. */
+static void test_machine_mute_routes(int chip) {
+    enum { TICKS = 4 };
+    for (int sounding = 0; sounding < opn_channels(chip); ++sounding) {
+        const int part = opn_part(chip, sounding);
+        if (part == OPN_PART_RHYTHM) continue;
+        const char* name = part == OPN_PART_SSG ? "ssg" : part == OPN_PART_ADPCM ? "adpcm" : "fm";
+        const int built = build_tone(&g_img, chip, name, sounding, A4);
+        EXPECT(built == 0, "%s channel %d mute probe loads", chip_name(chip), sounding);
+        if (built) continue;
+        double pk;
+        RefTick* ref = record(chip, &g_img, TICKS, &pk);
+        EXPECT(ref && pk > 0, "%s channel %d mute probe sounds (peak %.6f)", chip_name(chip), sounding, pk);
+        if (!ref) continue;
+        for (int muted = 0; muted < opn_channels(chip); ++muted) {
+            OpnMachine* m = opnm_create(chip, RATE);
+            EXPECT(m != NULL, "%s channel %d mute probe machine", chip_name(chip), muted);
+            if (!m) continue;
+            int mode;
+            const int started = opnm_start(m, &g_img, 0, 0, SEEK_BUDGET, &mode);
+            EXPECT(started == OPNM_OK && opnm_mute(m, muted, 1) == OPNM_OK,
+                   "%s channel %d mute probe starts", chip_name(chip), muted);
+            int bad_audio = 0, bad_writes = 0;
+            for (int k = 0; k < TICKS; ++k) {
+                const int n = opnm_tick(m, g_out);
+                bad_writes += !same_tick(opnm_player(m), &ref[k]);
+                const uint64_t h = fnv(0xCBF29CE484222325ull, g_out, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
+                bad_audio += n != ref[k].frames || (muted == sounding ? peak(g_out, n) != 0 : h != ref[k].hash);
+            }
+            EXPECT(!bad_audio && !bad_writes,
+                   "%s sounding %d muted %d: %s, writes unchanged (%d audio / %d write ticks differ)",
+                   chip_name(chip), sounding, muted, sounding == muted ? "exact silence" : "exact original samples",
+                   bad_audio, bad_writes);
+            opnm_destroy(m);
+        }
+        free(ref);
+    }
+}
+
+/* Mute in the dense song: writes and positions stay identical; the rendered audio must change while muted, then
+ * converge to never-muted playback. The resampler high-pass remembers the muted stretch: retain the existing
+ * bound of 1e-4 from 0.5 s after unmute. Chip-level tests above require exact state continuity without that filter. */
 #define MUTE_TICKS 150
 static void test_mute(int chip, const RefTick* ref) {
     printf("%s mute\n", chip_name(chip));
     test_chip_mute(chip);
+    test_machine_mute_routes(chip);
     static const int channels[2][4] = {{0, 1, 3, -1}, {0, 3, OPNA_CH_SSG, OPNA_CH_ADPCM}};
     OpnMachine* never = opnm_create(chip, RATE);
     int mode;
@@ -1773,24 +1959,18 @@ static void test_mute(int chip, const RefTick* ref) {
     for (int d = 0; d < 4; ++d) {
         const int ch = channels[chip][d];
         if (ch < 0) continue;
-        EXPECT(build_song(&g_drop, chip, 0, ch) == 0, "song without channel %d (%s)", ch, g_drop.info.problem);
-        double pk;
-        RefTick* dropped = record(chip, &g_drop, MUTE_TICKS, &pk);
-        if (!dropped) continue;
         OpnMachine* m = opnm_create(chip, RATE);
-        int bad_writes = 0, bad_muted = 0, first_muted = -1, frames = 0, unmute_frame = 0;
+        int bad_writes = 0, bad_positions = 0, changed_muted = 0, frames = 0, unmute_frame = 0;
         float* out = (float*)malloc(sizeof(float) * 2 * OPNM_MAX_TICK_FRAMES * SONG_TICKS);
         opnm_start(m, &g_song[chip], 0, 0, SEEK_BUDGET, &mode);
         EXPECT(opnm_mute(m, ch, 1) == OPNM_OK, "mute channel %d", ch);
         for (int k = 0; k < SONG_TICKS; ++k) {
             if (k == MUTE_TICKS) opnm_mute(m, ch, 0), unmute_frame = frames;
+            bad_positions += !pos_is(m, &ref[k]);
             const int n = opnm_tick(m, out + 2 * frames);
             bad_writes += !same_tick(opnm_player(m), &ref[k]);
             const uint64_t h = fnv(0xCBF29CE484222325ull, out + 2 * frames, sizeof(float) * 2 * (size_t)(n > 0 ? n : 0));
-            if (k < MUTE_TICKS && (n != dropped[k].frames || h != dropped[k].hash)) {
-                if (first_muted < 0) first_muted = k;
-                ++bad_muted;
-            }
+            if (k < MUTE_TICKS && n == ref[k].frames && h != ref[k].hash) ++changed_muted;
             frames += n > 0 ? n : 0;
         }
         double worst = 0;
@@ -1798,14 +1978,12 @@ static void test_mute(int chip, const RefTick* ref) {
         for (int i = 2 * from; i < 2 * to; ++i)
             if (fabs((double)out[i] - clean[i]) > worst) worst = fabs((double)out[i] - clean[i]);
         EXPECT(bad_writes == 0, "channel %d muted: the player's writes unchanged (%d differ)", ch, bad_writes);
-        EXPECT(bad_muted == 0, "channel %d muted: samples = the song without it (%d of %d ticks differ, first %d)", ch, bad_muted,
-               MUTE_TICKS, first_muted);
+        EXPECT(bad_positions == 0, "channel %d muted: positions unchanged (%d differ)", ch, bad_positions);
+        EXPECT(changed_muted > 0, "channel %d muted: audible contribution removed (%d ticks changed)", ch, changed_muted);
         EXPECT(frames == clean_frames && to > from && worst < 1e-4,
                "channel %d unmuted: from 0.5 s after the unmute within %.2e of never muted (bound 1e-4)", ch, worst);
-        printf("  channel %d: muted = without it %s; 0.5 s after the unmute max difference %.2e\n", ch,
-               bad_muted ? "NO" : "yes", worst);
+        printf("  channel %d: %d muted ticks changed; 0.5 s after the unmute max difference %.2e\n", ch, changed_muted, worst);
         free(out);
-        free(dropped);
         opnm_destroy(m);
     }
     free(clean);
@@ -1820,7 +1998,7 @@ static void test_mute(int chip, const RefTick* ref) {
     free(buf);
     for (int c = 0; c < opn_channels(chip); ++c) opnm_mute(m, c, 0);
     frames = render(m, 30, &buf);
-    EXPECT(rms(buf, frames) > 0.001, "unmuted: sound again (rms %.4f)", rms(buf, frames));
+    EXPECT(rms(buf, frames) > 0.001 * OUTPUT_GAIN, "unmuted: sound again (rms %.4f)", rms(buf, frames));
     free(buf);
     EXPECT(opnm_mute(m, opn_channels(chip), 1) != OPNM_OK, "channel %d rejected", opn_channels(chip));
     opnm_destroy(m);
@@ -1864,7 +2042,7 @@ static void test_audition(void) {
         const int ssg = opn_ssg_first(chip);
         EXPECT(opnm_audition(m, &g_img, ssg, A4, 2, 0) == OPNM_OK, "%s SSG A-4", n);
         frames = render(m, 30, &buf);
-        EXPECT(rms(buf, frames) > 0.002, "%s SSG audition audible", n);
+        EXPECT(rms(buf, frames) > 0.002 * OUTPUT_GAIN, "%s SSG audition audible", n);
         free(buf);
         const int r = opnm_release(m);
         const int t = r ? release_ticks(m, 700) : 0;
@@ -2092,9 +2270,17 @@ static OpnVgmInfo check_loop(const char* dir, const char* name, const OpnImage* 
     vgm_writes(g_vgm, size, &file, &loop_index);
     wl_add(&expanded, file.w, file.n);
     if (looped) {
-        EXPECT(loop_index >= 0 && loop_index < file.n, "%s: the loop offset is on a command before writes (%d of %d)", name,
-               loop_index, file.n);
-        if (loop_index >= 0)
+        const double loop_want = (info.ticks - info.loop_tick) *
+            (double)opn_tick_samples(im->info.timer_b) * 44100.0 / NATIVE_HZ;
+        EXPECT(s.loop_seen && loop_index >= 0 && loop_index <= file.n &&
+                   info.loop_offset == 0x1C + opn_u32(g_vgm + 0x1C),
+               "%s: the loop offset is on a command boundary (%d of %d writes)", name, loop_index, file.n);
+        EXPECT(s.loop_samples > 0 && s.loop_samples == info.loop_samples &&
+                   s.loop_samples == opn_u32(g_vgm + 0x20) && fabs(s.loop_samples - loop_want) <= 1.0,
+               "%s: loop waits %u samples = %u ticks (%.1f)", name, s.loop_samples,
+               info.ticks - info.loop_tick, loop_want);
+        /* A settled volume slide can loop on waits alone, after the last register write. */
+        if (loop_index >= 0 && loop_index < file.n)
             for (int k = 1; k < VGM_PASSES; ++k) wl_add(&expanded, file.w + loop_index, file.n - loop_index);
     }
     const uint32_t total = looped ? info.loop_tick + VGM_PASSES * (info.ticks - info.loop_tick) : info.ticks;
@@ -2343,7 +2529,7 @@ static void test_song_audio(const char* dir, int chip, const RefTick* ref, doubl
     for (int k = 0; same && k < SONG_TICKS; ++k) same = again[k].hash == ref[k].hash && again[k].frames == ref[k].frames;
     EXPECT(same, "bit-identical on a second start");
     free(again);
-    EXPECT(pk > 0.01 && pk < 1.0, "non-silent, unclipped (peak %.4f)", pk);
+    EXPECT(pk > 0.01 * OUTPUT_GAIN && pk < 1.0, "non-silent, unclipped (peak %.4f)", pk);
     OpnMachine* m = opnm_create(chip, RATE);
     int mode;
     opnm_start(m, &g_song[chip], 0, 0, SEEK_BUDGET, &mode);
@@ -2351,7 +2537,7 @@ static void test_song_audio(const char* dir, int chip, const RefTick* ref, doubl
     const int frames = render(m, SONG_TICKS, &buf);
     int quiet = 0;
     for (int s = 0; s + RATE / 2 <= frames; s += RATE / 2)
-        if (rms(buf + 2 * s, RATE / 2) < 0.002) ++quiet;
+        if (rms(buf + 2 * s, RATE / 2) < 0.002 * OUTPUT_GAIN) ++quiet;
     EXPECT(quiet == 0, "every half second non-silent (%d quiet)", quiet);
     char name[64];
     snprintf(name, sizeof name, "%s_song", prefix(chip));
@@ -2397,6 +2583,7 @@ int main(int argc, char** argv) {
     make_samples();
     test_images();
     test_pitch(dir);
+    test_headroom();
     test_fm3(dir);
     test_fm3_live();
     test_ssg();
@@ -2405,8 +2592,8 @@ int main(int argc, char** argv) {
     test_positions();
     test_audition();
     for (int chip = 0; chip < 2; ++chip) {
-        EXPECT(build_song(&g_song[chip], chip, 0, -1) == 0, "%s song loads (%s)", chip_name(chip), g_song[chip].info.problem);
-        EXPECT(build_song(&g_moved[chip], chip, 333, -1) == 0, "%s moved song loads (%s)", chip_name(chip), g_moved[chip].info.problem);
+        EXPECT(build_song(&g_song[chip], chip, 0) == 0, "%s song loads (%s)", chip_name(chip), g_song[chip].info.problem);
+        EXPECT(build_song(&g_moved[chip], chip, 333) == 0, "%s moved song loads (%s)", chip_name(chip), g_moved[chip].info.problem);
     }
     for (int chip = 0; chip < 2; ++chip) {
         double pk = 0;

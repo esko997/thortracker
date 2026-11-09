@@ -4901,9 +4901,15 @@ remain pending; see `docs/VERIFICATION.md`.
   `pc9801_86.cpp` (YM2608 at 7.987 MHz). These are an emulator's board descriptions, not datasheets or a measured
   board; no hardware measurement backs them here.
 - **Rates**: at the power-on prescaler (FM ÷6, SSG ÷4) one FM sample takes 72 master clocks on the YM2203 and 144 on
-  the YM2608: **55 466.67 Hz on both** ("native samples"). The SSG's effective clock is 1 996 800 Hz on both (ymfm:
-  YM2203 fM × 2 / 4, YM2608 fM / 4), so a tone period TP sounds 124 800 / TP Hz (YM2203 fM / (32 TP), YM2608
-  fM / (64 TP)).
+  the YM2608: **55 466.67 Hz on both** ("native samples"). The effective AY-compatible SSG clock is **1 996 800 Hz**
+  on both, distinct from the **249 600 Hz counter-update rate** (YM2203 fM/16, YM2608 fM/32). Each tone period
+  toggles the output; two toggles complete a cycle, giving **124 800 / TP Hz** (YM2203 fM/(32 TP), YM2608 fM/(64 TP)).
+  The wrapper clocks nine SSG updates per two native samples. This agrees with
+  [upstream ymfm](https://github.com/aaronsgiles/ymfm/blob/main/src/ymfm_opn.h) and the independent
+  [MAME-derived OPN prescaler](https://github.com/ValleyBell/libvgm/blob/master/emu/cores/fmopn.c)
+  (`SSG clock = master × 2 / (4 × pre_divider)`, with pre_divider 1 for YM2203 and 2 for YM2608).
+  The [YM2608 application manual §3-1](https://manualmachine.com/yamaha/ym2608/5410883-user-manual/#35) gives the
+  latter tone formula explicitly; no conflicting YM2203 manual passage or original-hardware measurement is established here.
 - **ADPCM-B memory**: 256 KiB, the size of the PC-9801-86's and Sound Board II's DRAM as commonly documented (MAME
   maps 2 MiB and marks the size unconfirmed); the chip runs in 8-bit DRAM mode (`$101` bit 1), so start/end registers
   count 32 bytes.
@@ -5037,11 +5043,22 @@ rhythm channels; FM locks on FM only; `H`, `J`, `N` on SSG only.
   its end) or 10 s. A drum audition without the rhythm ROM is refused in Kotlin (`Ym2608RhythmRom.MISSING`).
 - **Mute** leaves a tracker channel's part out of the sums only (`OPN_MUTE_*`); the chip keeps computing it, so
   unmuting continues exactly as if never muted.
-- **Mix** (MAME's routing in `pc8801.cpp`, at the chips' own DAC range as the OPL3 plays Nuked's): YM2203 (FM +
-  SSG A + B + C) / 2, mono (a full FM carrier 0.125, a full SSG channel 0..0.25); YM2608 clamp16(FM + rhythm +
-  ADPCM-B, ymfm's own sum: FM >> 1, ADPCM-B >> 1) + (SSG A + B + C) / 3 on both sides (MAME: SSG 0.25 against FM
-  0.5; a full FM carrier 0.125, ADPCM-B at level 255 0.5, a full SSG channel 0..0.167). Clamped to 16 bits before
-  blip_buf. The balance between FM and SSG on real boards differs by model and is not measured here.
+- **Mix** (MAME's relative routing in `pc8801.cpp`): YM2203 (FM + SSG A + B + C) / 2, mono;
+  YM2608 clamp16(FM + rhythm + ADPCM-B, ymfm's own sum: FM >> 1, ADPCM-B >> 1) +
+  (SSG A + B + C) / 3 on both sides (MAME: SSG 0.25 against FM 0.5). Apply a fixed **3/16 output
+  gain before blip_buf**, without clipping the combined route. Preserve the YM2203 floating-point DAC
+  and YM2608's inner DAC saturation before adding SSG. The unscaled legal route ranges are
+  −16384..40956 and −32768..49149 respectively; additive FM algorithms can reach the DAC limits.
+  Budget the full DC-to-opposite-rail span, not just the positive peak: the larger span is below
+  2.5 host units. The integrated `bl_step` table's total variation is below two, including linear
+  phase interpolation; use two as a conservative reconstruction span bound for arbitrary held
+  levels. The high-pass subtracts a running DC estimate, so budget that entire reconstructed span:
+  2.5 × 2 × 3/16 = 0.9375, with more than 2048 PCM units left for integer rounding.
+  Relative part levels and register/VGM output are unchanged; this is not a limiter or automatic gain.
+  The native headroom regression covers both chips at 8, 44.1, 48 and 96 kHz with full additive FM,
+  full-volume SSG, held DC, DC-to-square and simultaneous cuts, comparing against an independently
+  routed chip plus blip path (including DAC saturation). Execution of the new regression is pending.
+  The balance between FM and SSG on real boards differs by model and is not measured here.
 
 ### VGM export (`opn/opn_vgm.c`, `opn_export.h`)
 
