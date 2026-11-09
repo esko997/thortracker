@@ -33,12 +33,22 @@ Order below is the current intent; design notes for the chip work live in `docs/
    with Game Gear stereo, and the Japanese SMS FM Sound Unit (YM2413), with separate melodic/rhythm layouts.
    Native/reference, Android/desktop export parity, reserved-device playback and unchanged Game Boy
    checks passed; see `docs/VERIFICATION.md`. All four variants are grouped under **Sega 8-bit…**.
-5. **Mega Drive extensions** — integrated for 0.23.0: three PCM lanes and sample kits, channel 3's independent
+5. **Mega Drive extensions** — released in 0.23.0: three PCM lanes and sample kits, channel 3's independent
    operator pitches, and the real XGM2 driver with unpacked/compiled exports. Native/reference, exported-file
    driver playback, reserved-device edits/audition, WAV import and Game Boy parity passed; see `docs/VERIFICATION.md`
    for measured seek latency, adaptive-buffer underruns and the upstream converter limitation.
-6. **L2+R2 third chord layer** — cumulative with the L2 and R2 layers. Today two held modifiers are ambiguous
-   (`HostInput`); it needs a modifier-set binding, keymap file support and capture of two-modifier chords.
+6. **L2+R2 third chord layer** — integrated and device-verified for 0.24.0 (keymap version 6).
+   A binding is a button plus a modifier *set* (at most two of Select/L2/R2/L3), so L2+R2+A
+   is one layer whichever trigger went down first. Routing: a press runs the chord of exactly the held set; failing
+   that, if any subset of the held set binds the button (L2+A, R2+A while both are held) the press does nothing;
+   otherwise the bare key acts. Presses keep the meaning of their DOWN through rolling releases; Android key-ups
+   flagged canceled do not trigger taps or cursor advance; edits already made on press remain. Captures track
+   held triggers correctly, including analog-trigger release on the Deck frontend. Older keymap files decode
+   unchanged and gain the new defaults. See `docs/VERIFICATION.md` for device and two-pane evidence.
+   - **Default choice for review:** L2+R2 + A/B/X/Y/↑/→/↓ show Song/Instrument/Sketch/Keyboard/Pattern/Wave/Help
+     on the *other* display, mirroring the R2 view chords, without moving controller focus (one R3 → R2+x → R3
+     sequence becomes one chord; e.g. Keyboard on the other screen beside the pattern being edited). With one
+     display (Deck, single-screen Android) they show on it. L2+R2+← stays free. No existing chord moved.
 7. **More chips** (unordered):
    - AY-3-8910 / YM2149 — ZX Spectrum 128, MSX, Atari ST, Amstrad CPC (the hardware envelope as a buzzer bass).
    - PC Engine HuC6280 — six 32-step wavetable channels, LFO, noise.
@@ -199,7 +209,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 - 0.11.0: C64 SID sound system (GoatTracker 2.77 playroutine + reSID), .sid/.prg/.sng export.
 - 0.12.0: OPL3 FM sound system (own player on Nuked-OPL3), up to 4 effect columns on OPL3, chord effect, curated FM editor, VGM export.
 - 0.13.0: Mega Drive sound system (YM2612 + PSG through SGDK's XGM Z80 driver), .vgm/.xgm/.xgc export.
-- L2+R2 third chord layer: scheduled, see Roadmap.
+- L2+R2 third chord layer: other-display view chords by default (keymap version 6), see Roadmap.
 - Start plays from the current pattern's first row; L3+Start plays from its cursor. Song-start remains an explicit command.
 - App-owned menus, rename, confirmation and errors live inside the app's display roots; Android SAF and the IME remain system-owned.
 - Visible arpeggio-0 selection without inventing a parameter; OFF label retains immediate-cut semantics.

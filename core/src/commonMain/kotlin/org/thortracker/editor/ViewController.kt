@@ -150,8 +150,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Drops any held state, e.g. when the display loses controller focus. */
     fun cancelHolds() {
-        // In Sketch a tap A can write (Insert) or change the key; a cancelled hold is never such a tap.
-        if (editHeld && state.kind == ViewKind.SKETCH) editUsed = true
+        // Keep edits already made on press, but never turn cancellation into a tap or cursor advance.
+        if (editHeld) editUsed = true
         if (editHeld) release(Action.EDIT)
         clearHeld = false; clearUsed = true
         markHeld = false
