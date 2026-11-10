@@ -53,6 +53,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * Atari 2600 (`atari2600-tia-ntsc`, `atari2600-tia-pal`) 1.
  * Atari POKEY (`atari-pokey`) 1.
  * VIC-20 (`vic20-vic`) 1, C16/Plus/4 (`c16-ted`) 1 and Virtual Boy VSU (`vb-vsu`) 1.
+ * WonderSwan (`ws-wonderswan`) 1 and WonderSwan Color (`ws-wonderswan-color`) 1 (their `sound` names its model: `color`).
  * SAM Coupé (`sam-saa1099`) 1; Creative Music System (`cms-saa1099`) 1.
  */
 object ProjectCodec {

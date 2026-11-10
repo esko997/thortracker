@@ -48,6 +48,11 @@
  * (under 1 s), and it must still render a valid non-silent file equal to straight ticking, deterministically for any
  * step size, with loops=1 adding about one loop and a fade adding exactly its length; a wrong image size is refused.
  *
+ * The shortest songs (ws-shortest.wsimg and wsc-shortest.wsimg: one order of one row, A-4 held on CH1 of the original
+ * WonderSwan and of the WonderSwan Color, looping to order 0) run the same render paths at the other extreme: once
+ * through is a single row (under 1 s), and it must still render a valid non-silent file equal to straight ticking,
+ * deterministically for any step size, with loops=1 adding about one loop and a fade adding exactly its length; a
+ * wrong image size is refused.
  * The shortest songs (saa-sam-shortest.saaimg and saa-cms-shortest.saaimg: one order of one row at speed 1, A-4 held on
  * lane 1, looping to order 0) run the same render paths at the other extreme: once through is a single engine tick
  * (under 1 s), and it must still render a valid non-silent file equal to straight ticking, deterministically for any
@@ -110,6 +115,8 @@ static const Demo kDemos[] = {
     {"raster-run.sidimg", "c64-sid"},
     {"glass-harbour.o3img", "opl3-fm"},
     {"neon-causeway.ymimg", "ym2612-fm"},
+    {"ws-demo.wsimg", "ws-wonderswan"},
+    {"wsc-demo.wsimg", "ws-wonderswan-color"},
     {"crimson-stereoscope.vbimg", "vb-vsu"},
     {"saa-sam-demo.saaimg", "sam-saa1099"},
     {"saa-cms-demo.saaimg", "cms-saa1099"},
@@ -176,6 +183,8 @@ static const Demo kShortestHeld[] = {
     {"pokey-shortest.pkimg", "atari-pokey"},
     {"vic-shortest.cbimg", "vic20-vic"},
     {"ted-shortest.cbimg", "c16-ted"},
+    {"ws-shortest.wsimg", "ws-wonderswan"},
+    {"wsc-shortest.wsimg", "ws-wonderswan-color"},
 };
 
 static char spool[512];

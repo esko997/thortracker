@@ -27,6 +27,9 @@
  *                     (opl3/opl3_chip.c over opl3/opl3_machine.c, opl3_player.c, opl3_image.c)
  *   "ym2612-fm"       Thor Tracker's own YM2612 player streamed through SGDK's XGM2 driver on a Z80 + YM2612
  *                     (ymfm) + SN76489 (ym/ym_chip.c over ym/ym_machine.c, ym_player.c, ym_xgm.c, ym_image.c)
+ *   "ws-wonderswan"   Thor Tracker's own WonderSwan player on the sound unit (a port of ares's APU), voice samples
+ *                     from the HBlank timer (ws/ws_chip.c over ws/ws_machine.c, ws_player.c, ws_image.c, ws_apu.c)
+ *   "ws-wonderswan-color"  the same on the WonderSwan Color, plus Sound DMA and Hyper Voice (ws/ws_chip.c)
  *   "vb-vsu"          Thor Tracker's own player on the Virtual Boy VSU, a Mednafen-derived core amended from the
  *                     Sacred Tech Scroll (vsu/vsu_engine.c over vsu/vsu_machine.c, vsu_player.c, vsu_chip.c, vsu_image.c)
  *   "sam-saa1099"     Thor Tracker's own SAA1099 player on one Philips SAA1099 (our clock-exact port of SAASound's

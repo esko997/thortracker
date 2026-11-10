@@ -1,5 +1,57 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.36.0 WonderSwan — integration verification
+
+Both WonderSwan models integrate VSU, SAA1099 and the preceding systems, targeting
+**0.36.0 / versionCode 49**, project format 10. **995 JVM tests and 6 Android host tests**
+pass; signed Android release, clean instrumentation and all sample exports build inside
+the enforced resource scope. The factory Game Boy `.uge` remains byte-identical.
+The required generated driver constants, reference fixture and two golden files are tracked
+as clean-checkout inputs, not treated as build caches.
+
+- The integrated native run passes every earlier engine and **2,796 WAV checks**. Its three
+  WonderSwan failures were test defects: comparing different host-owned ROM addresses as chip
+  state, and calling a 1,000-byte buffer too small for a 414-byte VGM. The corrected checks compare
+  all hardware state after verifying the mapped bytes and normalizing only the host address;
+  VGM boundaries now test exactly the required size and one byte short.
+- **693 WonderSwan native checks pass**, including CPU-fed samples, all four DMA rates,
+  mono/opposed stereo, hardware sweep/noise, live edits, seeks and mute continuity.
+- Headroom verification now includes the full signed-byte range **−128 / +127** and uses
+  Hyper Voice's hardware shift as an exact half-level control. Removed an incidental peak-window
+  assertion. Restoring the old half-gain mixer produces **12 actual host-clipping failures**
+  at 11025/44100 Hz; the production quarter-gain mixer passes without changing raw chip wrap,
+  player/timer/DMA traces or any reference VGM bytes. This is a same-resampler linearity control,
+  not an independent hardware oracle.
+- Independent Python comparison matches both **1,500-tick** traces, exact VGM bytes, decoded
+  register/RAM timelines and three repeated loop passes. A-4 is **440.362 Hz** in the native WAV
+  and **440.353 Hz** through pinned libvgm `c5c03a2c`, versus **440.367 Hz** from the clock/divider.
+  The reference reader now uses the standard WAV module for libvgm's extensible PCM header;
+  the original 0.3 Hz tolerance is unchanged.
+- The actual renderer CLI plays both exported demos for five seconds: mono **peak 0.151,
+  RMS 0.0191**, Color **peak 0.321, RMS 0.0391**, both reaching order 1/row 22.
+  Mono VGM is **338,335 bytes**, 20.78 seconds with an 8.90-second loop.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/{ws-native,ws-corrected,ws-before}`.
+The native/Kotlin registries and all shared-registry renderer source lists retain every engine;
+the SMS renderer remains standalone. Hyper Voice VGM export is explicitly refused; WAV supports it.
+Both jobs in candidate CI run `42730175159` (`cc19ab6`) pass. Its actual AppImage played and
+held-auditioned both demos, then returned to Pattern: mono reached order 1/row 22 with hold/after
+PCM peaks 0.08578491/0.15112305; Color reached order 1/row 20 with 0.28866577/0.32122803.
+Both rendered surfaces were inspected; evidence is `recovery-20261109/ws-desktop/`.
+Nova, DMG and Konkr each pass both actual-device scenarios: wave/noise/sweep edits, CPU-fed and DMA
+samples, Hyper Voice, held audition, playback/seek, project round trip, WAV export and explicit
+Hyper Voice VGM refusal. All three have zero driver faults and zero xruns in the dedicated scenarios;
+maximum callbacks are **1.186 / 5.030 / 2.104 ms** respectively. Their edited WAV pairs are byte-identical,
+48 kHz stereo with 569,856 frames and no clipping rails. Nova also passes all **22 permanent Android
+tests** and **32 full-RGBA Game Boy baseline comparisons**. Actual wave, DMA and refusal surfaces
+were inspected. Evidence: `recovery-20261109/ws-frontend/device-smoke/`.
+The collection wrapper initially attempted to pull the intentionally refused VGM after both tests
+had passed; successful exports were retained and checked. It now recognizes that explicit negative
+case without relaxing positive-export checks. The corrected wrapper completed on DMG and verified
+that the refused VGM was absent. Final integrated CI and official publication remain pending.
+No physical WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking
+remains disabled.
+
 ## Workstation recovery and enforced build limits
 
 The second reported lockup interrupted VIC/TED verification. Recovered on-disk JVM reports contain
@@ -42,7 +94,7 @@ half-sample frame phase (**30/30 frame-count mismatches**, worst PCM difference 
 Advancing both cleared resamplers with `blip_skip_silence` fixes it: the same target now has exact frame
 counts and **bit-identical PCM at all seven rates, 8–96 kHz**, with identical raw chip state.
 The permanent regression keeps the existing 2e-3 bound. Evidence: `recovery-20261109/vsu-before/`
-under `~/.local/state/thortracker`. Final integrated CI and official publication remain pending.
+under `~/.local/state/thortracker`. Final integrated CI and official publication passed; see below.
 
 **594 VSU native checks pass**, including seek, mute, live edits and seven-rate headroom. The first integrated
 run passed all other engines and **2,622 WAV checks**, but exposed one stale VSU sweep assertion: S5INT
@@ -78,6 +130,21 @@ Each device exported a non-silent 48 kHz stereo WAV (1,843,200 frames, peaks 358
 and a **47,225-byte VGM**. The independent left/right document-silencing fixture rendered 153,600
 frames with peak 1220 per side; its opposing-silence assertions passed. Device wave/modulation
 surfaces were inspected. Evidence: `recovery-20261109/vsu-frontend/{ordered-clean,ordered-smoke,selection-smoke,accepted-metrics.json}`.
+
+Official **0.35.0/code 48** is published from main `aa3149e`; all four jobs in run `42735902241`
+pass. Downloaded APK/AppImage checksums, production certificate, non-debuggable manifest and
+arm64/x86_64 APK libraries are verified. APK SHA-256:
+`0ecde00d61cf6a19dcb411ae6b74b062911734ec5b7049abfd0abfbf5b3829e6`;
+AppImage SHA-256: `e61d4d09497dab4bfdb829c0cb8e59d802df92eb383e9fb0fdaa71edc203b54f`.
+The actual official AppImage repeats playback/held audition/Pattern return at order 0/row 41 and
+the noise-only audition, with hold peaks **0.08251954 / 0.036783855**. Both surfaces were inspected.
+Artifact-only copies reached Thor Downloads and Deck's `~/thortracker-deck/`; the Deck's stable
+`thor-tracker` symlink was updated atomically. No installation, launch or wake command was issued.
+The actual official APK passes the full VSU scenario on DMG with zero xruns/faults and a maximum
+callback of **6.944 ms**. Edited WAV, stereo-silencing WAV and VGM bytes match the accepted candidate.
+The official modulation surface was inspected. Nova/Konkr were not downgraded from newer accepted
+candidates merely to repeat this release gate.
+Evidence: `recovery-20261109/{official-0350,vsu-official-desktop,vsu-official-smoke}/`.
 
 - Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
   and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.
@@ -125,9 +192,10 @@ settings/project restoration; invoke only `org.thortracker.VsuDeviceHarness` in 
 
 ## 0.34.0 Philips SAA1099 — integration verification
 
-SAM Coupé and Creative Music System integrate all preceding systems. Six generated fixtures repeat
-byte-identically; **925 JVM and 6 Android host tests** pass. The corrected production-signed Android
-release and clean/temporary frontend instrumentation compile within the enforced build scope.
+SAA candidate `c27a60b` integrates SAM Coupé, Creative Music System and all preceding systems.
+Six generated fixtures repeat byte-identically; **925 JVM and 6 Android host tests** pass.
+The corrected production-signed Android release and clean/temporary frontend instrumentation
+compile within the enforced build scope. This is candidate evidence, not a pass for 0.36.0.
 
 - All earlier native engines and **2,567 WAV checks** pass. The first SAA run found a fractional
   resampler-time loss during silent seek and a test assuming the new tone period had already latched.
@@ -1282,6 +1350,84 @@ AppImage replaced the target of the stable `~/thortracker-deck/thor-tracker` sym
 The published AppImage also played the eight-channel demo on this PC: row 29 after four seconds, peak 0.20598,
 with a rendered Pattern view. APK SHA-256: `f8cf8b6ffa945774b6efd44f650a0c9e4ff67afbf7b6d410617b7f2fabe71910`;
 AppImage: `7b6b771dee79aa7a0031ef857d03da53036151cfcdd6a94cb3722a10e92fcca0`.
+
+## Unreleased: WonderSwan and WonderSwan Color — source slice, NOT verified
+
+**Source integration update:** WonderSwan/SAA head `38026f1` and VSU/SAA candidate `9464a80`
+are combined for **0.36.0/code 49**, project format 10. The current merge status and candidate
+attribution are recorded at the top of this document; this section retains the original WonderSwan
+contract and pending procedures. The parent owns verification. All Kotlin/Native linking
+(including debug tests/executables) must run in CI, not locally; use disk-backed evidence under
+`~/.local/state/thortracker`, not `/tmp`.
+
+Branch `wonderswan-system` adds the **WonderSwan** (`"ws-wonderswan"`: CH1-CH4, CPU-fed voice samples on CH2, CH3
+sweep, CH4 noise) and **WonderSwan Color** (`"ws-wonderswan-color"`: the same plus Sound DMA on CH2 and Hyper Voice)
+systems — Thor Tracker's own player on a C port of ares's WonderSwan APU, VGM and WAV export — with the demos **Paper
+Crane Run** (WonderSwan) and **Lantern Tide** (WonderSwan Color). It was written source-only: **nothing has been built,
+compiled, generated, tested, run on a device or listened to** for WonderSwan. The original slice did
+not bump the version; the combined integration now targets 0.36.0/code 49. The parent must run the
+pending checks before calling this backend verified and record the observed results separately.
+
+1. Generate the Kotlin constants, the native fixture and the golden images (pure Python 3), check a second run is
+   byte-identical, then commit `core/src/commonMain/kotlin/org/thortracker/backend/WsPlayerImage.kt`,
+   `app/src/test/cpp/ws_test_song.h` (per-tick and per-interrupt reference writes for 1500 ticks of four songs, the
+   reference VGMs' hashes and loader corruptions) and `core/src/jvmTest/resources/ws-golden/{mono,color}.bin.gz`:
+
+   ```sh
+   python3 tools/audio/prepare_ws.py
+   python3 tools/audio/ws/ws_golden.py
+   python3 tools/audio/prepare_ws.py && python3 tools/audio/ws/ws_golden.py && git status --short   # no new changes
+   ```
+
+   `prepare_ws.py` fails before writing if the C sources and the Python reference disagree on any shared number,
+   `WSP_PERIOD_Q16` or `WSP_SINE`; it also asserts that the reference VGMs of `ws_song`, `wsc_vgm` and `ws_tone` close
+   their loops within 45283 ticks.
+2. The usual full run (Kotlin: `WsGoldenTest`, `WsModelTest`, `WsEditorTest` and every existing test), the app and
+   Deck builds (CMake through Gradle; cinterop `decknative` with `ws_export.h`), the sample exports
+   (`paper-crane-run.thor`, `lantern-tide.thor`, `ws-demo.wsimg`, `wsc-demo.wsimg`, `ws-shortest.wsimg`,
+   `wsc-shortest.wsimg`) and the native host test (`ws_machine_test.c` with the Kotlin images, and `wav_render_test.c`
+   with the two demos and the two shortest songs):
+
+   ```sh
+   nice -n 10 tools/build.sh --max-workers=1 :core:jvmTest :app:testDebugUnitTest :app:exportSamples
+   nice -n 10 tools/build.sh --max-workers=1 :app:assembleRelease :app:assembleAndroidTest
+   # EVIDENCE is an existing SSD-backed directory under ~/.local/state/thortracker.
+   # Run native commands in the parent's bounded, serialized host-C scope.
+   tools/audio/run_native_host_test.sh "$EVIDENCE"
+   python3 tools/audio/ws/ws_reference_check.py "$EVIDENCE"
+   python3 tools/audio/ws/ws_reference_check.py "$EVIDENCE" --vgm2wav /path/to/libvgm/bin/vgm2wav   # optional
+   tools/audio/render_ws_image.sh app/build/samples/ws-demo.wsimg "$EVIDENCE/paper-crane-run.wav" 90 --vgm "$EVIDENCE/paper-crane-run.vgm"
+   tools/audio/render_ws_image.sh app/build/samples/wsc-demo.wsimg "$EVIDENCE/lantern-tide.wav" 90
+   ```
+
+   Run `:core:linuxX64Test` and `:deck:linkReleaseExecutableLinuxX64` in CI only, then exercise
+   the downloaded optimized AppImage; no local debug/test Kotlin/Native link is permitted.
+
+   Expected from the specification (not yet observed): A-4 = N 218 = 440.37 Hz (+1.44 cents), every note G-1..C-6
+   within 6.4 cents and the worst 23.3 cents (F#-7); the eight LFSR sequence lengths 32767, 1953, 254, 217, 73, 63, 42,
+   28 (already reproduced by arithmetic from the formula); the APU's closed-form blocks equal to its per-cycle loop; the
+   engine's tick and timer-interrupt writes (with cycles) and DMA transfers equal `ws_ref.py`'s for 1500 ticks of each
+   reference song; the VGMs byte-equal to the reference's and their loops repeating exactly over three passes; seeks
+   bit-identical to straight play. The native test's thresholds (A-4 within 0.25 Hz, `ws_reference_check.py` 0.3 Hz,
+   silence rms < 0.0005, non-silence rms > 0.005 / 0.002, release ends in 1-10 ticks, one-shots in 2, the 755-tick
+   release cap, and the `WsLane` size `_Static_assert` written for arm64/x86_64 layouts) may need tuning once measured.
+   Also the release-standard checks: Game Boy views pixel-identical to the baseline, every existing golden and sample
+   export unchanged, and every shared-registry `render_*_image.sh` still links all engines (they compile
+   the WonderSwan and VSU sources because `chip_engine.c` lists their ops; standalone SMS is the exception).
+3. Listen: both demos and the reference songs on headphones and (song setting) speaker output; the CH3 sweep, the noise
+   taps, the CPU-fed voice drums at 12000 / R Hz, the Color's DMA loops, hold, backwards and stereo Hyper Voice; the
+   proposed voice / Hyper Voice level mapping (docs/BACKENDS.md, open questions). The Paper Crane Run VGM in an
+   independent player (libvgm: its WonderSwan core differs in noise and voice details; pitch and timing should agree).
+4. Reserved handhelds only (Nova, DMG, Konkr; the Thor gets artifacts only): New blank song / Load demo → WonderSwan →
+   WonderSwan / WonderSwan Color; demo playback (no underruns; the tick cost on the Konkr incl. a 4528-tick seek), the
+   Instrument pages per kind and feed, the Wave view, the starter kit and a `.wav` import (stereo kept on the Color
+   only), audition on every lane (lane-fit refusals), the Song view's Output / speaker shift / voice timer rows and
+   the Pattern inspector's shared-state lines (timer, shift, DMA owner), VGM (refused with Hyper Voice notes) and WAV
+   exports through the document picker.
+
+Preserved untracked reference material: `.ws-reference/` (fetched hardware sources: ares, Mesen 2,
+Mednafen 1.32.1 `wswan`, libvgm, the VGM 1.71 text), `.ws-kotlin-ref/` and
+`.ws-native-scratch/` (the slices' read-only copies and scratch fragments).
 
 ## 0.16.0 NES + Konami VRC7
 
