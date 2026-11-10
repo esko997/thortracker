@@ -197,7 +197,9 @@ its downloaded AppImage.
   - **Colour themes, implemented in the 0.38.0 candidate:** original Slate, Paper and Contrast palettes,
     selected under Menu → Colour theme and persisted as workspace state. They do not alter song data,
     exports or Undo history. Nova, DMG and Konkr pass selection/restart/playback checks, and all 32 Slate
-    baseline captures are pixel-identical. Native runtime checks remain pending. No BRIXEQ palette was copied.
+    baseline captures are pixel-identical. The actual CI AppImage passes palette persistence in fresh
+    processes, unchanged project bytes, playback, audition and compact surfaces. Brick runtime checks
+    remain pending. No BRIXEQ palette was copied.
   - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
     and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
     Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text

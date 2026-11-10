@@ -34,6 +34,8 @@ listOf(project(":deck"), project(":brick")).forEach { nativeProject ->
                 baseName = "thortracker"
                 entryPoint = "org.thortracker.deck.main"
                 // AppImage bundles SDL3; Brick uses vendor SDL2. Both hosts supply libstdc++.
+                // Do not retain unused Kotlin/Native default libraries (crypt/util/resolv) on the minimal firmware.
+                if (brick) linkerOpts("--as-needed")
                 linkerOpts("-L${deps.dir("lib").asFile}", if (brick) "-lSDL2" else "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
             }
             // Compile shared frontend files once, against each target's concrete SDL ABI and Platform class.

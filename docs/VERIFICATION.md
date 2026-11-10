@@ -1,6 +1,6 @@
 # Thor Tracker verification — 2026-11-10
 
-## 0.38.0 candidate — themes verified on Android; native delivery in progress
+## 0.38.0 candidate — themes verified on Android and desktop; Brick validation pending
 
 This is not a release claim. Android candidate source `1943ce6` adds original Slate, Paper and
 Contrast workspace palettes. Slate preserves the original appearance. Theme selection is
@@ -18,6 +18,15 @@ outside the musical document and does not add an Undo entry.
   Captured keyboard surfaces are inspected; the Help cache regression passes in the core suite.
 - **32/32 complete Slate RGBA captures are identical** to the official 0.37.1 same-device baseline,
   covering 16 Game Boy views at 1920×1080 and 1240×1080.
+- The actual CI AppImage from `44abe41` selects all three themes through the shared controller menu,
+  plays the factory song with PCM peak 0.509230, and restores Paper/Contrast in separate fresh processes.
+  The working project remains byte-identical. Compact 1024×768 keyboard runs produce held-audition PCM
+  peaks 0.119800/0.119781 and show readable black/white key focus rims. A nine-lane OPL3 fixture retains
+  its exact project bytes through collapse, horizontal edge jumps to channels 8/0, a vertical jump to
+  its shortened pattern's row 15, and advancing playback with peak 0.116943.
+- Native surfaces are inspected at 1280×800 and 1024×768. These runs use offscreen video and dummy audio:
+  no physical Deck performance, acoustic output or Brick rendering claim is implied.
+  AppImage SHA-256: `b801e1431698f6f24a17539224faf0adc02989ee58723cde26986eca108bc9f4`.
 - Each live theme scenario uses an owned fixture and a separate cold restoration test. Eight original
   private-file entries are restored byte-for-byte; `/ThorTunez` is untouched. Test packages are removed,
   original screen timeouts restored, devices returned Home/asleep, and leases released.
@@ -33,7 +42,8 @@ outside the musical document and does not add an Undo entry.
   no emulator or local native link was launched.
 
 Evidence: `recovery-20261109/brick-themes/`, especially `nova-permanent-tests.txt`,
-`theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json` and `device-contracts/`.
+`theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json`, `desktop-themes/results.json`
+and `device-contracts/`.
 
 ## 0.37.1 Pattern workspace and first-note hardening — released and verified
 

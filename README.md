@@ -54,6 +54,24 @@ To upgrade, download the new AppImage, `chmod +x` it and run the `ln -sfn` line 
 
 Controls are the Thor's: the D-pad moves, hold A + D-pad edits, Start plays, R2 + A/B/X/Y and R2 + ↑/→/↓ switch views (L2 + R2 + the same buttons do too, since the Deck has one display), L2 + A/B undo/redo. **Select + Start** opens the menu (it also opens from a back grip if your Steam Input layout passes them to the game), and the menu has **Quit**. To type a song title, select the title field with A, then press **Steam + X** for the on-screen keyboard. Projects and exports are kept in `~/ThorTracker`; the song you are working on is saved automatically and reopens next time.
 
+## Brick Hammer / NextUI
+
+The ARM64 Pak targets the **Brick Hammer running NextUI (`tg5040`)** and uses its installed
+vendor SDL2. **The candidate's on-device display, audio and launcher-return checks are still
+pending**; see [verification status](docs/VERIFICATION.md). This is not a Miyoo Mini build.
+
+The package is `thor-tracker-<version>-brick-nextui.zip` with a `.sha256` sidecar. Extract it
+at the SD-card root so the launcher is `Tools/tg5040/ThorTracker.pak/launch.sh`, then choose
+ThorTracker from NextUI's Tools. The printed A/B/X/Y buttons retain their meanings; L2 and R2
+are modifier layers, including their combined layer. **Menu** or **Select+Start** opens the
+application menu; **Quit** returns through NextUI's normal Pak launcher.
+
+Projects and exports live in `/mnt/SDCARD/ThorTunez`; recovery, keymap, theme, tuning packs
+and user-supplied firmware live in `/mnt/SDCARD/ThorTunez/.thortracker`. Updates replace only
+`ThorTracker.pak`, not that data directory. The launcher preserves NextUI's HOME/ALSA routing
+and writes `ThorTracker.txt` under NextUI's logs directory. No vendor SDL/Mali library or
+proprietary chip firmware is bundled.
+
 ## Colour themes
 
 **Menu → Colour theme** selects **Slate** (the unchanged original appearance), **Paper** (light),

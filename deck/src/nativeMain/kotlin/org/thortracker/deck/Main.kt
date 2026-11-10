@@ -40,8 +40,8 @@ import org.thortracker.ui.RecentMessages
 import platform.posix.*
 
 /**
- * Thor Tracker on the Steam Deck: the shared core (editing, panes, transport, views, button routing, menus) in one
- * full-screen pane on SDL3, driven by the gamepad and heard through the song's C chip engine ([DeckAudio]).
+ * Thor Tracker's shared native Linux application: editing, panes, transport, views, button routing and menus
+ * in one full-screen pane, with target-specific SDL display/input and the shared C chip engine ([DeckAudio]).
  * Usage: thortracker [song.thor] [seconds=N] [script=...] [size=WxH[@density]]
  */
 fun main(args: Array<String>) {
@@ -50,7 +50,7 @@ fun main(args: Array<String>) {
     // Test hook: script=96+22,20,99~1500 taps buttons (Android key codes; "a+b" holds a while tapping b, "b~ms" holds b
     // for ms), one step per 150 ms,
     // through the same routing as the gamepad; "rx=V"/"ry=V" moves one right-stick axis (-1 left/up .. 1 right/down),
-    // e.g. rx=-1,rx=0,rx=-1,rx=0 jumps to the first channel. With seconds=N the last frame is saved as deck-screenshot.bmp.
+    // e.g. rx=-1,rx=0,rx=-1,rx=0 jumps to the first channel. With seconds=N the platform saves its last frame.
     val script = args.firstOrNull { it.startsWith("script=") }?.substringAfter('=')?.split(',')?.filter { it.isNotBlank() }.orEmpty()
     // Test hook: size=WxH[@density] draws into a WxH window (no full screen) at that UI density, e.g. the Thor's displays
     // (1920x1080@2.31, 1240x1080@2.31) under SDL_VIDEO_DRIVER=offscreen, whose full-screen mode is 1024 x 768.
