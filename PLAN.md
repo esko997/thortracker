@@ -226,7 +226,10 @@ its downloaded AppImage.
   Navigation/touch skip hidden fields; expansion restores effect-column choices. Per-pane workspace
   persistence and display swaps retain the layout; full-cell clipboard operations retain all hidden data.
   Existing custom keymap conflicts are preserved instead of overwritten.
-- **Pattern-local channel mute:** proposed musical property, distinct from visual collapse; it must survive
+- **Pattern-local channel mute — explicitly deferred by the user (2026-11-10):** current native formats
+  cannot uniformly preserve an output-mask mute. The user declined a preview/WAV-first implementation
+  with native-export refusals. [Feasibility record](docs/PATTERN_MUTE.md) retains the constraints and
+  unapproved future alternatives. The original requested property, distinct from visual collapse, must survive
   save/reopen and affect both playback and native/WAV export. Every occurrence of a reused pattern should
   use its mute state. Define entry/tail behaviour and retain timing/control-flow effects on muted lanes;
   shared oscillators, envelopes, filters and modulation must not be accidentally disabled. Audition policy

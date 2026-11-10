@@ -8,7 +8,9 @@ Source inspection used the 0.38.0 candidate (`73b2597`). No builds, tests, rende
 
 A saved pattern mute must not silently disappear in export. The existing audition-borrowing mute API does **not** establish a uniform document-mute contract, and a native register log is not an export of an emulator's output mask.
 
-The following alternatives were presented. **Option 3 was selected.** Options 1 and 2 remain unapproved possibilities if the user later reopens the feature:
+The user was offered precise preview/WAV mute with explicit native-export limits, or deferral, and
+**selected deferral**. The list below also retains a constrained driver-command alternative considered
+during engineering research; it was not presented as an approved implementation choice.
 
 1. **Precise preview/WAV mute, explicit native-export refusals.** Preserve the running player/chip state and gate only the selected lane's audible contribution. Support a native format only after its implementation proves the same semantics; otherwise refuse that export with the pattern, lane, format and reason. This changes the original all-native-export acceptance requirement and needs approval. It is not permission to claim every VGM is compatible.
 2. **Constrained driver-command mute.** Define an entry cut and suppression/routing policy representable by the destination driver. Apply that same policy to preview, WAV and native export. Explicitly reject songs or lanes for which effects, shared resources, capacity or tail behavior make it unrepresentable. This is different from an advancing hidden voice; its exact tail and shared-modulation semantics must be approved. Do not silently substitute it for option 1.
