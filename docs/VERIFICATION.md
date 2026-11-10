@@ -22,9 +22,35 @@ an unrelated default format.
 - **52 actual native-engine renders**, 12 seconds each, have nonzero PCM, advancing rows and no
   driver faults. This is playability evidence, not cross-chip waveform, mix-headroom or tuning equality.
   Native-only VGM/XGM/XGC exporters are not replaced by JVM mocks.
+- A converted PCE demo exposed real SCC resampler clipping. Five synchronized full-volume voices,
+  including −128/+127 polarity changes, reproduced **28 failures** across SCC/SCC+ at seven rates
+  from 8000 to 96000 Hz. Reducing the gain **before** blip_buf from 48 to 24 passes **689 SCC checks**:
+  the full mix equals five solo contributions within six PCM LSBs and never reaches a clipping rail.
+  The formerly clipped 12-second conversion now peaks at **0.545685**, with 119 row changes.
+  Raw player/chip traces, both images and both VGM exports are byte-identical before/after.
+  The independent reference also matches all 1,501 player batches, 2,545 chip events and exact VGM
+  bytes. A-4 remains 440.397 Hz natively and 440.420 Hz through pinned libvgm; existing waveform
+  comparison tolerances pass unchanged for both variants.
+- The integrated native run passes every engine and **2,796 WAV-export checks**. Optional OPNA/EPSM
+  rhythm-ROM checks remain skipped because that private ROM is unavailable; no ROM is distributed.
+- Candidate CI `42734222075` (`076b879`) passes both builds. Its actual AppImage completes eight
+  isolated conversion scenarios: preview, cancel, confirmation cancel, report first/next/back,
+  full TXT report save and apply/play. The JVM checker verifies the resulting source document,
+  converted document, previous-project backup and complete report against the expected values.
+  Playback reaches order 3/row 11; preview, report pages and converted Pattern surfaces were inspected.
+  This candidate predates the SCC gain fix; it is UI evidence, not proof of the corrected SCC audio.
+- Nova passes the **22 permanent Android tests**, **32 full-RGBA Game Boy baseline comparisons**
+  and both actual conversion/picker scenarios against the corrected signed release. These exercise
+  GB→NES and AY→GB, cancellation, all report pages, frozen report/backend export snapshots,
+  backup confirmation, save/reopen, playback, held audition and native WAV output. Actual activity
+  recreation behind DocumentsUI refuses the lost exporter and writes no default backend payload.
+  Initial screenshots caught preceding composed frames. Compositor-settled recapture passes both
+  scenarios and visibly confirms report pagination, backup confirmation and the recreation refusal.
+  Dedicated playback/audition has zero xruns/faults and a maximum callback of **3.834 ms**.
+  Evidence: `recovery-20261109/conversion-frontend/{clean-parity,visual-smoke}/`.
 
 Evidence: `~/.local/state/thortracker/recovery-20261109/conversion-export-evidence/`.
-Android conversion/picker lifecycle and CI-built desktop surface verification remain pending.
+DMG/Konkr conversion acceptance, final post-gain-fix AppImage and official publication remain pending.
 No temporary probe source is intended for the committed application/test tree.
 
 ## 0.36.0 WonderSwan — integration verification

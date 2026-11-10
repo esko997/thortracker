@@ -19,7 +19,7 @@ extern "C" {
 #define SCM_MAX_SAMPLE_RATE 96000u
 #define SCM_MAX_TICK_FRAMES 1601u /* 96000 / 60 + 1 */
 #define SCM_CLOCK SCK_CLOCK       /* 3579545 Hz */
-#define SCM_LEVEL_SCALE 48        /* resampler input = sum of levels x 48 (+-28800) */
+#define SCM_LEVEL_SCALE 24        /* raw sum ±14400; reserve room for high-pass transients and interpolation */
 #define SCM_RELEASE_SECONDS 10    /* a released audition ends after this long even if its envelope never falls silent */
 #define SCM_PREROLL_TICKS 60      /* x multispeed: a seek renders the last second before its target */
 #define SCM_SEEK_TICKS 12000      /* the Kotlin engine's seekTicks */

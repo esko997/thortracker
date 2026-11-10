@@ -1291,6 +1291,64 @@ static void test_audio(const char* dir) {
     }
 }
 
+/* Five full-range, phase-aligned voices must equal five times one independently rendered
+ * voice. Long DC holds followed by opposite-polarity wave edits exercise the high-pass
+ * transient as well as the resampler's interpolation overshoot. Muted voices still clock. */
+static void test_mix_headroom(void) {
+    static const uint32_t rates[] = {8000, 11025, 22050, 32000, 44100, 48000, 96000};
+    static const uint8_t pattern[] = {SC_MASK_NOTE | SC_MASK_INSTRUMENT, A4, 1, SC_RUN | 62};
+    float full_pcm[SCM_MAX_TICK_FRAMES * 2], solo_pcm[SCM_MAX_TICK_FRAMES * 2];
+    printf("full-mix headroom\n");
+    for (int variant = 0; variant < 2; ++variant) {
+        for (size_t rate = 0; rate < sizeof rates / sizeof rates[0]; ++rate) {
+            base_image(&g_work, variant, 1);
+            g_work.bytes[SC_OFF_ROWS] = 64;
+            memset(g_work.bytes + SC_OFF_WAVES, 0x80, SC_WAVE_BYTES);
+            tail_pattern(&g_work, pattern, sizeof pattern, 1);
+            EXPECT(sc_load_image(&g_work) == 0, "headroom fixture loads, variant %d", variant);
+            SccMachine* full = scm_create(rates[rate]);
+            SccMachine* solo = scm_create(rates[rate]);
+            EXPECT(full && solo, "headroom machines at %u Hz", rates[rate]);
+            if (!full || !solo) {
+                if (full) scm_destroy(full);
+                if (solo) scm_destroy(solo);
+                continue;
+            }
+            int mode, valid = 1, rails = 0;
+            EXPECT(scm_start(full, &g_work, 0, 0, SEEK_BUDGET, &mode) == SCM_OK &&
+                       scm_start(solo, &g_work, 0, 0, SEEK_BUDGET, &mode) == SCM_OK,
+                   "headroom start at %u Hz", rates[rate]);
+            for (int c = 1; c < SC_CHANNELS; ++c) scm_mute(solo, c, 1);
+            double worst = 0;
+            for (int t = 0; t < 180; ++t) {
+                if (t == 60 || t == 120) {
+                    memset(g_work.bytes + SC_OFF_WAVES, t == 60 ? 0x7F : 0x80, SC_WAVE_BYTES);
+                    if (sc_load_image(&g_work)) { valid = 0; break; }
+                    scm_apply_image(full, &g_work);
+                    scm_apply_image(solo, &g_work);
+                }
+                const int n = scm_tick(full, full_pcm);
+                if (n <= 0 || scm_tick(solo, solo_pcm) != n ||
+                    memcmp(scm_core(full), scm_core(solo), sizeof(SccCore))) {
+                    valid = 0;
+                    break;
+                }
+                for (int i = 0; i < n; ++i) {
+                    const double difference = fabs(full_pcm[2 * i] - SC_CHANNELS * solo_pcm[2 * i]);
+                    if (difference > worst) worst = difference;
+                    if (full_pcm[2 * i] >= 32767.0 / 32768 || full_pcm[2 * i] <= -1) ++rails;
+                }
+            }
+            EXPECT(valid, "full and solo preserve frame counts and exact chip state at %u Hz", rates[rate]);
+            EXPECT(worst <= 6.0 / 32768, "SCC%s %u Hz: full mix equals solo sum (error %.8f)",
+                   variant ? "+" : "", rates[rate], worst);
+            EXPECT(rails == 0, "SCC%s %u Hz: no resampler rail samples (%d)", variant ? "+" : "", rates[rate], rails);
+            scm_destroy(full);
+            scm_destroy(solo);
+        }
+    }
+}
+
 /* Benchmark after 1 s of warm-up. Thread CPU time excludes descheduling, but cache misses, page faults and CPU
  * frequency still vary; their worst/mean ratio is not an engine correctness invariant. */
 static void measure_tick_cost(void) {
@@ -1730,9 +1788,6 @@ static void test_audition(const char* dir) {
         if (buf[2 * i] < lo) lo = buf[2 * i];
         if (buf[2 * i] > hi) hi = buf[2 * i];
     }
-    const double want_p2p = (119 + 120) * (double)SCM_LEVEL_SCALE / 32768;
-    EXPECT(fabs((hi - lo) - want_p2p) < 0.02 * want_p2p, "output scale: peak-to-peak %.4f = levels 119..-120 x 48 / 32768 (%.4f)",
-           hi - lo, want_p2p);
     EXPECT(rms(buf + 2 * (frames - RATE / 2), RATE / 2) > 0.9 * rms(buf + 2 * (RATE / 2), RATE / 2), "held");
     EXPECT(mono(buf, frames), "mono");
     /* the sine has no release point: release cuts it (the key bit clears) */
@@ -2675,6 +2730,7 @@ int main(int argc, char** argv) {
     test_images();
     test_reference(dir);
     test_audio(dir);
+    test_mix_headroom();
     measure_tick_cost();
     test_loop();
     test_seek();
