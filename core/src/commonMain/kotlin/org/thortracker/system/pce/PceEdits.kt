@@ -7,6 +7,7 @@ import org.thortracker.editor.inserted
 import org.thortracker.editor.replaced
 import org.thortracker.model.Cell
 import org.thortracker.model.Song
+import org.thortracker.model.Songs
 import org.thortracker.system.fm.FmControls
 
 /**
@@ -143,9 +144,29 @@ sealed interface PceClip : Clip {
 private fun PceSound.withWaveFor(instrument: PceInstrument?): PceSound =
     if (instrument?.kind == PceKind.TONE && waves.isEmpty()) copy(waves = listOf(PcePresets.WAVES.first().second)) else this
 
+/**
+ * A new noise binding must fit every stored use of the slot, not only the current arrangement. Checking explicit
+ * bindings also covers the later notes that inherit them, including bindings on otherwise empty imported rows.
+ * Existing noise sounds and unrelated invalid data remain editable; clearing or repairing a slot is always allowed.
+ */
+private fun EditorSession.canReplacePceInstrument(slot: Int, instrument: PceInstrument?): Boolean {
+    if (instrument?.kind != PceKind.NOISE || song.pce.instrument(slot)?.kind == PceKind.NOISE) return true
+    val candidate = song.copy(sound = song.pce.withInstrument(slot, instrument))
+    for ((p, pattern) in song.patterns.withIndex()) for ((ch, track) in pattern.tracks.withIndex()) {
+        if (ch in PceRules.NOISE_CHANNELS) continue
+        val row = track.indexOfFirst { it.instrument == slot }
+        if (row < 0) continue
+        val problem = PceValidator.cellProblem(candidate, ch, Cell(note = PceInstrument.ROOT, instrument = slot)) ?: continue
+        note("${Songs.patternLabel(song, p)}, ${PceRules.CHANNEL_NAMES[ch]} row $row: $problem. Move those notes to PSG 5 or PSG 6, or use another sound slot")
+        return false
+    }
+    return true
+}
+
 /** Replaces instrument [slot] ([instrument] null empties it); a tone sound in a song without waves gets the first built-in one. */
 fun EditorSession.setPceInstrument(slot: Int, instrument: PceInstrument?, label: String): Boolean {
     if (slot !in 1..PceSystem.SLOTS) return false
+    if (!canReplacePceInstrument(slot, instrument)) return false
     return apply(label) { s ->
         if (s.pce.instrument(slot) == instrument) s else s.copy(sound = s.pce.withWaveFor(instrument).withInstrument(slot, instrument))
     }
@@ -201,6 +222,7 @@ fun pceInstrumentFor(sound: PceSound, instrument: PceInstrument): PceInstrument 
  */
 fun EditorSession.applyPcePreset(slot: Int, preset: PcePresets.Preset): Boolean {
     if (slot !in 1..PceSystem.SLOTS) return false
+    if (!canReplacePceInstrument(slot, preset.instrument)) return false
     return apply("Preset ${preset.name}") { s ->
         var sound = s.pce
         var instrument = preset.instrument.copy(name = preset.name.take(FmControls.NAME_MAX))
@@ -254,6 +276,7 @@ fun EditorSession.pastePce(slot: Int, kind: PceEnvelopeKind?): Boolean = when (v
  */
 private fun EditorSession.pastePceSound(slot: Int, clip: PceClip.Sound): Boolean {
     if (slot !in 1..PceSystem.SLOTS) return false
+    if (!canReplacePceInstrument(slot, clip.instrument)) return false
     val before = song
     var sound = before.pce
     var instrument = clip.instrument

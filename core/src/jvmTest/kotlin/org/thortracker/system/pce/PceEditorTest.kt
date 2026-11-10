@@ -12,6 +12,7 @@ import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.model.Cell
+import org.thortracker.model.Phrase
 import org.thortracker.system.pce.PceInstrumentView.Page
 import org.thortracker.system.pce.PceInstrumentView.Row
 
@@ -595,6 +596,144 @@ class PceEditorTest {
         val v = view { instrument = slot }
         v.tap(Action.AUDITION)
         assertTrue(auditions.isEmpty())
+    }
+
+    @Test
+    fun sketchNoiseAssignmentIsAtomicAndKeepsTheCursorOnRejection() {
+        session.applyPcePreset(slot, PcePresets.named("Snare")!!)
+        val v = view(ViewKind.SKETCH) { channel = 0; instrument = slot }
+        v.state.sketchPhrase = Phrase(listOf(48, null, 50, null))
+        v.sketchSetPhraseField(ViewController.PHRASE_INSERT)
+        val before = session.song
+        val selection = session.selection
+        v.tap(Action.EDIT)
+        assertEquals(before, session.song)
+        assertEquals(selection, session.selection)
+        v.state.channel = 4
+        v.tap(Action.EDIT)
+        assertEquals(Cell(note = 48, instrument = slot), session.song.patterns[0].tracks[4][0])
+        assertEquals(Cell(note = 50, instrument = slot), session.song.patterns[0].tracks[4][2])
+        assertEquals(4, session.selection.row)
+        assertTrue(PceSystem.errors(session.song).isEmpty())
+    }
+
+    @Test
+    fun keyboardRefusesNoiseOnToneOnlyLanesWithoutWritingOrAdvancing() {
+        session.applyPcePreset(slot, PcePresets.named("Snare")!!)
+        session.step = 1
+        val k = view(ViewKind.KEYBOARD) { octave = 4; entryMode = true }
+        for (ch in 0..3) {
+            k.setKeyboardChannel(ch)
+            k.setKeyboardSound(slot)
+            val before = session.song
+            val row = session.selection.row
+            val heard = auditions.size
+            k.keyDown(0)
+            assertEquals(before, session.song)
+            assertEquals(row, session.selection.row)
+            assertEquals(heard, auditions.size)
+            assertEquals(PceValidator.cellProblem(before, ch, Cell(note = 48, instrument = slot)), session.message)
+            k.touchKeyUp()
+        }
+        for (ch in PceRules.NOISE_CHANNELS) {
+            k.setKeyboardChannel(ch)
+            val row = session.selection.row
+            k.keyDown(0)
+            assertEquals(Cell(note = 48, instrument = slot), session.song.patterns[0].tracks[ch][row])
+            assertEquals(row + 1, session.selection.row)
+            assertEquals(Triple(ch, 48, slot), auditions.last())
+            assertTrue(PceSystem.errors(session.song).isEmpty())
+            k.touchKeyUp()
+        }
+    }
+
+    @Test
+    fun patternNoiseEntryAndSoundAdjustmentAreCheckedBeforeMutation() {
+        session.applyPcePreset(slot, PcePresets.named("Snare")!!)
+        session.setPceInstrument(slot - 1, defaultPceInstrument(slot - 1), "Tone")
+        val v = view(ViewKind.PATTERN) { channel = 0; field = 0 }
+        session.select(session.selection.copy(instrument = slot))
+        v.follow()
+        val before = session.song
+        val row = v.state.row
+        v.tap(Action.EDIT)
+        assertEquals(before, session.song)
+        assertEquals(row, v.state.row)
+        assertTrue(auditions.isEmpty())
+        session.setCell(0, 0, row, Cell(note = 48, instrument = slot - 1))
+        v.state.field = 1
+        val withTone = session.song
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(withTone, session.song)
+        assertEquals(slot - 1, session.song.patterns[0].tracks[0][row].instrument)
+        // The identical sound adjustment is legal on a noise-capable channel.
+        session.setCell(0, 4, row, Cell(note = 48, instrument = slot - 1))
+        v.state.channel = 4
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(slot, session.song.patterns[0].tracks[4][row].instrument)
+        assertTrue(PceSystem.errors(session.song).isEmpty())
+    }
+
+    @Test
+    fun notePreflightDoesNotBlockUnfinishedEffectsOrRepairAndOff() {
+        session.applyPcePreset(slot, PcePresets.named("Snare")!!)
+        // Imported invalid data is preserved; clearing the bad note must remain possible.
+        session.setCell(0, 0, 0, Cell(note = 48, instrument = slot))
+        val v = view(ViewKind.PATTERN) { channel = 0; row = 0; field = 0 }
+        v.tap(Action.CLEAR)
+        assertEquals(Cell(), session.song.patterns[0].tracks[0][0])
+        v.tap(Action.CLEAR)
+        assertEquals(Cell(note = Cell.CUT), session.song.patterns[0].tracks[0][0])
+        // A legal assignment must not be blocked by an unrelated effect still being edited.
+        session.setCell(0, 4, 0, Cell(effect = PceRules.FX_VOLUME, param = 32))
+        val k = view(ViewKind.KEYBOARD) { octave = 4; entryMode = true }
+        k.setKeyboardChannel(4)
+        k.setKeyboardSound(slot)
+        k.keyDown(0)
+        k.touchKeyUp()
+        assertEquals(Cell(note = 48, instrument = slot, effect = PceRules.FX_VOLUME, param = 32),
+            session.song.patterns[0].tracks[4][0])
+    }
+
+    @Test
+    fun noiseReplacementChecksParkedBindingsAndTheirInheritedNotes() {
+        session.setPceInstrument(slot, defaultPceInstrument(slot), "Tone")
+        session.setCell(0, 0, 0, Cell(note = 48, instrument = slot))
+        session.setCell(0, 0, 1, Cell(note = 50))
+        val used = session.song.patterns[0]
+        session.replaceSong(session.song.copy(patterns = listOf(PceSystem.blank().patterns[0], used),
+            orders = listOf(0, 1), parkedOrders = listOf(1)))
+        val before = session.song
+        val snare = PcePresets.named("Snare")!!
+        assertFalse(session.applyPcePreset(slot, snare))
+        assertEquals(before, session.song)
+        assertFalse(session.setPceKind(slot, PceKind.NOISE))
+        assertEquals(before, session.song)
+        session.hold(PceClip.Sound(snare.instrument, null))
+        assertFalse(session.pastePce(slot, null))
+        assertEquals(before, session.song)
+        assertFalse(session.canUndo)
+        // Moving the binding and its inherited notes is an explicit user edit, never a side effect of the preset.
+        val moved = used.copy(tracks = used.tracks.mapIndexed { ch, track -> when (ch) {
+            0 -> PceSystem.blank().patterns[0].tracks[0]
+            4 -> used.tracks[0]
+            else -> track
+        } })
+        session.replaceSong(before.copy(patterns = listOf(before.patterns[0], moved)))
+        assertTrue(session.applyPcePreset(slot, snare))
+        assertEquals(PceKind.NOISE, session.song.pce.instrument(slot)!!.kind)
+        assertEquals(Cell(note = 50), session.song.patterns[1].tracks[4][1])
+        assertTrue(PceSystem.errors(session.song).isEmpty())
+    }
+
+    @Test
+    fun existingInvalidNoiseDocumentsRemainEditableAndRepairable() {
+        session.applyPcePreset(slot, PcePresets.named("Snare")!!)
+        session.setCell(0, 0, 0, Cell(note = 48, instrument = slot))
+        assertTrue(session.editPceEnvelope(slot, PceEnvelopeKind.VOLUME, "Edit volume") { PceEnvelope(listOf(20, 0)) })
+        assertEquals(slot, session.song.patterns[0].tracks[0][0].instrument)
+        assertTrue(session.setPceKind(slot, PceKind.TONE))
+        assertTrue(PceSystem.errors(session.song).isEmpty())
     }
 
     @Test
