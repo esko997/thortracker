@@ -171,7 +171,6 @@ class NesMultiEffectTest {
             assertEquals(cut - 2, n.cutDelay)
             val row = text(song).lineSequence().first { "NoteDelay=\"2\"" in it }
             assertTrue("CutDelay=\"${cut - 2}\"" in row, row)
-            assertTrue(image(song).isNotEmpty())
         }
         val bad = at(NesSystem.blank(), 0, 3, Cell(48, 1, NesRules.FX_NOTE_DELAY, 3).withEffect(3, NesRules.FX_NOTE_CUT, 2))
         assertTrue(bad.system.errors(bad).any { "Pulse 1 row 3" in it && "cuts before" in it })

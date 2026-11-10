@@ -645,10 +645,8 @@ class NesExportTest {
         val fine = NesSystem.fine
         assertEquals(0, fine.of(Cell(57, 1)))
         assertEquals(5, fine.of(Cell(57, 1, NesRules.FX_FINE_PITCH, 0x85)))
-        assertEquals(null, fine.of(Cell(57, 1, NesRules.FX_VIBRATO, 0x44)))
         assertEquals(Cell(57, 1, NesRules.FX_FINE_PITCH, 0x83), fine.write(Cell(55, 1), 57, 3))
         assertEquals(Cell(57, 1), fine.write(Cell(57, 1, NesRules.FX_FINE_PITCH, 0x83), 57, 0))
-        assertEquals(null, fine.write(Cell(57, 1, NesRules.FX_VOLUME, 4), 57, 3))
         // A-4 is period 253 on the pulses: one unit up is ~6.8 cents.
         assertTrue(fine.cents(57, 1) in 6.5..7.1, "${fine.cents(57, 1)}")
         assertEquals(0..5, fine.range(NesSystem.noteRange.last))

@@ -1,10 +1,16 @@
-# Landscape touch proposal
+# Touch interface proposals
 
-Status: **paused for later review, not approved production implementation**. Based on 0.37.1 / main `006c173`, 2026-11-10. The user finds the side-editor direction sensible and has prioritized the Brick Hammer port and themes. No Android, desktop, audio, document-format or controller code changes are part of this spike.
+Status: **discussion only; no approved production implementation**. The original landscape study
+used 0.37.1 / main `006c173` on 2026-11-10. The user's latest direction reopens a controller overlay
+and portrait layout as alternatives, with a drawer for navigation and settings. Neither that
+candidate nor the original side editor is selected for implementation. No Android, desktop, audio,
+document-format or controller changes are part of these studies.
 
-## Recommendation
+## Initial landscape study
 
-Keep one tracker and one document model. Add an explicitly selected **Touch layout** workspace presentation, rather than an onscreen gamepad or a second editor. In landscape, separate **selecting a whole pattern cell** from **editing its fields**:
+The original study recommended one tracker and one document model with an explicitly selected
+**Touch layout** workspace presentation. It explored a side editor rather than an onscreen gamepad,
+separating **selecting a whole pattern cell** from **editing its fields**:
 
 - Pattern on the left; a contextual Note / Sound / FX editor on the right.
 - Persistent transport, view selection, Undo/Redo and Actions. Do not hide essential controls after an inactivity timeout.
@@ -13,6 +19,31 @@ Keep one tracker and one document model. Add an explicitly selected **Touch layo
 - Preserve the current dense controller layout. Touching a handheld must not unexpectedly switch its layout or controller-focused display.
 
 The tradeoff is deliberate: fewer visible rows/channels in exchange for reliable direct input. Review that tradeoff before implementing it.
+
+## Reopened candidate: portrait controller overlay and drawer
+
+The user's current proposal is to retain the familiar D-pad/A/B/X/Y workflow on a phone rather than
+design another editor. Portrait could place a dedicated control area below the tracker, avoiding a
+literal overlay on the selected row. Compare that geometry with landscape before choosing either.
+This is a discussion candidate, not a change to the silent browser study below.
+
+- Reuse shared logical input/actions and their existing legality, history and audition rules.
+  Test multi-touch holds explicitly: held A/X plus D-pad and trigger chords need separate pointer
+  ownership. Two thumbs cannot comfortably hold three independent targets, so evaluate visibly
+  latched modifiers rather than assuming L2+R2 chords translate unchanged.
+- Keep a visible drawer button for views, scales, project actions and settings. A swipe can supplement
+  it, but Android's left-edge Back gesture makes a swipe-only route unsafe. Opening the drawer must
+  release pending held controls and retain the editor's location.
+- Let users explicitly choose/show the controls. Controller connection can offer a suggestion, not
+  strand someone with no visible controls when a paired controller is asleep or out of reach.
+- Preserve held-audition release on pointer cancellation, dialogs, keyboard appearance, focus loss,
+  backgrounding and controller changes. Never leave a virtual trigger or note latched invisibly.
+- Compare thumb reach, minimum touch targets, four-effect lanes, selection/clipboard/Undo, instrument
+  editing and native file picking on a real phone. Retaining controller semantics is less new editor
+  logic, but is not proof of comfortable touch input or accessibility.
+
+The original side-editor study remains a reference for context preservation and explicit actions;
+its single-contact note pad is not evidence that a multi-touch controller overlay works.
 
 ## Review artifacts
 
@@ -64,7 +95,7 @@ Full multi-effect lanes are intentionally not crammed into the pattern. A whole-
 | Bottom keyboard/editor | Familiar piano layout; maximum channel width | Consumes scarce landscape height. Keep as a candidate for a performance-focused Keyboard view, not the default Pattern editor. |
 | Side editor | Stable edit location; pattern retains height; large controls | Reduces visible channels. Recommended first; needs easy horizontal navigation and left-handed mirroring. |
 | Full-screen value sheet | Room for dense FM/operator or exact hex controls | Hides context. Use for complex editors/IME pressure, with a pinned channel/row summary and explicit return, not for every note. |
-| Virtual gamepad overlay | Reuses button chords superficially | Occupies space, obscures content, requires users to learn modifiers. Rejected. |
+| Virtual gamepad/control area | Reuses familiar controller actions and chords | Reopened by the user as a portrait/landscape candidate. Requires multi-touch, modifier ergonomics, visibility and cancellation studies; not implemented. |
 
 Before native layout is fixed, also measure 18-voice/large-channel arrangements, multi-FX lanes, cutout/gesture-navigation insets and enlarged text. The GB study does not prove those fit. At short usable heights (including the IME), switch deliberately to a contextual sheet; do not shrink controls below the target.
 

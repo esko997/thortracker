@@ -767,6 +767,24 @@ class ViewControllerTest {
     }
 
     @Test
+    fun emptyEffectMarkerDoesNotFollowBetweenColumnsAboveChannelFifteen() {
+        for (channel in 16..19) {
+            val original = org.thortracker.system.nes.NesEpsmSystem.blank()
+            val ownSession = EditorSession(original)
+            val v = ViewController(ownSession, ViewState(channel = channel, field = 3,
+                effectColumns = List(20) { 4 }))
+            // Adjusting a blank zero value keeps its entry marker, without writing an effect.
+            v.hold(Action.EDIT, Action.LEFT)
+            assertTrue(v.chosenArpeggio())
+            v.tap(Action.RIGHT)
+            assertEquals(channel, v.state.channel)
+            assertEquals(4, v.state.field)
+            assertFalse(v.chosenArpeggio())
+            assertEquals(original, ownSession.song)
+        }
+    }
+
+    @Test
     fun effectOneWithValueZeroStepsBackToEffectZeroNotToNothing() {
         session.setCell(0, 0, 0, Cell(note = 48, instrument = 1, effect = 1, param = 0))
         val v = view(ViewKind.PATTERN) { field = 2 }

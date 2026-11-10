@@ -86,6 +86,53 @@ class Opl3EditorTest {
     }
 
     @Test
+    fun automaticColumnsKeepTheHeldValueTargetUntilRelease() {
+        session.step = 0
+        for (column in 1..3) {
+            val original = Cell().withEffect(0, Opl3Rules.FX_VOLUME, 0x30).withEffect(column, 0, 1)
+            session.setCell(0, 0, 0, original)
+            val before = session.song
+            val v = view(ViewKind.PATTERN) { field = 3 + 2 * column }
+            // Hosts normalize synchronously when an edit changes the document.
+            session.onSongChanged = { v.normalise() }
+            v.press(Action.EDIT)
+            v.tap(Action.LEFT)
+            v.tap(Action.LEFT)
+            assertEquals(original.withEffect(column, 0, 0), cell(0, 0))
+            assertEquals(3 + 2 * column, v.state.field)
+            assertEquals(column + 1, v.shownColumns(0))
+            v.release(Action.EDIT)
+            v.normalise()
+            assertEquals(1, v.shownColumns(0))
+            assertEquals(3, v.state.field)
+            v.tap(Action.UNDO)
+            assertEquals(before, session.song)
+            session.onSongChanged = null
+        }
+    }
+
+    @Test
+    fun automaticColumnsKeepTheHeldEmptyPickerUntilCancellation() {
+        val original = Cell().withEffect(0, Opl3Rules.FX_VOLUME, 0x30).withEffect(3, 0, 1)
+        session.setCell(0, 0, 0, original)
+        val before = session.song
+        val v = view(ViewKind.PATTERN) { field = 8 }
+        session.onSongChanged = { v.normalise() }
+        v.press(Action.EDIT)
+        v.tap(Action.LEFT) // Arpeggio -> none, making column four empty.
+        v.tap(Action.RIGHT) // Choose the zero-valued arpeggio in that same column.
+        assertEquals(original.withEffect(3, 0, 0), cell(0, 0))
+        assertEquals(8, v.state.field)
+        assertTrue(v.chosenArpeggio())
+        v.cancelHolds()
+        v.normalise()
+        assertEquals(1, v.shownColumns(0))
+        assertEquals(3, v.state.field)
+        v.tap(Action.UNDO)
+        assertEquals(before, session.song)
+    }
+
+    @Test
     fun copyPasteAndPlacingOffKeepEveryColumn() {
         val two = Cell(note = 48, instrument = 1).withEffect(0, Opl3Rules.FX_VOLUME, 0x30).withEffect(3, Opl3Rules.FX_CHORD, 0x37)
         session.setCell(0, 0, 0, two)

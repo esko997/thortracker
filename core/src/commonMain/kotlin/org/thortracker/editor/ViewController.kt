@@ -456,7 +456,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val max = system.effectColumns(channel)
         if (max <= 1) return 1
         val chosen = state.effectColumns.getOrElse(channel) { 0 }
-        return (if (chosen > 0) chosen else usedColumns(channel)).coerceIn(1, max)
+        val editing = if (editHeld && state.kind == ViewKind.PATTERN && channel == state.channel) cursorColumn() + 1 else 0
+        // Clearing the last populated column must not move an ongoing hold into a different field.
+        return (if (chosen > 0) chosen else maxOf(usedColumns(channel), editing)).coerceIn(1, max)
     }
 
     /** A collapsed lane exposes only its note; stored sounds and effects are untouched. */
@@ -1910,8 +1912,8 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         /** [text] without the character at [pos]. */
         internal fun deleteChar(text: String, pos: Int) = if (pos < text.length) text.removeRange(pos, pos + 1) else text
 
-        /** Identifies one pattern cell (and effect [column]) for view-local markers: pattern < 256, column < 4, channel < 16, row < 64. */
-        fun cellKey(pattern: Int, channel: Int, row: Int, column: Int = 0): Int = (pattern shl 12) or (column shl 10) or (channel shl 6) or row
+        /** Identifies one pattern cell/effect for view-local markers: pattern < 256, column < 4, channel < 64, row < 64. */
+        fun cellKey(pattern: Int, channel: Int, row: Int, column: Int = 0): Int = (pattern shl 14) or (column shl 12) or (channel shl 6) or row
         val PATTERN_CONTEXT = arrayOf(ViewKind.KEYBOARD, ViewKind.INSTRUMENT, ViewKind.HELP, ViewKind.HELP)
         val ORDER_FIELDS = listOf("Pattern", "Repeat", "New", "Clone", "Delete", "Earlier", "Later", "Loop here", "Park")
         /** Song view order command that parks/unparks the order. */

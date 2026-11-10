@@ -184,32 +184,44 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
   playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
   persistence and frontend acceptance; zoom does not depend on future touchscreen support.
-- **Multiple effects per row — capability review (0.39.0):** the [manual matrix](README.md#multiple-effects-per-row)
-  records existing limits across all 43 variants: 17 with one column, 5 with two and 21 with four.
+- **Multiple effects per row — NES first pass implemented for 0.40.0:** the
+  [manual matrix](README.md#multiple-effects-per-row) covers all 43 variants: **2 with one column,
+  5 with two and 36 with four**. All 15 FamiStudio NES variants now accept four ordered columns,
+  with matching preview and supported native exports. Existing one-column exports remain unchanged.
   More columns do not guarantee independent pitch effects or independent hardware-shared controls.
-  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0390) records
-  the driver/export gate for any NES/SID/GB extension. This is documentation/research, not a capacity change.
-- **Swing rhythms — research proposal, not implemented:** consider song-wide swing plus pattern
-  Inherit / Straight / Override, with amount and row subdivision. SID funktempo and Sega odd-row
-  speed already exist; a shared setting must preserve native exports without stealing effect columns.
+  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0400) records
+  precedence, timing restrictions and the driver/export gate. Four is the normal ceiling where
+  straightforward, not a mandate to retrofit fixed-format drivers or add elaborate export packing.
+  TIA is the smallest inferred next extension; VIC/TED and VSU need their packed-count contract
+  changed. Game Boy/SID remain one-column until a native-format solution justifies its complexity.
+- **Swing rhythms — implementation paused:** investigate viable drivers and the additional code,
+  format, export and verification cost of the simplest useful implementation before choosing timing
+  semantics. The earlier song-wide plus pattern Inherit / Straight / Override design is only a
+  research candidate, not an approved scope. SID funktempo and Sega odd-row speed already exist.
   [Feasibility and open decisions](docs/BACKENDS.md#swing-and-groove-research-proposal) cover
   quantization, odd-length phase, tempo-command precedence, seek/loops and driver-specific limits.
-  Review those semantics before implementing; no playback timing is changed in this phase.
-- **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
-  Android already accepts orientation changes and shared painters support touch selection/scrolling;
-  these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,
-  Undo/Redo and view selection reachable, with a contextual note keyboard/instrument/effect editor and
-  large touch targets. Avoid requiring simulated modifier chords or obscuring the edited row with a
-  gamepad overlay. Reuse the same actions, document, recovery, audio and export paths; retain controller
-  operation and two-display focus rules. Full composition, file picking and held audition must work
-  without any physical button. [Review proposal and silent interaction study](docs/TOUCH_PROPOSAL.md)
-  now cover side-editor layout, touch targets, editing semantics, workflow gaps and integration risks.
-  Paused by user request on 2026-11-10 while Brick Hammer and themes proceed. The side-editor direction
-  seems sensible to the user, but geometry and editing semantics still await review; portrait is separate.
-- **Hardening priority** (2026-11-10): investigate the reported PC Engine snare layout rejection and POKEY
-  silence after note entry before expanding features. Use deterministic, bounded child-assisted stress
-  runs on Nova, DMG and Konkr, exclusive device leases, explicit reproduction traces and preserved private
-  state. No unattended unbounded random input, `/ThorTunez` access, emulator or simultaneous heavy builds.
+  No playback timing changes are authorized by this research.
+- **Touch-only phone use — discussion, no implementation:** reopen the controller-overlay approach
+  alongside the earlier landscape side-editor study; portrait may be a better starting geometry.
+  A persistent navigation affordance could open a drawer for views, scales and settings, with a swipe
+  as an optional shortcut. Do not make access depend solely on whether Android detects a controller.
+  Evaluate simultaneous holds, L2/R2 layers, thumb reach, obscured rows, Android edge-back gestures,
+  file picking, keyboard/insets and cancellation before selecting a layout. Reuse shared controller
+  actions, document, recovery, audio and export paths; preserve physical-controller and dual-display
+  behavior. [Review proposal and silent interaction study](docs/TOUCH_PROPOSAL.md) retain the original
+  side-editor experiment, explicitly separate from this new portrait/overlay candidate.
+- **Hardening and ergonomics priority:** use bounded live editing/playback, navigation, selection,
+  clipboard, Undo and save/reopen scenarios on Nova, DMG and Konkr. Investigate concrete failures
+  before changing behavior; preserve private state and `/ThorTunez`, take exclusive device leases,
+  and avoid emulators or simultaneous heavy builds. Assess shortcut discoverability and small
+  workflow improvements without reducing utility. For 0.40.0, held automatic effect columns retain
+  their target through blanking; high-channel transient cell identities no longer collide; unfocused
+  panes show the rebound Focus control. Real Activity editing, playback, clipboard, Undo and
+  save/reopen scenarios pass on reserved devices.
+  **Keep B = Clear and Select+B = Cut cell/block.** Clear has field-specific note/effect semantics;
+  silently turning it into Cut would replace the shared clipboard, which document Undo does not
+  restore. Improve discoverability first. A separate last-cleared recovery slot would be new scope,
+  not an implicit change to the existing clipboard.
 - **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
   backends. Separately explore bespoke friendly synth panels for existing chips: musical controls map to
@@ -224,10 +236,15 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
     baseline captures are pixel-identical. The actual CI AppImage passes palette persistence in fresh
     processes, unchanged project bytes, playback, audition and compact surfaces. Brick Paper selection,
     full Quit/relaunch persistence and exact project save/reopen also pass. No BRIXEQ palette was copied.
-  - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
-    and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
-    Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
-    readable, avoid flicker, and measure GPU/frame-time/power impact on Brick and Android.
+  - **CRT/scanlines and shader pipelines — deferred:** BRIXEQ offers OFF/MILD/FULL post-processing,
+    horizontal RGB separation and alternating pairs of dim output rows; its shader omits warp,
+    bloom and animated grain. Investigate reusable
+    [`.slangp` support](https://docs.libretro.com/development/shader/slang-shaders/) as an alternative
+    to a bespoke option, not an approved renderer rewrite. A preset needs a compatible filter-chain
+    runtime, not just a file picker. [librashader](https://github.com/SnowflakePowered/librashader)
+    is a reuse candidate, not a verified fit for the current Android Canvas/SDL surfaces or Brick
+    graphics capabilities. Check runtime and individual shader licences, small-text readability,
+    frame time, memory and power; retain an unfiltered default and a safe disable path.
   - **Workflow:** persistent focused-parameter editing across steps; explicit step audition; bounded
     selection randomization with one-step Undo; queued pattern/scene changes; trigless parameter locks.
     These are research ideas, not approved implementations. Keep hardware-specific effect legality,
@@ -244,12 +261,14 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
 - **Pattern-local channel mute — explicitly deferred by the user (2026-11-10):** current native formats
   cannot uniformly preserve an output-mask mute. The user declined a preview/WAV-first implementation
   with native-export refusals. [Feasibility record](docs/PATTERN_MUTE.md) retains the constraints and
-  unapproved future alternatives. The original requested property, distinct from visual collapse, must survive
-  save/reopen and affect both playback and native/WAV export. Every occurrence of a reused pattern should
-  use its mute state. Define entry/tail behaviour and retain timing/control-flow effects on muted lanes;
+  unapproved future alternatives. The requested unit is **one channel/column within one pattern**,
+  not a global channel mute, visual collapse or a particular order occurrence. It must survive
+  save/reopen and affect playback and native/WAV export; every reuse of that pattern uses its mute.
+  Define entry/tail behaviour and retain timing/control-flow effects on muted lanes;
   shared oscillators, envelopes, filters and modulation must not be accidentally disabled. Audition policy
   and the per-backend lowering contract need design before implementation.
-- **Mixer volume ceiling** (clarified 2026-11-10): the requested fader is a ceiling,
+- **Mixer volume ceiling — explicitly deferred:** prioritize effect slots and native volume automation.
+  The recorded fader concept is a ceiling,
   `effective = min(programmed level, ceiling)`, not proportional gain. Lower automation stays unchanged;
   automation above the ceiling flattens at it. Apply after the relevant musical volume/envelope sources,
   not merely at the first note. A 70% ceiling therefore differs from multiplying every value by 0.7.
@@ -257,9 +276,9 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   master volume have different capabilities. Define exact/quantized/unsupported native-export behaviour
   per backend; never silently promise an independent hardware fader or export a preview-only mix.
   The [complete capability/design pass](docs/MIXER_CEILINGS.md) covers all 43 registered systems and
-  every native export route. Implementation awaits review of the level/percentage domain,
+  every native export route. Reopening implementation requires review of the level/percentage domain,
   autonomous-envelope and FM restrictions, shared/stereo controls, zero/live behavior and export
-  refusals. No mixer feature is implemented.
+  refusals. No mixer feature is implemented or currently scheduled.
 - **Right-stick pattern jump** — implemented in 0.14.1, verified in the Deck frontend and Android input path: two
   quick same-direction right-stick flicks, neutral between them, move the focused Pattern cursor to the pattern's
   first/last row. Shared detector `input/StickFlicks` (engage 0.6, neutral 0.3, flick ≤ 300 ms, gap ≤ 300 ms)

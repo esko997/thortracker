@@ -1,5 +1,61 @@
 # Thor Tracker verification — 2026-11-10
 
+## 0.40.0 — NES multi-effect support and editing hardening
+
+Version **0.40.0/code 54** gives all **15 NES/FamiStudio variants four effect columns**, including
+EPSM and every N163 layout. Independent attributes compose left to right; duplicates, shared
+volume/slide targets and global speed have explicit precedence. Preview, NSF and FamiStudio text
+use the same lowering. Existing export exclusions remain; MMC5 PCM cannot combine delay and cut,
+and engine-lane cuts cannot precede delayed notes. The project/cell schema is unchanged.
+
+The compiled registry reports **2 one-column, 5 two-column and 36 four-column systems**. All
+**172 existing sample exports are byte-identical** to 0.39.0, with identical file sets; the optional
+EPSM rhythm-ROM fixture is excluded from both runs. A real 0.39.0 reader explicitly refuses a
+new multi-column NES project rather than losing its later effects.
+
+The capped local build passes **1,108 core JVM tests and 8 Android host tests** and produces the
+production-signed release APK/instrumentation. Nova passes all **24 permanent Android tests**,
+zero ignored/failing cases, inside the separate private-backup/cold-restore wrapper.
+
+The actual native NES machine passes **18 × 256 frames** with exact register-command and
+order/row/tick agreement between a future-edited reference and a live image replacement, plus
+**90 direct-seek comparisons**. Cases cover all 15 variants, G02/S05, G02/S02 and four-column
+DPCM. Independent py65 execution matches **nine 256-frame comparisons**: five of Thor's NSF
+exports and four independently imported/exported by unmodified FamiStudio 4.5.3. DPCM sample
+addresses relocate, so their actual 1,041-byte payloads are verified before comparing commands.
+G02/S05 starts at tick 2 and cuts at tick 5; G02/S02 remains silent in native and reference runs.
+Four-column MMC5 PCM renders through the production engine and equals the effective three-command
+image byte for byte. Invalid cut-before-delay and PCM delay+cut fixtures fail with row/channel context.
+
+Separately laid-out edited images are **not claimed PCM-bit-identical**: some first differences
+occur before live replacement, alongside one/two-cycle driver-call differences. The traces compare
+register order/values and logical timing. Measured peak driver calls range up to 13,918 cycles in
+these fixtures; that is evidence for these songs, not a worst-case console CPU-budget guarantee.
+
+Actual Activity/controller scenarios pass on DMG and Konkr: four-column editing during playback,
+Undo, WAV/NSF/text exports, exact save/reopen/restart, and EPSM's last channel at 75/150% zoom.
+Surface captures are inspected. A baseline compiled-core reproduction shows held automatic-column
+shrink retargeting an edit and channel-16 transient cell-key collisions; the corrected build retains
+the held field, restores the exact song with Undo, and keeps high-channel keys distinct.
+The real Konkr scenario verifies held-column behavior on both OPL3 and NES and clipboard-neutral
+Clear. Before/after Android captures show a rebound Focus hint changing from literal R3 to Sel+R3.
+
+Renewed baseline POKEY first-note/live-edit, PCE noise/DDA and navigation/save/reopen scenarios also
+pass on Nova, DMG and Konkr. Each device run uses its exclusive ledger lease, restores original
+private bytes and settings in a cold process, removes its temporary test package, and returns
+Home/asleep. `/ThorTunez`, Thor and the user's active Brick session are untouched by these tests.
+
+Swing remains **research only**. A native Banjo header-8/4 spike verifies first-row initialization
+and repeated 1/2/3-row boundaries; odd tails still change total pattern duration. The cost review
+distinguishes one owned scheduler, NES lowering, restricted Banjo, SID and Game Boy integration.
+Mixer ceilings, pattern-local mute, touch implementation and shader pipelines remain deferred.
+The touch proposal records portrait controller-dock/drawer tradeoffs; B remains Clear, with existing
+Select+B Cut cell/block rather than silently replacing the shared clipboard.
+
+Evidence: `recovery-20261109/nes-effects-hardening/` contains before/after editor output, native
+position/register traces, independent-reference results, sample fingerprints, device captures,
+exact restoration receipts and the timing spike. No temporary harness/probe is committed.
+
 ## 0.39.0 — persistent view zoom and documentation
 
 Version **0.39.0/code 53** adds per-view content zoom at 75/100/125/150%, a focused-view menu

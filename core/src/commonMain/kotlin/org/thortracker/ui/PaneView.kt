@@ -9,6 +9,7 @@ import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.editor.channelCount
+import org.thortracker.input.Control
 import org.thortracker.input.Keymap
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
@@ -347,7 +348,7 @@ class PaneView(
         var x = r.left + ink.unit * 0.6f
         val msg = session.message
         val right = drawBattery(c, r, r.right - ink.unit * 0.6f, size) - ink.unit * 0.6f
-        if (!controllerFocused) x = ink.hint(c, "R3", "Control this display", x, r.top, r.height(), size)
+        if (!controllerFocused) x = ink.hint(c, keymap.label(Control.FOCUS), "Control this display", x, r.top, r.height(), size)
         for (h in currentHints()) {
             if (x + ink.hintWidth(h.keys, h.text, size) > right - (if (msg != null) ink.unit * 10 else 0f)) break
             x = ink.hint(c, h.keys, h.text, x, r.top, r.height(), size)
