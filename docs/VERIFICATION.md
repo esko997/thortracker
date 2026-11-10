@@ -1,4 +1,52 @@
-# Thor Tracker verification — 2026-11-09
+# Thor Tracker verification — 2026-11-10
+
+## 0.37.1 Pattern workspace and first-note hardening
+
+Version **0.37.1/code 51** adds visual Pattern channel collapse (**L2+Left**) and right-stick
+double-left/right jumps to the first/last channel's note cell, without changing row or order.
+Collapsed lanes retain their sounds/effects, full-cell clipboard data and exports; layout is a
+per-pane workspace preference. Existing custom keymap conflicts are preserved.
+
+- **1,080 core JVM tests and 7 Android host tests pass.** Collapse checks cover document/history
+  identity, project/GB/OPL3 export bytes, hidden-field navigation, clipboard data, lane geometry,
+  touch selection, workspace persistence and keymap migration. Entry tests cover document replacement,
+  ordinary edits/history, invalid-channel rejection, repair/OFF and unfinished effect editing.
+- PCE noise snare failure: normal note/sound entry could commit noise onto PSG 1–4 before checking
+  audition legality; converting a used tone slot to noise could also invalidate stored patterns.
+  Four controller regressions fail before the fix and pass afterward. Assignment preflight now
+  refuses the edit without moving the cursor or mutating the song. New noise replacement checks all
+  stored patterns, including parked patterns and bindings used by inherited notes. Existing invalid
+  imports remain repairable; no notes move silently and native validation is unchanged.
+- **91 native PCE fixture checks pass**, including legal noise/DDA snares, presets/envelope bounds,
+  real audition/playback PCM and VGM export, plus intentional invalid-image rejection.
+- Nova's real Activity rejects a snare on PSG 1 without changing the song, then accepts and plays
+  the same snare on PSG 5. Eight noise-snare and eight DDA-snare edit/play/audition cycles pass;
+  pre/post projects and offline WAVs are byte-identical. All 102 stream reports have zero driver
+  faults and xruns; maximum observed callback is 1.710 ms. Separate temporary live callback counters
+  also record nonzero PCM. The actionable channel guidance is placed first so narrow footers show it.
+- POKEY's silence was reproduced on DMG: entry memory retained another document's instrument slot.
+  Old slot 06 became joined bass: first-lane callback RMS **0**, then **0.183711** on the second lane.
+  Old slot 0F became a deliberately silent sync clock; old custom slot 10 became empty in a new song.
+  A replacement-only generation now resets document-local entry memory, not normal edits or Undo/Redo.
+  The fixed replacement test uses slots **[1,1,1]**, with first-callback RMS **0.202863** in every case.
+- A second DMG callback test passes eight first-note cases across all four lanes with queued and
+  preprocessed blank images, 24 rapid restarts, held audition/live edit/release, and natural
+  10.5-second idle suspension/resume. All 15 stopped windows contain zero nonzero samples;
+  driver faults and xruns stay zero. These are actual post-clamp AAudio callback measurements,
+  not human listening or DAC measurements. The temporary counters are removed from release source.
+- Konkr passes actual Activity view switching, nine-lane OPL3 collapse, real uinput
+  EventHub/InputReader horizontal and vertical gestures, exact provider save/reopen, and Activity
+  restart with collapsed layout retained. Endpoints are channel index 8 and shortened row 15.
+  Full-size expanded/collapsed surfaces were inspected; project bytes do not change on collapse.
+- Each Activity stress case uses a UUID-owned document and verifies eight original private-file
+  entries through a separate cold restoration test. Only owned Download documents/test packages
+  are removed; `/ThorTunez` is untouched. Device leases and original settings are restored.
+  Evidence: `recovery-20261109/feedback-phone-qol/`.
+- Brick exploration confirms USB root shell and the existing remote terminal. A bounded ARM64/glibc
+  probe loads vendor SDL 2.30.8: only `mali` video, plus ALSA/DSP/disk/dummy audio drivers. It never
+  initializes an SDL subsystem and is removed afterward. This is ABI/capability evidence, not a
+  running Tracker port. Landscape touch-only use, themes, pattern mute, mixer ceilings, synth panels
+  and a GitHub Pages documentation site remain explicitly scoped roadmap work.
 
 ## 0.37.0 Cross-system conversion — released and verified
 

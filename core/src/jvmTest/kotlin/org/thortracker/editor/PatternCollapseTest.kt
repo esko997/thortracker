@@ -5,7 +5,7 @@ import org.junit.Test
 import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.system.gb.GbSystem
-import org.thortracker.system.opl3.Opl3Lowering
+import org.thortracker.backend.Opl3Lowering
 import org.thortracker.system.opl3.Opl3Rules
 import org.thortracker.system.opl3.Opl3System
 
@@ -85,8 +85,6 @@ class PatternCollapseTest {
         c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
         c.tap(Action.PASTE)
         assertEquals(edited, session.song.patterns[0].tracks[1][0])
-        assertTrue(c.state.mark)
-        c.tap(Action.MARK) // clear the pasted selection; a new note still uses normal entry memory
         c.tap(Action.DOWN)
         c.tap(Action.EDIT)
         assertTrue(session.song.patterns[0].tracks[1][1].note >= 0)

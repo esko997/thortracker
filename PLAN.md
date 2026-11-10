@@ -134,11 +134,20 @@ its downloaded AppImage.
      (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
      vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
      No application was launched, installed or changed during this inspection.
+   - Follow-up USB shell verification on 2026-11-10 succeeds as root on the existing AArch64 firmware.
+     The existing Remote Terminal HTTP page responds at `http://192.168.1.248:8080/`; no terminal input
+     or launcher changes were sent. Available RAM was 736,328 KiB, with no swap. Neither a compiler nor
+     Python was found on the device's PATH, so executable probes need a cross-built binary.
+   - An isolated cross-built ARM64/glibc probe now runs on the device and loads the actual vendor SDL:
+     SDL 2.30.8 exposes **only `mali` video**, plus `alsa`, `dsp`, `disk` and `dummy` audio drivers.
+     It opened no display/audio/input subsystem (`SDL_WasInit(0) == 0`) and its temporary executable
+     was removed. This proves loader/library compatibility, not rendering or callback performance;
+     a stock KMS/DRM or SDL3 assumption would miss the installed vendor video integration.
    - Packaging target: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects/settings outside the Pak
      (proposed `/mnt/SDCARD/ThorTunez/`) so Pak Store replacement cannot remove user data.
      Follow [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/), use its environment
      and diagnostics locations, preserve global ALSA/display settings, and return cleanly to the launcher.
-     Prefer the device's vendor SDL2/GPU integration; linking and callback behavior still need an executable spike.
+     Prefer the device's vendor SDL2/GPU integration; shared-application linking and callback behavior still need a running frontend spike.
    - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
      Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
      Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
@@ -151,17 +160,40 @@ its downloaded AppImage.
 11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
+12. **GitHub Pages website and documentation** (requested 2026-11-10; future work):
+   - Publish a ThorTracker project site with downloads/releases, getting started, platform setup,
+     controls, supported backends and their limitations, file/export formats, and troubleshooting.
+   - Reuse repository documentation as the source of truth; avoid separately maintained copies.
+     Include bug-report guidance and links to the source, licence and third-party notices.
+   - Choose the site structure and publishing workflow when this work is scheduled; no website
+     implementation is part of the current audio/input hardening pass.
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
-- **Korg DS-10 / DS-10+ interface discussion:** revisit the Nintendo DS instruments together and discuss
-  interface ideas that could suit Thor Tracker. Discussion only for now; no research or implementation
-  requested, and no specific interaction or feature selected yet.
+- **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
+  Android already accepts orientation changes and shared painters support touch selection/scrolling;
+  these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,
+  Undo/Redo and view selection reachable, with a contextual note keyboard/instrument/effect editor and
+  large touch targets. Avoid requiring simulated modifier chords or obscuring the edited row with a
+  gamepad overlay. Reuse the same actions, document, recovery, audio and export paths; retain controller
+  operation and two-display focus rules. Full composition, file picking and held audition must work
+  without any physical button. Design/implementation pending; portrait is a separate later decision.
+- **Hardening priority** (2026-11-10): investigate the reported PC Engine snare layout rejection and POKEY
+  silence after note entry before expanding features. Use deterministic, bounded child-assisted stress
+  runs on Nova, DMG and Konkr, exclusive device leases, explicit reproduction traces and preserved private
+  state. No unattended unbounded random input, `/ThorTunez` access, emulator or simultaneous heavy builds.
+- **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
+  built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
+  backends. Separately explore bespoke friendly synth panels for existing chips: musical controls map to
+  that chip's actual instrument parameters, with an advanced page retaining precise hardware access.
+  Do not force unlike chips into a universal instrument model or hide quantization/shared-resource effects.
+  Both are design directions, not implemented engines or selected panel designs.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
-  - **Colour themes:** eight semantic palette roles, with independent background/text/focus contrast;
-    BRIXEQ ships DEFAULT, AMBER, DAISY, LAVENDER, LCD, LCD INV, NIGHT and DAY. For Thor Tracker,
-    discuss accessible dark/light palettes and persistent workspace selection without changing song data.
+  - **Colour themes, near-term priority before scanlines:** semantic palette roles, readable dark/light
+    choices, distinguishable focus/selection/playback/error states, and persistent workspace selection.
+    Themes must not alter song data or exports. BRIXEQ's palette names/colours are research references,
+    not assets to copy; create original palettes. Implementation remains pending.
   - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
     and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
     Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
@@ -174,18 +206,32 @@ its downloaded AppImage.
     not a reason to replace Thor Tracker's model. Its repository has no declared project license;
     availability of Lua in the release is not reuse permission. Discuss ideas and implement independently,
     rather than copying its code, palettes, artwork or shaders into the GPL project.
-- **Pattern channel compression:** a bindable toggle collapses the focused channel to a note-cell-width strip,
-  hiding instrument/effect fields without deleting or changing them. Expand with the same action. This is a
-  display-space control, not musical/time compression. Decide hidden-field navigation and workspace persistence
-  before implementation; retain a visible collapsed-state indicator.
-- **Mixer view:** proposed channel faders for fixed volume levels, separate from per-row volume effects.
-  Design remains open: distinguish chip-supported gain that survives native export from preview-only mixing.
-  Do not promise independent gain on chips whose voices share an analogue mix or silently change exported sound.
+- **Pattern channel compression — implemented in 0.37.1:** the bindable **L2+Left** toggle collapses
+  the focused channel to a numbered note-only strip. Hidden sounds/effects still play and export.
+  Navigation/touch skip hidden fields; expansion restores effect-column choices. Per-pane workspace
+  persistence and display swaps retain the layout; full-cell clipboard operations retain all hidden data.
+  Existing custom keymap conflicts are preserved instead of overwritten.
+- **Pattern-local channel mute:** proposed musical property, distinct from visual collapse; it must survive
+  save/reopen and affect both playback and native/WAV export. Every occurrence of a reused pattern should
+  use its mute state. Define entry/tail behaviour and retain timing/control-flow effects on muted lanes;
+  shared oscillators, envelopes, filters and modulation must not be accidentally disabled. Audition policy
+  and the per-backend lowering contract need design before implementation.
+- **Mixer volume ceiling** (clarified 2026-11-10): the requested fader is a ceiling,
+  `effective = min(programmed level, ceiling)`, not proportional gain. Lower automation stays unchanged;
+  automation above the ceiling flattens at it. Apply after the relevant musical volume/envelope sources,
+  not merely at the first note. A 70% ceiling therefore differs from multiplying every value by 0.7.
+  Register-volume chips, discrete wave gain, autonomous envelopes, FM carrier attenuation and SID's shared
+  master volume have different capabilities. Define exact/quantized/unsupported native-export behaviour
+  per backend; never silently promise an independent hardware fader or export a preview-only mix.
+  This is a design direction, not yet implemented.
 - **Right-stick pattern jump** — implemented in 0.14.1, verified in the Deck frontend and Android input path: two
   quick same-direction right-stick flicks, neutral between them, move the focused Pattern cursor to the pattern's
   first/last row. Shared detector `input/StickFlicks` (engage 0.6, neutral 0.3, flick ≤ 300 ms, gap ≤ 300 ms)
-  behind `HostInput.rightStick`; Android reads Z/RZ or RX/RY per device, the Deck SDL's right Y. Fixed gesture, not
+  behind `HostInput.rightStick`; Android reads Z/RZ or RX/RY per device, the Deck SDL's right X/Y. Fixed gesture, not
   in the keymap; the L2+R2 layer is unaffected. Thresholds may need tuning on the Thor's sticks.
+  Horizontal extension implemented in 0.37.1: double-left/right jumps to the first/last channel's note
+  cell, retaining the current row and including collapsed channels. Pattern-only; it does not change
+  the current pattern/order. Konkr's actual uinput route verifies both axes and shortened-pattern bounds.
 - **Crash-recovery working policy:** serialize heavyweight builds across worktrees; cap build workers and
   compiler parallelism, avoid accumulating Gradle/Kotlin daemons, and never overlap an emulator with compilation.
   Local Linux Gradle runs now require 8 GiB available memory and use an enforced 4 GiB/no-swap scope
