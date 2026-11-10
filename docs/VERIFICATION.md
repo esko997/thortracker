@@ -69,6 +69,9 @@ Nova also passes all **22 permanent Android tests** and **32 full-RGBA Game Boy 
 Its lifecycle test records one settling xrun and a 576-frame buffer, not a dedicated-scenario underrun.
 Actual report/refusal surfaces were inspected. Owned test documents/captures and the test package
 were removed; private document state, workspace/keymap, screen timeout, launcher and sleep were restored.
+In the recreated-activity refusal case, DocumentsUI had already created a **zero-byte destination**.
+That empty file is expected: the app refuses to write a payload, but does not delete the returned URI.
+The smoke wrapper removes its own test destination afterward; this is not a successful report export.
 
 The actual official AppImage passes all **eight isolated conversion scenarios**. The JVM checker confirms
 saved source/converted documents, the previous-project backup and the complete TXT report exactly.
