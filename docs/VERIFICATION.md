@@ -1,5 +1,79 @@
 # Thor Tracker verification — 2026-11-10
 
+## 0.41.0 candidate — TIA four columns and workflow hardening
+
+**Version 0.41.0/code 55 is a candidate, not an official release.** TIA NTSC and PAL now
+accept four ordered effect columns per channel. The registry's 43 systems comprise **2
+one-column, 3 two-column and 38 four-column variants**. Project/backend/image schemas are
+unchanged; old two-column TIA players reject third/fourth-column content rather than silently
+dropping it. This adds no voices or 6507 driver, and WAV export is not cartridge CPU-budget proof.
+
+The TIA carried-state/inspector and fine-pitch adapters follow the real player's ordering:
+last G00 cancels an earlier delay, a later slide clears portamento, the last P controls detune,
+and returning an upward tuning to a coarse note retains P80 where removal would uncover an
+earlier P. Help clarifies Columns, hidden effects and active shortcuts. **B remains Clear;
+Select+B remains Cut cell/block.** Focus loss or controller removal/change cancels held edit,
+Listen and modifier state without synthesizing a tap; focus-only cancellation does not stop
+transport, whereas Activity pause does.
+
+### Automated candidate evidence
+
+- **1,112 core JVM and 8 Android host tests pass.**
+- **All 29 native suites pass**, including **3,786 TIA checks and 2,796 WAV checks**.
+  Optional EPSM/OPNA rhythm-ROM checks are explicitly **skipped because no ROM is installed**;
+  they are not passing firmware-backed evidence.
+- Independent TIA verification covers **1,500 ticks**, NTSC/PAL pitch, and **four new
+  192-tick static/live-write and cadence comparisons**. Both region-specific four-second CLI
+  WAV exports complete.
+- An additional native NES continuity probe compares FDS/S5B no-op live image application:
+  **408,926 interleaved stereo float samples are bit-identical**. Edited-future register-write
+  positions agree within **two CPU clocks**, but their PCM is **not bit-identical**.
+  Do not extend the no-op PCM result to edited/relocated songs.
+
+### Actual Android workflows
+
+- **Nova, full-song:** real controller input composes a three-order arrangement using Repeat,
+  Clone and loop selection, copy/cut/paste and Undo. Actual project save/reopen, Activity
+  recreation, advancing playback and UGE export pass. WAV follows **Files → Export .wav →
+  length → WAV ready → Save .wav… → DocumentsUI**; saved RIFF/PCM passes format/data-length,
+  AC-energy and first-200ms checks and its bytes match an independent native render.
+- **Konkr, TIA NTSC/PAL:** actual fourth-slot editing changes **F06 → F07 during playback**;
+  playback keeps advancing without errors. Both projects pass real SAF save/reopen and
+  Activity recreation with all four columns preserved. Pattern and Controls/Effects Help
+  captures are retained. The actual PAL SAF WAV has the same PCM as the independent render.
+- **Konkr permanent Android contracts:** **27 tests, zero failures**.
+- **Nova interruption regressions:** the same three focused probes fail on exact **0.40.0**
+  baseline and pass on **0.41.0**: held edit across focus loss, held Listen across focus loss,
+  and a held modifier across the disconnect callback. The harness first removed an invalid
+  assumption that a canceled key-up must be consumed. These are real Activity callback/input
+  probes, **not claims of physical controller disconnection testing**.
+
+Every run cold-restores the **eight original private entries**, removes its temporary test
+package and restores device settings. Document cleanup is restricted to the logged UUID-owned
+filenames: three for full-song (`.thor`, `.uge`, `.wav`), three for TIA (two `.thor`, one `.wav`).
+Activity recreation in the workflow is distinct from the cold-process restoration proof.
+Saved WAV energy is not an AAudio-output or speaker-listening measurement.
+
+Evidence is retained under
+`~/.local/state/thortracker/recovery-20261109/workflow-touch-041/`:
+`candidate-device-v2/` contains workflow/callback transcripts, captures, owned exports and
+restoration receipts; `native/` contains the native run artifacts, alongside the independent
+TIA/NES probe evidence and NTSC/PAL CLI WAVs in the recovery root. External harnesses/probes
+are not production source. Builds and devices remain serialized and memory-capped.
+
+### Separate portrait preview and remaining gates
+
+The portrait preview remains a **separate package and branch**, not production touch support.
+**Six real multi-touch tests pass on DMG**, which is a functional testbed only. The user's
+phone calibration target is **Galaxy Fold8**; calibration is in progress and no phone
+ergonomics verification is claimed. Next is joint prototype review and soft-launch hardening,
+not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain deferred.
+
+There is **no new 0.41.0 physical Deck/Brick proof or official release/delivery yet**.
+The existing-sample byte-comparison gate is still pending for this candidate; the 172-export
+result in the historical 0.40.0 section below must not be attributed to 0.41.0. CI/publication
+and delivery evidence will be recorded separately after they occur.
+
 ## 0.40.0 — NES multi-effect support and editing hardening
 
 Version **0.40.0/code 54** gives all **15 NES/FamiStudio variants four effect columns**, including
