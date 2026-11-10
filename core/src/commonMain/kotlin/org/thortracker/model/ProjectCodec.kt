@@ -52,7 +52,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * PC-88/98 OPN (`ym2203-opn`) and OPNA (`ym2608-opna`) 1 (OPNA ADPCM-B sample data is one Base64 string per sample).
  * Atari 2600 (`atari2600-tia-ntsc`, `atari2600-tia-pal`) 1.
  * Atari POKEY (`atari-pokey`) 1.
- * VIC-20 (`vic20-vic`) 1 and C16/Plus/4 (`c16-ted`) 1.
+ * VIC-20 (`vic20-vic`) 1, C16/Plus/4 (`c16-ted`) 1 and Virtual Boy VSU (`vb-vsu`) 1.
  * SAM Coupé (`sam-saa1099`) 1; Creative Music System (`cms-saa1099`) 1.
  */
 object ProjectCodec {

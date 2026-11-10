@@ -12,6 +12,9 @@ import org.thortracker.system.nes.NesRules
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.ay.AyRules
 import org.thortracker.system.ay.AyVariant
+import org.thortracker.system.vsu.VsuPitch
+import org.thortracker.system.vsu.VsuRules
+import org.thortracker.system.vsu.VsuSystem
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.pow
@@ -158,5 +161,18 @@ class TruePitchTest {
         assertEquals("A-0", AyVariant.MSX.system.noteName(AyVariant.MSX.system.noteRange.first))
         assertEquals("B-0", AyVariant.ATARI_ST.system.noteName(AyVariant.ATARI_ST.system.noteRange.first))
         assertEquals("C-0", AyVariant.CPC.system.noteName(AyVariant.CPC.system.noteRange.first))
+    }
+    @Test fun virtualBoyWaveLanesPlayTruePitch() {
+        // FamiTracker-style names; A-4 = 57 is F 1693, 440.14 Hz.
+        assertEquals("A-4", VsuSystem.noteName(57))
+        assertEquals("D#2", VsuSystem.noteName(VsuRules.WAVE_NOTES.first))
+        assertTrue(abs(cents(VsuPitch.hz(0, 64 * 57), 440.0)) < 1.0)
+        // The 11-bit period rounds: within a few cents low down, at worst about -20 cents at B-7 (the specification's
+        // -19.7; the 25-cent bound is a first guess, not measured); never a semitone off, on every wave lane alike.
+        for (note in VsuRules.WAVE_NOTES) {
+            val hz = VsuPitch.hz(0, 64 * note)
+            assertTrue("vb-vsu note $note: $hz Hz", abs(cents(hz, twelveTet(note))) < 25.0)
+            for (lane in 1..4) assertEquals(hz, VsuPitch.hz(lane, 64 * note), 0.0)
+        }
     }
 }

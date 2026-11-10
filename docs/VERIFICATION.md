@@ -31,6 +31,98 @@ and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux t
 is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
 All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
 
+## 0.35.0 Virtual Boy VSU — integration verification
+
+The `vsu-system` branch integrates the published SAA 0.34 main revision `5830e7c`, including the
+audition/song-ordering fix, and preserves the prepared headroom changes in `3ee5b32`. Version is
+0.35.0/code 48. **956 JVM tests**, the Android host suite, signed release and clean instrumentation builds pass within the enforced resource scope.
+
+A seven-rate seek probe found one real timing defect: at 11025 Hz, an odd silent prefix reset the
+half-sample frame phase (**30/30 frame-count mismatches**, worst PCM difference **0.017578125**).
+Advancing both cleared resamplers with `blip_skip_silence` fixes it: the same target now has exact frame
+counts and **bit-identical PCM at all seven rates, 8–96 kHz**, with identical raw chip state.
+The permanent regression keeps the existing 2e-3 bound. Evidence: `recovery-20261109/vsu-before/`
+under `~/.local/state/thortracker`. Final integrated CI and official publication remain pending.
+
+**594 VSU native checks pass**, including seek, mute, live edits and seven-rate headroom. The first integrated
+run passed all other engines and **2,622 WAV checks**, but exposed one stale VSU sweep assertion: S5INT
+retains the swept frequency, so 1500 immediately stops on the next-value overflow (2250), as specified by
+the pinned Tech Scroll. The corrected case also checks FQL does not restart a stopped channel and a later
+explicit restart stops at the first overflowing frame. No production sweep behavior changed.
+
+An isolated original-scale-64 run fails **29 checks** (hidden clipping error up to 0.505249; peak 1.333333);
+scale 8 passes the unchanged oracle bounds. Register, raw output, chip-case and VGM files are byte-identical
+across the gain comparison. The independent Python reference agrees on **1,500 player ticks**, **132,385
+raw output changes**, **30 chip cases** and the complete **6,661-byte VGM**. Pinned libvgm gives envelope
+correlation **0.980**, log-spectrum **0.897**, pitch-class agreement **95%** and gain-normalized level ratio
+**2.96** with the documented core differences; this is not hardware waveform equivalence.
+
+The initial candidate's actual CI-built AppImage (`949b94e`, run `42724617812`) passed two local
+offscreen/dummy-audio scenarios: demo playback plus held Instrument audition and return to Pattern
+advanced to order 0/row 41, with PCM peaks 0.08251954 during the hold and 0.07674154 afterward.
+A noise-only held audition produced peak 0.036783855 and returned to exact silence on release.
+Both rendered surfaces were inspected. Evidence: `recovery-20261109/vsu-desktop/`.
+These are frontend/PCM checks, not physical-device listening or proof of the later integrated binary.
+
+The production-signed candidate passes **22 permanent Android tests** on Nova and **32 full-RGBA
+Game Boy parity captures**. The lifecycle suite incurred one settling xrun and grew Nova's buffer to
+576 frames; its driver-fault count stayed zero. Actual VSU menu creation, playback/held audition,
+live edits, all wave/modulation pages, undo/redo, restart, cursor seek and document exports passed
+on Nova, DMG and Konkr. Dedicated VSU scenarios had **zero xruns and driver faults**; maximum
+callback times were **3.388438 / 6.807240 / 4.538769 ms** respectively.
+The first DMG/Konkr probes exposed a harness selection race: setting the view's modulation page
+without the canonical `Selection.wave` allowed the normal follow callback to select wave 0.
+Correcting both fixture states passed against the unchanged APK; no production behavior was altered.
+Konkr's maximum seek used order-local fallback: **378 ms wall time / 23.959077 ms native preparation**.
+Each device exported a non-silent 48 kHz stereo WAV (1,843,200 frames, peaks 3581/3868, no rail samples)
+and a **47,225-byte VGM**. The independent left/right document-silencing fixture rendered 153,600
+frames with peak 1220 per side; its opposing-silence assertions passed. Device wave/modulation
+surfaces were inspected. Evidence: `recovery-20261109/vsu-frontend/{ordered-clean,ordered-smoke,selection-smoke,accepted-metrics.json}`.
+
+- Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
+  and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.
+- All 14 shared-registry renderer scripts include VSU, SAA, CBM, TIA, POKEY and the earlier engines,
+  including the Stella/PCE/ymfm wrappers and include paths. The SMS-only renderer remains intentionally standalone.
+- The prepared scale 8 precedes blip_buf; float divisor 24576 and raw physical diagnostics are unchanged.
+  The seven-rate oracle bounds and independent-reference thresholds are retained. No 5–10 ms startup
+  silence is invented; the hardware observation remains unresolved.
+- The recovered `~/.local/state/thortracker/recovery-20261109/harnesses/VsuDeviceHarness.kt` uses the
+  current frontend, VSU editor, WAV and diagnostics APIs; no repository instrumentation scaffold is added.
+
+Verification commands, serialized with SSD-backed evidence and scratch:
+
+```sh
+nice -n 10 tools/build.sh --max-workers=1 :core:jvmTest :app:testDebugUnitTest :app:exportSamples
+tools/audio/run_native_host_test.sh "$HOME/.local/state/thortracker/vsu-035/native"
+python3 tools/audio/vsu_reference_check.py "$HOME/.local/state/thortracker/vsu-035/native"
+python3 tools/audio/saa_reference_check.py "$HOME/.local/state/thortracker/vsu-035/native"
+tools/audio/render_vsu_image.sh app/build/samples/crimson-stereoscope.vbimg "$HOME/.local/state/thortracker/vsu-035/demo.wav" 30 --vgm "$HOME/.local/state/thortracker/vsu-035/demo.vgm"
+tools/audio/render_vsu_image.sh app/build/samples/vsu-shortest.vbimg "$HOME/.local/state/thortracker/vsu-035/shortest.wav" 2
+nice -n 10 tools/build.sh --max-workers=1 -PthortrackerSigningDir="$SIGNING_DIR" :app:assembleRelease
+nice -n 10 tools/build.sh --max-workers=1 -I "$RELEASE_TEST_INIT" -PthortrackerSigningDir="$SIGNING_DIR" :app:assembleReleaseAndroidTest
+```
+
+Prerequisites: prepared pinned native drivers/tables, Android SDK/NDK/JDK (or the configured Ubuntu
+Distrobox), host C/C++ compilers and Python 3. The Gradle wrapper enforces the memory preflight,
+same shared build lock and bounded scope; serialize the native commands under the parent's resource
+policy as well. Re-exercise every shared-registry renderer, the full all-engine WAV suite and independent
+references on this combined source merge. Compare original scale-64 versus scale-8 headroom runs in isolated
+evidence worktrees: the original must fail and the prepared gain must pass, while raw register/sample,
+chip-case and VGM traces remain byte-identical. Do not weaken bounds to obtain that result.
+The optional `vsu_reference_check.py EVIDENCE_DIR --vgm2wav /path/to/vgm2wav` requires libvgm and numpy;
+its host-gain normalization is diagnostic only, not physical hardware proof.
+`SIGNING_DIR` must name the parent's existing release-key directory; do not copy secrets into the repo.
+`RELEASE_TEST_INIT` must be the parent's external Gradle init script selecting `android.testBuildType = "release"`
+and adding only the recovered `VsuDeviceHarness.kt` through an isolated external androidTest source directory. The default project
+uses debug instrumentation; there is no release-test task without that override. Sign the resulting test APK
+with the same production certificate, run only the VSU class, then build/run the permanent suite without
+the temporary harness source directory.
+
+Run Linux tests and optimized AppImage linking in CI only, then exercise that downloaded AppImage.
+Production-signed Android harness/permanent tests need the canonical Nova/DMG/Konkr leases and exact
+settings/project restoration; invoke only `org.thortracker.VsuDeviceHarness` in the temporary harness APK
+(`-e deepSeek true -e deviceRole konkr` only on Konkr). Preserve Game Boy UGE/full-RGBA parity gates.
+
 ## 0.34.0 Philips SAA1099 — integration verification
 
 SAM Coupé and Creative Music System integrate all preceding systems. Six generated fixtures repeat
@@ -67,7 +159,19 @@ All six picker-created WAVs are non-silent 48 kHz stereo with distinct sides and
 SAM has **921,600 frames**, CMS **832,000**. VGM 1.71 lengths, loop samples and 8 MHz / dual-7.15909 MHz
 clock headers are checked. Final queue-order APK SHA-256:
 `f37ba345cdb4fff37ac2529f2e06114b32fbd1a75c9a19325a3edd4eeda6b055`.
-Official publication remains pending.
+Published as **v0.34.0** from main `5830e7c`; all four jobs in run `42729677335` passed.
+Official APK SHA-256: `3791d1fc8c64824696819898208a8656da2d445f489fe1cfb578d3c9e2c061a3`.
+Official AppImage: `3da7aeb2fefcb6738b534c7d812cc605d545f7c038add353e4d8286d5c3b34fa`.
+The APK is production-signed, non-debuggable, code 47, with arm64-v8a/x86_64 libraries.
+Published-binary SAM/CMS scenarios passed on Nova and Konkr. On DMG, CMS passed; SAM's
+first attempt timed out locating Downloads in DocumentsUI, and the unchanged focused SAM
+scenario then passed. This retry does not establish a fix for the transient picker-navigation failure.
+All six exported WAV/VGM pairs are byte-identical to the already-verified candidate outputs.
+The actual official AppImage played/auditioned both demos and returned to Pattern with advancing
+positions and nonzero PCM; both screenshots were inspected. Thor received only the APK in
+`Download/Thor Tracker/`; Deck received only the AppImage and stable `thor-tracker` symlink update.
+Remote hashes matched; neither daily-use device was awakened, installed or launched.
+Evidence: `recovery-20261109/{official-0340,saa-official-smoke,saa-official-sam-retry,saa-official-desktop}`.
 Physical SAM Coupé/Game Blaster listening has not been performed.
 
 ## 0.33.0 VIC-20 VIC and C16/Plus4 TED

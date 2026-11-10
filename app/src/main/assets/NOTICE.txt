@@ -125,6 +125,15 @@ Thor Tracker adds minimal compatibility headers (shim/), a C interface
 (tia/tia_stella.cpp) and a mixer reimplementing Stella's mono mixing formula
 and audio event timing (tia/tia_machine.c).
 
+Virtual Boy (VSU) playback uses Thor Tracker's own player (GPL-3.0-or-later) on
+a VSU core (app/src/main/cpp/vsu/vsu_chip.c) derived from Mednafen 1.32.1's
+src/vb/vsu.cpp by the Mednafen Team (GNU General Public License 2 or later,
+notice below; mednafen-1.32.1.tar.xz), amended where the Virtual Boy Sacred Tech
+Scroll by Guy Perfect (perfectkiosk.net/stsvb.html, revision of 2024-10-20)
+documents measured hardware behaviour; the Tech Scroll is a documentation source
+only, no code of it is included. libvgm's VSU core was consulted as a reference
+only. Resampled with the same blip_buf.
+
 binjgb
 https://github.com/binji/binjgb
 
@@ -365,6 +374,19 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Mednafen (Virtual Boy VSU emulation, src/vb/vsu.cpp, version 1.32.1)
+https://mednafen.github.io/
+
+Copyright (C) 2010-2016 Mednafen Team
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version. This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+details.
 
 Altirra (POKEY generator formulas, mix table and output stage)
 https://www.virtualdub.org/altirra.html (Altirra 4.40 source, src/ATAudio)
