@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           # Otherwise the published APK could not update over the previous release.
           if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then echo "v$VERSION is already released."; exit 0; fi
-          latest=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')
+          latest=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
           [ -n "$latest" ] || { echo 'No earlier release.'; exit 0; }
           gh release download "$latest" --pattern '*.apk' --dir "$RUNNER_TEMP/latest"
           aapt2=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/aapt2

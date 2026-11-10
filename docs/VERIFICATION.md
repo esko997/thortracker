@@ -73,6 +73,10 @@ not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain d
 
 There is **no new 0.41.0 physical Deck/Brick proof or official release/delivery yet**.
 CI/publication and delivery evidence will be recorded separately after they occur.
+Production's version-code check excludes prereleases: an APK for the separate preview
+package is not a production update baseline. The stable-only GitHub release lookup was
+exercised against the repository and returned `v0.40.0`.
+
 
 ## 0.40.0 — NES multi-effect support and editing hardening
 
