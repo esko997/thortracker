@@ -97,6 +97,24 @@ class ColourThemeTest {
         }
     }
 
+    @Test fun changingThemeRecoloursCachedEffectReferenceTextWithoutChangingThePage() {
+        val surface = RecordingSurface()
+        val pane = PaneView(EditorSession(GbSystem.blank()), ViewState(kind = ViewKind.HELP, helpPage = 1), 1f, surface, { 0L }, {})
+        var previous: Palette? = null
+        for (palette in listOf(Palette.SLATE, Palette.PAPER, Palette.CONTRAST, Palette.SLATE)) {
+            pane.palette = palette
+            surface.clear()
+            pane.draw(1024, 768)
+            assertTrue(surface.textColours.contains(palette.TEXT))
+            assertTrue(surface.textColours.contains(palette.DIM))
+            previous?.let {
+                assertFalse("Cached help text retains ${it.id} text on ${palette.id}", surface.textColours.contains(it.TEXT))
+                assertFalse("Cached help text retains ${it.id} secondary text on ${palette.id}", surface.textColours.contains(it.DIM))
+            }
+            previous = palette
+        }
+    }
+
     private class RecordingSurface : Surface {
         val fills = mutableListOf<Int>()
         val textColours = mutableListOf<Int>()

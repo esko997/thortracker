@@ -22,8 +22,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
 
     private sealed interface Line {
         data class Heading(val text: String) : Line
-        data class Row(val key: String, val text: String, val color: Int = ink.palette.DIM) : Line
-        data class Text(val text: String, val color: Int = ink.palette.DIM) : Line
+        // Zero means the current palette's secondary text colour; explicit colours are opaque ARGB.
+        data class Row(val key: String, val text: String, val color: Int = 0) : Line
+        data class Text(val text: String, val color: Int = 0) : Line
     }
 
     override fun draw(c: Surface, area: Rect) {
@@ -57,9 +58,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 is Line.Heading -> ink.label(c, line.text, left, y, lineH, ink.palette.TEXT, true, ink.unit * 1.05f)
                 is Line.Row -> {
                     ink.mono(c, line.key, left, y, lineH, ink.palette.PLAYHEAD, true, ink.unit * 0.9f)
-                    ink.label(c, ink.fit(line.text, width - keyW), left + keyW, y, lineH, line.color)
+                    ink.label(c, ink.fit(line.text, width - keyW), left + keyW, y, lineH, if (line.color == 0) ink.palette.DIM else line.color)
                 }
-                is Line.Text -> ink.label(c, line.text, left, y, lineH, line.color)
+                is Line.Text -> ink.label(c, line.text, left, y, lineH, if (line.color == 0) ink.palette.DIM else line.color)
             }
         }
         if (lines.size > visible) {
@@ -72,14 +73,15 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
 
     private var cachedSong: org.thortracker.model.Song? = null
     private var cachedKeymap: Keymap? = null
+    private var cachedPalette: Palette? = null
     private var cachedPage = -1
     private var cachedWidth = -1f
     private var cachedLines: List<Line> = emptyList()
 
-    /** Wrapped lines for the current page; rebuilt only when the song, keymap, page or width changes. */
+    /** Wrapped lines; rebuilt only when the song, keymap, palette, page or width changes. */
     private fun pageLines(width: Float, keyW: Float): List<Line> {
         val keymap = v.keymap
-        if (song !== cachedSong || keymap !== cachedKeymap || st.helpPage != cachedPage || width != cachedWidth) {
+        if (song !== cachedSong || keymap !== cachedKeymap || ink.palette !== cachedPalette || st.helpPage != cachedPage || width != cachedWidth) {
             val raw = when (st.helpPage) {
                 0 -> controls(keymap)
                 1 -> effects()
@@ -89,6 +91,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             cachedLines = raw.flatMap { wrapLine(it, width, keyW) }
             cachedSong = song
             cachedKeymap = keymap
+            cachedPalette = ink.palette
             cachedPage = st.helpPage
             cachedWidth = width
         }

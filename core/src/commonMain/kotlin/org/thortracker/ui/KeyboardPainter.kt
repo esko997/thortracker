@@ -129,7 +129,15 @@ internal class KeyboardPainter(v: PaneView) : Painter(v) {
             val r = keyRects.getOrNull(st.kbKey)
             if (r != null) {
                 cursor.set(r.left + 3, r.top + 3, r.right - 3, r.bottom - 3)
-                ink.outline(c, cursor, if (v.controllerFocused) cursorColor() else ink.palette.DIM, ink.dp(3f), ink.dp(4f))
+                val colour = if (v.controllerFocused) cursorColor() else ink.palette.DIM
+                if (ink.palette === Palette.SLATE) {
+                    ink.outline(c, cursor, colour, ink.dp(3f), ink.dp(4f))
+                } else {
+                    // Physical piano keys do not follow the workspace background. Keep a contrasting rim.
+                    val rim = if (isBlack(st.kbKey)) ink.palette.KEY_BLACK_TEXT else ink.palette.KEY_WHITE_TEXT
+                    ink.outline(c, cursor, rim, ink.dp(3f), ink.dp(4f))
+                    ink.outline(c, cursor, colour, ink.dp(1f), ink.dp(4f))
+                }
             }
         }
     }

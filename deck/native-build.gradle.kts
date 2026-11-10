@@ -1,5 +1,4 @@
 // Shared native frontend build: one engine/source list for SDL3 x64 and NextUI SDL2 ARM64.
-import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 
 val brick = project.name == "brick"
 val targetName = if (brick) "LinuxArm64" else "LinuxX64"
@@ -208,40 +207,6 @@ val buildEngine by tasks.registering(Exec::class) {
     // Feed the script through stdin: the growing engine list exceeds Linux's per-argument limit with bash -c.
     commandLine("bash", "-s")
     standardInput = script.byteInputStream()
-}
-
-configure<KotlinMultiplatformExtension> {
-    val platform = if (brick) linuxArm64() else linuxX64()
-    platform.apply {
-        compilations.getByName("main").cinterops {
-            create(if (brick) "sdl2" else "sdl3") {
-                definitionFile.set(file(if (brick) "src/nativeInterop/cinterop/sdl2.def" else "src/nativeInterop/cinterop/sdl3.def"))
-                includeDirs(sdlInclude)
-            }
-            create("decknative") {
-                definitionFile.set(frontend.file("src/nativeInterop/cinterop/decknative.def").asFile)
-                // ym2608_rhythm_rom.h: ym2608_rhythm_rom_install / ym2608_rhythm_rom_installed for the Deck's rhythm ROM;
-                // opn/opn_export.h: the OPN / OPNA VGM export.
-                includeDirs(frontend.dir("native"), engineSrc, engineSrc.dir("opl3"), engineSrc.dir("ym"), engineSrc.dir("nes"), engineSrc.dir("sms"),
-                    engineSrc.dir("ay"), engineSrc.dir("pce"), engineSrc.dir("scc"), engineSrc.dir("opm"), engineSrc.dir("opn"), engineSrc.dir("pokey"), engineSrc.dir("ws"), engineSrc.dir("vsu"), engineSrc.dir("saa"))
-                extraOpts("-libraryPath", nativeOut.get().asFile.absolutePath)
-            }
-        }
-        binaries.executable {
-            baseName = "thortracker"
-            entryPoint = "org.thortracker.deck.main"
-            // Links against deps/lib/libSDL3.so. The AppImage bundles that library in lib/ beside the executable, found
-            // through the rpath; without it the system's SDL3 is used (SteamOS ships one).
-            // libstdc++: reSID, ymfm, Mednafen's PSG and Stella's TIA (C++) inside libdeck_native.a; SteamOS ships the runtime (GCC 8.3 headers need GLIBCXX <= 3.4.25).
-            linkerOpts("-L${deps.dir("lib").asFile}", if (brick) "-lSDL2" else "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
-        }
-    }
-    sourceSets {
-        val main = getByName(if (brick) "linuxArm64Main" else "linuxX64Main").apply {
-            kotlin.srcDir(frontend.dir("src/nativeMain/kotlin"))
-            dependencies { implementation(project(":core")) }
-        }
-    }
 }
 
 // cinterop embeds libdeck_native.a (staticLibraries) into its klib: it must rerun when the engine changes,
