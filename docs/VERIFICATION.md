@@ -1,5 +1,106 @@
 # Thor Tracker verification — 2026-11-10
 
+## 0.38.0 — colour themes and Brick Hammer / NextUI
+
+Version **0.38.0/code 52** adds original Slate, Paper and Contrast workspace palettes and an
+ARM64 NextUI Pak. Slate preserves the original appearance. Theme selection is outside the
+musical document and does not add an Undo entry. Android candidate source is `1943ce6`;
+the native implementation exercised on hardware below is `046d897`. The final Help copy also describes
+the diagnostics file in the projects folder on Linux handhelds, rather than naming only the Deck path.
+
+- The bounded local build passes **1,084 core JVM tests and 7 Android host tests**. Nova passes
+  **24 permanent Android instrumentation tests** against the production-signed release APK.
+  The mixed-audio case reports one initial xrun, a 576-frame adaptive buffer and zero driver faults.
+- Nova, DMG and Konkr each pass real Activity/controller selection of all three palettes,
+  Pattern/Instrument/Keyboard/Help/menu capture, unchanged project bytes/document version/history,
+  Activity recreation with Contrast retained, and advancing playback afterward. This is Activity
+  restart evidence, not a claim of a separate process-death persistence scenario or human listening.
+- Paper and Contrast keyboard focus now have contrasting key-specific rims on both white and black
+  keys. Effect-help cached rows are rebuilt when their palette changes, avoiding stale explicit colours.
+  Captured keyboard surfaces are inspected; the Help cache regression passes in the core suite.
+- Before that final Help-copy clarification, **32/32 complete Slate RGBA captures are identical**
+  to the official 0.37.1 same-device baseline, covering 16 Game Boy views at 1920×1080 and 1240×1080.
+  The About diagnostics wording is an intentional subsequent text change, not a palette change.
+- The actual CI AppImage from `44abe41` selects all three themes through the shared controller menu,
+  plays the factory song with PCM peak 0.509230, and restores Paper/Contrast in separate fresh processes.
+  The working project remains byte-identical. Compact 1024×768 keyboard runs produce held-audition PCM
+  peaks 0.119800/0.119781 and show readable black/white key focus rims. A nine-lane OPL3 fixture retains
+  its exact project bytes through collapse, horizontal edge jumps to channels 8/0, a vertical jump to
+  its shortened pattern's row 15, and advancing playback with peak 0.116943.
+- Native surfaces are inspected at 1280×800 and 1024×768. These runs use offscreen video and dummy audio:
+  no physical Deck performance, acoustic output or Brick rendering claim is implied.
+  AppImage SHA-256: `b801e1431698f6f24a17539224faf0adc02989ee58723cde26986eca108bc9f4`.
+- Source `046d897` passes all three jobs in [CI run 42820497888](https://github.com/esko997/thortracker/actions/runs/42820497888):
+  Android/core/native tests, desktop AppImage build/boot, and ARM64 Pak build/ABI packaging.
+  Its final AppImage repeats controller theme selection, fresh-process Paper restoration, exact
+  project preservation, playback and compact Instrument held audition. SHA-256:
+  `843d03d383c43ba94329a9e38d092d50ea62ca67ec0fc6b12a6d12e7182c49c9`.
+- Each Android live theme scenario uses an owned fixture and a separate cold restoration test. Eight original
+  private-file entries are restored byte-for-byte; `/ThorTunez` is untouched. Test packages are removed,
+  original screen timeouts restored, devices returned Home/asleep, and leases released.
+- APK SHA-256: `bf287a90b5a3e24bbc46c15d202f6bce1701f2d4e62566ebd4b992ff87046f12`.
+  Production certificate SHA-256:
+  `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`.
+  This candidate is on Nova, DMG and Konkr; Thor and Deck have not been changed.
+- The Brick Pak is built: 7,874,145 bytes, 24 ZIP entries, correct executable modes and passing CRC.
+  It shares the complete native frontend/engines and uses vendor SDL2 with external `/mnt/SDCARD/ThorTunez`
+  data. Fonts include their OFL licence; the Pak includes GPL/engine notices and no vendor shared libraries.
+  The actual ARM64 ELF requires at most GLIBC 2.17, GLIBCXX 3.4.22 and CXXABI 1.3.3, below the captured
+  firmware limits. `--as-needed` removes unused toolchain crypt/util/resolver dependencies rather than
+  weakening the ABI allowlist. Pak SHA-256:
+  `09a90fc92af295a7c00010f9092f34917fa317e24db3e4edd853b2c251c6d86e`.
+- The unchanged CI Pak now runs through the Brick's normal **Tools → ThorTracker** launcher:
+  vendor SDL **2.30.8**, real **Mali/ALSA**, **1024×768**, X360 controller mapping and a 1,024-frame
+  48 kHz stereo device buffer. Its installed executable SHA-256 matches the CI ELF:
+  `688d747f0c1652ffe5f1cec9172f322ced9fad8e3dfe91be115bfe2bf16c4158`.
+- Actual evdev input passes R2 view switching, cumulative L2+R2 → Pattern, L2+Left collapse,
+  held-A note editing and L2+A Undo. The real file browser saves and reopens the factory project
+  byte-identically. Paper survives Quit and a fresh Pak launch; NextUI's Tools screen returns normally.
+  Inspected surfaces include Pattern, Keyboard, collapsed lanes, menus and Help/About.
+- Six separate **25-second real-hardware playback runs** produce nonzero PCM and advancing orders,
+  with zero driver faults: Game Boy, NES, SID, OPL3, Mega Drive and NES+EPSM.
+  Recorded worst callbacks are respectively **0.817, 4.344, 12.204, 8.299, 11.135 and 13.819 ms**.
+  NES/SID/OPL3/Mega Drive/EPSM report zero late callbacks and no ALSA underruns. The GB timed case
+  records **one late callback and one recovered ALSA underrun**; a separate preceding GB session
+  records **12,019 callbacks, zero late callbacks and zero faults**. This is bounded measurement,
+  not a claim that all workloads are glitch-free.
+- These are actual generated PCM/callback and inspected framebuffer results, not acoustic/DAC
+  measurements. Physical suspend/resume remains untested. No Miyoo Mini runtime is claimed.
+  USB access was lost at idle NextUI both before the initial Tracker launch and after later Quit.
+  The user subsequently disabled sleep while USB-connected; the remaining checks and cleanup completed.
+  This establishes the observed sequence, not a diagnosed cause of the earlier disconnects.
+- SID, OPL3 and Mega Drive also pass 8-second held audition during playback, followed by 3-second
+  audition-only runs: two accepted auditions each, nonzero PCM, zero late callbacks, no ALSA underruns
+  and zero faults. Worst callbacks are **19.638, 10.531 and 18.266 ms** respectively.
+  The device period is **21.333 ms**: SID's measured maximum consumes about **92%** of one period,
+  leaving only **1.695 ms**, not a comfortable worst-case margin. The `late callbacks` diagnostic
+  counts sounding callback gaps above **two periods (42.667 ms)**; zero is not proof that every
+  callback met a one-period deadline. ALSA underrun log counts are reported separately.
+- EPSM FM subsequently passes the same mixed/solo audition scenario with a valid FM sound selected:
+  two auditions, PCM peaks **0.024737/0.019331**, **741 callbacks**, **zero late callbacks, faults or
+  ALSA underruns**, and worst callback **12.053 ms**. Physical X presses in Instrument and Keyboard
+  independently produce two accepted auditions and PCM peak **0.119781**, without ALSA underruns.
+- The identical EPSM fixture/control sequence on the production x86_64 AppImage yields peaks
+  **0.025635/0.019727**, versus Brick **0.024737/0.019331** (differences **3.63%/2.05%**).
+  The lower EPSM levels are therefore also present on desktop, rather than evidence of a large
+  Brick-only attenuation. These are wall-clock-controlled peak windows on the same engine, not
+  sample-exact or independent-reference validation of absolute loudness.
+- After reconnection, the user's newly composed SCC working song, previous-project recovery file and
+  Contrast preference remain byte-identical through the isolated checks. Only the owned smoke Pak,
+  test workspace and unchanged test diagnostics report are removed. The production Pak is reopened
+  in Song view; the user's USB sleep setting is untouched and the canonical device lease is released.
+- The six timed playback runs average **56 frames/s** including cold UI work. The separate GB session
+  uses **51,272 KiB RSS**, with a **58,716 KiB high-water mark**, five threads and no swap.
+  These are specific observed workloads, not peak-memory bounds for arbitrary songs.
+- All Kotlin/Native linking remains on CI. Local Android/JVM work used one capped build at a time;
+  no emulator or local native link was launched.
+
+Evidence: `recovery-20261109/brick-themes/`, especially `nova-permanent-tests.txt`,
+`theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json`, `desktop-themes/results.json`,
+`ci-046d897/{pak-verification,desktop-runtime}.json`, `device-contracts/`, and
+`hardware-a8218cc3f32d48d5bb7165660357d5eb/{playback-results,dual-results}.json`.
+The latter directory also retains final physical-input/EPSM logs and the user-state preservation record.
+
 ## 0.37.1 Pattern workspace and first-note hardening — released and verified
 
 Version **0.37.1/code 51** adds visual Pattern channel collapse (**L2+Left**) and right-stick

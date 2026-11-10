@@ -2,8 +2,6 @@
 
 package org.thortracker.deck
 
-import cnames.structs.SDL_Renderer
-import cnames.structs.SDL_Window
 import decknative.*
 import kotlinx.cinterop.*
 import org.thortracker.audio.AuditionLoop
@@ -40,11 +38,10 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Popups
 import org.thortracker.ui.RecentMessages
 import platform.posix.*
-import sdl3.*
 
 /**
- * Thor Tracker on the Steam Deck: the shared core (editing, panes, transport, views, button routing, menus) in one
- * full-screen pane on SDL3, driven by the gamepad and heard through the song's C chip engine ([DeckAudio]).
+ * Thor Tracker's shared native Linux application: editing, panes, transport, views, button routing and menus
+ * in one full-screen pane, with target-specific SDL display/input and the shared C chip engine ([DeckAudio]).
  * Usage: thortracker [song.thor] [seconds=N] [script=...] [size=WxH[@density]]
  */
 fun main(args: Array<String>) {
@@ -53,22 +50,17 @@ fun main(args: Array<String>) {
     // Test hook: script=96+22,20,99~1500 taps buttons (Android key codes; "a+b" holds a while tapping b, "b~ms" holds b
     // for ms), one step per 150 ms,
     // through the same routing as the gamepad; "rx=V"/"ry=V" moves one right-stick axis (-1 left/up .. 1 right/down),
-    // e.g. rx=-1,rx=0,rx=-1,rx=0 jumps to the first channel. With seconds=N the last frame is saved as deck-screenshot.bmp.
+    // e.g. rx=-1,rx=0,rx=-1,rx=0 jumps to the first channel. With seconds=N the platform saves its last frame.
     val script = args.firstOrNull { it.startsWith("script=") }?.substringAfter('=')?.split(',')?.filter { it.isNotBlank() }.orEmpty()
     // Test hook: size=WxH[@density] draws into a WxH window (no full screen) at that UI density, e.g. the Thor's displays
     // (1920x1080@2.31, 1240x1080@2.31) under SDL_VIDEO_DRIVER=offscreen, whose full-screen mode is 1024 x 768.
     val size = args.firstOrNull { it.startsWith("size=") }?.substringAfter('=')
-    val (width, height) = size?.substringBefore('@')?.split('x')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 } ?: listOf(1280, 800)
-    val density = size?.substringAfter('@', "")?.toFloatOrNull() ?: DENSITY
+    val (width, height) = size?.substringBefore('@')?.split('x')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 } ?: listOf(Platform.WIDTH, Platform.HEIGHT)
+    val density = size?.substringAfter('@', "")?.toFloatOrNull() ?: Platform.DENSITY
 
-    check(SDL_Init(SDL_INIT_VIDEO or SDL_INIT_AUDIO or SDL_INIT_GAMEPAD)) { "SDL_Init: ${SDL_GetError()?.toKString()}" }
-    val window = SDL_CreateWindow("Thor Tracker", width, height, (if (size == null) SDL_WINDOW_FULLSCREEN else 0uL) or SDL_WINDOW_HIGH_PIXEL_DENSITY)
-        ?: error("window: ${SDL_GetError()?.toKString()}")
-    val renderer = SDL_CreateRenderer(window, null) ?: error("renderer: ${SDL_GetError()?.toKString()}")
-    SDL_SetRenderVSync(renderer, 1)
-    println("SDL ${SDL_GetVersion()} ${SDL_GetCurrentVideoDriver()?.toKString()}/${SDL_GetCurrentAudioDriver()?.toKString()}")
+    val platform = Platform(width, height, size == null)
     val appDir = executableDir()
-    check(dd_init(renderer, "$appDir/fonts") == 0) { "fonts missing next to the executable" }
+    check(dd_init(platform.renderer, "$appDir/fonts") == 0) { "fonts missing next to the executable" }
 
     Opl3Vgm.renderer = DeckOpl3Vgm
     WsVgm.renderer = DeckWsVgm
@@ -83,30 +75,32 @@ fun main(args: Array<String>) {
     AyVgm.renderer = DeckAyVgm
     SmsExport.renderer = DeckSmsVgm
     WavExport.renderer = DeckWav
-    val app = DeckApp(window, renderer, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
-    app.script = ArrayDeque(script)
-    app.run(quitAfterMs)
-    app.close()
-    dd_close()
-    SDL_DestroyRenderer(renderer)
-    SDL_DestroyWindow(window)
-    SDL_Quit()
+    try {
+        val app = DeckApp(platform, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
+        try {
+            app.script = ArrayDeque(script)
+            app.run(quitAfterMs)
+        } finally { app.close() }
+    } finally {
+        dd_close()
+        platform.close()
+    }
 }
 
-private class DeckApp(private val window: CPointer<SDL_Window>, private val renderer: CPointer<SDL_Renderer>, appDir: String, opened: Song?, density: Float) {
+class DeckApp(private val platform: Platform, appDir: String, opened: Song?, density: Float) {
     val session = EditorSession(Songs.demo())
     /** One pane, shown full screen (the Deck's single-screen layout); view chords switch what it shows. */
     val panes = Workspace(listOf(ViewState(kind = ViewKind.PATTERN)))
-    val audio = DeckAudio()
+    val audio = DeckAudio { platform.audioDriver }
     val transport = Transport(session).also { it.audio = audio }
-    private val output = outputSize(renderer)
-    val pane = PaneView(session, panes.focused, density, SdlSurface(), clock = { SDL_GetTicks().toLong() }, invalidate = {})
+    private val output = platform.output
+    val pane = PaneView(session, panes.focused, density, SdlSurface(), clock = { platform.ticks().toLong() }, invalidate = {})
     private val popup = DrawnPopup(pane.ink)
     val popups = Popups({ if (it == 0) popup else null }, { listOf(0) })
     val input = HostInput()
     var running = true
-    val shell = DeckShell(session, pane, popups, input, appDir, quit = { running = false }, audio = audio, display = {
-        "${output.width}x${output.height} px at density $density, SDL video ${SDL_GetCurrentVideoDriver()?.toKString() ?: "?"}"
+    val shell = DeckShell(session, pane, popups, input, appDir, panes, quit = { running = false }, audio = audio, display = {
+        "${output.width}x${output.height} px at density $density, SDL video ${platform.videoDriver}"
     })
     val menus = AppMenus(session, panes, transport, popups, shell)
     private var repeatCode = 0
@@ -128,7 +122,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         session.onSongChanged = { transport.songChanged(it); pane.refresh() }
         session.onStateChanged = { pane.refresh() }
         session.onAudition = { channel, note, instrument, detune -> auditionLoop.stop(); audio.audition(channel, note, instrument, detune) }
-        session.onAuditionSequence = { channel, steps, instrument, stepMillis -> auditionLoop.start(channel, steps, instrument, stepMillis, SDL_GetTicks().toLong()) }
+        session.onAuditionSequence = { channel, steps, instrument, stepMillis -> auditionLoop.start(channel, steps, instrument, stepMillis, platform.ticks().toLong()) }
         session.onReleaseAudition = { auditionLoop.stop(); audio.releaseAudition() }
         session.onTransport = { start -> if (start) transport.start(session.selection.order, session.selection.row) else transport.stop() }
         val start = opened ?: shell.recovered()
@@ -136,13 +130,12 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         popups.onOpenChanged = { open -> input.resetStick(); if (open) pane.cancelInteraction() }
     }
 
-    fun run(quitAfterMs: ULong?) = memScoped {
-        val event = alloc<SDL_Event>()
-        val start = SDL_GetTicks()
+    fun run(quitAfterMs: ULong?) {
+        val start = platform.ticks()
         var frames = 0L
         while (running) {
-            while (SDL_PollEvent(event.ptr)) handle(event)
-            val now = SDL_GetTicks()
+            platform.poll(this)
+            val now = platform.ticks()
             if (repeatCode != 0 && now >= repeatAt) { route(repeatCode, true, ++repeats); repeatAt = now + 60u }
             if (script.isNotEmpty() && now - start >= scriptAt) {
                 val step = script.removeFirst()
@@ -170,7 +163,7 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             shell.pumpTuningPacks()
             shell.autosave(now)
             val typing = popup.fieldFocused
-            if (typing != textInput) { textInput = typing; if (typing) SDL_StartTextInput(window) else SDL_StopTextInput(window) }
+            if (typing != textInput) { textInput = typing; platform.textInput(typing) }
             pane.playback = transport.position() ?: PlaybackPosition()
             pane.heldModifiers = if (popups.isOpen) emptySet() else input.heldModifiers
             pane.draw(output.width, output.height)
@@ -179,65 +172,35 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
                 running = false
                 println("audio: auditions=${audio.auditions} peak=${da_peak()}")
                 println("frames=$frames fps=${frames * 1000 / maxOf(1uL, now - start).toLong()} position=${transport.position()} popup=${popups.top?.title}")
-                SDL_RenderReadPixels(renderer, null)?.let { println("screenshot: ${SDL_SaveBMP(it, "deck-screenshot.bmp")}") }
+                println("screenshot: ${platform.screenshot()}")
             }
-            SDL_RenderPresent(renderer)
+            platform.present()
             frames++
         }
-        shell.autosave(SDL_GetTicks(), force = true)
+        shell.autosave(platform.ticks(), force = true)
     }
 
-    fun close() { shell.close(); audio.close() }
+    fun close() { shell.autosave(platform.ticks(), force = true); shell.close(); audio.close(); (pane.surface as SdlSurface).close() }
 
-    private fun handle(e: SDL_Event) {
-        when (e.type) {
-            SDL_EVENT_QUIT -> running = false
-            SDL_EVENT_GAMEPAD_ADDED -> {
-                SDL_OpenGamepad(e.gdevice.which)?.let { println("gamepad: ${SDL_GetGamepadName(it)?.toKString()}") }
-                input.resetStick()
-            }
-            SDL_EVENT_GAMEPAD_REMOVED, SDL_EVENT_GAMEPAD_REMAPPED -> { input.forgetStick(e.gdevice.which.toInt()); input.resetStick() }
-            // Another window took the input: a flick from before must not finish a jump.
-            SDL_EVENT_WINDOW_FOCUS_LOST, SDL_EVENT_WINDOW_FOCUS_GAINED -> input.resetStick()
-            SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_EVENT_GAMEPAD_BUTTON_UP ->
-                Pad.code(e.gbutton.button.toInt())?.let { button(it, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) }
-            SDL_EVENT_GAMEPAD_AXIS_MOTION -> {
-                val axis = e.gaxis.axis.toInt()
-                // Event timestamps are SDL_GetTicksNS nanoseconds: monotonic, the clock the script steps use too.
-                if (axis == SDL_GAMEPAD_AXIS_RIGHTX.toInt() || axis == SDL_GAMEPAD_AXIS_RIGHTY.toInt()) {
-                    rightStick(e.gaxis.which.toInt(), axis == SDL_GAMEPAD_AXIS_RIGHTX.toInt(), e.gaxis.value / 32767f,
-                        (e.gaxis.timestamp / 1_000_000uL).toLong())
-                    return
-                }
-                val code = Pad.triggerCode(axis) ?: return
-                val down = e.gaxis.value > 16000
-                if (down != (code in input.heldModifiers)) button(code, down)
-            }
-            SDL_EVENT_TEXT_INPUT -> e.text.text?.toKString()?.let(popup::type)
-            SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_UP -> {
-                val down = e.type == SDL_EVENT_KEY_DOWN
-                if (popup.fieldFocused) {
-                    // Typing goes to the field; Backspace edits, Enter submits, Escape leaves the field.
-                    if (down) when (e.key.key) {
-                        SDLK_BACKSPACE -> popup.erase()
-                        SDLK_RETURN, SDLK_KP_ENTER -> { popup.stopTyping(); popups.handleKey(Keys.ENTER, true, 0) }
-                        SDLK_ESCAPE -> popup.stopTyping()
-                    }
-                    return
-                }
-                if (!e.key.repeat) Pad.keyboardCode(e.key.key)?.let { button(it, down) }
-            }
+    fun focusChanged() { repeatCode = 0; input.reset(); pane.cancelInteraction() }
+    fun type(text: String) = popup.type(text)
+    val fieldFocused: Boolean get() = popup.fieldFocused
+    fun editText(code: Int) {
+        when (code) {
+            67 -> popup.erase() // Android DEL, used only by physical keyboard text entry.
+            Keys.ENTER -> { popup.stopTyping(); popups.handleKey(Keys.ENTER, true, 0) }
+            Keys.ESCAPE -> popup.stopTyping()
         }
     }
 
-    private fun button(code: Int, down: Boolean) {
+    fun button(code: Int, down: Boolean) {
         route(code, down, 0)
-        if (down && code in Pad.DPAD) { repeatCode = code; repeats = 0; repeatAt = SDL_GetTicks() + 320u }
+        if (down && code in DPAD) { repeatCode = code; repeats = 0; repeatAt = platform.ticks() + 320u }
         if (!down && code == repeatCode) repeatCode = 0
     }
 
     /** Independent right-stick axes: double left/right jumps channels, double up/down jumps rows. */
-    private fun rightStick(device: Int, horizontal: Boolean, value: Float, millis: Long) {
+    fun rightStick(device: Int, horizontal: Boolean, value: Float, millis: Long) {
         val jump = input.rightStick(device, horizontal, value.coerceIn(-1f, 1f), millis, 0, pane.state.kind, pane.patternFocused, popups.isOpen, false)
         if (jump != 0) {
             if (horizontal) pane.jumpPatternChannelEdge(jump > 0)
@@ -288,59 +251,12 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
     }
 }
 
-/** The renderer's output size in pixels (the Deck's panel: 1280 x 800). */
-private class Output(val width: Int, val height: Int)
-
-private fun outputSize(renderer: CPointer<SDL_Renderer>): Output = memScoped {
-    val w = alloc<IntVar>()
-    val h = alloc<IntVar>()
-    SDL_GetRenderOutputSize(renderer, w.ptr, h.ptr)
-    Output(w.value, h.value)
-}
+class Output(val width: Int, val height: Int)
 
 /** Device id the script hook's "ry=" steps use; SDL joystick ids are never 0 or negative. */
 private const val SCRIPT_STICK = -1
 
-/** UI scale like Android's density: 12 x 1.5 = 18 px text on the Deck's 1280 x 800 seven-inch panel. */
-private const val DENSITY = 1.5f
-
-/** SDL gamepad buttons / keyboard keys → the Android key codes the shared Keymap and HostInput use. */
-private object Pad {
-    val DPAD = setOf(Keys.DPAD_UP, Keys.DPAD_DOWN, Keys.DPAD_LEFT, Keys.DPAD_RIGHT)
-    fun code(button: Int): Int? = when (button) {
-        SDL_GAMEPAD_BUTTON_SOUTH.toInt() -> Keys.BUTTON_A
-        SDL_GAMEPAD_BUTTON_EAST.toInt() -> Keys.BUTTON_B
-        SDL_GAMEPAD_BUTTON_WEST.toInt() -> Keys.BUTTON_X
-        SDL_GAMEPAD_BUTTON_NORTH.toInt() -> Keys.BUTTON_Y
-        SDL_GAMEPAD_BUTTON_LEFT_SHOULDER.toInt() -> Keys.BUTTON_L1
-        SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER.toInt() -> Keys.BUTTON_R1
-        SDL_GAMEPAD_BUTTON_LEFT_STICK.toInt() -> Keys.BUTTON_THUMBL
-        SDL_GAMEPAD_BUTTON_RIGHT_STICK.toInt() -> Keys.BUTTON_THUMBR
-        SDL_GAMEPAD_BUTTON_START.toInt() -> Keys.BUTTON_START
-        SDL_GAMEPAD_BUTTON_BACK.toInt() -> Keys.BUTTON_SELECT        // Select / View
-        // The back grips (L4, R4, L5, R5) open the menu, like the Thor's Menu button.
-        SDL_GAMEPAD_BUTTON_LEFT_PADDLE1.toInt(), SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1.toInt(),
-        SDL_GAMEPAD_BUTTON_LEFT_PADDLE2.toInt(), SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2.toInt() -> Keys.BUTTON_MODE
-        SDL_GAMEPAD_BUTTON_DPAD_UP.toInt() -> Keys.DPAD_UP
-        SDL_GAMEPAD_BUTTON_DPAD_DOWN.toInt() -> Keys.DPAD_DOWN
-        SDL_GAMEPAD_BUTTON_DPAD_LEFT.toInt() -> Keys.DPAD_LEFT
-        SDL_GAMEPAD_BUTTON_DPAD_RIGHT.toInt() -> Keys.DPAD_RIGHT
-        else -> null
-    }
-    fun triggerCode(axis: Int): Int? = when (axis) {
-        SDL_GAMEPAD_AXIS_LEFT_TRIGGER.toInt() -> Keys.BUTTON_L2
-        SDL_GAMEPAD_AXIS_RIGHT_TRIGGER.toInt() -> Keys.BUTTON_R2
-        else -> null
-    }
-    fun keyboardCode(key: UInt): Int? = when (key) {
-        SDLK_UP -> Keys.DPAD_UP; SDLK_DOWN -> Keys.DPAD_DOWN; SDLK_LEFT -> Keys.DPAD_LEFT; SDLK_RIGHT -> Keys.DPAD_RIGHT
-        SDLK_Z -> Keys.BUTTON_A; SDLK_X -> Keys.BUTTON_B; SDLK_A -> Keys.BUTTON_X; SDLK_S -> Keys.BUTTON_Y
-        SDLK_Q -> Keys.BUTTON_L1; SDLK_W -> Keys.BUTTON_R1; SDLK_1 -> Keys.BUTTON_L2; SDLK_2 -> Keys.BUTTON_R2
-        SDLK_SPACE -> Keys.BUTTON_START; SDLK_TAB -> Keys.BUTTON_SELECT
-        SDLK_RETURN, SDLK_KP_ENTER -> Keys.ENTER; SDLK_ESCAPE -> Keys.ESCAPE; SDLK_F1 -> Keys.MENU
-        else -> null
-    }
-}
+private val DPAD = setOf(Keys.DPAD_UP, Keys.DPAD_DOWN, Keys.DPAD_LEFT, Keys.DPAD_RIGHT)
 
 /** The directory holding this executable (fonts and tunings ship beside it). */
 private fun executableDir(): String = memScoped {

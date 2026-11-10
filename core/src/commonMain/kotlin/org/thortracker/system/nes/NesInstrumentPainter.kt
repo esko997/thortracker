@@ -54,7 +54,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val env = kind.of(ins)
         val channels = s.system.channels
         val listen = channels.getOrNull(st.listenChannel)
-        val col = Palette.channel(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "Instrument bank$locked  ${usageText(st.instrument)}")
         val row = NesInstrumentView.row(st, s)
@@ -64,7 +64,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, Palette.LANE)
+        ink.rect(c, left, ink.palette.LANE)
         slotTop = top + ink.unit * 0.2f
         slotH = ink.unit * 1.45f
         val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
@@ -76,15 +76,15 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val y = slotTop + k * slotH
             val sel = i == st.instrument
             if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, Palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
                 ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
             }
             val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else Palette.FAINT, sel, sz)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
             val used = usage(i)
-            val nameColor = if (sel) Palette.TEXT else if (used > 0) Palette.DIM else Palette.FAINT
+            val nameColor = if (sel) ink.palette.TEXT else if (used > 0) ink.palette.DIM else ink.palette.FAINT
             ink.label(c, ink.fit(bank[i - 1].name, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, Palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
         if (row == Row.SLOT) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
@@ -148,11 +148,11 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 continue
             }
             val h = if (r == Row.ENVELOPE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + colW + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + colW + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when (r) {
                 Row.NAME -> {
-                    ink.label(c, "Name", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
-                    ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+                    ink.label(c, "Name", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
+                    ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
                     if (sel) {
                         val before = ins.name.take(st.textPos).padEnd(st.textPos, ' ')
                         val cx = vx + ink.labelWidth(before, ink.unit, true)
@@ -190,7 +190,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 Row.SAW -> plainSetting(c, "Saw volume", "${ins.sawVolume.label}: ${NesInstrumentView.sawText(ins.sawVolume)}", rx, vx, y, h, sel,
                     ins.sawVolume == Vrc6SawVolume.HALF)
                 Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = listen?.name ?: ""
                     ink.label(c, name, vx, y, h, col, true)
                     val note = when {
@@ -208,7 +208,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                     }
                     if (note != null) {
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rx + colW - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rx + colW - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 Row.ENVELOPE -> drawTabs(c, ins, Rect(rx, y, rx + colW, y + h), listen?.kind, col)
@@ -342,7 +342,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (fdsWaves && seq != null) {
             plot.hide()
             val small = ink.unit * 0.8f
-            ink.label(c, ink.fit(NesInstrumentView.FDS_TUNING, rw, small), rx, y, rowH * 0.85f, Palette.PLAYHEAD, size = small)
+            ink.label(c, ink.fit(NesInstrumentView.FDS_TUNING, rw, small), rx, y, rowH * 0.85f, ink.palette.PLAYHEAD, size = small)
             drawSequence(c, Rect(rx, y + rowH * 0.85f + ink.unit * 0.2f, rx + rw, area.bottom - ink.unit * 0.4f), seq, row, col)
             return
         }
@@ -377,7 +377,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             return
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind, ins.chip), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(NesInstrumentView.envelopeSummary(kind, ins.chip), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
         y += rowH * 0.85f
 
         // steps
@@ -388,8 +388,8 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     /** A setting row as the NES pages have always drawn it (the value unfitted). */
     private fun plainSetting(c: Surface, label: String, value: String, x: Float, vx: Float, y: Float, h: Float, sel: Boolean, off: Boolean) {
-        ink.label(c, label, x, y, h, if (sel) Palette.TEXT else Palette.DIM)
-        ink.label(c, value, vx, y, h, if (sel) (if (off) Palette.DIM else Palette.TEXT) else (if (off) Palette.FAINT else Palette.DIM), sel)
+        ink.label(c, label, x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
+        ink.label(c, value, vx, y, h, if (sel) (if (off) ink.palette.DIM else ink.palette.TEXT) else (if (off) ink.palette.FAINT else ink.palette.DIM), sel)
     }
 
     /** Frames at the NES's 60 per second, as a duration. */
@@ -411,11 +411,11 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val ignored = listen != null && k != null && ignores(k, listen, ins)
             val color = when {
                 on -> col
-                ignored -> Palette.FAINT
-                else -> Palette.DIM
+                ignored -> ink.palette.FAINT
+                else -> ink.palette.DIM
             }
-            if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
-            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
+            if (on) ink.rect(c, t, Palette.mix(ink.palette.BG, col, 0.18f))
+            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else ink.palette.RULE)
             val modTab = page == NesInstrumentView.MOD_PAGE && ins.chip == NesChip.FDS
             val pcmTab = page == NesInstrumentView.PCM_PAGE && ins.chip == NesChip.APU
             val size = k?.of(ins)?.values?.size ?: when (ins.chip) {
@@ -451,14 +451,14 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
      */
     private fun drawShape(c: Surface, r: Rect, e: S5bEnvelope, col: Int, chip: NesChip) {
         val small = ink.unit * 0.8f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.3f
         val title = when {
             e.shape == S5bShape.OFF -> "No hardware envelope: the volume envelope sets the level"
             e.autoPitch -> "${e.shape.label}: ${NesS5b.octaveText(e.shape, e.octave)}"
             else -> "${e.shape.label}: ${NesS5b.periodText(e.shape, e.period, chip)}"
         }
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.DIM, size = small)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.DIM, size = small)
         val notes = listOf(
             if (chip == NesChip.EPSM) "One generator for SSG 1-3: the highest SSG channel sounding an envelope sound sets shape and period."
             else "One generator for three squares: the highest square sounding an envelope sound sets shape and period.",
@@ -467,7 +467,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val lineH = ink.unit * 1.1f
         val plot = Rect(r.left + ink.unit * 0.5f, r.top + titleH, r.right - ink.unit * 0.5f, r.bottom - lineH * notes.size - ink.unit * 0.3f)
         if (plot.height() > ink.unit * 1.5f && plot.width() > ink.unit * 4f) {
-            ink.rect(c, plot, Palette.BG)
+            ink.rect(c, plot, ink.palette.BG)
             val levels = shapeLevels(e.shape)
             val dx = plot.width() / levels.size
             var px = plot.left
@@ -475,15 +475,15 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             for ((i, level) in levels.withIndex()) {
                 val x = plot.left + dx * (i + 1)
                 val y = plot.bottom - plot.height() * level / 31f
-                ink.line(c, px, py, px, y, if (e.shape == S5bShape.OFF) Palette.FAINT else col, ink.dp(2f))
-                ink.line(c, px, y, x, y, if (e.shape == S5bShape.OFF) Palette.FAINT else col, ink.dp(2f))
+                ink.line(c, px, py, px, y, if (e.shape == S5bShape.OFF) ink.palette.FAINT else col, ink.dp(2f))
+                ink.line(c, px, y, x, y, if (e.shape == S5bShape.OFF) ink.palette.FAINT else col, ink.dp(2f))
                 px = x
                 py = y
             }
         }
         var y = r.bottom - lineH * notes.size - ink.unit * 0.2f
         for (n in notes) {
-            ink.label(c, ink.fit(n, r.width() - ink.unit), r.left + ink.unit * 0.5f, y, lineH, Palette.FAINT, size = small * 0.95f)
+            ink.label(c, ink.fit(n, r.width() - ink.unit), r.left + ink.unit * 0.5f, y, lineH, ink.palette.FAINT, size = small * 0.95f)
             y += lineH
         }
     }
@@ -529,15 +529,15 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
      */
     private fun drawFm(c: Surface, r: Rect, patch: Vrc7Patch, row: Row, col: Int) {
         val small = ink.unit * 0.85f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.3f
         val custom = patch.preset == Vrc7Presets.CUSTOM
         val regs = patch.sounding
         fmColX = floatArrayOf(r.left + ink.unit * 0.5f, r.left + r.width() * 0.45f, r.left + r.width() * 0.72f)
         ink.label(c, ink.fit(if (custom) "Custom patch" else "${Vrc7Presets.NAMES[patch.preset]} (built-in)", fmColX[1] - fmColX[0], small),
-            fmColX[0], r.top, titleH, Palette.DIM, size = small)
-        ink.label(c, "Modulator", fmColX[1], r.top, titleH, Palette.DIM, size = small)
-        ink.label(c, "Carrier", fmColX[2], r.top, titleH, Palette.DIM, size = small)
+            fmColX[0], r.top, titleH, ink.palette.DIM, size = small)
+        ink.label(c, "Modulator", fmColX[1], r.top, titleH, ink.palette.DIM, size = small)
+        ink.label(c, "Carrier", fmColX[2], r.top, titleH, ink.palette.DIM, size = small)
         fmRowH = ink.unit * 1.15f
         fmRect = Rect(r.left, r.top + titleH, r.right, r.bottom)
         fmRows = NesInstrumentView.FM_ROWS.filter { it in NesInstrumentView.FM_PARAMS }
@@ -550,16 +550,16 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val param = NesInstrumentView.FM_PARAMS.getValue(rr)
             val y = fmRect.top + (i - fmScroll) * fmRowH
             val on = rr == row
-            if (on) ink.rect(c, r.left, y, r.right, y + fmRowH, Palette.CURSOR_FILL)
-            ink.label(c, param.label, fmColX[0], y, fmRowH, if (on) Palette.TEXT else Palette.DIM, size = small)
+            if (on) ink.rect(c, r.left, y, r.right, y + fmRowH, ink.palette.CURSOR_FILL)
+            ink.label(c, param.label, fmColX[0], y, fmRowH, if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
             for (op in 0..1) {
                 if (param.modulatorOnly && op == 1) continue
                 val text = NesInstrumentView.fmValueText(param, param.get(regs, op))
                 val cell = op == NesInstrumentView.fmOperator(st, param)
                 ink.label(c, text, fmColX[1 + op], y, fmRowH, when {
-                    !custom -> Palette.FAINT
+                    !custom -> ink.palette.FAINT
                     on && cell -> col
-                    else -> Palette.TEXT
+                    else -> ink.palette.TEXT
                 }, on && cell, small)
                 if (on && cell) {
                     val w = maxOf(ink.labelWidth(text, small, true), ink.unit * 1.5f)
@@ -639,12 +639,12 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
      */
     private fun drawRhythm(c: Surface, r: Rect, ins: NesInstrument, col: Int) {
         val small = ink.unit * 0.8f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val lineH = ink.unit * 1.15f
         var y = r.top
         val x = r.left + ink.unit * 0.5f
         val w = r.width() - ink.unit
-        ink.label(c, ink.fit("Six fixed-pitch drums from the YMF288's rhythm ROM", w, small), x, y, ink.unit * 1.3f, Palette.DIM, size = small)
+        ink.label(c, ink.fit("Six fixed-pitch drums from the YMF288's rhythm ROM", w, small), x, y, ink.unit * 1.3f, ink.palette.DIM, size = small)
         y += ink.unit * 1.3f
         val expansion = song.nes.expansion
         val level = NesEpsmPage.rhythmLevel(ins)
@@ -658,15 +658,15 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             if (y + lineH > r.bottom - lineH * 3) break
             val ch = NesRules.EPSM_RHYTHM1 + i
             val on = ch == st.listenChannel
-            ink.label(c, NesRules.channelName(expansion, ch), x, y, lineH, if (on) Palette.channel(ch) else Palette.TEXT, on, small)
+            ink.label(c, NesRules.channelName(expansion, ch), x, y, lineH, if (on) ink.palette.channel(ch) else ink.palette.TEXT, on, small)
             ink.label(c, ink.fit("${NesEpsmPage.DRUM_REGISTERS[i]} · level ${level * 2}/31 · pan $pan", w * 0.6f, small), x + w * 0.4f, y, lineH,
-                Palette.DIM, size = small)
+                ink.palette.DIM, size = small)
             y += lineH
         }
         val notes = listOf(
             (if (Ym2608RhythmRom.installed) "ROM installed (SHA-256 verified)" else "ROM missing: playback and Listen refuse drums until it is imported") to
-                (if (Ym2608RhythmRom.installed) col else Palette.ERROR),
-            "A note triggers its channel's drum; pitch, arpeggio and the FM patch do not change it." to Palette.FAINT,
+                (if (Ym2608RhythmRom.installed) col else ink.palette.ERROR),
+            "A note triggers its channel's drum; pitch, arpeggio and the FM patch do not change it." to ink.palette.FAINT,
         )
         var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f
         for ((n, color) in notes) {
@@ -706,8 +706,8 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val right = Rect(left.right + gap, r.top, r.right, r.bottom)
 
         // mapped keys
-        ink.round(c, left, ink.dp(4f), Palette.LANE)
-        ink.label(c, ink.fit("Keys of sound ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, Palette.DIM, size = small)
+        ink.round(c, left, ink.dp(4f), ink.palette.LANE)
+        ink.label(c, ink.fit("Keys of sound ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, ink.palette.DIM, size = small)
         keyList = ins.dpcm.keys.sorted()
         keyRowH = ink.unit * 1.25f
         keyRect = Rect(left.left, left.top + titleH, left.right, left.bottom - ink.unit * 0.3f)
@@ -716,7 +716,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (shown >= 0) keyScroll = keyScroll.coerceIn(maxOf(0, shown - keyRows + 1), shown)
         keyScroll = keyScroll.coerceIn(0, maxOf(0, keyList.size - keyRows))
         if (keyList.isEmpty()) {
-            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, Palette.FAINT, size = small)
+            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, ink.palette.FAINT, size = small)
         }
         val keyFocus = row == Row.KEY || row == Row.SAMPLE || row == Row.PITCH || row == Row.SAMPLE_LOOP || row == Row.LEVEL
         for (i in keyScroll until minOf(keyList.size, keyScroll + keyRows)) {
@@ -724,28 +724,28 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val m = ins.dpcm.getValue(key)
             val y = keyRect.top + (i - keyScroll) * keyRowH
             val on = key == st.dpcmKey
-            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 140))
+            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) ink.palette.CURSOR_FILL else Palette.alpha(ink.palette.CURSOR_FILL, 140))
             if (on) ink.rect(c, left.left, y, left.left + ink.dp(3f), y + keyRowH, col)
-            ink.mono(c, NesSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else Palette.DIM, on, small)
+            ink.mono(c, NesSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else ink.palette.DIM, on, small)
             val tail = m.pitch.toString(16).uppercase() + if (m.loop) " ↻" else ""
             val tailW = ink.labelWidth(tail, small) + ink.unit * 0.5f
             val name = samples.getOrNull(m.sample)?.name ?: "missing"
             ink.label(c, ink.fit(name, left.width() - ink.unit * 3.6f - tailW, small), left.left + ink.unit * 3.2f, y, keyRowH,
-                if (m.sample in samples.indices) (if (on) Palette.TEXT else Palette.DIM) else Palette.ERROR, size = small)
-            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (m.sample in samples.indices) (if (on) ink.palette.TEXT else ink.palette.DIM) else ink.palette.ERROR, size = small)
+            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
         }
 
         // samples
-        ink.round(c, right, ink.dp(4f), Palette.LANE)
+        ink.round(c, right, ink.dp(4f), ink.palette.LANE)
         val used = NesSampleMenu.stored(s)
         val over = used > Dpcm.MEMORY
         ink.label(c, ink.fit("Samples · ${NesSampleMenu.kb(used)} of ${NesSampleMenu.kb(Dpcm.MEMORY)}", right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH,
-            if (over) Palette.ERROR else Palette.DIM, size = small)
+            if (over) ink.palette.ERROR else ink.palette.DIM, size = small)
         val barL = right.left + right.width() * 0.64f
         val barR = right.right - ink.unit * 0.5f
         val barY = right.top + titleH * 0.42f
-        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
-        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / Dpcm.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), ink.palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / Dpcm.MEMORY), barY + ink.dp(5f), if (over) ink.palette.ERROR else col)
 
         val lineH = ink.unit * 1.35f
         addRect = Rect(right.left, right.bottom - lineH - ink.unit * 0.2f, right.right, right.bottom - ink.unit * 0.2f)
@@ -759,30 +759,30 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - sampleRows + 1), st.dpcmSample.coerceAtLeast(0))
         sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - sampleRows))
         val keyed = ins.dpcm[st.dpcmKey]?.sample ?: -1
-        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, ink.palette.FAINT, size = small)
         for (i in sampleScroll until minOf(samples.size, sampleScroll + sampleRows)) {
             val sample = samples[i]
             val y = sampleRect.top + (i - sampleScroll) * sampleRowH
             val on = i == st.dpcmSample
-            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, Palette.CURSOR_FILL)
-            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else Palette.FAINT, i == keyed, small)
+            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, ink.palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else ink.palette.FAINT, i == keyed, small)
             val size = "${sample.data.size} B"
             ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, right.width() - ink.unit * 2.6f - ink.labelWidth(size, small) - ink.unit), right.left + ink.unit * 2.2f, y, sampleRowH,
-                if (on) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
             if (on && row == Row.SAMPLES) ink.outline(c, Rect(right.left + 2, y + 1, right.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
 
         // the selected sample: waveform, name, initial level
         val sample = samples.getOrNull(st.dpcmSample)
-        ink.rect(c, waveRect, Palette.BG)
+        ink.rect(c, waveRect, ink.palette.BG)
         if (sample != null && waveRect.width() > 4f && waveRect.height() > 4f) {
             val levels = curve(sample)
             val columns = maxOf(1, waveRect.width().toInt() / 2)
             val per = levels.size.toFloat() / columns
             val cw = waveRect.width() / columns
             val mid = waveRect.top + waveRect.height() / 2
-            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, ink.palette.RULE, ink.dp(1f))
             for (k in 0 until columns) {
                 val a = (k * per).toInt().coerceIn(0, levels.size - 1)
                 val b = ((k + 1) * per).toInt().coerceIn(a + 1, levels.size)
@@ -794,16 +794,16 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 ink.rect(c, waveRect.left + k * cw, y0, waveRect.left + k * cw + maxOf(1f, cw - 0.5f), maxOf(y1, y0 + ink.dp(1f)), Palette.alpha(col, 200))
             }
             val secs = NumberText.fixed(sample.data.size * 8.0 / Dpcm.RATES_HZ[ins.dpcm[st.dpcmKey]?.pitch ?: DpcmMapping.PITCH.last], 2)
-            ink.label(c, "$secs s", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+            ink.label(c, "$secs s", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         }
         val vx = right.left + ink.unit * 4.4f
         fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
             val sel = row == which
             val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
-            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
-            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            if (sel) ink.rect(c, rr, ink.palette.CURSOR_FILL)
+            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) ink.palette.TEXT else ink.palette.DIM, size = small)
             ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small, bold = sel), vx, y, lineH,
-                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+                if (off) ink.palette.FAINT else if (sel) ink.palette.TEXT else ink.palette.DIM, sel, small)
             if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
         }
         boxRow(nameY, Row.SAMPLE_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)
@@ -832,8 +832,8 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val right = Rect(left.right + gap, r.top, r.right, r.bottom)
 
         // mapped keys
-        ink.round(c, left, ink.dp(4f), Palette.LANE)
-        ink.label(c, ink.fit("PCM keys of sound ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, Palette.DIM, size = small)
+        ink.round(c, left, ink.dp(4f), ink.palette.LANE)
+        ink.label(c, ink.fit("PCM keys of sound ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, ink.palette.DIM, size = small)
         keyList = ins.pcm.keys.sorted()
         keyRowH = ink.unit * 1.25f
         keyRect = Rect(left.left, left.top + titleH, left.right, left.bottom - ink.unit * 0.3f)
@@ -842,7 +842,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (shown >= 0) keyScroll = keyScroll.coerceIn(maxOf(0, shown - keyRows + 1), shown)
         keyScroll = keyScroll.coerceIn(0, maxOf(0, keyList.size - keyRows))
         if (keyList.isEmpty()) {
-            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, Palette.FAINT, size = small)
+            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, ink.palette.FAINT, size = small)
         }
         val keyFocus = row == Row.PCM_KEY || row == Row.PCM_SAMPLE || row == Row.PCM_PITCH || row == Row.PCM_LOOP || row == Row.PCM_SPREAD
         for (i in keyScroll until minOf(keyList.size, keyScroll + keyRows)) {
@@ -850,28 +850,28 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val m = ins.pcm.getValue(key)
             val y = keyRect.top + (i - keyScroll) * keyRowH
             val on = key == st.dpcmKey
-            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 140))
+            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) ink.palette.CURSOR_FILL else Palette.alpha(ink.palette.CURSOR_FILL, 140))
             if (on) ink.rect(c, left.left, y, left.left + ink.dp(3f), y + keyRowH, col)
-            ink.mono(c, NesSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else Palette.DIM, on, small)
+            ink.mono(c, NesSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else ink.palette.DIM, on, small)
             val tail = (if (m.pitch > 0) "+${m.pitch}" else m.pitch.toString()) + if (m.loop) " ↻" else ""
             val tailW = ink.labelWidth(tail, small) + ink.unit * 0.5f
             val name = samples.getOrNull(m.sample)?.name ?: "missing"
             ink.label(c, ink.fit(name, left.width() - ink.unit * 3.6f - tailW, small), left.left + ink.unit * 3.2f, y, keyRowH,
-                if (m.sample in samples.indices) (if (on) Palette.TEXT else Palette.DIM) else Palette.ERROR, size = small)
-            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (m.sample in samples.indices) (if (on) ink.palette.TEXT else ink.palette.DIM) else ink.palette.ERROR, size = small)
+            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
         }
 
         // samples
-        ink.round(c, right, ink.dp(4f), Palette.LANE)
+        ink.round(c, right, ink.dp(4f), ink.palette.LANE)
         val used = Pcm.stored(s.nes)
         val over = used > Pcm.MEMORY
         ink.label(c, ink.fit("PCM · ${Pcm.kb(used)} of ${Pcm.kb(Pcm.MEMORY)}", right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH,
-            if (over) Palette.ERROR else Palette.DIM, size = small)
+            if (over) ink.palette.ERROR else ink.palette.DIM, size = small)
         val barL = right.left + right.width() * 0.64f
         val barR = right.right - ink.unit * 0.5f
         val barY = right.top + titleH * 0.42f
-        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
-        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / Pcm.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), ink.palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / Pcm.MEMORY), barY + ink.dp(5f), if (over) ink.palette.ERROR else col)
 
         val lineH = ink.unit * 1.35f
         addRect = Rect(right.left, right.bottom - lineH - ink.unit * 0.2f, right.right, right.bottom - ink.unit * 0.2f)
@@ -885,30 +885,30 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - sampleRows + 1), st.dpcmSample.coerceAtLeast(0))
         sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - sampleRows))
         val keyed = ins.pcm[st.dpcmKey]?.sample ?: -1
-        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, ink.palette.FAINT, size = small)
         for (i in sampleScroll until minOf(samples.size, sampleScroll + sampleRows)) {
             val sample = samples[i]
             val y = sampleRect.top + (i - sampleScroll) * sampleRowH
             val on = i == st.dpcmSample
-            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, Palette.CURSOR_FILL)
-            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else Palette.FAINT, i == keyed, small)
+            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, ink.palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else ink.palette.FAINT, i == keyed, small)
             val size = "${pcmSeconds(sample)} · ${Pcm.rateText(sample.rate.toDouble())}"
             ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, right.width() - ink.unit * 2.6f - ink.labelWidth(size, small) - ink.unit), right.left + ink.unit * 2.2f, y, sampleRowH,
-                if (on) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
             if (on && row == Row.PCM_SAMPLES) ink.outline(c, Rect(right.left + 2, y + 1, right.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
 
         // the selected sample: waveform with its loop start, name, loop start
         val sample = samples.getOrNull(st.dpcmSample)
-        ink.rect(c, waveRect, Palette.BG)
+        ink.rect(c, waveRect, ink.palette.BG)
         if (sample != null && sample.data.size > 0 && waveRect.width() > 4f && waveRect.height() > 4f) {
             val data = sample.data
             val columns = maxOf(1, waveRect.width().toInt() / 2)
             val per = data.size.toFloat() / columns
             val cw = waveRect.width() / columns
             val mid = waveRect.top + waveRect.height() / 2
-            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, ink.palette.RULE, ink.dp(1f))
             for (k in 0 until columns) {
                 val a = (k * per).toInt().coerceIn(0, data.size - 1)
                 val b = ((k + 1) * per).toInt().coerceIn(a + 1, data.size)
@@ -924,18 +924,18 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
             if (sample.loopStart > 0) {
                 val lx = waveRect.left + waveRect.width() * sample.loopStart / data.size
-                ink.line(c, lx, waveRect.top, lx, waveRect.bottom, Palette.PLAYHEAD, ink.dp(2f))
+                ink.line(c, lx, waveRect.top, lx, waveRect.bottom, ink.palette.PLAYHEAD, ink.dp(2f))
             }
-            ink.label(c, "${data.size} B", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+            ink.label(c, "${data.size} B", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         }
         val vx = right.left + ink.unit * 4.4f
         fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
             val sel = row == which
             val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
-            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
-            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            if (sel) ink.rect(c, rr, ink.palette.CURSOR_FILL)
+            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) ink.palette.TEXT else ink.palette.DIM, size = small)
             ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small, bold = sel), vx, y, lineH,
-                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+                if (off) ink.palette.FAINT else if (sel) ink.palette.TEXT else ink.palette.DIM, sel, small)
             if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
         }
         boxRow(nameY, Row.PCM_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)
@@ -987,14 +987,14 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
         // RAM map
         val mapH = ink.unit * 1.6f
-        ink.label(c, "RAM", r.left, y, mapH, Palette.DIM, size = small)
+        ink.label(c, "RAM", r.left, y, mapH, ink.palette.DIM, size = small)
         val map = Rect(r.left + ink.unit * 2.6f, y + ink.dp(2f), r.right, y + mapH - ink.dp(2f))
-        ink.rect(c, map, Palette.LANE)
+        ink.rect(c, map, ink.palette.LANE)
         fun xOf(at: Int) = map.left + map.width() * at / NesRules.N163_RAM_SAMPLES.toFloat()
         val regs = Rect(xOf(ram), map.top, map.right, map.bottom)
-        ink.rect(c, regs, Palette.alpha(Palette.FAINT, 120))
+        ink.rect(c, regs, Palette.alpha(ink.palette.FAINT, 120))
         if (regs.width() > ink.labelWidth("registers", tiny) + ink.dp(4f)) {
-            ink.label(c, "registers", regs.centerX(), map.top, map.height(), Palette.TEXT, size = tiny, align = Align.CENTER)
+            ink.label(c, "registers", regs.centerX(), map.top, map.height(), ink.palette.TEXT, size = tiny, align = Align.CENTER)
         }
         val conflicts = NesInstrumentView.n163Overlaps(s, st.instrument).toSet()
         val others = s.nes.instruments.withIndex()
@@ -1009,7 +1009,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             laneEnds[lane] = maxOf(laneEnds[lane], o.position + o.size - 1)
             val ly = half + lane * laneH
             ink.rect(c, xOf(o.position), ly + ink.dp(1f), maxOf(xOf(o.position + o.size), xOf(o.position) + ink.dp(2f)), ly + laneH,
-                if (index + 1 in conflicts) Palette.ERROR else Palette.alpha(Palette.DIM, 160))
+                if (index + 1 in conflicts) ink.palette.ERROR else Palette.alpha(ink.palette.DIM, 160))
         }
         val mine = Rect(xOf(w.position), map.top, maxOf(xOf(w.position + w.size), xOf(w.position) + ink.dp(2f)), half)
         ink.rect(c, mine, col)
@@ -1023,7 +1023,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             others.isEmpty() -> "No other N163 sound uses the RAM"
             else -> "No overlap with the other ${others.size} N163 sound${if (others.size == 1) "" else "s"}"
         }
-        ink.label(c, ink.fit(overlapText, r.width(), small), r.left, y, lineH, if (conflicts.isNotEmpty()) Palette.ERROR else Palette.FAINT, size = small)
+        ink.label(c, ink.fit(overlapText, r.width(), small), r.left, y, lineH, if (conflicts.isNotEmpty()) ink.palette.ERROR else ink.palette.FAINT, size = small)
         y += lineH
         val seq = NesInstrumentView.waveSequence(s, st) ?: return
         drawSequence(c, Rect(r.left, y, r.right, r.bottom), seq, row, col)
@@ -1057,12 +1057,12 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val bx = seq.left + (i - thumbScroll) * boxW
             val box = Rect(bx + ink.dp(1f), seq.top + markH + ink.dp(1f), bx + boxW - ink.dp(1f), seq.bottom)
             val on = i == shown
-            if (w.loop in 0..i && i < loopEnd) ink.rect(c, bx, seq.top, bx + boxW, seq.top + markH, Palette.LISTEN)
-            ink.rect(c, box, if (on) Palette.CURSOR_FILL else Palette.BG)
+            if (w.loop in 0..i && i < loopEnd) ink.rect(c, bx, seq.top, bx + boxW, seq.top + markH, ink.palette.LISTEN)
+            ink.rect(c, box, if (on) ink.palette.CURSOR_FILL else ink.palette.BG)
             miniWave(c, box, w.waves[i], levels, if (on) col else Palette.alpha(col, 140))
-            if (i == w.release) ink.line(c, bx, seq.top, bx, seq.bottom, Palette.WRITE, ink.dp(2f))
-            ink.mono(c, (i + 1).toString(), box.left + ink.dp(2f), box.top, tiny * 1.3f, if (on) Palette.TEXT else Palette.FAINT, size = tiny)
-            ink.label(c, "×${w.repeat.getOrElse(i) { 1 }}", box.right - ink.dp(2f), box.bottom - tiny * 1.3f, tiny * 1.3f, Palette.FAINT,
+            if (i == w.release) ink.line(c, bx, seq.top, bx, seq.bottom, ink.palette.WRITE, ink.dp(2f))
+            ink.mono(c, (i + 1).toString(), box.left + ink.dp(2f), box.top, tiny * 1.3f, if (on) ink.palette.TEXT else ink.palette.FAINT, size = tiny)
+            ink.label(c, "×${w.repeat.getOrElse(i) { 1 }}", box.right - ink.dp(2f), box.bottom - tiny * 1.3f, tiny * 1.3f, ink.palette.FAINT,
                 size = tiny, align = Align.RIGHT)
             if (on) {
                 val focus = row == Row.WAVE_INDEX || row == Row.WAVE_REPEAT
@@ -1075,12 +1075,12 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         // the shown wave's samples
         val box = Rect(r.left, y, r.right, r.bottom)
         if (box.height() < ink.unit * 3f) { waveRect = Rect(); return }
-        ink.round(c, box, ink.dp(4f), Palette.LANE)
+        ink.round(c, box, ink.dp(4f), ink.palette.LANE)
         val focused = row == Row.WAVE_SAMPLES
         val samples = w.waves[shown]
         val title = "Wave ${shown + 1} of $count · sample $sample of ${w.size}: ${samples[sample]}"
         ink.label(c, ink.fit(title, box.width() - ink.unit, small), box.left + ink.unit * 0.5f, box.top, ink.unit * 1.3f,
-            if (focused) Palette.DIM else Palette.FAINT, size = small)
+            if (focused) ink.palette.DIM else ink.palette.FAINT, size = small)
         val labelH = ink.unit
         val inner = Rect(box.left + ink.unit * 1.6f, box.top + ink.unit * 1.4f, box.right - ink.unit * 0.5f, box.bottom - ink.unit * 0.2f - labelH)
         if (inner.height() <= 0f || inner.width() <= 0f) { waveRect = Rect(); return }
@@ -1089,10 +1089,10 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val cellH = inner.height() / levels
         for (level in listOf(w.top, w.centre, 0)) {
             val yl = inner.bottom - (level + 0.5f) * cellH
-            ink.mono(c, level.toString(), inner.left - ink.unit * 0.3f, yl - tiny, tiny * 2, Palette.FAINT, size = tiny, align = Align.RIGHT)
+            ink.mono(c, level.toString(), inner.left - ink.unit * 0.3f, yl - tiny, tiny * 2, ink.palette.FAINT, size = tiny, align = Align.RIGHT)
         }
         val centre = inner.bottom - w.centre * cellH
-        ink.line(c, inner.left, centre, inner.right, centre, Palette.BAR, ink.dp(1f))
+        ink.line(c, inner.left, centre, inner.right, centre, ink.palette.BAR, ink.dp(1f))
         val gap = if (waveCellW >= ink.dp(4f)) maxOf(1f, waveCellW * 0.12f) else 0f
         val barColor = Palette.alpha(col, 170)
         for (j in 0 until w.size) {
@@ -1101,17 +1101,17 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val top = if (v >= w.centre) inner.bottom - (v + 1) * cellH else centre
             val bottom = if (v >= w.centre) centre else inner.bottom - v * cellH
             val on = j == sample && focused
-            ink.rect(c, x + gap, top, maxOf(x + gap + 1f, x + waveCellW - gap), bottom, if (on) (if (ctl.editHeld) Palette.WRITE else col) else barColor)
+            ink.rect(c, x + gap, top, maxOf(x + gap + 1f, x + waveCellW - gap), bottom, if (on) (if (ctl.editHeld) ink.palette.WRITE else col) else barColor)
         }
         val cx = inner.left + sample * waveCellW
-        ink.outline(c, Rect(cx, inner.top, cx + maxOf(waveCellW, ink.dp(2f)), inner.bottom), if (focused) cursorColor() else Palette.FAINT,
+        ink.outline(c, Rect(cx, inner.top, cx + maxOf(waveCellW, ink.dp(2f)), inner.bottom), if (focused) cursorColor() else ink.palette.FAINT,
             ink.dp(if (focused) 2f else 1f), ink.dp(2f))
         var every = 1
         while (every * waveCellW < ink.unit * 1.4f && every < w.size) every *= 2
         for (j in 0 until w.size) {
             if (j % every != 0 && j != sample) continue
             ink.mono(c, j.toString(), inner.left + (j + 0.5f) * waveCellW, inner.bottom + ink.dp(2f), labelH,
-                if (j == sample) Palette.TEXT else Palette.FAINT, size = tiny, align = Align.CENTER)
+                if (j == sample) ink.palette.TEXT else ink.palette.FAINT, size = tiny, align = Align.CENTER)
         }
     }
 
@@ -1145,11 +1145,11 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val small = ink.unit * 0.8f
         val tiny = ink.unit * 0.65f
         if (r.height() < ink.unit * 4f) { modRect = Rect(); return }
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val focused = row == Row.MOD_TABLE
         val at = NesInstrumentView.modIndex(st)
         ink.label(c, ink.fit(NesInstrumentView.modEntryText(f, at), r.width() - ink.unit, small), r.left + ink.unit * 0.5f, r.top,
-            ink.unit * 1.3f, if (focused) Palette.DIM else Palette.FAINT, size = small)
+            ink.unit * 1.3f, if (focused) ink.palette.DIM else ink.palette.FAINT, size = small)
         val labelH = ink.unit
         val legendH = ink.unit * 1.1f
         val inner = Rect(r.left + ink.unit * 2.2f, r.top + ink.unit * 1.4f, r.right - ink.unit * 0.5f,
@@ -1163,8 +1163,8 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         fun yOf(value: Int) = inner.bottom - inner.height() * (value - lo) / (hi - lo).toFloat()
         for (value in listOf(hi, 0, lo)) {
             val yv = yOf(value)
-            ink.line(c, inner.left, yv, inner.right, yv, if (value == 0) Palette.BAR else Palette.RULE, ink.dp(1f))
-            ink.mono(c, value.toString(), inner.left - ink.unit * 0.3f, yv - tiny, tiny * 2, Palette.FAINT, size = tiny, align = Align.RIGHT)
+            ink.line(c, inner.left, yv, inner.right, yv, if (value == 0) ink.palette.BAR else ink.palette.RULE, ink.dp(1f))
+            ink.mono(c, value.toString(), inner.left - ink.unit * 0.3f, yv - tiny, tiny * 2, ink.palette.FAINT, size = tiny, align = Align.RIGHT)
         }
         val zero = yOf(0)
         val gap = maxOf(1f, modCellW * 0.12f)
@@ -1176,7 +1176,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val top = minOf(zero, yv)
             val bottom = maxOf(maxOf(zero, yv), top + ink.dp(1f))
             val on = i == at && focused
-            ink.rect(c, x + gap, top, x + modCellW - gap, bottom, if (on) (if (ctl.editHeld) Palette.WRITE else col) else barColor)
+            ink.rect(c, x + gap, top, x + modCellW - gap, bottom, if (on) (if (ctl.editHeld) ink.palette.WRITE else col) else barColor)
         }
         // What the chip plays: the counter after each entry, joined.
         val curve = f.modCurve
@@ -1186,23 +1186,23 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (i in 0 until size) {
             val cx = inner.left + (i + 0.5f) * modCellW
             val cy = yOf(curve[i])
-            if (i > 0) ink.line(c, px, py, cx, cy, Palette.LISTEN, ink.dp(1.5f))
-            ink.rect(c, cx - dot, cy - dot, cx + dot, cy + dot, Palette.LISTEN)
+            if (i > 0) ink.line(c, px, py, cx, cy, ink.palette.LISTEN, ink.dp(1.5f))
+            ink.rect(c, cx - dot, cy - dot, cx + dot, cy + dot, ink.palette.LISTEN)
             px = cx
             py = cy
         }
         val cx = inner.left + at * modCellW
-        ink.outline(c, Rect(cx, inner.top, cx + modCellW, inner.bottom), if (focused) cursorColor() else Palette.FAINT,
+        ink.outline(c, Rect(cx, inner.top, cx + modCellW, inner.bottom), if (focused) cursorColor() else ink.palette.FAINT,
             ink.dp(if (focused) 2f else 1f), ink.dp(2f))
         val every = if (modCellW >= ink.unit * 1.4f) 1 else if (modCellW >= ink.unit * 0.7f) 2 else 4
         for (i in 0 until size) {
             if (i % every != 0 && i != at) continue
             ink.mono(c, i.toString(), inner.left + (i + 0.5f) * modCellW, inner.bottom + ink.dp(2f), labelH,
-                if (i == at) Palette.TEXT else Palette.FAINT, size = tiny, align = Align.CENTER)
+                if (i == at) ink.palette.TEXT else ink.palette.FAINT, size = tiny, align = Align.CENTER)
         }
         val legend = "Bars: FamiStudio's targets · line: what the chip plays (steps of 0, ±2, ±4, ±8 or a reset)" +
             if (f.modDepth == 0) " · depth 0: off" else ""
-        ink.label(c, ink.fit(legend, r.width() - ink.unit, tiny), r.left + ink.unit * 0.5f, inner.bottom + labelH, legendH, Palette.FAINT, size = tiny)
+        ink.label(c, ink.fit(legend, r.width() - ink.unit, tiny), r.left + ink.unit * 0.5f, inner.bottom + labelH, legendH, ink.palette.FAINT, size = tiny)
     }
 
     // ---- touch: slots, tabs, drawing on the steps, the waves and the modulation table ----------------------------------

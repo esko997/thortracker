@@ -43,7 +43,7 @@ interface MenuHost {
     val displayCount: Int
     val keymap: Keymap
 
-    /** Re-reads panes and session for every display (and saves the pane layout). */
+    /** Re-reads panes, session and workspace palette for every display, and saves workspace preferences. */
     fun refresh()
     fun status(message: String)
     fun error(message: String)
@@ -215,9 +215,19 @@ class AppMenus(
             })
             add("Tuning" to ::tuningMenu)
             add("Controls" to ::showControls)
+            add("Colour theme" to ::colourTheme)
             add("Help" to { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; host.refresh() })
             addAll(host.extraMenuItems())
         })
+    }
+
+    fun colourTheme() {
+        menu("Colour theme", Palette.all.map { palette ->
+            palette.name to {
+                panes.palette = palette
+                host.refresh()
+            }
+        }, Palette.all.indexOf(panes.palette))
     }
 
     // ---- controls -------------------------------------------------------------------------------

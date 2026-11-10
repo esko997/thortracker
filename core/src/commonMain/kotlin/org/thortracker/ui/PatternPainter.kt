@@ -128,11 +128,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val x = laneLeft(ch)
             val laneW = laneWidth(ch)
             val headerW = laneW - (if (ch == lastLane) rightScrollW else 0f)
-            val col = Palette.channel(ch)
+            val col = ink.palette.channel(ch)
             val heard = if (ch != auditionChannel) 0f else if (auditionLit) 1f else motion.fade(auditionEnd, 320)
             val lamp = maxOf(playLamp(ch), heard)
-            ink.rect(c, x, laneTop, x + laneW, gridTop, Palette.mix(Palette.BG, col, 0.10f + 0.12f * lamp))
-            ink.rect(c, x, laneTop, x + laneW, laneTop + ink.dp(3f), if (lamp > 0f) Palette.mix(col, Palette.TEXT, 0.6f * lamp) else col)
+            ink.rect(c, x, laneTop, x + laneW, gridTop, Palette.mix(ink.palette.BG, col, 0.10f + 0.12f * lamp))
+            ink.rect(c, x, laneTop, x + laneW, laneTop + ink.dp(3f), if (lamp > 0f) Palette.mix(col, ink.palette.TEXT, 0.6f * lamp) else col)
             if (ctl.channelCollapsed(ch)) {
                 // The one-based channel number stays unambiguous even when names cannot fit; + means expandable.
                 ink.mono(c, (ch + 1).toString().padStart(2, '0') + "+", x + cw * 0.6f, laneTop,
@@ -150,12 +150,12 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val nw = ink.labelWidth(name, ink.unit, true)
             if (tag != null) {
                 val tr = Rect(x + headerW - tagW, laneTop + laneHeaderH * 0.2f, x + headerW - cw * 0.4f, laneTop + laneHeaderH * 0.8f)
-                ink.round(c, tr, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 60))
-                ink.label(c, tag, tr.centerX(), tr.top, tr.height(), Palette.PLAYHEAD, true, ink.unit * 0.7f, Align.CENTER)
+                ink.round(c, tr, ink.dp(3f), Palette.alpha(ink.palette.PLAYHEAD, 60))
+                ink.label(c, tag, tr.centerX(), tr.top, tr.height(), ink.palette.PLAYHEAD, true, ink.unit * 0.7f, Align.CENTER)
             }
             val penW = headerW - nw - cw * 2f - tagW
             if (penW >= ink.labelWidth("…", ink.unit * 0.8f)) {
-                ink.label(c, ink.fit("${hex2(pen)} $penName", penW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, Palette.DIM, size = ink.unit * 0.8f)
+                ink.label(c, ink.fit("${hex2(pen)} $penName", penW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, ink.palette.DIM, size = ink.unit * 0.8f)
             }
         }
         if (variableLanes) drawLaneScroll(c, area, laneHeaderH, rightScrollLabel, rightScrollW)
@@ -164,27 +164,27 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         for (r in first..last) {
             val y = gridTop + (r - first) * rowH
             val bg = when {
-                r % 16 == 0 -> Palette.BAR
-                r % 4 == 0 -> Palette.BEAT
-                else -> Palette.BG
+                r % 16 == 0 -> ink.palette.BAR
+                r % 4 == 0 -> ink.palette.BEAT
+                else -> ink.palette.BG
             }
             ink.rect(c, area.left, y, gridRight, y + rowH, bg)
-            val rc = if (r % 4 == 0) Palette.TEXT else Palette.FAINT
+            val rc = if (r % 4 == 0) ink.palette.TEXT else ink.palette.FAINT
             ink.mono(c, hex2(r), area.left + cw * 0.5f, y, rowH, rc, r % 16 == 0)
         }
         for (ch in firstLane..lastLane) {
             val x = laneLeft(ch)
-            ink.line(c, x, laneTop, x, gridTop + (last - first + 1) * rowH, Palette.RULE, ink.dp(1f))
+            ink.line(c, x, laneTop, x, gridTop + (last - first + 1) * rowH, ink.palette.RULE, ink.dp(1f))
         }
 
         // playhead band
         if (playHere && v.playback.row in first..last) {
             val y = gridTop + (v.playback.row - first) * rowH
-            ink.rect(c, area.left, y, gridRight, y + rowH, Palette.alpha(Palette.PLAYHEAD, 54))
-            ink.rect(c, area.left, y, area.left + ink.dp(4f), y + rowH, Palette.PLAYHEAD)
+            ink.rect(c, area.left, y, gridRight, y + rowH, Palette.alpha(ink.palette.PLAYHEAD, 54))
+            ink.rect(c, area.left, y, area.left + ink.dp(4f), y + rowH, ink.palette.PLAYHEAD)
         } else if (samePatternPlaying && v.playback.row in first..last) {
             val y = gridTop + (v.playback.row - first) * rowH
-            ink.outline(c, Rect(area.left + 1, y + 1, gridRight - 1, y + rowH - 1), Palette.alpha(Palette.PLAYHEAD, 120), ink.dp(1f))
+            ink.outline(c, Rect(area.left + 1, y + 1, gridRight - 1, y + rowH - 1), Palette.alpha(ink.palette.PLAYHEAD, 120), ink.dp(1f))
         }
 
         // mark
@@ -196,15 +196,15 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val c1 = minOf(b.lastChannel, lastLane)
             if (r0 <= r1 && c0 <= c1) {
                 val rect = Rect(laneLeft(c0), gridTop + (r0 - first) * rowH, laneRight(c1), gridTop + (r1 - first + 1) * rowH)
-                ink.rect(c, rect, Palette.alpha(Palette.LISTEN, 34))
-                ink.outline(c, rect, Palette.alpha(Palette.LISTEN, 160), ink.dp(1.5f))
+                ink.rect(c, rect, Palette.alpha(ink.palette.LISTEN, 34))
+                ink.outline(c, rect, Palette.alpha(ink.palette.LISTEN, 160), ink.dp(1.5f))
             }
         }
 
         // cursor row band
         if (st.row in first..last) {
             val y = gridTop + (st.row - first) * rowH
-            ink.rect(c, gridLeft, y, gridRight, y + rowH, Palette.alpha(Palette.TEXT, 14))
+            ink.rect(c, gridLeft, y, gridRight, y + rowH, Palette.alpha(ink.palette.TEXT, 14))
         }
 
         // edit afterglow: the cells the last change touched, behind their text
@@ -214,7 +214,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val r1 = minOf(flashRow1, last)
             if (r0 <= r1) for (ch in maxOf(flashCh0, firstLane)..minOf(flashCh1, lastLane)) {
                 val x = laneLeft(ch)
-                ink.rect(c, x + 1, gridTop + (r0 - first) * rowH, x + laneWidth(ch), gridTop + (r1 - first + 1) * rowH, Palette.alpha(Palette.channel(ch), (glow * 92).toInt()))
+                ink.rect(c, x + 1, gridTop + (r0 - first) * rowH, x + laneWidth(ch), gridTop + (r1 - first + 1) * rowH, Palette.alpha(ink.palette.channel(ch), (glow * 92).toInt()))
             }
         }
 
@@ -223,7 +223,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val zeroColumn = ctl.cursorColumn()
         for (ch in firstLane..lastLane) {
             val x = laneLeft(ch) + cw * 0.7f
-            val col = Palette.channel(ch)
+            val col = ink.palette.channel(ch)
             val track = p.tracks[ch]
             // Rows still sounding after the current one: a note sounds until the next note or OFF, unless the system
             // says it ends by itself (a one-shot sample).
@@ -250,15 +250,15 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         if (st.row in first..last && st.channel in firstLane..lastLane) {
             val fr = fieldRect(st.channel, st.field, st.row - first)
             val outline = when {
-                ctl.editHeld -> Palette.WRITE
-                ctl.auditionHeld -> Palette.LISTEN
-                v.controllerFocused -> Palette.TEXT
-                else -> Palette.DIM
+                ctl.editHeld -> ink.palette.WRITE
+                ctl.auditionHeld -> ink.palette.LISTEN
+                v.controllerFocused -> ink.palette.FOCUS
+                else -> ink.palette.DIM
             }
             ink.round(c, fr, ink.dp(3f), Palette.alpha(outline, 46))
             ink.outline(c, fr, outline, if (v.controllerFocused) ink.dp(2f) else ink.dp(1f), ink.dp(3f))
             val cell = p.tracks[st.channel][st.row]
-            drawCell(c, cell, laneLeft(st.channel) + cw * 0.7f, gridTop + (st.row - first) * rowH, Palette.channel(st.channel), st.channel, if (zeroHere) zeroColumn else -1)
+            drawCell(c, cell, laneLeft(st.channel) + cw * 0.7f, gridTop + (st.row - first) * rowH, ink.palette.channel(st.channel), st.channel, if (zeroHere) zeroColumn else -1)
         }
 
         // inspector
@@ -360,16 +360,16 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val size = ink.unit * 0.75f
         if (firstLane > 0) {
             scrollLeft.set(area.left, laneTop, gridLeft, laneTop + h)
-            ink.rect(c, scrollLeft, Palette.alpha(Palette.PLAYHEAD, 40))
-            ink.label(c, "◀$firstLane", scrollLeft.centerX(), laneTop, h, Palette.PLAYHEAD, true, size, Align.CENTER)
+            ink.rect(c, scrollLeft, Palette.alpha(ink.palette.PLAYHEAD, 40))
+            ink.label(c, "◀$firstLane", scrollLeft.centerX(), laneTop, h, ink.palette.PLAYHEAD, true, size, Align.CENTER)
         }
         if (rightLabel.isNotEmpty()) {
             val right = laneRight(lastLane)
             scrollRight.set(right - rightWidth,
                 laneTop + h * if (ctl.channelCollapsed(lastLane)) 0.65f else 0.1f,
                 right - cw * 0.2f, laneTop + h * if (ctl.channelCollapsed(lastLane)) 1f else 0.9f)
-            ink.round(c, scrollRight, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 90))
-            ink.label(c, rightLabel, scrollRight.centerX(), scrollRight.top, scrollRight.height(), Palette.TEXT, true,
+            ink.round(c, scrollRight, ink.dp(3f), Palette.alpha(ink.palette.PLAYHEAD, 90))
+            ink.label(c, rightLabel, scrollRight.centerX(), scrollRight.top, scrollRight.height(), ink.palette.TEXT, true,
                 if (ctl.channelCollapsed(lastLane)) size * 0.7f else size, Align.CENTER)
         }
     }
@@ -448,10 +448,10 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     /** A note a Fit moved: an amber field and an up/down tick at its right edge, until the cells are edited. */
     private fun drawFitMark(c: Surface, ch: Int, visRow: Int, up: Boolean) {
         val f = fieldRect(ch, 0, visRow)
-        ink.round(c, f, ink.dp(3f), Palette.alpha(Palette.PLAYHEAD, 64))
+        ink.round(c, f, ink.dp(3f), Palette.alpha(ink.palette.PLAYHEAD, 64))
         if (ctl.channelCollapsed(ch)) return // keep the fitted-note highlight, without a tick in the next lane
         val size = rowH * 0.62f
-        ink.label(c, if (up) "▴" else "▾", f.right + cw * 0.05f, f.top, f.height(), Palette.PLAYHEAD, true, size)
+        ink.label(c, if (up) "▴" else "▾", f.right + cw * 0.05f, f.top, f.height(), ink.palette.PLAYHEAD, true, size)
     }
 
     /** Orders cells by sounding pitch: note, then its fine pitch (another effect plays the plain note). */
@@ -477,18 +477,18 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         }
         val noteColor = when {
             cell.note >= 0 -> col
-            cell.note == Cell.CUT || cell.note == song.system.keyOn -> Palette.WRITE
-            else -> Palette.FAINT
+            cell.note == Cell.CUT || cell.note == song.system.keyOn -> ink.palette.WRITE
+            else -> ink.palette.FAINT
         }
         ink.mono(c, noteText, x, y, rowH, noteColor, cell.note >= 0)
         if (ctl.channelCollapsed(ch)) {
-            if (cell.hasAnyEffect) ink.rect(c, x + cw * 3.1f, y + rowH * 0.4f, x + cw * 3.3f, y + rowH * 0.6f, Palette.PLAYHEAD)
+            if (cell.hasAnyEffect) ink.rect(c, x + cw * 3.1f, y + rowH * 0.4f, x + cw * 3.3f, y + rowH * 0.6f, ink.palette.PLAYHEAD)
             if ((cell.note != Cell.EMPTY || cell.instrument != 0 || cell.hasAnyEffect) && hasProblem(ch, cell)) {
-                ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * 3.2f, y + rowH - ink.dp(1f), Palette.ERROR)
+                ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * 3.2f, y + rowH - ink.dp(1f), ink.palette.ERROR)
             }
             return
         }
-        ink.mono(c, if (cell.instrument > 0) hex2(cell.instrument) else "··", x + cw * 4, y, rowH, if (cell.instrument > 0) Palette.TEXT else Palette.FAINT)
+        ink.mono(c, if (cell.instrument > 0) hex2(cell.instrument) else "··", x + cw * 4, y, rowH, if (cell.instrument > 0) ink.palette.TEXT else ink.palette.FAINT)
         val columns = if (multi) ctl.shownColumns(ch) else 1
         for (k in 0 until columns) {
             val code = cell.effectCode(k)
@@ -496,15 +496,15 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val hasFx = code != 0 || param != 0
             val shown = hasFx || zero == k
             val fx = x + cw * (7 + 4 * k)
-            ink.mono(c, if (shown) EffectSpec.textOf(code) else "·", fx, y, rowH, if (shown) Palette.PLAYHEAD else Palette.FAINT, hasFx)
-            ink.mono(c, if (shown) hex2(param) else "··", x + cw * (8 + 4 * k), y, rowH, if (shown) Palette.DIM else Palette.FAINT)
+            ink.mono(c, if (shown) EffectSpec.textOf(code) else "·", fx, y, rowH, if (shown) ink.palette.PLAYHEAD else ink.palette.FAINT, hasFx)
+            ink.mono(c, if (shown) hex2(param) else "··", x + cw * (8 + 4 * k), y, rowH, if (shown) ink.palette.DIM else ink.palette.FAINT)
         }
         // Effects in hidden columns still play: a dot after the last shown column says so.
         if (multi && cell.lastEffectColumn >= columns) {
-            ink.rect(c, x + cw * (6 + 4 * columns) - ink.dp(2f), y + rowH * 0.4f, x + cw * (6 + 4 * columns) + ink.dp(1f), y + rowH * 0.6f, Palette.PLAYHEAD)
+            ink.rect(c, x + cw * (6 + 4 * columns) - ink.dp(2f), y + rowH * 0.4f, x + cw * (6 + 4 * columns) + ink.dp(1f), y + rowH * 0.6f, ink.palette.PLAYHEAD)
         }
         if ((cell.note != Cell.EMPTY || cell.instrument != 0 || cell.hasAnyEffect) && hasProblem(ch, cell)) {
-            ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * (if (columns == 1) 10.2f else 6.2f + 4 * columns), y + rowH - ink.dp(1f), Palette.ERROR)
+            ink.rect(c, x - cw * 0.2f, y + rowH - ink.dp(3f), x + cw * (if (columns == 1) 10.2f else 6.2f + 4 * columns), y + rowH - ink.dp(1f), ink.palette.ERROR)
         }
     }
 
@@ -543,8 +543,8 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val w = ink.labelWidth(text, size) + ink.unit
             val r = Rect(x - w, area.top + h * 0.18f, x, area.top + h * 0.82f)
             val on = (id == 0 && st.followPlayback) || (id == 3 && st.scalePanel)
-            ink.round(c, r, ink.dp(4f), if (on) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.RULE)
-            ink.label(c, text, r.centerX(), area.top, h, if (on) Palette.PLAYHEAD else Palette.DIM, size = size, align = Align.CENTER)
+            ink.round(c, r, ink.dp(4f), if (on) Palette.alpha(ink.palette.PLAYHEAD, 60) else ink.palette.RULE)
+            ink.label(c, text, r.centerX(), area.top, h, if (on) ink.palette.PLAYHEAD else ink.palette.DIM, size = size, align = Align.CENTER)
             headerChips += r to id
             x -= w + ink.unit * 0.4f
         }
@@ -558,15 +558,15 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
     private fun drawInspector(c: Surface, r: Rect) {
         val s = song
-        ink.rect(c, r, Palette.LANE)
-        ink.line(c, r.left, r.top, r.left, r.bottom, Palette.RULE, ink.dp(1f))
+        ink.rect(c, r, ink.palette.LANE)
+        ink.line(c, r.left, r.top, r.left, r.bottom, ink.palette.RULE, ink.dp(1f))
         val pad = ink.unit * 0.7f
         val x = r.left + pad
         val w = r.width() - pad * 2
         var y = r.top + ink.unit * 0.4f
         val line = ink.unit * 1.35f
         val ch = st.channel
-        val col = Palette.channel(ch)
+        val col = ink.palette.channel(ch)
         val cell = s.cellAt(s.patternAt(st.order), ch, st.row)
         val system = s.system
         val bank = system.channels[ch].bank
@@ -596,7 +596,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             cell.note == system.keyOn -> "${system.noteName(cell.note)}: key on, the gate opens again (no new attack)"
             else -> "No note: the previous note keeps sounding"
         }
-        ink.label(c, ink.fit(noteLine, w), x, y, line, Palette.TEXT)
+        ink.label(c, ink.fit(noteLine, w), x, y, line, ink.palette.TEXT)
         y += line
         val shownSlot = if (cell.instrument > 0) cell.instrument else if (cell.note >= 0) 0 else ctl.pen(bank)
         val soundLine = when {
@@ -604,7 +604,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             cell.note >= 0 -> "No sound number: legato, changes pitch without restarting the sound"
             else -> "Pen sound ${hex2(ctl.pen(bank))} ${system.instrumentName(s, bank, ctl.pen(bank)) ?: ""}"
         }
-        ink.label(c, ink.fit(soundLine, w), x, y, line, Palette.DIM)
+        ink.label(c, ink.fit(soundLine, w), x, y, line, ink.palette.DIM)
         y += line
         val key = bank * 256 + shownSlot
         if (s !== summarySong || key != summaryKey) {
@@ -625,9 +625,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 for ((i, level) in shape.withIndex()) {
                     ink.rect(c, x + i * bw, top + h * (1 - level), x + (i + 1) * bw, top + h, col)
                 }
-                ink.label(c, ink.fit(summary, w - pw - ink.unit * 0.5f, small), x + pw + ink.unit * 0.5f, y, line, Palette.DIM, size = small)
+                ink.label(c, ink.fit(summary, w - pw - ink.unit * 0.5f, small), x + pw + ink.unit * 0.5f, y, line, ink.palette.DIM, size = small)
             } else {
-                ink.label(c, ink.fit(summary, w, small), x, y, line, Palette.DIM, size = small)
+                ink.label(c, ink.fit(summary, w, small), x, y, line, ink.palette.DIM, size = small)
             }
             y += line
         }
@@ -644,11 +644,11 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 val on = k == focus
                 val hidden = if (k >= ctl.shownColumns(ch)) " (hidden column)" else ""
                 ink.label(c, ink.fit("${k + 1}: ${EffectSpec.charOf(code)}${hex2(param)} ${info?.name ?: ""}$hidden", w), x, y, line,
-                    if (on) Palette.PLAYHEAD else Palette.DIM, on)
+                    if (on) ink.palette.PLAYHEAD else ink.palette.DIM, on)
                 y += line
                 if (!on) continue
                 for (part in wrap(ctl.effectReading(ch, st.row, k, code, param), w, ink.unit * 0.85f)) {
-                    ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
+                    ink.label(c, part, x, y, line * 0.85f, ink.palette.DIM, size = ink.unit * 0.85f)
                     y += line * 0.85f
                 }
             }
@@ -656,36 +656,36 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         if (multi && cell.hasAnyEffect && !(st.field >= 2 && cursorEmpty)) Unit
         else if (!multi && cell.hasEffect) {
             val info = system.effects.firstOrNull { it.code == cell.effect }
-            ink.label(c, ink.fit("${EffectSpec.charOf(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, Palette.PLAYHEAD, true)
+            ink.label(c, ink.fit("${EffectSpec.charOf(cell.effect)}${hex2(cell.param)} ${info?.name ?: ""}", w), x, y, line, ink.palette.PLAYHEAD, true)
             y += line
             for (part in wrap(system.describeEffect(s, ch, cell.effect, cell.param), w, ink.unit * 0.85f)) {
-                ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
+                ink.label(c, part, x, y, line * 0.85f, ink.palette.DIM, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
         } else if (ctl.chosenArpeggio()) {
-            ink.label(c, ink.fit("000 Arpeggio, no value yet", w), x, y, line, Palette.PLAYHEAD, true)
+            ink.label(c, ink.fit("000 Arpeggio, no value yet", w), x, y, line, ink.palette.PLAYHEAD, true)
             y += line
             val text = "Set the value xy: the note alternates with note+x and note+y semitones (047 = major chord). " +
                 "000 itself plays no effect."
             for (part in wrap(text, w, ink.unit * 0.85f)) {
-                ink.label(c, part, x, y, line * 0.85f, Palette.DIM, size = ink.unit * 0.85f)
+                ink.label(c, part, x, y, line * 0.85f, ink.palette.DIM, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
         } else if (st.field >= 2) {
             val info = system.effectsFor(ch)
-            ink.label(c, "Effects (hold ${v.keymap.label(Action.EDIT)} to pick)", x, y, line, Palette.DIM)
+            ink.label(c, "Effects (hold ${v.keymap.label(Action.EDIT)} to pick)", x, y, line, ink.palette.DIM)
             y += line
-            ink.label(c, "· No effect", x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
+            ink.label(c, "· No effect", x, y, line * 0.8f, ink.palette.FAINT, size = ink.unit * 0.8f)
             y += line * 0.8f
             for (e in info) {
                 if (y > r.top + r.height() * 0.6f) break
-                ink.label(c, ink.fit("${e.char} ${e.name}  ${e.param}", w), x, y, line * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
+                ink.label(c, ink.fit("${e.char} ${e.name}  ${e.param}", w), x, y, line * 0.8f, ink.palette.FAINT, size = ink.unit * 0.8f)
                 y += line * 0.8f
             }
         }
         s.system.cellProblem(s, ch, cell)?.let { problem ->
             for (part in wrap(problem, w, ink.unit * 0.85f)) {
-                ink.label(c, part, x, y, line * 0.85f, Palette.ERROR, size = ink.unit * 0.85f)
+                ink.label(c, part, x, y, line * 0.85f, ink.palette.ERROR, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
         }
@@ -693,19 +693,19 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val shared = if (playing) system.sharedState(s, v.playback.order, v.playback.row) else system.sharedState(s, st.order, st.row)
         shared?.lines?.forEach { text ->
             for (part in wrap(text, w, ink.unit * 0.85f)) {
-                ink.label(c, part, x, y, line * 0.85f, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                ink.label(c, part, x, y, line * 0.85f, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                 y += line * 0.85f
             }
         }
         val clip = session.clipboard
         if (clip is org.thortracker.editor.Clip.Cells) {
-            ink.label(c, "Clipboard ${clip.width}×${clip.height} cells", x, y, line, Palette.FAINT, size = ink.unit * 0.8f)
+            ink.label(c, "Clipboard ${clip.width}×${clip.height} cells", x, y, line, ink.palette.FAINT, size = ink.unit * 0.8f)
             y += line
         }
 
         // order list
         y += ink.unit * 0.4f
-        ink.line(c, r.left, y, r.right, y, Palette.RULE, ink.dp(1f))
+        ink.line(c, r.left, y, r.right, y, ink.palette.RULE, ink.dp(1f))
         orderListTop = y + ink.unit * 0.3f
         orderRowH = ink.unit * 1.3f
         val n = maxOf(1, ((r.bottom - orderListTop) / orderRowH).toInt())
@@ -722,14 +722,14 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             val oy = orderListTop + i * orderRowH
             val current = o == st.order
             val playingHere = v.playback.playing && v.playback.order == o
-            if (current) ink.rect(c, r.left, oy, r.right, oy + orderRowH, Palette.CURSOR_FILL)
-            if (playingHere) ink.rect(c, r.left, oy, r.left + ink.dp(4f), oy + orderRowH, Palette.PLAYHEAD)
+            if (current) ink.rect(c, r.left, oy, r.right, oy + orderRowH, ink.palette.CURSOR_FILL)
+            if (playingHere) ink.rect(c, r.left, oy, r.left + ink.dp(4f), oy + orderRowH, ink.palette.PLAYHEAD)
             val pat = s.orders[o]
             val loop = if (o == s.loopOrder) " ↻" else ""
             val parked = o in s.parkedOrders
-            ink.mono(c, hex2(o), x, oy, orderRowH, if (current) Palette.TEXT else Palette.FAINT, size = small)
+            ink.mono(c, hex2(o), x, oy, orderRowH, if (current) ink.palette.TEXT else ink.palette.FAINT, size = small)
             ink.label(c, ink.fit("${if (parked) "‖ " else ""}${hex2(pat)} ${s.patterns[pat].name}$loop", nameW, small), x + cw * 2.8f, oy, orderRowH,
-                if (current) Palette.TEXT else if (parked) Palette.FAINT else Palette.DIM, size = small)
+                if (current) ink.palette.TEXT else if (parked) ink.palette.FAINT else ink.palette.DIM, size = small)
             if (stripRight - stripLeft > ink.unit * 4) {
                 v.strip.draw(c, stripLeft, oy + ink.dp(3f), stripRight, oy + orderRowH - ink.dp(3f), s.patterns[pat], if (playingHere) v.playback.row else -1)
             }
@@ -800,35 +800,35 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         val left = area.right - w - u * 0.5f
         val top = (headerBottom + u * 0.3f).coerceAtMost(maxOf(area.top, area.bottom - h))
         val panel = Rect(left, top, left + w, top + h)
-        ink.round(c, panel, ink.dp(6f), Palette.LANE)
-        ink.outline(c, panel, Palette.RULE, ink.dp(1f), ink.dp(6f))
-        ink.rect(c, panel.left + ink.dp(6f), panel.top, panel.right - ink.dp(6f), panel.top + ink.dp(2f), Palette.PLAYHEAD)
+        ink.round(c, panel, ink.dp(6f), ink.palette.LANE)
+        ink.outline(c, panel, ink.palette.RULE, ink.dp(1f), ink.dp(6f))
+        ink.rect(c, panel.left + ink.dp(6f), panel.top, panel.right - ink.dp(6f), panel.top + ink.dp(2f), ink.palette.PLAYHEAD)
 
         val x = left + pad
         var y = top + pad * 0.6f
-        ink.label(c, "Pattern ${hex2(song.patternAt(st.order))}", x, y, titleH, Palette.TEXT, true)
-        ink.label(c, ink.fit(scale.label, textW * 0.5f, bold = true), panel.right - pad, y, titleH, Palette.PLAYHEAD, true, align = Align.RIGHT)
+        ink.label(c, "Pattern ${hex2(song.patternAt(st.order))}", x, y, titleH, ink.palette.TEXT, true)
+        ink.label(c, ink.fit(scale.label, textW * 0.5f, bold = true), panel.right - pad, y, titleH, ink.palette.PLAYHEAD, true, align = Align.RIGHT)
         y += titleH
 
         // Root: a one-octave strip lighting the scale's pitch classes, the root outlined.
         rootRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + keyH)
         focusRow(c, rootRow, 0)
-        ink.label(c, "Root", x, y, keyH, Palette.DIM)
+        ink.label(c, "Root", x, y, keyH, ink.palette.DIM)
         val stripL = x + labelW
         val kw = (panel.right - pad - stripL) / 12f
         for (k in 0 until 12) {
             val r = rootKeys[k]
             r.set(stripL + k * kw + ink.dp(1f), y + keyH * 0.14f, stripL + (k + 1) * kw - ink.dp(1f), y + keyH * 0.86f)
             val inScale = scale.kind.hasInterval(k - scale.root)
-            val base = if (BLACK_KEYS[k]) Palette.BG else Palette.BAR
-            ink.round(c, r, ink.dp(3f), if (inScale && !scale.isChromatic) Palette.mix(base, Palette.PLAYHEAD, 0.38f) else base)
+            val base = if (BLACK_KEYS[k]) ink.palette.BG else ink.palette.BAR
+            ink.round(c, r, ink.dp(3f), if (inScale && !scale.isChromatic) Palette.mix(base, ink.palette.PLAYHEAD, 0.38f) else base)
             val isRoot = k == scale.root
-            if (isRoot) ink.outline(c, r, if (scale.isChromatic) Palette.DIM else Palette.PLAYHEAD, ink.dp(2f), ink.dp(3f))
+            if (isRoot) ink.outline(c, r, if (scale.isChromatic) ink.palette.DIM else ink.palette.PLAYHEAD, ink.dp(2f), ink.dp(3f))
             val name = Scale.ROOT_NAMES[k]
             ink.label(c, name, r.centerX(), r.top, r.height(), when {
-                isRoot && !scale.isChromatic -> Palette.TEXT
-                inScale && !scale.isChromatic -> Palette.TEXT
-                else -> Palette.FAINT
+                isRoot && !scale.isChromatic -> ink.palette.TEXT
+                inScale && !scale.isChromatic -> ink.palette.TEXT
+                else -> ink.palette.FAINT
             }, isRoot, if (name.length > 1) u * 0.62f else u * 0.75f, Align.CENTER)
         }
         y += keyH + u * 0.4f
@@ -836,42 +836,42 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         // Scale: previous / name / next.
         scaleRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
         focusRow(c, scaleRow, 1)
-        ink.label(c, "Scale", x, y, lineH, Palette.DIM)
+        ink.label(c, "Scale", x, y, lineH, ink.palette.DIM)
         val bw = u * 2.2f
         scalePrev.set(stripL, y + lineH * 0.12f, stripL + bw, y + lineH * 0.88f)
         scaleNext.set(panel.right - pad - bw, scalePrev.top, panel.right - pad, scalePrev.bottom)
-        ink.round(c, scalePrev, ink.dp(4f), Palette.RULE)
-        ink.round(c, scaleNext, ink.dp(4f), Palette.RULE)
-        ink.label(c, "◀", scalePrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
-        ink.label(c, "▶", scaleNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+        ink.round(c, scalePrev, ink.dp(4f), ink.palette.RULE)
+        ink.round(c, scaleNext, ink.dp(4f), ink.palette.RULE)
+        ink.label(c, "◀", scalePrev.centerX(), y, lineH, ink.palette.TEXT, size = small, align = Align.CENTER)
+        ink.label(c, "▶", scaleNext.centerX(), y, lineH, ink.palette.TEXT, size = small, align = Align.CENTER)
         ink.label(c, ink.fit(scale.kind.label, scaleNext.left - scalePrev.right - u * 0.6f), (scalePrev.right + scaleNext.left) / 2f, y, lineH,
-            Palette.TEXT, true, align = Align.CENTER)
+            ink.palette.TEXT, true, align = Align.CENTER)
         y += lineH + u * 0.3f
 
         // Length: previous / rows / next.
         lengthRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
         focusRow(c, lengthRow, 2)
-        ink.label(c, "Length", x, y, lineH, Palette.DIM)
+        ink.label(c, "Length", x, y, lineH, ink.palette.DIM)
         lengthPrev.set(stripL, y + lineH * 0.12f, stripL + bw, y + lineH * 0.88f)
         lengthNext.set(panel.right - pad - bw, lengthPrev.top, panel.right - pad, lengthPrev.bottom)
-        ink.round(c, lengthPrev, ink.dp(4f), Palette.RULE)
-        ink.round(c, lengthNext, ink.dp(4f), Palette.RULE)
-        ink.label(c, "◀", lengthPrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
-        ink.label(c, "▶", lengthNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+        ink.round(c, lengthPrev, ink.dp(4f), ink.palette.RULE)
+        ink.round(c, lengthNext, ink.dp(4f), ink.palette.RULE)
+        ink.label(c, "◀", lengthPrev.centerX(), y, lineH, ink.palette.TEXT, size = small, align = Align.CENTER)
+        ink.label(c, "▶", lengthNext.centerX(), y, lineH, ink.palette.TEXT, size = small, align = Align.CENTER)
         val len = ctl.patternLength
         ink.label(c, if (len < Songs.ROWS) "$len rows" else "$len rows (full)", (lengthPrev.right + lengthNext.left) / 2f, y, lineH,
-            if (len < Songs.ROWS) Palette.PLAYHEAD else Palette.TEXT, true, align = Align.CENTER)
+            if (len < Songs.ROWS) ink.palette.PLAYHEAD else ink.palette.TEXT, true, align = Align.CENTER)
         y += lineH + u * 0.3f
 
         // Fit: nudge the played notes of tonal channels onto the scale (one undo step).
         fitRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
         focusRow(c, fitRow, ViewController.SCALE_FIT_FIELD)
-        ink.label(c, "Notes", x, y, lineH, Palette.DIM)
+        ink.label(c, "Notes", x, y, lineH, ink.palette.DIM)
         val canFit = !scale.isChromatic && !tuned
         fitButton.set(stripL, y + lineH * 0.12f, panel.right - pad, y + lineH * 0.88f)
-        ink.round(c, fitButton, ink.dp(4f), if (canFit) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.RULE)
+        ink.round(c, fitButton, ink.dp(4f), if (canFit) Palette.alpha(ink.palette.PLAYHEAD, 60) else ink.palette.RULE)
         ink.label(c, ink.fit(if (canFit) "Fit notes to ${scale.label}" else if (tuned) "Fit via Menu → Tuning" else "Fit notes: choose a scale",
-            fitButton.width() - u, small), fitButton.centerX(), y, lineH, if (canFit) Palette.PLAYHEAD else Palette.DIM, canFit, small, Align.CENTER)
+            fitButton.width() - u, small), fitButton.centerX(), y, lineH, if (canFit) ink.palette.PLAYHEAD else ink.palette.DIM, canFit, small, Align.CENTER)
         y += lineH + u * 0.5f
 
         // Columns (several-column systems): the effect columns shown on the cursor's channel, this display only.
@@ -880,42 +880,42 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             y -= u * 0.2f
             columnsRow.set(left + pad * 0.4f, y, panel.right - pad * 0.4f, y + lineH)
             focusRow(c, columnsRow, ViewController.SCALE_COLUMNS_FIELD)
-            ink.label(c, "Columns", x, y, lineH, Palette.DIM)
+            ink.label(c, "Columns", x, y, lineH, ink.palette.DIM)
             columnsPrev.set(stripL, y + lineH * 0.12f, stripL + bw, y + lineH * 0.88f)
             columnsNext.set(panel.right - pad - bw, columnsPrev.top, panel.right - pad, columnsPrev.bottom)
-            ink.round(c, columnsPrev, ink.dp(4f), Palette.RULE)
-            ink.round(c, columnsNext, ink.dp(4f), Palette.RULE)
-            ink.label(c, "◀", columnsPrev.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
-            ink.label(c, "▶", columnsNext.centerX(), y, lineH, Palette.TEXT, size = small, align = Align.CENTER)
+            ink.round(c, columnsPrev, ink.dp(4f), ink.palette.RULE)
+            ink.round(c, columnsNext, ink.dp(4f), ink.palette.RULE)
+            ink.label(c, "◀", columnsPrev.centerX(), y, lineH, ink.palette.TEXT, size = small, align = Align.CENTER)
+            ink.label(c, "▶", columnsNext.centerX(), y, lineH, ink.palette.TEXT, size = small, align = Align.CENTER)
             val ch = st.channel
             val auto = st.effectColumns.getOrElse(ch) { 0 } == 0
             val text = "${song.system.channels[ch].name}: ${ctl.shownColumns(ch)} of ${song.system.effectColumns(ch)}${if (auto) " (auto)" else ""}"
             ink.label(c, ink.fit(text, columnsNext.left - columnsPrev.right - u * 0.6f, bold = true), (columnsPrev.right + columnsNext.left) / 2f, y, lineH,
-                Palette.channel(ch), true, align = Align.CENTER)
+                ink.palette.channel(ch), true, align = Align.CENTER)
             y += lineH + u * 0.5f
         }
 
         for (part in panelNote) {
-            ink.label(c, part, x, y, noteH, Palette.DIM, size = small)
+            ink.label(c, part, x, y, noteH, ink.palette.DIM, size = small)
             y += noteH
         }
         y += u * 0.4f
         val doneW = ink.labelWidth("Done", small, true) + u * 1.6f
         scaleDone.set(panel.right - pad - doneW, y + lineH * 0.1f, panel.right - pad, y + lineH * 0.9f)
-        ink.round(c, scaleDone, ink.dp(4f), Palette.alpha(Palette.PLAYHEAD, 60))
-        ink.label(c, "Done", scaleDone.centerX(), y, lineH, Palette.PLAYHEAD, true, small, Align.CENTER)
+        ink.round(c, scaleDone, ink.dp(4f), Palette.alpha(ink.palette.PLAYHEAD, 60))
+        ink.label(c, "Done", scaleDone.centerX(), y, lineH, ink.palette.PLAYHEAD, true, small, Align.CENTER)
         val footer = if (st.scaleField == ViewController.SCALE_FIT_FIELD)
             "${v.keymap.label(Action.EDIT)} fit  ${v.keymap.label(Action.SCALE, st.kind)} close"
             else "${v.keymap.label(Action.EDIT)} done  ${v.keymap.label(Action.CLEAR)} reset"
-        ink.label(c, footer, x, y, lineH, Palette.FAINT, size = small)
+        ink.label(c, footer, x, y, lineH, ink.palette.FAINT, size = small)
         return panel
     }
 
     /** Marks the panel row the controller is on. */
     private fun focusRow(c: Surface, r: Rect, field: Int) {
         if (st.scaleField != field) return
-        ink.round(c, r, ink.dp(4f), Palette.CURSOR_FILL)
-        ink.outline(c, r, if (v.controllerFocused) Palette.TEXT else Palette.DIM, if (v.controllerFocused) ink.dp(1.5f) else ink.dp(1f), ink.dp(4f))
+        ink.round(c, r, ink.dp(4f), ink.palette.CURSOR_FILL)
+        ink.outline(c, r, if (v.controllerFocused) ink.palette.FOCUS else ink.palette.DIM, if (v.controllerFocused) ink.dp(1.5f) else ink.dp(1f), ink.dp(4f))
     }
 
     // ---- touch -------------------------------------------------------------------------------------

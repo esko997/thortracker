@@ -32,7 +32,7 @@ internal class Opl3InstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val s = song
         val ins = Opl3InstrumentView.sound(s, st)
         val page = Opl3InstrumentView.page(st)
-        val col = Palette.channel(Opl3InstrumentView.listenChannel(st, ins))
+        val col = ink.palette.channel(Opl3InstrumentView.listenChannel(st, ins))
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = if (ins == null) "empty slot" else Opl3Curated.ALGORITHMS[Opl3Curated.controls(ins).algorithm].name
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "OPL3 · $kind$locked  ${usageText(st.instrument)}")
@@ -68,7 +68,7 @@ internal class Opl3InstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 if (r == Row.PAGE) { drawTabs(c, Rect(rx, y, rx + rw, y + ink.unit * 1.9f), col, tabLabels, st.envelope); y += ink.unit * 1.9f; continue }
                 if (r == Row.NAME) {
                     val sel = r == row
-                    if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + rowH, Palette.CURSOR_FILL)
+                    if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + rowH, ink.palette.CURSOR_FILL)
                     setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, rowH, sel, true)
                     y += rowH
                 }
@@ -90,11 +90,11 @@ internal class Opl3InstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 continue
             }
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when (r) {
                 Row.NAME -> drawName(c, ins?.name.orEmpty(), rx, vx, y, h, sel)
                 Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val ch = Opl3InstrumentView.listenChannel(st, ins)
                     val text = s.system.channels.getOrNull(ch)?.name.orEmpty() + if (ch != st.listenChannel) " (4-op: FM 1-6 only)" else ""
                     ink.label(c, ink.fit(text, rightEdge - vx), vx, y, h, col, true)
@@ -233,13 +233,13 @@ internal class Opl3InstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     /** The song's chord shapes (`Kxx`): number, name, up to four intervals (the cursor on one), and the notes from the listening C. */
     private fun drawChords(c: Surface, box: Rect, col: Int, focused: Boolean) {
-        ink.round(c, box, ink.dp(4f), Palette.LANE)
+        ink.round(c, box, ink.dp(4f), ink.palette.LANE)
         val chords = song.opl3.chords
         val small = ink.unit * 0.85f
         val titleH = ink.unit * 1.4f
         val root = ctl.defaultNote()
         ink.label(c, ink.fit("Chord shapes for Kxx (${chords.size} of ${Opl3System.MAX_CHORDS}) · notes from ${Opl3System.noteName(root)} · Hxy plays +x +y without a shape",
-            box.width() - ink.unit), box.left + ink.unit * 0.5f, box.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+            box.width() - ink.unit), box.left + ink.unit * 0.5f, box.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         listRowH = ink.unit * 1.35f
         listRect = Rect(box.left, box.top + titleH, box.right, box.bottom - ink.unit * 0.2f)
         val fit = maxOf(1, (listRect.height() / listRowH).toInt())
@@ -256,26 +256,26 @@ internal class Opl3InstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val i = listScroll + k
             val y = listRect.top + k * listRowH
             val on = i == step
-            if (on) ink.rect(c, box.left, y, box.right, y + listRowH, if (focused) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 120))
+            if (on) ink.rect(c, box.left, y, box.right, y + listRowH, if (focused) ink.palette.CURSOR_FILL else Palette.alpha(ink.palette.CURSOR_FILL, 120))
             if (i == chords.size) {
-                ink.label(c, if (chords.size >= Opl3System.MAX_CHORDS) "table full" else "+ add a shape", nameX, y, listRowH, Palette.FAINT, size = small)
+                ink.label(c, if (chords.size >= Opl3System.MAX_CHORDS) "table full" else "+ add a shape", nameX, y, listRowH, ink.palette.FAINT, size = small)
                 if (on && focused) ink.outline(c, Rect(nameX - ink.unit * 0.2f, y + 1, box.right - ink.unit * 0.3f, y + listRowH - 1), cursorColor(), ink.dp(2f), ink.dp(2f))
                 continue
             }
             val shape = chords[i]
-            ink.mono(c, "K${hex2(i + 1)}", numX, y, listRowH, if (on) col else Palette.DIM, on, small)
-            ink.label(c, ink.fit(shape.name.ifEmpty { "—" }, ivX - nameX - ink.unit * 0.3f, small), nameX, y, listRowH, if (on) Palette.TEXT else Palette.DIM, size = small)
+            ink.mono(c, "K${hex2(i + 1)}", numX, y, listRowH, if (on) col else ink.palette.DIM, on, small)
+            ink.label(c, ink.fit(shape.name.ifEmpty { "—" }, ivX - nameX - ink.unit * 0.3f, small), nameX, y, listRowH, if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
             for (f in 0 until 4) {
                 val x = ivX + f * ivW
                 val iv = shape.intervals.getOrNull(f)
-                ink.mono(c, iv?.let { Opl3Rules.signed(it) } ?: "·", x, y, listRowH, if (iv == null) Palette.FAINT else if (on) Palette.TEXT else Palette.DIM, size = small)
+                ink.mono(c, iv?.let { Opl3Rules.signed(it) } ?: "·", x, y, listRowH, if (iv == null) ink.palette.FAINT else if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
                 if (on && focused && f == st.programField) ink.outline(c, Rect(x - cw * 0.4f, y + 1, x + ivW - cw * 0.6f, y + listRowH - 1), cursorColor(), ink.dp(2f), ink.dp(2f))
             }
             val notes = Opl3InstrumentView.shapeNotes(shape, root)
             if (box.right - notesX > ink.unit * 4f) {
-                ink.label(c, ink.fit(notes, box.right - notesX - ink.unit * 0.4f, ink.unit * 0.8f), notesX, y, listRowH, Palette.FAINT, size = ink.unit * 0.8f)
+                ink.label(c, ink.fit(notes, box.right - notesX - ink.unit * 0.4f, ink.unit * 0.8f), notesX, y, listRowH, ink.palette.FAINT, size = ink.unit * 0.8f)
             }
-            shape.problem()?.let { ink.rect(c, box.right - ink.dp(5f), y + ink.dp(3f), box.right - ink.dp(2f), y + listRowH - ink.dp(3f), Palette.ERROR) }
+            shape.problem()?.let { ink.rect(c, box.right - ink.dp(5f), y + ink.dp(3f), box.right - ink.dp(2f), y + listRowH - ink.dp(3f), ink.palette.ERROR) }
         }
     }
 

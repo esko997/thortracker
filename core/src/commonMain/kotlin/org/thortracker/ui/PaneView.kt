@@ -90,6 +90,13 @@ class PaneView(
         }
 
     val ink = Ink(density, surface)
+    var palette: Palette
+        get() = ink.palette
+        set(value) {
+            if (ink.palette === value) return
+            ink.palette = value
+            invalidate()
+        }
     internal val strip = DensityStrip(ink)
     val motion = Motion(clock, invalidate)
     private var viewChangeStart = Motion.OFF
@@ -286,7 +293,7 @@ class PaneView(
         val c = surface
         motion.beginFrame()
         ink.layout(width, height)
-        c.fillRect(0f, 0f, width.toFloat(), height.toFloat(), Palette.BG)
+        c.fillRect(0f, 0f, width.toFloat(), height.toFloat(), ink.palette.BG)
         val hintH = ink.unit * 1.9f
         val area = Rect(0f, 0f, width.toFloat(), height - hintH)
         controller.normalise()
@@ -296,18 +303,18 @@ class PaneView(
         if (controllerFocused) {
             val w = ink.dp(3f)
             scratch.set(w / 2, w / 2, width - w / 2, height - w / 2)
-            ink.outline(c, scratch, Palette.PLAYHEAD, w)
+            ink.outline(c, scratch, ink.palette.FOCUS_ACCENT, w)
             // Taking control: a soft inner rim that settles into the steady border.
             val f = motion.fade(focusStart, 320)
             if (f > 0f) {
                 val hw = ink.dp(7f) * f
                 scratch.set(w + hw / 2, w + hw / 2, width - w - hw / 2, height - w - hw / 2)
-                ink.outline(c, scratch, Palette.alpha(Palette.PLAYHEAD, (f * 110).toInt()), hw)
+                ink.outline(c, scratch, Palette.alpha(ink.palette.FOCUS_ACCENT, (f * 110).toInt()), hw)
             }
         }
     }
 
-    /** A new view (swap, contextual change): an amber rule draws once along the header, then fades. */
+    /** A new view (swap, contextual change): a focus-accent rule draws once along the header, then fades. */
     private fun drawViewChange(c: Surface, area: Rect) {
         val t = motion.progress(viewChangeStart, 360)
         if (t >= 1f) return
@@ -315,12 +322,12 @@ class PaneView(
         val grow = 1f - (1f - reach) * (1f - reach) * (1f - reach)
         val alpha = if (t < 0.55f) 255 else ((1f - (t - 0.55f) / 0.45f) * 255).toInt()
         val y = area.top + ink.unit * 2f
-        ink.rect(c, area.left, y - ink.dp(2f), area.left + area.width() * grow, y, Palette.alpha(Palette.PLAYHEAD, alpha))
+        ink.rect(c, area.left, y - ink.dp(2f), area.left + area.width() * grow, y, Palette.alpha(ink.palette.FOCUS_ACCENT, alpha))
     }
 
     private fun drawHintBar(c: Surface, r: Rect) {
-        ink.rect(c, r, Palette.LANE)
-        ink.line(c, r.left, r.top, r.right, r.top, Palette.RULE, ink.dp(1f))
+        ink.rect(c, r, ink.palette.LANE)
+        ink.line(c, r.left, r.top, r.right, r.top, ink.palette.RULE, ink.dp(1f))
         val size = ink.unit * 0.82f
         var x = r.left + ink.unit * 0.6f
         val msg = session.message
@@ -343,9 +350,9 @@ class PaneView(
                 if (f > 0f) {
                     val pad = ink.unit * 0.4f
                     scratch.set(right - ink.labelWidth(text, size, true) - pad, r.top + r.height() * 0.14f, right + pad, r.bottom - r.height() * 0.14f)
-                    ink.round(c, scratch, size * 0.3f, Palette.alpha(Palette.PLAYHEAD, (f * 64).toInt()))
+                    ink.round(c, scratch, size * 0.3f, Palette.alpha(ink.palette.PLAYHEAD, (f * 64).toInt()))
                 }
-                ink.label(c, text, right, r.top, r.height(), Palette.PLAYHEAD, true, size, Align.RIGHT)
+                ink.label(c, text, right, r.top, r.height(), ink.palette.PLAYHEAD, true, size, Align.RIGHT)
             }
         }
     }
@@ -357,9 +364,9 @@ class PaneView(
     private fun drawBattery(c: Surface, r: Rect, right: Float, size: Float): Float {
         val b = battery ?: return right
         val color = when {
-            b.charging -> Palette.LISTEN
-            b.level <= 15 -> Palette.ERROR
-            else -> Palette.DIM
+            b.charging -> ink.palette.LISTEN
+            b.level <= 15 -> ink.palette.ERROR
+            else -> ink.palette.DIM
         }
         val text = "${b.level}%"
         val textW = ink.labelWidth(text, size, false)
@@ -419,12 +426,12 @@ internal abstract class Painter(protected val v: PaneView) {
     /** A labelled header strip; returns its bottom. [glow] (a colour with alpha, 0 = none) tints it under the text. */
     protected fun header(c: Surface, area: Rect, title: String, detail: String, reserveRight: Float = 0f, glow: Int = 0): Float {
         val h = ink.unit * 2f
-        ink.rect(c, area.left, area.top, area.right, area.top + h, Palette.LANE)
+        ink.rect(c, area.left, area.top, area.right, area.top + h, ink.palette.LANE)
         if (glow != 0) ink.rect(c, area.left, area.top, area.right, area.top + h, glow)
         val x = area.left + ink.unit * 0.7f
-        ink.label(c, title, x, area.top, h, Palette.TEXT, true, ink.unit * 1.05f)
+        ink.label(c, title, x, area.top, h, ink.palette.TEXT, true, ink.unit * 1.05f)
         val tw = ink.labelWidth(title, ink.unit * 1.05f, true)
-        ink.label(c, ink.fit(detail, area.width() - tw - reserveRight - ink.unit * 2.5f), x + tw + ink.unit * 0.9f, area.top, h, Palette.DIM)
+        ink.label(c, ink.fit(detail, area.width() - tw - reserveRight - ink.unit * 2.5f), x + tw + ink.unit * 0.9f, area.top, h, ink.palette.DIM)
         return area.top + h
     }
 }

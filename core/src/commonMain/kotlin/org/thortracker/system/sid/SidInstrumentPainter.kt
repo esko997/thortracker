@@ -42,7 +42,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         val s = song
         val ins = SidInstrumentView.sound(s, st) ?: return
         val page = SidInstrumentView.page(st)
-        val col = Palette.channel(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "C64 SID · ${s.sid.chip.label}$locked  ${usageText(st.instrument)}")
         val row = SidInstrumentView.row(st)
@@ -50,7 +50,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.28f, ink.unit * 13f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, Palette.LANE)
+        ink.rect(c, left, ink.palette.LANE)
         slotTop = top + ink.unit * 0.2f
         slotH = ink.unit * 1.45f
         val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
@@ -62,15 +62,15 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             val y = slotTop + k * slotH
             val sel = i == st.instrument
             if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, Palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
                 ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
             }
             val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else Palette.FAINT, sel, sz)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
             val used = usage(i)
-            val nameColor = if (sel) Palette.TEXT else if (used > 0) Palette.DIM else Palette.FAINT
+            val nameColor = if (sel) ink.palette.TEXT else if (used > 0) ink.palette.DIM else ink.palette.FAINT
             ink.label(c, ink.fit(bank[i - 1].name, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, Palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
         if (row == Row.SLOT) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
@@ -90,12 +90,12 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             if (r == Row.SLOT || r == Row.STEPS || r == Row.RAW) continue
             val sel = r == row
             val h = if (r == Row.PAGE || r == Row.TABLE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             val vib = ins.vibrato
             when (r) {
                 Row.NAME -> {
-                    ink.label(c, "Name", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
-                    ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+                    ink.label(c, "Name", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
+                    ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
                     if (sel) {
                         val before = ins.name.take(st.textPos).padEnd(st.textPos, ' ')
                         val cx = vx + ink.labelWidth(before, ink.unit, true)
@@ -105,7 +105,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
                     }
                 }
                 Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     ink.label(c, s.system.channels.getOrNull(st.listenChannel)?.name ?: "", vx, y, h, col, true)
                 }
                 Row.PAGE -> drawTabs(c, ins, Rect(rx, y, rx + rw, y + h), col)
@@ -161,16 +161,16 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     private fun setting(c: Surface, label: String, value: String, x: Float, vx: Float, y: Float, h: Float, sel: Boolean, off: Boolean) {
-        ink.label(c, label, x, y, h, if (sel) Palette.TEXT else Palette.DIM)
+        ink.label(c, label, x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
         val max = rightEdge - vx
-        ink.label(c, ink.fit(value, max, ink.unit, sel), vx, y, h, if (sel) (if (off) Palette.DIM else Palette.TEXT) else (if (off) Palette.FAINT else Palette.DIM), sel)
+        ink.label(c, ink.fit(value, max, ink.unit, sel), vx, y, h, if (sel) (if (off) ink.palette.DIM else ink.palette.TEXT) else (if (off) ink.palette.FAINT else ink.palette.DIM), sel)
     }
 
     private fun cursorColor() = when {
-        ctl.editHeld -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     /** Page tabs; program tabs carry their row count. */
@@ -181,13 +181,13 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         for ((i, p) in pages.withIndex()) {
             val t = Rect(r.left + i * w, r.top, r.left + (i + 1) * w, r.bottom)
             val on = i == st.envelope
-            if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
-            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
+            if (on) ink.rect(c, t, Palette.mix(ink.palette.BG, col, 0.18f))
+            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else ink.palette.RULE)
             val n = if (p.table >= 0) ins.program(p.table).rows.size else 0
             val label = if (n == 0) p.label else "${p.label} ($n)"
             val empty = p.table >= 0 && n == 0 || p == Page.START && !ins.vibrato.active && ins.restart == SidRestart.HARD
             ink.label(c, ink.fit(label, w - ink.unit * 0.4f, ink.unit * 0.9f), t.centerX(), t.top, t.height(),
-                if (on) col else if (empty) Palette.FAINT else Palette.DIM, on, ink.unit * 0.9f, Align.CENTER)
+                if (on) col else if (empty) ink.palette.FAINT else ink.palette.DIM, on, ink.unit * 0.9f, Align.CENTER)
             tabs += t to i
         }
     }
@@ -199,11 +199,11 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         for ((i, name) in SidTables.NAMES.withIndex()) {
             val t = Rect(r.left + i * w, r.top, r.left + (i + 1) * w, r.bottom)
             val on = i == st.rawTable
-            if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
-            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
+            if (on) ink.rect(c, t, Palette.mix(ink.palette.BG, col, 0.18f))
+            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else ink.palette.RULE)
             val used = if (i == SidTables.SPEED) speeds().size else placement(i).used
             ink.label(c, ink.fit("$name $used/${SidTables.ROWS}", w - ink.unit * 0.4f, ink.unit * 0.85f), t.centerX(), t.top, t.height(),
-                if (on) col else Palette.DIM, on, ink.unit * 0.85f, Align.CENTER)
+                if (on) col else ink.palette.DIM, on, ink.unit * 0.85f, Align.CENTER)
             tableTabs += t to i
         }
     }
@@ -215,7 +215,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** The ADSR curve: attack, decay to the sustain level, a held stretch, release after OFF; segment widths ∝ √time. */
     private fun drawEnvelope(c: Surface, r: Rect, ins: SidInstrument, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val a = SidInstrumentView.ATTACK_MS[ins.attack].toFloat()
         val d = 3f * SidInstrumentView.ATTACK_MS[ins.decay]
@@ -223,7 +223,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         val hold = 400f
         val level = ins.sustain / 15f
         ink.label(c, ink.fit("Envelope: ${ins.attackDecay.let { hex2(it) }}${hex2(ins.sustainRelease)} · sustain ${ins.sustain * 100 / 15}% · OFF releases", r.width() - ink.unit),
-            r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+            r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 0.8f, r.top + titleH, r.right - ink.unit * 0.8f, r.bottom - ink.unit * 1.4f)
         if (g.height() <= 0f) return
         val wa = sqrt(a); val wd = sqrt(d); val wh = sqrt(hold) * 1.2f; val wr = sqrt(rel)
@@ -234,8 +234,8 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         val xH = xD + g.width() * wh / total
         fun yOf(l: Float) = g.bottom - g.height() * l
         // sustain and segment guides
-        ink.line(c, g.left, yOf(level), g.right, yOf(level), Palette.RULE, ink.dp(1f))
-        for (x in listOf(xA, xD, xH)) ink.line(c, x, g.top, x, g.bottom, Palette.RULE, ink.dp(1f))
+        ink.line(c, g.left, yOf(level), g.right, yOf(level), ink.palette.RULE, ink.dp(1f))
+        for (x in listOf(xA, xD, xH)) ink.line(c, x, g.top, x, g.bottom, ink.palette.RULE, ink.dp(1f))
         var n = 0
         fun add(x: Float, l: Float) { if (n < xs.size) { xs[n] = x; ys[n] = yOf(l); n++ } }
         add(x0, 0f); add(xA, 1f)
@@ -244,16 +244,16 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         for (i in 1..steps) { val t = i.toFloat() / steps; add(xA + (xD - xA) * t, level + (1f - level) * exp(-4f * t)) }
         add(xH, level)
         for (i in 1..steps) { val t = i.toFloat() / steps; add(xH + (g.right - xH) * t, level * exp(-4f * t) * (1f - t * 0.02f)) }
-        ink.rect(c, x0, g.bottom - ink.dp(1f), g.right, g.bottom, Palette.RULE)
+        ink.rect(c, x0, g.bottom - ink.dp(1f), g.right, g.bottom, ink.palette.RULE)
         c.polyline(xs, ys, n, col, ink.dp(2.5f))
         val ls = ink.unit * 0.7f
         val ly = g.bottom + ink.dp(2f)
         val lh = ink.unit * 1.2f
-        ink.label(c, "A ${SidInstrumentView.msText(a.toInt())}", (x0 + xA) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        ink.label(c, "D ${SidInstrumentView.msText(d.toInt())}", (xA + xD) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        ink.label(c, "held · S ${NumberText.hex(ins.sustain)}", (xD + xH) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        ink.label(c, "R ${SidInstrumentView.msText(rel.toInt())}", (xH + g.right) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        ink.label(c, "OFF", xH + ink.dp(3f), g.top, ink.unit, Palette.WRITE, size = ls)
+        ink.label(c, "A ${SidInstrumentView.msText(a.toInt())}", (x0 + xA) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        ink.label(c, "D ${SidInstrumentView.msText(d.toInt())}", (xA + xD) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        ink.label(c, "held · S ${NumberText.hex(ins.sustain)}", (xD + xH) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        ink.label(c, "R ${SidInstrumentView.msText(rel.toInt())}", (xH + g.right) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        ink.label(c, "OFF", xH + ink.dp(3f), g.top, ink.unit, ink.palette.WRITE, size = ls)
     }
 
     // ---- programs -------------------------------------------------------------------------------------
@@ -271,13 +271,13 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             val order = if (v.playback.playing) v.playback.order else session.selection.order
             val prow = if (v.playback.playing) v.playback.row else session.selection.row
             val line = SidFilterOwner.state(s, order, prow).lines.firstOrNull() ?: ""
-            ink.label(c, ink.fit(line, r.width(), small), r.left, r.top, ink.unit * 1.2f, Palette.PLAYHEAD, size = small)
+            ink.label(c, ink.fit(line, r.width(), small), r.left, r.top, ink.unit * 1.2f, ink.palette.PLAYHEAD, size = small)
             r = Rect(r.left, r.top + ink.unit * 1.3f, r.right, r.bottom)
         }
         val p = ins.program(table)
         val graphW = if (table == SidTables.WAVE || r.width() < ink.unit * 30f) 0f else minOf(r.width() * 0.34f, ink.unit * 16f)
         val list = Rect(r.left, r.top, r.right - graphW - (if (graphW > 0f) ink.unit * 0.5f else 0f), r.bottom)
-        ink.round(c, list, ink.dp(4f), Palette.LANE)
+        ink.round(c, list, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val step = st.envStep
         val fields = SidInstrumentView.fields(s, st)
@@ -287,7 +287,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             p.rows.isEmpty() -> "No ${SidTables.NAMES[table].lowercase()} program: ${ctl.k(org.thortracker.editor.Action.EDIT)} adds its first row"
             else -> "${p.rows.size} rows; ${ctl.k(org.thortracker.editor.Action.EDIT)} adds row ${p.rows.size + 1}"
         }
-        ink.label(c, ink.fit(title, list.width() - ink.unit), list.left + ink.unit * 0.5f, list.top, titleH, if (focused) Palette.DIM else Palette.FAINT, size = small)
+        ink.label(c, ink.fit(title, list.width() - ink.unit), list.left + ink.unit * 0.5f, list.top, titleH, if (focused) ink.palette.DIM else ink.palette.FAINT, size = small)
         listRowH = ink.unit * 1.3f
         listRect = Rect(list.left, list.top + titleH, list.right, list.bottom - ink.unit * 0.2f)
         val fit = maxOf(1, (listRect.height() / listRowH).toInt())
@@ -304,30 +304,30 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             val y1 = listRect.top + (i - listScroll + 1) * listRowH
             val top = maxOf(listRect.top, y0)
             val bottom = minOf(listRect.bottom, y1)
-            if (bottom > top) ink.rect(c, list.left + ink.dp(3f), top + ink.dp(2f), list.left + ink.dp(6f), bottom - ink.dp(2f), Palette.LISTEN)
+            if (bottom > top) ink.rect(c, list.left + ink.dp(3f), top + ink.dp(2f), list.left + ink.dp(6f), bottom - ink.dp(2f), ink.palette.LISTEN)
         }
         for (k in 0 until minOf(fit, lines - listScroll)) {
             val i = listScroll + k
             val y = listRect.top + k * listRowH
             val on = i == step
-            if (on) ink.rect(c, list.left, y, list.right, y + listRowH, if (focused) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 120))
+            if (on) ink.rect(c, list.left, y, list.right, y + listRowH, if (focused) ink.palette.CURSOR_FILL else Palette.alpha(ink.palette.CURSOR_FILL, 120))
             if (i == p.rows.size) {
-                ink.mono(c, "+", numX, y, listRowH, Palette.FAINT, size = small, align = Align.RIGHT)
-                ink.label(c, if (p.rows.isEmpty()) "add the first row" else "add a row", firstX, y, listRowH, Palette.FAINT, size = small)
+                ink.mono(c, "+", numX, y, listRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
+                ink.label(c, if (p.rows.isEmpty()) "add the first row" else "add a row", firstX, y, listRowH, ink.palette.FAINT, size = small)
                 if (on && focused) ink.outline(c, Rect(firstX - gap / 2, y + 1, list.right - ink.unit * 0.3f, y + listRowH - 1), cursorColor(), ink.dp(2f), ink.dp(2f))
                 continue
             }
             val row = p.rows[i]
-            ink.mono(c, (i + 1).toString(), numX, y, listRowH, if (on) Palette.TEXT else Palette.FAINT, on, small, Align.RIGHT)
+            ink.mono(c, (i + 1).toString(), numX, y, listRowH, if (on) ink.palette.TEXT else ink.palette.FAINT, on, small, Align.RIGHT)
             val cols = SidPrograms.fields(table, row, p.rows.size)
             var x = firstX
             for ((f, field) in cols.withIndex()) {
                 val bold = f == 0
                 val w = ink.monoWidth(field.text, small, bold)
                 val color = when {
-                    field.toggle && field.text == "·" -> Palette.FAINT
+                    field.toggle && field.text == "·" -> ink.palette.FAINT
                     f == 0 -> col
-                    else -> if (on) Palette.TEXT else Palette.DIM
+                    else -> if (on) ink.palette.TEXT else ink.palette.DIM
                 }
                 ink.mono(c, field.text, x, y, listRowH, color, bold, small)
                 if (on && focused && f == st.programField) ink.outline(c, Rect(x - gap * 0.4f, y + 1, x + w + gap * 0.4f, y + listRowH - 1), cursorColor(), ink.dp(2f), ink.dp(2f))
@@ -338,9 +338,9 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             val room = list.right - ink.unit * 0.4f - x - gap
             if (room > ink.unit * 3f) {
                 ink.label(c, ink.fit(text, room, ink.unit * 0.75f), list.right - ink.unit * 0.4f, y, listRowH,
-                    if (problem != null) Palette.ERROR else Palette.FAINT, size = ink.unit * 0.75f, align = Align.RIGHT)
+                    if (problem != null) ink.palette.ERROR else ink.palette.FAINT, size = ink.unit * 0.75f, align = Align.RIGHT)
             } else if (problem != null) {
-                ink.rect(c, list.right - ink.dp(5f), y + ink.dp(3f), list.right - ink.dp(2f), y + listRowH - ink.dp(3f), Palette.ERROR)
+                ink.rect(c, list.right - ink.dp(5f), y + ink.dp(3f), list.right - ink.dp(2f), y + listRowH - ink.dp(3f), ink.palette.ERROR)
             }
         }
         if (graphW > 0f) drawTrace(c, Rect(list.right + ink.unit * 0.5f, r.top, r.right, r.bottom), p, table, col)
@@ -351,15 +351,15 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** Pulse width or cutoff over the program's first [TRACE_TICKS] ticks (2 s at 50 Hz). */
     private fun drawTrace(c: Surface, r: Rect, p: SidProgram, table: Int, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val pulse = table == SidTables.PULSE
-        ink.label(c, ink.fit(if (pulse) "Pulse width, 2 s" else "Cutoff, 2 s", r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(if (pulse) "Pulse width, 2 s" else "Cutoff, 2 s", r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 0.5f, r.top + titleH, r.right - ink.unit * 0.5f, r.bottom - ink.unit * 0.5f)
         if (g.height() <= ink.unit || p.rows.isEmpty()) return
         val max = if (pulse) 0xFFF else 0xFF
         val values = SidPrograms.trace(table, p.rows, TRACE_TICKS, if (pulse) 0x800 else 0x80)
-        if (pulse) ink.line(c, g.left, g.top + g.height() / 2, g.right, g.top + g.height() / 2, Palette.RULE, ink.dp(1f))
+        if (pulse) ink.line(c, g.left, g.top + g.height() / 2, g.right, g.top + g.height() / 2, ink.palette.RULE, ink.dp(1f))
         for (t in 0 until TRACE_TICKS) {
             traceXs[t] = g.left + g.width() * t / (TRACE_TICKS - 1)
             traceYs[t] = g.bottom - g.height() * values[t] / max
@@ -369,7 +369,7 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
 
     /** Vibrato drawn as the pitch over the first second, and the hard restart before the note. */
     private fun drawVibrato(c: Surface, r: Rect, ins: SidInstrument, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val vib = ins.vibrato
         val hr = song.sid
@@ -378,13 +378,13 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             SidRestart.GATE_OFF -> "${ins.gateTimer} tick${if (ins.gateTimer == 1) "" else "s"} before each note: gate off"
             SidRestart.LEGATO -> "notes glide under a running envelope"
         }
-        ink.label(c, ink.fit(restart, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(restart, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 0.8f, r.top + titleH + ink.unit * 0.3f, r.right - ink.unit * 0.8f, r.bottom - ink.unit * 0.5f)
         if (g.height() <= ink.unit) return
         val mid = g.top + g.height() / 2
-        ink.line(c, g.left, mid, g.right, mid, Palette.RULE, ink.dp(1f))
+        ink.line(c, g.left, mid, g.right, mid, ink.palette.RULE, ink.dp(1f))
         if (!vib.active) {
-            ink.label(c, "No vibrato", g.centerX(), g.top, g.height(), Palette.FAINT, size = ink.unit * 0.85f, align = Align.CENTER)
+            ink.label(c, "No vibrato", g.centerX(), g.top, g.height(), ink.palette.FAINT, size = ink.unit * 0.85f, align = Align.CENTER)
             return
         }
         // A triangle wobble after the delay: it turns every speed ticks (one second shown).
@@ -400,9 +400,9 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
         }
         c.polyline(traceXs, traceYs, ticks, col, ink.dp(2f))
         val dx = g.left + g.width() * minOf(vib.delay, ticks - 1) / (ticks - 1)
-        ink.line(c, dx, g.top, dx, g.bottom, Palette.LISTEN, ink.dp(1f))
-        ink.label(c, "delay", dx + ink.dp(3f), g.top, ink.unit, Palette.LISTEN, size = ink.unit * 0.7f)
-        ink.label(c, "1 s", g.right, g.bottom - ink.unit, ink.unit, Palette.FAINT, size = ink.unit * 0.7f, align = Align.RIGHT)
+        ink.line(c, dx, g.top, dx, g.bottom, ink.palette.LISTEN, ink.dp(1f))
+        ink.label(c, "delay", dx + ink.dp(3f), g.top, ink.unit, ink.palette.LISTEN, size = ink.unit * 0.7f)
+        ink.label(c, "1 s", g.right, g.bottom - ink.unit, ink.unit, ink.palette.FAINT, size = ink.unit * 0.7f, align = Align.RIGHT)
     }
 
     // ---- raw tables -----------------------------------------------------------------------------------
@@ -428,12 +428,12 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
      */
     private fun drawRaw(c: Surface, box: Rect, focused: Boolean) {
         val s = song
-        ink.round(c, box, ink.dp(4f), Palette.LANE)
+        ink.round(c, box, ink.dp(4f), ink.palette.LANE)
         val table = st.rawTable
         val small = ink.unit * 0.85f
         val titleH = ink.unit * 1.4f
         val note = if (table == SidTables.SPEED) "vibratos and effects 1-4, E make these rows" else "programs make these rows; ${ctl.k(org.thortracker.editor.Action.EDIT)} edits the row's program"
-        ink.label(c, ink.fit("${SidTables.NAMES[table]} table · $note", box.width() - ink.unit), box.left + ink.unit * 0.5f, box.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit("${SidTables.NAMES[table]} table · $note", box.width() - ink.unit), box.left + ink.unit * 0.5f, box.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         listRowH = ink.unit * 1.25f
         val list = Rect(box.left, box.top + titleH, box.right, box.bottom - ink.unit * 0.2f)
         listRect = list
@@ -446,33 +446,33 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
             val tableRow = i + 1
             val y = list.top + k * listRowH
             val on = i == step
-            if (on) ink.rect(c, list.left, y, list.right, y + listRowH, if (focused) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 120))
+            if (on) ink.rect(c, list.left, y, list.right, y + listRowH, if (focused) ink.palette.CURSOR_FILL else Palette.alpha(ink.palette.CURSOR_FILL, 120))
             var x = list.left + ink.unit * 0.5f
-            ink.mono(c, hex2(tableRow), x, y, listRowH, if (on) Palette.TEXT else Palette.FAINT, on, small)
+            ink.mono(c, hex2(tableRow), x, y, listRowH, if (on) ink.palette.TEXT else ink.palette.FAINT, on, small)
             x += cw * 3.2f
             if (table == SidTables.SPEED) {
                 val value = speeds().getOrNull(i)
-                if (value == null) { ink.mono(c, "·· ··", x, y, listRowH, Palette.FAINT, size = small); continue }
-                ink.mono(c, "${hex2(value shr 8)} ${hex2(value and 0xFF)}", x, y, listRowH, Palette.TEXT, size = small)
-                ink.label(c, ink.fit(speedText(value), list.right - x - cw * 7f, ink.unit * 0.75f), x + cw * 6.5f, y, listRowH, Palette.DIM, size = ink.unit * 0.75f)
+                if (value == null) { ink.mono(c, "·· ··", x, y, listRowH, ink.palette.FAINT, size = small); continue }
+                ink.mono(c, "${hex2(value shr 8)} ${hex2(value and 0xFF)}", x, y, listRowH, ink.palette.TEXT, size = small)
+                ink.label(c, ink.fit(speedText(value), list.right - x - cw * 7f, ink.unit * 0.75f), x + cw * 6.5f, y, listRowH, ink.palette.DIM, size = ink.unit * 0.75f)
                 continue
             }
             val pl = placement(table)
             val owner = pl.owner[tableRow]
-            if (owner == 0) { ink.mono(c, "·· ··", x, y, listRowH, Palette.FAINT, size = small); continue }
+            if (owner == 0) { ink.mono(c, "·· ··", x, y, listRowH, ink.palette.FAINT, size = small); continue }
             val prog = s.sid.instruments[owner - 1].program(table)
             val index = pl.index[tableRow]
             val row = prog.rows.getOrNull(index) ?: SidRow.jump(0) // the stop row the lowering adds
             val right = if (row.isJump && row.right > 0) pl.start[owner] + row.right - 1 else row.right
-            ink.mono(c, "${hex2(row.left)} ${hex2(right)}", x, y, listRowH, Palette.TEXT, size = small)
+            ink.mono(c, "${hex2(row.left)} ${hex2(right)}", x, y, listRowH, ink.palette.TEXT, size = small)
             x += cw * 6.5f
             val who = "${hex2(owner)}.${index + 1}"
-            ink.mono(c, who, x, y, listRowH, Palette.channel(0), size = small)
+            ink.mono(c, who, x, y, listRowH, ink.palette.channel(0), size = small)
             x += cw * (who.length + 1.5f)
             val meaning = if (index >= prog.rows.size) "Stop (end of program)" else SidTables.describe(table, row).let {
                 if (row.isJump && row.right > 0) "Go to table row ${hex2(right)}" else it
             }
-            ink.label(c, ink.fit("${s.sid.instruments[owner - 1].name}: $meaning", list.right - x - ink.unit * 0.4f, ink.unit * 0.75f), x, y, listRowH, Palette.DIM, size = ink.unit * 0.75f)
+            ink.label(c, ink.fit("${s.sid.instruments[owner - 1].name}: $meaning", list.right - x - ink.unit * 0.4f, ink.unit * 0.75f), x, y, listRowH, ink.palette.DIM, size = ink.unit * 0.75f)
         }
     }
 

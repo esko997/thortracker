@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONObject
 import org.thortracker.editor.ViewState
 import org.thortracker.input.Keymap
+import org.thortracker.ui.Palette
 
 /** Device-local navigation/layout settings, deliberately outside musical project files. */
 class WorkspaceStore(context: Context) {
@@ -16,6 +17,12 @@ class WorkspaceStore(context: Context) {
     }
 
     fun focused(): Int = prefs.getInt("focus", 0).coerceIn(0, 1)
+
+    fun palette(): Palette = Palette.fromId(prefs.getString("palette", null))
+
+    fun savePalette(palette: Palette) {
+        prefs.edit().putString("palette", palette.id).apply()
+    }
 
     /**
      * The controller keymap (versioned JSON, the same format as exported keymap files). Upgrading the app keeps

@@ -85,6 +85,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private lateinit var workspace: WorkspaceStore
     /** Panes (one per display here) and the controller's focus; [states] and [focus] are its views. */
     private lateinit var panes: Workspace
+    private val palette: Palette get() = panes.palette
+    private var appliedPalette: Palette? = null
     private val states: MutableList<ViewState> get() = panes.panes
     private val focus: Int get() = panes.focus
     private lateinit var displays: DisplayManager
@@ -100,7 +102,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         override val modalDisplay: Int get() = this@MainActivity.modalDisplay
         override val displayCount: Int get() = hosts.size
         override val keymap: Keymap get() = this@MainActivity.keymap
-        override fun refresh() { this@MainActivity.refresh(); workspace.save(states, focus) }
+        override fun refresh() {
+            this@MainActivity.refresh()
+            workspace.save(states, focus)
+            workspace.savePalette(palette)
+        }
         override fun status(message: String) { statusMessage = message; this@MainActivity.refresh() }
         override fun error(message: String) = showError(message)
         override fun applyKeymap(next: Keymap, message: String?) = this@MainActivity.applyKeymap(next, message)
@@ -232,7 +238,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
         workspace = WorkspaceStore(this)
-        panes = Workspace(workspace.load(), workspace.focused())
+        panes = Workspace(workspace.load(), workspace.focused()).apply { palette = workspace.palette() }
         keymap = workspace.keymap()
         input.keymap = keymap
         popups.keys = keymap
@@ -352,6 +358,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        if (::panes.isInitialized) applySystemBarIcons(window)
     }
 
     override fun onResume() {
@@ -654,9 +661,15 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     private fun refresh() {
         if (!::panes.isInitialized || !::session.isInitialized) return
+        if (appliedPalette !== palette) {
+            appliedPalette = palette
+            applyWindowPalette(window)
+            secondary?.window?.let(::applyWindowPalette)
+        }
         val selected = session.selection
         hosts.forEach { (index, host) ->
             val state = states[index]
+            host.applyPalette(palette)
             if (!state.pinned && index != focus && !host.tracker.ownsSelection) state.switchKind(selected.context)
             host.tracker.state = state
             host.tracker.controllerFocused = index == focus
@@ -665,7 +678,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             host.tracker.visibility = if (documentReady) View.VISIBLE else View.INVISIBLE
             host.tracker.refresh()
             host.toolbar.heading.text = if (index == focus) "● ${session.song.title}" else session.song.title
-            host.toolbar.heading.setTextColor(if (index == focus) Palette.PLAYHEAD else Palette.DIM)
+            host.toolbar.heading.setTextColor(if (index == focus) palette.FOCUS_ACCENT else palette.DIM)
             host.viewButton.text = state.kind.name.lowercase().replaceFirstChar { it.uppercase() }
             host.pin.text = if (state.pinned) "Pinned" else "Context"
             host.focusButton.visibility = if (hosts.size > 1) View.VISIBLE else View.GONE
@@ -677,6 +690,20 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             host.setModal(popupHere)
         }
         updateStatus()
+    }
+
+    private fun applyWindowPalette(target: android.view.Window) {
+        target.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(palette.BG))
+        target.statusBarColor = palette.BG
+        target.navigationBarColor = palette.BG
+        applySystemBarIcons(target)
+    }
+
+    private fun applySystemBarIcons(target: android.view.Window) {
+        val light = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        target.decorView.systemUiVisibility = if (palette === Palette.PAPER)
+            target.decorView.systemUiVisibility or light
+        else target.decorView.systemUiVisibility and light.inv()
     }
 
     /**
@@ -1383,6 +1410,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private inner class Host(context: Context, val index: Int) {
         private val density = context.resources.displayMetrics.density
         private var modal = false
+        private var appliedPalette: Palette? = null
         val tracker = TrackerView(context, session, states[index]).apply {
             onTouchEnded = { this@MainActivity.refresh() }
         }
@@ -1392,10 +1420,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             if (documentReady && !popups.isOpen) { modalDisplay = index; toolbar.revealByTouch(); refresh() }
         }
         private val chip = TextView(context).apply {
-            typeface = PopupLayer.REGULAR; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setTextColor(Palette.TEXT)
+            typeface = PopupLayer.REGULAR; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setTextColor(palette.TEXT)
             maxLines = 2; ellipsize = TextUtils.TruncateAt.END; maxWidth = dp(560)
             background = GradientDrawable().apply {
-                setColor(Palette.BAR); cornerRadius = dp(14).toFloat(); setStroke(dp(1), Palette.RULE)
+                setColor(palette.BAR); cornerRadius = dp(14).toFloat(); setStroke(dp(1), palette.RULE)
             }
             setPadding(dp(14), dp(6), dp(14), dp(6))
             visibility = View.GONE
@@ -1417,7 +1445,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 }
                 return super.dispatchTouchEvent(event)
             }
-        }.apply { setBackgroundColor(Palette.BG) }
+        }.apply { setBackgroundColor(palette.BG) }
 
         private fun act(action: () -> Unit) = { if (documentReady) { modalDisplay = index; action() } }
 
@@ -1442,6 +1470,20 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             })
             root.addView(toolbar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
             root.addView(popup, FrameLayout.LayoutParams(-1, -1))
+            applyPalette(palette)
+            (if (index == 0) window else secondary?.window)?.let(::applyWindowPalette)
+        }
+
+        fun applyPalette(value: Palette) {
+            if (appliedPalette === value) return
+            appliedPalette = value
+            tracker.pane.palette = value
+            popup.palette = value
+            toolbar.palette = value
+            handle.palette = value
+            chip.setTextColor(value.TEXT)
+            (chip.background as GradientDrawable).apply { setColor(value.BAR); setStroke(dp(1), value.RULE) }
+            root.setBackgroundColor(value.BG)
         }
 
         /** Shows [message] on the status chip ([sticky] while loading); null clears it. */

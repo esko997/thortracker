@@ -1,6 +1,7 @@
 package org.thortracker.editor
 
 import org.thortracker.system.SoundSystem
+import org.thortracker.ui.Palette
 
 /**
  * The views a frontend shows and which one the controller drives. Each pane is a [ViewState] (a view kind with its
@@ -10,6 +11,9 @@ import org.thortracker.system.SoundSystem
  */
 class Workspace(panes: List<ViewState>, focus: Int = 0) {
     init { require(panes.isNotEmpty()) { "A workspace needs at least one pane" } }
+
+    /** Device-local appearance preference, never part of a musical document or its undo history. */
+    var palette: Palette = Palette.SLATE
 
     /** Pane order is layout order: pane 0 is the main pane (the Thor's top display). */
     val panes: MutableList<ViewState> = panes.toMutableList()

@@ -1,13 +1,13 @@
-// SDL3 audio output for one sound system's chip machines (chip_engine.h) on desktop Linux / Steam Deck.
-// One SDL audio stream pulls frames on SDL's audio thread; each request runs whole driver ticks.
-// Control calls (main thread) lock the stream only to swap pointers or apply a live edit, so the callback
+// Shared native audio mixer: whole chip-driver ticks feed the platform's float stereo output.
+// SDL2/SDL3 device mechanics live in audio_output.c; all playback/live-edit/audition semantics stay here.
+// Control calls (main thread) lock the output only to swap pointers or apply a live edit, so the callback
 // never sees a half-applied change and never waits for a seek: start() and audition() (the costly calls:
 // a seek replays the song silently) run on spare machines outside the lock, which are then swapped in at a
 // tick boundary. Machines are created in da_open (reSID's first one builds its tables), never in the
 // callback. As on Android, an audition borrows its channel: the song machine's channel is muted while the
 // audition sounds.
 #include "deck_audio.h"
-#include <SDL3/SDL.h>
+#include "audio_output.h"
 #include <stdlib.h>
 #include <string.h>
 #include "chip_engine.h"
@@ -15,7 +15,6 @@
 #define RATE 48000
 
 static const ChipEngineOps* ops;
-static SDL_AudioStream* stream;
 static ChipMachine* song_machine;
 static ChipMachine* audition_machine;
 static ChipMachine* song_spare;      /* seeks run here outside the lock, then swap with song_machine */
@@ -35,22 +34,21 @@ static volatile float peak;   /* loudest rendered sample since the last da_peak 
 /* da_stats (diagnostics): device buffer, callbacks, late ones while sounding, the slowest, driver faults. */
 static int device_frames;
 static volatile long long callbacks, late_callbacks, worst_callback_ns, faults;
-static Uint64 last_callback_ns;
+static uint64_t last_callback_ns;
 
-static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int total) {
-    (void)user; (void)total;
-    const Uint64 started = SDL_GetTicksNS();
+static void feed(int additional) {
+    const uint64_t started = ao_ticks_ns();
     ++callbacks;
     /* A callback more than two device buffers after the previous one while sounding probably let the device run dry. */
     if ((playing || auditioning) && last_callback_ns && device_frames > 0 &&
-        started - last_callback_ns > 2 * (Uint64)device_frames * SDL_NS_PER_SECOND / RATE)
+        started - last_callback_ns > 2 * (uint64_t)device_frames * 1000000000ULL / RATE)
         ++late_callbacks;
     last_callback_ns = started;
     while (additional > 0) {
         if (!playing && !auditioning) {
             static const float silence[512 * 2];
             int n = additional < (int)sizeof silence ? additional : (int)sizeof silence;
-            SDL_PutAudioStreamData(s, silence, n);
+            ao_put(silence, n);
             additional -= n;
             continue;
         }
@@ -83,10 +81,10 @@ static void SDLCALL feed(void* user, SDL_AudioStream* s, int additional, int tot
         if (frames == 0) continue;
         for (int i = 0; i < frames * 2; i++) { float a = song_buf[i] < 0 ? -song_buf[i] : song_buf[i]; if (a > peak) peak = a; }
         int bytes = frames * 2 * (int)sizeof(float);
-        SDL_PutAudioStreamData(s, song_buf, bytes);
+        ao_put(song_buf, bytes);
         additional -= bytes;
     }
-    const long long took = (long long)(SDL_GetTicksNS() - started);
+    const long long took = (long long)(ao_ticks_ns() - started);
     if (took > worst_callback_ns) worst_callback_ns = took;
 }
 
@@ -100,25 +98,20 @@ int da_open(const char* system_id) {
     song_spare = ops->create(RATE);
     audition_spare = ops->create(RATE);
     if (!image || !spare || !song_machine || !audition_machine || !song_spare || !audition_spare) return -3;
-    SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, RATE };
-    stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
-    if (!stream) return -4;
-    SDL_AudioSpec device;
-    if (!SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(stream), &device, &device_frames)) device_frames = 0;
-    SDL_ResumeAudioStreamDevice(stream);
+    if (ao_open(RATE, feed, &device_frames) != 0) return -4;
     return 0;
 }
 
 int da_set_image(const unsigned char* bytes, int size) {
     if (size < 0 || (size_t)size != ops->image_size) return -1;
     if (ops->load_image(spare, bytes, (size_t)size) != CHIP_OK) return -2;
-    SDL_LockAudioStream(stream);
+    ao_lock();
     ChipImage* t = image;
     image = spare;
     spare = t;
     has_image = 1;
     if (playing) ops->apply_image(song_machine, image);
-    SDL_UnlockAudioStream(stream);
+    ao_unlock();
     return 0;
 }
 
@@ -132,7 +125,7 @@ int da_play(int order, int row, int max_ticks) {
     if (!has_image) return -1;
     int seek = 0;
     int r = ops->start(song_spare, image, order, row, max_ticks, &seek);
-    SDL_LockAudioStream(stream);
+    ao_lock();
     if (r == CHIP_OK) {
         swap(&song_machine, &song_spare);
         pos_order = order;
@@ -140,33 +133,33 @@ int da_play(int order, int row, int max_ticks) {
     }
     playing = r == CHIP_OK;
     borrowed_channel = -1;   /* start resets the machine: nothing is muted */
-    SDL_UnlockAudioStream(stream);
+    ao_unlock();
     return r;
 }
 
 void da_stop(void) {
-    SDL_LockAudioStream(stream);
+    ao_lock();
     playing = 0;
-    SDL_UnlockAudioStream(stream);
+    ao_unlock();
 }
 
 int da_audition(int channel, int note, int instrument, int fine, int ticks) {
     if (!has_image) return -1;
     int r = ops->audition(audition_spare, image, channel, note, instrument, fine);
-    SDL_LockAudioStream(stream);
+    ao_lock();
     if (r == CHIP_OK) swap(&audition_machine, &audition_spare);
     auditioning = r == CHIP_OK;
     audition_ticks_left = ticks;
     audition_channel = channel;
-    SDL_UnlockAudioStream(stream);
+    ao_unlock();
     return r;
 }
 
 void da_release_audition(void) {
-    SDL_LockAudioStream(stream);
+    ao_lock();
     /* Chips with a release phase keep sounding until their tick reports the end. */
     if (auditioning && !ops->release(audition_machine)) auditioning = 0;
-    SDL_UnlockAudioStream(stream);
+    ao_unlock();
 }
 
 int da_playing(void) { return playing; }
@@ -181,8 +174,7 @@ int da_order(void) { return pos_order; }
 int da_row(void) { return pos_row; }
 
 void da_close(void) {
-    if (stream) SDL_DestroyAudioStream(stream);
-    stream = NULL;
+    ao_close();
     if (song_machine) ops->destroy(song_machine);
     if (audition_machine) ops->destroy(audition_machine);
     if (song_spare) ops->destroy(song_spare);

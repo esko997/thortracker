@@ -152,6 +152,38 @@ jobs:
             dist/thor-tracker-*-x86_64.AppImage.sha256
           if-no-files-found: error
 
+  # Cross-build only: vendor Mali rendering and real ALSA output must be checked on the actual Brick.
+  brick:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-35'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Shared core and pinned ARM64 toolchain
+        run: ./gradlew --no-daemon --console=plain --max-workers=2 :core:compileKotlinLinuxArm64
+      - name: Build pinned upstream SDL2 for linking only
+        run: brick/tools/build-sdl2-link.sh
+      - name: ARM64 release executable
+        run: ./gradlew --no-daemon --console=plain --max-workers=2 :brick:linkReleaseExecutableLinuxArm64
+      - name: Package NextUI Pak and check ELF ABI requirements
+        shell: bash
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          brick/tools/package-pak.sh "$version"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-brick-nextui
+          path: |
+            dist/thor-tracker-*-brick-nextui.zip
+            dist/thor-tracker-*-brick-nextui.zip.sha256
+          if-no-files-found: error
+
   # A version bump on main publishes it: when no release v<versionName> exists yet, sign and publish that commit.
   release:
     needs: build
@@ -232,11 +264,10 @@ jobs:
           gh release create "$TAG" --target "$GITHUB_SHA" --title "Thor Tracker $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
             "dist/thor-tracker-$VERSION.apk" "dist/thor-tracker-$VERSION.apk.sha256"
 
-  # The Deck AppImage joins a release the signed APK already published. It never holds up the APK: if the deck job
-  # failed, this is skipped and the release stays APK-only.
-  release-appimage:
-    needs: [build, release, deck]
-    if: needs.release.outputs.published == 'true' && needs.deck.result == 'success'
+  # Preserve APK-first publishing. Attach successful native builds in one job so release-note updates cannot race.
+  release-native:
+    needs: [build, release, deck, brick]
+    if: always() && needs.release.outputs.published == 'true' && (needs.deck.result == 'success' || needs.brick.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -246,17 +277,33 @@ jobs:
       TAG: v${{ needs.build.outputs.version }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.deck.result == 'success'
         with:
           name: thor-tracker-appimage
           path: dist
-      - name: Attach the AppImage to the release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.brick.result == 'success'
+        with:
+          name: thor-tracker-brick-nextui
+          path: dist
+      - name: Attach native builds to the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          DECK_RESULT: ${{ needs.deck.result }}
+          BRICK_RESULT: ${{ needs.brick.result }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release upload "$TAG" "dist/thor-tracker-$VERSION-x86_64.AppImage" "dist/thor-tracker-$VERSION-x86_64.AppImage.sha256"
-          notes=$(gh release view "$TAG" --json body --jq .body)
-          printf '%s\n\nSteam Deck / Linux: `thor-tracker-%s-x86_64.AppImage` (see the README, "Steam Deck").\n' "$notes" "$VERSION" > "$RUNNER_TEMP/notes.md"
+          assets=()
+          gh release view "$TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+          if [[ $DECK_RESULT == success ]]; then
+            assets+=("dist/thor-tracker-$VERSION-x86_64.AppImage" "dist/thor-tracker-$VERSION-x86_64.AppImage.sha256")
+            printf '\nSteam Deck / Linux: `thor-tracker-%s-x86_64.AppImage` (see the README, "Steam Deck").\n' "$VERSION" >> "$RUNNER_TEMP/notes.md"
+          fi
+          if [[ $BRICK_RESULT == success ]]; then
+            assets+=("dist/thor-tracker-$VERSION-brick-nextui.zip" "dist/thor-tracker-$VERSION-brick-nextui.zip.sha256")
+            printf '\nBrick Hammer / NextUI: `thor-tracker-%s-brick-nextui.zip` (see the README, "Brick Hammer / NextUI").\n' "$VERSION" >> "$RUNNER_TEMP/notes.md"
+          fi
+          gh release upload "$TAG" "${assets[@]}"
           gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"

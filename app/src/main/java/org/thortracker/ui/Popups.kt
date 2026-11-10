@@ -31,11 +31,47 @@ import android.widget.TextView
  */
 @SuppressLint("ViewConstructor")
 class PopupLayer(context: Context) : FrameLayout(context), PopupView {
+    var palette: Palette = Palette.SLATE
+        set(value) {
+            if (field === value) return
+            field = value
+            title.setTextColor(value.TEXT)
+            (title.background as GradientDrawable).setColor(value.LANE)
+            (panel.background as GradientDrawable).apply { setColor(value.BG); setStroke(dp(1), value.RULE) }
+            rule.setBackgroundColor(value.RULE)
+            setBackgroundColor(Palette.alpha(value.BG, 0xB8))
+            hints.palette = value
+            recolourBody(body)
+            shown?.let { paintSelection(it.selected, scrollToEntry = false) }
+            invalidate()
+        }
+
+    /** Recolour in place: an open dialog keeps its text, keyboard focus, selection and scroll position. */
+    private fun recolourBody(view: View) {
+        if (view is TextView) view.setTextColor(palette.TEXT)
+        if (view is EditText) styleField(view)
+        (view.background as? GradientDrawable)?.apply { setColor(palette.LANE); setStroke(dp(1), palette.RULE) }
+        view.background?.invalidateSelf()
+        if (view is ViewGroup) for (i in 0 until view.childCount) recolourBody(view.getChildAt(i))
+    }
+
+    private fun styleField(view: EditText) {
+        view.setHintTextColor(palette.DIM)
+        view.highlightColor = if (palette === Palette.SLATE) nativeFieldHighlight else Palette.alpha(palette.FOCUS_ACCENT, 80)
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            view.textCursorDrawable?.mutate()?.setTint(palette.FOCUS_ACCENT)
+            view.textSelectHandle?.mutate()?.setTint(palette.FOCUS_ACCENT)
+            view.textSelectHandleLeft?.mutate()?.setTint(palette.FOCUS_ACCENT)
+            view.textSelectHandleRight?.mutate()?.setTint(palette.FOCUS_ACCENT)
+        }
+    }
+
     private val density = resources.displayMetrics.density
     private var shown: PopupSpec? = null
     private var owner: Popups? = null
     private val rows = ArrayList<View>()
     private var field: EditText? = null
+    private var nativeFieldHighlight = 0
     private var available = 0
     private val scroll = object : ScrollView(context) {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -48,14 +84,15 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
     }.apply { isVerticalScrollBarEnabled = true; isFocusable = false; overScrollMode = OVER_SCROLL_NEVER }
     private val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val title = TextView(context).apply {
-        typeface = BOLD; setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f); setTextColor(Palette.TEXT)
+        typeface = BOLD; setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f); setTextColor(palette.TEXT)
         setPadding(dp(18), dp(12), dp(18), dp(11)); maxLines = 2
         background = GradientDrawable().apply {
-            setColor(Palette.LANE)
+            setColor(palette.LANE)
             cornerRadii = floatArrayOf(dp(6).toFloat(), dp(6).toFloat(), dp(6).toFloat(), dp(6).toFloat(), 0f, 0f, 0f, 0f)
         }
     }
     private val hints = KeyHints(context)
+    private val rule = View(context).apply { setBackgroundColor(palette.RULE) }
     private val panel = object : LinearLayout(context) {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val available = MeasureSpec.getSize(widthMeasureSpec)
@@ -66,12 +103,12 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
         orientation = LinearLayout.VERTICAL
         isClickable = true // taps on the panel's own padding never reach the scrim
         background = GradientDrawable().apply {
-            setColor(Palette.BG); cornerRadius = dp(6).toFloat(); setStroke(dp(1), Palette.RULE)
+            setColor(palette.BG); cornerRadius = dp(6).toFloat(); setStroke(dp(1), palette.RULE)
         }
         setPadding(dp(1), dp(1), dp(1), dp(1))
         elevation = dp(12).toFloat()
         addView(title, LinearLayout.LayoutParams(-1, -2))
-        addView(View(context).apply { setBackgroundColor(Palette.RULE) }, LinearLayout.LayoutParams(-1, dp(1)))
+        addView(rule, LinearLayout.LayoutParams(-1, dp(1)))
         scroll.addView(body, LayoutParams(-1, -2))
         addView(scroll, LinearLayout.LayoutParams(-1, -2))
         addView(hints, LinearLayout.LayoutParams(-1, dp(30)))
@@ -83,7 +120,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
     }
     init {
         visibility = GONE
-        setBackgroundColor(Palette.alpha(Palette.BG, 0xB8))
+        setBackgroundColor(Palette.alpha(palette.BG, 0xB8))
         isClickable = true
         isFocusable = false
         setOnClickListener { owner?.back() } // tapping the scrim leaves the top popup
@@ -129,7 +166,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
         spec.message?.let { text ->
             body.addView(TextView(context).apply {
                 this.text = text; typeface = REGULAR; setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                setTextColor(Palette.TEXT); setLineSpacing(0f, 1.25f)
+                setTextColor(palette.TEXT); setLineSpacing(0f, 1.25f)
                 setPadding(dp(18), dp(14), dp(18), dp(10))
             }, LinearLayout.LayoutParams(-1, -2))
         }
@@ -139,7 +176,9 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
                 filters = arrayOf<InputFilter>(InputFilter.LengthFilter(value.maxLength))
                 imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
                 typeface = REGULAR; setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(Palette.TEXT); setHintTextColor(Palette.DIM)
+                setTextColor(palette.TEXT); setHintTextColor(palette.DIM)
+                nativeFieldHighlight = highlightColor
+                if (palette !== Palette.SLATE) styleField(this)
                 setPadding(dp(12), dp(10), dp(12), dp(10))
                 addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -164,7 +203,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
             val row: View = when {
                 item.heading -> TextView(context).apply {
                     text = item.label; typeface = BOLD; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setTextColor(Palette.PLAYHEAD); setPadding(dp(20), dp(12), dp(18), dp(4))
+                    setTextColor(palette.FOCUS_ACCENT); setPadding(dp(20), dp(12), dp(18), dp(4))
                 }
                 item.value != null -> LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -182,7 +221,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
                         text = item.value; typeface = BOLD; setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                         gravity = Gravity.CENTER; minWidth = dp(92)
                         setPadding(dp(10), dp(4), dp(10), dp(4))
-                        background = GradientDrawable().apply { setColor(Palette.LANE); cornerRadius = dp(4).toFloat(); setStroke(dp(1), Palette.RULE) }
+                        background = GradientDrawable().apply { setColor(palette.LANE); cornerRadius = dp(4).toFloat(); setStroke(dp(1), palette.RULE) }
                     }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
                 }
                 else -> Button(context).apply {
@@ -205,27 +244,32 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
     }
 
     /** Moves the visible cursor to [entry] and scrolls it into view. */
-    override fun select(entry: Int) {
+    override fun select(entry: Int) = paintSelection(entry, scrollToEntry = true)
+
+    private fun paintSelection(entry: Int, scrollToEntry: Boolean) {
         val spec = shown ?: return
         rows.forEachIndexed { index, view ->
             val on = index == entry
             if (view is EditText) {
                 view.background = GradientDrawable().apply {
-                    setColor(Palette.LANE); cornerRadius = dp(4).toFloat()
-                    setStroke(dp(if (on || view.isFocused) 2 else 1), if (on) Palette.PLAYHEAD else Palette.RULE)
+                    setColor(palette.LANE); cornerRadius = dp(4).toFloat()
+                    setStroke(dp(if (on || view.isFocused) 2 else 1), if (on) palette.FOCUS_ACCENT else palette.RULE)
                 }
             } else {
                 val item = spec.items[spec.itemIndex(index)]
-                if (item.heading) return@forEachIndexed
+                if (item.heading) {
+                    (view as TextView).setTextColor(palette.FOCUS_ACCENT)
+                    return@forEachIndexed
+                }
                 (view.background as? RowBackground)?.let { it.selected = on; it.invalidateSelf() }
                 val color = when {
-                    item.tone == PopupItem.Tone.DANGER -> Palette.WRITE
-                    on -> Palette.TEXT
-                    else -> Palette.mix(Palette.TEXT, Palette.DIM, 0.35f)
+                    item.tone == PopupItem.Tone.DANGER -> palette.WRITE
+                    on -> palette.TEXT
+                    else -> Palette.mix(palette.TEXT, palette.DIM, 0.35f)
                 }
                 if (view is LinearLayout) {
                     (view.getChildAt(0) as TextView).setTextColor(color)
-                    (view.getChildAt(1) as TextView).setTextColor(if (on) Palette.PLAYHEAD else Palette.TEXT)
+                    (view.getChildAt(1) as TextView).setTextColor(if (on) palette.FOCUS_ACCENT else palette.TEXT)
                 } else (view as TextView).setTextColor(color)
             }
         }
@@ -243,7 +287,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
             if (onField && fieldFocused) add(keys.pair(org.thortracker.editor.Action.LEFT, org.thortracker.editor.Action.RIGHT) to "Cursor")
             add(keys.label(org.thortracker.editor.Action.CLEAR) to leave)
         })
-        reveal(entry)
+        if (scrollToEntry) reveal(entry)
     }
 
     private fun reveal(entry: Int) {
@@ -275,7 +319,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
 
     private fun dp(v: Int) = (v * density).toInt()
 
-    private class RowBackground(private val density: Float) : Drawable() {
+    private inner class RowBackground(private val density: Float) : Drawable() {
         var selected = false
         private val paint = android.graphics.Paint()
         private var pressed = false
@@ -283,11 +327,11 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
         override fun draw(canvas: Canvas) {
             val b = bounds
             if (selected || pressed) {
-                paint.color = if (selected) Palette.CURSOR_FILL else Palette.BAR
+                paint.color = if (selected) palette.CURSOR_FILL else palette.BAR
                 canvas.drawRect(b, paint)
             }
             if (selected) {
-                paint.color = Palette.PLAYHEAD
+                paint.color = palette.FOCUS_ACCENT
                 canvas.drawRect(b.left.toFloat(), b.top.toFloat(), b.left + 3 * density, b.bottom.toFloat(), paint)
             }
         }
@@ -315,6 +359,13 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
 class KeyHints(context: Context) : View(context) {
     private val surface = CanvasSurface()
     private val ink = Ink(resources.displayMetrics.density, surface)
+    var palette: Palette
+        get() = ink.palette
+        set(value) {
+            if (ink.palette === value) return
+            ink.palette = value
+            invalidate()
+        }
     private var hints: List<Pair<String, String>> = emptyList()
 
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
@@ -326,7 +377,7 @@ class KeyHints(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Palette.LANE)
+        canvas.drawColor(palette.LANE)
         surface.canvas = canvas
         val size = ink.dp(12f) * 0.82f
         var x = ink.dp(14f)

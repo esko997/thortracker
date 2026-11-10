@@ -37,7 +37,7 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = AyInstrumentView.sound(s, st)
         val page = AyInstrumentView.page(st)
         val listen = st.listenChannel.coerceIn(0, s.system.channels.size - 1)
-        val col = Palette.channel(listen)
+        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when {
             ins == null -> "empty slot"
@@ -72,17 +72,17 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (r in rows) {
             val sel = r == row
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = s.system.channels.getOrNull(listen)?.name.orEmpty()
                     ink.label(c, name, vx, y, h, col, true)
                     val note = "at ${s.system.noteName(ctl.defaultNote())}" + (AyInstrumentView.side(variant, listen)?.let { " · heard $it" } ?: "")
                     val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                    ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                    ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, tabLabels, st.envelope.coerceIn(0, tabLabels.size - 1))
                 ins == null -> setting(c, r.label, "—", rx, vx, y, h, sel, true)
@@ -98,7 +98,7 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (envelopePage) {
             val k = page.envelope!!
             val sound = ins ?: defaultAyInstrument(st.instrument)
-            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
             y += rowH * 0.85f
             val plotTop = y + ink.unit * 0.3f
             if (area.bottom - plotTop > ink.unit * 4f) {
@@ -113,9 +113,9 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
         // What the Listen note writes, and the shared-resource rule.
         if (ins != null) {
-            ink.label(c, ink.fit(AyInstrumentView.readingText(s, ins, ctl.defaultNote()), rw, small), rx, y, rowH * 0.85f, Palette.PLAYHEAD, size = small)
+            ink.label(c, ink.fit(AyInstrumentView.readingText(s, ins, ctl.defaultNote()), rw, small), rx, y, rowH * 0.85f, ink.palette.PLAYHEAD, size = small)
             y += rowH * 0.85f
-            ink.label(c, ink.fit(SHARED_NOTE, rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+            ink.label(c, ink.fit(SHARED_NOTE, rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
             y += rowH * 0.85f
         }
         val box = if (side) Rect(rightEdge + pad, top + ink.unit * 0.3f, area.right - pad, area.bottom - ink.unit * 0.4f)
@@ -276,19 +276,19 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     /** [r13]'s levels as a staircase over [ramps] ramps of [steps] levels in [r]; ramp boundaries ruled. */
     private fun drawShape(c: Surface, r: Rect, title: String, r13: Int, steps: Int, ramps: Int, col: Int, on: Boolean) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 1.8f, r.top + titleH, r.right - ink.unit * 0.8f, r.bottom - ink.unit * 0.6f)
         if (g.height() <= ink.unit || !on) return
         val ls = ink.unit * 0.7f
-        ink.line(c, g.left, g.bottom, g.right, g.bottom, Palette.RULE, ink.dp(1f))
-        ink.line(c, g.left, g.top, g.right, g.top, Palette.RULE, ink.dp(1f))
-        ink.mono(c, (steps - 1).toString(), g.left - ink.dp(3f), g.top - ls, ls * 2, Palette.FAINT, size = ls, align = Align.RIGHT)
-        ink.mono(c, "0", g.left - ink.dp(3f), g.bottom - ls, ls * 2, Palette.FAINT, size = ls, align = Align.RIGHT)
+        ink.line(c, g.left, g.bottom, g.right, g.bottom, ink.palette.RULE, ink.dp(1f))
+        ink.line(c, g.left, g.top, g.right, g.top, ink.palette.RULE, ink.dp(1f))
+        ink.mono(c, (steps - 1).toString(), g.left - ink.dp(3f), g.top - ls, ls * 2, ink.palette.FAINT, size = ls, align = Align.RIGHT)
+        ink.mono(c, "0", g.left - ink.dp(3f), g.bottom - ls, ls * 2, ink.palette.FAINT, size = ls, align = Align.RIGHT)
         for (k in 1 until ramps) {
             val x = g.left + g.width() * k / ramps
-            ink.line(c, x, g.top, x, g.bottom, Palette.RULE, ink.dp(1f))
+            ink.line(c, x, g.top, x, g.bottom, ink.palette.RULE, ink.dp(1f))
         }
         stairs(c, g, levelsOf(r13, steps, ramps), steps, col, ink.dp(2f))
     }
@@ -309,10 +309,10 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     /** All 16 R13 values, each with its shape; the 8 aliases (0-7) faint and marked with what they play as. */
     private fun drawR13Table(c: Surface, r: Rect, shape: Int, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         ink.label(c, ink.fit("R13: all 16 values (0-3 play as 9, 4-7 as F)", r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH,
-            Palette.FAINT, size = ink.unit * 0.8f)
+            ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 0.4f, r.top + titleH, r.right - ink.unit * 0.4f, r.bottom - ink.unit * 0.3f)
         val columns = if (g.width() > g.height() * 3f) 8 else 4
         val rowsN = 16 / columns
@@ -324,12 +324,12 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val cell = Rect(g.left + (v % columns) * cw, g.top + (v / columns) * ch, g.left + (v % columns + 1) * cw, g.top + (v / columns + 1) * ch)
             val alias = v < 8
             val current = shape != 0 && v == shape
-            if (current) ink.rect(c, cell, Palette.mix(Palette.BG, col, 0.18f))
+            if (current) ink.rect(c, cell, Palette.mix(ink.palette.BG, col, 0.18f))
             val label = NumberText.hex(v) + if (alias) "=${NumberText.hex(AyInstrumentView.canonicalShape(v))}" else ""
-            ink.mono(c, label, cell.left + ink.unit * 0.2f, cell.top, ls * 1.6f, if (alias) Palette.FAINT else if (current) col else Palette.DIM, current, ls)
+            ink.mono(c, label, cell.left + ink.unit * 0.2f, cell.top, ls * 1.6f, if (alias) ink.palette.FAINT else if (current) col else ink.palette.DIM, current, ls)
             val sg = Rect(cell.left + ink.unit * 0.3f, cell.top + ls * 1.7f, cell.right - ink.unit * 0.3f, cell.bottom - ink.unit * 0.25f)
             if (sg.height() > ink.dp(4f) && sg.width() > ink.dp(8f)) {
-                stairs(c, sg, levelsOf(v, TABLE_STEPS, TABLE_RAMPS), TABLE_STEPS, if (alias) Palette.FAINT else if (current) col else Palette.DIM, ink.dp(1.2f))
+                stairs(c, sg, levelsOf(v, TABLE_STEPS, TABLE_RAMPS), TABLE_STEPS, if (alias) ink.palette.FAINT else if (current) col else ink.palette.DIM, ink.dp(1.2f))
             }
             if (current) ink.outline(c, cell, col, ink.dp(2f), ink.dp(3f))
         }

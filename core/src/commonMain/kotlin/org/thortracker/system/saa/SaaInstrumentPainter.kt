@@ -48,7 +48,7 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         val variant = s.saa.variant
         val channels = s.system.channels
         val listen = channels.getOrNull(st.listenChannel)
-        val col = Palette.channel(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}",
             "${variant.label} (${variant.chipLabel})${if (sound == null) " · empty slot" else ""}$locked  ${usageText(st.instrument)}")
@@ -58,7 +58,7 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, Palette.LANE)
+        ink.rect(c, left, ink.palette.LANE)
         slotTop = top + ink.unit * 0.2f
         slotH = ink.unit * 1.45f
         val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
@@ -69,22 +69,22 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
             val y = slotTop + k * slotH
             val sel = i == st.instrument
             if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, Palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
                 ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
             }
             val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else Palette.FAINT, sel, sz)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
             val slotSound = s.saa.instrument(i)
             val used = usage(i)
             val nameColor = when {
-                slotSound == null -> Palette.FAINT
-                sel -> Palette.TEXT
-                used > 0 -> Palette.DIM
-                else -> Palette.FAINT
+                slotSound == null -> ink.palette.FAINT
+                sel -> ink.palette.TEXT
+                used > 0 -> ink.palette.DIM
+                else -> ink.palette.FAINT
             }
             val text = slotSound?.name?.ifEmpty { "(unnamed)" } ?: "· empty"
             ink.label(c, ink.fit(text, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, Palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
         if (row == Row.SLOT) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
@@ -114,7 +114,7 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
                 val x = rx + k * w
                 val cellRight = x + w - (if (k < line.size - 1) ink.unit * 0.6f else 0f)
                 val sel = r == row
-                if (sel) ink.rect(c, x - ink.unit * 0.4f, y, cellRight + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+                if (sel) ink.rect(c, x - ink.unit * 0.4f, y, cellRight + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
                 drawRow(c, r, ins, empty, x, cellRight, y, h, sel, text, col, listen?.name.orEmpty())
                 if (r != Row.PAGE) rowRects += Rect(x, y, cellRight, y + h) to r
                 if (sel) ink.outline(c, Rect(x - ink.unit * 0.4f, y + 1, cellRight + ink.unit * 0.4f, y + h - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
@@ -122,7 +122,7 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
             y += h
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(SaaInstrumentView.envelopeSummary(kind), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(SaaInstrumentView.envelopeSummary(kind), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
         y += rowH * 0.85f
 
         // steps
@@ -154,18 +154,18 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         val e = ins.envelope
         val laneHasEnvelope = SaaSound.hasEnvelope(st.listenChannel)
         fun setting(value: String, off: Boolean) {
-            ink.label(c, r.label, x, y, h, if (sel) Palette.TEXT else Palette.DIM, size = size)
+            ink.label(c, r.label, x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, size = size)
             ink.label(c, ink.fit(value, maxOf(ink.unit, right - vx), size, sel), vx, y, h,
-                if (sel) (if (off) Palette.DIM else Palette.TEXT) else (if (off) Palette.FAINT else Palette.DIM), sel, size)
+                if (sel) (if (off) ink.palette.DIM else ink.palette.TEXT) else (if (off) ink.palette.FAINT else ink.palette.DIM), sel, size)
         }
         when (r) {
             Row.NAME -> if (empty) {
-                ink.label(c, "Empty slot", x, y, h, if (sel) Palette.TEXT else Palette.DIM, size = size)
+                ink.label(c, "Empty slot", x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, size = size)
                 ink.label(c, ink.fit("${ctl.k(Action.EDIT)} on Slot makes a sound; ${ctl.keys.held(Action.EDIT, ctl.lr())} on Preset picks one",
-                    maxOf(ink.unit, right - vx), size), vx, y, h, Palette.FAINT, size = size)
+                    maxOf(ink.unit, right - vx), size), vx, y, h, ink.palette.FAINT, size = size)
             } else {
-                ink.label(c, "Name", x, y, h, if (sel) Palette.TEXT else Palette.DIM, size = size)
-                ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) Palette.FAINT else Palette.TEXT, true, size)
+                ink.label(c, "Name", x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, size = size)
+                ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true, size)
                 if (sel) {
                     val before = ins.name.take(st.textPos).padEnd(st.textPos, ' ')
                     val cx = vx + ink.labelWidth(before, size, true)
@@ -183,11 +183,11 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
                 }, p < 0)
             }
             Row.LISTEN -> {
-                ink.label(c, "Listen on", x, y, h, if (sel) Palette.TEXT else Palette.DIM, size = size)
+                ink.label(c, "Listen on", x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, size = size)
                 ink.label(c, listenName, vx, y, h, col, true, size)
                 SaaInstrumentView.channelNote(s, st.listenChannel, ins)?.let { note ->
                     val nx = vx + ink.labelWidth(listenName, size, true) + ink.unit
-                    ink.label(c, ink.fit(note, right - nx, ink.unit * 0.8f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.8f)
+                    ink.label(c, ink.fit(note, right - nx, ink.unit * 0.8f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.8f)
                 }
             }
             Row.PAN_LEFT -> setting("${ins.panLeft}${if (ins.panLeft == 0) " (silent left)" else ""}", ins.panLeft == 0)
@@ -204,9 +204,9 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
             }, e == null || !laneHasEnvelope)
             Row.SHAPE -> if (e != null) {
                 val name = "${e.shape}: ${SaaHardwareEnvelope.SHAPE_NAMES[e.shape]}"
-                ink.label(c, r.label, x, y, h, if (sel) Palette.TEXT else Palette.DIM, size = size)
+                ink.label(c, r.label, x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, size = size)
                 val nameW = minOf(ink.labelWidth(name, size, sel), (right - vx) * 0.45f)
-                ink.label(c, ink.fit(name, nameW + 1f, size, sel), vx, y, h, if (sel) Palette.TEXT else Palette.DIM, sel, size)
+                ink.label(c, ink.fit(name, nameW + 1f, size, sel), vx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, sel, size)
                 val gx = vx + nameW + ink.unit
                 if (right - gx > ink.unit * 3f) drawShape(c, Rect(gx, y + ink.unit * 0.2f, right, y + h - ink.unit * 0.2f), e, col)
             }
@@ -251,7 +251,7 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
      * (0 on the internal clock; the last step on the external clock), as steps; the right level dashed when inverted.
      */
     private fun drawShape(c: Surface, r: Rect, e: SaaHardwareEnvelope, col: Int) {
-        ink.round(c, r, ink.dp(3f), Palette.LANE)
+        ink.round(c, r, ink.dp(3f), ink.palette.LANE)
         val levels = SaaHardwareEnvelope.levels(e.shape, e.threeBit)
         val looping = SaaHardwareEnvelope.looping(e.shape)
         val n = levels.size
@@ -271,7 +271,7 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         val sides = if (e.invertRight) 2 else 1
         for (side in 0 until sides) {
             val right = side == 1
-            val color = if (right) Palette.DIM else col
+            val color = if (right) ink.palette.DIM else col
             val width = ink.dp(if (right) 1f else 2f)
             for (k in 0 until total) {
                 val x0 = inner.left + k * stepW
@@ -281,17 +281,17 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
                 if (k + 1 < total && !right) ink.line(c, x0 + stepW, y0, x0 + stepW, yOf(level(k + 1, false)), color, width)
             }
         }
-        if (!looping) ink.line(c, inner.left + n * stepW, inner.top, inner.left + n * stepW, inner.bottom, Palette.RULE, ink.dp(1f))
+        if (!looping) ink.line(c, inner.left + n * stepW, inner.top, inner.left + n * stepW, inner.bottom, ink.palette.RULE, ink.dp(1f))
     }
 
     /** Player ticks (50 or 60 per second at multispeed 1) as a duration. */
     private fun ticks(n: Int) = "${(n * 1000.0 / (song.saa.variant.rate * song.saa.multispeed)).roundToInt()} ms"
 
     private fun cursorColor() = when {
-        ctl.editHeld -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     /** Page tabs: each envelope with its length. */
@@ -302,11 +302,11 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         for (k in kinds) {
             val t = Rect(r.left + k.ordinal * w, r.top, r.left + (k.ordinal + 1) * w, r.bottom)
             val on = k.ordinal == st.envelope
-            if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
-            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
+            if (on) ink.rect(c, t, Palette.mix(ink.palette.BG, col, 0.18f))
+            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else ink.palette.RULE)
             val size = k.of(ins).values.size
             val label = if (size == 0) k.label else "${k.label} ($size)"
-            ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), if (on) col else Palette.DIM, on, align = Align.CENTER)
+            ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), if (on) col else ink.palette.DIM, on, align = Align.CENTER)
             tabs += t to k.ordinal
         }
     }

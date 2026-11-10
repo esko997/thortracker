@@ -41,22 +41,22 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         val ins = s.bank(kind).getOrNull(st.instrument - 1) ?: return
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "${bankName(kind)} bank$locked  ${usageText(kind, st.instrument)}")
-        val col = Palette.channel(maxOf(0, s.firstChannelOf(kind)))
+        val col = ink.palette.channel(maxOf(0, s.firstChannelOf(kind)))
 
         // left column: tabs + slots
         val leftW = minOf(area.width() * 0.34f, ink.unit * 15f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, Palette.LANE)
+        ink.rect(c, left, ink.palette.LANE)
         val tabH = ink.unit * 1.9f
         tabs.clear()
         val tabW = leftW / GbBank.entries.size
         for (k in GbBank.entries) {
             val r = Rect(left.left + k.ordinal * tabW, top, left.left + (k.ordinal + 1) * tabW, top + tabH)
             val on = k == kind
-            val kc = Palette.channel(maxOf(0, s.firstChannelOf(k)))
-            if (on) ink.rect(c, r, Palette.mix(Palette.BG, kc, 0.18f))
-            ink.rect(c, r.left, r.bottom - ink.dp(if (on) 3f else 1f), r.right, r.bottom, if (on) kc else Palette.RULE)
-            ink.label(c, bankName(k), r.centerX(), r.top, r.height(), if (on) kc else Palette.DIM, on, align = Align.CENTER)
+            val kc = ink.palette.channel(maxOf(0, s.firstChannelOf(k)))
+            if (on) ink.rect(c, r, Palette.mix(ink.palette.BG, kc, 0.18f))
+            ink.rect(c, r.left, r.bottom - ink.dp(if (on) 3f else 1f), r.right, r.bottom, if (on) kc else ink.palette.RULE)
+            ink.label(c, bankName(k), r.centerX(), r.top, r.height(), if (on) kc else ink.palette.DIM, on, align = Align.CENTER)
             tabs += r to k.ordinal
         }
         slotTop = top + tabH + ink.unit * 0.2f
@@ -67,15 +67,15 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             val y = slotTop + (i - 1) * slotH
             val sel = i == st.instrument
             if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, Palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
                 ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
             }
             val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else Palette.FAINT, sel, sz)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
             val used = usage(kind, i)
-            val nameColor = if (sel) Palette.TEXT else if (used > 0) Palette.DIM else Palette.FAINT
+            val nameColor = if (sel) ink.palette.TEXT else if (used > 0) ink.palette.DIM else ink.palette.FAINT
             ink.label(c, ink.fit(bank[i - 1].name, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, Palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
         if (st.instField == 0) {
             val y = slotTop + (st.instrument - 1) * slotH
@@ -91,9 +91,9 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         var y = top + ink.unit * 0.4f
         // name
         val nameSel = st.instField == 1
-        ink.label(c, "Name", rx, y, paramH, Palette.DIM)
+        ink.label(c, "Name", rx, y, paramH, ink.palette.DIM)
         val nx = rx + ink.unit * 6.5f
-        ink.label(c, ins.name.ifEmpty { "(unnamed)" }, nx, y, paramH, if (ins.name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+        ink.label(c, ins.name.ifEmpty { "(unnamed)" }, nx, y, paramH, if (ins.name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
         if (nameSel) {
             val before = ins.name.take(st.textPos).padEnd(st.textPos, ' ')
             val cx = nx + ink.labelWidth(before, ink.unit, true)
@@ -111,7 +111,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         }
         paramRect = Rect(rx, paramTop, rx + rw, y)
         if (kind == GbBank.PULSE && s.firstChannelOf(kind) >= 0) {
-            ink.label(c, "Sweep plays only on ${HugeRules.CHANNEL_NAMES[s.firstChannelOf(kind)]}", rx, y, paramH * 0.8f, Palette.FAINT, size = ink.unit * 0.8f)
+            ink.label(c, "Sweep plays only on ${HugeRules.CHANNEL_NAMES[s.firstChannelOf(kind)]}", rx, y, paramH * 0.8f, ink.palette.FAINT, size = ink.unit * 0.8f)
             y += paramH * 0.8f
         }
 
@@ -124,19 +124,19 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
     }
 
     private fun cursorColor() = when {
-        ctl.editHeld -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     private fun drawParam(c: Surface, p: SoundParam, ins: GbInstrument, x: Float, y: Float, w: Float, selected: Boolean, col: Int) {
-        if (selected) ink.rect(c, x - ink.unit * 0.4f, y, x + w + ink.unit * 0.4f, y + paramH, Palette.CURSOR_FILL)
-        ink.label(c, p.label, x, y, paramH, if (selected) Palette.TEXT else Palette.DIM)
+        if (selected) ink.rect(c, x - ink.unit * 0.4f, y, x + w + ink.unit * 0.4f, y + paramH, ink.palette.CURSOR_FILL)
+        ink.label(c, p.label, x, y, paramH, if (selected) ink.palette.TEXT else ink.palette.DIM)
         val value = p.get(ins)
         val cy = y + paramH / 2
         val h = ink.dp(4f)
-        ink.round(c, Rect(barLeft, cy - h / 2, barRight, cy + h / 2), h, Palette.RULE)
+        ink.round(c, Rect(barLeft, cy - h / 2, barRight, cy + h / 2), h, ink.palette.RULE)
         val t = if (p.max == p.min) 0f else (value - p.min).toFloat() / (p.max - p.min)
         val kx = barLeft + (barRight - barLeft) * t
         ink.round(c, Rect(barLeft, cy - h / 2, kx, cy + h / 2), h, Palette.alpha(col, 170))
@@ -144,12 +144,12 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         if (p.max - p.min in 1..15) {
             for (i in 0..(p.max - p.min)) {
                 val dx = barLeft + (barRight - barLeft) * i / (p.max - p.min)
-                ink.rect(c, dx - 1, cy + h, dx + 1, cy + h * 2, Palette.FAINT)
+                ink.rect(c, dx - 1, cy + h, dx + 1, cy + h * 2, ink.palette.FAINT)
             }
         }
         val knob = ink.dp(if (selected) 8f else 6f)
-        c.fillCircle(kx, cy, knob, if (selected) (if (ctl.editHeld) Palette.WRITE else Palette.TEXT) else col)
-        ink.label(c, p.format(ins, value), barRight + ink.unit * 0.8f, y, paramH, if (selected) Palette.TEXT else Palette.DIM, selected)
+        c.fillCircle(kx, cy, knob, if (selected) (if (ctl.editHeld) ink.palette.WRITE else ink.palette.TEXT) else col)
+        ink.label(c, p.format(ins, value), barRight + ink.unit * 0.8f, y, paramH, if (selected) ink.palette.TEXT else ink.palette.DIM, selected)
         if (selected) ink.outline(c, Rect(x - ink.unit * 0.4f, y + 1, x + w + ink.unit * 0.4f, y + paramH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
     }
 
@@ -167,8 +167,8 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
     }
 
     private fun frame(c: Surface, r: Rect, title: String): Rect {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
-        ink.label(c, title, r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
+        ink.label(c, title, r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, ink.palette.FAINT, size = ink.unit * 0.8f)
         return Rect(r.left + ink.unit * 0.5f, r.top + ink.unit * 1.4f, r.right - ink.unit * 0.5f, r.bottom - ink.unit * 0.5f)
     }
 
@@ -189,8 +189,8 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         c.polyline(xs, ys, steps + 1, col, ink.dp(2f))
         if (cut < seconds) {
             val x = inner.left + inner.width() * (cut / seconds).toFloat()
-            ink.line(c, x, inner.top, x, inner.bottom, Palette.WRITE, ink.dp(1.5f))
-            ink.label(c, "length cut ${NumberText.fixed(cut * 1000.0, 0)} ms", minOf(x + ink.unit * 0.3f, inner.right - ink.unit * 8f), inner.top, ink.unit * 1.2f, Palette.WRITE, size = ink.unit * 0.75f)
+            ink.line(c, x, inner.top, x, inner.bottom, ink.palette.WRITE, ink.dp(1.5f))
+            ink.label(c, "length cut ${NumberText.fixed(cut * 1000.0, 0)} ms", minOf(x + ink.unit * 0.3f, inner.right - ink.unit * 8f), inner.top, ink.unit * 1.2f, ink.palette.WRITE, size = ink.unit * 0.75f)
         }
     }
 

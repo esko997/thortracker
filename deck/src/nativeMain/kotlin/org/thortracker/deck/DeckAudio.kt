@@ -17,7 +17,7 @@ import kotlin.math.roundToInt
  * song until it is released. It runs the engine of the song's own system ([SoundSystem.engine]) and reopens the
  * glue with another engine when a song of another system arrives. Main thread only.
  */
-class DeckAudio : TrackerAudio {
+class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
     private var system: SoundSystem? = null   // whose engine the glue has open
     private var image = ByteArray(0)
     private var hasImage = false
@@ -74,7 +74,7 @@ class DeckAudio : TrackerAudio {
     fun diagnostics(): List<Pair<String, String>> {
         val v = LongArray(DA_STATS)
         v.usePinned { da_stats(it.addressOf(0), v.size) }
-        val driver = sdl3.SDL_GetCurrentAudioDriver()?.toKString() ?: "none"
+        val driver = audioDriver()
         return listOf(
             "Audio" to "SDL $driver, ${v[0]} Hz float stereo, device buffer ${v[1]} frames, engine ${system?.engine?.id ?: "not open"}",
             "Audio stats" to "callbacks ${v[2]}, late callbacks ${v[3]}, worst callback ${v[4] / 1000} µs, driver faults ${v[5]}",

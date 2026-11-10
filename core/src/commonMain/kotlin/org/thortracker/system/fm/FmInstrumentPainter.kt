@@ -149,7 +149,7 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
     protected fun drawBank(c: Surface, area: Rect, top: Float, slots: Int, col: Int, focused: Boolean, name: (Int) -> String?): Rect {
         val leftW = minOf(area.width() * 0.26f, ink.unit * 12f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, Palette.LANE)
+        ink.rect(c, left, ink.palette.LANE)
         slotTop = top + ink.unit * 0.2f
         slotH = ink.unit * 1.4f
         val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
@@ -160,16 +160,16 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
             val y = slotTop + k * slotH
             val sel = i == st.instrument
             if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, Palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
                 ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
             }
             val sz = minOf(ink.unit, slotH * 0.72f)
             val slotName = name(i)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else Palette.FAINT, sel, sz)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
             val used = usage(i)
-            val nameColor = if (sel) Palette.TEXT else if (slotName == null) Palette.FAINT else if (used > 0) Palette.DIM else Palette.FAINT
+            val nameColor = if (sel) ink.palette.TEXT else if (slotName == null) ink.palette.FAINT else if (used > 0) ink.palette.DIM else ink.palette.FAINT
             ink.label(c, ink.fit(slotName ?: "·", leftW - ink.unit * 4.4f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, Palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
         if (focused) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
@@ -179,8 +179,8 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     protected fun drawName(c: Surface, name: String, rx: Float, vx: Float, y: Float, h: Float, sel: Boolean) {
-        ink.label(c, "Name", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
-        ink.label(c, name.ifEmpty { "(unnamed)" }, vx, y, h, if (name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+        ink.label(c, "Name", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
+        ink.label(c, name.ifEmpty { "(unnamed)" }, vx, y, h, if (name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
         if (sel) {
             val before = name.take(st.textPos).padEnd(st.textPos, ' ')
             val cx = vx + ink.labelWidth(before, ink.unit, true)
@@ -191,16 +191,16 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     protected fun setting(c: Surface, label: String, value: String, x: Float, vx: Float, y: Float, h: Float, sel: Boolean, off: Boolean) {
-        ink.label(c, ink.fit(label, vx - x - ink.unit * 0.3f), x, y, h, if (sel) Palette.TEXT else Palette.DIM)
+        ink.label(c, ink.fit(label, vx - x - ink.unit * 0.3f), x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
         val max = rightEdge - vx
-        ink.label(c, ink.fit(value, max, ink.unit, sel), vx, y, h, if (sel) (if (off) Palette.DIM else Palette.TEXT) else (if (off) Palette.FAINT else Palette.DIM), sel)
+        ink.label(c, ink.fit(value, max, ink.unit, sel), vx, y, h, if (sel) (if (off) ink.palette.DIM else ink.palette.TEXT) else (if (off) ink.palette.FAINT else ink.palette.DIM), sel)
     }
 
     protected fun cursorColor() = when {
-        ctl.editHeld -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     /** Page tabs [labels] across [r], [current] highlighted; touching one shows that page ([tabs]). */
@@ -210,10 +210,10 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
         for ((i, p) in labels.withIndex()) {
             val t = Rect(r.left + i * w, r.top, r.left + (i + 1) * w, r.bottom)
             val on = i == current
-            if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
-            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
+            if (on) ink.rect(c, t, Palette.mix(ink.palette.BG, col, 0.18f))
+            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else ink.palette.RULE)
             ink.label(c, ink.fit(p, w - ink.unit * 0.4f, ink.unit * 0.9f), t.centerX(), t.top, t.height(),
-                if (on) col else Palette.DIM, on, ink.unit * 0.9f, Align.CENTER)
+                if (on) col else ink.palette.DIM, on, ink.unit * 0.9f, Align.CENTER)
             tabs += t to i
         }
     }
@@ -230,13 +230,13 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
                                  played: (Int) -> Boolean, carrier: (Int) -> Boolean): Float {
         val colW = (rx + rw - vx) / 4f
         val size = ink.unit * 0.8f
-        ink.label(c, "Register", rx, y, h, Palette.FAINT, size = size)
+        ink.label(c, "Register", rx, y, h, ink.palette.FAINT, size = size)
         for (op in 0 until 4) {
             val x = opX(vx, rw, rx, op)
             val on = played(op)
             val car = on && carrier(op)
             val text = "Op ${op + 1} " + if (!on) "off" else if (car) "♪car" else "mod"
-            ink.label(c, ink.fit(text, colW - ink.unit * 0.2f, size, true), x, y, h, if (!on) Palette.FAINT else if (car) col else Palette.DIM, true, size)
+            ink.label(c, ink.fit(text, colW - ink.unit * 0.2f, size, true), x, y, h, if (!on) ink.palette.FAINT else if (car) col else ink.palette.DIM, true, size)
         }
         return y + h
     }
@@ -248,12 +248,12 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
     protected fun drawGridRow(c: Surface, label: String, rowIndex: Int, rx: Float, vx: Float, rw: Float, y: Float, h: Float, sel: Boolean,
                               current: Int, played: (Int) -> Boolean, text: (Int) -> String) {
         val colW = (rx + rw - vx) / 4f
-        if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.alpha(Palette.CURSOR_FILL, 160))
-        ink.mono(c, label, rx, y, h, if (sel) Palette.TEXT else Palette.DIM, sel, ink.unit * 0.9f)
+        if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.alpha(ink.palette.CURSOR_FILL, 160))
+        ink.mono(c, label, rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, sel, ink.unit * 0.9f)
         for (op in 0 until 4) {
             val x = opX(vx, rw, rx, op)
             ink.mono(c, ink.fit(text(op), colW - ink.unit * 0.3f, ink.unit * 0.85f), x, y, h,
-                if (!played(op)) Palette.FAINT else if (sel && op == current) Palette.TEXT else Palette.DIM, size = ink.unit * 0.85f)
+                if (!played(op)) ink.palette.FAINT else if (sel && op == current) ink.palette.TEXT else ink.palette.DIM, size = ink.unit * 0.85f)
             val cell = Rect(x - ink.unit * 0.2f, y + 1, x + colW - ink.unit * 0.2f, y + h - 1)
             gridCells += Triple(cell, rowIndex, op)
             if (sel && op == current) ink.outline(c, cell, cursorColor(), ink.dp(2f), ink.dp(3f))
@@ -269,9 +269,9 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
      */
     protected fun drawAlgorithm(c: Surface, r: Rect, title: String, routing: FmRouting, feedback: Int, col: Int, focus: Int,
                                 ratio: (Int) -> String, wave: (Int) -> Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 0.6f, r.top + titleH + ink.unit * 0.3f, r.right - ink.unit * 0.6f, r.bottom - ink.unit * 0.4f)
         val cols = routing.columns
         val outW = ink.unit * 2.2f
@@ -300,29 +300,29 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
                 if (to != n.op) continue
                 val src = boxOf(routing.nodes.first { it.op == from })
                 val sy = src.centerY()
-                if (sy == cy) arrow(c, src.right, cy, box.left, cy, Palette.DIM)
+                if (sy == cy) arrow(c, src.right, cy, box.left, cy, ink.palette.DIM)
                 else {
                     // Between rows: out of the modulator, down or up halfway across, then into the operator.
                     val mx = (src.right + box.left) / 2f
-                    ink.line(c, src.right, sy, mx, sy, Palette.DIM, ink.dp(1.5f))
-                    ink.line(c, mx, sy, mx, cy, Palette.DIM, ink.dp(1.5f))
-                    arrow(c, mx, cy, box.left, cy, Palette.DIM)
+                    ink.line(c, src.right, sy, mx, sy, ink.palette.DIM, ink.dp(1.5f))
+                    ink.line(c, mx, sy, mx, cy, ink.palette.DIM, ink.dp(1.5f))
+                    arrow(c, mx, cy, box.left, cy, ink.palette.DIM)
                 }
             }
             val op = n.op
             val carrier = n.carrier
-            ink.round(c, box, ink.dp(4f), Palette.mix(Palette.BG, col, if (carrier) 0.32f else 0.12f))
-            ink.outline(c, box, if (op == focus) Palette.TEXT else if (carrier) col else Palette.DIM, if (op == focus) ink.dp(2.5f) else ink.dp(1.2f), ink.dp(4f))
-            ink.label(c, "${op + 1}", box.left + ink.unit * 0.3f, box.top, boxH * 0.55f, if (carrier) Palette.TEXT else Palette.DIM, true, ink.unit * 0.9f)
-            ink.label(c, ink.fit(ratio(op), boxW * 0.55f, small), box.right - ink.unit * 0.25f, box.top, boxH * 0.55f, Palette.DIM, size = small, align = Align.RIGHT)
-            drawWave(c, Rect(box.left + ink.unit * 0.3f, box.top + boxH * 0.55f, box.right - ink.unit * 0.3f, box.bottom - boxH * 0.1f), wave(op), if (carrier) col else Palette.DIM)
+            ink.round(c, box, ink.dp(4f), Palette.mix(ink.palette.BG, col, if (carrier) 0.32f else 0.12f))
+            ink.outline(c, box, if (op == focus) ink.palette.TEXT else if (carrier) col else ink.palette.DIM, if (op == focus) ink.dp(2.5f) else ink.dp(1.2f), ink.dp(4f))
+            ink.label(c, "${op + 1}", box.left + ink.unit * 0.3f, box.top, boxH * 0.55f, if (carrier) ink.palette.TEXT else ink.palette.DIM, true, ink.unit * 0.9f)
+            ink.label(c, ink.fit(ratio(op), boxW * 0.55f, small), box.right - ink.unit * 0.25f, box.top, boxH * 0.55f, ink.palette.DIM, size = small, align = Align.RIGHT)
+            drawWave(c, Rect(box.left + ink.unit * 0.3f, box.top + boxH * 0.55f, box.right - ink.unit * 0.3f, box.bottom - boxH * 0.1f), wave(op), if (carrier) col else ink.palette.DIM)
             if (op == 0 && feedback > 0) {
                 // Feedback: a loop over operator 1.
                 val ly = box.top - ink.unit * 0.35f
-                ink.line(c, box.left + boxW * 0.25f, box.top, box.left + boxW * 0.25f, ly, Palette.PLAYHEAD, ink.dp(1.5f))
-                ink.line(c, box.left + boxW * 0.25f, ly, box.right - boxW * 0.25f, ly, Palette.PLAYHEAD, ink.dp(1.5f))
-                ink.line(c, box.right - boxW * 0.25f, ly, box.right - boxW * 0.25f, box.top, Palette.PLAYHEAD, ink.dp(1.5f))
-                ink.label(c, "fb$feedback", box.right - boxW * 0.2f, ly - ink.unit * 0.55f, ink.unit * 0.8f, Palette.PLAYHEAD, size = small)
+                ink.line(c, box.left + boxW * 0.25f, box.top, box.left + boxW * 0.25f, ly, ink.palette.PLAYHEAD, ink.dp(1.5f))
+                ink.line(c, box.left + boxW * 0.25f, ly, box.right - boxW * 0.25f, ly, ink.palette.PLAYHEAD, ink.dp(1.5f))
+                ink.line(c, box.right - boxW * 0.25f, ly, box.right - boxW * 0.25f, box.top, ink.palette.PLAYHEAD, ink.dp(1.5f))
+                ink.label(c, "fb$feedback", box.right - boxW * 0.2f, ly - ink.unit * 0.55f, ink.unit * 0.8f, ink.palette.PLAYHEAD, size = small)
             }
             if (carrier) arrow(c, box.right, cy, busX, cy, col)
         }
@@ -363,10 +363,10 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
      * slow settings both read.
      */
     protected fun drawEnvelope(c: Surface, r: Rect, e: FmEnvelopeSketch, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val sustainDb = e.sustainDb
-        ink.label(c, ink.fit(e.title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(e.title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 0.8f, r.top + titleH, r.right - ink.unit * 0.8f, r.bottom - ink.unit * 1.3f)
         if (g.height() <= ink.unit) return
         val floorDb = e.floorDb
@@ -380,8 +380,8 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
         val xA = g.left + g.width() * wa / total
         val xD = xA + g.width() * wd / total
         val xH = xD + g.width() * wh / total
-        for (x in listOf(xA, xD, xH)) ink.line(c, x, g.top, x, g.bottom, Palette.RULE, ink.dp(1f))
-        ink.line(c, g.left, yOf(sustainDb), g.right, yOf(sustainDb), Palette.RULE, ink.dp(1f))
+        for (x in listOf(xA, xD, xH)) ink.line(c, x, g.top, x, g.bottom, ink.palette.RULE, ink.dp(1f))
+        ink.line(c, g.left, yOf(sustainDb), g.right, yOf(sustainDb), ink.palette.RULE, ink.dp(1f))
         // tone decay (modulators): from full brightness falling at their decay rate during the note
         if (e.toneDecayMs != null) {
             var n = 0
@@ -410,11 +410,11 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
         val ls = ink.unit * 0.7f
         val ly = g.bottom + ink.dp(2f)
         val lh = ink.unit * 1.1f
-        ink.label(c, "A ${timeText(aMs)}", (g.left + xA) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        ink.label(c, if (e.ssgEg in 8..15) "SSG-EG" else "D ${timeText(dMs)}", (xA + xD) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        if (holdMs > 0f) ink.label(c, "held", (xD + xH) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        ink.label(c, "R ${timeText(rMs)}", (xH + g.right) / 2, ly, lh, Palette.DIM, size = ls, align = Align.CENTER)
-        if (holdMs > 0f) ink.label(c, "OFF", xH + ink.dp(3f), g.top, ink.unit, Palette.WRITE, size = ls)
+        ink.label(c, "A ${timeText(aMs)}", (g.left + xA) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        ink.label(c, if (e.ssgEg in 8..15) "SSG-EG" else "D ${timeText(dMs)}", (xA + xD) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        if (holdMs > 0f) ink.label(c, "held", (xD + xH) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        ink.label(c, "R ${timeText(rMs)}", (xH + g.right) / 2, ly, lh, ink.palette.DIM, size = ls, align = Align.CENTER)
+        if (holdMs > 0f) ink.label(c, "OFF", xH + ink.dp(3f), g.top, ink.unit, ink.palette.WRITE, size = ls)
     }
 
     /**
@@ -461,16 +461,16 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
      * semitones per tick, then held; flat at the note when [active] is false. [title] says it in notes.
      */
     protected fun drawSweep(c: Surface, r: Rect, title: String, start: Int, end: Int, speed: Int, active: Boolean, ticks: Int, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 2.6f, r.top + titleH + ink.unit * 0.3f, r.right - ink.unit * 0.8f, r.bottom - ink.unit * 1.3f)
         if (g.height() <= ink.unit) return
         val lo = minOf(0, start, end) - 2
         val hi = maxOf(0, start, end) + 2
         fun yOf(semi: Float) = g.bottom - g.height() * (semi - lo) / (hi - lo)
-        ink.line(c, g.left, yOf(0f), g.right, yOf(0f), Palette.RULE, ink.dp(1f))
-        ink.label(c, "note", g.left - ink.dp(3f), yOf(0f) - ink.unit * 0.5f, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+        ink.line(c, g.left, yOf(0f), g.right, yOf(0f), ink.palette.RULE, ink.dp(1f))
+        ink.label(c, "note", g.left - ink.dp(3f), yOf(0f) - ink.unit * 0.5f, ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         var n = 0
         for (i in 0 until envXs.size) {
             val t = i.toFloat() / (envXs.size - 1) * ticks
@@ -485,9 +485,9 @@ internal abstract class FmInstrumentPainter(v: PaneView) : Painter(v) {
         }
         c.polyline(envXs, envYs, n, col, ink.dp(2.5f))
         val ls = ink.unit * 0.7f
-        ink.label(c, signed(hi - 2), g.left - ink.dp(3f), g.top - ink.unit * 0.3f, ink.unit, Palette.DIM, size = ls, align = Align.RIGHT)
-        ink.label(c, signed(lo + 2), g.left - ink.dp(3f), g.bottom - ink.unit * 0.7f, ink.unit, Palette.DIM, size = ls, align = Align.RIGHT)
-        ink.label(c, "0.5 s", g.right, g.bottom + ink.dp(2f), ink.unit * 1.1f, Palette.FAINT, size = ls, align = Align.RIGHT)
+        ink.label(c, signed(hi - 2), g.left - ink.dp(3f), g.top - ink.unit * 0.3f, ink.unit, ink.palette.DIM, size = ls, align = Align.RIGHT)
+        ink.label(c, signed(lo + 2), g.left - ink.dp(3f), g.bottom - ink.unit * 0.7f, ink.unit, ink.palette.DIM, size = ls, align = Align.RIGHT)
+        ink.label(c, "0.5 s", g.right, g.bottom + ink.dp(2f), ink.unit * 1.1f, ink.palette.FAINT, size = ls, align = Align.RIGHT)
     }
 
     // ---- usage ----------------------------------------------------------------------------------------

@@ -127,9 +127,9 @@ its downloaded AppImage.
    No uncleared scale files in standard releases, no automatic downloads and no upstream licensing contact.
    Project format 10 reads versions 1–9; older apps cannot read newly saved projects.
 10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
-   - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
-     and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
-     This is a roadmap target, not a working port or an established performance claim.
+   - Shared native frontend and ARM64/vendor-SDL2 adapter are implemented in the 0.38.0 candidate,
+     with a NextUI Pak build. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
+     Initial hardware display/audio/lifecycle checks pass; see bounded measurements in `docs/VERIFICATION.md`.
    - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
      (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
      vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
@@ -143,20 +143,23 @@ its downloaded AppImage.
      It opened no display/audio/input subsystem (`SDL_WasInit(0) == 0`) and its temporary executable
      was removed. This proves loader/library compatibility, not rendering or callback performance;
      a stock KMS/DRM or SDL3 assumption would miss the installed vendor video integration.
-   - Packaging target: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects/settings outside the Pak
-     (proposed `/mnt/SDCARD/ThorTunez/`) so Pak Store replacement cannot remove user data.
-     Follow [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/), use its environment
-     and diagnostics locations, preserve global ALSA/display settings, and return cleanly to the launcher.
-     Prefer the device's vendor SDL2/GPU integration; shared-application linking and callback behavior still need a running frontend spike.
-   - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
-     Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
-     Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
-   - Then stress SID, OPL3, EPSM and Mega Drive with simultaneous audition, realistic projects/Undo history,
-     exports, SD-card save/recovery, suspend/resume and clean return to NextUI. Do not silently reduce chip fidelity
-     or remove systems to pass the port.
+   - Packaging: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects in `/mnt/SDCARD/ThorTunez`
+     and private workspace/recovery data in its `.thortracker` subdirectory, outside the replaceable Pak.
+     The launcher follows [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/),
+     uses its diagnostics locations and preserves HOME/ALSA routing. No vendor SDL/Mali library ships.
+     Real-device input confirms the trigger axes, printed face-button mapping, independent modifiers and
+     cumulative L2+R2 routing. Normal Pak launch, actual Mali rendering, save/reopen, Paper persistence,
+     note edit/Undo and explicit Quit back to NextUI pass.
+   - Six 25-second real-ALSA runs cover GB, NES, SID, OPL3, Mega Drive and EPSM with advancing playback,
+     nonzero PCM and zero driver faults. One GB case has a recovered underrun; the other five have none.
+     SID, OPL3, Mega Drive and EPSM FM additionally pass playback-plus-audition and audition-only checks.
+     Actual physical X audition also passes in Instrument and Keyboard; temporary test files are removed.
+   - Remaining hardware hardening: long projects/Undo history, exports, physical
+     suspend/resume and acoustic listening. Keep the bounded results distinct from all-workload guarantees;
+     do not silently reduce chip fidelity or remove systems to pass the port.
    - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
      stack. The installed Kotlin 2.1.0 compiler lists ARM32 hard-float, but marks it deprecated; the existing
-     16 MiB glyph atlas and full-chip CPU budget need measurement. Neither handheld port has been run yet.
+     16 MiB glyph atlas and full-chip CPU budget need measurement. The Miyoo port remains unimplemented.
 11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
@@ -170,6 +173,13 @@ its downloaded AppImage.
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
+- **Zoom in/out** (requested 2026-11-10): add readable zoom controls, particularly useful on the
+  Brick's compact screen. Proposed behaviour is workspace-only UI scaling: zoom in for larger text
+  and cells, out for more visible rows/channels, with no song, playback, export or Undo changes.
+  Keep the focused cell visible, retain the preference across restarts, provide a reset to default,
+  and expose menu actions plus rebindable controller controls. Exact scale steps, per-pane versus
+  whole-interface scope and default bindings remain design choices, not implemented behaviour.
+  Review alongside visual column collapse; do not make zoom depend on future touchscreen support.
 - **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
   Android already accepts orientation changes and shared painters support touch selection/scrolling;
   these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,
@@ -177,7 +187,10 @@ its downloaded AppImage.
   large touch targets. Avoid requiring simulated modifier chords or obscuring the edited row with a
   gamepad overlay. Reuse the same actions, document, recovery, audio and export paths; retain controller
   operation and two-display focus rules. Full composition, file picking and held audition must work
-  without any physical button. Design/implementation pending; portrait is a separate later decision.
+  without any physical button. [Review proposal and silent interaction study](docs/TOUCH_PROPOSAL.md)
+  now cover side-editor layout, touch targets, editing semantics, workflow gaps and integration risks.
+  Paused by user request on 2026-11-10 while Brick Hammer and themes proceed. The side-editor direction
+  seems sensible to the user, but geometry and editing semantics still await review; portrait is separate.
 - **Hardening priority** (2026-11-10): investigate the reported PC Engine snare layout rejection and POKEY
   silence after note entry before expanding features. Use deterministic, bounded child-assisted stress
   runs on Nova, DMG and Konkr, exclusive device leases, explicit reproduction traces and preserved private
@@ -190,10 +203,12 @@ its downloaded AppImage.
   Both are design directions, not implemented engines or selected panel designs.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
-  - **Colour themes, near-term priority before scanlines:** semantic palette roles, readable dark/light
-    choices, distinguishable focus/selection/playback/error states, and persistent workspace selection.
-    Themes must not alter song data or exports. BRIXEQ's palette names/colours are research references,
-    not assets to copy; create original palettes. Implementation remains pending.
+  - **Colour themes, implemented in the 0.38.0 candidate:** original Slate, Paper and Contrast palettes,
+    selected under Menu → Colour theme and persisted as workspace state. They do not alter song data,
+    exports or Undo history. Nova, DMG and Konkr pass selection/restart/playback checks, and all 32 Slate
+    baseline captures are pixel-identical. The actual CI AppImage passes palette persistence in fresh
+    processes, unchanged project bytes, playback, audition and compact surfaces. Brick Paper selection,
+    full Quit/relaunch persistence and exact project save/reopen also pass. No BRIXEQ palette was copied.
   - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
     and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
     Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
@@ -400,7 +415,6 @@ These are implementation scope defaults, not claims that the features are imposs
 - Window management, split panes and arbitrary docking.
 - Full Furnace feature parity, unrestricted automation lanes, custom executable driver routines and advanced macro/subpattern authoring.
 - Analog/revision-perfect emulation and hardware quirks not exercised by the supported feature set.
-- Configurable colour themes (requested after playtesting; deferred).
 - Scale-root-relative interval labels in place of Pattern note names remain deferred; Sketch displays degrees alongside pitches.
 
 Standard instrument settings, row effects and full-song composition are not optional scaffolding. A runnable empty UI or audio demo is not the MVP.

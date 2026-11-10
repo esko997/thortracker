@@ -35,7 +35,7 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = PokeyInstrumentView.sound(s, st)
         val page = PokeyInstrumentView.page(s, st)
         val listen = PokeyInstrumentView.listenChannel(st, ins)
-        val col = Palette.channel(listen)
+        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = ins?.kind?.label ?: "empty slot"
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "POKEY · $kind$locked  ${usageText(st.instrument)}")
@@ -69,17 +69,17 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (r in rows) {
             val sel = r == row
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = s.system.channels.getOrNull(listen)?.name.orEmpty()
                     ink.label(c, name, vx, y, h, col, true)
                     listenNote(ins)?.let { note ->
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, tabLabels, st.envelope.coerceIn(0, tabLabels.size - 1))
@@ -96,7 +96,7 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
         page.envelope?.let { k ->
             val small = ink.unit * 0.8f
-            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
             y += rowH * 0.85f
             val plotTop = y + ink.unit * 0.3f
             if (area.bottom - plotTop > ink.unit * 4f) {
@@ -209,10 +209,10 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
      * taken ones tinted, untouched ones faint), then the clock and the tuning a note really gets there.
      */
     private fun drawChannels(c: Surface, r: Rect, ins: PokeyInstrument, lane: Int, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val small = ink.unit * 0.8f
         val titleH = ink.unit * 1.4f
-        ink.label(c, ink.fit(PokeyInstrumentView.kindNote(ins.kind, lane), r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.DIM, size = small)
+        ink.label(c, ink.fit(PokeyInstrumentView.kindNote(ins.kind, lane), r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.DIM, size = small)
         val roles = PokeyInstrumentView.roles(ins.kind, lane)
         val gap = ink.unit * 0.4f
         val boxW = (r.width() - ink.unit - 3 * gap) / 4f
@@ -224,29 +224,29 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val role = roles[ch]
             val own = ch == lane
             ink.round(c, b, ink.dp(3f), when {
-                own -> Palette.mix(Palette.BG, col, 0.30f)
-                role != null -> Palette.mix(Palette.BG, col, 0.12f)
-                else -> Palette.BG
+                own -> Palette.mix(ink.palette.BG, col, 0.30f)
+                role != null -> Palette.mix(ink.palette.BG, col, 0.12f)
+                else -> ink.palette.BG
             })
             if (own) ink.outline(c, b, col, ink.dp(2f), ink.dp(3f))
             ink.label(c, ink.fit("POKEY ${ch + 1}", boxW - ink.unit * 0.3f, small, true), b.centerX(), b.top, boxH * 0.5f,
-                if (role != null) Palette.TEXT else Palette.FAINT, true, small, Align.CENTER)
+                if (role != null) ink.palette.TEXT else ink.palette.FAINT, true, small, Align.CENTER)
             ink.label(c, ink.fit(role ?: "free", boxW - ink.unit * 0.3f, small), b.centerX(), b.top + boxH * 0.45f, boxH * 0.5f,
-                if (own) col else if (role != null) Palette.DIM else Palette.FAINT, size = small, align = Align.CENTER)
+                if (own) col else if (role != null) ink.palette.DIM else ink.palette.FAINT, size = small, align = Align.CENTER)
         }
         var y = by + boxH + ink.unit * 0.4f
         val lineH = ink.unit * 1.25f
         val lines = ArrayList<Pair<String, Int>>()
         val fast = PokeyInstrumentView.fastOn(ins, lane)
         lines += "Clock on POKEY ${lane + 1}: " + (if (fast) "1.79 MHz" else "${PokeyInstrumentView.baseText(song)} base") +
-            " · ${song.pokey.machine.label}" to Palette.DIM
+            " · ${song.pokey.machine.label}" to ink.palette.DIM
         val a4 = 57
-        lines += PokeyInstrumentView.tuningText(song, ins, lane, a4) to Palette.TEXT
+        lines += PokeyInstrumentView.tuningText(song, ins, lane, a4) to ink.palette.TEXT
         val heard = PokeyInstrumentView.listenNote(ctl, ins)
-        if (heard != a4) lines += PokeyInstrumentView.tuningText(song, ins, lane, heard) to Palette.DIM
+        if (heard != a4) lines += PokeyInstrumentView.tuningText(song, ins, lane, heard) to ink.palette.DIM
         val dists = if (ins.kind == PokeyKind.SAMPLE) emptyList() else ins.distortion.values.ifEmpty { listOf(PokeyDistortion.PURE) }
         if (song.pokey.base15 && !fast && dists.any { it == 2 || it == 6 })
-            lines += "On the 15 kHz base, distortions C and 4 cannot play their whole patterns: other pitches" to Palette.PLAYHEAD
+            lines += "On the 15 kHz base, distortions C and 4 cannot play their whole patterns: other pitches" to ink.palette.PLAYHEAD
         for ((text, color) in lines) {
             if (y + lineH > r.bottom) break
             ink.label(c, ink.fit(text, r.width() - ink.unit, small), r.left + ink.unit * 0.5f, y, lineH, color, size = small)
@@ -263,16 +263,16 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val samples = song.pokey.samples
         val small = ink.unit * 0.8f
         val titleH = ink.unit * 1.4f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val used = PokeySamples.used(song)
         val over = used > PokeySample.MEMORY
         ink.label(c, ink.fit("Samples ${samples.size} of ${PokeySystem.MAX_SAMPLES} · ${used} of ${PokeySample.MEMORY} levels", r.width() * 0.62f),
-            r.left + ink.unit * 0.5f, r.top, titleH, if (over) Palette.ERROR else Palette.DIM, size = small)
+            r.left + ink.unit * 0.5f, r.top, titleH, if (over) ink.palette.ERROR else ink.palette.DIM, size = small)
         val barL = r.left + r.width() * 0.64f
         val barR = r.right - ink.unit * 0.5f
         val barY = r.top + titleH * 0.42f
-        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
-        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / PokeySample.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), ink.palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / PokeySample.MEMORY), barY + ink.dp(5f), if (over) ink.palette.ERROR else col)
 
         val lineH = ink.unit * 1.35f
         addRect = Rect(r.left, r.bottom - lineH - ink.unit * 0.2f, r.right, r.bottom - ink.unit * 0.2f)
@@ -284,33 +284,33 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val visible = maxOf(1, (sampleRect.height() / sampleRowH).toInt())
         sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - visible + 1), st.dpcmSample.coerceAtLeast(0))
         sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - visible))
-        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", r.width() - ink.unit), r.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", r.width() - ink.unit), r.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, ink.palette.FAINT, size = small)
         for (i in sampleScroll until minOf(samples.size, sampleScroll + visible)) {
             val sample = samples[i]
             val y = sampleRect.top + (i - sampleScroll) * sampleRowH
             val on = i == st.dpcmSample
             val plays = i == ins.sample
-            if (on) ink.rect(c, r.left, y, r.right, y + sampleRowH, Palette.CURSOR_FILL)
-            ink.mono(c, (i + 1).toString().padStart(2, '0'), r.left + ink.unit * 0.5f, y, sampleRowH, if (plays) col else Palette.FAINT, plays, small)
+            if (on) ink.rect(c, r.left, y, r.right, y + sampleRowH, ink.palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), r.left + ink.unit * 0.5f, y, sampleRowH, if (plays) col else ink.palette.FAINT, plays, small)
             val users = song.pokeySampleUsers(i)
             val size = PokeySampleMenu.levels(sample.levels.size) + if (users.isEmpty()) "" else " · " + users.joinToString(" ") { hex2(it) }
             val sizeW = ink.labelWidth(size, small)
             ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, r.width() - ink.unit * 3.2f - sizeW), r.left + ink.unit * 2.2f, y, sampleRowH,
-                if (on) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, size, r.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+            ink.label(c, size, r.right - ink.unit * 0.5f, y, sampleRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
             if (on && row == Row.SAMPLES) ink.outline(c, Rect(r.left + 2, y + 1, r.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
         rowRects += sampleRect to allRows.indexOf(Row.SAMPLES)
 
         // the selected sample's levels: one bar per column (the range of levels it covers)
         val sample = samples.getOrNull(st.dpcmSample)
-        ink.rect(c, waveRect, Palette.BG)
+        ink.rect(c, waveRect, ink.palette.BG)
         if (sample != null && sample.levels.isNotEmpty() && waveRect.width() > 4f && waveRect.height() > 4f) {
             val levels = sample.levels
             val columns = maxOf(1, waveRect.width().toInt() / 2)
             val per = levels.size.toFloat() / columns
             val cw = waveRect.width() / columns
-            val color = if (st.dpcmSample == ins.sample) Palette.alpha(col, 200) else Palette.DIM
+            val color = if (st.dpcmSample == ins.sample) Palette.alpha(col, 200) else ink.palette.DIM
             for (k in 0 until columns) {
                 val a = (k * per).toInt().coerceIn(0, levels.size - 1)
                 val b = ((k + 1) * per).toInt().coerceIn(a + 1, levels.size)
@@ -323,10 +323,10 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
             if (st.dpcmSample == ins.sample && ins.loop in levels.indices) {
                 val x = waveRect.left + waveRect.width() * ins.loop / levels.size
-                ink.line(c, x, waveRect.top, x, waveRect.bottom, Palette.LISTEN, ink.dp(2f))
-                ink.label(c, "loop", x + ink.dp(3f), waveRect.top, ink.unit, Palette.LISTEN, size = ink.unit * 0.65f)
+                ink.line(c, x, waveRect.top, x, waveRect.bottom, ink.palette.LISTEN, ink.dp(2f))
+                ink.label(c, "loop", x + ink.dp(3f), waveRect.top, ink.unit, ink.palette.LISTEN, size = ink.unit * 0.65f)
             }
-            ink.label(c, PokeySampleMenu.seconds(levels.size, ins.rate), waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT,
+            ink.label(c, PokeySampleMenu.seconds(levels.size, ins.rate), waveRect.right - ink.dp(3f), waveRect.top, ink.unit, ink.palette.FAINT,
                 size = ink.unit * 0.65f, align = Align.RIGHT)
         }
 
@@ -334,10 +334,10 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
             val sel = row == which
             val rr = Rect(r.left + ink.unit * 0.2f, y, r.right - ink.unit * 0.2f, y + lineH)
-            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
-            ink.label(c, label, r.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            if (sel) ink.rect(c, rr, ink.palette.CURSOR_FILL)
+            ink.label(c, label, r.left + ink.unit * 0.5f, y, lineH, if (sel) ink.palette.TEXT else ink.palette.DIM, size = small)
             ink.label(c, ink.fit(value, r.right - vx - ink.unit * 0.5f, small), vx, y, lineH,
-                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+                if (off) ink.palette.FAINT else if (sel) ink.palette.TEXT else ink.palette.DIM, sel, small)
             if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
             rowRects += rr to allRows.indexOf(which)
         }

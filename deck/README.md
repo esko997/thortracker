@@ -4,10 +4,10 @@
 
 A Kotlin/Native + SDL3 frontend for Steam Deck / desktop Linux. It shares the Android app's core and audio engine:
 
-- `:core`: Kotlin Multiplatform module (`jvm` for Android, `linuxX64` here). It holds the song model, validation, `.thor`/`.uge` export, `EditorSession`, `ViewController` and the keymap. Every editing rule is the same code on both platforms.
-- The C hUGEDriver engine (`app/src/main/cpp/huge_machine.c` + binjgb), unchanged. `native/deck_audio.c` feeds it through an SDL3 audio stream (PipeWire on SteamOS), with live song updates and note auditions.
-- The shared `Workspace` (panes, focus, view chords, swap) and `Transport` (play/stop, pattern loop, parked orders) drive both platforms. `DeckAudio.kt` implements the shared `TrackerAudio` over the SDL engine glue, so Start, L2+Start and L2+Y behave as on the Thor. The Deck uses a single pane.
-- Every view (Pattern, Song, Instrument, Wave, Keyboard, Sketch, Help) is the shared `PaneView` from `:core`, the same code the Thor app draws with. `SdlSurface.kt` implements the shared `Surface` over `native/deck_draw.c`: shapes as SDL triangle geometry, text from bundled Noto fonts (`fonts/`, OFL) rasterised by `stb_truetype` (`native/third_party`, public domain) into a glyph atlas. `Main.kt` is the gamepad routing and the frame loop; one pane fills the screen and the R2 chords switch its view.
+- `:core`: Kotlin Multiplatform (`jvm` for Android, `linuxX64` for Deck, `linuxArm64` for Brick). It holds the song model, validation, exports, editing rules, workspace, transport, keymap and painters.
+- `src/nativeMain/` contains the shared native application, menus, file browser, recovery, tuning services and export/audio bridges. Each target compiles those files against its concrete SDL ABI: [`Platform.kt`](src/linuxX64Main/kotlin/org/thortracker/deck/Platform.kt) handles SDL3 events/windows, and the [Brick adapter](../brick/src/linuxArm64Main/kotlin/org/thortracker/deck/Platform.kt) handles vendor SDL2.
+- `native/deck_audio.c` retains the complete shared chip-engine path, live updates and auditioning. `native/audio_output.c` supplies the SDL3 stream; the Brick's callback adapter preserves whole-tick tails across SDL2 device blocks.
+- `SdlSurface.kt` implements the shared `Surface` over `native/deck_draw.c`: SDL triangle geometry and bundled Noto fonts (`fonts/`, OFL), rasterised by `stb_truetype` into a glyph atlas. The native host uses one pane; R2 chords switch its view.
 
 ## Menus and files
 
@@ -17,10 +17,11 @@ The Deck uses the shared button routing (`HostInput`), popups and menus (`AppMen
 - **Files** live in `~/ThorTracker`. Open, Save as, Export .uge and keymap files use an in-app folder browser that works with the D-pad, so no system dialog is needed in Gaming Mode. Saving names the file after the song title and asks before replacing a file.
 - **Recovery:** the working song is written to `~/.local/share/thortracker/working.thor` a second after each change and on Quit, and reopens on the next start. "Load demo", "New blank song" and Open keep the replaced song as `previous.thor` for "Recover previous project". The keymap is saved beside it.
 - **Tuning library:** 500 licensed or independently generated entries ship in `tunings/` beside the executable. Categories, search, details and source credits use the shared controller menus; L1/R1 page long details. Optional local `.thorscales` packs import through the file browser and live in `~/.local/share/thortracker/tuning-packs`. Replacement and removal require confirmation; removing a collection keeps the song's selected tuning and attribution. Catalogue loading and pack I/O run on a lazy worker, which is drained on exit.
+- **Colour theme:** Menu → Colour theme offers Slate, Paper and Contrast. The stable theme ID is stored in `~/.local/share/thortracker/theme`, separately from the musical document. It updates panes, drawn popups and native shell controls immediately.
 
-## What has been verified (SteamOS 3.8.28)
+## Earlier SteamOS verification (historical)
 
-- One native 12 MB binary with no Java runtime. It uses the Deck's system SDL3 3.2.18 (Wayland, PipeWire). The engine is compiled with Kotlin/Native's own clang and glibc 2.19 sysroot, so the build needs no system compiler.
+- The early Game Boy-only port was a 12 MB native binary with no Java runtime, using system SDL3 3.2.18 (Wayland, PipeWire) on SteamOS 3.8.28. Current verification and platform limits are recorded in [`docs/VERIFICATION.md`](../docs/VERIFICATION.md); those historical size/frame-rate measurements are not measurements of the current all-engine build.
 - The Steam Deck Controller is detected. Scripted input through the same routing as the gamepad moved the cursor, edited a note (A+Right), undid it (L2+A) and started playback (Start). Playback ran at the right tempo while edits reached the engine live, at a steady 89-90 fps (90 Hz panel, vsync) with no slow frames.
 - `.thor` files load through the shared `ProjectCodec` on Linux.
 - All seven shared views render on the Deck at 89-90 fps with the bundled fonts, reached by the R2 view chords; the scale panel, playhead and hint bar match the Thor layout.
@@ -34,14 +35,20 @@ Not yet checked: physical button presses (no one pressed them), Gaming Mode as a
 
 ## Build and run
 
+Kotlin/Native linking runs on CI, not the development workstation. The `deck` job builds the
+AppImage on each branch push; download its `thor-tracker-appimage` artifact for local runtime
+checks. The CI build commands are:
+
 ```sh
-deck/tools/fetch-deps.sh            # SDL3 headers + the Deck's libSDL3.so to link against (deck/deps, gitignored)
-tools/build.sh :deck:linkDebugExecutableLinuxX64
-# deck/build/bin/linuxX64/debugExecutable/thortracker.kexe [song.thor] [seconds=N] [script=96+22,20,108]
-# script steps are Android key codes, one per 150 ms; ry=V sets the right stick's vertical axis (-1 up .. 1 down),
-# e.g. script=ry=1,ry=0,ry=1,ry=0 is a double flick down (Pattern: jump to the last row)
-# fonts/ and tunings/ are copied beside the executable; deploy them together
+deck/tools/build-sdl3.sh
+./gradlew --no-daemon --console=plain :deck:linkReleaseExecutableLinuxX64
+deck/tools/package-appimage.sh <version>
 ```
+
+The executable accepts `[song.thor]`, `seconds=N`, `script=96+22,20,108` and
+`size=1280x800@1.5` diagnostic arguments. Script steps use Android key codes, one per 150 ms;
+`rx=V` and `ry=V` set right-stick axes. Fonts and tunings are copied beside the executable
+and must be deployed with it.
 
 To install a release on the Deck, see the main README's "Steam Deck" section. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views, two quick right-stick flicks up/down jump Pattern to the pattern's first/last row); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
 

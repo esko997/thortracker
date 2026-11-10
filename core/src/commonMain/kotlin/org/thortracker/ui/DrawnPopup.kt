@@ -8,6 +8,10 @@ import org.thortracker.editor.Action
  * field takes typed text from the frontend ([type], [erase]) while it has focus.
  */
 class DrawnPopup(private val ink: Ink) : PopupView {
+    var palette: Palette
+        get() = ink.palette
+        set(value) { ink.palette = value }
+
     private var spec: PopupSpec? = null
     private var owner: Popups? = null
     private var hasParent = false
@@ -74,7 +78,7 @@ class DrawnPopup(private val ink: Ink) : PopupView {
     fun draw(c: Surface, width: Float, height: Float) {
         val s = spec ?: return
         val u = ink.dp(1f)
-        c.fillRect(0f, 0f, width, height, Palette.alpha(Palette.BG, 0xB8))
+        c.fillRect(0f, 0f, width, height, Palette.alpha(ink.palette.BG, 0xB8))
         val w = minOf(520f * u, width - 32f * u).coerceAtLeast(200f * u)
         val titleSize = 17f * u
         val rowH = 46f * u
@@ -102,12 +106,12 @@ class DrawnPopup(private val ink: Ink) : PopupView {
         val shownBody = minOf(bodyH, maxBody)
         val h = titleH + shownBody + hintH + 2f * u
         panel.set((width - w) / 2f, (height - h) / 2f, (width + w) / 2f, (height + h) / 2f)
-        ink.round(c, panel, 6f * u, Palette.BG)
-        ink.outline(c, panel, Palette.RULE, u, 6f * u)
-        c.fillRound(panel.left, panel.top, panel.right, panel.top + titleH, 6f * u, Palette.LANE)
-        c.fillRect(panel.left, panel.top + titleH - 6f * u, panel.right, panel.top + titleH, Palette.LANE)
-        c.text(s.title, panel.left + pad, panel.top, titleH, Palette.TEXT, Face.SANS, true, titleSize, Align.LEFT)
-        c.fillRect(panel.left, panel.top + titleH, panel.right, panel.top + titleH + u, Palette.RULE)
+        ink.round(c, panel, 6f * u, ink.palette.BG)
+        ink.outline(c, panel, ink.palette.RULE, u, 6f * u)
+        c.fillRound(panel.left, panel.top, panel.right, panel.top + titleH, 6f * u, ink.palette.LANE)
+        c.fillRect(panel.left, panel.top + titleH - 6f * u, panel.right, panel.top + titleH, ink.palette.LANE)
+        c.text(s.title, panel.left + pad, panel.top, titleH, ink.palette.TEXT, Face.SANS, true, titleSize, Align.LEFT)
+        c.fillRect(panel.left, panel.top + titleH, panel.right, panel.top + titleH + u, ink.palette.RULE)
 
         // Explicit row navigation reveals its cursor; manual paging remains free to read the message.
         val bodyTop = panel.top + titleH + u
@@ -131,7 +135,7 @@ class DrawnPopup(private val ink: Ink) : PopupView {
         val firstLine = ((clipTop - messageTop) / lineH).toInt().coerceIn(0, message.size)
         val lastLine = (((clipBottom - messageTop) / lineH).toInt() + 1).coerceIn(firstLine, message.size)
         for (i in firstLine until lastLine) {
-            c.text(message[i], panel.left + pad, messageTop + i * lineH, lineH, Palette.TEXT, Face.SANS, false, bodySize, Align.LEFT)
+            c.text(message[i], panel.left + pad, messageTop + i * lineH, lineH, ink.palette.TEXT, Face.SANS, false, bodySize, Align.LEFT)
         }
         rowRects.clear()
         var entry = 0
@@ -140,10 +144,10 @@ class DrawnPopup(private val ink: Ink) : PopupView {
             val fy = bodyTop + top - scroll
             scratch.set(panel.left + 16f * u, fy + 12f * u, panel.right - 16f * u, fy + fieldH - 8f * u)
             if (visible(scratch.top, scratch.bottom)) {
-                ink.round(c, scratch, 4f * u, Palette.LANE)
-                ink.outline(c, scratch, if (cursor == 0) Palette.PLAYHEAD else Palette.RULE, if (cursor == 0 || editing) 2f * u else u, 4f * u)
+                ink.round(c, scratch, 4f * u, ink.palette.LANE)
+                ink.outline(c, scratch, if (cursor == 0) ink.palette.FOCUS_ACCENT else ink.palette.RULE, if (cursor == 0 || editing) 2f * u else u, 4f * u)
                 val shown = field.value + if (editing) "▏" else ""
-                c.text(shown, scratch.left + 12f * u, scratch.top, scratch.height(), Palette.TEXT, Face.SANS, false, itemSize, Align.LEFT)
+                c.text(shown, scratch.left + 12f * u, scratch.top, scratch.height(), ink.palette.TEXT, Face.SANS, false, itemSize, Align.LEFT)
             }
             rowRects += Rect(scratch.left, scratch.top, scratch.right, scratch.bottom)
             entry = 1
@@ -156,31 +160,31 @@ class DrawnPopup(private val ink: Ink) : PopupView {
             if (!visible(ry, rb)) return@forEachIndexed
             val on = entry + index == cursor
             if (item.heading) {
-                c.text(item.label ?: "", panel.left + 20f * u, ry + 6f * u, rb - ry - 6f * u, Palette.PLAYHEAD, Face.SANS, true, 13f * u, Align.LEFT)
+                c.text(item.label ?: "", panel.left + 20f * u, ry + 6f * u, rb - ry - 6f * u, ink.palette.FOCUS_ACCENT, Face.SANS, true, 13f * u, Align.LEFT)
                 return@forEachIndexed
             }
             if (on) {
-                c.fillRect(panel.left + u, maxOf(ry, clipTop), panel.right - u, minOf(rb, clipBottom), Palette.CURSOR_FILL)
-                c.fillRect(panel.left + u, maxOf(ry, clipTop), panel.left + u + 3f * u, minOf(rb, clipBottom), Palette.PLAYHEAD)
+                c.fillRect(panel.left + u, maxOf(ry, clipTop), panel.right - u, minOf(rb, clipBottom), ink.palette.CURSOR_FILL)
+                c.fillRect(panel.left + u, maxOf(ry, clipTop), panel.left + u + 3f * u, minOf(rb, clipBottom), ink.palette.FOCUS_ACCENT)
             }
             val color = when {
-                item.tone == PopupItem.Tone.DANGER -> Palette.WRITE
-                on -> Palette.TEXT
-                else -> Palette.mix(Palette.TEXT, Palette.DIM, 0.35f)
+                item.tone == PopupItem.Tone.DANGER -> ink.palette.WRITE
+                on -> ink.palette.TEXT
+                else -> Palette.mix(ink.palette.TEXT, ink.palette.DIM, 0.35f)
             }
             val label = item.label ?: if (hasParent) "Back" else "Cancel"
             val bold = item.tone != PopupItem.Tone.PLAIN
             item.value?.let { value ->
                 val vw = maxOf(92f * u, ink.labelWidth(value, 15f * u, true) + 20f * u)
                 scratch.set(panel.right - 18f * u - vw, ry + 8f * u, panel.right - 18f * u, rb - 8f * u)
-                ink.round(c, scratch, 4f * u, Palette.LANE)
-                ink.outline(c, scratch, Palette.RULE, u, 4f * u)
-                c.text(value, scratch.centerX(), scratch.top, scratch.height(), if (on) Palette.PLAYHEAD else Palette.TEXT, Face.SANS, true, 15f * u, Align.CENTER)
+                ink.round(c, scratch, 4f * u, ink.palette.LANE)
+                ink.outline(c, scratch, ink.palette.RULE, u, 4f * u)
+                c.text(value, scratch.centerX(), scratch.top, scratch.height(), if (on) ink.palette.FOCUS_ACCENT else ink.palette.TEXT, Face.SANS, true, 15f * u, Align.CENTER)
                 c.text(ink.fit(label, scratch.left - panel.left - 32f * u, itemSize), panel.left + 20f * u, ry, rb - ry, color, Face.SANS, bold, itemSize, Align.LEFT)
             } ?: c.text(ink.fit(label, w - 38f * u, itemSize, bold), panel.left + 20f * u, ry, rb - ry, color, Face.SANS, bold, itemSize, Align.LEFT)
         }
         // Cover anything scrolled above or below the body, then the hint strip.
-        c.fillRect(panel.left + u, clipBottom, panel.right - u, panel.bottom - u, Palette.LANE)
+        c.fillRect(panel.left + u, clipBottom, panel.right - u, panel.bottom - u, ink.palette.LANE)
         drawHints(c, s, panel.left + u, clipBottom, panel.right - u, panel.bottom - u)
     }
 
