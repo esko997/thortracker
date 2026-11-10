@@ -84,17 +84,16 @@ All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit wa
 
 ## 0.35.0 Virtual Boy VSU — integration verification
 
-VSU candidate `9464a80` on branch `vsu` integrates SAA candidate `c27a60b` and the preceding systems,
-preserving the prepared headroom changes in `3ee5b32`. Its target is 0.35.0/code 48.
-**956 JVM tests**, the Android host suite, the initial signed release and clean instrumentation
-build pass within the enforced resource scope. This is candidate evidence, not a pass for 0.36.0.
+The `vsu-system` branch integrates the published SAA 0.34 main revision `5830e7c`, including the
+audition/song-ordering fix, and preserves the prepared headroom changes in `3ee5b32`. Version is
+0.35.0/code 48. **956 JVM tests**, the Android host suite, signed release and clean instrumentation builds pass within the enforced resource scope.
 
 A seven-rate seek probe found one real timing defect: at 11025 Hz, an odd silent prefix reset the
 half-sample frame phase (**30/30 frame-count mismatches**, worst PCM difference **0.017578125**).
 Advancing both cleared resamplers with `blip_skip_silence` fixes it: the same target now has exact frame
 counts and **bit-identical PCM at all seven rates, 8–96 kHz**, with identical raw chip state.
 The permanent regression keeps the existing 2e-3 bound. Evidence: `recovery-20261109/vsu-before/`
-under `~/.local/state/thortracker`. Frontend and CI gates remain in progress.
+under `~/.local/state/thortracker`. Final integrated CI and official publication remain pending.
 
 **594 VSU native checks pass**, including seek, mute, live edits and seven-rate headroom. The first integrated
 run passed all other engines and **2,622 WAV checks**, but exposed one stale VSU sweep assertion: S5INT
@@ -108,6 +107,28 @@ across the gain comparison. The independent Python reference agrees on **1,500 p
 raw output changes**, **30 chip cases** and the complete **6,661-byte VGM**. Pinned libvgm gives envelope
 correlation **0.980**, log-spectrum **0.897**, pitch-class agreement **95%** and gain-normalized level ratio
 **2.96** with the documented core differences; this is not hardware waveform equivalence.
+
+The initial candidate's actual CI-built AppImage (`949b94e`, run `42724617812`) passed two local
+offscreen/dummy-audio scenarios: demo playback plus held Instrument audition and return to Pattern
+advanced to order 0/row 41, with PCM peaks 0.08251954 during the hold and 0.07674154 afterward.
+A noise-only held audition produced peak 0.036783855 and returned to exact silence on release.
+Both rendered surfaces were inspected. Evidence: `recovery-20261109/vsu-desktop/`.
+These are frontend/PCM checks, not physical-device listening or proof of the later integrated binary.
+
+The production-signed candidate passes **22 permanent Android tests** on Nova and **32 full-RGBA
+Game Boy parity captures**. The lifecycle suite incurred one settling xrun and grew Nova's buffer to
+576 frames; its driver-fault count stayed zero. Actual VSU menu creation, playback/held audition,
+live edits, all wave/modulation pages, undo/redo, restart, cursor seek and document exports passed
+on Nova, DMG and Konkr. Dedicated VSU scenarios had **zero xruns and driver faults**; maximum
+callback times were **3.388438 / 6.807240 / 4.538769 ms** respectively.
+The first DMG/Konkr probes exposed a harness selection race: setting the view's modulation page
+without the canonical `Selection.wave` allowed the normal follow callback to select wave 0.
+Correcting both fixture states passed against the unchanged APK; no production behavior was altered.
+Konkr's maximum seek used order-local fallback: **378 ms wall time / 23.959077 ms native preparation**.
+Each device exported a non-silent 48 kHz stereo WAV (1,843,200 frames, peaks 3581/3868, no rail samples)
+and a **47,225-byte VGM**. The independent left/right document-silencing fixture rendered 153,600
+frames with peak 1220 per side; its opposing-silence assertions passed. Device wave/modulation
+surfaces were inspected. Evidence: `recovery-20261109/vsu-frontend/{ordered-clean,ordered-smoke,selection-smoke,accepted-metrics.json}`.
 
 - Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
   and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.
@@ -177,7 +198,32 @@ compile within the enforced build scope. This is candidate evidence, not a pass 
   **0.972/0.777 SAM, 0.801/0.730 CMS** are diagnostics, not an equivalence or listening claim.
 
 Evidence: `~/.local/state/thortracker/recovery-20261109/{saa-native,saa-corrected,saa-preclamp,saa-frontend}`.
-Live-device checks, optimized CI AppImage and official publication remain pending.
+CI **42720599432** passes the integrated build/native suite and optimized AppImage. The actual downloaded
+AppImage plays both demos, auditions a held instrument and returns to Pattern: SAM reaches order 1/row 9,
+CMS order 1/row 12, one audition each, with final peaks **0.443787 / 0.287689**. Both surfaces were inspected.
+The corrected production APK passes **22 clean Android tests** and all **32 full-RGBA Game Boy
+surface comparisons** on Nova. The lifecycle suite observed one settling xrun and grew its buffer
+to 576 frames; no driver faults. SAM and CMS controller, hardware-envelope/shared-noise, live-edit,
+held-audition, stop/restart, project-picker and export scenarios each pass on Nova, DMG and Konkr.
+These six backend scenarios report zero xruns/faults; largest callbacks are **2.360 / 11.099 / 5.567 ms**.
+Konkr's deep seek takes **454 ms wall / 113.977 ms native**, using the documented order-local fallback.
+All six picker-created WAVs are non-silent 48 kHz stereo with distinct sides and no full-scale samples;
+SAM has **921,600 frames**, CMS **832,000**. VGM 1.71 lengths, loop samples and 8 MHz / dual-7.15909 MHz
+clock headers are checked. Final queue-order APK SHA-256:
+`f37ba345cdb4fff37ac2529f2e06114b32fbd1a75c9a19325a3edd4eeda6b055`.
+Published as **v0.34.0** from main `5830e7c`; all four jobs in run `42729677335` passed.
+Official APK SHA-256: `3791d1fc8c64824696819898208a8656da2d445f489fe1cfb578d3c9e2c061a3`.
+Official AppImage: `3da7aeb2fefcb6738b534c7d812cc605d545f7c038add353e4d8286d5c3b34fa`.
+The APK is production-signed, non-debuggable, code 47, with arm64-v8a/x86_64 libraries.
+Published-binary SAM/CMS scenarios passed on Nova and Konkr. On DMG, CMS passed; SAM's
+first attempt timed out locating Downloads in DocumentsUI, and the unchanged focused SAM
+scenario then passed. This retry does not establish a fix for the transient picker-navigation failure.
+All six exported WAV/VGM pairs are byte-identical to the already-verified candidate outputs.
+The actual official AppImage played/auditioned both demos and returned to Pattern with advancing
+positions and nonzero PCM; both screenshots were inspected. Thor received only the APK in
+`Download/Thor Tracker/`; Deck received only the AppImage and stable `thor-tracker` symlink update.
+Remote hashes matched; neither daily-use device was awakened, installed or launched.
+Evidence: `recovery-20261109/{official-0340,saa-official-smoke,saa-official-sam-retry,saa-official-desktop}`.
 Physical SAM Coupé/Game Blaster listening has not been performed.
 
 ## 0.33.0 VIC-20 VIC and C16/Plus4 TED
@@ -229,6 +275,33 @@ explicitly selecting its sounding square/DAC instruments verifies audition witho
 Instrument, DAC and Pattern surfaces were visually inspected. Offscreen/dummy output verifies PCM/UI,
 not physical speakers or human listening. Evidence: `cbm-ci-appimage/` and `cbm-desktop/` under the
 same SSD evidence root. Temporary Android harness sources have been removed.
+
+### Official 0.33.0 delivery
+
+Published from `eef2607354d05cd971eb552de9b7816a43f5f0cc`; workflow **42719997421** passes build,
+Deck, signed release and AppImage attachment. APK code 46 is non-debuggable, includes arm64/x86_64 and
+verifies against the production certificate. Official VIC/TED controller, playback, live-edit, restart,
+sample/document and export scenarios were exercised on Nova, DMG and Konkr with **zero xruns and driver faults**;
+largest observed callbacks are **2.019 / 6.423 / 4.604 ms** respectively.
+
+**Audition-ordering defect, corrected for 0.34.0:** Konkr's original TED kind-switch scenario returned
+a DAC placement error after the instrument had become a tone. Nova and DMG passed that same harness.
+The C-4 rerun issued another valid audition and could overwrite the earlier error; it did **not**
+disprove the race. A deterministic real-executor regression subsequently failed on the old production
+APK and passed unchanged against the corrected APK, covering both already-applied and still-queued
+song updates. Command boundaries now seal edit batches instead of consuming a future song from a
+shared mailbox. Current invalid requests still fail normally. The original, unmodified C-2 TED
+scenario also passes on Konkr and DMG after the correction. The C-4 runner's separate plural-only
+result-parser defect was fixed without treating its successful `OK (1 test)` as an app failure.
+
+The official AppImage also passes actual VIC/TED playback plus held audition, with advancing transport and
+nonzero PCM; final Pattern surfaces were inspected. Thor receives only the SHA-verified APK in Download;
+Deck receives only the SHA-verified AppImage and its stable `thor-tracker` symlink. Neither was woken,
+installed to or launched; `/ThorTunez` remains untouched.
+
+APK SHA-256: `d119c0bb4c84c19c767871f6f82a1dd4a569ab94113c708fa4a998df51ada384`.
+AppImage SHA-256: `fe27df74e6f834334b589096743d1dfde88504797b69a1e03857d5922b16a5ab`.
+Evidence: `recovery-20261109/{official-0330,cbm-official}` under `~/.local/state/thortracker`.
 
 ## 0.32.0 Atari 2600 TIA
 

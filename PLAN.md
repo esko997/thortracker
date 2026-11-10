@@ -98,15 +98,15 @@ its downloaded AppImage.
      playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
    - VIC-20 VIC and Commodore 16/Plus4 TED — released **0.33.0/code 46**: "VIC-20 (VIC)" and
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
-     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
-     Android frontends and the CI-built optimized AppImage pass in the recorded VIC/TED candidate.
-   - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
-     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Candidate `c27a60b`'s
-     headroom, JVM and corrected native/reference checks pass; frontend verification remains pending.
-   - Virtual Boy VSU — source-integrated for **0.35.0/code 48** (`vb-vsu`: own player on a
-     Mednafen-derived core with the Sacred Tech Scroll's amendments, VGM + WAV export).
-     Candidate `9464a80` records 956 JVM tests and exact seven-rate seek output; remaining native/reference
-     and frontend gates are not claimed complete (docs/VERIFICATION.md, "0.35.0 Virtual Boy VSU").
+     shared master volume, TED D/A samples; project + WAV only. The audition/song-ordering race found
+     during reserved-device testing is corrected and regression-tested in 0.34.0.
+   - SAA1099 — released **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
+     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Native/reference, JVM,
+     Android device scenarios and the published AppImage pass; see the recorded DMG picker retry.
+   - Virtual Boy VSU — integrated on branch `vsu-system` for **0.35.0/code 48** (`vb-vsu`: own player
+     on a Mednafen-derived core with the Sacred Tech Scroll's amendments, VGM + WAV export).
+     956 JVM tests, 594 native checks, 2,622 WAV checks, independent references and all three reserved
+     Android frontends pass; final integrated CI/publication remain pending (`docs/VERIFICATION.md`).
    - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
      DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
      APU, VGM/WAV export), integrated for **0.36.0/code 49**. 995 JVM tests, 693 native checks,
