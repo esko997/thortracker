@@ -999,7 +999,7 @@ internal object FamiStudioLowering {
             val frames = if (next != row) {
                 var delay = -(if (note.noteDelay >= 0) note.noteDelay else 0)
                 fs.note(c, next)?.let { n ->
-                    if (n.noteDelay >= 0) delay += if (n.cutDelay >= 0) minOf(n.noteDelay, n.cutDelay) else n.noteDelay
+                    if (n.noteDelay >= 0) delay += n.noteDelay
                     else if (n.cutDelay >= 0) delay += n.cutDelay
                 }
                 framesBetween(row, next, speed, pal) + delay

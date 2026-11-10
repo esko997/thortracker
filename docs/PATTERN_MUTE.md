@@ -2,6 +2,10 @@
 
 **User decision, 2026-11-10: defer pattern mute.** Do not implement or advertise the feature. Documents, UI, playback and exports remain unchanged. The user chose deferral after reviewing the native-export incompatibilities below; no reduced preview/WAV-only or constrained-driver feature was approved.
 
+The intended unit is **one channel/column within one pattern**. All order entries reusing that
+pattern share its mute state. This is neither global channel mute nor visual column compression;
+the clarification does not reopen implementation or settle tail/shared-resource semantics.
+
 Source inspection used the 0.38.0 candidate (`73b2597`). No builds, tests, renderers, reference tools or devices were run for this investigation. This document records the requested first-checkpoint findings and possible future contracts, not an implementation commitment.
 
 ## Reviewed choices and selected deferral

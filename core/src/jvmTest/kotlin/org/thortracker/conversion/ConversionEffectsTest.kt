@@ -160,6 +160,29 @@ class ConversionEffectsTest {
         assertFalse(second.hasAnyEffect)
     }
 
+    @Test fun nesSpeedConversionKeepsTheLastColumnOfTheFirstChannel() {
+        val source = at(at(NesSystem.blank(), 0, 7, Cell(effect = 15, param = 5).withEffect(3, 15, 8)),
+            1, 7, Cell().withEffect(2, 15, 9))
+        val target = Opl3System.blank()
+        val issues = mutableListOf<ConversionIssue>()
+        val first = ConversionEffects.cell(source, target, ConversionLane(0, 0), 0, 7,
+            source.patterns[0].tracks[0][7], Cell.BLANK, issues)
+        val second = ConversionEffects.cell(source, target, ConversionLane(1, 1), 0, 7,
+            source.patterns[0].tracks[1][7], Cell.BLANK, issues)
+        assertEquals(Cell(effect = 15, param = 8), first)
+        assertFalse(second.hasAnyEffect)
+    }
+
+    @Test fun nesConversionKeepsFourIndependentCommandsAndEffectiveVolume() {
+        val source = Cell(48, 1, 12, 63).withEffect(1, 15, 8).withEffect(2, 16, 2).withEffect(3, 28, 5)
+        val converted = convert(Opl3System, NesSystem, source)
+        assertEquals(Cell(48, 1, 12, 15).withEffect(1, 15, 8).withEffect(2, 16, 2).withEffect(3, 28, 5), converted.cell)
+        assertFalse(converted.issues.any { it.impact == ConversionImpact.LOSS })
+        val duplicate = convert(NesSystem, Opl3System, Cell(48, 1, 10, 0x2f).withEffect(3, 12, 15))
+        assertEquals(Cell(48, 1, 12, 63), duplicate.cell)
+        assertFalse(duplicate.issues.any { it.impact == ConversionImpact.LOSS })
+    }
+
     @Test fun gbNoteDelayAndCutTranslateByMeaning() {
         val delayed = convert(GbSystem, Opl3System, Cell(note = 48, instrument = 1, effect = 7, param = 3))
         assertEquals(Cell(note = 48, instrument = 1, effect = 16, param = 3), delayed.cell)
@@ -248,6 +271,7 @@ class ConversionEffectsTest {
 
     @Test fun safeApuPromotionRetainsPeriodFinePitch() {
         val source = Cell(note = 48, instrument = 1, effect = 25, param = 129)
+            .withEffect(1, 12, 9).withEffect(2, 4, 0x63).withEffect(3, 15, 8)
         val result = convert(NesSystem, NesVrc6System, source)
         assertEquals(source, result.cell)
         assertFalse(result.issues.any { it.impact == ConversionImpact.LOSS })

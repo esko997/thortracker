@@ -162,13 +162,19 @@ internal object NesPcmLowering {
                 } else if (cell.note == Cell.CUT) {
                     flags = flags or EV_STOP
                 }
-                if (cell.hasEffect) when (cell.effect) {
-                    NesRules.FX_VOLUME -> { flags = flags or EV_VOLUME; packed = packed or (cell.param and 15) }
-                    NesRules.FX_NOTE_DELAY -> if (flags and (EV_NOTE or EV_STOP) != 0) {
+                NesRules.effectParam(cell, NesRules.FX_VOLUME)?.let {
+                    flags = flags or EV_VOLUME
+                    packed = packed or (it and 15)
+                }
+                NesRules.effectParam(cell, NesRules.FX_NOTE_DELAY)?.let {
+                    if (flags and (EV_NOTE or EV_STOP) != 0) {
                         flags = flags or EV_DELAY
-                        packed = packed or ((cell.param and 31) shl 4)
+                        packed = packed or ((it and 31) shl 4)
                     }
-                    NesRules.FX_NOTE_CUT -> { flags = flags or EV_CUT; packed = packed or ((cell.param and 31) shl 9) }
+                }
+                NesRules.effectParam(cell, NesRules.FX_NOTE_CUT)?.let {
+                    flags = flags or EV_CUT
+                    packed = packed or ((it and 31) shl 9)
                 }
                 if (flags == 0) continue
                 bytes += listOf(r, flags, mapping and 0xFF, mapping shr 8, packed and 0xFF, packed shr 8)

@@ -213,8 +213,9 @@ internal class FsSong(
                     val pattern = song.patterns[song.orders[o]]
                     for (r in 0 until pattern.length) {
                         val cell = pattern.tracks[NesRules.MMC5_PCM][r]
-                        if (cell.hasEffect && cell.effect == NesRules.FX_SPEED && (0 until channels).none { (notes[it][row]?.speed ?: -1) >= 0 }) {
-                            notes[0][row] = (notes[0][row] ?: FsNote()).also { it.speed = cell.param }
+                        val speed = NesRules.effectParam(cell, NesRules.FX_SPEED)
+                        if (speed != null && (0 until channels).none { (notes[it][row]?.speed ?: -1) >= 0 }) {
+                            notes[0][row] = (notes[0][row] ?: FsNote()).also { it.speed = speed }
                         }
                         row++
                     }
@@ -240,7 +241,6 @@ internal class FsSong(
             val epsmFm = NesRules.isEpsmFm(expansion, ch)
             val epsmSsg = NesRules.isEpsmSsg(expansion, ch)
             val n = FsNote()
-            val p = cell.param
             when {
                 cell.note >= 0 -> {
                     // FamiStudio's engine note for the true pitch ([NesRules.engineNoteShift]: VRC7, 5B, FDS, EPSM SSG/FM).
@@ -250,7 +250,7 @@ internal class FsSong(
                         n.instrument = current
                         n.attack = false
                     }
-                    if (fine != 0 && !(cell.effect == NesRules.FX_FINE_PITCH && cell.hasEffect)) n.finePitch = 0
+                    if (fine != 0 && NesRules.effectColumn(cell, NesRules.FX_FINE_PITCH) < 0) n.finePitch = 0
                 }
                 cell.note == Cell.CUT -> {
                     // DPCM has no release: OFF stops the sample; nor have the EPSM drums (see above).
@@ -262,37 +262,48 @@ internal class FsSong(
                     n.value = if (releases) FsNote.RELEASE else FsNote.STOP
                 }
             }
-            if (!cell.hasEffect) return n
-            when (cell.effect) {
-                NesRules.FX_ARPEGGIO -> n.arpeggio = p
-                NesRules.FX_VIBRATO -> n.vibrato = p
-                NesRules.FX_VOLUME_SLIDE -> {
-                    n.volume = p shr 4
-                    n.volumeSlideTarget = p and 0xF
+            // Independent attributes compose; repeated attributes take the rightmost column.
+            // A/C share volume, Q/R share the slide target, and I/J compose the FDS speed.
+            for (column in 0..cell.lastEffectColumn) {
+                val code = cell.effectCode(column)
+                val p = cell.effectParam(column)
+                if (code == 0 && p == 0) continue
+                when (code) {
+                    NesRules.FX_ARPEGGIO -> n.arpeggio = p
+                    NesRules.FX_VIBRATO -> n.vibrato = p
+                    NesRules.FX_VOLUME_SLIDE -> {
+                        n.volume = p shr 4
+                        n.volumeSlideTarget = p and 0xF
+                    }
+                    NesRules.FX_VOLUME -> { n.volume = p; n.volumeSlideTarget = -1 }
+                    NesRules.FX_SPEED -> n.speed = p
+                    NesRules.FX_NOTE_DELAY -> n.noteDelay = p
+                    NesRules.FX_FINE_PITCH -> n.finePitch = when {
+                        vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
+                        n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
+                        fds -> NesRules.fdsFinePitch(playing, p - NesRules.FINE_CENTRE)
+                        s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
+                        epsmFm -> NesRules.epsmFmFinePitch(playing, p - NesRules.FINE_CENTRE)
+                        epsmSsg -> -NesRules.epsmSsgFinePitch(playing, p - NesRules.FINE_CENTRE)
+                        else -> NesRules.FINE_CENTRE - p
+                    }
+                    NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
+                    NesRules.FX_SLIDE_DOWN -> n.slideTarget = n.value - p
+                    NesRules.FX_NOTE_CUT -> n.cutDelay = p
+                    NesRules.FX_DUTY -> n.duty = p
+                    NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
+                    NesRules.FX_PHASE_RESET -> n.phaseReset = true
+                    // I/J: FDS mod speed here; [of] gathers the 5B/EPSM period on the first square.
+                    NesRules.FX_FDS_MOD_DEPTH -> if (fds) n.fdsModDepth = p
+                    NesRules.FX_FDS_MOD_SPEED_HI -> if (fds) n.fdsModSpeed =
+                        ((p and 0xF) shl 8) or ((if (n.fdsModSpeed >= 0) n.fdsModSpeed else modSpeed) and 0xFF)
+                    NesRules.FX_FDS_MOD_SPEED_LO -> if (fds) n.fdsModSpeed =
+                        ((if (n.fdsModSpeed >= 0) n.fdsModSpeed else modSpeed) and 0xF00) or p
                 }
-                NesRules.FX_VOLUME -> n.volume = p
-                NesRules.FX_SPEED -> n.speed = p
-                NesRules.FX_NOTE_DELAY -> n.noteDelay = p
-                NesRules.FX_FINE_PITCH -> n.finePitch = when {
-                    vrc7 -> NesRules.vrc7FinePitch(playing, p - NesRules.FINE_CENTRE)
-                    n163 -> NesRules.n163FinePitch(playing, p - NesRules.FINE_CENTRE, expansion.n163Channels)
-                    fds -> NesRules.fdsFinePitch(playing, p - NesRules.FINE_CENTRE)
-                    s5b -> -NesRules.s5bFinePitch(playing, p - NesRules.FINE_CENTRE)
-                    epsmFm -> NesRules.epsmFmFinePitch(playing, p - NesRules.FINE_CENTRE)
-                    epsmSsg -> -NesRules.epsmSsgFinePitch(playing, p - NesRules.FINE_CENTRE)
-                    else -> NesRules.FINE_CENTRE - p
-                }
-                NesRules.FX_SLIDE_UP -> n.slideTarget = n.value + p
-                NesRules.FX_SLIDE_DOWN -> n.slideTarget = n.value - p
-                NesRules.FX_NOTE_CUT -> n.cutDelay = p
-                NesRules.FX_DUTY -> n.duty = p
-                NesRules.FX_DELTA_COUNTER -> n.deltaCounter = p
-                NesRules.FX_PHASE_RESET -> n.phaseReset = true
-                // I/J: the FDS's mod speed here; the 5B/EPSM envelope period is gathered per row on the first square by [of].
-                NesRules.FX_FDS_MOD_DEPTH -> if (fds) n.fdsModDepth = p
-                NesRules.FX_FDS_MOD_SPEED_HI -> if (fds) n.fdsModSpeed = ((p and 0xF) shl 8) or (modSpeed and 0xFF)
-                NesRules.FX_FDS_MOD_SPEED_LO -> if (fds) n.fdsModSpeed = (modSpeed and 0xF00) or p
             }
+            // The driver's delay opcode pauses parsing before the cut opcode. Thor's S is row-relative;
+            // FamiStudio's CutDelay is relative to the delayed note. Validation rejects cut-before-note.
+            if (n.noteDelay >= 0 && n.cutDelay >= 0) n.cutDelay -= n.noteDelay
             // On Noise FamiStudio has no pitch effects; the rules reject them, nothing to translate.
             if (ch == NesRules.NOISE) n.finePitch = FsNote.NO_FINE
             return n

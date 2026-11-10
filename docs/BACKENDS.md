@@ -705,22 +705,22 @@ Model (done with the OPL3): `SoundSystem.effectColumns(channel)` (default 1; the
 `effect`/`param` as column 0 and adds `more: List<Fx>` for columns 1-3, always canonical (no trailing blank column),
 so a cell that only uses column 0 is equal to, and saves exactly as, a cell from before (`[note, instrument, effect,
 param]`; further columns append `effect, param` pairs). `withEffect(column, code, param)`, `effectCode/effectParam`,
-`lastEffectColumn` and `hasAnyEffect` are the accessors; `hasEffect` still means column 0. The Game Boy, NES and SID
-reject extra columns (`cellRangeProblem`), and `OneColumnProjectBytesTest` pins their demo, blank and example
-project files to the SHA-256 the encoder wrote before effect columns existed. How many columns a pane shows is
-editor state (per pane, automatic from the highest used column), not song data.
+`lastEffectColumn` and `hasAnyEffect` are the accessors; `hasEffect` still means column 0. Game Boy
+and SID reject extra columns. NES now accepts four without changing the canonical cell encoding;
+`OneColumnProjectBytesTest` retains the old GB/NES/SID demo, blank and example byte contracts.
+Visible column counts are per-pane editor state, not song data. Automatic width retains the active
+effect field for the duration of an Edit hold, then may shrink on release/cancellation.
 
-### Current capacity and compatibility review (0.39.0)
+### Current capacity and compatibility review (0.40.0)
 
 The [manual's capability matrix](../README.md#multiple-effects-per-row) covers all 43 registered
-systems. A runtime walk of the compiled `SoundSystems.ALL` and every lane's `effectColumns`
-confirms **17 one-column, 5 two-column and 21 four-column variants**; each current system has
-the same limit on all its lanes. This verifies declared capacity, not arbitrary effect combinations.
+systems: **2 one-column, 5 two-column and 36 four-column variants**. All 15 NES/FamiStudio variants
+now declare four columns on every lane. Declared capacity does not promise arbitrary combinations.
 
 Treat capacity as a **chip + player + export** contract, not a hardware-age or voice-count heuristic.
-For example, EPSM has one column through the current FamiStudio integration, while the simple
-SN76489 has four through Banjo. Instrument envelopes/tables and persistent modulation are separate
-from the number of commands a row can introduce.
+NES's four columns compose existing FamiStudio note attributes rather than adding a driver command
+queue or changing chip resources. Instrument envelopes/tables and persistent modulation remain
+separate from the number of commands a row can introduce.
 
 Any extension must specify legal commands per lane, conflicting/shared resources, duplicate-command
 precedence, note-start locks versus persistent effects, and global/delayed-row ordering. Banjo's
@@ -728,17 +728,71 @@ arpeggio/slides/portamento/vibrato share one pitch slot despite its four columns
 also stage global timing and note locks; textual column order is not a universal execution model.
 Playback, seek/live edits, project round trips, conversion reports and every native/WAV export must
 agree. Do not merely raise `effectColumns`, steal a populated column, or flatten combinations silently.
-Review NES/FamiStudio and SID/GoatTracker lowering/driver options separately before promising extra
-columns; hUGEDriver's existing `.uge` row format still has one command. No capacity is changed here.
+Game Boy/hUGEDriver and SID/GoatTracker retain their fixed one-command native-format contracts.
+
+#### NES ordered attributes
+
+All columns feed the same `FsSong` representation used by native lowering and FamiStudio text.
+Independent attributes compose; the rightmost repeated command wins. A/C share volume state
+(a later C cancels that row's volume-slide target), and Q/R share one pitch-slide target. Global
+F uses the first channel that sets speed and the last F within that cell, including MMC5 PCM.
+FDS I/J update both halves of the held modulation speed; SSG I/J gather one shared period after
+per-cell duplicate resolution and reject conflicting bytes across squares.
+
+P in a later column survives note-start reset. Tuning reuses an existing P or a free slot, removes
+shadowed P commands when clearing its detune, and refuses a full row rather than overwriting another
+effect. Conversion resolves source duplicate/global-command semantics before destination mapping.
+The old project/backend versions remain valid because the cell schema already represents four slots;
+older NES readers explicitly reject such cells rather than silently dropping them.
+
+Thor's S is row-relative, while FamiStudio parses its cut after G's delayed stream resumes.
+The shared intermediate representation therefore emits `CutDelay = S - G` when both occur and S ≥ G;
+S < G is rejected with channel/row context. FamiStudio's
+[native exporter](https://raw.githubusercontent.com/BleuBleu/FamiStudio/4.5.3/FamiStudio/Source/IO/FamitoneMusicFile.cs)
+emits NoteDelay before CutDelay, and its
+[text importer](https://raw.githubusercontent.com/BleuBleu/FamiStudio/4.5.3/FamiStudio/Source/IO/FamistudioTextFile.cs)
+reads those attributes directly. MMC5 PCM has separate timers but its current native validator/player
+cannot retain both G/S, so that combination is rejected there; its existing NSF/text exclusion remains.
+
+Validation checks every populated slot, including holes before later effects. Additional columns
+do not relax sample memory, instrument identity, shared VRC7 patches, SSG ownership or data-size limits.
+
+### Cost of further four-column extensions
+
+The user-selected ceiling is **four where straightforward**, not a shared pool of four slots for the
+whole chip. One busy channel does not automatically remove slots from another. Actual limits concern
+the chosen player's command representation, shared hardware controls, data capacity and execution cost.
+Any future budget diagnostic must name a real export target/player; tracker-host performance is separate.
+
+These are source-based engineering estimates, not implemented capacity increases or measured effort:
+
+| Family | Required work beyond the editor | Relative complexity / recommendation |
+| --- | --- | --- |
+| Atari 2600 TIA, NTSC/PAL | Raise the two-effect limit in C/generated Kotlin/reference definitions and decoded rows; the image already reserves three count bits. Exercise ordered effects, dense-data bounds and write buffers. | Low–medium; strongest next candidate after NES. Two channels and their physical controls remain unchanged. |
+| VIC-20 / C16–Plus/4 | Widen the effect count from two to three bits in both loader and decoder, update reserved-bit validation and C/Kotlin/Python mirrors, then check shared-state/sample walkers. | Medium; one implementation serves VIC and TED. Shared master volume and TED D/A ownership remain restrictions. |
+| Virtual Boy VSU | Widen the same two-bit count, decoded arrays and independent reference; preserve staged parameter locks, global timing and wave-RAM rules. | Medium. Four commands do not add wave memory or another sweep/modulation voice. |
+| Game Boy / hUGEDriver | Its packed row and `.uge` route hold one command; OFF and structural flow already occupy that space. | High for general equivalence. Keep one rather than invent instrument-program packing or a driver fork in this pass. |
+| SID / GoatTracker | `.sng` and `GtRow` hold one command per voice-row; tables and shared chip state are separate resources. | High for general equivalence. Keep one; any restricted lowering would need a distinct reviewed contract. |
+
+Relevant boundaries are `tia_image.h` / `tia_image.c`, `cbm_image.h` / `cbm_image.c`,
+`vsu_image.h` / `vsu_image.c` and their Kotlin lowerers and independent references. A populated added
+effect contributes its code/parameter pair before compression; empty display columns need not cost
+stream bytes. Do not increase fixed data regions or write buffers without evidence of a required limit.
+
+TIA and VIC/TED currently export WAV only; VSU exports VGM/WAV, not a console executable. There is no
+shipped 6507/6502/V810 player whose remaining game CPU budget those exports establish. For real
+NES/Banjo/SID drivers, peak invocation cycles, register writes and data occupancy can be meaningful,
+but fitting a driver call is not proof that a particular game has enough time left for it.
 
 
 ## Swing and groove: research proposal
 
-**Research only; no shared swing setting or timing change is implemented.** Current `Song` has
-one initial `ticksPerRow`; `Pattern` has no timing override. Existing chip-specific swing must
-not be overlooked: SID `Exy` alternates tempos, and Banjo's `Oxx` sets odd-row speed.
+**Implementation is paused by user request.** Research viable drivers and added code/verification
+cost before choosing semantics. No shared swing setting or timing change is implemented. Current
+`Song` has one initial `ticksPerRow`; `Pattern` has no timing override. Existing chip-specific swing
+must not be overlooked: SID `Exy` alternates tempos, and Banjo's `Oxx` sets odd-row speed.
 
-### Proposed shared controls
+### Earlier broader proposal — not selected
 
 - **Song:** Straight or Swing, with an amount and subdivision.
 - **Pattern:** Inherit / Straight / Override. Inherit follows the song; Override supplies its own
@@ -762,7 +816,7 @@ verified swing support or promises that arbitrary songs can export.
 | Backend/player | Existing route | Constraint for shared swing metadata |
 | --- | --- | --- |
 | Own C players: OPL3, YM2612, AY, PCE, SCC, OPM, OPN/OPNA, POKEY, TIA, VIC/TED, SAA, VSU, WonderSwan | Explicit row scheduler; current register/WAV exporters consume that player's ticks | Strong candidate for timing metadata outside cell effects, but each image, lowering, scheduler, seek and export needs implementation. Tick clocks differ; OPN uses timer B, not the same multispeed scheme as OPL3. |
-| NES/FamiStudio, including expansions | Native speed opcode and text `Speed` attribute are independent note attributes | Strong lowering candidate despite one visible effect column. Resolve timing before slide-rate calculations and feed the same schedule to native streams and text. Existing export exclusions remain. |
+| NES/FamiStudio, including expansions | Native speed opcode and text `Speed` attribute are independent note attributes | Strong lowering candidate; new timing need not consume a visible effect slot. Resolve timing before slide-rate calculations and feed the same schedule to native streams and text. Existing export exclusions remain. |
 | Master System/Game Gear/Banjo | Separate even/odd speeds; `Fxx` sets both and `Oxx` changes odd rows | Native groove already exists. Speed commands take effect **next row**, so a new setting on a pattern's first row is too late for that row. Entry, jumps and loops need an explicit strategy. |
 | SID/GoatTracker | `Exy` funktempo, `F00/F01` selecting its phase | Existing native swing, but `.sng` has one command per voice-row. Injected timing can collide with occupied commands. Hard-restart gate timers must remain below the shortest row. |
 | Game Boy/hUGEDriver | Per-row `Fxx` speed, one command per channel-row | No separate groove lane in current `.uge` lowering. Structural jumps/breaks and OFF already use command space. Universal collision-free swing requires a reviewed driver/export solution, not just a UI toggle. |
@@ -772,6 +826,56 @@ initial speed 6: it returns **`6,4,8,4,8,4,8,4`**, demonstrating the first-row t
 The existing FamiStudio text exporter was exercised with two speed changes and emits independent
 `Note Time="0" Speed="8"` and `Note Time="1" Speed="4"` attributes. These are bounded
 lowering/export probes, not native-audio verification of the proposed feature.
+
+### Smallest useful implementation: cost spike
+
+The cheaper candidate is **song-wide integer long/short timing only**, with one-row subdivision:
+base `B` and offset `d` produce `B+d`, `B-d`. Pattern-row phase and a straight unpaired final row
+would make a five-row pattern at base 6/offset 2 last `8,4,8,4,6` ticks. This is a proposal, not an
+approved timing rule: it preserves a complete pattern traversal, not arbitrary early jumps or entry
+into the middle of a pair.
+
+Avoiding pattern overrides, percentages, multi-row subdivisions and carried phase removes substantial
+state/UI/format work. Explicitly refusing legacy timing effects while shared swing is enabled would
+also be simpler than an override/resumption system, but that restriction needs review rather than
+being imposed silently.
+
+| Route | Mandatory implementation/verification work | Cost assessment |
+| --- | --- | --- |
+| One owned player, e.g. OPL3 | Shared persisted setting/validation; image timing contract; row-start duration; seek/live-edit reconstruction; loop/export timing and editor consumers. | Medium. Arithmetic is small; consistent integration is the work. |
+| All owned players | Repeat those changes across separate image, loader, scheduler and reference implementations. Share tick-count arithmetic/fixtures, not a replacement sequencing framework. | Large breadth; no single common scheduler currently implements them all. |
+| NES/FamiStudio | Resolve native `Speed` attributes before pitch/volume slide-rate compilation; feed the same result to text and binary exports, validation, seek and sample indicators. | Medium; no visible effect-slot theft or new driver opcode is inherently required. More speed events can break stream runs and increase data size. |
+| Banjo, even lengths and no timing overrides | Initialize both native header speeds, update straight-play metadata/seek and exported source, prove first-row behavior. | Small–medium backend delta, plus shared feature work. Row-zero F/O injection is not equivalent to header initialization. |
+| Banjo with straight odd tails / broader flow | Schedule changes a row ahead, restore timing before the next entry, and handle one-row patterns, short-order jumps, loops and delayed notes. | Medium–high; boundary scheduling, not the existence of native odd/even speeds, drives the cost. |
+| SID | Allocate native E/F commands without overwriting musical commands; reset phase, handle tails, gate timers, tables and `.sng`/packed exports. | Medium–high for an explicitly restricted subset; high for universal support. |
+| Game Boy | Allocate Fxx around occupied effects, OFF and structural B/D; preserve `.uge`/playback equivalence and report exhausted rows. | High relative to value; a universal solution is not the simple first pass. |
+
+These tiers are engineering inferences, not measured implementation time or code-size promises.
+Shared costs also include undoable settings, conversion loss/blocker reporting, Sketch step timing,
+sample progress/duration and hardware-shared state walkers. Off must retain existing playback/export
+bytes. Required cases include lengths 1/2/3/5/max, reused/parked patterns, nonzero loops, both seek
+parities, delay/cut boundaries, slides, live edits and exact repeated-loop native row-start traces.
+
+A bounded **native Banjo/Z80 experiment** sets the existing song header and matching order-entry
+metadata to 8/4, without changing production code. Twelve measured row durations per case:
+
+| Pattern/order layout | Actual repeated row durations |
+| --- | --- |
+| Two rows, one reused order | `8,4 / 8,4 / …` |
+| Three rows, one reused order | `8,4,8 / 8,4,8 / …` |
+| One row | `8 / 8 / …` |
+| Three-row pattern reused by two orders | order 0 `8,4,8`, order 1 `8,4,8`, repeat |
+
+Header initialization therefore fixes the first row without a driver fork. It does **not** produce
+the proposed straight odd tail: three rows take 20 rather than 18 ticks, and one row takes 8 rather
+than 6. The experiment measures existing behavior only; it does not implement or prove an odd-tail
+restoration strategy. Evidence is retained under `recovery-20261109/nes-effects-hardening/`.
+
+Source anchors: `opl3_player.c` row/loop/live-edit speed handling and `opl3_image.c` order-start speed;
+`FamiStudioSong.kt` and `FamiStudioLowering.kt` speed and slide timing; `SmsLowering.kt`,
+`BanjoSong.kt`, `sms_machine.c` and Banjo `update.inc`; `GtSong.kt`, `SidValidator.kt`,
+`HugeLowering.kt` and `HugeRules.kt`. Boundary restoration is the next Banjo design question,
+not whether its existing header can initialize two speeds.
 
 ### Decisions still requiring review
 

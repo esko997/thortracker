@@ -108,10 +108,16 @@ internal object ConversionEffects {
             }
             val replacesEarlier = (from == Driver.NATIVE && (code in 0..4 || code == 10 || code == 12 ||
                 code == 16 || code == 25 || code == 28)) ||
-                (from == Driver.SMS && (code == 12 || code == 16 || code == 24 || code == 28))
+                (from == Driver.SMS && (code == 12 || code == 16 || code == 24 || code == 28)) ||
+                from == Driver.NES
             if (replacesEarlier && (column + 1..original.lastEffectColumn).any {
                     val later = original.effectCode(it)
-                    (if (code in 1..3) later in 1..3 else later == code) &&
+                    (when {
+                        from == Driver.NES && (code == 10 || code == 12) -> later == 10 || later == 12
+                        from == Driver.NES && (code == 26 || code == 27) -> later == 26 || later == 27
+                        code in 1..3 -> later in 1..3
+                        else -> later == code
+                    }) &&
                         (later != 0 || original.effectParam(it) != 0)
                 }) {
                 changed(column, "$text omitted because a later source command replaces this row's setting.")
@@ -333,7 +339,7 @@ internal object ConversionEffects {
         for (ch in tracks.indices) {
             val cell = tracks[ch][row]
             for (col in 0..cell.lastEffectColumn) if (cell.effectCode(col) == code) {
-                if (code == 15 && driver(song.system) == Driver.NES && winnerChannel >= 0) continue
+                if (code == 15 && driver(song.system) == Driver.NES && winnerChannel >= 0 && winnerChannel != ch) continue
                 winnerChannel = ch
                 winnerColumn = col
             }

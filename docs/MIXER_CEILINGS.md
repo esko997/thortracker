@@ -1,10 +1,10 @@
 # Mixer ceilings: capability and implementation proposal
 
-**Status: design for user review, not an implemented feature.** Source baseline: `73b2597` (0.38.0 candidate), inspected 2026-11-10. This document changes no player, project format, effect, exporter or UI. No builds, tests, reference renders or hardware experiments were run for this pass. Capability judgments below are source/hardware analysis, not acceptance-test results.
+**Status: explicitly deferred by the user; not an implemented feature.** More effect slots and native volume automation take priority. This record remains available for a later design review, not as scheduled work. Source baseline: `73b2597` (0.38.0 candidate), inspected 2026-11-10. This document changes no player, project format, effect, exporter or UI. No builds, tests, reference renders or hardware experiments were run for the original pass. Capability judgments below are source/hardware analysis, not acceptance-test results.
 
 ## 1. What is decided, and what is not
 
-**User decision:** a ceiling is `effective = min(programmed level, ceiling)`, **not** multiplication by a gain. Automation below the ceiling is unchanged; higher automation flattens. Existing volume effects keep their meanings. The current assignment is the design/capability pass; it does not authorize implementing the recommendations below. Touch-only controls, original synthesis and synth panels remain outside this proposal.
+**Recorded user definition:** a ceiling is `effective = min(programmed level, ceiling)`, **not** multiplication by a gain. Automation below the ceiling is unchanged; higher automation flattens. Existing volume effects keep their meanings. The capability pass below is retained for future discussion; implementation is paused. Touch-only controls, original synthesis and synth panels remain outside this proposal.
 
 **Principal finding:** a common-looking control cannot promise the same operation on every chip. Several chips have a writable level; others have an autonomous envelope, an attenuation control, a shared master, or sample data in the apparent volume register. A native export contains registers or a real driver, not Thor's emulator internals. A clamp added only inside an emulator is not automatically exportable.
 

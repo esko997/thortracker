@@ -459,14 +459,28 @@ number of voices or on how many instrument envelopes can run:
 
 | Columns | Systems |
 | --- | --- |
-| 1 | Game Boy/hUGEDriver; NES/FamiStudio and every expansion variant, including EPSM; C64 SID/GoatTracker |
+| 1 | Game Boy/hUGEDriver; C64 SID/GoatTracker |
 | 2 | Atari 2600 TIA (NTSC/PAL); VIC-20; C16/Plus/4 TED; Virtual Boy |
-| 4 | OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
+| 4 | NES/FamiStudio and all expansion variants, including EPSM; OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
 
 On a multi-column system, open the Pattern panel with **L2+Right** (or tap **Scale**) and choose
 **Columns**. Left/Right changes the focused channel's visible count; L1/R1 selects a channel;
 B returns to automatic. Automatic shows the columns used by that channel, with at least one.
 Hiding a column does **not** disable its effects, and this display preference is independent per pane.
+An automatic column stays visible while A is held to edit it, even if its last value becomes empty;
+releasing or canceling the hold returns to automatic width without changing another effect.
+
+**NES:** independent attributes combine left to right; the last duplicate wins. `Axy`/`Cxx` share
+volume state, and `Qxx`/`Rxx` share one slide target. The first channel containing `Fxx` sets global
+speed, using its last F column. For example, a pulse note can carry `C09 463 P84 F08` together.
+FDS I/J combine modulation-speed bytes; 5B/EPSM I/J combine their shared envelope-period bytes,
+with conflicting values on different squares reported rather than silently chosen.
+
+Note delay and cut remain row-relative: an engine-lane cut must not precede its delayed note.
+The separate MMC5 PCM lane cannot combine G and S on one row; use separate rows there. Existing
+chip-specific legality and native-export limits still apply, including MMC5 PCM's NSF/text refusal.
+Older Thor Tracker versions explicitly reject NES projects using extra columns; ordinary one-column
+projects retain their existing encoding.
 
 Several columns do not promise that every combination stacks. For example, Banjo's Sega backends
 share one pitch-effect slot between arpeggio, slides, portamento and vibrato: the last such command

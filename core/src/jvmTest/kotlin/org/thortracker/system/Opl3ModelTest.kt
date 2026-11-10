@@ -17,7 +17,6 @@ import org.thortracker.model.ProjectFormatException
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.gb.GbSystem
-import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.opl3.Opl3Curated
 import org.thortracker.system.opl3.Opl3Instrument
 import org.thortracker.system.opl3.Opl3Presets
@@ -62,14 +61,14 @@ class Opl3ModelTest {
     }
 
     @Test
-    fun oneColumnSystemsRejectExtraColumns() {
-        val cell = Cell(48, 1).withEffect(1, 0xC, 0x08)
-        for (system in listOf(GbSystem, NesSystem, SidSystem)) {
-            assertEquals(1, system.effectColumns(0))
-            val problem = system.cellProblem(system.blank(), 0, cell)
-            assertTrue("${system.id}: $problem", problem!!.contains("2 effect columns"))
+    fun fixedFormatProjectsRejectExtraEffectColumns() {
+        for (system in listOf(GbSystem, SidSystem)) {
+            val valid = with(system.blank(), 0, 0, 0, Cell(48, 1))
+            val text = ProjectCodec.encode(valid)
+            assertThrows(ProjectFormatException::class.java) {
+                ProjectCodec.decode(text.replace("[48,1,0,0]", "[48,1,0,0,12,8]"))
+            }
         }
-        assertEquals(4, Opl3System.effectColumns(8))
     }
 
     @Test

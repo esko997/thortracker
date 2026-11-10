@@ -210,6 +210,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     /** FamiTracker/FamiStudio names are scientific pitch: A-4 = 440 Hz. */
     override val nameOctaveOffset = 0
     override val effects: List<EffectSpec> get() = NesRules.effects(expansion)
+    override fun effectColumns(channel: Int) = Cell.MAX_EFFECT_COLUMNS
     override val views = ViewKind.entries.toSet() - ViewKind.WAVE
     override val exports = listOf(
         ExportFormat("nsf") { NsfExporter.export(it) },
@@ -573,19 +574,24 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             return 1200.0 * log2(p / (p - fine))
         }
 
-        override fun of(cell: Cell): Int? = when {
-            !cell.hasEffect -> 0
-            cell.effect == NesRules.FX_FINE_PITCH && cell.param >= NesRules.FINE_CENTRE -> cell.param - NesRules.FINE_CENTRE
-            else -> null
+        override fun of(cell: Cell): Int? {
+            val p = NesRules.effectParam(cell, NesRules.FX_FINE_PITCH) ?: return 0
+            return if (p >= NesRules.FINE_CENTRE) p - NesRules.FINE_CENTRE else null
         }
 
         override fun write(cell: Cell, note: Int, fine: Int): Cell? {
-            val current = of(cell)
-            return when {
-                fine > 0 -> if (current == null) null else cell.copy(note = note, effect = NesRules.FX_FINE_PITCH, param = NesRules.FINE_CENTRE + fine)
-                current != null && cell.effect == NesRules.FX_FINE_PITCH -> cell.copy(note = note, effect = 0, param = 0)
-                else -> cell.copy(note = note)
+            val column = NesRules.effectColumn(cell, NesRules.FX_FINE_PITCH)
+            if (column >= 0 && of(cell) == null) return if (fine == 0) cell.copy(note = note) else null
+            var result = cell.copy(note = note)
+            // Remove all earlier P commands too: clearing the winner must not uncover a stale detune.
+            for (i in 0..cell.lastEffectColumn) {
+                if (cell.effectCode(i) == NesRules.FX_FINE_PITCH) result = result.withEffect(i, 0, 0)
             }
+            if (fine == 0) return result
+            val slot = if (column >= 0) column else (0 until Cell.MAX_EFFECT_COLUMNS).firstOrNull {
+                cell.effectCode(it) == 0 && cell.effectParam(it) == 0
+            } ?: return null
+            return result.withEffect(slot, NesRules.FX_FINE_PITCH, NesRules.FINE_CENTRE + fine)
         }
 
         private fun period(note: Int) = FamiStudioLowering.NOTE_TABLE[(note - NesRules.NOTE_OFFSET).coerceIn(1, NesRules.NOTE_COUNT)]
@@ -600,6 +606,8 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
             "Played by the FamiStudio sound engine at FamiTracker tempo: a tick is one 60 Hz frame, Fxx sets frames per row.",
             "There are no jump effects: the song's loop order and each pattern's length arrange the song.",
             "Instruments are envelopes (volume, arpeggio, pitch, duty); effects change the playing note on top of them.",
+            "Four effect columns compose left to right; the last duplicate wins. A/C share volume and Q/R share a slide target.",
+            "Fxx on the first channel that sets speed wins. I/J combine high and low bytes; conflicting SSG bytes on different squares are errors.",
             "On DPCM a note plays the sample its instrument maps to that key (the instrument's DPCM page); only Fxx, Gxx, Sxx and Zxx apply there.",
         )
         override val tonalChannels = "Pulse and Triangle"

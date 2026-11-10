@@ -683,16 +683,44 @@ object NesRules {
         return kotlin.math.round(square * fine / pulse).toInt().coerceIn(-127, 127)
     }
 
+    /** Last column setting [code], or -1. Blank 000 columns never set arpeggio. */
+    fun effectColumn(cell: Cell, code: Int): Int {
+        for (column in cell.lastEffectColumn downTo 0) {
+            if (cell.effectCode(column) == code && (code != 0 || cell.effectParam(column) != 0)) return column
+        }
+        return -1
+    }
+
+    /** Last value for a command on this row, or null. */
+    fun effectParam(cell: Cell, code: Int): Int? =
+        effectColumn(cell, code).let { if (it < 0) null else cell.effectParam(it) }
+
+    /** FamiStudio chooses the first channel with Fxx, and the last Fxx within that channel. */
+    fun rowSpeed(pattern: org.thortracker.model.Pattern, row: Int, previous: Int): Int {
+        for (track in pattern.tracks) {
+            val speed = effectParam(track[row], FX_SPEED)
+            if (speed != null && speed in SPEEDS) return speed
+        }
+        return previous
+    }
+
     /** Range problem of a single cell of a song with [expansion] independent of context, or null. */
-    fun cellRangeProblem(expansion: NesExpansion, cell: Cell): String? = when {
-        cell.note != Cell.EMPTY && cell.note != Cell.CUT && cell.note !in NesSystem.noteRange ->
-            "note ${cell.note} is outside C-1..B-8 (${NesSystem.noteRange.first}-${NesSystem.noteRange.last})"
-        cell.instrument !in 0..NesSystem.SLOTS -> "instrument ${cell.instrument} is outside 0-${NesSystem.SLOTS}"
-        cell.effect !in 0..35 -> "effect ${cell.effect} is outside 0-Z"
-        cell.param !in 0..255 -> "effect parameter ${cell.param} is outside 00-FF"
-        cell.more.isNotEmpty() -> "${cell.more.size + 1} effect columns; the NES plays one per row"
-        cell.hasEffect && effect(expansion, cell.effect) == null -> "effect ${effectChar(cell.effect)} does not exist on the NES"
-        else -> null
+    fun cellRangeProblem(expansion: NesExpansion, cell: Cell): String? {
+        if (cell.note != Cell.EMPTY && cell.note != Cell.CUT && cell.note !in NesSystem.noteRange)
+            return "note ${cell.note} is outside C-1..B-8 (${NesSystem.noteRange.first}-${NesSystem.noteRange.last})"
+        if (cell.instrument !in 0..NesSystem.SLOTS) return "instrument ${cell.instrument} is outside 0-${NesSystem.SLOTS}"
+        for (column in 0..cell.lastEffectColumn) {
+            val code = cell.effectCode(column)
+            val param = cell.effectParam(column)
+            val problem = when {
+                code !in 0..35 -> "effect $code is outside 0-Z"
+                param !in 0..255 -> "effect parameter $param is outside 00-FF"
+                (code != 0 || param != 0) && effect(expansion, code) == null -> "effect ${effectChar(code)} does not exist on the NES"
+                else -> null
+            }
+            if (problem != null) return "effect column ${column + 1}: $problem"
+        }
+        return null
     }
 
     /**
@@ -726,18 +754,37 @@ object NesRules {
         if (cell.note >= 0 && isMmc5Pcm(expansion, channel) && cell.instrument != 0) {
             pcmMappingProblem(song, cell.instrument, cell.note)?.let { return it }
         }
-        if (!cell.hasEffect) return null
-        val p = cell.param
+        for (column in 0..cell.lastEffectColumn) {
+            val code = cell.effectCode(column)
+            val param = cell.effectParam(column)
+            if (code == 0 && param == 0) continue
+            effectProblem(song, channel, cell, code, param)?.let { return "effect column ${column + 1}: $it" }
+        }
+        val delay = effectParam(cell, FX_NOTE_DELAY)
+        val cut = effectParam(cell, FX_NOTE_CUT)
+        if (isMmc5Pcm(expansion, channel) && delay != null && cut != null) {
+            return "MMC5 PCM cannot combine Gxx and Sxx on one row; its player cancels a pending cut when the delayed note starts; use separate rows"
+        }
+        if (!isMmc5Pcm(expansion, channel) && delay != null && cut != null && cut < delay) {
+            return "${effectText(FX_NOTE_CUT, cut)} cuts before ${effectText(FX_NOTE_DELAY, delay)} starts the note; " +
+                "FamiStudio cannot represent a cut before a delayed note on the same row; move the cut to an earlier row"
+        }
+        return null
+    }
+
+    private fun effectProblem(song: Song, channel: Int, cell: Cell, code: Int, p: Int): String? {
+        val expansion = song.nes.expansion
+        val channelName = channelName(expansion, channel)
         val x = p shr 4
         val y = p and 0xF
-        val spec = effect(expansion, cell.effect) ?: return "effect ${effectChar(cell.effect)} does not exist on the NES"
-        val fx = effectText(cell.effect, p)
-        if (cell.effect in unusable(expansion, channel)) {
+        val spec = effect(expansion, code) ?: return "effect ${effectChar(code)} does not exist on the NES"
+        val fx = effectText(code, p)
+        if (code in unusable(expansion, channel)) {
             return when {
-                cell.effect == FX_PHASE_RESET && kind(expansion, channel) != ChannelKind.SAMPLE ->
+                code == FX_PHASE_RESET && kind(expansion, channel) != ChannelKind.SAMPLE ->
                     if (expansion == NesExpansion.FDS) "phase reset ($fx) is for the FDS channel; $channelName has none here"
                     else "phase reset ($fx) is for the N163's channels; $channelName has none here"
-                expansion == NesExpansion.FDS && cell.effect in FDS_EFFECT_CODES ->
+                expansion == NesExpansion.FDS && code in FDS_EFFECT_CODES ->
                     "${spec.name.lowercase()} ($fx) is for the FDS channel; $channelName has no modulation"
                 isEpsmRhythm(expansion, channel) ->
                     "${spec.name.lowercase()} ($fx) has no effect on $channelName (a fixed-pitch drum: volume, speed, delay and cut only)"
@@ -745,7 +792,7 @@ object NesRules {
             }
         }
         val noteName = if (cell.note >= 0) NesSystem.noteName(cell.note) else null
-        return when (cell.effect) {
+        return when (code) {
             FX_ARPEGGIO -> when {
                 cell.note < 0 -> "$fx needs a note on its row (FamiStudio arpeggios belong to a note)"
                 // On the FDS the engine note plus the arpeggio must stay inside the 12-bit frequency (the table's top).
@@ -773,7 +820,7 @@ object NesRules {
                 cell.note < 0 -> "$fx needs a note on its row: the note glides from there"
                 p == 0 -> "$fx slides 0 semitones; use 01 or more"
                 else -> {
-                    val target = cell.note + if (cell.effect == FX_SLIDE_UP) p else -p
+                    val target = cell.note + if (code == FX_SLIDE_UP) p else -p
                     when {
                         target !in NesSystem.noteRange -> "$fx from $noteName would end outside C-1..B-8"
                         pitched(expansion, channel) && target < lowestNote(expansion, channel) ->
@@ -803,7 +850,7 @@ object NesRules {
             FX_FDS_MOD_SPEED_HI, FX_FDS_MOD_SPEED_LO -> if (!isFds(expansion, channel)) null else {
                 val ins = if (cell.note >= 0 && cell.instrument != 0) song.nes.instruments.getOrNull(cell.instrument - 1) else null
                 when {
-                    cell.effect == FX_FDS_MOD_SPEED_HI && p > FdsSound.MOD_SPEED.last shr 8 ->
+                    code == FX_FDS_MOD_SPEED_HI && p > FdsSound.MOD_SPEED.last shr 8 ->
                         "$fx: the mod speed is 12-bit (000-FFF), so its high digit is I00-I0F"
                     ins != null && ins.chip == NesChip.FDS && ins.fds.autoMod ->
                         "$fx has no effect: I/J have no effect while an auto-mod sound plays, and sound ${hex2(cell.instrument)} " +
@@ -918,11 +965,10 @@ object NesRules {
         var hi = -1
         var lo = -1
         for (c in cells) {
-            if (!c.hasEffect) continue
-            when (c.effect) {
-                FX_ENV_PERIOD_HI -> if (hi >= 0 && hi != c.param) return null else hi = c.param
-                FX_ENV_PERIOD_LO -> if (lo >= 0 && lo != c.param) return null else lo = c.param
-            }
+            val high = effectParam(c, FX_ENV_PERIOD_HI)
+            val low = effectParam(c, FX_ENV_PERIOD_LO)
+            if (high != null) { if (hi >= 0 && hi != high) return null else hi = high }
+            if (low != null) { if (lo >= 0 && lo != low) return null else lo = low }
         }
         return if (hi < 0 && lo < 0) -1 else (maxOf(hi, 0) shl 8) or maxOf(lo, 0)
     }
@@ -930,9 +976,9 @@ object NesRules {
     /** Why one row's SSG cells set the envelope period ambiguously, or null; [chip] names the squares' chip ("5B", "SSG"). */
     fun envPeriodConflict(cells: List<Cell>, chip: String = "5B"): String? {
         if (envPeriod(cells) != null) return null
-        val hi = cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_HI }.map { it.param }.distinct()
+        val hi = cells.mapNotNull { effectParam(it, FX_ENV_PERIOD_HI) }.distinct()
         val which = if (hi.size > 1) hi.map { effectText(FX_ENV_PERIOD_HI, it) } else
-            cells.filter { it.hasEffect && it.effect == FX_ENV_PERIOD_LO }.map { it.param }.distinct().map { effectText(FX_ENV_PERIOD_LO, it) }
+            cells.mapNotNull { effectParam(it, FX_ENV_PERIOD_LO) }.distinct().map { effectText(FX_ENV_PERIOD_LO, it) }
         return "${which.joinToString(" and ")} set the $chip's one envelope period twice in one row; keep one"
     }
 }
