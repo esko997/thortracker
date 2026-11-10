@@ -21,12 +21,12 @@ VSU candidate `9464a80` targets **0.35.0/code 48**, including SAA candidate `c27
 released VIC/TED ancestry. Its 956 JVM tests and seven-rate fractional-seek probe pass; full
 native/reference and frontend acceptance remain pending in that candidate's verification record.
 
-The current source integration combines WonderSwan/SAA head `38026f1` with VSU/SAA candidate
-`9464a80`, targeting **0.36.0/code 49**. Both WonderSwan variants, VSU, both SAA variants and
-all earlier engines remain present. WonderSwan's pre-resampler headroom correction and the incoming
-SAA/VSU fractional-seek fixes are retained. No build, test, generator or device run is claimed for
-this combined source; WonderSwan runtime acceptance remains pending. All local Kotlin/Native
-linking, including debug/test links, remains prohibited: use CI and exercise its downloaded AppImage.
+The **0.36.0/code 49** integration retains both WonderSwan variants, VSU, both SAA variants and all
+earlier engines, including the headroom and fractional-seek corrections. Its 995 JVM tests, 693
+WonderSwan native checks, 2,796 WAV checks and independent references pass. The actual CI AppImage
+and both Nova/Konkr frontend scenarios pass; DMG acceptance and official publication remain pending.
+All local Kotlin/Native linking, including debug/test links, remains prohibited: use CI and exercise
+its downloaded AppImage.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -109,7 +109,9 @@ linking, including debug/test links, remains prohibited: use CI and exercise its
      and frontend gates are not claimed complete (docs/VERIFICATION.md, "0.35.0 Virtual Boy VSU").
    - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
      DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
-     APU, VGM/WAV export), integrated for **0.36.0/code 49**, not yet built or runtime-verified.
+     APU, VGM/WAV export), integrated for **0.36.0/code 49**. 995 JVM tests, 693 native checks,
+     2,796 WAV checks, independent references, actual CI AppImage and Nova/Konkr scenarios pass;
+     DMG acceptance and publication remain pending (`docs/VERIFICATION.md`).
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from

@@ -34,8 +34,22 @@ as clean-checkout inputs, not treated as build caches.
 Evidence: `~/.local/state/thortracker/recovery-20261109/{ws-native,ws-corrected,ws-before}`.
 The native/Kotlin registries and all shared-registry renderer source lists retain every engine;
 the SMS renderer remains standalone. Hyper Voice VGM export is explicitly refused; WAV supports it.
-Android frontend/device acceptance and CI AppImage verification remain pending. No physical
-WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking remains disabled.
+Both jobs in candidate CI run `42730175159` (`cc19ab6`) pass. Its actual AppImage played and
+held-auditioned both demos, then returned to Pattern: mono reached order 1/row 22 with hold/after
+PCM peaks 0.08578491/0.15112305; Color reached order 1/row 20 with 0.28866577/0.32122803.
+Both rendered surfaces were inspected; evidence is `recovery-20261109/ws-desktop/`.
+Nova and Konkr each pass both actual-device scenarios: wave/noise/sweep edits, CPU-fed and DMA
+samples, Hyper Voice, held audition, playback/seek, project round trip, WAV export and explicit
+Hyper Voice VGM refusal. Both have zero driver faults and zero xruns in the dedicated scenarios;
+maximum callbacks are **1.186 ms / 2.104 ms** respectively. Their edited WAV pairs are byte-identical,
+48 kHz stereo with 569,856 frames and no clipping rails. Nova also passes all **22 permanent Android
+tests** and **32 full-RGBA Game Boy baseline comparisons**. Actual wave, DMA and refusal surfaces
+were inspected. Evidence: `recovery-20261109/ws-frontend/device-smoke/`.
+The collection wrapper initially attempted to pull the intentionally refused VGM after both tests
+had passed; successful exports were retained and checked. It now recognizes that explicit negative
+case without relaxing positive-export checks. DMG acceptance and official publication remain pending.
+No physical WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking
+remains disabled.
 
 ## Workstation recovery and enforced build limits
 
