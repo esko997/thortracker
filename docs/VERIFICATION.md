@@ -69,7 +69,14 @@ the final native implementation tested below is `046d897`.
 - SID, OPL3 and Mega Drive also pass 8-second held audition during playback, followed by 3-second
   audition-only runs: two accepted auditions each, nonzero PCM, zero late callbacks, no ALSA underruns
   and zero faults. Worst callbacks are **19.638, 10.531 and 18.266 ms** respectively.
-  EPSM FM audition still needs a valid FM instrument selected; a 2A03 slot is correctly refused on FM 1.
+- EPSM FM subsequently passes the same mixed/solo audition scenario with a valid FM sound selected:
+  two auditions, PCM peaks **0.024737/0.019331**, **741 callbacks**, **zero late callbacks, faults or
+  ALSA underruns**, and worst callback **12.053 ms**. Physical X presses in Instrument and Keyboard
+  independently produce two accepted auditions and PCM peak **0.119781**, without ALSA underruns.
+- After reconnection, the user's newly composed SCC working song, previous-project recovery file and
+  Contrast preference remain byte-identical through the isolated checks. Only the owned smoke Pak,
+  test workspace and unchanged test diagnostics report are removed. The production Pak is reopened
+  in Song view; the user's USB sleep setting is untouched and the canonical device lease is released.
 - The six timed playback runs average **56 frames/s** including cold UI work. The separate GB session
   uses **51,272 KiB RSS**, with a **58,716 KiB high-water mark**, five threads and no swap.
   These are specific observed workloads, not peak-memory bounds for arbitrary songs.
@@ -78,7 +85,9 @@ the final native implementation tested below is `046d897`.
 
 Evidence: `recovery-20261109/brick-themes/`, especially `nova-permanent-tests.txt`,
 `theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json`, `desktop-themes/results.json`,
-`ci-046d897/{pak-verification,desktop-runtime}.json` and `device-contracts/`.
+`ci-046d897/{pak-verification,desktop-runtime}.json`, `device-contracts/`, and
+`hardware-a8218cc3f32d48d5bb7165660357d5eb/{playback-results,dual-results}.json`.
+The latter directory also retains final physical-input/EPSM logs and the user-state preservation record.
 
 ## 0.37.1 Pattern workspace and first-note hardening — released and verified
 

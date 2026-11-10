@@ -152,8 +152,9 @@ its downloaded AppImage.
      note edit/Undo and explicit Quit back to NextUI pass.
    - Six 25-second real-ALSA runs cover GB, NES, SID, OPL3, Mega Drive and EPSM with advancing playback,
      nonzero PCM and zero driver faults. One GB case has a recovered underrun; the other five have none.
-     SID, OPL3 and Mega Drive additionally pass playback-plus-audition and audition-only checks.
-   - Remaining hardware hardening: EPSM FM audition, long projects/Undo history, exports, physical
+     SID, OPL3, Mega Drive and EPSM FM additionally pass playback-plus-audition and audition-only checks.
+     Actual physical X audition also passes in Instrument and Keyboard; temporary test files are removed.
+   - Remaining hardware hardening: long projects/Undo history, exports, physical
      suspend/resume and acoustic listening. Keep the bounded results distinct from all-workload guarantees;
      do not silently reduce chip fidelity or remove systems to pass the port.
    - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
@@ -172,6 +173,13 @@ its downloaded AppImage.
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
+- **Zoom in/out** (requested 2026-11-10): add readable zoom controls, particularly useful on the
+  Brick's compact screen. Proposed behaviour is workspace-only UI scaling: zoom in for larger text
+  and cells, out for more visible rows/channels, with no song, playback, export or Undo changes.
+  Keep the focused cell visible, retain the preference across restarts, provide a reset to default,
+  and expose menu actions plus rebindable controller controls. Exact scale steps, per-pane versus
+  whole-interface scope and default bindings remain design choices, not implemented behaviour.
+  Review alongside visual column collapse; do not make zoom depend on future touchscreen support.
 - **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
   Android already accepts orientation changes and shared painters support touch selection/scrolling;
   these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,
