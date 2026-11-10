@@ -16,6 +16,9 @@ Select+B remains Cut cell/block.** Focus loss or controller removal/change cance
 Listen and modifier state without synthesizing a tap; focus-only cancellation does not stop
 transport, whereas Activity pause does. Interrupted shortcut capture is also canceled, including
 configuration changes: an invisible held modifier cannot leak into the next binding attempt.
+Menus no longer start a zero-distance scroll when already at the top: that animation could
+swallow the next fast tap. The unchanged real Save As touch scenario fails before this fix
+and passes afterward, without adding a compensating delay to the test.
 
 ### Automated candidate evidence
 
@@ -69,10 +72,12 @@ are not production source. Builds and devices remain serialized and memory-cappe
 ### Separate portrait preview and remaining gates
 
 The portrait preview remains a **separate package and branch**, not production touch support.
-**Six real multi-touch tests pass on DMG**, which is a functional testbed only. The user's
-phone calibration target is **Galaxy Fold8**; calibration is in progress and no phone
-ergonomics verification is claimed. Next is joint prototype review and soft-launch hardening,
-not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain deferred.
+**19 host tests and 13 real Android scenarios pass on DMG**, which is a functional testbed only.
+The design target is **Galaxy Fold8**, with a 144 dp three-row dock and bounded thumb groups.
+Five native cover/inner ratio renders pass geometry checks, alongside real multitouch,
+binding capture, interruption, provider and Save As picker workflows. These are not phone
+captures or physical ergonomics verification. Next is joint prototype review and soft-launch
+hardening, not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain deferred.
 
 There is **no new 0.41.0 physical Deck/Brick proof or official release/delivery yet**.
 CI/publication and delivery evidence will be recorded separately after they occur.

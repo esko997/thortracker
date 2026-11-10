@@ -293,7 +293,11 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
     private fun reveal(entry: Int) {
         val row = rows.getOrNull(entry) ?: return
         scroll.post {
-            if (entry == 0) { scroll.smoothScrollTo(0, 0); return@post }
+            if (entry == 0) {
+                // Even a zero-distance scroll intercepts the next tap while its animator runs.
+                if (scroll.scrollY != 0) scroll.smoothScrollTo(0, 0)
+                return@post
+            }
             var top = row.top
             var parent = row.parent as? View
             while (parent != null && parent !== body) { top += parent.top; parent = parent.parent as? View }
