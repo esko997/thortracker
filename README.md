@@ -54,6 +54,19 @@ To upgrade, download the new AppImage, `chmod +x` it and run the `ln -sfn` line 
 
 Controls are the Thor's: the D-pad moves, hold A + D-pad edits, Start plays, R2 + A/B/X/Y and R2 + ↑/→/↓ switch views (L2 + R2 + the same buttons do too, since the Deck has one display), L2 + A/B undo/redo. **Select + Start** opens the menu (it also opens from a back grip if your Steam Input layout passes them to the game), and the menu has **Quit**. To type a song title, select the title field with A, then press **Steam + X** for the on-screen keyboard. Projects and exports are kept in `~/ThorTracker`; the song you are working on is saved automatically and reopens next time.
 
+## Colour themes
+
+**Menu → Colour theme** selects **Slate** (the unchanged original appearance), **Paper** (light),
+or **Contrast** (higher-contrast dark). The choice applies immediately to the views, menus and
+platform controls, and is remembered as a workspace preference—not part of the song. It does
+not change notes, instruments, Undo history or exports. Both displays use the same selection.
+Scanlines remain a separate, deferred idea.
+
+<img src="docs/media/theme-paper-nova.png" width="49%" alt="Paper theme on a Nova: dark text and channel colours on a light pattern grid">
+<img src="docs/media/theme-contrast-nova.png" width="49%" alt="Contrast theme on a Nova: bright text and channel colours on a near-black pattern grid">
+
+*Actual Nova captures. The default Slate palette retains the original colours and layout.*
+
 ## A quick tour
 
 ### Pattern editing on both screens

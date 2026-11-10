@@ -127,9 +127,9 @@ its downloaded AppImage.
    No uncleared scale files in standard releases, no automatic downloads and no upstream licensing contact.
    Project format 10 reads versions 1–9; older apps cannot read newly saved projects.
 10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
-   - Research supports retaining the shared Kotlin core and native engines, with an ARM64/SDL2 platform adapter
-     and a NextUI package. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
-     This is a roadmap target, not a working port or an established performance claim.
+   - Shared native frontend and ARM64/vendor-SDL2 adapter are implemented in the 0.38.0 candidate,
+     with a NextUI Pak build. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
+     Hardware application/audio/lifecycle verification remains required; this is not a performance claim.
    - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
      (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
      vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
@@ -143,11 +143,12 @@ its downloaded AppImage.
      It opened no display/audio/input subsystem (`SDL_WasInit(0) == 0`) and its temporary executable
      was removed. This proves loader/library compatibility, not rendering or callback performance;
      a stock KMS/DRM or SDL3 assumption would miss the installed vendor video integration.
-   - Packaging target: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects/settings outside the Pak
-     (proposed `/mnt/SDCARD/ThorTunez/`) so Pak Store replacement cannot remove user data.
-     Follow [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/), use its environment
-     and diagnostics locations, preserve global ALSA/display settings, and return cleanly to the launcher.
-     Prefer the device's vendor SDL2/GPU integration; shared-application linking and callback behavior still need a running frontend spike.
+   - Packaging: `Tools/tg5040/ThorTracker.pak/launch.sh`, with projects in `/mnt/SDCARD/ThorTunez`
+     and private workspace/recovery data in its `.thortracker` subdirectory, outside the replaceable Pak.
+     The launcher follows [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/),
+     uses its diagnostics locations and preserves HOME/ALSA routing. No vendor SDL/Mali library ships.
+     A bounded real-device joystick probe confirms SDL's trigger axes and physical face-button mapping;
+     renderer/audio, cumulative trigger routing, persistence and return-to-launcher checks are still pending.
    - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
      Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
      Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
@@ -193,10 +194,10 @@ its downloaded AppImage.
   Both are design directions, not implemented engines or selected panel designs.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
-  - **Colour themes, near-term priority before scanlines:** semantic palette roles, readable dark/light
-    choices, distinguishable focus/selection/playback/error states, and persistent workspace selection.
-    Themes must not alter song data or exports. BRIXEQ's palette names/colours are research references,
-    not assets to copy; create original palettes. Implementation remains pending.
+  - **Colour themes, implemented in the 0.38.0 candidate:** original Slate, Paper and Contrast palettes,
+    selected under Menu → Colour theme and persisted as workspace state. They do not alter song data,
+    exports or Undo history. Nova, DMG and Konkr pass selection/restart/playback checks, and all 32 Slate
+    baseline captures are pixel-identical. Native runtime checks remain pending. No BRIXEQ palette was copied.
   - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
     and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
     Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
@@ -403,7 +404,6 @@ These are implementation scope defaults, not claims that the features are imposs
 - Window management, split panes and arbitrary docking.
 - Full Furnace feature parity, unrestricted automation lanes, custom executable driver routines and advanced macro/subpattern authoring.
 - Analog/revision-perfect emulation and hardware quirks not exercised by the supported feature set.
-- Configurable colour themes (requested after playtesting; deferred).
 - Scale-root-relative interval labels in place of Pattern note names remain deferred; Sketch displays degrees alongside pitches.
 
 Standard instrument settings, row effects and full-song composition are not optional scaffolding. A runnable empty UI or audio demo is not the MVP.

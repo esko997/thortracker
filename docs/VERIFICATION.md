@@ -1,5 +1,40 @@
 # Thor Tracker verification — 2026-11-10
 
+## 0.38.0 candidate — themes verified on Android; native delivery in progress
+
+This is not a release claim. Android candidate source `1943ce6` adds original Slate, Paper and
+Contrast workspace palettes. Slate preserves the original appearance. Theme selection is
+outside the musical document and does not add an Undo entry.
+
+- The bounded local build passes **1,084 core JVM tests and 7 Android host tests**. Nova passes
+  **24 permanent Android instrumentation tests** against the production-signed release APK.
+  The mixed-audio case reports one initial xrun, a 576-frame adaptive buffer and zero driver faults.
+- Nova, DMG and Konkr each pass real Activity/controller selection of all three palettes,
+  Pattern/Instrument/Keyboard/Help/menu capture, unchanged project bytes/document version/history,
+  Activity recreation with Contrast retained, and advancing playback afterward. This is Activity
+  restart evidence, not a claim of a separate process-death persistence scenario or human listening.
+- Paper and Contrast keyboard focus now have contrasting key-specific rims on both white and black
+  keys. Effect-help cached rows are rebuilt when their palette changes, avoiding stale explicit colours.
+  Captured keyboard surfaces are inspected; the Help cache regression passes in the core suite.
+- **32/32 complete Slate RGBA captures are identical** to the official 0.37.1 same-device baseline,
+  covering 16 Game Boy views at 1920×1080 and 1240×1080.
+- Each live theme scenario uses an owned fixture and a separate cold restoration test. Eight original
+  private-file entries are restored byte-for-byte; `/ThorTunez` is untouched. Test packages are removed,
+  original screen timeouts restored, devices returned Home/asleep, and leases released.
+- APK SHA-256: `bf287a90b5a3e24bbc46c15d202f6bce1701f2d4e62566ebd4b992ff87046f12`.
+  Production certificate SHA-256:
+  `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`.
+  This candidate is on Nova, DMG and Konkr; Thor and Deck have not been changed.
+- Brick source now shares the native frontend with an ARM64/vendor-SDL2 adapter and external
+  `/mnt/SDCARD/ThorTunez` data. A bounded device joystick probe confirms the actual SDL controller
+  mapping, including trigger axes 2/5. No Tracker Pak renderer/audio run is claimed yet: the device
+  became unreachable after returning to idle NextUI, and requires a physical wake.
+- All Kotlin/Native linking remains on CI. Local Android/JVM work used one capped build at a time;
+  no emulator or local native link was launched.
+
+Evidence: `recovery-20261109/brick-themes/`, especially `nova-permanent-tests.txt`,
+`theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json` and `device-contracts/`.
+
 ## 0.37.1 Pattern workspace and first-note hardening — released and verified
 
 Version **0.37.1/code 51** adds visual Pattern channel collapse (**L2+Left**) and right-stick
