@@ -1,6 +1,6 @@
 # Thor Tracker verification — 2026-11-09
 
-## 0.37.0 Cross-system conversion — integration verification
+## 0.37.0 Cross-system conversion — released and verified
 
 Version **0.37.0/code 50** adds Files → Convert to system with a non-mutating preview, complete
 paginated/exportable loss report, explicit previous-project confirmation and stale-preview protection.
@@ -56,8 +56,34 @@ an unrelated default format.
   Evidence: `recovery-20261109/conversion-frontend/{clean-parity,visual-smoke}/`.
 
 Evidence: `~/.local/state/thortracker/recovery-20261109/conversion-export-evidence/`.
-Final integrated CI and official publication remain pending.
-No temporary probe source is intended for the committed application/test tree.
+Final integrated CI **`42744768001`** passes. PR #48 merged as main **`ed40708`**; all four jobs in
+official publication run **`42746509594`** pass. Downloaded **0.37.0/code 50** artifacts:
+
+- APK SHA-256 `eef9a6f8c5459292eed93048151c526284e790370db12ba5ca08c6a31e76867e`
+- AppImage SHA-256 `64b60ba9926a20123533442791f1f3cf16dbc77028ed63f581eb63ac9c222cf0`
+
+The APK's production certificate, non-debuggable flag, version and both Android ABIs were verified.
+The official APK passes both conversion/picker scenarios on **Nova, DMG and Konkr**, with zero
+dedicated xruns/faults and maximum callbacks **3.542 / 14.792 / 4.118 ms**, respectively.
+Nova also passes all **22 permanent Android tests** and **32 full-RGBA Game Boy baseline comparisons**.
+Its lifecycle test records one settling xrun and a 576-frame buffer, not a dedicated-scenario underrun.
+Actual report/refusal surfaces were inspected. Owned test documents/captures and the test package
+were removed; private document state, workspace/keymap, screen timeout, launcher and sleep were restored.
+
+The actual official AppImage passes all **eight isolated conversion scenarios**. The JVM checker confirms
+saved source/converted documents, the previous-project backup and the complete TXT report exactly.
+Apply/play reaches order 3/row 11 with peak **0.26314014**. A separate 13-second PCE→SCC run reaches
+order 1/row 54 and peaks at **0.5456848**, matching the corrected native headroom result.
+Preview, report, converted Pattern and SCC surfaces were inspected. These are dummy-output desktop
+PCM and Android state/timing/offline-WAV checks, not microphone recordings or human listening.
+Evidence under `recovery-20261109/`: `official-0370/`, `conversion-official-smoke/`,
+`conversion-official-export-evidence/` and `conversion-official-scc-desktop/`.
+
+Official 0.37 is installed on the three reserved Android devices. Hash-verified artifacts were copied
+to Thor's `/sdcard/Download/Thor Tracker/` and Deck's `~/thortracker-deck/`, whose stable `thor-tracker`
+symlink now selects 0.37. Thor and Deck were not woken, installed or launched; `/ThorTunez` was untouched.
+The root `main` worktree was fast-forwarded with the preexisting DS-10 discussion note preserved verbatim.
+All temporary probe source remains outside the committed application/test tree.
 
 ## 0.36.0 WonderSwan — integration verification
 

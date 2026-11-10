@@ -113,12 +113,12 @@ its downloaded AppImage.
      995 JVM tests, 693 native checks, 2,796 WAV checks, independent references and all three reserved
      Android frontends pass, including official AppImage/DMG/Konkr APK checks (`docs/VERIFICATION.md`).
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
-8. **Conversion between systems (0.37.0 integration)** — Files menu preview, complete paginated/exportable
+8. **Conversion between systems (released 0.37.0/code 50)** — Files menu preview, complete paginated/exportable
    loss report, explicit Apply with previous-project protection, stale-preview rejection and all registered
    destinations. Retains compatible promotions and editable instrument identity; cross-family sounds use
-   named audible presets, with located pitch/effect/channel losses and capacity blockers. Native rendering,
-   the export matrix, actual CI AppImage and all three reserved Android frontends pass; final integrated
-   CI/publication gates are recorded in `docs/VERIFICATION.md`.
+   named audible presets, with located pitch/effect/channel losses and capacity blockers. All 43 destinations,
+   the export matrix and native renders pass. Final CI/publication, the official AppImage's eight conversion
+   scenarios and the official APK on Nova/DMG/Konkr pass; exact evidence is in `docs/VERIFICATION.md`.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
    [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md),
    and independently generated 1–72 EDO (496 additions). Non-octave periods and attribution are preserved.
