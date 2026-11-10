@@ -148,12 +148,13 @@ object TiaValidator {
             for (row in 0 until pattern.length) {
                 for (ch in 0 until CHANNELS) {
                     val c = pattern.tracks[ch][row]
-                    for (col in 0..c.more.size) {
+                    for (col in c.more.size downTo 0) {
                         if (c.effectCode(col) != TiaRules.FX_DELAY) continue
                         val d = c.effectParam(col)
                         // The speed this row plays at: earlier rows' and its own Fxx.
                         val speed = rowSpeed(walk.speed, pattern.tracks, row)
                         if (d >= speed) out += "$label, ${TiaRules.CHANNEL_NAMES[ch]} row $row: G${hex2(d)} waits $d ticks but rows are $speed ticks; the row never plays"
+                        break // Only the last Gxx controls this row (G00 cancels an earlier delay).
                     }
                 }
                 walk.row(p, row,

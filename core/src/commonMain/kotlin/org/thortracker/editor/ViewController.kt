@@ -1847,7 +1847,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 h += Hint(k(Action.MARK), if (state.mark) "Hold: extend, tap: unmark" else "Hold: select block")
                 h += Hint(channels(), "Channel")
                 h += Hint(copyPaste(), "Copy/paste")
-                h += Hint(k(Action.SCALE), "Pattern: ${patternScale.label}, $patternLength rows")
+                h += Hint(k(Action.SCALE), "Pattern: ${patternScale.label}, $patternLength rows" + if (multiColumn()) ", columns" else "")
             }
         }
     }

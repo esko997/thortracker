@@ -380,14 +380,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         // Key-ups for anything held now may never arrive.
         cancelHeldInput()
         unregisterReceiver(batteryReceiver)
-        hosts.values.forEach { it.tracker.heldModifiers = emptySet() }
         if (popups.dropCaptures()) statusMessage = "Binding unchanged"
-        hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
+        hosts.values.forEach { it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
         main.removeCallbacks(statusCheck)
         transport.halt()
-        releaseAudition()
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest)
         hasAudioFocus = false
         if (documentReady) projectStore.autosave(session.song, immediate = true)

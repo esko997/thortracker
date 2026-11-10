@@ -583,7 +583,7 @@ static void test_images(void) {
     corrupt(TIA_OFFSET_MASK, 0x20, "row mask bit 5");
     corrupt(TIA_OFFSET_MASK, 0x40, "row mask bit 6");
     corrupt(TIA_OFFSET_MASK, 0x00, "row mask 0");
-    corrupt(TIA_OFFSET_MASK, 0x0F, "row mask with three effects");
+    for (int n = 5; n <= 7; ++n) corrupt(TIA_OFFSET_MASK, 3 | (n << 2), "row mask above four effects");
     corrupt(TIA_OFFSET_NOTE, TI_NOTE_MAX + 1, "note 120");
     corrupt(TIA_OFFSET_NOTE, 0xFF, "note $FF");
     accepted(TIA_OFFSET_NOTE, TI_NOTE_OFF, "OFF");
@@ -612,6 +612,32 @@ static void test_images(void) {
         static const uint8_t data[] = {0x01};
         base_image(&g_bad, NTSC, 1, 6, data, 1);
         constructed("a row whose note byte is past the data", TI_OFF_DATA + 1);
+    }
+    for (int region = NTSC; region <= PAL; ++region) {
+        for (int n = 0; n <= 7; ++n) {
+            uint8_t data[16] = {0};
+            data[0] = (uint8_t)(1 | (n << 2));
+            data[1] = A4;
+            for (int e = 0; e < n; ++e) data[2 + e * 2] = TI_FX_VOLUME, data[3 + e * 2] = (uint8_t)e;
+            base_image(&g_bad, region, 1, 6, data, 2 + n * 2);
+            constructed("effect-count boundary in either region", n <= 4 ? -1 : TI_OFF_DATA);
+            if (n <= 4 && g_bad.info.loaded == TI_LOADED) {
+                TiRow row;
+                ti_read_row(&g_bad, 0, 0, 0, &row, NULL);
+                EXPECT(row.effects == n && row.note == A4, "decoder preserves count %d", n);
+                for (int e = 0; e < n; ++e)
+                    EXPECT(row.code[e] == TI_FX_VOLUME && row.param[e] == e, "decoder preserves slot %d of %d", e, n);
+            }
+        }
+        static const uint8_t four[] = {0x10, TI_FX_VOLUME, 1, TI_FX_VOLUME, 2, TI_FX_VOLUME, 3, TI_FX_VOLUME, 4};
+        base_image(&g_bad, region, 1, 6, four, sizeof four - 1);
+        constructed("fourth parameter truncated", TI_OFF_DATA + 1);
+        base_image(&g_bad, region, 1, 6, four, sizeof four);
+        g_bad.bytes[TI_OFF_DATA + 7] = 36;
+        constructed("fourth code above Z", TI_OFF_DATA + 7);
+        base_image(&g_bad, region, 1, 6, four, sizeof four);
+        g_bad.bytes[TI_OFF_DATA + 8] = 16;
+        constructed("fourth volume above 0F", TI_OFF_DATA + 8);
     }
     base_image(&g_bad, NTSC, 1, 6, empty_row, 1);
     put32(g_bad.bytes + TI_H_DATA_SIZE, TI_DATA_CAPACITY + 1);
@@ -654,6 +680,136 @@ static void test_images(void) {
 
 static void fprint_writes(FILE* f, const TiWrite* w, int n) {
     for (int i = 0; i < n; ++i) fprintf(f, " %02X=%02X", w[i].reg, w[i].val);
+}
+
+/* Separate four-column fixtures leave the original generated images/traces byte-for-byte intact. Seven full
+ * note/sound rows (11 bytes), then B/D (9 bytes); TIA 2 supplies four competing speeds, then seven empty rows.
+ * The final waveform byte is slot 2's envelope: even a fourth-column W cannot override it. */
+enum { FOUR_ROW_BYTES = 11, FOUR_CH1 = 7 * FOUR_ROW_BYTES + 9, FOUR_ENV = FOUR_CH1 + 10, FOUR_TICKS = 192 };
+
+static void build_four(TiaImage* image, int region) {
+    static const uint8_t data[] = {
+        0x13, 57, 1, TI_FX_VOLUME, 1, TI_FX_WAVEFORM, 4, TI_FX_FINE, 0x88, TI_FX_VOLUME, 10,
+        0x13, 62, 1, TI_FX_DELAY, 1, TI_FX_VOLUME, 2, TI_FX_CUT, 3, TI_FX_DELAY, 2,
+        0x13, 60, 1, TI_FX_DELAY, 7, TI_FX_VOLUME, 2, TI_FX_WAVEFORM, 4, TI_FX_DELAY, 0,
+        0x13, 65, 1, TI_FX_PORTAMENTO, 32, TI_FX_SLIDE_UP, 4, TI_FX_SLIDE_DOWN, 8, TI_FX_PORTAMENTO, 16,
+        0x13, 67, 1, TI_FX_PORTAMENTO, 32, TI_FX_SLIDE_UP, 4, TI_FX_SLIDE_DOWN, 8, TI_FX_SLIDE_UP, 0,
+        0x13, 69, 1, TI_FX_FINE, 0x90, TI_FX_WAVEFORM, 4, TI_FX_FINE, 0x88, TI_FX_WAVEFORM, 12,
+        0x13, 57, 2, TI_FX_WAVEFORM, 12, TI_FX_WAVEFORM, 4, TI_FX_VOLUME, 10, TI_FX_WAVEFORM, 8,
+        0x10, TI_FX_JUMP, 0, TI_FX_BREAK, 1, TI_FX_JUMP, 0, TI_FX_BREAK, 0,
+        0x10, TI_FX_SPEED, 3, TI_FX_SPEED, 4, TI_FX_SPEED, 5, TI_FX_SPEED, 6, 0x86,
+        1,
+    };
+    base_image(image, region, 8, 9, data, sizeof data);
+    set_pattern(image, 0, 1, FOUR_CH1);
+    put_instrument(image, 1, 0, 12);
+    put_instrument(image, 2, 0, 12);
+    put_envelope(image, 2, TI_ENV_WAVEFORM, FOUR_ENV, 1, 0, TI_ENV_NONE);
+    EXPECT(ti_load_image(image, region) == 0, "four-column image loads for region %d: %s", region, image->info.problem);
+}
+
+static void test_four_columns(const char* dir) {
+    static TiaImage image, edited;
+    static float other[TIM_MAX_TICK_FRAMES * 2];
+    for (int region = NTSC; region <= PAL; ++region) {
+        /* Four independent slots: Gxx/Cxx/Wxx/Sxx. Delay and cut remain row-relative, including equality,
+         * cut-before-delay (never fires) and commands at/past the six-tick boundary. No release envelope. */
+        static TiaImage timing;
+        for (int delay = 0; delay <= 7; ++delay) for (int cut = 0; cut <= 7; ++cut) {
+            const uint8_t data[] = {0x13, A4, 1, TI_FX_DELAY, (uint8_t)delay, TI_FX_VOLUME, 10,
+                                    TI_FX_WAVEFORM, 4, TI_FX_CUT, (uint8_t)cut};
+            base_image(&timing, region, 1, 6, data, sizeof data);
+            put_instrument(&timing, 1, 0, 12);
+            EXPECT(ti_load_image(&timing, region) == 0, "four-column G/S timing image loads");
+            TiPlayer p;
+            tip_reset(&p, &timing);
+            for (int tick = 0; tick < 6; ++tick) {
+                tip_tick(&p, &timing);
+                const int audible = tick >= delay && !(cut >= delay && tick >= cut);
+                EXPECT(p.ch[0].sounding == audible && p.ch[0].audv == (audible ? 10 : 0),
+                       "G%02X C0A W04 S%02X at tick %d, region %d: audible=%d", delay, cut, tick, region, audible);
+            }
+        }
+        build_four(&image, region);
+        memcpy(&edited, &image, sizeof edited);
+        /* Applied before tick 7: row 1 tick 1. Re-read pending fourth G01 and shared fourth F04. */
+        edited.bytes[TI_OFF_DATA + FOUR_ROW_BYTES + 10] = 1;
+        edited.bytes[TI_OFF_DATA + FOUR_CH1 + 8] = 4;
+        EXPECT(ti_load_image(&edited, region) == 0, "edited four-column image loads");
+        const char* label = region == NTSC ? "ntsc" : "pal";
+        char path[512];
+        for (int live = 0; live <= 1; ++live) {
+            snprintf(path, sizeof path, "%s/tia_four_%s%s.bin", dir, label, live ? "_edited" : "");
+            FILE* f = fopen(path, "wb");
+            EXPECT(f != NULL, "open four-column image output");
+            if (f) { fwrite(live ? edited.bytes : image.bytes, 1, TI_IMAGE_SIZE, f); fclose(f); }
+            snprintf(path, sizeof path, "%s/tia_four_%s%s_trace.txt", dir, label, live ? "_live" : "");
+            FILE* trace = fopen(path, "w");
+            EXPECT(trace != NULL, "open four-column trace output");
+            TiaMachine* m = tim_create(RATE, region);
+            int mode;
+            EXPECT(tim_start(m, &image, 0, 0, SEEK_BUDGET, &mode) == TIM_OK, "four-column playback starts");
+            tim_set_trace(m, collect, &g_col);
+            float* pcm = (float*)malloc((size_t)FOUR_TICKS * TIM_MAX_TICK_FRAMES * 2 * sizeof(float));
+            int frames = 0;
+            for (int t = 0; t < FOUR_TICKS; ++t) {
+                if (live && t == 7) tim_apply_image(m, &edited);
+                int o, r, k;
+                tim_position(m, &o, &r, &k);
+                const int n = traced_tick(m);
+                EXPECT(n > 0, "four-column tick renders");
+                if (pcm && n > 0) memcpy(pcm + 2 * frames, g_out, (size_t)n * 2 * sizeof(float));
+                frames += n;
+                if (trace) {
+                    fprintf(trace, "%d %d %d:", o, r, k);
+                    fprint_writes(trace, g_col.w, g_col.nw);
+                    fputc('\n', trace);
+                }
+                const TiPlayer* p = tim_player(m);
+                const TiChannel* c = &p->ch[0];
+                if (t == 0) EXPECT(p->speed == 6 && c->vol8 == 80 && c->fine == 8 && c->audc == 4,
+                                   "fourth volume and cross-channel fourth speed win; fine and waveform coexist");
+                if (t == 6) EXPECT(c->pending && c->delay == 2, "last G02 delays the full row");
+                if (live && t == 7) EXPECT(p->speed == 4 && !c->pending && c->base == 62 * 64 && c->audv == 2,
+                                          "live fourth G01 and F04 take effect at the tick boundary");
+                if (!live && t == 8) EXPECT(!c->pending && c->base == 62 * 64 && c->audv == 2,
+                                           "four-column delayed row runs at tick 2");
+                if (!live && t == 9) EXPECT(!c->sounding && c->audv == 0, "S03 cuts at row tick 3, not G02 + 3");
+                if (!live && t == 12) EXPECT(!c->pending && c->base == 60 * 64, "fourth G00 cancels G07");
+                if (!live && t == 18) EXPECT(c->slide_mode == 3 && c->slide_speed == 16 && c->target == 65 * 64,
+                                            "last shared slide/portamento mode wins");
+                if (!live && t == 24) EXPECT(c->slide_mode == 0 && c->base == 67 * 64, "fourth 100 stops portamento");
+                if (!live && t == 30) EXPECT(c->fine == 8 && c->audc == 12, "last P and W win independently");
+                if (!live && t == 36) EXPECT(c->wave_override == 8 && c->audc == 1, "waveform envelope still overrides W");
+                if (!live && t == 42) EXPECT(p->jump && p->jump_order == 0 && p->jump_row == 0, "fourth D00 overrides D01");
+                if (!live && t == 48) EXPECT(r == 0 && k == 0, "B/D loop reaches the winning row");
+            }
+            if (trace) fclose(trace);
+            EXPECT(pcm != NULL && rms(pcm, frames) > 0.0001, "four-column rendered PCM is audible");
+            if (pcm) {
+                snprintf(path, sizeof path, "%s/tia_four_%s%s.wav", dir, label, live ? "_live" : "");
+                write_wav(path, pcm, frames);
+                free(pcm);
+            }
+            tim_destroy(m);
+        }
+        /* Seek every row, including pending-note and competing B/D rows, against actual straight PCM/chip state. */
+        TiaMachine* straight = tim_create(RATE, region);
+        TiaMachine* seek = tim_create(RATE, region);
+        for (int row = 0; row < 8; ++row) {
+            int mode;
+            tim_start(straight, &image, 0, 0, SEEK_BUDGET, &mode);
+            for (int t = 0; t < row * 6; ++t) tim_tick(straight, g_out);
+            EXPECT(tim_start(seek, &image, 0, row, SEEK_BUDGET, &mode) == TIM_OK, "four-column seek reaches row %d", row);
+            for (int t = 0; t < 12; ++t) {
+                const int a = tim_tick(straight, g_out), b = tim_tick(seek, other);
+                EXPECT(a == b && !memcmp(g_out, other, (size_t)a * 2 * sizeof(float)) && same_state(straight, seek),
+                       "four-column seek PCM and chip state equal straight play, region %d row %d tick %d", region, row, t);
+            }
+        }
+        tim_destroy(straight);
+        tim_destroy(seek);
+    }
 }
 
 /* Plays `image` from the start and compares every tick with `ref`; writes the trace file when `trace` is given. */
@@ -1419,6 +1575,7 @@ int main(int argc, char** argv) {
     test_tables();
     test_images();
     test_reference(dir);
+    test_four_columns(dir);
     test_levels();
     test_frames();
     test_audio(dir);

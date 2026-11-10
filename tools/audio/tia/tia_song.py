@@ -70,7 +70,7 @@ def env_bytes(e):
 class Cell:
     note: int = None          # 0..119, NOTE_OFF
     inst: int = None
-    fx: list = field(default_factory=list)  # [(letter, param)], up to 2
+    fx: list = field(default_factory=list)  # [(letter, param)], up to 4 in column order
 
 
 @dataclass
@@ -105,7 +105,8 @@ def encode_pattern(cells, rows):
             empty += 1
             continue
         flush()
-        assert len(c.fx) <= 2
+        if len(c.fx) > 4:
+            raise ValueError("TIA rows have at most 4 effect columns")
         out.append((1 if c.note is not None else 0) | (2 if c.inst is not None else 0) | len(c.fx) << 2)
         if c.note is not None:
             out.append(c.note)
@@ -311,3 +312,26 @@ def pal_song():
     s = test_song()
     s.region = REGION_PAL
     return s
+
+
+def four_column_song(region=REGION_NTSC, edited=False):
+    """Eight rows for the native four-column fixture; kept separate so the old golden images stay unchanged.
+
+    Duplicate/shared commands exercise ordered precedence, G/S row-relative timing, and a waveform envelope's
+    priority over Wxx. Apply edited=True before playback tick 7 (row 1 tick 1) to replace pending fourth G02 by G01
+    and the fourth shared F06 by F04. Seek rows 0..7 of the unedited song at absolute ticks 0,6,...,42.
+    """
+    C = Cell
+    a = {
+        0: C(57, 1, [("C", 1), ("W", 4), ("P", 0x88), ("C", 10)]),
+        1: C(62, 1, [("G", 1), ("C", 2), ("S", 3), ("G", 1 if edited else 2)]),
+        2: C(60, 1, [("G", 7), ("C", 2), ("W", 4), ("G", 0)]),
+        3: C(65, 1, [("3", 32), ("1", 4), ("2", 8), ("3", 16)]),
+        4: C(67, 1, [("3", 32), ("1", 4), ("2", 8), ("1", 0)]),
+        5: C(69, 1, [("P", 0x90), ("W", 4), ("P", 0x88), ("W", 12)]),
+        6: C(57, 2, [("W", 12), ("W", 4), ("C", 10), ("W", 8)]),
+        7: C(None, None, [("B", 0), ("D", 1), ("B", 0), ("D", 0)]),
+    }
+    b = {0: C(None, None, [("F", 3), ("F", 4), ("F", 5), ("F", 4 if edited else 6)])}
+    return Song(speed=9, orders=[Order(8, ["a", "b"])], patterns={"a": a, "b": b},
+                instruments={1: Instrument(), 2: Instrument(waveforms=Env([1], loop=0))}, region=region)

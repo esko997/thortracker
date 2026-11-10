@@ -39,7 +39,7 @@ object TiaPalSystem : TiaSystem(TiaRegion.PAL, TiaPlayerImage.ENGINE_ID_PAL, "At
 /**
  * The Atari 2600's TIA (Television Interface Adaptor) played by Thor Tracker's own player on Stella 7.0's gate-level
  * audio channel model (natives `"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`; music-only, exported as WAV): two
- * channels, each a 4-bit waveform select (AUDC), a 5-bit frequency divider (AUDF) and a 4-bit volume (AUDV); up to two
+ * channels, each a 4-bit waveform select (AUDC), a 5-bit frequency divider (AUDF) and a 4-bit volume (AUDV); up to four
  * effect columns per channel and one bank of [SLOTS] sounds (waveform, tonal or raw pitch, volume, arpeggio, pitch and
  * waveform envelopes). One family, "Atari 2600", with a variant per TV standard ([region]): the region sets the chip's
  * clock (every pitch) and the frame rate (the tick). Pitch is honest: a note plays the nearest divider's frequency
@@ -145,9 +145,9 @@ sealed class TiaSystem(val region: TiaRegion, override val id: String, override 
         return song.copy(orders = listOf(index), loopOrder = 0, patterns = patterns, parkedOrders = emptyList())
     }
 
-    /** `Bxx` jumps to order xx (absolute); the first `B` column of the cell. */
+    /** `Bxx` jumps to order xx (absolute); the last `B` column of the cell wins. */
     override fun jumpTarget(cell: Cell): Int? {
-        for (c in 0..cell.more.size) if (cell.effectCode(c) == TiaRules.FX_JUMP) return cell.effectParam(c)
+        for (c in cell.more.size downTo 0) if (cell.effectCode(c) == TiaRules.FX_JUMP) return cell.effectParam(c)
         return null
     }
 
@@ -276,14 +276,17 @@ sealed class TiaSystem(val region: TiaRegion, override val id: String, override 
             val current = column(cell)
             val base = cell.copy(note = note)
             if (fine == 0) {
-                return if (current != null && cell.effectParam(current) >= TiaRules.FINE_CENTRE) base.withEffect(current, 0, 0) else base
+                if (current == null || cell.effectParam(current) < TiaRules.FINE_CENTRE) return base
+                // Removing the last P must not uncover an earlier detune.
+                val earlier = (0 until current).any { cell.effectCode(it) == TiaRules.FX_FINE }
+                return base.withEffect(current, if (earlier) TiaRules.FX_FINE else 0, if (earlier) TiaRules.FINE_CENTRE else 0)
             }
             if (current != null && cell.effectParam(current) < TiaRules.FINE_CENTRE) return null
             val col = current ?: (0 until TiaRules.EFFECT_COLUMNS).firstOrNull { cell.effectCode(it) == 0 && cell.effectParam(it) == 0 } ?: return null
             return base.withEffect(col, TiaRules.FX_FINE, TiaRules.FINE_CENTRE + fine)
         }
 
-        private fun column(cell: Cell): Int? = (0..cell.more.size).firstOrNull { cell.effectCode(it) == TiaRules.FX_FINE }
+        private fun column(cell: Cell): Int? = (cell.more.size downTo 0).firstOrNull { cell.effectCode(it) == TiaRules.FX_FINE }
     }
 
     private object Help : SystemHelp {
@@ -303,7 +306,9 @@ sealed class TiaSystem(val region: TiaRegion, override val id: String, override 
             "Slides, vibrato, portamento and Pxx move the pitch in 1/64 semitones and are heard where they cross to another " +
                 "divider: they step, as the chip does.",
             "Nothing restarts a waveform: a new note continues the running counters, so repeated notes need not start alike.",
-            "Two effect columns per channel, run in column order. No chords: each channel is one voice.",
+            "Four effect columns per channel, run left to right; the last setting wins, including shared slide/portamento " +
+                "mode. Fxx, Bxx and Dxx act at row start across TIA 1 then TIA 2; Gxx delays the other commands. " +
+                "More columns do not add voices: each channel still has one waveform, divider and volume.",
             "The TIA has no sample playback; AUDC 0 with a volume envelope gives clicks and levels at the frame rate.",
         )
         override val tonalChannels = "TIA 1 and TIA 2"
