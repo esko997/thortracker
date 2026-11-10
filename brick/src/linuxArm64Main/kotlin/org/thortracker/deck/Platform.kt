@@ -12,7 +12,7 @@ class Platform(width: Int, height: Int, fullscreen: Boolean) {
             "SDL_Init: ${SDL_GetError()?.toKString()}"
         }
     }
-    private val window = SDL_CreateWindow("Thor Tracker", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+    private val window = SDL_CreateWindow("Thor Tracker", SDL_WINDOWPOS_UNDEFINED.toInt(), SDL_WINDOWPOS_UNDEFINED.toInt(),
         width, height, if (fullscreen) SDL_WINDOW_FULLSCREEN_DESKTOP else 0u)
         ?: error("window: ${SDL_GetError()?.toKString()}")
     val renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED or SDL_RENDERER_PRESENTVSYNC)
@@ -96,7 +96,7 @@ class Platform(width: Int, height: Int, fullscreen: Boolean) {
                 SDL_KEYDOWN, SDL_KEYUP -> {
                     val down = e.type == SDL_KEYDOWN
                     if (app.fieldFocused) {
-                        if (down) when (e.key.keysym.sym) {
+                        if (down) when (e.key.keysym.sym.toUInt()) {
                             SDLK_BACKSPACE -> app.editText(67)
                             SDLK_RETURN, SDLK_KP_ENTER -> app.editText(Keys.ENTER)
                             SDLK_ESCAPE -> app.editText(Keys.ESCAPE)
@@ -134,7 +134,8 @@ private object Pad {
         SDL_CONTROLLER_AXIS_TRIGGERRIGHT.toInt() -> Keys.BUTTON_R2
         else -> null
     }
-    fun keyboardCode(key: Int): Int? = when (key) {
+    // SDL_Keycode is signed, while cinterop imports SDL2's nonnegative key constants as UInt.
+    fun keyboardCode(key: Int): Int? = when (key.toUInt()) {
         SDLK_UP -> Keys.DPAD_UP; SDLK_DOWN -> Keys.DPAD_DOWN; SDLK_LEFT -> Keys.DPAD_LEFT; SDLK_RIGHT -> Keys.DPAD_RIGHT
         SDLK_z -> Keys.BUTTON_A; SDLK_x -> Keys.BUTTON_B; SDLK_a -> Keys.BUTTON_X; SDLK_s -> Keys.BUTTON_Y
         SDLK_q -> Keys.BUTTON_L1; SDLK_w -> Keys.BUTTON_R1; SDLK_1 -> Keys.BUTTON_L2; SDLK_2 -> Keys.BUTTON_R2
