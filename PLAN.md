@@ -28,6 +28,12 @@ All four publication jobs, both official AppImage demos and official APK scenari
 All local Kotlin/Native linking, including debug/test links, remains prohibited: use CI and exercise
 its downloaded AppImage.
 
+**0.38.0/code 52** publishes the Brick Hammer Pak and colour themes. **0.39.0/code 53** publishes
+persistent zoom and the [documentation website](https://esko997.github.io/thortracker/).
+Official Android acceptance on Nova/DMG/Konkr and actual AppImage checks pass; Thor/Deck receive
+artifacts without interruption and the user's Brick session is left alone. Mixer ceilings and
+shared swing remain design proposals; pattern-local mute remains explicitly deferred.
+
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
