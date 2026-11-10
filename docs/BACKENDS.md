@@ -710,6 +710,102 @@ reject extra columns (`cellRangeProblem`), and `OneColumnProjectBytesTest` pins 
 project files to the SHA-256 the encoder wrote before effect columns existed. How many columns a pane shows is
 editor state (per pane, automatic from the highest used column), not song data.
 
+### Current capacity and compatibility review (0.39.0)
+
+The [manual's capability matrix](../README.md#multiple-effects-per-row) covers all 43 registered
+systems. A runtime walk of the compiled `SoundSystems.ALL` and every lane's `effectColumns`
+confirms **17 one-column, 5 two-column and 21 four-column variants**; each current system has
+the same limit on all its lanes. This verifies declared capacity, not arbitrary effect combinations.
+
+Treat capacity as a **chip + player + export** contract, not a hardware-age or voice-count heuristic.
+For example, EPSM has one column through the current FamiStudio integration, while the simple
+SN76489 has four through Banjo. Instrument envelopes/tables and persistent modulation are separate
+from the number of commands a row can introduce.
+
+Any extension must specify legal commands per lane, conflicting/shared resources, duplicate-command
+precedence, note-start locks versus persistent effects, and global/delayed-row ordering. Banjo's
+arpeggio/slides/portamento/vibrato share one pitch slot despite its four columns. Our own players
+also stage global timing and note locks; textual column order is not a universal execution model.
+Playback, seek/live edits, project round trips, conversion reports and every native/WAV export must
+agree. Do not merely raise `effectColumns`, steal a populated column, or flatten combinations silently.
+Review NES/FamiStudio and SID/GoatTracker lowering/driver options separately before promising extra
+columns; hUGEDriver's existing `.uge` row format still has one command. No capacity is changed here.
+
+
+## Swing and groove: research proposal
+
+**Research only; no shared swing setting or timing change is implemented.** Current `Song` has
+one initial `ticksPerRow`; `Pattern` has no timing override. Existing chip-specific swing must
+not be overlooked: SID `Exy` alternates tempos, and Banjo's `Oxx` sets odd-row speed.
+
+### Proposed shared controls
+
+- **Song:** Straight or Swing, with an amount and subdivision.
+- **Pattern:** Inherit / Straight / Override. Inherit follows the song; Override supplies its own
+  amount/subdivision. Straight disables this new setting, not explicit legacy timing commands.
+  Because patterns are reused, changing one affects every order that references it.
+- Start the design with **1-row and 2-row subdivisions**, displaying the actual whole-tick result.
+  At base speed 6, 1-row 2:1 swing is `8,4,8,4`; a 2-row subdivision is `8,8,4,4`.
+  A complete long/short cycle retains its original duration. A percentage must show quantization:
+  not every requested ratio is representable at every driver speed.
+- Keep the hardware tick clock, envelopes and sample playback rates unchanged; vary row durations.
+  Note delay alone is not swing, and final-PCM time stretching is not an acceptable implementation.
+  Do not silently raise multispeed for finer resolution: that changes modulation and CPU cost.
+- Reuse Song settings beside tempo and the controller-first Pattern panel. These are undoable song
+  edits, not workspace preferences. Whole-pattern copy/Clone carries the setting; cell paste does not.
+
+### Driver and export feasibility
+
+The classifications below are **design inferences from the current implementations**, not newly
+verified swing support or promises that arbitrary songs can export.
+
+| Backend/player | Existing route | Constraint for shared swing metadata |
+| --- | --- | --- |
+| Own C players: OPL3, YM2612, AY, PCE, SCC, OPM, OPN/OPNA, POKEY, TIA, VIC/TED, SAA, VSU, WonderSwan | Explicit row scheduler; current register/WAV exporters consume that player's ticks | Strong candidate for timing metadata outside cell effects, but each image, lowering, scheduler, seek and export needs implementation. Tick clocks differ; OPN uses timer B, not the same multispeed scheme as OPL3. |
+| NES/FamiStudio, including expansions | Native speed opcode and text `Speed` attribute are independent note attributes | Strong lowering candidate despite one visible effect column. Resolve timing before slide-rate calculations and feed the same schedule to native streams and text. Existing export exclusions remain. |
+| Master System/Game Gear/Banjo | Separate even/odd speeds; `Fxx` sets both and `Oxx` changes odd rows | Native groove already exists. Speed commands take effect **next row**, so a new setting on a pattern's first row is too late for that row. Entry, jumps and loops need an explicit strategy. |
+| SID/GoatTracker | `Exy` funktempo, `F00/F01` selecting its phase | Existing native swing, but `.sng` has one command per voice-row. Injected timing can collide with occupied commands. Hard-restart gate timers must remain below the shortest row. |
+| Game Boy/hUGEDriver | Per-row `Fxx` speed, one command per channel-row | No separate groove lane in current `.uge` lowering. Structural jumps/breaks and OFF already use command space. Universal collision-free swing requires a reviewed driver/export solution, not just a UI toggle. |
+
+The existing compiled Banjo row planner was exercised with `F08` plus `O04` on row zero at
+initial speed 6: it returns **`6,4,8,4,8,4,8,4`**, demonstrating the first-row timing trap.
+The existing FamiStudio text exporter was exercised with two speed changes and emits independent
+`Note Time="0" Speed="8"` and `Note Time="1" Speed="4"` attributes. These are bounded
+lowering/export probes, not native-audio verification of the proposed feature.
+
+### Decisions still requiring review
+
+1. **Phase and incomplete cycles.** Pattern-row-anchored phase makes reuse, seeking and pattern loops
+   predictable. It does not by itself preserve total duration for odd lengths: repeating `8,4,8`
+   is slower than three straight six-tick rows. Alternatives include continuous song phase,
+   a straight incomplete tail, or explicit boundary constraints. Each changes musical behavior.
+   Do not silently compensate or claim average-tempo preservation through arbitrary jumps.
+2. **Tempo-effect precedence.** Ordinary speed changes could establish a new base speed, but a
+   mid-cycle change needs a rule. Existing SID E/F and Sega F/O semantics must remain unchanged
+   when the new feature is off; overlap must not apply swing twice or silently overwrite commands.
+3. **Short-row safety.** Recheck delays/cuts, SID gate timers, NES compiled slide durations and
+   shared-state walkers against the resolved row durations. Never silently clamp timing or alter
+   instruments to make a groove fit.
+4. **Seek and export loop identity.** A continuously carried phase may need two passes through an
+   odd-length loop before timing state repeats. Current WAV/register exporters often detect a loop
+   by position; new timing state cannot be ignored. Live edits and direct seek must restore it too.
+5. **Persistence and conversion.** Add explicit project-version handling, validation and loss/blocker
+   reporting; copied metadata must not become silently straight playback on another backend.
+   Preserve default/off playback and export bytes. Byte-identical re-saving is a separate question:
+   the current codec writes the current version and encodes defaults.
+
+Recommended next design step: settle phase, boundaries and legacy-effect precedence, then prototype
+one owned scheduler (OPL3) and the NES lowering route. Banjo needs separate entry/control-flow work;
+GB and SID remain conditional until native-format collisions have an acceptable solution. Expose
+a setting only when that backend's playback and supported exports agree. Include Sketch audition,
+tempo labels, sample-duration estimates, conversion, parked orders and pattern loops in acceptance.
+
+Source anchors: `model/Song.kt`, `model/ProjectCodec.kt`, `backend/FamiStudioSong.kt`,
+`backend/FamiStudioLowering.kt`, `backend/FamiStudioText.kt`, `backend/SmsLowering.kt`,
+`system/sid/SidRules.kt`, `system/sid/SidValidator.kt`, `system/gb/HugeRules.kt`, the native
+player tick functions and `app/src/main/cpp/chip_wav.c`. The existing timing commands are also
+documented in `docs/AUDIO_ENGINE.md`; proposed shared controls are not current app functionality.
+
 ## FM
 
 Both OPL3 (YMF262) and YM2612 (OPN2), OPL3 first. Ideas from ALM Busy Circuits' Akemie's Castle / Akemie's Taiko and

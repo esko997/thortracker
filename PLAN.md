@@ -28,6 +28,12 @@ All four publication jobs, both official AppImage demos and official APK scenari
 All local Kotlin/Native linking, including debug/test links, remains prohibited: use CI and exercise
 its downloaded AppImage.
 
+**0.38.0/code 52** publishes the Brick Hammer Pak and colour themes. **0.39.0/code 53** publishes
+persistent zoom and the [documentation website](https://esko997.github.io/thortracker/).
+Official Android acceptance on Nova/DMG/Konkr and actual AppImage checks pass; Thor/Deck receive
+artifacts without interruption and the user's Brick session is left alone. Mixer ceilings and
+shared swing remain design proposals; pattern-local mute remains explicitly deferred.
+
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
 2. **WAV export** — implemented for all five systems in 0.14.0, with loop/fade options and disk-backed rendering.
@@ -178,6 +184,17 @@ its downloaded AppImage.
   Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
   playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
   persistence and frontend acceptance; zoom does not depend on future touchscreen support.
+- **Multiple effects per row — capability review (0.39.0):** the [manual matrix](README.md#multiple-effects-per-row)
+  records existing limits across all 43 variants: 17 with one column, 5 with two and 21 with four.
+  More columns do not guarantee independent pitch effects or independent hardware-shared controls.
+  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0390) records
+  the driver/export gate for any NES/SID/GB extension. This is documentation/research, not a capacity change.
+- **Swing rhythms — research proposal, not implemented:** consider song-wide swing plus pattern
+  Inherit / Straight / Override, with amount and row subdivision. SID funktempo and Sega odd-row
+  speed already exist; a shared setting must preserve native exports without stealing effect columns.
+  [Feasibility and open decisions](docs/BACKENDS.md#swing-and-groove-research-proposal) cover
+  quantization, odd-length phase, tempo-command precedence, seek/loops and driver-specific limits.
+  Review those semantics before implementing; no playback timing is changed in this phase.
 - **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
   Android already accepts orientation changes and shared painters support touch selection/scrolling;
   these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,

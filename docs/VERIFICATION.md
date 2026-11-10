@@ -7,9 +7,27 @@ with reset, and deliberately unbound rebindable controls. Android saves each vie
 Linux handhelds save their single-view preference. Menus and shell touch targets keep their
 physical size. Song data, playback semantics and exports are unchanged.
 
-This candidate also includes the canonical static documentation site and design-only mixer
+This release also includes the canonical static documentation site and design-only mixer
 capability record. Pattern-local mute remains explicitly deferred by the user; no mute or mixer
 feature is advertised as implemented.
+
+Official **0.39.0** is published from main `ac5c92c`; all five jobs in run `42855741540` pass.
+Downloaded APK, AppImage and NextUI Pak match their checksum sidecars. The APK has the production
+certificate, code 53/version 0.39.0, both supported ABIs and a non-debuggable manifest. The 24-entry
+Pak passes CRC validation and contains an executable AArch64 binary and launcher.
+
+The actual official AppImage passes 150% zoom, advancing playback, held Instrument audition and
+return to Pattern: one audition, PCM peak **0.404798**, order 0/row 50. Its surface is inspected;
+this is offscreen/dummy-audio evidence, not physical Deck listening. The actual official APK passes
+the reversible zoom/controller/persistence scenario on **Nova, DMG and Konkr**, with captures
+inspected and every original private entry cold-restored. Temporary test packages are removed;
+settings are restored and the three devices returned Home/asleep. `/ThorTunez` is untouched.
+
+Thor receives only the verified APK in `Download/Thor Tracker`; it is not woken, installed or launched.
+The reachable Deck receives the verified AppImage and its existing `~/thortracker-deck/thor-tracker`
+symlink now targets 0.39.0, without launching it. The user's Brick session is not accessed.
+Published artifacts and delivery receipts are under `recovery-20261109/official-0390/`; runtime
+captures and restoration evidence are under `recovery-20261109/workspace-qol/`.
 
 The capped local build passes **1,090 core JVM tests and 8 Android host tests**, and builds the
 production-signed release APK plus external instrumentation. Nova also passes all **24 permanent
@@ -55,7 +73,9 @@ builds produce identical bytes for all 42 output files. Actual browser checks co
 themes, reduced-motion preference, keyboard skip/disclosure/scroll controls, JavaScript-disabled
 navigation, loaded local fonts/images and 200% CSS zoom. Eight guides plus the manual have no
 page-wide horizontal overflow at 320/844/1440 CSS pixels. The corrected Pages workflow passes
-candidate dispatch `42853011146`; hosted acceptance remains pending the main-branch deployment.
+candidate dispatch `42853011146`. Main Pages run `42855741732` builds and deploys successfully.
+The public site at `https://esko997.github.io/thortracker/` passes mobile navigation, download links,
+the zoom deep link, loaded images/fonts, no page-wide overflow and the styled HTTP 404 page.
 
 ## 0.38.0 — colour themes and Brick Hammer / NextUI
 
