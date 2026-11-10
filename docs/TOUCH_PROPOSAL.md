@@ -1,6 +1,6 @@
 # Landscape touch proposal
 
-Status: **design spike for review, not approved production implementation**. Based on 0.37.1 / main `006c173`, 2026-11-10. No Android, desktop, audio, document-format or controller code changes are part of this spike.
+Status: **paused for later review, not approved production implementation**. Based on 0.37.1 / main `006c173`, 2026-11-10. The user finds the side-editor direction sensible and has prioritized the Brick Hammer port and themes. No Android, desktop, audio, document-format or controller code changes are part of this spike.
 
 ## Recommendation
 

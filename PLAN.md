@@ -179,7 +179,8 @@ its downloaded AppImage.
   operation and two-display focus rules. Full composition, file picking and held audition must work
   without any physical button. [Review proposal and silent interaction study](docs/TOUCH_PROPOSAL.md)
   now cover side-editor layout, touch targets, editing semantics, workflow gaps and integration risks.
-  Native implementation awaits user review; portrait remains a separate later decision.
+  Paused by user request on 2026-11-10 while Brick Hammer and themes proceed. The side-editor direction
+  seems sensible to the user, but geometry and editing semantics still await review; portrait is separate.
 - **Hardening priority** (2026-11-10): investigate the reported PC Engine snare layout rejection and POKEY
   silence after note entry before expanding features. Use deterministic, bounded child-assisted stress
   runs on Nova, DMG and Konkr, exclusive device leases, explicit reproduction traces and preserved private
