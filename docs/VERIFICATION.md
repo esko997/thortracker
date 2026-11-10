@@ -1,6 +1,6 @@
 # Thor Tracker verification — 2026-11-10
 
-## 0.37.1 Pattern workspace and first-note hardening
+## 0.37.1 Pattern workspace and first-note hardening — released and verified
 
 Version **0.37.1/code 51** adds visual Pattern channel collapse (**L2+Left**) and right-stick
 double-left/right jumps to the first/last channel's note cell, without changing row or order.
@@ -47,6 +47,48 @@ per-pane workspace preference. Existing custom keymap conflicts are preserved.
   initializes an SDL subsystem and is removed afterward. This is ABI/capability evidence, not a
   running Tracker port. Landscape touch-only use, themes, pattern mute, mixer ceilings, synth panels
   and a GitHub Pages documentation site remain explicitly scoped roadmap work.
+- Probe-free signed candidate **0.37.1/code 51** passes Nova's **22 permanent Android tests** and
+  an isolated **32-view Game Boy render capture**. Full-RGBA comparison against the same-device 0.37.0
+  baseline is identical for 30 images; only Help → Controls scrollbar extents change (32/34 pixels)
+  because the help list is longer. The permanent mixed-audio test observes one xrun and adaptive
+  buffer growth to 576 frames, with zero driver faults; targeted PCE/POKEY stress reports zero xruns.
+- The clean candidate repeats Nova's actual PCE refusal/legal-lane playback and 16 snare stress
+  cycles, Konkr's nine-lane gesture/save/restart scenario, and DMG's eight POKEY edit/play/audition
+  cycles, with original private state restored. No temporary callback fields appear in diagnostics.
+  The first DMG visual capture was obscured by Sortie's focused switcher; after dismissing only that
+  known overlay and asserting real Tracker window focus, the repeated bounded scenario and unobstructed
+  surface pass. No production workaround or unconditional extra controller input was added.
+- Candidate commit `fa086a2` passes both build/deck jobs in push CI `42758659874` and PR CI
+  `42758757755`. The actual CI AppImage exercises collapse and both stick axes at 1280×800 and
+  1240×1080: channel 8/row 3, then channel 0/row 63, always on the note field. At 1920×1080,
+  playback continues through collapse, Instrument view and held audition, reaching row 28 with
+  PCM peak 0.421082 (held-audition peak 0.446411). Screens were inspected. Offscreen/dummy-audio
+  execution is not physical Deck or listening evidence. All Kotlin/Native linking stayed in CI.
+- Published from merge `fa75310` after all four jobs in main CI **42760524523** passed.
+  Both published checksum sidecars and the production APK certificate were verified. APK SHA-256:
+  `efa73fd156648d165cdd4061863f8d680a4e4d922cedaeafc2c80e8ebc54efec`;
+  AppImage SHA-256: `14ad2ac6bb916e7bbd3328897f609250b989f38f2618bdd8c65147062ae68fcd`.
+  The published AppImage itself repeats the gesture and playback/audition scenarios successfully:
+  playback reaches row 28, PCM peak 0.421082, held-audition peak 0.489075.
+- Official APK **0.37.1/code 51** is installed and its installed hash verified on Nova, DMG and
+  Konkr. Each passes one bounded Activity scenario plus one separate cold eight-path restoration
+  test. Nova runs eight noise and eight DDA snare cycles; DMG runs eight POKEY cycles with exact
+  pre/post-stress project and WAV bytes; Konkr covers six system/view passes, real uinput gestures,
+  provider save/open and actual Activity recreation. The POKEY-only scenario does not recreate the
+  Activity. These official targeted scenarios report zero xruns/driver faults; stream energy is
+  not measured by the clean APK. Captured surfaces are unobstructed and inspected.
+- Nova's first official attempt stopped at a temporary accessibility-root availability assertion,
+  before PCE actions; its cold restoration still passed. The Activity and audio had initialized
+  without an audio error. Correcting the external harness to use `Activity.hasWindowFocus()` rather
+  than require an accessibility root passes the unchanged PCE scenario. Known Sortie dismissal is
+  still conditional on its identified foreground window. No production code changed for this.
+- All temporary test packages are removed, original settings/private data restored, and leases
+  released. Nova/Konkr finish Asleep; DMG finishes Dozing with the transition complete. `/ThorTunez`
+  is untouched. Thor receives only the hash-verified APK at
+  `/sdcard/Download/Thor Tracker/thor-tracker-0.37.1.apk`, without wake/install/launch.
+  Deck receives the hash-verified AppImage and an atomic update of the existing stable
+  `~/thortracker-deck/thor-tracker` symlink; previous versions remain, with no launch.
+  Final evidence: `feedback-phone-qol/official-*` and `artifact-only-delivery.json`.
 
 ## 0.37.0 Cross-system conversion — released and verified
 
