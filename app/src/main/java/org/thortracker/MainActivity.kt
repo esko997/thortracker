@@ -374,7 +374,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         active = false
         cancelHeldInput()
         unregisterReceiver(batteryReceiver)
-        if (popups.dropCaptures()) statusMessage = "Binding unchanged"
         hosts.values.forEach { it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
@@ -409,6 +408,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        cancelHeldInput()
         hideSystemBars()
         refresh()
     }
@@ -513,6 +513,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             it.tracker.cancelInteraction()
         }
         releaseAudition()
+        if (popups.dropCaptures()) statusMessage = "Binding unchanged"
     }
 
     /**

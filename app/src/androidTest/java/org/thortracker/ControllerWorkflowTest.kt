@@ -129,6 +129,42 @@ class ControllerWorkflowTest {
     @Test fun controllerReconfigurationCancelsHeldInputWithoutSynthesizingATap() =
         assertInputInterruption { activity.onInputDeviceChanged(-123) }
 
+    @Test fun interruptedBindingCaptureCannotRetainAnInvisibleModifier() {
+        val popups = MainActivity::class.java.getDeclaredField("popups").apply { isAccessible = true }
+            .get(activity) as org.thortracker.ui.Popups
+        val interruptions = listOf<() -> Unit>(
+            { activity.onWindowFocusChanged(false); activity.onWindowFocusChanged(true) },
+            { activity.onInputDeviceRemoved(-123) },
+            { activity.onInputDeviceChanged(-123) },
+            { activity.onConfigurationChanged(android.content.res.Configuration(activity.resources.configuration)) },
+        )
+        for (interrupt in interruptions) {
+            resetControls()
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow(Control.AUDITION.label)
+            down(KeyEvent.KEYCODE_BUTTON_L2)
+            instrumentation.runOnMainSync {
+                assertNotNull(popups.top?.capture)
+                interrupt() // The modifier's key-up is deliberately missing.
+                assertNull("Interrupted capture must no longer accept a binding", popups.top?.capture)
+                assertEquals(Keymap.DEFAULT.binding(Control.AUDITION), tracker.keymap.binding(Control.AUDITION))
+            }
+            clickRow(Control.AUDITION.label)
+            tap(KeyEvent.KEYCODE_BUTTON_THUMBR)
+            clickRow("Replace")
+            instrumentation.runOnMainSync {
+                assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_THUMBR), tracker.keymap.binding(Control.AUDITION))
+            }
+            up(KeyEvent.KEYCODE_BUTTON_L2)
+            tap(KeyEvent.KEYCODE_MENU)
+            down(KeyEvent.KEYCODE_BUTTON_THUMBR)
+            tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+            instrumentation.runOnMainSync { assertTrue("Fresh unmodified R3 must listen", tracker.controller.auditionHeld) }
+            up(KeyEvent.KEYCODE_BUTTON_THUMBR)
+        }
+    }
+
     private fun assertInputInterruption(interrupt: () -> Unit) {
         chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_Y) // Keyboard
         val audio = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }

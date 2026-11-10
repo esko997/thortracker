@@ -14,7 +14,8 @@ and returning an upward tuning to a coarse note retains P80 where removal would 
 earlier P. Help clarifies Columns, hidden effects and active shortcuts. **B remains Clear;
 Select+B remains Cut cell/block.** Focus loss or controller removal/change cancels held edit,
 Listen and modifier state without synthesizing a tap; focus-only cancellation does not stop
-transport, whereas Activity pause does.
+transport, whereas Activity pause does. Interrupted shortcut capture is also canceled, including
+configuration changes: an invisible held modifier cannot leak into the next binding attempt.
 
 ### Automated candidate evidence
 
@@ -43,7 +44,9 @@ transport, whereas Activity pause does.
   playback keeps advancing without errors. Both projects pass real SAF save/reopen and
   Activity recreation with all four columns preserved. Pattern and Controls/Effects Help
   captures are retained. The actual PAL SAF WAV has the same PCM as the independent render.
-- **Konkr permanent Android contracts:** **27 tests, zero failures**.
+- **Konkr permanent Android contracts:** **28 tests, zero failures**. The new capture regression
+  fails on the preserved unfixed candidate and passes after the fix, covering focus loss,
+  controller removal/change and configuration changes, followed by actual unmodified R3 audition.
 - **Nova interruption regressions:** the same three focused probes fail on exact **0.40.0**
   baseline and pass on **0.41.0**: held edit across focus loss, held Listen across focus loss,
   and a held modifier across the disconnect callback. The harness first removed an invalid
