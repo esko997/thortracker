@@ -89,16 +89,18 @@ tests, generators or device operations were run for this combined source merge; 
      Released **0.32.0/code 45**: NTSC/PAL, Stella 7.0's TIA audio channel, honest AUDF quantization,
      WAV-only, Cartridge Dawn demos. Native/reference, Android controller/edit/export and SDL
      playback/audition checks pass, including the official APK/AppImage; Thor/Deck artifacts delivered.
-   - VIC-20 VIC and Commodore 16/Plus4 TED — integration **0.33.0/code 46**: "VIC-20 (VIC)" and
+   - VIC-20 VIC and Commodore 16/Plus4 TED — released **0.33.0/code 46**: "VIC-20 (VIC)" and
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
-     shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
-     Android frontends and the CI-built optimized AppImage pass; publication is the remaining gate.
-   - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
-     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Headroom, JVM and corrected
-     native/reference checks pass; frontend verification remains pending.
-   - Virtual Boy VSU and WonderSwan — wavetable handhelds. VSU: source-integrated on branch `vsu`
-     for **0.35.0/code 48** (`vb-vsu`: own player on a Mednafen-derived core with the Sacred Tech Scroll's
-     amendments, VGM + WAV export); parent verification remains pending (docs/AUDIO_ENGINE.md "Virtual Boy VSU").
+     shared master volume, TED D/A samples; project + WAV only. The audition/song-ordering race found
+     during reserved-device testing is corrected and regression-tested in 0.34.0.
+   - SAA1099 — released **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
+     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Native/reference, JVM,
+     Android device scenarios and the published AppImage pass; see the recorded DMG picker retry.
+   - Virtual Boy VSU — integrated on branch `vsu-system` for **0.35.0/code 48** (`vb-vsu`: own player
+     on a Mednafen-derived core with the Sacred Tech Scroll's amendments, VGM + WAV export).
+     956 JVM tests, 594 native checks, 2,622 WAV checks, independent references and all three reserved
+     Android frontends pass; final integrated CI/publication remain pending (`docs/VERIFICATION.md`).
+   - WonderSwan / WonderSwan Color — next wavetable handhelds; source on `wonderswan-system`.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
