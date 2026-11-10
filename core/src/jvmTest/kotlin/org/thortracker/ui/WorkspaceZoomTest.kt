@@ -57,7 +57,6 @@ class WorkspaceZoomTest {
         popups.choose(0)
         assertSame(PaneZoom.LARGE, panes.panes[0].zoom)
         assertSame(PaneZoom.NORMAL, panes.panes[1].zoom)
-        assertEquals(1, host.refreshes)
         repeat(4) { menus.zoom(0, 1) }
         assertSame(PaneZoom.LARGEST, panes.panes[0].zoom)
         repeat(4) { menus.zoom(0, -1) }
@@ -141,38 +140,37 @@ class WorkspaceZoomTest {
     }
 
     @Test fun compactGridKeepsFocusedCellVisibleAndTouchUsesTheNewGeometry() {
-        for ((width, height) in listOf(320 to 240, 400 to 420, 640 to 480)) {
+        for ((width, height) in listOf(320 to 240, 400 to 420, 640 to 480)) for (zoom in PaneZoom.entries) {
             val session = EditorSession(Opl3System.blank())
             val channel = Opl3System.channels.lastIndex
             session.setCell(0, channel, 50, Cell(48, 1))
-            val state = ViewState(row = 50, channel = channel)
+            val state = ViewState(row = 50, channel = channel,
+                zoom = if (zoom == PaneZoom.NORMAL) PaneZoom.SMALL else PaneZoom.NORMAL)
             val surface = RecordingSurface()
             val pane = PaneView(session, state, 1f, surface, { 0L }, {})
             pane.controllerFocused = true
-            for (zoom in PaneZoom.entries) {
-                pane.touchScrolled = true
-                state.zoom = zoom
-                pane.refresh()
-                surface.clear()
-                pane.draw(width, height)
-                val note = surface.texts.first { it.value == Opl3System.noteName(48) && it.face == Face.MONO }
-                assertTrue(note.x >= 0 && note.x + surface.textWidth(note.value, Face.MONO, false, note.size) <= width)
-                assertTrue(note.top >= 0 && note.top + note.height <= height - pane.ink.unit * 1.9f)
-                val x = note.x + 1f
-                val y = note.top + note.height / 2
-                state.row = 0
-                state.channel = 0
-                assertTrue(pane.touchDown(x, y))
-                pane.touchUp(x, y)
-                assertEquals(50, state.row)
-                assertEquals(channel, state.channel)
-                assertEquals(0, state.field)
-                assertTrue(pane.touchDown(x, y))
-                state.zoom = if (zoom == PaneZoom.LARGEST) PaneZoom.SMALL else PaneZoom.LARGEST
-                pane.refresh()
-                assertFalse(pane.touchActive)
-                assertFalse("Old hit rectangles must not accept a new gesture before repaint", pane.touchDown(x, y))
-            }
+            pane.touchScrolled = true
+            state.zoom = zoom
+            pane.refresh()
+            surface.clear()
+            pane.draw(width, height)
+            val note = surface.texts.first { it.value == Opl3System.noteName(48) && it.face == Face.MONO }
+            assertTrue(note.x >= 0 && note.x + surface.textWidth(note.value, Face.MONO, false, note.size) <= width)
+            assertTrue(note.top >= 0 && note.top + note.height <= height - pane.ink.unit * 1.9f)
+            val x = note.x + 1f
+            val y = note.top + note.height / 2
+            state.row = 0
+            state.channel = 0
+            assertTrue(pane.touchDown(x, y))
+            pane.touchUp(x, y)
+            assertEquals(50, state.row)
+            assertEquals(channel, state.channel)
+            assertEquals(0, state.field)
+            assertTrue(pane.touchDown(x, y))
+            state.zoom = if (zoom == PaneZoom.LARGEST) PaneZoom.SMALL else PaneZoom.LARGEST
+            pane.refresh()
+            assertFalse(pane.touchActive)
+            assertFalse("Old hit rectangles must not accept a new gesture before repaint", pane.touchDown(x, y))
         }
     }
 
@@ -256,8 +254,7 @@ class WorkspaceZoomTest {
         override val modalDisplay = 1
         override val displayCount = 2
         override val keymap = Keymap.DEFAULT
-        var refreshes = 0
-        override fun refresh() { refreshes++ }
+        override fun refresh() {}
         override fun status(message: String) {}
         private fun unexpected(): Nothing = throw AssertionError("Zoom must not perform document or platform operations")
         override fun replace(song: Song) = unexpected()

@@ -1,5 +1,28 @@
 # Thor Tracker verification — 2026-11-10
 
+## 0.39.0 — persistent view zoom and documentation
+
+Version **0.39.0/code 53** adds per-view content zoom at 75/100/125/150%, a focused-view menu
+with reset, and deliberately unbound rebindable controls. Android saves each view's preference;
+Linux handhelds save their single-view preference. Menus and shell touch targets keep their
+physical size. Song data, playback semantics and exports are unchanged.
+
+This candidate also includes the canonical static documentation site and design-only mixer
+capability record. Pattern-local mute remains explicitly deferred by the user; no mute or mixer
+feature is advertised as implemented.
+
+Integrated app/device and publication acceptance is in progress. The first core run exposed
+two test defects: an obsolete assumption that every action must have a default binding, and
+a compact-zoom fixture that accidentally made its last zoom operation a no-op while manually
+suppressing cursor scrolling. The binding collision invariant is retained; each compact fixture
+now begins at a genuinely different zoom. No production behavior was changed to satisfy them.
+
+The initial documentation pass builds 15 pages with 13 transformation checks passing. Actual
+browser inspection covers light/dark themes and mobile navigation. All eight guide pages and
+the complete manual have no page-wide horizontal overflow at 320, 844 or 1440 CSS pixels;
+local images load and the landing page has no script/audio/video elements. Hosted acceptance
+and the final integrated test results are recorded after execution, not inferred from this pass.
+
 ## 0.38.0 — colour themes and Brick Hammer / NextUI
 
 Version **0.38.0/code 52** adds original Slate, Paper and Contrast workspace palettes and an

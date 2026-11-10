@@ -90,6 +90,21 @@ Scanlines remain a separate, deferred idea.
 
 *Actual Nova captures. The default Slate palette retains the original colours and layout.*
 
+## View zoom
+
+**Menu → Focused view zoom** changes the controller-focused view to **75%, 100%, 125% or 150%**.
+Zoom in makes its text and cells larger; zoom out fits more rows and channels. **Reset to 100%**
+restores the original size. Menus, shell buttons and their touch targets keep their normal physical size.
+
+Zoom is a workspace preference, not a song edit: it changes no notes, playback, Undo history or
+exports. Each Android view remembers its own setting; the setting follows the complete view when
+views are swapped and survives view changes, layout presets and restarting the app. Linux handhelds
+remember the single view's setting. The selected pattern field stays in view as the grid changes.
+
+**Zoom in**, **Zoom out** and **Reset view zoom** are rebindable actions under Controls. They have
+no default binding, so an existing custom keymap is not overwritten. Visual column compression
+remains a separate control.
+
 ## A quick tour
 
 ### Pattern editing on both screens
@@ -253,25 +268,24 @@ A **VIC-20 (VIC)** song has four lanes — Bass, Alto, Soprano (three squares an
 
 ### WonderSwan and WonderSwan Color: wavetables, sweep, noise, voice samples, Hyper Voice and Sound DMA
 
-**Source-integrated for 0.36.0/code 49, not yet runtime-verified or released.** This merge combines
-WonderSwan/SAA head `38026f1` with VSU/SAA candidate `9464a80`, retaining both WonderSwan models,
-VSU, both SAA systems and all earlier engines. WonderSwan output keeps hardware wrap and reserves
-headroom before resampling without a compensating boost. Hyper Voice cannot be represented by VGM;
-use WAV. Prior SAA/VSU candidate results are not proof of this combined source. See `docs/VERIFICATION.md`.
+Both WonderSwan models are available in the official release. Android device, native/reference and
+AppImage acceptance is recorded in [the verification log](docs/VERIFICATION.md#0360-wonderswan--integration-verification).
+Output preserves hardware wrap and reserves headroom before resampling without a compensating
+boost. Hyper Voice cannot be represented by VGM; use WAV.
 
 A WonderSwan song (**Menu → Files → New blank song → WonderSwan…**, then **WonderSwan** or **WonderSwan Color**; **Load demo** plays *Paper Crane Run* or *Lantern Tide*) is played by Thor Tracker's own player on a port of the ares emulator's WonderSwan sound unit, 75.47 ticks per second. The original model has four lanes, **CH1-CH4**; the Color adds a fifth, **Hyper Voice**. Every lane has up to four effect columns; notes run G-1..B-7 (A-4 ≈ 440.4 Hz: the chip's 11-bit periods are within 6.4 cents up to C-6 and drift to 23.3 cents at worst, F#-7). One bank of 64 sounds holds three kinds (the instrument view's **Kind** row): **Tone** plays one of the song's 32-step, 4-bit **waves** on CH1-CH4 (`Wxx` switches a note's wave), with a **sweep** that only CH3 has in hardware (`Uxx`/`Vxx` override it); **Noise** plays channel 4's LFSR on CH4 only, clocked at 32 times the note's frequency, in one of eight **tap modes** (`Nxx`; the short sequences buzz at a pitch), optionally restarted at each note; **Sample** plays 8-bit frames on CH2's voice output (off, 50 % or 100 % per side) or the Color's Hyper Voice (headphones only, mono or stereo, four levels). Samples are **fed** by the CPU from the voice timer (12000 / T Hz, the Song view or `Txx`; pitched from a root note) or, on the Color, by **Sound DMA** at a fixed 4000, 6000, 12000 or 24000 bytes per second (the note only triggers; one-shot, looping or backwards; `Hxx` holds it). There is one DMA engine: a DMA sample starting on one lane stops the one sounding on the other, and the lane tags show which lane has it. Every kind has volume, arpeggio, pitch and wave or tap-sequence envelopes; the Sample page adds the kit (kick, snare, hat, tom, synthesized in code) or a `.wav` converted on the device (stereo kept on the Color). The **Output** song setting picks **headphones** (stereo; the original model needs Bandai's adapter) or the mono **speaker**, whose 8-bit sum wraps unless the **speaker shift** (`Kxx`) keeps it low; Hyper Voice is silent there. Songs export as **VGM** (a Color song with Hyper Voice notes is refused: VGM has no Hyper Voice, export WAV) and WAV; there is no WonderSwan executable export.
 
 ### Virtual Boy: shared waves, envelopes and Wave 5's sweep
 
-The 0.35.0 candidate records 956 JVM tests and exact seven-rate fractional-seek output; full
-native/reference and frontend acceptance remain pending. Those results are not WonderSwan evidence.
+Available in the official release, with native/reference, Android-device and AppImage acceptance
+recorded in [the verification log](docs/VERIFICATION.md#0350-virtual-boy-vsu--integration-verification).
 
 A Virtual Boy song (**Menu → Files → New blank song → Virtual Boy**) has the VSU's six channels as lanes — **Wave 1-4**, **Wave 5** and **Noise** — each with up to two effect columns. The five 32-step waves and the modulation table belong to the whole song (the chip's wave RAM is shared and can only be loaded while every channel is silent, so it is loaded once at the start); the **Wave** view edits them, and any lane can play any wave. An instrument picks a wave and sets the hardware **envelope** (start level, grow or decay, step time, repeat), an automatic **length**, the Noise lane's **tap** (from a 32767-step hiss to a 28-step buzz) and, for Wave 5 only, the hardware **sweep** or **modulation**. Loudness is the envelope level (`Cxx`) and the per-lane stereo levels (`8xy`, left and right 0-F); OFF stops a channel. Notes are true pitches from D#2 up (the editor shows each note's real frequency: the 11-bit period is up to ~20 cents off at the top); Noise notes pick shift-register rates. Songs export as VGM and WAV; there is no Virtual Boy ROM export.
 
 ### SAA1099: SAM Coupé and Creative Music System (0.34.0)
 
-Candidate `c27a60b` records JVM, corrected native/headroom and independent-reference passes.
-Live-device and CI AppImage acceptance remain pending; see `docs/VERIFICATION.md`.
+Both SAA1099 variants are available in the official release. Native/reference and frontend
+acceptance records are in [the verification log](docs/VERIFICATION.md).
 
 A SAA1099 song (**Menu → Files → New blank song → Philips SAA1099… → SAM Coupé** or **Creative Music System**) plays the Philips SAA1099's square-wave voices: the SAM Coupé's one chip gives six lanes, `SAA 1`-`SAA 6`; the Creative Music System (Game Blaster) has two chips, lanes `A1`-`A6` and `B1`-`B6`, mixed into one stereo output. Each lane has up to four effect columns. Instruments are envelopes the player runs every tick — **Volume**, **Arpeggio**, **Pitch** and **Mixer** (off, tone, noise or tone + noise per tick) — plus a stereo **Pan** (left and right levels 0-15), a **Noise clock** and, on lanes 3 and 6 of a chip only, the chip's **hardware envelope** (eight shapes, 16 or 8 levels, inverted right side, clocked by lane 2's or 5's tone or by the player every few ticks). Shared hardware stays shared: lanes 1-3 share one noise generator and lanes 4-6 another (the latest note that uses noise sets its clock; the song check warns where two lanes of a triple want different clocks at once), and the lane headers show each generator's setting (`N0:31k`) and the hardware envelopes' clock lanes (`E←2`). `Yxx` restarts every generator of a chip in phase, holds them or switches the chip's sound off. **Load demo** opens "Coupé Lights" (SAM Coupé) or "Blaster Skyline" (Creative Music System).
 
@@ -554,7 +568,7 @@ The file is written to disk while it renders, so memory use stays small whatever
 **Menu → Help**, page **About** (←/→ to the last page) shows the version, each sound system's driver with its version and source pins, and the licence. Press **A** there for:
 
 - **Report a bug…** opens the [bug report form](https://github.com/esko997/thortracker/issues/new/choose) in the browser on Android; the Steam Deck shows the address to open.
-- **Copy diagnostics** makes a plain-text report for the issue: version, device and system version, display sizes, the current song's sound system and driver, audio statistics (sample rate, burst/buffer size, underruns, slowest audio callback, driver faults), the keymap version and the last 20 status and error messages. Android copies it to the clipboard; the Steam Deck writes `~/ThorTracker/diagnostics.txt`. It contains no song data.
+- **Copy diagnostics** makes a plain-text report for the issue: version, device and system version, display sizes, the current song's sound system and driver, audio statistics (sample rate, burst/buffer size, underruns, slowest audio callback, driver faults), the keymap version and the last 20 status and error messages. Android copies it to the clipboard; Linux handhelds write `diagnostics.txt` in the projects folder (`~/ThorTracker` on Deck, `/mnt/SDCARD/ThorTunez` on Brick). It contains no song data.
 
 Thor Tracker has no network access and no telemetry: nothing leaves the device unless you paste it somewhere yourself. To report a bug, open the form, fill in the version, device, sound system and the steps that show the problem, and paste the diagnostics. Attaching the `.thor` project (zipped) helps when the problem is in a song.
 

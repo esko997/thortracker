@@ -9,3 +9,5 @@ For **Steam Deck**, **Select + Start** opens the menu. Desktop keyboard mappings
 For **Brick Hammer**, printed A/B/X/Y retain their meanings. **L2**, **R2** and the combined layer provide the view and edit chords; **Menu** or **Select + Start** opens the app menu. This does not require stick gestures. See [Brick setup](/downloads/#brick-hammer--nextui).
 
 <!-- include: README.md :: Controller reference -->
+
+<!-- include: README.md :: View zoom -->
