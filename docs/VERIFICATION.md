@@ -11,17 +11,51 @@ This candidate also includes the canonical static documentation site and design-
 capability record. Pattern-local mute remains explicitly deferred by the user; no mute or mixer
 feature is advertised as implemented.
 
-Integrated app/device and publication acceptance is in progress. The first core run exposed
-two test defects: an obsolete assumption that every action must have a default binding, and
-a compact-zoom fixture that accidentally made its last zoom operation a no-op while manually
-suppressing cursor scrolling. The binding collision invariant is retained; each compact fixture
-now begins at a genuinely different zoom. No production behavior was changed to satisfy them.
+The capped local build passes **1,090 core JVM tests and 8 Android host tests**, and builds the
+production-signed release APK plus external instrumentation. Nova also passes all **24 permanent
+Android tests**, with zero ignored/failing cases, inside the external backup/cold-restore wrapper.
+The first core run exposed an obsolete all-actions-must-be-bound assumption and a compact fixture
+accidentally testing a no-op zoom while manually suppressing scrolling. The collision invariant
+remains; each compact fixture now starts at a different zoom. Production behavior was not changed.
 
-The initial documentation pass builds 15 pages with 13 transformation checks passing. Actual
-browser inspection covers light/dark themes and mobile navigation. All eight guide pages and
-the complete manual have no page-wide horizontal overflow at 320, 844 or 1440 CSS pixels;
-local images load and the landing page has no script/audio/video elements. Hosted acceptance
-and the final integrated test results are recorded after execution, not inferred from this pass.
+Nova, DMG and Konkr pass actual Activity/controller zoom menus, 75/150% extrema, the expanded
+last effect field, custom bindings and limits/reset, zoom during advancing playback, exact
+project/history invariance and Activity restart with 125% retained. Captures are inspected;
+the Nova comparison is included in the manual. These are single-display hardware checks;
+complete-view swaps and independent pane persistence additionally have shared/JVM coverage.
+Thor and the user's active Brick session are not interrupted.
+
+The actual CI AppImage from `c3f5a54` passes 75/150% compact rendering, a fresh-process
+150% reopen, reset to 100% and malformed-preference recovery. Menus stay at their normal physical
+size. The working project remains byte-identical to the official 0.38.0 fixture across all
+operations. Downloaded AppImage and ARM64 Pak checksums match their sidecars; the Pak passes CRC
+validation. Candidate build run `42852014698` passes all three platform jobs. This is local
+offscreen/dummy-audio native verification, not a new physical Brick or Deck session.
+
+Bounded hardening repeats eight POKEY first-note/live-edit/audition/restart cycles on Konkr and
+eight cycles each for PCE noise and DDA snares on DMG. Illegal PSG1 noise assignment leaves the
+document unchanged; legal PSG5 assignment plays. Offline first-200ms AC energy is positive before
+and after, with identical measured peaks/RMS for the unchanged fixtures. No driver faults occur.
+
+Nova's real SID scenario runs eight seconds of playback, eight with held audition, paired live
+edits, and four seconds of stopped audition. The adaptive buffer grows to **960 frames / 20 ms**,
+with **three startup/transition xruns** and zero driver faults. Accepted-run worst callback is
+**16.109 ms**; an earlier run measured **18.120 ms**. This is limited headroom, not a glitch-free
+or acoustic-listening claim. A separate bounded 16-row SID WAV has peak 7423 and AC RMS 1613.68.
+No fidelity reduction or audio-engine change is made.
+
+The external harness initially required a non-null accessibility root despite actual Activity
+window focus, rejected the new recovery case names, and used a four-second short-fixture assertion
+on the full SID demo. Those harness constraints were corrected; every affected run's original
+eight private entries were subsequently cold-restored and verified. Settings are restored and
+temporary test packages removed; `/ThorTunez` is untouched.
+
+Documentation builds 15 pages with **13 transformation checks** passing. Two unchanged-input
+builds produce identical bytes for all 42 output files. Actual browser checks cover light/dark
+themes, reduced-motion preference, keyboard skip/disclosure/scroll controls, JavaScript-disabled
+navigation, loaded local fonts/images and 200% CSS zoom. Eight guides plus the manual have no
+page-wide horizontal overflow at 320/844/1440 CSS pixels. The corrected Pages workflow passes
+candidate dispatch `42853011146`; hosted acceptance remains pending the main-branch deployment.
 
 ## 0.38.0 — colour themes and Brick Hammer / NextUI
 
@@ -30,6 +64,16 @@ ARM64 NextUI Pak. Slate preserves the original appearance. Theme selection is ou
 musical document and does not add an Undo entry. Android candidate source is `1943ce6`;
 the native implementation exercised on hardware below is `046d897`. The final Help copy also describes
 the diagnostics file in the projects folder on Linux handhelds, rather than naming only the Deck path.
+
+Official **0.38.0/code 52** is published from main `660e090`; all five jobs in run `42850250052`
+pass, including signed APK and combined native-asset publication. Downloaded APK/AppImage/Pak
+checksums match their sidecars; APK certificate, non-debuggable manifest and both Android ABIs
+are verified. The Pak's 24 entries pass CRC validation and retain executable launcher/binary modes.
+The actual official AppImage advances to order 0/row 58 through held Instrument audition and a
+return to Pattern, with PCM peak 0.413676; the resulting surface is inspected. This remains
+offscreen/dummy-audio evidence, not physical Deck listening. The final candidate Help/About
+diagnostics wording was also exercised and inspected before merge. Published artifacts and
+manifest evidence are in `recovery-20261109/official-0380/`.
 
 - The bounded local build passes **1,084 core JVM tests and 7 Android host tests**. Nova passes
   **24 permanent Android instrumentation tests** against the production-signed release APK.

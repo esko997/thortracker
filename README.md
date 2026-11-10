@@ -2,6 +2,9 @@
 
 Thor Tracker is a controller-first music tracker for Game Boy / Game Boy Color sound, built for the AYN Thor's two screens: write patterns on one display while the other shows the arrangement, an instrument, a piano keyboard or a phrase sketchpad, then swap them with a chord. What you hear is the real hUGEDriver 6.1.3 running inside an embedded binjgb Game Boy emulator, and songs export as hUGETracker `.uge` v6 files ready for GB homebrew. It also runs on single-screen Android handhelds.
 
+Read the **[documentation website](https://esko997.github.io/thortracker/)** for installation,
+controls, sound systems, exports and troubleshooting.
+
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
 *Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. All screenshots and clips come from the app running in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom). The emulator has no audio.*
@@ -104,6 +107,9 @@ remember the single view's setting. The selected pattern field stays in view as 
 **Zoom in**, **Zoom out** and **Reset view zoom** are rebindable actions under Controls. They have
 no default binding, so an existing custom keymap is not overwritten. Visual column compression
 remains a separate control.
+
+<img src="docs/media/zoom-75-nova.png" width="49%" alt="Actual Nova pattern at 75 percent zoom, showing four expanded FM channels">
+<img src="docs/media/zoom-150-nova.png" width="49%" alt="The same Nova pattern at 150 percent zoom, showing two larger FM channels with the last effect field visible">
 
 ## A quick tour
 

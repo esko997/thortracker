@@ -127,9 +127,9 @@ its downloaded AppImage.
    No uncleared scale files in standard releases, no automatic downloads and no upstream licensing contact.
    Project format 10 reads versions 1–9; older apps cannot read newly saved projects.
 10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
-   - Shared native frontend and ARM64/vendor-SDL2 adapter are implemented in the 0.38.0 candidate,
+   - Shared native frontend and ARM64/vendor-SDL2 adapter are released in **0.38.0/code 52**,
      with a NextUI Pak build. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
-     Initial hardware display/audio/lifecycle checks pass; see bounded measurements in `docs/VERIFICATION.md`.
+     Hardware display/audio/lifecycle checks pass; see bounded measurements in `docs/VERIFICATION.md`.
    - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
      (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
      vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
@@ -172,12 +172,12 @@ its downloaded AppImage.
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
-- **Zoom in/out — implemented for 0.39.0, integrated verification pending:** four workspace-only
-  content sizes (75/100/125/150%), independent per Android view and persistent on Linux handhelds.
+- **Zoom in/out — implemented and verified for 0.39.0:** four workspace-only content sizes
+  (75/100/125/150%), independent per Android view and persistent on Linux handhelds.
   Menu → Focused view zoom provides in/out/reset; rebindable actions are deliberately unbound.
   Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
-  playback, export or Undo changes. Compact-screen, persistence and actual frontend acceptance
-  are required before release; zoom does not depend on future touchscreen support.
+  playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
+  persistence and frontend acceptance; zoom does not depend on future touchscreen support.
 - **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
   Android already accepts orientation changes and shared painters support touch selection/scrolling;
   these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,
@@ -201,7 +201,7 @@ its downloaded AppImage.
   Both are design directions, not implemented engines or selected panel designs.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
-  - **Colour themes, implemented in the 0.38.0 candidate:** original Slate, Paper and Contrast palettes,
+  - **Colour themes, released in 0.38.0/code 52:** original Slate, Paper and Contrast palettes,
     selected under Menu → Colour theme and persisted as workspace state. They do not alter song data,
     exports or Undo history. Nova, DMG and Konkr pass selection/restart/playback checks, and all 32 Slate
     baseline captures are pixel-identical. The actual CI AppImage passes palette persistence in fresh
