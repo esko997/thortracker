@@ -49,16 +49,19 @@ class DeckShell(
     private val popups: Popups,
     private val input: HostInput,
     private val appDir: String,
+    private val workspace: org.thortracker.editor.Workspace,
     private val quit: () -> Unit,
     private val audio: DeckAudio,
     /** The output for the diagnostics: size, density, video driver. */
     private val display: () -> String,
 ) : MenuHost {
-    private val documents = "${Files.home}/ThorTracker"
-    private val data = "${Files.home}/.local/share/thortracker"
+    private val documents = platform.posix.getenv("THORTRACKER_DOCUMENTS")?.toKString() ?: "${Files.home}/ThorTracker"
+    private val data = platform.posix.getenv("THORTRACKER_DATA")?.toKString() ?: "${Files.home}/.local/share/thortracker"
     private val working = "$data/working.thor"
     private val previous = "$data/previous.thor"
     private val keymapFile = "$data/keymap.json"
+    private val themeFile = "$data/theme"
+    private var savedThemeId: String? = null
     /** Where a WAV export renders before it moves to its destination (removed when the export ends, and at startup). */
     private val wavSpool = "$data/wav-export.wav.part"
     /** Device firmware the user imports (the YM2608 rhythm ROM of the NES EPSM and OPNA drums): kept here, never in projects or exports. */
@@ -78,6 +81,9 @@ class DeckShell(
     init {
         Files.mkdirs(documents)
         Files.mkdirs(data)
+        savedThemeId = Files.readText(themeFile)?.trim()
+        workspace.palette = org.thortracker.ui.Palette.fromId(savedThemeId)
+        pane.palette = workspace.palette
         remove(wavSpool)   // a render the last run did not live to finish
         Files.readText(keymapFile)?.let { text -> runCatching { Keymap.fromJson(text) }.getOrNull() }?.let { applyKeymap(it, null) }
         loadRhythmRom()
@@ -96,7 +102,14 @@ class DeckShell(
         if (Files.write(working, ProjectCodec.encode(song).encodeToByteArray())) savedSong = song
     }
 
-    override fun refresh() = pane.refresh()
+    override fun refresh() {
+        pane.palette = workspace.palette
+        if (savedThemeId != workspace.palette.id) {
+            if (Files.write(themeFile, workspace.palette.id.encodeToByteArray())) savedThemeId = workspace.palette.id
+            else status("Colour theme changed but could not be saved")
+        }
+        pane.refresh()
+    }
     override fun status(message: String) { RecentMessages.record("status", message); session.note(message); pane.refresh() }
 
     override fun error(message: String) {
@@ -257,8 +270,8 @@ class DeckShell(
     }
 
     override fun diagnostics(): List<Pair<String, String>> = listOf(
-        "Platform" to "Steam Deck / desktop Linux: ${osName()}",
-        "Device" to (Files.readText("/sys/devices/virtual/dmi/id/product_name")?.trim()?.ifEmpty { null } ?: "unknown"),
+        "Platform" to "${Platform.NAME}: ${osName()}",
+        "Device" to (platform.posix.getenv("DEVICE")?.toKString() ?: Files.readText("/sys/devices/virtual/dmi/id/product_name")?.trim()?.ifEmpty { null } ?: "unknown"),
         "Display" to display(),
     ) + audio.diagnostics()
 

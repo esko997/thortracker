@@ -2,7 +2,13 @@
 // Text: glyphs are rasterised once per (font, size, glyph) by stb_truetype into a 2048x2048 atlas (white + coverage
 // alpha) and each string is drawn as one geometry batch tinted by vertex colour. A full atlas starts over.
 #include "deck_draw.h"
+#ifdef THOR_SDL2
+#include <SDL.h>
+typedef SDL_Color DrawColor;
+#else
 #include <SDL3/SDL.h>
+typedef SDL_FColor DrawColor;
+#endif
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,8 +22,12 @@ static SDL_Renderer* R;
 
 // ---- colour / geometry ---------------------------------------------------------------------------------------
 
-static SDL_FColor fcolor(uint32_t argb) {
-    SDL_FColor c = { ((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f, ((argb >> 24) & 0xFF) / 255.0f };
+static DrawColor fcolor(uint32_t argb) {
+#ifdef THOR_SDL2
+    DrawColor c = { (argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF, (argb >> 24) & 0xFF };
+#else
+    DrawColor c = { ((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f, ((argb >> 24) & 0xFF) / 255.0f };
+#endif
     return c;
 }
 
@@ -31,7 +41,7 @@ static void flush(SDL_Texture* tex) {
     nv = ni = 0;
 }
 
-static int vert(float x, float y, SDL_FColor c, float u, float v) {
+static int vert(float x, float y, DrawColor c, float u, float v) {
     verts[nv].position.x = x; verts[nv].position.y = y;
     verts[nv].color = c;
     verts[nv].tex_coord.x = u; verts[nv].tex_coord.y = v;
@@ -43,7 +53,7 @@ static void tri(int a, int b, int c) { indices[ni++] = a; indices[ni++] = b; ind
 /* Ensures room for [v] more vertices (and their triangles) in an untextured batch. */
 static void room(int v) { if (nv + v > MAX_VERTS || ni + v * 3 > MAX_VERTS * 3) flush(NULL); }
 
-static void quad(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, SDL_FColor c) {
+static void quad(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, DrawColor c) {
     room(4);
     int a = vert(x0, y0, c, 0, 0), b = vert(x1, y1, c, 0, 0), d = vert(x2, y2, c, 0, 0), e = vert(x3, y3, c, 0, 0);
     tri(a, b, d); tri(a, d, e);
@@ -82,7 +92,7 @@ void dd_fill_round(float l, float t, float r, float b, float radius, uint32_t ar
     if (radius <= 0.5f) { dd_fill_rect(l, t, r, b, argb); return; }
     float xs[OUTLINE_POINTS], ys[OUTLINE_POINTS];
     rounded_outline(l, t, r, b, radius, xs, ys);
-    SDL_FColor c = fcolor(argb);
+    DrawColor c = fcolor(argb);
     room(OUTLINE_POINTS + 1);
     int center = vert((l + r) / 2, (t + b) / 2, c, 0, 0);
     int first = nv;
@@ -92,7 +102,7 @@ void dd_fill_round(float l, float t, float r, float b, float radius, uint32_t ar
 }
 
 /* A band between two closed outlines of [n] corresponding points. */
-static void ring(const float* ox, const float* oy, const float* ix, const float* iy, int n, SDL_FColor c) {
+static void ring(const float* ox, const float* oy, const float* ix, const float* iy, int n, DrawColor c) {
     room(n * 2);
     int o0 = nv;
     for (int i = 0; i < n; i++) vert(ox[i], oy[i], c, 0, 0);
@@ -125,7 +135,7 @@ void dd_line(float x0, float y0, float x1, float y1, uint32_t argb, float width)
 #define CIRCLE_STEPS 40
 
 void dd_fill_circle(float cx, float cy, float radius, uint32_t argb) {
-    SDL_FColor c = fcolor(argb);
+    DrawColor c = fcolor(argb);
     room(CIRCLE_STEPS + 1);
     int center = vert(cx, cy, c, 0, 0);
     int first = nv;
@@ -148,7 +158,7 @@ void dd_stroke_circle(float cx, float cy, float radius, uint32_t argb, float wid
 }
 
 void dd_polyline(const float* xs, const float* ys, int count, uint32_t argb, float width) {
-    SDL_FColor c = fcolor(argb);
+    DrawColor c = fcolor(argb);
     for (int i = 0; i + 1 < count; i++) {
         float dx = xs[i + 1] - xs[i], dy = ys[i + 1] - ys[i], len = sqrtf(dx * dx + dy * dy);
         if (len <= 0) continue;
@@ -203,7 +213,11 @@ int dd_init(void* sdl_renderer, const char* font_dir) {
     atlas = SDL_CreateTexture(R, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, ATLAS, ATLAS);
     if (!atlas) return -2;
     SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND);
+#ifdef THOR_SDL2
+    SDL_SetTextureScaleMode(atlas, SDL_ScaleModeNearest);
+#else
     SDL_SetTextureScaleMode(atlas, SDL_SCALEMODE_NEAREST);
+#endif
     return 0;
 }
 
@@ -282,7 +296,7 @@ static float layout(int face, int bold, float size, const char* utf8, float x, f
     int base = primary(face, bold);
     float pen = 0;
     int prev_font = -1, prev_glyph = 0;
-    SDL_FColor c = fcolor(argb);
+    DrawColor c = fcolor(argb);
     const char* s = utf8;
     while (*s) {
         int cp = utf8_next(&s), glyph;

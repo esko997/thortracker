@@ -152,6 +152,38 @@ jobs:
             dist/thor-tracker-*-x86_64.AppImage.sha256
           if-no-files-found: error
 
+  # Cross-build only: vendor Mali rendering and real ALSA output must be checked on the actual Brick.
+  brick:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-35'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Shared core and pinned ARM64 toolchain
+        run: ./gradlew --no-daemon --console=plain --max-workers=2 :core:compileKotlinLinuxArm64
+      - name: Build pinned upstream SDL2 for linking only
+        run: brick/tools/build-sdl2-link.sh
+      - name: ARM64 release executable
+        run: ./gradlew --no-daemon --console=plain --max-workers=2 :brick:linkReleaseExecutableLinuxArm64
+      - name: Package NextUI Pak and check ELF ABI requirements
+        shell: bash
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          brick/tools/package-pak.sh "$version"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-brick-nextui
+          path: |
+            dist/thor-tracker-*-brick-nextui.zip
+            dist/thor-tracker-*-brick-nextui.zip.sha256
+          if-no-files-found: error
+
   # A version bump on main publishes it: when no release v<versionName> exists yet, sign and publish that commit.
   release:
     needs: build

@@ -13,6 +13,8 @@ class SdlSurface : Surface {
     private val px = nativeHeap.allocArray<FloatVar>(MAX_POINTS)
     private val py = nativeHeap.allocArray<FloatVar>(MAX_POINTS)
 
+    fun close() { nativeHeap.free(px); nativeHeap.free(py) }
+
     override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) = dd_fill_rect(l, t, r, b, color.toUInt())
 
     override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) =
