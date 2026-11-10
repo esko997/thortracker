@@ -32,12 +32,13 @@ class PaneView(
     var state: ViewState = state
         set(value) {
             if (value === field) return
-            controller.cancelHolds()
+            cancelInteraction()
             field = value
             controller.state = value
             seenSelection = session.selectionVersion
             seenKind = value.kind
             touchScrolled = false
+            geometryReady = false
             controller.normalise()
             viewChangeStart = motion.start()
             invalidate()
@@ -109,6 +110,17 @@ class PaneView(
     private var handling = 0
     private var seenSelection = session.selectionVersion
     private var seenKind = state.kind
+    private var seenZoom = state.zoom
+    private var geometryReady = false
+
+    /** Geometry changes end the old gesture before any coordinates can be interpreted at the new size. */
+    private fun syncZoom() {
+        if (seenZoom == state.zoom) return
+        seenZoom = state.zoom
+        cancelInteraction()
+        touchScrolled = false
+        geometryReady = false
+    }
 
     /** Set when the user scrolled by touch; cleared on the next controller move so the cursor comes back into view. */
     internal var touchScrolled = false
@@ -156,6 +168,7 @@ class PaneView(
 
     /** Re-reads the session: applies selection following and repaints. Call from the session callbacks. */
     fun refresh() {
+        syncZoom()
         val kindChanged = state.kind != seenKind
         seenKind = state.kind
         if (kindChanged) viewChangeStart = motion.start()
@@ -292,12 +305,14 @@ class PaneView(
     fun draw(width: Int, height: Int) {
         val c = surface
         motion.beginFrame()
-        ink.layout(width, height)
+        syncZoom()
+        ink.layout(width, height, state.zoom)
         c.fillRect(0f, 0f, width.toFloat(), height.toFloat(), ink.palette.BG)
         val hintH = ink.unit * 1.9f
         val area = Rect(0f, 0f, width.toFloat(), height - hintH)
         controller.normalise()
         painter().draw(c, area)
+        geometryReady = true
         drawViewChange(c, area)
         drawHintBar(c, Rect(0f, height - hintH, width.toFloat(), height.toFloat()))
         if (controllerFocused) {
@@ -389,6 +404,8 @@ class PaneView(
 
     /** Touch start at pane coordinates; true when the pane takes the gesture. */
     fun touchDown(x: Float, y: Float): Boolean {
+        syncZoom()
+        if (!geometryReady) return false
         val p = painter()
         val handled = input { p.down(x, y) }
         activePainter = if (handled) p else null

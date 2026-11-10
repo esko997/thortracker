@@ -62,6 +62,8 @@ class DeckShell(
     private val keymapFile = "$data/keymap.json"
     private val themeFile = "$data/theme"
     private var savedThemeId: String? = null
+    private val zoomFile = "$data/zoom"
+    private var savedZoom = org.thortracker.editor.PaneZoom.NORMAL
     /** Where a WAV export renders before it moves to its destination (removed when the export ends, and at startup). */
     private val wavSpool = "$data/wav-export.wav.part"
     /** Device firmware the user imports (the YM2608 rhythm ROM of the NES EPSM and OPNA drums): kept here, never in projects or exports. */
@@ -84,6 +86,8 @@ class DeckShell(
         savedThemeId = Files.readText(themeFile)?.trim()
         workspace.palette = org.thortracker.ui.Palette.fromId(savedThemeId)
         pane.palette = workspace.palette
+        savedZoom = org.thortracker.editor.PaneZoom.fromStored(Files.readText(zoomFile))
+        pane.state.zoom = savedZoom
         remove(wavSpool)   // a render the last run did not live to finish
         Files.readText(keymapFile)?.let { text -> runCatching { Keymap.fromJson(text) }.getOrNull() }?.let { applyKeymap(it, null) }
         loadRhythmRom()
@@ -107,6 +111,10 @@ class DeckShell(
         if (savedThemeId != workspace.palette.id) {
             if (Files.write(themeFile, workspace.palette.id.encodeToByteArray())) savedThemeId = workspace.palette.id
             else status("Colour theme changed but could not be saved")
+        }
+        if (savedZoom != pane.state.zoom) {
+            if (Files.write(zoomFile, pane.state.zoom.percent.toString().encodeToByteArray())) savedZoom = pane.state.zoom
+            else error("View zoom changed but could not be saved")
         }
         pane.refresh()
     }

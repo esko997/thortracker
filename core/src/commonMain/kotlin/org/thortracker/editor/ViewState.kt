@@ -6,6 +6,21 @@ import org.thortracker.model.Scale
 
 enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
 
+/** Device-local pane magnification. Unknown stored values use the unchanged 100% layout. */
+enum class PaneZoom(val percent: Int) {
+    SMALL(75), NORMAL(100), LARGE(125), LARGEST(150);
+
+    val factor: Float = percent / 100f
+    fun step(direction: Int): PaneZoom = entries[(ordinal + direction.coerceIn(-1, 1)).coerceIn(0, entries.lastIndex)]
+
+    companion object {
+        fun fromStored(value: String?): PaneZoom {
+            val percent = value?.trim()?.toIntOrNull()
+            return entries.firstOrNull { it.percent == percent } ?: NORMAL
+        }
+    }
+}
+
 /**
  * Navigation state of one display. Each view kind keeps its own cursor fields so switching a display
  * between kinds (or swapping displays) preserves where the user was.
@@ -14,6 +29,8 @@ enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
  */
 data class ViewState(
     var kind: ViewKind = ViewKind.PATTERN,
+    /** Travels with this complete view on swaps; never part of a song or undo history. */
+    var zoom: PaneZoom = PaneZoom.NORMAL,
     var pinned: Boolean = true,
     var followSelection: Boolean = true,
     var lockedSubject: Int = -1,

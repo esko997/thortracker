@@ -95,7 +95,8 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
     val transport = Transport(session).also { it.audio = audio }
     private val output = platform.output
     val pane = PaneView(session, panes.focused, density, SdlSurface(), clock = { platform.ticks().toLong() }, invalidate = {})
-    private val popup = DrawnPopup(pane.ink)
+    private val popupInk = org.thortracker.ui.Ink(density, pane.surface)
+    private val popup = DrawnPopup(popupInk)
     val popups = Popups({ if (it == 0) popup else null }, { listOf(0) })
     val input = HostInput()
     var running = true
@@ -167,6 +168,7 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
             pane.playback = transport.position() ?: PlaybackPosition()
             pane.heldModifiers = if (popups.isOpen) emptySet() else input.heldModifiers
             pane.draw(output.width, output.height)
+            popupInk.palette = pane.palette
             popup.draw(pane.surface, output.width.toFloat(), output.height.toFloat())
             if (quitAfterMs != null && now - start > quitAfterMs) {
                 running = false
@@ -236,6 +238,9 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
             // No toolbar on the Deck: its button opens the menu.
             Control.TOOLBAR -> menus.appMenu()
             Control.SWAP, Control.FOCUS -> {}
+            Control.ZOOM_IN -> menus.zoom(panes.focus, 1)
+            Control.ZOOM_OUT -> menus.zoom(panes.focus, -1)
+            Control.ZOOM_RESET -> menus.zoom(panes.focus, 0)
             else -> {
                 // One pane: other-display view chords show their view on it, like the R2 ones.
                 val shows = control.shows
