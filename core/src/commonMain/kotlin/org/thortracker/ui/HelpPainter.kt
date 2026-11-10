@@ -182,7 +182,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Heading("Pattern"),
         ) + (if (maxColumns() <= 1) listOf(Line.Row("Columns", "Note, sound number, effect type and effect value per channel")) else listOf(
             Line.Row("Columns", "Note, sound number, then effect type and value in each shown effect column: up to ${maxColumns()} per channel, " +
-                "all heard. ${k.label(Action.SCALE)} → Columns sets how many this display shows per channel ($lr; $channels changes channel; " +
+                "all processed. ${k.label(Action.SCALE)} → Columns sets how many this display shows per channel ($lr; $channels changes channel; " +
                 "$clear: automatic, the columns the song uses)"),
             Line.Row("Hidden", "Effects in hidden columns still play: the row shows a dot after its last column, the lane header \"+n fx\""),
             Line.Row("Lanes", "When the channels do not all fit, the lanes scroll sideways with the cursor; ◀n / n▶ beside the headers count " +
@@ -197,6 +197,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 "Axes are independent: a double diagonal can jump both row and channel."),
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
+            Line.Row(k.label(Action.CUT), "Cut the whole cell, or the marked block, to the clipboard. Unlike $clear, includes the note, sound and every effect column; paste with ${k.label(Action.PASTE)}"),
+            Line.Text("$clear does not replace the clipboard. To move a phrase, mark it, cut, move to its destination and paste. Undo restores the cut cells."),
             Line.Row("OFF", help.off),
         ) + (system.keyOn?.let { on ->
             listOf(Line.Row("$clear on OFF", "Enters ${system.noteName(on)} (key on): the gate opens again without restarting the note; $clear again clears it"))
@@ -275,6 +277,10 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         val columns = maxColumns()
         out += Line.Text(if (columns <= 1) "One effect per channel per row. Values are hexadecimal. 000 is no effect."
             else "Up to $columns effects per channel per row, one per effect column. Values are hexadecimal. 000 is no effect.")
+        if (columns > 1) out += Line.Text("${v.keymap.label(Action.SCALE)} in Pattern → Columns reveals more effect columns. " +
+            "Hidden columns still play; changing the displayed count never removes their effects.")
+        if (columns > 1) out += Line.Text("More columns do not guarantee combined effects: commands can replace the same control or share chip resources. " +
+            "Read this system's rules below; hiding a column does not resolve a conflict.")
         out += Line.Text("Effects marked unavailable cannot be exported or previewed and are refused.")
         val system = song.system
         for (text in system.help.effectsIntro) out += Line.Text(text)

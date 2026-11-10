@@ -372,17 +372,14 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     override fun onPause() {
         active = false
-        // Key-ups for anything held now may never arrive.
-        input.reset()
+        cancelHeldInput()
         unregisterReceiver(batteryReceiver)
-        hosts.values.forEach { it.tracker.heldModifiers = emptySet() }
         if (popups.dropCaptures()) statusMessage = "Binding unchanged"
-        hosts.values.forEach { it.tracker.cancelInteraction(); it.toolbar.hide() }
+        hosts.values.forEach { it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
         main.removeCallbacks(statusCheck)
         transport.halt()
-        releaseAudition()
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest)
         hasAudioFocus = false
         if (documentReady) projectStore.autosave(session.song, immediate = true)
@@ -443,6 +440,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                     hosts[1] = host
                     setContentView(host.root)
                 }
+                override fun onWindowFocusChanged(hasFocus: Boolean) {
+                    super.onWindowFocusChanged(hasFocus)
+                    if (!hasFocus) cancelHeldInput()
+                }
                 override fun dispatchKeyEvent(event: KeyEvent): Boolean =
                     routeKey(event) || super.dispatchKeyEvent(event)
                 override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -494,13 +495,25 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        // A shade, dialog or the other window took the input: a flick from before must not finish a jump.
-        input.resetStick()
+        if (!hasFocus) cancelHeldInput()
     }
 
     override fun onInputDeviceAdded(deviceId: Int) = input.resetStick()
-    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
-    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
+    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); cancelHeldInput() }
+    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); cancelHeldInput() }
+
+    /** Key-ups may never arrive after a window or controller leaves. Cancel, never synthesize a tap.
+     * Routing is shared by both windows/controllers, so cancel every hold rather than leave an unseen chord.
+     * Playback is independent of input focus; only held previews stop here (onPause also stops transport).
+     */
+    private fun cancelHeldInput() {
+        input.reset()
+        hosts.values.forEach {
+            it.tracker.heldModifiers = emptySet()
+            it.tracker.cancelInteraction()
+        }
+        releaseAudition()
+    }
 
     /**
      * Feeds both right-stick axes, including the samples batched into [event], to [HostInput.rightStick].

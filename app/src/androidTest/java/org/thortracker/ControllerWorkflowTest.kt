@@ -119,6 +119,72 @@ class ControllerWorkflowTest {
         assertEquals(changed, tracker.session.song)
     }
 
+    /** Missing key-ups must not leave an edit, modifier or audition alive after the host loses input. */
+    @Test fun focusLossCancelsHeldInputWithoutSynthesizingATap() =
+        assertInputInterruption { activity.onWindowFocusChanged(false); activity.onWindowFocusChanged(true) }
+
+    @Test fun controllerRemovalCancelsHeldInputWithoutSynthesizingATap() =
+        assertInputInterruption { activity.onInputDeviceRemoved(-123) }
+
+    @Test fun controllerReconfigurationCancelsHeldInputWithoutSynthesizingATap() =
+        assertInputInterruption { activity.onInputDeviceChanged(-123) }
+
+    private fun assertInputInterruption(interrupt: () -> Unit) {
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_Y) // Keyboard
+        val audio = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
+            .get(activity) as org.thortracker.audio.ChipAudio
+        var releases = 0
+        val field = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
+        instrumentation.runOnMainSync {
+            assertEquals(ViewKind.KEYBOARD, tracker.state.kind)
+            field.set(activity, object : org.thortracker.audio.TrackerAudio by audio {
+                override fun releaseAudition() { releases++; audio.releaseAudition() }
+            })
+        }
+        try {
+            assertEquals("Fixture has not auditioned yet", 0L, audio.diagnostics().getValue("lastAuditionPrepNs"))
+            down(KeyEvent.KEYCODE_BUTTON_X)
+            awaitTrue("accepted native audition") {
+                assertNull(audio.error())
+                audio.diagnostics().getValue("lastAuditionPrepNs") > 0
+            }
+            instrumentation.runOnMainSync {
+                assertTrue(tracker.controller.auditionHeld)
+                interrupt()
+                assertFalse(tracker.controller.auditionHeld)
+                assertTrue("The audio consumer must receive release", releases > 0)
+            }
+            up(KeyEvent.KEYCODE_BUTTON_X)
+        } finally {
+            instrumentation.runOnMainSync { field.set(activity, audio) }
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_DPAD_UP) // Pattern
+        val original = tracker.session.song
+        down(KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertTrue(tracker.controller.editHeld)
+            interrupt()
+            assertFalse("Interruption must cancel Edit even without a key-up", tracker.controller.editHeld)
+            assertEquals("Cancellation must not write a tap", original, tracker.session.song)
+        }
+        // The old release must not act, and the next direction must navigate rather than edit.
+        up(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        instrumentation.runOnMainSync {
+            assertEquals(1, tracker.state.field)
+            assertEquals(original, tracker.session.song)
+        }
+        down(KeyEvent.KEYCODE_BUTTON_R2)
+        instrumentation.runOnMainSync {
+            interrupt()
+            assertTrue("No invisible view-switch modifier may survive", tracker.heldModifiers.isEmpty())
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync { assertEquals(ViewKind.PATTERN, tracker.state.kind) }
+        up(KeyEvent.KEYCODE_BUTTON_R2)
+
+    }
+
     @Test fun twentyChannelPatternNavigatesEditsAndRestoresItsLastLane() {
         val demo = NesEpsmSystem.demo()
         val last = demo.system.channels.lastIndex
