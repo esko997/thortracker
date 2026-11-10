@@ -205,6 +205,12 @@ class PaneView(
         controller.jumpPatternEdge(bottom)
     }
 
+    /** Horizontal double flick: first/last channel's note, keeping the row. */
+    fun jumpPatternChannelEdge(last: Boolean): Boolean = input {
+        touchScrolled = false
+        controller.jumpPatternChannelEdge(last)
+    }
+
     /** Runs view-originated input so the selection it publishes is not followed back onto this pane. */
     internal fun <T> input(block: () -> T): T {
         val before = session.selectionVersion

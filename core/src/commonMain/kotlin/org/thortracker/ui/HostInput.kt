@@ -28,8 +28,8 @@ import org.thortracker.input.StickFlicks
  * since before a modifier went down keeps its own meaning until released. A press the system cancels ([cancel])
  * is forgotten without acting.
  *
- * The right stick's vertical axis ([rightStick]) is not a key: a quick double flick up or down jumps the focused
- * Pattern view to the first or last row of its pattern.
+ * The right stick ([rightStick]) is not a key: double up/down jumps to the first/last Pattern row;
+ * double left/right jumps to the first/last channel's note. Each axis detects flicks independently.
  */
 class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     enum class Target { NONE, POPUP, TOOLBAR }
@@ -56,8 +56,13 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
 
     private val owners = HashMap<Int, Owner>()
     private val held = LinkedHashSet<Int>()
-    /** One flick detector per controller, so two devices (or a phantom duplicate) never mix their samples. */
-    private val sticks = HashMap<Int, StickFlicks>()
+    /** Independent axes per controller: a diagonal can complete both jumps, never half of one on each axis. */
+    private class StickAxes {
+        val horizontal = StickFlicks()
+        val vertical = StickFlicks()
+        fun reset() { horizontal.reset(); vertical.reset() }
+    }
+    private val sticks = HashMap<Int, StickAxes>()
     private var stickPane = -1
     private var stickView: ViewKind? = null
 
@@ -100,17 +105,18 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     fun forgetStick(device: Int) { sticks.remove(device) }
 
     /**
-     * One sample of [device]'s right-stick vertical axis ([y] -1 up .. 1 down) at monotonic [millis]. Returns -1
-     * to jump to the first row of the pattern, 1 to its last row, 0 otherwise: only a quick double flick the
-     * same way with neutral between ([StickFlicks]), while [pane] shows a [patternFocused] Pattern view
+     * One sample of [device]'s right-stick axis ([value] -1 left/up .. 1 right/down) at monotonic [millis].
+     * Returns -1 for the first channel/row, 1 for the last, 0 otherwise. [horizontal] selects an independent
+     * detector, so diagonal double flicks may complete both axes. Only a quick double flick the same way
+     * with neutral between ([StickFlicks]) acts, while [pane] shows a [patternFocused] Pattern view
      * (controller focus, no panel) and neither a popup nor the toolbar has the controller. Anything else, a
      * change of focused pane or view, or a button press ([route]) in between forgets the first flick.
      */
-    fun rightStick(device: Int, y: Float, millis: Long, pane: Int, view: ViewKind, patternFocused: Boolean,
+    fun rightStick(device: Int, horizontal: Boolean, value: Float, millis: Long, pane: Int, view: ViewKind, patternFocused: Boolean,
                    popupOpen: Boolean, toolbarFocused: Boolean): Int {
         if (pane != stickPane || view != stickView) { stickPane = pane; stickView = view; resetStick() }
-        val flicks = sticks.getOrPut(device) { StickFlicks() }
-        val jump = flicks.sample(y, millis)
+        val axes = sticks.getOrPut(device) { StickAxes() }
+        val jump = (if (horizontal) axes.horizontal else axes.vertical).sample(value, millis)
         if (!patternFocused || view != ViewKind.PATTERN || popupOpen || toolbarFocused) { resetStick(); return 0 }
         return jump
     }

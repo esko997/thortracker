@@ -116,4 +116,51 @@ class PatternCollapseTest {
             assertEquals(4, other.fieldCount(0))
         }
     }
+
+    @Test fun horizontalEdgesKeepRowAndOrderAndAlwaysLandOnTheNoteIncludingCollapsedLanes() {
+        val session = EditorSession(Opl3System.blank().copy(orders = listOf(0, 0)))
+        val last = session.song.channelCount() - 1
+        val state = ViewState(order = 1, row = 12, channel = 3, field = 5,
+            effectColumns = List(last + 1) { 4 }, collapsedChannels = setOf(0, last))
+        val c = ViewController(session, state)
+        val before = session.song
+        assertTrue(c.jumpPatternChannelEdge(last = true))
+        assertEquals(listOf(1, 12, last, 0), listOf(state.order, state.row, state.channel, state.field))
+        assertEquals(last, session.selection.channel)
+        assertTrue(c.jumpPatternChannelEdge(last = false))
+        assertEquals(listOf(1, 12, 0, 0), listOf(state.order, state.row, state.channel, state.field))
+        assertTrue(c.jumpPatternChannelEdge(last = false)) // boundary is idempotent
+        assertSame(before, session.song)
+        assertFalse(session.canUndo)
+        c.press(Action.MARK)
+        assertTrue(c.jumpPatternChannelEdge(last = true))
+        c.release(Action.MARK)
+        assertEquals(Block(0, last, 12, 12), c.block())
+        assertTrue(state.mark)
+        // Vertical edge jumps keep their channel and retain their existing behavior.
+        assertTrue(c.jumpPatternEdge(bottom = true))
+        assertEquals(last, state.channel)
+        assertEquals(session.song.rowCount(session.song.orders[1]) - 1, state.row)
+    }
+
+    @Test fun horizontalEdgesAreInactiveOutsidePatternOrUnderPanelsAndEditHolds() {
+        val session = EditorSession(Opl3System.blank())
+        val c = ViewController(session, ViewState(row = 7, channel = 2, field = 3))
+        for (held in listOf(Action.EDIT, Action.CLEAR)) {
+            c.press(held)
+            assertFalse(c.jumpPatternChannelEdge(last = true))
+            assertEquals(2, c.state.channel)
+            assertEquals(3, c.state.field)
+            c.release(held)
+        }
+        c.tap(Action.SCALE)
+        assertFalse(c.jumpPatternChannelEdge(last = false))
+        assertEquals(2, c.state.channel)
+        for (kind in Opl3System.views.filter { it != ViewKind.PATTERN }) {
+            val other = ViewController(session, ViewState(kind = kind, row = 7, channel = 2))
+            assertFalse(other.jumpPatternChannelEdge(last = true))
+            assertEquals(2, other.state.channel)
+            assertEquals(7, other.state.row)
+        }
+    }
 }

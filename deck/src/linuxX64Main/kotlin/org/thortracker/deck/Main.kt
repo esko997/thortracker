@@ -52,8 +52,8 @@ fun main(args: Array<String>) {
     val quitAfterMs = args.firstOrNull { it.startsWith("seconds=") }?.substringAfter('=')?.toULong()?.times(1000uL)
     // Test hook: script=96+22,20,99~1500 taps buttons (Android key codes; "a+b" holds a while tapping b, "b~ms" holds b
     // for ms), one step per 150 ms,
-    // through the same routing as the gamepad; "ry=V" moves the right stick's vertical axis to V (-1 up .. 1 down),
-    // e.g. ry=-1,ry=0,ry=-1,ry=0 is a double flick up. With seconds=N the last frame is saved as deck-screenshot.bmp.
+    // through the same routing as the gamepad; "rx=V"/"ry=V" moves one right-stick axis (-1 left/up .. 1 right/down),
+    // e.g. rx=-1,rx=0,rx=-1,rx=0 jumps to the first channel. With seconds=N the last frame is saved as deck-screenshot.bmp.
     val script = args.firstOrNull { it.startsWith("script=") }?.substringAfter('=')?.split(',')?.filter { it.isNotBlank() }.orEmpty()
     // Test hook: size=WxH[@density] draws into a WxH window (no full screen) at that UI density, e.g. the Thor's displays
     // (1920x1080@2.31, 1240x1080@2.31) under SDL_VIDEO_DRIVER=offscreen, whose full-screen mode is 1024 x 768.
@@ -146,18 +146,18 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             if (repeatCode != 0 && now >= repeatAt) { route(repeatCode, true, ++repeats); repeatAt = now + 60u }
             if (script.isNotEmpty() && now - start >= scriptAt) {
                 val step = script.removeFirst()
-                // "ry=V" moves the right stick; "a+b" holds a while tapping b; "b~ms" holds b for ms (the next step waits
-                // until it is released).
-                val stick = if (step.startsWith("ry=")) step.substringAfter('=').toFloat() else null
+                // "rx=V"/"ry=V" moves one right-stick axis; "a+b" holds a while tapping b; "b~ms" holds b
+                // for ms (the next step waits until it is released).
+                val stick = if (step.startsWith("rx=") || step.startsWith("ry=")) step.substringAfter('=').toFloat() else null
                 val held = if (stick != null) null else step.substringAfter('~', "").toULongOrNull()
-                if (stick != null) rightStick(SCRIPT_STICK, stick, now.toLong())
+                if (stick != null) rightStick(SCRIPT_STICK, step.startsWith("rx="), stick, now.toLong())
                 else {
                     val codes = step.substringBefore('~').split('+').map { it.trim().toInt() }
                     codes.forEach { button(it, true) }
                     if (held != null) { heldScript = codes to now + held } else codes.reversed().forEach { button(it, false) }
                 }
                 val st = pane.state
-                println("script $step -> view=${st.kind} popup=${popups.top?.title} order=${st.order} row=${st.row} " +
+                println("script $step -> view=${st.kind} popup=${popups.top?.title} order=${st.order} row=${st.row} channel=${st.channel} field=${st.field} " +
                     "cell=${session.song.patterns[session.song.patternAt(st.order)].tracks[st.channel][st.row]} msg=${session.message}")
                 scriptAt = now - start + 150u + (held ?: 0u)
             }
@@ -204,8 +204,9 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
             SDL_EVENT_GAMEPAD_AXIS_MOTION -> {
                 val axis = e.gaxis.axis.toInt()
                 // Event timestamps are SDL_GetTicksNS nanoseconds: monotonic, the clock the script steps use too.
-                if (axis == SDL_GAMEPAD_AXIS_RIGHTY.toInt()) {
-                    rightStick(e.gaxis.which.toInt(), e.gaxis.value / 32767f, (e.gaxis.timestamp / 1_000_000uL).toLong())
+                if (axis == SDL_GAMEPAD_AXIS_RIGHTX.toInt() || axis == SDL_GAMEPAD_AXIS_RIGHTY.toInt()) {
+                    rightStick(e.gaxis.which.toInt(), axis == SDL_GAMEPAD_AXIS_RIGHTX.toInt(), e.gaxis.value / 32767f,
+                        (e.gaxis.timestamp / 1_000_000uL).toLong())
                     return
                 }
                 val code = Pad.triggerCode(axis) ?: return
@@ -235,10 +236,13 @@ private class DeckApp(private val window: CPointer<SDL_Window>, private val rend
         if (!down && code == repeatCode) repeatCode = 0
     }
 
-    /** The right stick's vertical axis ([y] -1 up .. 1 down): a quick double flick jumps Pattern to the first or last row. */
-    private fun rightStick(device: Int, y: Float, millis: Long) {
-        val jump = input.rightStick(device, y.coerceIn(-1f, 1f), millis, 0, pane.state.kind, pane.patternFocused, popups.isOpen, false)
-        if (jump != 0) pane.jumpPatternEdge(jump > 0)
+    /** Independent right-stick axes: double left/right jumps channels, double up/down jumps rows. */
+    private fun rightStick(device: Int, horizontal: Boolean, value: Float, millis: Long) {
+        val jump = input.rightStick(device, horizontal, value.coerceIn(-1f, 1f), millis, 0, pane.state.kind, pane.patternFocused, popups.isOpen, false)
+        if (jump != 0) {
+            if (horizontal) pane.jumpPatternChannelEdge(jump > 0)
+            else pane.jumpPatternEdge(jump > 0)
+        }
     }
 
     /** The same layers as Android's MainActivity.routeKey: binding capture, popup, host controls, then the pane. */

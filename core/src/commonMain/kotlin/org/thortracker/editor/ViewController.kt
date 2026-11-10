@@ -603,6 +603,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return true
     }
 
+    /** Horizontal right-stick double flick: first/last channel's note, retaining row and order, even if collapsed. */
+    fun jumpPatternChannelEdge(last: Boolean): Boolean {
+        normalise()
+        if (state.kind != ViewKind.PATTERN || systemView() != null || state.scalePanel || editHeld || clearHeld) return false
+        if (markHeld) markUsed = true
+        state.channel = if (last) song.channelCount() - 1 else 0
+        state.field = 0
+        publishPattern()
+        return true
+    }
+
     private fun patternDirection(dx: Int, dy: Int) {
         when {
             editHeld -> { editUsed = true; adjustCell(dx, dy) }

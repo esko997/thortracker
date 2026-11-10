@@ -185,6 +185,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 "an amber dot marks hidden effects. Left/right visits only visible fields. Sounds and effects still play; selections and copies keep whole cells."),
             Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
             Line.Row("Right stick ↑↑ / ↓↓", "Two quick flicks the same way, back to centre between them: the pattern's first / last row"),
+            Line.Row("Right stick ←← / →→", "Two quick flicks with centre between: first / last channel's note, keeping the row, including collapsed channels. " +
+                "Axes are independent: a double diagonal can jump both row and channel."),
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
             Line.Row("$clear on note", "Clears a note; on an empty row places OFF"),
             Line.Row("OFF", help.off),
