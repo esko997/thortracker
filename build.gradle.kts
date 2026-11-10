@@ -36,6 +36,10 @@ listOf(project(":deck"), project(":brick")).forEach { nativeProject ->
                 // AppImage bundles SDL3; Brick uses vendor SDL2. Both hosts supply libstdc++.
                 linkerOpts("-L${deps.dir("lib").asFile}", if (brick) "-lSDL2" else "-lSDL3", "-lstdc++", "-lm", "--allow-shlib-undefined", "-rpath=\$ORIGIN/lib")
             }
+            // Compile shared frontend files once, against each target's concrete SDL ABI and Platform class.
+            sourceSets.configureEach {
+                if (name == "nativeMain") kotlin.setSrcDirs(emptyList<String>())
+            }
             sourceSets.getByName(if (brick) "linuxArm64Main" else "linuxX64Main").apply {
                 kotlin.srcDir(frontend.dir("src/nativeMain/kotlin"))
                 dependencies { implementation(project(":core")) }

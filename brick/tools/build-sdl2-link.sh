@@ -22,7 +22,9 @@ gcc="$konan/aarch64-unknown-linux-gnu-gcc-8.3.0-glibc-2.25-kernel-4.9-2"
 sysroot="$gcc/aarch64-unknown-linux-gnu/sysroot"
 [[ -x $llvm/clang && -d $sysroot ]] || { echo 'Run :core:compileKotlinLinuxArm64 first' >&2; exit 1; }
 export CC="$llvm/clang --target=aarch64-unknown-linux-gnu --sysroot=$sysroot --gcc-toolchain=$gcc"
-export AR="$llvm/llvm-ar" RANLIB="$llvm/llvm-ranlib"
+export AR="$llvm/llvm-ar"
+# Kotlin's essentials bundle has llvm-ar, but no separate llvm-ranlib; `ar s` writes the same index.
+export RANLIB="$llvm/llvm-ar s"
 export CFLAGS='-O2 -fPIC'
 export LDFLAGS="-fuse-ld=lld"
 # Build upstream implementations only for linking, with no host X11/Wayland/audio dependency leakage.
