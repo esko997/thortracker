@@ -64,15 +64,25 @@ the final native implementation tested below is `046d897`.
   not a claim that all workloads are glitch-free.
 - These are actual generated PCM/callback and inspected framebuffer results, not acoustic/DAC
   measurements. Physical suspend/resume remains untested. No Miyoo Mini runtime is claimed.
-  Earlier USB loss occurred at idle NextUI before Tracker had launched; reopening Remote Terminal
-  restored access. Normal Pak runs and explicit Quit/relaunch now succeed.
+  USB access was lost at idle NextUI both before the initial Tracker launch and after later Quit.
+  The user subsequently disabled sleep while USB-connected; the remaining checks and cleanup completed.
+  This establishes the observed sequence, not a diagnosed cause of the earlier disconnects.
 - SID, OPL3 and Mega Drive also pass 8-second held audition during playback, followed by 3-second
   audition-only runs: two accepted auditions each, nonzero PCM, zero late callbacks, no ALSA underruns
   and zero faults. Worst callbacks are **19.638, 10.531 and 18.266 ms** respectively.
+  The device period is **21.333 ms**: SID's measured maximum consumes about **92%** of one period,
+  leaving only **1.695 ms**, not a comfortable worst-case margin. The `late callbacks` diagnostic
+  counts sounding callback gaps above **two periods (42.667 ms)**; zero is not proof that every
+  callback met a one-period deadline. ALSA underrun log counts are reported separately.
 - EPSM FM subsequently passes the same mixed/solo audition scenario with a valid FM sound selected:
   two auditions, PCM peaks **0.024737/0.019331**, **741 callbacks**, **zero late callbacks, faults or
   ALSA underruns**, and worst callback **12.053 ms**. Physical X presses in Instrument and Keyboard
   independently produce two accepted auditions and PCM peak **0.119781**, without ALSA underruns.
+- The identical EPSM fixture/control sequence on the production x86_64 AppImage yields peaks
+  **0.025635/0.019727**, versus Brick **0.024737/0.019331** (differences **3.63%/2.05%**).
+  The lower EPSM levels are therefore also present on desktop, rather than evidence of a large
+  Brick-only attenuation. These are wall-clock-controlled peak windows on the same engine, not
+  sample-exact or independent-reference validation of absolute loudness.
 - After reconnection, the user's newly composed SCC working song, previous-project recovery file and
   Contrast preference remain byte-identical through the isolated checks. Only the owned smoke Pak,
   test workspace and unchanged test diagnostics report are removed. The production Pak is reopened
