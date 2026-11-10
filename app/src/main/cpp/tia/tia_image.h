@@ -27,7 +27,7 @@ extern "C" {
 #define TI_MAX_ORDERS 256
 #define TI_MAX_ROWS 256
 #define TI_MAX_INSTRUMENTS 64
-#define TI_MAX_EFFECTS 2 /* effect columns per channel and row */
+#define TI_MAX_EFFECTS 4 /* effect columns per channel and row */
 #define TI_MAX_ENVELOPE 255 /* envelope length limit */
 
 /* Header (64 bytes). */
@@ -64,10 +64,13 @@ extern "C" {
 #define TI_FLAG_RAW 0x01 /* AUDF from the note number (31 - note mod 32) instead of the nearest-pitch divider */
 #define TI_FLAG_RELATIVE 0x04 /* the pitch envelope accumulates */
 
-/* Pattern rows. A run byte 0x80 | k = k + 1 empty rows (k 0..127). Otherwise a mask byte 0x01..0x0B:
- * bit 0 note byte follows, bit 1 instrument byte follows, bits 2-4 effect count 0..2, bits 5-6 zero; then the note
+/* Pattern rows. A run byte 0x80 | k = k + 1 empty rows (k 0..127). Otherwise a mask byte 0x01..0x13:
+ * bit 0 note byte follows, bit 1 instrument byte follows, bits 2-4 effect count 0..4, bits 5-6 zero; then the note
  * (TI_NOTE_MIN..TI_NOTE_MAX absolute, 57 = A-4; TI_NOTE_OFF), the instrument slot (1..64, defined), and per effect
  * column in order the effect code (0..35 = '0'..'9', 'A'..'Z') and its parameter. */
+/* Layout 1 already reserves three count bits: raising the supported count to four changes neither old row bytes
+ * nor defaults. Counts 5..7 remain malformed. Older two-column players reject new 3/4-effect rows, never truncate
+ * them. Columns are ordered commands for the same two physical voices, not extra hardware channels. */
 #define TI_NOTE_MIN 0 /* C-0 */
 #define TI_NOTE_MAX 119 /* B-9 */
 #define TI_NOTE_OFF 0xFE
@@ -129,7 +132,7 @@ typedef struct TiaImage {
 typedef struct TiRow {
     int note;        /* -1 none, TI_NOTE_MIN..TI_NOTE_MAX, TI_NOTE_OFF */
     int instrument;  /* 0 none, 1..64 */
-    int effects;     /* 0..2 */
+    int effects;     /* 0..4 */
     uint8_t code[TI_MAX_EFFECTS];
     uint8_t param[TI_MAX_EFFECTS];
 } TiRow;

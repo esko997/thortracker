@@ -60,7 +60,7 @@ internal class TiaWalk(private val song: Song) {
             var cut = -1
             for (col in 0..c.more.size) {
                 when (c.effectCode(col)) {
-                    TiaRules.FX_DELAY -> if (c.effectParam(col) > 0) delay = c.effectParam(col)
+                    TiaRules.FX_DELAY -> delay = c.effectParam(col)
                     TiaRules.FX_CUT -> cut = c.effectParam(col)
                 }
             }
@@ -77,6 +77,7 @@ internal class TiaWalk(private val song: Song) {
             val param = c.effectParam(col)
             when (c.effectCode(col)) {
                 TiaRules.FX_PORTAMENTO -> porta[ch] = param
+                TiaRules.FX_SLIDE_UP, TiaRules.FX_SLIDE_DOWN -> porta[ch] = 0
                 TiaRules.FX_FINE -> fine[ch] = param - TiaRules.FINE_CENTRE
                 TiaRules.FX_WAVEFORM -> if (param <= TiaPlayerImage.WAVEFORM_MAX) override[ch] = param
             }

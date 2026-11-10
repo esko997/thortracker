@@ -144,6 +144,9 @@ object TiaLowering {
         }
         for (r in 0 until rows) {
             val cell = track[r]
+            require(cell.more.size < TiaPlayerImage.MAX_EFFECTS) {
+                "TIA row $r has ${cell.more.size + 1} effect columns; at most ${TiaPlayerImage.MAX_EFFECTS} are supported"
+            }
             if (cell.isBlank) { empty++; continue }
             flush()
             var effects = 0

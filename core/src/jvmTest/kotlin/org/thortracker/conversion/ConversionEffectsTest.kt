@@ -18,6 +18,7 @@ import org.thortracker.system.opn.OpnaSystem
 import org.thortracker.system.sid.SidSystem
 import org.thortracker.system.sms.SmsSystem
 import org.thortracker.system.tia.TiaNtscSystem
+import org.thortracker.system.tia.TiaPalSystem
 import org.thortracker.system.ym2612.YmSystem
 
 class ConversionEffectsTest {
@@ -220,13 +221,14 @@ class ConversionEffectsTest {
         assertNull(GbSystem.cellProblem(result.target, 0, result.cell))
     }
 
-    @Test fun twoColumnDestinationPrioritizesSpeedAndCutOverModulation() {
+    @Test fun fourColumnTiaDestinationKeepsSpeedCutAndBothModulationsInOrder() {
         val source = Cell(note = 48, instrument = 1, effect = 0, param = 0x37)
             .withEffect(1, 4, 0x23).withEffect(2, 15, 6).withEffect(3, 28, 3)
-        val result = convert(Opl3System, TiaNtscSystem, source)
-        assertEquals(Cell(note = 48, instrument = 1, effect = 15, param = 6).withEffect(1, 28, 3), result.cell)
-        assertTrue(result.hasLoss(0))
-        assertTrue(result.hasLoss(1))
+        for (system in listOf(TiaNtscSystem, TiaPalSystem)) {
+            val result = convert(Opl3System, system, source)
+            assertEquals(source, result.cell)
+            for (column in 0..3) assertFalse(result.hasLoss(column))
+        }
     }
 
     @Test fun nativeFineZeroIsNegativeBendNotBlank() {
