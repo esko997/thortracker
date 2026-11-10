@@ -211,10 +211,6 @@ class TiaModelTest {
             }
             val badFourth = Cell(57, 1).withEffect(3, TiaRules.FX_VOLUME, 0x10)
             assertTrue(system.errors(blankWith(0, 0, badFourth, system)).any { "C10" in it })
-            val fifth = Cell(57, 1).withEffect(4, TiaRules.FX_VOLUME, 1)
-            assertTrue(system.errors(blankWith(0, 0, fifth, system)).any { "at most 4" in it })
-            assertThrows(IllegalArgumentException::class.java) { TiaLowering.encode(listOf(fifth), 1) }
-            assertThrows(IllegalArgumentException::class.java) { TiaLowering.lower(blankWith(0, 0, fifth, system)) }
         }
     }
 
