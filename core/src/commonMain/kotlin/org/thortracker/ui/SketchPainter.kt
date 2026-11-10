@@ -84,7 +84,7 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         rebuild(guide)
 
         val ch = st.channel.coerceIn(0, s.channelCount() - 1)
-        val col = Palette.channel(ch)
+        val col = ink.palette.channel(ch)
         val channelName = s.system.channels[ch].name
         val soundName = s.system.instrumentName(s, s.system.channels[ch].bank, st.instrument) ?: ""
 
@@ -113,9 +113,9 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         else "Pattern key ${scale.label} (pattern ${hex2(patternNo)})"
         val tuned = s.tuning?.let { "12-note reference; song tuned to ${it.name}  ·  " } ?: ""
         val detail = "$tuned$keyText  ·  $channelName sound ${hex2(st.instrument)} $soundName"
-        val glow = if (sounding >= 0 && strike > 0f) Palette.alpha(Palette.LISTEN, (strike * 64).toInt()) else 0
+        val glow = if (sounding >= 0 && strike > 0f) Palette.alpha(ink.palette.LISTEN, (strike * 64).toInt()) else 0
         val top = header(c, area, "Sketch", detail, glow = glow)
-        ink.rect(c, area.left, top - ink.dp(3f), area.right, top, Palette.LISTEN)
+        ink.rect(c, area.left, top - ink.dp(3f), area.right, top, ink.palette.LISTEN)
 
         // settings strip plus the pattern-key button
         val stripH = u * 2.6f
@@ -135,7 +135,7 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
                 ViewController.SKETCH_CHORDS_FIELD -> if (st.sketchCircle) "Circle" else "Triads"
                 else -> "${st.octave}"
             }
-            drawStripCell(c, r, i, value, if (i == F_CHANNEL) col else Palette.TEXT)
+            drawStripCell(c, r, i, value, if (i == F_CHANNEL) col else ink.palette.TEXT)
             x += w
         }
         drawKeyButton(c, x + 2, stripTop, area.right - pad - 2, stripTop + stripH, local)
@@ -176,11 +176,11 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val u = ink.unit
         val h = r.height()
         val focused = st.sketchRow == ROW_SETTINGS && st.sketchField == i
-        ink.round(c, r, ink.dp(4f), if (focused) Palette.CURSOR_FILL else Palette.LANE)
+        ink.round(c, r, ink.dp(4f), if (focused) ink.palette.CURSOR_FILL else ink.palette.LANE)
         // The halves step down / up; the arrows sit on the edges to say so.
-        ink.label(c, "‹", r.left + u * 0.45f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.2f)
-        ink.label(c, "›", r.right - u * 0.45f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.2f, Align.RIGHT)
-        ink.label(c, ViewController.SKETCH_FIELDS[i], r.centerX(), r.top + h * 0.04f, h * 0.42f, Palette.DIM, size = u * 0.8f, align = Align.CENTER)
+        ink.label(c, "‹", r.left + u * 0.45f, r.top, h, if (focused) ink.palette.TEXT else ink.palette.FAINT, true, u * 1.2f)
+        ink.label(c, "›", r.right - u * 0.45f, r.top, h, if (focused) ink.palette.TEXT else ink.palette.FAINT, true, u * 1.2f, Align.RIGHT)
+        ink.label(c, ViewController.SKETCH_FIELDS[i], r.centerX(), r.top + h * 0.04f, h * 0.42f, ink.palette.DIM, size = u * 0.8f, align = Align.CENTER)
         ink.label(c, ink.fit(value, r.width() - u * 2.6f, bold = true), r.centerX(), r.top + h * 0.36f, h * 0.64f, valueColor, true, align = Align.CENTER)
         if (focused) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
     }
@@ -189,16 +189,16 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val u = ink.unit
         keyButton.set(l, t, r, b)
         val pulse = motion.fade(keyChangeStart, 380)
-        val base = if (local) Palette.alpha(Palette.PLAYHEAD, 60) else Palette.LANE
+        val base = if (local) Palette.alpha(ink.palette.PLAYHEAD, 60) else ink.palette.LANE
         ink.round(c, keyButton, ink.dp(4f), base)
-        if (pulse > 0f) ink.round(c, keyButton, ink.dp(4f), Palette.alpha(Palette.PLAYHEAD, (pulse * 90).toInt()))
-        if (local) ink.outline(c, keyButton, Palette.PLAYHEAD, ink.dp(1.5f), ink.dp(4f))
+        if (pulse > 0f) ink.round(c, keyButton, ink.dp(4f), Palette.alpha(ink.palette.PLAYHEAD, (pulse * 90).toInt()))
+        if (local) ink.outline(c, keyButton, ink.palette.PLAYHEAD, ink.dp(1.5f), ink.dp(4f))
         val h = keyButton.height()
         val w = keyButton.width() - u
         ink.label(c, ink.fit(if (local) "Local key · tap to reset" else "Key follows pattern", w, u * 0.8f), keyButton.centerX(), t + h * 0.04f, h * 0.42f,
-            Palette.DIM, size = u * 0.8f, align = Align.CENTER)
+            ink.palette.DIM, size = u * 0.8f, align = Align.CENTER)
         ink.label(c, ink.fit(if (local) "↺ Pattern key" else "✓ Pattern key", w, bold = true), keyButton.centerX(), t + h * 0.36f, h * 0.64f,
-            if (local) Palette.PLAYHEAD else Palette.DIM, true, align = Align.CENTER)
+            if (local) ink.palette.PLAYHEAD else ink.palette.DIM, true, align = Align.CENTER)
     }
 
     /** A section title; the row the controller is on gets a cursor-coloured bar and bright text. */
@@ -208,10 +208,10 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val x = area.left + u * 0.6f
         if (active) ink.rect(c, x, top + h * 0.2f, x + ink.dp(3f), top + h * 0.85f, cursorColor())
         val tx = x + u * 0.6f
-        ink.label(c, title, tx, top, h, if (active) Palette.TEXT else Palette.DIM, true, u * 0.95f)
+        ink.label(c, title, tx, top, h, if (active) ink.palette.TEXT else ink.palette.DIM, true, u * 0.95f)
         if (detail.isEmpty()) return
         val room = area.right - u * 0.6f - (tx + ink.labelWidth(title, u * 0.95f, true) + u * 1.5f)
-        if (room > u * 4f) ink.label(c, ink.fit(detail, room, u * 0.8f), area.right - u * 0.6f, top, h, Palette.FAINT, size = u * 0.8f, align = Align.RIGHT)
+        if (room > u * 4f) ink.label(c, ink.fit(detail, room, u * 0.8f), area.right - u * 0.6f, top, h, ink.palette.FAINT, size = u * 0.8f, align = Align.RIGHT)
     }
 
     private fun drawChords(c: Surface, l: Float, t: Float, r: Float, b: Float, guide: TonalGuide, sounding: Int, strike: Float, after: Float) {
@@ -223,14 +223,14 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         if (chromaticShown) {
             // Without a diatonic key there is no meaningful chord shortlist; all twelve pitches remain playable.
             chooseScale.set(l, t, r, b)
-            ink.round(c, chooseScale, ink.dp(6f), Palette.LANE)
-            ink.outline(c, chooseScale, if (st.sketchRow == ROW_CHORDS) cursorColor() else Palette.RULE, ink.dp(if (st.sketchRow == ROW_CHORDS) 2f else 1f), ink.dp(6f))
+            ink.round(c, chooseScale, ink.dp(6f), ink.palette.LANE)
+            ink.outline(c, chooseScale, if (st.sketchRow == ROW_CHORDS) cursorColor() else ink.palette.RULE, ink.dp(if (st.sketchRow == ROW_CHORDS) 2f else 1f), ink.dp(6f))
             val h = chooseScale.height()
             val w = chooseScale.width() - u * 2
             ink.label(c, ink.fit("Choose a scale to explore chords", w, u * 1.1f, true), chooseScale.centerX(), t + h * 0.18f, h * 0.34f,
-                Palette.TEXT, true, u * 1.1f, Align.CENTER)
+                ink.palette.TEXT, true, u * 1.1f, Align.CENTER)
             ink.label(c, ink.fit("Chromatic keeps all 12 notes available. Tap here to choose a key.", w), chooseScale.centerX(), t + h * 0.52f, h * 0.3f,
-                Palette.PLAYHEAD, align = Align.CENTER)
+                ink.palette.PLAYHEAD, align = Align.CENTER)
             return
         }
         val cw = (r - l) / maxOf(chordCount, 7)
@@ -240,20 +240,20 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
             rect.set(l + i * cw + ink.dp(2f), t, l + (i + 1) * cw - ink.dp(2f), b)
             val id = padId(ROW_CHORDS, i)
             val selected = i == st.sketchChord
-            val base = if (selected) Palette.CURSOR_FILL else Palette.BAR
+            val base = if (selected) ink.palette.CURSOR_FILL else ink.palette.BAR
             val isOn = id == sounding
             val fill = when {
-                isOn -> if (strike > 0f) Palette.mix(Palette.LISTEN, Palette.TEXT, 0.55f * strike) else Palette.LISTEN
-                id == released && after > 0f -> Palette.mix(base, Palette.LISTEN, 0.7f * after)
+                isOn -> if (strike > 0f) Palette.mix(ink.palette.LISTEN, ink.palette.TEXT, 0.55f * strike) else ink.palette.LISTEN
+                id == released && after > 0f -> Palette.mix(base, ink.palette.LISTEN, 0.7f * after)
                 else -> base
             }
             ink.round(c, rect, ink.dp(5f), fill)
             val h = rect.height()
             val w = rect.width() - u * 0.6f
-            val strong = if (isOn) Palette.BG else Palette.TEXT
-            val soft = if (isOn) Palette.BG else Palette.DIM
+            val strong = if (isOn) ink.palette.BG else ink.palette.TEXT
+            val soft = if (isOn) ink.palette.BG else ink.palette.DIM
             ink.label(c, ink.fit(chord.degree, w, u * 1.5f, true), rect.centerX(), rect.top + h * 0.06f, h * 0.38f, strong, true, u * 1.5f, Align.CENTER)
-            ink.label(c, ink.fit(chord.name, w, u * 1.05f, true), rect.centerX(), rect.top + h * 0.42f, h * 0.26f, if (isOn) Palette.BG else Palette.TEXT, true, u * 1.05f, Align.CENTER)
+            ink.label(c, ink.fit(chord.name, w, u * 1.05f, true), rect.centerX(), rect.top + h * 0.42f, h * 0.26f, if (isOn) ink.palette.BG else ink.palette.TEXT, true, u * 1.05f, Align.CENTER)
             ink.mono(c, chordTones[i], rect.centerX(), rect.top + h * 0.68f, h * 0.24f, soft, size = u * 0.8f, align = Align.CENTER)
             focus(c, rect, ROW_CHORDS, selected)
         }
@@ -261,8 +261,8 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val gapL = l + chordCount * cw + u * 0.6f
         if (chordCount < 7 && r - gapL > u * 8f) {
             val h = b - t
-            ink.label(c, ink.fit("Only triads made of this scale's own tones", r - gapL), gapL, t + h * 0.2f, h * 0.3f, Palette.DIM, size = u * 0.85f)
-            ink.label(c, ink.fit("No notes are added from outside the key", r - gapL), gapL, t + h * 0.5f, h * 0.3f, Palette.FAINT, size = u * 0.85f)
+            ink.label(c, ink.fit("Only triads made of this scale's own tones", r - gapL), gapL, t + h * 0.2f, h * 0.3f, ink.palette.DIM, size = u * 0.85f)
+            ink.label(c, ink.fit("No notes are added from outside the key", r - gapL), gapL, t + h * 0.5f, h * 0.3f, ink.palette.FAINT, size = u * 0.85f)
         }
     }
 
@@ -282,9 +282,9 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val cy = t + h / 2f
         circleX = cx; circleY = cy; circleR = radius
         val focusedRow = st.sketchRow == ROW_CHORDS
-        c.fillCircle(cx, cy, radius, Palette.LANE)
-        c.strokeCircle(cx, cy, radius, if (focusedRow) Palette.alpha(cursorColor(), 140) else Palette.RULE, ink.dp(if (focusedRow) 2f else 1f))
-        c.strokeCircle(cx, cy, radius * RING_SPLIT, Palette.RULE, ink.dp(1f))
+        c.fillCircle(cx, cy, radius, ink.palette.LANE)
+        c.strokeCircle(cx, cy, radius, if (focusedRow) Palette.alpha(cursorColor(), 140) else ink.palette.RULE, ink.dp(if (focusedRow) 2f else 1f))
+        c.strokeCircle(cx, cy, radius * RING_SPLIT, ink.palette.RULE, ink.dp(1f))
 
         val place = ctl.sketchCirclePlace(guide.scale)
         for (ring in 0..1) {
@@ -301,27 +301,27 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
                 val id = padId(ROW_CHORDS, circleIndex(pos, minor))
                 val isOn = id == sounding
                 val base = when {
-                    current -> Palette.mix(Palette.BAR, Palette.PLAYHEAD, 0.55f)
-                    mark.isNotEmpty() -> Palette.mix(Palette.BAR, Palette.PLAYHEAD, 0.22f)
-                    else -> Palette.BAR
+                    current -> Palette.mix(ink.palette.BAR, ink.palette.PLAYHEAD, 0.55f)
+                    mark.isNotEmpty() -> Palette.mix(ink.palette.BAR, ink.palette.PLAYHEAD, 0.22f)
+                    else -> ink.palette.BAR
                 }
                 c.fillCircle(x, y, dot, when {
-                    isOn -> if (strike > 0f) Palette.mix(Palette.LISTEN, Palette.TEXT, 0.55f * strike) else Palette.LISTEN
-                    id == released && after > 0f -> Palette.mix(base, Palette.LISTEN, 0.7f * after)
+                    isOn -> if (strike > 0f) Palette.mix(ink.palette.LISTEN, ink.palette.TEXT, 0.55f * strike) else ink.palette.LISTEN
+                    id == released && after > 0f -> Palette.mix(base, ink.palette.LISTEN, 0.7f * after)
                     else -> base
                 })
                 val root = ViewController.circleRoot(pos)
                 val name = if (minor) MINOR_NAMES[(root + 9) % 12] else Scale.ROOT_NAMES[root]
-                val textColor = if (isOn) Palette.BG else if (current) Palette.TEXT else Palette.DIM
+                val textColor = if (isOn) ink.palette.BG else if (current) ink.palette.TEXT else ink.palette.DIM
                 val nameSize = if (minor) u * 0.85f else u * 1.05f
                 if (mark.isEmpty()) {
                     ink.label(c, name, x, y - dot, dot * 2f, textColor, current, nameSize, Align.CENTER)
                 } else {
                     ink.label(c, name, x, y - dot * 0.95f, dot * 1.15f, textColor, true, nameSize, Align.CENTER)
-                    ink.label(c, mark, x, y + dot * 0.1f, dot * 0.8f, if (isOn) Palette.BG else Palette.PLAYHEAD, size = minOf(nameSize * 0.75f, dot * 0.75f), align = Align.CENTER)
+                    ink.label(c, mark, x, y + dot * 0.1f, dot * 0.8f, if (isOn) ink.palette.BG else ink.palette.PLAYHEAD, size = minOf(nameSize * 0.75f, dot * 0.75f), align = Align.CENTER)
                 }
                 if (pos == st.sketchCircleKey && minor == st.sketchCircleMinor) {
-                    c.strokeCircle(x, y, dot + ink.dp(3f), if (focusedRow) cursorColor() else Palette.FAINT, ink.dp(if (focusedRow) 3f else 1.5f))
+                    c.strokeCircle(x, y, dot + ink.dp(3f), if (focusedRow) cursorColor() else ink.palette.FAINT, ink.dp(if (focusedRow) 3f else 1.5f))
                 }
             }
         }
@@ -350,11 +350,11 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         )
         val lineH = u * 1.45f
         var y = maxOf(t, cy - (lineH * (lines.size + 1.3f)) / 2f)
-        ink.label(c, ink.fit(title, pw, u * 1.3f, true), px, y, lineH * 1.3f, Palette.TEXT, true, u * 1.3f)
+        ink.label(c, ink.fit(title, pw, u * 1.3f, true), px, y, lineH * 1.3f, ink.palette.TEXT, true, u * 1.3f)
         y += lineH * 1.3f
         for ((i, line) in lines.withIndex()) {
             if (y + lineH > b) break
-            val color = when (i) { 3 -> Palette.PLAYHEAD; 4 -> Palette.FAINT; else -> Palette.DIM }
+            val color = when (i) { 3 -> ink.palette.PLAYHEAD; 4 -> ink.palette.FAINT; else -> ink.palette.DIM }
             ink.label(c, ink.fit(line, pw, u * 0.9f), px, y, lineH, color, size = u * 0.9f)
             y += lineH
         }
@@ -375,32 +375,32 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
             val role = toneRole[i]
             val selected = i == st.sketchTone
             val base = when {
-                role != 0 && chordAudition -> Palette.mix(Palette.BAR, Palette.LISTEN, 0.4f)
-                role != 0 -> Palette.mix(Palette.BAR, col, 0.26f)
-                selected -> Palette.CURSOR_FILL
-                else -> Palette.BAR
+                role != 0 && chordAudition -> Palette.mix(ink.palette.BAR, ink.palette.LISTEN, 0.4f)
+                role != 0 -> Palette.mix(ink.palette.BAR, col, 0.26f)
+                selected -> ink.palette.CURSOR_FILL
+                else -> ink.palette.BAR
             }
             val isOn = id == sounding
             val fill = when {
-                isOn -> if (strike > 0f) Palette.mix(Palette.LISTEN, Palette.TEXT, 0.55f * strike) else Palette.LISTEN
-                id == released && after > 0f -> Palette.mix(base, Palette.LISTEN, 0.7f * after)
+                isOn -> if (strike > 0f) Palette.mix(ink.palette.LISTEN, ink.palette.TEXT, 0.55f * strike) else ink.palette.LISTEN
+                id == released && after > 0f -> Palette.mix(base, ink.palette.LISTEN, 0.7f * after)
                 else -> base
             }
             ink.round(c, rect, ink.dp(5f), fill)
             val h = rect.height()
             // chord membership band along the top: thick for the chord root
             if (role != 0) {
-                val band = if (chordAudition) Palette.LISTEN else col
+                val band = if (chordAudition) ink.palette.LISTEN else col
                 ink.rect(c, rect.left + ink.dp(4f), rect.top + ink.dp(3f), rect.right - ink.dp(4f), rect.top + ink.dp(if (role == 1) 9f else 6f), band)
             }
             val playable = toneNotes[i] in song.system.noteRange
-            val strong = when { isOn -> Palette.BG; !playable -> Palette.FAINT; else -> Palette.TEXT }
+            val strong = when { isOn -> ink.palette.BG; !playable -> ink.palette.FAINT; else -> ink.palette.TEXT }
             val nameTop = rect.top + minOf(h * 0.12f, u * 2f)
             ink.mono(c, toneNames[i], rect.centerX(), nameTop, u * 2f, strong, true, nameSize, Align.CENTER)
-            val degreeColor = when { isOn -> Palette.BG; tone.interval == 0 -> Palette.TEXT; else -> Palette.DIM }
+            val degreeColor = when { isOn -> ink.palette.BG; tone.interval == 0 -> ink.palette.TEXT; else -> ink.palette.DIM }
             ink.label(c, tone.degree, rect.centerX(), nameTop + u * 2f, u * 1.6f, degreeColor, tone.interval == 0, u * 1.05f, Align.CENTER)
             if (role != 0 && h > u * 6f) {
-                ink.label(c, ROLES[role], rect.centerX(), rect.bottom - u * 2f, u * 1.6f, if (isOn) Palette.BG else if (chordAudition) Palette.LISTEN else col,
+                ink.label(c, ROLES[role], rect.centerX(), rect.bottom - u * 2f, u * 1.6f, if (isOn) ink.palette.BG else if (chordAudition) ink.palette.LISTEN else col,
                     role == 1, u * 0.9f, Align.CENTER)
             }
             focus(c, rect, ROW_NOTES, selected)
@@ -418,35 +418,35 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val isOn = sounding == padId(ROW_PHRASE, 0)
         val stripH = u * 2.6f
         phraseStrip.set(l, t, r, t + stripH)
-        val base = if (focusedRow && st.sketchPhraseField == ViewController.PHRASE_STRIP) Palette.CURSOR_FILL else Palette.LANE
-        ink.round(c, phraseStrip, ink.dp(4f), if (isOn) Palette.mix(base, Palette.LISTEN, 0.25f + 0.35f * strike) else base)
+        val base = if (focusedRow && st.sketchPhraseField == ViewController.PHRASE_STRIP) ink.palette.CURSOR_FILL else ink.palette.LANE
+        ink.round(c, phraseStrip, ink.dp(4f), if (isOn) Palette.mix(base, ink.palette.LISTEN, 0.25f + 0.35f * strike) else base)
         val n = phrase.length
         val cw = phraseStrip.width() / n
         val noteH = stripH * 0.58f
         val lineY = t + stripH * 0.64f
         val noteSize = minOf(u * 0.85f, cw * 0.3f)
-        val held = Palette.alpha(if (isOn) Palette.LISTEN else col, 150)
+        val held = Palette.alpha(if (isOn) ink.palette.LISTEN else col, 150)
         var noteOn = false
         for (i in 0 until n) {
             val x0 = l + i * cw
             val mid = x0 + cw / 2f
-            if (i > 0 && i % 4 == 0) ink.line(c, x0, t + ink.dp(3f), x0, t + stripH - ink.dp(3f), Palette.RULE, ink.dp(1f))
+            if (i > 0 && i % 4 == 0) ink.line(c, x0, t + ink.dp(3f), x0, t + stripH - ink.dp(3f), ink.palette.RULE, ink.dp(1f))
             val note = phrase.steps[i]
             if (note != null) {
                 noteOn = true
                 val inKey = guide.scale.contains(note)
-                ink.mono(c, song.system.noteName(note), mid, t, noteH, if (inKey) Palette.TEXT else Palette.DIM, i % 4 == 0, noteSize, Align.CENTER)
+                ink.mono(c, song.system.noteName(note), mid, t, noteH, if (inKey) ink.palette.TEXT else ink.palette.DIM, i % 4 == 0, noteSize, Align.CENTER)
                 c.fillCircle(mid, lineY, ink.dp(3f), held)
                 if (i + 1 < n && phrase.steps[i + 1] == null) ink.rect(c, mid, lineY - ink.dp(1.5f), x0 + cw, lineY + ink.dp(1.5f), held)
             } else if (noteOn) {
                 ink.rect(c, x0, lineY - ink.dp(1.5f), x0 + cw, lineY + ink.dp(1.5f), held)
             } else {
-                ink.label(c, "·", mid, t, noteH, Palette.FAINT, true, u, Align.CENTER)
+                ink.label(c, "·", mid, t, noteH, ink.palette.FAINT, true, u, Align.CENTER)
             }
-            ink.mono(c, hex1(i), mid, lineY + ink.dp(2f), t + stripH - lineY - ink.dp(2f), Palette.FAINT, size = u * 0.6f, align = Align.CENTER)
+            ink.mono(c, hex1(i), mid, lineY + ink.dp(2f), t + stripH - lineY - ink.dp(2f), ink.palette.FAINT, size = u * 0.6f, align = Align.CENTER)
         }
         if (st.sketchPhraseField == ViewController.PHRASE_STRIP) {
-            ink.outline(c, phraseStrip, if (focusedRow) cursorColor() else Palette.FAINT, ink.dp(if (focusedRow) 2f else 1f), ink.dp(4f))
+            ink.outline(c, phraseStrip, if (focusedRow) cursorColor() else ink.palette.FAINT, ink.dp(if (focusedRow) 2f else 1f), ink.dp(4f))
         }
 
         // settings and actions
@@ -484,24 +484,24 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         val focused = focusedRow && st.sketchPhraseField == i
         val setting = i in ViewController.PHRASE_LENGTH..ViewController.PHRASE_MOTION
         val fill = when {
-            on -> Palette.alpha(Palette.PLAYHEAD, 70)
-            focused -> Palette.CURSOR_FILL
-            setting || i == ViewController.PHRASE_CHORD_TONES -> Palette.LANE
-            else -> Palette.BAR
+            on -> Palette.alpha(ink.palette.PLAYHEAD, 70)
+            focused -> ink.palette.CURSOR_FILL
+            setting || i == ViewController.PHRASE_CHORD_TONES -> ink.palette.LANE
+            else -> ink.palette.BAR
         }
         ink.round(c, r, ink.dp(4f), fill)
-        if (on) ink.outline(c, r, Palette.PLAYHEAD, ink.dp(1.5f), ink.dp(4f))
+        if (on) ink.outline(c, r, ink.palette.PLAYHEAD, ink.dp(1.5f), ink.dp(4f))
         if (setting) {
-            ink.label(c, "‹", r.left + u * 0.4f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.1f)
-            ink.label(c, "›", r.right - u * 0.4f, r.top, h, if (focused) Palette.TEXT else Palette.FAINT, true, u * 1.1f, Align.RIGHT)
+            ink.label(c, "‹", r.left + u * 0.4f, r.top, h, if (focused) ink.palette.TEXT else ink.palette.FAINT, true, u * 1.1f)
+            ink.label(c, "›", r.right - u * 0.4f, r.top, h, if (focused) ink.palette.TEXT else ink.palette.FAINT, true, u * 1.1f, Align.RIGHT)
         }
         val w = r.width() - if (setting) u * 2.2f else u * 0.6f
         val valueColor = when {
-            i == ViewController.PHRASE_INSERT -> Palette.WRITE
-            on -> Palette.PLAYHEAD
-            else -> Palette.TEXT
+            i == ViewController.PHRASE_INSERT -> ink.palette.WRITE
+            on -> ink.palette.PLAYHEAD
+            else -> ink.palette.TEXT
         }
-        ink.label(c, ink.fit(caption, w, u * 0.8f), r.centerX(), r.top + h * 0.04f, h * 0.42f, Palette.DIM, size = u * 0.8f, align = Align.CENTER)
+        ink.label(c, ink.fit(caption, w, u * 0.8f), r.centerX(), r.top + h * 0.04f, h * 0.42f, ink.palette.DIM, size = u * 0.8f, align = Align.CENTER)
         ink.label(c, ink.fit(value, w, bold = true), r.centerX(), r.top + h * 0.36f, h * 0.64f, valueColor, true, align = Align.CENTER)
         if (focused) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
     }
@@ -511,13 +511,13 @@ internal class SketchPainter(v: PaneView) : Painter(v) {
         if (!selected) return
         inset.set(rect.left + ink.dp(2f), rect.top + ink.dp(2f), rect.right - ink.dp(2f), rect.bottom - ink.dp(2f))
         if (st.sketchRow == row) ink.outline(c, inset, cursorColor(), ink.dp(3f), ink.dp(4f))
-        else ink.outline(c, inset, Palette.FAINT, ink.dp(1f), ink.dp(4f))
+        else ink.outline(c, inset, ink.palette.FAINT, ink.dp(1f), ink.dp(4f))
     }
 
     private fun cursorColor() = when {
-        ctl.sketchAuditioning || touchRow >= 0 -> Palette.LISTEN
-        v.controllerFocused -> Palette.PLAYHEAD
-        else -> Palette.DIM
+        ctl.sketchAuditioning || touchRow >= 0 -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS_ACCENT
+        else -> ink.palette.DIM
     }
 
     /** Refreshes guide-derived strings, the note names at the current octave and the selected chord's roles. */

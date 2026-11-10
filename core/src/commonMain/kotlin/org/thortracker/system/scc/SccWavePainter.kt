@@ -57,7 +57,7 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
         val chip = s.scc.variant
         val top = header(c, area, "Wave ${hex2(number)}" + if (wave.name.isEmpty()) "" else " ${wave.name}",
             "${chip.label} · $locked" + if (users.isEmpty()) "no sound plays this wave" else "played by sound ${users.joinToString(", ") { hex2(it) }}")
-        val col = Palette.channel(st.listenChannel.coerceIn(0, s.system.channels.size - 1))
+        val col = ink.palette.channel(st.listenChannel.coerceIn(0, s.system.channels.size - 1))
         val pad = ink.unit * 0.7f
         val small = ink.unit * 0.8f
         var y = top + ink.unit * 0.3f
@@ -66,10 +66,10 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
         val lineH = ink.unit * 1.5f
         nameRect = Rect(area.left + pad, y, area.right - pad, y + lineH)
         val onName = st.waveRow == SccWaveView.NAME_ROW
-        if (onName) ink.rect(c, nameRect, Palette.CURSOR_FILL)
+        if (onName) ink.rect(c, nameRect, ink.palette.CURSOR_FILL)
         val vx = nameRect.left + ink.unit * 4f
-        ink.label(c, "Name", nameRect.left + ink.unit * 0.3f, y, lineH, if (onName) Palette.TEXT else Palette.DIM)
-        ink.label(c, wave.name.ifEmpty { "(unnamed)" }, vx, y, lineH, if (wave.name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+        ink.label(c, "Name", nameRect.left + ink.unit * 0.3f, y, lineH, if (onName) ink.palette.TEXT else ink.palette.DIM)
+        ink.label(c, wave.name.ifEmpty { "(unnamed)" }, vx, y, lineH, if (wave.name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
         if (onName) {
             val before = wave.name.take(st.textPos).padEnd(st.textPos, ' ')
             val cx = vx + ink.labelWidth(before, ink.unit, true)
@@ -79,7 +79,7 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
         }
         y += lineH
         SccWaveView.sharedNote(s, number)?.let { note ->
-            ink.label(c, ink.fit(note, area.width() - pad * 2, small), area.left + pad, y, ink.unit * 1.1f, Palette.PLAYHEAD, size = small)
+            ink.label(c, ink.fit(note, area.width() - pad * 2, small), area.left + pad, y, ink.unit * 1.1f, ink.palette.PLAYHEAD, size = small)
             y += ink.unit * 1.1f
         }
 
@@ -96,9 +96,9 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
             val w = s.scc.waves.getOrNull(i) ?: continue
             val r = Rect(area.left + pad + k * tw + 2, thumbTop, area.left + pad + (k + 1) * tw - 2, thumbTop + thumbH)
             val sel = i == st.wave
-            ink.round(c, r, ink.dp(3f), if (sel) Palette.CURSOR_FILL else Palette.LANE)
-            drawSccWaveThumb(ink, c, Rect(r.left + 2, r.top + ink.unit * 0.8f, r.right - 2, r.bottom - 2), w.samples, if (sel) col else Palette.FAINT)
-            ink.mono(c, hex2(i + 1), r.left + ink.dp(3f), r.top, ink.unit * 0.8f, if (sel) Palette.TEXT else Palette.DIM, size = ink.unit * 0.65f)
+            ink.round(c, r, ink.dp(3f), if (sel) ink.palette.CURSOR_FILL else ink.palette.LANE)
+            drawSccWaveThumb(ink, c, Rect(r.left + 2, r.top + ink.unit * 0.8f, r.right - 2, r.bottom - 2), w.samples, if (sel) col else ink.palette.FAINT)
+            ink.mono(c, hex2(i + 1), r.left + ink.dp(3f), r.top, ink.unit * 0.8f, if (sel) ink.palette.TEXT else ink.palette.DIM, size = ink.unit * 0.65f)
             if (sel) ink.outline(c, r, col, ink.dp(2f), ink.dp(3f))
             thumbs += r to i
         }
@@ -122,9 +122,9 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
             }
             val r = Rect(x, y, x + w, y + toolH)
             val sel = st.waveRow == SccWaveView.TOOLS_ROW && st.waveCol == t.ordinal
-            ink.round(c, r, ink.dp(4f), if (sel) Palette.CURSOR_FILL else Palette.RULE)
+            ink.round(c, r, ink.dp(4f), if (sel) ink.palette.CURSOR_FILL else ink.palette.RULE)
             if (sel) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
-            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) Palette.TEXT else Palette.DIM, sel, size, Align.CENTER)
+            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) ink.palette.TEXT else ink.palette.DIM, sel, size, Align.CENTER)
             tools += r to t
             x += w + ink.unit * 0.4f
         }
@@ -135,26 +135,26 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
         val labelW = ink.unit * 2.4f
         grid = Rect(area.left + pad + labelW, y, area.right - pad, area.bottom - statusH - ink.unit * 0.3f)
         if (grid.height() < ink.unit * 3) return
-        ink.rect(c, grid, Palette.LANE)
+        ink.rect(c, grid, ink.palette.LANE)
         val cw = grid.width() / SccWave.SAMPLES
         fun yOf(level: Int) = grid.bottom - grid.height() * (level - SccWaveView.LOW + 0.5f) / 256f
         val mid = yOf(0)
         for (level in listOf(-128, -64, 0, 64, 127)) {
             val ly = yOf(level)
-            ink.line(c, grid.left, ly, grid.right, ly, if (level == 0) Palette.alpha(Palette.DIM, 90) else Palette.RULE, ink.dp(1f))
+            ink.line(c, grid.left, ly, grid.right, ly, if (level == 0) Palette.alpha(ink.palette.DIM, 90) else ink.palette.RULE, ink.dp(1f))
             ink.mono(c, if (level > 0) "+$level" else level.toString(), grid.left - ink.unit * 0.3f, ly - ink.unit * 0.5f, ink.unit,
-                Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+                ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         }
         for (i in 0..SccWave.SAMPLES) {
             val gx = grid.left + i * cw
-            ink.line(c, gx, grid.top, gx, grid.bottom, if (i % 8 == 0) Palette.RULE else Palette.alpha(Palette.RULE, 90), 1f)
+            ink.line(c, gx, grid.top, gx, grid.bottom, if (i % 8 == 0) ink.palette.RULE else Palette.alpha(ink.palette.RULE, 90), 1f)
         }
         val onGrid = st.waveRow == SccWaveView.GRID_ROW
         for ((i, sample) in wave.samples.withIndex()) {
             val bx = grid.left + i * cw
             val sy = yOf(sample)
             ink.rect(c, bx + 1, minOf(mid, sy), bx + cw - 1, maxOf(mid, sy), Palette.alpha(col, 80))
-            ink.rect(c, bx + 1, sy - ink.dp(1.5f), bx + cw - 1, sy + ink.dp(1.5f), if (onGrid && i == st.waveCol) Palette.TEXT else col)
+            ink.rect(c, bx + 1, sy - ink.dp(1.5f), bx + cw - 1, sy + ink.dp(1.5f), if (onGrid && i == st.waveCol) ink.palette.TEXT else col)
         }
         if (onGrid) {
             val px = grid.left + st.waveCol * cw
@@ -169,16 +169,16 @@ internal class SccWavePainter(v: PaneView) : Painter(v) {
         val sample = wave.samples.getOrNull(st.waveCol) ?: 0
         val status = if (onGrid) "Sample ${st.waveCol}: ${signed(sample)} (${hex2(sample and 0xFF)})   pen ${signed(st.waveLevel)} (${hex2(st.waveLevel and 0xFF)})"
             else "32 samples, -128..127 · ${if (chip.sharedWave) "SCC: SCC 4 and SCC 5 share one wave RAM" else "SCC+: every channel has its own wave RAM"}"
-        ink.label(c, ink.fit(status, area.width() - pad * 2, small), area.left + pad, grid.bottom + ink.unit * 0.2f, statusH, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(status, area.width() - pad * 2, small), area.left + pad, grid.bottom + ink.unit * 0.2f, statusH, ink.palette.FAINT, size = small)
     }
 
     private fun signed(v: Int) = if (v > 0) "+$v" else v.toString()
 
     private fun cursorColor() = when {
-        ctl.editHeld || drawing -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld || drawing -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     // ---- touch ---------------------------------------------------------------------------------------

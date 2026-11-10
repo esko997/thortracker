@@ -43,7 +43,7 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = WsInstrumentView.sound(s, st)
         val page = WsInstrumentView.page(s, st)
         val listen = WsInstrumentView.listenChannel(s, st, ins)
-        val col = Palette.channel(listen)
+        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when (ins?.kind) {
             WsKind.TONE -> "tone sound"
@@ -84,17 +84,17 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (r in rows) {
             val sel = r == row
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = s.system.channels.getOrNull(listen)?.name.orEmpty()
                     ink.label(c, name, vx, y, h, col, true)
                     listenNote(ins, listen)?.let { note ->
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, WsInstrumentView.pages(s, st).map { tabLabel(ins, it) },
@@ -122,7 +122,7 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             return
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(WsInstrumentView.envelopeSummary(k, ins?.kind ?: WsKind.TONE), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(WsInstrumentView.envelopeSummary(k, ins?.kind ?: WsKind.TONE), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
         y += rowH * 0.85f
         val plotTop = y + ink.unit * 0.3f
         if (area.bottom - plotTop <= ink.unit * 4f) return
@@ -170,7 +170,7 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val tw = minOf(ink.unit * 6f, rightEdge - tx)
         if (tw < ink.unit * 2f) return
         val r = Rect(tx, y + h * 0.15f, tx + tw, y + h * 0.85f)
-        ink.rect(c, r, Palette.LANE)
+        ink.rect(c, r, ink.palette.LANE)
         val bw = r.width() / wave.size
         for ((i, v) in wave.withIndex()) {
             val bh = r.height() * (v + 1) / (WsSound.WAVE_MAX + 1f)
@@ -256,10 +256,10 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val samples = s.ws.samples
         val small = ink.unit * 0.8f
         val titleH = ink.unit * 1.4f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val free = WsSamples.free(s)
         ink.label(c, ink.fit("Samples · ${samples.size} of ${WsSound.MAX_SAMPLES} · ${WsSampleMenu.kb(free)} free", r.width() - ink.unit), r.left + ink.unit * 0.5f,
-            r.top, titleH, if (free < 0) Palette.ERROR else Palette.DIM, size = small)
+            r.top, titleH, if (free < 0) ink.palette.ERROR else ink.palette.DIM, size = small)
 
         val lineH = ink.unit * 1.35f
         addRect = Rect(r.left, r.bottom - lineH - ink.unit * 0.2f, r.right, r.bottom - ink.unit * 0.2f)
@@ -272,29 +272,29 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - visible + 1), st.dpcmSample.coerceAtLeast(0))
         sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - visible))
         val played = if (ins?.kind == WsKind.SAMPLE) ins.sample else -1
-        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", listW - ink.unit), r.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", listW - ink.unit), r.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, ink.palette.FAINT, size = small)
         for (i in sampleScroll until minOf(samples.size, sampleScroll + visible)) {
             val sample = samples[i]
             val y = sampleRect.top + (i - sampleScroll) * sampleRowH
             val on = i == st.dpcmSample
-            if (on) ink.rect(c, sampleRect.left, y, sampleRect.right, y + sampleRowH, Palette.CURSOR_FILL)
-            ink.mono(c, hex2(i), r.left + ink.unit * 0.5f, y, sampleRowH, if (i == played) col else Palette.FAINT, i == played, small)
+            if (on) ink.rect(c, sampleRect.left, y, sampleRect.right, y + sampleRowH, ink.palette.CURSOR_FILL)
+            ink.mono(c, hex2(i), r.left + ink.unit * 0.5f, y, sampleRowH, if (i == played) col else ink.palette.FAINT, i == played, small)
             val size = sample.frames.toString() + if (sample.stereo) " st" else ""
             ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, listW - ink.unit * 2.8f - ink.labelWidth(size, small) - ink.unit * 0.5f),
-                r.left + ink.unit * 2.2f, y, sampleRowH, if (on) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, size, sampleRect.right - ink.unit * 0.4f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                r.left + ink.unit * 2.2f, y, sampleRowH, if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+            ink.label(c, size, sampleRect.right - ink.unit * 0.4f, y, sampleRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
             if (on && row == Row.SAMPLES) ink.outline(c, Rect(sampleRect.left + 2, y + 1, sampleRect.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
 
         // the selected sample's bytes, min/max per column
         val sample = samples.getOrNull(st.dpcmSample)
-        ink.rect(c, waveRect, Palette.BG)
+        ink.rect(c, waveRect, ink.palette.BG)
         if (sample != null && waveRect.width() > 4f && waveRect.height() > 4f) {
             val data = sample.data
             val columns = maxOf(1, minOf(data.size, waveRect.width().toInt() / 2))
             val cw = waveRect.width() / columns
             val mid = waveRect.bottom - waveRect.height() * 128f / 255f
-            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, ink.palette.RULE, ink.dp(1f))
             for (k in 0 until columns) {
                 val a = (k.toLong() * data.size / columns).toInt()
                 val b = maxOf(a + 1, ((k + 1).toLong() * data.size / columns).toInt())
@@ -307,21 +307,21 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
             if (played == st.dpcmSample && ins != null && ins.loop && !ins.isDma) {
                 val lx = waveRect.left + waveRect.width() * ins.loopStart / sample.frames
-                ink.line(c, lx, waveRect.top, lx, waveRect.bottom, Palette.LISTEN, ink.dp(2f))
-                ink.label(c, "loop", lx + ink.dp(3f), waveRect.top, ink.unit, Palette.LISTEN, size = ink.unit * 0.7f)
+                ink.line(c, lx, waveRect.top, lx, waveRect.bottom, ink.palette.LISTEN, ink.dp(2f))
+                ink.label(c, "loop", lx + ink.dp(3f), waveRect.top, ink.unit, ink.palette.LISTEN, size = ink.unit * 0.7f)
             }
             val shown = if (played == st.dpcmSample) ins else null
-            ink.label(c, WsSampleMenu.seconds(s, sample, shown), waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+            ink.label(c, WsSampleMenu.seconds(s, sample, shown), waveRect.right - ink.dp(3f), waveRect.top, ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         }
 
         val vx = r.left + ink.unit * 4.4f
         fun boxRow(rr: Rect, which: Row, label: String, value: String, off: Boolean) {
             val sel = row == which
             val inner = Rect(rr.left + ink.unit * 0.2f, rr.top, rr.right - ink.unit * 0.2f, rr.bottom)
-            if (sel) ink.rect(c, inner, Palette.CURSOR_FILL)
-            ink.label(c, label, r.left + ink.unit * 0.5f, rr.top, rr.height(), if (sel) Palette.TEXT else Palette.DIM, size = small)
+            if (sel) ink.rect(c, inner, ink.palette.CURSOR_FILL)
+            ink.label(c, label, r.left + ink.unit * 0.5f, rr.top, rr.height(), if (sel) ink.palette.TEXT else ink.palette.DIM, size = small)
             ink.label(c, ink.fit(value, r.right - vx - ink.unit * 0.5f, small), vx, rr.top, rr.height(),
-                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+                if (off) ink.palette.FAINT else if (sel) ink.palette.TEXT else ink.palette.DIM, sel, small)
             if (sel) ink.outline(c, inner, cursorColor(), ink.dp(2f), ink.dp(3f))
         }
         boxRow(nameRect, Row.SAMPLE_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)

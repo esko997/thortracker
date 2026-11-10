@@ -46,8 +46,8 @@ internal class EnvelopePlot(private val ink: Ink) {
     fun draw(c: Surface, r: Rect, title: String, range: IntRange, env: NesEnvelope, step: Int, valueText: (Int) -> String,
              muted: Boolean, col: Int, focused: Boolean, cursor: Int, editing: Boolean, maxLength: Int = NesEnvelope.MAX_LENGTH) {
         val values = env.values
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, if (focused) Palette.DIM else Palette.FAINT, size = ink.unit * 0.8f)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, ink.unit * 1.4f, if (focused) ink.palette.DIM else ink.palette.FAINT, size = ink.unit * 0.8f)
         val labelH = ink.unit * 1.1f
         val inner = Rect(r.left + ink.unit * 2.2f, r.top + ink.unit * 1.5f, r.right - ink.unit * 0.5f, r.bottom - ink.unit * 0.3f - labelH)
         graph = inner
@@ -73,8 +73,8 @@ internal class EnvelopePlot(private val ink: Ink) {
         for (value in listOf(hi, if (lo < 0) 0 else -1, lo)) {
             if (value < lo) continue
             val yv = yOf(value)
-            ink.line(c, inner.left, yv, inner.right, yv, if (value == 0 && lo < 0) Palette.BAR else Palette.RULE, ink.dp(1f))
-            ink.mono(c, valueText(value).take(5), inner.left - ink.unit * 0.3f, yv - ls, ls * 2, Palette.FAINT, size = ls, align = Align.RIGHT)
+            ink.line(c, inner.left, yv, inner.right, yv, if (value == 0 && lo < 0) ink.palette.BAR else ink.palette.RULE, ink.dp(1f))
+            ink.mono(c, valueText(value).take(5), inner.left - ink.unit * 0.3f, yv - ls, ls * 2, ink.palette.FAINT, size = ls, align = Align.RIGHT)
         }
 
         // loop region (the part that repeats while held) and release point
@@ -84,23 +84,23 @@ internal class EnvelopePlot(private val ink: Ink) {
             val x0 = maxOf(inner.left, xOf(env.loop))
             val x1 = minOf(inner.right, xOf(loopEnd))
             if (x1 > x0) {
-                ink.rect(c, x0, inner.top, x1, inner.bottom, Palette.alpha(Palette.LISTEN, 26))
-                ink.rect(c, x0, inner.top, x1, inner.top + ink.dp(3f), Palette.LISTEN)
-                ink.label(c, "loop", x0 + ink.dp(3f), inner.top + ink.dp(3f), ink.unit, Palette.LISTEN, size = ink.unit * 0.7f)
+                ink.rect(c, x0, inner.top, x1, inner.bottom, Palette.alpha(ink.palette.LISTEN, 26))
+                ink.rect(c, x0, inner.top, x1, inner.top + ink.dp(3f), ink.palette.LISTEN)
+                ink.label(c, "loop", x0 + ink.dp(3f), inner.top + ink.dp(3f), ink.unit, ink.palette.LISTEN, size = ink.unit * 0.7f)
             }
         }
         if (env.release >= 0) {
             val x = xOf(env.release)
             if (x >= inner.left && x <= inner.right) {
-                ink.line(c, x, inner.top, x, inner.bottom, Palette.WRITE, ink.dp(2f))
-                ink.label(c, "release", x + ink.dp(3f), inner.bottom - ink.unit, ink.unit, Palette.WRITE, size = ink.unit * 0.7f)
+                ink.line(c, x, inner.top, x, inner.bottom, ink.palette.WRITE, ink.dp(2f))
+                ink.label(c, "release", x + ink.dp(3f), inner.bottom - ink.unit, ink.unit, ink.palette.WRITE, size = ink.unit * 0.7f)
             }
         }
 
         // bars
         val base = if (lo < 0) yOf(0) else inner.bottom
         val gap = maxOf(1f, cellW * 0.12f)
-        val barColor = if (muted) Palette.FAINT else Palette.alpha(col, 170)
+        val barColor = if (muted) ink.palette.FAINT else Palette.alpha(col, 170)
         val last = minOf(values.size, stepScroll + fit)
         for (i in stepScroll until last) {
             val x = xOf(i)
@@ -108,24 +108,24 @@ internal class EnvelopePlot(private val ink: Ink) {
             val t = minOf(base, yv)
             val b = maxOf(base, yv)
             val on = i == step
-            ink.rect(c, x + gap, minOf(t, b - ink.dp(2f)), x + cellW - gap, b, if (on && focused) (if (editing) Palette.WRITE else col) else barColor)
+            ink.rect(c, x + gap, minOf(t, b - ink.dp(2f)), x + cellW - gap, b, if (on && focused) (if (editing) ink.palette.WRITE else col) else barColor)
         }
         // append position
         if (values.size < maxLength && values.size in stepScroll until stepScroll + fit) {
             val x = xOf(values.size)
-            ink.outline(c, Rect(x + gap, inner.top + gap, x + cellW - gap, inner.bottom - gap), Palette.FAINT, ink.dp(1f), ink.dp(2f))
-            ink.mono(c, "+", x + cellW / 2, inner.top, inner.height(), Palette.FAINT, size = ink.unit * 0.8f, align = Align.CENTER)
+            ink.outline(c, Rect(x + gap, inner.top + gap, x + cellW - gap, inner.bottom - gap), ink.palette.FAINT, ink.dp(1f), ink.dp(2f))
+            ink.mono(c, "+", x + cellW / 2, inner.top, inner.height(), ink.palette.FAINT, size = ink.unit * 0.8f, align = Align.CENTER)
         }
         // cursor
         if (step in stepScroll until stepScroll + fit) {
             val x = xOf(step)
-            ink.outline(c, Rect(x, inner.top, x + cellW, inner.bottom), if (focused) cursor else Palette.FAINT, ink.dp(if (focused) 2f else 1f), ink.dp(2f))
+            ink.outline(c, Rect(x, inner.top, x + cellW, inner.bottom), if (focused) cursor else ink.palette.FAINT, ink.dp(if (focused) 2f else 1f), ink.dp(2f))
         }
         // step numbers
         val every = when { cellW >= ink.unit * 2f -> 1; cellW >= ink.unit * 1.4f -> 2; else -> 4 }
         for (i in stepScroll until minOf(stepScroll + fit, values.size + 1)) {
             if (i % every != 0 && i != step) continue
-            ink.mono(c, i.toString(), xOf(i) + cellW / 2, inner.bottom + ink.dp(2f), labelH, if (i == step) Palette.TEXT else Palette.FAINT, size = ink.unit * 0.65f, align = Align.CENTER)
+            ink.mono(c, i.toString(), xOf(i) + cellW / 2, inner.bottom + ink.dp(2f), labelH, if (i == step) ink.palette.TEXT else ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.CENTER)
         }
     }
 

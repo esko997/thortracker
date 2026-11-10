@@ -31,7 +31,7 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = VsuInstrumentView.sound(s, st)
         val page = VsuInstrumentView.page(st)
         val lane = st.listenChannel.coerceIn(0, VsuPlayerImage.CHANNELS - 1)
-        val col = Palette.channel(lane)
+        val col = ink.palette.channel(lane)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when {
             ins == null -> "empty slot"
@@ -64,17 +64,17 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (r in rows) {
             val sel = r == row
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = VsuRules.CHANNEL_NAMES[lane]
                     ink.label(c, name, vx, y, h, col, true)
                     val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
                     val note = VsuInstrumentView.listenNote(ctl, lane)
-                    ink.label(c, ink.fit(VsuPitch.readout(lane, note), rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                    ink.label(c, ink.fit(VsuPitch.readout(lane, note), rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, tabLabels, st.envelope)
                 ins == null -> setting(c, r.label, "—", rx, vx, y, h, sel, true)
@@ -152,18 +152,18 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     /** The envelope's level over [ENVELOPE_MS] (the hardware's steps), the length's stop marked. */
     private fun drawLevels(c: Surface, r: Rect, ins: VsuInstrument, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val stop = if (ins.autoLength) (ins.length + 1) * VsuPlayerImage.LENGTH_UNIT_MS else Double.MAX_VALUE
         val title = "Level over 1 s: ${VsuSystem.envelopeText(ins)}" + if (ins.autoLength) " · stops at ${VsuSystem.msText(stop)}" else " · until OFF"
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val g = Rect(r.left + ink.unit * 1.6f, r.top + titleH + ink.unit * 0.2f, r.right - ink.unit * 0.6f, r.bottom - ink.unit * 0.5f)
         if (g.height() < ink.unit) return
         fun xOf(ms: Double) = g.left + g.width() * (ms / ENVELOPE_MS).toFloat()
         fun yOf(level: Int) = g.bottom - g.height() * level / 15f
-        ink.line(c, g.left, g.bottom, g.right, g.bottom, Palette.RULE, ink.dp(1f))
-        ink.label(c, "15", g.left - ink.dp(3f), g.top - ink.unit * 0.4f, ink.unit, Palette.DIM, size = ink.unit * 0.65f, align = Align.RIGHT)
-        ink.label(c, "0", g.left - ink.dp(3f), g.bottom - ink.unit * 0.6f, ink.unit, Palette.DIM, size = ink.unit * 0.65f, align = Align.RIGHT)
+        ink.line(c, g.left, g.bottom, g.right, g.bottom, ink.palette.RULE, ink.dp(1f))
+        ink.label(c, "15", g.left - ink.dp(3f), g.top - ink.unit * 0.4f, ink.unit, ink.palette.DIM, size = ink.unit * 0.65f, align = Align.RIGHT)
+        ink.label(c, "0", g.left - ink.dp(3f), g.bottom - ink.unit * 0.6f, ink.unit, ink.palette.DIM, size = ink.unit * 0.65f, align = Align.RIGHT)
         val frame = (ins.interval + 1) * VsuPlayerImage.ENVELOPE_UNIT_MS
         var level = ins.level
         var t = 0.0
@@ -184,26 +184,26 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         c.polyline(xs, ys, n, col, ink.dp(2.5f))
         if (stop < ENVELOPE_MS) {
             val x = xOf(stop)
-            ink.line(c, x, g.top, x, g.bottom, Palette.WRITE, ink.dp(1.5f))
-            ink.label(c, "stop", x + ink.dp(3f), g.top, ink.unit, Palette.WRITE, size = ink.unit * 0.65f)
+            ink.line(c, x, g.top, x, g.bottom, ink.palette.WRITE, ink.dp(1.5f))
+            ink.label(c, "stop", x + ink.dp(3f), g.top, ink.unit, ink.palette.WRITE, size = ink.unit * 0.65f)
         }
     }
 
     /** The wave the sound plays (or the noise tap on Noise) and the pitch the Listen note really gets. */
     private fun drawPlayedWave(c: Surface, r: Rect, ins: VsuInstrument, lane: Int, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val note = VsuInstrumentView.listenNote(ctl, lane)
         if (lane == VsuRules.NOISE_LANE) {
             ink.label(c, ink.fit("Noise tap ${ins.noiseTap}: ${VsuPitch.tapLength(ins.noiseTap)}-step sequence", r.width() - ink.unit),
-                r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+                r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
             ink.label(c, ink.fit(VsuPitch.readout(lane, note), r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top + titleH, titleH,
-                Palette.DIM, size = ink.unit * 0.8f)
+                ink.palette.DIM, size = ink.unit * 0.8f)
             return
         }
         val samples = song.vsu.waves.getOrNull(ins.wave) ?: return
         ink.label(c, ink.fit("Wave ${ins.wave + 1}" + (VsuWaves.name(song.vsu, ins.wave)?.let { " $it" } ?: "") + " (shared)", r.width() - ink.unit),
-            r.left + ink.unit * 0.5f, r.top, titleH, Palette.FAINT, size = ink.unit * 0.8f)
+            r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.FAINT, size = ink.unit * 0.8f)
         val lineH = ink.unit * 1.2f
         val g = Rect(r.left + ink.unit * 0.5f, r.top + titleH, r.right - ink.unit * 0.5f, r.bottom - lineH * 2 - ink.unit * 0.2f)
         if (g.height() > ink.unit) {
@@ -214,8 +214,8 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(VsuPitch.readout(lane, note), r.width() - ink.unit, small), r.left + ink.unit * 0.5f, r.bottom - lineH * 2, lineH, Palette.TEXT, size = small)
-        if (note != 57) ink.label(c, ink.fit(VsuPitch.readout(lane, 57), r.width() - ink.unit, small), r.left + ink.unit * 0.5f, r.bottom - lineH, lineH, Palette.DIM, size = small)
+        ink.label(c, ink.fit(VsuPitch.readout(lane, note), r.width() - ink.unit, small), r.left + ink.unit * 0.5f, r.bottom - lineH * 2, lineH, ink.palette.TEXT, size = small)
+        if (note != 57) ink.label(c, ink.fit(VsuPitch.readout(lane, 57), r.width() - ink.unit, small), r.left + ink.unit * 0.5f, r.bottom - lineH, lineH, ink.palette.DIM, size = small)
     }
 
     /**
@@ -224,7 +224,7 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
      * (wrapping 11 bits), once or looping.
      */
     private fun drawFreqMod(c: Surface, r: Rect, ins: VsuInstrument, col: Int) {
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.4f
         val fm = ins.freqMod
         val note = VsuInstrumentView.listenNote(ctl, VsuRules.SWEEP_LANE)
@@ -270,10 +270,10 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             else -> "Sweep ${if (fm.up) "up" else "down"} from ${VsuSystem.noteName(note)} (F $f0), shift ${fm.shift}, every ${NumberText.fixed(step, 2)} ms" +
                 if (stoppedAt >= 0) " · stops at ${NumberText.fixed(stoppedAt, 0)} ms (F past 2047)" else ""
         }
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, if (stopsNow) Palette.ERROR else Palette.FAINT, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, if (stopsNow) ink.palette.ERROR else ink.palette.FAINT, size = ink.unit * 0.8f)
         if (VsuInstrumentView.ignored(Row.FM_ON, st.listenChannel, ins) != null) {
             ink.label(c, ink.fit("Listen is on ${VsuRules.CHANNEL_NAMES[st.listenChannel]}: only Wave 5 plays this page", r.width() - ink.unit),
-                r.left + ink.unit * 0.5f, r.top + titleH, titleH, Palette.PLAYHEAD, size = ink.unit * 0.8f)
+                r.left + ink.unit * 0.5f, r.top + titleH, titleH, ink.palette.PLAYHEAD, size = ink.unit * 0.8f)
         }
         val g = Rect(r.left + ink.unit * 2.6f, r.top + titleH * 2, r.right - ink.unit * 0.8f, r.bottom - ink.unit * 1.3f)
         if (g.height() <= ink.unit || points.isEmpty()) return
@@ -281,8 +281,8 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val bottom = minOf(points.minOf { it.second }, -1.0) - 0.5
         fun yOf(sv: Double) = (g.bottom - g.height() * ((sv - bottom) / (top - bottom))).toFloat()
         fun xOf(ms: Double) = (g.left + g.width() * (ms / window)).toFloat()
-        ink.line(c, g.left, yOf(0.0), g.right, yOf(0.0), Palette.RULE, ink.dp(1f))
-        ink.label(c, "note", g.left - ink.dp(3f), yOf(0.0) - ink.unit * 0.5f, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+        ink.line(c, g.left, yOf(0.0), g.right, yOf(0.0), ink.palette.RULE, ink.dp(1f))
+        ink.label(c, "note", g.left - ink.dp(3f), yOf(0.0) - ink.unit * 0.5f, ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         var prev = points.first()
         for (p in points.drop(1)) {
             if (n >= POINTS - 2) break
@@ -295,13 +295,13 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         c.polyline(xs, ys, n, col, ink.dp(2.5f))
         if (stoppedAt >= 0) {
             val x = xOf(stoppedAt)
-            ink.line(c, x, g.top, x, g.bottom, Palette.WRITE, ink.dp(1.5f))
-            ink.label(c, "stop", x + ink.dp(3f), g.top, ink.unit, Palette.WRITE, size = ink.unit * 0.65f)
+            ink.line(c, x, g.top, x, g.bottom, ink.palette.WRITE, ink.dp(1.5f))
+            ink.label(c, "stop", x + ink.dp(3f), g.top, ink.unit, ink.palette.WRITE, size = ink.unit * 0.65f)
         }
         val ls = ink.unit * 0.7f
-        ink.label(c, "${NumberText.fixed(top - 0.5, 1, plus = true)} st", g.left - ink.dp(3f), g.top - ink.unit * 0.3f, ink.unit, Palette.DIM, size = ls, align = Align.RIGHT)
-        ink.label(c, "${NumberText.fixed(bottom + 0.5, 1, plus = true)} st", g.left - ink.dp(3f), g.bottom - ink.unit * 0.7f, ink.unit, Palette.DIM, size = ls, align = Align.RIGHT)
-        ink.label(c, VsuSystem.msText(window), g.right, g.bottom + ink.dp(2f), ink.unit * 1.1f, Palette.FAINT, size = ls, align = Align.RIGHT)
+        ink.label(c, "${NumberText.fixed(top - 0.5, 1, plus = true)} st", g.left - ink.dp(3f), g.top - ink.unit * 0.3f, ink.unit, ink.palette.DIM, size = ls, align = Align.RIGHT)
+        ink.label(c, "${NumberText.fixed(bottom + 0.5, 1, plus = true)} st", g.left - ink.dp(3f), g.bottom - ink.unit * 0.7f, ink.unit, ink.palette.DIM, size = ls, align = Align.RIGHT)
+        ink.label(c, VsuSystem.msText(window), g.right, g.bottom + ink.dp(2f), ink.unit * 1.1f, ink.palette.FAINT, size = ls, align = Align.RIGHT)
     }
 
     // ---- touch ----------------------------------------------------------------------------------------

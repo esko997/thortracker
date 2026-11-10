@@ -30,7 +30,7 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         val users = s.gb.wave.withIndex().filter { it.value.wave == st.wave }.map { hex2(it.index + 1) }
         val locked = if (st.lockedSubject >= 0) "locked  " else ""
         val top = header(c, area, "Wave ${hex1(st.wave)}", locked + if (users.isEmpty()) "No wave sound plays this wave" else "Played by sound ${users.joinToString(", ")}")
-        val col = Palette.channel(maxOf(0, s.firstChannelOf(GbBank.WAVE)))
+        val col = ink.palette.channel(maxOf(0, s.firstChannelOf(GbBank.WAVE)))
         val pad = ink.unit * 0.7f
 
         // thumbnails
@@ -40,13 +40,13 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         for ((i, w) in s.gb.waves.withIndex()) {
             val r = Rect(area.left + pad + i * tw + 2, top + ink.unit * 0.4f, area.left + pad + (i + 1) * tw - 2, top + ink.unit * 0.4f + thumbH)
             val sel = i == st.wave
-            ink.round(c, r, ink.dp(3f), if (sel) Palette.CURSOR_FILL else Palette.LANE)
+            ink.round(c, r, ink.dp(3f), if (sel) ink.palette.CURSOR_FILL else ink.palette.LANE)
             val bw = r.width() / w.size
             for ((j, sample) in w.withIndex()) {
                 val h = (r.height() - ink.unit * 0.9f) * sample / 15f
-                ink.rect(c, r.left + j * bw, r.bottom - 2 - h, r.left + (j + 1) * bw, r.bottom - 2, if (sel) col else Palette.FAINT)
+                ink.rect(c, r.left + j * bw, r.bottom - 2 - h, r.left + (j + 1) * bw, r.bottom - 2, if (sel) col else ink.palette.FAINT)
             }
-            ink.mono(c, hex1(i), r.left + ink.dp(3f), r.top, ink.unit * 0.9f, if (sel) Palette.TEXT else Palette.DIM, size = ink.unit * 0.7f)
+            ink.mono(c, hex1(i), r.left + ink.dp(3f), r.top, ink.unit * 0.9f, if (sel) ink.palette.TEXT else ink.palette.DIM, size = ink.unit * 0.7f)
             if (sel) ink.outline(c, r, col, ink.dp(2f), ink.dp(3f))
             thumbs += r to i
         }
@@ -63,9 +63,9 @@ internal class WavePainter(v: PaneView) : Painter(v) {
             if (x + w > area.right - pad) break
             val r = Rect(x, toolTop, x + w, toolTop + toolH)
             val sel = st.waveRow == 0 && st.waveCol == i
-            ink.round(c, r, ink.dp(4f), if (sel) Palette.CURSOR_FILL else Palette.RULE)
+            ink.round(c, r, ink.dp(4f), if (sel) ink.palette.CURSOR_FILL else ink.palette.RULE)
             if (sel) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
-            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) Palette.TEXT else Palette.DIM, sel, size, Align.CENTER)
+            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) ink.palette.TEXT else ink.palette.DIM, sel, size, Align.CENTER)
             tools += r to i
             x += w + ink.unit * 0.4f
         }
@@ -79,24 +79,24 @@ internal class WavePainter(v: PaneView) : Painter(v) {
         if (grid.height() < ink.unit * 3) return
         val cw = grid.width() / WaveShapes.SAMPLES
         val ch = grid.height() / (WaveShapes.MAX + 1)
-        ink.rect(c, grid, Palette.LANE)
+        ink.rect(c, grid, ink.palette.LANE)
         for (lv in 0..WaveShapes.MAX) {
             val y = grid.bottom - (lv + 1) * ch
-            if (lv % 4 == 0) ink.line(c, grid.left, y + ch, grid.right, y + ch, Palette.RULE, 1f)
-            if (lv % 4 == 3 || lv == 0) ink.mono(c, hex1(lv), area.left + pad, y, ch, Palette.FAINT, size = minOf(ink.unit * 0.75f, ch * 0.9f))
+            if (lv % 4 == 0) ink.line(c, grid.left, y + ch, grid.right, y + ch, ink.palette.RULE, 1f)
+            if (lv % 4 == 3 || lv == 0) ink.mono(c, hex1(lv), area.left + pad, y, ch, ink.palette.FAINT, size = minOf(ink.unit * 0.75f, ch * 0.9f))
         }
         for (i in 0..WaveShapes.SAMPLES) {
             val gx = grid.left + i * cw
-            ink.line(c, gx, grid.top, gx, grid.bottom, if (i % 8 == 0) Palette.RULE else Palette.alpha(Palette.RULE, 90), 1f)
+            ink.line(c, gx, grid.top, gx, grid.bottom, if (i % 8 == 0) ink.palette.RULE else Palette.alpha(ink.palette.RULE, 90), 1f)
         }
         val mid = grid.bottom - grid.height() * 7.5f / 15f
-        ink.line(c, grid.left, mid, grid.right, mid, Palette.alpha(Palette.DIM, 70), ink.dp(1f))
+        ink.line(c, grid.left, mid, grid.right, mid, Palette.alpha(ink.palette.DIM, 70), ink.dp(1f))
         for ((i, sample) in wave.withIndex()) {
             val bx = grid.left + i * cw
             val topY = grid.bottom - (sample + 1) * ch
             ink.rect(c, bx + 1, topY + ch, bx + cw - 1, grid.bottom, Palette.alpha(col, 70))
             ink.rect(c, bx + 1, topY, bx + cw - 1, topY + ch, col)
-            ink.mono(c, hex1(sample), bx + cw / 2, grid.bottom + ink.unit * 0.2f, hexH, if (st.waveRow == 1 && i == st.waveCol) Palette.TEXT else Palette.FAINT, size = minOf(ink.unit * 0.8f, cw * 1.1f), align = Align.CENTER)
+            ink.mono(c, hex1(sample), bx + cw / 2, grid.bottom + ink.unit * 0.2f, hexH, if (st.waveRow == 1 && i == st.waveCol) ink.palette.TEXT else ink.palette.FAINT, size = minOf(ink.unit * 0.8f, cw * 1.1f), align = Align.CENTER)
         }
         // pen crosshair
         if (st.waveRow == 1) {
@@ -110,10 +110,10 @@ internal class WavePainter(v: PaneView) : Painter(v) {
     }
 
     private fun cursorColor() = when {
-        ctl.editHeld || drawing -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld || drawing -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     // ---- touch ---------------------------------------------------------------------------------------

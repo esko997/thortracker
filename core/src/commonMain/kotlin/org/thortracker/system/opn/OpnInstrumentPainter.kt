@@ -53,7 +53,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = OpnInstrumentView.sound(s, st)
         val page = OpnInstrumentView.page(s, st)
         val listen = OpnInstrumentView.listenChannel(s, st, ins)
-        val col = Palette.channel(listen)
+        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when (ins) {
             is OpnFmSound -> "FM · " + YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].name
@@ -101,17 +101,17 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 continue
             }
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = s.system.channels.getOrNull(listen)?.name.orEmpty()
                     ink.label(c, name, vx, y, h, col, true)
                     listenNote(ins, page)?.let { note ->
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, tabLabels, st.envelope.coerceIn(0, tabLabels.size - 1))
@@ -131,7 +131,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val k = page.envelope!!
             val ssg = ins as? OpnSsgSound ?: OpnEdits.defaultSsg(chip, st.instrument)
             val small = ink.unit * 0.8f
-            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
             y += rowH * 0.85f
             val plotTop = y + ink.unit * 0.3f
             if (area.bottom - plotTop > ink.unit * 4f) {
@@ -467,7 +467,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** FM 3's four operators: each one's offset as an interval and the note it sounds against the listening note; the mode. */
     private fun drawCh3(c: Surface, r: Rect, ins: OpnFmSound, col: Int) {
         val small = ink.unit * 0.8f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val x = r.left + ink.unit * 0.5f
         val w = r.width() - ink.unit
         val lineH = ink.unit * 1.2f
@@ -477,7 +477,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             OpnFm3Mode.NORMAL -> "FM 3 normal mode: these offsets are silent (set special or CSM mode)"
             OpnFm3Mode.SPECIAL -> "FM 3 special mode: each operator sounds the note plus its offset"
             OpnFm3Mode.CSM -> "FM 3 CSM mode: timer A at ${NumberText.fixed(OpnRules.timerAHz(song.opn.timerA), 1)} Hz keys these operators"
-        }, w, small), x, y, ink.unit * 1.4f, if (mode == OpnFm3Mode.NORMAL) Palette.ERROR else Palette.DIM, size = small)
+        }, w, small), x, y, ink.unit * 1.4f, if (mode == OpnFm3Mode.NORMAL) ink.palette.ERROR else ink.palette.DIM, size = small)
         y += ink.unit * 1.4f
         val root = ctl.defaultNote()
         for (op in 0 until 4) {
@@ -490,7 +490,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val on = op == OpnInstrumentView.operator(st)
             val text = "Op ${op + 1} ${if (carrier) "♪car" else "mod"}   ${NumberText.fixed(offset / 64.0, 2, plus = true)} st   " +
                 song.system.noteName(note) + if (cents != 0) " ${if (cents > 0) "+" else ""}${cents}¢" else ""
-            ink.label(c, ink.fit(text, w, small), x, y, lineH, if (on) col else if (carrier) Palette.TEXT else Palette.DIM, on, small)
+            ink.label(c, ink.fit(text, w, small), x, y, lineH, if (on) col else if (carrier) ink.palette.TEXT else ink.palette.DIM, on, small)
             y += lineH
         }
         val notes = listOf("Offsets play on FM 3 only; other channels and normal mode ignore them.",
@@ -498,7 +498,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f
         if (ny < y) return
         for (n in notes) {
-            ink.label(c, ink.fit(n, w, small), x, ny, lineH, Palette.FAINT, size = small * 0.95f)
+            ink.label(c, ink.fit(n, w, small), x, ny, lineH, ink.palette.FAINT, size = small * 0.95f)
             ny += lineH
         }
     }
@@ -506,14 +506,14 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** The SSG hardware envelope's level over five 32-step ramps from a restart, and the sharing rule under it. */
     private fun drawShape(c: Surface, r: Rect, e: S5bEnvelope, col: Int) {
         val small = ink.unit * 0.8f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val titleH = ink.unit * 1.3f
         val title = when {
             e.shape == S5bShape.OFF -> "No hardware envelope: the volume envelope sets the level"
             e.autoPitch -> "${e.shape.label}: ${NesS5b.octaveText(e.shape, e.octave)}"
             else -> "${e.shape.label}: ${periodText(e.shape, e.period)}"
         }
-        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.DIM, size = small)
+        ink.label(c, ink.fit(title, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.DIM, size = small)
         val notes = listOf(
             "One generator for SSG 1-3: the highest-numbered SSG channel sounding such a note sets its shape and period.",
             "Each note restarts it. Its level replaces the volume envelope's, which then only gates it; Hxx/Jxx override a row's note.",
@@ -521,10 +521,10 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val lineH = ink.unit * 1.1f
         val plotRect = Rect(r.left + ink.unit * 0.5f, r.top + titleH, r.right - ink.unit * 0.5f, r.bottom - lineH * notes.size - ink.unit * 0.3f)
         if (plotRect.height() > ink.unit * 1.5f && plotRect.width() > ink.unit * 4f) {
-            ink.rect(c, plotRect, Palette.BG)
+            ink.rect(c, plotRect, ink.palette.BG)
             val levels = shapeLevels(e.shape)
             val dx = plotRect.width() / levels.size
-            val color = if (e.shape == S5bShape.OFF) Palette.FAINT else col
+            val color = if (e.shape == S5bShape.OFF) ink.palette.FAINT else col
             var px = plotRect.left
             var py = plotRect.bottom - plotRect.height() * levels[0] / 31f
             for ((i, level) in levels.withIndex()) {
@@ -538,7 +538,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         }
         var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f
         for (n in notes) {
-            ink.label(c, ink.fit(n, r.width() - ink.unit), r.left + ink.unit * 0.5f, ny, lineH, Palette.FAINT, size = small * 0.95f)
+            ink.label(c, ink.fit(n, r.width() - ink.unit), r.left + ink.unit * 0.5f, ny, lineH, ink.palette.FAINT, size = small * 0.95f)
             ny += lineH
         }
     }
@@ -572,28 +572,28 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** The six drum channels with the level and pan this sound gives each, the ROM's state and the song's rhythm level. */
     private fun drawRhythm(c: Surface, r: Rect, ins: OpnRhythmSound, col: Int) {
         val small = ink.unit * 0.8f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val lineH = ink.unit * 1.15f
         var y = r.top
         val x = r.left + ink.unit * 0.5f
         val w = r.width() - ink.unit
         val chip = song.opn.chip
         ink.label(c, ink.fit("Six fixed-pitch drums from the YM2608's rhythm ROM · song rhythm level ${song.opn.rhythmLevel}/63", w, small), x, y,
-            ink.unit * 1.3f, Palette.DIM, size = small)
+            ink.unit * 1.3f, ink.palette.DIM, size = small)
         y += ink.unit * 1.3f
         val pan = OpnInstrumentView.panText(ins.left, ins.right)
         for (i in OpnChip.RHYTHM_NAMES.indices) {
             if (y + lineH > r.bottom - lineH * 2) break
             val ch = chip.rhythmFirst + i
             val on = ch == st.listenChannel
-            ink.label(c, OpnChip.RHYTHM_NAMES[i], x, y, lineH, if (on) Palette.channel(ch) else Palette.TEXT, on, small)
-            ink.label(c, ink.fit("level ${ins.level}/31 · pan $pan", w * 0.6f, small), x + w * 0.4f, y, lineH, Palette.DIM, size = small)
+            ink.label(c, OpnChip.RHYTHM_NAMES[i], x, y, lineH, if (on) ink.palette.channel(ch) else ink.palette.TEXT, on, small)
+            ink.label(c, ink.fit("level ${ins.level}/31 · pan $pan", w * 0.6f, small), x + w * 0.4f, y, lineH, ink.palette.DIM, size = small)
             y += lineH
         }
         val notes = listOf(
             (if (Ym2608RhythmRom.installed) "ROM installed (SHA-256 verified)" else "ROM missing: rhythm notes are refused until it is imported") to
-                (if (Ym2608RhythmRom.installed) col else Palette.ERROR),
-            "A note triggers its channel's drum; its pitch does not change the drum." to Palette.FAINT,
+                (if (Ym2608RhythmRom.installed) col else ink.palette.ERROR),
+            "A note triggers its channel's drum; its pitch does not change the drum." to ink.palette.FAINT,
         )
         var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f
         for ((n, color) in notes) {
@@ -611,21 +611,21 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val samples = s.opn.samples
         val small = ink.unit * 0.8f
         val titleH = ink.unit * 1.4f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val used = s.opn.adpcmUsed
         val over = used > OpnPlayerImage.ADPCM_MEMORY
         ink.label(c, ink.fit("ADPCM-B memory · ${OpnSampleMenu.memoryText(s)}", r.width() * 0.62f, small), r.left + ink.unit * 0.5f, r.top, titleH,
-            if (over) Palette.ERROR else Palette.DIM, size = small)
+            if (over) ink.palette.ERROR else ink.palette.DIM, size = small)
         val barL = r.left + r.width() * 0.64f
         val barR = r.right - ink.unit * 0.5f
         val barY = r.top + titleH * 0.42f
-        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
-        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / OpnPlayerImage.ADPCM_MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), ink.palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / OpnPlayerImage.ADPCM_MEMORY), barY + ink.dp(5f), if (over) ink.palette.ERROR else col)
 
         val sample = samples.getOrNull(ins.sample)
         val waveH = minOf(ink.unit * 4f, (r.height() - titleH) * 0.45f)
         val waveRect = Rect(r.left + ink.unit * 0.5f, r.top + titleH, r.right - ink.unit * 0.5f, r.top + titleH + waveH)
-        ink.rect(c, waveRect, Palette.BG)
+        ink.rect(c, waveRect, ink.palette.BG)
         if (sample != null && waveRect.width() > 4f && waveRect.height() > 4f) {
             val bins = outlines.getOrPut(sample) { outline(sample) }
             val n = bins.size / 2
@@ -633,7 +633,7 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val cw = waveRect.width() / columns
             val mid = waveRect.centerY()
             val half = waveRect.height() / 2
-            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, ink.palette.RULE, ink.dp(1f))
             for (k in 0 until columns) {
                 val a = k * n / columns
                 val b = maxOf(a + 1, (k + 1) * n / columns)
@@ -645,10 +645,10 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 ink.rect(c, waveRect.left + k * cw, y0, waveRect.left + k * cw + maxOf(1f, cw - 0.5f), maxOf(y1, y0 + ink.dp(1f)), Palette.alpha(col, 200))
             }
             ink.label(c, "${sample.rate} Hz · ${OpnSampleMenu.seconds(sample.seconds)}${if (ins.loop) " · loops" else ""}", waveRect.right - ink.dp(3f), waveRect.top,
-                ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+                ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         } else {
             ink.label(c, ink.fit(if (samples.isEmpty()) "No samples yet: ${ctl.k(Action.EDIT)} on Add sample" else "No sample chosen", waveRect.width() - ink.unit, small),
-                waveRect.left + ink.unit * 0.3f, waveRect.top, waveRect.height(), Palette.FAINT, size = small)
+                waveRect.left + ink.unit * 0.3f, waveRect.top, waveRect.height(), ink.palette.FAINT, size = small)
         }
 
         val rowH = ink.unit * 1.15f
@@ -660,12 +660,12 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val smp = samples[i]
             val y = listTop + (i - first) * rowH
             val on = i == ins.sample
-            if (on) ink.rect(c, r.left, y, r.right, y + rowH, Palette.alpha(Palette.CURSOR_FILL, 160))
-            ink.mono(c, (i + 1).toString().padStart(2, '0'), r.left + ink.unit * 0.5f, y, rowH, if (on) col else Palette.FAINT, on, small)
+            if (on) ink.rect(c, r.left, y, r.right, y + rowH, Palette.alpha(ink.palette.CURSOR_FILL, 160))
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), r.left + ink.unit * 0.5f, y, rowH, if (on) col else ink.palette.FAINT, on, small)
             val size = "${smp.rate} Hz · ${OpnSampleMenu.kib(smp.stored)}"
             ink.label(c, ink.fit(smp.name.ifEmpty { "(unnamed)" }, r.width() - ink.unit * 3f - ink.labelWidth(size, small)), r.left + ink.unit * 2.2f, y, rowH,
-                if (on) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, size, r.right - ink.unit * 0.5f, y, rowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+            ink.label(c, size, r.right - ink.unit * 0.5f, y, rowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
         }
     }
 
@@ -689,10 +689,10 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** The sound's sample name, with the letter cursor on [org.thortracker.editor.ViewState.textPos]. */
     private fun drawSampleName(c: Surface, rx: Float, vx: Float, y: Float, h: Float, sel: Boolean) {
         val index = OpnInstrumentView.sampleIndex(song, st)
-        ink.label(c, Row.SAMPLE_NAME.label, rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
-        if (index < 0) { ink.label(c, "—", vx, y, h, Palette.FAINT); return }
+        ink.label(c, Row.SAMPLE_NAME.label, rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
+        if (index < 0) { ink.label(c, "—", vx, y, h, ink.palette.FAINT); return }
         val name = song.opn.samples[index].name
-        ink.label(c, name.ifEmpty { "(unnamed)" }, vx, y, h, if (name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+        ink.label(c, name.ifEmpty { "(unnamed)" }, vx, y, h, if (name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
         if (sel) {
             val before = name.take(st.textPos).padEnd(st.textPos, ' ')
             val cx = vx + ink.labelWidth(before, ink.unit, true)

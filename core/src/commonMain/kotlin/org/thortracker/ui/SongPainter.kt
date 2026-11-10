@@ -45,10 +45,10 @@ internal class SongPainter(v: PaneView) : Painter(v) {
         settingsTop = y
         for ((i, pair) in settings.withIndex()) {
             val selected = st.songItem == i
-            if (selected) ink.rect(c, area.left, y, area.right, y + rowH, Palette.CURSOR_FILL)
-            ink.label(c, pair.first, area.left + pad, y, rowH, Palette.DIM)
+            if (selected) ink.rect(c, area.left, y, area.right, y + rowH, ink.palette.CURSOR_FILL)
+            ink.label(c, pair.first, area.left + pad, y, rowH, ink.palette.DIM)
             val vx = area.left + pad + labelW
-            ink.label(c, pair.second.ifEmpty { if (i <= 1) "(empty)" else "" }, vx, y, rowH, if (pair.second.isEmpty()) Palette.FAINT else Palette.TEXT, i == 0)
+            ink.label(c, pair.second.ifEmpty { if (i <= 1) "(empty)" else "" }, vx, y, rowH, if (pair.second.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, i == 0)
             if (selected && i <= 1) {
                 // character cursor
                 val before = pair.second.take(st.textPos).padEnd(st.textPos, ' ')
@@ -62,7 +62,7 @@ internal class SongPainter(v: PaneView) : Painter(v) {
             y += rowH
         }
         y += ink.unit * 0.3f
-        ink.line(c, area.left, y, area.right, y, Palette.RULE, ink.dp(1f))
+        ink.line(c, area.left, y, area.right, y, ink.palette.RULE, ink.dp(1f))
 
         // command bar at bottom
         val barH = ink.unit * 2.1f
@@ -89,16 +89,16 @@ internal class SongPainter(v: PaneView) : Painter(v) {
             val ry = listTop + i * rowH
             val pat = s.orders[o]
             val selected = o == cur
-            if (selected) ink.rect(c, area.left, ry, area.right, ry + rowH, Palette.CURSOR_FILL)
+            if (selected) ink.rect(c, area.left, ry, area.right, ry + rowH, ink.palette.CURSOR_FILL)
             if (o == playOrder) {
-                ink.rect(c, area.left, ry, area.right, ry + rowH, Palette.alpha(Palette.PLAYHEAD, 46))
-                ink.rect(c, area.left, ry, area.left + ink.dp(4f), ry + rowH, Palette.PLAYHEAD)
+                ink.rect(c, area.left, ry, area.right, ry + rowH, Palette.alpha(ink.palette.PLAYHEAD, 46))
+                ink.rect(c, area.left, ry, area.left + ink.dp(4f), ry + rowH, ink.palette.PLAYHEAD)
             }
             val parked = o in s.parkedOrders
-            ink.mono(c, hex2(o), area.left + pad, ry, rowH, if (selected) Palette.TEXT else Palette.FAINT)
+            ink.mono(c, hex2(o), area.left + pad, ry, rowH, if (selected) ink.palette.TEXT else ink.palette.FAINT)
             val px = area.left + pad + cw * 3.5f
             val patText = hex2(pat)
-            ink.mono(c, patText, px, ry, rowH, if (parked) Palette.FAINT else Palette.TEXT, true)
+            ink.mono(c, patText, px, ry, rowH, if (parked) ink.palette.FAINT else ink.palette.TEXT, true)
             if (selected && st.songField == 0) {
                 ink.outline(c, Rect(px - cw * 0.3f, ry + 2, px + cw * 2.3f, ry + rowH - 2), cursorColor(), ink.dp(2f), ink.dp(3f))
             }
@@ -106,39 +106,39 @@ internal class SongPainter(v: PaneView) : Painter(v) {
             val rows = s.patterns[pat].length
             val name = (if (parked) "Parked · " else "") + s.patterns[pat].name + if (rows < Songs.ROWS) " · $rows" else ""
             ink.label(c, ink.fit(loopMark + name, ink.unit * 9.5f), px + cw * 3f, ry, rowH,
-                when { parked -> Palette.FAINT; o == s.loopOrder -> Palette.PLAYHEAD; else -> Palette.DIM })
+                when { parked -> ink.palette.FAINT; o == s.loopOrder -> ink.palette.PLAYHEAD; else -> ink.palette.DIM })
             if (stripRight - stripLeft > ink.unit * 4) {
                 v.strip.draw(c, stripLeft, ry + ink.dp(3f), stripRight, ry + rowH - ink.dp(3f), s.patterns[pat], if (o == playOrder) v.playback.row else -1)
                 // Parked orders keep their preview, veiled so the played arrangement reads at a glance.
-                if (parked) ink.rect(c, stripLeft, ry + ink.dp(2f), stripRight, ry + rowH - ink.dp(2f), Palette.alpha(Palette.LANE, 170))
+                if (parked) ink.rect(c, stripLeft, ry + ink.dp(2f), stripRight, ry + rowH - ink.dp(2f), Palette.alpha(ink.palette.LANE, 170))
             }
         }
         if (s.orders.size > visible) {
             val trackH = listBottom - listTop
             val thumbH = maxOf(ink.unit, trackH * visible / s.orders.size)
             val thumbY = listTop + (trackH - thumbH) * first / maxOf(1, s.orders.size - visible)
-            ink.rect(c, area.right - ink.dp(4f), thumbY, area.right - ink.dp(1f), thumbY + thumbH, Palette.FAINT)
+            ink.rect(c, area.right - ink.dp(4f), thumbY, area.right - ink.dp(1f), thumbY + thumbH, ink.palette.FAINT)
         }
     }
 
     private fun cursorColor() = when {
-        ctl.editHeld -> Palette.WRITE
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld -> ink.palette.WRITE
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     private fun drawCommandBar(c: Surface, r: Rect) {
         chips.clear()
-        ink.rect(c, r, Palette.LANE)
-        ink.line(c, r.left, r.top, r.right, r.top, Palette.RULE, ink.dp(1f))
+        ink.rect(c, r, ink.palette.LANE)
+        ink.line(c, r.left, r.top, r.right, r.top, ink.palette.RULE, ink.dp(1f))
         val cur = st.songItem - ViewState.songHeaderItems(song)
         val size = ink.unit * 0.9f
         var x = r.left + ink.unit * 0.7f
         if (cur < 0) {
-            ink.label(c, "Move down to the order list to arrange patterns", x, r.top, r.height(), Palette.FAINT, size = size)
+            ink.label(c, "Move down to the order list to arrange patterns", x, r.top, r.height(), ink.palette.FAINT, size = size)
             return
         }
-        ink.label(c, "Order ${hex2(cur)}", x, r.top, r.height(), Palette.DIM, true, size)
+        ink.label(c, "Order ${hex2(cur)}", x, r.top, r.height(), ink.palette.DIM, true, size)
         x += ink.labelWidth("Order 00", size, true) + ink.unit * 0.8f
         for (f in 1 until ViewController.ORDER_FIELDS.size) {
             val text = if (f == ViewController.PARK_FIELD && cur in song.parkedOrders) "Unpark" else ViewController.ORDER_FIELDS[f]
@@ -147,9 +147,9 @@ internal class SongPainter(v: PaneView) : Painter(v) {
             val chip = Rect(x, r.top + r.height() * 0.17f, x + w, r.bottom - r.height() * 0.17f)
             val sel = st.songField == f
             val danger = f == 4
-            ink.round(c, chip, ink.dp(4f), if (sel) Palette.alpha(if (danger) Palette.WRITE else Palette.TEXT, 50) else Palette.RULE)
-            if (sel) ink.outline(c, chip, if (danger) Palette.WRITE else cursorColor(), ink.dp(2f), ink.dp(4f))
-            ink.label(c, text, chip.centerX(), r.top, r.height(), if (sel) Palette.TEXT else Palette.DIM, sel, size, Align.CENTER)
+            ink.round(c, chip, ink.dp(4f), if (sel) Palette.alpha(if (danger) ink.palette.WRITE else ink.palette.TEXT, 50) else ink.palette.RULE)
+            if (sel) ink.outline(c, chip, if (danger) ink.palette.WRITE else cursorColor(), ink.dp(2f), ink.dp(4f))
+            ink.label(c, text, chip.centerX(), r.top, r.height(), if (sel) ink.palette.TEXT else ink.palette.DIM, sel, size, Align.CENTER)
             chips += chip to f
             x += w + ink.unit * 0.4f
         }

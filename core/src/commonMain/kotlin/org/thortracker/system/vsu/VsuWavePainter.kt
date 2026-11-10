@@ -37,7 +37,7 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
         val locked = if (st.lockedSubject >= 0) "locked  " else ""
         val title = if (mod) "Modulation table" else "Wave ${st.wave + 1}" + (VsuWaves.name(sound, st.wave)?.let { " · $it" } ?: "")
         val top = header(c, area, title, locked + usersText())
-        val col = Palette.channel(if (mod) VsuRules.SWEEP_LANE else VsuWaves.lanesPlaying(s, st.wave).firstOrNull() ?: 0)
+        val col = ink.palette.channel(if (mod) VsuRules.SWEEP_LANE else VsuWaves.lanesPlaying(s, st.wave).firstOrNull() ?: 0)
         val pad = ink.unit * 0.7f
 
         // page thumbnails: the five waves, then the table
@@ -47,7 +47,7 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
         for (i in 0 until VsuWaves.PAGES) {
             val r = Rect(area.left + pad + i * tw + 2, top + ink.unit * 0.4f, area.left + pad + (i + 1) * tw - 2, top + ink.unit * 0.4f + thumbH)
             val sel = i == st.wave
-            ink.round(c, r, ink.dp(3f), if (sel) Palette.CURSOR_FILL else Palette.LANE)
+            ink.round(c, r, ink.dp(3f), if (sel) ink.palette.CURSOR_FILL else ink.palette.LANE)
             val w = if (i == VsuWaves.MOD_PAGE) sound.modulation else sound.waves[i]
             val bw = r.width() / w.size
             val inner = r.height() - ink.unit * 0.9f
@@ -55,14 +55,14 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
                 if (i == VsuWaves.MOD_PAGE) {
                     val mid = r.bottom - 2 - inner / 2
                     val h = inner / 2 * sample / 128f
-                    ink.rect(c, r.left + j * bw, minOf(mid, mid - h), r.left + (j + 1) * bw, maxOf(mid, mid - h) + 1, if (sel) col else Palette.FAINT)
+                    ink.rect(c, r.left + j * bw, minOf(mid, mid - h), r.left + (j + 1) * bw, maxOf(mid, mid - h) + 1, if (sel) col else ink.palette.FAINT)
                 } else {
                     val h = inner * sample / VsuPlayerImage.SAMPLE_MAX
-                    ink.rect(c, r.left + j * bw, r.bottom - 2 - h, r.left + (j + 1) * bw, r.bottom - 2, if (sel) col else Palette.FAINT)
+                    ink.rect(c, r.left + j * bw, r.bottom - 2 - h, r.left + (j + 1) * bw, r.bottom - 2, if (sel) col else ink.palette.FAINT)
                 }
             }
             ink.mono(c, if (i == VsuWaves.MOD_PAGE) "M" else "${i + 1}", r.left + ink.dp(3f), r.top, ink.unit * 0.9f,
-                if (sel) Palette.TEXT else Palette.DIM, size = ink.unit * 0.7f)
+                if (sel) ink.palette.TEXT else ink.palette.DIM, size = ink.unit * 0.7f)
             if (sel) ink.outline(c, r, col, ink.dp(2f), ink.dp(3f))
             thumbs += r to i
         }
@@ -83,9 +83,9 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
             if (x + w > area.right - pad) break
             val r = Rect(x, toolTop, x + w, toolTop + toolH)
             val sel = st.waveRow == 0 && st.waveCol == i
-            ink.round(c, r, ink.dp(4f), if (sel) Palette.CURSOR_FILL else Palette.RULE)
+            ink.round(c, r, ink.dp(4f), if (sel) ink.palette.CURSOR_FILL else ink.palette.RULE)
             if (sel) ink.outline(c, r, cursorColor(), ink.dp(2f), ink.dp(4f))
-            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) Palette.TEXT else Palette.DIM, sel, size, Align.CENTER)
+            ink.label(c, text, r.centerX(), r.top, r.height(), if (sel) ink.palette.TEXT else ink.palette.DIM, sel, size, Align.CENTER)
             tools += r to i
             x += w + ink.unit * 0.4f
         }
@@ -100,17 +100,17 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
         val range = VsuWaveView.levels(st)
         val levels = range.last - range.first + 1
         val cw = grid.width() / VsuPlayerImage.WAVE_SAMPLES
-        ink.rect(c, grid, Palette.LANE)
+        ink.rect(c, grid, ink.palette.LANE)
         fun yOf(level: Int) = grid.bottom - grid.height() * (level - range.first) / levels.toFloat()
         val marks = if (mod) listOf(-128, -64, 0, 64, 127) else listOf(0, 16, 32, 48, 63)
         for (m in marks) {
             val y = yOf(m)
-            ink.line(c, grid.left, y, grid.right, y, Palette.RULE, 1f)
-            ink.mono(c, m.toString(), area.left + pad, y - ink.unit * 0.45f, ink.unit * 0.9f, Palette.FAINT, size = ink.unit * 0.7f)
+            ink.line(c, grid.left, y, grid.right, y, ink.palette.RULE, 1f)
+            ink.mono(c, m.toString(), area.left + pad, y - ink.unit * 0.45f, ink.unit * 0.9f, ink.palette.FAINT, size = ink.unit * 0.7f)
         }
         for (i in 0..VsuPlayerImage.WAVE_SAMPLES) {
             val gx = grid.left + i * cw
-            ink.line(c, gx, grid.top, gx, grid.bottom, if (i % 8 == 0) Palette.RULE else Palette.alpha(Palette.RULE, 90), 1f)
+            ink.line(c, gx, grid.top, gx, grid.bottom, if (i % 8 == 0) ink.palette.RULE else Palette.alpha(ink.palette.RULE, 90), 1f)
         }
         val base = if (mod) yOf(0) else grid.bottom
         val ch = grid.height() / levels
@@ -121,7 +121,7 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
             ink.rect(c, bx + 1, vy, bx + cw - 1, vy + maxOf(ch, ink.dp(2f)), col)
             if (cw > ink.unit * 0.9f) {
                 ink.mono(c, value.toString(), bx + cw / 2, grid.bottom + ink.unit * 0.2f, valueH,
-                    if (st.waveRow == 1 && i == st.waveCol) Palette.TEXT else Palette.FAINT, size = minOf(ink.unit * 0.7f, cw * 0.45f), align = Align.CENTER)
+                    if (st.waveRow == 1 && i == st.waveCol) ink.palette.TEXT else ink.palette.FAINT, size = minOf(ink.unit * 0.7f, cw * 0.45f), align = Align.CENTER)
             }
         }
         // pen crosshair
@@ -134,7 +134,7 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
             ink.outline(c, Rect(px, py - ink.dp(2f), px + cw, py + ch + ink.dp(2f)), pc, ink.dp(2f))
             if (cw <= ink.unit * 0.9f) {
                 ink.mono(c, "${st.waveCol}: ${values[st.waveCol]} → ${st.waveLevel}", grid.right, grid.bottom + ink.unit * 0.2f, valueH,
-                    Palette.TEXT, size = ink.unit * 0.75f, align = Align.RIGHT)
+                    ink.palette.TEXT, size = ink.unit * 0.75f, align = Align.RIGHT)
             }
         }
     }
@@ -153,10 +153,10 @@ internal class VsuWavePainter(v: PaneView) : Painter(v) {
     }
 
     private fun cursorColor() = when {
-        ctl.editHeld || drawing -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld || drawing -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     // ---- touch ---------------------------------------------------------------------------------------

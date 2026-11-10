@@ -34,7 +34,7 @@ internal class SmsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = SmsInstrumentView.sound(s, st)
         val page = SmsInstrumentView.page(s, st)
         val listen = SmsInstrumentView.listenChannel(s, st, ins)
-        val col = Palette.channel(listen)
+        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kindText = when (ins) {
             is SmsPsgInstrument -> "PSG sound"
@@ -82,17 +82,17 @@ internal class SmsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 continue
             }
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = s.system.channels.getOrNull(listen)?.name.orEmpty()
                     ink.label(c, name, vx, y, h, col, true)
                     listenNote(ins, listen, layout)?.let { note ->
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, tabLabels, st.envelope.coerceIn(0, tabLabels.size - 1))
@@ -113,7 +113,7 @@ internal class SmsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (envelopePage) {
             val k = page.envelope!!
             val small = ink.unit * 0.8f
-            ink.label(c, ink.fit(envelopeSummary(k, ins), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+            ink.label(c, ink.fit(envelopeSummary(k, ins), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
             y += rowH * 0.85f
             val plotTop = y + ink.unit * 0.3f
             if (area.bottom - plotTop > ink.unit * 4f) {
@@ -224,22 +224,22 @@ internal class SmsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     private fun drawOperatorHeader(c: Surface, rx: Float, vx: Float, rw: Float, y: Float, h: Float, col: Int): Float {
         val size = ink.unit * 0.8f
-        ink.label(c, "Register", rx, y, h, Palette.FAINT, size = size)
-        ink.label(c, "Modulator", colX(vx, rx, rw, 0), y, h, Palette.DIM, true, size)
+        ink.label(c, "Register", rx, y, h, ink.palette.FAINT, size = size)
+        ink.label(c, "Modulator", colX(vx, rx, rw, 0), y, h, ink.palette.DIM, true, size)
         ink.label(c, "♪ Carrier", colX(vx, rx, rw, 1), y, h, col, true, size)
         return y + h
     }
 
     private fun drawOperatorRow(c: Surface, r: Row, rowIndex: Int, rx: Float, vx: Float, rw: Float, y: Float, h: Float, sel: Boolean, custom: Boolean, p: OpllPatch) {
         val colW = (rx + rw - vx) / 2f
-        if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.alpha(Palette.CURSOR_FILL, 160))
-        ink.mono(c, r.label, rx, y, h, if (sel) Palette.TEXT else Palette.DIM, sel, ink.unit * 0.9f)
+        if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.alpha(ink.palette.CURSOR_FILL, 160))
+        ink.mono(c, r.label, rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM, sel, ink.unit * 0.9f)
         val current = SmsInstrumentView.operator(st)
         for (op in 0 until 2) {
             val x = colX(vx, rx, rw, op)
             val text = gridText(operator(p, op), r)
             ink.mono(c, ink.fit(text, colW - ink.unit * 0.3f, ink.unit * 0.85f), x, y, h,
-                if (!custom) Palette.FAINT else if (sel && op == current) Palette.TEXT else Palette.DIM, size = ink.unit * 0.85f)
+                if (!custom) ink.palette.FAINT else if (sel && op == current) ink.palette.TEXT else ink.palette.DIM, size = ink.unit * 0.85f)
             val cell = Rect(x - ink.unit * 0.2f, y + 1, x + colW - ink.unit * 0.2f, y + h - 1)
             gridCells += Triple(cell, rowIndex, op)
             if (sel && op == current) ink.outline(c, cell, cursorColor(), ink.dp(2f), ink.dp(3f))

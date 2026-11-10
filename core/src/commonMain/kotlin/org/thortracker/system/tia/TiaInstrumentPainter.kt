@@ -37,7 +37,7 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val s = song
         val ins = TiaInstrumentView.sound(s, st)
         val region = s.tia.region
-        val col = Palette.channel(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when {
             ins == null -> "empty slot"
@@ -69,12 +69,12 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (r in rows) {
             val sel = r == row
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     ink.label(c, s.system.channels.getOrNull(st.listenChannel)?.name.orEmpty(), vx, y, h, col, true)
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, TiaInstrumentView.PAGES.map { tabLabel(ins, it) },
@@ -95,7 +95,7 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             return
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(TiaInstrumentView.envelopeSummary(k, ins?.raw == true), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(TiaInstrumentView.envelopeSummary(k, ins?.raw == true), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
         y += rowH * 0.85f
         val plotTop = y + ink.unit * 0.3f
         if (area.bottom - plotTop <= ink.unit * 4f) return
@@ -173,17 +173,17 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val region = s.tia.region
         val small = ink.unit * 0.8f
         val titleH = ink.unit * 1.4f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val w = TiaInstrumentView.guideWaveform(s, st)
         val wf = TiaRules.WAVEFORMS[w]
         val period = TiaRules.period(w)
         val span = TiaRules.reach(region, w)
         val head = "AUDC ${TiaRules.audcText(w)} · ${wf.long}" + (period?.let { " · period $it" } ?: "") +
             (span?.let { " · ${region.label} ${TiaSystem.noteText(it.first)}..${TiaSystem.noteText(it.last)}" } ?: "")
-        ink.label(c, ink.fit(head, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, Palette.DIM, size = small)
+        ink.label(c, ink.fit(head, r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top, titleH, ink.palette.DIM, size = small)
         if (period == null && ins?.raw != true) {
             ink.label(c, ink.fit("A constant level: no divider, no pitch. The volume (envelope, Cxx) is the output level; its steps click at the frame rate.",
-                r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top + titleH, titleH, Palette.FAINT, size = small)
+                r.width() - ink.unit), r.left + ink.unit * 0.5f, r.top + titleH, titleH, ink.palette.FAINT, size = small)
             return
         }
         ladderRowH = ink.unit * 1.15f
@@ -205,20 +205,20 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         for (a in ladderScroll until minOf(TiaRules.AUDF_MAX + 1, ladderScroll + visible)) {
             val y = ladderRect.top + (a - ladderScroll) * ladderRowH
             val on = a == cursor
-            if (on) ink.rect(c, ladderRect.left, y, ladderRect.right, y + ladderRowH, Palette.CURSOR_FILL)
+            if (on) ink.rect(c, ladderRect.left, y, ladderRect.right, y + ladderRowH, ink.palette.CURSOR_FILL)
             val hz = TiaRules.frequency(region, w, a)
-            ink.mono(c, "AUDF ${a.toString().padStart(2)}", x0, y, ladderRowH, if (a == heard) col else Palette.DIM, a == heard, small)
-            ink.mono(c, hz?.let { TiaRules.hzText(it) } ?: "—", x1, y, ladderRowH, if (on) Palette.TEXT else Palette.DIM, size = small)
+            ink.mono(c, "AUDF ${a.toString().padStart(2)}", x0, y, ladderRowH, if (a == heard) col else ink.palette.DIM, a == heard, small)
+            ink.mono(c, hz?.let { TiaRules.hzText(it) } ?: "—", x1, y, ladderRowH, if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
             if (ins?.raw == true) {
                 val note = TiaInstrumentView.ladderNote(region, ins, a, listenNote)?.first
                 ink.label(c, ink.fit("raw: note ${note?.let { TiaSystem.noteText(it) } ?: "—"} (and every 32 semitones)", r.right - x2 - ink.unit * 0.4f, small),
-                    x2, y, ladderRowH, Palette.FAINT, size = small)
+                    x2, y, ladderRowH, ink.palette.FAINT, size = small)
             } else if (hz != null) {
                 val note = TiaRules.nearestNote(hz)
                 val name = if (note in TiaRules.NOTES) TiaSystem.noteText(note) else "—"
                 val cents = TiaRules.cents(hz, note)
-                ink.mono(c, name, x2, y, ladderRowH, if (on) Palette.TEXT else Palette.DIM, size = small)
-                ink.mono(c, TiaRules.centsText(cents), x3, y, ladderRowH, if (kotlin.math.abs(cents) > 25) Palette.ERROR else Palette.FAINT, size = small)
+                ink.mono(c, name, x2, y, ladderRowH, if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+                ink.mono(c, TiaRules.centsText(cents), x3, y, ladderRowH, if (kotlin.math.abs(cents) > 25) ink.palette.ERROR else ink.palette.FAINT, size = small)
             }
             if (on && focused) ink.outline(c, Rect(ladderRect.left + 2, y + 1, ladderRect.right - 2, y + ladderRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }

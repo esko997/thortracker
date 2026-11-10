@@ -22,8 +22,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
 
     private sealed interface Line {
         data class Heading(val text: String) : Line
-        data class Row(val key: String, val text: String, val color: Int = Palette.DIM) : Line
-        data class Text(val text: String, val color: Int = Palette.DIM) : Line
+        data class Row(val key: String, val text: String, val color: Int = ink.palette.DIM) : Line
+        data class Text(val text: String, val color: Int = ink.palette.DIM) : Line
     }
 
     override fun draw(c: Surface, area: Rect) {
@@ -36,12 +36,12 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             val w = ink.labelWidth(text) + ink.unit * 1.4f
             val r = Rect(x, top, x + w, top + tabH)
             val on = i == st.helpPage
-            if (on) ink.rect(c, r.left, r.bottom - ink.dp(3f), r.right, r.bottom, Palette.PLAYHEAD)
-            ink.label(c, text, r.centerX(), r.top, r.height(), if (on) Palette.TEXT else Palette.DIM, on, align = Align.CENTER)
+            if (on) ink.rect(c, r.left, r.bottom - ink.dp(3f), r.right, r.bottom, ink.palette.PLAYHEAD)
+            ink.label(c, text, r.centerX(), r.top, r.height(), if (on) ink.palette.TEXT else ink.palette.DIM, on, align = Align.CENTER)
             tabs += r to i
             x += w
         }
-        ink.line(c, area.left, top + tabH, area.right, top + tabH, Palette.RULE, ink.dp(1f))
+        ink.line(c, area.left, top + tabH, area.right, top + tabH, ink.palette.RULE, ink.dp(1f))
         bodyTop = top + tabH + ink.unit * 0.4f
         lineH = ink.unit * 1.35f
         val keyW = ink.unit * 7f
@@ -54,9 +54,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             val line = lines.getOrNull(st.scroll + i) ?: break
             val y = bodyTop + i * lineH
             when (line) {
-                is Line.Heading -> ink.label(c, line.text, left, y, lineH, Palette.TEXT, true, ink.unit * 1.05f)
+                is Line.Heading -> ink.label(c, line.text, left, y, lineH, ink.palette.TEXT, true, ink.unit * 1.05f)
                 is Line.Row -> {
-                    ink.mono(c, line.key, left, y, lineH, Palette.PLAYHEAD, true, ink.unit * 0.9f)
+                    ink.mono(c, line.key, left, y, lineH, ink.palette.PLAYHEAD, true, ink.unit * 0.9f)
                     ink.label(c, ink.fit(line.text, width - keyW), left + keyW, y, lineH, line.color)
                 }
                 is Line.Text -> ink.label(c, line.text, left, y, lineH, line.color)
@@ -66,7 +66,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             val trackH = area.bottom - bodyTop
             val thumbH = maxOf(ink.unit, trackH * visible / lines.size)
             val thumbY = bodyTop + (trackH - thumbH) * st.scroll / maxOf(1, lines.size - visible)
-            ink.rect(c, area.right - ink.dp(4f), thumbY, area.right - ink.dp(1f), thumbY + thumbH, Palette.FAINT)
+            ink.rect(c, area.right - ink.dp(4f), thumbY, area.right - ink.dp(1f), thumbY + thumbH, ink.palette.FAINT)
         }
     }
 
@@ -154,9 +154,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row("L2+R2", "Hold both triggers, in either order, for a third layer of chords. While both are held, an L2 or R2 " +
                 "chord does nothing, so a third-layer press never undoes or switches a view by mistake"),
             Line.Row(k.label(Control.SWAP), "Swap the complete views of the two displays"),
-            Line.Text(viewChords(k, toOther = false), Palette.PLAYHEAD),
+            Line.Text(viewChords(k, toOther = false), ink.palette.PLAYHEAD),
             Line.Row("Views", "Show that view on this display; the same chord again returns to the previous view"),
-            Line.Text(viewChords(k, toOther = true), Palette.PLAYHEAD),
+            Line.Text(viewChords(k, toOther = true), ink.palette.PLAYHEAD),
             Line.Row("Other", "Show that view on the other display and keep the controller here (one display: on it); " +
                 "again returns to the previous view"),
             Line.Row(k.group(Action.COPY, Action.PASTE, Action.CUT), "Copy / paste / cut"),
@@ -245,7 +245,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         Line.Heading("Thor Tracker ${About.version}"),
         Line.Text("A controller-first chiptune tracker. Source code, releases and the issue tracker: github.com/esko997/thortracker"),
         Line.Heading("Sound systems"),
-    ) + SoundSystems.ALL.map { Line.Text("${it.name}: ${it.engine.driver}", if (it === song.system) Palette.TEXT else Palette.DIM) } + listOf(
+    ) + SoundSystems.ALL.map { Line.Text("${it.name}: ${it.engine.driver}", if (it === song.system) ink.palette.TEXT else ink.palette.DIM) } + listOf(
         Line.Text("Files → Export .wav renders the song through the same player as playback (48 kHz 16-bit stereo): once through, " +
             "optional loop passes, then a fade-out, or ending exactly at the loop point."),
         Line.Heading("Report a bug"),
@@ -281,8 +281,8 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
                 missing.isNotEmpty() -> "${e.name}, not on ${missing.joinToString(", ")}"
                 else -> e.name
             }
-            out += Line.Row("${e.char}$layout", if (meaning.isEmpty()) title else "$title ($meaning)", if (e.supported) Palette.TEXT else Palette.FAINT)
-            if (e.description.isNotBlank()) out += Line.Row("", e.description, if (e.supported) Palette.DIM else Palette.FAINT)
+            out += Line.Row("${e.char}$layout", if (meaning.isEmpty()) title else "$title ($meaning)", if (e.supported) ink.palette.TEXT else ink.palette.FAINT)
+            if (e.description.isNotBlank()) out += Line.Row("", e.description, if (e.supported) ink.palette.DIM else ink.palette.FAINT)
         }
         return out
     }
@@ -292,11 +292,11 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         val out = ArrayList<Line>()
         val problems = v.problems()
         out += if (problems.isEmpty()) Line.Heading("No problems: the song can be exported") else Line.Heading("Fix these before exporting")
-        for (p in problems) out += Line.Text(p, Palette.ERROR)
+        for (p in problems) out += Line.Text(p, ink.palette.ERROR)
         val warnings = v.warnings()
         if (warnings.isNotEmpty()) {
             out += Line.Heading("Worth checking")
-            for (w in warnings) out += Line.Text(w, Palette.PLAYHEAD)
+            for (w in warnings) out += Line.Text(w, ink.palette.PLAYHEAD)
         }
         out += Line.Heading("Limits used")
         out += Line.Row("Orders", "${s.orders.size} of ${s.system.maxOrders}")

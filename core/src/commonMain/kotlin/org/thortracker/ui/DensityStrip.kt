@@ -28,17 +28,17 @@ internal class DensityStrip(private val ink: Ink) {
         val end = left + colW * rows
         for (ch in 0 until channels) {
             val by = top + ch * bandH
-            ink.rect(c, left, by, end, by + bandH - 1, Palette.alpha(Palette.channel(ch), 26))
+            ink.rect(c, left, by, end, by + bandH - 1, Palette.alpha(ink.palette.channel(ch), 26))
             for (r in 0 until rows) {
                 if (dens[ch * rows + r]) {
                     val bx = left + r * colW
-                    ink.rect(c, bx, by, bx + maxOf(colW - 1, 1f), by + bandH - 1, Palette.channel(ch))
+                    ink.rect(c, bx, by, bx + maxOf(colW - 1, 1f), by + bandH - 1, ink.palette.channel(ch))
                 }
             }
         }
         if (playRow >= 0) {
             val hx = left + (playRow + 0.5f) * colW
-            ink.line(c, hx, top - 1, hx, bottom + 1, Palette.PLAYHEAD, ink.dp(2f))
+            ink.line(c, hx, top - 1, hx, bottom + 1, ink.palette.PLAYHEAD, ink.dp(2f))
         }
     }
 }

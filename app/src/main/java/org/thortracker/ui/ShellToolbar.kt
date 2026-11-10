@@ -28,13 +28,26 @@ import org.thortracker.input.Keymap
  */
 @SuppressLint("ViewConstructor")
 class ShellToolbar(context: Context, private val holdOpen: () -> Boolean) : LinearLayout(context) {
+    var palette: Palette = Palette.SLATE
+        set(value) {
+            if (field === value) return
+            field = value
+            (bar.background as GradientDrawable).setColor(value.LANE)
+            rule.setBackgroundColor(value.RULE)
+            heading.setTextColor(value.FOCUS_ACCENT)
+            status.setTextColor(value.DIM)
+            hints.palette = value
+            looks.clear()
+            repaint()
+        }
     private val density = resources.displayMetrics.density
     private val bar = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        background = GradientDrawable().apply { setColor(Palette.LANE) }
+        background = GradientDrawable().apply { setColor(palette.LANE) }
     }
     private val hints = KeyHints(context).apply { visibility = GONE }
+    private val rule = View(context).apply { setBackgroundColor(palette.RULE) }
     private val buttons = ArrayList<Button>()
     private val wide = HashSet<Button>()
     private val looks = HashMap<Button, Int>()
@@ -43,11 +56,11 @@ class ShellToolbar(context: Context, private val holdOpen: () -> Boolean) : Line
     private val timeout = Runnable { if (holdOpen() || controllerFocused) touched() else hide() }
 
     val heading = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTextColor(Palette.PLAYHEAD); maxLines = 1
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTextColor(palette.FOCUS_ACCENT); maxLines = 1
         typeface = PopupLayer.BOLD; ellipsize = TextUtils.TruncateAt.END
     }
     val status = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f); setTextColor(Palette.DIM); maxLines = 1
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f); setTextColor(palette.DIM); maxLines = 1
         typeface = PopupLayer.REGULAR; ellipsize = TextUtils.TruncateAt.END
     }
 
@@ -74,7 +87,7 @@ class ShellToolbar(context: Context, private val holdOpen: () -> Boolean) : Line
         }
         bar.addView(title, LayoutParams(0, -1, 1f))
         addView(bar, LayoutParams(-1, dp(48)))
-        addView(View(context).apply { setBackgroundColor(Palette.RULE) }, LayoutParams(-1, dp(1)))
+        addView(rule, LayoutParams(-1, dp(1)))
         addView(hints, LayoutParams(-1, dp(26)))
         setKeys(Keymap.DEFAULT)
         addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
@@ -206,13 +219,13 @@ class ShellToolbar(context: Context, private val holdOpen: () -> Boolean) : Line
         looks[button] = look
         button.background = GradientDrawable().apply {
             cornerRadius = dp(4).toFloat()
-            setColor(if (focused) Palette.CURSOR_FILL else Palette.BAR)
-            if (focused) setStroke(dp(2), Palette.PLAYHEAD)
+            setColor(if (focused) palette.CURSOR_FILL else palette.BAR)
+            if (focused) setStroke(dp(2), palette.FOCUS_ACCENT)
         }
         button.setTextColor(when {
-            !button.isEnabled -> Palette.FAINT
-            focused -> Palette.PLAYHEAD
-            else -> Palette.TEXT
+            !button.isEnabled -> palette.FAINT
+            focused -> palette.FOCUS_ACCENT
+            else -> palette.TEXT
         })
     }
 
@@ -228,6 +241,12 @@ class ShellToolbar(context: Context, private val holdOpen: () -> Boolean) : Line
  * the toolbar. Its touch target stays inside the editor's header strip, never over grid cells.
  */
 class ToolbarHandle(context: Context, private val reveal: () -> Unit) : View(context) {
+    var palette: Palette = Palette.SLATE
+        set(value) {
+            if (field === value) return
+            field = value
+            invalidate()
+        }
     private val density = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pill = RectF()
@@ -259,7 +278,7 @@ class ToolbarHandle(context: Context, private val reveal: () -> Unit) : View(con
         val h = 4 * density
         val top = 3 * density
         pill.set((width - w) / 2, top, (width + w) / 2, top + h)
-        paint.color = Palette.alpha(Palette.DIM, if (isPressed) 0xFF else 0x99)
+        paint.color = Palette.alpha(palette.DIM, if (isPressed) 0xFF else 0x99)
         canvas.drawRoundRect(pill, h / 2, h / 2, paint)
     }
 

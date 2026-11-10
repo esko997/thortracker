@@ -45,7 +45,7 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
         val env = kind.of(ins)
         val channels = s.system.channels
         val listen = channels.getOrNull(st.listenChannel)
-        val col = Palette.channel(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val chip = s.scc.variant
         val top = header(c, area, "Sound ${hex2(st.instrument)}",
@@ -56,7 +56,7 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
         // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, Palette.LANE)
+        ink.rect(c, left, ink.palette.LANE)
         slotTop = top + ink.unit * 0.2f
         slotH = ink.unit * 1.45f
         val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
@@ -67,22 +67,22 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
             val y = slotTop + k * slotH
             val sel = i == st.instrument
             if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, Palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
                 ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
             }
             val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else Palette.FAINT, sel, sz)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
             val slotSound = s.scc.instrument(i)
             val used = usage(i)
             val nameColor = when {
-                slotSound == null -> Palette.FAINT
-                sel -> Palette.TEXT
-                used > 0 -> Palette.DIM
-                else -> Palette.FAINT
+                slotSound == null -> ink.palette.FAINT
+                sel -> ink.palette.TEXT
+                used > 0 -> ink.palette.DIM
+                else -> ink.palette.FAINT
             }
             val text = slotSound?.name?.ifEmpty { "(unnamed)" } ?: "· empty"
             ink.label(c, ink.fit(text, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, Palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
         if (row == Row.SLOT) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
@@ -103,14 +103,14 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
         for (r in rows) {
             val sel = r == row
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when (r) {
                 Row.NAME -> if (empty) {
                     setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot makes a sound; ${ctl.keys.held(Action.EDIT, ctl.lr())} on Preset picks one",
                         rx, vx, y, h, sel, true)
                 } else {
-                    ink.label(c, "Name", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
-                    ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) Palette.FAINT else Palette.TEXT, true)
+                    ink.label(c, "Name", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
+                    ink.label(c, ins.name.ifEmpty { "(unnamed)" }, vx, y, h, if (ins.name.isEmpty()) ink.palette.FAINT else ink.palette.TEXT, true)
                     if (sel) {
                         val before = ins.name.take(st.textPos).padEnd(st.textPos, ' ')
                         val cx = vx + ink.labelWidth(before, ink.unit, true)
@@ -128,12 +128,12 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
                     }, rx, vx, y, h, sel, p < 0)
                 }
                 Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = listen?.name ?: ""
                     ink.label(c, name, vx, y, h, col, true)
                     SccInstrumentView.channelNote(s, st.listenChannel)?.let { note ->
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rx + rw - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rx + rw - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 Row.RESTART -> setting(c, "Restart", if (ins.restart) "on: each note starts its wave at sample 0" else "off: the wave runs on between notes",
@@ -159,7 +159,7 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
             y += h
         }
         val small = ink.unit * 0.8f
-        ink.label(c, ink.fit(SccInstrumentView.envelopeSummary(kind), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+        ink.label(c, ink.fit(SccInstrumentView.envelopeSummary(kind), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
         y += rowH * 0.85f
 
         // the waves a wave envelope plays, in order of first use, the one under the cursor marked
@@ -178,19 +178,19 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
     }
 
     private fun setting(c: Surface, label: String, value: String, x: Float, vx: Float, y: Float, h: Float, sel: Boolean, off: Boolean) {
-        ink.label(c, label, x, y, h, if (sel) Palette.TEXT else Palette.DIM)
+        ink.label(c, label, x, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
         ink.label(c, ink.fit(value, maxOf(ink.unit, rightEdge - vx), ink.unit, sel), vx, y, h,
-            if (sel) (if (off) Palette.DIM else Palette.TEXT) else (if (off) Palette.FAINT else Palette.DIM), sel)
+            if (sel) (if (off) ink.palette.DIM else ink.palette.TEXT) else (if (off) ink.palette.FAINT else ink.palette.DIM), sel)
     }
 
     /** Player ticks (60 per second at multispeed 1) as a duration. */
     private fun ticks(n: Int) = "${(n * 1000.0 / (60.0 * song.scc.multispeed)).roundToInt()} ms"
 
     private fun cursorColor() = when {
-        ctl.editHeld -> Palette.WRITE
-        ctl.auditionHeld -> Palette.LISTEN
-        v.controllerFocused -> Palette.TEXT
-        else -> Palette.DIM
+        ctl.editHeld -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
     }
 
     /** Page tabs: each envelope with its length. */
@@ -201,11 +201,11 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
         for (k in kinds) {
             val t = Rect(r.left + k.ordinal * w, r.top, r.left + (k.ordinal + 1) * w, r.bottom)
             val on = k.ordinal == st.envelope
-            if (on) ink.rect(c, t, Palette.mix(Palette.BG, col, 0.18f))
-            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else Palette.RULE)
+            if (on) ink.rect(c, t, Palette.mix(ink.palette.BG, col, 0.18f))
+            ink.rect(c, t.left, t.bottom - ink.dp(if (on) 3f else 1f), t.right, t.bottom, if (on) col else ink.palette.RULE)
             val size = k.of(ins).values.size
             val label = if (size == 0) k.label else "${k.label} ($size)"
-            ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), if (on) col else Palette.DIM, on, align = Align.CENTER)
+            ink.label(c, ink.fit(label, w - ink.unit * 0.4f), t.centerX(), t.top, t.height(), if (on) col else ink.palette.DIM, on, align = Align.CENTER)
             tabs += t to k.ordinal
         }
     }
@@ -224,11 +224,11 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
             val n = numbers[first + k]
             val t = Rect(r.left + k * tw + 2, r.top, r.left + (k + 1) * tw - 2, r.bottom)
             val on = n == current
-            ink.round(c, t, ink.dp(3f), if (on) Palette.CURSOR_FILL else Palette.LANE)
+            ink.round(c, t, ink.dp(3f), if (on) ink.palette.CURSOR_FILL else ink.palette.LANE)
             val samples = song.scc.wave(n)?.samples.orEmpty()
-            drawSccWaveThumb(ink, c, Rect(t.left + 2, t.top + ink.unit * 0.85f, t.right - 2, t.bottom - 2), samples, if (on) col else Palette.FAINT)
-            ink.mono(c, hex2(n), t.left + ink.dp(3f), t.top, ink.unit * 0.85f, if (on) Palette.TEXT else Palette.DIM, size = ink.unit * 0.65f)
-            if (n in shared) ink.mono(c, "4/5", t.right - ink.dp(3f), t.top, ink.unit * 0.85f, Palette.PLAYHEAD, size = ink.unit * 0.55f, align = Align.RIGHT)
+            drawSccWaveThumb(ink, c, Rect(t.left + 2, t.top + ink.unit * 0.85f, t.right - 2, t.bottom - 2), samples, if (on) col else ink.palette.FAINT)
+            ink.mono(c, hex2(n), t.left + ink.dp(3f), t.top, ink.unit * 0.85f, if (on) ink.palette.TEXT else ink.palette.DIM, size = ink.unit * 0.65f)
+            if (n in shared) ink.mono(c, "4/5", t.right - ink.dp(3f), t.top, ink.unit * 0.85f, ink.palette.PLAYHEAD, size = ink.unit * 0.55f, align = Align.RIGHT)
             if (on) ink.outline(c, t, col, ink.dp(2f), ink.dp(3f))
         }
     }

@@ -41,7 +41,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val ins = YmInstrumentView.sound(s, st)
         val page = YmInstrumentView.page(s, st)
         val listen = YmInstrumentView.listenChannel(st, ins, page)
-        val col = Palette.channel(listen)
+        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when (ins) {
             is YmFmInstrument -> "FM · " + YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].name
@@ -93,17 +93,17 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 continue
             }
             val h = if (r == Row.PAGE) ink.unit * 1.9f else rowH
-            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, Palette.CURSOR_FILL)
+            if (sel) ink.rect(c, rx - ink.unit * 0.4f, y, rx + rw + ink.unit * 0.4f, y + h, ink.palette.CURSOR_FILL)
             when {
                 r == Row.NAME -> if (ins != null) drawName(c, ins.name, rx, vx, y, h, sel)
                     else setting(c, "Empty slot", "${ctl.k(Action.EDIT)} on Slot or any setting makes a sound here", rx, vx, y, h, sel, true)
                 r == Row.LISTEN -> {
-                    ink.label(c, "Listen on", rx, y, h, if (sel) Palette.TEXT else Palette.DIM)
+                    ink.label(c, "Listen on", rx, y, h, if (sel) ink.palette.TEXT else ink.palette.DIM)
                     val name = s.system.channels.getOrNull(listen)?.name.orEmpty()
                     ink.label(c, name, vx, y, h, col, true)
                     listenNote(ins, listen)?.let { note ->
                         val nx = vx + ink.labelWidth(name, ink.unit, true) + ink.unit
-                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, Palette.PLAYHEAD, size = ink.unit * 0.85f)
+                        ink.label(c, ink.fit(note, rightEdge - nx, ink.unit * 0.85f), nx, y, h, ink.palette.PLAYHEAD, size = ink.unit * 0.85f)
                     }
                 }
                 r == Row.PAGE -> drawTabs(c, Rect(rx, y, rx + rw, y + h), col, tabLabels, st.envelope.coerceIn(0, tabLabels.size - 1))
@@ -131,7 +131,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val k = page.envelope!!
             val psg = ins as? YmPsgInstrument ?: defaultYmPsg(st.instrument)
             val small = ink.unit * 0.8f
-            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, Palette.FAINT, size = small)
+            ink.label(c, ink.fit(envelopeSummary(k), rw, small), rx, y, rowH * 0.85f, ink.palette.FAINT, size = small)
             y += rowH * 0.85f
             val plotTop = y + ink.unit * 0.3f
             if (area.bottom - plotTop > ink.unit * 4f) {
@@ -404,7 +404,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** FM 3's four operators: each one's offset as an interval and the note it sounds against the listening note; the mode. */
     private fun drawCh3(c: Surface, r: Rect, ins: YmFmInstrument, col: Int) {
         val small = ink.unit * 0.8f
-        ink.round(c, r, ink.dp(4f), Palette.LANE)
+        ink.round(c, r, ink.dp(4f), ink.palette.LANE)
         val x = r.left + ink.unit * 0.5f
         val w = r.width() - ink.unit
         val lineH = ink.unit * 1.2f
@@ -413,7 +413,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         ink.label(c, ink.fit(when (mode) {
             YmFm3Mode.NORMAL -> "FM 3 normal mode: these offsets are silent (set the FM 3 mode to special)"
             YmFm3Mode.SPECIAL -> "FM 3 special mode: each operator sounds the note plus its offset"
-        }, w, small), x, y, ink.unit * 1.4f, if (mode == YmFm3Mode.NORMAL) Palette.ERROR else Palette.DIM, size = small)
+        }, w, small), x, y, ink.unit * 1.4f, if (mode == YmFm3Mode.NORMAL) ink.palette.ERROR else ink.palette.DIM, size = small)
         y += ink.unit * 1.4f
         val root = ctl.defaultNote()
         for (op in 0 until 4) {
@@ -426,7 +426,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val on = op == YmInstrumentView.operator(st)
             val text = "Op ${op + 1} ${if (carrier) "♪car" else "mod"}   ${NumberText.fixed(offset / 64.0, 2, plus = true)} st   " +
                 YmSystem.noteName(note) + if (cents != 0) " ${if (cents > 0) "+" else ""}${cents}¢" else ""
-            ink.label(c, ink.fit(text, w, small), x, y, lineH, if (on) col else if (carrier) Palette.TEXT else Palette.DIM, on, small)
+            ink.label(c, ink.fit(text, w, small), x, y, lineH, if (on) col else if (carrier) ink.palette.TEXT else ink.palette.DIM, on, small)
             y += lineH
         }
         val notes = listOf("Offsets play on FM 3 only; other channels and normal mode ignore them.",
@@ -434,7 +434,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         var ny = r.bottom - lineH * notes.size - ink.unit * 0.2f
         if (ny < y) return
         for (n in notes) {
-            ink.label(c, ink.fit(n, w, small), x, ny, lineH, Palette.FAINT, size = small * 0.95f)
+            ink.label(c, ink.fit(n, w, small), x, ny, lineH, ink.palette.FAINT, size = small * 0.95f)
             ny += lineH
         }
     }
@@ -463,8 +463,8 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val right = Rect(left.right + gap, r.top, r.right, r.bottom)
 
         // mapped keys
-        ink.round(c, left, ink.dp(4f), Palette.LANE)
-        ink.label(c, ink.fit("Keys of kit ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, Palette.DIM, size = small)
+        ink.round(c, left, ink.dp(4f), ink.palette.LANE)
+        ink.label(c, ink.fit("Keys of kit ${hex2(st.instrument)}", left.width() - ink.unit), left.left + ink.unit * 0.5f, left.top, titleH, ink.palette.DIM, size = small)
         keyList = kit.pcm.keys.sorted()
         keyRowH = ink.unit * 1.25f
         keyRect = Rect(left.left, left.top + titleH, left.right, left.bottom - ink.unit * 0.3f)
@@ -473,7 +473,7 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (shown >= 0) keyScroll = keyScroll.coerceIn(maxOf(0, shown - keyRows + 1), shown)
         keyScroll = keyScroll.coerceIn(0, maxOf(0, keyList.size - keyRows))
         if (keyList.isEmpty()) {
-            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, Palette.FAINT, size = small)
+            ink.label(c, ink.fit("No keys yet: Add, then map", left.width() - ink.unit), left.left + ink.unit * 0.5f, keyRect.top, keyRowH, ink.palette.FAINT, size = small)
         }
         val keyFocus = row in YmPcmPage.KEY_ROWS
         for (i in keyScroll until minOf(keyList.size, keyScroll + keyRows)) {
@@ -481,30 +481,30 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             val m = kit.pcm.getValue(key)
             val y = keyRect.top + (i - keyScroll) * keyRowH
             val on = key == st.dpcmKey
-            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) Palette.CURSOR_FILL else Palette.alpha(Palette.CURSOR_FILL, 140))
+            if (on) ink.rect(c, left.left, y, left.right, y + keyRowH, if (keyFocus) ink.palette.CURSOR_FILL else Palette.alpha(ink.palette.CURSOR_FILL, 140))
             if (on) ink.rect(c, left.left, y, left.left + ink.dp(3f), y + keyRowH, col)
-            ink.mono(c, YmSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else Palette.DIM, on, small)
+            ink.mono(c, YmSystem.noteName(key), left.left + ink.unit * 0.5f, y, keyRowH, if (on) col else ink.palette.DIM, on, small)
             val tail = if (m.pitch > 0) "+${m.pitch}" else m.pitch.toString()
             val tailW = ink.labelWidth(tail, small) + ink.unit * 0.5f
             val name = samples.getOrNull(m.sample)?.name ?: "missing"
             ink.label(c, ink.fit(name, left.width() - ink.unit * 3.6f - tailW, small), left.left + ink.unit * 3.2f, y, keyRowH,
-                if (m.sample in samples.indices) (if (on) Palette.TEXT else Palette.DIM) else Palette.ERROR, size = small)
-            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (m.sample in samples.indices) (if (on) ink.palette.TEXT else ink.palette.DIM) else ink.palette.ERROR, size = small)
+            ink.label(c, tail, left.right - ink.unit * 0.4f, y, keyRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
         }
 
         // samples and the compiled bank
-        ink.round(c, right, ink.dp(4f), Palette.LANE)
+        ink.round(c, right, ink.dp(4f), ink.palette.LANE)
         val used = YmPcm.stored(s.ym)
         val problem = YmPcmLowering.problem(s.ym)
         val over = used > YmPcm.MEMORY || problem != null
         val bank = if (problem == null) YmPcmLowering.compile(s.ym) else null
         val title = "PCM · ${YmPcm.kb(used)} of ${YmPcm.kb(YmPcm.MEMORY)}" + (bank?.let { " · bank ${YmPcmLowering.usage(it)}" } ?: " · bank over its limits")
-        ink.label(c, ink.fit(title, right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH, if (over) Palette.ERROR else Palette.DIM, size = small)
+        ink.label(c, ink.fit(title, right.width() * 0.62f), right.left + ink.unit * 0.5f, right.top, titleH, if (over) ink.palette.ERROR else ink.palette.DIM, size = small)
         val barL = right.left + right.width() * 0.64f
         val barR = right.right - ink.unit * 0.5f
         val barY = right.top + titleH * 0.42f
-        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), Palette.RULE)
-        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / YmPcm.MEMORY), barY + ink.dp(5f), if (over) Palette.ERROR else col)
+        ink.rect(c, barL, barY, barR, barY + ink.dp(5f), ink.palette.RULE)
+        ink.rect(c, barL, barY, barL + (barR - barL) * minOf(1f, used.toFloat() / YmPcm.MEMORY), barY + ink.dp(5f), if (over) ink.palette.ERROR else col)
 
         val lineH = ink.unit * 1.35f
         addRect = Rect(right.left, right.bottom - lineH - ink.unit * 0.2f, right.right, right.bottom - ink.unit * 0.2f)
@@ -517,30 +517,30 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         sampleScroll = sampleScroll.coerceIn(maxOf(0, st.dpcmSample - sampleRows + 1), st.dpcmSample.coerceAtLeast(0))
         sampleScroll = sampleScroll.coerceIn(0, maxOf(0, samples.size - sampleRows))
         val keyed = kit.pcm[st.dpcmKey]?.sample ?: -1
-        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, Palette.FAINT, size = small)
+        if (samples.isEmpty()) ink.label(c, ink.fit("None yet: use Add below", right.width() - ink.unit), right.left + ink.unit * 0.5f, sampleRect.top, sampleRowH, ink.palette.FAINT, size = small)
         for (i in sampleScroll until minOf(samples.size, sampleScroll + sampleRows)) {
             val sample = samples[i]
             val y = sampleRect.top + (i - sampleScroll) * sampleRowH
             val on = i == st.dpcmSample
-            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, Palette.CURSOR_FILL)
-            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else Palette.FAINT, i == keyed, small)
+            if (on) ink.rect(c, right.left, y, right.right, y + sampleRowH, ink.palette.CURSOR_FILL)
+            ink.mono(c, (i + 1).toString().padStart(2, '0'), right.left + ink.unit * 0.5f, y, sampleRowH, if (i == keyed) col else ink.palette.FAINT, i == keyed, small)
             val size = "${YmPcm.seconds(sample)} · ${YmPcm.rateText(sample.rate.toDouble())}"
             ink.label(c, ink.fit(sample.name.ifEmpty { "(unnamed)" }, right.width() - ink.unit * 2.6f - ink.labelWidth(size, small) - ink.unit), right.left + ink.unit * 2.2f, y, sampleRowH,
-                if (on) Palette.TEXT else Palette.DIM, size = small)
-            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, Palette.FAINT, size = small, align = Align.RIGHT)
+                if (on) ink.palette.TEXT else ink.palette.DIM, size = small)
+            ink.label(c, size, right.right - ink.unit * 0.5f, y, sampleRowH, ink.palette.FAINT, size = small, align = Align.RIGHT)
             if (on && row == Row.PCM_SAMPLES) ink.outline(c, Rect(right.left + 2, y + 1, right.right - 2, y + sampleRowH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
 
         // the selected sample: waveform around silence, name
         val sample = samples.getOrNull(st.dpcmSample)
-        ink.rect(c, waveRect, Palette.BG)
+        ink.rect(c, waveRect, ink.palette.BG)
         if (sample != null && sample.data.size > 0 && waveRect.width() > 4f && waveRect.height() > 4f) {
             val data = sample.data
             val columns = maxOf(1, waveRect.width().toInt() / 2)
             val per = data.size.toFloat() / columns
             val cw = waveRect.width() / columns
             val mid = waveRect.top + waveRect.height() / 2
-            ink.line(c, waveRect.left, mid, waveRect.right, mid, Palette.RULE, ink.dp(1f))
+            ink.line(c, waveRect.left, mid, waveRect.right, mid, ink.palette.RULE, ink.dp(1f))
             for (k in 0 until columns) {
                 val a = (k * per).toInt().coerceIn(0, data.size - 1)
                 val b = ((k + 1) * per).toInt().coerceIn(a + 1, data.size)
@@ -554,16 +554,16 @@ internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 val y1 = mid - waveRect.height() * lo / 256f
                 ink.rect(c, waveRect.left + k * cw, y0, waveRect.left + k * cw + maxOf(1f, cw - 0.5f), maxOf(y1, y0 + ink.dp(1f)), Palette.alpha(col, 200))
             }
-            ink.label(c, "${data.size} B", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, Palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
+            ink.label(c, "${data.size} B", waveRect.right - ink.dp(3f), waveRect.top, ink.unit, ink.palette.FAINT, size = ink.unit * 0.65f, align = Align.RIGHT)
         }
         val vx = right.left + ink.unit * 4.4f
         fun boxRow(y: Float, which: Row, label: String, value: String, off: Boolean) {
             val sel = row == which
             val rr = Rect(right.left + ink.unit * 0.2f, y, right.right - ink.unit * 0.2f, y + lineH)
-            if (sel) ink.rect(c, rr, Palette.CURSOR_FILL)
-            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) Palette.TEXT else Palette.DIM, size = small)
+            if (sel) ink.rect(c, rr, ink.palette.CURSOR_FILL)
+            ink.label(c, label, right.left + ink.unit * 0.5f, y, lineH, if (sel) ink.palette.TEXT else ink.palette.DIM, size = small)
             ink.label(c, ink.fit(value, right.right - vx - ink.unit * 0.5f, small, bold = sel), vx, y, lineH,
-                if (off) Palette.FAINT else if (sel) Palette.TEXT else Palette.DIM, sel, small)
+                if (off) ink.palette.FAINT else if (sel) ink.palette.TEXT else ink.palette.DIM, sel, small)
             if (sel) ink.outline(c, rr, cursorColor(), ink.dp(2f), ink.dp(3f))
         }
         boxRow(nameY, Row.PCM_NAME, "Name", sample?.name?.ifEmpty { "(unnamed)" } ?: "—", sample == null)
