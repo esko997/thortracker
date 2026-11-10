@@ -13,9 +13,9 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-VIC/TED integration targets **0.33.0/code 46** on published TIA, retaining all earlier systems
-and the format-10 tuning library. Native/reference, JVM, all three Android frontends, Linux tests and
-the CI-built optimized AppImage pass. Publication is the remaining gate. See `docs/VERIFICATION.md`.
+SAA1099 integration targets **0.34.0/code 47**, retaining the verified VIC/TED candidate and all earlier systems.
+The analytical headroom bound, 960 pre-clamp cases, 925 JVM tests, corrected native checks and
+independent references pass. Frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
 
 1. **Hardening pass** — fixes from the user's Thor testing of 0.11-0.13; tune the FM curated lists, presets and
    demo mixes by ear; review the open questions in `docs/BACKENDS.md`.
@@ -89,7 +89,9 @@ the CI-built optimized AppImage pass. Publication is the remaining gate. See `do
      "C16 / Plus/4 (TED)", our own player on VICE's VIC and plus4emu's TED sound, PAL/NTSC per song,
      shared master volume, TED D/A samples; project + WAV only. Native/reference, JVM, all three
      Android frontends and the CI-built optimized AppImage pass; publication is the remaining gate.
-   - SAA1099 — SAM Coupé / Creative Music System: six channels with hardware envelopes.
+   - SAA1099 — integration **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
+     (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Headroom, JVM and corrected
+     native/reference checks pass; frontend verification remains pending.
    - Virtual Boy VSU and WonderSwan — wavetable handhelds.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.

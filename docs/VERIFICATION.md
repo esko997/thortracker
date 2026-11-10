@@ -31,6 +31,45 @@ and zero scope swap. It was stopped at `:core:linkDebugTestLinuxX64`; no Linux t
 is claimed from that invocation. Current disk reads and swap traffic returned to zero afterward.
 All Kotlin/Native linking on this workstation now goes to CI; the 4 GiB limit was not raised.
 
+## 0.34.0 Philips SAA1099 — integration verification
+
+SAM Coupé and Creative Music System integrate all preceding systems. Six generated fixtures repeat
+byte-identically; **925 JVM and 6 Android host tests** pass. The corrected production-signed Android
+release and clean/temporary frontend instrumentation compile within the enforced build scope.
+
+- All earlier native engines and **2,567 WAV checks** pass. The first SAA run found a fractional
+  resampler-time loss during silent seek and a test assuming the new tone period had already latched.
+- Reusing `blip_skip_silence` for both stereo sides fixes CMS seek at order 3/row 21 from **9 LSB**
+  difference to **bit-identical**, retaining the original 1/32768 limit. The envelope test now covers
+  exactly eight actual edges, including the initial pending reset half-period. The corrected SAA run
+  passes **618 checks**. Both uninterrupted song WAVs, raw player/chip traces and VGM files remain
+  byte-identical to the pre-fix run.
+- Pre-clamp stress/public-machine probes cover **510,719,992 channel samples**, with extrema
+  **−28,944 / +30,071**, zero clipping; existing SAM ×10/CMS ×5 gain is retained. See the source
+  audit for the finite coverage and analytical bound, not an exhaustive-history claim.
+- Independent reference: **1,501 player batches**, **2,000,461 chip clocks / 5,684 output events**,
+  byte-exact VGM streams and repeated loops pass. A-4 measures **440.141 Hz SAM / 440.397 Hz CMS**;
+  pinned libvgm `c5c03a2c` independently renders **440.141 / 440.394 Hz** and recognizes both CMS chips.
+  Its differing noise/envelope model is documented: song envelope/spectrum correlations
+  **0.972/0.777 SAM, 0.801/0.730 CMS** are diagnostics, not an equivalence or listening claim.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/{saa-native,saa-corrected,saa-preclamp,saa-frontend}`.
+CI **42720599432** passes the integrated build/native suite and optimized AppImage. The actual downloaded
+AppImage plays both demos, auditions a held instrument and returns to Pattern: SAM reaches order 1/row 9,
+CMS order 1/row 12, one audition each, with final peaks **0.443787 / 0.287689**. Both surfaces were inspected.
+The corrected production APK passes **22 clean Android tests** and all **32 full-RGBA Game Boy
+surface comparisons** on Nova. The lifecycle suite observed one settling xrun and grew its buffer
+to 576 frames; no driver faults. SAM and CMS controller, hardware-envelope/shared-noise, live-edit,
+held-audition, stop/restart, project-picker and export scenarios each pass on Nova, DMG and Konkr.
+These six backend scenarios report zero xruns/faults; largest callbacks are **2.360 / 11.099 / 5.567 ms**.
+Konkr's deep seek takes **454 ms wall / 113.977 ms native**, using the documented order-local fallback.
+All six picker-created WAVs are non-silent 48 kHz stereo with distinct sides and no full-scale samples;
+SAM has **921,600 frames**, CMS **832,000**. VGM 1.71 lengths, loop samples and 8 MHz / dual-7.15909 MHz
+clock headers are checked. Final queue-order APK SHA-256:
+`f37ba345cdb4fff37ac2529f2e06114b32fbd1a75c9a19325a3edd4eeda6b055`.
+Official publication remains pending.
+Physical SAM Coupé/Game Blaster listening has not been performed.
+
 ## 0.33.0 VIC-20 VIC and C16/Plus4 TED
 
 Integrates published TIA and all earlier systems. The reference fixture is deterministic across two runs.
@@ -80,6 +119,33 @@ explicitly selecting its sounding square/DAC instruments verifies audition witho
 Instrument, DAC and Pattern surfaces were visually inspected. Offscreen/dummy output verifies PCM/UI,
 not physical speakers or human listening. Evidence: `cbm-ci-appimage/` and `cbm-desktop/` under the
 same SSD evidence root. Temporary Android harness sources have been removed.
+
+### Official 0.33.0 delivery
+
+Published from `eef2607354d05cd971eb552de9b7816a43f5f0cc`; workflow **42719997421** passes build,
+Deck, signed release and AppImage attachment. APK code 46 is non-debuggable, includes arm64/x86_64 and
+verifies against the production certificate. Official VIC/TED controller, playback, live-edit, restart,
+sample/document and export scenarios were exercised on Nova, DMG and Konkr with **zero xruns and driver faults**;
+largest observed callbacks are **2.019 / 6.423 / 4.604 ms** respectively.
+
+**Audition-ordering defect, corrected for 0.34.0:** Konkr's original TED kind-switch scenario returned
+a DAC placement error after the instrument had become a tone. Nova and DMG passed that same harness.
+The C-4 rerun issued another valid audition and could overwrite the earlier error; it did **not**
+disprove the race. A deterministic real-executor regression subsequently failed on the old production
+APK and passed unchanged against the corrected APK, covering both already-applied and still-queued
+song updates. Command boundaries now seal edit batches instead of consuming a future song from a
+shared mailbox. Current invalid requests still fail normally. The original, unmodified C-2 TED
+scenario also passes on Konkr and DMG after the correction. The C-4 runner's separate plural-only
+result-parser defect was fixed without treating its successful `OK (1 test)` as an app failure.
+
+The official AppImage also passes actual VIC/TED playback plus held audition, with advancing transport and
+nonzero PCM; final Pattern surfaces were inspected. Thor receives only the SHA-verified APK in Download;
+Deck receives only the SHA-verified AppImage and its stable `thor-tracker` symlink. Neither was woken,
+installed to or launched; `/ThorTunez` remains untouched.
+
+APK SHA-256: `d119c0bb4c84c19c767871f6f82a1dd4a569ab94113c708fa4a998df51ada384`.
+AppImage SHA-256: `fe27df74e6f834334b589096743d1dfde88504797b69a1e03857d5922b16a5ab`.
+Evidence: `recovery-20261109/{official-0330,cbm-official}` under `~/.local/state/thortracker`.
 
 ## 0.32.0 Atari 2600 TIA
 

@@ -53,6 +53,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * Atari 2600 (`atari2600-tia-ntsc`, `atari2600-tia-pal`) 1.
  * Atari POKEY (`atari-pokey`) 1.
  * VIC-20 (`vic20-vic`) 1 and C16/Plus/4 (`c16-ted`) 1.
+ * SAM Coupé (`sam-saa1099`) 1; Creative Music System (`cms-saa1099`) 1.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

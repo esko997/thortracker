@@ -18,6 +18,8 @@ import org.thortracker.system.nes.NesS5bSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.nes.NesVrc7System
+import org.thortracker.system.saa.CmsSystem
+import org.thortracker.system.saa.SamCoupeSystem
 import org.thortracker.system.opm.OpmSystem
 import org.thortracker.system.pce.PceSystem
 import org.thortracker.system.scc.SccPlusSystem
@@ -434,7 +436,7 @@ object SoundSystems {
         listOf(GbSystem, NesSystem, NesVrc6System, NesVrc7System) + NesN163System.ALL +
             listOf(NesS5bSystem, NesFdsSystem, NesMmc5System, NesEpsmSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL +
             listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem, SccSystem, SccPlusSystem, PceSystem, OpmSystem, OpnSystem, OpnaSystem,
-                PokeySystem, TiaNtscSystem, TiaPalSystem, VicSystem, TedSystem)
+                PokeySystem, TiaNtscSystem, TiaPalSystem, VicSystem, TedSystem, SamCoupeSystem, CmsSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem
