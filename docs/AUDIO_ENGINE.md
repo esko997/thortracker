@@ -4165,8 +4165,11 @@ Cost: one event per step of a sounding channel (A-4: 14 kHz, 236 per tick), O(1)
   clock in the order made, then the core renders 3579545 / (60 · N) clocks (exact integer accumulation: 59659 or 59660
   at N = 1).
 - **Resampling**: blip_buf 1.1.0 at clock rate 3579545 Hz to the host rate (its ~15 Hz high-pass removes the SCC's DC).
-  Input = the sum of the channels' levels · 48 (±28800 at most); output float = sample / 32768; mono, written to both
-  stereo channels.
+  Input = the sum of the channels' levels · 24 (±14400 at most); output float = sample / 32768; mono,
+  written to both stereo channels. The extra 6 dB of headroom precedes the integer resampler: high-pass
+  history and interpolation can otherwise clip a legal full-volume five-voice mix. Full-range polarity
+  transitions must equal the sum of solo renders, within integer rounding, at all seven supported test
+  rates (8000..96000 Hz), for SCC and SCC+. Register timing and VGM output are unaffected.
 - **Size**: `SccImage` = 65536 bytes + `ScInfo`; a machine holds an image copy, the core (~300 bytes), the player and
   one blip buffer. Creation allocates once; no tables are built.
 

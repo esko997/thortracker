@@ -21,10 +21,10 @@ VSU is published as **0.35.0/code 48** from main `aa3149e`. Its 956 JVM tests, 5
 seven-rate seek/headroom checks and all three reserved-device candidate scenarios pass. All four
 publication jobs, the actual official AppImage and official APK acceptance on DMG pass.
 
-The **0.36.0/code 49** integration retains both WonderSwan variants, VSU, both SAA variants and all
-earlier engines, including the headroom and fractional-seek corrections. Its 995 JVM tests, 693
-WonderSwan native checks, 2,796 WAV checks and independent references pass. The actual CI AppImage
-and both scenarios on Nova, DMG and Konkr pass; final integrated CI and official publication remain pending.
+**0.36.0/code 49** is published from main `506c424`, retaining both WonderSwan variants, VSU,
+both SAA variants and all earlier engines. Its 995 JVM tests, 693 WonderSwan native checks,
+2,796 WAV checks, independent references and all three reserved-device candidate scenarios pass.
+All four publication jobs, both official AppImage demos and official APK scenarios on DMG/Konkr pass.
 All local Kotlin/Native linking, including debug/test links, remains prohibited: use CI and exercise
 its downloaded AppImage.
 
@@ -107,13 +107,18 @@ its downloaded AppImage.
      with the Sacred Tech Scroll's amendments, VGM + WAV export).
      956 JVM tests, 594 native checks, 2,622 WAV checks, independent references and all three reserved
      Android frontends pass, including official AppImage/DMG APK checks (`docs/VERIFICATION.md`).
-   - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
-     DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
-     APU, VGM/WAV export), integrated for **0.36.0/code 49**. 995 JVM tests, 693 native checks,
-     2,796 WAV checks, independent references, actual CI AppImage and all three reserved devices pass;
-     final integrated CI and publication remain pending (`docs/VERIFICATION.md`).
+   - WonderSwan and WonderSwan Color — released **0.36.0/code 49**: four wavetable channels
+     (voice samples, sweep, noise), plus Color's Sound DMA and Hyper Voice. Own player on a C port
+     of ares's APU, VGM/WAV export; Hyper Voice VGM is explicitly refused.
+     995 JVM tests, 693 native checks, 2,796 WAV checks, independent references and all three reserved
+     Android frontends pass, including official AppImage/DMG/Konkr APK checks (`docs/VERIFICATION.md`).
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
-8. **Conversion between systems** — a lossy step with a report of what did not carry over.
+8. **Conversion between systems (0.37.0 integration)** — Files menu preview, complete paginated/exportable
+   loss report, explicit Apply with previous-project protection, stale-preview rejection and all registered
+   destinations. Retains compatible promotions and editable instrument identity; cross-family sounds use
+   named audible presets, with located pitch/effect/channel losses and capacity blockers. Native rendering,
+   the export matrix, actual CI AppImage and all three reserved Android frontends pass; final integrated
+   CI/publication gates are recorded in `docs/VERIFICATION.md`.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
    [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md),
    and independently generated 1–72 EDO (496 additions). Non-octave periods and attribution are preserved.
@@ -256,7 +261,7 @@ its downloaded AppImage.
 - Backend owns musical document semantics, instruments, effects, constraints, compilation, export and playback implementation.
 - Backend-specific views are allowed. No universal FM/wavetable/sampler editor is required.
 - Views and editor commands must not manipulate emulator memory or hUGEDriver internals directly.
-- No cross-backend song conversion. Do not implement a speculative backend plugin system, universal effect language or unused future drivers.
+- Cross-backend conversion is an explicit, lossy document operation with a report; it does not replace backend semantics. Do not implement a speculative backend plugin system, universal effect language or unused future drivers.
 
 ## Responsive playback is a requirement
 
@@ -342,7 +347,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 
 These are implementation scope defaults, not claims that the features are impossible:
 
-- GBA/Mega Drive or other additional backends and conversion between backends.
+- Additional sample-based platforms (GBA DMA, SNES SPC700 and Amiga Paula).
 - Real-time note recording, MIDI integration, cloud sync, collaborative editing, plugin hosting and sample recording.
 - Import of arbitrary existing `.uge`/Furnace projects. Export compatibility does not establish import compatibility.
 - C/assembly/standalone-ROM exports.

@@ -113,7 +113,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         override fun openProject() = launchPicker(OPEN)
         override fun saveProject() { currentUri?.let { saveProject(it) } ?: launchPicker(SAVE) }
         override fun saveProjectAs() = launchPicker(SAVE)
-        override fun export(song: Song, format: ExportFormat) { exportFormat = format; launchPicker(EXPORT) }
+        override fun export(song: Song, format: ExportFormat) { exportFormat = format; launchPicker(EXPORT, song.title, song) }
         override fun exportWav(song: Song, options: WavOptions) = startWavExport(song, options)
         override fun showWavExport(): Boolean = this@MainActivity.showWavExport()
         override fun recoverPrevious() = projectStore.previous { song -> this@MainActivity.replace(song) }
@@ -204,8 +204,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private var keymap = Keymap.DEFAULT
     private var pickerSong: Song? = null
 
-    /** The format the export picker writes; the song system's first until the menu chooses one. */
-    private var exportFormat: ExportFormat = SoundSystems.DEFAULT.exports.first()
+    /** The explicitly selected exporter; dynamic reports cannot be reconstructed after process recreation. */
+    private var exportFormat: ExportFormat? = null
     /** The WAV export (rendering, ready to save, or being saved); null when none runs. */
     private var wavRun: WavRun? = null
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
@@ -1026,14 +1026,16 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         }
     }
 
-    private fun launchPicker(request: Int, title: String = session.song.title) {
+    private fun launchPicker(request: Int, title: String = session.song.title, snapshot: Song = session.song) {
+        val format = exportFormat
         if (request == EXPORT) {
-            val errors = session.song.system.errors(session.song)
+            if (format == null) return showError("The export selection was lost. Choose the export again; nothing was written.")
+            val errors = snapshot.system.errors(snapshot)
             if (errors.isNotEmpty()) return showError(errors.joinToString("\n"))
         }
         hosts.values.forEach { it.tracker.cancelInteraction() }
         if (request != EXPORT_WAV) {   // the WAV is rendered already: wavDestination writes it
-            pickerSong = session.song
+            pickerSong = snapshot
             pickerGeneration = documentGeneration
         }
         val intent = Intent(if (request == OPEN) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -1041,7 +1043,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             type = when (request) { OPEN -> "*/*"; EXPORT_WAV -> "audio/x-wav"; else -> "application/octet-stream" }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             if (request != OPEN) putExtra(Intent.EXTRA_TITLE, safeName(title) + when (request) {
-                EXPORT -> ".${exportFormat.extension}"
+                EXPORT -> ".${requireNotNull(format).extension}"
                 EXPORT_WAV -> ".wav"
                 else -> ".thor"
             })
@@ -1072,7 +1074,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             wavDestination(resultCode, data?.data)
             return
         }
-        if (resultCode != RESULT_OK) { pickerSong = null; pickerGeneration = null; return }
+        if (resultCode != RESULT_OK) {
+            pickerSong = null
+            pickerGeneration = null
+            if (requestCode == EXPORT) exportFormat = null
+            return
+        }
         val uri = data?.data ?: return
         try {
             contentResolver.takePersistableUriPermission(uri, data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
@@ -1103,7 +1110,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 if (generation == documentGeneration) replace(song, uri)
             }
             SAVE -> saveProject(uri, snapshot, generation)
-            EXPORT -> exportFormat.let { format ->
+            EXPORT -> {
+                val format = exportFormat
+                    ?: return showError("The export selection was lost. Choose the export again; nothing was written.")
+                exportFormat = null
                 projectStore.export(uri, snapshot, format) {
                     if (generation == documentGeneration) { statusMessage = "${format.extension.uppercase()} exported"; refresh() }
                 }

@@ -1,5 +1,64 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.37.0 Cross-system conversion — integration verification
+
+Version **0.37.0/code 50** adds Files → Convert to system with a non-mutating preview, complete
+paginated/exportable loss report, explicit previous-project confirmation and stale-preview protection.
+All **43 registered destinations** are available. Capacity overflow blocks rather than truncates;
+cross-family presets, dropped lanes/resources and pitch/effect approximations are reported explicitly.
+Android exports capture the requested song; a recreated activity with a lost exporter refuses to write
+an unrelated default format.
+
+- **1,062 JVM tests and 6 Android host tests pass**, with signed release and sample exports built under
+  the resource cap. The conversion-specific suite has **67 tests**.
+- Fail-before/pass-after regressions cover inherited notes inventing an unused default instrument,
+  inherited noise selecting the wrong hardware lane, GB's later B00 overriding an earlier jump, and
+  SMS's last delay overriding an earlier delay before zero-elision or destination column budgeting.
+  Compatible promotions also retain the original effect-column layout.
+- A throwaway CLI exercises **78 real conversion/export cases**: 77 converted documents and one
+  same-system no-op, no blockers or failures. It covers every destination, actual demos and compatible
+  promotions, source immutability, hidden/unused pattern data, distinct instrument identities,
+  canonical project round trips and identical lowered images before/after decoding.
+- **52 actual native-engine renders**, 12 seconds each, have nonzero PCM, advancing rows and no
+  driver faults. This is playability evidence, not cross-chip waveform, mix-headroom or tuning equality.
+  Native-only VGM/XGM/XGC exporters are not replaced by JVM mocks.
+- A converted PCE demo exposed real SCC resampler clipping. Five synchronized full-volume voices,
+  including −128/+127 polarity changes, reproduced **28 failures** across SCC/SCC+ at seven rates
+  from 8000 to 96000 Hz. Reducing the gain **before** blip_buf from 48 to 24 passes **689 SCC checks**:
+  the full mix equals five solo contributions within six PCM LSBs and never reaches a clipping rail.
+  The formerly clipped 12-second conversion now peaks at **0.545685**, with 119 row changes.
+  Raw player/chip traces, both images and both VGM exports are byte-identical before/after.
+  The independent reference also matches all 1,501 player batches, 2,545 chip events and exact VGM
+  bytes. A-4 remains 440.397 Hz natively and 440.420 Hz through pinned libvgm; existing waveform
+  comparison tolerances pass unchanged for both variants.
+- The integrated native run passes every engine and **2,796 WAV-export checks**. Optional OPNA/EPSM
+  rhythm-ROM checks remain skipped because that private ROM is unavailable; no ROM is distributed.
+- Candidate CI `42734222075` (`076b879`) passes both builds. Its actual AppImage completes eight
+  isolated conversion scenarios: preview, cancel, confirmation cancel, report first/next/back,
+  full TXT report save and apply/play. The JVM checker verifies the resulting source document,
+  converted document, previous-project backup and complete report against the expected values.
+  Playback reaches order 3/row 11; preview, report pages and converted Pattern surfaces were inspected.
+  This candidate predates the SCC gain fix; it is UI evidence, not proof of the corrected SCC audio.
+- Post-fix CI `42737641539` (`4e2e0ec`) passes both builds. Its actual AppImage plays the formerly
+  clipped PCE→SCC conversion for 13 seconds, reaches order 1/row 55 and peaks at **0.5456848**,
+  matching the corrected native renderer. The five-channel Pattern surface was inspected.
+  Evidence: `recovery-20261109/conversion-fixed-desktop/`.
+- Nova passes the **22 permanent Android tests** and **32 full-RGBA Game Boy baseline comparisons**.
+  Nova, DMG and Konkr each pass both actual conversion/picker scenarios against the corrected signed
+  release. These exercise GB→NES and AY→GB, cancellation, all report pages, frozen report/backend
+  export snapshots, backup confirmation, save/reopen, playback, held audition and native WAV output.
+  Actual activity recreation behind DocumentsUI refuses the lost exporter and writes no default
+  backend payload. Initial Nova screenshots caught preceding composed frames; compositor-settled
+  captures visibly confirm report pagination, backup confirmation and the recreation refusal.
+  Dedicated playback/audition has zero xruns/faults on all three devices; maximum callbacks are
+  **3.834 / 13.298 / 7.540 ms**, respectively. Working/recovery/previous files and AtomicFile companions
+  are restored byte-exact; workspace/keymap values are restored and `/ThorTunez` is never accessed.
+  Evidence: `recovery-20261109/conversion-frontend/{clean-parity,visual-smoke}/`.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/conversion-export-evidence/`.
+Final integrated CI and official publication remain pending.
+No temporary probe source is intended for the committed application/test tree.
+
 ## 0.36.0 WonderSwan — integration verification
 
 Both WonderSwan models integrate VSU, SAA1099 and the preceding systems, targeting
@@ -48,9 +107,25 @@ were inspected. Evidence: `recovery-20261109/ws-frontend/device-smoke/`.
 The collection wrapper initially attempted to pull the intentionally refused VGM after both tests
 had passed; successful exports were retained and checked. It now recognizes that explicit negative
 case without relaxing positive-export checks. The corrected wrapper completed on DMG and verified
-that the refused VGM was absent. Final integrated CI and official publication remain pending.
+that the refused VGM was absent.
 No physical WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking
 remains disabled.
+
+Final integrated CI `42739508947` passes. PR #47 merged as main **`506c424`**; all four publication
+jobs in run **`42741502289`** pass. Official **0.36.0/code 49** artifacts:
+
+- APK SHA-256 `8aff14c58b5a955575723b2e1154c9dd508efb803af518d8588a0486f7a40325`
+- AppImage SHA-256 `84fd07ee4468166b69c0bae69529e9e7ab92abaa05b12089aaf555c30b52eb5e`
+
+The downloaded APK has the production certificate, is non-debuggable and contains both Android ABIs.
+Both official scenarios pass on DMG and Konkr: zero xruns/faults, maximum callbacks **4.653 / 3.998 ms**,
+both WAVs byte-identical to all three accepted candidates, and the refused Hyper Voice VGM absent.
+Actual DMA/refusal surfaces were inspected. Nova was not downgraded from the accepted 0.37 candidate.
+The official AppImage plays and held-auditions both demos, then returns to Pattern; playback advances
+to order 1/rows 20 and 22, with nonzero hold PCM and peaks **0.15112305 / 0.32122803** afterward.
+Both desktop surfaces were inspected. Evidence: `recovery-20261109/{official-0360,ws-official-smoke,ws-official-desktop}/`.
+Hash-verified copies were delivered to Thor's Download folder and Deck's `~/thortracker-deck/`;
+Deck's stable `thor-tracker` symlink was updated. Neither device was woken, installed or launched.
 
 ## Workstation recovery and enforced build limits
 

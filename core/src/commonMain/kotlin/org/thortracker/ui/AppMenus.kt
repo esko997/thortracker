@@ -2,6 +2,8 @@ package org.thortracker.ui
 
 import org.thortracker.audio.Transport
 import org.thortracker.audio.WavOptions
+import org.thortracker.conversion.ConversionImpact
+import org.thortracker.conversion.SongConversion
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Follow
@@ -474,6 +476,7 @@ class AppMenus(
             "Save as…" to host::saveProjectAs,
         ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
             "Export .wav…" to ::exportWav,
+            "Convert to system…" to { chooseSystem("Convert to") { conversionPreview(it) } },
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
             "Recover previous project" to { confirmReplace { host.recoverPrevious() } },
@@ -524,6 +527,65 @@ class AppMenus(
             }
         }
         return entries to selected
+    }
+
+    private fun conversionPreview(target: SoundSystem) {
+        val source = session.song
+        if (source.system.id == target.id) {
+            host.status("Already using ${target.name}; song unchanged")
+            return
+        }
+        val version = session.documentVersion
+        val result = SongConversion.preview(source, target)
+        val report = SongConversion.report(source, target, result)
+        val items = buildList {
+            add(PopupItem("Read complete report") { conversionReport(report) })
+            add(PopupItem("Save report as .txt…") {
+                // The closure owns the immutable report, including when Android completes its picker later.
+                val carrier = target.blank().copy(title = "${source.title} conversion report".take(255))
+                host.export(carrier, ExportFormat("txt", "conversion report") { report.encodeToByteArray() })
+            })
+            if (result.canApply) add(PopupItem("Apply conversion…", PopupItem.Tone.DANGER) {
+                confirmReplace {
+                    if (session.documentVersion != version || session.song !== source) {
+                        host.error("This conversion preview is stale: the working song changed. Preview the conversion again.")
+                    } else {
+                        val converted = requireNotNull(result.song)
+                        val errors = target.errors(converted)
+                        if (errors.isNotEmpty()) host.error(errors.joinToString("\n"))
+                        else host.replace(converted)
+                    }
+                }
+            })
+            add(PopupItem("Cancel") { popups.closeAll() })
+        }
+        popups.show(PopupSpec("Convert to ${target.name}",
+            message = "${source.system.name} → ${target.name}\n" +
+                "${result.lanes.size} lanes mapped; " +
+                "${result.issues.count { it.impact == ConversionImpact.CHANGE }} changes, " +
+                "${result.issues.count { it.impact == ConversionImpact.LOSS }} losses, " +
+                "${result.issues.count { it.impact == ConversionImpact.BLOCKER }} blockers.\n" +
+                "Read the complete lane mapping and loss report before applying. " +
+                if (result.canApply) "The working song is unchanged until you confirm Apply."
+                else "Conversion is blocked; the working song is unchanged.",
+            items = items, selected = items.lastIndex), host.modalDisplay)
+    }
+
+    /** Small message pages work on both frontends; long individual lines are paginated too. */
+    private fun conversionReport(report: String) {
+        val lines = report.lines().flatMap { line -> if (line.isEmpty()) listOf("") else line.chunked(72) }
+        val pages = lines.chunked(12)
+        fun show(page: Int, replace: Boolean) {
+            val items = buildList {
+                if (page > 0) add(PopupItem("Previous page") { show(page - 1, true) })
+                if (page < pages.lastIndex) add(PopupItem("Next page") { show(page + 1, true) })
+                add(PopupItem.dismiss())
+            }
+            val spec = PopupSpec("Conversion report ${page + 1}/${pages.size}",
+                message = pages[page].joinToString("\n"), items = items)
+            if (replace) popups.replaceTop(spec) else popups.show(spec, host.modalDisplay)
+        }
+        show(0, false)
     }
 
     private fun export(format: ExportFormat) {
