@@ -24,6 +24,7 @@ class Platform(width: Int, height: Int, fullscreen: Boolean) {
     }
     private val controllers = mutableMapOf<Int, CPointer<cnames.structs._SDL_GameController>>()
     private val triggerDown = mutableSetOf<Int>()
+    private val event = nativeHeap.alloc<SDL_Event>()
     val audioDriver get() = SDL_GetCurrentAudioDriver()?.toKString() ?: "none"
     val videoDriver get() = SDL_GetCurrentVideoDriver()?.toKString() ?: "none"
     init {
@@ -57,10 +58,10 @@ class Platform(width: Int, height: Int, fullscreen: Boolean) {
     }
     fun close() {
         controllers.values.forEach { SDL_GameControllerClose(it) }; controllers.clear()
+        nativeHeap.free(event.ptr)
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit()
     }
-    fun poll(app: DeckApp) = memScoped {
-        val event = alloc<SDL_Event>()
+    fun poll(app: DeckApp) {
         while (SDL_PollEvent(event.ptr) != 0) {
             val e = event
             when (e.type) {
