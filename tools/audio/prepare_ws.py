@@ -380,7 +380,8 @@ def check_reference(c):
     formula = [math.floor(127 * math.sin(2 * math.pi * i / 64) + 0.5) for i in range(64)]
     if sine != list(R.SINE) or list(R.SINE) != formula:
         bad.append("WSP_SINE / ws_ref.SINE differ from floor(127 sin(2 pi i / 64) + 0.5)")
-    below = (R.PERIOD_Q16[R.PITCH_MIN - 1] + (1 << 16)) >> 17  # pitch 1166 (octave 1) without the clamp
+    octave, index = divmod(R.PITCH_MIN - 1, 768)
+    below = (R.PERIOD_Q16[index] + (1 << (15 + octave))) >> (16 + octave)  # without the clamp
     if R.period(57 * 64) != 218 or R.period(R.PITCH_MIN) != 2048 or below <= 2048:
         bad.append("period(): A-4 = %d (218), PITCH_MIN = %d (2048), pitch 1166 unclamped = %d (> 2048)"
                    % (R.period(57 * 64), R.period(R.PITCH_MIN), below))
