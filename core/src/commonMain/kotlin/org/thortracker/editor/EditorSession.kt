@@ -43,6 +43,10 @@ class EditorSession(initial: Song) {
     var documentVersion: Long = 0
         private set
 
+    /** Changes only when another document replaces this one; entry slots belong to that document. */
+    internal var documentGeneration: Long = 0
+        private set
+
     var onSongChanged: ((Song) -> Unit)? = null
     var onStateChanged: (() -> Unit)? = null
     var onAudition: ((Int, Int, Int, Int) -> Unit)? = null
@@ -103,6 +107,7 @@ class EditorSession(initial: Song) {
     private fun gestureChanged() = inGesture && gestureStart != null && gestureStart !== song
 
     fun replaceSong(song: Song) {
+        documentGeneration++
         openGestures.clear()
         fitMarks.clear()
         gestureStart = null

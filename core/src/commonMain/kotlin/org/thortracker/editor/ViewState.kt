@@ -124,6 +124,16 @@ data class EntryMemory(
     val effects: HashMap<Int, Pair<Int, Int>> = HashMap(),
     val pens: HashMap<Int, Int> = HashMap(),
     val tuned: HashMap<Int, Pair<Int, Int>> = HashMap(),
+    internal var documentGeneration: Long = 0,
 ) {
-    fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens), HashMap(tuned))
+    internal fun bindDocument(generation: Long) {
+        if (documentGeneration == generation) return
+        notes.clear()
+        effects.clear()
+        pens.clear()
+        tuned.clear()
+        documentGeneration = generation
+    }
+
+    fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens), HashMap(tuned), documentGeneration)
 }

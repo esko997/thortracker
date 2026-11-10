@@ -68,10 +68,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Current controller bindings, so hints name the buttons the user actually pressed. */
     var keys: Keymap = Keymap.DEFAULT
 
-    /** Last note/effect per channel and entry sound per bank; part of [state] so it swaps with it. */
-    private val lastNote get() = state.entry.notes
-    private val lastEffect get() = state.entry.effects
-    private val penSound get() = state.entry.pens
+    /** Entry memory follows display swaps, but never reinterprets another document's slot numbers or effects. */
+    private val entry get() = state.entry.also { it.bindDocument(session.documentGeneration) }
+    private val lastNote get() = entry.notes
+    private val lastEffect get() = entry.effects
+    private val penSound get() = entry.pens
 
     /** Held editing or Sketch listening keeps following from moving the subject under the user's hands. */
     val holding: Boolean get() = editHeld || clearHeld || markHeld ||
@@ -177,6 +178,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     // ---- shared helpers --------------------------------------------------------------------------
 
     fun normalise() {
+        state.entry.bindDocument(session.documentGeneration)
         val s = song
         val system = s.system
         // A song of another system may lack the showing view (no Wave view without wave tables).
@@ -523,7 +525,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Tuned pitch written into an empty row: the channel's last tuned pitch if still reachable, else 1/1 nearest the octave. */
     private fun entryPitch(channel: Int, map: TuningMap): TunedPitch? {
-        state.entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
+        entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
         val root = map.tuning.root
         val near = (octaveNote(state.octave) + root.mod(12)).coerceIn(system.noteRange)
         return map.nearest(near, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
@@ -540,7 +542,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         }
         if (!assignmentAllowed(state.channel, next.note, next.instrument)) return false
         write(next)
-        state.entry.tuned[state.channel] = pitch.note to pitch.detune
+        entry.tuned[state.channel] = pitch.note to pitch.detune
         lastNote[state.channel] = pitch.note
         startAudition(state.channel, pitch.note, ins, pitch.detune)
         session.note("${map.tuning.name}: ${map.label(pitch)}  ${system.noteName(pitch.note)}${if (pitch.detune > 0) " +${pitch.detune}" else ""}  " +
@@ -1314,7 +1316,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (note >= 0 && !assignmentAllowed(state.channel, cell.note, cell.instrument)) return
         session.setCell(p, state.channel, row, cell)
         if (pitch != null) {
-            state.entry.tuned[state.channel] = pitch.note to pitch.detune
+            entry.tuned[state.channel] = pitch.note to pitch.detune
             session.note("${session.tuningMap?.tuning?.name}: wrote ${session.tuningMap?.label(pitch)} (${NumberText.fixed(pitch.error, 1, plus = true)}¢)")
         }
         if (note >= 0) lastNote[state.channel] = note
