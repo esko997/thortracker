@@ -255,7 +255,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         Line.Row(k.label(Action.EDIT), "Report a bug (opens the issue form where the system can; otherwise shows its address) or Copy diagnostics"),
         Line.Row("Issues", About.ISSUES_URL),
         Line.Row("Diagnostics", "A plain-text report of the version, device, displays, audio statistics, the song's system and recent messages: " +
-            "copied to the clipboard on Android, written to ~/ThorTracker/diagnostics.txt on the Steam Deck. Paste it into the issue. " +
+            "copied to the clipboard on Android, saved as diagnostics.txt in your projects folder on Linux handhelds. Paste it into the issue. " +
             "Thor Tracker never sends anything anywhere: no network, no telemetry."),
         Line.Heading("Licence"),
         Line.Text("Thor Tracker is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 or (at your option) any later version. " +

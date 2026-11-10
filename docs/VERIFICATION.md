@@ -5,7 +5,8 @@
 Version **0.38.0/code 52** adds original Slate, Paper and Contrast workspace palettes and an
 ARM64 NextUI Pak. Slate preserves the original appearance. Theme selection is outside the
 musical document and does not add an Undo entry. Android candidate source is `1943ce6`;
-the final native implementation tested below is `046d897`.
+the native implementation exercised on hardware below is `046d897`. The final Help copy also describes
+the diagnostics file in the projects folder on Linux handhelds, rather than naming only the Deck path.
 
 - The bounded local build passes **1,084 core JVM tests and 7 Android host tests**. Nova passes
   **24 permanent Android instrumentation tests** against the production-signed release APK.
@@ -17,8 +18,9 @@ the final native implementation tested below is `046d897`.
 - Paper and Contrast keyboard focus now have contrasting key-specific rims on both white and black
   keys. Effect-help cached rows are rebuilt when their palette changes, avoiding stale explicit colours.
   Captured keyboard surfaces are inspected; the Help cache regression passes in the core suite.
-- **32/32 complete Slate RGBA captures are identical** to the official 0.37.1 same-device baseline,
-  covering 16 Game Boy views at 1920×1080 and 1240×1080.
+- Before that final Help-copy clarification, **32/32 complete Slate RGBA captures are identical**
+  to the official 0.37.1 same-device baseline, covering 16 Game Boy views at 1920×1080 and 1240×1080.
+  The About diagnostics wording is an intentional subsequent text change, not a palette change.
 - The actual CI AppImage from `44abe41` selects all three themes through the shared controller menu,
   plays the factory song with PCM peak 0.509230, and restores Paper/Contrast in separate fresh processes.
   The working project remains byte-identical. Compact 1024×768 keyboard runs produce held-audition PCM
