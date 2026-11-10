@@ -29,6 +29,8 @@ transport, whereas Activity pause does.
   **408,926 interleaved stereo float samples are bit-identical**. Edited-future register-write
   positions agree within **two CPU clocks**, but their PCM is **not bit-identical**.
   Do not extend the no-op PCM result to edited/relocated songs.
+- **172/172 existing sample exports are byte-identical to 0.40.0**, with no added or removed
+  exports. Evidence: `workflow-touch-041/sample-compatibility.json` under the recovery root.
 
 ### Actual Android workflows
 
@@ -70,9 +72,7 @@ ergonomics verification is claimed. Next is joint prototype review and soft-laun
 not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain deferred.
 
 There is **no new 0.41.0 physical Deck/Brick proof or official release/delivery yet**.
-The existing-sample byte-comparison gate is still pending for this candidate; the 172-export
-result in the historical 0.40.0 section below must not be attributed to 0.41.0. CI/publication
-and delivery evidence will be recorded separately after they occur.
+CI/publication and delivery evidence will be recorded separately after they occur.
 
 ## 0.40.0 — NES multi-effect support and editing hardening
 
