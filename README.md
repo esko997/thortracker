@@ -57,14 +57,19 @@ Controls are the Thor's: the D-pad moves, hold A + D-pad edits, Start plays, R2 
 ## Brick Hammer / NextUI
 
 The ARM64 Pak targets the **Brick Hammer running NextUI (`tg5040`)** and uses its installed
-vendor SDL2. **The candidate's on-device display, audio and launcher-return checks are still
-pending**; see [verification status](docs/VERIFICATION.md). This is not a Miyoo Mini build.
+vendor SDL2. The actual device passes display, controller-layer, project save/reopen, theme
+persistence and return-to-launcher checks; see [audio measurements and limits](docs/VERIFICATION.md).
+This is not a Miyoo Mini build. Physical suspend/resume and acoustic listening still need manual testing.
 
 The package is `thor-tracker-<version>-brick-nextui.zip` with a `.sha256` sidecar. Extract it
 at the SD-card root so the launcher is `Tools/tg5040/ThorTracker.pak/launch.sh`, then choose
 ThorTracker from NextUI's Tools. The printed A/B/X/Y buttons retain their meanings; L2 and R2
 are modifier layers, including their combined layer. **Menu** or **Select+Start** opens the
 application menu; **Quit** returns through NextUI's normal Pak launcher.
+
+<img src="docs/media/brick-paper.png" width="620" alt="Thor Tracker's Pattern view in Paper on the actual 1024×768 Brick Hammer display">
+
+*Actual Brick framebuffer after quitting and reopening the Pak with Paper retained.*
 
 Projects and exports live in `/mnt/SDCARD/ThorTunez`; recovery, keymap, theme, tuning packs
 and user-supplied firmware live in `/mnt/SDCARD/ThorTunez/.thortracker`. Updates replace only

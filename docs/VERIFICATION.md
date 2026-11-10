@@ -1,10 +1,11 @@
 # Thor Tracker verification — 2026-11-10
 
-## 0.38.0 candidate — themes verified on Android and desktop; Brick validation pending
+## 0.38.0 — colour themes and Brick Hammer / NextUI
 
-This is not a release claim. Android candidate source `1943ce6` adds original Slate, Paper and
-Contrast workspace palettes. Slate preserves the original appearance. Theme selection is
-outside the musical document and does not add an Undo entry.
+Version **0.38.0/code 52** adds original Slate, Paper and Contrast workspace palettes and an
+ARM64 NextUI Pak. Slate preserves the original appearance. Theme selection is outside the
+musical document and does not add an Undo entry. Android candidate source is `1943ce6`;
+the final native implementation tested below is `046d897`.
 
 - The bounded local build passes **1,084 core JVM tests and 7 Android host tests**. Nova passes
   **24 permanent Android instrumentation tests** against the production-signed release APK.
@@ -32,7 +33,7 @@ outside the musical document and does not add an Undo entry.
   Its final AppImage repeats controller theme selection, fresh-process Paper restoration, exact
   project preservation, playback and compact Instrument held audition. SHA-256:
   `843d03d383c43ba94329a9e38d092d50ea62ca67ec0fc6b12a6d12e7182c49c9`.
-- Each live theme scenario uses an owned fixture and a separate cold restoration test. Eight original
+- Each Android live theme scenario uses an owned fixture and a separate cold restoration test. Eight original
   private-file entries are restored byte-for-byte; `/ThorTunez` is untouched. Test packages are removed,
   original screen timeouts restored, devices returned Home/asleep, and leases released.
 - APK SHA-256: `bf287a90b5a3e24bbc46c15d202f6bce1701f2d4e62566ebd4b992ff87046f12`.
@@ -46,10 +47,32 @@ outside the musical document and does not add an Undo entry.
   firmware limits. `--as-needed` removes unused toolchain crypt/util/resolver dependencies rather than
   weakening the ABI allowlist. Pak SHA-256:
   `09a90fc92af295a7c00010f9092f34917fa317e24db3e4edd853b2c251c6d86e`.
-- A bounded Brick joystick probe confirms the actual SDL controller mapping, including trigger axes
-  2/5. **No Tracker Pak renderer/audio/lifecycle run is claimed:** the device became unreachable after
-  idle NextUI; a later 20-minute USB wait timed out and the remote terminal still returns EHOSTUNREACH.
-  Physical wake/reconnection is required before installation and hardware acceptance.
+- The unchanged CI Pak now runs through the Brick's normal **Tools → ThorTracker** launcher:
+  vendor SDL **2.30.8**, real **Mali/ALSA**, **1024×768**, X360 controller mapping and a 1,024-frame
+  48 kHz stereo device buffer. Its installed executable SHA-256 matches the CI ELF:
+  `688d747f0c1652ffe5f1cec9172f322ced9fad8e3dfe91be115bfe2bf16c4158`.
+- Actual evdev input passes R2 view switching, cumulative L2+R2 → Pattern, L2+Left collapse,
+  held-A note editing and L2+A Undo. The real file browser saves and reopens the factory project
+  byte-identically. Paper survives Quit and a fresh Pak launch; NextUI's Tools screen returns normally.
+  Inspected surfaces include Pattern, Keyboard, collapsed lanes, menus and Help/About.
+- Six separate **25-second real-hardware playback runs** produce nonzero PCM and advancing orders,
+  with zero driver faults: Game Boy, NES, SID, OPL3, Mega Drive and NES+EPSM.
+  Recorded worst callbacks are respectively **0.817, 4.344, 12.204, 8.299, 11.135 and 13.819 ms**.
+  NES/SID/OPL3/Mega Drive/EPSM report zero late callbacks and no ALSA underruns. The GB timed case
+  records **one late callback and one recovered ALSA underrun**; a separate preceding GB session
+  records **12,019 callbacks, zero late callbacks and zero faults**. This is bounded measurement,
+  not a claim that all workloads are glitch-free.
+- These are actual generated PCM/callback and inspected framebuffer results, not acoustic/DAC
+  measurements. Physical suspend/resume remains untested. No Miyoo Mini runtime is claimed.
+  Earlier USB loss occurred at idle NextUI before Tracker had launched; reopening Remote Terminal
+  restored access. Normal Pak runs and explicit Quit/relaunch now succeed.
+- SID, OPL3 and Mega Drive also pass 8-second held audition during playback, followed by 3-second
+  audition-only runs: two accepted auditions each, nonzero PCM, zero late callbacks, no ALSA underruns
+  and zero faults. Worst callbacks are **19.638, 10.531 and 18.266 ms** respectively.
+  EPSM FM audition still needs a valid FM instrument selected; a 2A03 slot is correctly refused on FM 1.
+- The six timed playback runs average **56 frames/s** including cold UI work. The separate GB session
+  uses **51,272 KiB RSS**, with a **58,716 KiB high-water mark**, five threads and no swap.
+  These are specific observed workloads, not peak-memory bounds for arbitrary songs.
 - All Kotlin/Native linking remains on CI. Local Android/JVM work used one capped build at a time;
   no emulator or local native link was launched.
 

@@ -129,7 +129,7 @@ its downloaded AppImage.
 10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
    - Shared native frontend and ARM64/vendor-SDL2 adapter are implemented in the 0.38.0 candidate,
      with a NextUI Pak build. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
-     Hardware application/audio/lifecycle verification remains required; this is not a performance claim.
+     Initial hardware display/audio/lifecycle checks pass; see bounded measurements in `docs/VERIFICATION.md`.
    - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
      (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
      vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
@@ -147,17 +147,18 @@ its downloaded AppImage.
      and private workspace/recovery data in its `.thortracker` subdirectory, outside the replaceable Pak.
      The launcher follows [NextUI's Pak contract](https://nextui.loveretro.games/paks/making-paks/),
      uses its diagnostics locations and preserves HOME/ALSA routing. No vendor SDL/Mali library ships.
-     A bounded real-device joystick probe confirms SDL's trigger axes and physical face-button mapping;
-     renderer/audio, cumulative trigger routing, persistence and return-to-launcher checks are still pending.
-   - First executable spike: verify the device's actual ABI/libc and SDL2 renderer/audio drivers; launch shared
-     Pattern and Instrument views; exercise digital L2/R2 and the cumulative layer; play and audition a song.
-     Measure resident memory, frame time, callback deadlines and underruns before selecting packaging/runtime policy.
-   - Then stress SID, OPL3, EPSM and Mega Drive with simultaneous audition, realistic projects/Undo history,
-     exports, SD-card save/recovery, suspend/resume and clean return to NextUI. Do not silently reduce chip fidelity
-     or remove systems to pass the port.
+     Real-device input confirms the trigger axes, printed face-button mapping, independent modifiers and
+     cumulative L2+R2 routing. Normal Pak launch, actual Mali rendering, save/reopen, Paper persistence,
+     note edit/Undo and explicit Quit back to NextUI pass.
+   - Six 25-second real-ALSA runs cover GB, NES, SID, OPL3, Mega Drive and EPSM with advancing playback,
+     nonzero PCM and zero driver faults. One GB case has a recovered underrun; the other five have none.
+     SID, OPL3 and Mega Drive additionally pass playback-plus-audition and audition-only checks.
+   - Remaining hardware hardening: EPSM FM audition, long projects/Undo history, exports, physical
+     suspend/resume and acoustic listening. Keep the bounded results distinct from all-workload guarantees;
+     do not silently reduce chip fidelity or remove systems to pass the port.
    - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
      stack. The installed Kotlin 2.1.0 compiler lists ARM32 hard-float, but marks it deprecated; the existing
-     16 MiB glyph atlas and full-chip CPU budget need measurement. Neither handheld port has been run yet.
+     16 MiB glyph atlas and full-chip CPU budget need measurement. The Miyoo port remains unimplemented.
 11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
@@ -198,8 +199,8 @@ its downloaded AppImage.
     selected under Menu → Colour theme and persisted as workspace state. They do not alter song data,
     exports or Undo history. Nova, DMG and Konkr pass selection/restart/playback checks, and all 32 Slate
     baseline captures are pixel-identical. The actual CI AppImage passes palette persistence in fresh
-    processes, unchanged project bytes, playback, audition and compact surfaces. Brick runtime checks
-    remain pending. No BRIXEQ palette was copied.
+    processes, unchanged project bytes, playback, audition and compact surfaces. Brick Paper selection,
+    full Quit/relaunch persistence and exact project save/reopen also pass. No BRIXEQ palette was copied.
   - **Optional CRT/scanlines:** BRIXEQ offers OFF/MILD/FULL post-processing, with horizontal RGB separation
     and alternating pairs of dim output rows. Its current shader omits warp, bloom and animated grain.
     Discuss a separate, off-by-default display setting with adjustable intensity; keep small tracker text
