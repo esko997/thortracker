@@ -8,6 +8,8 @@ The registry covers **Game Boy / Game Boy Color**, **NES** and its **VRC6, VRC7,
 
 The sections below are generated from the canonical manual, including its limitations and dated status notes. Some older notes describe pre-release work; they are retained, not silently upgraded into hardware-verification claims. Check the [release notes](https://github.com/esko997/thortracker/releases/latest) and the [verification record](/verification/) for the version and platform you use. No original-hardware listening comparison is implied by passing software tests.
 
+<!-- include: README.md :: Multiple effects per row -->
+
 ## Game Boy / Game Boy Color
 
 <!-- include: README.md :: Sound and export rules -->

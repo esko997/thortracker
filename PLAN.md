@@ -178,6 +178,17 @@ its downloaded AppImage.
   Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
   playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
   persistence and frontend acceptance; zoom does not depend on future touchscreen support.
+- **Multiple effects per row — capability review (0.39.0):** the [manual matrix](README.md#multiple-effects-per-row)
+  records existing limits across all 43 variants: 17 with one column, 5 with two and 21 with four.
+  More columns do not guarantee independent pitch effects or independent hardware-shared controls.
+  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0390) records
+  the driver/export gate for any NES/SID/GB extension. This is documentation/research, not a capacity change.
+- **Swing rhythms — research proposal, not implemented:** consider song-wide swing plus pattern
+  Inherit / Straight / Override, with amount and row subdivision. SID funktempo and Sega odd-row
+  speed already exist; a shared setting must preserve native exports without stealing effect columns.
+  [Feasibility and open decisions](docs/BACKENDS.md#swing-and-groove-research-proposal) cover
+  quantization, odd-length phase, tempo-command precedence, seek/loops and driver-specific limits.
+  Review those semantics before implementing; no playback timing is changed in this phase.
 - **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
   Android already accepts orientation changes and shared painters support touch selection/scrolling;
   these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,

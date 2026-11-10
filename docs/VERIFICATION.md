@@ -55,7 +55,9 @@ builds produce identical bytes for all 42 output files. Actual browser checks co
 themes, reduced-motion preference, keyboard skip/disclosure/scroll controls, JavaScript-disabled
 navigation, loaded local fonts/images and 200% CSS zoom. Eight guides plus the manual have no
 page-wide horizontal overflow at 320/844/1440 CSS pixels. The corrected Pages workflow passes
-candidate dispatch `42853011146`; hosted acceptance remains pending the main-branch deployment.
+candidate dispatch `42853011146`. Main Pages run `42855741732` builds and deploys successfully.
+The public site at `https://esko997.github.io/thortracker/` passes mobile navigation, download links,
+the zoom deep link, loaded images/fonts, no page-wide overflow and the styled HTTP 404 page.
 
 ## 0.38.0 — colour themes and Brick Hammer / NextUI
 
