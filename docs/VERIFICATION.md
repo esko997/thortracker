@@ -1,5 +1,32 @@
 # Thor Tracker verification — 2026-11-09
 
+## 0.37.0 Cross-system conversion — integration verification
+
+Version **0.37.0/code 50** adds Files → Convert to system with a non-mutating preview, complete
+paginated/exportable loss report, explicit previous-project confirmation and stale-preview protection.
+All **43 registered destinations** are available. Capacity overflow blocks rather than truncates;
+cross-family presets, dropped lanes/resources and pitch/effect approximations are reported explicitly.
+Android exports capture the requested song; a recreated activity with a lost exporter refuses to write
+an unrelated default format.
+
+- **1,062 JVM tests and 6 Android host tests pass**, with signed release and sample exports built under
+  the resource cap. The conversion-specific suite has **67 tests**.
+- Fail-before/pass-after regressions cover inherited notes inventing an unused default instrument,
+  inherited noise selecting the wrong hardware lane, GB's later B00 overriding an earlier jump, and
+  SMS's last delay overriding an earlier delay before zero-elision or destination column budgeting.
+  Compatible promotions also retain the original effect-column layout.
+- A throwaway CLI exercises **78 real conversion/export cases**: 77 converted documents and one
+  same-system no-op, no blockers or failures. It covers every destination, actual demos and compatible
+  promotions, source immutability, hidden/unused pattern data, distinct instrument identities,
+  canonical project round trips and identical lowered images before/after decoding.
+- **52 actual native-engine renders**, 12 seconds each, have nonzero PCM, advancing rows and no
+  driver faults. This is playability evidence, not cross-chip waveform, mix-headroom or tuning equality.
+  Native-only VGM/XGM/XGC exporters are not replaced by JVM mocks.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/conversion-export-evidence/`.
+Android conversion/picker lifecycle and CI-built desktop surface verification remain pending.
+No temporary probe source is intended for the committed application/test tree.
+
 ## 0.36.0 WonderSwan — integration verification
 
 Both WonderSwan models integrate VSU, SAA1099 and the preceding systems, targeting

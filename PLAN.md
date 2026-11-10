@@ -111,7 +111,11 @@ linking, including debug/test links, remains prohibited: use CI and exercise its
      DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
      APU, VGM/WAV export), integrated for **0.36.0/code 49**, not yet built or runtime-verified.
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
-8. **Conversion between systems** — a lossy step with a report of what did not carry over.
+8. **Conversion between systems (0.37.0 integration)** — Files menu preview, complete paginated/exportable
+   loss report, explicit Apply with previous-project protection, stale-preview rejection and all registered
+   destinations. Retains compatible promotions and editable instrument identity; cross-family sounds use
+   named audible presets, with located pitch/effect/channel losses and capacity blockers. Native rendering
+   and export matrix pass; final frontend/release gates are recorded in `docs/VERIFICATION.md`.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
    [licensed upstream data](https://github.com/jomimc/DaMuSc/blob/9a4589b99d229691fbefd99b4174e39814789a16/LICENSE.md),
    and independently generated 1–72 EDO (496 additions). Non-octave periods and attribution are preserved.
@@ -254,7 +258,7 @@ linking, including debug/test links, remains prohibited: use CI and exercise its
 - Backend owns musical document semantics, instruments, effects, constraints, compilation, export and playback implementation.
 - Backend-specific views are allowed. No universal FM/wavetable/sampler editor is required.
 - Views and editor commands must not manipulate emulator memory or hUGEDriver internals directly.
-- No cross-backend song conversion. Do not implement a speculative backend plugin system, universal effect language or unused future drivers.
+- Cross-backend conversion is an explicit, lossy document operation with a report; it does not replace backend semantics. Do not implement a speculative backend plugin system, universal effect language or unused future drivers.
 
 ## Responsive playback is a requirement
 
@@ -340,7 +344,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 
 These are implementation scope defaults, not claims that the features are impossible:
 
-- GBA/Mega Drive or other additional backends and conversion between backends.
+- Additional sample-based platforms (GBA DMA, SNES SPC700 and Amiga Paula).
 - Real-time note recording, MIDI integration, cloud sync, collaborative editing, plugin hosting and sample recording.
 - Import of arbitrary existing `.uge`/Furnace projects. Export compatibility does not establish import compatibility.
 - C/assembly/standalone-ROM exports.

@@ -16,6 +16,26 @@ The first launch opens the demo song **Thor Groove**. Later launches recover you
 
 **Philips SAA1099…** offers **SAM Coupé** (six voices on one chip) and **Creative Music System** (twelve voices on two chips), in both New and Load demo.
 
+## Converting between systems
+
+**Menu → Files → Convert to system…** previews a conversion to any available system. It does not
+change the working song until you choose **Apply conversion** and confirm the previous-project backup.
+**Read complete report** pages through the lane mapping, changes, losses and blockers;
+**Save report as .txt** exports the entire report. Cancel leaves the song, selection, history and
+file association untouched. A preview cannot overwrite edits made after it was calculated.
+
+Conversion preserves the arrangement, hidden rows, unused patterns and independently editable
+instrument identities where the destination can represent them. Extra channels and unsupported
+commands are reported; capacity overflow blocks Apply rather than truncating the song. Cross-family
+sounds use audible destination presets, with replaced instruments and resources listed explicitly.
+Sample-only or firmware-only voices are not filled with empty sample banks.
+
+NES-to-expansion, WonderSwan-to-Color, OPN-to-OPNA and compatible Sega PSG promotions retain their
+compatible sound data. Other conversions are musical approximations, not audio equivalence:
+pitch limits, noise keys, effect-column budgets, clocks, envelopes and tuning can differ.
+Retaining a tuning's metadata does not guarantee that the destination driver realizes the same
+fine pitches. Review the report, listen, then save the converted document under a new name.
+
 ## Steam Deck
 
 Thor Tracker also runs on the Steam Deck (and other x86_64 Linux) as a native program built from the same core: the same views, controls, menus and sound engine, one view at a time on the Deck's screen. It is newer than the Thor app; see `deck/README.md` for what it does and does not do yet.

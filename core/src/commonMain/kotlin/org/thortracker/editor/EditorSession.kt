@@ -34,6 +34,13 @@ class GestureToken internal constructor(val label: String)
  */
 class EditorSession(initial: Song) {
     var song: Song = initial
+        private set(value) {
+            field = value
+            documentVersion++
+        }
+
+    /** Changes on edits, undo/redo and replacement, even when history restores the same snapshot. */
+    var documentVersion: Long = 0
         private set
 
     var onSongChanged: ((Song) -> Unit)? = null
