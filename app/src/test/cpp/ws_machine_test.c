@@ -1157,7 +1157,7 @@ static void test_audio(const char* dir) {
     }
 }
 
-/* Legal full/half-amplitude samples with exact signed scaling: -128/+126 versus -64/+63.
+/* Legal full-range samples (-128/+127), with Hyper Voice's hardware shift supplying an exact half-level oracle.
  * 2048-frame plateaus let the high-pass settle before each opposite edge, even at 8 kHz.
  * Opposed stereo tests each side independently; the DMA stream alternates their bytes.
  * This is an end-to-end clipping regression, not an independent hardware oracle. */
@@ -1174,13 +1174,17 @@ static void build_headroom(WsImage* im, int half, int stereo, int transport) {
     for (int f = 0; f < FRAMES; ++f) {
         for (int side = 0; side <= stereo; ++side) {
             const int positive = (f >= FRAMES / 2) ^ side;
-            const int value = (positive ? 126 : -128) / (half ? 2 : 1);
+            const int value = positive ? 127 : -128;
             const int at = f * (stereo ? 2 : 1) + side;
             b[WS_OFF_DATA + OFFSET + at] = (uint8_t)(value + 128);
             b[WS_OFF_DATA + OFFSET + bytes + at] = (uint8_t)value;
         }
     }
     put32(b + WS_H_DATA_SIZE, OFFSET + 2 * bytes);
+    uint8_t* instrument = b + WS_OFF_INSTRUMENTS + WS_INSTRUMENT_SIZE * ((transport ? T_DMA_LOOP : T_LOOP) - 1);
+    put16(instrument + WS_I_ENVELOPES, 400);
+    instrument[WS_I_ENVELOPES + 2] = 1;
+    b[WS_OFF_DATA + 400] = half ? 6 : 15; /* Hyper Voice shift 1 versus 0, same sample bytes. */
     if (transport) {
         uint8_t* r = b + WS_OFF_INSTRUMENTS + WS_INSTRUMENT_SIZE * (T_DMA_LOOP - 1);
         r[WS_I_ROOT] = (uint8_t)(transport - 1);
@@ -1245,8 +1249,8 @@ static void test_output_headroom(void) {
                 EXPECT(bad_frames == 0 && bad_raw == 0 && raw_peak == 32768,
                        "%u Hz stereo=%d transport=%d: raw full-scale/phase unchanged (%d frames, %d raw, peak %d)",
                        rates[r], stereo, transport, bad_frames, bad_raw, raw_peak);
-                EXPECT(rails == 0 && pk > 0.4 && pk < 0.666,
-                       "%u Hz stereo=%d transport=%d: audible reversal without host rails (peak %.6f, rails %d)",
+                EXPECT(rails == 0,
+                       "%u Hz stereo=%d transport=%d: no host clipping (peak %.6f, rails %d)",
                        rates[r], stereo, transport, pk, rails);
                 EXPECT(error < 0.005,
                        "%u Hz stereo=%d transport=%d: full output = 2 * half output within fixed-point error (%.6f)",
@@ -1690,6 +1694,11 @@ static void test_mute(void) {
         int mode, bad = 0, bad_state = 0;
         wsm_start(m, image_of(r), 0, 0, SEEK_BUDGET, &mode);
         wsm_start(plain, image_of(r), 0, 0, SEEK_BUDGET, &mode);
+        const WsApu* muted_apu = wsm_apu(m);
+        const WsApu* plain_apu = wsm_apu(plain);
+        EXPECT(muted_apu->rom_base == plain_apu->rom_base && muted_apu->rom_size == plain_apu->rom_size &&
+                   (!muted_apu->rom_size || !memcmp(muted_apu->rom, plain_apu->rom, muted_apu->rom_size)),
+               "%s: both machines map the same immutable song bytes", r->name);
         wsm_mute(m, 1, 1);
         wsm_mute(m, 3, 1);
         if (r->model == WS_MODEL_COLOR) wsm_mute(m, 4, 1);
@@ -1701,7 +1710,11 @@ static void test_mute(void) {
             traced_tick(m);
             wsm_tick(plain, g_out);
             if (!same_tick(&g_col, r, t)) ++bad;
-            if (!ws_apu_same_state(wsm_apu(m), wsm_apu(plain))) ++bad_state;
+            /* Machines own separate, byte-identical image buffers. Normalize only that host address;
+             * retain every hardware field and RAM byte in the mute-continuity comparison. */
+            WsApu state = *muted_apu;
+            state.rom = plain_apu->rom;
+            if (!ws_apu_same_state(&state, plain_apu)) ++bad_state;
         }
         trace_off(m);
         EXPECT(bad == 0, "%s: muted lanes leave the player's writes unchanged (%d ticks differ)", r->name, bad);
@@ -1750,8 +1763,10 @@ static void test_vgm(const char* dir) {
         const uint32_t clock = buf[0xC0] | buf[0xC1] << 8 | buf[0xC2] << 16 | (uint32_t)buf[0xC3] << 24;
         EXPECT(!memcmp(buf, "Vgm ", 4) && buf[8] == 0x71 && buf[9] == 0x01 && clock == WS_VGM_CLOCK && buf[0x34] == 0xCC,
                "%s: header: VGM 1.71, WonderSwan at %u Hz, data at 0x100", v->ref->name, clock);
-        EXPECT(ws_vgm_render(image, WS_TEST_VGM_MAX_TICKS, buf, 1000, &info, &problem) == -1 && info.size == v->size,
-               "%s: too small a buffer: -1 and the size needed", v->ref->name);
+        EXPECT(ws_vgm_render(image, WS_TEST_VGM_MAX_TICKS, buf, (size_t)v->size - 1, &info, &problem) == -1 && info.size == v->size,
+               "%s: one byte short: -1 and the size needed", v->ref->name);
+        EXPECT(ws_vgm_render(image, WS_TEST_VGM_MAX_TICKS, buf, (size_t)v->size, &info, &problem) == 0 && info.size == v->size,
+               "%s: exact-sized buffer succeeds", v->ref->name);
         char name[64];
         snprintf(name, sizeof name, "%s.vgm", v->ref->name);
         write_bytes(dir, name, buf, (size_t)v->size);

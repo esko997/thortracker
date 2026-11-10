@@ -14,20 +14,21 @@ tools/audio/run_native_host_test.sh into its evidence directory), standard libra
    reference's writes from tick Ab to Aa, compared over three expanded passes); and the bytes equal ws_ref.vgm()'s.
 3. Pitch: the period of A-4 recomputed from the clock alone (3072000 / (32 N) with N = round(96000 / 440) = 218,
    440.367 Hz, +1.44 cents), the first frequency write of ws_tone.vgm decoded to the same, and ws_tone.wav's measured
-   fundamental (rising zero crossings with interpolation over 2 s after the first 0.5 s). Tolerance 0.3 Hz
-   (UNVERIFIED: chosen for a 48 kHz render of a square wave; adjust only with evidence).
+   fundamental (rising zero crossings with interpolation over 2 s after the first 0.5 s). Tolerance 0.3 Hz;
+   the verified native and libvgm measurements are recorded in docs/VERIFICATION.md.
 4. --vgm2wav PATH: libvgm's vgm2wav (ValleyBell/libvgm, its WonderSwan core "in_wsr", a simpler model than the
    engine's: compared by pitch only, never by waveform) renders ws_tone.vgm; its fundamental must equal the engine's
    within the same tolerance. libvgm commit read for the command mapping: 0xBC aa dd -> port $80 + (aa & $7F),
    0xC6 mm ll dd -> RAM offset (mm << 8 | ll) & $7FFF (vgmplayer_cmdhandler.cpp Cmd_WSwan_Reg, Cmd_Ofs16_Data8).
 
-Exit status 0 when every check passes. Nothing here has been run yet (source-only slice)."""
+Exit status 0 when every check passes."""
 import argparse
 import math
 import os
 import struct
 import subprocess
 import sys
+import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -198,21 +199,10 @@ def check_vgm(evidence, vgm_name, image_name):
 # ---- 3./4. pitch ----------------------------------------------------------------------------------------------------
 
 def read_wav(path):
-    with open(path, "rb") as f:
-        data = f.read()
-    assert data[0:4] == b"RIFF" and data[8:12] == b"WAVE"
-    at, fmt, pcm = 12, None, None
-    while at + 8 <= len(data):
-        cid, size = data[at:at + 4], struct.unpack_from("<I", data, at + 4)[0]
-        body = data[at + 8:at + 8 + size]
-        if cid == b"fmt ":
-            fmt = struct.unpack_from("<HHIIHH", body)
-        elif cid == b"data":
-            pcm = body
-        at += 8 + size + (size & 1)
-    tag, channels, rate, _, _, bits = fmt
-    assert tag == 1 and bits == 16
-    n = len(pcm) // (2 * channels)
+    with wave.open(path, "rb") as w:
+        channels, rate, n = w.getnchannels(), w.getframerate(), w.getnframes()
+        assert w.getsampwidth() == 2
+        pcm = w.readframes(n)
     samples = struct.unpack_from("<%dh" % (n * channels), pcm)
     mono = [sum(samples[i * channels:(i + 1) * channels]) / channels for i in range(n)]
     return rate, mono

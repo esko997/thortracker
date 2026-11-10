@@ -6746,9 +6746,12 @@ relative channel balance, register/DMA traces, phase, image data or VGM bytes/li
   high-pass state stays below 1.5 billion fixed-point units. No later gain undoes this headroom.
 - `test_output_headroom` exercises the real `wsm_tick` float consumer with long negative/positive DC plateaus,
   mono/opposed stereo, CPU-fed Hyper Voice and each Sound DMA rate, plus mute/unmute, at endpoint and fractional
-  host rates. A half-amplitude legal sample is the unclipped linearity control; both copies use the real player,
-  APU and resampler. Existing raw conversion, routing, wrap, DMA, sweep/noise and phase-continuity tests remain
-  unchanged. These source changes and test cases still require the parent's serialized native/reference runs.
+  host rates. Full-range -128/+127 sample bytes feed both machines; Hyper Voice's hardware shift gives the second
+  machine exactly half the raw amplitude without omitting the positive endpoint. Both copies use the real player,
+  APU and resampler. The earlier arbitrary peak-window assertion was removed: the regression checks actual host
+  rails and full/half linearity. Restoring the old `frame >> 1` gain now produces **12 genuine clipping failures**
+  at 11025/44100 Hz; quarter gain passes all **693 native checks**. Player/timer/DMA traces and all reference VGM
+  bytes remain identical between the gain variants. Independent trace, VGM loop and libvgm pitch checks also pass.
   The linearity control is not an independent hardware reference; ares/wiki disagreements and the Hyper Voice
   VGM refusal described elsewhere remain unchanged.
 

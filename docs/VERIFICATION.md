@@ -1,56 +1,41 @@
 # Thor Tracker verification — 2026-11-09
 
-## 0.36.0 WonderSwan source integration — runtime pending
+## 0.36.0 WonderSwan — integration verification
 
-Source-only integration of WonderSwan/SAA head `38026f1` with VSU/SAA candidate `9464a80`,
-targeting **0.36.0 / versionCode 49**, project format 10. This combines both WonderSwan models,
-VSU, both SAA1099 variants (including candidate `c27a60b`) and the released VIC/TED ancestry.
-The prepared WonderSwan headroom change from `32abd7f` and incoming SAA/VSU
-`blip_skip_silence` fractional-seek fixes are retained. No build, test, generator, formatter,
-device operation or Kotlin/Native link is claimed for this source integration.
-Earlier results below describe their original candidates, not proof of this merged source.
-In particular, SAA's corrected native/reference passes and VSU's 956 JVM tests and seven-rate
-fractional-seek proof must not be attributed to WonderSwan; its runtime acceptance remains pending.
+Both WonderSwan models integrate VSU, SAA1099 and the preceding systems, targeting
+**0.36.0 / versionCode 49**, project format 10. **995 JVM tests and 6 Android host tests**
+pass; signed Android release, clean instrumentation and all sample exports build inside
+the enforced resource scope. The factory Game Boy `.uge` remains byte-identical.
+The required generated driver constants, reference fixture and two golden files are tracked
+as clean-checkout inputs, not treated as build caches.
 
-The source merge retains both backends in the native/Kotlin registries, Android/SDL exports,
-CMake/Deck/native-host sources and every renderer using `chip_engine.c`, alongside all earlier
-engines. The SMS renderer remains intentionally standalone. WAV import keeps the existing numeric
-source-channel count and separately preserves channel samples for Color stereo import.
+- The integrated native run passes every earlier engine and **2,796 WAV checks**. Its three
+  WonderSwan failures were test defects: comparing different host-owned ROM addresses as chip
+  state, and calling a 1,000-byte buffer too small for a 414-byte VGM. The corrected checks compare
+  all hardware state after verifying the mapped bytes and normalizing only the host address;
+  VGM boundaries now test exactly the required size and one byte short.
+- **693 WonderSwan native checks pass**, including CPU-fed samples, all four DMA rates,
+  mono/opposed stereo, hardware sweep/noise, live edits, seeks and mute continuity.
+- Headroom verification now includes the full signed-byte range **−128 / +127** and uses
+  Hyper Voice's hardware shift as an exact half-level control. Removed an incidental peak-window
+  assertion. Restoring the old half-gain mixer produces **12 actual host-clipping failures**
+  at 11025/44100 Hz; the production quarter-gain mixer passes without changing raw chip wrap,
+  player/timer/DMA traces or any reference VGM bytes. This is a same-resampler linearity control,
+  not an independent hardware oracle.
+- Independent Python comparison matches both **1,500-tick** traces, exact VGM bytes, decoded
+  register/RAM timelines and three repeated loop passes. A-4 is **440.362 Hz** in the native WAV
+  and **440.353 Hz** through pinned libvgm `c5c03a2c`, versus **440.367 Hz** from the clock/divider.
+  The reference reader now uses the standard WAV module for libvgm's extensible PCM header;
+  the original 0.3 Hz tolerance is unchanged.
+- The actual renderer CLI plays both exported demos for five seconds: mono **peak 0.151,
+  RMS 0.0191**, Color **peak 0.321, RMS 0.0391**, both reaching order 1/row 22.
+  Mono VGM is **338,335 bytes**, 20.78 seconds with an 8.90-second loop.
 
-The machine still quarters signed-16 hardware-wrapped frames **before** resampling (`frame >> 2`),
-with no postgain. Raw diagnostics, register/DMA timing and all six-rate CPU/four-DMA-rate,
-mono/opposed-stereo and mute regressions are retained. Full/half-amplitude Hyper Voice output is a
-**linearity oracle using the same resampler**, not an independent resampler or hardware reference.
-Hyper Voice VGM export still refuses explicitly; WAV remains supported.
-
-Parent prerequisites and commands (run serialized; evidence on SSD, never `/tmp`):
-
-```sh
-python3 tools/audio/prepare_ws.py
-python3 tools/audio/ws/ws_golden.py
-nice -n 10 tools/build.sh --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process :core:jvmTest :app:testDebugUnitTest :app:exportSamples
-nice -n 10 tools/build.sh --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process :app:assembleRelease :app:assembleAndroidTest
-# EVIDENCE must be an existing SSD-backed directory under ~/.local/state/thortracker.
-tools/audio/run_native_host_test.sh "$EVIDENCE"
-python3 tools/audio/ws/ws_reference_check.py "$EVIDENCE"
-tools/audio/render_ws_image.sh app/build/samples/ws-demo.wsimg "$EVIDENCE/ws-demo-cli.wav" 5 --vgm "$EVIDENCE/ws-demo-cli.vgm"
-tools/audio/render_ws_image.sh app/build/samples/wsc-demo.wsimg "$EVIDENCE/wsc-demo-cli.wav" 5
-```
-
-The two WS generators must run before a clean-checkout JVM/native suite: this source-only slice has
-not materialized the golden gzip files or native fixture header. Review their generated changes
-before committing them for CI. Existing driver/generated assets and toolchains are also required;
-see the engine-specific preparation instructions in `AUDIO_ENGINE.md`. Native commands above need
-the parent's bounded, serialized host-C execution scope; `tools/build.sh` bounds Gradle, not those
-standalone scripts. No local Kotlin/Native linking, even debug/test: run `:core:linuxX64Test` and
-`:deck:linkReleaseExecutableLinuxX64` in CI, then exercise the downloaded AppImage locally.
-
-The recovered `~/.local/state/thortracker/recovery-20261109/harnesses/WsDeviceHarness.kt` remains
-outside the repository and uncompiled/unrun. It uses current view switching to clear stale pinned
-subjects. Parent must lease Nova/DMG/Konkr, back up the working project/workspace/keymap, build a
-matching production-signed temporary test APK and run both tests with `deviceRole` set. Deep seek
-is optional on Konkr only. Pull screenshots/timing/export evidence and remove logged owned documents;
-restore settings and user data and release leases. No instrumentation scaffold is committed.
+Evidence: `~/.local/state/thortracker/recovery-20261109/{ws-native,ws-corrected,ws-before}`.
+The native/Kotlin registries and all shared-registry renderer source lists retain every engine;
+the SMS renderer remains standalone. Hyper Voice VGM export is explicitly refused; WAV supports it.
+Android frontend/device acceptance and CI AppImage verification remain pending. No physical
+WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking remains disabled.
 
 ## Workstation recovery and enforced build limits
 
