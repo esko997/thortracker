@@ -8,6 +8,42 @@ volume/slide targets and global speed have explicit precedence. Preview, NSF and
 use the same lowering. Existing export exclusions remain; MMC5 PCM cannot combine delay and cut,
 and engine-lane cuts cannot precede delayed notes. The project/cell schema is unchanged.
 
+Official [0.40.0](https://github.com/esko997/thortracker/releases/tag/v0.40.0) is published from
+main `80929d833bdcc6ccd60780c55b7ec13eac4e5e58`; all five jobs in
+[run 42885282575](https://github.com/esko997/thortracker/actions/runs/42885282575) pass. Downloaded
+APK/AppImage/Pak match their checksum sidecars. The APK is non-debuggable, code 54/version 0.40.0,
+signed by the production certificate, with arm64-v8a and x86_64 libraries. The 24-entry Pak passes
+CRC validation and retains its executable AArch64 payload and launcher.
+
+The **published APK** passes the reversible NES four-column editing/playback/export/save/reopen
+scenario on Nova, DMG and Konkr; captures are inspected and original private bytes/settings are
+cold-restored. Final read-only checks confirm 0.40.0/code 54, no test package and the original
+60,000 ms timeout on all three. Nova/Konkr report Asleep; DMG reports Dozing after Home/sleep.
+
+The **published AppImage** passes an isolated 1280×800 offscreen/dummy-audio run with live
+F08→F09 editing, Undo, held Instrument audition and return to Pattern. Playback advances to
+order 0/row 11, with one audition, audition peak 0.245156 and playback peak 0.151235. Its saved
+working document exactly matches the starting project after Undo, and its surface is inspected.
+The candidate additionally passed the compact 768×576 held-empty-FX4/Undo scenario. These are
+actual native-binary checks, not physical Deck listening or new Brick hardware verification.
+
+Thor receives only the verified APK at `Download/Thor Tracker/thor-tracker-0.40.0.apk`; no wake,
+install or launch. The reachable Deck receives the AppImage and an atomic update of the existing
+`~/thortracker-deck/thor-tracker` symlink from 0.39.0 to 0.40.0; both remote hashes match.
+Old AppImages are retained. The user's Brick session remains untouched.
+
+| Official asset | SHA-256 |
+| --- | --- |
+| APK | `a64034f7e21a3d65b4b8bafebdfb8741b12b9239a809a72e002d8f40e4d0a3ee` |
+| x86_64 AppImage | `7e9d6980d913f7771d9cc2d75345e991a0c29222dff052d7177f22f228e6ac87` |
+| NextUI Pak | `498c67b6eeba72ca276b0f400e988ad6790505ab7178185b08b95346884ed93c` |
+
+Pages run `42885282733` builds/deploys successfully. The published
+[effect-column matrix](https://esko997.github.io/thortracker/systems/#multiple-effects-per-row)
+shows NES in the four-column row, with the deep link working and no page-wide overflow at 390 px.
+Official artifacts, signature/metadata checks, delivery and restoration receipts are retained under
+`recovery-20261109/official-0400/`; native frontend evidence is under `nes-effects-hardening/desktop/`.
+
 The compiled registry reports **2 one-column, 5 two-column and 36 four-column systems**. All
 **172 existing sample exports are byte-identical** to 0.39.0, with identical file sets; the optional
 EPSM rhythm-ROM fixture is excluded from both runs. A real 0.39.0 reader explicitly refuses a
@@ -42,8 +78,8 @@ Clear. Before/after Android captures show a rebound Focus hint changing from lit
 
 Renewed baseline POKEY first-note/live-edit, PCE noise/DDA and navigation/save/reopen scenarios also
 pass on Nova, DMG and Konkr. Each device run uses its exclusive ledger lease, restores original
-private bytes and settings in a cold process, removes its temporary test package, and returns
-Home/asleep. `/ThorTunez`, Thor and the user's active Brick session are untouched by these tests.
+private bytes and settings in a cold process, removes its temporary test package, returns Home
+and requests sleep. `/ThorTunez`, Thor and the user's active Brick session are untouched by these tests.
 
 Swing remains **research only**. A native Banjo header-8/4 spike verifies first-row initialization
 and repeated 1/2/3-row boundaries; odd tails still change total pattern duration. The cost review
