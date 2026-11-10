@@ -43,18 +43,20 @@ an unrelated default format.
   clipped PCE→SCC conversion for 13 seconds, reaches order 1/row 55 and peaks at **0.5456848**,
   matching the corrected native renderer. The five-channel Pattern surface was inspected.
   Evidence: `recovery-20261109/conversion-fixed-desktop/`.
-- Nova passes the **22 permanent Android tests**, **32 full-RGBA Game Boy baseline comparisons**
-  and both actual conversion/picker scenarios against the corrected signed release. These exercise
-  GB→NES and AY→GB, cancellation, all report pages, frozen report/backend export snapshots,
-  backup confirmation, save/reopen, playback, held audition and native WAV output. Actual activity
-  recreation behind DocumentsUI refuses the lost exporter and writes no default backend payload.
-  Initial screenshots caught preceding composed frames. Compositor-settled recapture passes both
-  scenarios and visibly confirms report pagination, backup confirmation and the recreation refusal.
-  Dedicated playback/audition has zero xruns/faults and a maximum callback of **3.834 ms**.
+- Nova passes the **22 permanent Android tests** and **32 full-RGBA Game Boy baseline comparisons**.
+  Nova, DMG and Konkr each pass both actual conversion/picker scenarios against the corrected signed
+  release. These exercise GB→NES and AY→GB, cancellation, all report pages, frozen report/backend
+  export snapshots, backup confirmation, save/reopen, playback, held audition and native WAV output.
+  Actual activity recreation behind DocumentsUI refuses the lost exporter and writes no default
+  backend payload. Initial Nova screenshots caught preceding composed frames; compositor-settled
+  captures visibly confirm report pagination, backup confirmation and the recreation refusal.
+  Dedicated playback/audition has zero xruns/faults on all three devices; maximum callbacks are
+  **3.834 / 13.298 / 7.540 ms**, respectively. Working/recovery/previous files and AtomicFile companions
+  are restored byte-exact; workspace/keymap values are restored and `/ThorTunez` is never accessed.
   Evidence: `recovery-20261109/conversion-frontend/{clean-parity,visual-smoke}/`.
 
 Evidence: `~/.local/state/thortracker/recovery-20261109/conversion-export-evidence/`.
-DMG/Konkr conversion acceptance, final integrated CI and official publication remain pending.
+Final integrated CI and official publication remain pending.
 No temporary probe source is intended for the committed application/test tree.
 
 ## 0.36.0 WonderSwan — integration verification
@@ -105,9 +107,25 @@ were inspected. Evidence: `recovery-20261109/ws-frontend/device-smoke/`.
 The collection wrapper initially attempted to pull the intentionally refused VGM after both tests
 had passed; successful exports were retained and checked. It now recognizes that explicit negative
 case without relaxing positive-export checks. The corrected wrapper completed on DMG and verified
-that the refused VGM was absent. Final integrated CI and official publication remain pending.
+that the refused VGM was absent.
 No physical WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking
 remains disabled.
+
+Final integrated CI `42739508947` passes. PR #47 merged as main **`506c424`**; all four publication
+jobs in run **`42741502289`** pass. Official **0.36.0/code 49** artifacts:
+
+- APK SHA-256 `8aff14c58b5a955575723b2e1154c9dd508efb803af518d8588a0486f7a40325`
+- AppImage SHA-256 `84fd07ee4468166b69c0bae69529e9e7ab92abaa05b12089aaf555c30b52eb5e`
+
+The downloaded APK has the production certificate, is non-debuggable and contains both Android ABIs.
+Both official scenarios pass on DMG and Konkr: zero xruns/faults, maximum callbacks **4.653 / 3.998 ms**,
+both WAVs byte-identical to all three accepted candidates, and the refused Hyper Voice VGM absent.
+Actual DMA/refusal surfaces were inspected. Nova was not downgraded from the accepted 0.37 candidate.
+The official AppImage plays and held-auditions both demos, then returns to Pattern; playback advances
+to order 1/rows 20 and 22, with nonzero hold PCM and peaks **0.15112305 / 0.32122803** afterward.
+Both desktop surfaces were inspected. Evidence: `recovery-20261109/{official-0360,ws-official-smoke,ws-official-desktop}/`.
+Hash-verified copies were delivered to Thor's Download folder and Deck's `~/thortracker-deck/`;
+Deck's stable `thor-tracker` symlink was updated. Neither device was woken, installed or launched.
 
 ## Workstation recovery and enforced build limits
 
