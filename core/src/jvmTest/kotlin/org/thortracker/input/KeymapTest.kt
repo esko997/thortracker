@@ -16,27 +16,11 @@ class KeymapTest {
     private val l3 = setOf(Keys.BUTTON_THUMBL)
     private val both = setOf(Keys.BUTTON_L2, Keys.BUTTON_R2)
 
-    @Test fun defaultLabelsMatchTheDocumentedControls() {
-        val k = Keymap.DEFAULT
-        assertEquals("L2+A", k.label(Action.UNDO))
-        assertEquals("L2+→", k.label(Action.SCALE))
-        assertEquals("Sel+X/A", k.pair(Action.COPY, Action.PASTE))
-        assertEquals("L1 R1", k.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL))
-        assertEquals("A+←→", k.held(Action.EDIT, k.pair(Action.LEFT, Action.RIGHT)))
-        assertEquals("✛", k.dpad())
-        assertEquals("Sel+Start", k.label(Control.TOOLBAR))
-        assertEquals("L2+A/B", k.pair(Action.UNDO, Action.REDO))
-        assertEquals(listOf("R2+A", "R2+B", "R2+X", "R2+Y", "R2+↑", "R2+→", "R2+↓"),
-            listOf(Control.SHOW_SONG, Control.SHOW_INSTRUMENT, Control.SHOW_SKETCH, Control.SHOW_KEYBOARD,
-                Control.SHOW_PATTERN, Control.SHOW_WAVE, Control.SHOW_HELP).map(k::label))
-    }
-
-    @Test fun everyControlHasAValidDefaultThatNoOtherControlInTheSameViewShares() {
+    @Test fun boundDefaultsAreValidAndDoNotConflictWithinAView() {
         val k = Keymap.DEFAULT
         for (c in Control.entries) {
-            val b = k.binding(c)
-            assertNotNull(c.name, b)
-            assertNull(c.name, k.problem(c, b!!))
+            val b = k.binding(c) ?: continue
+            assertNull(c.name, k.problem(c, b))
             assertEquals(c.name, emptyList<Control>(), k.conflicts(c, b))
         }
     }

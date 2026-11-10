@@ -10,6 +10,22 @@ import org.thortracker.model.ScaleKind
 import org.thortracker.system.gb.GbSystem
 
 class WorkspaceCodecTest {
+    @Test fun paneZoomRoundTripsAndLegacyOrMalformedValuesUseNormalSize() {
+        val old = WorkspaceCodec.decode(v086)
+        assertEquals(listOf(org.thortracker.editor.PaneZoom.NORMAL, org.thortracker.editor.PaneZoom.NORMAL), old.map { it.zoom })
+        for (zoom in org.thortracker.editor.PaneZoom.entries) {
+            old[0].zoom = zoom
+            old[1].zoom = org.thortracker.editor.PaneZoom.SMALL
+            assertEquals(old, WorkspaceCodec.decode(WorkspaceCodec.encode(old)))
+            assertEquals(zoom, WorkspaceCodec.decode("""[{"zoom":"${zoom.percent}"}]""")[0].zoom)
+        }
+        for (value in listOf("null", "true", "{}", "[]", "\"bad\"", "-75", "151", "125.5", "4294967396")) {
+            val state = WorkspaceCodec.decode("""[{"zoom":$value,"row":12}]""")[0]
+            assertEquals(org.thortracker.editor.PaneZoom.NORMAL, state.zoom)
+            assertEquals(12, state.row)
+        }
+    }
+
     /** A workspace as 0.8.6 saved it (org.json, phrase notes counted from C-3). */
     private val v086 = """[{"kind":"SKETCH","pinned":true,"follow":false,"locked":2,"order":1,"row":5,"channel":2,"field":1,""" +
         """"instrument":3,"wave":4,"scroll":0,"octave":5,"bank":1,"followPlayback":true,"entryMode":false,"songItem":5,""" +

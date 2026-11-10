@@ -5,7 +5,7 @@ import org.thortracker.ui.Palette
 
 /**
  * The views a frontend shows and which one the controller drives. Each pane is a [ViewState] (a view kind with its
- * own cursor and scroll). Where panes appear is the frontend's layout: on the Thor one pane per display, on a single
+ * own cursor, scroll and content zoom). Where panes appear is the frontend's layout: on the Thor one pane per display, on a single
  * screen one pane at a time. A layout may later show two panes side by side on a large screen; nothing here assumes
  * a pane owns a display. Persistence and drawing stay with the frontend.
  */
@@ -49,7 +49,7 @@ class Workspace(panes: List<ViewState>, focus: Int = 0) {
         return true
     }
 
-    /** Exchanges two panes' complete views (cursors, scroll and view-chord memory travel with them). */
+    /** Exchanges two panes' complete views (cursors, scroll, zoom and view-chord memory travel with them). */
     fun swap(a: Int = 0, b: Int = 1) {
         if (a !in panes.indices || b !in panes.indices || a == b) return
         val first = panes[a]

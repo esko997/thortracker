@@ -127,9 +127,9 @@ its downloaded AppImage.
    No uncleared scale files in standard releases, no automatic downloads and no upstream licensing contact.
    Project format 10 reads versions 1–9; older apps cannot read newly saved projects.
 10. **Minimal Linux handhelds — Brick Hammer / NextUI first** (added 2026-11-09).
-   - Shared native frontend and ARM64/vendor-SDL2 adapter are implemented in the 0.38.0 candidate,
+   - Shared native frontend and ARM64/vendor-SDL2 adapter are released in **0.38.0/code 52**,
      with a NextUI Pak build. [NextUI confirms Hammer support](https://nextui.loveretro.games/getting-started/).
-     Initial hardware display/audio/lifecycle checks pass; see bounded measurements in `docs/VERIFICATION.md`.
+     Hardware display/audio/lifecycle checks pass; see bounded measurements in `docs/VERIFICATION.md`.
    - Device is now available: read-only ADB inspection on 2026-11-09 confirms NextUI `20261013-0`
      (`39a06de`), AArch64 ELF userspace, glibc 2.33, 998,332 KiB RAM/no swap, 1024×768 at 60 Hz,
      vendor SDL2 2.30.8 under `/usr/trimui/lib`, and the ALSA `audiocodec` device.
@@ -163,23 +163,21 @@ its downloaded AppImage.
 11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
    Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
    existing release key, and Android developer verification (2027).
-12. **GitHub Pages website and documentation** (requested 2026-11-10; future work):
-   - Publish a ThorTracker project site with downloads/releases, getting started, platform setup,
-     controls, supported backends and their limitations, file/export formats, and troubleshooting.
-   - Reuse repository documentation as the source of truth; avoid separately maintained copies.
-     Include bug-report guidance and links to the source, licence and third-party notices.
-   - Choose the site structure and publishing workflow when this work is scheduled; no website
-     implementation is part of the current audio/input hardening pass.
+12. **GitHub Pages website and documentation** (requested 2026-11-10):
+   - Static site implemented under `site/`, drawing its manual sections directly from canonical
+     repository documentation. Installation, controls, systems/limits, files/exports, troubleshooting,
+     source and notices are included; no runtime JavaScript, analytics or remote fonts.
+   - Dedicated Pages workflow and local-link validation are implemented. Integrated publication and
+     browser acceptance are tracked in `docs/VERIFICATION.md`; maintainer steps are in `site/README.md`.
 
 ### Testing feedback and QoL proposals (2026-11-08)
 
-- **Zoom in/out** (requested 2026-11-10): add readable zoom controls, particularly useful on the
-  Brick's compact screen. Proposed behaviour is workspace-only UI scaling: zoom in for larger text
-  and cells, out for more visible rows/channels, with no song, playback, export or Undo changes.
-  Keep the focused cell visible, retain the preference across restarts, provide a reset to default,
-  and expose menu actions plus rebindable controller controls. Exact scale steps, per-pane versus
-  whole-interface scope and default bindings remain design choices, not implemented behaviour.
-  Review alongside visual column collapse; do not make zoom depend on future touchscreen support.
+- **Zoom in/out — implemented and verified for 0.39.0:** four workspace-only content sizes
+  (75/100/125/150%), independent per Android view and persistent on Linux handhelds.
+  Menu → Focused view zoom provides in/out/reset; rebindable actions are deliberately unbound.
+  Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
+  playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
+  persistence and frontend acceptance; zoom does not depend on future touchscreen support.
 - **Landscape, touch-only phone use** (2026-11-10): make the controller optional, not a separate editor.
   Android already accepts orientation changes and shared painters support touch selection/scrolling;
   these are not a complete touch-only composition workflow. Proposed landscape mode keeps transport,
@@ -203,7 +201,7 @@ its downloaded AppImage.
   Both are design directions, not implemented engines or selected panel designs.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
-  - **Colour themes, implemented in the 0.38.0 candidate:** original Slate, Paper and Contrast palettes,
+  - **Colour themes, released in 0.38.0/code 52:** original Slate, Paper and Contrast palettes,
     selected under Menu → Colour theme and persisted as workspace state. They do not alter song data,
     exports or Undo history. Nova, DMG and Konkr pass selection/restart/playback checks, and all 32 Slate
     baseline captures are pixel-identical. The actual CI AppImage passes palette persistence in fresh
@@ -226,7 +224,10 @@ its downloaded AppImage.
   Navigation/touch skip hidden fields; expansion restores effect-column choices. Per-pane workspace
   persistence and display swaps retain the layout; full-cell clipboard operations retain all hidden data.
   Existing custom keymap conflicts are preserved instead of overwritten.
-- **Pattern-local channel mute:** proposed musical property, distinct from visual collapse; it must survive
+- **Pattern-local channel mute — explicitly deferred by the user (2026-11-10):** current native formats
+  cannot uniformly preserve an output-mask mute. The user declined a preview/WAV-first implementation
+  with native-export refusals. [Feasibility record](docs/PATTERN_MUTE.md) retains the constraints and
+  unapproved future alternatives. The original requested property, distinct from visual collapse, must survive
   save/reopen and affect both playback and native/WAV export. Every occurrence of a reused pattern should
   use its mute state. Define entry/tail behaviour and retain timing/control-flow effects on muted lanes;
   shared oscillators, envelopes, filters and modulation must not be accidentally disabled. Audition policy
@@ -238,7 +239,10 @@ its downloaded AppImage.
   Register-volume chips, discrete wave gain, autonomous envelopes, FM carrier attenuation and SID's shared
   master volume have different capabilities. Define exact/quantized/unsupported native-export behaviour
   per backend; never silently promise an independent hardware fader or export a preview-only mix.
-  This is a design direction, not yet implemented.
+  The [complete capability/design pass](docs/MIXER_CEILINGS.md) covers all 43 registered systems and
+  every native export route. Implementation awaits review of the level/percentage domain,
+  autonomous-envelope and FM restrictions, shared/stereo controls, zero/live behavior and export
+  refusals. No mixer feature is implemented.
 - **Right-stick pattern jump** — implemented in 0.14.1, verified in the Deck frontend and Android input path: two
   quick same-direction right-stick flicks, neutral between them, move the focused Pattern cursor to the pattern's
   first/last row. Shared detector `input/StickFlicks` (engage 0.6, neutral 0.3, flick ≤ 300 ms, gap ≤ 300 ms)

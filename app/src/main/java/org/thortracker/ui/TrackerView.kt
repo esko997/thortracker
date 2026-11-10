@@ -58,10 +58,6 @@ class TrackerView(context: Context, session: EditorSession, state: ViewState) : 
         pane.motion.scale = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        pane.ink.layout(w, h)
-    }
-
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         refreshMotionScale()

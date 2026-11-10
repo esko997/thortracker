@@ -599,6 +599,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             Control.PLAY_CURSOR -> toggleTransport(fromCursor = true)
             Control.LOOP_PATTERN -> toggleLoop()
             Control.FOCUS -> switchFocus()
+            Control.ZOOM_IN -> menus.zoom(focus, 1)
+            Control.ZOOM_OUT -> menus.zoom(focus, -1)
+            Control.ZOOM_RESET -> menus.zoom(focus, 0)
             // Other-display chords target the other display while two show; with one, the only display.
             else -> control.shows?.let { showView(it, if (control.toOther && hosts.size > 1) 1 - focus else focus) }
                 ?: control.action?.let(::editAction)

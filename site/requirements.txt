@@ -1,0 +1,2 @@
+# Python 3.12; no transitive runtime dependencies.
+Markdown==3.10 --hash=sha256:b5b99d6951e2e4948d939255596523444c0e677c669700b1d17aa4a8a464cb7c

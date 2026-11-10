@@ -51,6 +51,7 @@ object WorkspaceCodec {
             fun string(key: String) = (item[key] as? JsonPrimitive)?.content ?: ""
             defaults[index] = ViewState(
                 kind = ViewKind.entries.firstOrNull { it.name == string("kind") } ?: defaults[index].kind,
+                zoom = org.thortracker.editor.PaneZoom.fromStored((item["zoom"] as? JsonPrimitive)?.content),
                 pinned = bool("pinned", true),
                 followSelection = bool("follow", true),
                 lockedSubject = int("locked", -1),
@@ -117,6 +118,7 @@ object WorkspaceCodec {
     fun encode(states: List<ViewState>): String = buildJsonArray {
         for (s in states) add(buildJsonObject {
             put("kind", s.kind.name); put("pinned", s.pinned); put("follow", s.followSelection)
+            put("zoom", s.zoom.percent)
             put("locked", s.lockedSubject); put("order", s.order); put("row", s.row)
             put("channel", s.channel); put("field", s.field); put("instrument", s.instrument)
             put("wave", s.wave); put("scroll", s.scroll); put("octave", s.octave)

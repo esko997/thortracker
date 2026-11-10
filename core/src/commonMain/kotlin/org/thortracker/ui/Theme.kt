@@ -107,11 +107,12 @@ class Ink(val density: Float, private val measure: Surface) {
     var unit = 14f * density
         private set
 
-    fun layout(width: Int, height: Int) {
+    /** Zoom magnifies content metrics, not physical [dp] targets, shell widgets or modal controls. */
+    fun layout(width: Int, height: Int, zoom: org.thortracker.editor.PaneZoom = org.thortracker.editor.PaneZoom.NORMAL) {
         // A fixed 12dp text unit: extra height becomes more rows, not larger text. Only displays too
         // narrow for the four-lane pattern grid (about 31 units) or too short for ~16 rows shrink it.
         val fit = minOf(width / 31f, height / 24f)
-        unit = maxOf(9f * density, minOf(12f * density, fit))
+        unit = maxOf(9f * density, minOf(12f * density, fit)) * zoom.factor
     }
 
     fun dp(v: Float) = v * density

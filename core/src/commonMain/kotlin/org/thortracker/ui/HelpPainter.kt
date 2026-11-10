@@ -76,12 +76,13 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
     private var cachedPalette: Palette? = null
     private var cachedPage = -1
     private var cachedWidth = -1f
+    private var cachedUnit = -1f
     private var cachedLines: List<Line> = emptyList()
 
-    /** Wrapped lines; rebuilt only when the song, keymap, palette, page or width changes. */
+    /** Wrapped lines; rebuilt only when the song, keymap, palette, page, width or text size changes. */
     private fun pageLines(width: Float, keyW: Float): List<Line> {
         val keymap = v.keymap
-        if (song !== cachedSong || keymap !== cachedKeymap || ink.palette !== cachedPalette || st.helpPage != cachedPage || width != cachedWidth) {
+        if (song !== cachedSong || keymap !== cachedKeymap || ink.palette !== cachedPalette || st.helpPage != cachedPage || width != cachedWidth || ink.unit != cachedUnit) {
             val raw = when (st.helpPage) {
                 0 -> controls(keymap)
                 1 -> effects()
@@ -94,6 +95,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             cachedPalette = ink.palette
             cachedPage = st.helpPage
             cachedWidth = width
+            cachedUnit = ink.unit
         }
         return cachedLines
     }
@@ -173,6 +175,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row(k.label(Control.LOOP_PATTERN), "Loop the current pattern on / off; while on, Play loops whichever pattern it starts"),
             Line.Row(k.label(Control.TOOLBAR), "Show the toolbar and move the controller to it"),
             Line.Row(k.label(Control.FOCUS), "Move controller focus to the other display"),
+            Line.Row("${k.label(Control.ZOOM_IN)} / ${k.label(Control.ZOOM_OUT)} / ${k.label(Control.ZOOM_RESET)}",
+                "Focused view zoom in / out / reset: 75–150%, reset 100%. Unbound until chosen in Controls"),
+            Line.Row("Zoom", "Menu → Focused view zoom. Each complete view keeps its size when swapped; menus stay physical-sized"),
             Line.Row("Menu", "Controls: rebind any button or chord; hints and this page follow"),
             Line.Heading("Pattern"),
         ) + (if (maxColumns() <= 1) listOf(Line.Row("Columns", "Note, sound number, effect type and effect value per channel")) else listOf(

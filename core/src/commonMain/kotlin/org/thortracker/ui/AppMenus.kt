@@ -158,6 +158,29 @@ class AppMenus(
         }
     }
 
+    /** Magnifies only pane content, not the shell or modal controls. Zero resets; ±1 takes one bounded step. */
+    fun zoom(index: Int, direction: Int) {
+        val state = states[index]
+        val next = if (direction == 0) org.thortracker.editor.PaneZoom.NORMAL else state.zoom.step(direction)
+        state.zoom = next
+        host.refresh()
+        host.status("View zoom ${next.percent}%" + when (next) {
+            org.thortracker.editor.PaneZoom.SMALL -> " (minimum)"
+            org.thortracker.editor.PaneZoom.LARGEST -> " (maximum)"
+            else -> ""
+        })
+    }
+
+    private fun zoomMenu(index: Int) {
+        val current = states[index].zoom
+        popups.show(PopupSpec("View zoom: ${current.percent}%", items = listOf(
+            PopupItem(if (current == org.thortracker.editor.PaneZoom.LARGEST) "Zoom in (at maximum 150%)" else "Zoom in") { zoom(index, 1) },
+            PopupItem(if (current == org.thortracker.editor.PaneZoom.SMALL) "Zoom out (at minimum 75%)" else "Zoom out") { zoom(index, -1) },
+            PopupItem("Reset to 100%") { zoom(index, 0) },
+            PopupItem.dismiss(),
+        )), host.modalDisplay)
+    }
+
     fun viewOptions(index: Int) {
         val state = states[index]
         choose("View behavior", buildList {
@@ -181,8 +204,8 @@ class AppMenus(
                 }
                 3 -> host.swap()
                 4, 5 -> {
-                    states[0] = ViewState(kind = ViewKind.PATTERN)
-                    states[1] = ViewState(kind = if (selected == 4) ViewKind.KEYBOARD else ViewKind.INSTRUMENT)
+                    states[0] = ViewState(kind = ViewKind.PATTERN, zoom = states[0].zoom)
+                    states[1] = ViewState(kind = if (selected == 4) ViewKind.KEYBOARD else ViewKind.INSTRUMENT, zoom = states[1].zoom)
                 }
                 6 -> state.followPlayback = !state.followPlayback
             }
@@ -200,6 +223,7 @@ class AppMenus(
                 add(RhythmRomMenu.LABEL + (if (Ym2608RhythmRom.installed) "  installed" else "  missing") to { open(RhythmRomMenu::open) })
             }
             add("Views / layout" to { viewOptions(focus) })
+            add("Focused view zoom: ${states[focus].zoom.percent}%" to { zoomMenu(focus) })
             if (host.displayCount > 1) add("Switch controller focus" to host::switchFocus)
             add("Play from song start" to { transport.start(0, 0) })
             add("Copy selection" to { host.editAction(Action.COPY) })
