@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
@@ -12,13 +11,15 @@ import android.widget.LinearLayout
 import org.thortracker.input.Keys
 import org.thortracker.input.PreviewPointers
 
-/** A fixed 192dp controller, never shrunk below 48dp targets. Buttons own independent pointer IDs. */
+/** Three rows of 48dp targets, with independent pointer ownership and bounded thumb travel. */
 @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
 class PreviewDock(
     context: Context,
     private val send: (code: Int, down: Boolean, repeat: Int) -> Unit,
     private val cancelInput: () -> Unit,
 ) : LinearLayout(context) {
+    companion object { const val HEIGHT_DP = 144 }
+
     private val buttons = LinkedHashMap<Int, Button>()
     private val names = HashMap<Int, String>()
     private val painted = HashMap<Int, Boolean>()
@@ -26,6 +27,8 @@ class PreviewDock(
     private val arrows = intArrayOf(Keys.DPAD_UP, Keys.DPAD_DOWN, Keys.DPAD_LEFT, Keys.DPAD_RIGHT)
     private val bounds = Rect()
     private val pointers = PreviewPointers { code, down -> send(code, down, 0) }
+    private val leftControls = LinearLayout(context).apply { orientation = VERTICAL }
+    private val rightControls = LinearLayout(context).apply { orientation = VERTICAL }
     private var repeating = false
     private var repeatCount = 0
     var palette: Palette = Palette.SLATE
@@ -40,32 +43,32 @@ class PreviewDock(
     }
 
     init {
-        orientation = VERTICAL
+        orientation = HORIZONTAL
+        setPadding(dp(8), 0, dp(8), 0)
         isMotionEventSplittingEnabled = false
-        val modifiers = row()
-        key(modifiers, "Select", Keys.BUTTON_SELECT)
-        key(modifiers, "L2", Keys.BUTTON_L2)
-        key(modifiers, "R2", Keys.BUTTON_R2)
-        key(modifiers, "L3", Keys.BUTTON_THUMBL)
-        key(modifiers, "L1", Keys.BUTTON_L1)
-        key(modifiers, "R1", Keys.BUTTON_R1)
-        val pad = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER }
-        addView(pad, LayoutParams(-1, dp(144)))
-        val directions = LinearLayout(context).apply { orientation = VERTICAL }
-        val faces = LinearLayout(context).apply { orientation = VERTICAL }
-        pad.addView(directions, LayoutParams(0, -1, 1f))
-        pad.addView(faces, LayoutParams(0, -1, 1f))
-        row(directions).also { space(it); key(it, "↑", Keys.DPAD_UP); space(it) }
-        row(directions).also { key(it, "←", Keys.DPAD_LEFT); key(it, "Start", Keys.BUTTON_START); key(it, "→", Keys.DPAD_RIGHT) }
-        row(directions).also { space(it); key(it, "↓", Keys.DPAD_DOWN); space(it) }
-        row(faces).also { space(it); key(it, "Y", Keys.BUTTON_Y); space(it) }
-        row(faces).also { key(it, "X", Keys.BUTTON_X); space(it); key(it, "A", Keys.BUTTON_A) }
-        row(faces).also { key(it, "R3", Keys.BUTTON_THUMBR); key(it, "B", Keys.BUTTON_B); space(it) }
+        addView(leftControls, LayoutParams(0, -1))
+        addView(View(context), LayoutParams(0, -1, 1f))
+        addView(rightControls, LayoutParams(0, -1))
+        row(leftControls).also { key(it, "L2", Keys.BUTTON_L2); key(it, "↑", Keys.DPAD_UP); key(it, "L1", Keys.BUTTON_L1) }
+        row(leftControls).also { key(it, "←", Keys.DPAD_LEFT); key(it, "Start", Keys.BUTTON_START); key(it, "→", Keys.DPAD_RIGHT) }
+        row(leftControls).also { key(it, "Select", Keys.BUTTON_SELECT); key(it, "↓", Keys.DPAD_DOWN); space(it) }
+        row(rightControls).also { key(it, "R1", Keys.BUTTON_R1); key(it, "Y", Keys.BUTTON_Y); key(it, "R2", Keys.BUTTON_R2) }
+        row(rightControls).also { key(it, "X", Keys.BUTTON_X); key(it, "R3", Keys.BUTTON_THUMBR); key(it, "A", Keys.BUTTON_A) }
+        row(rightControls).also { space(it); key(it, "B", Keys.BUTTON_B); key(it, "L3", Keys.BUTTON_THUMBL) }
         repaint()
     }
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // A wider unfolded window adds a central gap, not extra thumb travel.
+        val available = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight).coerceAtLeast(0)
+        val groupWidth = minOf(available / 2, dp(216))
+        leftControls.layoutParams.width = groupWidth
+        rightControls.layoutParams.width = groupWidth
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
     private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
-    private fun row(parent: LinearLayout = this) = LinearLayout(context).also {
+    private fun row(parent: LinearLayout) = LinearLayout(context).also {
         it.orientation = HORIZONTAL
         parent.addView(it, LayoutParams(-1, dp(48)))
     }

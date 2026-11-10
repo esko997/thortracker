@@ -43,7 +43,7 @@ class PreviewShell(
         bar.addView(transport, LinearLayout.LayoutParams(dp(64), dp(48)))
         content.addView(bar, LinearLayout.LayoutParams(-1, dp(48)))
         content.addView(tracker, LinearLayout.LayoutParams(-1, 0, 1f))
-        content.addView(dock, LinearLayout.LayoutParams(-1, dp(192)))
+        content.addView(dock, LinearLayout.LayoutParams(-1, dp(PreviewDock.HEIGHT_DP)))
         addView(content, LayoutParams(-1, -1))
         drawer.setOnClickListener { closeDrawer() }
         drawer.addView(drawerScroll, LayoutParams(-1, -1, Gravity.START))

@@ -378,9 +378,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     override fun onPause() {
         active = false
         // Key-ups for anything held now may never arrive.
-        cancelHeldInput()
+        cancelInterruptedInput()
         unregisterReceiver(batteryReceiver)
-        if (popups.dropCaptures()) statusMessage = "Binding unchanged"
         hosts.values.forEach { it.toolbar.hide() }
         detachSecondary()
         main.removeCallbacks(tick)
@@ -416,7 +415,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        cancelHeldInput()
+        cancelInterruptedInput()
         hideSystemBars()
         refresh()
     }
@@ -450,7 +449,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 }
                 override fun onWindowFocusChanged(hasFocus: Boolean) {
                     super.onWindowFocusChanged(hasFocus)
-                    if (!hasFocus) cancelHeldInput() else input.resetStick()
+                    if (!hasFocus) cancelInterruptedInput() else input.resetStick()
                 }
                 override fun dispatchKeyEvent(event: KeyEvent): Boolean =
                     routeKey(event) || super.dispatchKeyEvent(event)
@@ -503,12 +502,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) cancelHeldInput() else input.resetStick()
+        if (!hasFocus) cancelInterruptedInput() else input.resetStick()
     }
 
     override fun onInputDeviceAdded(deviceId: Int) = input.resetStick()
-    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); cancelHeldInput() }
-    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); cancelHeldInput() }
+    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); cancelInterruptedInput() }
+    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); cancelInterruptedInput() }
 
     /** Cancel, never release-as-tap, every editor and virtual/physical hold at a context boundary. */
     private fun cancelHeldInput() {
@@ -520,6 +519,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             it.tracker.cancelInteraction()
         }
         releaseAudition()
+    }
+
+    private fun cancelInterruptedInput() {
+        cancelHeldInput()
+        if (popups.dropCaptures()) statusMessage = "Binding unchanged"
     }
 
     private fun virtualKey(code: Int, down: Boolean, repeat: Int) {
@@ -599,7 +603,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             return false
         }
         if (HostInput.isController(code)) {
-            if (!down && original.isCanceled) { cancelHeldInput(); return true }
+            if (!down && original.isCanceled) { cancelInterruptedInput(); return true }
             if (keyOwners.change(original.deviceId, code, down, repeat) == PreviewKeyOwners.Edge.NONE) return true
         }
         popups.top?.capture?.let { capture ->
@@ -1510,7 +1514,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val focusButton: Button = toolbar.add("Focus", action = act { setFocus(index) })
         val transport: Button
         val preview: PreviewShell? = if (index == 0) PreviewShell(context, tracker,
-            PreviewDock(context, ::virtualKey, ::cancelHeldInput),
+            PreviewDock(context, ::virtualKey, ::cancelInterruptedInput),
             { cancelHeldInput(); setFocus(index); toolbar.hide() },
             entries = {
                 buildList {
@@ -1585,7 +1589,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             val captureDock = value && capture != null && preview != null
             preview?.dock?.isEnabled = !value || captureDock
             (popup.layoutParams as FrameLayout.LayoutParams).let {
-                it.bottomMargin = if (captureDock) dp(192) else 0
+                it.bottomMargin = if (captureDock) dp(PreviewDock.HEIGHT_DP) else 0
                 popup.layoutParams = it
             }
             root.hideFromAccessibility(false)

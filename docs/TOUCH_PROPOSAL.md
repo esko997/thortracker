@@ -1,25 +1,41 @@
 # Touch interface proposals
 
-Status: **isolated Android portrait preview source; not approved or merged into production**.
-The user authorized a real controller-dock preview after the original landscape study. The
-`portrait-touch-preview` branch is based on 0.40.0 (`1fef420`), has a distinct Android identity,
-and reuses the real editor/audio/file paths. No production release version changes.
-The landscape study and its browser evidence below remain historical proposals, not a native
-implementation contract. The portrait source and tests have **not been built or run by the worker**.
+Status: **isolated Android controller-dock preview; not merged into production**.
+The preview integrates the 0.41.0 editor, audio engines and file paths under a distinct Android
+identity. **Galaxy Fold8 is the design target. Pocket DMG is only a functional testbed**, not
+a substitute for the phone's screen geometry or a human two-thumb ergonomics trial.
+The landscape study and browser evidence below remain historical proposals, not a native
+implementation contract.
 
-## Native portrait controller preview
+## Native controller-dock preview for Galaxy Fold8
 
 ### Geometry and interaction
 
 The primary display has a 48 dp Menu / Touch preview / Play bar, the real `TrackerView` taking
-the remaining height, and a fixed 192 dp controller dock. The dock has a 48 dp modifier row
-(Select, L2, R2, L3, L1, R1), then three 48 dp rows for the D-pad, Start, A/B/X/Y and R3.
-All controller targets are at least 48 dp when the usable width is at least 288 dp; none is
-hidden at compact DMG portrait sizes. System bars remain outside the content; Android resizes
-the window for the IME. Rotation cancels holds and relays out the weighted editor.
-**The number of visible editor rows must be counted from the parent's actual DMG screenshot,
-not inferred from these dimensions.** Slate/Paper/Contrast and the existing native typeface
-are reused. The preview does not introduce a second note/value editor.
+the remaining height, and a **144 dp dock: three rows, all sixteen controller buttons retained**.
+Each thumb group is capped at 216 dp and anchored 8 dp from its side. Wider windows add a
+central gap rather than stretching controls toward the crease. L2 and R2 sit at the outer
+top corners; the normal D-pad and A/B/X/Y arrangement remain recognizable:
+
+```text
+L2      ↑      L1              R1      Y      R2
+←     Start    →               X      R3      A
+Select  ↓                             B      L3
+```
+
+Samsung's [Fold8 specification sheet](https://stg-images.samsung.com/is/content/samsung/assets/us/f2607/business/smartphones/spec-sheets/galaxy_z_fold8_one_pager_0713.pdf)
+lists a 972×1248 cover and 1848×2448 main display. The native ratio study uses representative
+360×462, 412×529, 720×544, 840×634 and 960×724 dp **app windows**; these are not measurements of
+the user's Android density, display zoom or usable insets. All targets pass the 48 dp check
+in those profiles. The 360×462 study shows fifteen Pattern rows; the 720×544 study shows
+nineteen, plus the existing inspector and arrangement overview.
+
+There is no forced orientation: the cover supports the portrait flow, while the opened
+inner display can use its natural wide layout. System bars stay outside the content and
+Android resizes for the IME. Configuration changes cancel held input. Actual fold/unfold,
+phone keyboard/inset behavior, large font/display zoom and physical reach still need phone
+review. Slate/Paper/Contrast and the existing native typeface are reused; this does not
+introduce a second note/value editor.
 
 - Each finger owns its initial button until it lifts, even after moving outside it. Sliding
   between buttons does not retarget; lift and press the next direction. A second finger can
@@ -65,70 +81,56 @@ root are app-scoped and **removed when the preview is uninstalled**; export anyt
 keeping to a deliberately chosen separate backup before cleanup. No storage permission,
 production URI grant, production FileProvider authority or production backup is reused.
 
-### Parent build and device checks (not executed by source worker)
+### Executed verification
 
-Use only this worktree; never merge this branch into the stable integration branch. Run one
-bounded build at a time, no emulator or Kotlin/Native linking. The external instrumentation
-source is at
-`/var/home/swatson/.local/state/thortracker/recovery-20261109/workflow-touch-041/portrait-harness-src/`.
-It is opt-in via `previewHarnessDir` and refuses any non-preview target or invocation without
-explicit data-reset consent.
+The production-signed, arm64 preview passes **19 host tests** and **13 real Android scenarios
+on reserved Pocket DMG**. The latter inject multi-pointer MotionEvents through Android's input
+dispatcher, using sparse physical-range IDs 0/2/4, plus hardware KeyEvents. They cover:
 
-```sh
-# From /var/home/swatson/Repos/homebrew-dev/thor-tracker-touch-preview:
-tools/build.sh --max-workers=1 \
-  '-Dorg.gradle.jvmargs=-Xmx1g -XX:+UseSerialGC -XX:ActiveProcessorCount=2' \
-  :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest \
-  -Pandroid.injected.build.abi=arm64-v8a \
-  -PpreviewHarnessDir=/var/home/swatson/.local/state/thortracker/recovery-20261109/workflow-touch-041/portrait-harness-src
-```
+- Held two-finger note adjustments and one grouped Undo, direction repeat, rolling releases,
+  mixed physical/virtual owners, cancellation and Home/background/foreground.
+- Held audition forwarded to native audio, native preparation and advancing playback. These
+  are not physical speaker-listening or phone latency measurements.
+- Both trigger layers, real touch-driven binding/conflict replacement and cancellation.
+- An actual notification-panel interruption: capture is canceled and the next unmodified R3
+  binding does not inherit an invisible L2. OEM window animations are disabled for this probe
+  and all three original animation settings are restored exactly afterward.
+- Native View measurement/rendering at all five cover/inner ratio profiles above, every dock
+  target's bounds, and held-input cancellation through the real resize callback.
+- Real provider save/open, JSON MIME and truncating overwrite. The actual Save As picker opens
+  directly on a uniquely marked preview root without choosing it from the sidebar.
 
-After reserving DMG and backing up any existing **preview** data (the harness replaces its
-working song), use the reserved serial explicitly:
+The same fast menu-tap scenario failed before the shared popup fix and passes afterward:
+starting a zero-distance scroll at the top of a menu intercepted the following tap. The fix
+avoids that animation; the test was not slowed down to hide the failure.
 
-```sh
-adb -s "$DMG_SERIAL" install -r app/build/outputs/apk/debug/app-debug.apk
-adb -s "$DMG_SERIAL" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb -s "$DMG_SERIAL" shell am start -n org.thortracker.touchpreview/org.thortracker.MainActivity
-adb -s "$DMG_SERIAL" shell am instrument -w -r \
-  -e class org.thortracker.PortraitTouchPreviewTest \
-  -e allowPreviewDataReset true \
-  org.thortracker.touchpreview.test/androidx.test.runner.AndroidJUnitRunner
-```
+Evidence is retained under
+`~/.local/state/thortracker/recovery-20261109/workflow-touch-041/preview-fold8-verified/`.
+The capture regression's before/after evidence and the 28-test production Android suite are
+recorded separately in `docs/VERIFICATION.md` on the stable integration branch. Disposable
+instrumentation is not shipped in the application. Production app data and `/ThorTunez` were
+not touched; the preview test package was removed and DMG settings restored.
 
-`PreviewInputTest` is source-level regression coverage using the actual `HostInput` and
-`ViewController`, not a replacement editor: two-finger grouped note adjustments/Undo,
-duplicate pointer owners, non-index pointer IDs, L2+R2 order/rolling release, physical/virtual
-ownership, lost-UP/repeat suppression and reentrant cancellation.
-The external harness injects genuine multi-pointer Android MotionEvents through
-`Instrumentation.sendPointerSync` (IDs 17/23/29), hardware KeyEvents, ACTION_CANCEL and a
-real Home/background/foreground transition. It checks real song changes/Undo, held audition
-and release callbacks forwarded to native audio, native audition preparation, playback,
-the actual provider save/open bytes and dock geometry. Its provider test uses the app's
-real save/open handlers, not a mocked SAF result; **the actual Android picker UI is a separate
-manual acceptance step**. Native preparation/error measurements are not a PCM/speaker
-audibility proof; listen and collect parent audio evidence separately.
+Build only this branch with the existing signed-release procedure, one bounded build at a
+time through `tools/build.sh --max-workers=1`. No emulator or local Kotlin/Native linking is
+needed. Do not merge the preview application identity or touch shell into production before
+ergonomics review.
 
-Parent acceptance sequence:
+### Phone delivery and review
 
-1. Capture app identities and production data/settings baseline without opening or mutating
-   production. Launch the preview from its own icon. Capture compact portrait geometry and
-   count actual visible rows; exercise each target and drawer entry.
-2. Via Files, make a blank GB song, choose a real sound, write/adjust notes with held A+arrows,
-   listen with X+arrows, mark/copy/paste, Undo/Redo, edit effects, arrange/reuse patterns and
-   change scale/entry-step/zoom/theme. Test L2, R2, both, and Select+B. Include pointer-up
-   order reversal, sliding outside a button and two physical/virtual owners of the same key.
-3. Play/Stop, L2+Start, and loop; verify actual audition acceptance and audible output with
-   playback stopped so a playing song cannot conceal rejection.
-4. Use the real SAF chooser to Save as into Thor Tracker Touch Preview, alter the song, Open
-   it, compare contents, then cold restart and reopen. Export a real WAV through Files and
-   verify its audio. Ensure no production directory was proposed/changed.
-5. While holding A/X and visible latches, open the drawer, an in-app popup and text/IME;
-   leave via Home, shade/focus loss, rotation and physical disconnect. Return and check no
-   held edit, audible note, repeat or invisible latch survives; fresh arrows only navigate.
-6. Repeat at DMG portrait and rotated/inset/IME configurations, with a physical controller,
-   then on a real tall phone before making phone-ergonomics claims. Restore the exact
-   baseline device state and preview data, Home/sleep; remove only this run's test package.
+The review APK uses a separate GitHub prerelease and immutable source tag, not the production
+latest release. A send-only Syncthing folder, `ThorTracker-Preview` (`thortracker-preview`),
+is offered only to the already paired phone. Accept that folder on the phone to receive APKs;
+this is APK delivery, **not song synchronization**. Installation remains a manual Android step.
+
+Review both folded and unfolded:
+
+1. A + directions for editing, X + directions for listening, Y selection, Select+B cut,
+   Undo/Redo, and L2/R2 separately and together. Check thumb reach and accidental presses.
+2. Drawer view changes, scale selection, dense effect/instrument editing, zoom and themes.
+3. Save/Open and WAV export using disposable songs and explicitly chosen backup destinations.
+4. Fold/unfold, rotate, open the phone keyboard, background/return and attach/detach a real
+   controller. No invisible hold, repeated edit or audition should survive an interruption.
 
 ### Explicit preview limitations
 
@@ -136,12 +138,14 @@ This is a real editing/audio/file preview, not the silent HTML study. It intenti
 shared controller down-to-write and field-specific Clear semantics; it does not implement
 the landscape proposal's release-to-write pad, OFF confirmation or whole-cell editor.
 The canvas still lacks virtual per-cell TalkBack nodes and small direct canvas targets are
-unchanged; the dock, drawer and native menus have semantic controls and 48 dp targets, but
-this is not a complete accessible tracker redesign. Two-thumb comfort, rendered row count,
-native device latency, SAF chooser behavior, rotation/IME fit and dual-display regression
-remain parent verification obligations, not source-only successes. The provider is a flat
-preview file root (no folder creation/rename). No phone pairing, distribution, publication,
-production release bump or production-data migration is part of this branch.
+unchanged. Dock/drawer controls have semantic labels and 48 dp targets; existing native menu
+rows remain 46 dp. This is not a complete accessible tracker redesign.
+
+Actual Fold8 density/zoom/insets, physical two-thumb comfort, fold transitions, IME fit,
+TalkBack, audible latency and full controller/dual-display parity still need review. Ratio
+renders on DMG are not phone captures. The provider is a flat preview root without folder
+creation/rename, and uninstalling the preview deletes its app-scoped files. No production
+data migration or production touch rollout is part of this branch.
 
 
 ## Initial landscape study
