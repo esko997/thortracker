@@ -14,11 +14,12 @@ android {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
     defaultConfig {
-        applicationId = "org.thortracker"
+        applicationId = "org.thortracker.touchpreview"
         minSdk = 26
         targetSdk = 32
         versionCode = 54
         versionName = "0.40.0"
+        testApplicationId = "org.thortracker.touchpreview.test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
@@ -44,6 +45,10 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")
         }
+    }
+    // Parent-owned, source-only device harness; opt-in and compiled only into this preview's test APK.
+    providers.gradleProperty("previewHarnessDir").orNull?.let {
+        sourceSets.getByName("androidTest").java.srcDir(it)
     }
     lint {
         // Sideloaded on handhelds, not published on Google Play; targetSdk 32 is the tested runtime behaviour.

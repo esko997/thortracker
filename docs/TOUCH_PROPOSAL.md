@@ -1,10 +1,148 @@
 # Touch interface proposals
 
-Status: **discussion only; no approved production implementation**. The original landscape study
-used 0.37.1 / main `006c173` on 2026-11-10. The user's latest direction reopens a controller overlay
-and portrait layout as alternatives, with a drawer for navigation and settings. Neither that
-candidate nor the original side editor is selected for implementation. No Android, desktop, audio,
-document-format or controller changes are part of these studies.
+Status: **isolated Android portrait preview source; not approved or merged into production**.
+The user authorized a real controller-dock preview after the original landscape study. The
+`portrait-touch-preview` branch is based on 0.40.0 (`1fef420`), has a distinct Android identity,
+and reuses the real editor/audio/file paths. No production release version changes.
+The landscape study and its browser evidence below remain historical proposals, not a native
+implementation contract. The portrait source and tests have **not been built or run by the worker**.
+
+## Native portrait controller preview
+
+### Geometry and interaction
+
+The primary display has a 48 dp Menu / Touch preview / Play bar, the real `TrackerView` taking
+the remaining height, and a fixed 192 dp controller dock. The dock has a 48 dp modifier row
+(Select, L2, R2, L3, L1, R1), then three 48 dp rows for the D-pad, Start, A/B/X/Y and R3.
+All controller targets are at least 48 dp when the usable width is at least 288 dp; none is
+hidden at compact DMG portrait sizes. System bars remain outside the content; Android resizes
+the window for the IME. Rotation cancels holds and relays out the weighted editor.
+**The number of visible editor rows must be counted from the parent's actual DMG screenshot,
+not inferred from these dimensions.** Slate/Paper/Contrast and the existing native typeface
+are reused. The preview does not introduce a second note/value editor.
+
+- Each finger owns its initial button until it lifts, even after moving outside it. Sliding
+  between buttons does not retarget; lift and press the next direction. A second finger can
+  press/repeat D-pad directions while A or X remains held. Arrows repeat after 350 ms, then
+  every 85 ms; other buttons do not synthesize repeats.
+- A, B, X and Y retain the real shared semantics: A writes/adjusts, B clears the current field,
+  X listens and Y marks. In Pattern, X+arrows keeps the original note sounding while navigating;
+  it does not invent a new continuous pitch-audition rule. Select+B cuts, not ordinary B.
+- Select/L2/R2/L3 are **tap-to-latch**, explicitly labeled `ON`, selected and announced to
+  accessibility. Tap again to release. L2 and R2 may both stay on for the existing third-layer
+  view commands without needing a third finger. Start remains available for L2+Start and
+  Select+Start. L1/R1 and R3 are momentary. Dock labels are physical button names and use the
+  same user keymap as the physical controller; Controls can restore/rebind that map.
+- Menu opens an explicit full-width, scrollable portrait navigation drawer. It lists every
+  available system view, Files, Pattern scale/length, Tuning/scale library, view behavior,
+  zoom, Undo/Redo and the real Settings/Controls/Help menu. Play/Stop is always at the top.
+  Both target the primary editor. Existing hardware Menu and Select+Start still use the
+  shared menu/toolbar paths.
+- Virtual keys and physical-device key owners are merged before `HostInput`: one source's
+  UP cannot release another source's held A/X/modifier. Pointer IDs, not their array positions,
+  own buttons. Opening a drawer/modal/toolbar, ACTION_CANCEL, lost window focus, pause,
+  rotation, or controller removal/reconfiguration cancels holds and audition without
+  interpreting cancellation as a tap. Modal/IME entry clears all visible latches; late UPs
+  and hardware repeats cannot resurrect a canceled press. Focus loss alone does not stop
+  background song transport; the existing onPause transport policy is unchanged.
+
+### Isolation and files
+
+Every Android variant has application ID **`org.thortracker.touchpreview`**, label
+**Thor Tracker Touch Preview**, and test application ID **`org.thortracker.touchpreview.test`**.
+The namespace/JNI classes remain `org.thortracker`; do not rename native symbols.
+Private recovery, settings, imported scales and firmware therefore live under the preview
+package, not production. The SAF provider authority is **`org.thortracker.touchpreview.documents`**.
+Its only root is the preview package's external-files directory:
+
+`Android/data/org.thortracker.touchpreview/files/Documents/ThorTrackerTouchPreview/`
+
+All file pickers initially point to that provider. It supports real create/read/write/delete
+for projects, exports and imported files, rejects traversal, and does not copy or discover
+production songs. Android's chooser can still explicitly browse another provider: never
+choose a production destination or `/ThorTunez` during preview tests. Files in this preview
+root are app-scoped and **removed when the preview is uninstalled**; export anything worth
+keeping to a deliberately chosen separate backup before cleanup. No storage permission,
+production URI grant, production FileProvider authority or production backup is reused.
+
+### Parent build and device checks (not executed by source worker)
+
+Use only this worktree; never merge this branch into the stable integration branch. Run one
+bounded build at a time, no emulator or Kotlin/Native linking. The external instrumentation
+source is at
+`/var/home/swatson/.local/state/thortracker/recovery-20261109/workflow-touch-041/portrait-harness-src/`.
+It is opt-in via `previewHarnessDir` and refuses any non-preview target or invocation without
+explicit data-reset consent.
+
+```sh
+# From /var/home/swatson/Repos/homebrew-dev/thor-tracker-touch-preview:
+tools/build.sh --max-workers=1 \
+  '-Dorg.gradle.jvmargs=-Xmx1g -XX:+UseSerialGC -XX:ActiveProcessorCount=2' \
+  :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest \
+  -Pandroid.injected.build.abi=arm64-v8a \
+  -PpreviewHarnessDir=/var/home/swatson/.local/state/thortracker/recovery-20261109/workflow-touch-041/portrait-harness-src
+```
+
+After reserving DMG and backing up any existing **preview** data (the harness replaces its
+working song), use the reserved serial explicitly:
+
+```sh
+adb -s "$DMG_SERIAL" install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s "$DMG_SERIAL" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s "$DMG_SERIAL" shell am start -n org.thortracker.touchpreview/org.thortracker.MainActivity
+adb -s "$DMG_SERIAL" shell am instrument -w -r \
+  -e class org.thortracker.PortraitTouchPreviewTest \
+  -e allowPreviewDataReset true \
+  org.thortracker.touchpreview.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+`PreviewInputTest` is source-level regression coverage using the actual `HostInput` and
+`ViewController`, not a replacement editor: two-finger grouped note adjustments/Undo,
+duplicate pointer owners, non-index pointer IDs, L2+R2 order/rolling release, physical/virtual
+ownership, lost-UP/repeat suppression and reentrant cancellation.
+The external harness injects genuine multi-pointer Android MotionEvents through
+`Instrumentation.sendPointerSync` (IDs 17/23/29), hardware KeyEvents, ACTION_CANCEL and a
+real Home/background/foreground transition. It checks real song changes/Undo, held audition
+and release callbacks forwarded to native audio, native audition preparation, playback,
+the actual provider save/open bytes and dock geometry. Its provider test uses the app's
+real save/open handlers, not a mocked SAF result; **the actual Android picker UI is a separate
+manual acceptance step**. Native preparation/error measurements are not a PCM/speaker
+audibility proof; listen and collect parent audio evidence separately.
+
+Parent acceptance sequence:
+
+1. Capture app identities and production data/settings baseline without opening or mutating
+   production. Launch the preview from its own icon. Capture compact portrait geometry and
+   count actual visible rows; exercise each target and drawer entry.
+2. Via Files, make a blank GB song, choose a real sound, write/adjust notes with held A+arrows,
+   listen with X+arrows, mark/copy/paste, Undo/Redo, edit effects, arrange/reuse patterns and
+   change scale/entry-step/zoom/theme. Test L2, R2, both, and Select+B. Include pointer-up
+   order reversal, sliding outside a button and two physical/virtual owners of the same key.
+3. Play/Stop, L2+Start, and loop; verify actual audition acceptance and audible output with
+   playback stopped so a playing song cannot conceal rejection.
+4. Use the real SAF chooser to Save as into Thor Tracker Touch Preview, alter the song, Open
+   it, compare contents, then cold restart and reopen. Export a real WAV through Files and
+   verify its audio. Ensure no production directory was proposed/changed.
+5. While holding A/X and visible latches, open the drawer, an in-app popup and text/IME;
+   leave via Home, shade/focus loss, rotation and physical disconnect. Return and check no
+   held edit, audible note, repeat or invisible latch survives; fresh arrows only navigate.
+6. Repeat at DMG portrait and rotated/inset/IME configurations, with a physical controller,
+   then on a real tall phone before making phone-ergonomics claims. Restore the exact
+   baseline device state and preview data, Home/sleep; remove only this run's test package.
+
+### Explicit preview limitations
+
+This is a real editing/audio/file preview, not the silent HTML study. It intentionally retains
+shared controller down-to-write and field-specific Clear semantics; it does not implement
+the landscape proposal's release-to-write pad, OFF confirmation or whole-cell editor.
+The canvas still lacks virtual per-cell TalkBack nodes and small direct canvas targets are
+unchanged; the dock, drawer and native menus have semantic controls and 48 dp targets, but
+this is not a complete accessible tracker redesign. Two-thumb comfort, rendered row count,
+native device latency, SAF chooser behavior, rotation/IME fit and dual-display regression
+remain parent verification obligations, not source-only successes. The provider is a flat
+preview file root (no folder creation/rename). No phone pairing, distribution, publication,
+production release bump or production-data migration is part of this branch.
+
 
 ## Initial landscape study
 

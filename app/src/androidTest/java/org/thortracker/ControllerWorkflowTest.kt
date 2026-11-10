@@ -496,7 +496,7 @@ class ControllerWorkflowTest {
             clickRow("Save")
             val deadline = SystemClock.elapsedRealtime() + 3000
             while (SystemClock.elapsedRealtime() < deadline &&
-                instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "org.thortracker" &&
+                instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == instrumentation.targetContext.packageName &&
                 destination.readBytes().contentEquals(bytes.get())) SystemClock.sleep(20)
             assertArrayEquals("saving the new song overwrote the previous song's destination",
                 bytes.get(), destination.readBytes())
@@ -504,7 +504,7 @@ class ControllerWorkflowTest {
             instrumentation.removeMonitor(picker)
             if (reader == null) reader = thread(isDaemon = true) { destination.inputStream().use { it.readBytes() } }
             reader.join(3000)
-            if (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != "org.thortracker")
+            if (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != instrumentation.targetContext.packageName)
                 tap(KeyEvent.KEYCODE_BACK)
             destination.delete()
         }
