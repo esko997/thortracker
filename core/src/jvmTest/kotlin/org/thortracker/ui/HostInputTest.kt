@@ -94,9 +94,9 @@ class HostInputTest {
         // Only L2 has a Start chord; it is still not run.
         assertEquals(none, input.down(Keys.BUTTON_START))
         assertEquals(none, input.up(Keys.BUTTON_START))
-        // L2+← acts only in sound views: in Pattern ← keeps moving, in Instrument it waits for one trigger to go.
-        assertEquals(HostInput.Route.Editor(Action.LEFT), input.down(Keys.DPAD_LEFT))
-        input.up(Keys.DPAD_LEFT)
+        // L2+← collapses in Pattern and changes octave in sound views; both wait for one trigger to go.
+        assertEquals(none, input.down(Keys.DPAD_LEFT))
+        assertEquals(none, input.up(Keys.DPAD_LEFT))
         assertEquals(none, input.down(Keys.DPAD_LEFT, view = ViewKind.INSTRUMENT))
         assertEquals(none, input.up(Keys.DPAD_LEFT, view = ViewKind.INSTRUMENT))
         // Nor does A reach a focused toolbar as its plain key.

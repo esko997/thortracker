@@ -70,6 +70,26 @@ class KeymapTest {
         assertEquals(Keymap.DEFAULT.binding(Control.LISTEN_OCTAVE_UP), read.binding(Control.LISTEN_OCTAVE_UP))
     }
 
+    @Test fun collapseChordIsPatternOnlyAndMigratesWithoutTakingCustomBindings() {
+        val chord = Binding(Keys.DPAD_LEFT, l2)
+        assertEquals(Control.TOGGLE_CHANNEL_COLLAPSE, Keymap.DEFAULT.control(chord, ViewKind.PATTERN))
+        for (kind in listOf(ViewKind.INSTRUMENT, ViewKind.WAVE, ViewKind.KEYBOARD, ViewKind.SKETCH))
+            assertEquals(Control.LISTEN_OCTAVE_DOWN, Keymap.DEFAULT.control(chord, kind))
+        assertNull(Keymap.DEFAULT.control(chord, ViewKind.SONG))
+        assertNull(Keymap.DEFAULT.control(chord, ViewKind.HELP))
+        val old = """{"format":"thor-tracker-keymap","version":6,"bindings":{"UNDO":"L2+A"}}"""
+        assertEquals(Keymap.DEFAULT, Keymap.fromJson(old))
+        val custom = """{"format":"thor-tracker-keymap","version":6,"bindings":{"INSERT_ROW":"L2+LEFT"}}"""
+        val migrated = Keymap.fromJson(custom)
+        assertEquals(chord, migrated.binding(Control.INSERT_ROW))
+        assertNull(migrated.binding(Control.TOGGLE_CHANNEL_COLLAPSE))
+        assertEquals(Control.LISTEN_OCTAVE_DOWN, migrated.control(chord, ViewKind.INSTRUMENT))
+        val rebound = migrated.with(Control.TOGGLE_CHANNEL_COLLAPSE, Binding(Keys.DPAD_LEFT, r2))
+        assertEquals(rebound, Keymap.fromJson(rebound.toJson()))
+        val unbound = Keymap.DEFAULT.with(Control.TOGGLE_CHANNEL_COLLAPSE, null)
+        assertEquals(unbound, Keymap.fromJson(unbound.toJson()))
+    }
+
     @Test fun keymapFileRoundTripsAndToleratesOtherVersionsControls() {
         val changed = Keymap.DEFAULT.with(Control.UNDO, Binding(Keys.BUTTON_B, sel)).with(Control.CUT, null)
             .with(Control.FOCUS, Binding(Keys.BUTTON_C))
@@ -176,8 +196,8 @@ class KeymapTest {
         assertNotNull(k.partialChord(Keys.BUTTON_A, both, ViewKind.PATTERN))    // L2+A, R2+A
         assertNull(k.partialChord(Keys.BUTTON_A, l2, ViewKind.PATTERN))         // that is L2+A's own layer
         assertNull(k.partialChord(Keys.BUTTON_A, emptySet(), ViewKind.PATTERN))
-        // L2+← acts only in sound views, and R2+← nowhere.
-        assertNull(k.partialChord(Keys.DPAD_LEFT, both, ViewKind.PATTERN))
+        // L2+← collapses in Pattern and changes octave in sound views; neither leaks through both triggers.
+        assertEquals(Control.TOGGLE_CHANNEL_COLLAPSE, k.partialChord(Keys.DPAD_LEFT, both, ViewKind.PATTERN))
         assertEquals(Control.LISTEN_OCTAVE_DOWN, k.partialChord(Keys.DPAD_LEFT, both, ViewKind.INSTRUMENT))
     }
 

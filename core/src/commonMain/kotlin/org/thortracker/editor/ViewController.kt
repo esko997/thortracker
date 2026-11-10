@@ -33,7 +33,7 @@ enum class Action {
     UP, DOWN, LEFT, RIGHT,
     EDIT, CLEAR, AUDITION, MARK,
     PREV_CHANNEL, NEXT_CHANNEL, OCTAVE_DOWN, OCTAVE_UP,
-    COPY, CUT, PASTE, DUPLICATE, UNDO, REDO, INSERT_ROW, DELETE_ROW, SCALE;
+    COPY, CUT, PASTE, DUPLICATE, UNDO, REDO, INSERT_ROW, DELETE_ROW, SCALE, TOGGLE_CHANNEL_COLLAPSE;
 
     val isDirection: Boolean get() = this == UP || this == DOWN || this == LEFT || this == RIGHT
 }
@@ -400,6 +400,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Publishes the pattern cursor as the shared selection. */
     fun publishPattern() {
+        state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)
         syncLock()
         if (state.chosenArpeggio != cursorKey()) state.chosenArpeggio = -1
         val bank = bankOf(state.channel)
@@ -456,8 +457,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return (if (chosen > 0) chosen else usedColumns(channel)).coerceIn(1, max)
     }
 
+    /** A collapsed lane exposes only its note; stored sounds and effects are untouched. */
+    fun channelCollapsed(channel: Int): Boolean = channel in state.collapsedChannels
+
     /** Cursor fields of [channel]: note, sound, then effect type and value per shown column. */
-    fun fieldCount(channel: Int): Int = 2 + 2 * shownColumns(channel)
+    fun fieldCount(channel: Int): Int =
+        if (state.kind == ViewKind.PATTERN && channelCollapsed(channel)) 1 else 2 + 2 * shownColumns(channel)
 
     /** The effect column the cursor is on (0 on the note and sound fields). */
     fun cursorColumn(): Int = columnOf(state.field)
@@ -839,6 +844,16 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun patternCommand(a: Action): Boolean {
         when (a) {
+            Action.TOGGLE_CHANNEL_COLLAPSE -> {
+                // Do not move the edited field out from under a held edit/clear/select gesture.
+                if (holding || auditionHeld) return true
+                val ch = state.channel
+                val collapsed = !channelCollapsed(ch)
+                state.collapsedChannels = if (collapsed) state.collapsedChannels + ch else state.collapsedChannels - ch
+                state.field = 0
+                publishPattern()
+                session.note("${system.channels[ch].name}: ${if (collapsed) "collapsed to notes; sounds and effects still play" else "expanded"}")
+            }
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 state.channel = (state.channel + if (a == Action.NEXT_CHANNEL) 1 else -1).coerceIn(0, song.channelCount() - 1)
                 state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)

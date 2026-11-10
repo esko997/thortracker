@@ -69,4 +69,16 @@ class WorkspaceCodecTest {
         assertEquals(listOf(5, 40, 6, 3), listOf(back.envelope, back.envStep, back.programField, back.rawTable))
         assertEquals(listOf(0, 0), WorkspaceCodec.decode(v086)[0].let { listOf(it.programField, it.rawTable) })
     }
+
+    @Test fun collapsedChannelsPersistPerPaneAndOldWorkspacesStayExpanded() {
+        val states = WorkspaceCodec.decode(v086)
+        assertEquals(emptySet<Int>(), states[0].collapsedChannels)
+        states[0].collapsedChannels = setOf(0, 8, 15)
+        states[1].collapsedChannels = setOf(2)
+        states[0].effectColumns = listOf(4, 2)
+        assertEquals(states, WorkspaceCodec.decode(WorkspaceCodec.encode(states)))
+        val odd = WorkspaceCodec.decode("""[{"collapsedChannels":[-1,0,0,15,16,"bad",null,{},2]}]""")
+        assertEquals(setOf(0, 2, 15), odd[0].collapsedChannels)
+        assertEquals(emptySet<Int>(), odd[1].collapsedChannels)
+    }
 }

@@ -180,6 +180,9 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
             Line.Row("Lanes", "When the channels do not all fit, the lanes scroll sideways with the cursor; ◀n / n▶ beside the headers count " +
                 "the lanes out of view (tap to go there)"),
         )) + listOf(
+            Line.Row(k.label(Action.TOGGLE_CHANNEL_COLLAPSE, ViewKind.PATTERN),
+                "Collapse / expand the focused channel to note width on this display. A numbered + header identifies a collapsed channel; " +
+                "an amber dot marks hidden effects. Left/right visits only visible fields. Sounds and effects still play; selections and copies keep whole cells."),
             Line.Row("Sound ··", "A note without a sound number is legato: it changes pitch without restarting the sound"),
             Line.Row("Right stick ↑↑ / ↓↓", "Two quick flicks the same way, back to centre between them: the pattern's first / last row"),
             Line.Row("$edit on note", "Empty row: write the last note and advance by the step"),
