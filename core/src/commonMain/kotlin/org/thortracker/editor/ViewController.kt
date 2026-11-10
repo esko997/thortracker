@@ -33,7 +33,7 @@ enum class Action {
     UP, DOWN, LEFT, RIGHT,
     EDIT, CLEAR, AUDITION, MARK,
     PREV_CHANNEL, NEXT_CHANNEL, OCTAVE_DOWN, OCTAVE_UP,
-    COPY, CUT, PASTE, DUPLICATE, UNDO, REDO, INSERT_ROW, DELETE_ROW, SCALE;
+    COPY, CUT, PASTE, DUPLICATE, UNDO, REDO, INSERT_ROW, DELETE_ROW, SCALE, TOGGLE_CHANNEL_COLLAPSE;
 
     val isDirection: Boolean get() = this == UP || this == DOWN || this == LEFT || this == RIGHT
 }
@@ -68,10 +68,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     /** Current controller bindings, so hints name the buttons the user actually pressed. */
     var keys: Keymap = Keymap.DEFAULT
 
-    /** Last note/effect per channel and entry sound per bank; part of [state] so it swaps with it. */
-    private val lastNote get() = state.entry.notes
-    private val lastEffect get() = state.entry.effects
-    private val penSound get() = state.entry.pens
+    /** Entry memory follows display swaps, but never reinterprets another document's slot numbers or effects. */
+    private val entry get() = state.entry.also { it.bindDocument(session.documentGeneration) }
+    private val lastNote get() = entry.notes
+    private val lastEffect get() = entry.effects
+    private val penSound get() = entry.pens
 
     /** Held editing or Sketch listening keeps following from moving the subject under the user's hands. */
     val holding: Boolean get() = editHeld || clearHeld || markHeld ||
@@ -177,6 +178,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     // ---- shared helpers --------------------------------------------------------------------------
 
     fun normalise() {
+        state.entry.bindDocument(session.documentGeneration)
         val s = song
         val system = s.system
         // A song of another system may lack the showing view (no Wave view without wave tables).
@@ -400,6 +402,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Publishes the pattern cursor as the shared selection. */
     fun publishPattern() {
+        state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)
         syncLock()
         if (state.chosenArpeggio != cursorKey()) state.chosenArpeggio = -1
         val bank = bankOf(state.channel)
@@ -456,8 +459,12 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return (if (chosen > 0) chosen else usedColumns(channel)).coerceIn(1, max)
     }
 
+    /** A collapsed lane exposes only its note; stored sounds and effects are untouched. */
+    fun channelCollapsed(channel: Int): Boolean = channel in state.collapsedChannels
+
     /** Cursor fields of [channel]: note, sound, then effect type and value per shown column. */
-    fun fieldCount(channel: Int): Int = 2 + 2 * shownColumns(channel)
+    fun fieldCount(channel: Int): Int =
+        if (state.kind == ViewKind.PATTERN && channelCollapsed(channel)) 1 else 2 + 2 * shownColumns(channel)
 
     /** The effect column the cursor is on (0 on the note and sound fields). */
     fun cursorColumn(): Int = columnOf(state.field)
@@ -518,7 +525,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     /** Tuned pitch written into an empty row: the channel's last tuned pitch if still reachable, else 1/1 nearest the octave. */
     private fun entryPitch(channel: Int, map: TuningMap): TunedPitch? {
-        state.entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
+        entry.tuned[channel]?.let { (n, d) -> map.index(n, d).takeIf { it >= 0 }?.let { return map.pitches[it] } }
         val root = map.tuning.root
         val near = (octaveNote(state.octave) + root.mod(12)).coerceIn(system.noteRange)
         return map.nearest(near, 0).takeIf { it >= 0 }?.let { map.pitches[it] }
@@ -533,8 +540,9 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             session.note("This row's effect ${EffectSpec.charOf(c.effect)}${EditorSession.hex2(c.param)} uses the slot tuned notes need for ${system.fine.name}; clear it first")
             return false
         }
+        if (!assignmentAllowed(state.channel, next.note, next.instrument)) return false
         write(next)
-        state.entry.tuned[state.channel] = pitch.note to pitch.detune
+        entry.tuned[state.channel] = pitch.note to pitch.detune
         lastNote[state.channel] = pitch.note
         startAudition(state.channel, pitch.note, ins, pitch.detune)
         session.note("${map.tuning.name}: ${map.label(pitch)}  ${system.noteName(pitch.note)}${if (pitch.detune > 0) " +${pitch.detune}" else ""}  " +
@@ -598,6 +606,17 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         return true
     }
 
+    /** Horizontal right-stick double flick: first/last channel's note, retaining row and order, even if collapsed. */
+    fun jumpPatternChannelEdge(last: Boolean): Boolean {
+        normalise()
+        if (state.kind != ViewKind.PATTERN || systemView() != null || state.scalePanel || editHeld || clearHeld) return false
+        if (markHeld) markUsed = true
+        state.channel = if (last) song.channelCount() - 1 else 0
+        state.field = 0
+        publishPattern()
+        return true
+    }
+
     private fun patternDirection(dx: Int, dy: Int) {
         when {
             editHeld -> { editUsed = true; adjustCell(dx, dy) }
@@ -645,6 +664,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                     if (writeTuned(c, pitch, pen(bank), map)) editInserted = true
                 } else {
                     val note = entryNote(ch)
+                    if (!assignmentAllowed(ch, note, pen(bank))) return
                     write(c.copy(note = note, instrument = pen(bank)))
                     editInserted = true
                     startAudition(ch, note, pen(bank))
@@ -659,7 +679,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             }
             1 -> when {
                 c.note < 0 -> session.note("Sounds start with a note: enter a note on this row first")
-                c.instrument == 0 -> { write(c.copy(instrument = pen(bank))); editInserted = true }
+                c.instrument == 0 -> {
+                    if (!assignmentAllowed(ch, c.note, pen(bank))) return
+                    write(c.copy(instrument = pen(bank)))
+                    editInserted = true
+                }
                 else -> { setPen(bank, c.instrument); state.instrument = c.instrument }
             }
             else -> {
@@ -717,6 +741,13 @@ class ViewController(val session: EditorSession, var state: ViewState) {
     fun effectReading(channel: Int, row: Int, column: Int, code: Int, param: Int): String =
         system.effectDetail(song, pattern, channel, row, column) ?: system.describeEffect(song, channel, code, param)
 
+    /** Check a new note/sound assignment, not the row's possibly unfinished effects. Clears and OFF bypass this. */
+    private fun assignmentAllowed(channel: Int, note: Int, instrument: Int): Boolean {
+        val problem = system.cellProblem(song, channel, Cell(note = note, instrument = instrument)) ?: return true
+        session.note(problem)
+        return false
+    }
+
     private fun write(c: Cell) {
         session.setCell(pattern, state.channel, state.row, c)
         problemNote()
@@ -764,6 +795,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                         return
                     }
                 }
+                if (!assignmentAllowed(ch, note, ins)) return
                 write(c.copy(note = note, instrument = ins))
                 lastNote[ch] = note
                 startAudition(ch, note, ins)
@@ -772,6 +804,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
             1 -> {
                 if (c.note < 0) { session.note("Sounds start with a note: enter a note on this row first"); return }
                 val ins = ((if (c.instrument == 0) pen(bank) else c.instrument) + dx + 4 * dy).coerceIn(1, slots(bank))
+                if (!assignmentAllowed(ch, c.note, ins)) return
                 write(c.copy(instrument = ins))
                 setPen(bank, ins)
                 state.instrument = ins
@@ -839,6 +872,16 @@ class ViewController(val session: EditorSession, var state: ViewState) {
 
     private fun patternCommand(a: Action): Boolean {
         when (a) {
+            Action.TOGGLE_CHANNEL_COLLAPSE -> {
+                // Do not move the edited field out from under a held edit/clear/select gesture.
+                if (holding || auditionHeld) return true
+                val ch = state.channel
+                val collapsed = !channelCollapsed(ch)
+                state.collapsedChannels = if (collapsed) state.collapsedChannels + ch else state.collapsedChannels - ch
+                state.field = 0
+                publishPattern()
+                session.note("${system.channels[ch].name}: ${if (collapsed) "collapsed to notes; sounds and effects still play" else "expanded"}")
+            }
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 state.channel = (state.channel + if (a == Action.NEXT_CHANNEL) 1 else -1).coerceIn(0, song.channelCount() - 1)
                 state.field = state.field.coerceIn(0, fieldCount(state.channel) - 1)
@@ -1258,22 +1301,24 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val p = song.patternAt(order)
         val row = sel.row.coerceIn(0, song.rowCount(p) - 1)
         val old = song.cellAt(p, state.channel, row)
+        val pitch = if (note >= 0) keyPitch(note) else null
         val cell = if (note == Cell.CUT) {
             val off = system.offEffect
             if (off != null && old.hasEffect) { session.note("That row has an effect; clear it first: OFF uses the effect slot (as $off)"); return }
             if (multiColumn()) old.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT)
         } else {
-            val pitch = keyPitch(note)
             if (pitch == null) old.copy(note = note, instrument = keyboardSound())
-            else system.fine.write(old.copy(instrument = keyboardSound()), pitch.note, pitch.detune)?.also {
-                state.entry.tuned[state.channel] = pitch.note to pitch.detune
-                session.note("${session.tuningMap?.tuning?.name}: wrote ${session.tuningMap?.label(pitch)} (${NumberText.fixed(pitch.error, 1, plus = true)}¢)")
-            } ?: run {
+            else system.fine.write(old.copy(instrument = keyboardSound()), pitch.note, pitch.detune) ?: run {
                 session.note("That row's effect uses the slot tuned notes need for ${system.fine.name}; clear it first")
                 return
             }
         }
+        if (note >= 0 && !assignmentAllowed(state.channel, cell.note, cell.instrument)) return
         session.setCell(p, state.channel, row, cell)
+        if (pitch != null) {
+            entry.tuned[state.channel] = pitch.note to pitch.detune
+            session.note("${session.tuningMap?.tuning?.name}: wrote ${session.tuningMap?.label(pitch)} (${NumberText.fixed(pitch.error, 1, plus = true)}¢)")
+        }
         if (note >= 0) lastNote[state.channel] = note
         moveWritePosition(session.step)
     }
@@ -1606,6 +1651,10 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         val phrase = sketchPhrase
         val span = minOf(phrase.length, song.rowCount(pattern) - sel.row)
         val ch = state.channel
+        for (i in 0 until span) {
+            val note = phrase.steps[i] ?: continue
+            if (!assignmentAllowed(ch, note, state.instrument)) return
+        }
         val written = session.insertPhrase(pattern, ch, sel.row, phrase.steps, state.instrument)
         val skipped = span - written
         session.select(sel.copy(row = sel.row + span, channel = ch, context = ViewKind.PATTERN))

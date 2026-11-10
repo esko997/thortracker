@@ -51,6 +51,7 @@ class TrackerView(context: Context, session: EditorSession, state: ViewState) : 
     fun release(action: org.thortracker.editor.Action) = pane.release(action)
     val patternFocused: Boolean get() = pane.patternFocused
     fun jumpPatternEdge(bottom: Boolean) = pane.jumpPatternEdge(bottom)
+    fun jumpPatternChannelEdge(last: Boolean) = pane.jumpPatternChannelEdge(last)
 
     /** Re-reads the system animator duration scale (0 = Remove animations shows end states at once). */
     private fun refreshMotionScale() {

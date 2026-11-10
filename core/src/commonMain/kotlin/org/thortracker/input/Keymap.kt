@@ -72,6 +72,7 @@ enum class Control(
     INSERT_ROW(ControlGroup.CLIPBOARD, "Insert row / order", "Insert", Action.INSERT_ROW, views = ROW_VIEWS),
     DELETE_ROW(ControlGroup.CLIPBOARD, "Delete row / order", "Delete", Action.DELETE_ROW, views = ROW_VIEWS),
     PATTERN_PANEL(ControlGroup.PATTERN, "Pattern panel: root, scale, length", "Pattern panel", Action.SCALE, views = PATTERN_ONLY),
+    TOGGLE_CHANNEL_COLLAPSE(ControlGroup.PATTERN, "Collapse / expand focused channel", "Collapse / expand", Action.TOGGLE_CHANNEL_COLLAPSE, views = PATTERN_ONLY, since = 7),
     UNDO(ControlGroup.HISTORY, "Undo", "Undo", Action.UNDO, overPopups = true),
     REDO(ControlGroup.HISTORY, "Redo", "Redo", Action.REDO, overPopups = true),
     PLAY_PATTERN(ControlGroup.TRANSPORT, "Play pattern from row 00 / stop", "Play", null),
@@ -224,7 +225,7 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
 
     companion object {
         const val FORMAT = "thor-tracker-keymap"
-        const val VERSION = 6
+        const val VERSION = 7
         const val UNBOUND = "—"
 
         /** Buttons that do nothing alone and start chords, in the order chord labels name them. */
@@ -276,6 +277,7 @@ class Keymap private constructor(bindings: Map<Control, Binding?>) {
             Control.INSERT_ROW to Binding(Keys.DPAD_UP, SEL),
             Control.DELETE_ROW to Binding(Keys.DPAD_DOWN, SEL),
             Control.PATTERN_PANEL to Binding(Keys.DPAD_RIGHT, L2),
+            Control.TOGGLE_CHANNEL_COLLAPSE to Binding(Keys.DPAD_LEFT, L2),
             Control.UNDO to Binding(Keys.BUTTON_A, L2),
             Control.REDO to Binding(Keys.BUTTON_B, L2),
             Control.PLAY_PATTERN to Binding(Keys.BUTTON_START),

@@ -94,9 +94,9 @@ class HostInputTest {
         // Only L2 has a Start chord; it is still not run.
         assertEquals(none, input.down(Keys.BUTTON_START))
         assertEquals(none, input.up(Keys.BUTTON_START))
-        // L2+← acts only in sound views: in Pattern ← keeps moving, in Instrument it waits for one trigger to go.
-        assertEquals(HostInput.Route.Editor(Action.LEFT), input.down(Keys.DPAD_LEFT))
-        input.up(Keys.DPAD_LEFT)
+        // L2+← collapses in Pattern and changes octave in sound views; both wait for one trigger to go.
+        assertEquals(none, input.down(Keys.DPAD_LEFT))
+        assertEquals(none, input.up(Keys.DPAD_LEFT))
         assertEquals(none, input.down(Keys.DPAD_LEFT, view = ViewKind.INSTRUMENT))
         assertEquals(none, input.up(Keys.DPAD_LEFT, view = ViewKind.INSTRUMENT))
         // Nor does A reach a focused toolbar as its plain key.
@@ -234,10 +234,10 @@ class HostInputTest {
         assertEquals(emptySet<Int>(), input.heldModifiers)
     }
 
-    /** Right-stick samples from [device] at the given (y, millis); returns the jumps reported. */
+    /** Samples from one right-stick axis; returns the jumps reported. */
     private fun HostInput.stick(vararg samples: Pair<Float, Int>, device: Int = 1, pane: Int = 0, view: ViewKind = ViewKind.PATTERN,
-                                pattern: Boolean = true, popup: Boolean = false, toolbar: Boolean = false): List<Int> =
-        samples.map { (y, t) -> rightStick(device, y, t.toLong(), pane, view, pattern, popup, toolbar) }.filter { it != 0 }
+                                pattern: Boolean = true, popup: Boolean = false, toolbar: Boolean = false, horizontal: Boolean = false): List<Int> =
+        samples.map { (value, t) -> rightStick(device, horizontal, value, t.toLong(), pane, view, pattern, popup, toolbar) }.filter { it != 0 }
 
     @Test fun rightStickDoubleFlicksJumpOnlyInTheFocusedPatternGrid() {
         val input = HostInput()
@@ -282,6 +282,43 @@ class HostInputTest {
         assertEquals(emptyList<Int>(), input.stick(-1f to 160, 0f to 220, device = 2))
         input.forgetStick(1)
         assertEquals(emptyList<Int>(), input.stick(-1f to 240, device = 1))
+    }
+
+    @Test fun horizontalDoubleFlicksRespectPatternFocusModalsAndControllerIdentity() {
+        val input = HostInput()
+        assertEquals(listOf(-1), input.stick(-1f to 0, 0f to 80, -1f to 160, 0f to 220, horizontal = true))
+        assertEquals(listOf(1), input.stick(1f to 1000, 0f to 1080, 1f to 1160, 0f to 1220, horizontal = true))
+        for (kind in ViewKind.entries.filter { it != ViewKind.PATTERN }) {
+            assertEquals(emptyList<Int>(), input.stick(-1f to 2000, 0f to 2080, -1f to 2160, 0f to 2220, view = kind, horizontal = true))
+        }
+        assertEquals(emptyList<Int>(), input.stick(-1f to 3000, 0f to 3080, -1f to 3160, 0f to 3220, pattern = false, horizontal = true))
+        assertEquals(emptyList<Int>(), input.stick(-1f to 4000, 0f to 4080, -1f to 4160, 0f to 4220, popup = true, horizontal = true))
+        assertEquals(emptyList<Int>(), input.stick(-1f to 5000, 0f to 5080, -1f to 5160, 0f to 5220, toolbar = true, horizontal = true))
+        input.stick(-1f to 6000, 0f to 6080, horizontal = true)
+        assertEquals(emptyList<Int>(), input.stick(-1f to 6160, horizontal = true, device = 2))
+        assertEquals(emptyList<Int>(), input.stick(-1f to 6160, horizontal = true, pane = 1))
+        input.stick(0f to 6200, -1f to 7000, 0f to 7080, horizontal = true, pane = 1)
+        input.down(Keys.BUTTON_START)
+        input.up(Keys.BUTTON_START)
+        assertEquals(emptyList<Int>(), input.stick(-1f to 7160, horizontal = true, pane = 1))
+    }
+
+    @Test fun rightStickAxesNeverPairWithEachOtherAndDiagonalsCanCompleteBoth() {
+        val input = HostInput()
+        input.stick(-1f to 0, 0f to 80, horizontal = true)
+        assertEquals(emptyList<Int>(), input.stick(-1f to 100, 0f to 140))
+        assertEquals(listOf(-1), input.stick(-1f to 160, 0f to 220, horizontal = true))
+        assertEquals(listOf(-1), input.stick(-1f to 180, 0f to 240))
+        // Like Android's batched diagonal samples: feed both axes at each timestamp.
+        for ((value, time) in listOf(1f to 1000, 0f to 1080, 1f to 1160)) {
+            val expected = if (time == 1160) listOf(1) else emptyList()
+            assertEquals(expected, input.stick(value to time, horizontal = true))
+            assertEquals(expected, input.stick(value to time))
+        }
+        input.resetStick()
+        // A held diagonal cannot become a fresh first flick on either axis across a reset.
+        for (horizontal in listOf(false, true))
+            assertEquals(emptyList<Int>(), input.stick(1f to 1200, 0f to 1280, 1f to 1360, horizontal = horizontal))
     }
 
     /** A key that is not a controller button (Android's KEYCODE_VOLUME_UP). */

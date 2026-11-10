@@ -329,6 +329,7 @@ object PceInstrumentView : SystemView() {
     private fun usePreset(v: ViewController, preset: PcePresets.Preset): Boolean {
         val st = v.state
         val ok = v.session.applyPcePreset(st.instrument, preset)
+        if (!ok) return false
         if (preset.instrument.kind == PceKind.NOISE && st.listenChannel !in PceRules.NOISE_CHANNELS) st.listenChannel = PceRules.NOISE_CHANNELS.first
         keepPage(v, Row.PRESET)
         val ins = sound(v.session.song, st)

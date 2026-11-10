@@ -338,6 +338,7 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | Hold X | Audition without writing |
 | Hold Y + D-pad | Mark a pattern block |
 | Right stick ↑ ↑ / ↓ ↓ | Pattern (controller-focused, pattern panel closed): two quick flicks the same way, letting the stick return to centre between them, move the cursor to the pattern's first / last row (its last played row for a shortened pattern). One flick, holding the stick, or flicks interrupted by a button press, a popup, the toolbar or a focus change do nothing; the D-pad and left stick are unchanged. Not rebindable |
+| Right stick ← ← / → → | Under the same Pattern-only conditions, jump to the first / last channel's note cell, retaining the current row and order. Collapsed channels are included. Not rebindable |
 | L1 / R1 | Change channel, instrument bank, wave or help page; NES Instrument view: envelope or DPCM page; C64 Instrument view: envelope, program, vibrato or tables page |
 | L2 / R2 alone | No action; chord modifiers only |
 | L2 + A / L2 + B | Undo / redo |
@@ -350,6 +351,7 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | Select + L1 / R1 | Lower / raise the octave (Pattern entry; listening note elsewhere) |
 | L2 + Left / Right | Instrument, Wave, Keyboard, Sketch: lower / raise the listening octave; while X is held the sound restarts at the new octave |
 | Select + Up / Down | Pattern: insert / delete a row in the channel or selection. Song: insert / delete an order |
+| L2 + Left | Pattern: collapse/expand the focused channel to note-cell width. Visual only; hidden sounds and effects still play and export |
 | L2 + Right | Pattern: open/close the current pattern's root/scale/length panel |
 | Start | Play from row 00 of the current pattern's order, or stop |
 | L2 + Start | Play from the current cursor, or stop |
@@ -373,6 +375,20 @@ Hold the modifier **before** pressing its chord button. While Select, L2, R2 or 
 3. Alternatively, put Keyboard on the other display, select **Write** with Y, and enter notes there. **Listen** mode auditions without changing the pattern.
 4. Hold Y and move to mark a phrase; Select+X copies it, Select+A pastes it. L2+A undoes a mistake.
 5. Press Start to hear the phrase, edit while it plays, and stop/start or seek without saving or exporting.
+
+New/Open resets remembered note, sound, effect and tuned-pitch entry for the new document; ordinary
+edits, Undo/Redo and display swaps retain it. Instrument slot numbers from another song are not reused.
+New note/sound assignments that a channel cannot play are refused before changing the song. For example,
+PC Engine **noise snares need PSG 5 or PSG 6**; DDA/sample drums can use any PSG channel. Existing imported
+data is retained, and clearing/OFF or repairing an invalid note remains possible.
+
+**Collapsing channels.** In Pattern, **L2+Left** toggles the current lane between its full fields and a
+note-only strip. Numbered `01+`, `02+`, … headers identify collapsed lanes; hidden effects have an amber
+marker and invalid cells retain their warning underline. Navigation and touch selection skip hidden
+fields; expanding restores the chosen effect-column count. Full-cell copy/paste still includes sounds
+and every effect column. This is a per-pane workspace preference, preserved across restart and display
+swaps—not a mute, song edit or export change. The action is rebindable in Controls; migrating an older
+custom keymap preserves a conflicting binding and leaves the new action unbound rather than stealing it.
 
 **Menu → Song details / tempo** opens the Song view with **Ticks per row** selected. Hold A+Left/Right to change it; a lower value is faster. The view also edits title, artist, arrangement, loop point and **New patterns**, the scale guide every pattern made with New starts in (A+Left/Right scale, A+Up/Down root, B Chromatic; Clone and Repeat keep the source pattern's scale, and existing patterns are unchanged), with repeat/new/clone/delete/move commands. Inserting, deleting, moving or cloning orders keeps the loop point and every stored `Bxx` jump on the same order entry (`B00`, "next order", is relative and unchanged); a jump aimed at a deleted order lands on the order that takes its place. Deleting an order never deletes its pattern. Instrument edits affect later note triggers. The Wave view edits the 32 four-bit samples directly; held drawing and touch drags are grouped for undo.
 

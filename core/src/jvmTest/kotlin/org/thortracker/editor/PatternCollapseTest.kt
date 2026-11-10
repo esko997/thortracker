@@ -1,0 +1,164 @@
+package org.thortracker.editor
+
+import org.junit.Assert.*
+import org.junit.Test
+import org.thortracker.model.Cell
+import org.thortracker.model.ProjectCodec
+import org.thortracker.system.gb.GbSystem
+import org.thortracker.backend.Opl3Lowering
+import org.thortracker.system.opl3.Opl3Rules
+import org.thortracker.system.opl3.Opl3System
+
+class PatternCollapseTest {
+    private fun ViewController.tap(action: Action) { press(action); release(action) }
+
+    @Test fun togglePreservesDocumentHistoryProjectAndExportBytes() {
+        for (song in listOf(GbSystem.demo(), Opl3System.demo())) {
+            val session = EditorSession(song)
+            val controller = ViewController(session, ViewState(field = 3))
+            val project = ProjectCodec.encode(song)
+            val bytes = if (song.system == GbSystem) GbSystem.exports.single().export(song) else Opl3Lowering.lower(song)
+            controller.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+            assertTrue(controller.channelCollapsed(0))
+            assertEquals(0, controller.state.field)
+            assertSame(song, session.song)
+            assertFalse(session.canUndo)
+            assertFalse(session.canRedo)
+            assertEquals(project, ProjectCodec.encode(session.song))
+            assertArrayEquals(bytes, if (song.system == GbSystem) GbSystem.exports.single().export(session.song) else Opl3Lowering.lower(session.song))
+            controller.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+            assertFalse(controller.channelCollapsed(0))
+            assertSame(song, session.song)
+            assertEquals(project, ProjectCodec.encode(session.song))
+        }
+    }
+
+    @Test fun navigationVisitsOnlyVisibleFieldsAndRestoresEffectColumnChoices() {
+        val session = EditorSession(Opl3System.blank())
+        val state = ViewState(effectColumns = listOf(4, 2, 3), field = 9)
+        val c = ViewController(session, state)
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        assertEquals(1, c.fieldCount(0))
+        assertEquals(4, c.shownColumns(0))
+        c.tap(Action.RIGHT)
+        assertEquals(1, state.channel)
+        assertEquals(0, state.field)
+        c.tap(Action.LEFT)
+        assertEquals(0, state.channel)
+        assertEquals(0, state.field)
+        c.tap(Action.NEXT_CHANNEL)
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        c.tap(Action.RIGHT)
+        assertEquals(2, state.channel)
+        c.tap(Action.LEFT)
+        assertEquals(1, state.channel)
+        assertEquals(0, state.field)
+        c.tap(Action.PREV_CHANNEL)
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        assertEquals(10, c.fieldCount(0))
+        repeat(9) { c.tap(Action.RIGHT) }
+        assertEquals(9, state.field)
+        c.tap(Action.NEXT_CHANNEL)
+        assertEquals(0, state.field)
+        c.tap(Action.NEXT_CHANNEL)
+        state.field = 7
+        c.press(Action.MARK)
+        c.tap(Action.LEFT)
+        assertEquals(0, state.field)
+        c.release(Action.MARK)
+    }
+
+    @Test fun noteEditsAndBlockCopyKeepHiddenSoundsAndEveryEffectColumn() {
+        val session = EditorSession(Opl3System.blank())
+        session.step = 0
+        val original = Cell(48, 2).withEffect(0, Opl3Rules.FX_VOLUME, 0x30).withEffect(3, Opl3Rules.FX_CHORD, 0x37)
+        session.setCell(0, 0, 0, original)
+        val c = ViewController(session, ViewState())
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        c.press(Action.EDIT)
+        c.tap(Action.RIGHT)
+        c.release(Action.EDIT)
+        val edited = session.song.patterns[0].tracks[0][0]
+        assertEquals(original.copy(note = 49), edited)
+        c.tap(Action.COPY)
+        c.tap(Action.NEXT_CHANNEL)
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        c.tap(Action.PASTE)
+        assertEquals(edited, session.song.patterns[0].tracks[1][0])
+        c.tap(Action.DOWN)
+        c.tap(Action.EDIT)
+        assertTrue(session.song.patterns[0].tracks[1][1].note >= 0)
+        assertTrue(session.song.patterns[0].tracks[1][1].instrument > 0)
+    }
+
+    @Test fun collapseIsPaneLocalPatternOnlyAndDoesNotInterruptHeldEdits() {
+        val session = EditorSession(Opl3System.blank())
+        val c = ViewController(session, ViewState(field = 3))
+        c.press(Action.EDIT)
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        assertFalse(c.channelCollapsed(0))
+        assertEquals(3, c.state.field)
+        c.release(Action.EDIT)
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        val snapshot = c.state.snapshot()
+        c.tap(Action.TOGGLE_CHANNEL_COLLAPSE)
+        assertEquals(setOf(0), snapshot.collapsedChannels)
+        val workspace = Workspace(listOf(c.state, snapshot))
+        workspace.swap()
+        assertEquals(setOf(0), workspace.focused.collapsedChannels)
+        for (kind in Opl3System.views.filter { it != ViewKind.PATTERN }) {
+            val state = ViewState(kind = kind, collapsedChannels = setOf(0))
+            val other = ViewController(session, state)
+            assertFalse(other.press(Action.TOGGLE_CHANNEL_COLLAPSE))
+            assertEquals(setOf(0), state.collapsedChannels)
+            assertEquals(4, other.fieldCount(0))
+        }
+    }
+
+    @Test fun horizontalEdgesKeepRowAndOrderAndAlwaysLandOnTheNoteIncludingCollapsedLanes() {
+        val session = EditorSession(Opl3System.blank().copy(orders = listOf(0, 0)))
+        val last = session.song.channelCount() - 1
+        val state = ViewState(order = 1, row = 12, channel = 3, field = 5,
+            effectColumns = List(last + 1) { 4 }, collapsedChannels = setOf(0, last))
+        val c = ViewController(session, state)
+        val before = session.song
+        assertTrue(c.jumpPatternChannelEdge(last = true))
+        assertEquals(listOf(1, 12, last, 0), listOf(state.order, state.row, state.channel, state.field))
+        assertEquals(last, session.selection.channel)
+        assertTrue(c.jumpPatternChannelEdge(last = false))
+        assertEquals(listOf(1, 12, 0, 0), listOf(state.order, state.row, state.channel, state.field))
+        assertTrue(c.jumpPatternChannelEdge(last = false)) // boundary is idempotent
+        assertSame(before, session.song)
+        assertFalse(session.canUndo)
+        c.press(Action.MARK)
+        assertTrue(c.jumpPatternChannelEdge(last = true))
+        c.release(Action.MARK)
+        assertEquals(Block(0, last, 12, 12), c.block())
+        assertTrue(state.mark)
+        // Vertical edge jumps keep their channel and retain their existing behavior.
+        assertTrue(c.jumpPatternEdge(bottom = true))
+        assertEquals(last, state.channel)
+        assertEquals(session.song.rowCount(session.song.orders[1]) - 1, state.row)
+    }
+
+    @Test fun horizontalEdgesAreInactiveOutsidePatternOrUnderPanelsAndEditHolds() {
+        val session = EditorSession(Opl3System.blank())
+        val c = ViewController(session, ViewState(row = 7, channel = 2, field = 3))
+        for (held in listOf(Action.EDIT, Action.CLEAR)) {
+            c.press(held)
+            assertFalse(c.jumpPatternChannelEdge(last = true))
+            assertEquals(2, c.state.channel)
+            assertEquals(3, c.state.field)
+            c.release(held)
+        }
+        c.tap(Action.SCALE)
+        assertFalse(c.jumpPatternChannelEdge(last = false))
+        assertEquals(2, c.state.channel)
+        for (kind in Opl3System.views.filter { it != ViewKind.PATTERN }) {
+            val other = ViewController(session, ViewState(kind = kind, row = 7, channel = 2))
+            assertFalse(other.jumpPatternChannelEdge(last = true))
+            assertEquals(2, other.state.channel)
+            assertEquals(7, other.state.row)
+        }
+    }
+}

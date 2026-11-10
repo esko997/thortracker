@@ -11,6 +11,8 @@ import org.thortracker.editor.MenuContext
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
+import org.thortracker.model.Cell
+import org.thortracker.model.Songs
 import org.thortracker.system.nes.NesEnvelope
 import org.thortracker.system.pokey.PokeyInstrumentView.Page
 import org.thortracker.system.pokey.PokeyInstrumentView.Row
@@ -66,6 +68,67 @@ class PokeyEditorTest {
     }
 
     private fun sample(name: String, length: Int) = PokeySample(name, List(length) { (it * 7 + name.length) % 16 })
+
+    @Test
+    fun replacingTheDocumentDoesNotReinterpretItsEntrySlotAsAPokeySound() {
+        // GB 06 -> joined-only POKEY bass; GB 0F -> silent sync clock; old POKEY 10 -> empty.
+        // These are real remembered slots, selected by pressing an existing note, not manufactured pens.
+        val previous = listOf(
+            Songs.blank() to 6,
+            Songs.blank() to 15,
+            PokeySystem.blank().let { it.copy(sound = it.pokey.withInstrument(16, PokeyInstrument(name = "Old lead"))) } to 16,
+        )
+        for ((old, slot) in previous) {
+            val s = EditorSession(old)
+            s.step = 0
+            s.setCell(0, 0, 0, Cell(note = 60, instrument = slot))
+            val v = ViewController(s, ViewState(kind = ViewKind.PATTERN))
+            v.tap(Action.EDIT)
+            assertEquals(slot, v.pen(0))
+            // The instrument editor's displayed slot is independent of the remembered Pattern pen.
+            v.state.instrument = 1
+            s.replaceSong(PokeySystem.blank())
+            val dormantDisplay = v.state.snapshot()
+            v.tap(Action.EDIT)
+            val cell = s.song.patterns[0].tracks[0][0]
+            assertEquals("old ${old.system.id} slot $slot leaked into the new document", 1, cell.instrument)
+            assertNull(PokeySystem.cellProblem(s.song, 0, cell))
+            assertEquals(PokeyPresets.instrument("Pure lead"), s.song.pokey.instrument(cell.instrument))
+            assertEquals("a display snapshot made before normalization also loses the old slot", 1,
+                ViewController(s, dormantDisplay).pen(0))
+        }
+    }
+
+    @Test
+    fun entryMemorySurvivesEditsHistoryAndDisplaySwapsButNotReplacement() {
+        val s = EditorSession(PokeySystem.blank())
+        s.step = 0
+        s.setCell(0, 1, 0, Cell(note = 48, instrument = 6))
+        val v = ViewController(s, ViewState(kind = ViewKind.PATTERN, channel = 1))
+        v.tap(Action.EDIT)
+        v.state.entry.effects[1] = PokeyRules.FX_VOLUME to 7
+        v.state.entry.tuned[1] = 48 to 2
+        val remembered = v.state.entry.deepCopy()
+        s.setTitle("Edited")
+        v.normalise()
+        assertEquals(remembered, v.state.entry)
+        s.undo()
+        v.normalise()
+        assertEquals(remembered, v.state.entry)
+        s.redo()
+        val swapped = ViewController(s, v.state.snapshot())
+        swapped.normalise()
+        assertEquals(remembered, swapped.state.entry)
+        assertEquals(6, swapped.pen(0))
+        s.replaceSong(PokeySystem.blank())
+        swapped.normalise()
+        assertEquals(1, swapped.pen(0))
+        assertTrue(swapped.state.entry.notes.isEmpty())
+        assertTrue(swapped.state.entry.effects.isEmpty())
+        assertTrue(swapped.state.entry.pens.isEmpty())
+        assertTrue(swapped.state.entry.tuned.isEmpty())
+        assertEquals("the original display cannot revive its old entry memory", 1, v.pen(0))
+    }
 
     @Test
     fun anEmptySlotGetsANewSoundAndClearEmptiesIt() {

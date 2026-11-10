@@ -106,6 +106,9 @@ object WorkspaceCodec {
                 rawTable = int("rawTable", 0).coerceAtLeast(0),
                 effectColumns = (item["effectColumns"] as? JsonArray)?.take(MAX_CHANNELS)
                     ?.map { (it as? JsonPrimitive)?.content?.toIntOrNull()?.coerceIn(0, Cell.MAX_EFFECT_COLUMNS) ?: 0 }.orEmpty(),
+                collapsedChannels = (item["collapsedChannels"] as? JsonArray)?.take(MAX_CHANNELS)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.content?.toIntOrNull()?.takeIf { ch -> ch in 0 until MAX_CHANNELS } }
+                    ?.toSet().orEmpty(),
             )
         }
         return defaults
@@ -134,6 +137,7 @@ object WorkspaceCodec {
             put("dpcmKey", s.dpcmKey); put("dpcmSample", s.dpcmSample)
             put("programField", s.programField); put("rawTable", s.rawTable)
             if (s.effectColumns.isNotEmpty()) put("effectColumns", buildJsonArray { s.effectColumns.forEach { add(JsonPrimitive(it)) } })
+            if (s.collapsedChannels.isNotEmpty()) put("collapsedChannels", buildJsonArray { s.collapsedChannels.sorted().forEach { add(JsonPrimitive(it)) } })
             s.sketchPhrase?.let { p -> put("phrasePitches", buildJsonArray { p.steps.forEach { add(JsonPrimitive(it ?: -1)) } }) }
         })
     }.toString()

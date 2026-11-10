@@ -269,7 +269,7 @@ object PceSystem : SoundSystem {
                 channel !in channels.indices -> "Cannot audition on channel $channel"
                 note !in noteRange -> "${noteName(note)} is outside ${noteName(noteRange.first)}..${noteName(noteRange.last)}, the notes the player plays"
                 ins.kind == PceKind.NOISE && channel !in PceRules.NOISE_CHANNELS ->
-                    "\"${ins.name}\" is noise, which the HuC6280 has on PSG 5 and PSG 6 only; audition it there"
+                    "Noise needs PSG 5 or 6; audition \"${ins.name}\" there"
                 fine !in -128..127 -> "Fine pitch $fine is outside -128..127"
                 else -> PceValidator.instrumentProblem(sound, instrument)?.let { "Sound ${NumberText.hex(instrument, 2)} \"${ins.name}\" $it" }
             }

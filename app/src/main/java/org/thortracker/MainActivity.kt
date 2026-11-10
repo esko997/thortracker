@@ -496,24 +496,33 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); input.resetStick() }
 
     /**
-     * Feeds the right stick's vertical axis, including the samples batched into [event], to
-     * [HostInput.rightStick]; a quick double flick moves the focused Pattern view to its pattern's first or last
-     * row. Only observes: the event still goes to the window, so Android keeps turning the left stick and hat
-     * into D-pad keys.
+     * Feeds both right-stick axes, including the samples batched into [event], to [HostInput.rightStick].
+     * Double up/down moves to the first/last Pattern row; double left/right to the first/last channel's note.
+     * Axes are independent, so a diagonal can complete both. Only observes: Android still turns the left stick
+     * and hat into D-pad keys.
      */
     private fun rightStick(event: MotionEvent) {
         if (event.actionMasked != MotionEvent.ACTION_MOVE || !event.isFromSource(InputDevice.SOURCE_JOYSTICK)) return
         val device = event.device ?: return
-        val range = rightStickY(device) ?: return
+        val yRange = rightStickY(device) ?: return
+        val xAxis = if (yRange.axis == MotionEvent.AXIS_RZ) MotionEvent.AXIS_Z else MotionEvent.AXIS_RX
+        val xRange = device.getMotionRange(xAxis, InputDevice.SOURCE_JOYSTICK) ?: return
         val host = hosts[focus]
         val pattern = active && documentReady && host?.tracker?.patternFocused == true
-        fun sample(value: Float, millis: Long) {
-            val y = (value - range.min) / range.range * 2f - 1f
-            val jump = input.rightStick(device.id, y, millis, focus, states[focus].kind, pattern, popups.isOpen, toolbarFocused())
-            if (jump != 0) host?.tracker?.jumpPatternEdge(jump > 0)
+        fun sample(range: InputDevice.MotionRange, horizontal: Boolean, value: Float, millis: Long) {
+            val position = (value - range.min) / range.range * 2f - 1f
+            val jump = input.rightStick(device.id, horizontal, position, millis, focus, states[focus].kind, pattern, popups.isOpen, toolbarFocused())
+            if (jump != 0) {
+                if (horizontal) host?.tracker?.jumpPatternChannelEdge(jump > 0)
+                else host?.tracker?.jumpPatternEdge(jump > 0)
+            }
         }
-        for (i in 0 until event.historySize) sample(event.getHistoricalAxisValue(range.axis, i), event.getHistoricalEventTime(i))
-        sample(event.getAxisValue(range.axis), event.eventTime)
+        for (i in 0 until event.historySize) {
+            sample(xRange, true, event.getHistoricalAxisValue(xRange.axis, i), event.getHistoricalEventTime(i))
+            sample(yRange, false, event.getHistoricalAxisValue(yRange.axis, i), event.getHistoricalEventTime(i))
+        }
+        sample(xRange, true, event.getAxisValue(xRange.axis), event.eventTime)
+        sample(yRange, false, event.getAxisValue(yRange.axis), event.eventTime)
     }
 
     /**

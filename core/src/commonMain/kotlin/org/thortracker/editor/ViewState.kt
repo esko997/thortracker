@@ -84,6 +84,8 @@ data class ViewState(
      * least one). Per pane, so a narrow display can show fewer. See [ViewController.shownColumns].
      */
     var effectColumns: List<Int> = emptyList(),
+    /** Pattern-only, per-pane note-width lanes. Missing entries are expanded; never part of the song. */
+    var collapsedChannels: Set<Int> = emptySet(),
     /**
      * Pattern view: the cell (see [ViewController.cellKey]) whose stored 000 the user explicitly picked as
      * effect 0 (arpeggio) and is still on; -1 = none. Display only: 000 stays "no effect" in the song. Not persisted.
@@ -122,6 +124,16 @@ data class EntryMemory(
     val effects: HashMap<Int, Pair<Int, Int>> = HashMap(),
     val pens: HashMap<Int, Int> = HashMap(),
     val tuned: HashMap<Int, Pair<Int, Int>> = HashMap(),
+    internal var documentGeneration: Long = 0,
 ) {
-    fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens), HashMap(tuned))
+    internal fun bindDocument(generation: Long) {
+        if (documentGeneration == generation) return
+        notes.clear()
+        effects.clear()
+        pens.clear()
+        tuned.clear()
+        documentGeneration = generation
+    }
+
+    fun deepCopy() = EntryMemory(HashMap(notes), HashMap(effects), HashMap(pens), HashMap(tuned), documentGeneration)
 }

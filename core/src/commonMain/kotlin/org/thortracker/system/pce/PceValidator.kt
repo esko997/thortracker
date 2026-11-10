@@ -136,8 +136,7 @@ object PceValidator {
             val ins = sound.instrument(cell.instrument)
                 ?: return "sound ${hex2(cell.instrument)} is empty; choose a preset for it or another sound"
             if (ins.kind == PceKind.NOISE && channel !in PceRules.NOISE_CHANNELS) {
-                return "sound ${hex2(cell.instrument)} \"${ins.name}\" is noise; the HuC6280 has noise on PSG 5 and PSG 6 " +
-                    "only, so noise sounds belong there"
+                return "noise needs PSG 5 or 6; sound ${hex2(cell.instrument)} \"${ins.name}\" cannot play here"
             }
         }
         val orders = song.orders.size
