@@ -550,7 +550,7 @@ class ControllerWorkflowTest {
             clickRow("Save")
             val deadline = SystemClock.elapsedRealtime() + 3000
             while (SystemClock.elapsedRealtime() < deadline &&
-                instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "org.thortracker" &&
+                instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == instrumentation.targetContext.packageName &&
                 destination.readBytes().contentEquals(bytes.get())) SystemClock.sleep(20)
             assertArrayEquals("saving the new song overwrote the previous song's destination",
                 bytes.get(), destination.readBytes())
@@ -558,8 +558,22 @@ class ControllerWorkflowTest {
             instrumentation.removeMonitor(picker)
             if (reader == null) reader = thread(isDaemon = true) { destination.inputStream().use { it.readBytes() } }
             reader.join(3000)
-            if (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != "org.thortracker")
-                tap(KeyEvent.KEYCODE_BACK)
+            awaitTrue("Save picker settles") { instrumentation.uiAutomation.rootInActiveWindow != null }
+            val foreground = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
+            if (foreground != instrumentation.targetContext.packageName) {
+                assertTrue("Only this test's document picker may be dismissed",
+                    foreground == "com.android.documentsui" || foreground == "com.google.android.documentsui")
+                val time = SystemClock.uptimeMillis()
+                for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                    assertTrue(instrumentation.uiAutomation.injectInputEvent(
+                        KeyEvent(time, SystemClock.uptimeMillis(), action, KeyEvent.KEYCODE_BACK, 0), true))
+                }
+                awaitTrue("Tracker regains focus after its document picker") {
+                    var focused = false
+                    instrumentation.runOnMainSync { focused = activity.hasWindowFocus() }
+                    focused
+                }
+            }
             destination.delete()
         }
     }
