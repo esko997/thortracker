@@ -33,7 +33,7 @@ Not simulated: arrangement, range-selection handles, full instrument synthesis c
 2. Undo: the edit and selection return together. Redo restores them.
 3. Choose Listen only; hold a pad, then release. No note is written. In Write, touch a pad and slide outside it before releasing: no write.
 4. Select a populated cell. Sound changes its instrument, not its note. FX can enter `037` or the level-only `C0F` example. The prototype only exposes a small valid subset, not the complete GB effect catalog.
-5. OFF uses GB's single effect slot (`E00`). Replacing another effect asks first. FX explains the occupied slot; clearing OFF releases it. Arpeggio is unavailable on Noise, including a cross-lane paste.
+5. OFF uses GB's single effect slot (`E00`). The study **proposes confirmation before replacing an existing effect**; current Pattern entry instead refuses and requires clearing the effect first. FX explains the occupied slot; clearing OFF releases it. Arpeggio is unavailable on Noise, including a cross-lane paste.
 6. Actions → Collapse lane, then expand it. Copy/paste includes the sound/effect even when they are hidden. Play is silent; selecting another row does not move the playing cursor.
 
 ## Layout choices
@@ -83,10 +83,12 @@ Selected edit position and playing position remain visually distinct. Touch scro
 **This differs from current Keyboard Write:** it writes and advances on down; glide only changes audition; cancel ends the gesture but retains the note already written. The spike deliberately explores the safer release-to-write alternative. We should decide whether it is worth changing phone entry before any shared Keyboard behavior changes. Audition onset can remain on down; it does not have to wait for the write.
 
 - OFF and Clear must be separate, labeled commands, not the controller's context-sensitive B cycle.
-- OFF follows the actual backend release/cut representation. GB uses `E00`; OPL3 releases rather than immediately silencing.
+- OFF must ultimately use the actual backend representation. Production stores `Cell.CUT`; GB lowers that to `E00`, while OPL3 releases rather than immediately silencing. Current one-column Pattern OFF replaces the whole cell with `Cell(note = CUT)`, dropping its instrument, and refuses if an effect is already present. The study's literal OFF-plus-`E00` fields are only a display stand-in, not the project representation; it retains the sound and offers replacement confirmation. Those differences are proposals, not existing behavior.
 - For review, the study's Clear removes the note only and preserves sound/FX (except removing OFF also removes its `E00`). Current controller clear also clears the note's instrument. Final field-specific Clear semantics need agreement; never silently change the controller path.
 - Sound 00/legato needs an explicit production choice distinct from erasing the note. The study's first four sounds are a subset of each new-song bank; sound-bank editing is a separate operation from assigning a sound to a row.
 - One successful entry is one shared undo transaction. Failure does not advance or add history. Scale/step advance must retain current cross-order/played-length semantics; the study stops at its single pattern's end.
+
+The JavaScript cell/history/legality examples exist only to make the interaction study inspectable. They are not reusable editor code or parity tests. Native work must delegate to the existing shared entry/validation/history rules; do not port these stand-ins into another implementation.
 
 ### Effects remain tracker effects
 
@@ -160,6 +162,7 @@ Native work also needs explicit safe-inset/IME behavior and accessibility. The c
 2. **Release-to-write vs existing down-to-write:** recommended release for deliberate phone step entry, audition on down. No existing behavior changes until agreed.
 3. **Whole-cell selection vs tiny subfields:** recommended whole-cell tap and explicit dock tabs. Dense direct-field taps may remain an optional expert/controller-layout behavior.
 4. **Clear semantics:** recommended explicit field-specific actions, not the overloaded controller cycle. Decide whether clearing a note should retain its sound assignment before implementation.
+5. **OFF conflict and sound handling:** retain the existing refusal/clear-first behavior, or approve a confirmation that replaces the occupied effect? Decide separately whether OFF should retain the sound assignment. Until agreed, production behavior stays unchanged.
 
 No decision is required to use or inspect the study. These are the points to resolve together before approving native work.
 
