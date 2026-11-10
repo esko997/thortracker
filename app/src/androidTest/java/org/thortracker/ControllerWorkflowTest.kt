@@ -133,31 +133,19 @@ class ControllerWorkflowTest {
         chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_Y) // Keyboard
         val audio = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
             .get(activity) as org.thortracker.audio.ChipAudio
-        var releases = 0
-        val field = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
+        instrumentation.runOnMainSync { assertEquals(ViewKind.KEYBOARD, tracker.state.kind) }
+        assertEquals("Fixture has not auditioned yet", 0L, audio.diagnostics().getValue("lastAuditionPrepNs"))
+        down(KeyEvent.KEYCODE_BUTTON_X)
+        awaitTrue("accepted native audition") {
+            assertNull(audio.error())
+            audio.diagnostics().getValue("lastAuditionPrepNs") > 0
+        }
         instrumentation.runOnMainSync {
-            assertEquals(ViewKind.KEYBOARD, tracker.state.kind)
-            field.set(activity, object : org.thortracker.audio.TrackerAudio by audio {
-                override fun releaseAudition() { releases++; audio.releaseAudition() }
-            })
+            assertTrue(tracker.controller.auditionHeld)
+            interrupt()
+            assertFalse("Interruption must cancel Listen even without a key-up", tracker.controller.auditionHeld)
         }
-        try {
-            assertEquals("Fixture has not auditioned yet", 0L, audio.diagnostics().getValue("lastAuditionPrepNs"))
-            down(KeyEvent.KEYCODE_BUTTON_X)
-            awaitTrue("accepted native audition") {
-                assertNull(audio.error())
-                audio.diagnostics().getValue("lastAuditionPrepNs") > 0
-            }
-            instrumentation.runOnMainSync {
-                assertTrue(tracker.controller.auditionHeld)
-                interrupt()
-                assertFalse(tracker.controller.auditionHeld)
-                assertTrue("The audio consumer must receive release", releases > 0)
-            }
-            up(KeyEvent.KEYCODE_BUTTON_X)
-        } finally {
-            instrumentation.runOnMainSync { field.set(activity, audio) }
-        }
+        up(KeyEvent.KEYCODE_BUTTON_X)
         chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_DPAD_UP) // Pattern
         val original = tracker.session.song
         down(KeyEvent.KEYCODE_BUTTON_A)

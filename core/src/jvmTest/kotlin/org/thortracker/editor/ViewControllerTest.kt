@@ -248,12 +248,16 @@ class ViewControllerTest {
         val v = view(ViewKind.PATTERN)
         v.state.effectColumns = listOf(1)
         v.tap(Action.COPY)
-        val copied = session.clipboard
         v.state.field = 2
         v.tap(Action.CLEAR)
         assertEquals(source.withEffect(0, 0, 0), cell(0, 0, 0))
-        assertSame("Clear must never silently replace the clipboard", copied, session.clipboard)
+        v.state.row = 2
+        v.tap(Action.PASTE)
+        assertEquals("Paste still uses the phrase copied before Clear", source, cell(0, 0, 2))
         v.tap(Action.UNDO)
+        assertEquals(Cell(), cell(0, 0, 2))
+        v.tap(Action.UNDO)
+        v.state.row = 0
         assertEquals(source, cell(0, 0, 0))
         v.tap(Action.CUT)
         assertEquals(Cell(), cell(0, 0, 0))
