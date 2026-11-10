@@ -31,6 +31,9 @@ import android.widget.TextView
  */
 @SuppressLint("ViewConstructor")
 class PopupLayer(context: Context) : FrameLayout(context), PopupView {
+    /** Reports every rendered top, including nested capture changes while the stack stays open. */
+    var onModalChanged: ((PopupSpec?) -> Unit)? = null
+
     var palette: Palette = Palette.SLATE
         set(value) {
             if (field === value) return
@@ -139,6 +142,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
             panel.alpha = 0f; panel.translationY = -dp(10).toFloat()
             panel.animate().alpha(1f).translationY(0f).setDuration(140).start()
         }
+        onModalChanged?.invoke(spec)
     }
 
     override fun hide() {
@@ -154,6 +158,7 @@ class PopupLayer(context: Context) : FrameLayout(context), PopupView {
         field = null
         rows.clear()
         body.removeAllViews()
+        onModalChanged?.invoke(null)
     }
 
     private fun build(spec: PopupSpec, hasParent: Boolean) {

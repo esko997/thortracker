@@ -409,6 +409,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         audio?.close()
         projectStore.close()
         popups.onOpenChanged = null
+        hosts.values.forEach { it.popup.onModalChanged = null }
         popups.closeAll()
         super.onDestroy()
     }
@@ -522,7 +523,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     private fun virtualKey(code: Int, down: Boolean, repeat: Int) {
-        if (!active || popups.isOpen || hosts[0]?.preview?.drawerOpen == true) return
+        if (!active || hosts[0]?.preview?.drawerOpen == true) return
+        if (popups.isOpen && (popups.display != 0 || popups.top?.capture == null)) return
         if (focus != 0) setFocus(0)
         routeKey(KeyEvent(0, android.os.SystemClock.uptimeMillis(),
             if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, code, repeat, 0, VIRTUAL_DEVICE, 0))
@@ -730,7 +732,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 transport.requested, initialized)
             val popupHere = popups.isOpen && popups.display == index
             host.handle.visibility = if (host.preview == null && documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
-            host.setModal(popupHere)
+            host.setModal(popupHere, if (popupHere) popups.top?.capture else null)
         }
         updateStatus()
     }
@@ -1461,11 +1463,14 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private inner class Host(context: Context, val index: Int) {
         private val density = context.resources.displayMetrics.density
         private var modal = false
+        private var bindingCapture: ((Int, Boolean) -> Unit)? = null
         private var appliedPalette: Palette? = null
         val tracker = TrackerView(context, session, states[index]).apply {
             onTouchEnded = { this@MainActivity.refresh() }
         }
-        val popup = PopupLayer(context)
+        val popup = PopupLayer(context).apply {
+            onModalChanged = { spec -> setModal(spec != null, spec?.capture) }
+        }
         val toolbar = ShellToolbar(context) { popups.isOpen }.apply { onLeave = { this@MainActivity.refresh() } }
         val handle = ToolbarHandle(context) {
             if (documentReady && !popups.isOpen) { modalDisplay = index; toolbar.revealByTouch(); refresh() }
@@ -1570,12 +1575,27 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             if (!sticky) chip.postDelayed(chipHide, 2800)
         }
 
-        /** While this display shows a popup, everything under it is hidden from accessibility. */
-        fun setModal(value: Boolean) {
-            if (value == modal) return
+        /** Only the capture dock joins a modal's accessible surface; editor and chrome stay isolated. */
+        fun setModal(value: Boolean, capture: ((Int, Boolean) -> Unit)?) {
+            if (value == modal && capture === bindingCapture) return
+            // Publish the new mode before cancellation: key capture can change the popup synchronously.
             modal = value
-            preview?.dock?.isEnabled = !value
-            root.hideFromAccessibility(value, popup)
+            bindingCapture = capture
+            cancelHeldInput()
+            val captureDock = value && capture != null && preview != null
+            preview?.dock?.isEnabled = !value || captureDock
+            (popup.layoutParams as FrameLayout.LayoutParams).let {
+                it.bottomMargin = if (captureDock) dp(192) else 0
+                popup.layoutParams = it
+            }
+            root.hideFromAccessibility(false)
+            preview?.let { shell ->
+                val content = shell.dock.parent as android.view.ViewGroup
+                shell.hideFromAccessibility(captureDock, content)
+                content.hideFromAccessibility(captureDock, shell.dock)
+                if (captureDock) root.hideFromAccessibility(true, popup, shell)
+            }
+            if (!captureDock) root.hideFromAccessibility(value, popup)
         }
 
         private fun dp(value: Int) = (value * density).toInt()

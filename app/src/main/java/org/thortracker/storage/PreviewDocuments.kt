@@ -95,7 +95,7 @@ class PreviewDocuments : DocumentsProvider() {
             DocumentsContract.Document.COLUMN_DOCUMENT_ID -> id
             DocumentsContract.Document.COLUMN_DISPLAY_NAME -> if (id == ROOT) "ThorTrackerTouchPreview" else file.name
             DocumentsContract.Document.COLUMN_MIME_TYPE -> if (id == ROOT) DocumentsContract.Document.MIME_TYPE_DIR
-                else if (file.extension == "wav") "audio/x-wav" else "application/octet-stream"
+                else fileMimeType(file.name)
             DocumentsContract.Document.COLUMN_SIZE -> if (id == ROOT) null else file.length()
             DocumentsContract.Document.COLUMN_LAST_MODIFIED -> file.lastModified()
             DocumentsContract.Document.COLUMN_FLAGS -> if (id == ROOT) DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE
@@ -109,7 +109,12 @@ class PreviewDocuments : DocumentsProvider() {
         private val COLUMNS = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
             DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_FLAGS)
-        fun rootUri(context: Context): Uri = DocumentsContract.buildDocumentUri("${context.packageName}.documents", ROOT)
+        fun rootUri(context: Context): Uri = DocumentsContract.buildRootUri("${context.packageName}.documents", ROOT)
+        internal fun fileMimeType(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+            "wav" -> "audio/x-wav"
+            "json" -> "application/json"
+            else -> "application/octet-stream"
+        }
         internal fun validateName(name: String) {
             if (name.isBlank() || name == ROOT || name == "." || name == ".." || name.any { it == '/' || it == '\\' || it.code < 32 })
                 throw FileNotFoundException("Invalid preview document name")
