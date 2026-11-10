@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Thor Tracker — landscape touch study</title>
+<style>
+:root { color-scheme:dark; font-family:system-ui,sans-serif; color:#e5e9ec; background:#141a20; --base:#1b222a; --panel:#283440; --line:#41505e; --focus:#e8ad58; --pulse:#81c7bd; }
+* { box-sizing:border-box; }
+body { margin:0; }
+button,select,input { font:inherit; color:inherit; }
+button,select,input[type=text] { min-height:48px; border:1px solid var(--line); border-radius:5px; background:#303e4b; }
+button { cursor:pointer; padding:4px 10px; touch-action:manipulation; }
+button:hover { background:#3b4d5b; }
+button:focus-visible,select:focus-visible,input:focus-visible { outline:3px solid var(--focus); outline-offset:-3px; }
+button:disabled { opacity:.38; cursor:default; }
+button[aria-pressed=true],button.active { background:#5b4935; border-color:var(--focus); }
+.app { height:100dvh; min-height:320px; max-width:1200px; margin:auto; background:var(--base); display:grid; grid-template-rows:56px minmax(0,1fr) 24px; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.transport { display:flex; align-items:center; gap:6px; padding:4px 8px; border-bottom:1px solid var(--line); }
+.title { flex:1; min-width:90px; line-height:1.15; }
+.title strong { display:block; font-size:15px; }
+.title small { font-size:11px; color:#b4c2cc; }
+.transport button { min-width:48px; white-space:nowrap; font-size:13px; }
+.workspace { display:grid; grid-template-columns:minmax(0,1fr) 320px; min-height:0; }
+.pattern { min-width:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.track-grid { display:grid; grid-template-columns:32px repeat(4,minmax(118px,1fr)); min-width:max-content; }
+.corner,.channel { position:sticky; top:0; z-index:2; background:var(--panel); min-height:48px; }
+.corner { left:0; z-index:3; display:grid; place-items:center; color:#a6b5c1; font:12px ui-monospace,monospace; }
+.channel { border-radius:0; text-align:left; font-size:13px; border-top:3px solid var(--pulse); }
+.channel[data-channel="1"] { border-top-color:#9dbbef; }
+.channel[data-channel="2"] { border-top-color:#c0a3de; }
+.channel[data-channel="3"] { border-top-color:#ed9a96; }
+.channel small { display:block; color:#b4c2cc; font-size:10px; font-weight:normal; }
+.row { position:sticky; left:0; z-index:1; background:var(--panel); display:grid; place-items:center; font:12px ui-monospace,monospace; color:#a6b5c1; }
+.row.beat { color:var(--focus); }
+.cell { border:0; border-right:1px solid #33414e; border-bottom:1px solid #33414e; border-radius:0; height:48px; min-width:0; padding:3px 7px; text-align:left; background:#202a34; font:13px ui-monospace,monospace; display:flex; gap:9px; align-items:center; white-space:nowrap; }
+.cell.beat { background:#293541; }
+.cell.selected { box-shadow:inset 0 0 0 2px var(--focus); background:#3e3d36; }
+.cell.playing { border-bottom:3px solid var(--pulse); }
+.cell .sound { color:#a6b5c1; }
+.cell .effect { color:#c0a3de; }
+.cell.collapsed { justify-content:center; padding:3px; }
+.editor { border-left:2px solid var(--line); min-width:0; overflow:auto; scrollbar-width:thin; background:var(--panel); padding:0 6px 4px; }
+.tabs { display:flex; gap:3px; position:sticky; top:0; background:var(--panel); z-index:3; }
+.tabs button { flex:1; border-radius:0 0 5px 5px; font-size:13px; }
+.selection { height:26px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:#c8d3db; }
+.selection strong { color:var(--focus); }
+.pad { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:2px; }
+.pad button { height:48px; padding:0; font-size:16px; font-weight:600; touch-action:none; user-select:none; -webkit-user-select:none; }
+.pad button.sharp { background:#202a34; color:#c0a3de; }
+.pad button.sounding { background:var(--pulse); color:#101b20; }
+.note-tools,.entry-tools { display:flex; align-items:center; gap:3px; margin-top:3px; }
+.note-tools button { flex:1; min-width:0; padding:2px; font-size:12px; }
+.note-tools output { min-width:26px; text-align:center; font-size:14px; }
+.entry-tools .mode { flex:1; font-size:12px; padding:3px; }
+.entry-tools label { display:flex; align-items:center; gap:3px; font-size:11px; }
+.entry-tools select { width:52px; padding:1px; }
+.hint { font-size:12px; line-height:1.4; color:#c1cdd6; margin:9px 2px; }
+.sound-list { display:grid; gap:4px; }
+.sound-list button { text-align:left; }
+.sound-list small { color:#a6b5c1; }
+.field { display:grid; gap:5px; margin:8px 0; font-size:13px; }
+.field select { width:100%; padding:4px; }
+.hex-controls { display:grid; grid-template-columns:48px 1fr 48px; gap:4px; }
+.hex-controls input { text-align:center; width:100%; font:20px ui-monospace,monospace; text-transform:uppercase; }
+.footer { display:flex; align-items:center; gap:12px; padding:0 8px; font-size:11px; overflow:hidden; border-top:1px solid var(--line); }
+.footer .scope { flex:none; color:#a9b8c4; }
+#status { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--focus); }
+dialog { background:var(--panel); color:#e5e9ec; border:1px solid var(--line); border-radius:8px; width:min(420px,94vw); max-height:90dvh; }
+dialog::backdrop { background:#000a; }
+dialog h2 { font-size:18px; margin:0 0 8px; }
+.menu { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+dialog p { font-size:13px; line-height:1.5; }
+.close { width:100%; margin-top:12px; }
+@media(max-width:700px) { .transport { gap:3px; padding-inline:4px; } .transport button { padding-inline:7px; } .title small { font-size:10px; } .footer .scope { font-size:10px; } }
+@media(max-height:380px) and (orientation:landscape) { .app { grid-template-rows:56px minmax(0,1fr) 20px; } .selection { height:20px; } .note-tools,.entry-tools { margin-top:0; } .editor { padding-bottom:0; } }
+@media(orientation:portrait) { .app { grid-template-rows:52px minmax(0,1fr) 24px; } .workspace { grid-template-columns:1fr; grid-template-rows:minmax(110px,1fr) 304px; } .editor { border-left:0; border-top:2px solid var(--line); } .pad { grid-template-columns:repeat(6,1fr); } }
+</style>
+</head>
+<body>
+<main class="app" aria-label="Silent landscape touch interaction study">
+<header class="transport">
+<div class="title"><strong>Pattern</strong><small>Touch study · Game Boy</small></div>
+<button id="undo" aria-label="Undo edit">Undo</button><button id="redo" aria-label="Redo edit">Redo</button>
+<button id="play" aria-pressed="false">Play · silent</button><button id="more">Actions</button>
+</header>
+<section class="workspace">
+<div class="pattern" aria-label="Scrollable pattern"><div class="track-grid" id="grid"></div></div>
+<aside class="editor" aria-label="Selected cell editor">
+<nav class="tabs" aria-label="Cell field"><button data-tab="note" aria-pressed="true">Note</button><button data-tab="sound" aria-pressed="false">Sound</button><button data-tab="fx" aria-pressed="false">FX</button></nav>
+<div class="selection"><strong id="location"></strong><span id="cell-summary"></span></div>
+<div id="dock"></div>
+</aside>
+</section>
+<footer class="footer"><span class="scope">Proposal only · no chip audio or project files</span><span id="status" role="status" aria-live="polite">Tap a cell; use the note pad to write.</span></footer>
+</main>
+<dialog id="actions"><h2>Pattern actions</h2><div class="menu"><button id="copy">Copy cell</button><button id="paste">Paste cell</button><button id="collapse">Collapse lane</button><button id="reset">Reset study</button></div><p>This is an isolated interaction model, not the Android app. “Play” moves the cursor without sound. Listen mode demonstrates held-note feedback only. Nothing reads or writes your ThorTracker projects.</p><p>Modeled here: cell selection, note/OFF/clear entry, per-lane sound choices, one effect slot, Undo/Redo and visual collapse. Arrangement, file operations and range selection are covered in the proposal, not simulated here.</p><button class="close">Back to pattern</button></dialog>
+<script>
+'use strict';
+const names=['Pulse 1','Pulse 2','Wave','Noise'];
+const pitches=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const presets=[['Duty 12.5%','Duty 25%','Duty 50%','Duty 75%'],['Duty 12.5%','Duty 25%','Duty 50%','Duty 75%'],['Square 12.5%','Square 25%','Square 50%','Square 75%'],['Noise 1','Noise 2','Noise 3','Noise 4']];
+const clone=value=>JSON.parse(JSON.stringify(value));
+const blank=()=>({note:null,sound:1,fx:null});
+function initial(){const rows=Array.from({length:32},()=>Array.from({length:4},blank)); for(let r=0;r<32;r+=4){rows[r][0].note=['C-4','E-4','G-4','D-4'][(r/4)%4];rows[r][1].note=r%8===0?'C-3':null;rows[r][2].note='C-2';rows[r][3].note='C-4';}return rows;}
+let rows=initial(),row=0,channel=0,tab='note',octave=4,listen=false,step=1,collapsed=new Set(),undo=[],redo=[],clipboard=null,held=null,timer=null,playRow=-1;
+const grid=document.querySelector('#grid'),dock=document.querySelector('#dock'),status=document.querySelector('#status'),actions=document.querySelector('#actions');
+const hex=n=>n.toString(16).toUpperCase().padStart(2,'0');
+function message(text){status.textContent=text;}
+function snapshot(){return {rows:clone(rows),row,channel};}
+function commit(change,text){const before=snapshot();change();if(JSON.stringify(before.rows)!==JSON.stringify(rows)){undo.push(before);redo=[];}message(text);render();}
+function renderGrid(){
+ grid.replaceChildren();grid.style.gridTemplateColumns='32px '+names.map((_,c)=>collapsed.has(c)?'64px':'minmax(118px,1fr)').join(' ');
+ const corner=document.createElement('span');corner.className='corner';corner.textContent='Row';grid.append(corner);
+ names.forEach((name,c)=>{const b=document.createElement('button');b.className='channel';b.dataset.channel=c;b.textContent=collapsed.has(c)?`${c+1}+`:name;b.setAttribute('aria-label',`Select ${name}${collapsed.has(c)?', collapsed':''}`);if(!collapsed.has(c)){const s=document.createElement('small');s.textContent='Note · sound · FX';b.append(s);}b.onclick=()=>select(row,c);grid.append(b);});
+ rows.forEach((cells,r)=>{const n=document.createElement('span');n.className='row'+(r%4===0?' beat':'');n.textContent=hex(r);grid.append(n);cells.forEach((cell,c)=>{const b=document.createElement('button');b.className='cell'+(r%4===0?' beat':'')+(r===row&&c===channel?' selected':'')+(r===playRow?' playing':'')+(collapsed.has(c)?' collapsed':'');b.dataset.row=r;b.dataset.col=c;b.setAttribute('aria-label',`${names[c]}, row ${hex(r)}, ${cell.note??'empty'}, sound ${hex(cell.sound)}`);b.setAttribute('aria-current',String(r===row&&c===channel));const note=document.createElement('span');note.textContent=cell.note??'···';b.append(note);if(!collapsed.has(c)){const s=document.createElement('span');s.className='sound';s.textContent=hex(cell.sound);const fx=document.createElement('span');fx.className='effect';fx.textContent=cell.fx?cell.fx.code+hex(cell.fx.value):'···';b.append(s,fx);}b.onclick=()=>select(r,c);grid.append(b);});});
+}
+function select(r,c){cancelHeld();row=r;channel=c;render();message(`${names[c]} · row ${hex(r)} selected. No edit.`);}
+function render(){renderGrid();document.querySelector('#location').textContent=`${names[channel]} · ${hex(row)}`;document.querySelector('#cell-summary').textContent=`${rows[row][channel].note??'Empty'} / ${hex(rows[row][channel].sound)}`;document.querySelector('#undo').disabled=!undo.length;document.querySelector('#redo').disabled=!redo.length;document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tab===tab)));renderDock();}
+function writeNote(note){
+ const r=row,c=channel,cell=rows[r][c];
+ if(note==='OFF'&&cell.fx&&cell.fx.code!=='E'&&!confirm('OFF uses the Game Boy effect slot. Replace '+cell.fx.code+hex(cell.fx.value)+' with E00?'))return;
+ commit(()=>{if(note==='OFF')cell.fx={code:'E',value:0};else if(cell.note==='OFF')cell.fx=null;cell.note=note;},`${note??'Cleared note'} at ${names[c]} ${hex(r)}.`);
+ if(note!==null){row=Math.min(rows.length-1,row+step);render();grid.querySelector(`[data-row="${row}"][data-col="${channel}"]`).scrollIntoView({block:'nearest',inline:'nearest'});}
+}
+function cancelHeld(){if(!held)return;held.button.classList.remove('sounding');if(held.button.hasPointerCapture(held.pointer))held.button.releasePointerCapture(held.pointer);held=null;}
+function renderDock(){
+ dock.replaceChildren();
+ if(tab==='note'){
+  const pad=document.createElement('div');pad.className='pad';
+  pitches.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p;b.className=p.includes('#')?'sharp':'';b.dataset.pitch=i;b.setAttribute('aria-label',`${listen?'Listen to':'Write'} ${p}${octave}`);
+   b.onpointerdown=e=>{if(held||e.button!==0)return;e.preventDefault();b.setPointerCapture(e.pointerId);held={button:b,pointer:e.pointerId,pitch:i,cancelled:false};b.classList.add('sounding');message(`${listen?'Listen':'Write'} preview: ${p}${octave} — silent study.`);};
+   b.onpointermove=e=>{if(!held||held.pointer!==e.pointerId)return;const box=b.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom){held.cancelled=true;b.classList.remove('sounding');message('Gesture cancelled; slide away to avoid writing.');}};
+   b.onpointerup=e=>{if(!held||held.pointer!==e.pointerId)return;const cancelled=held.cancelled;cancelHeld();if(!cancelled&&!listen)writeNote(p+(p.includes('#')?'':'-')+octave);else message(cancelled?'Cancelled; document unchanged.':'Listen released; document unchanged.');};
+   b.onpointercancel=()=>{cancelHeld();message('Touch cancelled; document unchanged.');};
+   b.onclick=e=>{if(e.detail===0){if(listen)message(`${p}${octave} listen gesture — silent study; no edit.`);else writeNote(p+(p.includes('#')?'':'-')+octave);}};
+   pad.append(b);
+  });dock.append(pad);
+  const tools=document.createElement('div');tools.className='note-tools';tools.innerHTML='<button aria-label="Lower octave">Oct −</button><output>'+octave+'</output><button aria-label="Raise octave">Oct +</button><button>OFF</button><button>Clear</button>';
+  const bs=tools.querySelectorAll('button');bs[0].onclick=()=>{octave=Math.max(2,octave-1);renderDock();};bs[1].onclick=()=>{octave=Math.min(7,octave+1);renderDock();};bs[2].onclick=()=>writeNote('OFF');bs[3].onclick=()=>writeNote(null);dock.append(tools);
+  bs[2].disabled=listen;bs[3].disabled=listen;
+  const entry=document.createElement('div');entry.className='entry-tools';entry.innerHTML=`<button class="mode" aria-pressed="${!listen}">Write</button><button class="mode" aria-pressed="${listen}">Listen only</button><label>Step<select aria-label="Note entry step"><option>0</option><option>1</option><option>2</option><option>4</option></select></label>`;entry.querySelector('select').value=step;entry.querySelector('select').onchange=e=>{step=Number(e.target.value);};entry.querySelectorAll('button').forEach((b,i)=>b.onclick=()=>{cancelHeld();listen=i===1;renderDock();message(listen?'Listen only: the note pad never writes.':'Write: release a note pad to enter one note.');});dock.append(entry);
+ }else if(tab==='sound'){
+  const list=document.createElement('div');list.className='sound-list';presets[channel].forEach((name,i)=>{const b=document.createElement('button');b.textContent=`${hex(i+1)}  ${name}`;b.setAttribute('aria-pressed',String(rows[row][channel].sound===i+1));b.onclick=()=>commit(()=>{rows[row][channel].sound=i+1;},`Sound ${hex(i+1)} assigned; note unchanged.`);list.append(b);});dock.append(list);const hint=document.createElement('p');hint.className='hint';hint.textContent='Representative choices only, not the production sound bank. Tap assigns a sound to this cell. Instrument design lives in its own view.';dock.append(hint);
+ }else{
+  const cell=rows[row][channel],code=cell.fx?.code??'',value=cell.fx?.value??0;
+  if(cell.note==='OFF'){const p=document.createElement('p');p.className='hint';p.textContent='OFF occupies the one Game Boy effect slot as E00. Clear OFF before choosing another effect.';const b=document.createElement('button');b.textContent='Clear OFF';b.onclick=()=>writeNote(null);dock.append(p,b);return;}
+  dock.innerHTML='<label class="field">Effect · slot 1<select id="effect"><option value="">No effect</option><option value="0">0 — Arpeggio</option><option value="C">C — Volume</option></select></label><label class="field">Hex value<div class="hex-controls"><button id="minus" aria-label="Decrease effect value">−</button><input id="hex" type="text" maxlength="2" aria-label="Hex effect value" autocomplete="off" spellcheck="false"><button id="plus" aria-label="Increase effect value">+</button></div></label><p class="hint" id="effect-hint"></p>';
+  const sel=dock.querySelector('#effect'),input=dock.querySelector('#hex');sel.value=code;sel.querySelector('[value="0"]').disabled=channel===3;input.value=hex(value);input.disabled=!code;dock.querySelector('#effect-hint').textContent=code==='C'?(channel===2?'Wave level: 00 mute; 01–04 = 25%, 05–09 = 50%, 0A–0F = 100%.':'Level-only subset: 00–0F. Pulse/noise envelope bits are not modeled here.'):code==='0'?'Each hex digit is a semitone offset. Example 37: root, +3, +7. 000 means no effect.':channel===3?'Arpeggio is unavailable on Noise. This study shows a subset of valid effects.':'Choose an effect first. This Game Boy study shows one effect slot.';
+  sel.onchange=()=>commit(()=>{cell.fx=sel.value?{code:sel.value,value:0}:null;},'Effect selected; parameter starts at 00.');
+  function setValue(n){if(!code)return;const max=code==='C'?15:255;if(!Number.isInteger(n)||n<0||n>max){input.value=hex(value);message(`Use a hex value from 00 to ${hex(max)}.`);return;}commit(()=>{cell.fx.value=n;},`Effect ${code}${hex(n)} written.`);}
+  input.onchange=()=>setValue(/^[0-9a-f]{1,2}$/i.test(input.value)?parseInt(input.value,16):NaN);dock.querySelector('#minus').disabled=!code;dock.querySelector('#plus').disabled=!code;dock.querySelector('#minus').onclick=()=>setValue(value-1);dock.querySelector('#plus').onclick=()=>setValue(value+1);
+ }
+}
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{cancelHeld();tab=b.dataset.tab;render();});
+document.querySelector('#undo').onclick=()=>{cancelHeld();if(undo.length){redo.push(snapshot());const previous=undo.pop();rows=previous.rows;row=previous.row;channel=previous.channel;render();message('One edit undone; selection restored.');}};
+document.querySelector('#redo').onclick=()=>{cancelHeld();if(redo.length){undo.push(snapshot());const next=redo.pop();rows=next.rows;row=next.row;channel=next.channel;render();message('One edit redone; selection restored.');}};
+function paintPlayhead(){grid.querySelectorAll('.playing').forEach(b=>b.classList.remove('playing'));if(playRow>=0)grid.querySelectorAll(`[data-row="${playRow}"]`).forEach(b=>b.classList.add('playing'));}
+function stop(){if(timer)clearInterval(timer);timer=null;playRow=-1;document.querySelector('#play').textContent='Play · silent';document.querySelector('#play').setAttribute('aria-pressed','false');paintPlayhead();}
+document.querySelector('#play').onclick=()=>{if(timer){stop();message('Cursor stopped.');}else{playRow=row;paintPlayhead();timer=setInterval(()=>{playRow=(playRow+1)%rows.length;paintPlayhead();},250);document.querySelector('#play').textContent='Stop';document.querySelector('#play').setAttribute('aria-pressed','true');message('Silent cursor preview; selection stays where you are editing.');}};
+document.querySelector('#more').onclick=()=>{cancelHeld();document.querySelector('#paste').disabled=!clipboard;document.querySelector('#collapse').textContent=collapsed.has(channel)?'Expand lane':'Collapse lane';actions.showModal();};
+document.querySelector('.close').onclick=()=>actions.close();
+document.querySelector('#copy').onclick=()=>{clipboard=clone(rows[row][channel]);actions.close();message('Full cell copied, including its sound and effect.');};
+document.querySelector('#paste').onclick=()=>{actions.close();if(clipboard){if(channel===3&&clipboard.fx?.code==='0'){message('Arpeggio cannot be pasted onto Noise. Nothing changed.');return;}commit(()=>{rows[row][channel]=clone(clipboard);},'Full cell pasted.');}};
+document.querySelector('#collapse').onclick=()=>{collapsed.has(channel)?collapsed.delete(channel):collapsed.add(channel);actions.close();renderGrid();message('Visual layout only; all cell data retained.');};
+document.querySelector('#reset').onclick=()=>{actions.close();stop();cancelHeld();rows=initial();row=channel=0;tab='note';listen=false;octave=4;step=1;collapsed.clear();undo=[];redo=[];clipboard=null;render();message('Study reset. No external files were touched.');};
+window.addEventListener('blur',()=>{cancelHeld();stop();});document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelHeld();stop();}});
+render();
+</script>
+</body>
+</html>

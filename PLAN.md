@@ -177,7 +177,9 @@ its downloaded AppImage.
   large touch targets. Avoid requiring simulated modifier chords or obscuring the edited row with a
   gamepad overlay. Reuse the same actions, document, recovery, audio and export paths; retain controller
   operation and two-display focus rules. Full composition, file picking and held audition must work
-  without any physical button. Design/implementation pending; portrait is a separate later decision.
+  without any physical button. [Review proposal and silent interaction study](docs/TOUCH_PROPOSAL.md)
+  now cover side-editor layout, touch targets, editing semantics, workflow gaps and integration risks.
+  Native implementation awaits user review; portrait remains a separate later decision.
 - **Hardening priority** (2026-11-10): investigate the reported PC Engine snare layout rejection and POKEY
   silence after note entry before expanding features. Use deterministic, bounded child-assisted stress
   runs on Nova, DMG and Konkr, exclusive device leases, explicit reproduction traces and preserved private
