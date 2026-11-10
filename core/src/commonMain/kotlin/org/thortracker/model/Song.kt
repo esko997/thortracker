@@ -20,9 +20,9 @@ import org.thortracker.system.SystemSound
  * [instrument]: 0 = no sound number (legato), 1.. = slot in the bank of the channel
  * ([org.thortracker.system.ChannelSpec.bank]).
  * [effect]/[param]: the system's raw effect number (0-35, written 0-9 then A-Z) and parameter byte; 0/0 ("000") is no effect.
- * This is effect column 0, the only one on systems with one column (Game Boy, NES, SID).
- * [more]: effect columns 1.. on systems that declare more ([org.thortracker.system.SoundSystem.effectColumns], the OPL3:
- * up to 4 in all); always canonical: at most [MAX_EFFECT_COLUMNS] − 1 entries, the last one not blank (trailing blank
+ * This is effect column 0, the only one on systems with one column (Game Boy, SID).
+ * [more]: effect columns 1.. on systems that declare more ([org.thortracker.system.SoundSystem.effectColumns]):
+ * up to 4 in all; always canonical: at most [MAX_EFFECT_COLUMNS] − 1 entries, the last one not blank (trailing blank
  * columns are dropped, so a cell that uses only column 0 equals and saves exactly as before). Use [withEffect].
  * Serialized compactly as `[note, instrument, effect, param]`, followed by `effect, param` per entry of [more].
  */

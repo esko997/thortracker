@@ -134,9 +134,7 @@ internal object NesPcmRows {
         val m = song.pcmMapping(slot, cell.note)?.takeIf { !it.loop } ?: return null
         val sample = song.nes.pcmSamples.getOrNull(m.sample) ?: return null
         fun speedAfter(r: Int, speed: Int): Int {
-            var s = speed
-            for (t in p.tracks) t[r].let { if (it.effect == NesRules.FX_SPEED && it.param in NesRules.SPEEDS) s = it.param }
-            return s
+            return NesRules.rowSpeed(p, r, speed)
         }
         var speed = song.ticksPerRow
         for (r in 0 until row) speed = speedAfter(r, speed)

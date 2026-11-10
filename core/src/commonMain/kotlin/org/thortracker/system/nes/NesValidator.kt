@@ -359,23 +359,24 @@ object NesValidator {
         if (structuralErrors(document).isNotEmpty()) return emptyList()
         val song = NesSystem.arranged(document)
         val out = Report()
-        val speed = song.ticksPerRow
-        val played = song.orders.toSet()
-        document.patterns.forEachIndexed { p, pattern ->
-            if (p !in played) return@forEachIndexed
-            pattern.tracks.forEachIndexed { ch, track ->
-                for (row in 0 until pattern.length) {
+        var speed = song.ticksPerRow
+        for (p in song.orders) {
+            val pattern = song.patterns[p]
+            for (row in 0 until pattern.length) {
+                speed = NesRules.rowSpeed(pattern, row, speed)
+                pattern.tracks.forEachIndexed { ch, track ->
                     val cell = track[row]
                     val where = "${Songs.patternLabel(song, p).cap()}, ${NesRules.channelName(song.nes.expansion, ch)} row $row"
-                    val fx = NesRules.effectText(cell.effect, cell.param)
-                    if (cell.effect == NesRules.FX_NOTE_DELAY && cell.param in 1..NesRules.DELAY_MAX && cell.param >= speed) {
-                        out += "$where: $fx delays by ${cell.param} frames, but rows last $speed frames at the song speed, so it lands in a later row"
+                    NesRules.effectParam(cell, NesRules.FX_NOTE_DELAY)?.let { delay ->
+                        if (delay in 1..NesRules.DELAY_MAX && delay >= speed) {
+                            out += "$where: ${NesRules.effectText(NesRules.FX_NOTE_DELAY, delay)} delays by $delay frames, but this row lasts $speed frames, so it lands in a later row"
+                        }
                     }
-                    if (cell.effect == NesRules.FX_NOTE_CUT && cell.hasEffect && cell.param >= speed) {
-                        out += "$where: $fx cuts after ${cell.param} frames, but rows last $speed frames at the song speed"
+                    NesRules.effectParam(cell, NesRules.FX_NOTE_CUT)?.let { cut ->
+                        if (cut >= speed) out += "$where: ${NesRules.effectText(NesRules.FX_NOTE_CUT, cut)} cuts after $cut frames, but this row lasts $speed frames"
                     }
-                    if (cell.effect == NesRules.FX_VIBRATO && (cell.param and 0xF) > 13) {
-                        out += "$where: FamiStudio warns that vibrato depths above D do not sound right in its sound engine"
+                    NesRules.effectParam(cell, NesRules.FX_VIBRATO)?.let { vibrato ->
+                        if ((vibrato and 0xF) > 13) out += "$where: FamiStudio warns that vibrato depths above D do not sound right in its sound engine"
                     }
                 }
             }
@@ -729,8 +730,8 @@ object NesValidator {
                     val fine = NesSystem.fine.of(cell)
                     when {
                         fine == null -> if (map.index(cell.note, 0) < 0) {
-                            out += "$where: tuned note needs this row's effect slot for Pxx but it holds " +
-                                "${NesRules.effectText(cell.effect, cell.param)}; it plays at the plain 12-note pitch"
+                            out += "$where: this row's Pxx bends below its note instead of expressing a tuned pitch; " +
+                                "use Fit notes to tuning or re-enter it"
                         }
                         map.index(cell.note, fine) < 0 -> {
                             val pitch = NesSystem.noteName(cell.note) + if (fine > 0) " +$fine" else ""

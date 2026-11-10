@@ -252,6 +252,30 @@ class NesPcmTest {
         assertEquals(listOf(6, NesPcmLowering.EV_CUT, 0, 0, (2 shl 9) and 0xFF, (2 shl 9) shr 8), ev(3))
     }
 
+    @Test
+    fun multiEffectPcmEventsKeepIndependentFieldsAndLastDuplicateValues() {
+        val delayed = Cell(NesPcmKit.KICK_KEY, 1, NesRules.FX_VOLUME, 15)
+            .withEffect(1, NesRules.FX_NOTE_DELAY, 2).withEffect(2, NesRules.FX_SPEED, 8)
+            .withEffect(3, NesRules.FX_VOLUME, 6)
+        val cut = Cell(NesPcmKit.HAT_KEY, 1, NesRules.FX_VOLUME, 9)
+            .withEffect(1, NesRules.FX_NOTE_CUT, 4).withEffect(2, NesRules.FX_SPEED, 6)
+            .withEffect(3, NesRules.FX_NOTE_CUT, 3)
+        val song = withPcm(kitSong(), mapOf(0 to delayed, 2 to cut))
+        assertEquals(emptyList(), song.system.errors(song))
+        val ext = extension(song)
+        val at = NesPcmLowering.EVENTS_AT
+        assertEquals(NesPcmLowering.EV_NOTE or NesPcmLowering.EV_VOLUME or NesPcmLowering.EV_DELAY, u8(ext, at + 1))
+        assertEquals(6 or (2 shl 4), u16(ext, at + 4))
+        assertEquals(NesPcmLowering.EV_NOTE or NesPcmLowering.EV_VOLUME or NesPcmLowering.EV_CUT, u8(ext, at + 7))
+        assertEquals(9 or (3 shl 9), u16(ext, at + 10))
+        assertEquals(8, FsSong.of(song).speedAt(0))
+        assertEquals(6, FsSong.of(song).speedAt(2))
+        assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+        val bad = withPcm(kitSong(), mapOf(7 to delayed.withEffect(3, NesRules.FX_NOTE_CUT, 4)))
+        assertTrue(bad.system.errors(bad).any { "row 7" in it && "cannot combine Gxx and Sxx" in it })
+        for (format in song.system.exports) assertFailsWith<IllegalArgumentException> { format.export(song) }
+    }
+
     // ---- exports and speed ------------------------------------------------------------------------
 
     @Test
