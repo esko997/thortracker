@@ -12,6 +12,15 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.thortracker.audio.ChipAudio
 import org.thortracker.model.Songs
+import org.junit.Assert.assertNotNull
+import org.thortracker.backend.CbmImage
+import org.thortracker.system.cbm.CbmKind
+import org.thortracker.system.cbm.TedSystem
+import org.thortracker.system.cbm.cbm
+import org.thortracker.system.cbm.cbmInstrument
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /** Uses the real JNI engine and Android audio device, not a fake callback or sequencer. */
 @RunWith(AndroidJUnit4::class)
@@ -75,6 +84,52 @@ class AudioDeviceTest {
             })
             audio.stop()
             await("transport stops", audio) { !audio.position().playing }
+        }
+    }
+
+    @Test
+    fun queuedAuditionUsesTheSongBeforeLaterInstrumentEdits() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val demo = TedSystem.demo()
+        val sample = (1..64).mapNotNull { demo.cbmInstrument(it) }.first { it.kind == CbmKind.SAMPLE }
+        val sampleSong = demo.copy(sound = demo.cbm.withInstrument(64, sample))
+        val toneSong = sampleSong.copy(sound = sampleSong.cbm.withInstrument(64, sample.copy(kind = CbmKind.TONE)))
+        for (updateQueued in listOf(false, true)) {
+            ChipAudio(context).use { audio ->
+                // Hold only the control executor, never the real-time callback. Both queue shapes must retain
+                // causal order: a processed update, and an update still eligible for coalescing.
+                val executor = ChipAudio::class.java.getDeclaredField("executor").run {
+                    isAccessible = true
+                    get(audio) as ScheduledThreadPoolExecutor
+                }
+                if (!updateQueued) {
+                    audio.update(sampleSong)
+                    executor.submit {}.get(5, TimeUnit.SECONDS)
+                }
+                val entered = CountDownLatch(1)
+                val resume = CountDownLatch(1)
+                executor.execute { entered.countDown(); check(resume.await(5, TimeUnit.SECONDS)) }
+                try {
+                    assertTrue("control queue entered", entered.await(5, TimeUnit.SECONDS))
+                    if (updateQueued) audio.update(sampleSong)
+                    audio.audition(CbmImage.TED_DAC_CHANNEL, 24, 64) // C-2 is valid for this sample.
+                    audio.update(toneSong) // No new audition: C-2 is below the tone lanes' range.
+                } finally {
+                    resume.countDown()
+                }
+                executor.submit {}.get(5, TimeUnit.SECONDS)
+                assertNull("later kind edit reinterpreted a queued sample audition; updateQueued=$updateQueued", audio.error())
+                assertTrue("sample audition reached the native engine", audio.diagnostics().getValue("lastAuditionPrepNs") > 0)
+
+                // The later edit must still arrive, and invalid *current* requests must still report errors.
+                audio.audition(CbmImage.TED_DAC_CHANNEL, 48, 64)
+                executor.submit {}.get(5, TimeUnit.SECONDS)
+                assertNotNull("tone on the DAC lane must be rejected", audio.error())
+                audio.audition(0, 48, 64)
+                executor.submit {}.get(5, TimeUnit.SECONDS)
+                assertNull("valid current tone audition clears its command error", audio.error())
+                audio.releaseAudition()
+            }
         }
     }
     @Test

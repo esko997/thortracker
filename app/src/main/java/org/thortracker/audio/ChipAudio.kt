@@ -7,7 +7,6 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.ay.AyVgm
@@ -62,7 +61,9 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     private val handleLock = Any()
     @Volatile private var handle = 0L
     @Volatile private var closed = false
-    private val pendingSong = AtomicReference<Song?>(null)
+    private class SongUpdate(var song: Song)
+    private val songLock = Any()
+    private var pendingSong: SongUpdate? = null // guarded by songLock; only the current queue segment coalesces
     @Volatile private var songError: String? = null
     // Covers queueing and preparation. Native position covers publication through callback acknowledgement.
     private val pendingTransport = AtomicInteger()
@@ -78,14 +79,26 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     private var imageVersion = 0
     private var hasImage = false
     private var idleCheck: ScheduledFuture<*>? = null
+    private var retrySong: Song? = null
 
     override fun update(song: Song) {
-        if (closed) return
-        if (pendingSong.getAndSet(song) == null) post { applyPendingSong() }
+        synchronized(songLock) {
+            if (closed) return
+            pendingSong?.let { it.song = song; return }
+            val update = SongUpdate(song)
+            pendingSong = update
+            post(coalescedUpdate = true) {
+                val next = synchronized(songLock) {
+                    if (pendingSong === update) pendingSong = null
+                    update.song
+                }
+                applySong(next)
+            }
+        }
     }
 
     override fun play(order: Int, row: Int) = post(transport = true) {
-        applyPendingSong()
+        retryFailedImage()
         val h = readyHandle() ?: return@post
         val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
         val result = nativePlay(h, order, row, engine.seekTicks)
@@ -101,7 +114,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     }
 
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) = post {
-        applyPendingSong()
+        retryFailedImage()
         val engine = system?.engine
         if (engine == null) {
             commandError = songError ?: "No playable song loaded"
@@ -170,7 +183,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     override fun close() {
         if (closed) return
         closed = true
-        pendingSong.set(null)
+        synchronized(songLock) { pendingSong = null }
         try {
             executor.execute {
                 try {
@@ -199,31 +212,39 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         }
     }
 
-    private fun post(transport: Boolean = false, block: () -> Unit) {
-        if (closed) return
-        if (transport) pendingTransport.incrementAndGet()
-        try {
-            executor.execute {
-                try {
-                    if (!closed) block()
-                } catch (t: RuntimeException) {
-                    // Never let a preview problem take down the host; report it instead.
-                    Log.e(TAG, "audio command failed", t)
-                    commandError = "Audio error: ${t.message ?: t.javaClass.simpleName}"
-                } finally {
-                    if (transport) pendingTransport.decrementAndGet()
+    private fun post(transport: Boolean = false, coalescedUpdate: Boolean = false, block: () -> Unit) {
+        synchronized(songLock) {
+            if (closed) return
+            // A command seals preceding updates. Later edits must not change the song that command observes.
+            if (!coalescedUpdate) pendingSong = null
+            if (transport) pendingTransport.incrementAndGet()
+            try {
+                executor.execute {
+                    try {
+                        if (!closed) block()
+                    } catch (t: RuntimeException) {
+                        // Never let a preview problem take down the host; report it instead.
+                        Log.e(TAG, "audio command failed", t)
+                        commandError = "Audio error: ${t.message ?: t.javaClass.simpleName}"
+                    } finally {
+                        if (transport) pendingTransport.decrementAndGet()
+                    }
                 }
+            } catch (_: RejectedExecutionException) {
+                if (transport) pendingTransport.decrementAndGet()
             }
-        } catch (_: RejectedExecutionException) {
-            if (transport) pendingTransport.decrementAndGet()
         }
     }
 
-    private fun applyPendingSong() {
-        val song = pendingSong.getAndSet(null) ?: return
+    private fun retryFailedImage() {
+        retrySong?.let { applySong(it) }
+    }
+
+    private fun applySong(song: Song) {
+        retrySong = null
         val h = engineFor(song.system)
         if (h == 0L) {
-            pendingSong.compareAndSet(null, song)
+            retrySong = song
             return
         }
         try {
