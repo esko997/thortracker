@@ -27,6 +27,11 @@ outside the musical document and does not add an Undo entry.
 - Native surfaces are inspected at 1280×800 and 1024×768. These runs use offscreen video and dummy audio:
   no physical Deck performance, acoustic output or Brick rendering claim is implied.
   AppImage SHA-256: `b801e1431698f6f24a17539224faf0adc02989ee58723cde26986eca108bc9f4`.
+- Source `046d897` passes all three jobs in [CI run 42820497888](https://github.com/esko997/thortracker/actions/runs/42820497888):
+  Android/core/native tests, desktop AppImage build/boot, and ARM64 Pak build/ABI packaging.
+  Its final AppImage repeats controller theme selection, fresh-process Paper restoration, exact
+  project preservation, playback and compact Instrument held audition. SHA-256:
+  `843d03d383c43ba94329a9e38d092d50ea62ca67ec0fc6b12a6d12e7182c49c9`.
 - Each live theme scenario uses an owned fixture and a separate cold restoration test. Eight original
   private-file entries are restored byte-for-byte; `/ThorTunez` is untouched. Test packages are removed,
   original screen timeouts restored, devices returned Home/asleep, and leases released.
@@ -34,16 +39,23 @@ outside the musical document and does not add an Undo entry.
   Production certificate SHA-256:
   `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`.
   This candidate is on Nova, DMG and Konkr; Thor and Deck have not been changed.
-- Brick source now shares the native frontend with an ARM64/vendor-SDL2 adapter and external
-  `/mnt/SDCARD/ThorTunez` data. A bounded device joystick probe confirms the actual SDL controller
-  mapping, including trigger axes 2/5. No Tracker Pak renderer/audio run is claimed yet: the device
-  became unreachable after returning to idle NextUI, and requires a physical wake.
+- The Brick Pak is built: 7,874,145 bytes, 24 ZIP entries, correct executable modes and passing CRC.
+  It shares the complete native frontend/engines and uses vendor SDL2 with external `/mnt/SDCARD/ThorTunez`
+  data. Fonts include their OFL licence; the Pak includes GPL/engine notices and no vendor shared libraries.
+  The actual ARM64 ELF requires at most GLIBC 2.17, GLIBCXX 3.4.22 and CXXABI 1.3.3, below the captured
+  firmware limits. `--as-needed` removes unused toolchain crypt/util/resolver dependencies rather than
+  weakening the ABI allowlist. Pak SHA-256:
+  `09a90fc92af295a7c00010f9092f34917fa317e24db3e4edd853b2c251c6d86e`.
+- A bounded Brick joystick probe confirms the actual SDL controller mapping, including trigger axes
+  2/5. **No Tracker Pak renderer/audio/lifecycle run is claimed:** the device became unreachable after
+  idle NextUI; a later 20-minute USB wait timed out and the remote terminal still returns EHOSTUNREACH.
+  Physical wake/reconnection is required before installation and hardware acceptance.
 - All Kotlin/Native linking remains on CI. Local Android/JVM work used one capped build at a time;
   no emulator or local native link was launched.
 
 Evidence: `recovery-20261109/brick-themes/`, especially `nova-permanent-tests.txt`,
-`theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json`, `desktop-themes/results.json`
-and `device-contracts/`.
+`theme-smoke-fixed/{nova,dmg,konkr}/`, `slate-parity/results.json`, `desktop-themes/results.json`,
+`ci-046d897/{pak-verification,desktop-runtime}.json` and `device-contracts/`.
 
 ## 0.37.1 Pattern workspace and first-note hardening — released and verified
 
