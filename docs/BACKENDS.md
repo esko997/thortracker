@@ -711,11 +711,11 @@ and SID reject extra columns. NES now accepts four without changing the canonica
 Visible column counts are per-pane editor state, not song data. Automatic width retains the active
 effect field for the duration of an Edit hold, then may shrink on release/cancellation.
 
-### Current capacity and compatibility review (0.40.0)
+### Current capacity and compatibility review (0.41.0 candidate)
 
 The [manual's capability matrix](../README.md#multiple-effects-per-row) covers all 43 registered
-systems: **2 one-column, 5 two-column and 36 four-column variants**. All 15 NES/FamiStudio variants
-now declare four columns on every lane. Declared capacity does not promise arbitrary combinations.
+systems: **2 one-column, 3 two-column and 38 four-column variants**. All 15 NES/FamiStudio variants
+and TIA NTSC/PAL declare four columns on every lane. Declared capacity does not promise arbitrary combinations.
 
 Treat capacity as a **chip + player + export** contract, not a hardware-age or voice-count heuristic.
 NES's four columns compose existing FamiStudio note attributes rather than adding a driver command
@@ -757,6 +757,32 @@ cannot retain both G/S, so that combination is rejected there; its existing NSF/
 Validation checks every populated slot, including holes before later effects. Additional columns
 do not relax sample memory, instrument identity, shared VRC7 patches, SSG ownership or data-size limits.
 
+#### TIA ordered commands (0.41.0 candidate)
+
+Both regions now accept four commands per channel. The image retains layout 1, its existing
+three-bit count field, 65,536-byte image and 62,144-byte data region; project/backend schemas
+are unchanged. Existing one/two-column images remain readable; old players reject counts
+three/four rather than truncating them. Decoded row storage and C/Kotlin/Python limits agree.
+
+F/B/D act at row start across TIA 1 then TIA 2, in column order. The last G on a channel
+controls its delayed row, including **G00 canceling an earlier delay**. Local settings then
+run left to right. Slides and portamento share one mode: 1/2 replaces 3, including 100/200
+ending a previous portamento. P and W have independent last-setting precedence; a waveform
+envelope still overrides W. S remains row-relative, not an additional delay after G.
+
+The editor/inspector follows that ordering too: its carried-state walk clears portamento
+when a later slide wins. Fine-pitch/tuning reads the **last P**, not the first. Returning
+an upward tuned pitch to a coarse note leaves a final **P80** when deleting it would expose
+an earlier detune; otherwise that unnecessary final P is cleared. A downward P is not
+silently repurposed as an upward tuning slot. This fixes interpretation and neutralization,
+not merely the visible column count.
+
+Native/static/live-update and independent-reference comparisons, plus real Konkr four-column
+editing/save/reopen and PAL WAV export, are recorded in `VERIFICATION.md`. The TIA still has
+two voices, one AUDC/AUDF/AUDV set per voice and WAV-only export. No 6507 driver or cartridge
+CPU-budget proof is added.
+
+
 ### Cost of further four-column extensions
 
 The user-selected ceiling is **four where straightforward**, not a shared pool of four slots for the
@@ -768,13 +794,12 @@ These are source-based engineering estimates, not implemented capacity increases
 
 | Family | Required work beyond the editor | Relative complexity / recommendation |
 | --- | --- | --- |
-| Atari 2600 TIA, NTSC/PAL | Raise the two-effect limit in C/generated Kotlin/reference definitions and decoded rows; the image already reserves three count bits. Exercise ordered effects, dense-data bounds and write buffers. | Low–medium; strongest next candidate after NES. Two channels and their physical controls remain unchanged. |
 | VIC-20 / C16–Plus/4 | Widen the effect count from two to three bits in both loader and decoder, update reserved-bit validation and C/Kotlin/Python mirrors, then check shared-state/sample walkers. | Medium; one implementation serves VIC and TED. Shared master volume and TED D/A ownership remain restrictions. |
 | Virtual Boy VSU | Widen the same two-bit count, decoded arrays and independent reference; preserve staged parameter locks, global timing and wave-RAM rules. | Medium. Four commands do not add wave memory or another sweep/modulation voice. |
 | Game Boy / hUGEDriver | Its packed row and `.uge` route hold one command; OFF and structural flow already occupy that space. | High for general equivalence. Keep one rather than invent instrument-program packing or a driver fork in this pass. |
 | SID / GoatTracker | `.sng` and `GtRow` hold one command per voice-row; tables and shared chip state are separate resources. | High for general equivalence. Keep one; any restricted lowering would need a distinct reviewed contract. |
 
-Relevant boundaries are `tia_image.h` / `tia_image.c`, `cbm_image.h` / `cbm_image.c`,
+Relevant remaining boundaries are `cbm_image.h` / `cbm_image.c`,
 `vsu_image.h` / `vsu_image.c` and their Kotlin lowerers and independent references. A populated added
 effect contributes its code/parameter pair before compression; empty display columns need not cost
 stream bytes. Do not increase fixed data regions or write buffers without evidence of a required limit.
@@ -1689,8 +1714,8 @@ onboard sound feature, nothing invented):
   and ignores fine pitch, slides, portamento, vibrato and the pitch envelope. Constant waveforms (AUDC 0, B) write no
   AUDF in tonal mode.
 - **Two channels, no chords, no shared controls**: `TIA 1`, `TIA 2` (`ChannelKind.VOICE`, tonal), each owning its AUDC,
-  AUDF and AUDV; two effect columns. What the channels share (the audio clock, the output node) is documented, not a
-  control.
+  AUDF and AUDV; four effect columns per channel in the 0.41.0 candidate (two at the 0.32.0 launch).
+  What the channels share (the audio clock, the output node) is documented, not a control.
 - **No samples**: the TIA has no dedicated sample-playback hardware; writing AUDV on a constant waveform (AUDC 0) many times a frame
   is a CPU technique that would need a cycle-timed 6507 driver. It is offered only at the frame rate, through volume
   envelopes on AUDC 0/B (the "DC click" preset).

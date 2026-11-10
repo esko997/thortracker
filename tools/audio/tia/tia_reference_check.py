@@ -6,6 +6,7 @@ dependencies). Nothing here has been run yet; thresholds are assumptions to conf
     python3 tools/audio/tia/tia_reference_check.py DIR --pitch     # + A-4 in the native WAVs against A / (6 * 12)
     python3 tools/audio/tia/tia_reference_check.py --periods       # every AUDC's period and shape from the counters
     python3 tools/audio/tia/tia_reference_check.py --edges         # the AUDF edge table against a brute-force search
+    python3 tools/audio/tia/tia_reference_check.py DIR --four-columns  # NTSC/PAL four-column images, live traces, WAVs
 
 DIR is the evidence directory tools/audio/run_native_host_test.sh writes: tia_song.bin (the test song's image),
 tia_trace.txt (the engine's per-tick player writes, one line per tick: "order row tick:" then " RR=VV" per write, the
@@ -25,6 +26,7 @@ import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tia_ref  # noqa: E402
+import tia_song  # noqa: E402
 
 # Korth, "Atari 2600 Specifications", "AUDC Pattern Shapes" ('-' high, '_' low), 70 output clocks each.
 KORTH_SHAPES = {
@@ -130,6 +132,79 @@ def check_trace(directory):
     return True
 
 
+def check_four_columns(directory):
+    """Independently build/decode the native fixtures and compare every write, including a pending-row live edit."""
+    for region, label in ((tia_ref.REGION_NTSC, "ntsc"), (tia_ref.REGION_PAL, "pal")):
+        images = []
+        for edited in (False, True):
+            stem = "tia_four_" + label + ("_edited" if edited else "")
+            with open(os.path.join(directory, stem + ".bin"), "rb") as f:
+                data = f.read()
+            expected = tia_song.build(tia_song.four_column_song(region, edited))
+            if data != expected:
+                print("%s: FAILED native image differs from independent builder" % stem)
+                return False
+            images.append(tia_ref.Image(data, region))
+        for live in (False, True):
+            stem = "tia_four_" + label + ("_live" if live else "")
+            with open(os.path.join(directory, stem + "_trace.txt")) as f:
+                lines = [line.strip() for line in f if line.strip()]
+            ref = [tia_ref.format_tick(pos, writes) for pos, writes in
+                   tia_ref.trace(images[0], 192, edit=images[1] if live else None, edit_at=7 if live else None)]
+            if lines != ref:
+                first = next((i for i, pair in enumerate(zip(lines, ref)) if pair[0] != pair[1]), min(len(lines), len(ref)))
+                print("%s: FAILED trace at tick %d (%d ticks, wanted 192)" % (stem, first, len(lines)))
+                return False
+            with wave.open(os.path.join(directory, stem + ".wav"), "rb") as w:
+                expected_frames = 192 * tia_ref.frame_clocks(region) * 48000 * tia_ref.CLOCK_DEN[region] / tia_ref.CLOCK_NUM[region]
+                if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (48000, 2, 2) or abs(w.getnframes() - expected_frames) > 1:
+                    print("%s: FAILED PCM format or frame cadence" % stem)
+                    return False
+                pcm = w.readframes(w.getnframes())
+                if not any(struct.unpack("<%dh" % (len(pcm) // 2), pcm)):
+                    print("%s: FAILED silent WAV" % stem)
+                    return False
+            print("%s: ok (192 ticks, ordered writes, native WAV cadence)" % stem)
+        # Independent loader and builder limits, not just the native implementation's rejection tests.
+        for count in range(5):
+            cell = tia_song.Cell(57, None, [("C", n) for n in range(count)])
+            song = tia_song.Song(6, [tia_song.Order(1, ["a", "a"])], {"a": {0: cell}}, {}, region=region)
+            image = tia_ref.Image(tia_song.build(song), region)
+            if len(image.pattern_rows(0, 0)[0][2]) != count:
+                print("four-column reference: FAILED decoded count %d" % count)
+                return False
+        base = bytearray(tia_song.build(song))  # Four effects, note, no instrument; both channels share this row.
+        for count in (5, 6, 7):
+            bad = bytearray(base)
+            bad[tia_ref.OFF_DATA] = 1 | (count << 2)
+            try:
+                tia_ref.Image(bad, region)
+            except tia_ref.ImageError as e:
+                if e.reason != "row mask byte" or e.offset != tia_ref.OFF_DATA:
+                    raise
+            else:
+                print("four-column reference: FAILED accepted count %d" % count)
+                return False
+        bad = bytearray(base)
+        struct.pack_into("<I", bad, tia_ref.H_DATA_SIZE, 9)  # The fourth parameter (offset 9) is absent.
+        try:
+            tia_ref.Image(bad, region)
+        except tia_ref.ImageError as e:
+            if e.reason != "row runs past the data size":
+                raise
+        else:
+            print("four-column reference: FAILED accepted truncated fourth parameter")
+            return False
+        try:
+            tia_song.encode_pattern({0: tia_song.Cell(fx=[("C", 1)] * 5)}, 1)
+        except ValueError:
+            pass
+        else:
+            print("four-column reference: FAILED builder accepted five effects")
+            return False
+    return True
+
+
 def wav_frequency(path, skip_seconds=0.2):
     """The fundamental of a held tone from rising zero crossings (left channel), interpolated."""
     with wave.open(path, "rb") as w:
@@ -174,6 +249,7 @@ def main(argv=None):
     ap.add_argument("--periods", action="store_true")
     ap.add_argument("--edges", action="store_true")
     ap.add_argument("--pitch", action="store_true")
+    ap.add_argument("--four-columns", action="store_true")
     args = ap.parse_args(argv)
     ok = True
     if args.periods:
@@ -184,8 +260,10 @@ def main(argv=None):
         ok &= check_trace(args.dir)
         if args.pitch:
             ok &= check_pitch(args.dir)
-    elif args.pitch:
-        ap.error("--pitch needs DIR")
+        if args.four_columns:
+            ok &= check_four_columns(args.dir)
+    elif args.pitch or args.four_columns:
+        ap.error("--pitch and --four-columns need DIR")
     return 0 if ok else 1
 
 

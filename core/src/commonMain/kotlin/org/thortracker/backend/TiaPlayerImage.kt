@@ -26,7 +26,7 @@ object TiaPlayerImage {
     const val MAX_ROWS = 256
     const val MAX_INSTRUMENTS = 64
     /** effect columns per channel and row */
-    const val MAX_EFFECTS = 2
+    const val MAX_EFFECTS = 4
     /** envelope length limit */
     const val MAX_ENVELOPE = 255
     /** "TTIA" */
@@ -101,7 +101,7 @@ object TiaPlayerImage {
 
     /**
      * Pattern rows: [RUN] | k = k + 1 empty rows (k 0..127, [MAX_RUN] rows at most); else a mask byte: [MASK_NOTE]
-     * (note byte follows), [MASK_INSTRUMENT] (slot byte follows), effect count 0..2 at bits 2-4 ([MASK_EFFECT_SHIFT]);
+     * (note byte follows), [MASK_INSTRUMENT] (slot byte follows), effect count 0..4 at bits 2-4 ([MASK_EFFECT_SHIFT]);
      * then the note ([NOTE_MIN]..[NOTE_MAX] absolute, [NOTE_OFF]), the slot, and per effect column code (0..35 =
      * '0'..'9', 'A'..'Z') and parameter.
      */

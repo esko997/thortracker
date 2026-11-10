@@ -23,6 +23,7 @@ import org.thortracker.system.tia.TiaPalSystem
 import org.thortracker.system.tia.TiaPresets
 import org.thortracker.system.tia.TiaRegion
 import org.thortracker.system.tia.TiaRules
+import org.thortracker.system.tia.TiaSharedState
 import org.thortracker.system.tia.TiaSound
 import org.thortracker.system.tia.TiaSystem
 import org.thortracker.system.tia.tia
@@ -184,6 +185,94 @@ class TiaModelTest {
         assertThrows(IllegalArgumentException::class.java) { TiaLowering.lower(over) }
     }
 
+    @Test
+    fun fourColumnsRoundTripAndLowerInOrderWithEveryHoleCombination() {
+        val codes = listOf(TiaRules.FX_VOLUME, TiaRules.FX_WAVEFORM, TiaRules.FX_FINE, TiaRules.FX_VIBRATO)
+        val params = listOf(10, 4, 0x88, 0x23)
+        for (system in listOf(TiaNtscSystem, TiaPalSystem)) {
+            for (channel in 0..1) assertEquals(4, system.effectColumns(channel))
+            for (used in 0..15) {
+                var cell = Cell(57, 1)
+                val expected = mutableListOf<Byte>(0, 57, 1)
+                for (col in 0..3) if (used and (1 shl col) != 0) {
+                    cell = cell.withEffect(col, codes[col], params[col])
+                    expected += codes[col].toByte()
+                    expected += params[col].toByte()
+                }
+                expected[0] = (3 or (((expected.size - 3) / 2) shl 2)).toByte()
+                val song = blankWith(0, 0, cell, system)
+                assertEquals(emptyList<String>(), system.errors(song))
+                assertEquals(song, ProjectCodec.decode(ProjectCodec.encode(song)))
+                assertArrayEquals(expected.toByteArray(), TiaLowering.encode(listOf(cell), 1))
+                val image = TiaLowering.lower(song)
+                assertEquals(1, u8(image, TiaPlayerImage.H_LAYOUT)) // No layout/version/default change.
+                assertArrayEquals(expected.toByteArray(), image.copyOfRange(TiaPlayerImage.OFF_DATA,
+                    TiaPlayerImage.OFF_DATA + expected.size))
+            }
+            val badFourth = Cell(57, 1).withEffect(3, TiaRules.FX_VOLUME, 0x10)
+            assertTrue(system.errors(blankWith(0, 0, badFourth, system)).any { "C10" in it })
+        }
+    }
+
+    @Test
+    fun fourColumnRowsCountAllElevenBytesAgainstTheImageBudget() {
+        fun dense(orders: Int): Song = base().let { song ->
+            val patterns = List(orders) { p ->
+                Pattern("P$p", List(2) { ch -> List(Songs.ROWS) { row ->
+                    Cell(row % 100, 1, TiaRules.FX_VOLUME, (p + ch) % 16)
+                        .withEffect(1, TiaRules.FX_SLIDE_UP, p)
+                        .withEffect(2, TiaRules.FX_FINE, 0x80)
+                        .withEffect(3, TiaRules.FX_VIBRATO, 0x23)
+                } })
+            }
+            song.copy(patterns = patterns, orders = patterns.indices.toList())
+        }
+        val fits = dense(44)
+        assertEquals(44 * 2 * 64 * 11 + 7, TiaLowering.dataSize(fits))
+        assertEquals(emptyList<String>(), TiaNtscSystem.errors(fits))
+        val over = dense(45)
+        assertTrue(TiaLowering.dataSize(over) > TiaPlayerImage.DATA_CAPACITY)
+        assertThrows(IllegalArgumentException::class.java) { TiaLowering.lower(over) }
+    }
+
+    @Test
+    fun fourColumnMirrorsUseTheLastDelaySlideJumpAndFineSetting() {
+        for (system in listOf(TiaNtscSystem, TiaPalSystem)) {
+            val canceledDelay = Cell(57, 1, TiaRules.FX_DELAY, 0xFF)
+                .withEffect(1, TiaRules.FX_WAVEFORM, 4)
+                .withEffect(2, TiaRules.FX_FINE, 0x88)
+                .withEffect(3, TiaRules.FX_DELAY, 0)
+            val song = blankWith(0, 0, canceledDelay, system)
+            assertEquals(4, TiaSharedState.at(song, 0, 0)[0]!!.waveform)
+            assertTrue(system.warnings(song).none { "never plays" in it })
+            val delayed = blankWith(0, 0, canceledDelay.withEffect(3, TiaRules.FX_DELAY, 6), system)
+            assertNull(TiaSharedState.at(delayed, 0, 0)[0])
+            assertTrue(system.warnings(delayed).any { "G06" in it && "never plays" in it })
+
+            // 1xx, 2xx and 3xx share one pitch-motion mode; a later slide cancels portamento.
+            val next = Cell(60, 1, TiaRules.FX_PORTAMENTO, 0x20)
+                .withEffect(1, TiaRules.FX_VOLUME, 10)
+                .withEffect(2, TiaRules.FX_WAVEFORM, 12)
+                .withEffect(3, TiaRules.FX_SLIDE_DOWN, 4)
+            val twoRows = with(blankWith(0, 0, Cell(57, 1), system), 0, 0, 1, next)
+            assertEquals(false, TiaSharedState.at(twoRows, 0, 1)[0]!!.glide)
+            assertEquals(true, TiaSharedState.at(with(twoRows, 0, 0, 1,
+                next.withEffect(3, TiaRules.FX_PORTAMENTO, 4)), 0, 1)[0]!!.glide)
+
+            val jumps = Cell(effect = TiaRules.FX_JUMP, param = 0).withEffect(3, TiaRules.FX_JUMP, 2)
+            assertEquals(2, system.jumpTarget(jumps))
+            val detune = Cell(57, 1, TiaRules.FX_FINE, 0x90).withEffect(3, TiaRules.FX_FINE, 0x88)
+            assertEquals(8, system.fine.of(detune))
+            val cleared = system.fine.write(detune, 57, 0)!!
+            assertEquals(0, system.fine.of(cleared)) // Do not uncover the earlier P90.
+            assertEquals(0x80, cleared.effectParam(3))
+            // More columns cannot override a sound's waveform envelope.
+            val enveloped = blankWith(0, 0, Cell(57, 3).withEffect(3, TiaRules.FX_WAVEFORM, 4), system)
+            assertEquals(1, TiaSharedState.at(enveloped, 0, 0)[0]!!.waveform)
+            assertTrue(system.warnings(enveloped).any { "ignored" in it && "waveform envelope" in it })
+        }
+    }
+
     // ---- lowering ------------------------------------------------------------------------------------------
 
     @Test
@@ -278,8 +367,12 @@ class TiaModelTest {
         assertEquals(0x80 + 20, written.param)
         assertEquals(20, fine.of(written))
         assertEquals(Cell(57, 1), fine.write(written, 57, 0))
-        // Both columns taken by other effects: no room.
-        assertNull(fine.write(Cell(57, 1, TiaRules.FX_VOLUME, 1).withEffect(1, TiaRules.FX_WAVEFORM, 1), 57, 5))
+        // A free third or fourth column carries tuning; four occupied columns leave no room.
+        val two = Cell(57, 1, TiaRules.FX_VOLUME, 1).withEffect(1, TiaRules.FX_WAVEFORM, 1)
+        assertEquals(TiaRules.FX_FINE, fine.write(two, 57, 5)!!.effectCode(2))
+        val three = two.withEffect(2, TiaRules.FX_VIBRATO, 0x23)
+        assertEquals(TiaRules.FX_FINE, fine.write(three, 57, 5)!!.effectCode(3))
+        assertNull(fine.write(three.withEffect(3, TiaRules.FX_ARPEGGIO, 0x37), 57, 5))
     }
 
     @Test
