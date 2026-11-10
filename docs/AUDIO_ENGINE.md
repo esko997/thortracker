@@ -263,6 +263,19 @@ into the running machine, then refreshes the driver's cached copies (descriptor 
 order_cnt, current pattern pointers, base tempo if edited, wave-reload flag). The callback never
 allocates, locks, encodes or compiles; images are produced off the realtime thread.
 
+On Android, consecutive edits may coalesce only until the next queued control command.
+Enqueuing an audition, play, mute, stop or other command seals that edit batch: it sees
+the preceding song, never a later edit pulled from a global mailbox. Queue insertion and
+batch sealing share a short UI/control-thread lock; lowering and native work happen outside
+it, and the audio callback never acquires it. A failed engine creation retains its own song
+for a later play/audition retry without consuming future edits.
+
+`AudioDeviceTest.queuedAuditionUsesTheSongBeforeLaterInstrumentEdits` gates the real control
+executor to cover both an already-applied update and an update waiting in the queue.
+An old TED DAC audition followed by a tone-kind edit reproduced the stale validation error
+on the production APK; the same test passes with command-bounded batches. A genuinely
+invalid current audition still fails validation, and a valid current audition clears it.
+
 ## Live-edit semantics (transport never restarts)
 
 - Pattern cells: the driver reads rows from memory every tick, so an edit is heard from the next
