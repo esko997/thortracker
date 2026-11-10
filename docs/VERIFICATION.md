@@ -38,16 +38,17 @@ Both jobs in candidate CI run `42730175159` (`cc19ab6`) pass. Its actual AppImag
 held-auditioned both demos, then returned to Pattern: mono reached order 1/row 22 with hold/after
 PCM peaks 0.08578491/0.15112305; Color reached order 1/row 20 with 0.28866577/0.32122803.
 Both rendered surfaces were inspected; evidence is `recovery-20261109/ws-desktop/`.
-Nova and Konkr each pass both actual-device scenarios: wave/noise/sweep edits, CPU-fed and DMA
+Nova, DMG and Konkr each pass both actual-device scenarios: wave/noise/sweep edits, CPU-fed and DMA
 samples, Hyper Voice, held audition, playback/seek, project round trip, WAV export and explicit
-Hyper Voice VGM refusal. Both have zero driver faults and zero xruns in the dedicated scenarios;
-maximum callbacks are **1.186 ms / 2.104 ms** respectively. Their edited WAV pairs are byte-identical,
+Hyper Voice VGM refusal. All three have zero driver faults and zero xruns in the dedicated scenarios;
+maximum callbacks are **1.186 / 5.030 / 2.104 ms** respectively. Their edited WAV pairs are byte-identical,
 48 kHz stereo with 569,856 frames and no clipping rails. Nova also passes all **22 permanent Android
 tests** and **32 full-RGBA Game Boy baseline comparisons**. Actual wave, DMA and refusal surfaces
 were inspected. Evidence: `recovery-20261109/ws-frontend/device-smoke/`.
 The collection wrapper initially attempted to pull the intentionally refused VGM after both tests
 had passed; successful exports were retained and checked. It now recognizes that explicit negative
-case without relaxing positive-export checks. DMG acceptance and official publication remain pending.
+case without relaxing positive-export checks. The corrected wrapper completed on DMG and verified
+that the refused VGM was absent. Final integrated CI and official publication remain pending.
 No physical WonderSwan listening or hardware equivalence is claimed. Local Kotlin/Native linking
 remains disabled.
 
@@ -93,7 +94,7 @@ half-sample frame phase (**30/30 frame-count mismatches**, worst PCM difference 
 Advancing both cleared resamplers with `blip_skip_silence` fixes it: the same target now has exact frame
 counts and **bit-identical PCM at all seven rates, 8–96 kHz**, with identical raw chip state.
 The permanent regression keeps the existing 2e-3 bound. Evidence: `recovery-20261109/vsu-before/`
-under `~/.local/state/thortracker`. Final integrated CI and official publication remain pending.
+under `~/.local/state/thortracker`. Final integrated CI and official publication passed; see below.
 
 **594 VSU native checks pass**, including seek, mute, live edits and seven-rate headroom. The first integrated
 run passed all other engines and **2,622 WAV checks**, but exposed one stale VSU sweep assertion: S5INT
@@ -129,6 +130,21 @@ Each device exported a non-silent 48 kHz stereo WAV (1,843,200 frames, peaks 358
 and a **47,225-byte VGM**. The independent left/right document-silencing fixture rendered 153,600
 frames with peak 1220 per side; its opposing-silence assertions passed. Device wave/modulation
 surfaces were inspected. Evidence: `recovery-20261109/vsu-frontend/{ordered-clean,ordered-smoke,selection-smoke,accepted-metrics.json}`.
+
+Official **0.35.0/code 48** is published from main `aa3149e`; all four jobs in run `42735902241`
+pass. Downloaded APK/AppImage checksums, production certificate, non-debuggable manifest and
+arm64/x86_64 APK libraries are verified. APK SHA-256:
+`0ecde00d61cf6a19dcb411ae6b74b062911734ec5b7049abfd0abfbf5b3829e6`;
+AppImage SHA-256: `e61d4d09497dab4bfdb829c0cb8e59d802df92eb383e9fb0fdaa71edc203b54f`.
+The actual official AppImage repeats playback/held audition/Pattern return at order 0/row 41 and
+the noise-only audition, with hold peaks **0.08251954 / 0.036783855**. Both surfaces were inspected.
+Artifact-only copies reached Thor Downloads and Deck's `~/thortracker-deck/`; the Deck's stable
+`thor-tracker` symlink was updated atomically. No installation, launch or wake command was issued.
+The actual official APK passes the full VSU scenario on DMG with zero xruns/faults and a maximum
+callback of **6.944 ms**. Edited WAV, stereo-silencing WAV and VGM bytes match the accepted candidate.
+The official modulation surface was inspected. Nova/Konkr were not downgraded from newer accepted
+candidates merely to repeat this release gate.
+Evidence: `recovery-20261109/{official-0350,vsu-official-desktop,vsu-official-smoke}/`.
 
 - Native/Kotlin registries, Android JNI, Deck VGM bindings, model codec and sample export retain VSU
   and both SAA variants alongside every candidate system. The registry-driven New/demo menus need no special branch.

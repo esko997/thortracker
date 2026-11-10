@@ -13,18 +13,18 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-SAA1099 candidate `c27a60b` targets **0.34.0/code 47**, retaining VIC/TED and all earlier systems.
-Its analytical headroom bound, 960 pre-clamp cases, 925 JVM tests, corrected native checks and
-independent references pass. Frontend verification and publication remain pending. See `docs/VERIFICATION.md`.
+SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
+JVM, reserved-device frontend and published AppImage checks pass; the DMG picker retry and exact
+artifact evidence are recorded in `docs/VERIFICATION.md`.
 
-VSU candidate `9464a80` targets **0.35.0/code 48**, including SAA candidate `c27a60b` and the
-released VIC/TED ancestry. Its 956 JVM tests and seven-rate fractional-seek probe pass; full
-native/reference and frontend acceptance remain pending in that candidate's verification record.
+VSU is published as **0.35.0/code 48** from main `aa3149e`. Its 956 JVM tests, 594 native checks,
+seven-rate seek/headroom checks and all three reserved-device candidate scenarios pass. All four
+publication jobs, the actual official AppImage and official APK acceptance on DMG pass.
 
 The **0.36.0/code 49** integration retains both WonderSwan variants, VSU, both SAA variants and all
 earlier engines, including the headroom and fractional-seek corrections. Its 995 JVM tests, 693
 WonderSwan native checks, 2,796 WAV checks and independent references pass. The actual CI AppImage
-and both Nova/Konkr frontend scenarios pass; DMG acceptance and official publication remain pending.
+and both scenarios on Nova, DMG and Konkr pass; final integrated CI and official publication remain pending.
 All local Kotlin/Native linking, including debug/test links, remains prohibited: use CI and exercise
 its downloaded AppImage.
 
@@ -103,15 +103,15 @@ its downloaded AppImage.
    - SAA1099 — released **0.34.0/code 47**: SAM Coupé (one chip, six voices) and Creative Music System
      (two chips, twelve voices), shared noise/envelope controls, VGM and WAV. Native/reference, JVM,
      Android device scenarios and the published AppImage pass; see the recorded DMG picker retry.
-   - Virtual Boy VSU — integrated on branch `vsu-system` for **0.35.0/code 48** (`vb-vsu`: own player
-     on a Mednafen-derived core with the Sacred Tech Scroll's amendments, VGM + WAV export).
+   - Virtual Boy VSU — released **0.35.0/code 48** (`vb-vsu`: own player on a Mednafen-derived core
+     with the Sacred Tech Scroll's amendments, VGM + WAV export).
      956 JVM tests, 594 native checks, 2,622 WAV checks, independent references and all three reserved
-     Android frontends pass; final integrated CI/publication remain pending (`docs/VERIFICATION.md`).
+     Android frontends pass, including official AppImage/DMG APK checks (`docs/VERIFICATION.md`).
    - WonderSwan and WonderSwan Color — four wavetable channels (voice samples, sweep, noise), plus the Color's Sound
      DMA and Hyper Voice: source slice on branch `wonderswan-system` (two systems, own player on a C port of ares's
      APU, VGM/WAV export), integrated for **0.36.0/code 49**. 995 JVM tests, 693 native checks,
-     2,796 WAV checks, independent references, actual CI AppImage and Nova/Konkr scenarios pass;
-     DMG acceptance and publication remain pending (`docs/VERIFICATION.md`).
+     2,796 WAV checks, independent references, actual CI AppImage and all three reserved devices pass;
+     final integrated CI and publication remain pending (`docs/VERIFICATION.md`).
    - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
 8. **Conversion between systems** — a lossy step with a report of what did not carry over.
 9. **Tuning library (0.28.0)** — 500 bundled choices: four stock, 424 DaMuSc measured tunings regenerated from
