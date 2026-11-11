@@ -208,6 +208,88 @@ static void test_note_trigger_and_audio(HugeMachine* m) {
     EXPECT(rms / 20 > 0.02, "pulse audible, mean rms %.4f", rms / 20);
 }
 
+/* Pan Docs: envelopes on CH1/CH2/CH4 step at 64 Hz, with a 4-bit (0..15)
+ * amplitude; pace 0 disables stepping.
+ * https://gbdev.io/pandocs/Audio_Registers.html#ff12--nr12-channel-1-volume--envelope
+ * https://gbdev.io/pandocs/Audio_details.html#dacs
+ *
+ * Compare actual driver/emulator PCM against a separate, phase-matched machine
+ * holding volume 15. The DC blocker is linear, so settled RMS must scale by V/15.
+ * This distinguishes 14 from 15, unlike register reads (NRx2 retains its initial
+ * volume) or a mere nonzero-audio assertion. Pace 7 leaves enough time to observe
+ * the intermediate plateaus after the ~20 Hz DC blocker has settled. Probe ticks
+ * are well away from the 7/64-second envelope edges, not exact edge-timing tests. */
+static void test_envelope_audio_bounds(HugeMachine* m, HugeMachine* reference) {
+    printf("hardware envelopes: pulse 1, pulse 2 and noise reach and hold volume 15\n");
+    static const struct {
+        const char* name;
+        uint8_t envelope;
+        int count;
+        struct { int tick, volume; } probe[5];
+    } cases[] = {
+        {"13 grow pace 1", 0xD9, 3, {{8, 15}, {31, 15}, {63, 15}}},
+        {"14 grow pace 1", 0xE9, 3, {{8, 15}, {31, 15}, {63, 15}}},
+        {"13 grow pace 7", 0xDF, 4, {{3, 13}, {10, 14}, {17, 15}, {63, 15}}},
+        {"15 grow ceiling", 0xF9, 3, {{3, 15}, {31, 15}, {63, 15}}},
+        {"13 hold grow pace 0", 0xD8, 3, {{3, 13}, {31, 13}, {63, 13}}},
+        {"14 hold fade pace 0", 0xE0, 3, {{3, 14}, {31, 14}, {63, 14}}},
+        {"0 hold grow pace 0", 0x08, 3, {{3, 0}, {31, 0}, {63, 0}}},
+        {"15 fade pace 7", 0xF7, 5, {{3, 15}, {10, 14}, {17, 13}, {110, 0}, {127, 0}}},
+        {"1 fade floor", 0x11, 3, {{8, 0}, {31, 0}, {63, 0}}},
+        {"0 grow pace 1", 0x09, 2, {{31, 15}, {63, 15}}},
+    };
+    static const int channels[] = {0, 1, 3};
+    static const int envelope_regs[] = {NR12, NR22, NR42};
+    static const int trigger_regs[] = {NR14, NR24, NR44};
+    for (int c = 0; c < 3; ++c) {
+        const int channel = channels[c];
+        for (size_t k = 0; k < sizeof cases / sizeof cases[0]; ++k) {
+            TSong s;
+            song_init(&s, 6, 1);
+            cell(&s, 0, channel, 0, channel == 3 ? 40 : 36, 1, 0, 0);
+            uint8_t* envelope = channel == 3 ? &s.noise[0][0] : &s.duty[0][2];
+            *envelope = cases[k].envelope;
+            start(m, &s, 1, 0, 0, NULL);
+            *envelope = 0xF8; /* volume 15, pace 0, DAC enabled */
+            start(reference, &s, 1, 0, 0, NULL);
+            int probe = 0;
+            for (int tick = 0; tick <= cases[k].probe[cases[k].count - 1].tick; ++tick) {
+                Tick actual, held;
+                run_tick(m, &actual);
+                run_tick(reference, &held);
+                EXPECT(actual.frames > 0 && actual.frames == held.frames,
+                       "CH%d %s tick %d: matched PCM frames %d/%d", channel + 1,
+                       cases[k].name, tick, actual.frames, held.frames);
+                if (tick == 0) {
+                    EXPECT(last_write(&actual, envelope_regs[c]) == cases[k].envelope &&
+                               (last_write(&actual, trigger_regs[c]) & 0x80) != 0,
+                           "CH%d %s: driver wrote envelope and triggered", channel + 1, cases[k].name);
+                    EXPECT(last_write(&held, envelope_regs[c]) == 0xF8 &&
+                               (last_write(&held, trigger_regs[c]) & 0x80) != 0,
+                           "CH%d %s: reference holds 15", channel + 1, cases[k].name);
+                } else {
+                    EXPECT(count_writes(&actual, envelope_regs[c]) == 0 &&
+                               count_writes(&held, envelope_regs[c]) == 0 &&
+                               count_writes(&actual, trigger_regs[c]) == 0 &&
+                               count_writes(&held, trigger_regs[c]) == 0,
+                           "CH%d %s tick %d: envelope runs without driver rewrites or retriggers",
+                           channel + 1, cases[k].name, tick);
+                }
+                if (tick == cases[k].probe[probe].tick) {
+                    const int volume = cases[k].probe[probe].volume;
+                    const double ratio = held.rms > 0 ? actual.rms / held.rms : -1;
+                    /* 0.01 of full scale is 0.15 volume steps: far below the
+                     * 1/15 difference between the broken ceiling and volume 15. */
+                    EXPECT(held.rms > 0.005 && fabs(ratio - volume / 15.0) < 0.01,
+                           "CH%d %s tick %d: volume %d, RMS ratio %.6f (actual %.6f / hold15 %.6f)",
+                           channel + 1, cases[k].name, tick, volume, ratio, actual.rms, held.rms);
+                    ++probe;
+                }
+            }
+        }
+    }
+}
+
 static void test_row_and_order_timing(HugeMachine* m) {
     printf("row/order timing and wrap\n");
     TSong s;
@@ -647,10 +729,17 @@ static float ops_render(const ChipEngineOps* ops, ChipMachine* m, int ticks) {
 
 static void test_chip_engine_ops(void) {
     printf("chip engine ops: gb-huge as the audio hosts drive it\n");
+#ifdef HUGE_MACHINE_TEST_GB_ONLY
+    /* Standalone GB suite links the real adapter without the all-system registry.
+     * The normal native runner still exercises registry selection below. */
+    extern const ChipEngineOps huge_chip_ops;
+    const ChipEngineOps* ops = &huge_chip_ops;
+#else
     const ChipEngineOps* ops = chip_engine_ops("gb-huge");
     EXPECT(ops && strcmp(ops->system_id, "gb-huge") == 0, "gb-huge is registered");
     EXPECT(chip_engine_ops("no-such-system") == NULL && chip_engine_ops(NULL) == NULL, "unknown systems have no engine");
     if (!ops) return;
+#endif
     EXPECT(ops->image_size == 0x10000 && ops->image_storage >= ops->image_size, "image %zu bytes, storage %zu",
            ops->image_size, ops->image_storage);
     ChipImage* img = (ChipImage*)calloc(1, ops->image_storage);
@@ -758,6 +847,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     test_note_trigger_and_audio(m);
+    test_envelope_audio_bounds(m, aud);
     test_row_and_order_timing(m);
     test_live_cell_edit(m);
     test_live_instrument_edit(m);
