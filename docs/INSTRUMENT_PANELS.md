@@ -1,19 +1,19 @@
 # Musical instrument faces
 
-**0.44.0/code 62 rollout candidate:** Sound now covers the supported chip families, including
-their wavetable, noise, sample and percussion channels. Advanced remains the exact native
-editor. The Game Boy, SID and YM2612 pilots were merged and released as 0.43.0; the wider
-rollout is undergoing device and native-runtime verification before integration.
+**0.44.0/code 62:** Sound covers every supported chip family, including wavetable, noise,
+sample and percussion channels. Advanced remains the exact native editor. The Game Boy, SID
+and YM2612 pilots shipped in 0.43.0; the wider rollout has passed the device scenarios below.
 
 The APK remains **Thor Tracker**, package `org.thortracker`, with the production signing key.
 It updates the normal app rather than installing another similarly named app. The older
 separate Touch Preview installation and its data are not removed or imported automatically.
 
 
-## Review gallery
+## Handheld gallery
 
-Actual Pocket DMG native editor captures from revision 3; no recoloring or compositing.
-These render the live Activity's editor without Android system bars or transient system toasts.
+Actual native editor captures, not mockups or recolored composites. The original three pilots
+below are Pocket DMG captures from 0.43.0 revision 3. The wider-family gallery uses the final
+0.44.0 candidate on Nova, DMG and Konkr; it omits Android system bars.
 
 ### Game Boy
 
@@ -39,6 +39,31 @@ Compact **360×270 dp native editor renders**, not physical phone captures:
 [GB](media/instrument-pilots/gb-pulse-360x270dp.png) ·
 [SID](media/instrument-pilots/sid-mos8580-360x270dp.png) ·
 [YM2612](media/instrument-pilots/ym2612-360x270dp.png).
+
+### More sound machines
+
+![NES console cabinet on Nova](media/instrument-faces/nes.png)
+
+![POKEY keyboard-style controls on DMG](media/instrument-faces/pokey.png)
+
+![TIA paddle controls on DMG](media/instrument-faces/tia.png)
+
+![WonderSwan wave console on Nova](media/instrument-faces/wonderswan.png)
+
+Open the remaining full-size captures:
+
+| Family | Device |
+| --- | --- |
+| [AY/YM2149](media/instrument-faces/ay.png) | Nova |
+| [Sega PSG](media/instrument-faces/sega.png) | Nova |
+| [VIC](media/instrument-faces/vic.png) | DMG |
+| [SAA1099](media/instrument-faces/saa.png) | DMG |
+| [PC Engine](media/instrument-faces/pce.png) | Konkr |
+| [SCC](media/instrument-faces/scc.png) | Nova |
+| [Virtual Boy](media/instrument-faces/vsu.png) | Konkr |
+| [OPL3](media/instrument-faces/opl3.png) | Nova |
+| [OPM](media/instrument-faces/opm.png) | Nova |
+| [OPNA ADPCM](media/instrument-faces/opna-adpcm.png) | Nova |
 
 ## One instrument, two faces
 
@@ -145,7 +170,7 @@ face does not turn them into independent synthesizers.
 | Sega PSG/Game Gear and OPLL | PSG contour, chord and noise shaping; FM voice and tone controls | Noise can depend on the tone channel's clock. OPLL ROM voices and editable custom patches remain distinct. |
 | VIC/TED | Native source, gate, contour, level and audition controls | Chip-wide volume and software sample playback keep their existing backend limits. |
 | SAA1099/SAM Coupé/Game Blaster | Source, contour, stereo position, noise and envelope motion | Six- and twelve-channel variants retain their own lane groups and shared envelope/noise ownership. |
-| Atari POKEY/TIA | Chip-specific tone/noise choices, contours and movement | Joined voices and channel restrictions are respected; unsupported controls are unavailable rather than approximate. |
+| Atari POKEY/TIA | POKEY keyboard-style keycaps and TIA paddle controls; chip-specific tone/noise choices, contours and movement | Joined voices and channel restrictions are respected; unsupported controls are unavailable rather than approximate. |
 | PC Engine | Wave/noise/sample source, existing waveform or recording, contour and movement | Shared waveform/sample data are not rewritten. Noise and DDA retain their channel and playback restrictions. |
 | SCC/SCC+ | Existing wave, contour, waveform gesture, attack and audition lane | Native shared-wave constraints remain; opening the face preserves the complete patch. |
 | WonderSwan/Color | Voice, wave/noise/recording, contour, tuning and playback | CPU sample, HyperVoice and DMA modes keep their distinct capabilities and compatible audition lanes. |
@@ -155,14 +180,37 @@ face does not turn them into independent synthesizers.
 | OPN family | Separate FM, SSG, rhythm and ADPCM faces | Rhythm requires its ROM; ADPCM uses real imported recordings. The FM controls do not overwrite these other instrument types. |
 
 Handheld layouts page controls when necessary instead of reducing touch targets below usable
-size. The NES cabinet also uses a denser two-column control layout on Pocket DMG: all four
-pulse controls remain visible beside the signal display.
+size. The NES cabinet uses a denser two-column control layout on Pocket DMG. POKEY shows all
+six controls and TIA all four paddles there; SCC, WonderSwan, Sega FM and SAA use the available
+landscape width instead of unnecessarily paging a single control.
 
 The first real NES pass found a mixed-input bug: a touch edit while A was held changed the
 patch but did not restart audition. Accepted touch edits now update audition while the
 separate held-direction guard still prevents accidental edits after a target change.
 
-## Verification and review boundary
+## Verification and limits
+
+The final 0.44.0 candidate passes **1,402 core JVM and 22 Android host tests**. Real Nova
+Activity scenarios cover **41 system configurations and 281 channel/slot cases**: 1,309
+controller control probes, 281 held-A touch edits, 281 pixel-identical Sound/Advanced sidebar
+comparisons, whole-project Undo and preservation checks, 41 native name Apply/Cancel/Undo
+scenarios, native audition and advancing transport. These include the new YM2612 PSG/PCM
+faces; GB/SID retain their previously verified pilots.
+
+DMG repeats **73 cases across 15 PSG/Atari configurations**; Konkr repeats **30 cases across
+six wavetable configurations**. The three runs produce **768 native WAVs** across 384 cases.
+These compare real saved baseline/shaped patches and validate native output, not acoustic
+listening or original-hardware CPU cost. No driver faults were recorded. Nova accumulated
+two audio underruns during the dense stress run; DMG/Konkr recorded none, so this is not a
+claim of universally glitch-free audio. A separate clean APK passes all **30 permanent
+Android instrumentation tests** on DMG, including its native audio contract.
+
+Compact 360×270 dp renders exercise paging; actual handheld captures above expose the
+landscape layouts. These do not establish Galaxy Fold8 physical thumb reach. The CI AppImage
+also passes isolated offscreen instrument/audition/playback scenarios; physical Deck and
+Brick operation are not claimed by that check. See [verification details](VERIFICATION.md).
+
+### Earlier pilot evidence
 
 The original code-59 candidate passes **1,187 shared-core and 22 Android host tests**, plus a
 real Pocket DMG Activity scenario for all three GB banks, both SID models and YM2612. It covers
@@ -208,13 +256,11 @@ local Kotlin/Native linking and emulators are avoided.
 
 ## Wider rollout
 
-The reviewed direction is sufficient to proceed in chip-family batches. Carry the stable
-instrument list, controller axes, mode safety, touch ownership and Undo behavior into each
-face; do not force every chip into the same musical controls or recolor one universal form.
+The authorized family rollout is implemented. Future refinements must keep the stable
+instrument list, controller axes, mode safety, touch ownership and Undo behavior. Do not
+force every chip into the same musical controls or recolor one universal form.
 
-Suggested order: NES and Sega PSG voices; AY/shared-envelope and wavetable families; then
-remaining FM families and the more specialized noise/percussion systems. Related voices
-can share control widgets and layout machinery, but each mapping must name its owned fields
-and shared-resource limits. Retain Custom patches and the exact Advanced editor throughout.
-Review each batch on handheld-sized panes before continuing. No additional chip faces,
-original synth, swing, mixer ceilings or shader pipeline are included in revision 3.
+Related voices share widgets and layout machinery, but each mapping owns explicit native
+fields and exposes shared-resource limits. Opening a face preserves arbitrary patches;
+Advanced remains available. The original synth, swing, mixer ceilings and shader pipeline
+remain separate, deferred work.

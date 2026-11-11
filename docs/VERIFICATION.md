@@ -1,5 +1,67 @@
 # Thor Tracker verification — 2026-11-11
 
+## 0.44.0 — musical Sound faces across the supported chips
+
+The Sound/Advanced instrument workflow now covers every supported chip family, including NES
+expansions, Sega PSG/OPLL, AY/YM2149, VIC/TED, SAA1099, Atari POKEY/TIA, PC Engine, SCC/SCC+,
+WonderSwan/Color, VSU, OPL3, OPM and OPN/OPNA, plus YM2612's PSG and PCM voices. The earlier
+GB/SID/YM2612 pilots remain available. Normal **Thor Tracker**, `org.thortracker`, **code 62**,
+production signing; no project-schema, native-engine or export-format changes.
+
+- Musical mappings and visual compositions are chip-specific. Native shared resources, lane
+  restrictions, ROM/sample requirements and Custom patches remain explicit. Advanced is intact.
+- The instrument sidebar retains Advanced's font, geometry and hit testing. Up/Down selects
+  slots; Left/Right cycles Sound controls; A+Left/Right edits. Touch, audition and grouped Undo
+  use the same underlying instrument. Accepted touch edits now reaudition while A is held,
+  without allowing held-direction edits to leak across mode/target changes.
+- Visual refinement includes the NES cabinet, POKEY keyboard-style controls, TIA paddles,
+  connected AY/VIC traces, wider Sega/SAA layouts, SCC side-by-side controls and WonderSwan LCD.
+  [Actual Nova/DMG/Konkr gallery and family limits](INSTRUMENT_PANELS.md).
+- **1,402 core JVM and 22 Android host tests pass**, with no failures or ignored tests.
+- The final candidate passes **281 channel/slot cases across 41 system configurations on Nova**:
+  1,309 controller control probes, 281 held-A touch gestures, 281 exact Sound/Advanced sidebar
+  pixel comparisons, whole-project preservation/Undo, 41 native Name Apply/Cancel/Undo checks,
+  native audition, compact 360×270 dp rendering and advancing/stopping transport.
+- **DMG: 73 cases across 15 PSG/Atari configurations. Konkr: 30 cases across six wavetable
+  configurations.** The three runs export **768 baseline/shaped native WAVs** across 384 cases.
+  Native output is checked against saved input projects; this is not human listening or an
+  exhaustive acoustic characterization of every parameter combination.
+- No driver faults were recorded. The dense Nova run accumulated **two underruns**, maximum
+  callback **6.771 ms**; DMG/Konkr recorded none (maxima **7.284/2.248 ms** respectively).
+  Different device burst sizes make those callback times non-equivalent budgets. This bounded
+  UI stress does not establish glitch-free long-session playback.
+- A separate, clean instrumentation APK passes **all 30 permanent Android tests on DMG**.
+  Its audio contract reports zero xruns/driver faults, max callback **3.868 ms**.
+- Every device scenario cold-backs up all eight private recovery/workspace entries, restores
+  them and independently verifies hashes. Owned test APKs/files are removed; timeouts are
+  restored and devices returned Home/asleep. `/ThorTunez` is untouched.
+
+Final local source: `2f57cd2` (production code). Candidate APK SHA-256:
+`bd33d8a8c0034e83cab6329fe4a485f3ebbb891d87d9c656512ac18d6612504f`.
+Evidence under `~/.local/state/thortracker/sound-faces-044/evidence/`:
+
+- Nova: `nova/5804c03d3fbb4f8e903247e8392bcb2b/`.
+- DMG family pass: `dmg/21f81894bccc41bd96082c54c04b2cd6/`.
+- Konkr: `konkr/3e3767cec5f1412abbd5a72117675251/`.
+- Clean permanent suite: `dmg/4822da9d0dca49b493b10303a0f8d533/`.
+
+The first NES device pass exposed the held-A/touch audition bug; the corrected unchanged
+scenario passes. A later DMG harness failure read live painter rectangles off the UI thread;
+geometry is now copied atomically on the main thread, and the full 15-system pass succeeds.
+Neither failure was bypassed by removing its assertion. Original private data was also
+restored and independently verified on failed runs.
+
+Cross-platform checkpoint CI [43051829397](https://github.com/esko997/thortracker/actions/runs/43051829397)
+passes build, Deck and Brick at `1e3a99b`, including the byte-identical factory UGE and native
+engine checks. Its actual AppImage passes five isolated offscreen/dummy-audio scenarios for
+NES, OPL3, Sega PSG, PC Engine and POKEY: real Instrument navigation, held audition with
+nonzero PCM, advancing playback and inspected surfaces. The PCE attempt to change a used tone
+slot to noise is correctly rejected with its channel restriction. Evidence:
+`native-evidence/d3f098d290b744ef9808987b9f72edf5/`. That binary predates the final
+PSG/wavetable/Atari layout refinements; final publication checks gate the merge separately.
+These checks are not physical Deck/Brick operation or Fold8 thumb-reach measurements.
+All local builds were serialized and capped; Kotlin/Native linking ran only in CI.
+
 ## 0.43.0 — musical instrument faces and stable pattern headers
 
 The approved Game Boy, SID and YM2612 Sound pilots are promoted to main with normal Thor Tracker

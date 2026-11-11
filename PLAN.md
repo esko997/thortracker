@@ -13,11 +13,11 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**0.43.0/code 61:** the redesigned Game Boy LCD (Pulse/Wave/Noise), C64 SID and Mega Drive
-YM2612 Sound faces are approved for main. Both faces retain the same instrument list;
-Sound's vertical axis selects slots and its horizontal axis selects parameters.
-The user authorized autonomous implementation, runtime testing, visual/functionality refinement
-and periodic main integration for all supported chip/channel families, beginning with NES.
+**0.44.0/code 62:** the full Sound-face rollout is implemented and exercised across the supported
+chip families, after the Game Boy, SID and YM2612 pilots shipped in 0.43.0. Both faces retain
+the same instrument list; Sound's vertical axis selects slots and its horizontal axis selects
+parameters. NES expansions, PSG/OPLL, wavetable, remaining FM and specialized sample/noise/drum
+voices now have musical controls with their native restrictions preserved.
 See [the gallery, mappings and rollout contract](docs/INSTRUMENT_PANELS.md).
 Preserve exact patches, Advanced editors and the existing audition/Undo workflow.
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
@@ -242,9 +242,9 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
 - **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
   backends. The approved first Game Boy Sound face edits real instruments alongside Advanced.
-  The GB LCD, SID synth deck and YM2612 tone console pilots have been reviewed positively.
-  Their shared list and spatial Sound navigation are corrected in revision 3; proceed toward
-  additional chip-family batches using the [rollout contract](docs/INSTRUMENT_PANELS.md#wider-rollout).
+  The GB LCD, SID synth deck and YM2612 tone console pilots shipped in 0.43.0; the additional
+  chip families are implemented in 0.44.0, including live handheld refinement and verification.
+  See the [family gallery and rollout contract](docs/INSTRUMENT_PANELS.md#wider-family-coverage).
   Musical controls must own explicit chip fields, preserve arbitrary patches on entry/mode changes,
   and expose shared-resource limits honestly. The original synthesis engine remains deferred.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
