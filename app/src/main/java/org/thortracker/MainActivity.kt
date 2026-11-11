@@ -72,11 +72,10 @@ import org.thortracker.ui.ToolbarHandle
 import org.thortracker.ui.PaneView
 import org.thortracker.ui.TrackerView
 import org.thortracker.ui.hideFromAccessibility
-import org.thortracker.ui.PreviewDock
-import org.thortracker.ui.PreviewShell
-import org.thortracker.input.PreviewControllers
-import org.thortracker.input.PreviewKeyOwners
-import org.thortracker.storage.PreviewDocuments
+import org.thortracker.ui.ControllerDock
+import org.thortracker.ui.TouchShell
+import org.thortracker.input.TouchControllers
+import org.thortracker.input.TouchKeyOwners
 import java.io.File
 import java.io.IOException
 import android.util.AtomicFile
@@ -100,7 +99,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private val hosts = mutableMapOf<Int, Host>()
     private val popups = Popups({ hosts[it]?.popup }, { hosts.keys })
     private val input = HostInput()
-    private val keyOwners = PreviewKeyOwners()
+    private val keyOwners = TouchKeyOwners()
     private lateinit var menus: AppMenus
 
     /** Platform side of the shared menus: document pickers, assets, displays and status. */
@@ -298,7 +297,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             input.resetStick()
             if (open) {
                 cancelHeldInput()
-                hosts[0]?.preview?.closeDrawer()
+                hosts[0]?.touchShell?.closeDrawer()
             } else {
                 hosts.values.forEach { it.tracker.requestFocus() }
                 hideSystemBars()
@@ -515,14 +514,14 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
     /**
      * Rescans every attached device: the dock hides while a usable physical controller is attached
-     * ([PreviewControllers.usable], the built-in handheld pad included) and returns when the last one goes.
+     * ([TouchControllers.usable], the built-in handheld pad included) and returns when the last one goes.
      * A rescan rather than per-event bookkeeping, so startup, resume and enable/disable changes agree.
      */
     private fun syncControllers() {
-        val shell = hosts[0]?.preview ?: return
+        val shell = hosts[0]?.touchShell ?: return
         val attached = inputDevices.inputDeviceIds.any { id ->
             val device = inputDevices.getInputDevice(id) ?: return@any false
-            PreviewControllers.usable(device.isVirtual, Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || device.isEnabled,
+            TouchControllers.usable(device.isVirtual, Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || device.isEnabled,
                 device.sources) { device.hasKeys(*it) }
         }
         if (shell.dockShown != attached) return
@@ -541,7 +540,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
      * capture the dock held a key in is dropped, since its chord can no longer be completed as seen.
      */
     private fun forgetVirtualInput() {
-        hosts[0]?.preview?.dock?.cancel()
+        hosts[0]?.touchShell?.dock?.cancel()
         if (popups.top?.capture != null) {
             if (keyOwners.holds(VIRTUAL_DEVICE)) cancelInterruptedInput()
             return
@@ -556,7 +555,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         keyOwners.cancel()
         input.reset()
         hosts.values.forEach {
-            it.preview?.dock?.cancel()
+            it.touchShell?.dock?.cancel()
             it.tracker.heldModifiers = emptySet()
             it.tracker.cancelInteraction()
         }
@@ -569,7 +568,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     private fun virtualKey(code: Int, down: Boolean, repeat: Int) {
-        val shell = hosts[0]?.preview
+        val shell = hosts[0]?.touchShell
         if (!active || shell == null || shell.drawerOpen || !shell.dockShown) return
         if (popups.isOpen && (popups.display != 0 || popups.top?.capture == null)) return
         if (focus != 0) setFocus(0)
@@ -590,7 +589,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val xAxis = if (yRange.axis == MotionEvent.AXIS_RZ) MotionEvent.AXIS_Z else MotionEvent.AXIS_RX
         val xRange = device.getMotionRange(xAxis, InputDevice.SOURCE_JOYSTICK) ?: return
         val host = hosts[focus]
-        val pattern = active && documentReady && host?.tracker?.patternFocused == true && hosts[0]?.preview?.drawerOpen != true
+        val pattern = active && documentReady && host?.tracker?.patternFocused == true && hosts[0]?.touchShell?.drawerOpen != true
         fun sample(range: InputDevice.MotionRange, horizontal: Boolean, value: Float, millis: Long) {
             val position = (value - range.min) / range.range * 2f - 1f
             val jump = input.rightStick(device.id, horizontal, position, millis, focus, states[focus].kind, pattern, popups.isOpen, toolbarFocused())
@@ -637,17 +636,17 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val down = action == KeyEvent.ACTION_DOWN
         val repeat = original.repeatCount
         val code = original.keyCode
-        val preview = hosts[0]?.preview
-        if (preview?.drawerOpen == true) {
+        val shell = hosts[0]?.touchShell
+        if (shell?.drawerOpen == true) {
             if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_BUTTON_B || code == KeyEvent.KEYCODE_MENU) {
-                if (down && repeat == 0) preview.closeDrawer()
+                if (down && repeat == 0) shell.closeDrawer()
                 return true
             }
             return false
         }
         if (HostInput.isController(code)) {
             if (!down && original.isCanceled) { cancelInterruptedInput(); return true }
-            if (keyOwners.change(original.deviceId, code, down, repeat) == PreviewKeyOwners.Edge.NONE) return true
+            if (keyOwners.change(original.deviceId, code, down, repeat) == TouchKeyOwners.Edge.NONE) return true
         }
         popups.top?.capture?.let { capture ->
             // The capture takes the key, but a trigger still counts as held or let go, so none stays stuck after it.
@@ -775,10 +774,10 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             host.transport.isEnabled = initialized
             host.transport.text = if (transport.requested) "Stop" else "Play"
             host.toolbar.repaint()
-            host.preview?.refresh(palette, state.kind.name.lowercase().replaceFirstChar(Char::uppercase),
+            host.touchShell?.refresh(palette, state.kind.name.lowercase().replaceFirstChar(Char::uppercase),
                 transport.requested, initialized)
             val popupHere = popups.isOpen && popups.display == index
-            host.handle.visibility = if (host.preview == null && documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
+            host.handle.visibility = if (host.touchShell == null && documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
             host.setModal(popupHere, if (popupHere) popups.top?.capture else null)
         }
         updateStatus()
@@ -894,7 +893,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val intent = Intent(if (request == KEYMAP_IMPORT) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = if (request == KEYMAP_IMPORT) "*/*" else "application/json"
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, PreviewDocuments.rootUri(this@MainActivity))
             if (request == KEYMAP_EXPORT) putExtra(Intent.EXTRA_TITLE, "thor-tracker-keymap.json")
         }
         try { startActivityForResult(intent, request) }
@@ -1026,7 +1024,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private fun launchTuningPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, PreviewDocuments.rootUri(this@MainActivity))
         }
         try { startActivityForResult(intent, TUNING_IMPORT) }
         catch (e: Exception) { showError("No document provider could open: ${e.message}") }
@@ -1071,7 +1068,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private fun launchFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, PreviewDocuments.rootUri(this@MainActivity))
         }
         try { startActivityForResult(intent, FILE_IMPORT) }
         catch (e: Exception) { fileLoad = null; showError("No document provider could open: ${e.message}") }
@@ -1177,7 +1173,6 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             addCategory(Intent.CATEGORY_OPENABLE)
             type = when (request) { OPEN -> "*/*"; EXPORT_WAV -> "audio/x-wav"; else -> "application/octet-stream" }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, PreviewDocuments.rootUri(this@MainActivity))
             if (request != OPEN) putExtra(Intent.EXTRA_TITLE, safeName(title) + when (request) {
                 EXPORT -> ".${requireNotNull(format).extension}"
                 EXPORT_WAV -> ".wav"
@@ -1556,8 +1551,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val pin: Button = toolbar.add("Pinned", action = act { menus.viewOptions(index) })
         val focusButton: Button = toolbar.add("Focus", action = act { setFocus(index) })
         val transport: Button
-        val preview: PreviewShell? = if (index == 0) PreviewShell(context, tracker,
-            PreviewDock(context, ::virtualKey, ::cancelInterruptedInput),
+        val touchShell: TouchShell? = if (index == 0) TouchShell(context, tracker,
+            ControllerDock(context, ::virtualKey, ::cancelInterruptedInput),
             { cancelHeldInput(); setFocus(index); toolbar.hide() },
             entries = {
                 buildList {
@@ -1588,7 +1583,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             transport = toolbar.add("Play", action = act { toggleTransport(fromCursor = false) })
             tracker.keymap = keymap
             toolbar.setKeys(keymap)
-            root.addView(preview ?: tracker, FrameLayout.LayoutParams(-1, -1))
+            root.addView(touchShell ?: tracker, FrameLayout.LayoutParams(-1, -1))
             root.addView(handle, FrameLayout.LayoutParams(dp(72), dp(18), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
             root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
             root.addView(toolbar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
@@ -1633,19 +1628,19 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
 
         /** Chip, capture popup and accessibility for the current modal and dock presence (hidden for a controller). */
         fun layoutDock() {
-            val dockShown = preview?.dockShown == true
+            val dockShown = touchShell?.dockShown == true
             (chip.layoutParams as FrameLayout.LayoutParams).let {
                 it.bottomMargin = dp(if (dockShown) 200 else 34)
                 chip.layoutParams = it
             }
             val captureDock = modal && bindingCapture != null && dockShown
-            preview?.dock?.isEnabled = !modal || captureDock
+            touchShell?.dock?.isEnabled = !modal || captureDock
             (popup.layoutParams as FrameLayout.LayoutParams).let {
-                it.bottomMargin = if (captureDock) dp(PreviewDock.HEIGHT_DP) else 0
+                it.bottomMargin = if (captureDock) dp(ControllerDock.HEIGHT_DP) else 0
                 popup.layoutParams = it
             }
             root.hideFromAccessibility(false)
-            preview?.let { shell ->
+            touchShell?.let { shell ->
                 val content = shell.dock.parent as android.view.ViewGroup
                 shell.hideFromAccessibility(captureDock, content)
                 content.hideFromAccessibility(captureDock, shell.dock)

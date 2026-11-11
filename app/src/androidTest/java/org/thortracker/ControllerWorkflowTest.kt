@@ -609,6 +609,33 @@ class ControllerWorkflowTest {
         assertEquals(before, tracker.session.song)
     }
 
+    @Test fun projectSaveUsesNormalSafWithoutAnAppScopedRoot() {
+        var launched: Intent? = null
+        val picker = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_CREATE_DOCUMENT) return null
+                launched = Intent(intent)
+                return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        try {
+            instrumentation.addMonitor(picker)
+            openFiles()
+            clickRow("Save as…")
+            instrumentation.waitForIdleSync()
+            val intent = requireNotNull(launched) { "Save as did not launch the system document picker" }
+            assertTrue(intent.hasCategory(Intent.CATEGORY_OPENABLE))
+            assertEquals("application/octet-stream", intent.type)
+            assertFalse(intent.hasExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI))
+            val grants = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            assertEquals(grants, intent.flags and grants)
+            assertTrue(requireNotNull(intent.getStringExtra(Intent.EXTRA_TITLE)).endsWith(".thor"))
+        } finally {
+            instrumentation.removeMonitor(picker)
+        }
+    }
+
     @Test fun finishingAnOlderSaveDoesNotAttachItsDestinationToANewSong() {
         val original = tracker.session.song
         val destination = File(activity.cacheDir, "late-save-${System.nanoTime()}.thor")
@@ -856,7 +883,7 @@ class ControllerWorkflowTest {
             tracker.state.sketchCircle = false
             tracker.state.octave = 4
         }
-        clickHostButton("Pattern")
+        clickToolbarButton("Pattern")
         clickRow("Sketch")
         // View selection leaves the controller in the revealed toolbar until Back returns it to the editor.
         tap(KeyEvent.KEYCODE_BACK)
@@ -911,17 +938,23 @@ class ControllerWorkflowTest {
         instrumentation.runOnMainSync { audioField.set(activity, engine) }
     }
 
-    private fun clickHostButton(text: String) {
+    private fun clickToolbarButton(text: String) {
         fun find(view: View): android.widget.Button? {
             if (view is android.widget.Button && view.text.toString() == text) return view
             if (view is ViewGroup) for (index in 0 until view.childCount) find(view.getChildAt(index))?.let { return it }
             return null
         }
+        fun toolbar(view: View): org.thortracker.ui.ShellToolbar? {
+            if (view is org.thortracker.ui.ShellToolbar) return view
+            if (view is ViewGroup) for (index in 0 until view.childCount) toolbar(view.getChildAt(index))?.let { return it }
+            return null
+        }
+        fun button() = toolbar(activity.window.decorView)?.let(::find)
         var shown = false
-        instrumentation.runOnMainSync { shown = find(activity.window.decorView)?.isShown == true }
+        instrumentation.runOnMainSync { shown = button()?.isShown == true }
         if (!shown) chord(KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START)
         instrumentation.runOnMainSync {
-            val button = checkNotNull(find(activity.window.decorView))
+            val button = checkNotNull(button())
             check(button.isShown) { "Toolbar button is hidden: $text" }
             button.performClick()
         }

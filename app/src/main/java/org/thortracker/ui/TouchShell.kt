@@ -12,13 +12,13 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * Single-screen preview chrome. The actual editor receives the remaining height, including after resize and
+ * Primary-screen touch chrome. The actual editor receives the remaining height, including after resize and
  * while the dock is hidden for an attached controller; the Menu/Play header stays either way.
  */
-class PreviewShell(
+class TouchShell(
     context: Context,
     private val tracker: TrackerView,
-    val dock: PreviewDock,
+    val dock: ControllerDock,
     private val cancelInput: () -> Unit,
     private val entries: () -> List<Pair<String, () -> Unit>>,
     play: () -> Unit,
@@ -36,13 +36,13 @@ class PreviewShell(
     private val drawerScroll = ScrollView(context).apply { isFillViewport = true; addView(drawerRows) }
     private var palette = Palette.SLATE
     val drawerOpen: Boolean get() = drawer.visibility == VISIBLE
-    /** The host cancels the dock's presses ([PreviewDock.cancel]) before hiding it. */
+    /** The host cancels the dock's presses ([ControllerDock.cancel]) before hiding it. */
     var dockShown: Boolean
         get() = dock.visibility == VISIBLE
         set(value) { dock.visibility = if (value) VISIBLE else GONE }
 
     init {
-        tag = "preview-shell"
+        tag = "touch-shell"
         fitsSystemWindows = true
         val bar = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         bar.addView(menu, LinearLayout.LayoutParams(dp(64), dp(48)))
@@ -50,7 +50,7 @@ class PreviewShell(
         bar.addView(transport, LinearLayout.LayoutParams(dp(64), dp(48)))
         content.addView(bar, LinearLayout.LayoutParams(-1, dp(48)))
         content.addView(tracker, LinearLayout.LayoutParams(-1, 0, 1f))
-        content.addView(dock, LinearLayout.LayoutParams(-1, dp(PreviewDock.HEIGHT_DP)))
+        content.addView(dock, LinearLayout.LayoutParams(-1, dp(ControllerDock.HEIGHT_DP)))
         addView(content, LayoutParams(-1, -1))
         drawer.setOnClickListener { closeDrawer() }
         drawer.addView(drawerScroll, LayoutParams(-1, -1, Gravity.START))
@@ -72,7 +72,7 @@ class PreviewShell(
         drawer.visibility = VISIBLE
         content.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         drawerRows.getChildAt(0)?.requestFocus()
-        drawerRows.announceForAccessibility("Touch preview navigation")
+        drawerRows.announceForAccessibility("Navigation")
     }
 
     private fun addDrawerButton(label: String, action: () -> Unit) {
@@ -88,7 +88,7 @@ class PreviewShell(
     }
 
     fun refresh(value: Palette, view: String, playing: Boolean, ready: Boolean) {
-        title.text = "Touch preview\n$view"
+        title.text = "Thor Tracker\n$view"
         transport.text = if (playing) "Stop" else "Play"
         transport.isEnabled = ready
         if (palette !== value || menu.background !is GradientDrawable) {

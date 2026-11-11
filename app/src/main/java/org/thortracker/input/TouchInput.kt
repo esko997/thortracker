@@ -5,7 +5,7 @@ import org.thortracker.editor.Action
 import org.thortracker.ui.HostInput
 
 /** Merge hardware devices and the virtual dock before HostInput sees key edges. */
-class PreviewKeyOwners {
+class TouchKeyOwners {
     enum class Edge { DOWN, REPEAT, UP, NONE }
     private val owners = HashMap<Int, MutableSet<Int>>()
 
@@ -46,7 +46,7 @@ class PreviewKeyOwners {
 }
 
 /** The dock hides while any usable physical controller is attached, including a handheld's built-in pad. */
-object PreviewControllers {
+object TouchControllers {
     /**
      * A device that can drive the default controls: an enabled, non-virtual gamepad with A and B, and
      * directions from a D-pad or a stick/hat (Android turns a hat into D-pad keys). A keyboard, D-pad remote or
@@ -63,7 +63,7 @@ object PreviewControllers {
 }
 
 /** Pointer IDs, not event indices, own buttons until lifted. Latches are explicit, persistent layers. */
-class PreviewPointers(
+class TouchPointers(
     private val edge: (code: Int, down: Boolean) -> Unit,
 ) {
     private val pointers = HashMap<Int, Int>()
