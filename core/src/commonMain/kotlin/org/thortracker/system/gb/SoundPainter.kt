@@ -52,6 +52,8 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
     private val rowFields = IntArray(MAX_ROWS)
     private var rowCount = 0
     private var rowScroll = 0
+    private val scrollUpRect = Rect()
+    private val scrollDownRect = Rect()
     private val railLeft = FloatArray(MAX_ROWS)
     private val railRight = FloatArray(MAX_ROWS)
     private val cellRects = Array(MAX_ROWS) { Array(MAX_CELLS) { Rect() } }
@@ -73,7 +75,10 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         private set
 
     private var usageSong: Song? = null
-    private val usage = HashMap<Pair<GbBank, Int>, Int>()
+    private val usage = IntArray(GbBank.entries.size * SLOTS)
+    private val usageCounted = HashSet<Int>()
+    private var registerSound: GbInstrument? = null
+    private var registerBytes = ByteArray(0)
 
     override fun draw(c: Surface, area: Rect) {
         val s = song
@@ -204,11 +209,17 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         val u = ink.unit
         val params = GbSoundView.params(st)
         val n = 1 + params.size
-        val footerH = u * 1.2f
+        val registerH = u * 1.2f
         val captionH = u * 1.25f
         val gap = u * 0.4f
         val minRow = u * 1.35f
         val maxRow = maxOf(u * 1.6f, ink.dp(48f))
+        // Navigation has physical 48dp targets, independent of zoom. Reserve it before sizing the rows.
+        val overflow = panel.height() - registerH < n * minRow
+        val navH = maxOf(ink.dp(48f), registerH)
+        val footerH = if (overflow) navH + gap * 0.5f else registerH
+        scrollUpRect.set(0f, 0f, 0f, 0f)
+        scrollDownRect.set(0f, 0f, 0f, 0f)
         val note = ctl.defaultNote()
         val avail = panel.height() - footerH
         val heroSpace = avail - n * minRow - captionH - gap * 2
@@ -228,7 +239,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         // rows: as tall as the room allows up to touch size; scrolled to keep the cursor's row in view
         val rowsBottom = panel.bottom - footerH
         val rowH = ((rowsBottom - y) / n).coerceIn(minRow, maxRow)
-        val visible = ((rowsBottom - y) / rowH).toInt().coerceIn(1, n)
+        val visible = if (overflow) ((rowsBottom - y) / rowH).toInt().coerceIn(1, n) else n
         val selRow = st.instField - 1
         if (selRow >= 0) rowScroll = rowScroll.coerceIn(maxOf(0, selRow - visible + 1), minOf(selRow, n - visible))
         rowScroll = rowScroll.coerceIn(0, n - visible)
@@ -238,15 +249,28 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             drawRow(c, rowCount, field, panel.left, y + k * rowH, panel.right, rowH, ins, params, col)
             rowCount++
         }
-        if (visible < n) drawScrollMarks(c, panel.right, y, y + visible * rowH, rowScroll > 0, rowScroll + visible < n)
-        drawRegisters(c, panel.left, panel.bottom - footerH, panel.right, footerH, ins, kind, note)
+        if (overflow) {
+            val navW = maxOf(ink.dp(48f), u * 2.8f)
+            val navGap = ink.dp(4f)
+            val top = panel.bottom - navH
+            scrollDownRect.set(panel.right - navW, top, panel.right, panel.bottom)
+            scrollUpRect.set(scrollDownRect.left - navGap - navW, top, scrollDownRect.left - navGap, panel.bottom)
+            drawNavigation(c, scrollUpRect, "Up", st.instField > 0)
+            drawNavigation(c, scrollDownRect, "Down", st.instField < n)
+            val registerRight = scrollUpRect.left - gap
+            if (registerRight - panel.left >= ink.labelWidth("Registers", u * 0.75f) + u * 4f) {
+                drawRegisters(c, panel.left, top, registerRight, navH, ins, kind, note)
+            }
+        } else {
+            drawRegisters(c, panel.left, panel.bottom - footerH, panel.right, footerH, ins, kind, note)
+        }
     }
 
-    private fun drawScrollMarks(c: Surface, right: Float, top: Float, bottom: Float, above: Boolean, below: Boolean) {
-        val s = ink.dp(4f)
-        val x = right - s
-        if (above) { ink.line(c, x - s, top + s * 1.5f, x, top + s * 0.5f, ink.palette.DIM, ink.dp(1.5f)); ink.line(c, x, top + s * 0.5f, x + s, top + s * 1.5f, ink.palette.DIM, ink.dp(1.5f)) }
-        if (below) { ink.line(c, x - s, bottom - s * 1.5f, x, bottom - s * 0.5f, ink.palette.DIM, ink.dp(1.5f)); ink.line(c, x, bottom - s * 0.5f, x + s, bottom - s * 1.5f, ink.palette.DIM, ink.dp(1.5f)) }
+    private fun drawNavigation(c: Surface, r: Rect, label: String, enabled: Boolean) {
+        ink.round(c, r, ink.dp(3f), ink.palette.LANE)
+        ink.outline(c, r, ink.palette.RULE, ink.dp(1f), ink.dp(3f))
+        ink.label(c, label, r.centerX(), r.top, r.height(), if (enabled) ink.palette.TEXT else ink.palette.FAINT,
+            size = ink.unit * 0.85f, align = Align.CENTER)
     }
 
     private fun drawCaption(c: Surface, l: Float, t: Float, r: Float, h: Float, ins: GbInstrument, note: Int, withSweep: Boolean) {
@@ -660,14 +684,23 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
     /** The bytes hUGEDriver's instrument record gives the channel's registers (HugeLowering's own encoding). */
     private fun drawRegisters(c: Surface, l: Float, t: Float, r: Float, h: Float, ins: GbInstrument, kind: GbBank, note: Int) {
         val size = ink.unit * 0.75f
+        if (registerSound !== ins) {
+            registerBytes = when (kind) {
+                GbBank.PULSE -> HugeLowering.dutyBytes(ins)
+                GbBank.WAVE -> HugeLowering.waveBytes(ins)
+                GbBank.NOISE -> HugeLowering.noiseBytes(ins)
+            }
+            registerSound = ins
+        }
+        val b = registerBytes
         val text = when (kind) {
-            GbBank.PULSE -> HugeLowering.dutyBytes(ins).let { b ->
+            GbBank.PULSE -> {
                 "NR10 ${hex2(b[0].toInt() and 0xFF)} (Pulse 1)  NR11 ${hex2(b[1].toInt() and 0xFF)}  NR12 ${hex2(b[2].toInt() and 0xFF)}  NR14 mask ${hex2(b[5].toInt() and 0xFF)}"
             }
-            GbBank.WAVE -> HugeLowering.waveBytes(ins).let { b ->
+            GbBank.WAVE -> {
                 "NR31 ${hex2(b[0].toInt() and 0xFF)}  NR32 ${hex2(b[1].toInt() and 0xFF)}  wave ${hex1(b[2].toInt() and 0xFF)}  NR34 mask ${hex2(b[5].toInt() and 0xFF)}"
             }
-            GbBank.NOISE -> HugeLowering.noiseBytes(ins).let { b ->
+            GbBank.NOISE -> {
                 val flags = b[3].toInt() and 0xFF
                 "NR42 ${hex2(b[0].toInt() and 0xFF)}  NR41 ${hex2(flags and 0x3F)}  NR43 ${hex2(SoundTimeline.noiseNr43(ins, note))} at ${GbSystem.noteName(note)}  NR44 ${hex2(0x80 or (flags and 0x40))}"
             }
@@ -686,21 +719,21 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
 
     private fun usage(kind: GbBank, slot: Int): Int {
         val s = song
-        if (s !== usageSong) {
-            usage.clear()
+        if (s.patterns !== usageSong?.patterns || s.orders !== usageSong?.orders) {
+            usage.fill(0)
             for (ch in 0 until s.channelCount()) {
                 val k = HugeRules.channelKind(ch)
-                val counted = HashSet<Int>()
+                usageCounted.clear()
                 for (pat in s.orders) {
-                    if (!counted.add(pat)) continue
+                    if (!usageCounted.add(pat)) continue
                     for (cell in s.patterns[pat].tracks[ch]) {
-                        if (cell.instrument > 0) usage[k to cell.instrument] = (usage[k to cell.instrument] ?: 0) + 1
+                        if (cell.instrument in 1..SLOTS) usage[k.ordinal * SLOTS + cell.instrument - 1]++
                     }
                 }
             }
             usageSong = s
         }
-        return usage[kind to slot] ?: 0
+        return usage[kind.ordinal * SLOTS + slot - 1]
     }
 
     private fun usageText(kind: GbBank, slot: Int): String {
@@ -735,9 +768,21 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
 
     internal fun tabRect(kind: GbBank): Rect = tabRects[kind.ordinal]
 
+    /** Last-drawn 48dp setting-navigation target, or null when every setting fits without scrolling. */
+    internal fun navigationRect(down: Boolean): Rect? {
+        val r = if (down) scrollDownRect else scrollUpRect
+        return if (r.width() > 0f) r else null
+    }
+
     // ---- touch: tabs, slots, rows, choices, the wave strip and sliders --------------------------------------------
 
     override fun down(x: Float, y: Float): Boolean {
+        if (scrollUpRect.contains(x, y) || scrollDownRect.contains(x, y)) {
+            // Unlike controller Edit+direction this is always navigation, never an adjustment.
+            GbSoundView.navigateSetting(st, if (scrollDownRect.contains(x, y)) 1 else -1)
+            if (ctl.editHeld) ctl.useEdit()
+            return true
+        }
         for (k in GbBank.entries) if (tabRects[k.ordinal].contains(x, y)) {
             st.bank = k.ordinal
             st.instField = st.instField.coerceAtMost(1 + GbSoundView.params(st).size)

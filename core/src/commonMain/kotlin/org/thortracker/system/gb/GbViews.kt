@@ -60,13 +60,18 @@ object GbSoundView : SystemView() {
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
-        val fields = 2 + params(st).size
         when {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
-            dy != 0 -> { st.instField = (st.instField - dy).coerceIn(0, fields - 1); st.textPos = 0 }
+            dy != 0 -> navigateSetting(st, -dy)
             st.instField == 1 -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
             else -> { st.instrument = (st.instrument + dx).coerceIn(1, HugeRules.INSTRUMENT_SLOTS); publish(v) }
         }
+    }
+
+    /** Shared controller/touch field order; navigation never edits the selected sound. */
+    internal fun navigateSetting(st: ViewState, delta: Int) {
+        st.instField = (st.instField + delta).coerceIn(0, 1 + params(st).size)
+        st.textPos = 0
     }
 
     private fun adjust(v: ViewController, dx: Int, dy: Int) {
@@ -134,7 +139,7 @@ object GbSoundView : SystemView() {
                 session.editInstrument(kind, st.instrument, "Reset ${p.label.lowercase()}") { p.set(it, def) }
             }
         }
-        if (changed && st.instField != 1 && v.auditionHeld) audition(v)
+        if (changed && st.instField != 1) heard(v)
     }
 
     override fun audition(v: ViewController) {
