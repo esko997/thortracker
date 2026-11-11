@@ -36,6 +36,10 @@ Evidence root: `~/.local/state/thortracker/recovery-20261109/instrument-pilots-0
 Final DMG run: `final-pilots/dmg-7aa4eb071f844f3b91495cce085c1cee/`;
 Nova: `final-contracts/nova-8f1001e83d124c668ed3d19cb73de0a4/`.
 Builds were serialized through the memory-capped wrapper; no emulator or local Kotlin/Native link.
+The first review CI JVM compile exhausted the separate Kotlin daemon's heap (`GC overhead limit
+exceeded`); desktop/ARM64 builds succeeded. The CI build job now uses one in-process compiler
+with an explicit 2 GiB heap. Local 1 GiB settings and the workstation wrapper's cgroup limits
+are unchanged; no validator or test was weakened to work around the compiler failure.
 Pause after these three pilots for artistic and musical review.
 
 ## 0.42.0 — production touch controls and Game Boy Sound editor

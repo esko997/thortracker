@@ -33,7 +33,13 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 cmake;3.22.1'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - name: Unit tests (core and app), core Linux build, debug and (unsigned) release builds, sample export
-        run: ./gradlew --no-daemon --console=plain :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleRelease exportSamples
+        # Full JVM compilation needs more heap than an incremental local build.
+        # Keep it bounded on CI, without a second Kotlin compiler daemon.
+        run: >-
+          ./gradlew --no-daemon --console=plain --max-workers=1
+          -Pkotlin.compiler.execution.strategy=in-process
+          '-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8'
+          :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleRelease exportSamples
       - name: The factory song still exports byte-identically
         run: cmp app/build/samples/thor-groove.uge examples/thor-groove.uge
       - name: A new version also raises versionCode above the latest release
