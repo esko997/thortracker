@@ -174,6 +174,7 @@ object YmInstrumentView : SystemView() {
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
         st.instField = st.instField.coerceIn(if (fmPages(song, st)) -1 else 0,
             if (YmSoundFace.friendly(song, st)) YmSoundControl.entries.size + 1 else rows(song, st).size - 1)
+        YmSoundFace.settle(song, st)
         when {
             page(song, st) == Page.EXPERT || page(song, st) == Page.CH3 -> st.envStep = st.envStep.coerceIn(0, 3)
             envelopeKind(song, st) != null -> st.envStep = st.envStep.coerceIn(0, envelope(song, st)?.let(::lastStep) ?: 0)
@@ -237,6 +238,7 @@ object YmInstrumentView : SystemView() {
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         keepPage(v, row)
         if (page(v.session.song, st) == Page.PCM) YmPcmPage.showFirstMapping(v)
+        YmSoundFace.settle(v.session.song, st)
         publish(v)
     }
 
@@ -519,7 +521,8 @@ object YmInstrumentView : SystemView() {
             if (tap) YmSoundFace.selectMode(v, !v.state.ymPanel.advanced, true)
             return
         }
-        if (YmSoundFace.friendly(v.session.song, v.state) && v.state.instField >= 1) return
+        // Sound has no slot field ([YmSoundFace.settle]): its Edit is held editing or audition, never a slot tap.
+        if (YmSoundFace.friendly(v.session.song, v.state)) return
         val st = v.state
         val session = v.session
         val row = row(session.song, st)

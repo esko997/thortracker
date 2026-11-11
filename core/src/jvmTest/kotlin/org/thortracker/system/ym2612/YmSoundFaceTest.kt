@@ -252,19 +252,38 @@ class YmSoundFaceTest {
         assertSame(before, session.song)
     }
 
-    @Test fun soundStillCreatesEmptySlotsByShapingAControlOrEditOnTheSlot() {
+    @Test fun freshSoundEditsTheFirstControlAndSlotFocusNeverStrandsSound() {
         val session = session()
-        val v = view(session, 2)
-        v.tap(Action.DOWN)
-        assertEquals(2, v.state.instrument); assertNull(session.song.ymInstrument(2))
+        val v = view(session, 0)
+        val before = session.song
+        // A fresh view's Slot field: Edit+direction shapes the first musical control at once.
         v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
-        assertEquals(YmSoundMacros.step(YmSoundControl.BRIGHTNESS, defaultYmFm(2), 1), session.song.ymInstrument(2))
-        v.tap(Action.DOWN)
-        assertNull(session.song.ymInstrument(3))
+        assertEquals(1, v.state.instrument); assertEquals(2, v.state.instField)
+        val shaped = YmSoundMacros.step(YmSoundControl.BRIGHTNESS, before.ymInstrument(1) as YmFmInstrument, 1)
+        assertNotSame(before.ymInstrument(1), shaped)
+        assertEquals(shaped, session.song.ymInstrument(1))
+        session.undo()
+        assertSame(before, session.song)
+        // An Edit tap is no slot action in Sound: it lands on the first control and changes nothing.
         v.state.instField = 0
         v.tap(Action.EDIT)
-        assertTrue(session.song.ymInstrument(3) is YmFmInstrument)
+        assertEquals(2, v.state.instField)
+        assertSame(before, session.song)
+        // Leaving an FM slot for a PSG one and stepping off its Slot row back onto FM settles on the first control.
+        session.setYmInstrument(2, defaultYmPsg(2), "PSG")
+        val withPsg = session.song
+        v.state.instField = 3
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instrument); assertFalse(YmSoundFace.friendly(session.song, v.state))
+        repeat(3) { v.tap(Action.UP) }
         assertEquals(0, v.state.instField)
+        v.tap(Action.RIGHT)
+        assertEquals(3, v.state.instrument); assertTrue(YmSoundFace.friendly(session.song, v.state))
+        assertEquals(2, v.state.instField)
+        assertSame(withPsg, session.song)
+        // The empty slot is created by shaping a control.
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertEquals(YmSoundMacros.step(YmSoundControl.BRIGHTNESS, defaultYmFm(3), 1), session.song.ymInstrument(3))
     }
 
     @Test fun advancedKeepsItsPreciseRowNavigation() {
@@ -445,7 +464,7 @@ class YmSoundFaceTest {
         session.setYmInstrument(4, defaultYmPsg(4), "PSG")
         session.setYmInstrument(5, defaultYmPcm(5), "PCM")
         for ((width, height, density) in listOf(Triple(360, 270, 1f), Triple(960, 720, 1f), Triple(1024, 768, 2f))) {
-            for (zoom in listOf(PaneZoom.NORMAL, PaneZoom.LARGEST)) for (slot in listOf(1, 40)) for (field in listOf(0, 3)) {
+            for (zoom in listOf(PaneZoom.NORMAL, PaneZoom.LARGEST)) for (slot in listOf(1, 40)) for (field in listOf(2, 5)) {
                 val panel = Panel(session, width, height, density, zoom)
                 panel.state.instrument = slot
                 fun column(advanced: Boolean): List<String> {

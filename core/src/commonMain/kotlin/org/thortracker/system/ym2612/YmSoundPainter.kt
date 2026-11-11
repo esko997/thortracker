@@ -140,7 +140,8 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
         val actual = YmInstrumentView.sound(song, st) as? YmFmInstrument
         if (actual == null && emptySlot != st.instrument) { emptySlot = st.instrument; emptySound = defaultYmFm(st.instrument) }
         val ins = actual ?: emptySound!!
-        val bank = advanced.drawSidebar(c, body, p.channel(YmInstrumentView.listenChannel(st, actual, null)), st.instField == 0)
+        // No slot-row cursor: Sound chooses slots with Up/Down and keeps its focus on mode, name or a control.
+        val bank = advanced.drawSidebar(c, body, p.channel(YmInstrumentView.listenChannel(st, actual, null)), false)
         c.fillRect(bank.right, bank.top, area.right, body.bottom, shell)
         val pad = ink.dp(8f)
         val left = bank.right + pad

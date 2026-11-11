@@ -16,16 +16,25 @@ internal object YmSoundFace {
     fun friendly(song: Song, st: ViewState): Boolean = YmInstrumentView.fmPages(song, st) && !st.ymPanel.advanced
     fun control(st: ViewState): YmSoundControl? = YmSoundControl.entries.getOrNull(st.instField - 2)
 
+    /**
+     * Sound has no slot field — Up/Down choose the slot — so Advanced's Slot row (field 0), a fresh view's default, lands
+     * on the first musical control and Edit+direction shapes the sound at once.
+     */
+    fun settle(song: Song, st: ViewState) {
+        if (st.instField == 0 && friendly(song, st)) st.instField = 2
+    }
+
     fun selectMode(v: ViewController, advanced: Boolean, keepModeFocus: Boolean = false) {
         if (!YmInstrumentView.fmPages(v.session.song, v.state)) return
         MusicalPanelMode.select(v, v.state.ymPanel, advanced, keepModeFocus)
+        settle(v.session.song, v.state)
     }
 
-    /** Another slot from Sound, keeping the focused field (mode, slot, name or control) while the slot stays FM. */
+    /** Another slot from Sound, keeping the focused field (mode, name or control) while the slot stays FM. */
     fun moveSlot(v: ViewController, delta: Int) {
         val field = v.state.instField
         YmInstrumentView.moveSlot(v, delta)
-        if (friendly(v.session.song, v.state)) v.state.instField = field
+        if (friendly(v.session.song, v.state)) { v.state.instField = field; settle(v.session.song, v.state) }
     }
 
     /** A touched bank slot: another slot keeps the focused field; the selected one is published for entry, as in Advanced. */
@@ -49,8 +58,7 @@ internal object YmSoundFace {
             v.useEdit()
             when (st.instField) {
                 -1 -> if (dx != 0) selectMode(v, dx > 0, true)
-                0 -> YmInstrumentView.moveSlot(v, dx - dy * 8)
-                // Up = previous letter, Down = next letter, within the name's length limit.
+                // Field 0 never stays in Sound ([settle]); Up = previous letter, Down = next letter, within the limit.
                 1 -> if (dx != 0) v.session.renameYm(st.instrument) { NameEdit.edit(it, st.textPos, dx, YmInstrumentView.NAME_MAX) }
                     else st.textPos = (st.textPos - dy).coerceIn(0, YmInstrumentView.NAME_MAX - 1)
                 else -> control(st)?.let { control ->
@@ -74,10 +82,6 @@ internal object YmSoundFace {
                 h += Hint(if (sound) v.editLr() else v.lr(), "Sound / Advanced")
                 h += Hint(v.k(Action.EDIT), "Switch face")
                 if (sound) { h += Hint(v.lr(), "Parameter"); h += Hint(v.ud(), "Sound slot") }
-            }
-            0 -> {
-                h += Hint(v.ud(), "Sound slot"); h += Hint(v.lr(), "Parameter")
-                h += Hint(v.k(Action.EDIT), "Create / select"); h += Hint(v.k(Action.CLEAR), "Empty slot")
             }
             1 -> {
                 h += Hint(v.editLr(), "Change letter"); h += Hint(v.editUd(), "Previous / next letter")
