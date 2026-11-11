@@ -711,7 +711,7 @@ and SID reject extra columns. NES now accepts four without changing the canonica
 Visible column counts are per-pane editor state, not song data. Automatic width retains the active
 effect field for the duration of an Edit hold, then may shrink on release/cancellation.
 
-### Current capacity and compatibility review (0.41.0 candidate)
+### Current capacity and compatibility review (0.41.0)
 
 The [manual's capability matrix](../README.md#multiple-effects-per-row) covers all 43 registered
 systems: **2 one-column, 3 two-column and 38 four-column variants**. All 15 NES/FamiStudio variants
@@ -757,7 +757,7 @@ cannot retain both G/S, so that combination is rejected there; its existing NSF/
 Validation checks every populated slot, including holes before later effects. Additional columns
 do not relax sample memory, instrument identity, shared VRC7 patches, SSG ownership or data-size limits.
 
-#### TIA ordered commands (0.41.0 candidate)
+#### TIA ordered commands (0.41.0)
 
 Both regions now accept four commands per channel. The image retains layout 1, its existing
 three-bit count field, 65,536-byte image and 62,144-byte data region; project/backend schemas
@@ -1714,7 +1714,7 @@ onboard sound feature, nothing invented):
   and ignores fine pitch, slides, portamento, vibrato and the pitch envelope. Constant waveforms (AUDC 0, B) write no
   AUDF in tonal mode.
 - **Two channels, no chords, no shared controls**: `TIA 1`, `TIA 2` (`ChannelKind.VOICE`, tonal), each owning its AUDC,
-  AUDF and AUDV; four effect columns per channel in the 0.41.0 candidate (two at the 0.32.0 launch).
+  AUDF and AUDV; four effect columns per channel since 0.41.0 (two at the 0.32.0 launch).
   What the channels share (the audio clock, the output node) is documented, not a control.
 - **No samples**: the TIA has no dedicated sample-playback hardware; writing AUDV on a constant waveform (AUDC 0) many times a frame
   is a CPU technique that would need a cycle-timed 6507 driver. It is offered only at the frame rate, through volume

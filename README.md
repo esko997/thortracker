@@ -5,10 +5,12 @@ Thor Tracker is a controller-first music tracker for Game Boy / Game Boy Color s
 Read the **[documentation website](https://esko997.github.io/thortracker/)** for installation,
 controls, sound systems, exports and troubleshooting.
 
-**0.41.0/code 55 candidate:** TIA NTSC/PAL now support four effect columns, with clearer
-Columns/hidden-effect and Clear/Cut guidance and cancellation of held input after interruptions.
-Android/native candidate evidence is recorded in [verification](docs/VERIFICATION.md); this is
-not yet an official release or a new Deck/Brick hardware verification claim.
+**[0.41.0/code 55](https://github.com/esko997/thortracker/releases/tag/v0.41.0):** TIA NTSC/PAL
+support four effect columns, with clearer Columns/hidden-effect and Clear/Cut guidance,
+interruption-safe held input and binding capture, and reliable fast menu taps.
+Published Android/AppImage verification and delivery are recorded in [verification](docs/VERIFICATION.md).
+The separate **[Fold8 touch preview](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)**
+installs alongside production; phone ergonomics still need review.
 
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
@@ -271,7 +273,7 @@ One list of 64 sounds holds every kind (the **Type** row switches a slot between
 Nova, DMG and Konkr, and SDL playback/audition pass. See `docs/VERIFICATION.md` for measured results
 and limits; automated PCM/UI verification is separate from human listening.
 
-**0.41.0 candidate:** both variants now have **four effect columns per channel**, still only two
+**0.41.0:** both variants now have **four effect columns per channel**, still only two
 voices. Columns run left to right; the last setting wins for a shared target. Global F/B/D run at
 row start, and the last G controls delay (`G00` cancels an earlier G). The project/image schema is
 unchanged; older players reject third/fourth-column content rather than dropping it. WAV export
@@ -482,7 +484,7 @@ number of voices or on how many instrument envelopes can run:
 | 4 | NES/FamiStudio and all expansion variants, including EPSM; Atari 2600 TIA (NTSC/PAL); OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
 
 The 43 registered variants comprise **2 one-column, 3 two-column and 38 four-column systems**
-in the 0.41.0 candidate.
+in 0.41.0.
 
 On a multi-column system, open the Pattern panel with **L2+Right** (or tap **Scale**) and choose
 **Columns**. Left/Right changes the focused channel's visible count; L1/R1 selects a channel;

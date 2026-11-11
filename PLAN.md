@@ -13,12 +13,12 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**Current priority (0.41.0/code 55 candidate, 2026-11-10):** finish soft-launch workflow
-hardening and review the isolated phone touch prototype, not another backend. TIA NTSC/PAL
-four-column support and Android interruption fixes have candidate evidence in
-`docs/VERIFICATION.md`; official publication and new Deck/Brick verification are still pending.
-The phone calibration target is the **Galaxy Fold8**. DMG is a touch-functional testbed, not
-evidence that the phone layout or thumb reach is calibrated.
+**Current priority (0.41.0/code 55, 2026-11-11):** review the isolated phone touch prototype
+and continue focused soft-launch hardening, not another backend. TIA NTSC/PAL four-column
+support, interruption-safe input/capture and fast-menu-tap fixes are published; actual release
+artifact and reserved-device evidence is in `docs/VERIFICATION.md`. There is no new physical
+Deck/Brick runtime claim. **Galaxy Fold8** is the phone design target; DMG is the functional
+testbed, not proof of phone density, insets or thumb reach.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
 JVM, reserved-device frontend and published AppImage checks pass; the DMG picker retry and exact
@@ -191,12 +191,12 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
   playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
   persistence and frontend acceptance; zoom does not depend on future touchscreen support.
-- **Multiple effects per row — NES in 0.40.0, TIA in the 0.41.0 candidate:** the
+- **Multiple effects per row — NES in 0.40.0, TIA in 0.41.0:** the
   [manual matrix](README.md#multiple-effects-per-row) covers all 43 variants: **2 with one column,
   3 with two and 38 with four**. All 15 FamiStudio NES variants and both TIA regions accept four
   ordered columns. TIA's image/project schema is unchanged; old players reject added-column
   content. More columns do not add voices, independent pitch targets or shared hardware controls.
-  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0410-candidate)
+  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0410)
   records precedence, timing restrictions and the driver/export gate. Four is the normal ceiling
   where straightforward, not a mandate to retrofit fixed-format drivers or elaborate export packing.
   VIC/TED and VSU still need their packed-count contract changed. Game Boy/SID remain one-column
@@ -208,32 +208,34 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   [Feasibility and open decisions](docs/BACKENDS.md#swing-and-groove-research-proposal) cover
   quantization, odd-length phase, tempo-command precedence, seek/loops and driver-specific limits.
   No playback timing changes are authorized by this research.
-- **Touch-only phone use — isolated portrait preview, production unchanged:** the separate
-  package/branch explores the controller dock and drawer alongside the earlier landscape study.
-  Six real multi-touch tests pass on DMG as a functional testbed; **Galaxy Fold8** is the user's
-  calibration target, with calibration still in progress. Do not describe phone ergonomics as verified.
-  Next is joint prototype review and soft-launch hardening: simultaneous holds, modifier layers,
-  thumb reach, obscured rows, edge-back gestures, file picking, keyboard/insets and cancellation.
-  Reuse shared controller actions, document, recovery, audio and export paths; preserve physical
-  controllers and dual displays. [The proposal](docs/TOUCH_PROPOSAL.md) remains a review boundary,
-  not permission to merge the preview into production.
+- **Touch-only phone use — isolated preview, production unchanged:** the
+  [review APK and source](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)
+  use a separate package. **19 host tests and 13 real Android scenarios pass on DMG**, plus five
+  native cover/inner ratio renders. The **Galaxy Fold8** layout has a 144 dp three-row dock and
+  edge-bounded thumb groups; there is no orientation lock. Phone ergonomics are not verified.
+  Review simultaneous holds, modifier layers, thumb reach, dense menus, obscured rows, edge-back,
+  file picking, keyboard/insets and fold transitions. A phone-only Syncthing APK folder is offered;
+  receipt and installation are separate steps. Reuse the shared controller/editor/audio paths.
+  [The proposal](https://github.com/esko997/thortracker/blob/touch-preview-0.41.0-1/docs/TOUCH_PROPOSAL.md)
+  remains a review boundary, not permission to merge the preview into production.
 - **Hardening and ergonomics priority:** use bounded live editing/playback, navigation, selection,
   clipboard, Undo and save/reopen scenarios on Nova, DMG and Konkr. Investigate concrete failures
   before changing behavior; preserve private state and `/ThorTunez`, take exclusive device leases,
   and avoid emulators or simultaneous heavy builds. Assess shortcut discoverability and small
-  workflow improvements without reducing utility. The 0.41.0 candidate cancels held edit/listen
-  input and modifiers after window-focus loss or controller removal/change; focus-only cancellation
-  preserves transport, while Activity pause stops it. Nova's full-song and Konkr's TIA four-column
-  scenarios cover actual UI editing, playback, save/reopen and export; exact bounds and restoration
+  workflow improvements without reducing utility. 0.41.0 cancels held edit/listen input, modifiers
+  and binding capture after interruptions and avoids zero-distance menu scrolling that swallowed
+  fast taps. Focus-only cancellation preserves transport; Activity pause stops it.
+  Nova's full-song and Konkr/DMG's TIA scenarios cover UI editing, playback, save/reopen and export;
+  exact bounds and restoration
   evidence are in `docs/VERIFICATION.md`. Existing automatic-column and high-channel fixes remain.
   **Keep B = Clear and Select+B = Cut cell/block.** Clear has field-specific note/effect semantics;
   silently turning it into Cut would replace the shared clipboard, which document Undo does not
   restore. Improve discoverability first. A separate last-cleared recovery slot would be new scope,
   not an implicit change to the existing clipboard.
-  Recurring friction to revisit is deliberately short: discovering **Columns** and hidden effects,
-  distinguishing **Clear from Cut**, and avoiding stale held input after an interruption.
-  Help now explains Columns/hidden-FX markers and current shortcuts. Keep swing, mixer ceilings,
-  pattern-local mute and shader pipelines deferred rather than expanding this hardening pass.
+  Remaining review points are deliberately short: finding **Columns** and hidden effects without
+  memorizing chords, distinguishing field-specific **Clear from Cut**, and phone thumb reach,
+  dense menus and keyboard/insets. Help now explains Columns/hidden-FX markers and current
+  shortcuts. Keep swing, mixer ceilings, pattern-local mute and shader pipelines deferred.
 - **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
   backends. Separately explore bespoke friendly synth panels for existing chips: musical controls map to

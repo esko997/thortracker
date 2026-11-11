@@ -5682,11 +5682,11 @@ physical-button latency or human-listening measurements.
 
 ## Atari 2600: Thor Tracker's own player on the TIA (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`)
 
-**Status: 0.41.0/code 55 candidate; official publication pending.** Both regions now accept four
-effect columns. Current native checks pass (3,786 TIA / 2,796 WAV), with independent register,
-cadence and NTSC/PAL pitch comparisons and actual Konkr four-column editing/save/reopen/PAL WAV
-export. The original 0.32.0 launch also had Android and SDL coverage; that is not a new 0.41.0
-Deck/Brick verification claim. See `VERIFICATION.md` for candidate evidence and limitations.
+**Status: 0.41.0/code 55 published.** Both regions accept four effect columns. Native checks
+pass (3,786 TIA / 2,796 WAV), with independent register, cadence and NTSC/PAL pitch comparisons.
+The published APK passes four-column editing/save/reopen/PAL WAV workflows on Konkr and DMG;
+the published AppImage opens both four-column projects, plays and auditions with nonzero PCM.
+These are not physical Deck/Brick or speaker-listening claims. See `VERIFICATION.md` for evidence.
 The Atari 2600's sound is the TIA's two audio channels (Television Interface Adaptor, CO10444): per channel a 4-bit
 control register (AUDC: which of the counters' feedback and division modes), a 5-bit frequency divider (AUDF) and a
 4-bit volume (AUDV), clocked twice per scanline from the video timing, the two outputs tied together into one mono

@@ -1,8 +1,8 @@
-# Thor Tracker verification — 2026-11-10
+# Thor Tracker verification — 2026-11-11
 
-## 0.41.0 candidate — TIA four columns and workflow hardening
+## 0.41.0 — TIA four columns and workflow hardening
 
-**Version 0.41.0/code 55 is a candidate, not an official release.** TIA NTSC and PAL now
+**Version 0.41.0/code 55 is published.** TIA NTSC and PAL now
 accept four ordered effect columns per channel. The registry's 43 systems comprise **2
 one-column, 3 two-column and 38 four-column variants**. Project/backend/image schemas are
 unchanged; old two-column TIA players reject third/fourth-column content rather than silently
@@ -79,11 +79,55 @@ binding capture, interruption, provider and Save As picker workflows. These are 
 captures or physical ergonomics verification. Next is joint prototype review and soft-launch
 hardening, not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain deferred.
 
-There is **no new 0.41.0 physical Deck/Brick proof or official release/delivery yet**.
-CI/publication and delivery evidence will be recorded separately after they occur.
-Production's version-code check excludes prereleases: an APK for the separate preview
-package is not a production update baseline. The stable-only GitHub release lookup was
-exercised against the repository and returned `v0.40.0`.
+The [isolated preview APK, source and review notes](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)
+are published under immutable tag `touch-preview-0.41.0-1` (`1a5e049`). The downloaded APK
+matches SHA-256 `ba4c43de14325642a26404217caba70acbf93aab2a599f43c2100f671fe13e99`,
+uses the production signing certificate, and installs as `org.thortracker.touchpreview`,
+version `0.41.0-touch-preview.1`/code 55, arm64 only. DMG has a clean review installation.
+The phone-only `ThorTracker-Preview` Syncthing outbox contains the same APK and checksum;
+phone receipt/installation is not claimed. Its app-scoped document root is deleted on uninstall.
+Production version checks exclude this separate-package prerelease.
+
+### Official publication and delivery
+
+PR #55 merged as main `089ac739266c60c33b4d3f4fcac554c10cc69c35`.
+All five jobs in [publication run 42926200711](https://github.com/esko997/thortracker/actions/runs/42926200711)
+pass: build, Deck, Brick, signed release and native attachment. The
+[official 0.41.0 release](https://github.com/esko997/thortracker/releases/tag/v0.41.0)
+contains verified checksum sidecars:
+
+- APK: `c2bbcf07bb78237e7b4c4af601da31d6ef68b9507c034fd3877ac14569834aa2`
+- AppImage: `a0f41cbe2d9f4bd4991722e2e908055a541406b1a7bff0e4a360e8fa1285a161`
+- Brick Pak: `5386021e67ee007d069ced0608aab691c8af95317cdd9d614737dd0cd2c821bf`
+
+The APK is `org.thortracker`, version 0.41.0/code 55, non-debuggable, with arm64-v8a/x86_64
+libraries and production certificate
+`d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`.
+The 24-entry Pak passes CRC checks and retains executable launcher/AArch64 payload permissions.
+
+The **published APK** repeats full-song composition/save/reopen/UGE/WAV on Nova and both TIA
+regions' four-column/live-edit/save/reopen/PAL WAV workflows on Konkr and DMG. Their exported
+WAVs are byte-identical to the earlier independently rendered fixtures. Original eight-entry
+private state is cold-restored, UUID-owned documents and test packages removed, and settings
+restored. Final read-only checks show 0.41.0/code 55 on all three, 60,000 ms timeouts, Nova/Konkr
+Asleep and DMG Dozing. The separate DMG preview remains installed. Nova's first reservation
+deferred to a brief PS2-card sync lease; no app test ran until that owner released it.
+
+The **published AppImage** runs both actual Android-saved four-column projects in isolated
+1024×768 offscreen/dummy-audio sessions: Play → Instrument → held X → Pattern. NTSC/PAL
+playback reaches rows 43/35, each accepts one audition, with audition peaks 0.1652832/0.16616821
+and playback peaks 0.14242554/0.14297485. Screenshots show all four effects in the inspector.
+This is actual-binary PCM/UI evidence, not physical speaker listening.
+
+The Deck received the checksum-verified AppImage without launch or Gaming Mode input.
+`~/thortracker-deck/thor-tracker` now points to `thor-tracker-0.41.0-x86_64.AppImage`; the old
+0.40.0 file remains. **Thor and Brick were not accessed.** No new physical Deck/Brick runtime
+proof is claimed. GitHub Pages deployment `42926200785` passes; the deployed Systems page's
+four-column matrix/TIA text was inspected in Chromium.
+
+Published evidence is under `workflow-touch-041/official-release/`, `official-device/`,
+`official-desktop/`, `official-device-final-state.json` and `deck-delivery.json` beneath the
+recovery root above. Disposable verification sources are removed; logs, APKs and captures remain.
 
 
 ## 0.40.0 — NES multi-effect support and editing hardening
