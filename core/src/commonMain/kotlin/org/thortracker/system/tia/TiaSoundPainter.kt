@@ -9,6 +9,13 @@ import org.thortracker.ui.Surface
 
 /** Right-hand musical console. The owning precise painter draws and hit-tests the one shared bank. */
 internal class TiaSoundPainter(v: PaneView) : Painter(v) {
+    private companion object {
+        val CONSOLE = 0xff242220.toInt()
+        val CHEEK = 0xff78503a.toInt()
+        val TEXT = 0xffece3cf.toInt()
+        val MUTED = 0xffbdac92.toInt()
+        val ACCENT = 0xffe4b056.toInt()
+    }
     private val modes = Array(2) { Rect() }
     private val controls = Array(4) { Rect() }
     private val rails = Array(4) { Rect() }
@@ -83,22 +90,24 @@ internal class TiaSoundPainter(v: PaneView) : Painter(v) {
     override fun draw(c: Surface, area: Rect) {
         val ins = instrument()
         cache(ins)
-        val p = ink.palette
         val touch = ink.dp(48f)
         val pad = ink.dp(8f)
-        val wide = area.width() >= ink.dp(440f) && area.height() >= ink.dp(300f)
+        val wide = area.width() >= maxOf(ink.dp(280f), ink.unit * 18) &&
+            area.height() >= touch + ink.dp(56f) + 2 * maxOf(ink.dp(86f), ink.unit * 5.5f)
         for (r in controls) r.set(0f, 0f, 0f, 0f)
-        ink.rect(c, area, p.LANE)
+        ink.rect(c, area, CONSOLE)
+        c.fillRect(area.left, area.top, area.left + ink.dp(3f), area.bottom, CHEEK)
+        c.fillRect(area.right - ink.dp(3f), area.top, area.right, area.bottom, CHEEK)
         previousSlot.set(area.right - touch * 2, area.top, area.right - touch, area.top + touch)
         nextSlot.set(area.right - touch, area.top, area.right, area.top + touch)
         name.set(area.left, area.top, previousSlot.left, area.top + touch)
-        ink.label(c, ink.fit(title, name.width() - pad * 2), name.left + pad, name.top, touch, p.TEXT, true)
+        ink.label(c, ink.fit(title, name.width() - pad * 2), name.left + pad, name.top, touch, TEXT, true)
         if (st.instField == 1) {
-            ink.outline(c, name, p.FOCUS, ink.dp(2f))
-            ink.label(c, "Letter ${st.textPos + 1}", name.left + pad, name.bottom - ink.dp(14f), ink.dp(14f), p.FOCUS, size = ink.unit * 0.65f)
+            ink.outline(c, name, ACCENT, ink.dp(2f))
+            ink.label(c, "Letter ${st.textPos + 1}", name.left + pad, name.bottom - ink.dp(14f), ink.dp(14f), ACCENT, size = ink.unit * 0.65f)
         }
-        ink.label(c, "Slot −", previousSlot.left + pad, previousSlot.top, touch, p.DIM, size = ink.unit * 0.75f)
-        ink.label(c, "Slot +", nextSlot.left + pad, nextSlot.top, touch, p.DIM, size = ink.unit * 0.75f)
+        ink.label(c, "Slot −", previousSlot.left + pad, previousSlot.top, touch, MUTED, size = ink.unit * 0.75f)
+        ink.label(c, "Slot +", nextSlot.left + pad, nextSlot.top, touch, MUTED, size = ink.unit * 0.75f)
         val focus = (st.instField - 2).coerceIn(0, 3)
         val footer = if (wide) ink.dp(32f) else touch
         val signalH = if (area.height() >= touch * 3.5f) ink.dp(24f) else 0f
@@ -114,48 +123,47 @@ internal class TiaSoundPainter(v: PaneView) : Painter(v) {
                 drawControl(c, n)
             }
             previous.set(0f, 0f, 0f, 0f); next.set(0f, 0f, 0f, 0f)
-            ink.label(c, ink.fit(hints[focus], area.width() - pad * 2, ink.unit * 0.75f), area.left + pad, bottom, footer, p.DIM, size = ink.unit * 0.75f)
+            ink.label(c, ink.fit(hints[focus], area.width() - pad * 2, ink.unit * 0.75f), area.left + pad, bottom, footer, MUTED, size = ink.unit * 0.75f)
         } else {
             controls[focus].set(area.left + pad, top, area.right - pad, bottom)
             drawControl(c, focus)
             previous.set(area.left, bottom, area.left + touch, area.bottom)
             next.set(area.right - touch, bottom, area.right, area.bottom)
-            ink.label(c, "‹", previous.left + pad, bottom, footer, p.TEXT, true)
-            ink.label(c, "›", next.left + pad, bottom, footer, p.TEXT, true)
-            ink.label(c, ink.fit(hints[focus], area.width() - touch * 2 - pad * 2, ink.unit * 0.7f), previous.right + pad, bottom, footer, p.DIM, size = ink.unit * 0.7f)
+            ink.label(c, "‹", previous.left + pad, bottom, footer, TEXT, true)
+            ink.label(c, "›", next.left + pad, bottom, footer, TEXT, true)
+            ink.label(c, ink.fit(hints[focus], area.width() - touch * 2 - pad * 2, ink.unit * 0.7f), previous.right + pad, bottom, footer, MUTED, size = ink.unit * 0.7f)
         }
     }
     private fun feedback(c: Surface, area: Rect) {
         val left = area.left + ink.dp(84f)
-        ink.label(c, dividerText, area.left, area.top, area.height(), ink.palette.DIM, size = ink.unit * 0.65f)
+        ink.label(c, dividerText, area.left, area.top, area.height(), MUTED, size = ink.unit * 0.65f)
         val w = (area.right - left) / 32f
         for (k in 0..31) c.fillRect(left + k * w, area.bottom - ink.dp(if (k == divider) 14f else 5f),
-            left + (k + 1) * w - ink.dp(0.5f), area.bottom, if (k == divider) ink.palette.PLAYHEAD else ink.palette.RULE)
+            left + (k + 1) * w - ink.dp(0.5f), area.bottom, if (k == divider) ACCENT else CHEEK)
     }
     private fun drawControl(c: Surface, n: Int) {
         val r = controls[n]
         if (r.height() <= 0f) return
-        val p = ink.palette
         val pad = ink.dp(10f)
         val focused = st.instField == n + 2
-        val accent = if (enabled[n]) p.channel(n % 2) else p.FAINT
+        val accent = if (enabled[n]) ACCENT else MUTED
 
         // A paddle arc is the cartridge console's focal shape, not a bank of register boxes.
-        val radius = minOf(ink.dp(23f), r.height() * 0.28f)
+        val radius = minOf(ink.dp(46f), r.height() * 0.28f)
         val cx = r.left + radius + pad
         val cy = r.centerY()
         c.strokeCircle(cx, cy, radius, accent, ink.dp(3f))
         c.line(cx, cy, cx + needleX[n] * radius, cy + needleY[n] * radius,
-            if (indices[n] < 0) p.FAINT else p.TEXT, ink.dp(3f))
+            if (indices[n] < 0) MUTED else TEXT, ink.dp(3f))
         val tx = cx + radius + pad
-        ink.label(c, labels[n], tx, r.top, ink.dp(24f), p.DIM, size = ink.unit * 0.75f)
-        ink.label(c, ink.fit(values[n], r.right - tx - pad, ink.unit * 0.85f), tx, r.top + ink.dp(24f), ink.dp(24f), if (enabled[n]) p.TEXT else p.FAINT, true, ink.unit * 0.85f)
+        ink.label(c, labels[n], tx, r.top, ink.dp(24f), MUTED, size = ink.unit * 0.75f)
+        ink.label(c, ink.fit(values[n], r.right - tx - pad, ink.unit * 0.85f), tx, r.top + ink.dp(24f), ink.dp(24f), if (enabled[n]) TEXT else MUTED, true, ink.unit * 0.85f)
         rails[n].set(r.left + pad, r.bottom - ink.dp(12f), r.right - pad, r.bottom - ink.dp(12f))
 
         if (enabled[n] && maxima[n] > 0 && indices[n] >= 0) PanelWidgets.rail(ink, c, rails[n].left, rails[n].right, rails[n].top,
-            indices[n].toFloat() / maxima[n], maxima[n], accent, focused, ctl.editHeld || drag.target != null)
-        else c.line(rails[n].left, rails[n].top, rails[n].right, rails[n].top, p.RULE, ink.dp(2f))
-        if (focused) ink.outline(c, r, if (ctl.editHeld) p.WRITE else p.FOCUS, ink.dp(2f))
+            indices[n].toFloat() / maxima[n], maxima[n], accent, false, false)
+        else c.line(rails[n].left, rails[n].top, rails[n].right, rails[n].top, CHEEK, ink.dp(2f))
+        if (focused) ink.outline(c, r, ACCENT, ink.dp(if (ctl.editHeld) 3f else 2f))
     }
     internal fun modeRect(advanced: Boolean) = modes[if (advanced) 1 else 0]
     internal fun controlRect(n: Int) = controls[n]

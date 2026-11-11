@@ -9,6 +9,14 @@ import org.thortracker.ui.Surface
 
 /** Right-hand musical console. The owning precise painter draws and hit-tests the one shared bank. */
 internal class PokeySoundPainter(v: PaneView) : Painter(v) {
+    private companion object {
+        val CASE = 0xffc8baa1.toInt()
+        val KEY = 0xffe2dac8.toInt()
+        val INK = 0xff2d2722.toInt()
+        val MUTED = 0xff5d4b3f.toInt()
+        val ACCENT = 0xffb45d20.toInt()
+        val FADER = 0xfff4ba66.toInt()
+    }
     private val modes = Array(2) { Rect() }
     private val controls = Array(6) { Rect() }
     private val rails = Array(6) { Rect() }
@@ -61,7 +69,7 @@ internal class PokeySoundPainter(v: PaneView) : Painter(v) {
         val taken = ins.kind.taken(lane)
         for (ch in 0..3) {
             channelTaken[ch] = ch in taken
-            channelLabels[ch] = if (ch == lane) "${ch + 1} plays" else if (channelTaken[ch]) "${ch + 1} taken" else "${ch + 1} free"
+            channelLabels[ch] = if (ch == lane) "${ch + 1} voice" else if (channelTaken[ch]) "${ch + 1} paired" else "${ch + 1} free"
         }
         cached = ins; cachedSong = song; cachedSlot = st.instrument; cachedLane = st.listenChannel
     }
@@ -81,22 +89,24 @@ internal class PokeySoundPainter(v: PaneView) : Painter(v) {
     override fun draw(c: Surface, area: Rect) {
         val ins = instrument()
         cache(ins)
-        val p = ink.palette
         val touch = ink.dp(48f)
         val pad = ink.dp(8f)
-        val wide = area.width() >= ink.dp(440f) && area.height() >= ink.dp(300f)
+        val columns = if (area.width() >= maxOf(ink.dp(336f), ink.unit * 24)) 3 else 2
+        val rows = controls.size / columns
+        val wide = area.width() >= maxOf(ink.dp(224f), ink.unit * 16) &&
+            area.height() >= touch + ink.dp(56f) + rows * maxOf(ink.dp(80f), ink.unit * 5)
         for (r in controls) r.set(0f, 0f, 0f, 0f)
-        ink.rect(c, area, p.LANE)
+        ink.rect(c, area, CASE)
         previousSlot.set(area.right - touch * 2, area.top, area.right - touch, area.top + touch)
         nextSlot.set(area.right - touch, area.top, area.right, area.top + touch)
         name.set(area.left, area.top, previousSlot.left, area.top + touch)
-        ink.label(c, ink.fit(title, name.width() - pad * 2), name.left + pad, name.top, touch, p.TEXT, true)
+        ink.label(c, ink.fit(title, name.width() - pad * 2), name.left + pad, name.top, touch, INK, true)
         if (st.instField == 1) {
-            ink.outline(c, name, p.FOCUS, ink.dp(2f))
-            ink.label(c, "Letter ${st.textPos + 1}", name.left + pad, name.bottom - ink.dp(14f), ink.dp(14f), p.FOCUS, size = ink.unit * 0.65f)
+            ink.outline(c, name, INK, ink.dp(2f))
+            ink.label(c, "Letter ${st.textPos + 1}", name.left + pad, name.bottom - ink.dp(14f), ink.dp(14f), INK, size = ink.unit * 0.65f)
         }
-        ink.label(c, "Slot −", previousSlot.left + pad, previousSlot.top, touch, p.DIM, size = ink.unit * 0.75f)
-        ink.label(c, "Slot +", nextSlot.left + pad, nextSlot.top, touch, p.DIM, size = ink.unit * 0.75f)
+        ink.label(c, "Slot −", previousSlot.left + pad, previousSlot.top, touch, MUTED, size = ink.unit * 0.75f)
+        ink.label(c, "Slot +", nextSlot.left + pad, nextSlot.top, touch, MUTED, size = ink.unit * 0.75f)
         val focus = (st.instField - 2).coerceIn(0, 5)
         val footer = if (wide) ink.dp(32f) else touch
         val signalH = if (area.height() >= touch * 3.5f) ink.dp(24f) else 0f
@@ -105,50 +115,51 @@ internal class PokeySoundPainter(v: PaneView) : Painter(v) {
         val top = name.bottom + signalH
         val bottom = area.bottom - footer
         if (wide) {
-            val w = area.width() / 2f
-            val h = (bottom - top) / 3f
-            for (n in 0 until 6) {
-                controls[n].set(area.left + n % 2 * w + pad, top + n / 2 * h, area.left + (n % 2 + 1) * w - pad, top + (n / 2 + 1) * h - pad)
+            val w = area.width() / columns
+            val h = (bottom - top) / rows
+            for (n in controls.indices) {
+                controls[n].set(area.left + n % columns * w + pad, top + n / columns * h, area.left + (n % columns + 1) * w - pad, top + (n / columns + 1) * h - pad)
                 drawControl(c, n)
             }
             previous.set(0f, 0f, 0f, 0f); next.set(0f, 0f, 0f, 0f)
-            ink.label(c, ink.fit(hints[focus], area.width() - pad * 2, ink.unit * 0.75f), area.left + pad, bottom, footer, p.DIM, size = ink.unit * 0.75f)
+            ink.label(c, ink.fit(hints[focus], area.width() - pad * 2, ink.unit * 0.75f), area.left + pad, bottom, footer, MUTED, size = ink.unit * 0.75f)
         } else {
             controls[focus].set(area.left + pad, top, area.right - pad, bottom)
             drawControl(c, focus)
             previous.set(area.left, bottom, area.left + touch, area.bottom)
             next.set(area.right - touch, bottom, area.right, area.bottom)
-            ink.label(c, "‹", previous.left + pad, bottom, footer, p.TEXT, true)
-            ink.label(c, "›", next.left + pad, bottom, footer, p.TEXT, true)
-            ink.label(c, ink.fit(hints[focus], area.width() - touch * 2 - pad * 2, ink.unit * 0.7f), previous.right + pad, bottom, footer, p.DIM, size = ink.unit * 0.7f)
+            ink.label(c, "‹", previous.left + pad, bottom, footer, INK, true)
+            ink.label(c, "›", next.left + pad, bottom, footer, INK, true)
+            ink.label(c, ink.fit(hints[focus], area.width() - touch * 2 - pad * 2, ink.unit * 0.7f), previous.right + pad, bottom, footer, MUTED, size = ink.unit * 0.7f)
         }
     }
     private fun feedback(c: Surface, area: Rect) {
         val w = area.width() / 4f
         for (ch in 0..3) {
             val x = area.left + ch * w
-            c.fillRect(x + ink.dp(3f), area.top + ink.dp(4f), x + ink.dp(11f), area.top + ink.dp(12f), if (channelTaken[ch]) ink.palette.PLAYHEAD else ink.palette.RULE)
-            ink.label(c, channelLabels[ch], x + ink.dp(16f), area.top, area.height(), ink.palette.DIM, size = ink.unit * 0.65f)
+            c.fillRect(x + ink.dp(3f), area.top + ink.dp(4f), x + ink.dp(11f), area.top + ink.dp(12f), if (channelTaken[ch]) ACCENT else MUTED)
+            ink.label(c, channelLabels[ch], x + ink.dp(16f), area.top, area.height(), INK, size = ink.unit * 0.65f)
         }
     }
     private fun drawControl(c: Surface, n: Int) {
         val r = controls[n]
         if (r.height() <= 0f) return
-        val p = ink.palette
         val pad = ink.dp(10f)
         val focused = st.instField == n + 2
-        val accent = if (enabled[n]) p.channel(n % 4) else p.FAINT
+        val accent = if (enabled[n]) ACCENT else MUTED
 
         // Computer function-key strips: a broad value window over a tactile stepped travel rail.
+        ink.rect(c, r, KEY)
         ink.rect(c, r.left, r.top, r.left + ink.dp(4f), r.bottom, accent)
-        ink.label(c, labels[n], r.left + pad, r.top, ink.dp(23f), p.DIM, size = ink.unit * 0.8f)
-        ink.label(c, ink.fit(values[n], r.width() - pad * 2, ink.unit), r.left + pad, r.top + ink.dp(22f), ink.dp(23f), if (enabled[n]) p.TEXT else p.FAINT, true)
+        ink.label(c, labels[n], r.left + pad, r.top, ink.dp(23f), MUTED, size = ink.unit * 0.8f)
+        ink.label(c, ink.fit(values[n], r.width() - pad * 2, ink.unit), r.left + pad, r.top + ink.dp(22f), ink.dp(23f), if (enabled[n]) INK else MUTED, true)
         rails[n].set(r.left + pad, r.bottom - ink.dp(16f), r.right - pad, r.bottom - ink.dp(16f))
+        c.fillRect(rails[n].left - ink.dp(3f), rails[n].top - ink.dp(7f), rails[n].right + ink.dp(3f), rails[n].top + ink.dp(7f), INK)
 
         if (enabled[n] && maxima[n] > 0 && indices[n] >= 0) PanelWidgets.rail(ink, c, rails[n].left, rails[n].right, rails[n].top,
-            indices[n].toFloat() / maxima[n], maxima[n], accent, focused, ctl.editHeld || drag.target != null)
-        else c.line(rails[n].left, rails[n].top, rails[n].right, rails[n].top, p.RULE, ink.dp(2f))
-        if (focused) ink.outline(c, r, if (ctl.editHeld) p.WRITE else p.FOCUS, ink.dp(2f))
+            indices[n].toFloat() / maxima[n], maxima[n], FADER, false, false)
+        else c.line(rails[n].left, rails[n].top, rails[n].right, rails[n].top, KEY, ink.dp(2f))
+        if (focused) ink.outline(c, r, INK, ink.dp(if (ctl.editHeld) 3f else 2f))
     }
     internal fun modeRect(advanced: Boolean) = modes[if (advanced) 1 else 0]
     internal fun controlRect(n: Int) = controls[n]

@@ -231,6 +231,23 @@ class PokeySoundFaceTest {
         s.undo(); assertSame(old, s.song)
     }
 
+    @Test fun handheldLandscapeExposesAllSixTouchControlsWithoutChangingThePatch() {
+        for ((width, height) in listOf(640 to 384, 552 to 408)) {
+            val s = session()
+            val original = s.song
+            val p = Panel(s, width, height)
+            p.draw()
+            val rects = (0..5).map(p.face::controlRect)
+            for ((i, r) in rects.withIndex()) {
+                assertTrue("$width/$height control $i", r.width() >= 48f && r.height() >= 48f)
+                assertTrue(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height)
+                for (other in rects.take(i))
+                    assertTrue(r.right <= other.left || r.left >= other.right || r.bottom <= other.top || r.top >= other.bottom)
+            }
+            assertSame(original, s.song)
+        }
+    }
+
     @Test fun compactFacePagesEveryControlAndSlotsAtTouchSize() {
         val s = session(); val old = s.song
         val p = Panel(s, 360, 270)
