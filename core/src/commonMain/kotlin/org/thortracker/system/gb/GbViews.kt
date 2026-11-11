@@ -88,7 +88,10 @@ object GbSoundView : SystemView() {
     override fun direction(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
         when {
-            st.instField == -1 && dx != 0 -> setAdvanced(v, dx > 0, keepModeFocus = true)
+            st.instField == -1 && dx != 0 -> {
+                if (v.editHeld) v.useEdit()
+                setAdvanced(v, dx > 0, keepModeFocus = true)
+            }
             v.editHeld -> { v.useEdit(); if (!st.gbModeEditBlocked) adjust(v, dx, dy) }
             dy != 0 -> navigateSetting(st, -dy)
             st.instField == 1 -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)

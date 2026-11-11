@@ -49,6 +49,10 @@ class GbPulseSoundViewTest {
         assertTrue(v.state.gbAdvanced)
         v.tap(Action.EDIT)
         assertFalse(v.state.gbAdvanced)
+        v.press(Action.EDIT)
+        v.tap(Action.LEFT) // Selecting the already-active Sound tab consumes the hold, not a release toggle.
+        v.release(Action.EDIT)
+        assertFalse(v.state.gbAdvanced)
         assertSame(before, session.song)
         assertArrayEquals(bytes, export.export(session.song))
         assertFalse(session.canUndo)
