@@ -581,7 +581,7 @@ class ViewControllerTest {
     @Test
     fun explicitNavigationMovesTheLock() {
         val v = view(ViewKind.INSTRUMENT) { lockedSubject = 16 + 2; bank = 1; instrument = 2 }
-        v.tap(Action.RIGHT)
+        v.tap(Action.DOWN)
         assertEquals(16 + 3, v.state.lockedSubject)
     }
 

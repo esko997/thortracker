@@ -64,7 +64,7 @@ class PatternHeaderPainterTest {
         session.setCell(0, 0, 0, Cell(48, 2))
         session.setCell(0, 0, 1, Cell(50, 1))
         for (row in 2..8) session.setCell(0, 0, row, Cell(52, 2))
-        session.setCell(0, 1, 0, Cell(instrument = 3))
+        session.setCell(0, 1, 0, Cell(48, 3))
         session.setCell(0, 2, 0, Cell(48))
         session.setCell(0, 2, 1, Cell(Cell.CUT))
         session.setPatternLength(0, 2)

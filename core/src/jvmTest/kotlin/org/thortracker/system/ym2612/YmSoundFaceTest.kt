@@ -214,6 +214,7 @@ class YmSoundFaceTest {
 
     @Test fun nameEditsLettersWithHeldHorizontalAndMovesCaretWithHeldVerticalWithinTheLimit() {
         val session = session()
+        session.setYmInstrument(2, null, "Empty fixture")
         val v = view(session, 1)
         val before = session.song
         val max = YmInstrumentView.NAME_MAX
@@ -254,6 +255,7 @@ class YmSoundFaceTest {
 
     @Test fun freshSoundEditsTheFirstControlAndSlotFocusNeverStrandsSound() {
         val session = session()
+        session.setYmInstrument(3, null, "Empty fixture")
         val v = view(session, 0)
         val before = session.song
         // A fresh view's Slot field: Edit+direction shapes the first musical control at once.
