@@ -24,7 +24,8 @@ class YmEditorTest {
         session.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
     }
 
-    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) = ViewController(session, ViewState(kind = kind).apply(setup))
+    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) =
+        ViewController(session, ViewState(kind = kind).apply { ymPanel.advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 
