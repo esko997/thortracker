@@ -37,6 +37,20 @@ Evidence: `~/.local/state/thortracker/recovery-20261109/instrument-pilots-043/fe
 GB's 15 slots; it was corrected to use each bank's declared size, with cold restoration verified
 on the failed run as well. Source and builds remained serialized and memory-capped.
 
+Cross-platform CI [43029591293](https://github.com/esko997/thortracker/actions/runs/43029591293)
+passes build, Deck and Brick jobs at `ad3e9aa7016de23367edac27602293785e59e765`. Its actual AppImage,
+SHA-256 `fe19f48d54e722762d18e6bde5f9828ef44fd77d644514c5eb4f5ca3cbc8c292`, passes three isolated
+offscreen/dummy-audio runtime probes using `seconds=6 size=1280x800@1.5` and
+`script=105+97,20,19,22,21,96+22,99~500,108` (GB; SID/FM use `96+21`).
+All show Instrument, nonzero audition PCM, advancing playback and inspected screenshots.
+Saved projects change only GB duty 0→1, SID's owned wave program/table placement, or YM's two
+modulator TL values 27→28. This is not physical Deck operation or acoustic-listening proof.
+The first GB probe hit the lower duty bound; the verification direction was corrected, not
+the control's clamping behavior. Native evidence is in `feedback-desktop/`.
+The APK contains production sources through `f463826`; later commits add test-fixture corrections,
+documentation and the gallery. Thor received the hash-verified APK as an artifact only.
+The phone outbox was updated, but Syncthing reports `notSharing`; phone receipt is not confirmed.
+
 ## 0.43.0 — three musical instrument review pilots
 
 Separate review branch; **not a broader chip-panel rollout**. Approved touch/GB functionality
