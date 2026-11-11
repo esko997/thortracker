@@ -204,7 +204,20 @@ internal class SmsSoundPainter(v: PaneView) : Painter(v) {
         val slot = advanced.slotAt(x, y)
         if (slot > 0) { SmsSoundFace.moveSlot(ctl, slot - st.instrument); SmsInstrumentView.publish(ctl); return true }
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) { SmsSoundFace.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1); return true }
-        if (name.contains(x, y)) { st.instField = 1; return true }
+        if (name.contains(x, y)) {
+            st.instField = 1
+            val chosen = st.instrument
+            val expected = actual()
+            val original = shown()
+            val panel = st.soundPanel("sms")
+            panel.invalidate()
+            val revision = panel.revision
+            session.requestText("Sound name", original.name, SmsInstrumentView.NAME_MAX) { text ->
+                if (st.instrument == chosen && panel.revision == revision && actual() === expected)
+                    session.setSmsInstrument(chosen, original.named(text), "Rename sound")
+            }
+            return true
+        }
         val list = SmsSoundFace.controls(song, st)
         if (previous.contains(x, y) || next.contains(x, y)) {
             st.instField = 2 + ((st.instField - 2).coerceIn(0, list.lastIndex) + if (next.contains(x, y)) 1 else list.lastIndex).mod(list.size)

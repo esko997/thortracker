@@ -175,6 +175,7 @@ class PokeySoundFaceTest {
         val old = s.song
         val entries = ArrayList<String>()
         s.onMenuRequest = { build -> build(object : MenuContext {
+            override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
             private val captured = entries
             override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { entries.mapTo(captured) { it.first } }
             override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit

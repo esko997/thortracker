@@ -191,7 +191,20 @@ internal class AySoundPainter(v: PaneView) : Painter(v) {
         val slot = advanced.slotAt(x, y)
         if (slot > 0) { AySoundFace.moveSlot(ctl, slot - st.instrument); AyInstrumentView.publish(ctl); return true }
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) { AySoundFace.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1); return true }
-        if (name.contains(x, y)) { st.instField = 1; return true }
+        if (name.contains(x, y)) {
+            st.instField = 1
+            val chosen = st.instrument
+            val expected = actual()
+            val original = shown()
+            val panel = st.soundPanel("ay")
+            panel.invalidate()
+            val revision = panel.revision
+            session.requestText("Sound name", original.name, AyInstrumentView.NAME_MAX) { text ->
+                if (st.instrument == chosen && panel.revision == revision && actual() === expected)
+                    session.setAyInstrument(chosen, original.copy(name = text), "Rename sound")
+            }
+            return true
+        }
         if (previous.contains(x, y) || next.contains(x, y)) {
             st.instField = 2 + ((st.instField - 2).coerceIn(0, 4) + if (next.contains(x, y)) 1 else 4).mod(5)
             return true

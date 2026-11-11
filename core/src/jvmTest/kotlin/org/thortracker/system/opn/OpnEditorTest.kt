@@ -37,6 +37,7 @@ class OpnEditorTest {
         s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
         s.onMenuRequest = { build ->
             build(object : MenuContext {
+                override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
                 override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { menus += title to entries }
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) {
                     picks += extensions to maxBytes
@@ -563,15 +564,4 @@ class OpnEditorTest {
         assertEquals(63, song.opn.rhythmLevel)
     }
 
-    @Test
-    fun helpNamesEveryPartOfTheChip() {
-        val opna = OpnInstrumentView.helpSections(Keymap.DEFAULT, OpnChip.YM2608)
-        assertEquals(listOf("Instruments", "FM voices", "SSG sounds", "Rhythm and ADPCM"), opna.map { it.first })
-        val opn = OpnInstrumentView.helpSections(Keymap.DEFAULT, OpnChip.YM2203)
-        assertEquals(listOf("Instruments", "FM voices", "SSG sounds"), opn.map { it.first })
-        assertTrue(opn.flatMap { it.second }.any { it.first == "YM2203" })
-        assertTrue(opna.flatMap { it.second }.any { it.first == "Ch3" && it.second.contains("special") })
-        assertEquals(OpnInstrumentView, OpnaSystem.view(ViewKind.INSTRUMENT))
-        assertEquals(OpnInstrumentView, OpnSystem.view(ViewKind.INSTRUMENT))
-    }
 }

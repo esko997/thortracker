@@ -314,7 +314,19 @@ internal class NesSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) {
             NesSoundFace.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1); return true
         }
-        if (nameBox.contains(x, y)) { st.instField = 1; return true }
+        if (nameBox.contains(x, y)) {
+            st.instField = 1
+            val chosen = st.instrument
+            val original = NesInstrumentView.sound(song, st) ?: return true
+            val panel = NesSoundFace.panel(st)
+            panel.invalidate()
+            val revision = panel.revision
+            session.requestText("Sound name", original.name, org.thortracker.editor.EditorSession.MAX_NAME) { text ->
+                if (st.instrument == chosen && panel.revision == revision && NesInstrumentView.sound(song, st) === original)
+                    session.setNesInstrument(chosen, original.copy(name = text), "Rename sound")
+            }
+            return true
+        }
         if (previousControl.contains(x, y) || nextControl.contains(x, y)) {
             val d = if (nextControl.contains(x, y)) 1 else -1
             st.instField = 2 + ((st.instField - 2).coerceAtLeast(0) + d).mod(specifications.size)

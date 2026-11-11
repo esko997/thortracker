@@ -69,6 +69,7 @@ class PceEditorTest {
     private fun installMenus() {
         session.onMenuRequest = { build ->
             build(object : MenuContext {
+                override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
                 override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { menus += entries }
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) {
                     val file = this@PceEditorTest.picked ?: return

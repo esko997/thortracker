@@ -153,7 +153,8 @@ internal object NesSoundFace {
             Action.COPY -> s.copyNesInstrument(st.instrument)
             Action.PASTE -> {
                 panel(st).invalidate()
-                s.pasteNesInstrument(st.instrument)
+                if (s.clipboard is NesClip.Sound) s.pasteNes(st.instrument, NesEnvelopeKind.VOLUME)
+                else s.note("Copy a whole sound first; envelope and wave pastes belong in Advanced")
                 settle(s.song, st)
                 if (v.editHeld) { v.useEdit(); panel(st).editBlocked = true }
             }

@@ -472,6 +472,7 @@ class NesInstrumentViewTest {
         val menus = ArrayList<List<Pair<String, () -> Unit>>>()
         session.onMenuRequest = { build ->
             build(object : org.thortracker.editor.MenuContext {
+                override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
                 override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { menus += entries }
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
                 override fun status(message: String) = Unit
@@ -1411,6 +1412,7 @@ class NesInstrumentViewTest {
         val picks = ArrayList<Pair<List<String>, Int>>()
         epsm.onMenuRequest = { build ->
             build(object : org.thortracker.editor.MenuContext {
+                override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
                 override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = Unit
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) {
                     picks += extensions to maxBytes
@@ -1457,6 +1459,7 @@ class NesInstrumentViewTest {
         val errors = ArrayList<String>()
         val statuses = ArrayList<String>()
         val menu = object : org.thortracker.editor.MenuContext {
+            override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
             override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = Unit
             override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
             override fun status(message: String) { statuses += message }

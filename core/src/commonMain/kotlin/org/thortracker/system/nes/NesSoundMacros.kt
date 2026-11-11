@@ -30,7 +30,7 @@ internal enum class NesVoice(val title: String) {
 }
 
 internal enum class NesSoundControl(val label: String, val maximum: Int, val hint: String) {
-    VOICE("Listen on", 0, "Choose a channel; changing chips is an explicit type edit"),
+    VOICE("Voice", 0, "Choose a channel; crossing chips converts this instrument's native type"),
     CHARACTER("Width", 3, "Static pulse width; choosing replaces a Custom duty sequence"),
     VRC6_WIDTH("Width", 7, "Eight pulse widths, from thin to square"),
     GRAIN("Grain", 1, "Air uses long noise; Metal repeats the short sequence"),

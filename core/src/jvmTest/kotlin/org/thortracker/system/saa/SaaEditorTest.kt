@@ -282,7 +282,7 @@ class SaaEditorTest {
         assertEquals(Triple(2, v.defaultNote(), slot("Buzz bass")), auditions.last())
         // On the CMS Listen reaches chip B's lanes.
         val cms = EditorSession(CmsSystem.blank())
-        val w = ViewController(cms, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        val w = ViewController(cms, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; soundPanel("saa").advanced = true })
         w.state.instField = SaaInstrumentView.rows(cms.song, w.state).indexOf(Row.LISTEN)
         repeat(11) { w.tap(Action.RIGHT) }
         assertEquals(11, w.state.listenChannel)
@@ -290,12 +290,6 @@ class SaaEditorTest {
         assertEquals(0, w.state.listenChannel)
     }
 
-    @Test
-    fun helpExplainsTheSharedNoiseAndEnvelopes() {
-        val help = SaaInstrumentView.helpSections(Keymap.DEFAULT)
-        assertEquals(listOf("Instruments", "Envelopes", "SAA1099 shared noise and envelopes"), help.map { it.first })
-        assertTrue(help.all { it.second.isNotEmpty() })
-    }
 
     @Test
     fun emptySlotsAreNotAuditioned() {

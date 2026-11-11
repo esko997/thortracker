@@ -186,7 +186,19 @@ internal class CbmSoundPainter(v: PaneView) : Painter(v) {
         val slot = advanced.slotAt(x, y)
         if (slot > 0) { if (slot == st.instrument) CbmInstrumentView.publish(ctl) else CbmSoundFace.moveSlot(ctl, slot - st.instrument); return true }
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) { CbmSoundFace.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1); return true }
-        if (nameRect.contains(x, y)) { st.instField = 1; return true }
+        if (nameRect.contains(x, y)) {
+            st.instField = 1
+            val chosen = st.instrument
+            val expected = CbmInstrumentView.sound(song, st)
+            val original = CbmSoundFace.shown(ctl)
+            p.invalidate()
+            val revision = p.revision
+            session.requestText("Sound name", original.name, CbmInstrumentView.NAME_MAX) { text ->
+                if (st.instrument == chosen && p.revision == revision && CbmInstrumentView.sound(song, st) === expected)
+                    session.setCbmInstrument(chosen, original.copy(name = text), "Rename sound")
+            }
+            return true
+        }
         val list = CbmSoundFace.controls(ctl)
         if (previousControl.contains(x, y) || nextControl.contains(x, y)) {
             st.instField = 2 + ((st.instField - 2).coerceIn(0, list.lastIndex) + if (nextControl.contains(x, y)) 1 else list.lastIndex).mod(list.size)
