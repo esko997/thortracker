@@ -17,7 +17,7 @@ import org.thortracker.ui.Painter
 
 /**
  * The Game Boy's three typed banks share musical Sound and precise Advanced faces beside one bank and slot list.
- * The mode and its cursors live only in the pane. Field -1 is the mode row, 0 bank/slot, 1 name,
+ * The mode and its cursors live only in the pane. Field -1 is the mode row, 0 bank/slot (Advanced only), 1 name,
  * and 2+ the current mode's controls. Holding Edit on a control listens and groups changes into one Undo.
  * Sound moves between slots vertically and between its mode, name and controls horizontally; Advanced keeps
  * its precise vertical field list with slots horizontal.
@@ -41,10 +41,12 @@ object GbSoundView : SystemView() {
 
     override val gestureLabel = "Edit sound"
 
+    /** Sound has no slot field: its slot is chosen with Up/Down, so a fresh or slot-focused Sound starts on its first control. */
     override fun normalise(v: ViewController) {
         val st = v.state
         st.bank = st.bank.coerceIn(0, GbBank.entries.size - 1)
         st.instField = st.instField.coerceIn(-1, lastField(st))
+        if (st.instField == 0 && friendly(st)) st.instField = 2
     }
 
     override fun subject(state: ViewState): Int = state.bank * 16 + state.instrument
@@ -292,12 +294,6 @@ object GbSoundView : SystemView() {
                 h += Hint(v.lr(), "Name and controls")
                 h += Hint(v.editLr(), "Sound / Advanced (same patch)")
                 h += Hint(v.k(Action.EDIT), "Switch mode")
-            }
-            0 -> {
-                h += Hint(v.lr(), "Mode, name and controls")
-                h += Hint(v.editLr(), "Sound slot")
-                h += Hint(v.editUd(), "Bank")
-                h += Hint(v.k(Action.CLEAR), "Reset sound")
             }
             1 -> {
                 h += Hint(v.lr(), "Mode and controls")

@@ -337,6 +337,37 @@ class GbPulseSoundViewTest {
     }
 
     @Test
+    fun freshSoundEditsItsFirstControlAndNeverRestsOnTheSlotField() {
+        val original = session.song.gb.pulse[0]
+        val v = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT))
+        assertEquals("a new pane's stored field", 0, v.state.instField)
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertEquals(2, v.state.instField)
+        assertEquals("Edit+Right shapes the first control, not the slot", 1, v.state.instrument)
+        assertEquals(original.copy(duty = 2), session.song.gb.pulse[0])
+        v.tap(Action.NEXT_CHANNEL)
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instField)
+        val edited = session.song
+        // Advanced keeps its slot field: a fresh precise pane's Edit+Right still chooses the next slot.
+        val precise = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply { gbPanel.advanced = true })
+        precise.press(Action.EDIT); precise.tap(Action.RIGHT); precise.release(Action.EDIT)
+        assertEquals(0, precise.state.instField)
+        assertEquals(2, precise.state.instrument)
+        assertSame(edited, session.song)
+        // Touch: a fresh Sound pane, slot and bank taps all leave a musical control focused.
+        val p = panel()
+        assertEquals(2, p.state.instField)
+        p.tap(p.painter.slotRect(3))
+        p.draw()
+        p.tap(p.painter.tabRect(GbBank.NOISE))
+        p.draw()
+        assertEquals(3, p.state.instrument)
+        assertEquals(2, p.state.instField)
+        assertSame(edited, session.song)
+    }
+
+    @Test
     fun soundNameEditsLettersWithEditLeftRightAndMovesTheClampedCaretWithEditUpDown() {
         session.setInstrument(GbBank.PULSE, 1, session.song.gb.pulse[0].copy(name = "Lead"))
         val v = controller(1)
