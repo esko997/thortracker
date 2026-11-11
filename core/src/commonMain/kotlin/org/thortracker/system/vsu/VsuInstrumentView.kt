@@ -90,17 +90,21 @@ object VsuInstrumentView : SystemView() {
         val st = v.state
         st.instrument = st.instrument.coerceIn(1, VsuSystem.SLOTS)
         st.envelope = st.envelope.coerceIn(0, Page.entries.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (VsuSoundFace.friendly(st)) VsuSoundMacros.COUNT + 1 else rows(st).size - 1)
+        st.textPos = st.textPos.coerceIn(0, NAME_MAX - 1)
+        VsuSoundFace.settle(st)
         st.listenChannel = st.listenChannel.coerceIn(0, VsuPlayerImage.CHANNELS - 1)
     }
 
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("vsu").invalidate()
         state.instrument = subject.coerceIn(1, VsuSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) state.soundPanel("vsu").invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -128,12 +132,15 @@ object VsuInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, VsuSystem.SLOTS)
         if (slot == st.instrument) return
+        st.soundPanel("vsu").invalidate()
+        if (v.editHeld) { v.useEdit(); st.soundPanel("vsu").editBlocked = true }
         st.instrument = slot
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         publish(v)
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (VsuSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val rows = rows(st)
         when {
@@ -246,10 +253,12 @@ object VsuInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (VsuSoundFace.press(v)) return
         if (row(v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (VsuSoundFace.release(v, tap)) return
         val st = v.state
         val session = v.session
         val row = row(st)
@@ -272,6 +281,7 @@ object VsuInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (VsuSoundFace.clear(v)) return
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -304,6 +314,16 @@ object VsuInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        val panel = v.state.soundPanel("vsu")
+        if (panel.editBlocked && v.editHeld) { v.useEdit(); return true }
+        if (VsuSoundFace.friendly(v.state) && (a == Action.PREV_CHANNEL || a == Action.NEXT_CHANNEL)) {
+            VsuSoundFace.lane(v, (v.state.listenChannel + if (a == Action.NEXT_CHANNEL) 1 else 5).mod(6))
+            return true
+        }
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) {
+            panel.invalidate()
+            if (v.editHeld) { v.useEdit(); panel.editBlocked = true }
+        }
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -328,6 +348,7 @@ object VsuInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (VsuSoundFace.friendly(v.state) || v.state.instField == -1) { VsuSoundFace.hints(v, h); return }
         val st = v.state
         val row = row(st)
         val ins = sound(v.session.song, st)
@@ -364,7 +385,18 @@ object VsuInstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         val editLr = keys.held(Action.EDIT, lr)
         return listOf(
-            "Instruments" to listOf(
+            "Sound face" to listOf(
+                ud to "Choose an instrument slot. $lr chooses Listen lane, Timbre/Grain, Contour, Gate, Motion, Level, Name and Sound/Advanced",
+                editLr to "Shape the selected control; on Name change a letter, ${keys.held(Action.EDIT, ud)} moves the letter cursor",
+                channels to "Listen on any of the six lanes without changing the instrument or shared RAM. $listen auditions; octave shortcuts set its pitch",
+                "Timbre / Grain" to "Select an existing shared wave or Noise texture. The scopes show stored wave/reset-state noise and the hardware envelope, not live audio",
+                "Contour / Gate" to "Held, Pluck, Bloom or Pulse shape hardware envelope timing and direction; Gate adds a short cutoff or holds until OFF. Level sets the initial volume",
+                "Motion" to "Still, Drop or Rise use the player's pitch sweep. Wave 5 also offers the shared modulation table once or looping; two active motion engines stay Advanced-only",
+                "Custom" to "Unrecognized settings stay exact until you choose a recipe. Choosing a contour or motion affects only its named fields, never wave/modulation RAM",
+                "Touch" to "Move across a control rail. Small panes page with < and >; - and + move slots. Each drag is one Undo",
+                "Advanced" to "All precise pages remain available. Switching faces never edits the patch; on Advanced's first row, $ud reaches the face selector",
+            ),
+            "Advanced instruments" to listOf(
                 ud to "Sound slot, name, Listen lane, page, then the page's settings",
                 lr to "On settings: the sound slot",
                 channels to "Pages: Sound, Sweep/Mod (Wave 5), Pitch sweep",
@@ -391,5 +423,5 @@ object VsuInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = VsuInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = VsuSoundPainter(pane)
 }

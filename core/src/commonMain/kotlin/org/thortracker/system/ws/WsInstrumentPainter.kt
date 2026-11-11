@@ -44,14 +44,8 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val page = WsInstrumentView.page(s, st)
         val listen = WsInstrumentView.listenChannel(s, st, ins)
         val col = ink.palette.channel(listen)
-        val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val kind = when (ins?.kind) {
-            WsKind.TONE -> "tone sound"
-            WsKind.NOISE -> "noise sound"
-            WsKind.SAMPLE -> if (ins?.isDma == true) "DMA sample sound" else "sample sound"
-            null -> "empty slot"
-        }
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${s.system.name} · $kind$locked  ${usageText(st.instrument)}")
+        val left = drawSidebar(c, area, col, WsInstrumentView.row(s, st) == Row.SLOT)
+        val top = left.top
         val row = WsInstrumentView.row(s, st)
         val allRows = WsInstrumentView.rows(s, st)
         rowRects.clear()
@@ -60,15 +54,6 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         sampleRect = Rect()
         addRect = Rect()
 
-        val left = drawBank(c, area, top, WsRules.SLOTS, col, row == Row.SLOT) { i ->
-            s.ws.instrument(i)?.let {
-                it.name.ifEmpty { "(unnamed)" } + when (it.kind) {
-                    WsKind.TONE -> ""
-                    WsKind.NOISE -> " ᴺ"
-                    WsKind.SAMPLE -> if (it.isDma) " ᴰ" else " ˢ"
-                }
-            }
-        }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
@@ -134,6 +119,31 @@ internal class WsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             NesEnvelope(env.values, env.loop, env.release), st.envStep, text, ins == null || listen !in s.system.channels.indices, col,
             row == Row.STEPS, cursorColor(), ctl.editHeld, range, WsEnvelope.MAX_LENGTH)
     }
+
+    /** One header/bank implementation for both instrument faces. */
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
+        val ins = WsInstrumentView.sound(song, st)
+        val locked = if (st.lockedSubject >= 0) "  locked" else ""
+        val kind = when (ins?.kind) {
+            WsKind.TONE -> "tone sound"
+            WsKind.NOISE -> "noise sound"
+            WsKind.SAMPLE -> if (ins.isDma) "DMA sample sound" else "sample sound"
+            null -> "empty slot"
+        }
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${song.system.name} · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, WsRules.SLOTS, col, focused) { i ->
+            song.ws.instrument(i)?.let {
+                it.name.ifEmpty { "(unnamed)" } + when (it.kind) {
+                    WsKind.TONE -> ""
+                    WsKind.NOISE -> " ᴺ"
+                    WsKind.SAMPLE -> if (it.isDma) " ᴰ" else " ˢ"
+                }
+            }
+        }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y) && slotH > 0f) (slotScroll + ((y - slotTop) / slotH).toInt() + 1).coerceIn(1, WsRules.SLOTS) else -1
 
     /** A page tab: envelopes carry their length, as on the NES. */
     private fun tabLabel(ins: WsInstrument?, p: Page): String {

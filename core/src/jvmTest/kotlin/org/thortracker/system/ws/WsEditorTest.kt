@@ -26,7 +26,7 @@ class WsEditorTest {
     }
 
     private fun view(session: EditorSession = color, kind: ViewKind = ViewKind.INSTRUMENT, setup: ViewState.() -> Unit = {}) =
-        ViewController(session, ViewState(kind = kind).apply(setup))
+        ViewController(session, ViewState(kind = kind).apply { soundPanel("ws").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 

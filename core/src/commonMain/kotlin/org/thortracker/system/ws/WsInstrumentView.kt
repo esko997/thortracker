@@ -152,8 +152,11 @@ object WsInstrumentView : SystemView() {
         val song = v.session.song
         st.instrument = st.instrument.coerceIn(1, WsRules.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
+        if (WsSoundFace.friendly(st)) st.listenChannel = listenChannel(song, st, sound(song, st))
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (WsSoundFace.friendly(st)) WsSoundMacros.COUNT + 1 else rows(song, st).size - 1)
+        st.textPos = st.textPos.coerceIn(0, NAME_MAX - 1)
+        WsSoundFace.settle(st)
         st.dpcmSample = st.dpcmSample.coerceIn(0, maxOf(0, song.ws.samples.size - 1))
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, WsEnvelopes.lastStep(it)) }
     }
@@ -161,10 +164,12 @@ object WsInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("ws").invalidate()
         state.instrument = subject.coerceIn(1, WsRules.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) state.soundPanel("ws").invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -204,6 +209,8 @@ object WsInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, WsRules.SLOTS)
         if (slot == st.instrument) return
+        st.soundPanel("ws").invalidate()
+        if (v.editHeld) { v.useEdit(); st.soundPanel("ws").editBlocked = true }
         val song = v.session.song
         val row = row(song, st)
         st.instrument = slot
@@ -214,6 +221,7 @@ object WsInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (WsSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -450,10 +458,12 @@ object WsInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (WsSoundFace.press(v)) return
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (WsSoundFace.release(v, tap)) return
         val st = v.state
         val session = v.session
         val row = row(session.song, st)
@@ -513,6 +523,7 @@ object WsInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (WsSoundFace.clear(v)) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -572,24 +583,34 @@ object WsInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        val panel = v.state.soundPanel("ws")
+        if (panel.editBlocked && v.editHeld) { v.useEdit(); return true }
+        if (WsSoundFace.friendly(v.state) && (a == Action.PREV_CHANNEL || a == Action.NEXT_CHANNEL)) {
+            WsSoundFace.cycleLane(v, if (a == Action.NEXT_CHANNEL) 1 else -1)
+            return true
+        }
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) {
+            panel.invalidate()
+            if (v.editHeld) { v.useEdit(); panel.editBlocked = true }
+        }
         val st = v.state
         val session = v.session
         val song = session.song
         val slot = st.instrument
         val row = row(song, st)
-        val kind = envelopeKind(song, st)
+        val kind = if (WsSoundFace.friendly(st)) null else envelopeKind(song, st)
         val onEnvelope = kind != null && row !in HEAD_ROWS
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> showPage(v, st.envelope + if (a == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> if (onEnvelope) session.copyWsEnvelope(slot, kind!!) else session.copyWsInstrument(slot)
-            Action.PASTE -> { session.pasteWs(slot, kind); keepPage(v, row) }
+            Action.PASTE -> { session.pasteWs(slot, kind); if (!WsSoundFace.friendly(st)) keepPage(v, row) }
             Action.CUT -> if (onEnvelope) {
                 session.copyWsEnvelope(slot, kind!!)
                 session.editWsEnvelope(slot, kind, "Cut ${kind.label.lowercase()} envelope") { kind.of(defaultWsInstrument(slot)) }
             } else {
                 session.copyWsInstrument(slot)
                 session.setWsInstrument(slot, null, "Cut sound")
-                keepPage(v, row)
+                if (!WsSoundFace.friendly(st)) keepPage(v, row)
             }
             Action.DUPLICATE -> {
                 if (slot >= WsRules.SLOTS) { session.note("Sound ${EditorSession.hex2(slot)} is the last slot"); return true }
@@ -604,6 +625,7 @@ object WsInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (WsSoundFace.friendly(v.state) || v.state.instField == -1) { WsSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -660,7 +682,17 @@ object WsInstrumentView : SystemView() {
         val editLr = keys.held(Action.EDIT, lr)
         val editUd = keys.held(Action.EDIT, ud)
         return listOf(
-            "Instruments" to listOfNotNull(
+            "Sound face" to listOf(
+                ud to "Choose an instrument slot. $lr chooses Voice, source, Contour, motion/tuning, playback/Listen lane, Name and Sound/Advanced",
+                editLr to "Shape the selected control; on Name change a letter, ${keys.held(Action.EDIT, ud)} moves the letter cursor",
+                channels to "Choose a compatible audition lane without changing the sound. $listen listens; octave shortcuts set its pitch",
+                "Voice" to "Wave, Noise, CPU sample${if (color) " or Color DMA" else ""}; inactive settings stay intact. Add recordings under Advanced / Sample",
+                "Contour" to "Held, Pluck, Soft pluck or Swell replace only the volume program, keeping its peak. Custom stays exact until you choose",
+                "Source / motion" to "Choose existing waves or recordings, or a noise texture; sequences retain ownership in Advanced. Bend works on CH3 only",
+                "Touch" to "Tap a control and move across its rail. Small panes page with < and >; - and + move slots. Each drag is one Undo",
+                "Advanced" to "All precise pages remain available. Switching faces never edits the patch; on Advanced's first row, $ud reaches the face selector",
+            ),
+            "Advanced instruments" to listOfNotNull(
                 ud to "Sound slot, name, Listen lane, kind, ${if (color) "feed (samples), " else ""}preset, the kind's settings, page, then the page's settings",
                 lr to "On settings: the sound slot; on envelope steps: the step; on the sample list: the sample",
                 channels to "Pages. Tone: Volume, Arpeggio, Pitch, Wave seq. Noise: Volume, Arpeggio, Pitch, Tap seq. Sample: Sample, Volume, " +
@@ -711,5 +743,5 @@ object WsInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = WsInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = WsSoundPainter(pane)
 }

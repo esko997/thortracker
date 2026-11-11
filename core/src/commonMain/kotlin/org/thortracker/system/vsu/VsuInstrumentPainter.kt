@@ -32,21 +32,13 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val page = VsuInstrumentView.page(st)
         val lane = st.listenChannel.coerceIn(0, VsuPlayerImage.CHANNELS - 1)
         val col = ink.palette.channel(lane)
-        val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val kind = when {
-            ins == null -> "empty slot"
-            ins.freqMod.on -> "Wave 5 ${if (ins.freqMod.modulation) "modulation" else "sweep"}"
-            else -> "wave ${ins.wave + 1}"
-        }
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "VSU · $kind$locked  ${usageText(st.instrument)}")
+        val left = drawSidebar(c, area, col, VsuInstrumentView.row(st) == Row.SLOT)
+        val top = left.top
         val row = VsuInstrumentView.row(st)
         val allRows = VsuInstrumentView.rows(st)
         rowRects.clear()
         gridCells.clear()
 
-        val left = drawBank(c, area, top, VsuSystem.SLOTS, col, row == Row.SLOT) { i ->
-            s.vsu.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.freqMod.on) " ⁵" else "" }
-        }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
@@ -116,6 +108,24 @@ internal class VsuInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             }
         }
     }
+
+    /** Advanced and Sound share the exact header, bank, scrolling and hit geometry. */
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
+        val ins = VsuInstrumentView.sound(song, st)
+        val locked = if (st.lockedSubject >= 0) "  locked" else ""
+        val kind = when {
+            ins == null -> "empty slot"
+            ins.freqMod.on -> "Wave 5 ${if (ins.freqMod.modulation) "modulation" else "sweep"}"
+            else -> "wave ${ins.wave + 1}"
+        }
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "VSU · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, VsuSystem.SLOTS, col, focused) { i ->
+            song.vsu.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.freqMod.on) " ⁵" else "" }
+        }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y) && slotH > 0f) (slotScroll + ((y - slotTop) / slotH).toInt() + 1).coerceIn(1, VsuSystem.SLOTS) else -1
 
     /** A field's text: the value, then what it means. */
     private fun value(ins: VsuInstrument, r: Row): String {
