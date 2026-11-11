@@ -57,6 +57,8 @@ data class ViewState(
     var gbPanel: MusicalPanelState = MusicalPanelState(),
     var sidPanel: MusicalPanelState = MusicalPanelState(),
     var ymPanel: MusicalPanelState = MusicalPanelState(),
+    /** Lazily owned chip-family faces; presentation only, independent in every pane snapshot. */
+    val chipPanels: MutableMap<String, MusicalPanelState> = mutableMapOf(),
     /** Envelope instrument editors (NES): the envelope shown, the step under the cursor and the channel Listen plays on. */
     var envelope: Int = 0,
     var envStep: Int = 0,
@@ -124,8 +126,14 @@ data class ViewState(
         kind = next
     }
 
+    fun soundPanel(family: String): MusicalPanelState = chipPanels.getOrPut(family) { MusicalPanelState() }
+
     /** Independent copy, used when swapping or persisting display states. */
-    fun snapshot(): ViewState = copy(entry = entry.deepCopy(), gbPanel = gbPanel.copy(), sidPanel = sidPanel.copy(), ymPanel = ymPanel.copy())
+    fun snapshot(): ViewState = copy(
+        entry = entry.deepCopy(),
+        gbPanel = gbPanel.copy(), sidPanel = sidPanel.copy(), ymPanel = ymPanel.copy(),
+        chipPanels = chipPanels.mapValues { it.value.copy() }.toMutableMap(),
+    )
 
     companion object {
         /** Song view rows before the order list: title, artist, ticks per row, loop order, scale for new patterns. */
