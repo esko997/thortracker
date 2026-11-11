@@ -17,8 +17,9 @@ Listen and modifier state without synthesizing a tap; focus-only cancellation do
 transport, whereas Activity pause does. Interrupted shortcut capture is also canceled, including
 configuration changes: an invisible held modifier cannot leak into the next binding attempt.
 Menus no longer start a zero-distance scroll when already at the top: that animation could
-swallow the next fast tap. The unchanged real Save As touch scenario fails before this fix
-and passes afterward, without adding a compensating delay to the test.
+swallow the next fast tap. The touch-preview package's unchanged real Save As scenario fails
+before this shared popup fix and passes afterward, without a compensating test delay. The
+stable APK containing the same fix separately passes all 28 permanent Android contracts.
 
 ### Automated candidate evidence
 
