@@ -107,7 +107,8 @@ internal class SmsSoundPainter(v: PaneView) : Painter(v) {
         val list = SmsSoundMacros.controls(ins.kind)
         val top = name.bottom
         val bottom = area.bottom - ink.dp(34f)
-        compact = right - left < ink.dp(480f) || bottom - top < touch * list.size
+        val rackRows = if (list.size > 3) 3 else list.size
+        compact = right - left < ink.dp(480f) || bottom - top < ink.dp(64f) * rackRows
         if (compact) {
             val i = (st.instField - 2).coerceIn(0, list.lastIndex)
             previous.set(left, top, left + touch, bottom)
@@ -117,12 +118,24 @@ internal class SmsSoundPainter(v: PaneView) : Painter(v) {
             ink.label(c, "<", previous.centerX(), top, previous.height(), p.TEXT, true, align = Align.CENTER)
             ink.label(c, ">", next.centerX(), top, next.height(), p.TEXT, true, align = Align.CENTER)
         } else {
-            val divide = left + (right - left) * 0.38f
+            val divide = left + (right - left) * if (list.size > 3) 0.30f else 0.38f
             moduleBounds.set(left, top, divide - pad, bottom)
             module(c, moduleBounds, ins, accent)
-            val h = (bottom - top) / list.size
+            val rackLeft = divide + pad
+            val h = (bottom - top) / rackRows
+            val middle = (rackLeft + right) / 2
             for (i in list.indices) {
-                controls[i].set(divide + pad, top + i * h, right, top + (i + 1) * h)
+                if (list.size <= 3) {
+                    controls[i].set(rackLeft, top + i * h, right, top + (i + 1) * h)
+                } else if (i == 0) {
+                    // Voice / kit spans the rack; its dependent controls sit in two columns below.
+                    controls[i].set(rackLeft, top, right, top + h)
+                } else {
+                    val row = (i - 1) / 2 + 1
+                    val column = (i - 1) % 2
+                    controls[i].set(if (column == 0) rackLeft else middle + pad, top + row * h,
+                        if (column == 0) middle - pad else right, top + (row + 1) * h)
+                }
                 drawFader(c, i, list[i], accent)
             }
         }

@@ -103,7 +103,7 @@ internal class SaaSoundPainter(v: PaneView) : Painter(v) {
         }
         val top = nameRect.bottom
         val bottom = body.bottom - ink.unit * 1.5f
-        compact = width < ink.dp(360f) || bottom - top < ink.dp(225f)
+        compact = width < ink.dp(360f) || bottom - top < ink.dp(212f)
         if (compact) {
             val i = (st.instField - 2).coerceIn(0, list.lastIndex)
             previousControl.set(left, top, left + touch, bottom)
@@ -114,7 +114,7 @@ internal class SaaSoundPainter(v: PaneView) : Painter(v) {
             ink.label(c, ">", nextControl.centerX(), top, bottom - top, p.TEXT, true, align = Align.CENTER)
         } else {
             // One stereo stage spans the panel; two unequal columns separate voice from chip resources.
-            diagram.set(left, top, right, top + ink.dp(58f))
+            diagram.set(left, top, right, top + ink.dp(36f))
             drawDiagram(c, diagram, ins)
             val start = diagram.bottom + pad
             val split = left + width * 0.53f

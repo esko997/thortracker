@@ -150,6 +150,10 @@ internal class AySoundPainter(v: PaneView) : Painter(v) {
                     val x2 = r.left + ink.dp(8f) + (r.width() - ink.dp(16f)) * (k + 1) / n
                     val yy = y + h * (1f - env[k] / (if (control == AySoundControl.COLOUR) 31f else 15f))
                     c.line(x, yy, x2, yy, accent, ink.dp(2f))
+                    if (k + 1 < n) {
+                        val nextY = y + h * (1f - env[k + 1] / (if (control == AySoundControl.COLOUR) 31f else 15f))
+                        c.line(x2, yy, x2, nextY, accent, ink.dp(2f))
+                    }
                 }
             } else if (control == AySoundControl.BUZZ || control == AySoundControl.REGISTER) {
                 val levels = shapeLevels(ins)
@@ -158,6 +162,10 @@ internal class AySoundPainter(v: PaneView) : Painter(v) {
                     val x2 = r.left + ink.dp(8f) + (r.width() - ink.dp(16f)) * (k + 1) / levels.size
                     val yy = y + h * (1f - levels[k] / (AyInstrumentView.rampSteps(song.ay.variant) - 1f))
                     c.line(x, yy, x2, yy, if (ins.envelope.on) accent else p.FAINT, ink.dp(2f))
+                    if (k < levels.lastIndex) {
+                        val nextY = y + h * (1f - levels[k + 1] / (AyInstrumentView.rampSteps(song.ay.variant) - 1f))
+                        c.line(x2, yy, x2, nextY, if (ins.envelope.on) accent else p.FAINT, ink.dp(2f))
+                    }
                 }
             }
         }

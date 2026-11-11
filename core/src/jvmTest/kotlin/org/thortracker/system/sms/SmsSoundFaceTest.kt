@@ -179,6 +179,26 @@ class SmsSoundFaceTest {
         fun tap(r: Rect) { assertTrue(painter.down(r.centerX(), r.centerY())); painter.up(0f, 0f) }
     }
 
+    @Test fun wideShortPanesKeepTheWholeCartridgeRackVisible() {
+        for (ins in listOf(psg(), fm(), kit())) {
+            val s = session(ins = ins)
+            val before = s.song
+            val p = Panel(s, 720, 384)
+            assertFalse("Wide ${ins.kind} must not become a single empty page", p.painter.compact)
+            val list = SmsSoundMacros.controls(ins.kind)
+            for (i in list.indices) {
+                val r = p.painter.controlRect(i)!!
+                assertTrue(r.width() >= 48f && r.height() >= 48f)
+                for (j in 0 until i) {
+                    val other = p.painter.controlRect(j)!!
+                    assertTrue(r.left >= other.right || r.right <= other.left ||
+                        r.top >= other.bottom || r.bottom <= other.top)
+                }
+            }
+            assertSame(before, s.song)
+        }
+    }
+
     @Test fun compactTouchPagesAllKindsAndSharesTheExactAdvancedSidebar() {
         for (ins in listOf(psg(), fm(), kit())) for (size in listOf(360 to 270, 960 to 720)) {
             val s = session(ins = ins)

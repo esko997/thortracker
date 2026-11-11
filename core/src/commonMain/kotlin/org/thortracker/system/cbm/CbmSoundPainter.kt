@@ -161,12 +161,21 @@ internal class CbmSoundPainter(v: PaneView) : Painter(v) {
         val n = wave?.size ?: 0
         val middle = r.top + r.height() * 0.5f
         val max = if (recording) 8f else if (master) song.cbm.chip.maxVolume.toFloat() else song.cbm.chip.maxWave.toFloat()
+        val caption = r.height() >= ink.dp(36f)
+        if (caption) ink.label(c, if (recording) "Recording" else if (master) "Shared volume" else "Gate timing",
+            r.left, r.top, ink.dp(14f), ink.palette.DIM, size = ink.unit * 0.65f)
+        val traceTop = r.top + ink.dp(if (caption) 18f else 4f)
         for (k in 0 until 32) {
             val v = if (n == 0) (if (master) song.cbm.volume else ins.wave) else wave!![k * n / 32]
             val x = r.left + r.width() * k / 32
-            val y = r.bottom - ink.dp(6f) - (r.height() - ink.dp(12f)) * v / max
-            c.line(x, y, x + r.width() / 32, y, ink.palette.FOCUS, ink.dp(2f))
-            if (k % 4 == 0) c.line(x, middle, x, r.bottom, ink.palette.RULE, ink.dp(1f))
+            val y = r.bottom - ink.dp(4f) - (r.bottom - traceTop - ink.dp(4f)) * v / max
+            val nextX = x + r.width() / 32
+            c.line(x, y, nextX, y, ink.palette.FOCUS, ink.dp(2f))
+            if (n > 0 && k < 31) {
+                val nextY = r.bottom - ink.dp(4f) - (r.bottom - traceTop - ink.dp(4f)) * wave!![(k + 1) * n / 32] / max
+                c.line(nextX, y, nextX, nextY, ink.palette.FOCUS, ink.dp(2f))
+            }
+            if (k % 4 == 0) c.line(x, maxOf(middle, traceTop), x, r.bottom, ink.palette.RULE, ink.dp(1f))
         }
 
     }

@@ -246,6 +246,25 @@ class SaaSoundFaceTest {
         init { draw() }
     }
 
+    @Test fun wideShortPanesKeepStereoStageAndEveryControlVisible() {
+        for (variant in SaaVariant.entries) {
+            val s = session(variant)
+            val before = s.song
+            val p = Panel(s, 720, 384)
+            assertFalse("Wide $variant must show the complete stage", p.painter.compact)
+            for (i in SaaSoundControl.entries.indices) {
+                val r = p.painter.controlRect(i)
+                assertTrue(r.width() >= 48f && r.height() >= 48f)
+                for (j in 0 until i) {
+                    val other = p.painter.controlRect(j)
+                    assertTrue(r.left >= other.right || r.right <= other.left ||
+                        r.top >= other.bottom || r.bottom <= other.top)
+                }
+            }
+            assertSame(before, s.song)
+        }
+    }
+
     @Test fun compactTouchPagesEveryControlAndSharesTheExactAdvancedBank() {
         for (variant in SaaVariant.entries) {
             val s = session(variant)

@@ -70,7 +70,7 @@ internal object CbmSoundMacros {
         CbmSoundControl.LOOP_START -> "Frame $value"
     }
     fun hint(c: CbmSoundControl, chip: CbmChip): String = when (c) {
-        CbmSoundControl.VOICE -> "Noise uses Voice 2; Sample takes both. Add audio in Advanced."
+        CbmSoundControl.VOICE -> "Noise: voice 2. Sample: both; add in Advanced."
         CbmSoundControl.GATE -> if (chip == CbmChip.VIC) "This lane only; note sets noise rate." else "This voice only. Mixed programs: Advanced."
         CbmSoundControl.MASTER -> "Shared master: shapes EVERY voice."
         CbmSoundControl.LANE -> "Audition lane only; no patch change."

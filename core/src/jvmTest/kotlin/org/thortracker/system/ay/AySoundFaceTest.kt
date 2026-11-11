@@ -162,6 +162,26 @@ class AySoundFaceTest {
         }
     }
 
+    @Test fun nativeBuzzerStepsFormAConnectedTraceWithoutChangingThePatch() {
+        for (variant in AyVariant.entries) {
+            val s = session(variant)
+            s.setAyInstrument(1, patch().copy(envelope = AyEnvelopeSettings(shape = 8)), "Buzzer")
+            val before = s.song
+            val p = Panel(s, 960, 720)
+            p.canvas.lines.clear()
+            p.draw()
+            val r = p.painter.controlRect(AySoundControl.BUZZ.ordinal)!!
+            val trace = p.canvas.lines.filter {
+                it.x0 > r.left && it.x1 < r.right &&
+                    it.y0 >= r.top + 60.9f && it.y1 >= r.top + 60.9f &&
+                    it.y0 <= r.bottom - 31.9f && it.y1 <= r.bottom - 31.9f
+            }
+            val levels = AyInstrumentView.shapeLevels(8, AyInstrumentView.rampSteps(variant), 2)
+            assertEquals(levels.size - 1, trace.count { it.x0 == it.x1 && it.y0 != it.y1 })
+            assertSame(before, s.song)
+        }
+    }
+
     @Test fun dragsPinOriginalPatchAndStopOnUndoSlotAndModeChanges() {
         val s = session()
         val p = Panel(s)
