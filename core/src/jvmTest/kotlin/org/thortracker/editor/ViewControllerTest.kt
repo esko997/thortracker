@@ -411,7 +411,7 @@ class ViewControllerTest {
 
     @Test
     fun instrumentParameterHoldIsOneUndo() {
-        val v = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = 0; instrument = 1; instField = 3 }
+        val v = view(ViewKind.INSTRUMENT) { gbPanel.advanced = true; bank = 0; instrument = 1; instField = 3 }
         assertEquals("Volume", GbSoundView.params(v.state)[1].label)
         v.hold(Action.EDIT, Action.LEFT, Action.LEFT)
         assertEquals(13, session.song.gb.pulse[0].volume)
@@ -426,7 +426,7 @@ class ViewControllerTest {
     @Test
     fun everyInstrumentParameterStaysInRange() {
         for (kind in GbBank.entries) {
-            val v = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = kind.ordinal; instrument = 2 }
+            val v = view(ViewKind.INSTRUMENT) { gbPanel.advanced = true; bank = kind.ordinal; instrument = 2 }
             for ((i, p) in GbSoundView.params(v.state).withIndex()) {
                 v.state.instField = i + 2
                 v.hold(Action.EDIT, *Array(40) { Action.UP })
@@ -440,7 +440,7 @@ class ViewControllerTest {
 
     @Test
     fun soundNameEditsWithTheController() {
-        val v = view(ViewKind.INSTRUMENT) { instField = 1 }
+        val v = view(ViewKind.INSTRUMENT) { gbPanel.advanced = true; instField = 1 } // Advanced: Left/Right move the letter cursor.
         session.setInstrument(GbBank.PULSE, 1, session.song.gb.pulse[0].copy(name = "Lead"))
         v.tap(Action.RIGHT)
         v.tap(Action.RIGHT)
@@ -581,7 +581,7 @@ class ViewControllerTest {
     @Test
     fun explicitNavigationMovesTheLock() {
         val v = view(ViewKind.INSTRUMENT) { lockedSubject = 16 + 2; bank = 1; instrument = 2 }
-        v.tap(Action.RIGHT)
+        v.tap(Action.DOWN)
         assertEquals(16 + 3, v.state.lockedSubject)
     }
 
@@ -670,9 +670,9 @@ class ViewControllerTest {
         assertEquals(ViewKind.PATTERN, session.selection.context)
         view(ViewKind.KEYBOARD) { kbRow = 0; kbField = 1 }.hold(Action.EDIT, Action.RIGHT)
         assertEquals(ViewKind.PATTERN, session.selection.context)
-        view(ViewKind.INSTRUMENT) { bank = GbBank.PULSE.ordinal }.tap(Action.RIGHT)
+        view(ViewKind.INSTRUMENT) { bank = GbBank.PULSE.ordinal }.tap(Action.DOWN) // Sound: Down chooses the next slot.
         assertEquals(ViewKind.KEYBOARD, session.selection.context)
-        view(ViewKind.INSTRUMENT) { bank = GbBank.WAVE.ordinal }.tap(Action.RIGHT)
+        view(ViewKind.INSTRUMENT) { bank = GbBank.WAVE.ordinal }.tap(Action.DOWN)
         assertEquals(ViewKind.WAVE, session.selection.context)
         view(ViewKind.WAVE).tap(Action.NEXT_CHANNEL)
         assertEquals(ViewKind.INSTRUMENT, session.selection.context)
@@ -790,7 +790,7 @@ class ViewControllerTest {
         assertEquals(cell(0, 0, 4), cell(0, 0, 20))
 
         // Shape the lead sound and draw a wave the wave sound uses.
-        val sounds = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = 0; instrument = 1; instField = 2 }
+        val sounds = view(ViewKind.INSTRUMENT) { gbPanel.advanced = true; bank = 0; instrument = 1; instField = 2 }
         sounds.hold(Action.EDIT, Action.RIGHT) // duty 25%
         assertEquals(1, session.song.gb.pulse[0].duty)
         val waves = view(ViewKind.WAVE) { wave = 0; waveRow = 0; waveCol = 1 }

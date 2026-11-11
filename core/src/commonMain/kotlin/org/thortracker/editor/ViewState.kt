@@ -3,6 +3,7 @@ package org.thortracker.editor
 import org.thortracker.model.Phrase
 import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
+import org.thortracker.system.panel.MusicalPanelState
 
 enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
 
@@ -52,14 +53,10 @@ data class ViewState(
     var songItem: Int = SONG_HEADER_ITEMS,
     var songField: Int = 0,
     var instField: Int = 0,
-    /** Game Boy pulse pilot: local presentation only, never song data or undo history. */
-    var gbAdvanced: Boolean = false,
-    var gbAdvancedField: Int = 2,
-    var gbSoundField: Int = 2,
-    /** Invalidates pointer ownership even if navigation returns to the original slot/mode. */
-    var gbSoundRevision: Int = 0,
-    /** A physical Edit held across a mode change must release before it can edit the new mode. */
-    var gbModeEditBlocked: Boolean = false,
+    /** Independent, non-document presentation and pointer ownership for the three musical design pilots. */
+    var gbPanel: MusicalPanelState = MusicalPanelState(),
+    var sidPanel: MusicalPanelState = MusicalPanelState(),
+    var ymPanel: MusicalPanelState = MusicalPanelState(),
     /** Envelope instrument editors (NES): the envelope shown, the step under the cursor and the channel Listen plays on. */
     var envelope: Int = 0,
     var envStep: Int = 0,
@@ -119,9 +116,6 @@ data class ViewState(
     /** What "tap A" re-enters on this display; travels with the state when displays swap. Not persisted. */
     val entry: EntryMemory = EntryMemory(),
 ) {
-    /** Active GB pointer owner only. Not copied with pane snapshots; navigation closes its Undo group immediately. */
-    internal var cancelGbSoundTouch: (() -> Unit)? = null
-
     /** Subject identifiers belong to their view kind; never reinterpret one in another editor. */
     fun switchKind(next: ViewKind) {
         if (kind == next) return
@@ -131,7 +125,7 @@ data class ViewState(
     }
 
     /** Independent copy, used when swapping or persisting display states. */
-    fun snapshot(): ViewState = copy(entry = entry.deepCopy())
+    fun snapshot(): ViewState = copy(entry = entry.deepCopy(), gbPanel = gbPanel.copy(), sidPanel = sidPanel.copy(), ymPanel = ymPanel.copy())
 
     companion object {
         /** Song view rows before the order list: title, artist, ticks per row, loop order, scale for new patterns. */

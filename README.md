@@ -10,6 +10,10 @@ Without a usable physical controller, Android shows a two-thumb controller dock 
 drawer; attaching a controller hides the dock. Game Boy pulse instruments offer musical
 Sound controls beside the precise Advanced editor. Both edit the same instrument and Undo history.
 
+**This branch is the 0.43.0 three-instrument review:** Game Boy pixel LCD, C64 SID synth deck
+and Mega Drive YM2612 tone console. [Screenshots, musical controls and review limits](docs/INSTRUMENT_PANELS.md).
+The APK still updates the normal **Thor Tracker** app; no new preview identity is introduced.
+
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
 *Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. This clip was captured in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom), without audio. Other captures identify their own device or synthetic viewport.*
@@ -126,6 +130,12 @@ remains a separate control.
 ![The Keyboard view on the bottom screen writing notes C-4, E-4, G-4, C-5, G-4, E-4, C-4 down the Pulse 2 column of the top screen's pattern, one row per press](docs/media/pattern-keyboard-write.gif)
 
 The Pattern view is a four-channel hUGE grid (Pulse 1, Pulse 2, Wave, Noise) with an inspector that explains the selected note, sound or effect. Hold A and use the D-pad to change a value, or put the Keyboard on the other screen in **Write** mode. Each press writes a note at the pattern cursor and moves down a row. Both screens edit the same song, and the order list beside the grid shows where you are.
+
+When space permits, a channel header names the instrument assigned most often in that channel's
+current pattern—not the instrument selected for entering new notes. Only active pattern rows
+and explicit instrument assignments count; empty channels have no instrument label, and ties
+prefer the lowest slot number. Choosing a different entry sound therefore leaves other channel
+headers alone.
 
 ### Song view: arrangement, loop point and parked orders
 

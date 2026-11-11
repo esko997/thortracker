@@ -20,11 +20,11 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The Mega Drive instrument editor, controller-only: the one bank of [YmSystem.SLOTS] sounds, each empty, an FM voice
- * (FM 1-6), a PSG sound (PSG 1-3, Noise) or a PCM kit (PCM 1-3). Head rows: slot, name, the channel Listen plays on,
- * the sound's type, the page. An FM voice has the OPL3 editor's pages (shared FM pieces): *Sound*, the curated controls
- * of [YmCurated] beside the drawn algorithm and envelope (SSG-EG drawn on it); *Expert*, algorithm, feedback, AMS/FMS
- * and every OPN2 operator field as a grid; *Ch3*, FM 3's mode and the voice's four operator pitch offsets (heard on
+ * The Mega Drive instrument editor: one bank of [YmSystem.SLOTS] sounds, each empty, an FM voice, a PSG sound or a PCM
+ * kit. FM opens on the musical [YmSoundFace]; Sound/Advanced selects a pane-local face without changing the patch.
+ * Advanced head rows: slot, name, the channel Listen plays on, type, page. An FM voice has the shared FM pages:
+ * Curated controls of [YmCurated] beside the algorithm and envelope; Expert, every OPN2 operator register; Ch3,
+ * FM 3's mode and four operator pitch offsets (heard on
  * FM 3 in special mode); *Drum*, the pitch sweep. A PSG sound has the NES editor's envelopes (volume, arpeggio, pitch,
  * edited step by step) and a *Noise·Drum* page (noise type and rate for the Noise channel, the sweep). A PCM kit has
  * one *PCM* page ([YmPcmPage]): its level, keys mapped to samples and the song's samples.
@@ -35,7 +35,7 @@ import org.thortracker.ui.Painter
  */
 object YmInstrumentView : SystemView() {
     enum class Page(val label: String, val envelope: NesEnvelopeKind? = null) {
-        SOUND("Sound"), EXPERT("Expert"), CH3("Ch3"), DRUM("Drum"),
+        SOUND("Curated"), EXPERT("Expert"), CH3("Ch3"), DRUM("Drum"),
         VOLUME("Volume", NesEnvelopeKind.VOLUME), ARPEGGIO("Arpeggio", NesEnvelopeKind.ARPEGGIO), PITCH("Pitch", NesEnvelopeKind.PITCH),
         NOISE("Noise·Drum"), PCM("PCM"),
     }
@@ -172,7 +172,9 @@ object YmInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, YmSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(if (fmPages(song, st)) -1 else 0,
+            if (YmSoundFace.friendly(song, st)) YmSoundControl.entries.size + 1 else rows(song, st).size - 1)
+        YmSoundFace.settle(song, st)
         when {
             page(song, st) == Page.EXPERT || page(song, st) == Page.CH3 -> st.envStep = st.envStep.coerceIn(0, 3)
             envelopeKind(song, st) != null -> st.envStep = st.envStep.coerceIn(0, envelope(song, st)?.let(::lastStep) ?: 0)
@@ -183,10 +185,12 @@ object YmInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.ymPanel.invalidate()
         state.instrument = subject.coerceIn(1, YmSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument) state.ymPanel.invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -228,15 +232,18 @@ object YmInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, YmSystem.SLOTS)
         if (slot == st.instrument) return
+        st.ymPanel.invalidate()
         val row = row(v.session.song, st)
         st.instrument = slot
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         keepPage(v, row)
         if (page(v.session.song, st) == Page.PCM) YmPcmPage.showFirstMapping(v)
+        YmSoundFace.settle(v.session.song, st)
         publish(v)
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (YmSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -246,7 +253,7 @@ object YmInstrumentView : SystemView() {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> { v.useClear(); if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e)) }
             dy != 0 -> {
-                st.instField = (st.instField - dy).coerceIn(0, rows.size - 1)
+                st.instField = (st.instField - dy).coerceIn(if (fmPages(song, st)) -1 else 0, rows.size - 1)
                 st.textPos = 0
             }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
@@ -499,10 +506,23 @@ object YmInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        v.state.ymPanel.editBlocked = false
+        if (v.state.instField < 0) return
+        if (YmSoundFace.friendly(v.session.song, v.state)) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (v.state.ymPanel.editBlocked) { v.state.ymPanel.editBlocked = false; return }
+        if (v.state.instField < 0) {
+            if (tap) YmSoundFace.selectMode(v, !v.state.ymPanel.advanced, true)
+            return
+        }
+        // Sound has no slot field ([YmSoundFace.settle]): its Edit is held editing or audition, never a slot tap.
+        if (YmSoundFace.friendly(v.session.song, v.state)) return
         val st = v.state
         val session = v.session
         val row = row(session.song, st)
@@ -541,6 +561,9 @@ object YmInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || v.state.ymPanel.editBlocked) return
+        // A musical control has no implicit reset/adoption of a custom patch. Slot/name retain their normal actions.
+        if (YmSoundFace.friendly(v.session.song, v.state) && v.state.instField >= 2) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -614,14 +637,22 @@ object YmInstrumentView : SystemView() {
         val song = v.session.song
         val ins = sound(song, st)
         if (ins == null) { v.session.note("Sound ${EditorSession.hex2(st.instrument)} is empty: ${v.k(Action.EDIT)} on Slot makes one"); return }
-        val ch = listenChannel(st, ins, page(song, st))
-        if (ch != st.listenChannel && page(song, st) != Page.CH3) {
+        val listenPage = if (YmSoundFace.friendly(song, st)) null else page(song, st)
+        val ch = listenChannel(st, ins, listenPage)
+        if (ch != st.listenChannel && listenPage != Page.CH3) {
             v.session.note("${ins.name.ifEmpty { "This sound" }} is ${YmSystem.kindName(ins)}: listening on ${song.system.channels[ch].name}")
         }
         if (ins is YmPcmInstrument) YmPcmPage.audition(v, ch) else v.startAudition(ch, v.defaultNote(), st.instrument)
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (v.state.ymPanel.editBlocked && v.editHeld) { v.useEdit(); return true }
+        if (YmSoundFace.friendly(v.session.song, v.state) && (a == Action.PREV_CHANNEL || a == Action.NEXT_CHANNEL)) {
+            val d = if (a == Action.NEXT_CHANNEL) 1 else -1
+            v.state.instField = 2 + ((v.state.instField - 2).coerceAtLeast(0) + d).mod(YmSoundControl.entries.size)
+            return true
+        }
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) v.state.ymPanel.invalidate()
         val st = v.state
         val session = v.session
         val song = session.song
@@ -656,6 +687,7 @@ object YmInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (YmSoundFace.friendly(v.session.song, v.state) || v.state.instField == -1) { YmSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -719,10 +751,21 @@ object YmInstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         val editLr = keys.held(Action.EDIT, lr)
         return listOf(
+            "FM Sound face" to listOf(
+                "Sound / Advanced" to "Move up past Slot, then $lr selects the face. Both edit the same exact patch; opening either changes nothing. PSG and PCM keep their own editors",
+                "Brightness" to "The large dial changes modulator strength, not carrier loudness. Its internal balance stays until a register reaches its limit",
+                "Structure" to "One deliberate routing and voice-balance choice, covering all eight algorithms. Ratios, envelopes, detune, sweep and FM 3 offsets stay",
+                "Harmonics" to "Round, Hollow, Reedy, Metal and Glass set only modulator multipliers to 1, 2, 3, 5 and 7. Carrier pitch and custom tuning stay",
+                "Edge" to "Operator 1 feedback: from pure to a biting or noisy tone. It also works on Four sines",
+                "Contour" to "Pluck, Held, Bloom or Short changes only carrier attack, decay, sustain level/rate and release. Other envelopes and rate scaling stay. SSG carrier envelopes require Advanced",
+                "Custom" to "No exact musical choice matches those fields. They remain untouched until you choose a value; Clear never normalizes a musical control",
+                "Four sines" to "There are no modulators, so Brightness and Harmonics are unavailable",
+                "Explore" to "Hold $edit with directions, or drag a dial horizontally. One continuous edit is one Undo. $channels selects a control; unheld $lr selects a slot",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, type, page, then the page's settings",
                 lr to "On settings: the sound slot; on the Expert and Ch3 grids: the operator; on envelope steps: the step; on PCM keys: the key",
-                channels to "Pages. FM voices: Sound (curated), Expert (every register), Ch3 (FM 3 operator pitches), Drum (pitch sweep). " +
+                channels to "Advanced pages. FM voices: Curated, Expert (every register), Ch3 (FM 3 operator pitches), Drum (pitch sweep). " +
                     "PSG sounds: Volume, Arpeggio, Pitch, Noise·Drum. PCM kits: PCM",
                 "Listen on" to "The channel $listen plays the sound on: FM voices on FM 1-6 (FM 3 on the Ch3 page), PSG sounds on PSG 1-3 or Noise, " +
                     "PCM kits on PCM 1-3 (the shown key). Holding $edit on a setting sounds the sound and every change restarts it",
@@ -731,7 +774,7 @@ object YmInstrumentView : SystemView() {
                 "$clear tap" to "The setting's default; on Slot: empty the slot (notes naming it are refused)",
                 "$edit on Slot" to "An empty slot gets a new sound to start from, of the kind Listen's channel plays",
             ),
-            "FM Sound page" to listOf(
+            "FM Curated page (Advanced)" to listOf(
                 "Preset" to "Starting sounds: slap and finger bass, brass, E-piano, bell, strings, lead, organ, pluck, pad and FM drums (kick, snare, tom, hi-hat, crash)",
                 "Algorithm" to "How the four operators connect (0 chain … 7 additive). Modulators (→) colour the carriers you hear; carriers sum to the output",
                 "Ratios" to "Frequency multipliers of operators 1-4 (½ to 15) with detune: whole-number sets are harmonic, chorus/shimmer detune pairs",
@@ -764,5 +807,5 @@ object YmInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = YmInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = YmSoundPainter(pane)
 }

@@ -14,6 +14,7 @@ import org.thortracker.model.Pattern
 import org.thortracker.model.Songs
 import org.thortracker.model.Scale
 import org.thortracker.system.EffectSpec
+import org.thortracker.system.SoundSystem
 
 /**
  * Pattern grid: hex row ruler, one lane per channel with note / sound / effect columns, sustain rails
@@ -34,6 +35,10 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
     private var orderRowH = 0f
     private var orderScroll = 0
     private val headerChips = ArrayList<Pair<Rect, Int>>()
+    private var headerPattern: Pattern? = null
+    private var headerSystem: SoundSystem? = null
+    private var headerInstruments = IntArray(0)
+    private var instrumentCounts = IntArray(0)
 
     // feedback: the cells the last edit changed, and the auditioned lane's lamp
     private var seenPattern: Pattern? = null
@@ -65,6 +70,7 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
 
         // header
         val p = s.patterns[pattern]
+        refreshHeaderInstruments(p)
         noticeEdit(pattern, p)
         val uses = s.patternUses(pattern)
         val detail = buildString {
@@ -139,8 +145,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                     if (ch == lastLane && rightScrollW > 0f) laneHeaderH * 0.65f else laneHeaderH, col, true)
                 continue
             }
-            val pen = ctl.pen(s.system.channels[ch].bank)
-            val penName = s.system.instrumentName(s, s.system.channels[ch].bank, pen) ?: ""
+            val instrument = headerInstruments[ch]
+            val instrumentName = if (instrument > 0)
+                s.system.instrumentName(s, s.system.channels[ch].bank, instrument) ?: "" else ""
             // Hidden effect columns that hold effects (they still play): "+n" in the lane header.
             val hidden = if (multi) ctl.usedColumns(ch) - ctl.shownColumns(ch) else 0
             val tag = shared?.tags?.getOrNull(ch) ?: if (hidden > 0) "+$hidden fx" else null
@@ -153,9 +160,9 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
                 ink.round(c, tr, ink.dp(3f), Palette.alpha(ink.palette.PLAYHEAD, 60))
                 ink.label(c, tag, tr.centerX(), tr.top, tr.height(), ink.palette.PLAYHEAD, true, ink.unit * 0.7f, Align.CENTER)
             }
-            val penW = headerW - nw - cw * 2f - tagW
-            if (penW >= ink.labelWidth("…", ink.unit * 0.8f)) {
-                ink.label(c, ink.fit("${hex2(pen)} $penName", penW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, ink.palette.DIM, size = ink.unit * 0.8f)
+            val instrumentW = headerW - nw - cw * 2f - tagW
+            if (instrument > 0 && instrumentW >= ink.labelWidth("…", ink.unit * 0.8f)) {
+                ink.label(c, ink.fit("${hex2(instrument)} $instrumentName", instrumentW, ink.unit * 0.8f), x + cw * 1.2f + nw, laneTop, laneHeaderH, ink.palette.DIM, size = ink.unit * 0.8f)
             }
         }
         if (variableLanes) drawLaneScroll(c, area, laneHeaderH, rightScrollLabel, rightScrollW)
@@ -380,6 +387,32 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         cell.note == Cell.CUT -> 0
         left > 0 -> left - 1
         else -> 0
+    }
+
+    /** Explicit assignments in active rows only; ties prefer the lowest slot, never the entry pen. */
+    private fun refreshHeaderInstruments(pattern: Pattern) {
+        val system = song.system
+        if (headerPattern === pattern && headerSystem === system) return
+        val channels = system.channels
+        if (headerInstruments.size != channels.size) headerInstruments = IntArray(channels.size)
+        val capacity = system.banks.maxOf { it.slots } + 1
+        if (instrumentCounts.size < capacity) instrumentCounts = IntArray(capacity)
+        for (ch in channels.indices) {
+            instrumentCounts.fill(0)
+            val slots = system.banks[channels[ch].bank].slots
+            val track = pattern.tracks[ch]
+            for (row in 0 until minOf(pattern.length, track.size)) {
+                val instrument = track[row].instrument
+                if (instrument in 1..slots) instrumentCounts[instrument]++
+            }
+            var best = 0
+            for (slot in 1..slots) {
+                if (instrumentCounts[slot] > instrumentCounts[best]) best = slot
+            }
+            headerInstruments[ch] = best
+        }
+        headerPattern = pattern
+        headerSystem = system
     }
 
     /** Notices an edit of the shown pattern (here, on the other display, or undo) and lights what changed. */

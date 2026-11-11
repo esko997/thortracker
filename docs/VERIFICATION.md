@@ -1,5 +1,101 @@
 # Thor Tracker verification — 2026-11-11
 
+## 0.43.0 — musical instrument faces and stable pattern headers
+
+The approved Game Boy, SID and YM2612 Sound pilots are promoted to main with normal Thor Tracker
+identity, `org.thortracker`, **code 61** and the existing production certificate. The final review
+revision below changes no musical mapping, native engine, project schema or export behavior.
+
+- Sound reuses each pilot's Advanced instrument list, including typography, responsive geometry
+  and hit testing. Themed artwork remains in the editing area.
+- Bare Up/Down selects slots; bare Left/Right cycles mode, name and musical parameters;
+  A+Left/Right edits. New Sound views focus their first control. Name caret motion is A+Up/Down;
+  precise Advanced navigation, audition and grouped Undo are retained.
+- Pattern channel labels use the most frequent explicit instrument in active pattern rows;
+  ties prefer the lowest slot, and empty channels omit the label. Counts are cached per pattern,
+  while instrument renames remain live. Entry selection and playback are unaffected.
+- **1,206 core JVM and 22 Android host tests pass**, no failures/errors/skips. Tests cover the
+  requested axes, name bounds, empty FM slot creation, Advanced navigation, shared-list drawing,
+  header ties, hidden rows, entry-pen independence and edit/Undo.
+- A production-signed **Pocket DMG Activity smoke passes** for GB Pulse/Wave/Noise, SID 6581/8580
+  and YM2612. Real key events exercise slot/parameter movement and held edits; one Undo restores
+  each patch. Touch switches modes, and full native RGBA comparisons prove identical slot-list
+  pixels and geometry between faces. Six native 360×270 dp renders cover compact layouts.
+  These are not Galaxy Fold8 physical-reach measurements.
+- The live Pattern scenario retains `[2,3,0,0]` instrument labels through real Instrument-view
+  selection and return, without changing the song.
+- A separate, clean instrumentation APK passes **all 30 permanent Android tests** on DMG.
+  Its native audio contract reports zero xruns/driver faults and maximum callback 3.080 ms;
+  this is not a new six-chip acoustic or long-session audio measurement.
+- All eight private recovery/workspace entries were cold-backed up, restored and independently
+  verified, manifest SHA-256 `13a603d9a03808acbb2df782f13582272d727532ad79926980eaba9e7b6636e3`.
+  The owned test APK and UUID directory were removed; the original 60000 ms timeout was restored
+  and DMG returned Home/asleep. `/ThorTunez` was untouched.
+
+APK SHA-256: `30bfb49e3c061272fbb9c8c68cd39ea3f06373251a101e3d88df20eb3ca711c0`.
+Evidence: `~/.local/state/thortracker/recovery-20261109/instrument-pilots-043/feedback-devices/`
+`dmg-feedback-9e3c1b3885be426982bf42fab4c08acf/`. The temporary harness initially enumerated beyond
+GB's 15 slots; it was corrected to use each bank's declared size, with cold restoration verified
+on the failed run as well. Source and builds remained serialized and memory-capped.
+
+Cross-platform CI [43029591293](https://github.com/esko997/thortracker/actions/runs/43029591293)
+passes build, Deck and Brick jobs at `ad3e9aa7016de23367edac27602293785e59e765`. Its actual AppImage,
+SHA-256 `fe19f48d54e722762d18e6bde5f9828ef44fd77d644514c5eb4f5ca3cbc8c292`, passes three isolated
+offscreen/dummy-audio runtime probes using `seconds=6 size=1280x800@1.5` and
+`script=105+97,20,19,22,21,96+22,99~500,108` (GB; SID/FM use `96+21`).
+All show Instrument, nonzero audition PCM, advancing playback and inspected screenshots.
+Saved projects change only GB duty 0→1, SID's owned wave program/table placement, or YM's two
+modulator TL values 27→28. This is not physical Deck operation or acoustic-listening proof.
+The first GB probe hit the lower duty bound; the verification direction was corrected, not
+the control's clamping behavior. Native evidence is in `feedback-desktop/`.
+The APK contains production sources through `f463826`; later commits add test-fixture corrections,
+documentation and the gallery. Thor received the hash-verified APK as an artifact only.
+The phone outbox was updated, but Syncthing reports `notSharing`; phone receipt is not confirmed.
+
+## 0.43.0 — three musical instrument review pilots
+
+Separate review branch; **not a broader chip-panel rollout**. Approved touch/GB functionality
+is already on main in 0.42.0. The review APK uses the same `org.thortracker` package, Thor Tracker
+label and production certificate, revision 2 **0.43.0/code 60**, arm64-v8a and x86_64.
+See [the illustrated review](INSTRUMENT_PANELS.md) for musical mappings and explicit limits.
+
+- Game Boy Pulse/Wave/Noise use an olive pixel LCD; SID uses waveform keys, envelope/pulse
+  displays and amber faders; YM2612 uses a large modulation-brightness dial and four supporting
+  controls. Advanced keeps exact patches and deeper controls. No project/native-image schema changes.
+- **1,188 core JVM and 22 Android host tests pass**, with no failures/errors/skips. Revision 2
+  fixes SID's name cursor exceeding its 16-character limit; the regression fails before/passes after.
+  GB/FM paging checks require real touch navigation to hidden controls rather than selecting them in test state.
+- The original code-59 production-signed candidate passes a real Pocket DMG Activity scenario covering all
+  three GB banks, SID 6581/8580 and YM2612: touch and controller edits, grouped Undo, exact patch
+  and native-image preservation across mode switches, audition and advancing playback.
+- **All 30 permanent Android contracts pass on Nova**, plus a separate Activity scenario exercising
+  two-pointer dock editing, simultaneous modifier cancellation, grouped edit/Undo, Sound/Advanced
+  switching and auto-hiding for its actual built-in controller.
+- Twelve native Android editor renders cover six bank/model cases at **360×270 dp and 720×352 dp**;
+  every control is reachable and at least 48 dp. Contrast faces and unsupported additive-FM controls
+  are also exercised. Synthetic viewports are not physical Galaxy Fold8 reach evidence.
+- **34 native WAVs pass signal checks** for GB envelopes/gates/shifts/LFSR width, SID PWM/envelopes
+  and last-started shared-filter ownership, and YM modulation/harmonics/feedback/carrier envelopes.
+  All 34 final WAVs are byte-identical to the preceding candidate after the final FM layout refinement.
+  Exact measurements and the rejected short-window noise assumption are recorded in the review.
+- DMG's six short audio scenarios report **zero xruns/driver faults**, maximum observed callback
+  **9.350 ms**. This is not long-session, acoustic-listening or original-hardware export-budget proof.
+- Eight original private entries on each device were cold-backed up, restored, and independently
+  verified: DMG manifest SHA-256 `4e9599cfd617a3e6e75076a8574703037186d685c40713bf9f76652a30898062`,
+  Nova `978d888d7d6a22ffad06c0248ff92818c01c320df436c57fc0f6543fa3c48f8b`.
+  Owned test APKs/UUID directories were removed, original timeout restored and devices returned Home/asleep.
+  `/ThorTunez` is untouched. Thor remains artifact-only; the old separate preview is not deleted/migrated.
+
+Evidence root: `~/.local/state/thortracker/recovery-20261109/instrument-pilots-043/`.
+Final DMG run: `final-pilots/dmg-7aa4eb071f844f3b91495cce085c1cee/`;
+Nova: `final-contracts/nova-8f1001e83d124c668ed3d19cb73de0a4/`.
+Builds were serialized through the memory-capped wrapper; no emulator or local Kotlin/Native link.
+The first review CI JVM compile exhausted the separate Kotlin daemon's heap (`GC overhead limit
+exceeded`); desktop/ARM64 builds succeeded. The CI build job now uses one in-process compiler
+with an explicit 2 GiB heap. Local 1 GiB settings and the workstation wrapper's cgroup limits
+are unchanged; no validator or test was weakened to work around the compiler failure.
+Pause after these three pilots for artistic and musical review.
+
 ## 0.42.0 — production touch controls and Game Boy Sound editor
 
 The approved controller dock and Game Boy pulse Sound/Advanced workflow now use the normal

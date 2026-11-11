@@ -28,7 +28,7 @@ class SidInstrumentViewTest {
     }
 
     private fun view(kind: ViewKind = ViewKind.INSTRUMENT, setup: ViewState.() -> Unit = {}) =
-        ViewController(session, ViewState(kind = kind).apply(setup))
+        ViewController(session, ViewState(kind = kind).apply { sidPanel.advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 

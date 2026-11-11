@@ -99,7 +99,8 @@ object SidInstrumentView : SystemView() {
         val st = v.state
         st.instrument = st.instrument.coerceIn(1, SidSystem.SLOTS)
         st.envelope = st.envelope.coerceIn(0, Page.entries.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        st.instField = if (st.sidPanel.advanced) st.instField.coerceIn(-1, rows(st).size - 1) else SidSoundFace.soundField(st.instField)
+        if (!v.editHeld) st.sidPanel.editBlocked = false
         st.listenChannel = st.listenChannel.coerceIn(0, v.session.song.system.channels.size - 1)
         st.rawTable = st.rawTable.coerceIn(0, SidTables.NAMES.size - 1)
         val p = program(v.session.song, st)
@@ -114,10 +115,12 @@ object SidInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.sidPanel.invalidate()
         state.instrument = subject.coerceIn(1, SidSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument) state.sidPanel.invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -131,6 +134,7 @@ object SidInstrumentView : SystemView() {
     /** Shows page [index] (wrapping), keeping the cursor on the same kind of row where the new page has it. */
     fun showPage(v: ViewController, index: Int) {
         val st = v.state
+        st.sidPanel.invalidate()
         val row = row(st)
         st.envelope = index.mod(Page.entries.size)
         val rows = rows(st)
@@ -144,6 +148,7 @@ object SidInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, SidSystem.SLOTS)
         if (slot == st.instrument) return
+        st.sidPanel.invalidate()
         st.instrument = slot
         mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         program(v.session.song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
@@ -162,6 +167,7 @@ object SidInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (SidSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val rows = rows(st)
         val row = row(st)
@@ -299,10 +305,12 @@ object SidInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (SidSoundFace.editPress(v)) return
         if (row(v.state) in SOUND_ROWS && page(v.state) != Page.TABLES) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (SidSoundFace.editRelease(v, tap)) return
         val st = v.state
         val session = v.session
         val row = row(st)
@@ -346,6 +354,7 @@ object SidInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (SidSoundFace.clear(v)) return
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -396,10 +405,17 @@ object SidInstrumentView : SystemView() {
     }
 
     /** Program pages' rows copy, cut and paste the program; the others the whole sound. */
-    private fun programRow(state: ViewState) = page(state).table >= 0 && (row(state) == Row.LENGTH || row(state) == Row.STEPS)
+    private fun programRow(state: ViewState) = state.sidPanel.advanced && state.instField >= 0 &&
+        page(state).table >= 0 && (row(state) == Row.LENGTH || row(state) == Row.STEPS)
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
+        st.sidPanel.invalidate()
+        if (!st.sidPanel.advanced && (a == Action.PREV_CHANNEL || a == Action.NEXT_CHANNEL)) {
+            st.listenChannel = (st.listenChannel + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(v.session.song.system.channels.size)
+            if (v.auditionHeld) audition(v)
+            return true
+        }
         val session = v.session
         val slot = st.instrument
         val table = page(st).table
@@ -416,7 +432,7 @@ object SidInstrumentView : SystemView() {
                 session.copySidInstrument(slot)
                 session.setSidInstrument(slot, defaultSidInstrument(slot), "Cut sound")
             }
-            Action.DUPLICATE -> if (row(st) == Row.STEPS) duplicateStep(v) else {
+            Action.DUPLICATE -> if (st.sidPanel.advanced && st.instField >= 0 && row(st) == Row.STEPS) duplicateStep(v) else {
                 if (slot >= SidSystem.SLOTS) { session.note("Sound ${EditorSession.hex2(slot)} is the last slot"); return true }
                 val src = sound(session.song, st) ?: return true
                 session.setSidInstrument(slot + 1, src.copy(name = (src.name + "+").take(SidInstrument.NAME_MAX)), "Duplicate sound")
@@ -429,6 +445,7 @@ object SidInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (SidSoundFace.hints(v, h)) return
         val st = v.state
         val row = row(st)
         val song = v.session.song
@@ -479,6 +496,9 @@ object SidInstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         return listOf(
             "Instruments" to listOf(
+                "Sound / Advanced" to "Up past the slot selects the face; Left/Right switches without changing the patch. Sound: Voice, Pulse, Contour, Tail, Color; hold Edit with a direction to shape it",
+                "Sound programs" to "Custom stays exact until its control is changed. Voice replaces only the wave program; selecting Pulse also gives an empty pulse program a square width. Pulse works on the Pulse voice. Contour owns attack/decay/sustain; Tail owns release",
+                "Color" to "One shared filter for all three voices, last program start wins. Leave starts no filter program; it does not bypass a filter another voice started. Refine routing in Advanced",
                 ud to "Sound slot, name, Listen voice, page, then the page's settings or program rows",
                 lr to "On settings: the sound slot; on a program row: its columns",
                 channels to "Pages: envelope, wave, pulse and filter programs, vibrato and hard restart, tables",
