@@ -1,6 +1,6 @@
 # Three musical instrument pilots
 
-**Review candidate: 0.43.0/code 59. Stop here for joint review before adding more faces.**
+**Review revision 2: 0.43.0/code 60. Stop here for joint review before adding more faces.**
 The approved touch controls and first Game Boy Sound/Advanced workflow are on `main` in
 0.42.0. These redesigned Game Boy, C64 SID and Mega Drive YM2612 faces are a separate review
 workstream—not a commitment to roll the design across every backend yet.
@@ -126,12 +126,17 @@ carrier ratios, detuning, tuning or modulation programs.
 
 ## Verification and review boundary
 
-The first integrated candidate passes **1,187 shared-core and 22 Android host tests**, plus a
+The original code-59 candidate passes **1,187 shared-core and 22 Android host tests**, plus a
 real Pocket DMG Activity scenario for all three GB banks, both SID models and YM2612. It covers
 touch/controller edits, grouped Undo, exact native-image preservation across face switches,
 audition and advancing playback. Native Android editor renders at **360×270 dp and 720×352 dp**
 exercise all controls at physical touch size. Those are synthetic editor viewports, not Galaxy
 Fold8 captures or physical two-thumb ergonomics evidence.
+
+Revision 2 fixes controller name navigation beyond SID's 16-character limit. Its regression
+fails before the fix and passes afterward; **1,188 core and 22 Android host tests pass**.
+Compact GB/FM coverage now requires touch navigation whenever controls are hidden.
+The gallery and native-audio measurements remain from code 59; musical mappings are unchanged.
 
 **34 native WAVs** exercise envelopes, wave shifts/gates, noise width, SID PWM/shared filter and
 FM modulation/harmonics/feedback. The low GB noise fixture clocks at 146.286 Hz: its seven-bit
@@ -141,6 +146,13 @@ that exact chip-period comparison. SID Warm → Air → Warm changes started by 
 match the corresponding static-filter RMS within 1.5% on 6581 and 0.001% on 8580. FM Brightness
 raises this fixture's spectral centroid from 262 to 538 Hz while leaving both carrier TLs at 16.
 These are digital native-render checks, not acoustic listening or original-console CPU-budget proof.
+
+A counterfactual check compares each SID window against both static colors: the correct color's
+PCM RMS error is below one tenth of the wrong color's error in all six windows (both chip models).
+The YM Edge input projects differ **only** in feedback 0 → 7; 99.905% of sampled PCM frames differ.
+Their equality to the adjacent Glass/Held fixtures is expected endpoint reuse, not a harmonics
+change. Feedback is not monotonically brighter for arbitrary patches: this MUL-7 fixture's
+centroid decreases from 2778 to 2224 Hz. The test proves an isolated feedback change, not brightness.
 
 Every device run cold-backs up and independently verifies restoration of the eight original
 private recovery/workspace entries; its test APK and UUID-owned files are removed, and original

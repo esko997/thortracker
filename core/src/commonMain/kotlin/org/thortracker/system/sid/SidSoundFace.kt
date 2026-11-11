@@ -1,7 +1,6 @@
 package org.thortracker.system.sid
 
 import org.thortracker.editor.Action
-import org.thortracker.editor.EditorSession
 import org.thortracker.editor.Hint
 import org.thortracker.editor.NameEdit
 import org.thortracker.editor.ViewController
@@ -67,7 +66,7 @@ internal object SidSoundFace {
             st.instField = (st.instField - dy).coerceIn(-1, SidSoundControl.entries.size + 1)
             st.textPos = 0
         } else if (st.instField == 1) {
-            st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
+            st.textPos = (st.textPos + dx).coerceIn(0, SidInstrument.NAME_MAX - 1)
         } else SidInstrumentView.moveSlot(v, dx)
         return true
     }

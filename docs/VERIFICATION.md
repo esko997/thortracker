@@ -4,14 +4,16 @@
 
 Separate review branch; **not a broader chip-panel rollout**. Approved touch/GB functionality
 is already on main in 0.42.0. The review APK uses the same `org.thortracker` package, Thor Tracker
-label and production certificate, version **0.43.0/code 59**, arm64-v8a and x86_64.
+label and production certificate, revision 2 **0.43.0/code 60**, arm64-v8a and x86_64.
 See [the illustrated review](INSTRUMENT_PANELS.md) for musical mappings and explicit limits.
 
 - Game Boy Pulse/Wave/Noise use an olive pixel LCD; SID uses waveform keys, envelope/pulse
   displays and amber faders; YM2612 uses a large modulation-brightness dial and four supporting
   controls. Advanced keeps exact patches and deeper controls. No project/native-image schema changes.
-- **1,187 core JVM and 22 Android host tests pass**, with no failures/errors/skips.
-- The final production-signed candidate passes a real Pocket DMG Activity scenario covering all
+- **1,188 core JVM and 22 Android host tests pass**, with no failures/errors/skips. Revision 2
+  fixes SID's name cursor exceeding its 16-character limit; the regression fails before/passes after.
+  GB/FM paging checks require real touch navigation to hidden controls rather than selecting them in test state.
+- The original code-59 production-signed candidate passes a real Pocket DMG Activity scenario covering all
   three GB banks, SID 6581/8580 and YM2612: touch and controller edits, grouped Undo, exact patch
   and native-image preservation across mode switches, audition and advancing playback.
 - **All 30 permanent Android contracts pass on Nova**, plus a separate Activity scenario exercising

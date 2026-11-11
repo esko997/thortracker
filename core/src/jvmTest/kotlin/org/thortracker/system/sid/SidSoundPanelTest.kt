@@ -31,6 +31,22 @@ class SidSoundPanelTest {
         press(a); for (m in moves) tap(m); release(a)
     }
 
+    @Test fun nameCursorStopsAtTheLastEditableCharacter() {
+        val s = EditorSession(SidSystem.blank())
+        val original = "ABCDEFGHIJKLMNOP"
+        s.setSidInstrument(1, SidInstrument(name = original))
+        val p = panel(s)
+        p.state.instField = 1
+        repeat(32) { p.ctl.tap(Action.RIGHT) }
+        assertEquals(SidInstrument.NAME_MAX - 1, p.state.textPos)
+        p.ctl.hold(Action.EDIT, Action.RIGHT)
+        assertEquals("ABCDEFGHIJKLMNOQ", s.song.sid.instruments[0].name)
+        s.undo()
+        assertEquals(original, s.song.sid.instruments[0].name)
+        repeat(32) { p.ctl.tap(Action.LEFT) }
+        assertEquals(0, p.state.textPos)
+    }
+
     @Test fun arbitraryReadbackAndEveryFaceSwitchAreReadOnlyOnBothChips() {
         for (chip in SidChip.entries) {
             val s = EditorSession(SidSystem.blank())

@@ -19,7 +19,7 @@ android {
         applicationId = "org.thortracker"
         minSdk = 26
         targetSdk = 32
-        versionCode = 59
+        versionCode = 60
         versionName = "0.43.0"
         testApplicationId = "org.thortracker.test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

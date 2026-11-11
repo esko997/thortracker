@@ -272,6 +272,17 @@ class YmSoundFaceTest {
                 val panel = Panel(session, width, height, density, zoom)
                 panel.pane.palette = Palette.CONTRAST
                 panel.draw()
+                if ((0..4).any { panel.painter.controlRect(it) == null }) {
+                    // Hidden controls must be reachable through touch alone, not by assigning instField.
+                    panel.state.instField = 2
+                    panel.draw()
+                    repeat(5) { i ->
+                        assertNotNull(panel.painter.controlRect(i))
+                        val next = requireNotNull(panel.painter.navigationRect(true))
+                        panel.tap(next); panel.draw()
+                        assertEquals((i + 1) % 5 + 2, panel.state.instField)
+                    }
+                }
                 for (i in 0..4) {
                     panel.state.instField = i + 2
                     panel.draw()
