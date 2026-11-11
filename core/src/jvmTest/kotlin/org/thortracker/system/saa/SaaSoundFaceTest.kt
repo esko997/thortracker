@@ -290,4 +290,22 @@ class SaaSoundFaceTest {
         v.tap(Action.RIGHT); v.release(Action.EDIT)
         assertSame(before, s.song)
     }
+
+    @Test fun heldListenFollowsLaneSetterAndChannelCommandsOnBothVariants() {
+        for (variant in SaaVariant.entries) {
+            val s = session(variant)
+            val v = view(s)
+            val before = s.song
+            val heard = ArrayList<Int>()
+            s.onAudition = { lane, _, _, _ -> heard += lane }
+            val last = variant.channels - 1
+            v.press(Action.AUDITION)
+            SaaSoundFace.set(v, SaaSoundControl.LANE, last)
+            v.tap(Action.NEXT_CHANNEL)
+            v.tap(Action.PREV_CHANNEL)
+            assertEquals(listOf(2, last, 0, last), heard)
+            assertSame(before, s.song)
+            v.release(Action.AUDITION)
+        }
+    }
 }

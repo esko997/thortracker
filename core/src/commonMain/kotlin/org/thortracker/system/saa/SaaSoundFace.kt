@@ -41,6 +41,7 @@ internal object SaaSoundFace {
             panel(v).invalidate()
             v.state.listenChannel = n.coerceIn(0, maximum(v, c))
             if (v.editHeld) { v.useEdit(); panel(v).editBlocked = true }
+            if (v.auditionHeld) SaaInstrumentView.audition(v)
             return false
         }
         val changed = v.session.editSaaInstrument(v.state.instrument, "Set ${c.label}") { SaaSoundMacros.set(c, it, n, v.state.listenChannel) }
@@ -87,9 +88,8 @@ internal object SaaSoundFace {
         val slot = v.state.instrument
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                panel(v).invalidate()
-                v.state.listenChannel = (v.state.listenChannel + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(v.session.song.system.channels.size)
-                if (v.editHeld) { v.useEdit(); panel(v).editBlocked = true }
+                set(v, SaaSoundControl.LANE,
+                    (v.state.listenChannel + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(v.session.song.system.channels.size))
             }
             Action.COPY -> v.session.copySaaInstrument(slot)
             Action.PASTE -> {

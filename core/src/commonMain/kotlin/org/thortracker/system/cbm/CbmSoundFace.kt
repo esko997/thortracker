@@ -35,18 +35,29 @@ internal object CbmSoundFace {
         val ins = shown(v)
         return CbmSoundMacros.maximum(c, v.session.song.cbm, ins)
     }
-    fun set(v: ViewController, c: CbmSoundControl, n: Int): Boolean {
+    fun value(v: ViewController, c: CbmSoundControl): Int? {
+        val ins = shown(v)
+        return CbmSoundMacros.value(c, v.session.song.cbm, ins,
+            CbmInstrumentView.listenChannel(v.session.song, v.state, ins))
+    }
+    private fun blockEdit(v: ViewController) {
+        if (v.editHeld) { v.useEdit(); panel(v).editBlocked = true }
+    }
+    fun set(v: ViewController, c: CbmSoundControl, n: Int, original: CbmInstrument? = null): Boolean {
         if (!CbmSoundMacros.enabled(c, v.session.song.cbm, shown(v))) return false
         if (c == CbmSoundControl.LANE) {
             panel(v).invalidate()
             v.state.listenChannel = n.coerceIn(0, maximum(v, c))
             if (v.editHeld) { v.useEdit(); panel(v).editBlocked = true }
+            if (v.auditionHeld) CbmInstrumentView.audition(v)
             return false
         }
-        val changed = v.session.editCbmInstrument(v.state.instrument, "Set ${c.label}") { CbmSoundMacros.set(c, v.session.song.cbm, it, n) }
+        val changed = v.session.editCbmInstrument(v.state.instrument, "Set ${c.label}") {
+            CbmSoundMacros.set(c, v.session.song.cbm, original ?: it, n)
+        }
         if (changed) {
-            if (c == CbmSoundControl.VOICE) { panel(v).invalidate(); if (v.editHeld) panel(v).editBlocked = true; settle(v) }
             heard(v)
+            if (c == CbmSoundControl.VOICE) { panel(v).invalidate(); blockEdit(v); settle(v) }
         }
         return changed
     }
@@ -70,8 +81,7 @@ internal object CbmSoundFace {
                 } else st.textPos = (st.textPos - dy).coerceIn(0, CbmInstrumentView.NAME_MAX - 1)
                 else -> controls(v).getOrNull(st.instField - 2)?.let { c ->
                     if (dx == 0 && c == CbmSoundControl.LANE) return@let
-                    val ins = shown(v)
-                    val current = CbmSoundMacros.value(c, v.session.song.cbm, ins, v.state.listenChannel)
+                    val current = value(v, c)
                     set(v, c, ((current ?: if (dx + dy < 0) maximum(v, c) + 1 else -1) + dx + dy).coerceIn(0, maximum(v, c)))
                 }
             }
@@ -88,13 +98,27 @@ internal object CbmSoundFace {
         val slot = v.state.instrument
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
-                panel(v).invalidate()
-                v.state.listenChannel = (v.state.listenChannel + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(v.session.song.system.channels.size)
-                if (v.editHeld) { v.useEdit(); panel(v).editBlocked = true }
+                val ins = shown(v)
+                if (v.session.song.cbm.chip == CbmChip.VIC || ins.kind == CbmKind.TONE && !ins.playsNoise) {
+                    val current = CbmInstrumentView.listenChannel(v.session.song, v.state, ins)
+                    set(v, CbmSoundControl.LANE, (current + if (a == Action.NEXT_CHANNEL) 1 else -1)
+                        .mod(maximum(v, CbmSoundControl.LANE) + 1))
+                }
             }
             Action.COPY -> v.session.copyCbmInstrument(slot)
-            Action.PASTE -> { panel(v).invalidate(); v.session.pasteCbm(slot, null); settle(v) }
-            Action.CUT -> { panel(v).invalidate(); v.session.copyCbmInstrument(slot); v.session.setCbmInstrument(slot, null, "Cut sound") }
+            Action.PASTE -> {
+                panel(v).invalidate()
+                v.session.pasteCbm(slot, null)
+                blockEdit(v)
+                settle(v)
+            }
+            Action.CUT -> {
+                panel(v).invalidate()
+                v.session.copyCbmInstrument(slot)
+                v.session.setCbmInstrument(slot, null, "Cut sound")
+                blockEdit(v)
+                settle(v)
+            }
             Action.DUPLICATE -> {
                 val ins = CbmInstrumentView.sound(v.session.song, v.state) ?: return true
                 if (slot < CbmSystem.SLOTS) { v.session.setCbmInstrument(slot + 1, ins.copy(name = (ins.name + "+").take(CbmInstrumentView.NAME_MAX)), "Duplicate sound"); moveSlot(v, 1) }

@@ -296,4 +296,98 @@ class CbmSoundFaceTest {
         v.tap(Action.RIGHT); v.release(Action.EDIT)
         assertSame(before, s.song)
     }
+
+    @Test fun recordingDragRestoresOriginalLoopStartAfterVisitingAShortSample() {
+        val song = TedSystem.blank()
+        val original = patch().copy(kind = CbmKind.SAMPLE, sample = 0, loopStart = 90)
+        val sound = song.cbm.copy(samples = listOf(
+            CbmSample("Long", List(100) { it % 9 }),
+            CbmSample("Short", List(10) { it % 9 }))).withInstrument(1, original)
+        val s = EditorSession(song.copy(sound = sound))
+        val p = Panel(s)
+        p.state.instField = 3
+        p.draw()
+        p.painter.down(p.painter.valueX(1, 0f), p.painter.controlRect(1).centerY())
+        p.painter.move(p.painter.valueX(1, 1f), 0f)
+        assertEquals(original.copy(sample = 1, loopStart = 9), s.song.cbm.instrument(1))
+        p.draw()
+        p.painter.move(p.painter.valueX(1, 0f), 0f)
+        assertEquals(original, s.song.cbm.instrument(1))
+        p.painter.up(0f, 0f)
+    }
+
+    @Test fun acceptedHeldVoiceEditAuditionsNewVoiceBeforeBlockingFurtherChanges() {
+        val s = session()
+        val v = view(s)
+        val heard = ArrayList<Pair<Int, CbmInstrument>>()
+        s.onAudition = { lane, _, slot, _ -> heard += lane to s.song.cbm.instrument(slot)!! }
+        v.press(Action.EDIT)
+        v.tap(Action.RIGHT)
+        val noise = s.song.cbm.instrument(1)!!
+        assertEquals(listOf(0, 1), heard.map { it.first })
+        assertEquals(noise, heard.last().second)
+        assertEquals(2, noise.wave)
+        v.tap(Action.RIGHT)
+        assertEquals(2, heard.size)
+        assertSame(noise, s.song.cbm.instrument(1))
+        v.release(Action.EDIT)
+    }
+
+    @Test fun heldListenFollowsLaneSetterAndChannelCommandsOnBothChips() {
+        for (system in listOf(VicSystem, TedSystem)) {
+            val s = session(system)
+            val v = view(s)
+            val before = s.song
+            val heard = ArrayList<Int>()
+            s.onAudition = { lane, _, _, _ -> heard += lane }
+            val last = if (system == VicSystem) 3 else 1
+            v.press(Action.AUDITION)
+            CbmSoundFace.set(v, CbmSoundControl.LANE, last)
+            v.tap(Action.NEXT_CHANNEL)
+            v.tap(Action.PREV_CHANNEL)
+            assertEquals(listOf(0, last, 0, last), heard)
+            assertSame(before, s.song)
+            v.release(Action.AUDITION)
+        }
+    }
+
+    @Test fun tedToneReadbackAndNavigationUseResolvedVoiceNotTheParkedDacLane() {
+        val s = session()
+        val v = view(s, 5)
+        v.state.listenChannel = CbmImage.TED_DAC_CHANNEL
+        val before = s.song
+        assertEquals(0, CbmSoundFace.value(v, CbmSoundControl.LANE))
+        v.edit(Action.RIGHT)
+        assertEquals(1, v.state.listenChannel)
+        assertEquals(1, CbmSoundFace.value(v, CbmSoundControl.LANE))
+        v.state.listenChannel = CbmImage.TED_DAC_CHANNEL
+        for (lane in listOf(1, 0, 1, 0)) {
+            v.tap(Action.NEXT_CHANNEL)
+            assertEquals(lane, v.state.listenChannel)
+            assertEquals(lane, CbmInstrumentView.listenChannel(s.song, v.state, s.song.cbm.instrument(1)))
+        }
+        assertSame(before, s.song)
+    }
+
+    @Test fun pasteAndCutCannotRedirectHeldEditIntoAChangedKindOrEmptySlot() {
+        val s = session()
+        val sample = patch().copy(kind = CbmKind.SAMPLE)
+        s.setCbmInstrument(2, sample, "Sample fixture")
+        s.copyCbmInstrument(2)
+        val v = view(s)
+        v.press(Action.EDIT)
+        v.tap(Action.PASTE)
+        assertEquals(sample, s.song.cbm.instrument(1))
+        val pasted = s.song
+        v.tap(Action.RIGHT); v.tap(Action.CLEAR)
+        assertSame(pasted, s.song)
+        v.release(Action.EDIT)
+        v.press(Action.EDIT)
+        v.tap(Action.CUT)
+        assertNull(s.song.cbm.instrument(1))
+        val cut = s.song
+        v.tap(Action.RIGHT); v.tap(Action.CLEAR)
+        assertSame(cut, s.song)
+        v.release(Action.EDIT)
+    }
 }

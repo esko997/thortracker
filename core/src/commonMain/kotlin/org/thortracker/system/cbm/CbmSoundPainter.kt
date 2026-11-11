@@ -41,7 +41,7 @@ internal class CbmSoundPainter(v: PaneView) : Painter(v) {
     internal var compact = false
         private set
     private class Target(val slot: Int, val revision: Int, val control: CbmSoundControl,
-        val left: Float, val right: Float, val maximum: Int, var expected: CbmInstrument?)
+        val left: Float, val right: Float, val maximum: Int, val original: CbmInstrument, var expected: CbmInstrument?)
     private val drag = PanelDrag<Target>()
     private val cancelOwned: () -> Unit = { cancel() }
 
@@ -77,7 +77,7 @@ internal class CbmSoundPainter(v: PaneView) : Painter(v) {
             for (i in list.indices) {
                 val control = list[i]
                 enabled[i] = CbmSoundMacros.enabled(control, song.cbm, ins)
-                indices[i] = CbmSoundMacros.value(control, song.cbm, ins, st.listenChannel) ?: -1
+                indices[i] = CbmSoundFace.value(ctl, control) ?: -1
                 values[i] = if (!enabled[i]) when (control) {
                     CbmSoundControl.LANE -> "Voice 2 only"
                     CbmSoundControl.GATE -> "Mixed: use Advanced"
@@ -202,7 +202,7 @@ internal class CbmSoundPainter(v: PaneView) : Painter(v) {
                 return true
             }
             drag.begin(session, "Set ${control.label}", Target(st.instrument, p.revision, control, rails[i].left, rails[i].right,
-                CbmSoundFace.maximum(ctl, control), CbmInstrumentView.sound(song, st)))
+                CbmSoundFace.maximum(ctl, control), ins, CbmInstrumentView.sound(song, st)))
             p.cancelTouch = cancelOwned
             setFromX(x)
             return true
@@ -213,7 +213,7 @@ internal class CbmSoundPainter(v: PaneView) : Painter(v) {
         val t = drag.live(session) ?: return
         val p = CbmSoundFace.panel(ctl)
         if (p.advanced || p.revision != t.revision || st.instrument != t.slot || CbmInstrumentView.sound(song, st) !== t.expected) { cancel(); return }
-        CbmSoundFace.set(ctl, t.control, PanelWidgets.railValue(x, t.left, t.right, 0, t.maximum))
+        CbmSoundFace.set(ctl, t.control, PanelWidgets.railValue(x, t.left, t.right, 0, t.maximum), t.original)
         t.expected = CbmInstrumentView.sound(song, st)
     }
     override fun move(x: Float, y: Float) { if (advancedPointer) advanced.move(x, y) else setFromX(x) }
