@@ -5,6 +5,8 @@ plugins {
 }
 // Release signing is opt-in: tools/release.sh passes -PthortrackerSigningDir=<dir holding thortracker-release.p12 and
 // store-password>. Without it, assembleRelease builds an unsigned APK (as the CI build job does).
+// The same opt-in key also signs debug builds so they can update the installed production app.
+// Without it, debug keeps Android's local debug key and cannot update a production-signed install.
 val signingDir = providers.gradleProperty("thortrackerSigningDir").orNull?.let(::file)
 android {
     namespace = "org.thortracker"
@@ -14,12 +16,12 @@ android {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
     defaultConfig {
-        applicationId = "org.thortracker.touchpreview"
+        applicationId = "org.thortracker"
         minSdk = 26
         targetSdk = 32
-        versionCode = 57
-        versionName = "0.42.0-touch-preview.2"
-        testApplicationId = "org.thortracker.touchpreview.test"
+        versionCode = 58
+        versionName = "0.42.0"
+        testApplicationId = "org.thortracker.test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
@@ -45,10 +47,9 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")
         }
-    }
-    // Parent-owned, source-only device harness; opt-in and compiled only into this preview's test APK.
-    providers.gradleProperty("previewHarnessDir").orNull?.let {
-        sourceSets.getByName("androidTest").java.srcDir(it)
+        debug {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
     }
     lint {
         // Sideloaded on handhelds, not published on Google Play; targetSdk 32 is the tested runtime behaviour.

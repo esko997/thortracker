@@ -12,12 +12,12 @@ import org.thortracker.model.Songs
 import org.thortracker.ui.HostInput
 
 /** Real router/editor transitions; no Android event mocks and no substitute editing implementation. */
-class PreviewInputTest {
+class TouchInputTest {
     private class Bench {
         val session = EditorSession(Songs.demo()).apply { step = 0 }
         val view = ViewController(session, ViewState(kind = ViewKind.PATTERN))
         val router = HostInput()
-        val owners = PreviewKeyOwners()
+        val owners = TouchKeyOwners()
         val controls = ArrayList<Control>()
         var auditions = 0
         var releases = 0
@@ -29,7 +29,7 @@ class PreviewInputTest {
             session.onReleaseAudition = { releases++ }
         }
         fun key(source: Int, code: Int, down: Boolean, repeat: Int = 0) {
-            if (owners.change(source, code, down, repeat) == PreviewKeyOwners.Edge.NONE) return
+            if (owners.change(source, code, down, repeat) == TouchKeyOwners.Edge.NONE) return
             capture?.let {
                 router.trackModifier(code, down)
                 if (repeat == 0) it.key(code, down)?.let { binding ->
@@ -45,7 +45,7 @@ class PreviewInputTest {
                 else -> Unit
             }
         }
-        val touch = PreviewPointers { code, down -> key(-1001, code, down) }
+        val touch = TouchPointers { code, down -> key(-1001, code, down) }
         fun down(id: Int, code: Int) = touch.down(id, code, code in Keymap.MODIFIERS)
         fun up(id: Int) = touch.up(id) { it in Keymap.MODIFIERS }
         fun tap(id: Int, code: Int) { down(id, code); up(id) }
@@ -74,7 +74,7 @@ class PreviewInputTest {
 
     @Test fun pointerIndexReorderingAndTwoOwnersOfSameButtonDoNotReleaseEarly() {
         val events = ArrayList<Pair<Int, Boolean>>()
-        val pointers = PreviewPointers { code, down -> events += code to down }
+        val pointers = TouchPointers { code, down -> events += code to down }
         pointers.down(80, Keys.BUTTON_X, false); pointers.down(3, Keys.BUTTON_X, false)
         pointers.down(99, Keys.DPAD_UP, false)
         pointers.up(3) { false }; pointers.up(99) { false }; pointers.up(80) { false }
@@ -126,9 +126,9 @@ class PreviewInputTest {
     }
 
     @Test fun cancellationDuringDownCallbackDoesNotResurrectPointer() {
-        lateinit var pointers: PreviewPointers
+        lateinit var pointers: TouchPointers
         val events = ArrayList<Pair<Int, Boolean>>()
-        pointers = PreviewPointers { code, down -> events += code to down; pointers.cancel() }
+        pointers = TouchPointers { code, down -> events += code to down; pointers.cancel() }
         pointers.down(50, Keys.BUTTON_A, false)
         pointers.up(50) { false }
         assertFalse(pointers.pressed(Keys.BUTTON_A))
@@ -238,19 +238,38 @@ class PreviewInputTest {
         assertEquals(before + 1, b.note())
     }
 
+    @Test fun onlyCurrentOwnersRepeatAndFinalOwnerReleasesTheKey() {
+        val owners = TouchKeyOwners()
+        assertEquals(TouchKeyOwners.Edge.DOWN, owners.change(-1001, Keys.DPAD_RIGHT, true))
+        assertEquals(TouchKeyOwners.Edge.NONE, owners.change(4, Keys.DPAD_RIGHT, true, repeat = 1))
+        assertEquals(TouchKeyOwners.Edge.NONE, owners.change(4, Keys.DPAD_RIGHT, true))
+        assertEquals(TouchKeyOwners.Edge.REPEAT, owners.change(4, Keys.DPAD_RIGHT, true, repeat = 1))
+        assertEquals(TouchKeyOwners.Edge.NONE, owners.change(-1001, Keys.DPAD_RIGHT, false))
+        assertFalse(owners.holds(-1001))
+        assertTrue(owners.holds(4))
+        assertEquals(TouchKeyOwners.Edge.NONE, owners.change(-1001, Keys.DPAD_RIGHT, true, repeat = 2))
+        assertEquals(TouchKeyOwners.Edge.UP, owners.change(4, Keys.DPAD_RIGHT, false))
+        assertFalse(owners.holds(4))
+        owners.change(4, Keys.BUTTON_A, true)
+        owners.cancel()
+        assertEquals(TouchKeyOwners.Edge.NONE, owners.change(4, Keys.BUTTON_A, false))
+        assertEquals(TouchKeyOwners.Edge.NONE, owners.change(4, Keys.BUTTON_A, true, repeat = 1))
+        assertEquals(TouchKeyOwners.Edge.DOWN, owners.change(4, Keys.BUTTON_A, true))
+    }
+
     @Test fun dockHidesOnlyForEnabledPhysicalGamepadWithFaceButtonsAndDirections() {
         val faceButtons: (IntArray) -> BooleanArray = { keys -> BooleanArray(keys.size) { keys[it] == Keys.BUTTON_A || keys[it] == Keys.BUTTON_B } }
         val numberedOnly: (IntArray) -> BooleanArray = { keys -> BooleanArray(keys.size) { keys[it] in Keys.BUTTON_1..Keys.BUTTON_16 } }
         val handheld = InputDevice.SOURCE_KEYBOARD or InputDevice.SOURCE_DPAD or InputDevice.SOURCE_GAMEPAD or InputDevice.SOURCE_JOYSTICK
         val hatPad = InputDevice.SOURCE_GAMEPAD or InputDevice.SOURCE_JOYSTICK
         val keyboard = InputDevice.SOURCE_KEYBOARD or InputDevice.SOURCE_DPAD
-        assertTrue("Built-in handheld pad", PreviewControllers.usable(false, true, handheld, faceButtons))
-        assertTrue("Stick/hat directions", PreviewControllers.usable(false, true, hatPad, faceButtons))
-        assertFalse("Disabled", PreviewControllers.usable(false, false, handheld, faceButtons))
-        assertFalse("Virtual", PreviewControllers.usable(true, true, handheld, faceButtons))
-        assertFalse("Keyboard", PreviewControllers.usable(false, true, keyboard, faceButtons))
-        assertFalse("D-pad remote", PreviewControllers.usable(false, true, InputDevice.SOURCE_DPAD, faceButtons))
-        assertFalse("No directions", PreviewControllers.usable(false, true, InputDevice.SOURCE_GAMEPAD, faceButtons))
-        assertFalse("No A/B", PreviewControllers.usable(false, true, handheld, numberedOnly))
+        assertTrue("Built-in handheld pad", TouchControllers.usable(false, true, handheld, faceButtons))
+        assertTrue("Stick/hat directions", TouchControllers.usable(false, true, hatPad, faceButtons))
+        assertFalse("Disabled", TouchControllers.usable(false, false, handheld, faceButtons))
+        assertFalse("Virtual", TouchControllers.usable(true, true, handheld, faceButtons))
+        assertFalse("Keyboard", TouchControllers.usable(false, true, keyboard, faceButtons))
+        assertFalse("D-pad remote", TouchControllers.usable(false, true, InputDevice.SOURCE_DPAD, faceButtons))
+        assertFalse("No directions", TouchControllers.usable(false, true, InputDevice.SOURCE_GAMEPAD, faceButtons))
+        assertFalse("No A/B", TouchControllers.usable(false, true, handheld, numberedOnly))
     }
 }

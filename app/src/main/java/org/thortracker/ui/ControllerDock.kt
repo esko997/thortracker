@@ -9,11 +9,11 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import org.thortracker.input.Keys
-import org.thortracker.input.PreviewPointers
+import org.thortracker.input.TouchPointers
 
 /** Three rows of 48dp targets, with independent pointer ownership and bounded thumb travel. */
 @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
-class PreviewDock(
+class ControllerDock(
     context: Context,
     private val send: (code: Int, down: Boolean, repeat: Int) -> Unit,
     private val cancelInput: () -> Unit,
@@ -26,7 +26,7 @@ class PreviewDock(
     private val latchKeys = setOf(Keys.BUTTON_SELECT, Keys.BUTTON_L2, Keys.BUTTON_R2, Keys.BUTTON_THUMBL)
     private val arrows = intArrayOf(Keys.DPAD_UP, Keys.DPAD_DOWN, Keys.DPAD_LEFT, Keys.DPAD_RIGHT)
     private val bounds = Rect()
-    private val pointers = PreviewPointers { code, down -> send(code, down, 0) }
+    private val pointers = TouchPointers { code, down -> send(code, down, 0) }
     private val leftControls = LinearLayout(context).apply { orientation = VERTICAL }
     private val rightControls = LinearLayout(context).apply { orientation = VERTICAL }
     private var repeating = false
@@ -78,7 +78,7 @@ class PreviewDock(
             text = name; typeface = PopupLayer.REGULAR; textSize = 12f
             isAllCaps = false; minWidth = dp(48); minimumWidth = dp(48)
             minHeight = dp(48); minimumHeight = dp(48); setPadding(0, 0, 0, 0)
-            tag = "preview-key-$code"
+            tag = "controller-key-$code"
             setOnClickListener {
                 // Accessibility activation is a full tap; real multi-touch goes through dispatchTouchEvent.
                 pointers.down(Int.MIN_VALUE, code, code in latchKeys)
