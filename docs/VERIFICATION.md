@@ -1,5 +1,42 @@
 # Thor Tracker verification — 2026-11-11
 
+## 0.43.0 review revision 3 — stable lists and spatial Sound navigation
+
+Review branch only; normal Thor Tracker identity, `org.thortracker`, **code 61** and the existing
+production certificate. No musical mapping, native engine, project schema or export changes.
+
+- Sound reuses each pilot's Advanced instrument list, including typography, responsive geometry
+  and hit testing. Themed artwork remains in the editing area.
+- Bare Up/Down selects slots; bare Left/Right cycles mode, name and musical parameters;
+  A+Left/Right edits. New Sound views focus their first control. Name caret motion is A+Up/Down;
+  precise Advanced navigation, audition and grouped Undo are retained.
+- Pattern channel labels use the most frequent explicit instrument in active pattern rows;
+  ties prefer the lowest slot, and empty channels omit the label. Counts are cached per pattern,
+  while instrument renames remain live. Entry selection and playback are unaffected.
+- **1,206 core JVM and 22 Android host tests pass**, no failures/errors/skips. Tests cover the
+  requested axes, name bounds, empty FM slot creation, Advanced navigation, shared-list drawing,
+  header ties, hidden rows, entry-pen independence and edit/Undo.
+- A production-signed **Pocket DMG Activity smoke passes** for GB Pulse/Wave/Noise, SID 6581/8580
+  and YM2612. Real key events exercise slot/parameter movement and held edits; one Undo restores
+  each patch. Touch switches modes, and full native RGBA comparisons prove identical slot-list
+  pixels and geometry between faces. Six native 360×270 dp renders cover compact layouts.
+  These are not Galaxy Fold8 physical-reach measurements.
+- The live Pattern scenario retains `[2,3,0,0]` instrument labels through real Instrument-view
+  selection and return, without changing the song.
+- A separate, clean instrumentation APK passes **all 30 permanent Android tests** on DMG.
+  Its native audio contract reports zero xruns/driver faults and maximum callback 3.080 ms;
+  this is not a new six-chip acoustic or long-session audio measurement.
+- All eight private recovery/workspace entries were cold-backed up, restored and independently
+  verified, manifest SHA-256 `13a603d9a03808acbb2df782f13582272d727532ad79926980eaba9e7b6636e3`.
+  The owned test APK and UUID directory were removed; the original 60000 ms timeout was restored
+  and DMG returned Home/asleep. `/ThorTunez` was untouched.
+
+APK SHA-256: `30bfb49e3c061272fbb9c8c68cd39ea3f06373251a101e3d88df20eb3ca711c0`.
+Evidence: `~/.local/state/thortracker/recovery-20261109/instrument-pilots-043/feedback-devices/`
+`dmg-feedback-9e3c1b3885be426982bf42fab4c08acf/`. The temporary harness initially enumerated beyond
+GB's 15 slots; it was corrected to use each bank's declared size, with cold restoration verified
+on the failed run as well. Source and builds remained serialized and memory-capped.
+
 ## 0.43.0 — three musical instrument review pilots
 
 Separate review branch; **not a broader chip-panel rollout**. Approved touch/GB functionality

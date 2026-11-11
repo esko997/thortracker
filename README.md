@@ -131,6 +131,12 @@ remains a separate control.
 
 The Pattern view is a four-channel hUGE grid (Pulse 1, Pulse 2, Wave, Noise) with an inspector that explains the selected note, sound or effect. Hold A and use the D-pad to change a value, or put the Keyboard on the other screen in **Write** mode. Each press writes a note at the pattern cursor and moves down a row. Both screens edit the same song, and the order list beside the grid shows where you are.
 
+When space permits, a channel header names the instrument assigned most often in that channel's
+current pattern—not the instrument selected for entering new notes. Only active pattern rows
+and explicit instrument assignments count; empty channels have no instrument label, and ties
+prefer the lowest slot number. Choosing a different entry sound therefore leaves other channel
+headers alone.
+
 ### Song view: arrangement, loop point and parked orders
 
 <img src="docs/media/song-view-parked-order.png" width="620" alt="Song view showing title, artist, ticks per row (about 149 BPM), loop point at order 01 marked with a loop arrow, and order 03 dimmed and labelled Parked, with the order command row Repeat, New, Clone, Delete, Earlier, Later, Loop here, Unpark">

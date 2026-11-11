@@ -1,9 +1,9 @@
 # Three musical instrument pilots
 
-**Review revision 2: 0.43.0/code 60. Stop here for joint review before adding more faces.**
+**Review revision 3: 0.43.0/code 61.** The three pilots have been reviewed; this revision
+applies the shared-list and navigation feedback before expanding to more chip families.
 The approved touch controls and first Game Boy Sound/Advanced workflow are on `main` in
-0.42.0. These redesigned Game Boy, C64 SID and Mega Drive YM2612 faces are a separate review
-workstream—not a commitment to roll the design across every backend yet.
+0.42.0. The redesigned Game Boy, C64 SID and Mega Drive YM2612 faces remain on the review branch.
 
 The APK remains **Thor Tracker**, package `org.thortracker`, with the production signing key.
 It updates the normal app rather than installing another similarly named app. The older
@@ -12,8 +12,8 @@ separate Touch Preview installation and its data are not removed or imported aut
 
 ## Review gallery
 
-Actual Pocket DMG screenshots from the final Android candidate; no recoloring or compositing.
-These show the built-in controller in use, so the touch dock is automatically hidden.
+Actual Pocket DMG native editor captures from revision 3; no recoloring or compositing.
+These render the live Activity's editor without Android system bars or transient system toasts.
 
 ### Game Boy
 
@@ -48,12 +48,17 @@ an instrument. A patch outside a musical control's recognized choices stays **Cu
 no invented slider position. Deliberate edits own only the fields listed below.
 
 - Touch: tap Sound/Advanced; move a control horizontally. Hold X to hear edits.
-- Controller: Up/Down selects a control; hold A + direction to adjust and audition; X listens.
-  The editor-mode row is above the slot row; Left/Right or A switches faces there.
+- Sound controller: **Up/Down selects the instrument slot; Left/Right cycles controls;
+  hold A + Left/Right to adjust.** New Sound views focus the first musical control. X listens.
+  The horizontal cycle also includes Name and Sound/Advanced: A switches faces on the mode
+  selector; on Name, A+Left/Right edits a letter and A+Up/Down moves the letter cursor.
+  Advanced retains its existing precise-editor navigation.
 - A continuous edit is one Undo. Mode/slot changes and Undo end stale pointer edits. A held
   across a mode change must be released before it can change a different control.
-- Small panes page controls and named slots rather than shrinking touch targets below 48 dp.
-  Larger panes show more controls together. Contrast uses the workspace's semantic colors.
+- The instrument list uses the same typography, geometry and hit targets in both faces;
+  machine-specific artwork stays in the sound-editing area. Small Sound panes page controls
+  at physical touch size rather than shrinking them. The list retains Advanced's existing
+  responsive layout. Contrast uses the workspace's semantic colors.
 - Mode/cursor state belongs to the pane for this session, not the musical project. There is
   no new project format, hidden macro bank, extra synthesis layer or export-only approximation.
 
@@ -136,7 +141,16 @@ Fold8 captures or physical two-thumb ergonomics evidence.
 Revision 2 fixes controller name navigation beyond SID's 16-character limit. Its regression
 fails before the fix and passes afterward; **1,188 core and 22 Android host tests pass**.
 Compact GB/FM coverage now requires touch navigation whenever controls are hidden.
-The gallery and native-audio measurements remain from code 59; musical mappings are unchanged.
+Revision 3 passes **1,206 core and 22 Android host tests**, plus a live Pocket DMG Activity
+scenario covering the requested axes, held edits, grouped Undo, touch mode switching and
+pixel-identical instrument lists in all six bank/model cases. All **30 permanent Android
+contracts** pass in a separate clean test APK. The gallery and six 360×270 dp native renders
+are refreshed; musical mappings and the earlier native-audio measurements are unchanged.
+
+Pattern channel headers now show the most frequently assigned instrument in that channel's
+active pattern rows, not the shared entry instrument. Empty assignments and hidden rows do
+not count; ties prefer the lowest slot. The live Activity check verifies distinct Pulse 1/2
+labels remain stable while choosing a different entry sound. This does not alter playback.
 
 **34 native WAVs** exercise envelopes, wave shifts/gates, noise width, SID PWM/shared filter and
 FM modulation/harmonics/feedback. The low GB noise fixture clocks at 146.286 Hz: its seven-bit
@@ -159,6 +173,15 @@ private recovery/workspace entries; its test APK and UUID-owned files are remove
 device settings restored. `/ThorTunez` is not touched. Builds are serialized and memory-capped;
 local Kotlin/Native linking and emulators are avoided.
 
-Review next: whether each face evokes its machine, whether its musical choices invite useful
-experimentation, and whether the visible-control density feels right. No additional chip faces,
-original synth, swing, mixer ceilings or shader pipeline are included in this review.
+## Wider rollout
+
+The reviewed direction is sufficient to proceed in chip-family batches. Carry the stable
+instrument list, controller axes, mode safety, touch ownership and Undo behavior into each
+face; do not force every chip into the same musical controls or recolor one universal form.
+
+Suggested order: NES and Sega PSG voices; AY/shared-envelope and wavetable families; then
+remaining FM families and the more specialized noise/percussion systems. Related voices
+can share control widgets and layout machinery, but each mapping must name its owned fields
+and shared-resource limits. Retain Custom patches and the exact Advanced editor throughout.
+Review each batch on handheld-sized panes before continuing. No additional chip faces,
+original synth, swing, mixer ceilings or shader pipeline are included in revision 3.

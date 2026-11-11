@@ -13,11 +13,12 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**Current review (0.43.0/code 60, revision 2):** the approved touch dock and Game Boy Sound/Advanced workflow
-are on `main` in 0.42.0. The separate review branch implements **three artistic/musical pilots only**:
-Game Boy LCD (Pulse/Wave/Noise), C64 SID and Mega Drive YM2612. See
-[review gallery and musical mappings](docs/INSTRUMENT_PANELS.md). **Pause for joint review before
-expanding to other chips.** Distinct controls/faces share input/history and retain exact patches in Advanced.
+**Current review (0.43.0/code 61, revision 3):** the approved touch dock and Game Boy Sound/Advanced workflow
+are on `main` in 0.42.0. The three redesigned pilots—Game Boy LCD (Pulse/Wave/Noise), C64 SID and
+Mega Drive YM2612—have received positive review. This revision keeps the instrument list identical
+between faces and makes Sound's vertical axis select slots and horizontal axis select parameters.
+See [the refreshed gallery, mappings and wider rollout approach](docs/INSTRUMENT_PANELS.md).
+Expand in chip-family batches, preserving exact patches and the existing Advanced editors.
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
@@ -233,13 +234,18 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   memorizing chords, distinguishing field-specific **Clear from Cut**, and phone thumb reach,
   dense menus and keyboard/insets. Help now explains Columns/hidden-FX markers and current
   shortcuts. Keep swing, mixer ceilings, pattern-local mute and shader pipelines deferred.
+  The latest playtest confirms a discoverability gap: unused effect capacity is not obvious
+  outside the Columns row, and the **Scale** button hides that broader pattern configuration.
+  `+n fx` warns about populated hidden columns, not unused available slots; improve this distinction
+  in a subsequent clarity pass rather than adding more effects or changing playback here.
 - **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
   backends. The approved first Game Boy Sound face edits real instruments alongside Advanced.
-  Next: a sparse green/black LCD redesign for all three GB banks, a distinct SID synth deck and
-  a YM2612 tone console; **stop after those three pilots for review**. Musical controls must own
-  explicit chip fields, preserve arbitrary patches on entry/mode changes, and expose shared-resource
-  limits honestly. The original synthesis engine remains deferred.
+  The GB LCD, SID synth deck and YM2612 tone console pilots have been reviewed positively.
+  Their shared list and spatial Sound navigation are corrected in revision 3; proceed toward
+  additional chip-family batches using the [rollout contract](docs/INSTRUMENT_PANELS.md#wider-rollout).
+  Musical controls must own explicit chip fields, preserve arbitrary patches on entry/mode changes,
+  and expose shared-resource limits honestly. The original synthesis engine remains deferred.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
   - **Colour themes, released in 0.38.0/code 52:** original Slate, Paper and Contrast palettes,
