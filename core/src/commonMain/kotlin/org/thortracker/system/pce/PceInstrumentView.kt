@@ -124,7 +124,7 @@ object PceInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, PceSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        PceSoundFace.settle(v)
         st.dpcmSample = st.dpcmSample.coerceIn(0, maxOf(0, song.pce.samples.size - 1))
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, PceEnvelopes.lastStep(it)) }
     }
@@ -132,10 +132,12 @@ object PceInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("pce").invalidate()
         state.instrument = subject.coerceIn(1, PceSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument) state.soundPanel("pce").invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -185,6 +187,8 @@ object PceInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (PceSoundFace.direction(v, dx, dy)) return
+        if (!v.editHeld && dy > 0 && v.state.instField == 0) { v.state.instField = -1; return }
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -383,10 +387,17 @@ object PceInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (v.state.soundPanel("pce").editBlocked) return
+        if (!v.state.soundPanel("pce").advanced) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
+        if (v.state.instField == -1) return
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (PceSoundFace.release(v, tap)) return
         val st = v.state
         val session = v.session
         val row = row(session.song, st)
@@ -443,6 +454,13 @@ object PceInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.soundPanel("pce").editBlocked && v.editHeld) return
+        if (!v.state.soundPanel("pce").advanced || v.state.instField == -1) {
+            if (v.state.instField == 1) v.session.editPceInstrument(v.state.instrument, "Rename sound") {
+                it.copy(name = ViewController.deleteChar(it.name, v.state.textPos))
+            }
+            return
+        }
         val st = v.state
         val session = v.session
         val song = session.song
@@ -494,6 +512,7 @@ object PceInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (PceSoundFace.command(v, a)) return true
         val st = v.state
         val session = v.session
         val song = session.song
@@ -526,6 +545,7 @@ object PceInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (!v.state.soundPanel("pce").advanced || v.state.instField == -1) { PceSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -575,6 +595,13 @@ object PceInstrumentView : SystemView() {
         val editLr = keys.held(Action.EDIT, lr)
         val editUd = keys.held(Action.EDIT, ud)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose sound slot; $lr cycles face, name and musical controls",
+                keys.held(Action.EDIT, lr) to "Shape the selected control; on Name change a letter",
+                keys.held(Action.EDIT, ud) to "On Name move the caret; on a control adjust it",
+                "Advanced" to "Exact envelopes, wave editor and DDA sample import remain here",
+                "Shared state" to "Wave selection never rewrites samples. The song LFO uses PSG 2 to modulate PSG 1; tone Motion edits only pitch, noise Motion replaces only its note-relative arpeggio/color",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, kind, preset, wave (tone sounds), page, then the page's settings",
                 lr to "On settings: the sound slot; on envelope steps: the step; on the sample list: the sample",
@@ -614,5 +641,5 @@ object PceInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = PceInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = PceSoundPainter(pane)
 }

@@ -36,12 +36,9 @@ internal class PceInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
 
     private val plot = EnvelopePlot(ink)
 
-    override fun draw(c: Surface, area: Rect) {
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
         val s = song
         val ins = PceInstrumentView.sound(s, st)
-        val page = PceInstrumentView.page(s, st)
-        val listen = PceInstrumentView.listenChannel(st, ins)
-        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when (ins?.kind) {
             PceKind.TONE -> "tone sound"
@@ -50,15 +47,7 @@ internal class PceInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             null -> "empty slot"
         }
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "PC Engine · $kind$locked  ${usageText(st.instrument)}")
-        val row = PceInstrumentView.row(s, st)
-        val allRows = PceInstrumentView.rows(s, st)
-        rowRects.clear()
-        gridCells.clear()
-        plot.hide()
-        sampleRect = Rect()
-        addRect = Rect()
-
-        val left = drawBank(c, area, top, PceSystem.SLOTS, col, row == Row.SLOT) { i ->
+        return drawBank(c, area, top, PceSystem.SLOTS, col, focused) { i ->
             s.pce.instrument(i)?.let {
                 it.name.ifEmpty { "(unnamed)" } + when (it.kind) {
                     PceKind.TONE -> ""
@@ -67,6 +56,27 @@ internal class PceInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
                 }
             }
         }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, PceSystem.SLOTS) else 0
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val ins = PceInstrumentView.sound(s, st)
+        val page = PceInstrumentView.page(s, st)
+        val listen = PceInstrumentView.listenChannel(st, ins)
+        val col = ink.palette.channel(listen)
+        val row = PceInstrumentView.row(s, st)
+        val allRows = PceInstrumentView.rows(s, st)
+        rowRects.clear()
+        gridCells.clear()
+        plot.hide()
+        sampleRect = Rect()
+        addRect = Rect()
+
+        val left = drawSidebar(c, area, col, row == Row.SLOT)
+        val top = left.top
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad

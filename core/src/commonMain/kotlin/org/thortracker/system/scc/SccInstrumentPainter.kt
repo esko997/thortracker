@@ -36,23 +36,14 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
 
     private var usageSong: Song? = null
     private val usage = HashMap<Int, Int>()
-
-    override fun draw(c: Surface, area: Rect) {
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
         val s = song
         val sound = SccInstrumentView.sound(s, st)
-        val ins = SccInstrumentView.shown(s, st)
-        val kind = SccInstrumentView.kind(st)
-        val env = kind.of(ins)
-        val channels = s.system.channels
-        val listen = channels.getOrNull(st.listenChannel)
-        val col = ink.palette.channel(st.listenChannel)
+        val row = if (focused) Row.SLOT else Row.NAME
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val chip = s.scc.variant
         val top = header(c, area, "Sound ${hex2(st.instrument)}",
             "${chip.label} (${chip.chip})${if (sound == null) " · empty slot" else ""}$locked  ${usageText(st.instrument)}")
-        val row = SccInstrumentView.row(st)
-        rowRects.clear()
-
         // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
@@ -88,6 +79,27 @@ internal class SccInstrumentPainter(v: PaneView) : Painter(v) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
             ink.outline(c, Rect(left.left + 2, y + 1, left.right - 2, y + slotH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
+        return left
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, SccSound.SLOTS) else 0
+
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val sound = SccInstrumentView.sound(s, st)
+        val ins = SccInstrumentView.shown(s, st)
+        val kind = SccInstrumentView.kind(st)
+        val env = kind.of(ins)
+        val channels = s.system.channels
+        val listen = channels.getOrNull(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
+        val row = SccInstrumentView.row(st)
+        rowRects.clear()
+        val left = drawSidebar(c, area, col, row == Row.SLOT)
+        val top = left.top
+
 
         // right column: settings rows (shrinking a little on short displays so the steps keep their room)
         val pad = ink.unit * 0.9f
