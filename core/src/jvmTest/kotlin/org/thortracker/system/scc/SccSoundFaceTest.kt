@@ -188,6 +188,22 @@ class SccSoundFaceTest {
         s.undo(); assertSame(before, s.song)
     }
 
+    @Test fun landscapeDeckShowsEveryControlWithoutHidingTheStoredWave() {
+        for (variant in SccVariant.entries) {
+            val s = session(variant)
+            val before = s.song
+            val p = Panel(s, 640, 384)
+            for (i in 0 until SccSoundMacros.COUNT) {
+                val r = p.painter.controlRect(i)
+                assertTrue(r.width() >= 48f && r.height() >= 48f)
+                assertTrue(r.top >= p.area.top && r.bottom <= p.area.bottom - 48f)
+            }
+            assertEquals(p.painter.controlRect(0).top, p.painter.controlRect(1).top, .01f)
+            assertTrue(p.painter.controlRect(2).top >= p.painter.controlRect(0).bottom)
+            assertSame(before, s.song)
+        }
+    }
+
     @Test fun compactPagingAndSharedRamWarningRemainAvailableByTouch() {
         for (variant in SccVariant.entries) for (zoom in listOf(PaneZoom.NORMAL, PaneZoom.LARGEST)) {
             val s = session(variant)

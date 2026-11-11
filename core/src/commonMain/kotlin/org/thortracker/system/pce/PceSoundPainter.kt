@@ -40,6 +40,33 @@ internal class PceSoundPainter(v: PaneView) : Painter(v) {
     private var caretLeft = 0f
     private var caretWidth = 0f
 
+    private var hintKey = ""
+    private var hintWidth = -1f
+    private var hintSize = -1f
+    private var hintFirst = ""
+    private var hintSecond = ""
+
+    private fun drawHint(c: Surface, text: String, left: Float, top: Float, right: Float, height: Float) {
+        val width = maxOf(0f, right - left)
+        val size = ink.unit * 0.75f
+        if (text != hintKey || width != hintWidth || size != hintSize) {
+            hintFirst = text
+            hintSecond = ""
+            if (ink.labelWidth(text, size) > width) {
+                var split = text.lastIndexOf(' ')
+                while (split > 0 && ink.labelWidth(text.substring(0, split), size) > width) split = text.lastIndexOf(' ', split - 1)
+                if (split > 0) {
+                    hintFirst = text.substring(0, split)
+                    hintSecond = ink.fit(text.substring(split + 1), width, size)
+                } else hintFirst = ink.fit(text, width, size)
+            }
+            hintKey = text; hintWidth = width; hintSize = size
+        }
+        val line = if (hintSecond.isEmpty()) height else height / 2
+        ink.label(c, hintFirst, left, top, line, ink.palette.DIM, size = size)
+        if (hintSecond.isNotEmpty()) ink.label(c, hintSecond, left, top + line, line, ink.palette.DIM, size = size)
+    }
+
     private fun drawName(c: Surface, value: String, accent: Int) {
         val pos = if (st.instField == 1) st.textPos else -1
         val width = maxOf(0f, name.width() - ink.dp(8f))
@@ -72,12 +99,16 @@ internal class PceSoundPainter(v: PaneView) : Painter(v) {
         for (i in 0 until PceSoundMacros.COUNT) {
             values[i] = if (i == 5) PceSoundMacros.listenValue(ins, st.listenChannel) else PceSoundMacros.value(i, ins)
             titles[i] = PceSoundMacros.title(i, ins)
-            texts[i] = if (!PceSoundMacros.enabled(i, song.pce, ins)) "Advanced / unavailable" else PceSoundMacros.text(i, values[i], ins)
+            texts[i] = if (PceSoundMacros.enabled(i, song.pce, ins)) PceSoundMacros.text(i, values[i], ins)
+                else if (i == 4 && ins.kind != PceKind.SAMPLE) "Sample only" else "Advanced"
             hints[i] = PceSoundMacros.hint(i, song.pce, ins)
         }
         status = when (ins.kind) {
-            PceKind.TONE -> if (song.pce.lfoControl and 3 != 0 && song.pce.lfoControl and PceRules.LFO_HALT == 0)
-                "Shared LFO on: PSG 2 wave bends PSG 1" else "32 steps / 5-bit wave memory"
+            PceKind.TONE -> when {
+                song.pce.lfoControl and 3 != 0 && song.pce.lfoControl and PceRules.LFO_HALT == 0 -> "Shared LFO: PSG 2 bends PSG 1"
+                ins.waves.values.isNotEmpty() -> "Wave sequence / first stored step"
+                else -> "32 steps / 5-bit wave memory"
+            }
             PceKind.NOISE -> "Noise: PSG 5/6 only / played note sets clock"
             PceKind.SAMPLE -> "DDA ${PceSamples.rateHz(song.pce.timerReload)} Hz / root rate"
         }
@@ -129,8 +160,7 @@ internal class PceSoundPainter(v: PaneView) : Painter(v) {
         next.set(right - touch, footer, right, area.bottom)
         ink.label(c, "‹", previous.centerX(), footer, touch, accent, true, align = Align.CENTER)
         ink.label(c, "›", next.centerX(), footer, touch, accent, true, align = Align.CENTER)
-        ink.label(c, ink.fit(hints[focused], maxOf(0f, next.left - previous.right), ink.unit * 0.72f), previous.right,
-            footer, touch, p.DIM, size = ink.unit * 0.72f)
+        drawHint(c, hints[focused], previous.right, footer, next.left, touch)
     }
 
     private fun drawWave(c: Surface, r: Rect, ins: PceInstrument, accent: Int) {

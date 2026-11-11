@@ -68,10 +68,37 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         if (cached === ins && cachedListen == st.listenChannel) return
         for (i in 0 until SccSoundMacros.COUNT) {
             values[i] = if (i == 4) st.listenChannel else SccSoundMacros.value(i, ins)
-            texts[i] = if (!SccSoundMacros.enabled(i, ins)) "Sequence / Advanced" else SccSoundMacros.text(i, values[i])
+            texts[i] = if (!SccSoundMacros.enabled(i, ins)) "Advanced" else SccSoundMacros.text(i, values[i])
             hints[i] = SccSoundMacros.hint(i, ins)
         }
         cached = ins; cachedListen = st.listenChannel
+    }
+
+    private var hintKey = ""
+    private var hintWidth = -1f
+    private var hintSize = -1f
+    private var hintFirst = ""
+    private var hintSecond = ""
+
+    private fun drawHint(c: Surface, text: String, left: Float, top: Float, right: Float, height: Float) {
+        val width = maxOf(0f, right - left)
+        val size = ink.unit * 0.75f
+        if (text != hintKey || width != hintWidth || size != hintSize) {
+            hintFirst = text
+            hintSecond = ""
+            if (ink.labelWidth(text, size) > width) {
+                var split = text.lastIndexOf(' ')
+                while (split > 0 && ink.labelWidth(text.substring(0, split), size) > width) split = text.lastIndexOf(' ', split - 1)
+                if (split > 0) {
+                    hintFirst = text.substring(0, split)
+                    hintSecond = ink.fit(text.substring(split + 1), width, size)
+                } else hintFirst = ink.fit(text, width, size)
+            }
+            hintKey = text; hintWidth = width; hintSize = size
+        }
+        val line = if (hintSecond.isEmpty()) height else height / 2
+        ink.label(c, hintFirst, left, top, line, ink.palette.DIM, size = size)
+        if (hintSecond.isNotEmpty()) ink.label(c, hintSecond, left, top + line, line, ink.palette.DIM, size = size)
     }
 
     override fun draw(c: Surface, area: Rect) {
@@ -104,13 +131,18 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         drawName(c, ins.name, accent)
         val footer = area.bottom - touch
         val available = footer - (top + touch)
-        val wide = right - left >= ink.dp(420f) && available >= touch * SccSoundMacros.COUNT
+        val wide = right - left >= ink.dp(420f) && available >= touch * 3
         val focused = (st.instField - 2).coerceIn(0, SccSoundMacros.COUNT - 1)
         if (wide) {
-            val middle = left + (right - left) * 0.52f
+            val tall = available >= touch * SccSoundMacros.COUNT
+            val middle = left + (right - left) * if (tall) 0.52f else 0.35f
             scope.set(left, top + touch, middle - ink.dp(12f), footer)
-            val h = available / SccSoundMacros.COUNT
-            for (i in controls.indices) controls[i].set(middle, top + touch + i * h, right, top + touch + (i + 1) * h)
+            val columns = if (tall) 1 else 2
+            val rows = if (tall) SccSoundMacros.COUNT else 3
+            val w = (right - middle) / columns
+            val h = available / rows
+            for (i in controls.indices) controls[i].set(middle + (i % columns) * w, top + touch + (i / columns) * h,
+                middle + (i % columns + 1) * w, top + touch + (i / columns + 1) * h)
         } else {
             val scopeH = maxOf(0f, available - touch)
             scope.set(left, top + touch, right, top + touch + scopeH)
@@ -122,8 +154,7 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         next.set(right - touch, footer, right, area.bottom)
         ink.label(c, "‹", previous.centerX(), footer, touch, accent, true, align = Align.CENTER)
         ink.label(c, "›", next.centerX(), footer, touch, accent, true, align = Align.CENTER)
-        ink.label(c, ink.fit(hints[focused], maxOf(0f, next.left - previous.right), ink.unit * 0.72f), previous.right,
-            footer, touch, p.DIM, size = ink.unit * 0.72f)
+        drawHint(c, hints[focused], previous.right, footer, next.left, touch)
     }
 
     private fun drawWave(c: Surface, r: Rect, ins: SccInstrument, accent: Int) {
@@ -132,7 +163,7 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         c.fillRect(r.left, r.top, r.right, r.bottom, Palette.mix(p.BG, accent, 0.12f))
         val labelH = minOf(ink.dp(28f), r.height() / 3)
         val shared = song.scc.variant.sharedWave && st.listenChannel in SccSound.SHARED_CHANNELS
-        val caption = if (shared) "SCC 4/5: last wave wins" else if (ins.wave.values.size > 1) "Wave sequence / first stored wave" else "Signed wave memory / 32 steps"
+        val caption = if (shared) "SCC 4/5: last wave wins" else if (ins.wave.values.size > 1) "Sequence: first wave" else "Signed / 32 steps"
         ink.label(c, ink.fit(caption, r.width() - ink.dp(8f), ink.unit * 0.75f), r.left + ink.dp(4f), r.top, labelH,
             if (shared) p.PLAYHEAD else p.TEXT, size = ink.unit * 0.75f)
         val samples = song.scc.wave(ins.wave.values.firstOrNull() ?: 1)?.samples ?: return
@@ -154,11 +185,14 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         val selected = st.instField == i + 2
         val enabled = SccSoundMacros.enabled(i, ins)
         val pad = ink.dp(12f)
-        val h = minOf(ink.dp(24f), r.height() * 0.5f)
-        val textWidth = (r.width() - pad * 2) / 2
+        val stacked = r.width() < ink.dp(220f)
+        val h = minOf(ink.dp(if (stacked) 20f else 24f), r.height() * if (stacked) 0.3f else 0.5f)
+        val textWidth = (r.width() - pad * 2) / if (stacked) 1 else 2
         ink.label(c, ink.fit(SccSoundMacros.labels[i], textWidth, ink.unit * 0.8f, selected), r.left + pad, r.top, h, if (selected) p.TEXT else p.DIM, selected, size = ink.unit * 0.8f)
-        ink.label(c, ink.fit(texts[i], textWidth, ink.unit * 0.8f), r.right - pad, r.top, h, if (enabled) accent else p.FAINT, align = Align.RIGHT, size = ink.unit * 0.8f)
-        rails[i].set(r.left + pad, r.top + h, r.right - pad, r.bottom)
+        ink.label(c, ink.fit(texts[i], textWidth, ink.unit * 0.8f), if (stacked) r.left + pad else r.right - pad,
+            r.top + if (stacked) h else 0f, h, if (enabled) accent else p.DIM,
+            align = if (stacked) Align.LEFT else Align.RIGHT, size = ink.unit * 0.8f)
+        rails[i].set(r.left + pad, r.top + h * if (stacked) 2 else 1, r.right - pad, r.bottom)
         val max = SccSoundMacros.maximum(i)
         if (enabled && values[i] >= 0) PanelWidgets.rail(ink, c, rails[i].left, rails[i].right, rails[i].centerY(),
             values[i].toFloat() / max, max, accent, selected, ctl.editHeld)

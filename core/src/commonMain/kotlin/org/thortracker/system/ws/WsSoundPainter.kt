@@ -46,6 +46,33 @@ internal class WsSoundPainter(v: PaneView) : Painter(v) {
     internal var compact = false
         private set
 
+    private var hintKey = ""
+    private var hintWidth = -1f
+    private var hintSize = -1f
+    private var hintFirst = ""
+    private var hintSecond = ""
+
+    private fun drawHint(c: Surface, text: String, left: Float, top: Float, right: Float, height: Float) {
+        val width = maxOf(0f, right - left)
+        val size = ink.unit * 0.75f
+        if (text != hintKey || width != hintWidth || size != hintSize) {
+            hintFirst = text
+            hintSecond = ""
+            if (ink.labelWidth(text, size) > width) {
+                var split = text.lastIndexOf(' ')
+                while (split > 0 && ink.labelWidth(text.substring(0, split), size) > width) split = text.lastIndexOf(' ', split - 1)
+                if (split > 0) {
+                    hintFirst = text.substring(0, split)
+                    hintSecond = ink.fit(text.substring(split + 1), width, size)
+                } else hintFirst = ink.fit(text, width, size)
+            }
+            hintKey = text; hintWidth = width; hintSize = size
+        }
+        val line = if (hintSecond.isEmpty()) height else height / 2
+        ink.label(c, hintFirst, left, top, line, ink.palette.DIM, size = size)
+        if (hintSecond.isNotEmpty()) ink.label(c, hintSecond, left, top + line, line, ink.palette.DIM, size = size)
+    }
+
     override fun draw(c: Surface, area: Rect) {
         val p = ink.palette
         val panel = st.soundPanel("ws")
@@ -92,12 +119,26 @@ internal class WsSoundPainter(v: PaneView) : Painter(v) {
             cached = ins; cachedSound = song.ws; cachedLane = st.listenChannel
         }
         val top = name.bottom
-        val bottom = area.bottom - ink.unit * 1.5f
-        compact = right - left < ink.dp(370f) || bottom - top < touch * WsSoundMacros.COUNT
+        val bottom = area.bottom - ink.unit * 2.6f
+        val strip = right - left >= ink.dp(420f) && bottom - top >= touch * 3 && bottom - top < touch * WsSoundMacros.COUNT
+        compact = !strip && (right - left < ink.dp(370f) || bottom - top < touch * WsSoundMacros.COUNT)
         listen.set(0f, 0f, 0f, 0f)
-        if (compact) {
+        if (compact || strip) {
             listen.set(modes[1].right, area.top, area.right, area.top + touch)
             ink.label(c, "${song.system.channels[lane].name} >", listen.centerX(), listen.top, touch, p.TEXT, align = Align.CENTER)
+        }
+        if (strip) {
+            val displayBottom = bottom - touch * 1.6f
+            scope.set(left, top, right, displayBottom - ink.dp(8f))
+            c.fillRect(scope.left, scope.top, scope.right, scope.bottom, paper)
+            PixelLabels.draw(c, if (ins.kind == WsKind.SAMPLE) "VOICE MEMORY" else "POCKET WAVE", scope.left + ink.dp(10f), scope.top + ink.dp(12f), ink.dp(2f), dark, scope.width() - ink.dp(20f))
+            drawSignal(c, ins, dark)
+            val w = (right - left) / WsSoundMacros.COUNT
+            for (i in controls.indices) {
+                controls[i].set(left + i * w + ink.dp(4f), displayBottom, left + (i + 1) * w - ink.dp(4f), bottom)
+                drawControl(c, i, ins, p.TEXT, p.FOCUS)
+            }
+        } else if (compact) {
             previous.set(left, top, left + touch, bottom)
             next.set(right - touch, top, right, bottom)
             val i = (st.instField - 2).coerceIn(0, controls.lastIndex)
@@ -126,7 +167,7 @@ internal class WsSoundPainter(v: PaneView) : Painter(v) {
             }
         }
         val selected = (st.instField - 2).coerceIn(0, controls.lastIndex)
-        ink.label(c, ink.fit(hints[selected], right - left, ink.unit * 0.75f), left, bottom, ink.unit * 1.5f, p.DIM, size = ink.unit * 0.75f)
+        drawHint(c, hints[selected], left, bottom, right, area.bottom - bottom)
     }
 
     private fun drawSignal(c: Surface, ins: WsInstrument, color: Int) {
@@ -168,7 +209,7 @@ internal class WsSoundPainter(v: PaneView) : Painter(v) {
     private fun drawControl(c: Surface, i: Int, ins: WsInstrument, text: Int, accent: Int) {
         val r = controls[i]
         val h = minOf(ink.dp(24f), r.height() * 0.3f)
-        ink.label(c, WsSoundMacros.title(i, ins), r.left, r.top, h, text, true, ink.unit * 0.9f)
+        ink.label(c, ink.fit(WsSoundMacros.title(i, ins), r.width(), ink.unit * 0.9f, true), r.left, r.top, h, text, true, ink.unit * 0.9f)
         ink.label(c, ink.fit(values[i], r.width(), ink.unit * 0.85f), r.left, r.top + h, h, if (enabled[i]) text else ink.palette.DIM, size = ink.unit * 0.85f)
         rails[i].set(r.left + ink.dp(10f), r.bottom - ink.dp(14f), r.right - ink.dp(10f), r.bottom - ink.dp(14f))
         val rail = rails[i]

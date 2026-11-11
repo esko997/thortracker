@@ -357,6 +357,22 @@ class WsSoundFaceTest {
         }
     }
 
+    @Test fun landscapePocketStripKeepsAllFiveControlsVisibleAndTouchSized() {
+        val s = session()
+        val before = s.song
+        val panel = Panel(s, 640, 384)
+        assertFalse(panel.painter.compact)
+        for (i in 0 until WsSoundMacros.COUNT) {
+            val r = panel.painter.controlRect(i)
+            assertTrue(r.width() >= 48f && r.height() >= 48f)
+            assertTrue(r.bottom <= panel.area.bottom)
+            assertEquals(panel.painter.controlRect(0).top, r.top, .01f)
+            if (i > 0) assertTrue(r.left >= panel.painter.controlRect(i - 1).right)
+        }
+        assertTrue(panel.painter.listenRect().width() >= 48f)
+        assertSame(before, s.song)
+    }
+
     @Test fun compactTouchCanReachEveryControlModeSlotAndSampleListeningLane() {
         val s = session(instrument = patch().copy(kind = WsKind.SAMPLE))
         val before = s.song

@@ -44,6 +44,33 @@ internal class VsuSoundPainter(v: PaneView) : Painter(v) {
     internal var compact = false
         private set
 
+    private var hintKey = ""
+    private var hintWidth = -1f
+    private var hintSize = -1f
+    private var hintFirst = ""
+    private var hintSecond = ""
+
+    private fun drawHint(c: Surface, text: String, left: Float, top: Float, right: Float, height: Float) {
+        val width = maxOf(0f, right - left)
+        val size = ink.unit * 0.75f
+        if (text != hintKey || width != hintWidth || size != hintSize) {
+            hintFirst = text
+            hintSecond = ""
+            if (ink.labelWidth(text, size) > width) {
+                var split = text.lastIndexOf(' ')
+                while (split > 0 && ink.labelWidth(text.substring(0, split), size) > width) split = text.lastIndexOf(' ', split - 1)
+                if (split > 0) {
+                    hintFirst = text.substring(0, split)
+                    hintSecond = ink.fit(text.substring(split + 1), width, size)
+                } else hintFirst = ink.fit(text, width, size)
+            }
+            hintKey = text; hintWidth = width; hintSize = size
+        }
+        val line = if (hintSecond.isEmpty()) height else height / 2
+        ink.label(c, hintFirst, left, top, line, ink.palette.DIM, size = size)
+        if (hintSecond.isNotEmpty()) ink.label(c, hintSecond, left, top + line, line, ink.palette.DIM, size = size)
+    }
+
     override fun draw(c: Surface, area: Rect) {
         val p = ink.palette
         val panel = st.soundPanel("vsu")
@@ -87,7 +114,7 @@ internal class VsuSoundPainter(v: PaneView) : Painter(v) {
             cached = ins; cachedLane = st.listenChannel
         }
         val top = name.bottom
-        val bottom = area.bottom - ink.unit * 1.5f
+        val bottom = area.bottom - ink.unit * 2.6f
         compact = right - left < ink.dp(370f) || bottom - top < touch * 4
         if (compact) {
             previous.set(left, top, left + touch, bottom)
@@ -120,7 +147,7 @@ internal class VsuSoundPainter(v: PaneView) : Painter(v) {
             }
         }
         val selected = (st.instField - 2).coerceIn(0, controls.lastIndex)
-        ink.label(c, ink.fit(hints[selected], right - left, ink.unit * 0.75f), left, bottom, ink.unit * 1.5f, p.DIM, size = ink.unit * 0.75f)
+        drawHint(c, hints[selected], left, bottom, right, area.bottom - bottom)
     }
 
     private fun drawEye(c: Surface, ins: VsuInstrument, envelope: Boolean, red: Int) {
@@ -128,11 +155,13 @@ internal class VsuSoundPainter(v: PaneView) : Painter(v) {
         val bg = if (contrast) ink.palette.BG else 0xFF250D12.toInt()
         c.fillRect(eye.left, eye.top, eye.right, eye.bottom, bg)
         ink.outline(c, eye, red, ink.dp(2f))
-        if (!compact) PixelLabels.draw(c, if (envelope) "CONTOUR / 1S" else if (st.listenChannel == VsuRules.NOISE_LANE) "NOISE / RESET" else "WAVE MEMORY",
+        if (compact) PixelLabels.draw(c, if (envelope) "1S" else if (st.listenChannel == VsuRules.NOISE_LANE) "NOISE" else "WAVE",
+            eye.left + ink.dp(6f), eye.top + ink.dp(4f), ink.dp(1f), red, eye.width() - ink.dp(12f))
+        else PixelLabels.draw(c, if (envelope) "CONTOUR / 1S" else if (st.listenChannel == VsuRules.NOISE_LANE) "NOISE / RESET" else "WAVE MEMORY",
             eye.left + ink.dp(10f), eye.top + ink.dp(10f), ink.dp(2f), red, eye.width() - ink.dp(20f))
-        val l = eye.left + ink.dp(12f)
-        val r = eye.right - ink.dp(12f)
-        val t = eye.top + ink.dp(if (compact) 4f else 36f)
+        val l = eye.left + ink.dp(if (compact) 6f else 12f)
+        val r = eye.right - ink.dp(if (compact) 6f else 12f)
+        val t = eye.top + ink.dp(if (compact) 16f else 36f)
         val b = eye.bottom - ink.dp(if (compact) 4f else 12f)
         if (b <= t) return
         val wave = song.vsu.waves.getOrNull(ins.wave)
