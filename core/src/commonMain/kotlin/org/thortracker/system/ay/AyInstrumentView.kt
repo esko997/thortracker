@@ -267,12 +267,14 @@ object AyInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
-        if (state.instrument != subject) state.soundPanel("ay").invalidate()
-        state.instrument = subject.coerceIn(1, AySystem.SLOTS)
+        val slot = subject.coerceIn(1, AySystem.SLOTS)
+        if (state.instrument != slot) state.soundPanel("ay").apply { invalidate(); editBlocked = true }
+        state.instrument = slot
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
-        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) state.soundPanel("ay").invalidate()
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel)
+            state.soundPanel("ay").apply { invalidate(); editBlocked = true }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -482,7 +484,7 @@ object AyInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
-        if (v.state.instField < 0 || v.state.soundPanel("ay").editBlocked) return
+        if (v.state.instField < 0 || (v.state.soundPanel("ay").editBlocked && v.editHeld)) return
         if (AySoundFace.friendly(v.state) && v.state.instField >= 2) return
         val st = v.state
         val session = v.session
@@ -529,7 +531,6 @@ object AyInstrumentView : SystemView() {
 
     override fun command(v: ViewController, a: Action): Boolean {
         if (AySoundFace.command(v, a)) return true
-        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) v.state.soundPanel("ay").invalidate()
         val st = v.state
         val session = v.session
         val slot = st.instrument

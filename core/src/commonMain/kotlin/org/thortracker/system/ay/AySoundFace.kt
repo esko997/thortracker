@@ -63,12 +63,16 @@ internal object AySoundFace {
     fun command(v: ViewController, action: Action): Boolean {
         val panel = v.state.soundPanel("ay")
         if (panel.editBlocked && v.editHeld) { v.useEdit(); return true }
+        if (action == Action.PASTE || action == Action.CUT || action == Action.DUPLICATE) {
+            panel.invalidate()
+            if (v.editHeld) { v.useEdit(); panel.editBlocked = true }
+        }
         if (!friendly(v.state)) return false
         when (action) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> listen(v, if (action == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> v.session.copyAyInstrument(v.state.instrument)
-            Action.PASTE -> { panel.invalidate(); v.session.pasteAy(v.state.instrument, null) }
-            Action.CUT -> { panel.invalidate(); v.session.copyAyInstrument(v.state.instrument); v.session.setAyInstrument(v.state.instrument, null, "Cut sound") }
+            Action.PASTE -> v.session.pasteAy(v.state.instrument, null)
+            Action.CUT -> { v.session.copyAyInstrument(v.state.instrument); v.session.setAyInstrument(v.state.instrument, null, "Cut sound") }
             else -> return false
         }
         return true

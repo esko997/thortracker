@@ -182,4 +182,53 @@ class AySoundFaceTest {
         p.painter.move(999f, 0f); assertSame(moved, s.song)
         s.undo(); assertSame(before, s.song)
     }
+
+    @Test fun heldEditCannotCrossPasteCutOrDuplicate() {
+        for (action in listOf(Action.PASTE, Action.CUT, Action.DUPLICATE)) {
+            val s = session()
+            s.setAyInstrument(2, patch().copy(mixer = NesEnvelope(listOf(2))), "Replacement")
+            s.copyAyInstrument(2)
+            val v = view(s)
+            v.normalise()
+            v.press(Action.EDIT)
+            v.tap(action)
+            val replaced = s.song
+            if (action == Action.CUT) assertNull(s.song.ayInstrument(1))
+            if (action == Action.PASTE) assertEquals(listOf(2), s.song.ayInstrument(1)!!.mixer.values)
+            if (action == Action.DUPLICATE) assertEquals(2, v.state.instrument)
+            v.tap(Action.RIGHT); v.tap(Action.CLEAR)
+            assertSame(replaced, s.song)
+            v.release(Action.EDIT)
+            v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+            assertNotSame(replaced, s.song)
+        }
+    }
+
+    @Test fun locksAndSelectionFollowRequireReleaseButNeverStrandFreshEdits() {
+        for (follow in listOf(false, true)) for (held in listOf(false, true)) {
+            val s = session()
+            s.setAyInstrument(2, patch(), "Second target")
+            val v = view(s)
+            v.normalise()
+            if (held) v.press(Action.EDIT)
+            if (follow) AyInstrumentView.follow(v.state, s.selection.copy(instrument = 2, channel = 1), s.song)
+            else AyInstrumentView.applyLock(v.state, 2)
+            assertEquals(2, v.state.instrument)
+            val transitioned = s.song
+            if (held) {
+                v.tap(Action.RIGHT); v.tap(Action.CLEAR)
+                assertSame(transitioned, s.song)
+                v.release(Action.EDIT)
+            } else {
+                // Clear does not require A, so a stale release guard must not swallow it.
+                v.state.instField = 1
+                v.tap(Action.CLEAR)
+                assertNotSame(transitioned, s.song)
+                v.state.instField = 2
+            }
+            val beforeEdit = s.song
+            v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+            assertNotSame(beforeEdit, s.song)
+        }
+    }
 }

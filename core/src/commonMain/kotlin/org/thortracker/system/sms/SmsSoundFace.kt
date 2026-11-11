@@ -79,12 +79,16 @@ internal object SmsSoundFace {
     fun command(v: ViewController, action: Action): Boolean {
         val panel = v.state.soundPanel("sms")
         if (panel.editBlocked && v.editHeld) { v.useEdit(); return true }
+        if (action == Action.PASTE || action == Action.CUT || action == Action.DUPLICATE) {
+            panel.invalidate()
+            if (v.editHeld) { v.useEdit(); panel.editBlocked = true }
+        }
         if (!friendly(v.state)) return false
         when (action) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> listen(v, if (action == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> v.session.copySmsInstrument(v.state.instrument)
-            Action.PASTE -> { panel.invalidate(); v.session.pasteSms(v.state.instrument, null); settle(v.session.song, v.state) }
-            Action.CUT -> { panel.invalidate(); v.session.copySmsInstrument(v.state.instrument); v.session.setSmsInstrument(v.state.instrument, null, "Cut sound"); settle(v.session.song, v.state) }
+            Action.PASTE -> { v.session.pasteSms(v.state.instrument, null); settle(v.session.song, v.state) }
+            Action.CUT -> { v.session.copySmsInstrument(v.state.instrument); v.session.setSmsInstrument(v.state.instrument, null, "Cut sound"); settle(v.session.song, v.state) }
             else -> return false
         }
         return true

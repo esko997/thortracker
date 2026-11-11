@@ -248,4 +248,52 @@ class SmsSoundFaceTest {
             assertSame(before, s.song)
         }
     }
+
+    @Test fun heldBrightnessEditCannotCrossPasteCutOrDuplicateIntoAnotherPatch() {
+        for (action in listOf(Action.PASTE, Action.CUT, Action.DUPLICATE)) {
+            val s = session()
+            s.setSmsInstrument(2, psg(), "Replacement")
+            s.copySmsInstrument(2)
+            val v = view(s)
+            v.state.instField = 3 // FM Brightness becomes PSG Chord after paste.
+            v.press(Action.EDIT)
+            v.tap(action)
+            val replaced = s.song
+            if (action == Action.PASTE) assertEquals(psg(), s.song.smsInstrument(1))
+            if (action == Action.CUT) assertNull(s.song.smsInstrument(1))
+            if (action == Action.DUPLICATE) assertEquals(2, v.state.instrument)
+            v.tap(Action.RIGHT); v.tap(Action.CLEAR)
+            assertSame(replaced, s.song)
+            v.release(Action.EDIT)
+            v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+            assertNotSame(replaced, s.song)
+        }
+    }
+
+    @Test fun locksAndSelectionFollowBlockHeldEditsAcrossKindsButAllowFreshEdits() {
+        for (follow in listOf(false, true)) for (held in listOf(false, true)) {
+            val s = session()
+            s.setSmsInstrument(2, psg(), "Second target")
+            val v = view(s)
+            v.state.instField = 3
+            if (held) v.press(Action.EDIT)
+            if (follow) SmsInstrumentView.follow(v.state, s.selection.copy(instrument = 2, channel = 0), s.song)
+            else SmsInstrumentView.applyLock(v.state, 2)
+            assertEquals(2, v.state.instrument)
+            val transitioned = s.song
+            if (held) {
+                v.tap(Action.RIGHT); v.tap(Action.CLEAR)
+                assertSame(transitioned, s.song)
+                v.release(Action.EDIT)
+            } else {
+                v.state.instField = 1
+                v.tap(Action.CLEAR)
+                assertNotSame(transitioned, s.song)
+                v.state.instField = 3
+            }
+            val beforeEdit = s.song
+            v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+            assertNotSame(beforeEdit, s.song)
+        }
+    }
 }
