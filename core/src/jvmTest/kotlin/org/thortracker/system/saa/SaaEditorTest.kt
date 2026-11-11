@@ -24,7 +24,8 @@ class SaaEditorTest {
         session.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
     }
 
-    private fun view(setup: ViewState.() -> Unit = {}) = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply(setup))
+    private fun view(setup: ViewState.() -> Unit = {}) = ViewController(session,
+        ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("saa").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 
