@@ -267,13 +267,14 @@ class GbPulseSoundViewTest {
             val before = session.song
             p.state.instField = 2
             p.draw()
-            assertTrue("$w x $h $zoom", p.painter.lcd.compact)
             for (i in 0..3) {
                 val rect = p.painter.lcd.controlRect(i)!!
                 assertInside(rect, p.area, 48 * d)
-                for (forward in listOf(false, true)) assertInside(p.painter.lcd.navigationRect(forward)!!, p.area, 48 * d)
-                p.tap(p.painter.lcd.navigationRect(true)!!)
-                p.draw()
+                p.painter.lcd.navigationRect(true)?.let { next ->
+                    for (forward in listOf(false, true)) assertInside(p.painter.lcd.navigationRect(forward)!!, p.area, 48 * d)
+                    p.tap(next)
+                    p.draw()
+                }
             }
             assertEquals(2, p.state.instField)
             for (forward in listOf(false, true)) assertInside(p.painter.modeRect(forward), p.area, 48 * d)

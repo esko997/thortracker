@@ -51,7 +51,7 @@ internal object YmSoundMacros {
         YmSoundControl.STRUCTURE -> structures[value]
         YmSoundControl.HARMONICS -> harmonicNames[value]
         YmSoundControl.CONTOUR -> contours[value]
-        YmSoundControl.BRIGHTNESS -> "$value"
+        YmSoundControl.BRIGHTNESS -> "${(value * 100 + 63) / 127}%"
         YmSoundControl.EDGE -> "$value"
     }
 

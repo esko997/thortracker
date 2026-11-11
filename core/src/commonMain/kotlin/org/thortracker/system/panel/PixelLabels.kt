@@ -6,7 +6,8 @@ import org.thortracker.ui.Surface
 /** Original 5x7 display lettering. Integer pixels stay crisp on Android and both SDL frontends. */
 internal object PixelLabels {
     const val HEIGHT = 7
-    fun width(text: String, pixel: Float): Float = if (text.isEmpty()) 0f else (text.length * 6 - 1) * pixel.roundToInt().coerceAtLeast(1)
+    fun width(text: String, pixel: Float): Float = if (text.isEmpty()) 0f else
+        ((text.length * 6 - 1) * pixel.roundToInt().coerceAtLeast(1)).toFloat()
 
     fun draw(c: Surface, text: String, left: Float, top: Float, pixel: Float, color: Int,
              maxWidth: Float = Float.POSITIVE_INFINITY) {

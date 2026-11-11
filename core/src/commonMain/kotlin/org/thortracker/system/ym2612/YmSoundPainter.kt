@@ -162,7 +162,7 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
         if (st.instField == 1) ink.outline(c, nameRect, p.FOCUS, ink.dp(2f))
         val top = nameRect.bottom
         val bottom = body.bottom - ink.unit * 1.5f
-        compact = width < ink.dp(420f) || bottom - top < maxOf(touch * 4, ink.unit * 14.8f)
+        compact = width < ink.dp(360f) || bottom - top < maxOf(touch * 4, ink.unit * 14.8f)
         if (compact) {
             val index = (st.instField - 2).coerceIn(0, 4)
             controls[index].set(left, top, right, maxOf(top, bottom - touch))

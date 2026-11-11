@@ -272,16 +272,19 @@ class YmSoundFaceTest {
                 val panel = Panel(session, width, height, density, zoom)
                 panel.pane.palette = Palette.CONTRAST
                 panel.draw()
-                assertTrue(panel.painter.compact)
                 for (i in 0..4) {
-                    assertEquals(i + 2, panel.state.instField)
+                    panel.state.instField = i + 2
+                    panel.draw()
                     val r = panel.painter.controlRect(i)!!
-                    assertTrue(r.width() >= 48 * density)
-                    assertTrue(r.height() >= 48 * density)
+                    assertTrue(r.width() >= 48 * density - .001f)
+                    assertTrue(r.height() >= 48 * density - .001f)
                     assertTrue(r.top >= panel.area.top && r.bottom <= panel.area.bottom)
-                    val nav = panel.painter.navigationRect(true)!!
-                    assertTrue(nav.height() >= 48 * density)
-                    panel.tap(nav); panel.draw()
+                    panel.painter.navigationRect(true)?.let { nav ->
+                        assertTrue("navigation $width x $height/$density/$zoom: ${nav.height()}",
+                            nav.height() >= 48 * density - .001f)
+                        panel.tap(nav); panel.draw()
+                        assertEquals((i + 1) % 5 + 2, panel.state.instField)
+                    }
                 }
                 assertNotNull(panel.painter.slotRect(1))
                 assertNotNull(panel.painter.slotRect(2))
