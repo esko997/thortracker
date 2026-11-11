@@ -17,7 +17,8 @@ import org.thortracker.ui.Painter
 /**
  * The Game Boy's sound editor: the three typed banks, the selected sound's name and one row per register setting
  * ([SoundParams]). State: [ViewState.bank] (bank index = [GbBank] ordinal), [ViewState.instrument] and
- * [ViewState.instField] (0 slot/bank, 1 name, 2+ parameters).
+ * [ViewState.instField] (0 slot/bank, 1 name, 2+ parameters). Holding Edit on a setting sounds the sound, and every
+ * change made while Edit or Listen is held sounds it again, so edits are heard as they are made.
  */
 object GbSoundView : SystemView() {
     fun kind(state: ViewState): GbBank = GbSystem.kindOf(state.bank)
@@ -86,12 +87,23 @@ object GbSoundView : SystemView() {
             }
             else -> {
                 val p = params(st).getOrNull(st.instField - 2) ?: return
-                session.editInstrument(kind, st.instrument, "Set ${p.label.lowercase()}") { p.adjust(it, dx + p.coarse * dy) }
-                if (p.label == "Wave") publish(v)
+                val changed = session.editInstrument(kind, st.instrument, "Set ${p.label.lowercase()}") { p.adjust(it, dx + p.coarse * dy) }
+                if (p === SoundParams.wave) publish(v)
+                if (changed) heard(v)
             }
         }
     }
 
+    /** After a change: a held Listen, or Edit held on a setting, sounds the changed sound again. */
+    internal fun heard(v: ViewController) {
+        if (v.auditionHeld || (v.editHeld && v.state.instField >= 2)) audition(v)
+    }
+
+    override fun editPress(v: ViewController) {
+        if (v.state.instField >= 2) audition(v)
+    }
+
+    // Releasing Edit ends the audition its press started (ViewController stops it after this).
     override fun editRelease(v: ViewController, tap: Boolean) {
         if (!tap) return
         val st = v.state
@@ -113,7 +125,7 @@ object GbSoundView : SystemView() {
         val st = v.state
         val session = v.session
         val kind = kind(st)
-        when (st.instField) {
+        val changed = when (st.instField) {
             0 -> session.setInstrument(kind, st.instrument, defaultSound(kind, st.instrument))
             1 -> session.editInstrument(kind, st.instrument, "Rename sound") { it.copy(name = ViewController.deleteChar(it.name, st.textPos)) }
             else -> {
@@ -122,6 +134,7 @@ object GbSoundView : SystemView() {
                 session.editInstrument(kind, st.instrument, "Reset ${p.label.lowercase()}") { p.set(it, def) }
             }
         }
+        if (changed && st.instField != 1 && v.auditionHeld) audition(v)
     }
 
     override fun audition(v: ViewController) {

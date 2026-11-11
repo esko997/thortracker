@@ -3,7 +3,10 @@ package org.thortracker.system.gb
 import org.thortracker.editor.EditorSession
 import org.thortracker.model.NumberText
 
-/** One editable GB instrument parameter with its legal range and readable value text. */
+/**
+ * One editable GB instrument parameter with its legal range and readable value text. Ranges of at most four values
+ * are [choice]s (the Sound panel shows them as segments); larger ranges are sliders.
+ */
 class SoundParam(
     val label: String,
     val min: Int,
@@ -15,50 +18,54 @@ class SoundParam(
     val format: (GbInstrument, Int) -> String = { _, v -> v.toString() },
 ) {
     fun adjust(i: GbInstrument, delta: Int): GbInstrument = set(i, (get(i) + delta).coerceIn(min, max))
+
+    val choice: Boolean get() = max - min <= 3
 }
 
 object SoundParams {
-    private val duty = SoundParam("Duty", 0, 3, 1, "Pulse width: thin 12.5% to hollow 75%",
+    // Each parameter is one register field; the panel identifies them by identity for their drawings.
+    internal val duty = SoundParam("Duty", 0, 3, 1, "Pulse width: thin 12.5% to hollow 75%",
         { it.duty }, { i, v -> i.copy(duty = v) }, { _, v -> arrayOf("12.5%", "25%", "50%", "75%")[v] })
 
-    private val volume = SoundParam("Volume", 0, 15, 4, "Starting volume of the envelope",
+    internal val volume = SoundParam("Volume", 0, 15, 4, "Starting volume of the envelope",
         { it.volume }, { i, v -> i.copy(volume = v) })
 
-    private val envDir = SoundParam("Envelope", 0, 1, 1, "Envelope direction: fade out or swell in",
+    internal val envDir = SoundParam("Envelope", 0, 1, 1, "Envelope direction: fade out or swell in",
         { it.envelopeDirection }, { i, v -> i.copy(envelopeDirection = v) }, { _, v -> if (v == 0) "Fade" else "Swell" })
 
-    private val envPace = SoundParam("Env pace", 0, 7, 2, "Steps every pace/64 s; 0 holds the volume",
+    internal val envPace = SoundParam("Env pace", 0, 7, 2, "Steps every pace/64 s; 0 holds the volume",
         { it.envelopePace }, { i, v -> i.copy(envelopePace = v) },
-        { _, v -> if (v == 0) "Hold" else "$v (${NumberText.fixed(v * 1000.0 / 64, 0)} ms/step)" })
+        { _, v -> if (v == 0) "0 (hold)" else "$v (${NumberText.fixed(v * 1000.0 / 64, 1)} ms/step)" })
 
-    private val lengthOn = SoundParam("Length cut", 0, 1, 1, "Silence the note after the length timer",
+    internal val lengthOn = SoundParam("Length cut", 0, 1, 1, "Silence the note after the length timer",
         { if (it.lengthEnabled) 1 else 0 }, { i, v -> i.copy(lengthEnabled = v == 1) }, { _, v -> if (v == 1) "On" else "Off" })
 
-    private val length64 = SoundParam("Length", 0, 63, 8, "Timer value; higher is shorter",
+    internal val length64 = SoundParam("Length", 0, 63, 8, "Timer value; higher is shorter",
         { it.length }, { i, v -> i.copy(length = v) },
-        { _, v -> "$v (${NumberText.fixed((64 - v) * 1000.0 / 256, 0)} ms)" })
+        { _, v -> "$v (${NumberText.fixed((64 - v) * 1000.0 / 256, 1)} ms)" })
 
-    private val length256 = SoundParam("Length", 0, 255, 16, "Timer value; higher is shorter",
+    internal val length256 = SoundParam("Length", 0, 255, 16, "Timer value; higher is shorter",
         { it.length }, { i, v -> i.copy(length = v) },
-        { _, v -> "$v (${NumberText.fixed((256 - v) * 1000.0 / 256, 0)} ms)" })
+        { _, v -> "$v (${NumberText.fixed((256 - v) * 1000.0 / 256, 1)} ms)" })
 
-    private val sweepTime = SoundParam("Sweep time", 0, 7, 2, "Pitch sweep step every time/128 s; 0 off (pulse 1 only)",
-        { it.sweepTime }, { i, v -> i.copy(sweepTime = v) }, { _, v -> if (v == 0) "Off" else "$v (${NumberText.fixed(v * 1000.0 / 128, 1)} ms)" })
+    internal val sweepTime = SoundParam("Sweep time", 0, 7, 2, "Pitch sweep step every time/128 s; 0 off (pulse 1 only)",
+        { it.sweepTime }, { i, v -> i.copy(sweepTime = v) }, { _, v -> if (v == 0) "0 (off)" else "$v (${NumberText.fixed(v * 1000.0 / 128, 1)} ms)" })
 
-    private val sweepDir = SoundParam("Sweep dir", 0, 1, 1, "Sweep pitch downwards or upwards",
+    internal val sweepDir = SoundParam("Sweep dir", 0, 1, 1, "Sweep pitch downwards or upwards",
         { it.sweepDirection }, { i, v -> i.copy(sweepDirection = v) }, { _, v -> if (v == 0) "Down" else "Up" })
 
-    private val sweepShift = SoundParam("Sweep shift", 0, 7, 2, "Size of each sweep step; 0 off",
-        { it.sweepShift }, { i, v -> i.copy(sweepShift = v) })
+    internal val sweepShift = SoundParam("Sweep shift", 0, 7, 2, "Size of each sweep step: the period moves by period/2^shift",
+        { it.sweepShift }, { i, v -> i.copy(sweepShift = v) },
+        { _, v -> if (v == 0) "0 (no pitch change)" else "$v (period ±1/${1 shl v})" })
 
-    private val wave = SoundParam("Wave", 0, 15, 4, "Waveform played by this sound",
+    internal val wave = SoundParam("Wave", 0, 15, 4, "Waveform played by this sound",
         { it.wave }, { i, v -> i.copy(wave = v) }, { _, v -> "Wave ${EditorSession.hex1(v)}" })
 
-    private val waveVolume = SoundParam("Output", 0, 3, 1, "Wave channel output level",
+    internal val waveVolume = SoundParam("Output", 0, 3, 1, "Wave channel output level",
         { outputRank(it.waveVolume) }, { i, v -> i.copy(waveVolume = OUTPUT_ORDER[v]) },
         { _, v -> arrayOf("Mute", "25%", "50%", "100%")[v] })
 
-    private val noiseWidth = SoundParam("Noise", 0, 1, 1, "Long 15-bit hiss or short 7-bit metallic tone",
+    internal val noiseWidth = SoundParam("Noise", 0, 1, 1, "Long 15-bit hiss or short 7-bit metallic tone",
         { it.noiseWidth }, { i, v -> i.copy(noiseWidth = v) }, { _, v -> if (v == 0) "Long (15-bit)" else "Short (7-bit)" })
 
     /** Raw waveVolume values in ascending loudness: 0 mute, 3 quarter, 2 half, 1 full. */

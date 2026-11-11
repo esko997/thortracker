@@ -238,7 +238,11 @@ object GbSystem : SoundSystem {
             return listOf(
                 "Sounds" to listOf(
                     lr to "Choose the sound slot; $channels change bank",
-                    keys.held(org.thortracker.editor.Action.EDIT, lr) to "Adjust the setting; $edit tap toggles on/off settings",
+                    keys.held(org.thortracker.editor.Action.EDIT, lr) to "Adjust the setting; holding $edit plays the sound and every change plays it " +
+                        "again; $edit tap toggles on/off settings",
+                    "Touch" to "Drag a slider, or tap a choice or a wave; each drag or tap is one undo step",
+                    "Timeline" to "The volume from the note's start at the hardware's rates (steps every pace/64 s, the length cut, " +
+                        "Pulse 1's sweep at the listening note); bytes at the bottom are what hUGEDriver writes",
                 ),
                 "Waves" to listOf(
                     keys.dpad() to "Move the pen across samples and levels; ${keys.label(org.thortracker.editor.Action.UP)} at the top reaches the tools",
