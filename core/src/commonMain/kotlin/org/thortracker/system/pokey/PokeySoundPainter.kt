@@ -164,7 +164,13 @@ internal class PokeySoundPainter(v: PaneView) : Painter(v) {
         if (name.contains(x, y)) {
             st.instField = 1
             val slot = st.instrument
-            session.requestText("Sound name", instrument().name, PokeyInstrumentView.NAME_MAX) { value -> session.editPokeyInstrument(slot, "Rename sound") { it.copy(name = value) } }
+            val generation = session.documentGeneration
+            val target = song.pokeyInstrument(slot)
+            session.requestText("Sound name", instrument().name, PokeyInstrumentView.NAME_MAX) { value ->
+                if (session.documentGeneration == generation && session.song.pokeyInstrument(slot) === target) {
+                    session.editPokeyInstrument(slot, "Rename sound") { it.copy(name = value) }
+                }
+            }
             return true
         }
         if (previous.contains(x, y) || next.contains(x, y)) {
