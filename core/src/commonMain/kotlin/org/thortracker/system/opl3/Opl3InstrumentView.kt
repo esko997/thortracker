@@ -551,7 +551,7 @@ object Opl3InstrumentView : SystemView() {
                 ud to "Choose instrument slot; $lr chooses mode, name or a musical control",
                 editLr to "Shape the selected sound; $edit on mode switches Sound / Advanced without changing the patch",
                 "Organ" to "Voicing selects 2/4-op routing; Drawbar shapes modulation; Reed shapes output waves; Contour, Release and Drop shape articulation",
-                "Touch" to "Drag a control; compact panes use arrows to page. Advanced retains presets, exact registers and chords",
+                "Touch" to "Tap the name to rename; drag a control to shape it. Compact panes use arrows to page. Advanced retains presets, exact registers and chords",
             ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, page, then the page's settings",

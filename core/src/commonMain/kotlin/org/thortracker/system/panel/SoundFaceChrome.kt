@@ -171,6 +171,14 @@ internal abstract class SoundFaceChrome<P : Any>(v: PaneView, protected val face
     private var cached: P? = null
     private var emptySlot = -1
     private var emptyRevision = -1
+    private var emptyListenChannel = -1
+    private var emptyDocument = -1L
+    private var drawnSlot = -1
+    private var drawnRevision = -1
+    private var drawnListenChannel = -1
+    private var drawnDocument = -1L
+    private var drawnActual: P? = null
+    private var nameRequest = 0
     private var emptyPatch: P? = null
     private var title = ""
     private var titleWidth = -1f
@@ -183,7 +191,8 @@ internal abstract class SoundFaceChrome<P : Any>(v: PaneView, protected val face
     private var hintUnit = -1f
     private var selectedHint = ""
     private class Target<P>(val slot: Int, val control: Int, val revision: Int, val left: Float, val right: Float,
-        val maximum: Int, val original: P, var expected: P?)
+        val maximum: Int, val original: P, var expected: P?, val listenChannel: Int, val document: Long,
+        val editAudition: Boolean)
     private val drag = PanelDrag<Target<P>>()
     private val cancelTouch: () -> Unit = { cancel() }
     protected abstract fun sidebar(c: Surface, area: Rect): Rect
@@ -209,9 +218,13 @@ internal abstract class SoundFaceChrome<P : Any>(v: PaneView, protected val face
         if (panel.advanced) { precise.draw(c, body); return }
         val bank = sidebar(c, body)
         val actual = face.current(ctl)
-        if (actual == null && (emptyPatch == null || emptySlot != st.instrument || emptyRevision != panel.revision)) {
+        if (actual == null && (emptyPatch == null || emptySlot != st.instrument || emptyRevision != panel.revision ||
+                emptyListenChannel != st.listenChannel || emptyDocument != session.documentGeneration)) {
             emptyPatch = face.empty(ctl); emptySlot = st.instrument; emptyRevision = panel.revision
+            emptyListenChannel = st.listenChannel; emptyDocument = session.documentGeneration
         }
+        drawnSlot = st.instrument; drawnRevision = panel.revision; drawnListenChannel = st.listenChannel
+        drawnDocument = session.documentGeneration; drawnActual = actual
         val patch = actual ?: emptyPatch!!
         val pad = ink.dp(6f)
         val left = bank.right + pad
@@ -291,13 +304,16 @@ internal abstract class SoundFaceChrome<P : Any>(v: PaneView, protected val face
             }
             return advancedPointer
         }
+        if (drawnSlot != st.instrument || drawnRevision != p.revision || drawnListenChannel != st.listenChannel ||
+            drawnDocument != session.documentGeneration || drawnActual !== face.current(ctl)) return true
+        val editAudition = ctl.editHeld && !p.editBlocked && st.instField >= 2
         if (ctl.editHeld) { ctl.useEdit(); p.editBlocked = true }
         val slot = slotAt(x, y)
         if (slot > 0) { if (slot == st.instrument) face.publish(ctl) else face.moveSlot(ctl, slot - st.instrument); return true }
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) {
             face.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1); return true
         }
-        if (nameRect.contains(x, y)) { st.instField = 1; return true }
+        if (nameRect.contains(x, y)) { requestName(); return true }
         val actual = face.current(ctl)
         val patch = actual ?: face.empty(ctl)
         if (previousControl.contains(x, y) || nextControl.contains(x, y)) {
@@ -309,21 +325,46 @@ internal abstract class SoundFaceChrome<P : Any>(v: PaneView, protected val face
             st.instField = i + 2
             if (!face.enabled(patch, i)) return true
             drag.begin(session, "Set ${face.label(patch, i)}", Target(st.instrument, i, p.revision,
-                rails[i].left, rails[i].right, face.maximum(patch, i), patch, actual))
+                rails[i].left, rails[i].right, face.maximum(patch, i), patch, actual, st.listenChannel,
+                session.documentGeneration, editAudition))
             p.cancelTouch = cancelTouch
             setFromX(x)
             return true
         }
         return false
     }
+    private fun requestName() {
+        st.instField = 1
+        val slot = st.instrument
+        val document = session.documentGeneration
+        val revision = face.panel(ctl).revision
+        val listenChannel = st.listenChannel
+        val kind = st.kind
+        val actual = face.current(ctl)
+        val patch = actual ?: face.empty(ctl)
+        val request = ++nameRequest
+        var consumed = false
+        session.requestText("Sound name", face.name(patch), face.nameLimit) { name ->
+            if (!consumed) {
+                consumed = true
+                if (request == nameRequest && document == session.documentGeneration && st.instrument == slot &&
+                    st.kind == kind && st.listenChannel == listenChannel && !face.panel(ctl).advanced &&
+                    face.panel(ctl).revision == revision && face.current(ctl) === actual) {
+                    face.store(ctl, face.named(patch, name), "Rename sound")
+                }
+            }
+        }
+    }
     private fun setFromX(x: Float) {
         val t = drag.live(session) ?: return
         val p = face.panel(ctl)
-        if (p.advanced || st.instrument != t.slot || p.revision != t.revision || face.current(ctl) !== t.expected) { cancel(); return }
+        if (p.advanced || st.instrument != t.slot || p.revision != t.revision || face.current(ctl) !== t.expected ||
+            st.listenChannel != t.listenChannel || session.documentGeneration != t.document) { cancel(); return }
         val n = PanelWidgets.railValue(x, t.left, t.right, 0, t.maximum)
         val next = face.set(t.original, t.control, n)
         if (next == t.expected || (t.expected == null && next === t.original)) return
-        if (face.store(ctl, next, "Set ${face.label(t.original, t.control)}")) face.heard(ctl)
+        if (face.store(ctl, next, "Set ${face.label(t.original, t.control)}") &&
+            (ctl.auditionHeld || (t.editAudition && ctl.editHeld))) face.audition(ctl)
         t.expected = face.current(ctl)
     }
     final override fun move(x: Float, y: Float) { if (advancedPointer) precise.move(x, y) else setFromX(x) }

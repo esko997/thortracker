@@ -899,7 +899,7 @@ object OpnInstrumentView : SystemView() {
             editLr to "Shape the selected sound; $edit on mode switches Sound / Advanced without changing the patch",
             "Tone console" to "FM shapes modulator colour and carrier contour; SSG shapes source, volume and shared noise/envelope; rhythm and ADPCM shape native playback",
             "Types and samples" to "Advanced retains Type, sample selection/import/trim, exact SSG programs and FM3 offsets",
-            "Touch" to "Drag a control; compact panes use arrows to page",
+            "Touch" to "Tap the name to rename; drag a control to shape it. Compact panes use arrows to page",
         )
         sections += "Instruments" to listOf(
             ud to "Sound slot, name, Listen channel, type, page, then the page's settings",

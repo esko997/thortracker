@@ -482,7 +482,7 @@ object OpmInstrumentView : SystemView() {
                 ud to "Choose instrument slot; $lr chooses mode, name or a musical control",
                 editLr to "Shape the selected sound; $edit on mode switches Sound / Advanced without changing the patch",
                 "Workstation" to "Colour and Alloy shape modulators, Contour shapes outputs, Bite adds feedback, Noise uses FM 8, Fall adds pitch drop",
-                "Touch" to "Drag a control; compact panes use arrows to page. Advanced retains routing, ratios and the shared LFO",
+                "Touch" to "Tap the name to rename; drag a control to shape it. Compact panes use arrows to page. Advanced retains routing, ratios and the shared LFO",
             ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, page, then the page's settings",
