@@ -74,6 +74,7 @@ import org.thortracker.ui.TrackerView
 import org.thortracker.ui.hideFromAccessibility
 import org.thortracker.ui.PreviewDock
 import org.thortracker.ui.PreviewShell
+import org.thortracker.input.PreviewControllers
 import org.thortracker.input.PreviewKeyOwners
 import org.thortracker.storage.PreviewDocuments
 import java.io.File
@@ -371,6 +372,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         active = true
         hideSystemBars()
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        syncControllers()
         updateSecondary()
         refresh()
     }
@@ -423,6 +425,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private fun buildPrimary() {
         val host = Host(this, 0)
         hosts[0] = host
+        // Before the first frame: a handheld's built-in pad must not flash the dock on startup.
+        syncControllers()
         setContentView(host.root)
     }
 
@@ -505,9 +509,47 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         if (!hasFocus) cancelInterruptedInput() else input.resetStick()
     }
 
-    override fun onInputDeviceAdded(deviceId: Int) = input.resetStick()
-    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); cancelInterruptedInput() }
-    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); cancelInterruptedInput() }
+    override fun onInputDeviceAdded(deviceId: Int) { input.resetStick(); syncControllers() }
+    override fun onInputDeviceRemoved(deviceId: Int) { input.forgetStick(deviceId); cancelInterruptedInput(); syncControllers() }
+    override fun onInputDeviceChanged(deviceId: Int) { input.forgetStick(deviceId); cancelInterruptedInput(); syncControllers() }
+
+    /**
+     * Rescans every attached device: the dock hides while a usable physical controller is attached
+     * ([PreviewControllers.usable], the built-in handheld pad included) and returns when the last one goes.
+     * A rescan rather than per-event bookkeeping, so startup, resume and enable/disable changes agree.
+     */
+    private fun syncControllers() {
+        val shell = hosts[0]?.preview ?: return
+        val attached = inputDevices.inputDeviceIds.any { id ->
+            val device = inputDevices.getInputDevice(id) ?: return@any false
+            PreviewControllers.usable(device.isVirtual, Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || device.isEnabled,
+                device.sources) { device.hasKeys(*it) }
+        }
+        if (shell.dockShown != attached) return
+        val dockFocused = shell.dock.hasFocus()
+        if (attached) forgetVirtualInput()
+        shell.dockShown = !attached
+        hosts[0]?.layoutDock()
+        // A focused dock button must not hand focus to the header; drawer and popup focus stay where they are.
+        if (dockFocused && !shell.drawerOpen && !popups.isOpen) hosts[0]?.tracker?.requestFocus()
+    }
+
+    /**
+     * The dock is going away mid-gesture: forget only its presses, latches and arrow repeat, never as
+     * releases. A physical controller's held keys keep their owner, layer, release and audition; only an
+     * editor hold no surviving key still drives is cancelled ([ViewController.cancelHold]). A pending button
+     * capture the dock held a key in is dropped, since its chord can no longer be completed as seen.
+     */
+    private fun forgetVirtualInput() {
+        hosts[0]?.preview?.dock?.cancel()
+        if (popups.top?.capture != null) {
+            if (keyOwners.holds(VIRTUAL_DEVICE)) cancelInterruptedInput()
+            return
+        }
+        keyOwners.forget(VIRTUAL_DEVICE, input) { action -> hosts.values.forEach { it.tracker.controller.cancelHold(action) } }
+        showHeldModifiers()
+        refresh()
+    }
 
     /** Cancel, never release-as-tap, every editor and virtual/physical hold at a context boundary. */
     private fun cancelHeldInput() {
@@ -527,7 +569,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     private fun virtualKey(code: Int, down: Boolean, repeat: Int) {
-        if (!active || hosts[0]?.preview?.drawerOpen == true) return
+        val shell = hosts[0]?.preview
+        if (!active || shell == null || shell.drawerOpen || !shell.dockShown) return
         if (popups.isOpen && (popups.display != 0 || popups.top?.capture == null)) return
         if (focus != 0) setFocus(0)
         routeKey(KeyEvent(0, android.os.SystemClock.uptimeMillis(),
@@ -1547,13 +1590,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             toolbar.setKeys(keymap)
             root.addView(preview ?: tracker, FrameLayout.LayoutParams(-1, -1))
             root.addView(handle, FrameLayout.LayoutParams(dp(72), dp(18), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-            root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-                bottomMargin = dp(if (preview != null) 200 else 34)
-            })
+            root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
             root.addView(toolbar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
             root.addView(popup, FrameLayout.LayoutParams(-1, -1))
             applyPalette(palette)
             (if (index == 0) window else secondary?.window)?.let(::applyWindowPalette)
+            layoutDock()
         }
 
         fun applyPalette(value: Palette) {
@@ -1586,8 +1628,18 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             modal = value
             bindingCapture = capture
             cancelHeldInput()
-            val captureDock = value && capture != null && preview != null
-            preview?.dock?.isEnabled = !value || captureDock
+            layoutDock()
+        }
+
+        /** Chip, capture popup and accessibility for the current modal and dock presence (hidden for a controller). */
+        fun layoutDock() {
+            val dockShown = preview?.dockShown == true
+            (chip.layoutParams as FrameLayout.LayoutParams).let {
+                it.bottomMargin = dp(if (dockShown) 200 else 34)
+                chip.layoutParams = it
+            }
+            val captureDock = modal && bindingCapture != null && dockShown
+            preview?.dock?.isEnabled = !modal || captureDock
             (popup.layoutParams as FrameLayout.LayoutParams).let {
                 it.bottomMargin = if (captureDock) dp(PreviewDock.HEIGHT_DP) else 0
                 popup.layoutParams = it
@@ -1599,7 +1651,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 content.hideFromAccessibility(captureDock, shell.dock)
                 if (captureDock) root.hideFromAccessibility(true, popup, shell)
             }
-            if (!captureDock) root.hideFromAccessibility(value, popup)
+            if (!captureDock) root.hideFromAccessibility(modal, popup)
         }
 
         private fun dp(value: Int) = (value * density).toInt()

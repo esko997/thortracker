@@ -92,7 +92,8 @@ class PreviewDock(
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (!isEnabled) return false
+        // A hidden dock can still be a gesture's touch target: its stale buttons must not take another finger.
+        if (!isEnabled || visibility != VISIBLE) return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)

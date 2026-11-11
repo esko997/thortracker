@@ -182,6 +182,8 @@ class SidInstrumentViewTest {
         val v = view(ViewKind.PATTERN) { channel = 0; row = 0; field = 0 }
         v.tap(Action.CLEAR)
         assertEquals(Cell.CUT, session.song.patterns[0].tracks[0][0].note)
+        assertEquals(1, v.state.row)
+        v.tap(Action.UP)
         v.tap(Action.CLEAR)
         assertEquals(SidRules.KEY_ON, session.song.patterns[0].tracks[0][0].note)
         v.tap(Action.CLEAR)

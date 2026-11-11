@@ -100,6 +100,72 @@ class ControllerWorkflowTest {
         instrumentation.runOnMainSync { apply.invoke(activity, Keymap.DEFAULT, null) }
     }
 
+    @Test fun patternTouchKeepsItsFirstPointerWhenFingersLiftOrReorder() {
+        instrumentation.runOnMainSync {
+            val before = tracker.session.song
+            val bitmap = android.graphics.Bitmap.createBitmap(tracker.width, tracker.height, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            data class Finger(val id: Int, val y: Float)
+            val first = Finger(0, tracker.height * .35f)
+            val second = Finger(2, tracker.height * .65f)
+            fun send(action: Int, vararg fingers: Finger) {
+                val props = fingers.map { finger -> MotionEvent.PointerProperties().apply {
+                    id = finger.id; toolType = MotionEvent.TOOL_TYPE_FINGER
+                } }.toTypedArray()
+                val coords = fingers.map { finger -> MotionEvent.PointerCoords().apply {
+                    x = tracker.width * .3f; y = finger.y; pressure = 1f; size = 1f
+                } }.toTypedArray()
+                val now = SystemClock.uptimeMillis()
+                val event = MotionEvent.obtain(now, now, action, fingers.size, props, coords,
+                    0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+                try { tracker.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+            fun reset() {
+                tracker.cancelInteraction()
+                tracker.state.row = 0
+                tracker.state.channel = 0
+                tracker.refresh()
+                tracker.draw(canvas)
+            }
+            fun position() = tracker.state.row to tracker.state.channel
+            try {
+                reset()
+                send(MotionEvent.ACTION_DOWN, first)
+                send(MotionEvent.ACTION_UP, first)
+                val expected = position()
+                reset()
+                send(MotionEvent.ACTION_DOWN, second)
+                send(MotionEvent.ACTION_UP, second)
+                assertNotEquals("Probe points select different cells", expected, position())
+                for (firstLiftsFirst in listOf(true, false)) {
+                    reset()
+                    send(MotionEvent.ACTION_DOWN, first)
+                    send(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), first, second)
+                    send(MotionEvent.ACTION_MOVE, second, first) // array order is not pointer ownership
+                    if (firstLiftsFirst) {
+                        send(MotionEvent.ACTION_POINTER_UP, first, second)
+                        send(MotionEvent.ACTION_MOVE, second)
+                        send(MotionEvent.ACTION_UP, second)
+                    } else {
+                        send(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), first, second)
+                        send(MotionEvent.ACTION_UP, first)
+                    }
+                    assertEquals("The original finger chooses the cell", expected, position())
+                    assertFalse(tracker.pane.touchActive)
+                    assertEquals(before, tracker.session.song)
+                }
+                reset()
+                send(MotionEvent.ACTION_DOWN, first)
+                tracker.cancelInteraction()
+                val canceled = position()
+                send(MotionEvent.ACTION_UP, second)
+                assertEquals("A canceled gesture cannot transfer to another finger", canceled, position())
+                assertFalse(tracker.pane.touchActive)
+                assertEquals(before, tracker.session.song)
+            } finally { bitmap.recycle() }
+        }
+    }
+
     @Test fun heldNoteAdjustmentIsOneUndoStep() {
         val before = tracker.session.song
         down(KeyEvent.KEYCODE_BUTTON_A)

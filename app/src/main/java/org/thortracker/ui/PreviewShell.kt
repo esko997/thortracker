@@ -11,7 +11,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Single-screen preview chrome. The actual editor receives the remaining height, including after resize. */
+/**
+ * Single-screen preview chrome. The actual editor receives the remaining height, including after resize and
+ * while the dock is hidden for an attached controller; the Menu/Play header stays either way.
+ */
 class PreviewShell(
     context: Context,
     private val tracker: TrackerView,
@@ -33,6 +36,10 @@ class PreviewShell(
     private val drawerScroll = ScrollView(context).apply { isFillViewport = true; addView(drawerRows) }
     private var palette = Palette.SLATE
     val drawerOpen: Boolean get() = drawer.visibility == VISIBLE
+    /** The host cancels the dock's presses ([PreviewDock.cancel]) before hiding it. */
+    var dockShown: Boolean
+        get() = dock.visibility == VISIBLE
+        set(value) { dock.visibility = if (value) VISIBLE else GONE }
 
     init {
         tag = "preview-shell"

@@ -161,6 +161,28 @@ class ViewController(val session: EditorSession, var state: ViewState) {
         if (state.kind == ViewKind.SKETCH) sketchRelease()
     }
 
+    /**
+     * Drops one held [a] without acting, like [cancelHolds] for that hold only, when one of several input
+     * sources goes away. Other holds keep going, including the audition a still-held Edit or Listen sounds.
+     * The host calls this only when no other held key still drives [a].
+     */
+    fun cancelHold(a: Action) {
+        when (a) {
+            Action.EDIT -> {
+                if (!editHeld) return
+                editHeld = false
+                editRelease(tap = false)
+                editGesture?.let { session.endGesture(it) }
+                editGesture = null
+            }
+            Action.CLEAR -> { clearHeld = false; clearUsed = true }
+            Action.MARK -> markHeld = false
+            Action.AUDITION -> { if (!auditionHeld) return; auditionHeld = false }
+            else -> return
+        }
+        if (!editHeld && !auditionHeld) stopAudition()
+    }
+
     private fun historyStep(undo: Boolean) {
         // Undo/redo closes any open group; a still-held A then starts a fresh one.
         val regroup = editGesture != null
@@ -865,7 +887,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 c.note == Cell.CUT || (c.note == system.keyOn) -> write(c.copy(note = Cell.EMPTY))
                 c.hasEffect && system.offEffect != null -> session.note("Clear this row's effect first: OFF uses the effect slot (as ${system.offEffect})")
                 // One-column systems replace the row by OFF; with several columns the row's effects stay.
-                else -> { write(if (multiColumn()) c.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT)); session.note(system.help.offEntered) }
+                else -> {
+                    write(if (multiColumn()) c.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT))
+                    session.note(system.help.offEntered)
+                    advance(session.step)
+                }
             }
             1 -> write(c.copy(instrument = 0))
             else -> { write(c.withEffect(cursorColumn(), 0, 0)); state.chosenArpeggio = -1 }

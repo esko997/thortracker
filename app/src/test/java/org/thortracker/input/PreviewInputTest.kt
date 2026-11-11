@@ -1,5 +1,6 @@
 package org.thortracker.input
 
+import android.view.InputDevice
 import org.junit.Assert.*
 import org.junit.Test
 import org.thortracker.editor.Action
@@ -49,6 +50,8 @@ class PreviewInputTest {
         fun up(id: Int) = touch.up(id) { it in Keymap.MODIFIERS }
         fun tap(id: Int, code: Int) { down(id, code); up(id) }
         fun cancel() { touch.cancel(); owners.cancel(); router.reset(); view.cancelHolds() }
+        /** As MainActivity.forgetVirtualInput when a controller attaches: only the dock's presses go. */
+        fun hideDock() { touch.cancel(); owners.forget(-1001, router) { view.cancelHold(it) } }
         fun startCapture() { cancel(); modal = true; capture = BindingCapture() }
         fun cancelCapture() { capture = null; cancel() }
         fun closeModal() { cancelCapture(); modal = false }
@@ -167,5 +170,87 @@ class PreviewInputTest {
         b.tap(20, Keys.BUTTON_X)
         assertEquals(Binding(Keys.BUTTON_X), b.captured)
         assertEquals(before, b.session.song)
+    }
+
+    @Test fun hidingDockForgetsVirtualLayersButPhysicalEditGestureContinues() {
+        val b = Bench(); val before = b.note()
+        b.key(4, Keys.BUTTON_A, true); b.down(45, Keys.BUTTON_A)
+        b.down(9, Keys.DPAD_RIGHT)
+        b.tap(8, Keys.BUTTON_L2)
+        assertEquals(before + 1, b.note())
+        b.hideDock()
+        assertTrue(b.router.heldModifiers.isEmpty())
+        assertFalse(b.touch.latched(Keys.BUTTON_L2))
+        assertFalse(b.touch.pressed(Keys.BUTTON_A))
+        b.up(45); b.up(9); b.key(-1001, Keys.DPAD_RIGHT, false)
+        b.key(4, Keys.DPAD_RIGHT, true); b.key(4, Keys.DPAD_RIGHT, false)
+        assertEquals("Physical A still owns the edit after the dock's A went", before + 2, b.note())
+        b.key(4, Keys.BUTTON_A, false)
+        b.key(4, Keys.DPAD_RIGHT, true); b.key(4, Keys.DPAD_RIGHT, false)
+        assertEquals("Physical release ended the edit; arrows navigate", before + 2, b.note())
+    }
+
+    @Test fun hidingDockMidVirtualEditCancelsWithoutWritingAndKeepsPhysicalLayer() {
+        val b = Bench()
+        b.down(17, Keys.BUTTON_A); b.tap(31, Keys.DPAD_RIGHT)
+        val adjusted = b.session.song
+        b.down(40, Keys.BUTTON_X)
+        b.key(4, Keys.BUTTON_L2, true)
+        val releases = b.releases
+        b.hideDock()
+        assertTrue("Forgotten held audition is released", b.releases > releases)
+        assertEquals(setOf(Keys.BUTTON_L2), b.router.heldModifiers)
+        b.up(17); b.up(40); b.key(-1001, Keys.BUTTON_A, false)
+        b.key(4, Keys.BUTTON_L2, false)
+        b.key(4, Keys.DPAD_RIGHT, true); b.key(4, Keys.DPAD_RIGHT, false)
+        assertEquals("No tap, late release or orphaned hold edits", adjusted, b.session.song)
+        assertTrue(b.router.heldModifiers.isEmpty())
+    }
+
+    @Test fun hidingDockEndsVirtualEditButKeepsPhysicalListenSounding() {
+        val b = Bench()
+        b.key(4, Keys.BUTTON_X, true)
+        b.down(17, Keys.BUTTON_A); b.tap(31, Keys.DPAD_RIGHT)
+        val adjusted = b.session.song
+        val releases = b.releases
+        b.hideDock()
+        assertEquals("Physical Listen keeps sounding", releases, b.releases)
+        b.up(17)
+        b.key(4, Keys.DPAD_RIGHT, true); b.key(4, Keys.DPAD_RIGHT, false)
+        assertEquals("The dock's Edit ended without a tap; arrows no longer edit", adjusted, b.session.song)
+        b.key(4, Keys.BUTTON_X, false)
+        assertTrue("Physical release stops the audition", b.releases > releases)
+    }
+
+    @Test fun hidingDockEndsVirtualListenButKeepsPhysicalEditAndItsAudition() {
+        val b = Bench(); val before = b.note()
+        b.key(4, Keys.BUTTON_A, true)
+        b.down(40, Keys.BUTTON_X)
+        val releases = b.releases
+        b.hideDock()
+        assertEquals("Physical Edit keeps its audition", releases, b.releases)
+        b.up(40)
+        b.key(4, Keys.DPAD_RIGHT, true); b.key(4, Keys.DPAD_RIGHT, false)
+        assertEquals("Physical Edit still adjusts", before + 1, b.note())
+        b.key(4, Keys.BUTTON_A, false)
+        assertTrue("Physical release stops the audition", b.releases > releases)
+        b.key(4, Keys.DPAD_RIGHT, true); b.key(4, Keys.DPAD_RIGHT, false)
+        assertEquals(before + 1, b.note())
+    }
+
+    @Test fun dockHidesOnlyForEnabledPhysicalGamepadWithFaceButtonsAndDirections() {
+        val faceButtons: (IntArray) -> BooleanArray = { keys -> BooleanArray(keys.size) { keys[it] == Keys.BUTTON_A || keys[it] == Keys.BUTTON_B } }
+        val numberedOnly: (IntArray) -> BooleanArray = { keys -> BooleanArray(keys.size) { keys[it] in Keys.BUTTON_1..Keys.BUTTON_16 } }
+        val handheld = InputDevice.SOURCE_KEYBOARD or InputDevice.SOURCE_DPAD or InputDevice.SOURCE_GAMEPAD or InputDevice.SOURCE_JOYSTICK
+        val hatPad = InputDevice.SOURCE_GAMEPAD or InputDevice.SOURCE_JOYSTICK
+        val keyboard = InputDevice.SOURCE_KEYBOARD or InputDevice.SOURCE_DPAD
+        assertTrue("Built-in handheld pad", PreviewControllers.usable(false, true, handheld, faceButtons))
+        assertTrue("Stick/hat directions", PreviewControllers.usable(false, true, hatPad, faceButtons))
+        assertFalse("Disabled", PreviewControllers.usable(false, false, handheld, faceButtons))
+        assertFalse("Virtual", PreviewControllers.usable(true, true, handheld, faceButtons))
+        assertFalse("Keyboard", PreviewControllers.usable(false, true, keyboard, faceButtons))
+        assertFalse("D-pad remote", PreviewControllers.usable(false, true, InputDevice.SOURCE_DPAD, faceButtons))
+        assertFalse("No directions", PreviewControllers.usable(false, true, InputDevice.SOURCE_GAMEPAD, faceButtons))
+        assertFalse("No A/B", PreviewControllers.usable(false, true, handheld, numberedOnly))
     }
 }

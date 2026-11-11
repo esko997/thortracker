@@ -1,7 +1,7 @@
 # Touch interface proposals
 
 Status: **isolated Android controller-dock preview; not merged into production**.
-The preview integrates the 0.41.0 editor, audio engines and file paths under a distinct Android
+The 0.42.0-touch-preview.1 candidate integrates the current editor, audio engines and file paths under a distinct Android
 identity. **Galaxy Fold8 is the design target. Pocket DMG is only a functional testbed**, not
 a substitute for the phone's screen geometry or a human two-thumb ergonomics trial.
 The landscape study and browser evidence below remain historical proposals, not a native
@@ -61,6 +61,15 @@ introduce a second note/value editor.
   interpreting cancellation as a tap. Modal/IME entry clears all visible latches; late UPs
   and hardware repeats cannot resurrect a canceled press. Focus loss alone does not stop
   background song transport; the existing onPause transport policy is unchanged.
+- The dock hides automatically while a usable physical controller is attached and returns when
+  the last one goes, including at startup, resume and device enable/disable changes. Usable means
+  an enabled, non-virtual gamepad with A, B and D-pad or stick/hat directions; a handheld's
+  built-in pad counts, while keyboards, D-pad remotes and Android's virtual keyboard do not. The
+  editor takes the reclaimed height; the Menu/Play header and drawer remain. Hiding forgets only
+  the dock's presses, latches, arrow repeat and their audition without treating them as releases;
+  keys a physical controller holds keep their owner and layer. A forgotten dock Edit/Clear/Mark/Listen
+  hold ends only that hold, so a physical Edit or Listen and its audition continue. There is no manual
+  show override.
 
 ### Isolation and files
 
@@ -81,7 +90,37 @@ root are app-scoped and **removed when the preview is uninstalled**; export anyt
 keeping to a deliberately chosen separate backup before cleanup. No storage permission,
 production URI grant, production FileProvider authority or production backup is reused.
 
-### Executed verification
+### 0.42.0 executed verification
+
+The production-signed preview passes **1,130 shared-core and 24 Android host tests**. The final
+segmented-cell boundary correction also passes the targeted Game Boy panel suite and signed build.
+The complete pulse/wave/noise [Game Boy panel](https://github.com/esko997/thortracker/blob/gameboy-panel-review-042/docs/INSTRUMENT_PANELS.md) is present; other instrument
+panels remain unchanged. OFF insertion advances by the configured entry step, Open asks before
+replacing the working song, and the editor canvas keeps its first touch pointer through reordered
+IDs and either lift order.
+
+On reserved Pocket DMG:
+- A **160-round** actual multitouch run covers held editing, multi-owner directions,
+  selection/copy/paste, cancellation and reversed lifts, with 640 audition calls and 27
+  first-pointer probes. Zero xruns/driver faults; max callback 6.588 ms.
+- The final Game Boy panel passes 19 parameter paths, 41 history cases, held-Edit Clear,
+  two pointer cases, 72 theme/zoom/size configurations and eight compact touch-navigation cases.
+  These include synthetic 360×270 cover and 720×352 inner editor viewports, not phone captures.
+- The permanent first-pointer regression passes against the final APK.
+- Actual built-in-controller sleep/wake and four second-gamepad add/remove cycles verify automatic
+  dock hiding/showing and reclaimed editor height on the final APK.
+
+The DMG's built-in pad normally hides the dock. The long touch scenario explicitly forces it visible
+as a **test fixture only**; production has no show override. Shell input-disable permission is denied
+and was not bypassed. Every completed run independently cold-verifies eight restored private
+recovery/workspace entries and removes its owned test package. Detailed harness corrections and
+stable/native evidence are in [Verification](https://github.com/esko997/thortracker/blob/gameboy-panel-review-042/docs/VERIFICATION.md).
+
+APK: `thor-tracker-0.42.0-touch-preview.1.apk`, code 56, arm64-v8a and x86_64.
+SHA-256: `1f8881cc2e0b32442242a19541907fd141487f07df97c40c46a670b93c791775`.
+Update the existing preview in place; do not uninstall it and lose its private/app-scoped files.
+
+### Previous 0.41.0 verification
 
 The production-signed, arm64 preview passes **19 host tests** and **13 real Android scenarios
 on reserved Pocket DMG**. The latter inject multi-pointer MotionEvents through Android's input
