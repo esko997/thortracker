@@ -77,7 +77,8 @@ internal object GbPulseMacros {
         }
     }
 
-    private fun shape(i: GbInstrument): Int? {
+    /** Shared pulse/noise envelope vocabulary; neither operation changes the instrument's bank. */
+    internal fun shape(i: GbInstrument): Int? {
         if (i.length !in 0..63 || i.envelopeDirection !in 0..1) return null
         return when {
             i.volume == 12 && i.envelopePace == 0 -> 1
@@ -88,7 +89,7 @@ internal object GbPulseMacros {
         }
     }
 
-    private fun length(i: GbInstrument): Int? = when (shape(i)) {
+    internal fun length(i: GbInstrument): Int? = when (shape(i)) {
         0, 2 -> PACES.indexOf(i.envelopePace).takeIf { it >= 0 }
         1 -> if (!i.lengthEnabled) 3 else GATES.indexOf(i.length).takeIf { it >= 0 }
         else -> null
@@ -144,7 +145,7 @@ internal object GbPulseMacros {
         }
     }
 
-    private fun envelope(i: GbInstrument, shape: Int, length: Int): GbInstrument = when (shape) {
+    internal fun envelope(i: GbInstrument, shape: Int, length: Int): GbInstrument = when (shape) {
         0 -> i.copy(volume = 12, envelopeDirection = 0, envelopePace = PACES[length], lengthEnabled = false)
         1 -> i.copy(volume = 12, envelopePace = 0, lengthEnabled = length < 3,
             length = if (length < 3) GATES[length] else i.length)

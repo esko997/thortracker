@@ -42,17 +42,17 @@ class GbPulseSoundViewTest {
         v.tap(Action.UP)
         assertEquals(-1, v.state.instField)
         v.tap(Action.RIGHT)
-        assertTrue(v.state.gbAdvanced)
+        assertTrue(v.state.gbPanel.advanced)
         v.tap(Action.LEFT)
-        assertFalse(v.state.gbAdvanced)
+        assertFalse(v.state.gbPanel.advanced)
         v.tap(Action.EDIT)
-        assertTrue(v.state.gbAdvanced)
+        assertTrue(v.state.gbPanel.advanced)
         v.tap(Action.EDIT)
-        assertFalse(v.state.gbAdvanced)
+        assertFalse(v.state.gbPanel.advanced)
         v.press(Action.EDIT)
         v.tap(Action.LEFT) // Selecting the already-active Sound tab consumes the hold, not a release toggle.
         v.release(Action.EDIT)
-        assertFalse(v.state.gbAdvanced)
+        assertFalse(v.state.gbPanel.advanced)
         assertSame(before, session.song)
         assertArrayEquals(bytes, export.export(session.song))
         assertFalse(session.canUndo)
@@ -61,9 +61,10 @@ class GbPulseSoundViewTest {
         assertEquals(0, v.state.bank)
         val otherPane = ViewState(kind = ViewKind.INSTRUMENT)
         GbSoundView.setAdvanced(v, true)
-        assertFalse(otherPane.gbAdvanced)
-        assertTrue(v.state.snapshot().gbAdvanced)
-        assertNull(v.state.snapshot().cancelGbSoundTouch)
+        assertFalse(otherPane.gbPanel.advanced)
+        assertTrue(v.state.snapshot().gbPanel.advanced)
+        assertNull(v.state.snapshot().gbPanel.cancelTouch)
+        assertNotSame(v.state.gbPanel, v.state.snapshot().gbPanel)
     }
 
     @Test
@@ -75,14 +76,14 @@ class GbPulseSoundViewTest {
         val before = session.song
         val history = session.undoLabel
         val p = panel()
-        assertTrue(p.surface.texts.contains("Custom"))
+        assertNull(GbMusicalMacros.value(1, session.song.gb.pulse[0]))
         p.tap(p.painter.modeRect(true))
         p.draw()
-        assertTrue(p.state.gbAdvanced)
+        assertTrue(p.state.gbPanel.advanced)
         p.state.instField = 7
         p.tap(p.painter.modeRect(false))
         p.draw()
-        assertFalse(p.state.gbAdvanced)
+        assertFalse(p.state.gbPanel.advanced)
         p.tap(p.painter.modeRect(true))
         assertEquals(7, p.state.instField)
         assertSame(before, session.song)
@@ -166,18 +167,20 @@ class GbPulseSoundViewTest {
     }
 
     @Test
-    fun waveAndNoiseNeverOpenAFakeSoundModeAndBanksKeepTheirBindings() {
+    fun waveAndNoiseOpenTheirTypedSoundFacesAndBanksKeepTheirBindings() {
         val p = panel()
         val before = session.song
         for (kind in listOf(GbBank.WAVE, GbBank.NOISE)) {
             p.pane.controller.tap(Action.NEXT_CHANNEL)
             assertEquals(kind.ordinal, p.state.bank)
-            assertFalse(GbSoundView.friendly(p.state))
+            assertTrue(GbSoundView.friendly(p.state))
             p.draw()
-            assertTrue(p.surface.texts.contains("Sound: Pulse only"))
-            p.tap(p.painter.modeRect(false))
+            assertNotNull(p.painter.lcd.controlRect(0))
+            p.tap(p.painter.modeRect(true))
+            p.draw()
             assertFalse(GbSoundView.friendly(p.state))
             assertNotNull(p.painter.rowRect(1))
+            p.tap(p.painter.modeRect(false))
         }
         p.pane.controller.tap(Action.NEXT_CHANNEL)
         assertTrue(GbSoundView.friendly(p.state))
@@ -189,21 +192,21 @@ class GbPulseSoundViewTest {
     fun touchDragHearsUpdatesGroupsUndoAndHistoryInvalidatesTheOldPointer() {
         val p = panel()
         val control = GbPulseControl.CHARACTER
-        val row = p.painter.pulse.controlRect(control)!!
+        val row = p.painter.lcd.controlRect(control.ordinal)!!
         val before = session.song
         p.pane.controller.press(Action.AUDITION)
-        p.painter.down(p.painter.pulse.railX(control, 0f), row.centerY())
-        p.painter.move(p.painter.pulse.railX(control, 0.5f), row.centerY())
-        p.painter.move(p.painter.pulse.railX(control, 1f), row.centerY())
+        p.painter.down(p.painter.lcd.valueX(control.ordinal, 0f), row.centerY())
+        p.painter.move(p.painter.lcd.valueX(control.ordinal, 0.5f), row.centerY())
+        p.painter.move(p.painter.lcd.valueX(control.ordinal, 1f), row.centerY())
         assertEquals(2, session.song.gb.pulse[0].duty)
         assertEquals(3, heard.size)
         p.painter.up(0f, 0f)
         session.undo()
         assertSame(before, session.song)
         assertFalse(session.canUndo)
-        p.painter.down(p.painter.pulse.railX(control, 1f), row.centerY())
+        p.painter.down(p.painter.lcd.valueX(control.ordinal, 1f), row.centerY())
         session.undo()
-        p.painter.move(p.painter.pulse.railX(control, 0.5f), row.centerY())
+        p.painter.move(p.painter.lcd.valueX(control.ordinal, 0.5f), row.centerY())
         p.painter.up(0f, 0f)
         assertSame(before, session.song)
         assertTrue(session.canRedo)
@@ -214,14 +217,14 @@ class GbPulseSoundViewTest {
     fun slotAndModeChangesCancelOldTargetsBeforeAnotherGestureWithoutWaitingForPaint() {
         val p = panel()
         val control = GbPulseControl.CHARACTER
-        val y = p.painter.pulse.controlRect(control)!!.centerY()
-        val x = p.painter.pulse.railX(control, 0.5f)
+        val y = p.painter.lcd.controlRect(control.ordinal)!!.centerY()
+        val x = p.painter.lcd.valueX(control.ordinal, 0.5f)
         val oldSlot = session.song.gb.pulse[1]
         p.painter.down(x, y)
         val edited = session.song
         p.state.instrument = 2
         GbSoundView.publish(p.pane.controller)
-        p.painter.move(p.painter.pulse.railX(control, 1f), y)
+        p.painter.move(p.painter.lcd.valueX(control.ordinal, 1f), y)
         p.painter.up(0f, 0f)
         assertSame(edited, session.song)
         assertSame(oldSlot, session.song.gb.pulse[1])
@@ -253,7 +256,7 @@ class GbPulseSoundViewTest {
         p.painter.move(p.painter.railX(3, 1f)!!, row.centerY())
         p.painter.up(0f, 0f)
         assertSame(after, session.song)
-        assertFalse(p.state.gbAdvanced)
+        assertFalse(p.state.gbPanel.advanced)
     }
 
     @Test
@@ -264,12 +267,12 @@ class GbPulseSoundViewTest {
             val before = session.song
             p.state.instField = 2
             p.draw()
-            assertTrue("$w x $h $zoom", p.painter.pulse.compact)
+            assertTrue("$w x $h $zoom", p.painter.lcd.compact)
             for (i in 0..3) {
-                val rect = p.painter.pulse.controlRect(GbPulseControl.entries[i])!!
+                val rect = p.painter.lcd.controlRect(i)!!
                 assertInside(rect, p.area, 48 * d)
-                for (forward in listOf(false, true)) assertInside(p.painter.pulse.navigationRect(forward)!!, p.area, 48 * d)
-                p.tap(p.painter.pulse.navigationRect(true)!!)
+                for (forward in listOf(false, true)) assertInside(p.painter.lcd.navigationRect(forward)!!, p.area, 48 * d)
+                p.tap(p.painter.lcd.navigationRect(true)!!)
                 p.draw()
             }
             assertEquals(2, p.state.instField)
@@ -305,9 +308,106 @@ class GbPulseSoundViewTest {
             p.pane.palette = palette
             p.state.instField = 4 // Length exposes Custom -> Pluck before editing.
             p.draw()
-            assertFalse(p.painter.pulse.compact)
-            for (control in GbPulseControl.entries) assertInside(p.painter.pulse.controlRect(control)!!, p.area, 48 * 2.3f)
+            assertFalse(p.painter.lcd.compact)
+            for (control in GbPulseControl.entries) assertInside(p.painter.lcd.controlRect(control.ordinal)!!, p.area, 48 * 2.3f)
             if (palette == Palette.CONTRAST) assertTrue(p.surface.colors.contains(palette.TEXT))
+        }
+    }
+
+    @Test
+    fun waveAndNoiseTouchMatchControllerNativeBytesAndExportWithOneUndoPerGesture() {
+        val export = GbSystem.exports.first { it.extension == "uge" }
+        for (kind in listOf(GbBank.WAVE, GbBank.NOISE)) {
+            val source = GbInstrument(name = "Exact nonpulse", kind = kind, volume = 9, envelopePace = 3,
+                envelopeDirection = 1, length = 17, lengthEnabled = true, wave = 11, waveVolume = 3,
+                noiseWidth = 1, duty = 3, sweepTime = 5, sweepShift = 2)
+            session.setInstrument(kind, 1, source)
+            val p = panel()
+            p.state.bank = kind.ordinal
+            for (control in 0..2) {
+                p.state.instField = control + 2
+                p.draw()
+                val before = session.song
+                val other = EditorSession(before)
+                val keyboard = ViewController(other, ViewState(kind = ViewKind.INSTRUMENT,
+                    bank = kind.ordinal, instField = control + 2))
+                val max = GbMusicalMacros.steps(kind, control) - 1
+                val target = if (kind == GbBank.NOISE && control == 0) 0 else max
+                val row = p.painter.lcd.controlRect(control)!!
+                p.painter.down(p.painter.lcd.valueX(control, 0f), row.centerY())
+                for (rank in 1..target) p.painter.move(p.painter.lcd.valueX(control, rank.toFloat() / max), row.centerY())
+                p.painter.up(0f, 0f)
+                keyboard.press(Action.EDIT)
+                repeat(max + 1) {
+                    val current = GbMusicalMacros.value(control, GbSoundView.sound(other.song, keyboard.state)!!)
+                    if (current != target) keyboard.tap(if (current != null && current > target) Action.LEFT else Action.RIGHT)
+                }
+                keyboard.release(Action.EDIT)
+                assertEquals(other.song, session.song)
+                assertArrayEquals(export.export(other.song), export.export(session.song))
+                val nativeTouch = org.thortracker.backend.HugeLowering.lower(session.song)
+                val nativeKeys = org.thortracker.backend.HugeLowering.lower(other.song)
+                assertArrayEquals(if (kind == GbBank.WAVE) nativeKeys.wave[0] else nativeKeys.noise[0],
+                    if (kind == GbBank.WAVE) nativeTouch.wave[0] else nativeTouch.noise[0])
+                assertSame(before.gb.waves, session.song.gb.waves)
+                session.undo()
+                assertSame(before, session.song)
+            }
+        }
+    }
+
+    @Test
+    fun nonpulseModeSwitchesPreserveCustomPatchesAndHeldEditCannotLeakAcrossFaces() {
+        session.onAudition = { _, _, _, _ -> }
+        val export = GbSystem.exports.first { it.extension == "uge" }
+        for (kind in listOf(GbBank.WAVE, GbBank.NOISE)) {
+            session.setInstrument(kind, 1, GbInstrument(kind = kind, volume = 7, envelopePace = 5,
+                length = 19, lengthEnabled = true, wave = 9, waveVolume = 2, noiseWidth = 1))
+            val p = panel()
+            p.state.bank = kind.ordinal
+            p.state.instField = 4
+            p.draw()
+            val before = session.song
+            val bytes = export.export(before)
+            val undo = session.undoLabel
+            val ctl = p.pane.controller
+            ctl.press(Action.EDIT)
+            p.tap(p.painter.modeRect(true))
+            ctl.tap(Action.RIGHT)
+            p.draw()
+            p.tap(p.painter.modeRect(false))
+            p.draw()
+            val row = p.painter.lcd.controlRect(2)!!
+            p.painter.down(p.painter.lcd.valueX(2, 1f), row.centerY())
+            p.painter.move(p.painter.lcd.valueX(2, 0f), row.centerY())
+            p.painter.up(0f, 0f)
+            ctl.release(Action.EDIT)
+            assertSame(before, session.song)
+            assertEquals(undo, session.undoLabel)
+            assertArrayEquals(bytes, export.export(session.song))
+            assertNull(GbMusicalMacros.value(2, GbSoundView.sound(session.song, p.state)!!))
+        }
+    }
+
+    @Test
+    fun compactNonpulseFacesReachEveryControlAndAllFifteenNamedSlots() {
+        for (kind in listOf(GbBank.WAVE, GbBank.NOISE)) {
+            val p = panel(320, 240, 1f)
+            p.state.bank = kind.ordinal
+            p.state.instField = 2
+            val before = session.song
+            repeat(3) { control ->
+                p.draw()
+                assertInside(p.painter.lcd.controlRect(control)!!, p.area, 48f)
+                p.tap(p.painter.lcd.navigationRect(true)!!)
+            }
+            repeat(15) { slot ->
+                p.draw()
+                assertEquals(slot + 1, p.state.instrument)
+                assertInside(p.painter.slotRect(slot + 1), p.area, 48f)
+                if (slot < 14) p.tap(p.painter.slotNavigationRect(true)!!)
+            }
+            assertSame(before, session.song)
         }
     }
 

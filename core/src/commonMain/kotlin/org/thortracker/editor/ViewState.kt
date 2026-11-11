@@ -57,14 +57,6 @@ data class ViewState(
     var gbPanel: MusicalPanelState = MusicalPanelState(),
     var sidPanel: MusicalPanelState = MusicalPanelState(),
     var ymPanel: MusicalPanelState = MusicalPanelState(),
-    /** Game Boy pulse pilot: local presentation only, never song data or undo history. */
-    var gbAdvanced: Boolean = false,
-    var gbAdvancedField: Int = 2,
-    var gbSoundField: Int = 2,
-    /** Invalidates pointer ownership even if navigation returns to the original slot/mode. */
-    var gbSoundRevision: Int = 0,
-    /** A physical Edit held across a mode change must release before it can edit the new mode. */
-    var gbModeEditBlocked: Boolean = false,
     /** Envelope instrument editors (NES): the envelope shown, the step under the cursor and the channel Listen plays on. */
     var envelope: Int = 0,
     var envStep: Int = 0,
@@ -124,9 +116,6 @@ data class ViewState(
     /** What "tap A" re-enters on this display; travels with the state when displays swap. Not persisted. */
     val entry: EntryMemory = EntryMemory(),
 ) {
-    /** Active GB pointer owner only. Not copied with pane snapshots; navigation closes its Undo group immediately. */
-    internal var cancelGbSoundTouch: (() -> Unit)? = null
-
     /** Subject identifiers belong to their view kind; never reinterpret one in another editor. */
     fun switchKind(next: ViewKind) {
         if (kind == next) return
