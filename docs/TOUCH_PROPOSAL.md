@@ -1,17 +1,16 @@
 # Touch interface proposals
 
-Status: **isolated Android controller-dock preview; not merged into production**.
-The 0.42.0-touch-preview.2 candidate integrates the current editor, audio engines and file paths under a distinct Android
-identity. **Galaxy Fold8 is the design target. Pocket DMG is only a functional testbed**, not
-a substitute for the phone's screen geometry or a human two-thumb ergonomics trial.
-The landscape study and browser evidence below remain historical proposals, not a native
-implementation contract.
+Status: **approved controller dock and Game Boy pulse Sound editor promoted to production 0.42.0/code 58**.
+The app is now **Thor Tracker**, package `org.thortracker`, signed with the production key.
+**Galaxy Fold8 is the design target. Pocket DMG is only a functional testbed**, not proof of
+phone density, insets or physical two-thumb reach. The earlier isolated APKs and landscape
+browser studies below remain historical review evidence.
 
-## Native controller-dock preview for Galaxy Fold8
+## Native controller dock for Galaxy Fold8
 
 ### Geometry and interaction
 
-The primary display has a 48 dp Menu / Touch preview / Play bar, the real `TrackerView` taking
+The primary display has a 48 dp Menu / current view / Play bar, the real `TrackerView` taking
 the remaining height, and a **144 dp dock: three rows, all sixteen controller buttons retained**.
 Each thumb group is capped at 216 dp and anchored 8 dp from its side. Wider windows add a
 central gap rather than stretching controls toward the crease. L2 and R2 sit at the outer
@@ -71,24 +70,24 @@ introduce a second note/value editor.
   hold ends only that hold, so a physical Edit or Listen and its audition continue. There is no manual
   show override.
 
-### Isolation and files
+### Identity and files
 
-Every Android variant has application ID **`org.thortracker.touchpreview`**, label
-**Thor Tracker Touch Preview**, and test application ID **`org.thortracker.touchpreview.test`**.
-The namespace/JNI classes remain `org.thortracker`; do not rename native symbols.
-Private recovery, settings, imported scales and firmware therefore live under the preview
-package, not production. The SAF provider authority is **`org.thortracker.touchpreview.documents`**.
-Its only root is the preview package's external-files directory:
+Production and review builds use **`org.thortracker`**, label **Thor Tracker**, and test package
+**`org.thortracker.test`**. Supplying the production signing configuration also signs debug
+builds with that key; ordinary locally debug-signed builds cannot update a production install.
+The normal Android file picker handles projects, exports, keymaps and tuning imports, preserving
+existing destination grants. No app-scoped preview provider or forced initial root remains.
 
-`Android/data/org.thortracker.touchpreview/files/Documents/ThorTrackerTouchPreview/`
+The historical `org.thortracker.touchpreview` installation is left intact. Its private files
+and app-scoped `Documents/ThorTrackerTouchPreview` directory are not automatically imported.
+Export anything wanted from that app before uninstalling it: Android removes app-scoped data
+on uninstall. Neither promotion nor testing deletes `/ThorTunez`.
 
-All file pickers initially point to that provider. It supports real create/read/write/delete
-for projects, exports and imported files, rejects traversal, and does not copy or discover
-production songs. Android's chooser can still explicitly browse another provider: never
-choose a production destination or `/ThorTunez` during preview tests. Files in this preview
-root are app-scoped and **removed when the preview is uninstalled**; export anything worth
-keeping to a deliberately chosen separate backup before cleanup. No storage permission,
-production URI grant, production FileProvider authority or production backup is reused.
+The production candidate passes 1,154 core tests, 22 Android host tests and all 30 permanent
+Android contracts on DMG. A separate real Activity probe verifies touch Sound/Advanced switching,
+exact UGE preservation, grouped controller Undo, two-pointer dock editing, latch cancellation
+and automatic hiding for the actual built-in controller. Eight private entries are cold-restored
+and independently verified. See [Verification](VERIFICATION.md) for scope and limitations.
 
 ### Game Boy pulse Sound playground
 
@@ -132,6 +131,9 @@ Actual Pocket DMG capture, with a transient recovery-status message still visibl
 [Custom advanced patch, untouched in Sound](media/gb-pulse-custom-dmg.png).
 These are not Galaxy Fold8 captures or evidence of physical two-thumb comfort.
 
+The following measurements and APK identify the **historical isolated preview**, not the
+production package described above.
+
 **Verified for preview.2:** 1,154 shared-core tests and 24 Android host tests; signed APK
 installed and exercised on reserved Pocket DMG. Actual Activity key/touch dispatch covers
 musical edits, X audition, mode switching, grouped Undo, pointer invalidation and exact Custom
@@ -148,8 +150,8 @@ No new Deck/Brick runtime proof is claimed for this Android preview.
 
 APK: `thor-tracker-0.42.0-touch-preview.2.apk`, code 57, arm64-v8a and x86_64.
 SHA-256: `5fbbf32f6185ebdb8e058f3124e5dd77e7301f800d79d5454504a5988300bdc8`.
-Install over the existing preview, without uninstalling. Review the musical controls and
-Sound → Advanced workflow before expanding this approach to Wave, Noise or other chips.
+This historical APK updates only the separate preview. Use the current normal release for the
+approved functionality; the next artistic review is limited to Game Boy, SID and YM2612 pilots.
 
 ### Previous 0.42.0-touch-preview.1 verification
 
