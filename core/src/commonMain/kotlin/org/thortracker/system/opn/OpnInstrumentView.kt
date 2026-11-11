@@ -236,7 +236,7 @@ object OpnInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, OpnSound.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        OpnSoundFace.normalise(v, rows(song, st).size - 1)
         val page = page(song, st)
         when {
             page == Page.EXPERT || page == Page.CH3 -> st.envStep = st.envStep.coerceIn(0, 3)
@@ -296,6 +296,7 @@ object OpnInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (OpnSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -519,6 +520,10 @@ object OpnInstrumentView : SystemView() {
         val cur = sound(song, st)
         val next = parts[(parts.indexOf(part(song, st)).coerceAtLeast(0) + delta).mod(parts.size)]
         val ok = session.apply("Make ${partText(next).substringAfter(' ')}") { OpnEdits.withPart(it, slot, next) }
+        if (ok) {
+            OpnSoundFace.panel(v).invalidate()
+            if (v.editHeld) { v.useEdit(); OpnSoundFace.panel(v).editBlocked = true }
+        }
         if (chip.part(st.listenChannel.coerceIn(0, chip.channelCount - 1)) != next) st.listenChannel = OpnEdits.firstChannel(chip, next)
         keepPage(v, Row.TYPE)
         session.note("Sound ${EditorSession.hex2(slot)} is now ${partText(next)} (${partChannels(chip, next)})" +
@@ -616,10 +621,12 @@ object OpnInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (OpnSoundFace.editPress(v)) return
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (OpnSoundFace.editRelease(v, tap)) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -664,6 +671,7 @@ object OpnInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (OpnSoundFace.clear(v)) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -770,12 +778,13 @@ object OpnInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (OpnSoundFace.command(v, a)) return true
         val st = v.state
         val session = v.session
         val song = session.song
         val slot = st.instrument
         val row = row(song, st)
-        val kind = envelopeKind(song, st)
+        val kind = if (OpnSoundFace.panel(v).advanced) envelopeKind(song, st) else null
         val onEnvelope = kind != null && row !in HEAD
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
@@ -783,14 +792,14 @@ object OpnInstrumentView : SystemView() {
                 if (row in GRIDS) st.envStep = (st.envStep + d).coerceIn(0, 3) else showPage(v, st.envelope + d)
             }
             Action.COPY -> if (onEnvelope) OpnEdits.copyEnvelope(session, slot, kind!!) else OpnEdits.copySound(session, slot)
-            Action.PASTE -> { OpnEdits.paste(session, slot, kind); keepPage(v, row) }
+            Action.PASTE -> { OpnEdits.paste(session, slot, kind); if (OpnSoundFace.panel(v).advanced) keepPage(v, row) }
             Action.CUT -> if (onEnvelope) {
                 OpnEdits.copyEnvelope(session, slot, kind!!)
                 OpnEdits.editEnvelope(session, slot, kind, "Cut ${kind.label.lowercase()} envelope") { OpnEdits.envelope(OpnEdits.defaultSsg(chip(song), slot), kind) }
             } else {
                 OpnEdits.copySound(session, slot)
                 OpnEdits.set(session, slot, null, "Cut sound")
-                keepPage(v, row)
+                if (OpnSoundFace.panel(v).advanced) keepPage(v, row)
             }
             Action.DUPLICATE -> {
                 if (slot >= OpnSound.SLOTS) { session.note("Sound ${EditorSession.hex2(slot)} is the last slot"); return true }
@@ -805,6 +814,7 @@ object OpnInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (OpnSoundFace.hints(v, h)) return
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -884,6 +894,13 @@ object OpnInstrumentView : SystemView() {
         val parts = if (opna) "FM voices (FM 1-6), SSG sounds (SSG 1-3), rhythm sounds (the six drum channels) and ADPCM sounds (ADPCM)"
             else "FM voices (FM 1-3) and SSG sounds (SSG 1-3)"
         val sections = ArrayList<Pair<String, List<Pair<String, String>>>>()
+        sections += "Sound face" to listOf(
+            ud to "Choose instrument slot; $lr chooses mode, name or a musical control",
+            editLr to "Shape the selected sound; $edit on mode switches Sound / Advanced without changing the patch",
+            "Tone console" to "FM shapes modulator colour and carrier contour; SSG shapes source, volume and shared noise/envelope; rhythm and ADPCM shape native playback",
+            "Types and samples" to "Advanced retains Type, sample selection/import/trim, exact SSG programs and FM3 offsets",
+            "Touch" to "Drag a control; compact panes use arrows to page",
+        )
         sections += "Instruments" to listOf(
             ud to "Sound slot, name, Listen channel, type, page, then the page's settings",
             lr to "On settings: the sound slot; on the Expert and Ch3 grids: the operator; on envelope steps: the step",
@@ -941,5 +958,5 @@ object OpnInstrumentView : SystemView() {
         return sections
     }
 
-    override fun painter(pane: PaneView): Painter = OpnInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = OpnSoundPainter(pane)
 }

@@ -28,23 +28,31 @@ internal class Opl3InstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private var listRowH = 0f
     private var listScroll = 0
 
+    internal fun drawSidebar(c: Surface, area: Rect, focused: Boolean): Rect {
+        val ins = Opl3InstrumentView.sound(song, st)
+        val locked = if (st.lockedSubject >= 0) "  locked" else ""
+        val kind = if (ins == null) "empty slot" else Opl3Curated.ALGORITHMS[Opl3Curated.controls(ins).algorithm].name
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "OPL3 · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, Opl3System.SLOTS, ink.palette.channel(Opl3InstrumentView.listenChannel(st, ins)), focused) { i ->
+            song.opl3.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.fourOp) " ⁴" else "" }
+        }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int = if (slotRect.contains(x, y))
+        (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, Opl3System.SLOTS) else -1
+
     override fun draw(c: Surface, area: Rect) {
         val s = song
         val ins = Opl3InstrumentView.sound(s, st)
         val page = Opl3InstrumentView.page(st)
         val col = ink.palette.channel(Opl3InstrumentView.listenChannel(st, ins))
-        val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val kind = if (ins == null) "empty slot" else Opl3Curated.ALGORITHMS[Opl3Curated.controls(ins).algorithm].name
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "OPL3 · $kind$locked  ${usageText(st.instrument)}")
+        val left = drawSidebar(c, area, st.instField == 0)
+        val top = left.top
         val row = Opl3InstrumentView.row(st)
         rowRects.clear()
         gridCells.clear()
         listRect = Rect()
 
-        // left column: the bank, scrolled to keep the selected slot in view
-        val left = drawBank(c, area, top, Opl3System.SLOTS, col, row == Row.SLOT) { i ->
-            s.opl3.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.fourOp) " ⁴" else "" }
-        }
 
         // right: settings rows, with the drawings beside them on wide displays or below them on narrow ones
         val pad = ink.unit * 0.9f

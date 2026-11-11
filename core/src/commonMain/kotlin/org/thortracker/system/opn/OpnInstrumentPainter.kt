@@ -47,13 +47,8 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** Waveform outlines (min, max per bin) of drawn samples, by identity (samples are immutable). */
     private val outlines = IdentityCache<OpnaSample, ShortArray>(16)
 
-    override fun draw(c: Surface, area: Rect) {
-        val s = song
-        val chip = s.opn.chip
-        val ins = OpnInstrumentView.sound(s, st)
-        val page = OpnInstrumentView.page(s, st)
-        val listen = OpnInstrumentView.listenChannel(s, st, ins)
-        val col = ink.palette.channel(listen)
+    internal fun drawSidebar(c: Surface, area: Rect, focused: Boolean): Rect {
+        val ins = OpnInstrumentView.sound(song, st)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when (ins) {
             is OpnFmSound -> "FM · " + YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].name
@@ -62,16 +57,30 @@ internal class OpnInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             is OpnAdpcmSound -> "ADPCM sound"
             null -> "empty slot"
         }
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${chip.label} · $kind$locked  ${usageText(st.instrument)}")
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${song.opn.chip.label} · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, OpnSound.SLOTS, ink.palette.channel(OpnInstrumentView.listenChannel(song, st, ins)), focused) { i ->
+            song.opn.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + mark(it) }
+        }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int = if (slotRect.contains(x, y))
+        (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, OpnSound.SLOTS) else -1
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val chip = s.opn.chip
+        val ins = OpnInstrumentView.sound(s, st)
+        val page = OpnInstrumentView.page(s, st)
+        val listen = OpnInstrumentView.listenChannel(s, st, ins)
+        val col = ink.palette.channel(listen)
+        val left = drawSidebar(c, area, st.instField == 0)
+        val top = left.top
         val row = OpnInstrumentView.row(s, st)
         val allRows = OpnInstrumentView.rows(s, st)
         rowRects.clear()
         gridCells.clear()
         plot.hide()
 
-        val left = drawBank(c, area, top, OpnSound.SLOTS, col, row == Row.SLOT) { i ->
-            s.opn.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + mark(it) }
-        }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad

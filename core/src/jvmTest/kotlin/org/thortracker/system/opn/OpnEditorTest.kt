@@ -49,7 +49,7 @@ class OpnEditorTest {
     }
 
     private fun view(session: EditorSession, setup: ViewState.() -> Unit = {}) =
-        ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply(setup))
+        ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("opn").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 

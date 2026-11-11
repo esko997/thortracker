@@ -88,7 +88,7 @@ object Opl3InstrumentView : SystemView() {
         val st = v.state
         st.instrument = st.instrument.coerceIn(1, Opl3System.SLOTS)
         st.envelope = st.envelope.coerceIn(0, Page.entries.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        Opl3SoundFace.normalise(v, rows(st).size - 1)
         st.listenChannel = st.listenChannel.coerceIn(0, v.session.song.system.channels.size - 1)
         when (page(st)) {
             Page.EXPERT -> st.envStep = st.envStep.coerceIn(0, (sound(v.session.song, st)?.operatorCount ?: 2) - 1)
@@ -144,6 +144,7 @@ object Opl3InstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (Opl3SoundFace.direction(v, dx, dy)) return
         val st = v.state
         val rows = rows(st)
         val row = row(st)
@@ -340,10 +341,12 @@ object Opl3InstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (Opl3SoundFace.editPress(v)) return
         if (row(v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (Opl3SoundFace.editRelease(v, tap)) return
         val st = v.state
         val session = v.session
         val row = row(st)
@@ -374,6 +377,7 @@ object Opl3InstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (Opl3SoundFace.clear(v)) return
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -456,6 +460,7 @@ object Opl3InstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (Opl3SoundFace.command(v, a)) return true
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -465,13 +470,13 @@ object Opl3InstrumentView : SystemView() {
                 val d = if (a == Action.NEXT_CHANNEL) 1 else -1
                 if (row in GRID) moveOperator(v, d) else showPage(v, st.envelope + d)
             }
-            Action.COPY -> if (page(st) == Page.CHORDS) session.copyOpl3Chords() else session.copyOpl3Instrument(slot)
+            Action.COPY -> if (Opl3SoundFace.panel(v).advanced && page(st) == Page.CHORDS) session.copyOpl3Chords() else session.copyOpl3Instrument(slot)
             Action.PASTE -> session.pasteOpl3(slot)
-            Action.CUT -> if (page(st) != Page.CHORDS) {
+            Action.CUT -> if (!Opl3SoundFace.panel(v).advanced || page(st) != Page.CHORDS) {
                 session.copyOpl3Instrument(slot)
                 session.setOpl3Instrument(slot, null, "Cut sound")
             } else session.copyOpl3Chords()
-            Action.DUPLICATE -> if (row == Row.SHAPES) {
+            Action.DUPLICATE -> if (Opl3SoundFace.panel(v).advanced && row == Row.SHAPES) {
                 val shape = session.song.opl3.chords.getOrNull(st.envStep) ?: return true
                 if (session.song.opl3.chords.size >= Opl3System.MAX_CHORDS) { session.note("The chord table holds at most ${Opl3System.MAX_CHORDS} shapes"); return true }
                 if (session.editOpl3Chords("Duplicate chord shape") { it.toMutableList().also { l -> l.add(st.envStep + 1, shape) } }) st.envStep++
@@ -488,6 +493,7 @@ object Opl3InstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (Opl3SoundFace.hints(v, h)) return
         val st = v.state
         val row = row(st)
         val song = v.session.song
@@ -541,6 +547,12 @@ object Opl3InstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         val editLr = keys.held(Action.EDIT, lr)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose instrument slot; $lr chooses mode, name or a musical control",
+                editLr to "Shape the selected sound; $edit on mode switches Sound / Advanced without changing the patch",
+                "Organ" to "Voicing selects 2/4-op routing; Drawbar shapes modulation; Reed shapes output waves; Contour, Release and Drop shape articulation",
+                "Touch" to "Drag a control; compact panes use arrows to page. Advanced retains presets, exact registers and chords",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, page, then the page's settings",
                 lr to "On settings: the sound slot; on the Expert grid: the operator; on a chord shape: its intervals",
@@ -575,5 +587,5 @@ object Opl3InstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = Opl3InstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = Opl3SoundPainter(pane)
 }
