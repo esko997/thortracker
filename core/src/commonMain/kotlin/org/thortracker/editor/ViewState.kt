@@ -3,6 +3,7 @@ package org.thortracker.editor
 import org.thortracker.model.Phrase
 import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
+import org.thortracker.system.panel.MusicalPanelState
 
 enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
 
@@ -52,6 +53,10 @@ data class ViewState(
     var songItem: Int = SONG_HEADER_ITEMS,
     var songField: Int = 0,
     var instField: Int = 0,
+    /** Independent, non-document presentation and pointer ownership for the three musical design pilots. */
+    var gbPanel: MusicalPanelState = MusicalPanelState(),
+    var sidPanel: MusicalPanelState = MusicalPanelState(),
+    var ymPanel: MusicalPanelState = MusicalPanelState(),
     /** Game Boy pulse pilot: local presentation only, never song data or undo history. */
     var gbAdvanced: Boolean = false,
     var gbAdvancedField: Int = 2,
@@ -131,7 +136,7 @@ data class ViewState(
     }
 
     /** Independent copy, used when swapping or persisting display states. */
-    fun snapshot(): ViewState = copy(entry = entry.deepCopy())
+    fun snapshot(): ViewState = copy(entry = entry.deepCopy(), gbPanel = gbPanel.copy(), sidPanel = sidPanel.copy(), ymPanel = ymPanel.copy())
 
     companion object {
         /** Song view rows before the order list: title, artist, ticks per row, loop order, scale for new patterns. */
