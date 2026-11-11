@@ -1,5 +1,35 @@
 # Thor Tracker verification — 2026-11-11
 
+## 0.42.0 — production touch controls and Game Boy Sound editor
+
+The approved controller dock and Game Boy pulse Sound/Advanced workflow now use the normal
+**Thor Tracker** identity: `org.thortracker`, version **0.42.0/code 58**, arm64-v8a and x86_64,
+production certificate `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`.
+The previous separate preview installation is neither removed nor migrated. Preview-only
+document-provider code, forced picker roots and Gradle harness hooks are removed; normal SAF
+destinations and grants remain. Opt-in production signing also applies to debug builds.
+
+- **1,154 core JVM and 22 Android host tests pass.** The main/preview integration had duplicated
+  the identical clipboard regression; the duplicate was removed, retaining the behavior check.
+- **All 30 permanent Android contracts pass on Pocket DMG**, including ordinary SAF save intent,
+  stale-save protection, interrupted binding capture, controller workflows and native audio.
+- A separate real Activity probe passes touch Sound/Advanced switching without changing the patch
+  or UGE bytes, held-A edits grouped into one Undo, actual two-pointer dock editing, simultaneous
+  latched L2/R2 cancellation on opening navigation, and dock hiding for DMG's real built-in pad.
+  Dock visibility was forced only as a test fixture; there is no user-facing override.
+- That short UI probe reports **zero xruns/driver faults**, maximum callback **0.191 ms**.
+  This is not an acoustic listening, physical thumb-reach or long-session claim.
+- All eight private recovery/workspace entries were cold-backed up, restored, and independently
+  verified with manifest SHA-256 `4e9599cfd617a3e6e75076a8574703037186d685c40713bf9f76652a30898062`.
+  The owned test package and UUID directory were removed; timeout restored and DMG returned
+  Home/asleep. `/ThorTunez` and the user's Thor were not touched.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/instrument-pilots-043/production/`
+`dmg-a3529954efbd47f9b83d51cbb1de8892/`. Earlier preview-specific native contour/sweep and long-touch
+measurements remain below; they are not relabeled as new production measurements.
+Builds were serialized through the memory-capped wrapper; no emulator or local Kotlin/Native
+linking was used. The next design review is deliberately limited to GB, SID and YM2612.
+
 ## 0.41.0 — TIA four columns and workflow hardening
 
 **Version 0.41.0/code 55 is published.** TIA NTSC and PAL now

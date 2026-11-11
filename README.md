@@ -5,10 +5,10 @@ Thor Tracker is a controller-first music tracker for Game Boy / Game Boy Color s
 Read the **[documentation website](https://esko997.github.io/thortracker/)** for installation,
 controls, sound systems, exports and troubleshooting.
 
-**This tag is the isolated 0.42.0-touch-preview.2 review build**, not the production app.
-It adds a [Game Boy pulse Sound playground](docs/TOUCH_PROPOSAL.md#game-boy-pulse-sound-playground):
-four musical controls beside the existing Advanced editor, editing the same instrument slot.
-The controller dock and earlier workflow fixes remain included.
+**0.42.0 promotes the approved touch controls and Game Boy Sound editor to the normal app.**
+Without a usable physical controller, Android shows a two-thumb controller dock and navigation
+drawer; attaching a controller hides the dock. Game Boy pulse instruments offer musical
+Sound controls beside the precise Advanced editor. Both edit the same instrument and Undo history.
 
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
@@ -16,7 +16,10 @@ The controller dock and earlier workflow fixes remain included.
 
 ## Install
 
-For this branch, install `thor-tracker-0.42.0-touch-preview.2.apk` from its separate preview prerelease or the phone's `ThorTracker-Preview` delivery folder. It updates **Thor Tracker Touch Preview**, not production. Android 8 or later is required; arm64-v8a and x86_64 are supported. Do not uninstall an existing preview to update.
+Install `thor-tracker-<version>.apk` from [Releases](https://github.com/esko997/thortracker/releases).
+It updates **Thor Tracker** (`org.thortracker`) in place. Android 8 or later is required;
+arm64-v8a and x86_64 are supported. The old separate **Thor Tracker Touch Preview** installation
+and its data are not migrated or removed; export any songs from it through its file picker.
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
