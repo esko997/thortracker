@@ -43,6 +43,18 @@ Also fixed:
   configurations and eight compact touch-navigation cases**. Each makes 120 audition calls.
   Actual Android window captures and rendered compact surfaces were visually inspected.
   The matrix caught and fixed a last-cell floating-point endpoint extending beyond its row.
+- [CI run 42945870451](https://github.com/esko997/thortracker/actions/runs/42945870451), source
+  `9bdea61`, passes **build, Deck and Brick**; both official-release jobs are correctly skipped.
+  The downloaded AppImage matches its checksum
+  `a63458ddeeee7c17c82634e7cafd9e90ee5a003b75e3eeb1824d421dc9e7595f`.
+  Three actual-binary, isolated-home runs at 1024×768@1.5 show pulse, wave and noise panels,
+  advancing playback to rows 48/48/50, audition counts 3/1/1 and nonzero PCM peaks.
+  The pulse capture shows the edited volume 9; all three final surfaces were visually inspected.
+  These use SDL offscreen/dummy under a 512 MiB/no-swap/one-CPU scope, not physical Deck/Brick
+  playback or speaker listening. Evidence: `native-ui/`.
+- Documentation builds all **15 pages** with local URL/fragment/asset checks. The changed manual
+  image loads and fits at **390×844** and **1440×1000**, with document width equal to viewport
+  width in both browser inspections. This was a local preview, not a Pages deployment.
 
 ### Longer actual workflows
 
@@ -52,6 +64,11 @@ Also fixed:
 | Konkr composition | 128 rounds; 925 auditions; 13 saves, four reopens and four UGE exports | Zero xruns/driver faults; max callback 3.383 ms; PSS 73,968→70,075 KiB, peak 77,008 |
 | DMG touch | 160 rounds of held edit, multi-owner arrows, selection/copy/paste, cancellation and reversed lifts; 640 auditions; 27 first-pointer probes | Zero xruns/driver faults; max callback 6.588 ms; PSS 68,714→85,059 KiB, peak 92,055 |
 | Konkr Open follow-up | 32 further composition rounds, including confirmation Back/Continue | Scenario and independent private-state restoration pass |
+
+The two 128-round runs used the pre-panel hardening candidate. The 160-round touch run used an
+earlier panel build, before the final compact-navigation and envelope corrections. The final APKs
+then passed the focused panel, pointer and controller-presence acceptance above; do not describe
+the earlier long runs as 160 rounds against the exact final APK.
 
 These are bounded runs, not an overnight leak proof or the 400-entry Undo-limit test: maximum
 observed Undo depth was 202 in composition and 157 in touch. Save/open callbacks in these long
@@ -76,6 +93,9 @@ Recovery was completed through validated owned-case aliases with the same backup
 then independently verified; the whitelist is corrected for later runs. Two earlier failed probes
 were harness-oracle errors (note entry assigns the current instrument pen; confirmation dismiss is
 Back, not a literal Cancel button), not product fixes disguised by changed assertions.
+Final cleanup removed only the **15 UUID-owned test directories** after retaining their host
+evidence. Nova, Konkr and DMG each report the original 60,000 ms timeout and no temporary test
+package. Disposable instrumentation source and runners are removed after verification.
 
 Evidence: `~/.local/state/thortracker/recovery-20261109/long-session-042/`, including `evidence/`,
 `native-before/`, `native-after/`, `sample-compatibility.json` and `preview-full-host-tests.json`.
@@ -88,6 +108,10 @@ Signed review artifacts:
 - Separate `org.thortracker.touchpreview` APK: `thor-tracker-0.42.0-touch-preview.1.apk`,
   SHA-256 `1f8881cc2e0b32442242a19541907fd141487f07df97c40c46a670b93c791775`.
 Both use the existing production signing certificate; no uninstall or external-project migration is required.
+The [isolated preview prerelease](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.42.0-1)
+is published from immutable source tag `touch-preview-0.42.0-1` (`8f0d8bd`). Downloaded APK and
+checksum match the tested bytes. The same files are in the phone-only `ThorTracker-Preview`
+Syncthing outbox; phone receipt is not confirmed. Production `main` and latest stable stay at 0.41.0.
 
 The [Game Boy panel notes](INSTRUMENT_PANELS.md) distinguish implemented controls from later SCC/FM
 proposals. Fold8 cover/inner renders are **synthetic editor viewports**, not physical phone captures

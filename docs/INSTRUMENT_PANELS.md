@@ -49,6 +49,22 @@ documented in [Audio Engine](AUDIO_ENGINE.md). Song and hardware-export bytes ar
 The next review is this complete Game Boy panel, not automatic expansion to SCC or FM. Those
 proposals, a standalone Listen latch, and one-shot character macros remain unimplemented.
 
+### Review captures
+
+These three captures come from the actual CI-built AppImage, rendered offscreen at 1024×768@1.5;
+they are not photographs or captures from a physical Brick:
+
+<img src="media/gameboy-panel-native-pulse.png" width="620" alt="Game Boy pulse panel with envelope timeline, duty diagram, exact controls and edited volume 9">
+
+<img src="media/gameboy-panel-native-wave.png" width="620" alt="Game Boy wave panel with sixteen waveform choices and exact output and length controls">
+
+<img src="media/gameboy-panel-native-noise.png" width="620" alt="Game Boy noise panel with a decaying envelope, LFSR illustration and exact parameters">
+
+[Actual Pocket DMG capture](media/gameboy-panel-dmg.png) ·
+[Synthetic compact Paper layout at 150%](media/gameboy-panel-compact-paper.png).
+The compact example deliberately shows field navigation rather than pretending every waveform
+thumbnail is a large touch target.
+
 ## Recommendation in brief
 
 Build panels **incrementally, one system at a time, out of a small set of shared interaction
