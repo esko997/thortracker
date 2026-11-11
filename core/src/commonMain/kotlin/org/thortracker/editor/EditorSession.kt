@@ -62,6 +62,17 @@ class EditorSession(initial: Song) {
         onMenuRequest?.invoke(build) ?: note("Menus are not available here")
     }
 
+    /** Uses the frontend's existing controller/touch text popup; callbacks cannot cross document replacement. */
+    fun requestText(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) {
+        require(maxLength > 0)
+        val generation = documentGeneration
+        requestMenu { menu ->
+            menu.text(title, initial.take(maxLength), maxLength) { value ->
+                if (documentGeneration == generation) accepted(value.take(maxLength))
+            }
+        }
+    }
+
     var selection: Selection = Selection()
         private set
 

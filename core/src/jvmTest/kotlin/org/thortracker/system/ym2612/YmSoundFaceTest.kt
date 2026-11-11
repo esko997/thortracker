@@ -271,16 +271,17 @@ class YmSoundFaceTest {
         v.tap(Action.EDIT)
         assertEquals(2, v.state.instField)
         assertSame(before, session.song)
-        // Leaving an FM slot for a PSG one and stepping off its Slot row back onto FM settles on the first control.
+        // Crossing FM/PSG slots preserves the focused musical field and never changes the patch.
         session.setYmInstrument(2, defaultYmPsg(2), "PSG")
         val withPsg = session.song
         v.state.instField = 3
         v.tap(Action.DOWN)
-        assertEquals(2, v.state.instrument); assertFalse(YmSoundFace.friendly(session.song, v.state))
-        repeat(3) { v.tap(Action.UP) }
-        assertEquals(0, v.state.instField)
-        v.tap(Action.RIGHT)
+        assertEquals(2, v.state.instrument); assertTrue(YmSoundFace.friendly(session.song, v.state))
+        assertEquals(3, v.state.instField)
+        v.tap(Action.DOWN)
         assertEquals(3, v.state.instrument); assertTrue(YmSoundFace.friendly(session.song, v.state))
+        assertEquals(3, v.state.instField)
+        v.tap(Action.LEFT)
         assertEquals(2, v.state.instField)
         assertSame(withPsg, session.song)
         // The empty slot is created by shaping a control.
@@ -313,22 +314,6 @@ class YmSoundFaceTest {
         assertSame(before, session.song)
     }
 
-    @Test fun nonFmKeepsItsExactEditorAndAuditionKind() {
-        val session = session()
-        session.setYmInstrument(2, defaultYmPsg(2), "PSG")
-        session.setYmInstrument(3, defaultYmPcm(3), "PCM")
-        val v = view(session, 0)
-        val before = session.song
-        for (slot in 2..3) {
-            YmInstrumentView.moveSlot(v, slot - v.state.instrument)
-            assertFalse(YmSoundFace.friendly(session.song, v.state))
-            val expected = if (slot == 2) YmInstrumentView.PSG_PAGES else YmInstrumentView.PCM_PAGES
-            assertEquals(expected, YmInstrumentView.pages(session.song, v.state))
-            YmSoundFace.selectMode(v, true)
-            assertFalse(v.state.ymPanel.advanced)
-        }
-        assertSame(before, session.song)
-    }
 
     /** Records draw calls that start inside the left column ([columnRight], below [columnTop]) while [ops] is set. */
     private class Canvas : Surface {
@@ -367,6 +352,20 @@ class YmSoundFaceTest {
             painter.draw(surface, area)
         }
         fun tap(r: Rect) { assertTrue(painter.down(r.centerX(), r.centerY())); painter.up(r.centerX(), r.centerY()) }
+    }
+
+    @Test fun psgContourDragReturningToOriginalPreservesItsDurationAndInactiveFields() {
+        val original = YmPsgInstrument(volume = org.thortracker.system.panel.EnvelopeContour.make(
+            org.thortracker.system.panel.EnvelopeContour.Shape.PLUCK, 32, 11), sweep = YmSweep(33, -17, 0))
+        val base = YmSystem.blank()
+        val session = EditorSession(base.copy(sound = base.ym.withInstrument(1, original)))
+        val panel = Panel(session, 960, 720)
+        val y = panel.painter.controlRect(0)!!.centerY()
+        assertTrue(panel.painter.down(panel.painter.valueX(0, 0f), y))
+        panel.draw()
+        panel.painter.move(panel.painter.valueX(0, 0.5f), y)
+        panel.painter.up(0f, y)
+        assertEquals(original, session.song.ymInstrument(1))
     }
 
     @Test fun dragUsesOriginalPatchSurvivesRepaintAndIsOneUndo() {

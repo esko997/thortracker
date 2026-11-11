@@ -9,6 +9,9 @@ interface MenuContext {
     /** A popup of [entries]; choosing one runs it. [selected] is where the cursor starts. */
     fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int = 0)
 
+    /** A bounded text field; accepting returns its value, dismissing leaves the document unchanged. */
+    fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit)
+
     /**
      * Lets the user choose a file ending in one of [extensions] (".wav", lower case); [picked] receives its name
      * without the extension and its bytes (at most [maxBytes]). Failures are reported through [error].
