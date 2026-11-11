@@ -197,10 +197,14 @@ fun EditorSession.copySccWave(number: Int) {
 /**
  * Pastes the clipboard into sound [slot]: a sound replaces it; an envelope goes into [kind] (values clamped to its
  * range, the release kept only on volume), so a shape can move between envelopes (a pitch envelope keeps its mode).
+ * A null destination accepts whole sounds only; Sound must not guess an envelope destination.
  */
-fun EditorSession.pasteSccSound(slot: Int, kind: SccEnvelopeKind): Boolean = when (val clip = clipboard) {
+fun EditorSession.pasteSccSound(slot: Int, kind: SccEnvelopeKind?): Boolean = when (val clip = clipboard) {
     is SccClip.Sound -> setSccInstrument(slot, clip.instrument, "Paste sound").also { note("Pasted into sound ${hex2(slot)}") }
-    is SccClip.Envelope -> editSccInstrument(slot, "Paste ${kind.label.lowercase()} envelope") {
+    is SccClip.Envelope -> if (kind == null) {
+        note("Sound accepts whole SCC sounds; paste envelopes in Advanced.")
+        false
+    } else editSccInstrument(slot, "Paste ${kind.label.lowercase()} envelope") {
         val with = kind.set(it, kind.fixed(clip.envelope))
         if (kind == SccEnvelopeKind.PITCH && clip.kind == SccEnvelopeKind.PITCH) with.copy(pitchRelative = clip.relative) else with
     }.also { note("Pasted the ${clip.kind.label.lowercase()} envelope into ${kind.label.lowercase()}") }

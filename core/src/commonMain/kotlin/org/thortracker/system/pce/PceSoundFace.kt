@@ -4,6 +4,7 @@ import org.thortracker.editor.Action
 import org.thortracker.editor.Hint
 import org.thortracker.editor.NameEdit
 import org.thortracker.editor.ViewController
+import org.thortracker.editor.ViewKind
 import org.thortracker.system.panel.MusicalPanelMode
 
 internal object PceSoundFace {
@@ -91,13 +92,35 @@ internal object PceSoundFace {
         }
         return true
     }
+    fun rename(v: ViewController) {
+        invalidate(v)
+        val st = v.state
+        st.instField = 1
+        val session = v.session
+        val slot = st.instrument
+        val before = session.song
+        val original = before.pceInstrument(slot) ?: run { session.note("Shape this empty slot before naming it."); return }
+        val panel = st.soundPanel("pce")
+        val revision = panel.revision
+        val generation = session.documentGeneration
+        session.requestText("Sound name", original.name, PceInstrumentView.NAME_MAX) { name ->
+            if (st.kind == ViewKind.INSTRUMENT && st.instrument == slot && !panel.advanced &&
+                panel.revision == revision && session.documentGeneration == generation && session.song === before) {
+                session.setPceInstrument(slot, original.copy(name = name.take(PceInstrumentView.NAME_MAX)), "Rename sound")
+            }
+        }
+    }
+
     fun command(v: ViewController, a: Action): Boolean {
+        if (v.state.soundPanel("pce").editBlocked && v.editHeld) { v.useEdit(); return true }
         if (v.state.soundPanel("pce").advanced) return false
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> MusicalPanelMode.cycleSoundField(v, v.state.soundPanel("pce"), PceSoundMacros.COUNT, if (a == Action.NEXT_CHANNEL) 1 else -1)
             Action.COPY -> v.session.copyPceInstrument(v.state.instrument)
             Action.PASTE -> { invalidate(v); v.session.pastePce(v.state.instrument, null) }
             Action.CUT -> { invalidate(v); v.session.copyPceInstrument(v.state.instrument); v.session.setPceInstrument(v.state.instrument, null, "Cut sound") }
+            // The native duplicate owns the copy and slot selection; terminate the Sound gesture first.
+            Action.DUPLICATE -> { invalidate(v); return false }
             else -> return false
         }
         return true

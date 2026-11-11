@@ -432,6 +432,8 @@ object SccInstrumentView : SystemView() {
                 ud to "Choose sound slot; $lr cycles face, name and musical controls",
                 keys.held(Action.EDIT, lr) to "Shape the selected control; on Name change a letter",
                 keys.held(Action.EDIT, ud) to "On Name move the caret; on a control adjust it",
+                "Name" to "Tap the name to type it; switching slot, face or document cancels a pending rename",
+                "Paste" to "Sound accepts whole sounds; choose Advanced to paste an envelope into a precise destination",
                 "Advanced" to "Exact envelopes and raw wave tools remain here; complex wave sequences stay Custom",
                 "Shared waves" to "Selecting a wave changes only its pointer, never the stored samples. SCC 4/5 still share the last claimed wave; SCC+ channels are independent",
             ),

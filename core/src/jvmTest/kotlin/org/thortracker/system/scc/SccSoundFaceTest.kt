@@ -5,6 +5,7 @@ import org.junit.Test
 import org.thortracker.backend.SccLowering
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
+import org.thortracker.editor.MenuContext
 import org.thortracker.editor.PaneZoom
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
@@ -221,6 +222,99 @@ class SccSoundFaceTest {
             assertTrue(sound.isNotEmpty())
             assertEquals(sound, p.surface.ops)
         }
+    }
+
+    @Test fun duplicateTerminatesTouchAndHeldEditsBeforeSelectingTheNewSlot() {
+        val s = session()
+        val p = Panel(s, 960, 720)
+        val v = p.pane.controller
+        p.state.instField = 3; p.draw()
+        val r = p.painter.controlRect(1)
+        p.painter.down(r.left + 12, r.centerY())
+        v.tap(Action.DUPLICATE)
+        assertEquals(2, p.state.instrument)
+        val duplicated = s.song
+        p.painter.move(r.right - 12, r.centerY())
+        assertSame(duplicated, s.song)
+        p.painter.up(0f, 0f)
+        v.press(Action.EDIT)
+        v.tap(Action.DUPLICATE)
+        assertEquals(3, p.state.instrument)
+        val heldDuplicate = s.song
+        v.tap(Action.RIGHT); v.tap(Action.DUPLICATE); v.tap(Action.CUT); v.tap(Action.PASTE)
+        assertSame(heldDuplicate, s.song)
+        assertEquals(3, p.state.instrument)
+        v.release(Action.EDIT)
+        v.tap(Action.DUPLICATE)
+        assertEquals(4, p.state.instrument)
+    }
+
+    @Test fun soundPasteRejectsEveryEnvelopeKindAndRetainsWholeSoundPaste() {
+        val s = session()
+        val v = view(s)
+        for (kind in SccEnvelopeKind.entries) {
+            s.copySccEnvelope(1, kind)
+            val before = s.song
+            v.tap(Action.PASTE)
+            assertSame(before, s.song)
+            assertTrue(s.message!!.contains("Advanced"))
+        }
+        s.copySccInstrument(1)
+        v.tap(Action.DOWN); v.tap(Action.PASTE)
+        assertEquals(s.song.sccInstrument(1), s.song.sccInstrument(2))
+    }
+
+    @Test fun touchingNameRequestsBoundedNativeRenameAndUndo() {
+        val s = session()
+        val menu = TextMenu()
+        s.onMenuRequest = { it(menu) }
+        val p = Panel(s, 360, 270)
+        val before = s.song
+        val left = p.painter.slotNavigationRect(false)
+        val right = p.painter.slotNavigationRect(true)
+        val x = (left.right + right.left) / 2
+        assertTrue(p.painter.down(x, left.centerY())); p.painter.up(x, left.centerY())
+        assertEquals("Keep wave", menu.initial)
+        assertEquals(EditorSession.MAX_NAME, menu.maximum)
+        assertSame(before, s.song)
+        menu.accepted!!("N".repeat(100))
+        assertEquals(before.sccInstrument(1)!!.copy(name = "N".repeat(EditorSession.MAX_NAME)), s.song.sccInstrument(1))
+        s.undo(); assertSame(before, s.song)
+    }
+
+    @Test fun renameCallbacksCannotCrossSlotsModesViewsDocumentsOrPatchChanges() {
+        for (boundary in 0..4) {
+            val s = session()
+            val menu = TextMenu()
+            s.onMenuRequest = { it(menu) }
+            val v = view(s)
+            SccSoundFace.rename(v)
+            val accept = menu.accepted!!
+            when (boundary) {
+                0 -> SccSoundFace.moveSlot(v, 1)
+                1 -> { SccSoundFace.mode(v, true); SccSoundFace.mode(v, false) }
+                2 -> v.state.kind = ViewKind.WAVE
+                3 -> s.replaceSong(s.song)
+                else -> s.setSccInstrument(1, patch().copy(restart = true), "Other edit")
+            }
+            val beforeAccept = s.song
+            accept("Stale")
+            assertSame(beforeAccept, s.song)
+        }
+    }
+
+    private class TextMenu : MenuContext {
+        var initial = ""
+        var maximum = 0
+        var accepted: ((String) -> Unit)? = null
+        override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) {
+            this.initial = initial; maximum = maxLength; this.accepted = accepted
+        }
+        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = error("Unexpected menu")
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = error("Unexpected file picker")
+        override fun status(message: String) = Unit
+        override fun error(message: String): Nothing = throw AssertionError(message)
+        override fun installRhythmRom(bytes: ByteArray): String? = error("Unexpected ROM import")
     }
 
     private class Panel(val session: EditorSession, val width: Int, val height: Int, zoom: PaneZoom = PaneZoom.NORMAL) {

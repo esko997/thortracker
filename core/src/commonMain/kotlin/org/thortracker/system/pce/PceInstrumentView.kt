@@ -599,6 +599,7 @@ object PceInstrumentView : SystemView() {
                 ud to "Choose sound slot; $lr cycles face, name and musical controls",
                 keys.held(Action.EDIT, lr) to "Shape the selected control; on Name change a letter",
                 keys.held(Action.EDIT, ud) to "On Name move the caret; on a control adjust it",
+                "Name" to "Tap the name to type it; switching slot, face or document cancels a pending rename",
                 "Advanced" to "Exact envelopes, wave editor and DDA sample import remain here",
                 "Shared state" to "Wave selection never rewrites samples. The song LFO uses PSG 2 to modulate PSG 1; tone Motion edits only pitch, noise Motion replaces only its note-relative arpeggio/color",
             ),

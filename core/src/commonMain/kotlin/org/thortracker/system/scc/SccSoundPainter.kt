@@ -182,7 +182,7 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         val slot = advanced.slotAt(x, y)
         if (slot > 0) { SccSoundFace.moveSlot(ctl, slot - st.instrument); return true }
         if (slotPrevious.contains(x, y) || slotNext.contains(x, y)) { SccSoundFace.moveSlot(ctl, if (slotNext.contains(x, y)) 1 else -1); return true }
-        if (name.contains(x, y)) { st.instField = 1; return true }
+        if (name.contains(x, y)) { SccSoundFace.rename(ctl); return true }
         if (previous.contains(x, y) || next.contains(x, y)) {
             st.instField = 2 + ((st.instField - 2).coerceIn(0, SccSoundMacros.COUNT - 1) + if (next.contains(x, y)) 1 else SccSoundMacros.COUNT - 1).mod(SccSoundMacros.COUNT)
             return true
