@@ -20,6 +20,17 @@ data class MusicalPanelState(
 }
 
 internal object MusicalPanelMode {
+    /** Horizontal Sound navigation: mode, name, then musical controls; slot selection is vertical. */
+    fun cycleSoundField(v: ViewController, panel: MusicalPanelState, controlCount: Int, delta: Int) {
+        val st = v.state
+        val last = controlCount + 1
+        val current = if (st.instField < 0) 0 else st.instField.coerceIn(1, last)
+        val next = (current + delta).mod(last + 1)
+        if (st.instField >= 1) panel.soundField = st.instField
+        st.instField = if (next == 0) -1 else next
+        st.textPos = 0
+    }
+
     /** Field -1 is the mode selector. Switching must not turn a still-held Edit into an edit in the other face. */
     fun select(v: ViewController, panel: MusicalPanelState, advanced: Boolean, keepModeFocus: Boolean = false) {
         if (panel.advanced == advanced) return
