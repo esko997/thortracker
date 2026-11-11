@@ -28,7 +28,7 @@ class NesInstrumentViewTest {
     }
 
     private fun view(setup: ViewState.() -> Unit = {}) =
-        ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply(setup))
+        ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 
@@ -72,7 +72,7 @@ class NesInstrumentViewTest {
     @Test
     fun vrc6SoundsChooseTheirChip() {
         val vrc6 = EditorSession(NesVrc6System.blank())
-        val v = ViewController(vrc6, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        val v = ViewController(vrc6, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1 })
         fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, vrc6.song).indexOf(row) }
         val ins = { vrc6.song.nes.instruments[0] }
         assertTrue(Row.CHIP in NesInstrumentView.rows(v.state, vrc6.song))
@@ -119,7 +119,7 @@ class NesInstrumentViewTest {
         val mmc5 = EditorSession(NesMmc5System.blank())
         val heard = ArrayList<Triple<Int, Int, Int>>()
         mmc5.onAudition = { ch, note, ins, _ -> heard += Triple(ch, note, ins) }
-        val v = ViewController(mmc5, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; listenChannel = NesRules.DPCM })
+        val v = ViewController(mmc5, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1; listenChannel = NesRules.DPCM })
         assertFalse(Row.CHIP in NesInstrumentView.rows(v.state, mmc5.song))
         assertFalse(Row.SAW in NesInstrumentView.rows(v.state, mmc5.song))
         // Listen steps from DPCM onto the MMC5 pulses, then the PCM lane.
@@ -155,7 +155,7 @@ class NesInstrumentViewTest {
     @Test
     fun s5bSoundsEditMixerNoiseAndTheHardwareEnvelope() {
         val s5b = EditorSession(NesS5bSystem.blank())
-        val v = ViewController(s5b, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        val v = ViewController(s5b, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1 })
         fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, s5b.song).indexOf(row) }
         val ins = { s5b.song.nes.instruments[0] }
         goTo(Row.CHIP)
@@ -212,7 +212,7 @@ class NesInstrumentViewTest {
     @Test
     fun vrc7SoundsEditTheirFmPatch() {
         val vrc7 = EditorSession(NesVrc7System.blank())
-        val v = ViewController(vrc7, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        val v = ViewController(vrc7, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1 })
         fun goTo(row: Row) { v.state.instField = NesInstrumentView.rows(v.state, vrc7.song).indexOf(row) }
         val ins = { vrc7.song.nes.instruments[0] }
         goTo(Row.CHIP)
@@ -515,7 +515,7 @@ class NesInstrumentViewTest {
         val s = EditorSession(NesN163System.of(channels).blank())
         s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
         assertTrue(s.setNesChip(1, NesChip.N163))
-        return ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = NesInstrumentView.WAVE_PAGE })
+        return ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1; envelope = NesInstrumentView.WAVE_PAGE })
     }
 
     private val ViewController.wave: N163Wave get() = session.song.nes.instruments[state.instrument - 1].wave
@@ -553,7 +553,7 @@ class NesInstrumentViewTest {
     fun n163SoundsChooseTheirChipAndGetTheWavesPage() {
         val s = EditorSession(NesN163System.of(4).blank())
         s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
-        val v = ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = NesEnvelopeKind.DUTY.ordinal })
+        val v = ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1; envelope = NesEnvelopeKind.DUTY.ordinal })
         val ins = { s.song.nes.instruments[0] }
         val rows = { NesInstrumentView.rows(v.state, s.song) }
         v.goTo(Row.STEPS)
@@ -847,7 +847,7 @@ class NesInstrumentViewTest {
         val s = EditorSession(NesFdsSystem.blank())
         s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
         assertTrue(s.setNesChip(1, NesChip.FDS))
-        return ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = page })
+        return ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1; envelope = page })
     }
 
     private val ViewController.fds: FdsSound get() = session.song.nes.instruments[state.instrument - 1].fds
@@ -857,7 +857,7 @@ class NesInstrumentViewTest {
     fun fdsSoundsChooseTheirChipAndGetTheWavesAndModulationPages() {
         val s = EditorSession(NesFdsSystem.blank())
         s.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
-        val v = ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = NesEnvelopeKind.DUTY.ordinal })
+        val v = ViewController(s, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1; envelope = NesEnvelopeKind.DUTY.ordinal })
         val ins = { s.song.nes.instruments[0] }
         val rows = { NesInstrumentView.rows(v.state, s.song) }
         v.goTo(Row.STEPS)
@@ -1297,7 +1297,7 @@ class NesInstrumentViewTest {
     fun epsmSoundsEditSsgFmAndRhythmPages() {
         val epsm = EditorSession(NesEpsmSystem.blank())
         val expansion = NesExpansion.EPSM
-        val v = ViewController(epsm, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        val v = ViewController(epsm, ViewState(kind = ViewKind.INSTRUMENT).apply { soundPanel("nes").advanced = true; instrument = 1 })
         fun goTo(row: Row) {
             v.state.instField = NesInstrumentView.rows(v.state, epsm.song).indexOf(row)
             assertEquals(row, NesInstrumentView.row(v.state, epsm.song))

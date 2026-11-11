@@ -46,22 +46,10 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     }
 
     private val plot = EnvelopePlot(ink)
-
-    override fun draw(c: Surface, area: Rect) {
-        val s = song
-        val ins = NesInstrumentView.sound(s, st) ?: return
-        val kind = NesInstrumentView.kind(s, st)
-        val env = kind.of(ins)
-        val channels = s.system.channels
-        val listen = channels.getOrNull(st.listenChannel)
-        val col = ink.palette.channel(st.listenChannel)
+    /** The same bank, header, scroll and hit geometry in Sound and Advanced. */
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, slotFocus: Boolean): Rect {
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "Instrument bank$locked  ${usageText(st.instrument)}")
-        val row = NesInstrumentView.row(st, s)
-        rowRects.clear()
-        gridCells.clear()
-
-        // left column: the bank, scrolled to keep the selected slot in view
         val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
         val left = Rect(area.left, top, area.left + leftW, area.bottom)
         ink.rect(c, left, ink.palette.LANE)
@@ -70,7 +58,7 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
         slotScroll = slotScroll.coerceIn(maxOf(0, st.instrument - visible), minOf(st.instrument - 1, NesSystem.SLOTS - visible).coerceAtLeast(0))
         slotRect = Rect(left.left, slotTop, left.right, slotTop + slotH * visible)
-        val bank = s.nes.instruments
+        val bank = song.nes.instruments
         for (k in 0 until minOf(visible, NesSystem.SLOTS - slotScroll)) {
             val i = slotScroll + k + 1
             val y = slotTop + k * slotH
@@ -86,10 +74,35 @@ internal class NesInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             ink.label(c, ink.fit(bank[i - 1].name, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
             if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
         }
-        if (row == Row.SLOT) {
+        if (slotFocus) {
             val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
             ink.outline(c, Rect(left.left + 2, y + 1, left.right - 2, y + slotH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
         }
+        return left
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, NesSystem.SLOTS) else -1
+
+    internal fun slotBounds(slot: Int): Rect? {
+        val y = slotTop + (slot - 1 - slotScroll) * slotH
+        return if (slot in 1..NesSystem.SLOTS && y >= slotRect.top && y + slotH <= slotRect.bottom)
+            Rect(slotRect.left, y, slotRect.right, y + slotH) else null
+    }
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val ins = NesInstrumentView.sound(s, st) ?: return
+        val kind = NesInstrumentView.kind(s, st)
+        val env = kind.of(ins)
+        val channels = s.system.channels
+        val listen = channels.getOrNull(st.listenChannel)
+        val col = ink.palette.channel(st.listenChannel)
+        val left = drawSidebar(c, area, col, st.instField == 0)
+        val top = left.top
+        val row = NesInstrumentView.row(st, s)
+        rowRects.clear()
+        gridCells.clear()
 
         // right column: settings rows
         val pad = ink.unit * 0.9f

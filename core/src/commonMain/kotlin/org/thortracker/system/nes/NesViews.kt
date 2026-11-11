@@ -557,10 +557,11 @@ object NesInstrumentView : SystemView() {
     override fun normalise(v: ViewController) {
         val st = v.state
         val song = v.session.song
+        if (!v.editHeld) NesSoundFace.panel(st).editBlocked = false
         st.instrument = st.instrument.coerceIn(1, NesSystem.SLOTS)
         st.envelope = st.envelope.coerceIn(0, pages(song, st) - 1)
-        st.instField = st.instField.coerceIn(0, rows(st, song).size - 1)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
+        st.instField = st.instField.coerceIn(-1, if (NesSoundFace.friendly(st)) NesSoundFace.controls(song, st).size + 1 else rows(st, song).size - 1)
         val e = envelope(song, st)
         st.envStep = st.envStep.coerceIn(0, if (e == null) 0 else lastStep(e))
         waveSequence(song, st)?.let { s ->
@@ -570,15 +571,24 @@ object NesInstrumentView : SystemView() {
         if (modPage(song, st)) st.programField = modIndex(st)
         if (epsmPage(song, st) == EPSM_EXPERT_PAGE) st.programField = NesEpsmPage.operator(st)
         if (pcmPage(song, st)) NesPcmPage.normalise(v) else NesDpcmPage.normalise(v)
+        NesSoundFace.settle(song, st)
     }
 
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) {
+            NesSoundFace.panel(state).invalidate()
+            NesSoundFace.panel(state).editBlocked = true
+        }
         state.instrument = subject.coerceIn(1, NesSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) {
+            NesSoundFace.panel(state).invalidate()
+            NesSoundFace.panel(state).editBlocked = true
+        }
         val wasDpcm = dpcmPage(song, state)
         val wasPcm = pcmPage(song, state)
         state.instrument = selection.instrument
@@ -685,6 +695,7 @@ object NesInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, NesSystem.SLOTS)
         if (slot == st.instrument) return
+        NesSoundFace.panel(st).invalidate()
         val song = v.session.song
         val before = chip(song, st)
         st.instrument = slot
@@ -771,6 +782,7 @@ object NesInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (NesSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(st, song)
@@ -785,7 +797,7 @@ object NesInstrumentView : SystemView() {
             row == Row.WAVE_SAMPLES && v.clearHeld -> { moveSample(v, COARSE * dx); stepWave(v, -dy) }
             // Clear held on the modulation table: ←→ jump along it.
             row == Row.MOD_TABLE && v.clearHeld -> moveModEntry(v, COARSE * dx)
-            dy != 0 -> { st.instField = (st.instField - dy).coerceIn(0, rows.size - 1); st.textPos = 0 }
+            dy != 0 -> { st.instField = (st.instField - dy).coerceIn(-1, rows.size - 1); st.textPos = 0 }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
             row == Row.LISTEN -> st.listenChannel = (st.listenChannel + dx).mod(song.system.channels.size)
             row == Row.ENVELOPE -> showEnvelope(v, st.envelope + dx)
@@ -1109,7 +1121,19 @@ object NesInstrumentView : SystemView() {
         }
     }
 
+    override fun editPress(v: ViewController) {
+        NesSoundFace.panel(v.state).editBlocked = false
+        if (NesSoundFace.friendly(v.state) && v.state.instField >= 2) audition(v)
+    }
+
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = NesSoundFace.panel(v.state)
+        if (panel.editBlocked) { panel.editBlocked = false; return }
+        if (v.state.instField == -1) {
+            if (tap) NesSoundFace.selectMode(v, !panel.advanced, true)
+            return
+        }
+        if (NesSoundFace.friendly(v.state)) return
         if (!tap) return
         val st = v.state
         val session = v.session
@@ -1149,6 +1173,8 @@ object NesInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || NesSoundFace.panel(v.state).editBlocked) return
+        if (NesSoundFace.friendly(v.state) && v.state.instField != 1) return
         val st = v.state
         val session = v.session
         val kind = kind(session.song, st)
@@ -1219,6 +1245,14 @@ object NesInstrumentView : SystemView() {
     override fun audition(v: ViewController) {
         // DPCM and the MMC5 PCM lane play the shown key's mapping, whichever page is up.
         val song = v.session.song
+        if (NesSoundFace.friendly(v.state)) {
+            when (NesSoundFace.voice(song, v.state)) {
+                NesVoice.PCM -> NesPcmPage.audition(v)
+                NesVoice.DPCM -> NesDpcmPage.audition(v)
+                else -> v.startAudition(v.state.listenChannel, v.defaultNote(), v.state.instrument)
+            }
+            return
+        }
         when {
             pcmPage(song, v.state) || NesRules.isMmc5Pcm(song.nes.expansion, v.state.listenChannel) -> NesPcmPage.audition(v)
             dpcmPage(song, v.state) || v.state.listenChannel == NesRules.DPCM -> NesDpcmPage.audition(v)
@@ -1243,6 +1277,8 @@ object NesInstrumentView : SystemView() {
         row in WAVE_SHAPE_ROWS && (wavePage(song, state) || fdsWavePage(song, state))
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (NesSoundFace.panel(v.state).editBlocked && v.editHeld) { v.useEdit(); return true }
+        if (NesSoundFace.friendly(v.state)) return NesSoundFace.command(v, a)
         val st = v.state
         val session = v.session
         val kind = kind(session.song, st)
@@ -1288,6 +1324,7 @@ object NesInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (NesSoundFace.friendly(v.state) || v.state.instField == -1) { NesSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val kind = kind(song, st)
@@ -1403,7 +1440,21 @@ object NesInstrumentView : SystemView() {
         val ud = keys.pair(Action.UP, Action.DOWN)
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         return listOf(
-            "Instruments" to listOf(
+            "Sound face" to listOf(
+                ud to "Choose the sound slot",
+                lr to "Choose Listen on, musical controls, Name or Sound/Advanced",
+                keys.held(Action.EDIT, lr) to "Shape the selected control; on Name change the letter",
+                keys.held(Action.EDIT, ud) to "Coarse adjustment; on Name move the letter cursor",
+                "$edit tap" to "On Sound/Advanced, switch faces without changing the stored patch",
+                keys.label(Action.AUDITION) to "Listen on the selected channel; octave shortcuts still choose the listening pitch",
+                "Listen on" to "Choose any supported channel. Crossing to a different chip explicitly converts this slot, like Advanced's Chip control",
+                "Custom" to "The stored program is not a recipe. Choosing a contour, width or register explicitly replaces only that sequence",
+                "Wave" to "Reshape the first stored wave without changing its size, RAM placement or sequence; precise samples stay in Advanced",
+                "Shared hardware" to "5B/EPSM noise and hardware envelope are shared; VRC7 has one custom patch shared by all six FM channels",
+                "Samples" to "Key selects a mapping; choose an existing sample, speed/tuning and repeat. Import, starter kits and loop start remain in Advanced",
+                "Touch" to "Tap a control and slide horizontally; arrows page compact panes, +/- move slots. One drag is one Undo",
+            ),
+            "Advanced instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, page, length, loop, release (volume), mode (pitch), then the steps",
                 lr to "On settings: the sound slot; on the steps: move along them",
                 channels to "Pages: volume, arpeggio, pitch or duty envelope, then DPCM samples",
@@ -1586,5 +1637,5 @@ object NesInstrumentView : SystemView() {
         Vrc7Param.VIB -> "Vibrato from the chip's LFO (6.4 Hz, 14 cents)"
     }
 
-    override fun painter(pane: PaneView): Painter = NesInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = NesSoundPainter(pane)
 }
