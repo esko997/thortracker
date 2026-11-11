@@ -99,7 +99,7 @@ object SidInstrumentView : SystemView() {
         val st = v.state
         st.instrument = st.instrument.coerceIn(1, SidSystem.SLOTS)
         st.envelope = st.envelope.coerceIn(0, Page.entries.size - 1)
-        st.instField = st.instField.coerceIn(-1, if (st.sidPanel.advanced) rows(st).size - 1 else SidSoundControl.entries.size + 1)
+        st.instField = if (st.sidPanel.advanced) st.instField.coerceIn(-1, rows(st).size - 1) else SidSoundFace.soundField(st.instField)
         if (!v.editHeld) st.sidPanel.editBlocked = false
         st.listenChannel = st.listenChannel.coerceIn(0, v.session.song.system.channels.size - 1)
         st.rawTable = st.rawTable.coerceIn(0, SidTables.NAMES.size - 1)

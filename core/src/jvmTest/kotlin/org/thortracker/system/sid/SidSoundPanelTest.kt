@@ -105,11 +105,36 @@ class SidSoundPanelTest {
         p.ctl.tap(Action.LEFT)
         assertEquals(6, p.state.instField)
         assertFalse(p.state.sidPanel.advanced)
-        // A fresh view starts on the slot (field 0); the walk joins the ring from there.
-        p.state.instField = 0
-        p.ctl.tap(Action.RIGHT)
-        assertEquals(2, p.state.instField)
         assertSame(before, s.song)
+    }
+
+    @Test fun aFreshSoundViewEditsTheFirstControlAndNeverReturnsToSlotEditing() {
+        val s = EditorSession(SidSystem.blank())
+        val v = ViewController(s, ViewState(kind = ViewKind.INSTRUMENT)) // Field 0: Advanced's Slot row.
+        assertEquals(0, v.state.instField)
+        val voice = SidSoundMacros.value(SidSoundControl.VOICE, s.song.sid.instruments[0])!!
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(2, v.state.instField)
+        assertEquals(1, v.state.instrument)
+        assertEquals(voice + 1, SidSoundMacros.value(SidSoundControl.VOICE, s.song.sid.instruments[0]))
+        s.undo()
+        // Slot changes from any source keep the control; a stale slot focus (e.g. restored from a copied workspace)
+        // is never editable in Sound, and Advanced keeps its Slot row.
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instrument)
+        assertEquals(2, v.state.instField)
+        v.state.instField = 0
+        v.hold(Action.EDIT, Action.LEFT)
+        assertEquals(2, v.state.instrument)
+        assertEquals(2, v.state.instField)
+        SidSoundFace.selectMode(v, true)
+        v.state.instField = 0
+        v.normalise()
+        assertEquals(0, v.state.instField)
+        v.hold(Action.EDIT, Action.RIGHT)
+        assertEquals(3, v.state.instrument)
+        SidSoundFace.selectMode(v, false)
+        assertEquals(2, v.state.instField)
     }
 
     @Test fun advancedKeepsItsPreciseRowNavigation() {
@@ -147,7 +172,7 @@ class SidSoundPanelTest {
             for ((width, height) in listOf(1000 to 700, 480 to 300)) {
                 val p = panel(s, width, height)
                 p.state.instrument = 30
-                for ((soundField, advancedField) in listOf(3 to 2, 0 to 0, -1 to -1)) {
+                for ((soundField, advancedField) in listOf(3 to 2, -1 to -1)) {
                     SidSoundFace.selectMode(p.ctl, false)
                     p.state.instField = soundField
                     p.draw()

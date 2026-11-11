@@ -16,6 +16,12 @@ internal object SidSoundFace {
         !SidSoundMacros.overridden(control, ins) &&
             (control != SidSoundControl.PULSE || SidSoundMacros.value(SidSoundControl.VOICE, ins) == 2)
 
+    /**
+     * Sound's fields: -1 mode, 1 name, 2.. controls. It has no slot field (Up/Down choose the slot from anywhere), so
+     * Advanced's Slot row 0, including a fresh view, lands on the first control: Edit+direction always shapes sound.
+     */
+    fun soundField(field: Int): Int = if (field == 0) 2 else field.coerceIn(-1, SidSoundControl.entries.size + 1)
+
     fun set(v: ViewController, slot: Int, control: SidSoundControl, index: Int): Boolean {
         val ins = v.session.song.sidInstrument(slot) ?: return false
         if (!enabled(control, ins)) return false
@@ -61,7 +67,6 @@ internal object SidSoundFace {
             v.useEdit()
             when (st.instField) {
                 -1 -> if (dx != 0) selectMode(v, dx > 0, true)
-                0 -> SidInstrumentView.moveSlot(v, dx - dy * 8)
                 1 -> if (dx != 0) {
                     v.session.editSidInstrument(st.instrument, "Rename sound") {
                         it.copy(name = NameEdit.edit(it.name, st.textPos, dx, SidInstrument.NAME_MAX))
@@ -98,7 +103,6 @@ internal object SidSoundFace {
         }
         if (st.sidPanel.advanced) return false
         if (!v.auditionHeld) v.session.releaseAudition()
-        if (tap && st.instField == 0) SidInstrumentView.publish(v)
         return true
     }
 

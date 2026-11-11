@@ -166,7 +166,7 @@ internal class SidSoundPainter(v: PaneView, private val bank: SidBankPainter) : 
         val beige = if (contrast) p.LANE else BEIGE
         val touch = ink.dp(48f)
         val gap = ink.dp(8f)
-        bank.draw(c, area, st.instField == 0)
+        bank.draw(c, area, false) // Sound has no slot field: the selected row's fill is its whole cursor.
         deck.set(bank.content.left + gap, bank.content.top, area.right, area.bottom)
         ink.rect(c, deck, blue)
         // Title row: slot steps (every slot reachable by touch at touch size), name, and the voice Listen plays on.
