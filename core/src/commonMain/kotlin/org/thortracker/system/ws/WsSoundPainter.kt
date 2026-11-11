@@ -205,7 +205,7 @@ internal class WsSoundPainter(v: PaneView) : Painter(v) {
         val slot = advanced.slotAt(x, y)
         if (slot > 0) { WsSoundFace.moveSlot(ctl, slot - st.instrument); return true }
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) { WsSoundFace.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1); return true }
-        if (name.contains(x, y)) { st.instField = 1; return true }
+        if (name.contains(x, y)) { WsSoundFace.rename(ctl); return true }
         if (listen.contains(x, y)) { WsSoundFace.cycleLane(ctl, 1); return true }
         if (previous.contains(x, y) || next.contains(x, y)) { st.instField = 2 + ((st.instField - 2).coerceIn(0, controls.lastIndex) + if (next.contains(x, y)) 1 else controls.lastIndex).mod(controls.size); return true }
         for (i in controls.indices) if (controls[i].contains(x, y)) {

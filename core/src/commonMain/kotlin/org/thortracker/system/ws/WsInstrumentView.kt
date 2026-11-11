@@ -689,7 +689,7 @@ object WsInstrumentView : SystemView() {
                 "Voice" to "Wave, Noise, CPU sample${if (color) " or Color DMA" else ""}; inactive settings stay intact. Add recordings under Advanced / Sample",
                 "Contour" to "Held, Pluck, Soft pluck or Swell replace only the volume program, keeping its peak. Custom stays exact until you choose",
                 "Source / motion" to "Choose existing waves or recordings, or a noise texture; sequences retain ownership in Advanced. Bend works on CH3 only",
-                "Touch" to "Tap a control and move across its rail. Small panes page with < and >; - and + move slots. Each drag is one Undo",
+                "Touch" to "Tap Name for text entry, or move across a control rail. Small panes page with < and >; - and + move slots. Each drag is one Undo",
                 "Advanced" to "All precise pages remain available. Switching faces never edits the patch; on Advanced's first row, $ud reaches the face selector",
             ),
             "Advanced instruments" to listOfNotNull(

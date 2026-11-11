@@ -4,6 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
+import org.thortracker.editor.MenuContext
 import org.thortracker.editor.PaneZoom
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
@@ -117,6 +118,28 @@ class WsSoundFaceTest {
         assertSame(saved.ws.samples, s.song.ws.samples)
     }
 
+    @Test fun heldVoiceChangeRestartsTheAcceptedKindOnItsNewLaneBeforeBlockingFurtherEdits() {
+        val s = session()
+        val v = view(s)
+        val heard = ArrayList<Pair<Int, WsKind>>()
+        s.onAudition = { channel, _, slot, _ -> heard += channel to s.song.wsInstrument(slot)!!.kind }
+        val before = s.song
+        v.press(Action.EDIT)
+        assertEquals(0 to WsKind.TONE, heard.last())
+        val count = heard.size
+        v.tap(Action.RIGHT)
+        assertEquals(count + 1, heard.size)
+        assertEquals(WsRules.NOISE_LANE to WsKind.NOISE, heard.last())
+        assertTrue(v.state.soundPanel("ws").editBlocked)
+        val noise = s.song
+        v.tap(Action.RIGHT)
+        assertSame(noise, s.song)
+        assertEquals(count + 1, heard.size)
+        v.release(Action.EDIT)
+        s.undo()
+        assertSame(before, s.song)
+    }
+
     @Test fun navigationModeSwitchAndGroupedUndoPreserveTheExactPatch() {
         val s = session()
         val v = view(s)
@@ -189,6 +212,67 @@ class WsSoundFaceTest {
         }
         assertEquals(1, WsSoundMacros.noiseStep(0, 0))
         assertEquals(3, WsSoundMacros.noiseStep(1, 0))
+    }
+
+    private class TextPrompt : MenuContext {
+        var initial = ""
+        var maximum = 0
+        lateinit var accepted: (String) -> Unit
+        override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) {
+            this.initial = initial; maximum = maxLength; this.accepted = accepted
+        }
+        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { throw AssertionError("Unexpected menu") }
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) { throw AssertionError("Unexpected picker") }
+        override fun status(message: String) = Unit
+        override fun error(message: String) { throw AssertionError(message) }
+        override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("Unexpected ROM")
+    }
+
+    @Test fun touchNameOpensBoundedNativeTextEntryAndUndoRestoresOnlyItsPinnedInstrument() {
+        val s = session()
+        val panel = Panel(s, 360, 270)
+        val prompt = TextPrompt()
+        s.onMenuRequest = { it(prompt) }
+        val before = s.song
+        panel.tap(panel.painter.nameTarget())
+        assertEquals(patch().name, prompt.initial)
+        assertEquals(WsInstrumentView.NAME_MAX, prompt.maximum)
+        assertSame(before, s.song)
+        prompt.accepted("N".repeat(WsInstrumentView.NAME_MAX + 8))
+        assertEquals(patch().copy(name = "N".repeat(WsInstrumentView.NAME_MAX)), s.song.wsInstrument(1))
+        assertSame(before.ws.waves, s.song.ws.waves)
+        assertSame(before.ws.samples, s.song.ws.samples)
+        s.undo()
+        assertSame(before, s.song)
+        panel.state.instrument = WsRules.SLOTS
+        panel.draw()
+        panel.tap(panel.painter.nameTarget())
+        assertEquals("", prompt.initial)
+        prompt.accepted("New voice")
+        assertEquals(defaultWsInstrument(WsRules.SLOTS).copy(name = "New voice"), s.song.wsInstrument(WsRules.SLOTS))
+    }
+
+    @Test fun delayedNameResponsesCannotRetargetOrOverwriteUndoAndModeChanges() {
+        val s = session()
+        val panel = Panel(s)
+        val prompt = TextPrompt()
+        s.onMenuRequest = { it(prompt) }
+        val before = s.song
+        for (change in 0..3) {
+            panel.state.instrument = 1
+            WsSoundFace.selectMode(panel.pane.controller, false)
+            panel.draw()
+            panel.tap(panel.painter.nameTarget())
+            val reply = prompt.accepted
+            when (change) {
+                0 -> WsSoundFace.moveSlot(panel.pane.controller, 1)
+                1 -> { WsSoundFace.selectMode(panel.pane.controller, true); WsSoundFace.selectMode(panel.pane.controller, false) }
+                2 -> { s.editWsInstrument(1, "Other edit") { it.copy(tap = 1) }; s.undo() }
+                else -> panel.tap(panel.painter.nameTarget()) // A newer request supersedes the old callback.
+            }
+            reply("Stale")
+            assertSame(before, s.song)
+        }
     }
 
     private class Canvas : Surface {

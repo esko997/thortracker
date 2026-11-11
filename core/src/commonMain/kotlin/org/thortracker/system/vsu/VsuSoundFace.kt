@@ -4,6 +4,7 @@ import org.thortracker.editor.Action
 import org.thortracker.editor.Hint
 import org.thortracker.editor.NameEdit
 import org.thortracker.editor.ViewController
+import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.system.panel.MusicalPanelMode
 
@@ -13,6 +14,21 @@ internal object VsuSoundFace {
     fun selectMode(v: ViewController, advanced: Boolean, focus: Boolean = false) {
         MusicalPanelMode.select(v, v.state.soundPanel("vsu"), advanced, focus)
         settle(v.state)
+    }
+    fun rename(v: ViewController) {
+        val st = v.state
+        val panel = st.soundPanel("vsu")
+        panel.invalidate()
+        st.instField = 1
+        val slot = st.instrument
+        val revision = panel.revision
+        val document = v.session.documentVersion
+        val initial = v.session.song.vsuInstrument(slot)?.name.orEmpty()
+        v.session.requestText("Sound name", initial, VsuInstrumentView.NAME_MAX) { name ->
+            if (v.state !== st || st.kind != ViewKind.INSTRUMENT || st.instrument != slot || st.instField != 1 ||
+                panel.advanced || panel.revision != revision || v.session.documentVersion != document) return@requestText
+            v.session.editVsuInstrument(slot, "Rename sound") { it.copy(name = name.take(VsuInstrumentView.NAME_MAX)) }
+        }
     }
     fun moveSlot(v: ViewController, delta: Int) {
         val st = v.state

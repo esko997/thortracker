@@ -4,6 +4,7 @@ import org.thortracker.editor.Action
 import org.thortracker.editor.Hint
 import org.thortracker.editor.NameEdit
 import org.thortracker.editor.ViewController
+import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
 import org.thortracker.system.panel.MusicalPanelMode
 
@@ -13,6 +14,21 @@ internal object WsSoundFace {
     fun selectMode(v: ViewController, advanced: Boolean, focus: Boolean = false) {
         MusicalPanelMode.select(v, v.state.soundPanel("ws"), advanced, focus)
         settle(v.state)
+    }
+    fun rename(v: ViewController) {
+        val st = v.state
+        val panel = st.soundPanel("ws")
+        panel.invalidate()
+        st.instField = 1
+        val slot = st.instrument
+        val revision = panel.revision
+        val document = v.session.documentVersion
+        val initial = v.session.song.wsInstrument(slot)?.name.orEmpty()
+        v.session.requestText("Sound name", initial, WsInstrumentView.NAME_MAX) { name ->
+            if (v.state !== st || st.kind != ViewKind.INSTRUMENT || st.instrument != slot || st.instField != 1 ||
+                panel.advanced || panel.revision != revision || v.session.documentVersion != document) return@requestText
+            v.session.editWsInstrument(slot, "Rename sound") { it.copy(name = name.take(WsInstrumentView.NAME_MAX)) }
+        }
     }
     fun moveSlot(v: ViewController, delta: Int) {
         val st = v.state
@@ -55,13 +71,14 @@ internal object WsSoundFace {
             v.session.note("Add a recording in Advanced / Sample first")
             return
         }
+        val restart = v.auditionHeld || (v.editHeld && !st.soundPanel("ws").editBlocked)
         if (v.session.setWsInstrument(st.instrument, next, "Set ${WsSoundMacros.title(i, ins)}")) {
             if (next.kind != ins.kind || next.feed != ins.feed) {
                 st.soundPanel("ws").invalidate()
                 if (v.editHeld) st.soundPanel("ws").editBlocked = true
             }
             st.listenChannel = WsInstrumentView.listenChannel(v.session.song, st, next)
-            heard(v)
+            if (restart) WsInstrumentView.audition(v)
         }
     }
     fun direction(v: ViewController, dx: Int, dy: Int): Boolean {

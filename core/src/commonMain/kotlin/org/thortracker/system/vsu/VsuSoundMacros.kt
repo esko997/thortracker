@@ -58,6 +58,8 @@ internal object VsuSoundMacros {
         }
         3 -> if (!ins.autoLength) 3 else gates.indexOf(ins.length).takeIf { it >= 0 }
         4 -> when {
+            // Wave 5 checks upward sweep overflow even with FM on=false. That is not a safe Still/Drop/Rise.
+            lane == VsuRules.SWEEP_LANE && !ins.freqMod.modulation && ins.freqMod.up -> null
             lane == VsuRules.SWEEP_LANE && ins.freqMod.running -> {
                 val f = ins.freqMod
                 if (!ins.sweep.active && f.modulation && f.slowClock && f.interval == 2) (if (f.repeat) 4 else 3) else null
@@ -106,7 +108,8 @@ internal object VsuSoundMacros {
                 when {
                     v >= 3 -> ins.copy(sweep = ins.sweep.copy(speed = 0), freqMod = f.copy(on = true, modulation = true, repeat = v == 4, slowClock = true, interval = 2))
                     else -> ins.copy(sweep = when (v) { 1 -> drops; 2 -> rises; else -> ins.sweep.copy(speed = 0) },
-                        freqMod = if (lane == VsuRules.SWEEP_LANE) f.copy(on = false) else f)
+                        // Disabled modulation avoids the native sweep overflow check; retain its inactive timing/direction.
+                        freqMod = if (lane == VsuRules.SWEEP_LANE) f.copy(on = false, modulation = true) else f)
                 }
             }
             5 -> ins.copy(level = v)

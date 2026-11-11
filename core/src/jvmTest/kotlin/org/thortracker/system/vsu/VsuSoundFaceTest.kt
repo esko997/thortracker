@@ -4,6 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
+import org.thortracker.editor.MenuContext
 import org.thortracker.editor.PaneZoom
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
@@ -72,6 +73,26 @@ class VsuSoundFaceTest {
         assertSame(inactive, VsuSoundMacros.apply(4, inactive, 0, 0))
         assertEquals(0, VsuSoundMacros.apply(5, old, -99, 0).level)
         assertEquals(15, VsuSoundMacros.apply(5, old, 99, 0).level)
+    }
+
+    @Test fun waveFiveSoftwareMotionDisarmsEvenDisabledUpwardHardwareOverflow() {
+        for (on in listOf(false, true)) for (shift in 0..7) {
+            val hardware = patch().copy(sweep = VsuSweep.NONE,
+                freqMod = VsuFreqMod(on = on, modulation = false, up = true, shift = shift,
+                    interval = 3, slowClock = true, repeat = true))
+            assertNull(VsuSoundMacros.value(4, hardware, VsuRules.SWEEP_LANE))
+            for (choice in 0..2) {
+                val next = VsuSoundMacros.apply(4, hardware, choice, VsuRules.SWEEP_LANE)
+                // Native VSU checks overflow before the enable bit: modulation must be selected as well as disabled.
+                assertFalse(next.freqMod.on)
+                assertTrue(next.freqMod.modulation)
+                assertEquals(hardware.freqMod.copy(on = false, modulation = true), next.freqMod)
+                assertEquals(hardware, next.copy(sweep = hardware.sweep, freqMod = hardware.freqMod))
+                assertEquals(choice, VsuSoundMacros.value(4, next, VsuRules.SWEEP_LANE))
+                assertSame(next, VsuSoundMacros.apply(4, next, choice, VsuRules.SWEEP_LANE))
+                assertSame(hardware.freqMod, VsuSoundMacros.apply(4, hardware, choice, 0).freqMod)
+            }
+        }
     }
 
     @Test fun listeningAndDrawingNeverRewriteSharedWaveOrModulationRam() {
@@ -167,6 +188,67 @@ class VsuSoundFaceTest {
             assertEquals(0, register)
         }
         assertEquals(1, VsuSoundMacros.noiseStep(0, 0))
+    }
+
+    private class TextPrompt : MenuContext {
+        var initial = ""
+        var maximum = 0
+        lateinit var accepted: (String) -> Unit
+        override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) {
+            this.initial = initial; maximum = maxLength; this.accepted = accepted
+        }
+        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { throw AssertionError("Unexpected menu") }
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) { throw AssertionError("Unexpected picker") }
+        override fun status(message: String) = Unit
+        override fun error(message: String) { throw AssertionError(message) }
+        override fun installRhythmRom(bytes: ByteArray): String? = throw AssertionError("Unexpected ROM")
+    }
+
+    @Test fun touchNameOpensBoundedNativeTextEntryAndUndoRestoresOnlyItsPinnedInstrument() {
+        val s = session()
+        val panel = Panel(s, 360, 270)
+        val prompt = TextPrompt()
+        s.onMenuRequest = { it(prompt) }
+        val before = s.song
+        panel.tap(panel.painter.nameTarget())
+        assertEquals(patch().name, prompt.initial)
+        assertEquals(VsuInstrumentView.NAME_MAX, prompt.maximum)
+        assertSame(before, s.song)
+        prompt.accepted("N".repeat(VsuInstrumentView.NAME_MAX + 8))
+        assertEquals(patch().copy(name = "N".repeat(VsuInstrumentView.NAME_MAX)), s.song.vsuInstrument(1))
+        assertSame(before.vsu.waves, s.song.vsu.waves)
+        assertSame(before.vsu.modulation, s.song.vsu.modulation)
+        s.undo()
+        assertSame(before, s.song)
+        panel.state.instrument = VsuSystem.SLOTS
+        panel.draw()
+        panel.tap(panel.painter.nameTarget())
+        assertEquals("", prompt.initial)
+        prompt.accepted("New voice")
+        assertEquals(defaultVsuInstrument(VsuSystem.SLOTS).copy(name = "New voice"), s.song.vsuInstrument(VsuSystem.SLOTS))
+    }
+
+    @Test fun delayedNameResponsesCannotRetargetOrOverwriteUndoAndModeChanges() {
+        val s = session()
+        val panel = Panel(s)
+        val prompt = TextPrompt()
+        s.onMenuRequest = { it(prompt) }
+        val before = s.song
+        for (change in 0..3) {
+            panel.state.instrument = 1
+            VsuSoundFace.selectMode(panel.pane.controller, false)
+            panel.draw()
+            panel.tap(panel.painter.nameTarget())
+            val reply = prompt.accepted
+            when (change) {
+                0 -> VsuSoundFace.moveSlot(panel.pane.controller, 1)
+                1 -> { VsuSoundFace.selectMode(panel.pane.controller, true); VsuSoundFace.selectMode(panel.pane.controller, false) }
+                2 -> { s.editVsuInstrument(1, "Other edit") { it.copy(level = 1) }; s.undo() }
+                else -> panel.tap(panel.painter.nameTarget())
+            }
+            reply("Stale")
+            assertSame(before, s.song)
+        }
     }
 
     private class Canvas : Surface {

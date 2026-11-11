@@ -391,9 +391,9 @@ object VsuInstrumentView : SystemView() {
                 channels to "Listen on any of the six lanes without changing the instrument or shared RAM. $listen auditions; octave shortcuts set its pitch",
                 "Timbre / Grain" to "Select an existing shared wave or Noise texture. The scopes show stored wave/reset-state noise and the hardware envelope, not live audio",
                 "Contour / Gate" to "Held, Pluck, Bloom or Pulse shape hardware envelope timing and direction; Gate adds a short cutoff or holds until OFF. Level sets the initial volume",
-                "Motion" to "Still, Drop or Rise use the player's pitch sweep. Wave 5 also offers the shared modulation table once or looping; two active motion engines stay Advanced-only",
+                "Motion" to "Still, Drop or Rise use the player's pitch sweep and select disabled modulation on Wave 5 to avoid hardware sweep overflow. Wave 5 also offers the shared table once or looping; two active motion engines stay Advanced-only",
                 "Custom" to "Unrecognized settings stay exact until you choose a recipe. Choosing a contour or motion affects only its named fields, never wave/modulation RAM",
-                "Touch" to "Move across a control rail. Small panes page with < and >; - and + move slots. Each drag is one Undo",
+                "Touch" to "Tap Name for text entry, or move across a control rail. Small panes page with < and >; - and + move slots. Each drag is one Undo",
                 "Advanced" to "All precise pages remain available. Switching faces never edits the patch; on Advanced's first row, $ud reaches the face selector",
             ),
             "Advanced instruments" to listOf(
