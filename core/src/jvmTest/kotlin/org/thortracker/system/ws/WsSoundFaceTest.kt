@@ -205,10 +205,26 @@ class WsSoundFaceTest {
     }
 
     @Test fun noisePreviewUsesTheNativeResetSequenceAndTapPeriods() {
+        val nativeTaps = intArrayOf(14, 10, 13, 4, 8, 6, 9, 11)
         for (tap in 0..7) {
+            // ws_apu.c feeds back bits 7/tap and emits the new low bit. Bits above both taps
+            // contain shift history, not feedback state, and need not return to reset's zero.
+            val feedbackMask = (1 shl (maxOf(7, nativeTaps[tap]) + 1)) - 1
+            val length = WsRules.TAP_LENGTHS[tap]
             var register = 0
-            repeat(WsRules.TAP_LENGTHS[tap]) { register = WsSoundMacros.noiseStep(register, tap) }
-            assertEquals(0, register)
+            repeat(length) { step ->
+                register = WsSoundMacros.noiseStep(register, tap)
+                if (step < length - 1) assertNotEquals(0, register and feedbackMask)
+            }
+            assertEquals(0, register and feedbackMask)
+            val settled = register
+            var resetPhase = 0
+            repeat(length) {
+                resetPhase = WsSoundMacros.noiseStep(resetPhase, tap)
+                register = WsSoundMacros.noiseStep(register, tap)
+                assertEquals(resetPhase and 1, register and 1)
+            }
+            assertEquals(settled, register)
         }
         assertEquals(1, WsSoundMacros.noiseStep(0, 0))
         assertEquals(3, WsSoundMacros.noiseStep(1, 0))

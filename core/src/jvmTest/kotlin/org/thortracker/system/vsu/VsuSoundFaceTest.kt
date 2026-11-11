@@ -182,10 +182,25 @@ class VsuSoundFaceTest {
         assertEquals(15, VsuSoundMacros.envelopeLevel(growing, 16f))
         assertEquals(14, VsuSoundMacros.envelopeLevel(growing, 31f))
         assertEquals(0, VsuSoundMacros.envelopeLevel(falling.copy(autoLength = true, length = 0), 4f))
+        val nativeTaps = intArrayOf(14, 10, 13, 4, 8, 6, 9, 11)
         for ((tap, length) in listOf(32767, 1953, 254, 217, 73, 63, 42, 28).withIndex()) {
+            // vsu_chip.c reads only bits 7/tap for feedback and bit 0 for audio.
+            // The higher, unused shift-history bits have an initial fill transient.
+            val feedbackMask = (1 shl (maxOf(7, nativeTaps[tap]) + 1)) - 1
             var register = 0
-            repeat(length) { register = VsuSoundMacros.noiseStep(register, tap) }
-            assertEquals(0, register)
+            repeat(length) { step ->
+                register = VsuSoundMacros.noiseStep(register, tap)
+                if (step < length - 1) assertNotEquals(0, register and feedbackMask)
+            }
+            assertEquals(0, register and feedbackMask)
+            val settled = register
+            var resetPhase = 0
+            repeat(length) {
+                resetPhase = VsuSoundMacros.noiseStep(resetPhase, tap)
+                register = VsuSoundMacros.noiseStep(register, tap)
+                assertEquals(resetPhase and 1, register and 1)
+            }
+            assertEquals(settled, register)
         }
         assertEquals(1, VsuSoundMacros.noiseStep(0, 0))
     }
