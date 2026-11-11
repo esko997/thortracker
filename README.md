@@ -12,6 +12,11 @@ Published Android/AppImage verification and delivery are recorded in [verificati
 The separate **[Fold8 touch preview](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)**
 installs alongside production; phone ergonomics still need review.
 
+**0.42.0 review candidate:** the first Game Boy instrument-panel pilot, OFF-entry advance,
+confirmation before Open, and first-pointer-owned touch editing are implemented on the review
+branch. This is not a new published stable release. See the [panel design and review notes](docs/INSTRUMENT_PANELS.md)
+and [measured verification](docs/VERIFICATION.md); the touch package remains separate.
+
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
 *Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. All screenshots and clips come from the app running in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom). The emulator has no audio.*
@@ -134,9 +139,16 @@ Title, tempo, loop point and the order list with a density strip for each patter
 
 ### Instrument and Wave: sound design
 
-![Top screen: the Wave view editing wave 5, a 32-step V shape, with Sine, Triangle, Saw, Square, Invert, Shift and Smooth tools. Bottom screen: the Instrument view's Wave bank, with sound 01 Triangle bass using wave 5 at 100% output](docs/media/sound-design-wave-instrument.png)
+<img src="docs/media/gameboy-panel-dmg.png" width="620" alt="The 0.42 Game Boy pulse instrument panel on Pocket DMG: nominal volume timeline, duty waveform, exact parameter controls and register bytes">
 
 Fifteen instruments in each of the pulse, wave and noise banks, each with live sliders and a preview of its envelope or waveform, plus sixteen 32-sample wave tables you draw directly or start from a preset shape.
+
+The 0.42 candidate's Game Boy panel keeps exact hardware values alongside envelope/length, pulse
+duty/sweep, waveform and noise illustrations. **Hold A + directions** changes and re-auditions a
+value; **X** listens, **B** restores that field's default. A hold or drag is one Undo step. Compact
+layouts provide **Up/Down** field controls; use the controller or touch dock for precise edits when
+wave thumbnails or rows are small. Diagrams show nominal hardware rules, not an audio oscilloscope.
+Other backends retain their existing instrument editors.
 
 ### NES instruments: envelopes
 
@@ -402,7 +414,7 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | D-pad | Move through fields, rows or tools |
 | Hold A + D-pad | Change the selected value; horizontal fine, vertical coarse |
 | Tap A | Enter the last note/value, or activate a command |
-| Tap B | Clear the selected field; on an empty pattern note, place OFF |
+| Tap B | Clear the selected field; on an empty pattern note, place OFF and advance by the entry step (0.42 candidate) |
 | Hold B + D-pad | Move or jump without clearing on release |
 | Hold X | Audition without writing |
 | Hold Y + D-pad | Mark a pattern block |
@@ -652,6 +664,8 @@ Thor Tracker has no network access and no telemetry: nothing leaves the device u
 - Replacing a document retains one previous-project recovery backup. A later replacement overwrites that single slot: use named project files for permanent versions.
 - Unreadable recovery files are quarantined intact rather than replaced in place. The app reports the failure and retained location.
 - Opening a project validates its version and structure before replacing the working document.
+- The 0.42 candidate asks before **Open project**, using the same replacement confirmation as other
+  document-replacing actions. Back leaves the current song, previous-project slot and document URI alone.
 - 0.28.0 saves **project format 10**, adding optional `tuning.provenance` for the chosen scale's identity and source credit—not the whole catalogue. **Earlier releases cannot open format 10**, including songs without a tuning. Formats 1–9 still open and migrate. The sound system remains in `backend`, its instruments in `sound`, and notes retain format 9's scientific pitch (0 = C0, A4 = 57 = 440 Hz); displayed names remain each tracker's own (hUGETracker's C-3 is C2). Formats 1–7 are Game Boy projects, development format 8 upgrades its old pitch convention, and legacy Game Boy `.uge` exports remain byte-identical. Missing older fields retain their documented defaults: Chromatic, 64-row, untuned patterns with nothing parked. The backend layouts below are independent of this outer project-format version.
 - NES songs with the DPCM channel save NES data version 2 (`backendVersion` 2): a fifth pattern track (DPCM), the song's DPCM samples (`sound.samples`: name, DMC bytes, initial value) and each instrument's note → sample mappings (`dpcm`). NES data version 1 songs (0.9.0) open with an empty DPCM track and keep the whole song budget while they have no samples; releases before DPCM cannot open version 2 files. Game Boy files keep `backendVersion` 1 and are unchanged. NES + VRC6 songs save backend `nes-famistudio-vrc6` (NES data version 2): eight pattern tracks, `sound.expansion` = `"vrc6"`, and on VRC6 sounds `chip` = `"vrc6"` and `sawVolume` (`full`, `quarter`; Half is left out); plain NES files are written exactly as before. Releases before the VRC6 cannot open NES + VRC6 files.
 - NES + VRC7 songs save backend `nes-famistudio-vrc7` (NES data version 2): eleven pattern tracks, `sound.expansion` = `"vrc7"`, `sound.vrc7Sustain` (`release`, `stop`; left out when both are off), and on VRC7 sounds `chip` = `"vrc7"` and `fm` (`preset` 0-15, 0 = custom, and the 8 patch `regs`; a built-in patch stores its ROM values, as FamiStudio does). Releases before the VRC7 cannot open these files; plain NES and NES + VRC6 files are unchanged.

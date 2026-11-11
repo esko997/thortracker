@@ -13,12 +13,13 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**Current priority (0.41.0/code 55, 2026-11-11):** review the isolated phone touch prototype
-and continue focused soft-launch hardening, not another backend. TIA NTSC/PAL four-column
-support, interruption-safe input/capture and fast-menu-tap fixes are published; actual release
-artifact and reserved-device evidence is in `docs/VERIFICATION.md`. There is no new physical
-Deck/Brick runtime claim. **Galaxy Fold8** is the phone design target; DMG is the functional
-testbed, not proof of phone density, insets or thumb reach.
+**Current priority (0.42.0/code 56 candidate, 2026-11-11):** review the first complete Game Boy
+instrument panel and the isolated phone touch preview. The published stable release remains 0.41.0.
+The candidate adds OFF-entry advance, safe Open confirmation and first-pointer-owned touch handling.
+Long composition and touch runs pass on reserved Android devices; exact evidence and limits are in
+`docs/VERIFICATION.md`. No new backend or automatic rollout to other instrument panels is implied.
+**Galaxy Fold8** remains the phone design target; DMG is the functional testbed, not proof of phone
+density, insets or thumb reach. There is no new physical Deck/Brick runtime claim.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
 JVM, reserved-device frontend and published AppImage checks pass; the DMG picker retry and exact
@@ -173,9 +174,20 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
    - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
      stack. The installed Kotlin 2.1.0 compiler lists ARM32 hard-float, but marks it deprecated; the existing
      16 MiB glyph atlas and full-chip CPU budget need measurement. The Miyoo port remains unimplemented.
-11. **Distribution** (after much more work): a free soft launch (e.g. r/AynThor) with GitHub releases, then a paid
-   Play Store listing. Before the store: settle the name ("Thor" is AYN's product name), Play Console with the
-   existing release key, and Android developer verification (2027).
+11. **Distribution** (updated 2026-11-11): investigate the **NextUI Pak Store as the first free soft launch**,
+   ahead of a wider community announcement and much later paid Play Store listing.
+   - Submit through the [Pak Store issue form](https://github.com/LoveRetro/nextui-pak-store/issues/new?template=new-pak-submission.yml),
+     not a request to bundle Tracker into NextUI firmware. Maintainer acceptance is external; no submission made.
+   - Preparation: root `pak.json`, Media / TOOL classification, `tg5040` only, an actual Brick screenshot,
+     exact release tag/asset metadata, and metadata inside the installed Pak for version discovery.
+     Hardware acceptance currently covers Brick Hammer, not every device sharing that platform identifier.
+   - The current SD-root ZIP is **not** directly compatible with Pak Store's ordinary-ZIP extraction into
+     `Tools/tg5040/ThorTracker.pak`. Publish a Pak-root `.pak.zip` or SD-root `.pakz`, then exercise install/update
+     and preservation of external projects. Follow the [upstream extraction contract](https://github.com/LoveRetro/nextui-pak-store/blob/main/utils/functions.go).
+     Keep catalog metadata on the last fully published asset until its replacement exists.
+   - Before submission: current-build Brick playback, long editing, exports and suspend/resume; earlier bounded
+     0.38 hardware results do not establish current-build acceptance. Paid-store name ("Thor" is AYN's product name),
+     Play Console/release-key setup and Android developer verification remain later work.
 12. **GitHub Pages website and documentation** (requested 2026-11-10):
    - Static site implemented under `site/`, drawing its manual sections directly from canonical
      repository documentation. Installation, controls, systems/limits, files/exports, troubleshooting,
@@ -236,12 +248,23 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   memorizing chords, distinguishing field-specific **Clear from Cut**, and phone thumb reach,
   dense menus and keyboard/insets. Help now explains Columns/hidden-FX markers and current
   shortcuts. Keep swing, mixer ceilings, pattern-local mute and shader pipelines deferred.
-- **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
+  The 0.42 candidate additionally covers two 128-round composition runs, a 160-round touch run,
+  configured-step OFF insertion, Open confirmation and sparse/reordered multitouch pointer IDs.
+  Opening another project and compact instrument-field reachability are fixed rather than added as
+  new features. Remaining high-value review: small wave-choice targets and cross-chip audition
+  consistency; retain the precise controller/dock route and review one panel at a time.
+- **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-11): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
   backends. Separately explore bespoke friendly synth panels for existing chips: musical controls map to
   that chip's actual instrument parameters, with an advanced page retaining precise hardware access.
   Do not force unlike chips into a universal instrument model or hide quantization/shared-resource effects.
-  Both are design directions, not implemented engines or selected panel designs.
+  The original synthesis backend remains a design direction, not an implemented engine.
+  The [instrument-panel proposal](docs/INSTRUMENT_PANELS.md) now records a complete Game Boy pilot:
+  pulse/wave/noise diagrams and controls, exact values/registers, held-Edit re-audition, compact
+  navigation and gesture-safe Undo. Shared rails/cells/gesture ownership are extracted only where
+  actually used; there is no universal instrument model or prerequisite rewrite of other painters.
+  Review that panel before starting SCC/SCC+ or OPM. Console-inspired character uses original
+  synthesis diagrams, not copied console artwork, and retains themes, zoom and precise editing.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
   - **Colour themes, released in 0.38.0/code 52:** original Slate, Paper and Contrast palettes,

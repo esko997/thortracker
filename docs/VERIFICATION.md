@@ -1,5 +1,101 @@
 # Thor Tracker verification — 2026-11-11
 
+## 0.42.0 candidate — Game Boy panel and longer-session hardening
+
+**Review candidate, code 56; not a published stable release or a touch cutover.** The shared
+Game Boy instrument panel covers pulse, wave and noise with nominal envelope/length/sweep and
+waveform illustrations, exact numeric/register values, rails/segments and compact field navigation.
+Controller field order remains intact; held Edit now re-auditions actual changes. Touch gestures
+pin their instrument/parameter and group Undo. Shared code is limited to proven controls and
+gesture ownership, not a universal instrument model.
+
+Also fixed:
+- A successful new OFF entry advances by the configured entry step. Clearing existing content,
+  refused OFF insertion and SID OFF-to-ON cycling do not acquire an extra advance.
+- Open project uses the existing replacement confirmation. A real Konkr follow-up checks Back
+  preserves the song, previous-project recovery and document URI, then Continue opens the picker path.
+- TrackerView retains its first touch pointer through sparse/reordered IDs and either lift order;
+  a second finger cannot redirect the first finger's final selection.
+- The isolated touch preview hides its dock while a usable nonvirtual gamepad is connected,
+  reclaims that height and releases only virtual owners when hiding. Physical holds are preserved.
+- Game Boy increasing envelopes now reach volume 15 rather than incorrectly stopping at 14.
+  This changes affected playback/audition/WAV audio, not `.thor` or `.uge` data.
+
+### Host and device evidence
+
+- Stable full host run: **1,129 core JVM and 8 Android host tests**, zero failures. Preview full
+  host run: **1,130 core and 24 Android host tests**, zero failures. After the final segmented-cell
+  endpoint rounding correction, the targeted Game Boy panel suite and both signed builds pass again.
+- **172/172 existing sample exports remain byte-identical** to the pre-panel candidate, with
+  no added or removed exports. Optional rhythm-ROM exports are explicitly skipped: no ROM is installed.
+- **All 29 native suites pass**, including **4,555 Game Boy checks** in the normal all-engine
+  configuration and **2,796 WAV checks**. EPSM/OPNA rhythm-ROM cases remain explicitly skipped.
+- The real hUGEDriver/binjgb PCM envelope regression fails before the native fix (**30 failures
+  among 4,553 checks**, failed peaks exactly 14/15 of the held-volume-15 reference) and passes
+  afterward (**4,553 checks, zero failures**). Pulse 1, pulse 2, noise, pace 1/7, ceiling/floor,
+  fade, pace-zero hold and increasing from zero are covered; no mocked amplitude oracle.
+- Nova executes **all 29 permanent Android tests**, zero failures/skips/assumptions, through
+  JUnit's actual four test classes inside the external restoration wrapper. This is not a claim
+  that the test APK contained only permanent classes. The preview independently passes its
+  permanent first-pointer regression on DMG.
+- Both the stable and isolated preview APKs pass the Game Boy panel scenario on **Pocket DMG**:
+  **19 parameter paths, 41 history cases, held-Edit Clear, two pointer cases, 72 theme/zoom/size
+  configurations and eight compact touch-navigation cases**. Each makes 120 audition calls.
+  Actual Android window captures and rendered compact surfaces were visually inspected.
+  The matrix caught and fixed a last-cell floating-point endpoint extending beyond its row.
+
+### Longer actual workflows
+
+| Device / scenario | Completed work | Observed audio / resource bounds |
+| --- | --- | --- |
+| Nova composition | 128 rounds; 925 auditions; 13 saves, four reopens and four UGE exports | Zero xruns/driver faults; max callback 1.222 ms; PSS 69,639→97,262 KiB, peak 97,262 |
+| Konkr composition | 128 rounds; 925 auditions; 13 saves, four reopens and four UGE exports | Zero xruns/driver faults; max callback 3.383 ms; PSS 73,968→70,075 KiB, peak 77,008 |
+| DMG touch | 160 rounds of held edit, multi-owner arrows, selection/copy/paste, cancellation and reversed lifts; 640 auditions; 27 first-pointer probes | Zero xruns/driver faults; max callback 6.588 ms; PSS 68,714→85,059 KiB, peak 92,055 |
+| Konkr Open follow-up | 32 further composition rounds, including confirmation Back/Continue | Scenario and independent private-state restoration pass |
+
+These are bounded runs, not an overnight leak proof or the 400-entry Undo-limit test: maximum
+observed Undo depth was 202 in composition and 157 in touch. Save/open callbacks in these long
+runs use owned `file://` fixtures, **not real DocumentsUI/SAF interaction**. The prior 0.41.0 SAF
+evidence below is separate. Audition calls and callback diagnostics are not speaker listening.
+
+DMG's built-in gamepad normally hides the preview dock. The long touch scenario uses an explicit
+**test-only visibility fixture**, not a production override. Actual controller-presence testing
+separately observes built-in-pad sleep/wake removal/addition and four second-gamepad add/remove
+cycles. It verifies hidden/shown layout height and retained header controls. Shell permission to
+disable an input device is denied; no root or permission workaround was used.
+The final preview APK passes this controller-presence scenario again, with an independently
+verified eight-entry restoration receipt and zero mismatches.
+
+### Safety, artifacts and review limits
+
+Each device run takes its canonical exclusive lease, persists/restores the original timeout,
+cold-restores all **eight private recovery/workspace entries**, and verifies their bytes from a
+separate fresh process before removing its owned test APK. `/ThorTunez`, Thor and Brick are untouched.
+The initial panel/permanent wrapper extension omitted those case names from its recovery whitelist.
+Recovery was completed through validated owned-case aliases with the same backup digest checks,
+then independently verified; the whitelist is corrected for later runs. Two earlier failed probes
+were harness-oracle errors (note entry assigns the current instrument pen; confirmation dismiss is
+Back, not a literal Cancel button), not product fixes disguised by changed assertions.
+
+Evidence: `~/.local/state/thortracker/recovery-20261109/long-session-042/`, including `evidence/`,
+`native-before/`, `native-after/`, `sample-compatibility.json` and `preview-full-host-tests.json`.
+External instrumentation is not production source. Local heavy builds are serialized and bounded
+to 4 GiB/no swap and two CPUs; no emulator or local Kotlin/Native linking was used.
+
+Signed review artifacts:
+- Stable-shaped candidate APK: `thor-tracker-0.42.0-review.apk`,
+  SHA-256 `89480b01133d6ecb05912275d50be85201e5f30ba6fef7d9c27a3088a9426579`.
+- Separate `org.thortracker.touchpreview` APK: `thor-tracker-0.42.0-touch-preview.1.apk`,
+  SHA-256 `1f8881cc2e0b32442242a19541907fd141487f07df97c40c46a670b93c791775`.
+Both use the existing production signing certificate; no uninstall or external-project migration is required.
+
+The [Game Boy panel notes](INSTRUMENT_PANELS.md) distinguish implemented controls from later SCC/FM
+proposals. Fold8 cover/inner renders are **synthetic editor viewports**, not physical phone captures
+or thumb-reach proof. At high zoom, compact wave choices remain small: the controller/dock and
+48 dp field-navigation controls provide the precise editing route. Review the Game Boy panel before
+expanding its design to another chip. NextUI Pak Store preparation remains a roadmap item; no
+submission was made and current-build Brick acceptance is still required.
+
 ## 0.41.0 — TIA four columns and workflow hardening
 
 **Version 0.41.0/code 55 is published.** TIA NTSC and PAL now

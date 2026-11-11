@@ -49,7 +49,7 @@ internal object PanelWidgets {
         val w = (r.width() - gap * (count - 1)) / count
         for (i in 0 until count) {
             val l = r.left + i * (w + gap)
-            cells[i].set(l, r.top, l + w, r.bottom)
+            cells[i].set(l, r.top, if (i == count - 1) r.right else l + w, r.bottom)
         }
     }
 

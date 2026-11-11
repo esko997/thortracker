@@ -865,7 +865,11 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 c.note == Cell.CUT || (c.note == system.keyOn) -> write(c.copy(note = Cell.EMPTY))
                 c.hasEffect && system.offEffect != null -> session.note("Clear this row's effect first: OFF uses the effect slot (as ${system.offEffect})")
                 // One-column systems replace the row by OFF; with several columns the row's effects stay.
-                else -> { write(if (multiColumn()) c.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT)); session.note(system.help.offEntered) }
+                else -> {
+                    write(if (multiColumn()) c.copy(note = Cell.CUT, instrument = 0) else Cell(note = Cell.CUT))
+                    session.note(system.help.offEntered)
+                    advance(session.step)
+                }
             }
             1 -> write(c.copy(instrument = 0))
             else -> { write(c.withEffect(cursorColumn(), 0, 0)); state.chosenArpeggio = -1 }

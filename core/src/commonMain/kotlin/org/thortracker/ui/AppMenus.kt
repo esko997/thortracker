@@ -505,7 +505,7 @@ class AppMenus(
         val system = session.song.system
         menu("Project", listOf(
             "New blank song" to { chooseSystem("New song for") { confirmReplace { host.replace(it.blank()) } } },
-            "Open project" to host::openProject,
+            "Open project" to { confirmReplace { host.openProject() } },
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
         ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
