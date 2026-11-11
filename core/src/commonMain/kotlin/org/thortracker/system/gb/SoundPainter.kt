@@ -289,14 +289,19 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         val minRow = u * 1.35f
         val maxRow = maxOf(u * 1.6f, ink.dp(48f))
         // Navigation has physical 48dp targets, independent of zoom. Reserve it before sizing the rows.
-        val overflow = panel.height() - registerH < n * minRow
+        // A compact bank can recover a few pixels without making ten tiny rows usable by touch.
+        // Keep explicit navigation until each setting has at least a practical 20dp row.
+        val overflow = panel.height() - registerH < n * maxOf(minRow, ink.dp(20f))
         val navH = maxOf(ink.dp(48f), registerH)
         val footerH = if (overflow) navH + gap * 0.5f else registerH
         scrollUpRect.set(0f, 0f, 0f, 0f)
         scrollDownRect.set(0f, 0f, 0f, 0f)
         val note = ctl.defaultNote()
         val avail = panel.height() - footerH
-        val heroSpace = avail - n * minRow - captionH - gap * 2
+        // On tall panes the timeline yields to full-size controls, rather than spending their last pixels.
+        // Dense panes retain the precise overview; tall touch panes reserve 48dp rows before the hero.
+        val reservedRow = if (avail >= n * maxRow + captionH + gap * 2) maxRow else minRow
+        val heroSpace = avail - n * reservedRow - captionH - gap * 2
         val heroH = if (heroSpace >= u * 4.5f) minOf(heroSpace, u * 9f) else 0f
         timelineShown = heroH > 0f
         pitchShown = false
