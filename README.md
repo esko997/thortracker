@@ -5,20 +5,21 @@ Thor Tracker is a controller-first music tracker for Game Boy / Game Boy Color s
 Read the **[documentation website](https://esko997.github.io/thortracker/)** for installation,
 controls, sound systems, exports and troubleshooting.
 
-**[0.41.0/code 55](https://github.com/esko997/thortracker/releases/tag/v0.41.0):** TIA NTSC/PAL
-support four effect columns, with clearer Columns/hidden-effect and Clear/Cut guidance,
-interruption-safe held input and binding capture, and reliable fast menu taps.
-Published Android/AppImage verification and delivery are recorded in [verification](docs/VERIFICATION.md).
-The separate **[Fold8 touch preview](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)**
-installs alongside production; phone ergonomics still need review.
+**0.42.0 promotes the approved touch controls and Game Boy Sound editor to the normal app.**
+Without a usable physical controller, Android shows a two-thumb controller dock and navigation
+drawer; attaching a controller hides the dock. Game Boy pulse instruments offer musical
+Sound controls beside the precise Advanced editor. Both edit the same instrument and Undo history.
 
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
-*Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. All screenshots and clips come from the app running in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom). The emulator has no audio.*
+*Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. This clip was captured in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom), without audio. Other captures identify their own device or synthetic viewport.*
 
 ## Install
 
-Download the latest APK from the [GitHub Releases page](https://github.com/esko997/thortracker/releases) and sideload it: open it on the device and allow installs from that source, or run `adb install -r path/to/downloaded.apk`. Android 8 or later is required; arm64-v8a and x86_64 are supported.
+Install `thor-tracker-<version>.apk` from [Releases](https://github.com/esko997/thortracker/releases).
+It updates **Thor Tracker** (`org.thortracker`) in place. Android 8 or later is required;
+arm64-v8a and x86_64 are supported. The old separate **Thor Tracker Touch Preview** installation
+and its data are not migrated or removed; export any songs from it through its file picker.
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
@@ -278,7 +279,6 @@ voices. Columns run left to right; the last setting wins for a shared target. Gl
 row start, and the last G controls delay (`G00` cancels an earlier G). The project/image schema is
 unchanged; older players reject third/fourth-column content rather than dropping it. WAV export
 does not establish a 6507 cartridge CPU budget.
-
 An Atari 2600 song (**Menu → Files → New blank song → Atari 2600…**, then **NTSC** or **PAL**; **Load demo** plays *Cartridge Dawn*) has the TIA's two channels, **TIA 1** and **TIA 2**, each with up to four effect columns, notes C-0..B-9, one tick per TV frame (59.92 per second on NTSC, 49.86 on PAL; speeds count frames). Each sound has a **Waveform**, one of the chip's sixteen AUDC values: pure squares at div 2 (high) and div 6 (the melodic middle), the 18/13 div 31 tone (the bass), div 93 (very low), the 4-bit and 5-bit polynomial buzzes, white noise (8) and a constant level (0 and B). The chip divides that waveform's clock by 1-32 (AUDF), so each waveform has only 32 pitches, and Thor Tracker is honest about it: a **tonal** sound plays each note at the divider nearest to it, at that divider's true frequency (A-4 on div 6 is 436.1 Hz on NTSC, 432.1 Hz on PAL), and notes outside a waveform's span play its nearest end (the song check warns about them). The **Waveform** row shows the span (div 6: E-3..D#8), and the **Pitch guide** page lists all 32 dividers with their frequency, nearest note and error in cents — **A** plays the one under the cursor. The pattern inspector and lane tags show the key-on registers each channel reaches at the cursor (e.g. `C·11`: AUDC C, AUDF 11). A **raw** sound (the **Pitch mode** row; noise and drums) uses the note as the divider instead: C-0 is AUDF 31 and each semitone up is one step brighter, repeating every 32 semitones. Sounds have **Volume** (AUDV 0-15), **Arpeggio**, **Pitch** and **Waveform seq** envelopes (per frame, loop and release points; a waveform sequence makes kicks that start as noise and fall to a tone); slides, vibrato and portamento move in 1/64 semitones and are heard as the dividers step, as on the real console; `Wxx` switches a sounding note's waveform. Nothing restarts the chip's waveform counters, so repeated notes need not start alike. The TIA has no sample playback (a constant waveform's volume steps give clicks at the frame rate), and there is no VGM for it: songs export as **.wav**. NTSC and PAL are separate variants because the console's clock sets every pitch and the frame rate; a PAL song plays about 16 cents lower at the same AUDF.
 
 ### VIC-20 and C16 / Plus/4 sounds: one master volume

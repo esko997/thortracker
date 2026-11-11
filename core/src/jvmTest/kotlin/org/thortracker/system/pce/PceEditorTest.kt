@@ -684,6 +684,8 @@ class PceEditorTest {
         assertEquals(Cell(), session.song.patterns[0].tracks[0][0])
         v.tap(Action.CLEAR)
         assertEquals(Cell(note = Cell.CUT), session.song.patterns[0].tracks[0][0])
+        assertEquals(1, session.selection.row)
+        v.tap(Action.UP)
         // A legal assignment must not be blocked by an unrelated effect still being edited.
         session.setCell(0, 4, 0, Cell(effect = PceRules.FX_VOLUME, param = 32))
         val k = view(ViewKind.KEYBOARD) { octave = 4; entryMode = true }

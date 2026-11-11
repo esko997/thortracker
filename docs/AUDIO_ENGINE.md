@@ -199,10 +199,22 @@ aborting, and reads cartridge ROM from a host-owned buffer (live song edits are 
 writes). The preview is still an emulator: analog output, mixer filtering and revision quirks
 are binjgb's, not proven equal to a specific GBC.
 
-**Local binjgb change** (only one, marked `THOR-TRACKER LOCAL CHANGE`): `AudioBuffer` holds
-float samples in [0, 1] instead of unsigned 8-bit (`emulator.h` struct, `write_audio_frame`,
-`init_audio_buffer`), so the 4-bit channel sums keep full resolution. Mixing/APU logic is
-unchanged.
+**Local binjgb changes** (marked `THOR-TRACKER LOCAL CHANGE`):
+
+- `AudioBuffer` holds float samples in [0, 1] instead of unsigned 8-bit (`emulator.h`,
+  `write_audio_frame`, `init_audio_buffer`), preserving the 4-bit channel sums' resolution.
+- Automatic volume envelopes accept the inclusive maximum **15**. The upstream comparison
+  used `< 15`, so growing pulse/noise envelopes stopped at 14. The correction uses `<= 15`;
+  overflow/underflow still stop the envelope, and pace zero still holds its initial volume.
+  This changes affected GB playback, audition and WAV output, not project or `.uge` bytes.
+
+The real-driver PCM regression covers both pulse channels and noise against independent
+phase-matched hold-15 machines, including intermediate steps, ceiling/floor holds and pace
+zero. Before correction, 30 checks fail at exactly **14/15** of the reference RMS; afterward
+all **4,553 GB-only checks** pass. This focused mode omits registry-only assertions, not
+the real engine adapter. Hardware references: [NRx2 envelope](https://gbdev.io/pandocs/Audio_Registers.html#ff12--nr12-channel-1-volume--envelope)
+and [4-bit DAC range](https://gbdev.io/pandocs/Audio_details.html#dacs). The panel draws nominal
+hardware timing; frame-sequencer phase and analog output are not represented by that diagram.
 
 ## Preparing the player (once, when the driver pin changes)
 

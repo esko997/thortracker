@@ -95,6 +95,18 @@ class HostInput(var keymap: Keymap = Keymap.DEFAULT) {
     }
 
     /**
+     * Like [cancel], for one of several input sources going away while others stay held: forgets [code]'s
+     * press without acting. Returns the editor action whose hold the host must cancel alone
+     * ([org.thortracker.editor.ViewController.cancelHold]), or null when the press drove no editor action or
+     * another held key (or chord) still drives the same action.
+     */
+    fun forget(code: Int): Action? {
+        if (trackModifier(code, false)) return null
+        val action = (owners.remove(code) as? Owner.Editor)?.action ?: return null
+        return action.takeIf { owners.values.none { it is Owner.Editor && it.action == action } }
+    }
+
+    /**
      * Forgets pending right-stick flicks (a stick held now must return to neutral before it counts). Hosts call
      * this when a popup opens or closes, the window loses focus or a controller changes, so a flick from before
      * cannot complete a jump after.

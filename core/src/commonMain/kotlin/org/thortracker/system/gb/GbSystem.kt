@@ -237,8 +237,19 @@ object GbSystem : SoundSystem {
             val channels = keys.pair(org.thortracker.editor.Action.PREV_CHANNEL, org.thortracker.editor.Action.NEXT_CHANNEL)
             return listOf(
                 "Sounds" to listOf(
+                    "Sound / Advanced" to "Pulse opens Sound: Character, Shape, Length and Motion. Both modes edit the same slot. " +
+                        "Use the touch tabs, or move up to the mode row and use $lr or tap $edit. Changing mode never changes the sound.",
+                    "Pulse pilot" to "Wave and Noise keep Advanced. Custom means your precise patch is preserved; " +
+                        "choosing a musical control changes only its part of the sound. Length on Custom adopts Pluck.",
+                    "Listen" to "Hold ${keys.label(org.thortracker.editor.Action.AUDITION)} while dragging to hear changes. " +
+                        "Swell Length sets its rise time, then holds. Motion works on Pulse 1 only; Rising can mute high notes.",
                     lr to "Choose the sound slot; $channels change bank",
-                    keys.held(org.thortracker.editor.Action.EDIT, lr) to "Adjust the setting; $edit tap toggles on/off settings",
+                    keys.held(org.thortracker.editor.Action.EDIT, lr) to "Adjust the selected control; holding $edit plays it and each change. " +
+                        "One hold is one Undo. In Advanced, $edit tap toggles on/off settings.",
+                    "Touch" to "Drag straight along a Sound control, or an Advanced slider; tap Advanced choices or waves. " +
+                        "Each drag is one Undo. On short panes, Previous / Next control reaches all four Sound controls.",
+                    "Advanced timeline" to "The volume from the note's start at the hardware's rates (steps every pace/64 s, the length cut, " +
+                        "Pulse 1's sweep at the listening note); bytes at the bottom are what hUGEDriver writes",
                 ),
                 "Waves" to listOf(
                     keys.dpad() to "Move the pen across samples and levels; ${keys.label(org.thortracker.editor.Action.UP)} at the top reaches the tools",

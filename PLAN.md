@@ -13,12 +13,12 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**Current priority (0.41.0/code 55, 2026-11-11):** review the isolated phone touch prototype
-and continue focused soft-launch hardening, not another backend. TIA NTSC/PAL four-column
-support, interruption-safe input/capture and fast-menu-tap fixes are published; actual release
-artifact and reserved-device evidence is in `docs/VERIFICATION.md`. There is no new physical
-Deck/Brick runtime claim. **Galaxy Fold8** is the phone design target; DMG is the functional
-testbed, not proof of phone density, insets or thumb reach.
+**Current priority (0.42.0/code 58):** promote the approved touch dock and Game Boy Sound/Advanced
+workflow into the normal Thor Tracker app, then review **three artistic/musical pilots only**:
+Game Boy LCD (Pulse/Wave/Noise), C64 SID and Mega Drive YM2612. Pause for joint review before
+expanding to other chips. Use distinct musical controls and machine-evocative faces, with
+shared input/history infrastructure and exact patches retained in Advanced.
+**Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
 JVM, reserved-device frontend and published AppImage checks pass; the DMG picker retry and exact
@@ -208,16 +208,13 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   [Feasibility and open decisions](docs/BACKENDS.md#swing-and-groove-research-proposal) cover
   quantization, odd-length phase, tempo-command precedence, seek/loops and driver-specific limits.
   No playback timing changes are authorized by this research.
-- **Touch-only phone use — isolated preview, production unchanged:** the
-  [review APK and source](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)
-  use a separate package. **19 host tests and 13 real Android scenarios pass on DMG**, plus five
-  native cover/inner ratio renders. The **Galaxy Fold8** layout has a 144 dp three-row dock and
-  edge-bounded thumb groups; there is no orientation lock. Phone ergonomics are not verified.
-  Review simultaneous holds, modifier layers, thumb reach, dense menus, obscured rows, edge-back,
-  file picking, keyboard/insets and fold transitions. A phone-only Syncthing APK folder is offered;
-  receipt and installation are separate steps. Reuse the shared controller/editor/audio paths.
-  [The proposal](https://github.com/esko997/thortracker/blob/touch-preview-0.41.0-1/docs/TOUCH_PROPOSAL.md)
-  remains a review boundary, not permission to merge the preview into production.
+- **Touch-only phone use — approved production promotion in 0.42.0:** the normal app now includes
+  the 144 dp three-row controller dock, edge-bounded thumb groups, latched modifiers and navigation
+  drawer, automatically hidden by a usable physical controller. No orientation lock.
+  The app keeps its normal name, package and production signature; historical separate previews
+  and their data remain untouched. Continue phone review of reach, dense menus, keyboard/insets
+  and fold transitions. APK staging does not prove phone receipt or installation.
+  [Design and evidence](docs/TOUCH_PROPOSAL.md) distinguish real DMG checks from synthetic geometry.
 - **Hardening and ergonomics priority:** use bounded live editing/playback, navigation, selection,
   clipboard, Undo and save/reopen scenarios on Nova, DMG and Konkr. Investigate concrete failures
   before changing behavior; preserve private state and `/ThorTunez`, take exclusive device leases,
@@ -238,10 +235,11 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   shortcuts. Keep swing, mixer ceilings, pattern-local mute and shader pipelines deferred.
 - **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
-  backends. Separately explore bespoke friendly synth panels for existing chips: musical controls map to
-  that chip's actual instrument parameters, with an advanced page retaining precise hardware access.
-  Do not force unlike chips into a universal instrument model or hide quantization/shared-resource effects.
-  Both are design directions, not implemented engines or selected panel designs.
+  backends. The approved first Game Boy Sound face edits real instruments alongside Advanced.
+  Next: a sparse green/black LCD redesign for all three GB banks, a distinct SID synth deck and
+  a YM2612 tone console; **stop after those three pilots for review**. Musical controls must own
+  explicit chip fields, preserve arbitrary patches on entry/mode changes, and expose shared-resource
+  limits honestly. The original synthesis engine remains deferred.
 - **BRIXEQ interface research** (2026-11-09): reviewed the [manual](https://github.com/boorch/brixeq-pak/blob/main/MANUAL.md)
   and read-only copies of the installed v1.9.0 Pak UI/launcher. Useful discussion candidates:
   - **Colour themes, released in 0.38.0/code 52:** original Slate, Paper and Contrast palettes,

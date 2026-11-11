@@ -5,6 +5,8 @@ plugins {
 }
 // Release signing is opt-in: tools/release.sh passes -PthortrackerSigningDir=<dir holding thortracker-release.p12 and
 // store-password>. Without it, assembleRelease builds an unsigned APK (as the CI build job does).
+// The same opt-in key also signs debug builds so they can update the installed production app.
+// Without it, debug keeps Android's local debug key and cannot update a production-signed install.
 val signingDir = providers.gradleProperty("thortrackerSigningDir").orNull?.let(::file)
 android {
     namespace = "org.thortracker"
@@ -17,8 +19,9 @@ android {
         applicationId = "org.thortracker"
         minSdk = 26
         targetSdk = 32
-        versionCode = 55
-        versionName = "0.41.0"
+        versionCode = 58
+        versionName = "0.42.0"
+        testApplicationId = "org.thortracker.test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
@@ -43,6 +46,9 @@ android {
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")
+        }
+        debug {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
     lint {

@@ -226,17 +226,57 @@ class ViewControllerTest {
         session.setCell(0, 0, 0, Cell(note = 44, instrument = 2, effect = 0xC, param = 0x08))
         v.tap(Action.CLEAR)
         assertEquals(Cell(Cell.EMPTY, 0, 0xC, 0x08), cell(0, 0, 0))
+        assertEquals(0, v.state.row)
         v.tap(Action.CLEAR) // effect present: a cut would need the effect slot
         assertEquals(Cell.EMPTY, cell(0, 0, 0).note)
         assertNotNull(session.message)
+        assertEquals(0, v.state.row)
         v.state.field = 2
         v.tap(Action.CLEAR)
         v.state.field = 0
         v.tap(Action.CLEAR)
         assertEquals(Cell(note = Cell.CUT), cell(0, 0, 0))
         assertEquals(null, GbSystem.cellProblem(session.song, 0, cell(0, 0, 0)))
+        assertEquals(1, v.state.row)
+        v.tap(Action.UP)
         v.tap(Action.CLEAR)
         assertEquals(Cell(), cell(0, 0, 0))
+        assertEquals(0, v.state.row)
+    }
+
+    @Test
+    fun offEntryUsesTheEntryStepAndUndoPreservesOtherEffectColumns() {
+        session.replaceSong(org.thortracker.system.opl3.Opl3System.blank())
+        session.step = 4
+        val original = Cell(effect = 0xC, param = 0x20).withEffect(3, 0x4, 0x12)
+        session.setCell(0, 0, 0, original)
+        val v = view(ViewKind.PATTERN)
+        v.tap(Action.CLEAR)
+        assertEquals(original.copy(note = Cell.CUT), cell(0, 0, 0))
+        assertEquals(4, v.state.row)
+        assertEquals(4, session.selection.row)
+        v.tap(Action.EDIT)
+        assertTrue(cell(0, 0, 4).note >= 0)
+        assertEquals(8, v.state.row)
+        session.undo()
+        session.undo()
+        assertEquals(original, cell(0, 0, 0))
+        assertEquals(Cell(), cell(0, 0, 4))
+    }
+
+    @Test
+    fun offEntryHonoursZeroStepAndTheLastRowBoundary() {
+        val v = view(ViewKind.PATTERN)
+        session.step = 0
+        v.tap(Action.CLEAR)
+        assertEquals(Cell.CUT, cell(0, 0, 0).note)
+        assertEquals(0, v.state.row)
+        v.state.row = 63
+        session.step = 4
+        v.tap(Action.CLEAR)
+        assertEquals(Cell.CUT, cell(0, 0, 63).note)
+        assertEquals(63, v.state.row)
+        assertEquals(63, session.selection.row)
     }
 
     @Test
@@ -371,7 +411,7 @@ class ViewControllerTest {
 
     @Test
     fun instrumentParameterHoldIsOneUndo() {
-        val v = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 3 }
+        val v = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = 0; instrument = 1; instField = 3 }
         assertEquals("Volume", GbSoundView.params(v.state)[1].label)
         v.hold(Action.EDIT, Action.LEFT, Action.LEFT)
         assertEquals(13, session.song.gb.pulse[0].volume)
@@ -386,7 +426,7 @@ class ViewControllerTest {
     @Test
     fun everyInstrumentParameterStaysInRange() {
         for (kind in GbBank.entries) {
-            val v = view(ViewKind.INSTRUMENT) { bank = kind.ordinal; instrument = 2 }
+            val v = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = kind.ordinal; instrument = 2 }
             for ((i, p) in GbSoundView.params(v.state).withIndex()) {
                 v.state.instField = i + 2
                 v.hold(Action.EDIT, *Array(40) { Action.UP })
@@ -750,7 +790,7 @@ class ViewControllerTest {
         assertEquals(cell(0, 0, 4), cell(0, 0, 20))
 
         // Shape the lead sound and draw a wave the wave sound uses.
-        val sounds = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 2 }
+        val sounds = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = 0; instrument = 1; instField = 2 }
         sounds.hold(Action.EDIT, Action.RIGHT) // duty 25%
         assertEquals(1, session.song.gb.pulse[0].duty)
         val waves = view(ViewKind.WAVE) { wave = 0; waveRow = 0; waveCol = 1 }

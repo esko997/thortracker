@@ -1,10 +1,254 @@
 # Touch interface proposals
 
-Status: **discussion only; no approved production implementation**. The original landscape study
-used 0.37.1 / main `006c173` on 2026-11-10. The user's latest direction reopens a controller overlay
-and portrait layout as alternatives, with a drawer for navigation and settings. Neither that
-candidate nor the original side editor is selected for implementation. No Android, desktop, audio,
-document-format or controller changes are part of these studies.
+Status: **approved controller dock and Game Boy pulse Sound editor promoted to production 0.42.0/code 58**.
+The app is now **Thor Tracker**, package `org.thortracker`, signed with the production key.
+**Galaxy Fold8 is the design target. Pocket DMG is only a functional testbed**, not proof of
+phone density, insets or physical two-thumb reach. The earlier isolated APKs and landscape
+browser studies below remain historical review evidence.
+
+## Native controller dock for Galaxy Fold8
+
+### Geometry and interaction
+
+The primary display has a 48 dp Menu / current view / Play bar, the real `TrackerView` taking
+the remaining height, and a **144 dp dock: three rows, all sixteen controller buttons retained**.
+Each thumb group is capped at 216 dp and anchored 8 dp from its side. Wider windows add a
+central gap rather than stretching controls toward the crease. L2 and R2 sit at the outer
+top corners; the normal D-pad and A/B/X/Y arrangement remain recognizable:
+
+```text
+L2      ↑      L1              R1      Y      R2
+←     Start    →               X      R3      A
+Select  ↓                             B      L3
+```
+
+Samsung's [Fold8 specification sheet](https://stg-images.samsung.com/is/content/samsung/assets/us/f2607/business/smartphones/spec-sheets/galaxy_z_fold8_one_pager_0713.pdf)
+lists a 972×1248 cover and 1848×2448 main display. The native ratio study uses representative
+360×462, 412×529, 720×544, 840×634 and 960×724 dp **app windows**; these are not measurements of
+the user's Android density, display zoom or usable insets. All targets pass the 48 dp check
+in those profiles. The 360×462 study shows fifteen Pattern rows; the 720×544 study shows
+nineteen, plus the existing inspector and arrangement overview.
+
+There is no forced orientation: the cover supports the portrait flow, while the opened
+inner display can use its natural wide layout. System bars stay outside the content and
+Android resizes for the IME. Configuration changes cancel held input. Actual fold/unfold,
+phone keyboard/inset behavior, large font/display zoom and physical reach still need phone
+review. Slate/Paper/Contrast and the existing native typeface are reused; this does not
+introduce a second note/value editor.
+
+- Each finger owns its initial button until it lifts, even after moving outside it. Sliding
+  between buttons does not retarget; lift and press the next direction. A second finger can
+  press/repeat D-pad directions while A or X remains held. Arrows repeat after 350 ms, then
+  every 85 ms; other buttons do not synthesize repeats.
+- A, B, X and Y retain the real shared semantics: A writes/adjusts, B clears the current field,
+  X listens and Y marks. In Pattern, X+arrows keeps the original note sounding while navigating;
+  it does not invent a new continuous pitch-audition rule. Select+B cuts, not ordinary B.
+- Select/L2/R2/L3 are **tap-to-latch**, explicitly labeled `ON`, selected and announced to
+  accessibility. Tap again to release. L2 and R2 may both stay on for the existing third-layer
+  view commands without needing a third finger. Start remains available for L2+Start and
+  Select+Start. L1/R1 and R3 are momentary. Dock labels are physical button names and use the
+  same user keymap as the physical controller; Controls can restore/rebind that map.
+- Menu opens an explicit full-width, scrollable portrait navigation drawer. It lists every
+  available system view, Files, Pattern scale/length, Tuning/scale library, view behavior,
+  zoom, Undo/Redo and the real Settings/Controls/Help menu. Play/Stop is always at the top.
+  Both target the primary editor. Existing hardware Menu and Select+Start still use the
+  shared menu/toolbar paths.
+- Virtual keys and physical-device key owners are merged before `HostInput`: one source's
+  UP cannot release another source's held A/X/modifier. Pointer IDs, not their array positions,
+  own buttons. Opening a drawer/modal/toolbar, ACTION_CANCEL, lost window focus, pause,
+  rotation, or controller removal/reconfiguration cancels holds and audition without
+  interpreting cancellation as a tap. Modal/IME entry clears all visible latches; late UPs
+  and hardware repeats cannot resurrect a canceled press. Focus loss alone does not stop
+  background song transport; the existing onPause transport policy is unchanged.
+- The dock hides automatically while a usable physical controller is attached and returns when
+  the last one goes, including at startup, resume and device enable/disable changes. Usable means
+  an enabled, non-virtual gamepad with A, B and D-pad or stick/hat directions; a handheld's
+  built-in pad counts, while keyboards, D-pad remotes and Android's virtual keyboard do not. The
+  editor takes the reclaimed height; the Menu/Play header and drawer remain. Hiding forgets only
+  the dock's presses, latches, arrow repeat and their audition without treating them as releases;
+  keys a physical controller holds keep their owner and layer. A forgotten dock Edit/Clear/Mark/Listen
+  hold ends only that hold, so a physical Edit or Listen and its audition continue. There is no manual
+  show override.
+
+### Identity and files
+
+Production and review builds use **`org.thortracker`**, label **Thor Tracker**, and test package
+**`org.thortracker.test`**. Supplying the production signing configuration also signs debug
+builds with that key; ordinary locally debug-signed builds cannot update a production install.
+The normal Android file picker handles projects, exports, keymaps and tuning imports, preserving
+existing destination grants. No app-scoped preview provider or forced initial root remains.
+
+The historical `org.thortracker.touchpreview` installation is left intact. Its private files
+and app-scoped `Documents/ThorTrackerTouchPreview` directory are not automatically imported.
+Export anything wanted from that app before uninstalling it: Android removes app-scoped data
+on uninstall. Neither promotion nor testing deletes `/ThorTunez`.
+
+The production candidate passes 1,154 core tests, 22 Android host tests and all 30 permanent
+Android contracts on DMG. A separate real Activity probe verifies touch Sound/Advanced switching,
+exact UGE preservation, grouped controller Undo, two-pointer dock editing, latch cancellation
+and automatic hiding for the actual built-in controller. Eight private entries are cold-restored
+and independently verified. See [Verification](VERIFICATION.md) for scope and limitations.
+
+### Game Boy pulse Sound playground
+
+The earlier accurate instrument panel remains **Advanced**. This pilot adds a different,
+approachable **Sound** face inside Instrument view—not another document or a patch conversion.
+Select an instrument on the left; explore four musical controls on the right. Pulse starts
+in Sound; Wave and Noise retain Advanced. Mode choice and remembered cursors are pane-local
+for this session, not part of the song or saved workspace.
+
+| Control | Musical choices | What changes |
+| --- | --- | --- |
+| Character | Thin, Reedy, Square | Pulse duty only. The equivalent 25% and 75% timbres both read Reedy; selecting the current choice preserves the exact original. |
+| Shape | Pluck, Held, Swell | Loudness envelope and length gate. Pluck fades; Held stays steady; Swell grows, then holds. |
+| Length | Short, Medium, Long, Longest | Pluck fade / Swell rise: about 188 / 375 / 750 / 1313 ms. Held: about 63 / 125 / 250 ms or until the next note/OFF. |
+| Motion | Still, Falling, Rising | Hardware pitch sweep on **Pulse 1 only**. Pulse 2 ignores it; rising notes can reach the hardware cutoff. |
+
+These are discrete real-chip settings, not filters, ADSR emulation or additional synthesis.
+Shape keeps a recognized Length choice; otherwise it starts at Medium. Length keeps a
+recognized Shape. **Changing Length on a Custom Shape deliberately makes a Pluck**; the
+panel warns about this before editing. Neither changes Character, Motion, name or other-bank
+fields. Selecting a control's already-current choice preserves the entire patch exactly.
+
+Opening Sound or Advanced never rewrites an instrument. Unrepresented advanced settings
+show **Custom**, with no invented slider position. Existing factory sounds can legitimately
+show Custom because their exact level differs from these musical presets. Find a sound here,
+then switch to Advanced to refine it; both faces edit the same stored instrument and Undo history.
+
+**Touch:** tap Sound/Advanced; slide a control horizontally. Hold X on the dock to hear changes.
+**Controller:** Up/Down selects controls, held A + direction adjusts and auditions, X listens.
+Move above the slot row to the editor tabs, then Left/Right (or A) switches modes. L1/R1 still
+switch banks. One continuous edit is one Undo; Undo, slot navigation and mode changes invalidate
+an old pointer drag. A held across a mode switch must be released before it can edit again.
+
+The console-inspired face uses a neutral shell, olive readout and burgundy controls; Contrast
+uses the workspace's high-contrast roles. Short panes show one control with 48dp Previous/Next
+targets; instrument slots remain selectable on the left, with paging rather than tiny rows.
+
+![Game Boy pulse Sound face on Pocket DMG](media/gb-pulse-sound-dmg.png)
+
+Actual Pocket DMG capture, with a transient recovery-status message still visible.
+[Custom advanced patch, untouched in Sound](media/gb-pulse-custom-dmg.png).
+These are not Galaxy Fold8 captures or evidence of physical two-thumb comfort.
+
+The following measurements and APK identify the **historical isolated preview**, not the
+production package described above.
+
+**Verified for preview.2:** 1,154 shared-core tests and 24 Android host tests; signed APK
+installed and exercised on reserved Pocket DMG. Actual Activity key/touch dispatch covers
+musical edits, X audition, mode switching, grouped Undo, pointer invalidation and exact Custom
+patch preservation. All three themes were captured. Six native WAV renders confirm fading,
+steady and swelling loudness, steady/falling/rising pitch, and the rising sweep's eventual cutoff.
+Live diagnostics: zero xruns and driver faults in this short scenario; max callback 0.923 ms.
+This is not a long-session or physical speaker-listening claim.
+
+The eight original private recovery/workspace entries were cold-restored and independently
+byte-verified; test APK and UUID-owned external artifacts were removed, timeout restored to
+60000 ms, and DMG returned Home/asleep. Production app data and `/ThorTunez` were untouched.
+Builds were serialized and bounded; no emulator or local Kotlin/Native linking was used.
+No new Deck/Brick runtime proof is claimed for this Android preview.
+
+APK: `thor-tracker-0.42.0-touch-preview.2.apk`, code 57, arm64-v8a and x86_64.
+SHA-256: `5fbbf32f6185ebdb8e058f3124e5dd77e7301f800d79d5454504a5988300bdc8`.
+This historical APK updates only the separate preview. Use the current normal release for the
+approved functionality; the next artistic review is limited to Game Boy, SID and YM2612 pilots.
+
+### Previous 0.42.0-touch-preview.1 verification
+
+The production-signed preview passes **1,130 shared-core and 24 Android host tests**. The final
+segmented-cell boundary correction also passes the targeted Game Boy panel suite and signed build.
+The complete pulse/wave/noise [Game Boy panel](https://github.com/esko997/thortracker/blob/gameboy-panel-review-042/docs/INSTRUMENT_PANELS.md) is present; other instrument
+panels remain unchanged. OFF insertion advances by the configured entry step, Open asks before
+replacing the working song, and the editor canvas keeps its first touch pointer through reordered
+IDs and either lift order.
+
+On reserved Pocket DMG:
+- A **160-round** actual multitouch run covers held editing, multi-owner directions,
+  selection/copy/paste, cancellation and reversed lifts, with 640 audition calls and 27
+  first-pointer probes. Zero xruns/driver faults; max callback 6.588 ms.
+- The final Game Boy panel passes 19 parameter paths, 41 history cases, held-Edit Clear,
+  two pointer cases, 72 theme/zoom/size configurations and eight compact touch-navigation cases.
+  These include synthetic 360×270 cover and 720×352 inner editor viewports, not phone captures.
+- The permanent first-pointer regression passes against the final APK.
+- Actual built-in-controller sleep/wake and four second-gamepad add/remove cycles verify automatic
+  dock hiding/showing and reclaimed editor height on the final APK.
+
+The DMG's built-in pad normally hides the dock. The long touch scenario explicitly forces it visible
+as a **test fixture only**; production has no show override. Shell input-disable permission is denied
+and was not bypassed. Every completed run independently cold-verifies eight restored private
+recovery/workspace entries and removes its owned test package. Detailed harness corrections and
+stable/native evidence are in [Verification](https://github.com/esko997/thortracker/blob/gameboy-panel-review-042/docs/VERIFICATION.md).
+
+APK: `thor-tracker-0.42.0-touch-preview.1.apk`, code 56, arm64-v8a and x86_64.
+SHA-256: `1f8881cc2e0b32442242a19541907fd141487f07df97c40c46a670b93c791775`.
+Update the existing preview in place; do not uninstall it and lose its private/app-scoped files.
+
+### Previous 0.41.0 verification
+
+The production-signed, arm64 preview passes **19 host tests** and **13 real Android scenarios
+on reserved Pocket DMG**. The latter inject multi-pointer MotionEvents through Android's input
+dispatcher, using sparse physical-range IDs 0/2/4, plus hardware KeyEvents. They cover:
+
+- Held two-finger note adjustments and one grouped Undo, direction repeat, rolling releases,
+  mixed physical/virtual owners, cancellation and Home/background/foreground.
+- Held audition forwarded to native audio, native preparation and advancing playback. These
+  are not physical speaker-listening or phone latency measurements.
+- Both trigger layers, real touch-driven binding/conflict replacement and cancellation.
+- An actual notification-panel interruption: capture is canceled and the next unmodified R3
+  binding does not inherit an invisible L2. OEM window animations are disabled for this probe
+  and all three original animation settings are restored exactly afterward.
+- Native View measurement/rendering at all five cover/inner ratio profiles above, every dock
+  target's bounds, and held-input cancellation through the real resize callback.
+- Real provider save/open, JSON MIME and truncating overwrite. The actual Save As picker opens
+  directly on a uniquely marked preview root without choosing it from the sidebar.
+
+The same fast menu-tap scenario failed before the shared popup fix and passes afterward:
+starting a zero-distance scroll at the top of a menu intercepted the following tap. The fix
+avoids that animation; the test was not slowed down to hide the failure.
+
+Evidence is retained under
+`~/.local/state/thortracker/recovery-20261109/workflow-touch-041/preview-fold8-verified/`.
+The capture regression's before/after evidence and the 28-test production Android suite are
+recorded separately in `docs/VERIFICATION.md` on the stable integration branch. Disposable
+instrumentation is not shipped in the application. Production app data and `/ThorTunez` were
+not touched; the preview test package was removed and DMG settings restored.
+
+Build only this branch with the existing signed-release procedure, one bounded build at a
+time through `tools/build.sh --max-workers=1`. No emulator or local Kotlin/Native linking is
+needed. Do not merge the preview application identity or touch shell into production before
+ergonomics review.
+
+### Phone delivery and review
+
+The review APK uses a separate GitHub prerelease and immutable source tag, not the production
+latest release. A send-only Syncthing folder, `ThorTracker-Preview` (`thortracker-preview`),
+is offered only to the already paired phone. Accept that folder on the phone to receive APKs;
+this is APK delivery, **not song synchronization**. Installation remains a manual Android step.
+
+Review both folded and unfolded:
+
+1. A + directions for editing, X + directions for listening, Y selection, Select+B cut,
+   Undo/Redo, and L2/R2 separately and together. Check thumb reach and accidental presses.
+2. Drawer view changes, scale selection, dense effect/instrument editing, zoom and themes.
+3. Save/Open and WAV export using disposable songs and explicitly chosen backup destinations.
+4. Fold/unfold, rotate, open the phone keyboard, background/return and attach/detach a real
+   controller. No invisible hold, repeated edit or audition should survive an interruption.
+
+### Explicit preview limitations
+
+This is a real editing/audio/file preview, not the silent HTML study. It intentionally retains
+shared controller down-to-write and field-specific Clear semantics; it does not implement
+the landscape proposal's release-to-write pad, OFF confirmation or whole-cell editor.
+The canvas still lacks virtual per-cell TalkBack nodes and small direct canvas targets are
+unchanged. Dock/drawer controls have semantic labels and 48 dp targets; existing native menu
+rows remain 46 dp. This is not a complete accessible tracker redesign.
+
+Actual Fold8 density/zoom/insets, physical two-thumb comfort, fold transitions, IME fit,
+TalkBack, audible latency and full controller/dual-display parity still need review. Ratio
+renders on DMG are not phone captures. The provider is a flat preview root without folder
+creation/rename, and uninstalling the preview deletes its app-scoped files. No production
+data migration or production touch rollout is part of this branch.
+
 
 ## Initial landscape study
 

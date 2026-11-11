@@ -321,6 +321,19 @@ class HostInputTest {
             assertEquals(emptyList<Int>(), input.stick(1f to 1200, 0f to 1280, 1f to 1360, horizontal = horizontal))
     }
 
+    @Test fun forgettingOneSourcesKeysNamesOnlyEditorHoldsAndKeepsOtherOwners() {
+        val input = HostInput()
+        assertEquals(HostInput.Route.Editor(Action.EDIT), input.down(Keys.BUTTON_A))
+        assertEquals(HostInput.Route.Editor(Action.AUDITION), input.down(Keys.BUTTON_X))
+        input.down(Keys.BUTTON_L2)
+        assertEquals(null, input.forget(Keys.BUTTON_L2))
+        assertTrue(input.heldModifiers.isEmpty())
+        assertEquals(Action.EDIT, input.forget(Keys.BUTTON_A))
+        assertEquals("Already forgotten", null, input.forget(Keys.BUTTON_A))
+        // The surviving X keeps its owner: even under a popup opened since, its release still ends the Listen hold.
+        assertEquals(HostInput.Route.Editor(Action.AUDITION), input.up(Keys.BUTTON_X, popup = true))
+    }
+
     /** A key that is not a controller button (Android's KEYCODE_VOLUME_UP). */
     private val VOLUME_UP = 24
 }

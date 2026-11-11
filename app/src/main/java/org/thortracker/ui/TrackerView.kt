@@ -18,6 +18,7 @@ import org.thortracker.editor.ViewState
 class TrackerView(context: Context, session: EditorSession, state: ViewState) : View(context) {
     private val surface = CanvasSurface()
     val pane = PaneView(session, state, resources.displayMetrics.density, surface, AnimationUtils::currentAnimationTimeMillis, ::postInvalidateOnAnimation)
+    private var touchPointerId = -1
 
     val session: EditorSession get() = pane.session
     val controller get() = pane.controller
@@ -45,7 +46,7 @@ class TrackerView(context: Context, session: EditorSession, state: ViewState) : 
     }
 
     fun refresh() = pane.refresh()
-    fun cancelInteraction() = pane.cancelInteraction()
+    fun cancelInteraction() { touchPointerId = -1; pane.cancelInteraction() }
     fun controllerAction(action: org.thortracker.editor.Action, down: Boolean, repeat: Int) = pane.controllerAction(action, down, repeat)
     fun press(action: org.thortracker.editor.Action) = pane.press(action)
     fun release(action: org.thortracker.editor.Action) = pane.release(action)
@@ -76,18 +77,30 @@ class TrackerView(context: Context, session: EditorSession, state: ViewState) : 
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = event.x
-        val y = event.y
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val handled = pane.touchDown(x, y)
+                val handled = pane.touchDown(event.x, event.y)
+                touchPointerId = if (handled) event.getPointerId(0) else -1
                 if (handled) parent?.requestDisallowInterceptTouchEvent(true)
                 return handled
             }
-            MotionEvent.ACTION_MOVE -> pane.touchMove(x, y)
-            MotionEvent.ACTION_UP -> pane.touchUp(x, y)
-            MotionEvent.ACTION_CANCEL -> pane.touchCancel()
+            MotionEvent.ACTION_MOVE -> {
+                if (touchPointerId >= 0) {
+                    val index = event.findPointerIndex(touchPointerId)
+                    if (index >= 0) pane.touchMove(event.getX(index), event.getY(index))
+                    else { touchPointerId = -1; pane.touchCancel() }
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP -> {
+                val index = event.actionIndex
+                if (event.getPointerId(index) == touchPointerId) {
+                    touchPointerId = -1
+                    pane.touchUp(event.getX(index), event.getY(index))
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> { touchPointerId = -1; pane.touchCancel() }
         }
-        return pane.touchActive || event.actionMasked == MotionEvent.ACTION_UP
+        // Other fingers never take over a gesture accepted by this single-pointer editor.
+        return true
     }
 }

@@ -3,7 +3,7 @@
  * This translation unit includes binjgb's emulator.c so it can drive the CPU directly
  * (call a driver entry point with a sentinel return address), skip idle time while seeking
  * and snapshot/restore the power-on state without allocation. binjgb itself is unmodified
- * apart from the documented float audio buffer patch. */
+ * apart from the documented float audio buffer and envelope ceiling patches. */
 #ifndef NDEBUG
 #define NDEBUG 1 /* binjgb asserts must never abort the app */
 #endif

@@ -100,6 +100,72 @@ class ControllerWorkflowTest {
         instrumentation.runOnMainSync { apply.invoke(activity, Keymap.DEFAULT, null) }
     }
 
+    @Test fun patternTouchKeepsItsFirstPointerWhenFingersLiftOrReorder() {
+        instrumentation.runOnMainSync {
+            val before = tracker.session.song
+            val bitmap = android.graphics.Bitmap.createBitmap(tracker.width, tracker.height, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            data class Finger(val id: Int, val y: Float)
+            val first = Finger(0, tracker.height * .35f)
+            val second = Finger(2, tracker.height * .65f)
+            fun send(action: Int, vararg fingers: Finger) {
+                val props = fingers.map { finger -> MotionEvent.PointerProperties().apply {
+                    id = finger.id; toolType = MotionEvent.TOOL_TYPE_FINGER
+                } }.toTypedArray()
+                val coords = fingers.map { finger -> MotionEvent.PointerCoords().apply {
+                    x = tracker.width * .3f; y = finger.y; pressure = 1f; size = 1f
+                } }.toTypedArray()
+                val now = SystemClock.uptimeMillis()
+                val event = MotionEvent.obtain(now, now, action, fingers.size, props, coords,
+                    0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+                try { tracker.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+            fun reset() {
+                tracker.cancelInteraction()
+                tracker.state.row = 0
+                tracker.state.channel = 0
+                tracker.refresh()
+                tracker.draw(canvas)
+            }
+            fun position() = tracker.state.row to tracker.state.channel
+            try {
+                reset()
+                send(MotionEvent.ACTION_DOWN, first)
+                send(MotionEvent.ACTION_UP, first)
+                val expected = position()
+                reset()
+                send(MotionEvent.ACTION_DOWN, second)
+                send(MotionEvent.ACTION_UP, second)
+                assertNotEquals("Probe points select different cells", expected, position())
+                for (firstLiftsFirst in listOf(true, false)) {
+                    reset()
+                    send(MotionEvent.ACTION_DOWN, first)
+                    send(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), first, second)
+                    send(MotionEvent.ACTION_MOVE, second, first) // array order is not pointer ownership
+                    if (firstLiftsFirst) {
+                        send(MotionEvent.ACTION_POINTER_UP, first, second)
+                        send(MotionEvent.ACTION_MOVE, second)
+                        send(MotionEvent.ACTION_UP, second)
+                    } else {
+                        send(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), first, second)
+                        send(MotionEvent.ACTION_UP, first)
+                    }
+                    assertEquals("The original finger chooses the cell", expected, position())
+                    assertFalse(tracker.pane.touchActive)
+                    assertEquals(before, tracker.session.song)
+                }
+                reset()
+                send(MotionEvent.ACTION_DOWN, first)
+                tracker.cancelInteraction()
+                val canceled = position()
+                send(MotionEvent.ACTION_UP, second)
+                assertEquals("A canceled gesture cannot transfer to another finger", canceled, position())
+                assertFalse(tracker.pane.touchActive)
+                assertEquals(before, tracker.session.song)
+            } finally { bitmap.recycle() }
+        }
+    }
+
     @Test fun heldNoteAdjustmentIsOneUndoStep() {
         val before = tracker.session.song
         down(KeyEvent.KEYCODE_BUTTON_A)
@@ -164,7 +230,6 @@ class ControllerWorkflowTest {
             up(KeyEvent.KEYCODE_BUTTON_THUMBR)
         }
     }
-
     private fun assertInputInterruption(interrupt: () -> Unit) {
         chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_Y) // Keyboard
         val audio = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
@@ -544,6 +609,33 @@ class ControllerWorkflowTest {
         assertEquals(before, tracker.session.song)
     }
 
+    @Test fun projectSaveUsesNormalSafWithoutAnAppScopedRoot() {
+        var launched: Intent? = null
+        val picker = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_CREATE_DOCUMENT) return null
+                launched = Intent(intent)
+                return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        try {
+            instrumentation.addMonitor(picker)
+            openFiles()
+            clickRow("Save as…")
+            instrumentation.waitForIdleSync()
+            val intent = requireNotNull(launched) { "Save as did not launch the system document picker" }
+            assertTrue(intent.hasCategory(Intent.CATEGORY_OPENABLE))
+            assertEquals("application/octet-stream", intent.type)
+            assertFalse(intent.hasExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI))
+            val grants = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            assertEquals(grants, intent.flags and grants)
+            assertTrue(requireNotNull(intent.getStringExtra(Intent.EXTRA_TITLE)).endsWith(".thor"))
+        } finally {
+            instrumentation.removeMonitor(picker)
+        }
+    }
+
     @Test fun finishingAnOlderSaveDoesNotAttachItsDestinationToANewSong() {
         val original = tracker.session.song
         val destination = File(activity.cacheDir, "late-save-${System.nanoTime()}.thor")
@@ -791,7 +883,7 @@ class ControllerWorkflowTest {
             tracker.state.sketchCircle = false
             tracker.state.octave = 4
         }
-        clickHostButton("Pattern")
+        clickToolbarButton("Pattern")
         clickRow("Sketch")
         // View selection leaves the controller in the revealed toolbar until Back returns it to the editor.
         tap(KeyEvent.KEYCODE_BACK)
@@ -846,17 +938,23 @@ class ControllerWorkflowTest {
         instrumentation.runOnMainSync { audioField.set(activity, engine) }
     }
 
-    private fun clickHostButton(text: String) {
+    private fun clickToolbarButton(text: String) {
         fun find(view: View): android.widget.Button? {
             if (view is android.widget.Button && view.text.toString() == text) return view
             if (view is ViewGroup) for (index in 0 until view.childCount) find(view.getChildAt(index))?.let { return it }
             return null
         }
+        fun toolbar(view: View): org.thortracker.ui.ShellToolbar? {
+            if (view is org.thortracker.ui.ShellToolbar) return view
+            if (view is ViewGroup) for (index in 0 until view.childCount) toolbar(view.getChildAt(index))?.let { return it }
+            return null
+        }
+        fun button() = toolbar(activity.window.decorView)?.let(::find)
         var shown = false
-        instrumentation.runOnMainSync { shown = find(activity.window.decorView)?.isShown == true }
+        instrumentation.runOnMainSync { shown = button()?.isShown == true }
         if (!shown) chord(KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START)
         instrumentation.runOnMainSync {
-            val button = checkNotNull(find(activity.window.decorView))
+            val button = checkNotNull(button())
             check(button.isShown) { "Toolbar button is hidden: $text" }
             button.performClick()
         }
