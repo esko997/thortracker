@@ -5,6 +5,7 @@ import org.junit.Test
 import org.thortracker.backend.YmLowering
 import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
+import org.thortracker.editor.NameEdit
 import org.thortracker.editor.PaneZoom
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
@@ -168,10 +169,126 @@ class YmSoundFaceTest {
         assertEquals(-1, v.state.instField)
         v.tap(Action.LEFT)
         assertFalse(v.state.ymPanel.advanced)
+        // Sound's mode row: bare Down chooses the next slot and keeps the mode focused; Right enters the ring at Name.
         v.tap(Action.DOWN)
-        assertEquals(0, v.state.instField)
+        assertEquals(-1, v.state.instField)
+        assertEquals(2, v.state.instrument)
+        v.tap(Action.RIGHT)
+        assertEquals(1, v.state.instField)
         v.tap(Action.NEXT_CHANNEL)
         assertEquals(3, v.state.instField)
+        assertSame(before, session.song)
+    }
+
+    @Test fun soundBareAxesChooseSlotsAndCycleParametersWithoutEditing() {
+        val session = session()
+        session.setYmInstrument(2, patch(2), "Fixture")
+        val v = view(session, 3)
+        val before = session.song
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instrument); assertEquals(3, v.state.instField)
+        v.tap(Action.UP)
+        assertEquals(1, v.state.instrument); assertEquals(3, v.state.instField)
+        v.tap(Action.UP)
+        assertEquals(1, v.state.instrument); assertEquals(3, v.state.instField)
+        for (field in listOf(4, 5, 6, -1, 1, 2, 3)) { v.tap(Action.RIGHT); assertEquals(field, v.state.instField) }
+        for (field in listOf(2, 1, -1, 6, 5, 4, 3)) { v.tap(Action.LEFT); assertEquals(field, v.state.instField) }
+        assertFalse(v.state.ymPanel.advanced)
+        repeat(3) { v.tap(Action.LEFT) }
+        assertEquals(-1, v.state.instField)
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instrument); assertEquals(-1, v.state.instField)
+        v.tap(Action.UP)
+        assertEquals(1, v.state.instrument); assertEquals(-1, v.state.instField)
+        assertFalse(v.state.ymPanel.advanced)
+        assertSame(before, session.song)
+        // On the mode row only Edit chooses the face, and the mode stays focused.
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertTrue(v.state.ymPanel.advanced); assertEquals(-1, v.state.instField)
+        v.tap(Action.EDIT)
+        assertFalse(v.state.ymPanel.advanced); assertEquals(-1, v.state.instField)
+        v.press(Action.EDIT); v.tap(Action.LEFT); v.release(Action.EDIT)
+        assertFalse(v.state.ymPanel.advanced); assertEquals(-1, v.state.instField)
+        assertSame(before, session.song)
+    }
+
+    @Test fun nameEditsLettersWithHeldHorizontalAndMovesCaretWithHeldVerticalWithinTheLimit() {
+        val session = session()
+        val v = view(session, 1)
+        val before = session.song
+        val max = YmInstrumentView.NAME_MAX
+        v.press(Action.EDIT)
+        repeat(max + 3) { v.tap(Action.DOWN) }
+        assertEquals(max - 1, v.state.textPos)
+        v.tap(Action.UP)
+        assertEquals(max - 2, v.state.textPos)
+        repeat(max + 3) { v.tap(Action.UP) }
+        assertEquals(0, v.state.textPos)
+        v.release(Action.EDIT)
+        assertSame(before, session.song)
+        assertEquals(1, v.state.instrument); assertEquals(1, v.state.instField)
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        val first = NameEdit.edit("Keep me", 0, 1, max)
+        assertEquals(before.ymInstrument(1)!!.named(first), session.song.ymInstrument(1))
+        v.press(Action.EDIT)
+        repeat(max) { v.tap(Action.DOWN) }
+        v.tap(Action.LEFT)
+        v.release(Action.EDIT)
+        assertEquals(max - 1, v.state.textPos)
+        val last = session.song.ymInstrument(1)!!.name
+        assertEquals(NameEdit.edit(first, max - 1, -1, max), last)
+        assertTrue(last.length <= max)
+        session.undo(); session.undo()
+        assertSame(before, session.song)
+        // Bare Left leaves the name through the ring; bare Down chooses a slot and keeps the name focused.
+        v.tap(Action.LEFT)
+        assertEquals(-1, v.state.instField); assertEquals(0, v.state.textPos)
+        v.tap(Action.RIGHT)
+        assertEquals(1, v.state.instField)
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instrument); assertEquals(1, v.state.instField)
+        // An empty slot has no name to edit; letters never create a sound.
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertSame(before, session.song)
+    }
+
+    @Test fun soundStillCreatesEmptySlotsByShapingAControlOrEditOnTheSlot() {
+        val session = session()
+        val v = view(session, 2)
+        v.tap(Action.DOWN)
+        assertEquals(2, v.state.instrument); assertNull(session.song.ymInstrument(2))
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertEquals(YmSoundMacros.step(YmSoundControl.BRIGHTNESS, defaultYmFm(2), 1), session.song.ymInstrument(2))
+        v.tap(Action.DOWN)
+        assertNull(session.song.ymInstrument(3))
+        v.state.instField = 0
+        v.tap(Action.EDIT)
+        assertTrue(session.song.ymInstrument(3) is YmFmInstrument)
+        assertEquals(0, v.state.instField)
+    }
+
+    @Test fun advancedKeepsItsPreciseRowNavigation() {
+        val session = session()
+        session.setYmInstrument(2, patch(1), "Fixture")
+        val v = view(session, 0)
+        YmSoundFace.selectMode(v, true)
+        v.state.instField = 0
+        val before = session.song
+        v.tap(Action.RIGHT)
+        assertEquals(2, v.state.instrument); assertEquals(0, v.state.instField)
+        v.tap(Action.DOWN)
+        assertEquals(1, v.state.instField)
+        v.tap(Action.RIGHT)
+        assertEquals(1, v.state.textPos)
+        repeat(3) { v.tap(Action.DOWN) }
+        assertEquals(4, v.state.instField)
+        v.tap(Action.RIGHT)
+        assertEquals(YmInstrumentView.Page.EXPERT, YmInstrumentView.page(session.song, v.state))
+        repeat(5) { v.tap(Action.UP) }
+        assertEquals(-1, v.state.instField)
+        assertTrue(v.state.ymPanel.advanced)
+        v.tap(Action.DOWN)
+        assertEquals(0, v.state.instField); assertEquals(2, v.state.instrument)
         assertSame(before, session.song)
     }
 
@@ -192,15 +309,26 @@ class YmSoundFaceTest {
         assertSame(before, session.song)
     }
 
+    /** Records draw calls that start inside the left column ([columnRight], below [columnTop]) while [ops] is set. */
     private class Canvas : Surface {
-        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) {}
-        override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) {}
-        override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) {}
-        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) {}
-        override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) {}
-        override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) {}
-        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {}
-        override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) {}
+        var ops: MutableList<String>? = null
+        var columnRight = 0f
+        var columnTop = 0f
+        private fun keep(l: Float, t: Float, op: () -> String) { if (l < columnRight - 0.01f && t >= columnTop - 0.01f) ops?.add(op()) }
+        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) = keep(l, t) { "fill $l $t $r $b $color" }
+        override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) = keep(l, t) { "round $l $t $r $b $radius $color" }
+        override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) =
+            keep(l, t) { "stroke $l $t $r $b $color $width $radius" }
+        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) =
+            keep(minOf(x0, x1), minOf(y0, y1)) { "line $x0 $y0 $x1 $y1 $color $width" }
+        override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) = keep(cx - radius, cy - radius) { "circle $cx $cy $radius $color" }
+        override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) =
+            keep(cx - radius, cy - radius) { "ring $cx $cy $radius $color $width" }
+        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {
+            if (count > 0) keep((0 until count).minOf { xs[it] }, (0 until count).minOf { ys[it] }) { "poly ${xs.take(count)} ${ys.take(count)} $color" }
+        }
+        override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) =
+            keep(x, top) { "text $s $x $top $h $color $face $bold $size $align" }
         override fun textWidth(s: String, face: Face, bold: Boolean, size: Float): Float = s.length * size / 2
     }
 
@@ -299,12 +427,73 @@ class YmSoundFaceTest {
                 }
                 assertNotNull(panel.painter.slotRect(1))
                 assertNotNull(panel.painter.slotRect(2))
-                panel.tap(panel.painter.slotNavigationRect(true)); panel.draw()
+                val field = panel.state.instField
+                val stepper = panel.painter.slotNavigationRect(true)!!
+                assertTrue(stepper.width() >= 48 * density - .001f && stepper.height() >= 48 * density - .001f)
+                panel.tap(stepper); panel.draw()
                 assertEquals(2, panel.state.instrument)
+                assertEquals(field, panel.state.instField)
                 assertNotNull(panel.painter.slotRect(2))
                 assertSame(before, session.song)
             }
         }
+    }
+
+    @Test fun soundAndAdvancedDrawTheExactSameLeftColumn() {
+        val session = session()
+        session.setYmInstrument(2, patch(2).named("Second"), "Fixture")
+        session.setYmInstrument(4, defaultYmPsg(4), "PSG")
+        session.setYmInstrument(5, defaultYmPcm(5), "PCM")
+        for ((width, height, density) in listOf(Triple(360, 270, 1f), Triple(960, 720, 1f), Triple(1024, 768, 2f))) {
+            for (zoom in listOf(PaneZoom.NORMAL, PaneZoom.LARGEST)) for (slot in listOf(1, 40)) for (field in listOf(0, 3)) {
+                val panel = Panel(session, width, height, density, zoom)
+                panel.state.instrument = slot
+                fun column(advanced: Boolean): List<String> {
+                    YmSoundFace.selectMode(panel.pane.controller, advanced)
+                    panel.state.instField = field
+                    panel.draw()
+                    panel.surface.columnRight = panel.painter.slotRect(slot)!!.right
+                    panel.surface.columnTop = panel.painter.modeRect(false)!!.bottom
+                    val ops = ArrayList<String>()
+                    panel.surface.ops = ops
+                    panel.draw()
+                    panel.surface.ops = null
+                    return ops
+                }
+                val sound = column(false)
+                val advanced = column(true)
+                assertTrue(sound.any { it.startsWith("text Sound ${EditorSession.hex2(slot)} ") })
+                assertTrue(sound.any { it.startsWith("text ${EditorSession.hex2(slot)} ") })
+                assertEquals("$width x $height/$density/$zoom slot $slot field $field", advanced, sound)
+            }
+        }
+    }
+
+    @Test fun sharedColumnTapsChooseSlotsKeepingSoundFocusWhileAdvancedTapsStillFocusTheSlotRow() {
+        val session = session()
+        session.setYmInstrument(3, patch(1), "Fixture")
+        val before = session.song
+        val panel = Panel(session, 960, 720)
+        panel.state.instField = 4
+        panel.draw()
+        panel.tap(panel.painter.slotRect(3)!!); panel.draw()
+        assertEquals(3, panel.state.instrument); assertEquals(4, panel.state.instField)
+        assertFalse(panel.state.ymPanel.advanced)
+        panel.tap(panel.painter.slotNavigationRect(false)!!); panel.draw()
+        assertEquals(2, panel.state.instrument); assertEquals(4, panel.state.instField)
+        panel.tap(panel.painter.nameTarget()!!)
+        assertEquals(1, panel.state.instField)
+        panel.draw()
+        val fifth = panel.painter.slotRect(5)!!
+        val bounds = listOf(fifth.left, fifth.top, fifth.right, fifth.bottom)
+        YmSoundFace.selectMode(panel.pane.controller, true)
+        panel.draw()
+        val advanced = panel.painter.slotRect(5)!!
+        assertEquals(bounds, listOf(advanced.left, advanced.top, advanced.right, advanced.bottom))
+        panel.tap(advanced)
+        assertEquals(5, panel.state.instrument); assertEquals(0, panel.state.instField)
+        assertTrue(panel.state.ymPanel.advanced)
+        assertSame(before, session.song)
     }
 
     @Test fun unavailableControlsAreReadOnlyByTouchAndController() {

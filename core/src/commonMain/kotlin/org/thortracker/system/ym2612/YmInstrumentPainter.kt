@@ -36,31 +36,53 @@ import org.thortracker.ui.Surface
 internal class YmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private val plot = EnvelopePlot(ink)
 
-    override fun draw(c: Surface, area: Rect) {
+    /**
+     * The header and slot bank exactly as Advanced shows them, the bank in [col] with the selected slot outlined when
+     * [focused]. Sound draws this same column, so the left side never changes between faces. Returns the bank column;
+     * its top is the header's bottom.
+     */
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
         val s = song
-        val ins = YmInstrumentView.sound(s, st)
-        val page = YmInstrumentView.page(s, st)
-        val listen = YmInstrumentView.listenChannel(st, ins, page)
-        val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val kind = when (ins) {
+        val kind = when (val ins = YmInstrumentView.sound(s, st)) {
             is YmFmInstrument -> "FM · " + YmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].name
             is YmPsgInstrument -> "PSG sound"
             is YmPcmInstrument -> "PCM kit"
             null -> "empty slot"
         }
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "Mega Drive · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, YmSystem.SLOTS, col, focused) { i ->
+            s.ym.instrument(i)?.let {
+                it.name.ifEmpty { "(unnamed)" } + when (it) { is YmPsgInstrument -> " ᴾ"; is YmPcmInstrument -> " ᴷ"; else -> "" }
+            }
+        }
+    }
+
+    /** The bank slot at ([x], [y]) in the last drawn column, as the shared touch handling reads it; 0 when none. */
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, YmSystem.SLOTS) else 0
+
+    /** Where the last drawn column shows [slot], or null while it is scrolled out of view. */
+    internal fun slotBounds(slot: Int): Rect? {
+        val k = slot - 1 - slotScroll
+        if (slotRect.width() <= 0f || k < 0 || slot > YmSystem.SLOTS || slotTop + (k + 1) * slotH > slotRect.bottom + 0.5f) return null
+        return Rect(slotRect.left, slotTop + k * slotH, slotRect.right, slotTop + (k + 1) * slotH)
+    }
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val ins = YmInstrumentView.sound(s, st)
+        val page = YmInstrumentView.page(s, st)
+        val listen = YmInstrumentView.listenChannel(st, ins, page)
+        val col = ink.palette.channel(listen)
         val row = YmInstrumentView.row(s, st)
         val allRows = YmInstrumentView.rows(s, st)
         rowRects.clear()
         gridCells.clear()
         plot.hide()
 
-        val left = drawBank(c, area, top, YmSystem.SLOTS, col, row == Row.SLOT) { i ->
-            s.ym.instrument(i)?.let {
-                it.name.ifEmpty { "(unnamed)" } + when (it) { is YmPsgInstrument -> " ᴾ"; is YmPcmInstrument -> " ᴷ"; else -> "" }
-            }
-        }
+        val left = drawSidebar(c, area, col, row == Row.SLOT)
+        val top = left.top
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
