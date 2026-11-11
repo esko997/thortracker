@@ -113,6 +113,27 @@ class TiaSoundFaceTest {
         assertEquals(TiaInstrumentView.NAME_MAX - 1, v.state.textPos)
     }
 
+    @Test fun heldCharacterAndTrackingChangesRestartTheAcceptedPatch() {
+        for (control in 0..1) {
+            val s = session(); val v = view(s)
+            v.state.instField = control + 2
+            v.state.listenChannel = 1
+            val heard = ArrayList<Pair<Int, TiaInstrument?>>()
+            s.onAudition = { lane, _, slot, _ -> heard += lane to s.song.tiaInstrument(slot) }
+            val old = s.song
+            v.press(Action.EDIT)
+            assertEquals(1 to old.tiaInstrument(1), heard.single())
+            v.tap(Action.RIGHT)
+            val changed = s.song.tiaInstrument(1)!!
+            assertEquals(if (control == 0) patch().copy(waveform = 4) else patch().copy(raw = true), changed)
+            assertEquals(2, heard.size)
+            assertEquals(1 to changed, heard.last())
+            v.release(Action.EDIT)
+            s.undo()
+            assertSame(old, s.song)
+        }
+    }
+
     @Test fun heldEditIsBlockedAcrossModesSlotsAndFollowUntilRelease() {
         val s = session(); val v = view(s)
         val old = s.song

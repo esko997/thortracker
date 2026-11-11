@@ -37,8 +37,10 @@ internal object PokeySoundFace {
         if (!PokeySoundMacros.enabled(v.session.song, ins, n, PokeyInstrumentView.listenChannel(v.state, ins))) return
         val next = PokeySoundMacros.apply(v.session.song, ins, n, value, PokeyInstrumentView.listenChannel(v.state, ins))
         if (next === ins && PokeyInstrumentView.sound(v.session.song, v.state) != null) return
+        // A kind change blocks the next held edit, not the audition of this accepted change.
+        val restart = v.auditionHeld || (v.editHeld && !panel(v.state).editBlocked && v.state.instField >= 2)
         if (n == 0 && next != ins) invalidate(v)
-        if (v.session.setPokeyInstrument(v.state.instrument, next, "Shape sound")) heard(v)
+        if (v.session.setPokeyInstrument(v.state.instrument, next, "Shape sound") && restart) PokeyInstrumentView.audition(v)
     }
     fun direction(v: ViewController, dx: Int, dy: Int): Boolean {
         val st = v.state

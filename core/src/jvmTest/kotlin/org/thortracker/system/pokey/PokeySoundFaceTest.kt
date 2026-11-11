@@ -121,6 +121,34 @@ class PokeySoundFaceTest {
         assertEquals(PokeyInstrumentView.NAME_MAX - 1, v.state.textPos)
     }
 
+    @Test fun acceptedHeldVoiceChangeRestartsTheNewPatchOnItsEffectiveLaneBeforeBlockingFurtherEdits() {
+        val s = session(); val v = view(s)
+        v.state.instField = 2
+        v.state.listenChannel = 0
+        val heard = ArrayList<Pair<Int, PokeyInstrument?>>()
+        s.onAudition = { lane, _, slot, _ -> heard += lane to s.song.pokeyInstrument(slot) }
+        val old = s.song
+        v.press(Action.EDIT)
+        assertEquals(0 to old.pokeyInstrument(1), heard.single())
+        v.tap(Action.RIGHT)
+        val joined = s.song
+        assertEquals(PokeyKind.JOINED, joined.pokeyInstrument(1)!!.kind)
+        assertEquals(2, heard.size)
+        assertEquals(1 to joined.pokeyInstrument(1), heard.last())
+        assertTrue(PokeySoundFace.panel(v.state).editBlocked)
+        v.tap(Action.RIGHT)
+        assertSame(joined, s.song)
+        assertEquals(2, heard.size)
+        v.release(Action.EDIT)
+        assertFalse(PokeySoundFace.panel(v.state).editBlocked)
+        s.undo()
+        assertSame(old, s.song)
+        s.redo()
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertEquals(PokeyKind.FILTERED, s.song.pokeyInstrument(1)!!.kind)
+        assertEquals(0 to s.song.pokeyInstrument(1), heard.last())
+    }
+
     @Test fun heldEditCannotCrossModeSlotKindOrExternalFollow() {
         val s = session(); val v = view(s)
         v.state.instField = 3
