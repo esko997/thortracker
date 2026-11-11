@@ -311,6 +311,37 @@ class ViewControllerTest {
     }
 
     @Test
+    fun fieldClearPreservesClipboardWhileCutMovesWholeCellsIncludingHiddenEffects() {
+        session.replaceSong(org.thortracker.system.opl3.Opl3System.blank())
+        val source = Cell(note = 48, instrument = 1, effect = 0xC, param = 0x20)
+            .withEffect(3, 0x4, 0x12)
+        session.setCell(0, 0, 0, source)
+        val v = view(ViewKind.PATTERN)
+        v.state.effectColumns = listOf(1)
+        v.tap(Action.COPY)
+        v.state.field = 2
+        v.tap(Action.CLEAR)
+        assertEquals(source.withEffect(0, 0, 0), cell(0, 0, 0))
+        v.state.row = 2
+        v.tap(Action.PASTE)
+        assertEquals("Paste still uses the phrase copied before Clear", source, cell(0, 0, 2))
+        v.tap(Action.UNDO)
+        assertEquals(Cell(), cell(0, 0, 2))
+        v.tap(Action.UNDO)
+        v.state.row = 0
+        assertEquals(source, cell(0, 0, 0))
+        v.tap(Action.CUT)
+        assertEquals(Cell(), cell(0, 0, 0))
+        v.state.row = 4
+        v.tap(Action.PASTE)
+        assertEquals("Cut/paste includes hidden column four, not only the effect field", source, cell(0, 0, 4))
+        v.tap(Action.UNDO)
+        assertEquals(Cell(), cell(0, 0, 4))
+        v.tap(Action.UNDO)
+        assertEquals(source, cell(0, 0, 0))
+    }
+
+    @Test
     fun soundNumberNeedsANote() {
         val v = view(ViewKind.PATTERN) { field = 1 }
         v.hold(Action.EDIT, Action.RIGHT)

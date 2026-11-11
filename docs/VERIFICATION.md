@@ -1,4 +1,135 @@
-# Thor Tracker verification — 2026-11-10
+# Thor Tracker verification — 2026-11-11
+
+## 0.41.0 — TIA four columns and workflow hardening
+
+**Version 0.41.0/code 55 is published.** TIA NTSC and PAL now
+accept four ordered effect columns per channel. The registry's 43 systems comprise **2
+one-column, 3 two-column and 38 four-column variants**. Project/backend/image schemas are
+unchanged; old two-column TIA players reject third/fourth-column content rather than silently
+dropping it. This adds no voices or 6507 driver, and WAV export is not cartridge CPU-budget proof.
+
+The TIA carried-state/inspector and fine-pitch adapters follow the real player's ordering:
+last G00 cancels an earlier delay, a later slide clears portamento, the last P controls detune,
+and returning an upward tuning to a coarse note retains P80 where removal would uncover an
+earlier P. Help clarifies Columns, hidden effects and active shortcuts. **B remains Clear;
+Select+B remains Cut cell/block.** Focus loss or controller removal/change cancels held edit,
+Listen and modifier state without synthesizing a tap; focus-only cancellation does not stop
+transport, whereas Activity pause does. Interrupted shortcut capture is also canceled, including
+configuration changes: an invisible held modifier cannot leak into the next binding attempt.
+Menus no longer start a zero-distance scroll when already at the top: that animation could
+swallow the next fast tap. The touch-preview package's unchanged real Save As scenario fails
+before this shared popup fix and passes afterward, without a compensating test delay. The
+stable APK containing the same fix separately passes all 28 permanent Android contracts.
+
+### Automated candidate evidence
+
+- **1,112 core JVM and 8 Android host tests pass.**
+- **All 29 native suites pass**, including **3,786 TIA checks and 2,796 WAV checks**.
+  Optional EPSM/OPNA rhythm-ROM checks are explicitly **skipped because no ROM is installed**;
+  they are not passing firmware-backed evidence.
+- Independent TIA verification covers **1,500 ticks**, NTSC/PAL pitch, and **four new
+  192-tick static/live-write and cadence comparisons**. Both region-specific four-second CLI
+  WAV exports complete.
+- An additional native NES continuity probe compares FDS/S5B no-op live image application:
+  **408,926 interleaved stereo float samples are bit-identical**. Edited-future register-write
+  positions agree within **two CPU clocks**, but their PCM is **not bit-identical**.
+  Do not extend the no-op PCM result to edited/relocated songs.
+- **172/172 existing sample exports are byte-identical to 0.40.0**, with no added or removed
+  exports. Evidence: `workflow-touch-041/sample-compatibility.json` under the recovery root.
+
+### Actual Android workflows
+
+- **Nova, full-song:** real controller input composes a three-order arrangement using Repeat,
+  Clone and loop selection, copy/cut/paste and Undo. Actual project save/reopen, Activity
+  recreation, advancing playback and UGE export pass. WAV follows **Files → Export .wav →
+  length → WAV ready → Save .wav… → DocumentsUI**; saved RIFF/PCM passes format/data-length,
+  AC-energy and first-200ms checks and its bytes match an independent native render.
+- **Konkr, TIA NTSC/PAL:** actual fourth-slot editing changes **F06 → F07 during playback**;
+  playback keeps advancing without errors. Both projects pass real SAF save/reopen and
+  Activity recreation with all four columns preserved. Pattern and Controls/Effects Help
+  captures are retained. The actual PAL SAF WAV has the same PCM as the independent render.
+- **Konkr permanent Android contracts:** **28 tests, zero failures**. The new capture regression
+  fails on the preserved unfixed candidate and passes after the fix, covering focus loss,
+  controller removal/change and configuration changes, followed by actual unmodified R3 audition.
+- **Nova interruption regressions:** the same three focused probes fail on exact **0.40.0**
+  baseline and pass on **0.41.0**: held edit across focus loss, held Listen across focus loss,
+  and a held modifier across the disconnect callback. The harness first removed an invalid
+  assumption that a canceled key-up must be consumed. These are real Activity callback/input
+  probes, **not claims of physical controller disconnection testing**.
+
+Every run cold-restores the **eight original private entries**, removes its temporary test
+package and restores device settings. Document cleanup is restricted to the logged UUID-owned
+filenames: three for full-song (`.thor`, `.uge`, `.wav`), three for TIA (two `.thor`, one `.wav`).
+Activity recreation in the workflow is distinct from the cold-process restoration proof.
+Saved WAV energy is not an AAudio-output or speaker-listening measurement.
+
+Evidence is retained under
+`~/.local/state/thortracker/recovery-20261109/workflow-touch-041/`:
+`candidate-device-v2/` contains workflow/callback transcripts, captures, owned exports and
+restoration receipts; `native/` contains the native run artifacts, alongside the independent
+TIA/NES probe evidence and NTSC/PAL CLI WAVs in the recovery root. External harnesses/probes
+are not production source. Builds and devices remain serialized and memory-capped.
+
+### Separate portrait preview and remaining gates
+
+The portrait preview remains a **separate package and branch**, not production touch support.
+**19 host tests and 13 real Android scenarios pass on DMG**, which is a functional testbed only.
+The design target is **Galaxy Fold8**, with a 144 dp three-row dock and bounded thumb groups.
+Five native cover/inner ratio renders pass geometry checks, alongside real multitouch,
+binding capture, interruption, provider and Save As picker workflows. These are not phone
+captures or physical ergonomics verification. Next is joint prototype review and soft-launch
+hardening, not new backends. Swing, mixer ceilings, pattern-local mute and shaders remain deferred.
+
+The [isolated preview APK, source and review notes](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)
+are published under immutable tag `touch-preview-0.41.0-1` (`1a5e049`). The downloaded APK
+matches SHA-256 `ba4c43de14325642a26404217caba70acbf93aab2a599f43c2100f671fe13e99`,
+uses the production signing certificate, and installs as `org.thortracker.touchpreview`,
+version `0.41.0-touch-preview.1`/code 55, arm64 only. DMG has a clean review installation.
+The phone-only `ThorTracker-Preview` Syncthing outbox contains the same APK and checksum;
+phone receipt/installation is not claimed. Its app-scoped document root is deleted on uninstall.
+Production version checks exclude this separate-package prerelease.
+
+### Official publication and delivery
+
+PR #55 merged as main `089ac739266c60c33b4d3f4fcac554c10cc69c35`.
+All five jobs in [publication run 42926200711](https://github.com/esko997/thortracker/actions/runs/42926200711)
+pass: build, Deck, Brick, signed release and native attachment. The
+[official 0.41.0 release](https://github.com/esko997/thortracker/releases/tag/v0.41.0)
+contains verified checksum sidecars:
+
+- APK: `c2bbcf07bb78237e7b4c4af601da31d6ef68b9507c034fd3877ac14569834aa2`
+- AppImage: `a0f41cbe2d9f4bd4991722e2e908055a541406b1a7bff0e4a360e8fa1285a161`
+- Brick Pak: `5386021e67ee007d069ced0608aab691c8af95317cdd9d614737dd0cd2c821bf`
+
+The APK is `org.thortracker`, version 0.41.0/code 55, non-debuggable, with arm64-v8a/x86_64
+libraries and production certificate
+`d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`.
+The 24-entry Pak passes CRC checks and retains executable launcher/AArch64 payload permissions.
+
+The **published APK** repeats full-song composition/save/reopen/UGE/WAV on Nova and both TIA
+regions' four-column/live-edit/save/reopen/PAL WAV workflows on Konkr and DMG. Their exported
+WAVs are byte-identical to the earlier independently rendered fixtures. Original eight-entry
+private state is cold-restored, UUID-owned documents and test packages removed, and settings
+restored. Final read-only checks show 0.41.0/code 55 on all three, 60,000 ms timeouts, Nova/Konkr
+Asleep and DMG Dozing. The separate DMG preview remains installed. Nova's first reservation
+deferred to a brief PS2-card sync lease; no app test ran until that owner released it.
+
+The **published AppImage** runs both actual Android-saved four-column projects in isolated
+1024×768 offscreen/dummy-audio sessions: Play → Instrument → held X → Pattern. NTSC/PAL
+playback reaches rows 43/35, each accepts one audition, with audition peaks 0.1652832/0.16616821
+and playback peaks 0.14242554/0.14297485. Screenshots show all four effects in the inspector.
+This is actual-binary PCM/UI evidence, not physical speaker listening.
+
+The Deck received the checksum-verified AppImage without launch or Gaming Mode input.
+`~/thortracker-deck/thor-tracker` now points to `thor-tracker-0.41.0-x86_64.AppImage`; the old
+0.40.0 file remains. **Thor and Brick were not accessed.** No new physical Deck/Brick runtime
+proof is claimed. GitHub Pages deployment `42926200785` passes; the deployed Systems page's
+four-column matrix/TIA text was inspected in Chromium.
+
+Published evidence is under `workflow-touch-041/official-release/`, `official-device/`,
+`official-desktop/`, `official-device-final-state.json` and `deck-delivery.json` beneath the
+recovery root above. Disposable verification sources are removed; logs, APKs and captures remain.
+
 
 ## 0.40.0 — NES multi-effect support and editing hardening
 

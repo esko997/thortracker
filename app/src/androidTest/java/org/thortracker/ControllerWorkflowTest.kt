@@ -195,6 +195,41 @@ class ControllerWorkflowTest {
     @Test fun controllerReconfigurationCancelsHeldInputWithoutSynthesizingATap() =
         assertInputInterruption { activity.onInputDeviceChanged(-123) }
 
+    @Test fun interruptedBindingCaptureCannotRetainAnInvisibleModifier() {
+        val popups = MainActivity::class.java.getDeclaredField("popups").apply { isAccessible = true }
+            .get(activity) as org.thortracker.ui.Popups
+        val interruptions = listOf<() -> Unit>(
+            { activity.onWindowFocusChanged(false); activity.onWindowFocusChanged(true) },
+            { activity.onInputDeviceRemoved(-123) },
+            { activity.onInputDeviceChanged(-123) },
+            { activity.onConfigurationChanged(android.content.res.Configuration(activity.resources.configuration)) },
+        )
+        for (interrupt in interruptions) {
+            resetControls()
+            tap(KeyEvent.KEYCODE_MENU)
+            clickRow("Controls")
+            clickRow(Control.AUDITION.label)
+            down(KeyEvent.KEYCODE_BUTTON_L2)
+            instrumentation.runOnMainSync {
+                assertNotNull(popups.top?.capture)
+                interrupt() // The modifier's key-up is deliberately missing.
+                assertNull("Interrupted capture must no longer accept a binding", popups.top?.capture)
+                assertEquals(Keymap.DEFAULT.binding(Control.AUDITION), tracker.keymap.binding(Control.AUDITION))
+            }
+            clickRow(Control.AUDITION.label)
+            tap(KeyEvent.KEYCODE_BUTTON_THUMBR)
+            clickRow("Replace")
+            instrumentation.runOnMainSync {
+                assertEquals(Binding(KeyEvent.KEYCODE_BUTTON_THUMBR), tracker.keymap.binding(Control.AUDITION))
+            }
+            up(KeyEvent.KEYCODE_BUTTON_L2)
+            tap(KeyEvent.KEYCODE_MENU)
+            down(KeyEvent.KEYCODE_BUTTON_THUMBR)
+            tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+            instrumentation.runOnMainSync { assertTrue("Fresh unmodified R3 must listen", tracker.controller.auditionHeld) }
+            up(KeyEvent.KEYCODE_BUTTON_THUMBR)
+        }
+    }
     private fun assertInputInterruption(interrupt: () -> Unit) {
         chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_Y) // Keyboard
         val audio = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
@@ -624,8 +659,22 @@ class ControllerWorkflowTest {
             instrumentation.removeMonitor(picker)
             if (reader == null) reader = thread(isDaemon = true) { destination.inputStream().use { it.readBytes() } }
             reader.join(3000)
-            if (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != instrumentation.targetContext.packageName)
-                tap(KeyEvent.KEYCODE_BACK)
+            awaitTrue("Save picker settles") { instrumentation.uiAutomation.rootInActiveWindow != null }
+            val foreground = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
+            if (foreground != instrumentation.targetContext.packageName) {
+                assertTrue("Only this test's document picker may be dismissed",
+                    foreground == "com.android.documentsui" || foreground == "com.google.android.documentsui")
+                val time = SystemClock.uptimeMillis()
+                for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                    assertTrue(instrumentation.uiAutomation.injectInputEvent(
+                        KeyEvent(time, SystemClock.uptimeMillis(), action, KeyEvent.KEYCODE_BACK, 0), true))
+                }
+                awaitTrue("Tracker regains focus after its document picker") {
+                    var focused = false
+                    instrumentation.runOnMainSync { focused = activity.hasWindowFocus() }
+                    focused
+                }
+            }
             destination.delete()
         }
     }

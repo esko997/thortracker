@@ -5694,10 +5694,11 @@ physical-button latency or human-listening measurements.
 
 ## Atari 2600: Thor Tracker's own player on the TIA (`"atari2600-tia-ntsc"`, `"atari2600-tia-pal"`)
 
-**Status: 0.32.0/code 45 locally verified; publication pending.** Integrated native checks pass
-(1,812 TIA / 2,220 WAV), with independent register, period, divider-edge and pitch comparisons.
-Both regions pass actual controller/edit/restart/export scenarios on Nova, DMG and Konkr, plus SDL
-playback and audition. Pre-resampler headroom is corrected; raw chip levels are unchanged. See `VERIFICATION.md`.
+**Status: 0.41.0/code 55 published.** Both regions accept four effect columns. Native checks
+pass (3,786 TIA / 2,796 WAV), with independent register, cadence and NTSC/PAL pitch comparisons.
+The published APK passes four-column editing/save/reopen/PAL WAV workflows on Konkr and DMG;
+the published AppImage opens both four-column projects, plays and auditions with nonzero PCM.
+These are not physical Deck/Brick or speaker-listening claims. See `VERIFICATION.md` for evidence.
 The Atari 2600's sound is the TIA's two audio channels (Television Interface Adaptor, CO10444): per channel a 4-bit
 control register (AUDC: which of the counters' feedback and division modes), a 5-bit frequency divider (AUDF) and a
 4-bit volume (AUDV), clocked twice per scanline from the video timing, the two outputs tied together into one mono
@@ -5870,6 +5871,10 @@ pitch, slides, portamento, vibrato and the pitch envelope do not apply.
 reference builder is `tools/audio/tia/tia_song.py` (`build()`). The loader rejects anything off-contract with a reason
 and the byte (`TiInfo.problem`, `problem_offset`); the Kotlin validator mirrors its checks with user-facing messages.
 
+The four-column extension keeps layout 1 and all offsets/capacities unchanged: the packed row
+already reserves three bits for its count. Older two-column players reject counts three/four.
+More commands add no physical voices, and this host player/WAV route proves no 6507 game budget.
+
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | `"TTIA"` |
@@ -5905,7 +5910,7 @@ there); every byte read must lie inside `[0, D)`. Row encoding, as the OPL3's an
 | Bytes | Meaning |
 |---|---|
 | `0x80 \| k` | k + 1 empty rows (k 0..127) |
-| `m` (0x01..0x0B), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..2; bits 5-6 zero, m ≠ 0 |
+| `m` (0x01..0x13), then data | bit 0: a note byte follows; bit 1: an instrument byte follows; bits 2-4: effect count 0..4; bits 5-6 zero, m ≠ 0 |
 | note | 0..119 = absolute note C-0..B-9 (57 = A-4), `0xFE` = OFF |
 | instrument | slot 1..64, defined |
 | effects | per effect column in order: code (0..35 = `0`-`9`, `A`-`Z`), parameter |
@@ -5920,7 +5925,7 @@ parameters: `Bxx` < order count, `Cxx` ≤ 0F, `F00` rejected, `Wxx` ≤ 0F). Co
 in sequential straight play (header speed, then the last `Fxx` of each order: rows, then channels, then columns;
 jumps ignored).
 
-**What the lowering writes** from a `Cell` with up to 2 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
+**What the lowering writes** from a `Cell` with up to 4 effect columns: note `EMPTY` → no note byte, `CUT` → `0xFE`,
 an absolute note → itself; instrument 0 → no byte; effect columns in column order, blank columns (code 0, parameter
 0) omitted; empty rows in runs of at most 128; byte-identical (order, channel) encodings stored once in first-use
 order (orders, then channels), then each instrument's envelopes in slot order (volume, arpeggio, pitch, waveform;
@@ -5941,9 +5946,9 @@ setting the shadows): `$15` 0, `$17` 0, `$19` 0, `$16` 0, `$18` 0, `$1A` 0.
 1. Tick 0 of a row: read both channels' rows at (order, row). Then, over channels 0..1 and their effect columns in
    order: `Fxx` sets the speed (the last one wins and applies to this row); `Bxx`/`Dxx` record the next position: `B`
    only → (xx, 0); `D` only → (next order, xx), the next order being order + 1 or, past the last one, the loop order;
-   both → (B's order, D's row). Then for each channel 0..1: its cut is cleared; if the row has `Gxx` with xx > 0 (the
-   last `G` of the row) its row is delayed to tick xx; otherwise the row runs now. Other ticks: each channel whose
-   delayed row is due (tick = xx) runs it, channels in order.
+   both → (B's order, D's row). Then for each channel 0..1: its cut is cleared; the **last G**
+   determines its delay. A value > 0 delays the row to tick xx; G00 cancels an earlier G and runs
+   it now. Other ticks: each channel whose delayed row is due (tick = xx) runs it, channels in order.
 2. Each channel whose cut tick (`Sxx`) equals this tick gets OFF, channels in order.
 3. Each sounding channel 0..1 is updated (below), channels in order.
 4. tick + 1; when it reaches the speed: tick 0 and the next row — the recorded jump (row clamped to the target
@@ -5985,7 +5990,10 @@ vibrato phase + speed (mod 64) when speed and depth are set; vol8 + x − y (cla
 
 ### Effects (what Kotlin's effect specs declare for both variants)
 
-Up to 2 effect columns per channel. "Note" = for the note keyed on this row only; "now" = from this row on.
+Up to 4 effect columns per channel. "Note" = for the note keyed on this row only; "now" = from this row on.
+Commands are ordered, not independent effect engines: the last setting of a shared target wins.
+In particular, 1/2/3 share one slide mode; a later slide clears portamento, including 100/200.
+P and W are separate last-setting targets; a waveform envelope still overrides W.
 
 | Effect | Parameter | Meaning |
 |---|---|---|
@@ -6003,6 +6011,13 @@ Up to 2 effect columns per channel. "Note" = for the note keyed on this row only
 | `Pxx` fine pitch | 80 = none | xx − 80 in 1/64 semitones until the next note (tonal instruments) |
 | `Sxx` note off | tick | OFF at tick xx of this row |
 | `Wxx` waveform | 00-0F (AUDC) | now: the waveform of the sounding note (next update) and of later notes until the next note row without `W`; ignored by instruments with a waveform envelope |
+
+The Kotlin key-on/inspector walk mirrors last-G delay and shared slide-mode precedence.
+Its fine-pitch adapter reads the last P column. When an upward tuned note is returned to its
+coarse pitch, clearing the final P must not reveal an earlier P: it retains a neutral P80 in
+that case, or removes the final P when no earlier one exists. A downward final P is not treated
+as an upward tuning. This is editor interpretation/neutralization; native P execution remains
+the ordered `fine = xx − 80` assignment above.
 
 ### Position, seek and live edits
 

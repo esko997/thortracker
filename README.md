@@ -271,6 +271,11 @@ One list of 64 sounds holds every kind (the **Type** row switches a slot between
 Nova, DMG and Konkr, and SDL playback/audition pass. See `docs/VERIFICATION.md` for measured results
 and limits; automated PCM/UI verification is separate from human listening.
 
+**0.41.0:** both variants now have **four effect columns per channel**, still only two
+voices. Columns run left to right; the last setting wins for a shared target. Global F/B/D run at
+row start, and the last G controls delay (`G00` cancels an earlier G). The project/image schema is
+unchanged; older players reject third/fourth-column content rather than dropping it. WAV export
+does not establish a 6507 cartridge CPU budget.
 An Atari 2600 song (**Menu → Files → New blank song → Atari 2600…**, then **NTSC** or **PAL**; **Load demo** plays *Cartridge Dawn*) has the TIA's two channels, **TIA 1** and **TIA 2**, each with up to four effect columns, notes C-0..B-9, one tick per TV frame (59.92 per second on NTSC, 49.86 on PAL; speeds count frames). Each sound has a **Waveform**, one of the chip's sixteen AUDC values: pure squares at div 2 (high) and div 6 (the melodic middle), the 18/13 div 31 tone (the bass), div 93 (very low), the 4-bit and 5-bit polynomial buzzes, white noise (8) and a constant level (0 and B). The chip divides that waveform's clock by 1-32 (AUDF), so each waveform has only 32 pitches, and Thor Tracker is honest about it: a **tonal** sound plays each note at the divider nearest to it, at that divider's true frequency (A-4 on div 6 is 436.1 Hz on NTSC, 432.1 Hz on PAL), and notes outside a waveform's span play its nearest end (the song check warns about them). The **Waveform** row shows the span (div 6: E-3..D#8), and the **Pitch guide** page lists all 32 dividers with their frequency, nearest note and error in cents — **A** plays the one under the cursor. The pattern inspector and lane tags show the key-on registers each channel reaches at the cursor (e.g. `C·11`: AUDC C, AUDF 11). A **raw** sound (the **Pitch mode** row; noise and drums) uses the note as the divider instead: C-0 is AUDF 31 and each semitone up is one step brighter, repeating every 32 semitones. Sounds have **Volume** (AUDV 0-15), **Arpeggio**, **Pitch** and **Waveform seq** envelopes (per frame, loop and release points; a waveform sequence makes kicks that start as noise and fall to a tone); slides, vibrato and portamento move in 1/64 semitones and are heard as the dividers step, as on the real console; `Wxx` switches a sounding note's waveform. Nothing restarts the chip's waveform counters, so repeated notes need not start alike. The TIA has no sample playback (a constant waveform's volume steps give clicks at the frame rate), and there is no VGM for it: songs export as **.wav**. NTSC and PAL are separate variants because the console's clock sets every pitch and the frame rate; a PAL song plays about 16 cents lower at the same AUDF.
 
 ### VIC-20 and C16 / Plus/4 sounds: one master volume
@@ -425,6 +430,11 @@ A held adjustment or wave-drawing gesture is one undo step. Overlapping gestures
 
 Canceled controller releases end the gesture without triggering a tap or advancing the cursor. Edits already made on press or during a held adjustment remain; cancellation is not Undo.
 
+Window-focus loss or a controller removal/change cancels held edits, Listen notes and modifiers;
+it never synthesizes a release tap. Focus-only cancellation leaves song transport playing.
+Activity pause also stops transport. These are input/lifecycle rules, not Undo: edits already
+made remain in the document.
+
 Hold the modifier **before** pressing its chord button. While Select, L2, R2 or L3 is held, the focused display's hint bar shows only that modifier's chords that act in the focused view; while two are held (L2 + R2, pressed in either order), it shows that pair's own chords, or that no chord applies. With a modifier held, a button without a chord in that view does its ordinary job. With L2 and R2 both held, a button without an L2 + R2 chord does nothing if L2 or R2 alone has a chord for it, so a third-layer press never undoes or switches the view by mistake. An A press that precedes L2/R2 remains an ordinary edit; note entry is not delayed waiting for a possible chord. A button keeps the meaning it had when pressed until it is released, whatever happens to the triggers meanwhile; consumed chords suppress repeats and releases, even if a trigger is released first. Undo/redo and screen swap also work over app popups without choosing their highlighted item. Bare L3 is also unbound.
 
 ![Pattern view playing with L2+Y on: the header reads "Pattern 00 Intro · Looping", the playhead row is highlighted, and the status line says "Looping pattern 00 (order 00)"](docs/media/pattern-loop-playback.png)
@@ -435,6 +445,8 @@ Hold the modifier **before** pressing its chord button. While Select, L2, R2 or 
 2. Tap A on subsequent empty rows to repeat the last note. **Menu → Entry step** sets the row advance.
 3. Alternatively, put Keyboard on the other display, select **Write** with Y, and enter notes there. **Listen** mode auditions without changing the pattern.
 4. Hold Y and move to mark a phrase; Select+X copies it, Select+A pastes it. L2+A undoes a mistake.
+   **B is Clear**, not Cut: it clears the selected field without replacing the clipboard.
+   **Select+B cuts the cell or marked block**, including its sound and every effect, for Select+A paste.
 5. Press Start to hear the phrase, edit while it plays, and stop/start or seek without saving or exporting.
 
 New/Open resets remembered note, sound, effect and tuned-pitch entry for the new document; ordinary
@@ -465,8 +477,11 @@ number of voices or on how many instrument envelopes can run:
 | Columns | Systems |
 | --- | --- |
 | 1 | Game Boy/hUGEDriver; C64 SID/GoatTracker |
-| 2 | Atari 2600 TIA (NTSC/PAL); VIC-20; C16/Plus/4 TED; Virtual Boy |
-| 4 | NES/FamiStudio and all expansion variants, including EPSM; OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
+| 2 | VIC-20; C16/Plus/4 TED; Virtual Boy |
+| 4 | NES/FamiStudio and all expansion variants, including EPSM; Atari 2600 TIA (NTSC/PAL); OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
+
+The 43 registered variants comprise **2 one-column, 3 two-column and 38 four-column systems**
+in 0.41.0.
 
 On a multi-column system, open the Pattern panel with **L2+Right** (or tap **Scale**) and choose
 **Columns**. Left/Right changes the focused channel's visible count; L1/R1 selects a channel;
@@ -474,6 +489,9 @@ B returns to automatic. Automatic shows the columns used by that channel, with a
 Hiding a column does **not** disable its effects, and this display preference is independent per pane.
 An automatic column stays visible while A is held to edit it, even if its last value becomes empty;
 releasing or canceling the hold returns to automatic width without changing another effect.
+The row's trailing dot and the lane header's **+n fx** identify hidden effects that still play.
+**Help → Controls** explains Columns and the active shortcut bindings; **Help → Effects**
+describes the selected backend's commands and their limitations.
 
 **NES:** independent attributes combine left to right; the last duplicate wins. `Axy`/`Cxx` share
 volume state, and `Qxx`/`Rxx` share one slide target. The first channel containing `Fxx` sets global

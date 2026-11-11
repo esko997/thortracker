@@ -13,6 +13,13 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
+**Current priority (0.41.0/code 55, 2026-11-11):** review the isolated phone touch prototype
+and continue focused soft-launch hardening, not another backend. TIA NTSC/PAL four-column
+support, interruption-safe input/capture and fast-menu-tap fixes are published; actual release
+artifact and reserved-device evidence is in `docs/VERIFICATION.md`. There is no new physical
+Deck/Brick runtime claim. **Galaxy Fold8** is the phone design target; DMG is the functional
+testbed, not proof of phone density, insets or thumb reach.
+
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
 JVM, reserved-device frontend and published AppImage checks pass; the DMG picker retry and exact
 artifact evidence are recorded in `docs/VERIFICATION.md`.
@@ -184,16 +191,16 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   Complete-view swaps retain zoom; shell and modal touch targets stay physical-sized. No song,
   playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
   persistence and frontend acceptance; zoom does not depend on future touchscreen support.
-- **Multiple effects per row — NES first pass implemented for 0.40.0:** the
+- **Multiple effects per row — NES in 0.40.0, TIA in 0.41.0:** the
   [manual matrix](README.md#multiple-effects-per-row) covers all 43 variants: **2 with one column,
-  5 with two and 36 with four**. All 15 FamiStudio NES variants now accept four ordered columns,
-  with matching preview and supported native exports. Existing one-column exports remain unchanged.
-  More columns do not guarantee independent pitch effects or independent hardware-shared controls.
-  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0400) records
-  precedence, timing restrictions and the driver/export gate. Four is the normal ceiling where
-  straightforward, not a mandate to retrofit fixed-format drivers or add elaborate export packing.
-  TIA is the smallest inferred next extension; VIC/TED and VSU need their packed-count contract
-  changed. Game Boy/SID remain one-column until a native-format solution justifies its complexity.
+  3 with two and 38 with four**. All 15 FamiStudio NES variants and both TIA regions accept four
+  ordered columns. TIA's image/project schema is unchanged; old players reject added-column
+  content. More columns do not add voices, independent pitch targets or shared hardware controls.
+  The [compatibility review](docs/BACKENDS.md#current-capacity-and-compatibility-review-0410)
+  records precedence, timing restrictions and the driver/export gate. Four is the normal ceiling
+  where straightforward, not a mandate to retrofit fixed-format drivers or elaborate export packing.
+  VIC/TED and VSU still need their packed-count contract changed. Game Boy/SID remain one-column
+  until a native-format solution justifies its complexity; none is next in the hardening queue.
 - **Swing rhythms — implementation paused:** investigate viable drivers and the additional code,
   format, export and verification cost of the simplest useful implementation before choosing timing
   semantics. The earlier song-wide plus pattern Inherit / Straight / Override design is only a
@@ -201,27 +208,34 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   [Feasibility and open decisions](docs/BACKENDS.md#swing-and-groove-research-proposal) cover
   quantization, odd-length phase, tempo-command precedence, seek/loops and driver-specific limits.
   No playback timing changes are authorized by this research.
-- **Touch-only phone use — discussion, no implementation:** reopen the controller-overlay approach
-  alongside the earlier landscape side-editor study; portrait may be a better starting geometry.
-  A persistent navigation affordance could open a drawer for views, scales and settings, with a swipe
-  as an optional shortcut. Do not make access depend solely on whether Android detects a controller.
-  Evaluate simultaneous holds, L2/R2 layers, thumb reach, obscured rows, Android edge-back gestures,
-  file picking, keyboard/insets and cancellation before selecting a layout. Reuse shared controller
-  actions, document, recovery, audio and export paths; preserve physical-controller and dual-display
-  behavior. [Review proposal and silent interaction study](docs/TOUCH_PROPOSAL.md) retain the original
-  side-editor experiment, explicitly separate from this new portrait/overlay candidate.
+- **Touch-only phone use — isolated preview, production unchanged:** the
+  [review APK and source](https://github.com/esko997/thortracker/releases/tag/touch-preview-0.41.0-1)
+  use a separate package. **19 host tests and 13 real Android scenarios pass on DMG**, plus five
+  native cover/inner ratio renders. The **Galaxy Fold8** layout has a 144 dp three-row dock and
+  edge-bounded thumb groups; there is no orientation lock. Phone ergonomics are not verified.
+  Review simultaneous holds, modifier layers, thumb reach, dense menus, obscured rows, edge-back,
+  file picking, keyboard/insets and fold transitions. A phone-only Syncthing APK folder is offered;
+  receipt and installation are separate steps. Reuse the shared controller/editor/audio paths.
+  [The proposal](https://github.com/esko997/thortracker/blob/touch-preview-0.41.0-1/docs/TOUCH_PROPOSAL.md)
+  remains a review boundary, not permission to merge the preview into production.
 - **Hardening and ergonomics priority:** use bounded live editing/playback, navigation, selection,
   clipboard, Undo and save/reopen scenarios on Nova, DMG and Konkr. Investigate concrete failures
   before changing behavior; preserve private state and `/ThorTunez`, take exclusive device leases,
   and avoid emulators or simultaneous heavy builds. Assess shortcut discoverability and small
-  workflow improvements without reducing utility. For 0.40.0, held automatic effect columns retain
-  their target through blanking; high-channel transient cell identities no longer collide; unfocused
-  panes show the rebound Focus control. Real Activity editing, playback, clipboard, Undo and
-  save/reopen scenarios pass on reserved devices.
+  workflow improvements without reducing utility. 0.41.0 cancels held edit/listen input, modifiers
+  and binding capture after interruptions and avoids zero-distance menu scrolling that swallowed
+  fast taps. Focus-only cancellation preserves transport; Activity pause stops it.
+  Nova's full-song and Konkr/DMG's TIA scenarios cover UI editing, playback, save/reopen and export;
+  exact bounds and restoration
+  evidence are in `docs/VERIFICATION.md`. Existing automatic-column and high-channel fixes remain.
   **Keep B = Clear and Select+B = Cut cell/block.** Clear has field-specific note/effect semantics;
   silently turning it into Cut would replace the shared clipboard, which document Undo does not
   restore. Improve discoverability first. A separate last-cleared recovery slot would be new scope,
   not an implicit change to the existing clipboard.
+  Remaining review points are deliberately short: finding **Columns** and hidden effects without
+  memorizing chords, distinguishing field-specific **Clear from Cut**, and phone thumb reach,
+  dense menus and keyboard/insets. Help now explains Columns/hidden-FX markers and current
+  shortcuts. Keep swing, mixer ceilings, pattern-local mute and shader pipelines deferred.
 - **Korg DS-10 / DS-10+ and original synthesis** (updated 2026-11-10): longer-term direction is an original
   built-in synthesis backend with its own instruments and more playful panels, alongside the hardware
   backends. Separately explore bespoke friendly synth panels for existing chips: musical controls map to
