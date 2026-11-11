@@ -6,6 +6,7 @@ Thor Tracker itself is licensed under the GNU General Public License, version 3 
 Game Boy playback uses hUGEDriver 6.1.3 (public domain) and binjgb at commit
 16621111ed0ee73bcc45c912a823bcebedcffc0f (MIT, notice below).
 The binjgb audio output buffer is locally adapted to floating-point samples.
+Its envelope bound is locally corrected so increasing envelopes reach volume 15.
 
 NES playback uses the FamiStudio sound engine 4.5.3 (notice below; its NTSC note
 tables, for NES + VRC6 songs its VRC6 build's saw note tables, for NES + VRC7
